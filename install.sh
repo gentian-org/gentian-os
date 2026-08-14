@@ -79,10 +79,19 @@ export CLUSTER_XR_TIMEOUT="${CLUSTER_XR_TIMEOUT:-15m}"
 OPENBAO_CLI_VERSION="${OPENBAO_CLI_VERSION:-$(gentian_pin openbao cli)}"
 
 GENTIAN_DIRECTION="forward"
+GENTIAN_KIT_PATH=""
+GENTIAN_RECOVER_FROM=""
 
 driver_usage() {
     sed -n '3,42p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
     cat <<'EOF'
+
+Recovery:
+  --export-recovery-kit [PATH]  write the bootstrap material (master password,
+                                derivation salt, unseal keys, cluster identity)
+                                to an encrypted kit; default gentian-recovery-kit.age
+  --recover PATH                load a kit before installing, so derived
+                                credentials reproduce their original values
 
 Other options:
   --validate            validate config and step contracts, no cluster changes
@@ -120,6 +129,13 @@ parse_driver_args() {
             --phase)
                 shift; [[ $# -gt 0 ]] || { error "$0: --phase requires a value"; exit 1; }
                 GENTIAN_PHASE="$1" ;;
+            --export-recovery-kit)
+                GENTIAN_DIRECTION="export-kit"
+                if [[ -z "${2:-}" || "${2:-}" == -* ]]; then GENTIAN_KIT_PATH=""
+                else shift; GENTIAN_KIT_PATH="$1"; fi ;;
+            --recover)
+                shift; [[ $# -gt 0 ]] || { error "$0: --recover requires a kit path"; exit 1; }
+                GENTIAN_RECOVER_FROM="$1" ;;
             --no-cluster-infra)  INSTALL_CLUSTER_INFRA="0" ;;
             --cluster-infra)     INSTALL_CLUSTER_INFRA="1" ;;
             --config-file)
@@ -152,6 +168,12 @@ parse_driver_args() {
 # first apply().
 # =============================================================================
 prepare_run() {
+    # Before config, so the kit supplies what install.env would otherwise have
+    # to, and before the credential prompt, so nothing is asked for twice.
+    if [[ -n "${GENTIAN_RECOVER_FROM}" ]]; then
+        load_recovery_kit "${GENTIAN_RECOVER_FROM}" || exit 1
+    fi
+
     load_operator_config
     load_deployments_cluster_settings
     try_load_creds_from_openbao
@@ -232,6 +254,13 @@ main() {
     fi
 
     case "${GENTIAN_DIRECTION}" in
+        export-kit)
+            # Reads the cluster and OpenBao; changes neither.
+            load_operator_config
+            load_deployments_cluster_settings
+            try_load_creds_from_openbao
+            export_recovery_kit "${GENTIAN_KIT_PATH:-gentian-recovery-kit.age}"
+            ;;
         status)
             drive_status
             ;;

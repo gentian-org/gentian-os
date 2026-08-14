@@ -241,8 +241,9 @@ the end" and `--phase C` runs one stage.
 
 Everything should read `satisfied` except the steps that report their state
 differently by design — `A-04-prewarm`, `C-03-provider-helm` and `D-02-gateway-wait`
-have nothing persistent to check, and `13`, `14`, `17` and `34` re-run on every
-pass because they hold per-run tokens or reconcile continuously.
+have nothing persistent to check, and `B-04-openbao-init`, `B-09-seed-secrets` and
+`E-02-tenant-reconcile` re-run on every pass because they hold per-run tokens or
+reconcile continuously.
 
 Then check that the credentials the cluster declares are actually present:
 
@@ -256,7 +257,45 @@ genuinely absent from OpenBao — not that something failed to start.
 
 ---
 
-## 7. Installing on an internal domain
+## 7. Export the recovery kit
+
+Do this now, while everything is still in the shell that installed it.
+
+```bash
+./install.sh --export-recovery-kit kit.age
+```
+
+Most of this cluster is reconstructible: configuration comes from Git, and the
+sixteen derived credentials are a function of the master password and the
+derivation salt. The salt, though, is generated during the install and lives only
+in OpenBao. Lose OpenBao's storage and the master password on its own reproduces
+nothing.
+
+The kit is that gap closed — the salt, the master password, the unseal material
+and this cluster's identity, in one encrypted file. Restoring it into a fresh
+cluster with `--recover` makes every derived credential come back byte-identical.
+Without it, a rebuild gives you a working cluster with entirely different
+credentials, which is a migration rather than a restore.
+
+```bash
+./install.sh --recover kit.age    # on the fresh cluster, before anything else
+```
+
+It is encrypted with `age` where available and `openssl` otherwise; there is no
+unencrypted path. Store it wherever your break-glass material already lives —
+anyone who can decrypt it holds every derived credential in the cluster.
+
+To export unattended, set `GENTIAN_KIT_RECIPIENT` to an age public key
+(`age -p` prompts on the terminal and so cannot run from a job); read such a kit
+back with `GENTIAN_KIT_IDENTITY` pointing at the private key.
+
+The kit does **not** back up your data, and it does not restore OpenBao — a fresh
+instance issues its own unseal material. It is only the part that nothing else
+can rebuild.
+
+---
+
+## 8. Installing on an internal domain
 
 If your domain is not publicly resolvable, Let's Encrypt cannot reach it and no
 certificate will ever be issued. The symptom is unhelpful: every Gateway sits at
@@ -289,7 +328,7 @@ mode — it never silently falls back to a public issuer.
 
 ---
 
-## 8. Installing from a mirror
+## 9. Installing from a mirror
 
 For an air-gapped or forked install, point the platform at your own copies in
 `install.env`:
@@ -310,7 +349,7 @@ That file is what to mirror.
 
 ---
 
-## 9. Day-2 credentials
+## 10. Day-2 credentials
 
 Once the cluster is running, credentials are supplied through the on-cluster
 credential manager rather than the installer. It validates a value against the
@@ -325,7 +364,7 @@ credential, so the step refuses to revoke it and says so.
 
 ---
 
-## 10. Uninstalling
+## 11. Uninstalling
 
 Uninstall is the same steps in reverse:
 
@@ -340,7 +379,7 @@ recovers the credentials rather than re-prompting.
 
 ---
 
-## 11. When something is wrong
+## 12. When something is wrong
 
 **Start here.** It tells you which step's expectation is unmet:
 
@@ -407,6 +446,5 @@ useful; running them is not.
   `gentian-deployments`; the cluster reconciles. See
   [docs/deployment.md](docs/deployment.md) for the layering.
 
-If you are the first person to install from this branch, §15 of
-[docs/plans/config-and-credential-cleanup.md](docs/plans/config-and-credential-cleanup.md) lists
-what the run is expected to settle and what to check when something does not converge.
+- **Back up the data** — the recovery kit in §7 covers credentials, not
+  databases or object storage.

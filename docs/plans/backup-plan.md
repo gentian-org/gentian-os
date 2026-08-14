@@ -1,6 +1,6 @@
 # Backup and Recovery
 
-**Status:** Draft — nothing here is implemented
+**Status:** Phase 1 (the recovery kit) is implemented; Phases 2–5 are not
 **Scope:** cluster recovery, tenant-level restore, credential escrow
 **Applies to:** `install.sh`, OpenBao, CNPG, MinIO, tenant namespaces
 
@@ -70,6 +70,9 @@ cluster identity       kernelDomain, deployments repo and branch, stage
 It is small, changes rarely, and belongs wherever the organisation already keeps
 break-glass material. It is the difference between "rebuild from Git" being a
 plan and being a hope.
+
+This part exists. `scripts/lib/recovery.sh` implements it, and `install.sh`
+exposes it as `--export-recovery-kit` and `--recover` — see §6.
 
 **The whole point of the kit is that derived credentials come back identical.**
 Restore it into a fresh cluster before the first install and every database
@@ -165,16 +168,42 @@ components. A `--backup` flag would also make the installer a dependency of
 restore, which is the wrong direction: recovery should need a bundle and a
 cluster, not a current checkout.
 
-**Yes to `--export-recovery-kit` and `--recover <kit>`.** The bootstrap material
-is the one thing only the installer holds, and priming a fresh cluster with it
-before the first run is what makes derived credentials come back identical.
-
-That gives a restore path with one moving part:
+**`--export-recovery-kit` and `--recover <kit>`, both implemented.** The
+bootstrap material is the one thing only the installer holds, and priming a fresh
+cluster with it before the first run is what makes derived credentials come back
+identical.
 
 ```bash
-./install.sh --recover recovery-kit.age    # prime OpenBao, then install as usual
-# then restore data per §4
+# After an install, while the values are still reachable:
+./install.sh --export-recovery-kit kit.age
+
+# Into a fresh cluster, before anything else:
+./install.sh --recover kit.age
 ```
+
+Export reads the environment first, then OpenBao, then the init files the
+installer wrote, so it also works against a half-broken cluster. It refuses to
+write anything unless both the master password and the salt are present — a kit
+missing the salt reproduces nothing and would be worse than no kit at all.
+
+Encryption is `age` when installed and `openssl` otherwise, with the difference
+stated on the way past: age authenticates, so a tampered kit fails to decrypt
+rather than yielding plausible garbage. There is no unencrypted path.
+
+| Variable | Effect |
+|---|---|
+| `GENTIAN_KIT_RECIPIENT` | An age public key. Encrypt to it instead of prompting — the only way to export unattended, since `age -p` reads its passphrase from the terminal |
+| `GENTIAN_KIT_IDENTITY` | The matching private key file, needed to read a kit written that way |
+
+On import the kit is parsed against a fixed key whitelist rather than sourced.
+Encrypted is not the same as trusted, and sourcing it would let a key name in the
+file decide what the installer sets. Values already in the environment win, so an
+explicit override on the command line is not silently undone by the kit.
+
+What it does **not** do is restore OpenBao. A fresh instance initialises itself
+and issues new unseal material; the keys in the kit belong to the old one and
+unseal a restored Raft snapshot, nothing else. Restoring that snapshot is a
+separate operation, and §4 still applies for data.
 
 **Backup policy itself should be declarative**, following the pattern already in
 use: an `XBackup` claim per cluster and per tenant, composing Velero `Schedule`
@@ -186,10 +215,12 @@ nobody reads.
 
 ## 7. Traps
 
-**The salt lives only in OpenBao.** A disaster that loses OpenBao's storage also
-loses the salt, and the master password alone then reproduces nothing. Every
-claim about rebuild-reproducibility depends on fixing this, and it is the
-cheapest item in this document.
+**The salt lives only in OpenBao — unless a kit was exported.** A disaster that
+loses OpenBao's storage also loses the salt, and the master password alone then
+reproduces nothing. `--export-recovery-kit` is the fix, which makes *having run
+it* the actual dependency: the command exists, but a kit that was never exported
+protects nothing. Export after the first install, and again after any credential
+that is not derived changes.
 
 **Transit auto-unseal is a two-body problem.** The primary unseals from the
 transit instance. Restore the primary without it and the cluster is sealed. The
@@ -210,16 +241,17 @@ that establishes whether any of this works.
 
 Ordered by value per unit of effort.
 
-### Phase 1 — Recovery kit
+### Phase 1 — Recovery kit — **implemented**
 
 `install.sh --export-recovery-kit` writes an encrypted bundle;
-`--recover <kit>` primes a fresh cluster from it.
+`--recover <kit>` primes a fresh cluster from it. See §6.
 
 **Acceptance**
-- The kit contains the salt, and the salt is therefore recoverable without OpenBao.
-- A cluster installed with `--recover` derives credentials byte-identical to the original.
-- The kit is encrypted at rest and the tool refuses to write it unencrypted.
-- Losing the cluster and holding only the kit is sufficient to rebuild from Git.
+- ✅ The kit contains the salt, and the salt is therefore recoverable without OpenBao.
+- ✅ The kit is encrypted at rest and the tool refuses to write it unencrypted — there is no plaintext path.
+- ✅ A tampered kit is rejected rather than partially loaded (age kits; openssl kits are unauthenticated by construction).
+- ⬜ A cluster installed with `--recover` derives credentials byte-identical to the original. **Verified only by round-tripping the kit itself; the end-to-end claim needs a fresh-cluster run.**
+- ⬜ Losing the cluster and holding only the kit is sufficient to rebuild from Git. Same — this is a drill, not a unit test, and belongs with Phase 5.
 
 ### Phase 2 — Database backups
 
@@ -264,7 +296,8 @@ A scheduled exercise restoring into a scratch cluster.
 | Question | Notes |
 |---|---|
 | RPO and RTO per layer | Nothing below can be sized without these. Config is RPO=0; tenant data is probably minutes; credentials are hours. They should be stated before tools are chosen |
-| Kit encryption and custody | `age`, `sops`, or an organisational secret store. Who holds it, and how a restore is authorised, is a policy question rather than a technical one |
+| Kit custody | Encryption is settled — age, falling back to openssl. Who holds the kit, where, and how a restore is authorised remains open, and is a policy question rather than a technical one |
+| When to re-export | The kit is only as current as its last export. Nothing prompts for one today; a reminder on credential rotation, or an unattended scheduled export using `GENTIAN_KIT_RECIPIENT`, would both work |
 | Shared versus per-tenant database instances | Per-tenant CNPG clusters would make per-tenant PITR possible and remove the need for logical dumps, at a cost in footprint. Worth costing before Phase 2 hardens the current shape |
 | Tenant restore and OpenBao | Whether a tenant's paths are restored from a snapshot or re-derived. Re-derivation is cleaner but only works for the derived class |
 | Backup of the deployments repository | It is a Git remote, so it is somebody's backup already — but whose, and is that stated anywhere? |
