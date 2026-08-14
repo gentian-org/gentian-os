@@ -31,6 +31,8 @@ SCRIPT_DIR="${SCRIPT_DIR:-$(cd "${__GENTIAN_SCRIPTS_DIR}/.." && pwd)}"
 # no dependencies of its own by design.
 # shellcheck source=scripts/lib/versions.sh
 source "${__GENTIAN_LIB_DIR}/versions.sh"
+# shellcheck source=scripts/lib/compat.sh
+source "${__GENTIAN_LIB_DIR}/compat.sh"
 
 # shellcheck source=scripts/lib-runtime.sh
 source "${__GENTIAN_SCRIPTS_DIR}/lib-runtime.sh"

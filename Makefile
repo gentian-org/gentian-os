@@ -22,7 +22,7 @@ CROSSPLANE_IMAGE ?= xpkg.crossplane.io/crossplane/crossplane:$(CROSSPLANE_CLI_VE
 KUBEBUILDER_ASSETS ?= /tmp/envtest-bins/k8s/1.32.0-linux-amd64
 export KUBEBUILDER_ASSETS
 
-.PHONY: all build generate manifests test lint docker-build clean install-plugin validate-steps gen-credentials check-credentials
+.PHONY: all build generate manifests test lint docker-build clean install-plugin validate-steps gen-credentials check-credentials lint-portability
 
 all: generate build test
 
@@ -109,6 +109,11 @@ lint-shell: validate-steps
 ## vault (installer preflight), cluster (day-2), git (CI on a deployments branch).
 check-credentials:
 	@bash scripts/check-credentials.sh --source=$${SOURCE:-cluster}
+
+## Report macOS/BSD portability violations. Expected non-zero until Phase 13
+## migrates the call sites; the count must only go down.
+lint-portability:
+	@bash scripts/lint-portability.sh
 
 ## Assert every scripts/steps/*.sh declares its contract and defines apply().
 ## Reads only the step files — no cluster, no kubeconfig.

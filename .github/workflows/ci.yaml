@@ -97,6 +97,37 @@ jobs:
           files+=("scripts/kubectl-gentian")
           shellcheck -x "${files[@]}"
 
+      - name: step contracts
+        run: make validate-steps
+
+      - name: credential catalogue parity
+        run: python3 -m pip install --quiet pyyaml && make gen-credentials && git diff --exit-code kernel/credentials/
+
+  # macOS is a supported install host, so the installer has to be exercised on
+  # BSD userland and stock bash 3.2 — not just checked for it. This job is
+  # SEPARATE from lint on purpose: it is expected to fail on portability until
+  # Phase 13 migrates the call sites, and burying that in the main lint job
+  # would either block every merge or train people to ignore a red X.
+  portability:
+    name: Portability (macOS)
+    runs-on: macos-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: bash version on the runner
+        run: /bin/bash --version | head -1
+
+      - name: portability lint
+        run: bash scripts/lint-portability.sh
+
+      - name: driver runs on stock bash 3.2
+        run: |
+          # --explain reads only step headers: no kubeconfig, no cluster, and it
+          # exercises discovery, ordering and selection, which is most of the
+          # driver's own logic.
+          /bin/bash ./install.sh --explain
+
   docker:
     name: Docker build and push
     runs-on: ubuntu-latest
