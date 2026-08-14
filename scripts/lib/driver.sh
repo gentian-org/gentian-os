@@ -63,9 +63,17 @@ step_id_of() {
     echo "${base%.sh}"
 }
 
-# step_number_of <id> — "30-cert-manager" → "30"
+# step_number_of <id> — "30-cert-manager" → "30", "16b-repo" → "16b"
 step_number_of() {
     echo "${1%%-*}"
+}
+
+# step_ordinal_of <id> — the numeric part only, for range comparisons.
+# "16b" → 16, so --from/--until compare on the number and a suffixed step sorts
+# with its parent rather than after everything.
+step_ordinal_of() {
+    local n="${1%%-*}"
+    echo "${n//[!0-9]/}"
 }
 
 # discover_steps — populate _STEP_IDS/_STEP_FILES in numeric filename order.
@@ -81,13 +89,17 @@ discover_steps() {
     fi
 
     local f
-    # `sort` on the filename gives numeric order because every step is
-    # zero-padded to two digits.
+    # LC_ALL=C is load-bearing. Locale-aware collation ignores punctuation, so
+    # "16b-repo" sorts BEFORE "16-cluster" ('b' < 'c') instead of after it. The
+    # C locale compares bytes, where '-' (45) < 'b' (98), which is the order the
+    # numbering means. Every step is zero-padded to two digits, so byte order is
+    # numeric order.
     while IFS= read -r f; do
         [[ -n "$f" ]] || continue
         _STEP_IDS+=("$(step_id_of "$f")")
         _STEP_FILES+=("$f")
-    done < <(find "${GENTIAN_STEPS_DIR}" -maxdepth 1 -name '[0-9][0-9]-*.sh' | sort)
+    done < <(find "${GENTIAN_STEPS_DIR}" -maxdepth 1 -name '[0-9][0-9]-*.sh' \
+                  -o -maxdepth 1 -name '[0-9][0-9][a-z]-*.sh' | LC_ALL=C sort)
 
     if [[ ${#_STEP_IDS[@]} -eq 0 ]]; then
         error "No step files found in ${GENTIAN_STEPS_DIR}"
@@ -118,8 +130,7 @@ _in_csv() {
 
 # step_selected <id> — apply --only / --from / --until / --skip.
 step_selected() {
-    local id="$1" num
-    num="$(step_number_of "$id")"
+    local id="$1"
 
     if [[ -n "${GENTIAN_ONLY}" ]]; then
         _in_csv "$id" "${GENTIAN_ONLY}" || return 1
@@ -129,10 +140,11 @@ step_selected() {
     fi
     # String comparison would order "9" after "10"; both are zero-padded, so
     # 10# forces base-10 and avoids octal on values like 08.
-    if [[ -n "${GENTIAN_FROM}" ]] && (( 10#${num} < 10#$(step_number_of "${GENTIAN_FROM}") )); then
+    local ord; ord="$(step_ordinal_of "$id")"
+    if [[ -n "${GENTIAN_FROM}" ]] && (( 10#${ord} < 10#$(step_ordinal_of "${GENTIAN_FROM}") )); then
         return 1
     fi
-    if [[ -n "${GENTIAN_UNTIL}" ]] && (( 10#${num} > 10#$(step_number_of "${GENTIAN_UNTIL}") )); then
+    if [[ -n "${GENTIAN_UNTIL}" ]] && (( 10#${ord} > 10#$(step_ordinal_of "${GENTIAN_UNTIL}") )); then
         return 1
     fi
     return 0
@@ -378,6 +390,28 @@ validate_steps() {
     return $rc
 }
 
+# _step_shell_lines <file> — the file with heredoc bodies removed, so only
+# actual shell is scanned. Steps legitimately embed YAML this way.
+_step_shell_lines() {
+    awk '
+        # Inside a heredoc: emit nothing until the terminator.
+        inhd {
+            line = $0
+            sub(/^[ \t]+/, "", line)
+            if (line == delim) inhd = 0
+            next
+        }
+        # Opening delimiter, quoted or not, with or without the <<- dash form.
+        match($0, /<<-?[ ]*[\047"]?[A-Za-z_][A-Za-z0-9_]*[\047"]?/) {
+            d = substr($0, RSTART, RLENGTH)
+            gsub(/^<<-?[ ]*|[\047"]/, "", d)
+            delim = d
+            inhd = 1
+        }
+        { print }
+    ' "$1"
+}
+
 # validate_step_calls — every library function a step calls must be defined.
 #
 # This exists because it was NOT caught once: when install.sh became a driver
@@ -419,9 +453,13 @@ validate_step_calls() {
             declare -F "${fn}" >/dev/null 2>&1 && continue
             error "$(step_id_of "${file}"): calls '${fn}', which is not defined or on PATH"
             rc=1
-            # Capture a trailing '=' so assignments can be dropped: `    claim="$(...)"`
-            # is a local variable, not a call.
-        done < <(grep -oE '^ {4}[a-z_][a-z0-9_]*=?' "${file}" | grep -v '=$' | tr -d ' ' | sort -u)
+            # Heredoc bodies are stripped first: a step that applies YAML inline
+            # has `    phase: bootstrap` at the same indent as a call, and the
+            # lint would read "phase" as an undefined function. The trailing '='
+            # is captured so assignments drop out too — `    claim="$(...)"` is a
+            # local variable, not a call.
+        done < <(_step_shell_lines "${file}" |
+                 grep -oE '^ {4}[a-z_][a-z0-9_]*=?' | grep -v '=$' | tr -d ' ' | sort -u)
     done
     return $rc
 }
