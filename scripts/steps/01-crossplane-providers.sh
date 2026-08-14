@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # step: 01-crossplane-providers
+# phase: control-plane
 # requires: 00-crossplane
 # provides: provider-kubernetes, provider-helm, provider-vault, XRDs, Compositions
 # mutates: Crossplane Provider/ProviderConfig objects, gentianos.io XRDs

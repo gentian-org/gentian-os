@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # step: 05-cluster-issuers
+# phase: control-plane
 # requires: 04-cert-manager
 # provides: ClusterIssuers for the cluster's trust anchor
 # mutates: cluster-scoped ClusterIssuer objects, a root CA Certificate under self-signed

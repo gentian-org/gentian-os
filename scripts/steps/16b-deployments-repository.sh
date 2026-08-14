@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # step: 16b-deployments-repository
+# phase: secrets
 # requires: 16-cluster-xr
 # provides: Repository claim for gentian-deployments — ArgoCD credential and operator push access
 # mutates: Repository claim in crossplane-system

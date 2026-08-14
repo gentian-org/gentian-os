@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # step: 31-appprofiles
+# phase: applications
 # requires: 26-operator
 # provides: AppProfile CRs from the gentian-apps repository
 # mutates: AppProfile objects

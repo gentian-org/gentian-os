@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # step: 02-namespaces
+# phase: control-plane
 # requires: 00-crossplane
 # provides: kernel namespaces (openbao, external-secrets, argocd, gentian-system, platform-kernel, gentian-infra-<stage>)
 # mutates: namespaces only

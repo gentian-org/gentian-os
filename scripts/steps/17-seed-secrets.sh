@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # step: 17-seed-secrets
+# phase: secrets
 # requires: 16-cluster-xr
 # provides: remaining OpenBao paths (registry, DNS, mail)
 # mutates: OpenBao KV paths only

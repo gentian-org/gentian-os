@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # step: 30-portal-login
+# phase: applications
 # requires: 28-mail
 # provides: portal OIDC login, Keycloak realm SMTP configuration
 # mutates: Keycloak realm settings, portal Application

@@ -37,6 +37,8 @@
 #   ./install.sh --from 19          resume from there
 #   ./install.sh --only 07,08       a named subset
 #   ./install.sh --skip 03          everything but that
+#   ./install.sh --phase secrets    one phase: control-plane, secrets, platform,
+#                                   applications, handover
 #
 # There is no install-state file. State is read from the cluster by each step's
 # check(), which is what makes a re-run converge instead of restart.
@@ -115,6 +117,9 @@ parse_driver_args() {
             --skip)
                 shift; [[ $# -gt 0 ]] || { error "$0: --skip requires a value"; exit 1; }
                 GENTIAN_SKIP="$1" ;;
+            --phase)
+                shift; [[ $# -gt 0 ]] || { error "$0: --phase requires a value"; exit 1; }
+                GENTIAN_PHASE="$1" ;;
             --no-cluster-infra)  INSTALL_CLUSTER_INFRA="0" ;;
             --cluster-infra)     INSTALL_CLUSTER_INFRA="1" ;;
             --config-file)
@@ -134,7 +139,7 @@ parse_driver_args() {
         esac
         shift
     done
-    export GENTIAN_DRY_RUN GENTIAN_ONLY GENTIAN_FROM GENTIAN_UNTIL GENTIAN_SKIP
+    export GENTIAN_DRY_RUN GENTIAN_ONLY GENTIAN_FROM GENTIAN_UNTIL GENTIAN_SKIP GENTIAN_PHASE
     export INSTALL_CLUSTER_INFRA INSTALL_CONFIG_FILE INSTALL_SECRETS_FILE
     export INSTALL_AUTO_LOAD_CONFIG INSTALL_VERIFY_ONLY INSTALL_VALIDATE_ONLY
 }

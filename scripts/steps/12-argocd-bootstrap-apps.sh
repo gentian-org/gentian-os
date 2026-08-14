@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # step: 12-argocd-bootstrap-apps
+# phase: secrets
 # requires: 11-openbao-transit-init
 # provides: openbao, reloader, cnpg and globals Applications
 # mutates: ArgoCD Applications in argocd

@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # step: 33-tenants
+# phase: handover
 # requires: 32-app-catalogue
 # provides: nothing at install time — tenants are created after installation
 # mutates: Tenant and App CRs, on teardown only

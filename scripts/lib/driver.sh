@@ -6,6 +6,7 @@
 # self-contained and declares a contract in its header:
 #
 #   # step: 30-cert-manager
+#   # phase: control-plane
 #   # requires: 20-namespaces
 #   # provides: cert-manager, ClusterIssuers
 #   # mutates: cluster-scoped CRDs, namespace cert-manager
@@ -29,6 +30,12 @@
 #
 # check() must not mutate. --dry-run relies on it: the driver runs every
 # check() and prints what apply() would do without calling apply() at all.
+#
+# Phases group the steps for reading and for --phase selection. They are NOT
+# part of the ordering key: the numeric prefix is the total order the driver
+# executes, and the phase is one header line. Encoding the phase into the number
+# would make regrouping a step a renumbering, which is the thing the gaps and
+# letter suffixes exist to avoid.
 # =============================================================================
 
 [[ -n "${GENTIAN_DRIVER_LOADED:-}" ]] && return 0
@@ -51,6 +58,7 @@ GENTIAN_ONLY="${GENTIAN_ONLY:-}"
 GENTIAN_FROM="${GENTIAN_FROM:-}"
 GENTIAN_UNTIL="${GENTIAN_UNTIL:-}"
 GENTIAN_SKIP="${GENTIAN_SKIP:-}"
+GENTIAN_PHASE="${GENTIAN_PHASE:-}"
 
 # =============================================================================
 # Discovery
@@ -105,6 +113,38 @@ discover_steps() {
         error "No step files found in ${GENTIAN_STEPS_DIR}"
         return 1
     fi
+
+    # A misspelled --phase would otherwise select nothing and report success,
+    # which reads exactly like "there was nothing to do".
+    if [[ -n "${GENTIAN_PHASE}" ]]; then
+        local known; known="$(step_phases)"
+        if ! printf '%s\n' "${known}" | grep -qx "${GENTIAN_PHASE}"; then
+            error "Unknown phase: ${GENTIAN_PHASE}"
+            error "  Known phases: $(printf '%s' "${known}" | tr '\n' ' ')"
+            return 1
+        fi
+    fi
+}
+
+# step_phases — the declared phases, in execution order.
+step_phases() {
+    local i ph seen=""
+    for (( i = 0; i < ${#_STEP_IDS[@]}; i++ )); do
+        ph="$(step_header "${_STEP_FILES[$i]}" phase)"
+        [[ -n "${ph}" ]] || continue
+        [[ " ${seen} " == *" ${ph} "* ]] && continue
+        seen+="${ph} "
+        echo "${ph}"
+    done
+}
+
+# _file_for <id> — the step file backing an id.
+_file_for() {
+    local i
+    for (( i = 0; i < ${#_STEP_IDS[@]}; i++ )); do
+        [[ "${_STEP_IDS[$i]}" == "$1" ]] && { echo "${_STEP_FILES[$i]}"; return 0; }
+    done
+    return 1
 }
 
 # step_header <file> <field> — read a `# field: value` contract line.
@@ -128,9 +168,19 @@ _in_csv() {
     return 1
 }
 
-# step_selected <id> — apply --only / --from / --until / --skip.
+# step_selected <id> — apply --phase / --only / --from / --until / --skip.
 step_selected() {
     local id="$1"
+
+    # Phase is a grouping, deliberately NOT part of the ordering key. A step
+    # moves between phases by editing one header line; its number and its
+    # neighbours' numbers do not change. Encoding the phase into the number
+    # would make every re-grouping a renumbering — the problem the numbering
+    # gaps and letter suffixes exist to avoid.
+    if [[ -n "${GENTIAN_PHASE}" ]]; then
+        local ph; ph="$(step_header "$(_file_for "${id}")" phase)"
+        [[ "${ph}" == "${GENTIAN_PHASE}" ]] || return 1
+    fi
 
     if [[ -n "${GENTIAN_ONLY}" ]]; then
         _in_csv "$id" "${GENTIAN_ONLY}" || return 1
@@ -154,8 +204,20 @@ step_selected() {
 # Reporting
 # =============================================================================
 
+# Printed once when the phase changes, so a long run reads as five stages
+# rather than thirty-five uncounted steps.
+_GENTIAN_LAST_PHASE=""
+_phase_banner() {
+    local ph="$1"
+    [[ -n "${ph}" && "${ph}" != "${_GENTIAN_LAST_PHASE}" ]] || return 0
+    _GENTIAN_LAST_PHASE="${ph}"
+    echo ""
+    echo -e "${CYAN}── ${ph} ───────────────────────────────────────────${NC}"
+}
+
 _step_banner() {
     local id="$1" file="$2" provides
+    _phase_banner "$(step_header "$file" phase)"
     provides="$(step_header "$file" provides)"
     echo ""
     echo -e "${CYAN}[$(step_number_of "$id")]${NC} ${id#*-}"
@@ -305,13 +367,17 @@ drive_reverse() {
 drive_explain() {
     discover_steps || return 1
     local i id file
-    printf '\n%-4s %-26s %s\n' "#" "STEP" "PROVIDES"
-    printf '%-4s %-26s %s\n' "---" "--------------------------" "--------"
+    local last=""
     for (( i = 0; i < ${#_STEP_IDS[@]}; i++ )); do
         id="${_STEP_IDS[$i]}"
         file="${_STEP_FILES[$i]}"
         step_selected "$id" || continue
-        printf '%-4s %-26s %s\n' \
+        local ph; ph="$(step_header "$file" phase)"
+        if [[ "${ph}" != "${last}" ]]; then
+            last="${ph}"
+            printf '\n%b%s%b\n' "${CYAN}" "${ph}" "${NC}"
+        fi
+        printf '  %-4s %-26s %s\n' \
             "$(step_number_of "$id")" "${id#*-}" "$(step_header "$file" provides)"
     done
     echo ""
@@ -371,6 +437,10 @@ validate_steps() {
         fi
         if [[ -z "$(step_header "$file" provides)" ]]; then
             error "${id}: missing 'provides:' header"
+            rc=1
+        fi
+        if [[ -z "$(step_header "$file" phase)" ]]; then
+            error "${id}: missing 'phase:' header"
             rc=1
         fi
         _load_step "$file"

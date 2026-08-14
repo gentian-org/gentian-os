@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # step: 09-argocd-image-updater
+# phase: control-plane
 # requires: 08-argocd
 # provides: ArgoCD Image Updater
 # mutates: namespace argocd-image-updater

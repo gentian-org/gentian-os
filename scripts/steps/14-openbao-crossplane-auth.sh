@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # step: 14-openbao-crossplane-auth
+# phase: secrets
 # requires: 13-openbao-init
 # provides: OpenBao Kubernetes auth backend, crossplane-write policy, audit device
 # mutates: OpenBao auth backends and policies

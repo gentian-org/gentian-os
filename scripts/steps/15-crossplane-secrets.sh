@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # step: 15-crossplane-secrets
+# phase: secrets
 # requires: 14-openbao-crossplane-auth
 # provides: derived-credential Secrets consumed by the Cluster XR
 # mutates: Secrets in crossplane-system

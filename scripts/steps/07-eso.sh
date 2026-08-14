@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # step: 07-eso
+# phase: control-plane
 # requires: 02-namespaces
 # provides: External Secrets Operator — the only runtime read path for secrets
 # mutates: namespace external-secrets, ESO CRDs

@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # step: 04-cert-manager
+# phase: control-plane
 # requires: 02-namespaces
 # provides: cert-manager controller and its CRDs
 # mutates: namespace cert-manager, cert-manager CRDs

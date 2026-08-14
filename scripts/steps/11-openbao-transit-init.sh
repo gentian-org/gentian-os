@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # step: 11-openbao-transit-init
+# phase: secrets
 # requires: 10-openbao-transit
 # provides: initialised transit OpenBao + auto-unseal Secret for the primary
 # mutates: Secret openbao/openbao-transit-unseal, transit OpenBao data

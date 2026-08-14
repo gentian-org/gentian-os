@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # step: 22-mac-admission
+# phase: platform
 # requires: 19-root-appset
 # provides: Kyverno admission policies (Stage 0 MAC)
 # mutates: Kyverno ClusterPolicy objects

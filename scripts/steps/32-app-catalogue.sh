@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # step: 32-app-catalogue
+# phase: applications
 # requires: 31-appprofiles
 # provides: AppCatalogue CRD and the kubectl-gentian plugin
 # mutates: AppCatalogue objects, host CLI plugin

@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # step: 26-operator
+# phase: applications
 # requires: 25-suze
 # provides: gentian-os operator with the authz bridge
 # mutates: namespace gentian-system, gentianos.io CRDs

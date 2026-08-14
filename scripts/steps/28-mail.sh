@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # step: 28-mail
+# phase: applications
 # requires: 26-operator
 # provides: mail delivery per MAIL_SERVICE_MODE (external relay or kernel Postfix)
 # mutates: mail Secrets and ConfigMaps in platform-kernel

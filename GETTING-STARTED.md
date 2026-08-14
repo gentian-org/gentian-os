@@ -212,10 +212,16 @@ they are easy to lose.
 The failure names the step and the file to open. Fix the cause and re-run:
 
 ```bash
-./install.sh                # continues; completed steps are skipped
-./install.sh --from 16      # or resume from a specific point
-./install.sh --only 07      # or re-run one step
+./install.sh                     # continues; completed steps are skipped
+./install.sh --from 16           # or resume from a specific point
+./install.sh --only 07           # or re-run one step
+./install.sh --phase secrets     # or one phase
 ```
+
+The steps are grouped into five phases, which `--explain` prints as headings:
+`control-plane`, `secrets`, `platform`, `applications`, `handover`. The phase is
+a grouping only — the numbers are a single sequence, so a step can be regrouped
+without renumbering anything.
 
 ---
 

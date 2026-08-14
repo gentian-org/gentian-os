@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # step: 06-envoy-gateway
+# phase: control-plane
 # requires: 02-namespaces
 # provides: Envoy Gateway control plane (ROUTING_MODE=gateway)
 # mutates: namespace envoy-gateway-system, Gateway API CRDs

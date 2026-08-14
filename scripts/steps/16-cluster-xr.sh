@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # step: 16-cluster-xr
+# phase: secrets
 # requires: 15-crossplane-secrets
 # provides: Cluster claim — KV mount, policies, AppProject, ClusterSecretStore
 # mutates: Cluster claim in crossplane-system and everything it composes

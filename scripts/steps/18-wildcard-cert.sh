@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # step: 18-wildcard-cert
+# phase: platform
 # requires: 16-cluster-xr
 # provides: wildcard TLS certificate for *.${KERNEL_DOMAIN} (optional)
 # mutates: Certificate in cert-manager, wildcard-tls Secrets in kernel namespaces

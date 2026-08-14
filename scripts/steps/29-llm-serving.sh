@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # step: 29-llm-serving
+# phase: applications
 # requires: 26-operator
 # provides: LLM serving stack (vLLM/LocalAI + LiteLLM) when LLM_SUPPORT is on
 # mutates: LLM workloads in platform-kernel

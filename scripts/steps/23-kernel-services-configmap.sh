@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # step: 23-kernel-services-configmap
+# phase: platform
 # requires: 16-cluster-xr
 # provides: ConfigMap gentian-kernel-services in platform-kernel
 # mutates: one ConfigMap

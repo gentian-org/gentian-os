@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # step: 03-prewarm
+# phase: control-plane
 # requires: 02-namespaces
 # provides: pre-pulled images on every node
 # mutates: transient DaemonSet/Pods only — nothing that outlives the step

@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # step: 00-crossplane
+# phase: control-plane
 # requires:
 # provides: Crossplane core controller in crossplane-system
 # mutates: namespace crossplane-system, Crossplane CRDs, cluster-scoped RBAC

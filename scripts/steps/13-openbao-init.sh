@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # step: 13-openbao-init
+# phase: secrets
 # requires: 12-argocd-bootstrap-apps
 # provides: initialised primary OpenBao, BAO_TOKEN for the rest of the run
 # mutates: Secret openbao/openbao-init, OpenBao storage

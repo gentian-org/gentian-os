@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # step: 08-argocd
+# phase: control-plane
 # requires: 02-namespaces
 # provides: ArgoCD server and controllers
 # mutates: namespace argocd, ArgoCD CRDs

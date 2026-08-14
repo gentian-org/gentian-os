@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # step: 19-root-appset
+# phase: platform
 # requires: 16-cluster-xr
 # provides: root ApplicationSet — the app-of-apps everything else arrives through
 # mutates: ApplicationSet gentian-appsets in argocd

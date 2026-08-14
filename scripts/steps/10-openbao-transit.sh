@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # step: 10-openbao-transit
+# phase: secrets
 # requires: 08-argocd
 # provides: transit-seal OpenBao Application (auto-unseal root, no cloud KMS)
 # mutates: ArgoCD Application openbao-transit, namespace openbao

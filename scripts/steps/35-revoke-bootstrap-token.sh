@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # step: 35-revoke-bootstrap-token
+# phase: handover
 # requires: 34-tenant-reconcile
 # provides: an installer whose OpenBao token no longer works
 # mutates: revokes BAO_TOKEN; removes the openbao-init Secret's root token

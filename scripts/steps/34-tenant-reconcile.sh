@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # step: 34-tenant-reconcile
+# phase: handover
 # requires: 33-tenants
 # provides: per-tenant LiteLLM Teams and Keycloak realm SMTP, reconciled
 # mutates: LiteLLM Team objects, per-tenant Keycloak realm SMTP settings

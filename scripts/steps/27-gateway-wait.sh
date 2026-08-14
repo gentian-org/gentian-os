@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # step: 27-gateway-wait
+# phase: applications
 # requires: 26-operator
 # provides: kernel Gateway reporting Programmed
 # mutates: nothing — waits on a condition
