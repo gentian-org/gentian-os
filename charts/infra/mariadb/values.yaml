@@ -121,7 +121,7 @@ image:
   imagePullPolicy: "IfNotPresent"
 
   # -- Define image tag.
-  tag: "11.1.2-jammy@sha256:b6440c4f4e1471bdcee202e4c4e21c1f93af87421f6d33028363dd224e54f481"
+  tag: "11.1.2-jammy@sha256:2403cc521634162f743b5179ff5b35520daf72df5d9e7e397192af685d9148fd"
 
 # -- Credentials to fetch images from private registry.
 # Ref: https://kubernetes.io/docs/tasks/configure-pod-container/pull-image-private-registry/
@@ -159,7 +159,13 @@ job:
     imagePullPolicy: "IfNotPresent"
 
     # -- Define image tag.
-    tag: "11.1.2-jammy@sha256:b6440c4f4e1471bdcee202e4c4e21c1f93af87421f6d33028363dd224e54f481"
+    # Manifest-LIST digest, not a per-architecture one. The previous pin
+    # (b6440c4f…) resolved to a single amd64 manifest, so it could not be
+    # pulled on arm64 nodes at all. A list digest keeps the supply-chain
+    # guarantee a digest exists for while still covering every architecture the
+    # tag publishes — dropping the digest would have fixed arm64 by giving up
+    # the pin, which is the wrong trade.
+    tag: "11.1.2-jammy@sha256:2403cc521634162f743b5179ff5b35520daf72df5d9e7e397192af685d9148fd"
 
   # -- Amount of retries while waiting for mariadb server is available.
   retries: 6

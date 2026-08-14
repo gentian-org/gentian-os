@@ -22,7 +22,7 @@ CROSSPLANE_IMAGE ?= xpkg.crossplane.io/crossplane/crossplane:$(CROSSPLANE_CLI_VE
 KUBEBUILDER_ASSETS ?= /tmp/envtest-bins/k8s/1.32.0-linux-amd64
 export KUBEBUILDER_ASSETS
 
-.PHONY: all build generate manifests test lint docker-build clean install-plugin validate-steps gen-credentials check-credentials lint-portability
+.PHONY: all build generate manifests test lint docker-build clean install-plugin validate-steps gen-credentials check-credentials lint-portability lint-image-digests
 
 all: generate build test
 
@@ -109,6 +109,12 @@ lint-shell: validate-steps
 ## vault (installer preflight), cluster (day-2), git (CI on a deployments branch).
 check-credentials:
 	@bash scripts/check-credentials.sh --source=$${SOURCE:-cluster}
+
+## Assert every pinned image digest is a manifest list, not a single
+## architecture. Queries the registry, so it needs network and is not part of
+## the offline lint set.
+lint-image-digests:
+	@bash scripts/lint-image-digests.sh
 
 ## Report macOS/BSD portability violations. Expected non-zero until Phase 13
 ## migrates the call sites; the count must only go down.
