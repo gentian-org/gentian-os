@@ -376,3 +376,7 @@ useful; running them is not.
 - **Change this cluster's configuration** — edit its claims in
   `gentian-deployments`; the cluster reconciles. See
   [docs/deployment.md](docs/deployment.md) for the layering.
+
+If you are the first person to install from this branch, §15 of
+[docs/plans/config-and-credential-cleanup.md](docs/plans/config-and-credential-cleanup.md) lists
+what the run is expected to settle and what to check when something does not converge.

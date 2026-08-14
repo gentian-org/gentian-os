@@ -1,6 +1,7 @@
 # Configuration and Credential Architecture
 
-**Status:** Draft
+**Status:** Draft. Implemented through Phase 12, unverified against a cluster — see §15 for
+what the first real install is expected to settle.
 **Scope:** `gentian-os` bootstrap and installer structure, cluster configuration surfaces,
 credential lifecycle
 **Applies to:** `install.sh`, `uninstall.sh`, `update.sh`, `scripts/lib/`, `gentian-deployments`
@@ -1921,3 +1922,116 @@ installer writes containing secret material, not just the cache.
 | `architecture.md` §8 "Repository Structure" claims `crossplane/functions/` holds composition functions (it is empty) and omits `internal/`, `api/`, `charts/`, `scripts/`, `authz/`, `config/`. | Replace the tree with a pointer to `docs/folder-structure.md`. |
 | `charts/infra/{mariadb,postgresql}/README.md.gotmpl.tpl` are Bitnami readme-generator leftovers sitting beside the real `.gotmpl`. | Delete; note in the chart's `UPSTREAM.md`. |
 | `GETTING-STARTED.md` is 34 KB and documents the current `install.sh` / `uninstall.sh` / `update.sh` split. Phases 0a and 0b invalidate most of it. | Rewrite as part of Phase 0b, not after it. Much of its length exists to explain sequencing that the driver's own output will make self-evident. |
+
+---
+
+## 15. After the first cluster run
+
+Nothing in this plan has been exercised against a cluster. `apply()` and `destroy()` have never
+run anywhere; every check made so far is structural — schemas, renders, contracts, unit tests and
+server-side dry-runs. This section is the list of work that is *waiting on that run*, so it does
+not get lost between the run and whatever comes next.
+
+Four categories, in the order they unblock each other.
+
+---
+
+### 15.1 Verify what has only been reasoned about
+
+These are acceptance criteria already written into §11 and marked Unverified or Partial there.
+They are gathered here because they are the whole point of the run.
+
+| What | Where it is recorded | How to tell |
+|---|---|---|
+| A clean-room install reaches a running root ApplicationSet | Phase 0a, criterion 1 | Diff `kubectl get` output against a known-good cluster |
+| `--dry-run` makes zero cluster mutations | Phase 0a, criterion 2 | Snapshot cluster state, run it, diff. The three heal hooks and the repository scaffolding are guarded; this confirms nothing else is |
+| Install → uninstall returns the cluster to its prior state, and uninstall is idempotent | Phase 0b, criteria 1–2 | `destroy()` has never run. Expect this to be the roughest area |
+| ESO's actual verdict on the satisfaction probes | Phase 6, criterion 1 | `creationPolicy: None` is right in principle and has only ever been dry-run |
+| The unsatisfied → satisfied transition unblocks composition without intervention | Phase 6, criterion 4 | Supply a missing credential and watch the claim proceed |
+| OIDC login yields a policy set from Keycloak groups; a named write appears in the audit device | Phase 7, criteria 1–2 | Needs Keycloak running |
+| The bootstrap token is genuinely invalid afterwards | Phase 7, criterion 3 | Attempt a write with it and expect failure |
+| An arm64 install; an internal-domain install with `self-signed`; a mirrored install making no upstream request | Phase 12, criteria 4 and 6 | Three separate installs |
+| `sed_inplace` under BSD | Phase 11, criterion 2 | The macOS CI job runs it but nobody has watched it |
+
+**The check to run first when something does not converge:** compare the *field names* a
+credential is stored under against what `credentials.yaml` declares, not just the path. A value
+under the right path with the wrong key reads as absent and looks like an ESO fault. Only the six
+paths in the catalogue have been checked against the seeder.
+
+---
+
+### 15.2 Audits the run makes possible
+
+Each of these is blocked on knowing how the cluster actually behaves. Guessing at them is how the
+Phase 0a regression happened.
+
+**Which reconciler already covers which shell step.** Phase 4b's second half cannot proceed
+without it. Steps 28, 29, 30 and 34 call running services' APIs, which no ApplicationSet can
+express; the operator already has `mail_reconciler.go` and `identity_reconciler.go` in that space,
+and `identity_reconciler` runs a tenant realm SMTP Job today. Deleting a step because a reconciler
+*looks* like it does the same thing is exactly the mistake to avoid. Watch what each reconciler
+actually does on a live cluster, then delete.
+
+**Which teardown paths are real.** Fourteen library functions are unreferenced and were left in
+place deliberately: `delete_kernel_helm_releases`, `apply_kernel_gateway_overlays`, `_drain_pvcs`,
+`_delete_pvs_for_namespace`, `verify_keycloak_iframe_policy` and the rest. Several are teardown or
+verification helpers that *should* have callers, which makes them evidence rather than litter —
+they may point at coverage lost when steps 21 and 25 were deleted. A real uninstall tells you
+which. `make lint-resolvable` will not flag them, because being uncalled is not the same as being
+unresolvable.
+
+**Whether the scoped provider roles hold.** Phase 12e: replacing `cluster-admin` on
+`provider-helm` and `provider-kubernetes` with roles scoped to what they actually manage. Any
+resource kind the enumeration misses surfaces as `forbidden` at provision time, so this needs a
+cluster to validate against and re-checking whenever a pinned chart version moves. Prior art:
+`7c38423` derives them from the chart contents.
+
+---
+
+### 15.3 Migrations that are safer afterwards
+
+All of these swap a working imperative path for a composed one. The failure mode is "nothing
+happens" rather than "something breaks loudly", which is precisely why they want a known-good
+cluster to compare against.
+
+| Move | Why it is right | What it is waiting on |
+|---|---|---|
+| `gentian-cluster-config` ConfigMap → Cluster XR | ~20 declared values rendered by a shell heredoc and read back by Compositions through `function-extra-resources` | The three *discovered* values — kube-apiserver CIDR, endpoint IP and port — need another source. A provider-kubernetes `Object` observing the `kubernetes` Service would do it. This is Phase 10c and it is one change, not twenty |
+| The ten `.tmpl` bootstrap Applications and 15 `envsubst` sites → Cluster XR | Every one is a rendered artefact applied by a script, which §2 prohibits because the reconciler cannot detect drift in it | Nothing but confidence; it is the largest single reduction left |
+| Wildcard `Certificate` and `gentian-kernel-services` ConfigMap → Cluster XR | Small, and natural neighbours of resources already composed | Same |
+| ClusterIssuers → Cluster XR | Issuers have a lifecycle, so they belong to a reconciler. Step 05 owns them today only because it is more capable — it dispatches on all four `issuerMode` values and waits for the cert-manager webhook | Bootstrap ordering: **nothing between step 05 and step 16 may need an issuer.** Confirm that on a real run before moving them |
+
+The test that decides all of these, learned from removing the OpenBao double-writer:
+
+> Everything Crossplane needs in order to manage a system is something Crossplane must **not**
+> manage. A composition that owns its own authorisation can lock itself out.
+
+That is why step 14 keeps exactly three things — the KV mount, the `crossplane-write` policy and
+the provider token — and why nothing on the list above is in that category.
+
+---
+
+### 15.4 Known duplications and gaps to close
+
+**Two things provide the operator's git credential.** `create-deployments-git-credentials.sh`
+creates `gentian-deployments-git-credentials` imperatively; the `XRepository` composition emits
+`deployments-git-credentials` through ESO. The operator mounts whichever name
+`appLifecycle.gitCredentialsSecret` is set to in the deployments values, so resolving it means
+picking a winner and updating that value. **If the operator cannot push, check which Secret it is
+actually mounting.**
+
+**No policy tests exist.** Phase 7, criterion 5: cluster-admin and tenant-admin should be covered
+by explicit allow *and* deny tests. The `tenant-admin` deny on `gentian-os/kernel/*` is the one
+rule where a mistake is a breach rather than an annoyance, and nothing currently asserts it.
+
+**The credential manager's ServiceAccount policy is uninspected.** Phase 8, criterion 7. The
+service has no OpenBao identity by construction, but "by construction" is an argument, not an
+observation.
+
+**30 portability violations remain**, reported by `make lint-portability` and expected to be
+non-zero until Phase 13 migrates the call sites. The number must only go down.
+
+**`docs/commands.md` and `docs/design/mail.md` have not been checked** against the new paradigm.
+`GETTING-STARTED.md` points at both for post-install operations.
+
+---
