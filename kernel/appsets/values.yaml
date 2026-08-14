@@ -13,3 +13,14 @@ targetRevision: develop
 # raw/*.yaml, so per-service charts can render values that depend on the
 # cluster domain. Passed by root-applicationset.yaml.tmpl from KERNEL_DOMAIN.
 kernelDomain: ""
+
+# Where gentian-os itself comes from. The children hardcoded this URL, so a
+# mirrored or forked install could pin the ref but not the origin (§9, platform
+# provenance). Passed by root-applicationset.yaml.tmpl from GENTIAN_OS_REPO.
+gentianOsRepo: https://github.com/gentian-org/gentian-os
+
+# The deployments repository and which cluster's directory to read. Claims live
+# there, not here, because they are per-cluster configuration (§2, surface 2).
+deploymentsRepo: ""
+deploymentsRevision: main
+deploymentsCluster: ""

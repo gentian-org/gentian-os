@@ -1,0 +1,69 @@
+---
+# Per-cluster Crossplane claims, from the deployments repository.
+#
+# This is what makes Phase 4b possible: the Suze and InfraData claims used to be
+# applied by install.sh with kubectl, which put them outside drift detection —
+# edit the claim in Git and nothing happened until someone re-ran the installer.
+# They are per-cluster configuration (§2, surface 2) and belong in
+# gentian-deployments, synced like everything else.
+#
+# The Cluster claim is deliberately NOT here. It is bootstrap: it creates the KV
+# mount, the policies and the ClusterSecretStore that ESO needs before any of
+# this can resolve a secret. It stays imperative in step 16.
+#
+# Sync wave 11: after infra-data prerequisites (8) and the Suze services (9), so
+# the claims compose against resources that already exist.
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: gentian-claims
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "11"
+spec:
+  # Deleting this ApplicationSet must not delete the claims and cascade into
+  # every managed resource they own.
+  syncPolicy:
+    preserveResourcesOnDeletion: true
+  goTemplate: true
+  goTemplateOptions: ["missingkey=error"]
+  generators:
+  - list:
+      elements:
+      - env: dev
+  template:
+    metadata:
+      name: 'gentian-claims-{{.env}}'
+      annotations:
+        argocd.argoproj.io/sync-wave: "11"
+    spec:
+      project: gentian
+      source:
+        repoURL: deployments.repo.placeholder
+        targetRevision: deployments.revision.placeholder
+        path: clusters/deployments.cluster.placeholder/kernel/claims
+        directory:
+          recurse: false
+          # cluster.yaml is applied by step 16 at bootstrap and must not be
+          # fought over here: two writers on the claim that owns the
+          # ClusterSecretStore is how a cluster loses its secret store.
+          exclude: 'cluster.yaml'
+      destination:
+        server: https://kubernetes.default.svc
+        namespace: crossplane-system
+      syncPolicy:
+        automated:
+          # No prune: a claim removed from Git should be removed deliberately,
+          # not as a side effect of a branch change. Crossplane garbage-collects
+          # everything the claim owns, which is too much to do by accident.
+          prune: false
+          selfHeal: true
+        retry:
+          limit: 10
+          backoff:
+            duration: 15s
+            factor: 2
+            maxDuration: 2m
+        syncOptions:
+        - CreateNamespace=false
+        - ServerSideApply=true

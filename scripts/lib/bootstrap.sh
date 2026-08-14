@@ -518,6 +518,13 @@ bootstrap_root_appset() {
 
     export GENTIAN_DEPLOYMENTS_STAGE="${GENTIAN_DEPLOYMENTS_STAGE:-dev}"
     resolve_gentian_os_branch
+    # Provenance and the deployments pointer reach the child ApplicationSets
+    # through here. Defaults keep an unset install working against the public
+    # origin; a mirrored install sets them in install.env (§2, surface 1).
+    export GENTIAN_OS_REPO="${GENTIAN_OS_REPO:-https://github.com/gentian-org/gentian-os}"
+    export GENTIAN_DEPLOYMENTS_REPO="${GENTIAN_DEPLOYMENTS_REPO:-}"
+    export GENTIAN_DEPLOYMENTS_BRANCH="${GENTIAN_DEPLOYMENTS_BRANCH:-main}"
+    export GENTIAN_DEPLOYMENTS_CLUSTER="${GENTIAN_DEPLOYMENTS_CLUSTER:-default-cluster}"
     envsubst < "${SCRIPT_DIR}/kernel/bootstrap/root-applicationset.yaml.tmpl" \
         | kubectl apply -f -
     success "gentian-appsets Application applied."
@@ -623,105 +630,6 @@ verify_infra_chart_index() {
     success "Infra Helm index contains postgresql, mariadb, redis, and minio."
 }
 
-apply_infra_data_xr() {
-    banner "Step 11b — Apply InfraData XR (shared PostgreSQL, MariaDB, Redis, MinIO)"
-
-    local claim; claim="$(gentian_infradata_claim_name)"
-    local timeout="${INFRA_DATA_XR_TIMEOUT:-10m}"
-    local chart_repo
-    chart_repo="$(detect_infra_chart_repo)"
-    local stage="${GENTIAN_DEPLOYMENTS_STAGE:-${ENV:-dev}}"
-    local infra_ns="${INFRA_NAMESPACE:-gentian-infra-${stage}}"
-
-    verify_infra_chart_index "${chart_repo}"
-
-    # Wait for the gentian-infra-data AppSet (kernel/appsets/08-infra-data.yaml,
-    # sync wave 8) to sync every ConfigMap/Secret the InfraData composition's
-    # Release CRs require via valuesFrom (all optional: false — see
-    # crossplane/compositions/infra-data.yaml). provider-helm does not watch
-    # ConfigMaps: a Release created before its ConfigMap exists fails once and
-    # never retries on its own (needs a manual delete+recreate, e.g.
-    # update.sh --reconcile-releases). Waiting here avoids hitting that race
-    # at all instead of recovering from it after the fact.
-    info "Waiting for gentian-infra-data AppSet prerequisites in ${infra_ns} (up to 3m)..."
-    local deadline=$((SECONDS + 180))
-    local apps=(
-        "infra-postgresql-${stage}" "infra-mariadb-${stage}"
-        "infra-redis-${stage}" "infra-minio-${stage}"
-    )
-    local configmaps=(
-        postgresql-base-values "postgresql-${stage}-values"
-        mariadb-base-values "mariadb-${stage}-values"
-        redis-env-values redis-base-values "redis-${stage}-values"
-        minio-env-values minio-base-values "minio-${stage}-values"
-    )
-    local secrets=(postgresql-sensitive-values mariadb-sensitive-values)
-    local app configmap secret ready
-    while :; do
-        ready=1
-        for app in "${apps[@]}"; do
-            kubectl get application "${app}" -n argocd \
-                -o jsonpath='{.status.sync.status}' 2>/dev/null | grep -q Synced \
-                || { ready=0; break; }
-        done
-        if [[ "${ready}" == "1" ]]; then
-            for configmap in "${configmaps[@]}"; do
-                kubectl get configmap "${configmap}" -n "${infra_ns}" >/dev/null 2>&1 \
-                    || { ready=0; break; }
-            done
-        fi
-        if [[ "${ready}" == "1" ]]; then
-            for secret in "${secrets[@]}"; do
-                kubectl get secret "${secret}" -n "${infra_ns}" >/dev/null 2>&1 \
-                    || { ready=0; break; }
-            done
-        fi
-        [[ "${ready}" == "1" ]] && break
-        if (( SECONDS > deadline )); then
-            warn "InfraData prerequisites not ready after 3m — refresh gentian-appsets and retry."
-            warn "  kubectl get applications -n argocd | grep -E 'infra-(postgresql|mariadb|redis|minio)'"
-            warn "  kubectl get configmap,secret -n ${infra_ns}"
-            break
-        fi
-        sleep 5
-    done
-
-    info "Applying InfraData claim (${claim})..."
-    kubectl apply -f "${GENTIAN_DEPLOYMENTS_PATH}/clusters/${GENTIAN_DEPLOYMENTS_CLUSTER}/kernel/claims/infra-data.yaml"
-
-    info "Setting chartRepository to ${chart_repo}..."
-    kubectl patch infradata "${claim}" -n crossplane-system --type=merge \
-        -p "{\"spec\":{\"chartRepository\":\"${chart_repo}\"}}"
-
-    info "Waiting for InfraData claim to bind to a composite (up to 60s)..."
-    local xr_name=""
-    local deadline=$((SECONDS + 60))
-    until [[ -n "${xr_name}" ]]; do
-        xr_name=$(kubectl get infradata "${claim}" -n crossplane-system \
-            -o jsonpath='{.spec.resourceRef.name}' 2>/dev/null || true)
-        if (( SECONDS > deadline )); then
-            error "InfraData claim ${claim} was never bound to a composite after 60s."
-            error "  kubectl describe infradata ${claim} -n crossplane-system"
-            exit 1
-        fi
-        [[ -n "${xr_name}" ]] || sleep 3
-    done
-    info "  Composite name: ${xr_name}"
-
-    info "Waiting for XInfraData ${xr_name} to be Ready (timeout: ${timeout})..."
-    kubectl wait "xinfradata/${xr_name}" \
-        --for=condition=Ready --timeout="${timeout}" \
-    || {
-        error "XInfraData ${xr_name} did not become Ready within ${timeout}."
-        error "  kubectl describe xinfradata ${xr_name}"
-        error "  kubectl get managed -l crossplane.io/composite=${xr_name}"
-        error "  kubectl describe release.helm.crossplane.io -l crossplane.io/composite=${xr_name}"
-        error "Common cause: chart not found — verify ${chart_repo}/index.yaml lists redis and minio."
-        exit 1
-    }
-
-    success "InfraData XR ${xr_name} is Ready — shared PostgreSQL, MariaDB, Redis, and MinIO provisioned."
-}
 
 # =============================================================================
 # Step 11c — Kyverno admission controller (Stage 0 MAC)
@@ -767,104 +675,6 @@ _reset_suze_ghost_helm_releases() {
         -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}' 2>/dev/null)
 }
 
-apply_suze_xr() {
-    banner "Step 12 — Apply Suze XR (Secure Universal Zero-trust Environment)"
-
-    local claim; claim="$(gentian_suze_claim_name)"
-    local timeout_sec="${SUZE_XR_TIMEOUT_SEC:-1200}"
-
-    info "Waiting for Suze Argo apps + prerequisites in platform-kernel (up to 3m)..."
-    local deadline=$((SECONDS + 180))
-    until kubectl get application openfga-dev -n argocd -o jsonpath='{.status.sync.status}' 2>/dev/null | grep -q Synced \
-        && kubectl get application keycloak-idp-dev -n argocd -o jsonpath='{.status.sync.status}' 2>/dev/null | grep -q Synced \
-        && kubectl get configmap openfga-base-values -n platform-kernel >/dev/null 2>&1 \
-        && kubectl get secret openfga-sensitive-values -n platform-kernel >/dev/null 2>&1 \
-        && kubectl get configmap keycloak-idp-base-values -n platform-kernel >/dev/null 2>&1 \
-        && kubectl get secret keycloak-idp-sensitive-values -n platform-kernel >/dev/null 2>&1; do
-        if (( SECONDS > deadline )); then
-            warn "Suze prerequisites not ready — refresh gentian-appsets and retry."
-            warn "  kubectl get applications -n argocd | grep -E 'openfga|keycloak-idp'"
-            break
-        fi
-        sleep 5
-    done
-
-    info "Applying Suze claim (${claim})..."
-    kubectl apply -f "${SCRIPT_DIR}/crossplane/xrds/suze.yaml"
-    wait_for_crd_established "xsuze.gentianos.io" 120
-    kubectl apply -f "${SCRIPT_DIR}/crossplane/compositions/suze.yaml"
-    kubectl apply -f "${GENTIAN_DEPLOYMENTS_PATH}/clusters/${GENTIAN_DEPLOYMENTS_CLUSTER}/kernel/claims/suze.yaml"
-
-    info "Waiting for Suze claim to bind (up to 60s)..."
-    local xr_name=""
-    deadline=$((SECONDS + 60))
-    until [[ -n "${xr_name}" ]]; do
-        xr_name=$(kubectl get suze "${claim}" -n crossplane-system \
-            -o jsonpath='{.spec.resourceRef.name}' 2>/dev/null || true)
-        if (( SECONDS > deadline )); then
-            error "Suze claim ${claim} was never bound to a composite after 60s."
-            exit 1
-        fi
-        [[ -n "${xr_name}" ]] || sleep 3
-    done
-    info "  Composite name: ${xr_name}"
-
-    if wait_xr_condition_ready "xsuze/${xr_name}" 10 && _suze_idp_workloads_ready; then
-        success "Suze XR ${xr_name} is already Ready with live IdP workloads — skipping reinstall."
-        return 0
-    fi
-
-    if wait_xr_condition_ready "xsuze/${xr_name}" 10 && ! _suze_idp_workloads_ready; then
-        _reset_suze_ghost_helm_releases "${xr_name}"
-    fi
-
-    # Delete failed Helm Release MRs so the composition reinstalls with updated values.
-    local rel state synced
-    while IFS= read -r rel; do
-        [[ -z "${rel}" ]] && continue
-        state=$(kubectl get release.helm.crossplane.io/"${rel}" \
-            -o jsonpath='{.status.atProvider.state}' 2>/dev/null || true)
-        synced=$(kubectl get release.helm.crossplane.io/"${rel}" \
-            -o jsonpath='{.status.conditions[?(@.type=="Synced")].status}' 2>/dev/null || true)
-        if [[ "${state}" == "failed" || "${synced}" == "False" ]]; then
-            warn "Resetting failed Suze Release ${rel} for clean reinstall..."
-            kubectl delete release.helm.crossplane.io/"${rel}" --wait=true --timeout=180s 2>/dev/null || true
-        fi
-    done < <(kubectl get release.helm.crossplane.io -l "crossplane.io/composite=${xr_name}" \
-        -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}' 2>/dev/null)
-
-    for hr in gentian-openfga gentian-idp-keycloak; do
-        if helm status "${hr}" -n platform-kernel 2>/dev/null | grep -qE 'STATUS: (failed|pending-install|pending-upgrade)'; then
-            warn "Uninstalling stuck Helm release ${hr} in platform-kernel..."
-            helm uninstall "${hr}" -n platform-kernel --wait --timeout=3m 2>/dev/null || true
-        fi
-    done
-
-    info "Waiting for XSuze ${xr_name} to be Ready (timeout: ${timeout_sec}s)..."
-    wait_xr_condition_ready "xsuze/${xr_name}" "${timeout_sec}" \
-    || {
-        error "XSuze ${xr_name} did not become Ready within ${timeout_sec}s."
-        error "  kubectl describe xsuze ${xr_name}"
-        error "  kubectl get managed -l crossplane.io/composite=${xr_name}"
-        error "  kubectl get pods -n platform-kernel"
-        exit 1
-    }
-
-    ensure_suze_idp_workloads "${xr_name}" 300 || exit 1
-
-    if ! verify_keycloak_installation; then
-        error "Keycloak installation verification failed."
-        exit 1
-    fi
-
-    # Advisory, not fatal: a degraded Argo CD does not invalidate the install,
-    # but it must not pass unnoticed — everything from here on assumes GitOps
-    # is reconciling, and when it silently is not the cluster drifts from git
-    # while every Application still reports its last known status.
-    verify_argocd_controller || warn "Argo CD is not reconciling — see above. Nothing will sync until it is fixed." 
-
-    success "Suze XR ${xr_name} is Ready — Gentian IdP (Keycloak + OpenFGA) provisioned."
-}
 
 # =============================================================================
 # Print Crossplane-aware installation summary

@@ -10,11 +10,19 @@
   The revision swap matches "targetRevision: develop" exactly, so the pinned
   third-party chart versions in the same files ("2.2.9", "3.3.7", …) are left
   alone — only sources that point at gentian-os carry the branch literal.
+
+  The gentian-os repoURL is swapped too, so a mirrored or air-gapped install can
+  redirect the origin and not just the ref. The deployments placeholders carry
+  the per-cluster claim location, which lives in the other repository.
 */ -}}
 {{- range $path, $_ := .Files.Glob "raw/*.yaml" }}
 ---
 {{ $.Files.Get $path
      | replace "env: dev" (printf "env: %s" $.Values.stage)
      | replace "targetRevision: develop" (printf "targetRevision: %s" $.Values.targetRevision)
-     | replace "kernel.domain.placeholder" $.Values.kernelDomain }}
+     | replace "kernel.domain.placeholder" $.Values.kernelDomain
+     | replace "https://github.com/gentian-org/gentian-os" $.Values.gentianOsRepo
+     | replace "deployments.repo.placeholder" $.Values.deploymentsRepo
+     | replace "deployments.revision.placeholder" $.Values.deploymentsRevision
+     | replace "deployments.cluster.placeholder" $.Values.deploymentsCluster }}
 {{- end }}

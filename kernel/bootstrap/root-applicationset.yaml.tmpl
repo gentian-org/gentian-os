@@ -55,6 +55,18 @@ spec:
       # still pull its kernel services off develop.
       - name: targetRevision
         value: "${GENTIAN_OS_BRANCH}"
+      # Where gentian-os itself comes from. The children hardcoded this URL, so
+      # a mirrored or air-gapped install could pin the ref but not the origin.
+      - name: gentianOsRepo
+        value: "${GENTIAN_OS_REPO}"
+      # The deployments repository and which cluster's directory holds its
+      # claims. Claims are per-cluster configuration and live there, not here.
+      - name: deploymentsRepo
+        value: "${GENTIAN_DEPLOYMENTS_REPO}"
+      - name: deploymentsRevision
+        value: "${GENTIAN_DEPLOYMENTS_BRANCH}"
+      - name: deploymentsCluster
+        value: "${GENTIAN_DEPLOYMENTS_CLUSTER}"
   destination:
     server: https://kubernetes.default.svc
     namespace: argocd
