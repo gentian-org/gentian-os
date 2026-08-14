@@ -213,8 +213,26 @@ install_crossplane_providers() {
 }
 
 # =============================================================================
+# =============================================================================
+# bootstrap_openbao_for_crossplane — the minimum that must precede Crossplane
+# =============================================================================
+# Everything this writes is something Crossplane needs in order to manage
+# OpenBao at all, and therefore something Crossplane must NOT manage:
+#
+#   the KV mount      — where its SecretV2 resources write
+#   crossplane-write  — the policy its token carries
+#   the token Secret  — how provider-vault authenticates
+#
+# A composition that managed its own authorisation could lock itself out: drift
+# or a delete on any of the three leaves provider-vault unable to reconcile the
+# resource that would restore it.
+#
+# Everything else — the Kubernetes auth backend and its config, the eso-read
+# policy, both auth roles, and the OIDC write path — is declared by the Cluster
+# composition and is deliberately absent here.
+# =============================================================================
 bootstrap_openbao_for_crossplane() {
-    banner "Step 8 — Bootstrap OpenBao auth for Crossplane"
+    banner "Step 14 — OpenBao bootstrap for Crossplane (mount, policy, token)"
 
     if ! VAULT_ADDR=$(gentian_service_addr openbao openbao 8200 https); then
         error "Could not reach the openbao Service on :8200."
@@ -245,15 +263,6 @@ bootstrap_openbao_for_crossplane() {
     fi
 
     # ── 2. Kubernetes auth backend ────────────────────────────────────────────
-    if bao auth list -format=json 2>/dev/null | jq -e '."kubernetes/"' >/dev/null 2>&1; then
-        success "Kubernetes auth backend already present."
-    else
-        bao auth enable -path=kubernetes kubernetes
-        success "Kubernetes auth backend enabled."
-    fi
-    bao write auth/kubernetes/config \
-        kubernetes_host="https://kubernetes.default.svc"
-    success "Kubernetes auth backend configured."
 
     # ── 3. crossplane-write policy (broad — provider-vault needs sys/* access) ─
     # The Cluster XR Policy MR will keep this policy in sync going forward.
@@ -279,35 +288,16 @@ path "auth/token/create"      { capabilities = ["update"] }
 path "auth/token/lookup-self" { capabilities = ["read"] }
 POLICY
     success "crossplane-write policy written."
-
-    # ── 3b. eso-read policy ───────────────────────────────────────────────────
-    # ESO reads all kernel + tenant app secrets. Tenant isolation is enforced
-    # by Kubernetes RBAC on the resulting Secrets; ESO needs one cluster-wide role.
-    bao policy write eso-read - <<POLICY
-path "${_kv_mount}/data/gentian-os/kernel/*"    { capabilities = ["read"] }
-path "${_kv_mount}/metadata/gentian-os/kernel/*" { capabilities = ["list"] }
-path "${_kv_mount}/data/gentian-os/tenants/+/apps/*"  { capabilities = ["read"] }
-path "${_kv_mount}/metadata/gentian-os/tenants/*"       { capabilities = ["list"] }
-POLICY
-    success "eso-read policy written."
-
-    # ── 4. Kubernetes auth roles ──────────────────────────────────────────────
-    # crossplane-provider: kept for future dynamic-token use (not used by
-    # provider-vault ProviderConfig which reads a static token Secret).
-    bao write auth/kubernetes/role/crossplane-provider \
-        bound_service_account_names=crossplane-provider-vault \
-        bound_service_account_namespaces="${CROSSPLANE_NAMESPACE}" \
-        token_policies=crossplane-write \
-        token_ttl=3600
-    success "crossplane-provider K8s auth role created."
-
-    # eso: External Secrets Operator reads all kernel and tenant app secrets.
-    bao write auth/kubernetes/role/eso \
-        bound_service_account_names=external-secrets \
-        bound_service_account_namespaces=external-secrets \
-        token_policies=eso-read \
-        token_ttl=3600
-    success "eso K8s auth role created."
+    # The Kubernetes auth backend, its config, the eso-read policy and both auth
+    # roles are NOT written here. The Cluster composition declares all of them,
+    # and doing it twice puts two writers on one OpenBao object with no way to
+    # see them disagree.
+    #
+    # None of them is needed to reach the composition: provider-vault
+    # authenticates with the static token Secret created below
+    # (credentials.source: Secret, provider-configs.yaml), not through the
+    # Kubernetes backend. Only ESO needs that, and ESO's ClusterSecretStore is
+    # itself composed.
 
     # ── 5. Mint periodic crossplane token + store as k8s Secret ──────────────
     # provider-vault v3.x (upjet/Terraform-based) does not support

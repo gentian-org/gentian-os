@@ -6,8 +6,8 @@ metadata:
 status:
   conditions:
   - lastTransitionTime: "2024-01-01T00:00:00Z"
-    message: 'Unready resources: argocd-appproject-tenants, cert-issuer-http01, eso-cluster-secret-store,
-      and 17 more'
+    message: 'Unready resources: argocd-appproject-tenants, eso-cluster-secret-store,
+      namespace-gentian-system, and 14 more'
     reason: Creating
     status: "False"
     type: Ready
@@ -51,45 +51,6 @@ spec:
         - https://github.com/gentian-org/gentian-os
         - https://github.com/gentian-org/gentian-apps
         - https://github.com/gentian-org/gentian-deployments
-  providerConfigRef:
-    name: kubernetes
----
-apiVersion: kubernetes.crossplane.io/v1alpha2
-kind: Object
-metadata:
-  annotations:
-    crossplane.io/composition-resource-name: cert-issuer-http01
-  labels:
-    crossplane.io/composite: dev-cluster
-  name: dev-cluster-cluster-issuer-http01
-  ownerReferences:
-  - apiVersion: gentianos.io/v1alpha1
-    blockOwnerDeletion: true
-    controller: true
-    kind: XCluster
-    name: dev-cluster
-    uid: ""
-spec:
-  forProvider:
-    manifest:
-      apiVersion: cert-manager.io/v1
-      kind: ClusterIssuer
-      metadata:
-        name: letsencrypt-http01
-      spec:
-        acme:
-          email: admin@platform.example.test
-          privateKeySecretRef:
-            name: letsencrypt-http01-account-key
-          server: https://acme-v02.api.letsencrypt.org/directory
-          solvers:
-          - http01:
-              gatewayHTTPRoute:
-                parentRefs:
-                - group: gateway.networking.k8s.io
-                  kind: Gateway
-                  name: kernel-public-gateway
-                  namespace: gentian-dev
   providerConfigRef:
     name: kubernetes
 ---
@@ -502,35 +463,6 @@ spec:
   providerConfigRef:
     name: openbao
 ---
-apiVersion: vault.vault.upbound.io/v1alpha1
-kind: Mount
-metadata:
-  annotations:
-    crossplane.io/composition-resource-name: vault-kv-mount
-    crossplane.io/external-name: secret
-  labels:
-    crossplane.io/composite: dev-cluster
-  name: dev-cluster-kv-mount
-  ownerReferences:
-  - apiVersion: gentianos.io/v1alpha1
-    blockOwnerDeletion: true
-    controller: true
-    kind: XCluster
-    name: dev-cluster
-    uid: ""
-spec:
-  forProvider:
-    description: KV v2 store for all Gentian OS secrets
-    options:
-      version: "2"
-    path: secret
-    type: kv
-  managementPolicies:
-  - Observe
-  - Create
-  providerConfigRef:
-    name: openbao
----
 apiVersion: kv.vault.upbound.io/v1alpha1
 kind: SecretV2
 metadata:
@@ -557,45 +489,6 @@ spec:
   managementPolicies:
   - Observe
   - Create
-  providerConfigRef:
-    name: openbao
----
-apiVersion: vault.vault.upbound.io/v1alpha1
-kind: Policy
-metadata:
-  annotations:
-    crossplane.io/composition-resource-name: vault-policy-crossplane-write
-  labels:
-    crossplane.io/composite: dev-cluster
-  name: dev-cluster-policy-crossplane-write
-  ownerReferences:
-  - apiVersion: gentianos.io/v1alpha1
-    blockOwnerDeletion: true
-    controller: true
-    kind: XCluster
-    name: dev-cluster
-    uid: ""
-spec:
-  forProvider:
-    name: crossplane-write
-    policy: |
-      # KV operations (create/manage kernel and tenant secrets)
-      path "secret/data/gentian-os/*"     { capabilities = ["create","read","update","delete"] }
-      path "secret/metadata/gentian-os/*" { capabilities = ["list","read","delete"] }
-      # Mount management — required for SecretMount MR (KV engine lifecycle)
-      path "sys/mounts/*"   { capabilities = ["create","read","update","delete","sudo"] }
-      path "sys/mounts"     { capabilities = ["read","list"] }
-      # Policy management — required for Policy MRs (eso-read, etc.)
-      path "sys/policies/acl/*" { capabilities = ["create","read","update","delete","list"] }
-      path "sys/policies/acl"   { capabilities = ["read","list"] }
-      # Auth method management — required for Backend/AuthBackendConfig/AuthBackendRole MRs
-      path "sys/auth/*"  { capabilities = ["create","read","update","delete","sudo"] }
-      path "sys/auth"    { capabilities = ["read"] }
-      path "auth/+/config"  { capabilities = ["create","read","update"] }
-      path "auth/+/role/*"  { capabilities = ["create","read","update","delete","list"] }
-      # Token operations
-      path "auth/token/create"      { capabilities = ["update"] }
-      path "auth/token/lookup-self" { capabilities = ["read"] }
   providerConfigRef:
     name: openbao
 ---

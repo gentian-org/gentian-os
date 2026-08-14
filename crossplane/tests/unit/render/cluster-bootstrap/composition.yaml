@@ -60,28 +60,6 @@ spec:
             {{- /* ── OpenBao KV v2 mount ───────────────────────────────────────── */}}
             ---
             apiVersion: vault.vault.upbound.io/v1alpha1
-            kind: Mount
-            metadata:
-              annotations:
-                gotemplating.fn.crossplane.io/composition-resource-name: vault-kv-mount
-                # Tell upjet the external resource ID so observe finds the
-                # pre-existing mount rather than attempting a duplicate create.
-                crossplane.io/external-name: {{ $kvMount }}
-              name: {{ $name }}-kv-mount
-            spec:
-              managementPolicies: ["Observe", "Create"]
-              forProvider:
-                path: {{ $kvMount }}
-                type: kv
-                description: "KV v2 store for all Gentian OS secrets"
-                options:
-                  version: "2"
-              providerConfigRef:
-                name: openbao
-
-            {{- /* ── OpenBao policies ─────────────────────────────────────────── */}}
-            ---
-            apiVersion: vault.vault.upbound.io/v1alpha1
             kind: Policy
             metadata:
               annotations:
@@ -106,38 +84,6 @@ spec:
               providerConfigRef:
                 name: openbao
 
-            ---
-            apiVersion: vault.vault.upbound.io/v1alpha1
-            kind: Policy
-            metadata:
-              annotations:
-                gotemplating.fn.crossplane.io/composition-resource-name: vault-policy-crossplane-write
-              name: {{ $name }}-policy-crossplane-write
-            spec:
-              forProvider:
-                name: crossplane-write
-                policy: |
-                  # KV operations (create/manage kernel and tenant secrets)
-                  path "{{ $kvMount }}/data/gentian-os/*"     { capabilities = ["create","read","update","delete"] }
-                  path "{{ $kvMount }}/metadata/gentian-os/*" { capabilities = ["list","read","delete"] }
-                  # Mount management — required for SecretMount MR (KV engine lifecycle)
-                  path "sys/mounts/*"   { capabilities = ["create","read","update","delete","sudo"] }
-                  path "sys/mounts"     { capabilities = ["read","list"] }
-                  # Policy management — required for Policy MRs (eso-read, etc.)
-                  path "sys/policies/acl/*" { capabilities = ["create","read","update","delete","list"] }
-                  path "sys/policies/acl"   { capabilities = ["read","list"] }
-                  # Auth method management — required for Backend/AuthBackendConfig/AuthBackendRole MRs
-                  path "sys/auth/*"  { capabilities = ["create","read","update","delete","sudo"] }
-                  path "sys/auth"    { capabilities = ["read"] }
-                  path "auth/+/config"  { capabilities = ["create","read","update"] }
-                  path "auth/+/role/*"  { capabilities = ["create","read","update","delete","list"] }
-                  # Token operations
-                  path "auth/token/create"      { capabilities = ["update"] }
-                  path "auth/token/lookup-self" { capabilities = ["read"] }
-              providerConfigRef:
-                name: openbao
-
-            {{- /* ── OpenBao Kubernetes auth backend ──────────────────────────── */}}
             ---
             apiVersion: auth.vault.upbound.io/v1alpha1
             kind: Backend
@@ -451,37 +397,25 @@ spec:
               providerConfigRef:
                 name: kubernetes
 
-            {{- /* ── cert-manager ClusterIssuers ─────────────────────────────── */}}
-            ---
-            apiVersion: kubernetes.crossplane.io/v1alpha2
-            kind: Object
-            metadata:
-              annotations:
-                gotemplating.fn.crossplane.io/composition-resource-name: cert-issuer-http01
-              name: {{ $name }}-cluster-issuer-http01
-            spec:
-              forProvider:
-                manifest:
-                  apiVersion: cert-manager.io/v1
-                  kind: ClusterIssuer
-                  metadata:
-                    name: letsencrypt-http01
-                  spec:
-                    acme:
-                      server: https://acme-v02.api.letsencrypt.org/directory
-                      email: {{ $letsencryptEmail }}
-                      privateKeySecretRef:
-                        name: letsencrypt-http01-account-key
-                      solvers:
-                        - http01:
-                            gatewayHTTPRoute:
-                              parentRefs:
-                                - group: gateway.networking.k8s.io
-                                  kind: Gateway
-                                  name: kernel-public-gateway
-                                  namespace: gentian-dev
-              providerConfigRef:
-                name: kubernetes
+            {{- /* ── Certificate issuers: owned by step 05, not here ──────────
+                 This composition used to emit a letsencrypt-http01
+                 ClusterIssuer under that exact name, while 05-cluster-issuers
+                 applied a manifest declaring the same object. Two writers, last
+                 one wins, and the disagreement stays invisible until a
+                 certificate fails to issue.
+
+                 Step 05 owns them because it is strictly more capable: it
+                 dispatches on spec.certificates.issuerMode across acme-dns01,
+                 acme-http01, private-ca and self-signed, and waits for the
+                 cert-manager webhook first. A single hardcoded ACME issuer here
+                 cannot express a cluster on an internal domain.
+
+                 Moving all four modes into this composition is the better end
+                 state — issuers have a lifecycle and belong to a reconciler —
+                 but it needs the bootstrap ordering verified on a real cluster
+                 first: nothing between step 05 and step 16 may need an issuer.
+            */}}
+
     - step: automatically-detect-ready-composed-resources
       functionRef:
         name: function-auto-ready
