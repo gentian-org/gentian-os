@@ -43,7 +43,7 @@ spec:
   # manifest to this repository.
   writable: true
   credential:
-    vaultPath: gentian/repositories/deployments
+    vaultPath: gentian-os/kernel/repositories/deployments
     displayName: "Deployments Repository Access"
     phase: bootstrap
     validate:

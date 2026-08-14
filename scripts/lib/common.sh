@@ -1088,8 +1088,16 @@ check_prereqs() {
         missing=$((missing + 1))
     else
         success "cluster reachable (context: $(kubectl config current-context 2>/dev/null || echo unknown))"
-        cleanup_orphaned_kyverno_webhooks
-        force_reconcile_failed_helm_releases
+        # These two HEAL rather than check: they delete orphaned webhooks and
+        # re-reconcile failed Releases. Preflight runs before the --dry-run gate,
+        # so without this guard `--dry-run` would mutate the cluster — which is
+        # exactly the command someone runs to find out whether it is safe to.
+        if [[ "${GENTIAN_DRY_RUN:-0}" == "1" ]]; then
+            info "Dry run: skipping the self-heal hooks (they would mutate the cluster)."
+        else
+            cleanup_orphaned_kyverno_webhooks
+            force_reconcile_failed_helm_releases
+        fi
     fi
 
     # ── MicroK8s kubelet max-pods ─────────────────────────────────────────────
@@ -1099,7 +1107,11 @@ check_prereqs() {
     # and restart microk8s so the new limit takes effect before any workloads
     # are deployed. This is idempotent.
     local kubelet_args_file="/var/snap/microk8s/current/args/kubelet"
-    if [[ -f "${kubelet_args_file}" ]]; then
+    # Also a mutation, and a privileged one: it edits a root-owned file and
+    # restarts microk8s. Same reasoning as the heal hooks above.
+    if [[ "${GENTIAN_DRY_RUN:-0}" == "1" ]] && [[ -f "${kubelet_args_file}" ]]; then
+        info "Dry run: skipping the microk8s max-pods adjustment."
+    elif [[ -f "${kubelet_args_file}" ]]; then
         local cur_max_pods
         cur_max_pods=$(grep -E '^--max-pods=' "${kubelet_args_file}" | cut -d= -f2 || true)
         cur_max_pods=${cur_max_pods:-110}

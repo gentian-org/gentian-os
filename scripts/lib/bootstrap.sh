@@ -492,11 +492,45 @@ apply_cluster_xr() {
 # Delegates to the existing seed-openbao.sh (uses kv_put_once for safety).
 # =============================================================================
 seed_secrets_remaining() {
-    # seed_secrets() is defined in install.sh (sources seed-openbao.sh).
-    # The Cluster XR already wrote the 7 HMAC-derived paths (or observed them
-    # if they pre-existed). seed_secrets will skip those via kv_put_once and
-    # write only the paths not covered by the Cluster XR.
+    # seed_secrets() is defined in scripts/lib/openbao.sh (sources
+    # seed-openbao.sh). The Cluster XR already wrote the HMAC-derived paths (or
+    # observed them if they pre-existed). seed_secrets skips those via
+    # kv_put_once and writes only the paths the Cluster XR does not cover.
     seed_secrets
+    seed_repository_credentials
+}
+
+# =============================================================================
+# seed_repository_credentials — persist the tier-0 deployments token
+# =============================================================================
+# The installer collects this token at the credential prompt, and until now the
+# only thing it did with it was create a Secret imperatively. Nothing wrote it
+# to OpenBao, so the Repository claim in step 16b would gate on a path that
+# never gets a value: its ExternalSecrets would never sync, the ArgoCD
+# repository credential would never appear, and the gentian-claims
+# ApplicationSet would never be able to read the deployments repo.
+#
+# The path sits under gentian-os/kernel/ because the eso-read policy grants read
+# on that prefix and nothing else — a credential stored anywhere else is
+# unreadable by ESO no matter who wrote it.
+# =============================================================================
+seed_repository_credentials() {
+    if [[ -z "${GENTIAN_DEPLOYMENTS_GIT_TOKEN:-}" ]]; then
+        info "No deployments repository token supplied; skipping its OpenBao path."
+        return 0
+    fi
+    local username="${GENTIAN_DEPLOYMENTS_GIT_USERNAME:-x-access-token}"
+    info "Seeding gentian-os/kernel/repositories/deployments..."
+    # kv put, not kv_put_once: a rotated token must actually replace the old one.
+    if bao kv put -mount=secret "gentian-os/kernel/repositories/deployments" \
+        "username=${username}" \
+        "password=${GENTIAN_DEPLOYMENTS_GIT_TOKEN}" >/dev/null 2>&1; then
+        success "Deployments repository credential stored."
+    else
+        error "Could not write the deployments repository credential to OpenBao."
+        error "  The Repository claim in step 16b will not become satisfied without it."
+        return 1
+    fi
 }
 
 # =============================================================================
@@ -816,4 +850,139 @@ install_llm_serving() {
     ensure_litellm_vllm_model || warn "LiteLLM vLLM model sync failed — retry with ./update.sh --llm."
 
     success "LLM serving stack deployment complete."
+}
+
+# =============================================================================
+# scaffold_cluster_deployment — Day-0 only. If this cluster's kernel/
+# directory in gentian-deployments is missing claims/{cluster,infra-data,
+# suze}.yaml or values.yaml, generate them from KERNEL_DOMAIN/
+# GENTIAN_DEPLOYMENTS_STAGE and commit + push directly to main (no PR —
+# this is scaffolding a not-yet-running cluster, not changing a live one;
+# see docs/deployment.md §3). Per-file checks, not a directory-level one:
+# never overwrites a file that already exists, so this is a no-op on every
+# subsequent run, and it converges correctly even when cluster-settings.env
+# already exists but the mechanical files don't.
+#
+# The gentian-os/gentian-portal Applications and the ImageUpdater CR are
+# NOT scaffolded here — they're rendered directly from
+# kernel/bootstrap/{gentian-os,gentian-portal}-application.yaml.tmpl by
+# install_gentian_os_operator()/install_portal_login() (catalogue.sh /
+# portal-login-bootstrap.sh) and applied straight to the cluster, never
+# committed to gentian-deployments. Their content never varies except by
+# %CLUSTER%/%STAGE%, so there's nothing cluster-specific worth persisting
+# as a file — see docs/deployment.md §3.1.
+# =============================================================================
+scaffold_cluster_deployment() {
+    local kernel_dir="${GENTIAN_DEPLOYMENTS_PATH}/clusters/${GENTIAN_DEPLOYMENTS_CLUSTER}/kernel"
+    local stage="${GENTIAN_DEPLOYMENTS_STAGE:-dev}"
+    local cluster="${GENTIAN_DEPLOYMENTS_CLUSTER}"
+    local domain="${KERNEL_DOMAIN:?KERNEL_DOMAIN must be resolved before scaffold_cluster_deployment}"
+    local generated=0
+
+    if [[ ! -f "${GENTIAN_DEPLOYMENTS_PATH}/profiles/${stage}.yaml" ]]; then
+        warn "gentian-deployments/profiles/${stage}.yaml does not exist yet."
+        warn "  Stage-tier policy (logLevel, ACME issuer, etc.) has no home for '${stage}' —"
+        warn "  add it (see profiles/dev.yaml for the existing example) before continuing."
+    fi
+    if [[ ! -f "${GENTIAN_DEPLOYMENTS_PATH}/profiles/_base.yaml" ]]; then
+        warn "gentian-deployments/profiles/_base.yaml does not exist yet."
+        warn "  Cross-stage shared policy (platformSecurityPolicy, etc.) has no home —"
+        warn "  add it before continuing (see profiles/_base.yaml in an existing cluster's repo)."
+    fi
+
+    mkdir -p "${kernel_dir}/claims"
+
+    if [[ ! -f "${kernel_dir}/claims/cluster.yaml" ]]; then
+        # Name from GENTIAN_DEPLOYMENTS_CLUSTER + _STAGE. The old literal
+        # "dev-cluster" was really "<stage>-cluster" from when dev was the only
+        # stage, and left prod clusters owning a claim called dev-cluster.
+        # Clusters scaffolded before this keep their existing name — the file is
+        # only written when absent, and every lookup goes through
+        # gentian_cluster_claim_name(), which reads it back from here.
+        cat > "${kernel_dir}/claims/cluster.yaml" <<EOF
+apiVersion: gentianos.io/v1alpha1
+kind: Cluster
+metadata:
+  name: ${cluster}-${stage}
+  namespace: crossplane-system
+spec:
+  kernelDomain: ${domain}
+EOF
+        info "Scaffolded ${kernel_dir}/claims/cluster.yaml"
+        generated=1
+    fi
+
+    if [[ ! -f "${kernel_dir}/claims/infra-data.yaml" ]]; then
+        cat > "${kernel_dir}/claims/infra-data.yaml" <<EOF
+apiVersion: gentianos.io/v1alpha1
+kind: InfraData
+metadata:
+  name: ${cluster}-${stage}-infra-data
+  namespace: crossplane-system
+spec:
+  environment: ${stage}
+  compositeDeletePolicy: Background
+EOF
+        info "Scaffolded ${kernel_dir}/claims/infra-data.yaml"
+        generated=1
+    fi
+
+    if [[ ! -f "${kernel_dir}/claims/suze.yaml" ]]; then
+        cat > "${kernel_dir}/claims/suze.yaml" <<EOF
+apiVersion: gentianos.io/v1alpha1
+kind: Suze
+metadata:
+  name: ${cluster}-${stage}-suze
+  namespace: crossplane-system
+spec:
+  environment: ${stage}
+  idpNamespace: platform-kernel
+  compositeDeletePolicy: Background
+  openfga:
+    chartVersion: "0.3.10"
+EOF
+        info "Scaffolded ${kernel_dir}/claims/suze.yaml"
+        generated=1
+    fi
+
+    if [[ ! -f "${kernel_dir}/values.yaml" ]]; then
+        cat > "${kernel_dir}/values.yaml" <<EOF
+# Cluster overlay — only what's unique to THIS cluster. Tier-wide policy
+# lives in gentian-deployments/profiles/${stage}.yaml (Layer 2); chart
+# defaults live in gentian-os/charts/gentian-os/values.yaml (Layer 1).
+# Also read directly by the gentian-portal Application for kernelDomain
+# (portal chart is separate from the operator chart but shares this file).
+kernelDomain: ${domain}
+stage: ${stage}
+llmSupport: ${LLM_SUPPORT:-false}
+
+image:
+  tag: "develop"
+
+api:
+  env:
+    BACKEND_CORS_ORIGINS: https://portal.${domain}
+
+appLifecycle:
+  deployments:
+    enabled: true
+    cluster: ${cluster}
+    repo: ${GENTIAN_DEPLOYMENTS_REPO:-https://github.com/gentian-org/gentian-deployments.git}
+    gitCredentialsSecret: gentian-deployments-git-credentials
+EOF
+        info "Scaffolded ${kernel_dir}/values.yaml"
+        generated=1
+    fi
+
+    if (( generated )); then
+        (
+            cd "${GENTIAN_DEPLOYMENTS_PATH}"
+            git add "clusters/${cluster}/kernel"
+            git commit -m "Scaffold clusters/${cluster}/kernel (stage=${stage}, kernelDomain=${domain})"
+            git push origin "$(git rev-parse --abbrev-ref HEAD)"
+        )
+        success "Scaffolded and pushed clusters/${cluster}/kernel to gentian-deployments."
+    else
+        info "clusters/${cluster}/kernel already fully scaffolded — nothing to do."
+    fi
 }

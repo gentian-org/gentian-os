@@ -180,12 +180,6 @@ spec:
                 name: cluster-admin
                 policy: |
                   # Every credential a cluster operator may supply.
-                  path "{{ $kvMount }}/data/gentian/*" {
-                    capabilities = ["create", "update", "read"]
-                  }
-                  path "{{ $kvMount }}/metadata/gentian/*" {
-                    capabilities = ["list", "read"]
-                  }
                   path "{{ $kvMount }}/data/gentian-os/kernel/*" {
                     capabilities = ["create", "update", "read"]
                   }
@@ -215,13 +209,10 @@ spec:
                   path "{{ $kvMount }}/data/gentian-os/tenants/{{ `{{identity.entity.aliases.` }}{{ $oidc.accessorPlaceholder | default "AUTH_ACCESSOR" }}{{ `.metadata.tenant}}` }}/*" {
                     capabilities = ["create", "update", "read"]
                   }
-                  path "{{ $kvMount }}/data/gentian/registries/*" {
+                  path "{{ $kvMount }}/data/gentian-os/kernel/*" {
                     capabilities = ["deny"]
                   }
-                  path "{{ $kvMount }}/metadata/gentian/registries/*" {
-                    capabilities = ["deny"]
-                  }
-                  path "{{ $kvMount }}/data/gentian/repositories/*" {
+                  path "{{ $kvMount }}/metadata/gentian-os/kernel/*" {
                     capabilities = ["deny"]
                   }
               providerConfigRef:

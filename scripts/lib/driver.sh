@@ -424,7 +424,7 @@ _step_shell_lines() {
 # Functions a step pulls in by sourcing a file inside apply() are resolved by
 # sourcing the same files here first.
 validate_step_calls() {
-    local i file fn rc=0 src
+    local file fn rc=0 src
 
     # Anything a step sources at apply() time, loaded up front so its functions
     # are visible to the check.
@@ -436,8 +436,15 @@ validate_step_calls() {
     done < <(grep -ho 'source "\${SCRIPT_DIR}/[^"]*"' "${GENTIAN_STEPS_DIR}"/*.sh 2>/dev/null |
              sed 's|source "\${SCRIPT_DIR}/||; s|"$||' | sort -u)
 
-    for (( i = 0; i < ${#_STEP_IDS[@]}; i++ )); do
-        file="${_STEP_FILES[$i]}"
+    # install.sh's own prepare_run is checked too. Leaving it out is how
+    # scaffold_cluster_deployment survived as a call to a function that no
+    # longer existed: every step validated, and the one place the driver calls
+    # library code directly was the one place nothing looked.
+    local self_defined
+    self_defined=" $(grep -oE '^[a-z_][a-z0-9_]*\(\)' "${SCRIPT_DIR}/install.sh" 2>/dev/null |
+                     tr -d '()' | tr '\n' ' ')"
+
+    for file in "${SCRIPT_DIR}/install.sh" "${_STEP_FILES[@]}"; do
         # Calls at the top of a verb body: four-space indent, bare command.
         while IFS= read -r fn; do
             [[ -n "${fn}" ]] || continue
@@ -451,6 +458,8 @@ validate_step_calls() {
             # A real external command is fine; only unresolvable names matter.
             command -v "${fn}" >/dev/null 2>&1 && continue
             declare -F "${fn}" >/dev/null 2>&1 && continue
+            # Defined in install.sh itself, so it resolves at run time there.
+            [[ "${self_defined}" == *" ${fn} "* ]] && continue
             error "$(step_id_of "${file}"): calls '${fn}', which is not defined or on PATH"
             rc=1
             # Heredoc bodies are stripped first: a step that applies YAML inline
