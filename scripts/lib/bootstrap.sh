@@ -1073,6 +1073,10 @@ $(if [[ -n "${EXTERNAL_SMTP_HOST:-}" ]]; then printf 'EXTERNAL_SMTP_HOST=%s\n' "
 # cluster rotates from one value. random — each secret is independent.
 SECRET_MODE=${SECRET_MODE:-derived}
 
+# true when INFRA_CHART_REPO needs a login. false means the installer never asks
+# for registry credentials, because a public chart URL has none to give.
+INFRA_CHART_PRIVATE=${INFRA_CHART_PRIVATE:-false}
+
 # Leave unset to use the cluster's default StorageClass.
 $(if [[ -n "${STORAGE_CLASS:-}" ]]; then printf 'STORAGE_CLASS=%s\n' "${STORAGE_CLASS}"; else printf '# STORAGE_CLASS=nfs-csi\n'; fi)
 EOF

@@ -202,7 +202,17 @@ prepare_run() {
     # One pass over credentials.yaml, replacing prompt_credentials and
     # prompt_kernel_secrets. Validation runs here, before the first apply(), so
     # a bad credential aborts with the cluster untouched.
-    collect_bootstrap_credentials
+    #
+    # A dry run applies nothing, and no step's check() reads a credential, so it
+    # has everything it needs to print the plan without one. Asking anyway turns
+    # "show me what you would do" into a credential hunt, and makes the preview
+    # unavailable exactly when an operator most wants it — before they have
+    # gathered the secrets.
+    if [[ "${GENTIAN_DRY_RUN}" == "1" ]]; then
+        info "Dry run: skipping credential collection — nothing is applied, so nothing is needed."
+    else
+        collect_bootstrap_credentials
+    fi
 
     CROSSPLANE_MODE=1 check_prereqs
     _ensure_bao

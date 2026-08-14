@@ -309,6 +309,8 @@ INPUT_HIERARCHY_VARS=(
     CF_API_TOKEN
     CF_ZONE_NAME
     SECRET_MODE
+    INFRA_CHART_PRIVATE
+    INFRA_CHART_REPO
     MINIO_ENDPOINT
     CNPG_HOST
     STORAGE_CLASS
@@ -1148,30 +1150,38 @@ check_prereqs() {
     fi
 
     # ── Required environment variables ───────────────────────────────────────
-    if [[ -z "${MASTER_PASSWORD:-}" ]]; then
-        error "MASTER_PASSWORD is not set"
-        missing=$((missing + 1))
-    else
-        success "MASTER_PASSWORD set"
-    fi
-
+    # A dry run collects no credentials, so their absence is the expected state
+    # rather than a missing prerequisite. Reporting it as one would abort the
+    # preview over values it was never going to use.
     MAIL_SERVICE_MODE="${MAIL_SERVICE_MODE:-external}"
     export MAIL_SERVICE_MODE
-    if [[ "${MAIL_SERVICE_MODE}" == "external" ]]; then
-        for var in SMTP_RELAY_USERNAME SMTP_RELAY_PASSWORD; do
-            if [[ -z "${!var:-}" ]]; then
-                error "$var is required when MAIL_SERVICE_MODE=external"
-                missing=$((missing + 1))
-            else
-                success "$var set"
-            fi
-        done
-        if [[ -z "${EXTERNAL_SMTP_HOST:-}" ]]; then
-            error "EXTERNAL_SMTP_HOST is required when MAIL_SERVICE_MODE=external"
-            missing=$((missing + 1))
-        fi
+
+    if [[ "${GENTIAN_DRY_RUN:-0}" == "1" ]]; then
+        info "Dry run: credential variables not checked (none were collected)."
     else
-        info "MAIL_SERVICE_MODE=${MAIL_SERVICE_MODE}: SMTP relay credentials not required (Keycloak uses in-cluster Postfix)"
+        if [[ -z "${MASTER_PASSWORD:-}" ]]; then
+            error "MASTER_PASSWORD is not set"
+            missing=$((missing + 1))
+        else
+            success "MASTER_PASSWORD set"
+        fi
+
+        if [[ "${MAIL_SERVICE_MODE}" == "external" ]]; then
+            for var in SMTP_RELAY_USERNAME SMTP_RELAY_PASSWORD; do
+                if [[ -z "${!var:-}" ]]; then
+                    error "$var is required when MAIL_SERVICE_MODE=external"
+                    missing=$((missing + 1))
+                else
+                    success "$var set"
+                fi
+            done
+            if [[ -z "${EXTERNAL_SMTP_HOST:-}" ]]; then
+                error "EXTERNAL_SMTP_HOST is required when MAIL_SERVICE_MODE=external"
+                missing=$((missing + 1))
+            fi
+        else
+            info "MAIL_SERVICE_MODE=${MAIL_SERVICE_MODE}: SMTP relay credentials not required (Keycloak uses in-cluster Postfix)"
+        fi
     fi
 
     if ! mail_network_mode_compatible "${MAIL_SERVICE_MODE}" "${NETWORK_MODE:-tunnel}"; then
