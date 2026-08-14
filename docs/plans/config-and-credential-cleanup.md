@@ -1315,7 +1315,7 @@ some — which is also what makes `optional: true` requirements work.
 
 ### Phase 4 — Installer refactor
 
-**Status: 4a implemented. 4b deliberately held** — see below.
+**Status: 4a implemented. 4b half done** — claims are declarative, application steps are not.
 
 **4a — Prompting is catalogue-driven.** `collect_bootstrap_credentials` in
 `scripts/lib/credentials.sh` iterates `credentials.yaml` and prompts for `phase: bootstrap`
@@ -1329,7 +1329,7 @@ the prompt loop, instead of being hardcoded in two places.
 
 | # | Criterion | Status |
 |---|---|---|
-| 1 | No application name appears in the installer | **Not met** — that is 4b |
+| 1 | No application name appears in the installer | **Not met** — the claims half of 4b landed; mail, LLM, portal and tenant reconcile still name applications |
 | 2 | Adding a prompt requires editing `credentials.yaml` only | **Passing** |
 | 3 | A failed validation aborts with zero cluster mutations | **Passing** — verified with a bogus token: every validator still runs, the run stops before `check_prereqs`, and the message says nothing was applied |
 | 4 | The reduction is deletion, not relocation | **Passing** for 4a — 93 lines removed with no new equivalent |
@@ -1340,11 +1340,25 @@ the prompt loop, instead of being hardcoded in two places.
 | 9 | `--validate` performs config validation with no cluster changes | **Passing** |
 | 10 | No credential value is written to local disk | **Passing** — there is no cache to write to |
 
-**Why 4b is held.** §13 says composition gating should not be deferred past 4b, because moving
-steps 11d–16 into the root ApplicationSet enlarges the eventual-consistency debugging surface
-*before* the mechanism that makes those failures legible exists. Running 4b now would delete eight
-working steps and replace them with objects that, when a credential is missing, report only that
-something is not Ready. Phase 6 first, then 4b.
+**4b, first half — the claims.** With Phase 6 gating in place, a step moved declarative now fails
+as a named missing requirement rather than as "something is not Ready", so the §13 objection is
+answered. The Suze and InfraData claims arrive through a `gentian-claims` ApplicationSet reading
+`clusters/<cluster>/kernel/claims` from the deployments repository. Steps `21-infra-data` and
+`25-suze` are deleted, along with `apply_infra_data_xr` and `apply_suze_xr` — 197 lines, deleted
+rather than relocated.
+
+Two safety properties in that ApplicationSet are worth keeping when it is edited:
+
+- **`cluster.yaml` is excluded.** The Cluster claim stays imperative in step 16 because it creates
+  the KV mount, policies and ClusterSecretStore that ESO needs before anything else can resolve a
+  secret. Two writers on the claim owning the ClusterSecretStore is how a cluster loses its secret
+  store.
+- **`prune: false`.** Crossplane garbage-collects everything a claim owns, which is far too much
+  to do as a side effect of a branch change.
+
+**4b, second half — the applications.** Steps 23, 28, 29, 30 and 34 still name applications: mail,
+LLM serving, portal login and the per-tenant reconcilers. They need per-service ApplicationSets,
+and until they land the acceptance grep does not come back empty.
 
 ---
 
@@ -1370,7 +1384,7 @@ One XRD plus one Composition covering `type: git` and `type: oci`, emitting the 
 | 7 | Rotation propagates to every consumer with no Git commit | **Unverified** |
 | 8 | Two claims sharing one `vaultPath` both work | **Unverified** — the schema permits it; the Phase 2 generator enforces that their field sets agree |
 | 9 | Deleting a claim removes everything it emitted | **Unverified** |
-| 10 | Every repository the cluster draws from is driven by this XR | **Not met** — no claims authored yet; `kernel/argocd/repos/*.yaml` and `scripts/create-deployments-git-credentials.sh` still exist |
+| 10 | Every repository the cluster draws from is driven by this XR | **Partial** — the deployments repository is a claim (step `16b`), replacing `scripts/create-deployments-git-credentials.sh`. `kernel/argocd/repos/*.yaml` and the infra chart registry are not yet migrated |
 | 11 | Adding a repository of either type needs one claim and no new Composition | **Passing** by construction |
 
 Criteria 5–9 need a cluster with Crossplane, ESO and ArgoCD running. Criterion 10 is the
@@ -1579,11 +1593,14 @@ The compatibility layer and the checks that keep it honest. Migrating the call s
 Make each dimension in §9 *expressible*. Supplying the values and the artefacts behind them is
 Phase 13, except where noted.
 
-**12a — Platform provenance (interface).** Add `GENTIAN_OS_REPO` and
-`GENTIAN_OS_IMAGE_REPOSITORY` to surface 1, and define the threading contract: the repository URL
-reaches `kernel/appsets/values.yaml` through `root-applicationset.yaml.tmpl` beside the existing
-`targetRevision`, and the image repository reaches the operator's chart values. Record the
-contract in `19-root-appset`'s header.
+**12a — Platform provenance. Repository half implemented.** `GENTIAN_OS_REPO` is in
+`install.env.template`, and the appsets chart swaps the gentian-os `repoURL` as well as the ref,
+so a mirrored install redirects the origin and not just the branch. Verified by rendering the
+chart against a mirror: every gentian-os URL is redirected, the per-cluster claims path is
+templated, and third-party repoURLs are left alone.
+
+`GENTIAN_OS_IMAGE_REPOSITORY` is **not** done — the operator's image still comes from a hardcoded
+registry, so a mirrored install redirects Git but not images.
 
 **12b — CPU architecture (complete here).** A lint rejecting per-architecture digest pins,
 plus the fix it demands: manifest-list digests in `charts/infra/mariadb/values.yaml`, which pins
