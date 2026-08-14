@@ -1,0 +1,266 @@
+apiVersion: apiextensions.crossplane.io/v1
+kind: Composition
+metadata:
+  name: repository-default
+  labels:
+    gentianos.io/composition: repository
+spec:
+  compositeTypeRef:
+    apiVersion: gentianos.io/v1alpha1
+    kind: XRepository
+  mode: Pipeline
+  pipeline:
+
+    # ── Emit the credential declaration and every consumer-shaped artefact ────
+    # One OpenBao path per repository, one rotation point, N artefacts kept in
+    # lockstep. Adding a repository is one claim and no new Composition.
+    #
+    # The CredentialRequirement is emitted here rather than hand-written so it
+    # cannot drift from the claim that needs it. ESO's sync status on the
+    # emitted ExternalSecret is what makes the requirement satisfied or not —
+    # nothing polls OpenBao, and no component holds a token to do so.
+    - step: render-artefacts
+      functionRef:
+        name: function-go-templating
+      input:
+        apiVersion: gotemplating.fn.crossplane.io/v1beta1
+        kind: GoTemplate
+        source: Inline
+        inline:
+          template: |
+            {{- $spec := .observed.composite.resource.spec }}
+            {{- $name := .observed.composite.resource.metadata.name }}
+            {{- $cred := $spec.credential }}
+            {{- $isOci := eq $spec.type "oci" }}
+            {{- $isGit := eq $spec.type "git" }}
+            {{- /*
+                 Everything written into the cluster uses the in-cluster
+                 address. The external address exists only for the installer's
+                 own reachability probes and must never leak into a Secret or
+                 an ApplicationSet.
+            */ -}}
+            {{- $url := $spec.endpoints.inCluster }}
+
+            ---
+            # The catalogue entry for this repository's credential.
+            apiVersion: gentianos.io/v1alpha1
+            kind: CredentialRequirement
+            metadata:
+              name: repository-{{ $name }}
+              labels:
+                gentianos.io/credential-phase: {{ $cred.phase | default "runtime" }}
+                gentianos.io/credential-scope: cluster
+              annotations:
+                {{ setResourceNameAnnotation (printf "credreq-%s" $name) }}
+            spec:
+              displayName: {{ $cred.displayName | quote }}
+              description: {{ $cred.description | default "" | quote }}
+              phase: {{ $cred.phase | default "runtime" }}
+              scope: cluster
+              optional: {{ $cred.optional | default false }}
+              vaultPath: {{ $cred.vaultPath | quote }}
+              fields:
+                - key: username
+                  format: string
+                  secret: false
+                - key: password
+                  format: password
+                  secret: true
+              validate:
+                type: {{ (($cred.validate).type) | default "noop" }}
+              consumedBy:
+                - kind: XRepository
+                  name: {{ $name }}
+
+            ---
+            # ArgoCD reads repository credentials from Secrets carrying this
+            # label. Materialised by ESO from the vault path, so rotation
+            # propagates without a Git commit.
+            apiVersion: kubernetes.crossplane.io/v1alpha2
+            kind: Object
+            metadata:
+              annotations:
+                {{ setResourceNameAnnotation (printf "argocd-repo-%s" $name) }}
+            spec:
+              forProvider:
+                manifest:
+                  apiVersion: external-secrets.io/v1beta1
+                  kind: ExternalSecret
+                  metadata:
+                    name: repo-{{ $name }}
+                    namespace: argocd
+                  spec:
+                    refreshInterval: 1h
+                    secretStoreRef:
+                      name: openbao
+                      kind: ClusterSecretStore
+                    target:
+                      name: repo-{{ $name }}
+                      template:
+                        metadata:
+                          labels:
+                            argocd.argoproj.io/secret-type: repository
+                        data:
+                          type: {{ if $isOci }}helm{{ else }}git{{ end }}
+                          url: {{ $url | quote }}
+                          username: "{{ `{{ .username }}` }}"
+                          password: "{{ `{{ .password }}` }}"
+                    data:
+                      - secretKey: username
+                        remoteRef:
+                          key: {{ $cred.vaultPath | quote }}
+                          property: username
+                      - secretKey: password
+                        remoteRef:
+                          key: {{ $cred.vaultPath | quote }}
+                          property: password
+              providerConfigRef:
+                name: kubernetes
+
+            ---
+            # Whitelist the source in the tenants AppProject. ArgoCD refuses to
+            # sync an Application whose source is not listed, so a repository
+            # that is credentialled but not whitelisted fails at sync with a
+            # PERMISSION error rather than an authentication one — a misleading
+            # symptom. Emitting it here keeps adding a repository to one object.
+            apiVersion: kubernetes.crossplane.io/v1alpha2
+            kind: Object
+            metadata:
+              annotations:
+                {{ setResourceNameAnnotation (printf "appproject-source-%s" $name) }}
+            spec:
+              managementPolicies: ["Observe", "Create", "Update"]
+              forProvider:
+                manifest:
+                  apiVersion: argoproj.io/v1alpha1
+                  kind: AppProject
+                  metadata:
+                    name: gentianos-tenants
+                    namespace: argocd
+                  spec:
+                    sourceRepos:
+                      - {{ $url | quote }}
+              providerConfigRef:
+                name: kubernetes
+
+            {{- if $isOci }}
+            ---
+            # dockerconfigjson for kubelet, in every matching namespace present
+            # and future. A ClusterExternalSecret rather than one per namespace,
+            # so adding a tenant does not add a Git object.
+            apiVersion: kubernetes.crossplane.io/v1alpha2
+            kind: Object
+            metadata:
+              annotations:
+                {{ setResourceNameAnnotation (printf "pull-secret-%s" $name) }}
+            spec:
+              forProvider:
+                manifest:
+                  apiVersion: external-secrets.io/v1beta1
+                  kind: ClusterExternalSecret
+                  metadata:
+                    name: pull-{{ $name }}
+                  spec:
+                    externalSecretName: pull-{{ $name }}
+                    namespaceSelector:
+                      matchLabels:
+                        {{- with (($spec.namespaceSelector).matchLabels) }}
+                        {{- toYaml . | nindent 24 }}
+                        {{- else }}
+                        gentianos.io/pull-secrets: "true"
+                        {{- end }}
+                    refreshTime: 1h
+                    externalSecretSpec:
+                      secretStoreRef:
+                        name: openbao
+                        kind: ClusterSecretStore
+                      target:
+                        name: pull-{{ $name }}
+                        template:
+                          type: kubernetes.io/dockerconfigjson
+                          data:
+                            .dockerconfigjson: |
+                              {"auths":{"{{ $url }}":{"username":"{{ `{{ .username }}` }}","password":"{{ `{{ .password }}` }}"}}}
+                      data:
+                        - secretKey: username
+                          remoteRef:
+                            key: {{ $cred.vaultPath | quote }}
+                            property: username
+                        - secretKey: password
+                          remoteRef:
+                            key: {{ $cred.vaultPath | quote }}
+                            property: password
+              providerConfigRef:
+                name: kubernetes
+
+            ---
+            # Crossplane's own package pulls (providers, Configuration packages)
+            # authenticate through ImageConfig, not through a ServiceAccount
+            # pull secret.
+            apiVersion: kubernetes.crossplane.io/v1alpha2
+            kind: Object
+            metadata:
+              annotations:
+                {{ setResourceNameAnnotation (printf "imageconfig-%s" $name) }}
+            spec:
+              forProvider:
+                manifest:
+                  apiVersion: pkg.crossplane.io/v1beta1
+                  kind: ImageConfig
+                  metadata:
+                    name: {{ $name }}
+                  spec:
+                    matchImages:
+                      - prefix: {{ $url | quote }}
+                    registry:
+                      authentication:
+                        pullSecretRef:
+                          name: pull-{{ $name }}
+              providerConfigRef:
+                name: kubernetes
+            {{- end }}
+
+            {{- if and $isGit $spec.writable }}
+            ---
+            # Push access for the operator's GitOps app lifecycle: installing an
+            # app from the store commits to gentian-deployments.
+            apiVersion: kubernetes.crossplane.io/v1alpha2
+            kind: Object
+            metadata:
+              annotations:
+                {{ setResourceNameAnnotation (printf "git-credentials-%s" $name) }}
+            spec:
+              forProvider:
+                manifest:
+                  apiVersion: external-secrets.io/v1beta1
+                  kind: ExternalSecret
+                  metadata:
+                    name: {{ $name }}-git-credentials
+                    namespace: gentian-system
+                  spec:
+                    refreshInterval: 1h
+                    secretStoreRef:
+                      name: openbao
+                      kind: ClusterSecretStore
+                    target:
+                      name: {{ $name }}-git-credentials
+                      template:
+                        data:
+                          .git-credentials: |
+                            https://{{ `{{ .username }}` }}:{{ `{{ .password }}` }}@{{ trimPrefix "https://" $url }}
+                    data:
+                      - secretKey: username
+                        remoteRef:
+                          key: {{ $cred.vaultPath | quote }}
+                          property: username
+                      - secretKey: password
+                        remoteRef:
+                          key: {{ $cred.vaultPath | quote }}
+                          property: password
+              providerConfigRef:
+                name: kubernetes
+            {{- end }}
+
+    - step: auto-ready
+      functionRef:
+        name: function-auto-ready

@@ -1,0 +1,15 @@
+# A private OCI registry supplying charts and images.
+apiVersion: gentianos.io/v1alpha1
+kind: XRepository
+metadata:
+  name: infra-charts
+spec:
+  type: oci
+  endpoints:
+    inCluster: https://registry.example.net
+  credential:
+    vaultPath: gentian/registries/infra-charts
+    displayName: "Infrastructure Chart Registry"
+    optional: true
+    validate:
+      type: oci-registry

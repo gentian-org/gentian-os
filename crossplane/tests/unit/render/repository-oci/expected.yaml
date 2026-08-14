@@ -1,0 +1,217 @@
+---
+apiVersion: gentianos.io/v1alpha1
+kind: XRepository
+metadata:
+  name: infra-charts
+status:
+  conditions:
+  - lastTransitionTime: "2024-01-01T00:00:00Z"
+    message: 'Unready resources: appproject-source-infra-charts, argocd-repo-infra-charts,
+      credreq-infra-charts, and 2 more'
+    reason: Creating
+    status: "False"
+    type: Ready
+---
+apiVersion: kubernetes.crossplane.io/v1alpha2
+kind: Object
+metadata:
+  annotations:
+    crossplane.io/composition-resource-name: appproject-source-infra-charts
+  generateName: infra-charts-
+  labels:
+    crossplane.io/composite: infra-charts
+  ownerReferences:
+  - apiVersion: gentianos.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XRepository
+    name: infra-charts
+    uid: ""
+spec:
+  forProvider:
+    manifest:
+      apiVersion: argoproj.io/v1alpha1
+      kind: AppProject
+      metadata:
+        name: gentianos-tenants
+        namespace: argocd
+      spec:
+        sourceRepos:
+        - https://registry.example.net
+  managementPolicies:
+  - Observe
+  - Create
+  - Update
+  providerConfigRef:
+    name: kubernetes
+---
+apiVersion: kubernetes.crossplane.io/v1alpha2
+kind: Object
+metadata:
+  annotations:
+    crossplane.io/composition-resource-name: argocd-repo-infra-charts
+  generateName: infra-charts-
+  labels:
+    crossplane.io/composite: infra-charts
+  ownerReferences:
+  - apiVersion: gentianos.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XRepository
+    name: infra-charts
+    uid: ""
+spec:
+  forProvider:
+    manifest:
+      apiVersion: external-secrets.io/v1beta1
+      kind: ExternalSecret
+      metadata:
+        name: repo-infra-charts
+        namespace: argocd
+      spec:
+        data:
+        - remoteRef:
+            key: gentian/registries/infra-charts
+            property: username
+          secretKey: username
+        - remoteRef:
+            key: gentian/registries/infra-charts
+            property: password
+          secretKey: password
+        refreshInterval: 1h
+        secretStoreRef:
+          kind: ClusterSecretStore
+          name: openbao
+        target:
+          name: repo-infra-charts
+          template:
+            data:
+              password: '{{ .password }}'
+              type: helm
+              url: https://registry.example.net
+              username: '{{ .username }}'
+            metadata:
+              labels:
+                argocd.argoproj.io/secret-type: repository
+  providerConfigRef:
+    name: kubernetes
+---
+apiVersion: gentianos.io/v1alpha1
+kind: CredentialRequirement
+metadata:
+  annotations:
+    crossplane.io/composition-resource-name: credreq-infra-charts
+  labels:
+    crossplane.io/composite: infra-charts
+    gentianos.io/credential-phase: runtime
+    gentianos.io/credential-scope: cluster
+  name: repository-infra-charts
+  ownerReferences:
+  - apiVersion: gentianos.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XRepository
+    name: infra-charts
+    uid: ""
+spec:
+  consumedBy:
+  - kind: XRepository
+    name: infra-charts
+  description: ""
+  displayName: Infrastructure Chart Registry
+  fields:
+  - format: string
+    key: username
+    secret: false
+  - format: password
+    key: password
+    secret: true
+  optional: true
+  phase: runtime
+  scope: cluster
+  validate:
+    type: oci-registry
+  vaultPath: gentian/registries/infra-charts
+---
+apiVersion: kubernetes.crossplane.io/v1alpha2
+kind: Object
+metadata:
+  annotations:
+    crossplane.io/composition-resource-name: imageconfig-infra-charts
+  generateName: infra-charts-
+  labels:
+    crossplane.io/composite: infra-charts
+  ownerReferences:
+  - apiVersion: gentianos.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XRepository
+    name: infra-charts
+    uid: ""
+spec:
+  forProvider:
+    manifest:
+      apiVersion: pkg.crossplane.io/v1beta1
+      kind: ImageConfig
+      metadata:
+        name: infra-charts
+      spec:
+        matchImages:
+        - prefix: https://registry.example.net
+        registry:
+          authentication:
+            pullSecretRef:
+              name: pull-infra-charts
+  providerConfigRef:
+    name: kubernetes
+---
+apiVersion: kubernetes.crossplane.io/v1alpha2
+kind: Object
+metadata:
+  annotations:
+    crossplane.io/composition-resource-name: pull-secret-infra-charts
+  generateName: infra-charts-
+  labels:
+    crossplane.io/composite: infra-charts
+  ownerReferences:
+  - apiVersion: gentianos.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XRepository
+    name: infra-charts
+    uid: ""
+spec:
+  forProvider:
+    manifest:
+      apiVersion: external-secrets.io/v1beta1
+      kind: ClusterExternalSecret
+      metadata:
+        name: pull-infra-charts
+      spec:
+        externalSecretName: pull-infra-charts
+        externalSecretSpec:
+          data:
+          - remoteRef:
+              key: gentian/registries/infra-charts
+              property: username
+            secretKey: username
+          - remoteRef:
+              key: gentian/registries/infra-charts
+              property: password
+            secretKey: password
+          secretStoreRef:
+            kind: ClusterSecretStore
+            name: openbao
+          target:
+            name: pull-infra-charts
+            template:
+              data:
+                .dockerconfigjson: |
+                  {"auths":{"https://registry.example.net":{"username":"{{ .username }}","password":"{{ .password }}"}}}
+              type: kubernetes.io/dockerconfigjson
+        namespaceSelector:
+          matchLabels:
+            gentianos.io/pull-secrets: "true"
+        refreshTime: 1h
+  providerConfigRef:
+    name: kubernetes

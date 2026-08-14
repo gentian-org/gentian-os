@@ -372,8 +372,57 @@ validate_steps() {
     done
 
     validate_pins || rc=1
+    validate_step_calls || rc=1
 
     [[ $rc -eq 0 ]] && success "Step contracts valid (${#_STEP_IDS[@]} steps)."
+    return $rc
+}
+
+# validate_step_calls — every library function a step calls must be defined.
+#
+# This exists because it was NOT caught once: when install.sh became a driver
+# and uninstall.sh was deleted, the bodies those steps called went with them.
+# Every contract still validated and shellcheck stayed clean, because nothing
+# checked that a step's apply() could actually resolve what it invokes. The
+# break would only have surfaced as a "command not found" partway through a real
+# install, against a real cluster.
+#
+# Functions a step pulls in by sourcing a file inside apply() are resolved by
+# sourcing the same files here first.
+validate_step_calls() {
+    local i file fn rc=0 src
+
+    # Anything a step sources at apply() time, loaded up front so its functions
+    # are visible to the check.
+    # shellcheck disable=SC2016  # the pattern matches a literal ${SCRIPT_DIR}
+    while IFS= read -r src; do
+        [[ -n "${src}" && -f "${SCRIPT_DIR}/${src}" ]] || continue
+        # shellcheck source=/dev/null
+        source "${SCRIPT_DIR}/${src}" >/dev/null 2>&1 || true
+    done < <(grep -ho 'source "\${SCRIPT_DIR}/[^"]*"' "${GENTIAN_STEPS_DIR}"/*.sh 2>/dev/null |
+             sed 's|source "\${SCRIPT_DIR}/||; s|"$||' | sort -u)
+
+    for (( i = 0; i < ${#_STEP_IDS[@]}; i++ )); do
+        file="${_STEP_FILES[$i]}"
+        # Calls at the top of a verb body: four-space indent, bare command.
+        while IFS= read -r fn; do
+            [[ -n "${fn}" ]] || continue
+            # Shell keywords, not calls. 'esac' is quoted because an unquoted
+            # one inside a pattern list ends the case statement instead of
+            # matching — the pattern silently stops covering everything after it.
+            case "${fn}" in
+                local|return|echo|export|source|if|fi|then|else|elif|for|while|do|done|case|'esac'|break|continue|exit)
+                    continue ;;
+            esac
+            # A real external command is fine; only unresolvable names matter.
+            command -v "${fn}" >/dev/null 2>&1 && continue
+            declare -F "${fn}" >/dev/null 2>&1 && continue
+            error "$(step_id_of "${file}"): calls '${fn}', which is not defined or on PATH"
+            rc=1
+            # Capture a trailing '=' so assignments can be dropped: `    claim="$(...)"`
+            # is a local variable, not a call.
+        done < <(grep -oE '^ {4}[a-z_][a-z0-9_]*=?' "${file}" | grep -v '=$' | tr -d ' ' | sort -u)
+    done
     return $rc
 }
 

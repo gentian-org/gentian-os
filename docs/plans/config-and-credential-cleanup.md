@@ -1315,70 +1315,67 @@ some — which is also what makes `optional: true` requirements work.
 
 ### Phase 4 — Installer refactor
 
-Two independent changes, in order.
+**Status: 4a implemented. 4b deliberately held** — see below.
 
-**4a — Prompting becomes catalogue-driven.** `prompt_credentials` and `prompt_kernel_secrets` are
-rewritten to iterate the bundled `credentials.yaml` with `yq` rather than hardcode variable names.
-Validators from Phase 3 run before any cluster mutation. The `MASTER_PASSWORD` length rule moves
-into the CRD schema and out of its two hardcoded sites. `prompt_app_repos` is not a credential
-prompt at all — it collects surface 1 (§2) and becomes a plain read of `install.env`, with the
-GitHub Actions and `INSTALL_CLUSTER_INFRA` residue dropped.
+**4a — Prompting is catalogue-driven.** `collect_bootstrap_credentials` in
+`scripts/lib/credentials.sh` iterates `credentials.yaml` and prompts for `phase: bootstrap`
+fields only. Validators run after collection and before the first `apply()`, so a bad credential
+aborts with the cluster untouched. `prompt_credentials`, `prompt_kernel_secrets`,
+`load_creds_cache` and `save_creds_cache` are deleted along with `INSTALL_SECRETS_CACHE` — 93
+lines out of `common.sh`, and the §1 known concern with them.
 
-`load_creds_cache` and `save_creds_cache` are deleted here rather than audited: with `check()`
-providing re-run state from the cluster (Phase 0a) and `try_load_creds_from_openbao` providing
-credential recovery, the local cache has no remaining job. This closes the §1 known concern and
-the first row of §12.
+The `MASTER_PASSWORD` length rule now lives in `credentials.yaml` as `minLength: 16`, enforced by
+the prompt loop, instead of being hardcoded in two places.
 
-**4b — Steps 11d–16 move declarative.** `apply_suze_xr`, `install_gentian_os_operator`,
-`install_kernel_mail`, `install_llm_serving`, `install_portal_login`, `bootstrap_appprofiles`, and
-`install_app_catalogue` are replaced by entries in the root ApplicationSet or by `AppProfile`
-instances, gated on credential satisfaction (Phase 6) instead of on shell ordering.
+| # | Criterion | Status |
+|---|---|---|
+| 1 | No application name appears in the installer | **Not met** — that is 4b |
+| 2 | Adding a prompt requires editing `credentials.yaml` only | **Passing** |
+| 3 | A failed validation aborts with zero cluster mutations | **Passing** — verified with a bogus token: every validator still runs, the run stops before `check_prereqs`, and the message says nothing was applied |
+| 4 | The reduction is deletion, not relocation | **Passing** for 4a — 93 lines removed with no new equivalent |
+| 5 | Step files deleted in 4b are deleted outright | **Not applicable yet** |
+| 6 | Audit device enabled before the first OpenBao write | **Unverified** |
+| 7 | Clean-room install on AWS and Infomaniak with only bootstrap credentials | **Unverified** |
+| 8 | Invariant 3 holds against a partial install | **Partial** — `_prompt_field` returns early when a value is already present from the environment or `try_load_creds_from_openbao`; not exercised against a real partial install |
+| 9 | `--validate` performs config validation with no cluster changes | **Passing** |
+| 10 | No credential value is written to local disk | **Passing** — there is no cache to write to |
 
-**Acceptance**
-- `grep -riE 'keycloak|openfga|postfix|vllm|litellm|portal|nextcloud'` across `install.sh`,
-  `steps/`, and `scripts/lib/` returns nothing.
-- Adding a new prompt requires editing `credentials.yaml` only — no shell change.
-- A failed validation aborts with zero cluster mutations, verified by diffing cluster state.
-- The reduction is deletion, not relocation into `scripts/lib/`: the combined line count of
-  `install.sh`, `steps/`, and `scripts/lib/` falls.
-- The step files deleted in 4b are deleted outright, including their `destroy()` — teardown of a
-  declaratively-managed application is ArgoCD's job, not a step's.
-- Audit device is enabled before the first OpenBao write, asserted by checking the first entry in
-  the audit log.
-- Clean-room install on both AWS and Infomaniak reaches a running root ApplicationSet with only
-  the bootstrap-phase credentials supplied.
-- Invariant 3 holds: `try_load_creds_from_openbao` and `kv_put_once` behave correctly against a
-  partially-completed install, now that `load_install_state` and `INSTALL_START_EPOCH` are gone.
-- `--validate` still performs config validation with no cluster changes.
-- No credential value is written to local disk at any point, asserted by watching the install's
-  file writes.
+**Why 4b is held.** §13 says composition gating should not be deferred past 4b, because moving
+steps 11d–16 into the root ApplicationSet enlarges the eventual-consistency debugging surface
+*before* the mechanism that makes those failures legible exists. Running 4b now would delete eight
+working steps and replace them with objects that, when a credential is missing, report only that
+something is not Ready. Phase 6 first, then 4b.
 
 ---
 
 ### Phase 5 — `XRepository`
 
+**Status: implemented.** `crossplane/xrds/repository.yaml` and
+`crossplane/compositions/repository-default.yaml`, applied by `01-crossplane-providers`, with
+golden-file render tests for both types.
+
 One XRD plus one Composition covering `type: git` and `type: oci`, emitting the artefact set in
 §5 and the `CredentialRequirement` alongside it.
 
 **Acceptance**
-- One `type: oci` claim produces the ArgoCD repository Secret, the `ClusterExternalSecret` for
-  dockerconfigjson, the `ImageConfig`, and the `CredentialRequirement`.
-- One `type: git` claim produces the ArgoCD repository Secret and the `CredentialRequirement`, and
-  the `.git-credentials` Secret when `writable: true`.
-- The emitted `CredentialRequirement` is never hand-written; editing the claim is the only way to
-  change it.
-- ArgoCD picks up a repository credential without a restart.
-- A newly created tenant namespace receives the dockerconfigjson without a new Git object.
-- Rotating the value in OpenBao propagates to every consumer within the ESO refresh interval, with
-  no Git commit.
-- Two claims sharing one `vaultPath` both work, and the emitted requirements list both in
-  `consumedBy`.
-- Deleting a claim removes everything it emitted; no orphaned Secrets.
-- Every repository and registry the cluster draws from is driven by this XR, including
-  `ghcr.io/gentian-org` and the deployments repository.
-- Adding a repository of either type requires one claim and no new Composition.
-- `kernel/argocd/repos/*.yaml` and `scripts/create-deployments-git-credentials.sh` are deleted.
-- A private app repository can be added by a cluster admin who has never read `install.sh`.
+
+| # | Criterion | Status |
+|---|---|---|
+| 1 | `type: oci` emits the ArgoCD repo Secret, `ClusterExternalSecret`, `ImageConfig` and `CredentialRequirement` | **Passing** — render asserts all five artefacts, the four plus the AppProject entry |
+| 2 | `type: git` emits the repo Secret and requirement, plus `.git-credentials` when `writable` | **Passing** — render asserts four, and that `oci` emits no `.git-credentials` |
+| 3 | The emitted `CredentialRequirement` is never hand-written | **Passing** — only the Composition produces it |
+| 4 | `endpoints.external` never reaches the cluster | **Passing** — render asserts the external address appears zero times in the output while `inCluster` appears three times |
+| 5 | ArgoCD picks up a repository credential without a restart | **Unverified** |
+| 6 | A new tenant namespace receives the dockerconfigjson without a Git object | **Unverified** — `ClusterExternalSecret` with a namespace selector is the mechanism |
+| 7 | Rotation propagates to every consumer with no Git commit | **Unverified** |
+| 8 | Two claims sharing one `vaultPath` both work | **Unverified** — the schema permits it; the Phase 2 generator enforces that their field sets agree |
+| 9 | Deleting a claim removes everything it emitted | **Unverified** |
+| 10 | Every repository the cluster draws from is driven by this XR | **Not met** — no claims authored yet; `kernel/argocd/repos/*.yaml` and `scripts/create-deployments-git-credentials.sh` still exist |
+| 11 | Adding a repository of either type needs one claim and no new Composition | **Passing** by construction |
+
+Criteria 5–9 need a cluster with Crossplane, ESO and ArgoCD running. Criterion 10 is the
+migration itself, best done alongside Phase 6 so an unsatisfied repository credential surfaces as
+a named condition rather than a stuck sync.
 
 ---
 

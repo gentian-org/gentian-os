@@ -1,0 +1,138 @@
+apiVersion: apiextensions.crossplane.io/v1
+kind: CompositeResourceDefinition
+metadata:
+  name: xrepositories.gentianos.io
+spec:
+  group: gentianos.io
+  names:
+    kind: XRepository
+    plural: xrepositories
+  claimNames:
+    kind: Repository
+    plural: repositories
+  defaultCompositionRef:
+    name: repository-default
+  versions:
+    - name: v1alpha1
+      served: true
+      referenceable: true
+      schema:
+        openAPIV3Schema:
+          type: object
+          properties:
+            spec:
+              type: object
+              required:
+                - type
+                - endpoints
+                - credential
+              properties:
+                type:
+                  type: string
+                  description: >
+                    Which consumer-shaped artefacts to emit. A separate
+                    XGitRepository and XRegistry would share credential
+                    handling, requirement emission and gating, and differ only
+                    in what they emit — that is a field, not a second API.
+                  enum:
+                    - git
+                    - oci
+                endpoints:
+                  type: object
+                  description: >
+                    Two addresses, because the install host and in-cluster pods
+                    do not always share a network path — a tunnelled cluster, a
+                    NAT boundary, split-horizon DNS. A single url field forces
+                    one of the two consumers to be wrong, and the resulting
+                    failure reports the repository as unreachable when the
+                    address is merely wrong for that caller.
+                  required:
+                    - inCluster
+                  properties:
+                    inCluster:
+                      type: string
+                      description: >
+                        The address controllers and pods use. Everything written
+                        into the cluster reads this.
+                    external:
+                      type: string
+                      description: >
+                        The address the install host uses. Defaults to
+                        inCluster, which is the common case; set it only when
+                        the two genuinely differ.
+                branch:
+                  type: string
+                  description: Git ref to track. Ignored when type is oci.
+                  default: main
+                writable:
+                  type: boolean
+                  description: >
+                    Emit the operator's .git-credentials Secret, granting push
+                    access for GitOps app lifecycle. Git repositories only.
+                  default: false
+                namespaceSelector:
+                  type: object
+                  description: >
+                    Which namespaces receive the image pull Secret. A selector
+                    rather than a list, so adding a tenant does not add a Git
+                    object. OCI repositories only.
+                  properties:
+                    matchLabels:
+                      type: object
+                      additionalProperties:
+                        type: string
+                credential:
+                  type: object
+                  description: >
+                    The credential DECLARATION, never a value. The Composition
+                    emits a CredentialRequirement from this alongside the
+                    consumer artefacts, so a private repository is one object in
+                    Git rather than a claim plus a hand-kept requirement that
+                    drifts from it.
+                  required:
+                    - vaultPath
+                    - displayName
+                  properties:
+                    vaultPath:
+                      type: string
+                      description: >
+                        Several claims may share one path — when a single token
+                        covers many repositories, rotation stays one write.
+                    displayName:
+                      type: string
+                    description:
+                      type: string
+                    phase:
+                      type: string
+                      enum:
+                        - bootstrap
+                        - runtime
+                      default: runtime
+                    optional:
+                      type: boolean
+                      default: false
+                    validate:
+                      type: object
+                      properties:
+                        type:
+                          type: string
+                          enum:
+                            - oci-registry
+                            - git-https
+                            - oidc-discovery
+                            - smtp
+                            - noop
+                          default: noop
+            status:
+              type: object
+              properties:
+                credentialSatisfied:
+                  type: boolean
+                  description: >
+                    Mirrors the emitted ExternalSecret's sync status. ESO is the
+                    satisfaction probe; nothing here polls OpenBao.
+                artefacts:
+                  type: array
+                  description: Names of the consumer artefacts emitted.
+                  items:
+                    type: string

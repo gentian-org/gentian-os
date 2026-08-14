@@ -154,11 +154,14 @@ prepare_run() {
     [[ "${INSTALL_VALIDATE_ONLY:-0}" == "1" ]] && validate_config
 
     prompt_app_repos
-    prompt_credentials
     resolve_kernel_domain_from_claim   # already-bootstrapped cluster reads its Claim
     prompt_kernel_domain
     prompt_network_mode
-    prompt_kernel_secrets
+
+    # One pass over credentials.yaml, replacing prompt_credentials and
+    # prompt_kernel_secrets. Validation runs here, before the first apply(), so
+    # a bad credential aborts with the cluster untouched.
+    collect_bootstrap_credentials
 
     CROSSPLANE_MODE=1 check_prereqs
     _ensure_bao

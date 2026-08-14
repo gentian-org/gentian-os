@@ -1,0 +1,19 @@
+# A private Git repository the operator also pushes to, with the install host
+# reaching it at a different address than in-cluster pods do.
+apiVersion: gentianos.io/v1alpha1
+kind: XRepository
+metadata:
+  name: deployments
+spec:
+  type: git
+  endpoints:
+    inCluster: https://git.internal.example/gentian-deployments
+    external: https://10.0.0.5:8443/gentian-deployments
+  branch: main
+  writable: true
+  credential:
+    vaultPath: gentian/repositories/deployments
+    displayName: "Deployments Repository Access"
+    phase: bootstrap
+    validate:
+      type: git-https
