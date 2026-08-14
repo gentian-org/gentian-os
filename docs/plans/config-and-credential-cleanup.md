@@ -1624,8 +1624,14 @@ so a mirrored install redirects the origin and not just the branch. Verified by 
 chart against a mirror: every gentian-os URL is redirected, the per-cluster claims path is
 templated, and third-party repoURLs are left alone.
 
-`GENTIAN_OS_IMAGE_REPOSITORY` is **not** done — the operator's image still comes from a hardcoded
-registry, so a mirrored install redirects Git but not images.
+`GENTIAN_OS_IMAGE_REPOSITORY` is done too. It reaches the operator Application in the two places
+that both matter: the Helm `image.repository` parameter, and the `argocd-image-updater` image-list
+annotation, which had the vendor registry hardcoded and would otherwise have kept watching it. The
+operator chart's own `repoURL` is parameterised as well.
+
+Verified by rendering the Application template against a mirror: zero `github.com/gentian-org`
+references, zero `ghcr.io/gentian-org` references, and the result still parses. A placeholder audit
+confirms all seven `%VARS%` are substituted — an unsubstituted one reaches the cluster literally.
 
 **12b — CPU architecture. Implemented.** `charts/infra/mariadb/values.yaml` pinned
 `sha256:b6440c…` in two places; querying Docker Hub confirmed it is a **single** manifest, so the
@@ -1686,14 +1692,20 @@ exercise.
   it.
 
 **Acceptance**
-- Every dimension in §9 is expressible in surface 1 or surface 2. None is detected at runtime.
-- `XCluster` rejects an `issuerMode` outside the enum at admission.
-- A `Repository` claim with only `endpoints.inCluster` set behaves exactly as one with a single
-  `url` did — the new field costs nothing where the two paths agree.
-- The per-architecture-digest lint passes, and an arm64 install reaches a running root
-  ApplicationSet (12b is complete, so this is not deferred).
-- Selecting an unimplemented `issuerMode` fails with a message naming the mode and the phase that
-  supplies it — never a silent fallback to ACME.
+
+| # | Criterion | Status |
+|---|---|---|
+| 1 | Every dimension in §9 is expressible in surface 1 or surface 2; none is detected at runtime | **Passing** — architecture in chart values, trust anchor and topology in claims, provenance in surface 1. Permission model is the exception: it is expressible only as the binding that already exists |
+| 2 | `XCluster` rejects an `issuerMode` outside the enum at admission | **Partial** — declared as an enum and the XRD applies by server-side dry-run; rejection of a bad claim is untested |
+| 3 | A `Repository` claim with only `endpoints.inCluster` behaves as one with a single `url` did | **Passing** — `external` defaults to `inCluster`, verified by render |
+| 4 | The digest lint passes, and an arm64 install reaches a running root ApplicationSet | **Partial** — the lint passes and the pins are manifest lists; no arm64 install has been run |
+| 5 | Selecting an unimplemented `issuerMode` fails naming the mode — never a silent fallback to ACME | **Passing** — verified; an unknown mode is rejected naming the four supported values |
+| 6 | A mirrored install makes no request to the upstream origin | **Partial** — the Application template renders with zero vendor references, Git and image both; egress has not been observed |
+
+Criterion 1's exception is worth keeping in view: `self-signed`, `private-ca`, `endpoints` and the
+provenance variables are all things a cluster *declares*. The permission model is not — it is
+whatever the cluster admin will grant, and the platform can only reduce what it asks for. That is
+why 12e became privilege reduction rather than a field.
 
 ---
 
