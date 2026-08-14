@@ -21,9 +21,14 @@
 # One driver, three directions. Update is not a separate program: converging a
 # running cluster IS the update, so it is the same forward pass.
 #
+#   ./install.sh --prepare-deployment   write this cluster's files, change nothing
 #   ./install.sh                    install or converge
 #   ./install.sh --update           same thing, named for what you meant
 #   ./install.sh --uninstall        reverse order, destroy() each step
+#
+# A cluster is its claims and values in gentian-deployments, so those come
+# first: --prepare-deployment generates them from install.env, and you edit,
+# commit and push them before installing. Installing does not write them.
 #
 # Read before you run:
 #
@@ -33,10 +38,10 @@
 #
 # Run part of it:
 #
-#   ./install.sh --step 16          just that one
-#   ./install.sh --from 19          resume from there
-#   ./install.sh --only 07,08       a named subset
-#   ./install.sh --skip 03          everything but that
+#   ./install.sh --step A-07        just that one
+#   ./install.sh --from B-03        resume from there
+#   ./install.sh --only A-07,A-08   a named subset
+#   ./install.sh --skip A-04        everything but that
 #   ./install.sh --phase secrets    one phase: control-plane, secrets, platform,
 #                                   applications, handover
 #
@@ -85,6 +90,8 @@ driver_usage() {
     cat <<'EOF'
 
 Other options:
+  --prepare-deployment  write clusters/<id>/kernel in gentian-deployments from
+                        install.env, then stop — nothing is committed or applied
   --validate            validate config and step contracts, no cluster changes
   --verify-only         run post-install verification and print the summary
   --no-cluster-infra    skip cert-manager / CNPG / reloader
@@ -101,6 +108,7 @@ parse_driver_args() {
     while [[ $# -gt 0 ]]; do
         case "$1" in
             --update)            GENTIAN_DIRECTION="forward" ;;
+            --prepare-deployment) GENTIAN_DIRECTION="prepare" ;;
             --uninstall|--destroy) GENTIAN_DIRECTION="reverse" ;;
             --explain)           GENTIAN_EXPLAIN=1 ;;
             --status)            GENTIAN_DIRECTION="status" ;;
@@ -159,6 +167,12 @@ prepare_run() {
     [[ "${INSTALL_VALIDATE_ONLY:-0}" == "1" ]] && validate_config
 
     prompt_app_repos
+
+    # Before any credential is collected: the claims and values this cluster is
+    # built from have to exist and have to have been read by someone. They are
+    # written by --prepare-deployment, never by an install.
+    require_cluster_deployment
+
     resolve_kernel_domain_from_claim   # already-bootstrapped cluster reads its Claim
     prompt_kernel_domain
     prompt_network_mode
@@ -170,7 +184,24 @@ prepare_run() {
 
     CROSSPLANE_MODE=1 check_prereqs
     _ensure_bao
-    scaffold_cluster_deployment        # new cluster only — no-op if scaffolded
+}
+
+# =============================================================================
+# prepare_deployment_run — write this cluster's directory in gentian-deployments
+# and stop.
+#
+# Reads only what the files need: the repository pointers, the kernel domain and
+# the exposure model. No credentials are collected and no cluster is contacted,
+# so this runs against a cluster that does not exist yet.
+# =============================================================================
+prepare_deployment_run() {
+    load_operator_config
+    load_deployments_cluster_settings
+    prompt_app_repos
+    resolve_kernel_domain_from_claim   # a re-run reads back what it wrote
+    prompt_kernel_domain
+    prompt_network_mode
+    scaffold_cluster_deployment
 }
 
 # _ensure_bao — install the OpenBao CLI to ~/.local/bin when absent.
@@ -232,6 +263,9 @@ main() {
     fi
 
     case "${GENTIAN_DIRECTION}" in
+        prepare)
+            prepare_deployment_run
+            ;;
         status)
             drive_status
             ;;

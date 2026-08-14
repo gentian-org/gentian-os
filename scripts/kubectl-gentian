@@ -46,7 +46,7 @@ fi
 
 DEPLOYMENTS_PATH="${GENTIAN_DEPLOYMENTS_PATH:-}"
 DEPLOYMENTS_REPO="${GENTIAN_DEPLOYMENTS_REPO:-}"
-DEPLOYMENTS_CLUSTER="${GENTIAN_DEPLOYMENTS_CLUSTER:-default-cluster}"
+DEPLOYMENTS_CLUSTER="${GENTIAN_DEPLOYMENTS_CLUSTER_ID:-default-cluster}"
 # The ONLY place "dev" may be defaulted. Nine functions used to carry their own
 # `${2:-dev}` fallback, which silently won every time a stage argument was
 # omitted — so on this prod cluster `gtnctl tenant undeploy gtn` announced
@@ -97,7 +97,7 @@ Usage:
 Environment / ~/.gentian/config:
   GENTIAN_DEPLOYMENTS_PATH   local path to gentian-deployments checkout
   GENTIAN_DEPLOYMENTS_REPO   remote Git URL (used if path does not exist)
-  GENTIAN_DEPLOYMENTS_CLUSTER  cluster selector (default: default-cluster)
+  GENTIAN_DEPLOYMENTS_CLUSTER_ID  cluster selector (default: default-cluster)
 
 Examples:
   kubectl gentian apps list
@@ -1493,7 +1493,7 @@ ensure_env_layout() {
   # wrong — that is worth stopping for.
   if [[ ! -d "${cluster_root}" ]]; then
     echo "ERROR: cluster path not found: ${cluster_root}" >&2
-    echo "Set GENTIAN_DEPLOYMENTS_CLUSTER (currently '${DEPLOYMENTS_CLUSTER}') in ${CONFIG_FILE}." >&2
+    echo "Set GENTIAN_DEPLOYMENTS_CLUSTER_ID (currently '${DEPLOYMENTS_CLUSTER}') in ${CONFIG_FILE}." >&2
     exit 1
   fi
 
@@ -1501,7 +1501,7 @@ ensure_env_layout() {
   # comes into being when the first tenant is deployed, so on a freshly
   # bootstrapped cluster it is legitimately absent. Erroring here meant
   # `tenants deploy` refused to run because the directory it would itself create
-  # was not there yet, and blamed GENTIAN_DEPLOYMENTS_CLUSTER for it — sending
+  # was not there yet, and blamed GENTIAN_DEPLOYMENTS_CLUSTER_ID for it — sending
   # the operator to look for a config problem that does not exist. The function
   # is called ensure_env_layout; ensure it.
   mkdir -p "${root}"

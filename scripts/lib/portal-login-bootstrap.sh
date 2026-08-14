@@ -1383,7 +1383,7 @@ release_gentian_portal_helm_bootstrap() {
 
 apply_gentian_portal_argocd_application() {
     local gentian_ui_branch portal_tag rendered tmpl
-    local cluster="${GENTIAN_DEPLOYMENTS_CLUSTER:-test}"
+    local cluster="${GENTIAN_DEPLOYMENTS_CLUSTER_ID:-test}"
     local stage="${GENTIAN_DEPLOYMENTS_STAGE:-dev}"
     resolve_gentian_os_branch
     gentian_ui_branch="${GENTIAN_UI_BRANCH:-develop}"

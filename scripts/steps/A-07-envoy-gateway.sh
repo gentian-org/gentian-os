@@ -9,7 +9,11 @@
 _envoy_ns() { echo "${ENVOY_GATEWAY_NAMESPACE:-envoy-gateway-system}"; }
 
 check() {
-    [[ "${ROUTING_MODE:-gateway}" == "gateway" ]] || return 0
+    # `gateway` is the only supported value — anything else is rejected with a
+    # hard error before the steps run (certs.sh). Reaching here with another
+    # value means no validator has seen it yet, as on the --status path, and a
+    # verdict about Envoy Gateway would be meaningless.
+    [[ "${ROUTING_MODE:-gateway}" == "gateway" ]] || return "${CHECK_UNDEFINED}"
     kubectl get deployment -n "$(_envoy_ns)" -l control-plane=envoy-gateway \
         -o name 2>/dev/null | grep -q .
 }

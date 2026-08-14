@@ -6,8 +6,9 @@
 # mutates: Certificate in cert-manager, wildcard-tls Secrets in kernel namespaces
 
 check() {
-    # Optional step: without a DNS-01 token there is nothing to issue.
-    [[ -n "${CF_API_TOKEN:-}" ]] || return 0
+    # Optional step: without a DNS-01 token there is nothing to issue, so there
+    # is also nothing to report as done.
+    [[ -n "${CF_API_TOKEN:-}" ]] || return "${CHECK_UNDEFINED}"
     kubectl get secret wildcard-kernel-tls -n cert-manager >/dev/null 2>&1
 }
 

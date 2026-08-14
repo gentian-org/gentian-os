@@ -5,6 +5,28 @@
 # Sourced by scripts/lib/load.sh. Do not execute directly.
 # =============================================================================
 
+# ─── check() verdicts ────────────────────────────────────────────────────────
+# The three answers a step's check() can give. Named because `return 2` at the
+# bottom of a step file says nothing about what it means.
+#
+#   SATISFIED  the step's `provides:` already holds — skip it.
+#   MISSING    it does not hold — apply() has work to do.
+#   UNDEFINED  the question does not apply, or cannot be answered yet: the
+#              feature is switched off, the step has no install-time artefact,
+#              or the config that would decide it was never loaded.
+#
+# UNDEFINED exists because a check that returns SATISFIED for "there was nothing
+# to do" is indistinguishable from one that returns it for "I verified this is
+# done", and only the second is a claim about the cluster. On the forward pass
+# both skip; in --status only the second is green.
+CHECK_SATISFIED=0
+CHECK_MISSING=1
+CHECK_UNDEFINED=2
+# Exported because the readers are the step files in scripts/steps/, which are
+# sourced rather than sourced-from-here — same reason install.sh exports the
+# Crossplane settings the step bodies read.
+export CHECK_SATISFIED CHECK_MISSING CHECK_UNDEFINED
+
 # ─── Colour helpers ──────────────────────────────────────────────────────────
 RED='\033[0;31m'; YELLOW='\033[1;33m'; GREEN='\033[0;32m'; CYAN='\033[0;36m'; NC='\033[0m'
 info()    { echo -e "${CYAN}[INFO]${NC}  $*"; }
@@ -273,7 +295,7 @@ INPUT_HIERARCHY_VARS=(
     GENTIAN_DEPLOYMENTS_REPO
     GENTIAN_DEPLOYMENTS_BRANCH
     GENTIAN_DEPLOYMENTS_PATH
-    GENTIAN_DEPLOYMENTS_CLUSTER
+    GENTIAN_DEPLOYMENTS_CLUSTER_ID
     GENTIAN_DEPLOYMENTS_STAGE
     GENTIAN_DEPLOYMENTS_GIT_TOKEN
     GENTIAN_DEPLOYMENTS_GIT_USERNAME
@@ -389,7 +411,7 @@ validate_config() {
     local cluster_settings_file
 
     deployments_root="${GENTIAN_DEPLOYMENTS_PATH:-${HOME}/.gentian/gentian-deployments}"
-    cluster="${GENTIAN_DEPLOYMENTS_CLUSTER:-default-cluster}"
+    cluster="${GENTIAN_DEPLOYMENTS_CLUSTER_ID:-default-cluster}"
     cluster_settings_file="${deployments_root}/clusters/${cluster}/kernel/cluster-settings.env"
 
     _file_header() {
@@ -627,12 +649,12 @@ prompt_app_repos() {
         fi
     fi
 
-    if [[ -z "${GENTIAN_DEPLOYMENTS_CLUSTER:-}" ]]; then
+    if [[ -z "${GENTIAN_DEPLOYMENTS_CLUSTER_ID:-}" ]]; then
         if [[ "${GENTIAN_NONINTERACTIVE:-0}" == "1" ]]; then
-            GENTIAN_DEPLOYMENTS_CLUSTER="${default_deploy_cluster}"
+            GENTIAN_DEPLOYMENTS_CLUSTER_ID="${default_deploy_cluster}"
         else
-            read -rp "  gentian-deployments cluster path segment [${default_deploy_cluster}]: " v
-            GENTIAN_DEPLOYMENTS_CLUSTER="${v:-${default_deploy_cluster}}"
+            read -rp "  deployment cluster ID [${default_deploy_cluster}]: " v
+            GENTIAN_DEPLOYMENTS_CLUSTER_ID="${v:-${default_deploy_cluster}}"
         fi
     fi
 
@@ -649,12 +671,12 @@ prompt_app_repos() {
     : "${GENTIAN_APPS_BRANCH:=${default_apps_branch}}"
     : "${GENTIAN_DEPLOYMENTS_REPO:=${default_deploy_repo}}"
     : "${GENTIAN_DEPLOYMENTS_BRANCH:=${default_deploy_branch}}"
-        : "${GENTIAN_DEPLOYMENTS_CLUSTER:=${default_deploy_cluster}}"
+        : "${GENTIAN_DEPLOYMENTS_CLUSTER_ID:=${default_deploy_cluster}}"
         : "${GENTIAN_DEPLOYMENTS_STAGE:=${default_deploy_stage}}"
     : "${GENTIAN_DEPLOYMENTS_PATH:=${HOME}/.gentian/gentian-deployments}"
     export GENTIAN_APPS_REPO GENTIAN_APPS_BRANCH \
             GENTIAN_DEPLOYMENTS_REPO GENTIAN_DEPLOYMENTS_BRANCH \
-            GENTIAN_DEPLOYMENTS_CLUSTER GENTIAN_DEPLOYMENTS_STAGE \
+            GENTIAN_DEPLOYMENTS_CLUSTER_ID GENTIAN_DEPLOYMENTS_STAGE \
             GENTIAN_DEPLOYMENTS_PATH
 
     # ENV is the environment suffix behind namespaces, service hostnames and
@@ -690,7 +712,7 @@ GENTIAN_APPS_REPO="${GENTIAN_APPS_REPO}"
 GENTIAN_APPS_BRANCH="${GENTIAN_APPS_BRANCH}"
 GENTIAN_DEPLOYMENTS_REPO="${GENTIAN_DEPLOYMENTS_REPO}"
 GENTIAN_DEPLOYMENTS_BRANCH="${GENTIAN_DEPLOYMENTS_BRANCH}"
-GENTIAN_DEPLOYMENTS_CLUSTER="${GENTIAN_DEPLOYMENTS_CLUSTER}"
+GENTIAN_DEPLOYMENTS_CLUSTER_ID="${GENTIAN_DEPLOYMENTS_CLUSTER_ID}"
 GENTIAN_DEPLOYMENTS_STAGE="${GENTIAN_DEPLOYMENTS_STAGE}"
 GENTIAN_DEPLOYMENTS_PATH="${GENTIAN_DEPLOYMENTS_PATH}"
 EOF
@@ -716,15 +738,21 @@ EOF
 # =============================================================================
 # Load cluster-scoped non-secret settings from gentian-deployments checkout.
 # File path convention:
-#   ${GENTIAN_DEPLOYMENTS_PATH}/clusters/${GENTIAN_DEPLOYMENTS_CLUSTER}/kernel/cluster-settings.env
+#   ${GENTIAN_DEPLOYMENTS_PATH}/clusters/${GENTIAN_DEPLOYMENTS_CLUSTER_ID}/kernel/cluster-settings.env
 # =============================================================================
 load_deployments_cluster_settings() {
+    # Whether the operator named a path, recorded before the default fills it
+    # in. A configured path that does not exist is a mistake to report, not an
+    # invitation to pick a different repository: the installer writes claims
+    # into this directory and reads the cluster's identity back out of it, so
+    # substituting another checkout silently configures the wrong cluster.
+    local _configured_path="${GENTIAN_DEPLOYMENTS_PATH:-}"
     : "${GENTIAN_DEPLOYMENTS_PATH:=${HOME}/.gentian/gentian-deployments}"
 
     # Local developer layout often checks out sibling repos under the same
     # parent directory (../gentian-deployments). Prefer that path when the
     # default cache location does not exist.
-    if [[ ! -d "${GENTIAN_DEPLOYMENTS_PATH}" ]]; then
+    if [[ -z "${_configured_path}" && ! -d "${GENTIAN_DEPLOYMENTS_PATH}" ]]; then
         local sibling_repo
         sibling_repo="$(cd "${SCRIPT_DIR}/.." && pwd)/gentian-deployments"
         if [[ -d "${sibling_repo}" ]]; then
@@ -734,13 +762,15 @@ load_deployments_cluster_settings() {
         fi
     fi
 
-    local cluster="${GENTIAN_DEPLOYMENTS_CLUSTER:-default-cluster}"
+    local cluster="${GENTIAN_DEPLOYMENTS_CLUSTER_ID:-default-cluster}"
     local settings_file="${GENTIAN_DEPLOYMENTS_PATH}/clusters/${cluster}/kernel/cluster-settings.env"
 
     if [[ -r "${settings_file}" ]]; then
         load_env_file_override "${settings_file}" "deployments cluster settings"
     else
-        info "No deployments cluster settings file found at ${settings_file} (optional)."
+        # Not an error here: --prepare-deployment runs this before writing the
+        # file. Installing requires it, and says so.
+        info "No deployments cluster settings file found at ${settings_file}."
     fi
 }
 
@@ -804,6 +834,7 @@ prompt_network_mode() {
         fi
         info "Using NETWORK_MODE=${NETWORK_MODE}"
         export NETWORK_MODE
+        _prompt_node_ip
         return
     fi
 
@@ -829,6 +860,59 @@ prompt_network_mode() {
         warn "Invalid value '${v}'. Enter 'tunnel' or 'static-ip'."
     done
     export NETWORK_MODE="$v"
+    save_install_state
+    _prompt_node_ip
+}
+
+# _is_ip_address <value> — dotted-quad or IPv6. NODE_IP becomes the Service's
+# loadBalancerIP, which Kubernetes rejects unless it is an address, so a
+# hostname typed here fails much later and somewhere else.
+_is_ip_address() {
+    local ip="$1" octet
+    [[ "$ip" == *:* ]] && return 0
+    [[ "$ip" =~ ^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$ ]] || return 1
+    local IFS=.
+    for octet in $ip; do
+        # A leading zero is rejected by Go's IP parser, so Kubernetes would
+        # refuse the address the Service is eventually given.
+        [[ "$octet" =~ ^(0|[1-9][0-9]{0,2})$ ]] || return 1
+        (( octet <= 255 )) || return 1
+    done
+    return 0
+}
+
+# _prompt_node_ip — ask for NODE_IP when static-ip mode needs one.
+#
+# Only auto-detection would fill this in otherwise, and that reads the first
+# node's InternalIP from a running cluster: wrong for the public address DNS
+# points at, and unavailable altogether to --prepare-deployment, which writes
+# cluster-settings.env without contacting a cluster.
+_prompt_node_ip() {
+    [[ "${NETWORK_MODE}" == "static-ip" ]] || return 0
+
+    if [[ -n "${NODE_IP:-}" ]]; then
+        info "Using NODE_IP=${NODE_IP}"
+        export NODE_IP
+        return 0
+    fi
+
+    # Non-interactive keeps the cluster-side auto-detection it had; there is no
+    # one to ask, and validate_config already reports an unset NODE_IP here.
+    if [[ "${GENTIAN_NONINTERACTIVE:-0}" == "1" ]]; then
+        return 0
+    fi
+
+    echo ""
+    info "NETWORK_MODE=static-ip: DNS for this cluster points straight at one address."
+    local v
+    while true; do
+        read -rp "  NODE_IP (the address DNS resolves to): " v
+        if [[ -n "$v" ]] && _is_ip_address "$v"; then
+            break
+        fi
+        warn "Enter an IP address, not a hostname — it becomes the edge Service's loadBalancerIP."
+    done
+    export NODE_IP="$v"
     save_install_state
 }
 
@@ -1298,7 +1382,7 @@ gentian_mail_namespace() {
 # =============================================================================
 gentian_claim_name() {
     local claim_file="$1" fallback="$2"
-    local path="${GENTIAN_DEPLOYMENTS_PATH:-}/clusters/${GENTIAN_DEPLOYMENTS_CLUSTER:-}/kernel/claims/${claim_file}.yaml"
+    local path="${GENTIAN_DEPLOYMENTS_PATH:-}/clusters/${GENTIAN_DEPLOYMENTS_CLUSTER_ID:-}/kernel/claims/${claim_file}.yaml"
     local name=""
     name=$(yq_get '.metadata.name' "${path}" 2>/dev/null || true)
     if [[ -n "${name}" ]]; then
@@ -1414,7 +1498,7 @@ yq_get() {
 # prompt_kernel_domain/scaffold_cluster_deployment handle that case.
 # =============================================================================
 resolve_kernel_domain_from_claim() {
-    local claim_file="${GENTIAN_DEPLOYMENTS_PATH}/clusters/${GENTIAN_DEPLOYMENTS_CLUSTER}/kernel/claims/cluster.yaml"
+    local claim_file="${GENTIAN_DEPLOYMENTS_PATH}/clusters/${GENTIAN_DEPLOYMENTS_CLUSTER_ID}/kernel/claims/cluster.yaml"
     [[ -n "${KERNEL_DOMAIN:-}" ]] && return 0
 
     local domain

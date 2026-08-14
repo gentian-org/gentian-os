@@ -253,7 +253,7 @@ adopt_gentian_os_helm_preflight() {
 
 _gentian_os_deployments_kernel_dir() {
     : "${GENTIAN_DEPLOYMENTS_PATH:=${HOME}/.gentian/gentian-deployments}"
-    local cluster="${GENTIAN_DEPLOYMENTS_CLUSTER:-default-cluster}"
+    local cluster="${GENTIAN_DEPLOYMENTS_CLUSTER_ID:-default-cluster}"
     echo "${GENTIAN_DEPLOYMENTS_PATH}/clusters/${cluster}/kernel"
 }
 
@@ -328,7 +328,7 @@ handoff_gentian_os_to_argocd() {
     local openfga_token_in_bao="${2:-0}"
     resolve_gentian_os_branch
     local stage="${GENTIAN_DEPLOYMENTS_STAGE:-${ENV:-dev}}"
-    local cluster="${GENTIAN_DEPLOYMENTS_CLUSTER:-default-cluster}"
+    local cluster="${GENTIAN_DEPLOYMENTS_CLUSTER_ID:-default-cluster}"
     local tmpl="${SCRIPT_DIR}/kernel/bootstrap/gentian-os-application.yaml.tmpl"
     local rendered
     rendered="$(mktemp)"

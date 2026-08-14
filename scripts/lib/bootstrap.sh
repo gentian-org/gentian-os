@@ -490,7 +490,7 @@ create_crossplane_secrets() {
 apply_cluster_xr() {
     banner "Step 10 — Apply Cluster XR (kernel structural provisioning)"
 
-    local claims_dir="${GENTIAN_DEPLOYMENTS_PATH}/clusters/${GENTIAN_DEPLOYMENTS_CLUSTER}/kernel/claims"
+    local claims_dir="${GENTIAN_DEPLOYMENTS_PATH}/clusters/${GENTIAN_DEPLOYMENTS_CLUSTER_ID}/kernel/claims"
     [[ -f "${claims_dir}/cluster.yaml" ]] || {
         error "No Cluster claim at ${claims_dir}/cluster.yaml — run install.sh's cluster scaffolding step first."
         exit 1
@@ -611,7 +611,7 @@ bootstrap_root_appset() {
     export GENTIAN_OS_REPO="${GENTIAN_OS_REPO:-https://github.com/gentian-org/gentian-os}"
     export GENTIAN_DEPLOYMENTS_REPO="${GENTIAN_DEPLOYMENTS_REPO:-}"
     export GENTIAN_DEPLOYMENTS_BRANCH="${GENTIAN_DEPLOYMENTS_BRANCH:-main}"
-    export GENTIAN_DEPLOYMENTS_CLUSTER="${GENTIAN_DEPLOYMENTS_CLUSTER:-default-cluster}"
+    export GENTIAN_DEPLOYMENTS_CLUSTER_ID="${GENTIAN_DEPLOYMENTS_CLUSTER_ID:-default-cluster}"
     envsubst < "${SCRIPT_DIR}/kernel/bootstrap/root-applicationset.yaml.tmpl" \
         | kubectl apply -f -
     success "gentian-appsets Application applied."
@@ -906,15 +906,20 @@ install_llm_serving() {
 }
 
 # =============================================================================
-# scaffold_cluster_deployment — Day-0 only. If this cluster's kernel/
-# directory in gentian-deployments is missing claims/{cluster,infra-data,
-# suze}.yaml or values.yaml, generate them from KERNEL_DOMAIN/
-# GENTIAN_DEPLOYMENTS_STAGE and commit + push directly to main (no PR —
-# this is scaffolding a not-yet-running cluster, not changing a live one;
-# see docs/deployment.md §3). Per-file checks, not a directory-level one:
-# never overwrites a file that already exists, so this is a no-op on every
-# subsequent run, and it converges correctly even when cluster-settings.env
-# already exists but the mechanical files don't.
+# scaffold_cluster_deployment — write this cluster's kernel/ directory in
+# gentian-deployments: claims/{cluster,infra-data,suze}.yaml, values.yaml and
+# cluster-settings.env, generated from KERNEL_DOMAIN and
+# GENTIAN_DEPLOYMENTS_STAGE. Reached through `install.sh --prepare-deployment`.
+#
+# Per-file checks, not a directory-level one: an existing file is never
+# overwritten, so re-running converges a partially-written directory and
+# preserves every hand edit made to one that is already complete.
+#
+# Writing is all it does. The files are left in the working tree for the
+# operator to read, edit and commit, because this directory is what the cluster
+# is — a generated claim pushed unread is a cluster configured by whoever ran
+# the installer rather than by anyone who reviewed it, and the repository is
+# shared with every other cluster.
 #
 # The gentian-os/gentian-portal Applications and the ImageUpdater CR are
 # NOT scaffolded here — they're rendered directly from
@@ -926,17 +931,20 @@ install_llm_serving() {
 # as a file — see docs/deployment.md §3.1.
 # =============================================================================
 scaffold_cluster_deployment() {
-    # Writes claim files into the deployments repo and, further down, git
-    # commits and PUSHES them. Under --dry-run that is the most consequential
-    # mutation in the whole preflight — it changes a repository other clusters
-    # read. Nothing here is a check, so the whole function is skipped.
-    if [[ "${GENTIAN_DRY_RUN:-0}" == "1" ]]; then
-        info "Dry run: skipping cluster scaffolding (it writes and pushes to the deployments repo)."
-        return 0
+    # The files are only useful inside the checkout they get committed from.
+    # Writing them into a bare directory produces a tree nothing tracks, which
+    # looks like success and installs nothing.
+    if [[ ! -d "${GENTIAN_DEPLOYMENTS_PATH}/.git" ]]; then
+        error "${GENTIAN_DEPLOYMENTS_PATH} is not a git checkout of gentian-deployments."
+        error "  Clone it there first:"
+        error "    git clone ${GENTIAN_DEPLOYMENTS_REPO:-<deployments-repo>} ${GENTIAN_DEPLOYMENTS_PATH}"
+        error "  Or point GENTIAN_DEPLOYMENTS_PATH at an existing checkout."
+        return 1
     fi
-    local kernel_dir="${GENTIAN_DEPLOYMENTS_PATH}/clusters/${GENTIAN_DEPLOYMENTS_CLUSTER}/kernel"
+
+    local kernel_dir="${GENTIAN_DEPLOYMENTS_PATH}/clusters/${GENTIAN_DEPLOYMENTS_CLUSTER_ID}/kernel"
     local stage="${GENTIAN_DEPLOYMENTS_STAGE:-dev}"
-    local cluster="${GENTIAN_DEPLOYMENTS_CLUSTER}"
+    local cluster="${GENTIAN_DEPLOYMENTS_CLUSTER_ID}"
     local domain="${KERNEL_DOMAIN:?KERNEL_DOMAIN must be resolved before scaffold_cluster_deployment}"
     local generated=0
 
@@ -954,12 +962,10 @@ scaffold_cluster_deployment() {
     mkdir -p "${kernel_dir}/claims"
 
     if [[ ! -f "${kernel_dir}/claims/cluster.yaml" ]]; then
-        # Name from GENTIAN_DEPLOYMENTS_CLUSTER + _STAGE. The old literal
-        # "dev-cluster" was really "<stage>-cluster" from when dev was the only
-        # stage, and left prod clusters owning a claim called dev-cluster.
-        # Clusters scaffolded before this keep their existing name — the file is
-        # only written when absent, and every lookup goes through
-        # gentian_cluster_claim_name(), which reads it back from here.
+        # The claim is named GENTIAN_DEPLOYMENTS_CLUSTER_ID + _STAGE. This file
+        # is written only when absent, and gentian_cluster_claim_name() reads
+        # the name back from it, so a cluster keeps whatever name it was
+        # scaffolded with.
         cat > "${kernel_dir}/claims/cluster.yaml" <<EOF
 apiVersion: gentianos.io/v1alpha1
 kind: Cluster
@@ -1035,15 +1041,94 @@ EOF
         generated=1
     fi
 
-    if (( generated )); then
-        (
-            cd "${GENTIAN_DEPLOYMENTS_PATH}"
-            git add "clusters/${cluster}/kernel"
-            git commit -m "Scaffold clusters/${cluster}/kernel (stage=${stage}, kernelDomain=${domain})"
-            git push origin "$(git rev-parse --abbrev-ref HEAD)"
-        )
-        success "Scaffolded and pushed clusters/${cluster}/kernel to gentian-deployments."
-    else
-        info "clusters/${cluster}/kernel already fully scaffolded — nothing to do."
+    # cluster-settings.env holds what KERNEL_DOMAIN and the stage cannot imply:
+    # exposure model, tenancy, mail. The values written are the ones this run
+    # resolved, so the file states the cluster's actual configuration rather
+    # than a set of defaults the operator then has to guess at.
+    if [[ ! -f "${kernel_dir}/cluster-settings.env" ]]; then
+        cat > "${kernel_dir}/cluster-settings.env" <<EOF
+# Runtime settings for cluster ${cluster} (stage ${stage}).
+#
+# KERNEL_DOMAIN is not here — it is authored in claims/cluster.yaml and nowhere
+# else. Every option, including the ones left out below, is documented in
+# gentian-os/cluster-settings.env.template.
+
+# multi — one subdomain and Keycloak realm per tenant. single — one tenant
+# occupies the whole cluster at KERNEL_DOMAIN.
+TENANCY_MODE=${TENANCY_MODE:-multi}
+
+# tunnel — reached through a reverse proxy or tunnel; NODE_IP is not needed.
+# static-ip — DNS points straight at NODE_IP, which is then required.
+NETWORK_MODE=${NETWORK_MODE:-tunnel}
+$(if [[ -n "${NODE_IP:-}" ]]; then printf 'NODE_IP=%s\n' "${NODE_IP}"; else printf '# NODE_IP=203.0.113.10\n'; fi)
+# gateway is the only supported value: Envoy Gateway plus the Gateway API.
+ROUTING_MODE=${ROUTING_MODE:-gateway}
+
+# external — relay through an external SMTP provider; needs EXTERNAL_SMTP_HOST
+# here and SMTP_RELAY_USERNAME/PASSWORD in install.secrets.env. kernel — use
+# in-cluster Postfix/Dovecot, which requires NETWORK_MODE=static-ip.
+MAIL_SERVICE_MODE=${MAIL_SERVICE_MODE:-external}
+$(if [[ -n "${EXTERNAL_SMTP_HOST:-}" ]]; then printf 'EXTERNAL_SMTP_HOST=%s\n' "${EXTERNAL_SMTP_HOST}"; else printf '# EXTERNAL_SMTP_HOST=smtp.example.com\n'; fi)
+# derived — every secret is HKDF-derived from MASTER_PASSWORD, so the whole
+# cluster rotates from one value. random — each secret is independent.
+SECRET_MODE=${SECRET_MODE:-derived}
+
+# Leave unset to use the cluster's default StorageClass.
+$(if [[ -n "${STORAGE_CLASS:-}" ]]; then printf 'STORAGE_CLASS=%s\n' "${STORAGE_CLASS}"; else printf '# STORAGE_CLASS=nfs-csi\n'; fi)
+EOF
+        info "Scaffolded ${kernel_dir}/cluster-settings.env"
+        generated=1
     fi
+
+    if (( generated )); then
+        echo ""
+        success "Wrote clusters/${cluster}/kernel in ${GENTIAN_DEPLOYMENTS_PATH}."
+        info "Nothing has been committed, pushed, or applied. Next:"
+        info "  1. Read and edit clusters/${cluster}/kernel — the claims are what"
+        info "     the cluster becomes, and cluster-settings.env carries the"
+        info "     exposure and mail model."
+        info "  2. Commit and push them to ${GENTIAN_DEPLOYMENTS_BRANCH:-main}."
+        info "  3. Run ./install.sh"
+    else
+        info "clusters/${cluster}/kernel is already complete — nothing written."
+    fi
+}
+
+# =============================================================================
+# require_cluster_deployment — the forward pass's precondition.
+#
+# Installing reads this cluster's claims and values from gentian-deployments, so
+# an absent file is not something to fill in silently: the generated default
+# would decide the cluster's domain, tenancy and exposure model without anyone
+# having read it. Name what is missing and stop.
+# =============================================================================
+require_cluster_deployment() {
+    local cluster="${GENTIAN_DEPLOYMENTS_CLUSTER_ID}"
+    local kernel_dir="${GENTIAN_DEPLOYMENTS_PATH}/clusters/${cluster}/kernel"
+    local missing=() f
+
+    # cluster-settings.env counts: it carries the exposure and mail model, which
+    # nothing else can imply and which silently default to tunnel and external
+    # when the file is absent.
+    for f in claims/cluster.yaml claims/infra-data.yaml claims/suze.yaml \
+             values.yaml cluster-settings.env; do
+        [[ -f "${kernel_dir}/${f}" ]] || missing+=("${f}")
+    done
+
+    if (( ${#missing[@]} == 0 )); then
+        return 0
+    fi
+
+    error "clusters/${cluster}/kernel is incomplete in gentian-deployments."
+    error "  Missing: ${missing[*]}"
+    error "  Path:    ${kernel_dir}"
+    error ""
+    error "  Generate them, review them, then install:"
+    error "    ./install.sh --prepare-deployment"
+    error "    (edit, commit and push clusters/${cluster}/kernel)"
+    error "    ./install.sh"
+    error ""
+    error "  If this cluster's configuration lives elsewhere, check"
+    error "  GENTIAN_DEPLOYMENTS_CLUSTER_ID and GENTIAN_DEPLOYMENTS_PATH."
+    return 1
 }

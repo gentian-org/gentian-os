@@ -13,9 +13,15 @@
 #
 # and implements up to three verbs:
 #
-#   check()   read-only. 0 = already satisfied, 1 = work to do.
+#   check()   read-only. 0 = already satisfied, 1 = work to do,
+#             2 = undefined (not applicable, or not yet answerable).
 #   apply()   make it so. Idempotent.
 #   destroy() reverse it. Idempotent.
+#
+# A check() that guards on config it needs — a feature flag, a token, a routing
+# mode — returns UNDEFINED when that guard fails, never SATISFIED. Both skip on
+# the forward pass, so the distinction costs nothing there; it exists so
+# --status can tell "verified present" apart from "never asked".
 #
 # check() is the load-bearing verb: it reads cluster state and answers whether
 # the step's `provides:` already holds. Because state is read from the cluster
@@ -272,6 +278,26 @@ _has_verb() {
     declare -F "$1" >/dev/null 2>&1
 }
 
+# _step_verdict — run the loaded step's check() and return one of the CHECK_*
+# codes. Call as: `verdict=0; _step_verdict || verdict=$?`.
+#
+# A step with no check() is UNDEFINED rather than MISSING: it has not told us
+# there is work to do, only that it has no way to say. The callers decide what
+# that means for their direction — the forward pass still applies such a step.
+_step_verdict() {
+    local rc=0
+    _has_verb check || return "${CHECK_UNDEFINED}"
+    check || rc=$?
+    case "$rc" in
+        0) return "${CHECK_SATISFIED}" ;;
+        2) return "${CHECK_UNDEFINED}" ;;
+        # Any other nonzero — including a check() that died on `set -e` or a
+        # kubectl that could not reach the API — is work to do. Guessing
+        # "undefined" there would silently skip a step that was never verified.
+        *) return "${CHECK_MISSING}" ;;
+    esac
+}
+
 # run_step_forward <id> <file>
 # Reports check()'s verdict before doing anything, then applies if needed.
 run_step_forward() {
@@ -286,13 +312,23 @@ run_step_forward() {
         return 1
     fi
 
-    if _has_verb check && check; then
-        echo "     check: satisfied  →  skip"
-        return 0
-    fi
-
     if _has_verb check; then
-        echo "     check: not satisfied  →  applying"
+        local verdict=0
+        _step_verdict || verdict=$?
+        case "$verdict" in
+            "${CHECK_SATISFIED}")
+                echo "     check: satisfied  →  skip"
+                return 0 ;;
+            "${CHECK_UNDEFINED}")
+                # Not applicable to this cluster — the feature is off, or there
+                # is no install-time artefact. Skipped for the same reason a
+                # satisfied step is, and named differently so the log does not
+                # claim it verified something.
+                echo "     check: undefined (nothing to do here)  →  skip"
+                return 0 ;;
+            *)
+                echo "     check: not satisfied  →  applying" ;;
+        esac
     else
         # A step with no check() cannot be skipped and cannot be dry-run
         # honestly. Steps that only wait on a condition are the legitimate case.
@@ -325,9 +361,18 @@ run_step_reverse() {
         return 0
     fi
 
-    if _has_verb check && ! check; then
-        echo "     check: already absent  →  skip"
-        return 0
+    # Only a definite MISSING earns a skip. UNDEFINED must still run destroy():
+    # E-01-tenants is the case that matters — its check() has no install-time
+    # artefact to report on, but its destroy() does the whole tenant teardown.
+    # Skipping on a non-answer would leave resources behind; destroy() is
+    # idempotent, so running one that had nothing to do is free.
+    if _has_verb check; then
+        local verdict=0
+        _step_verdict || verdict=$?
+        if [[ "$verdict" == "${CHECK_MISSING}" ]]; then
+            echo "     check: already absent  →  skip"
+            return 0
+        fi
     fi
 
     if [[ "${GENTIAN_DRY_RUN}" == "1" ]]; then
@@ -415,20 +460,21 @@ drive_explain() {
 # answer to "where did this install get to".
 drive_status() {
     discover_steps || return 1
-    local i id file state
+    local i id file state verdict
     echo ""
     for (( i = 0; i < ${#_STEP_IDS[@]}; i++ )); do
         id="${_STEP_IDS[$i]}"
         file="${_STEP_FILES[$i]}"
         step_selected "$id" || continue
         _load_step "$file"
-        if ! _has_verb check; then
-            state="${YELLOW}no check${NC}"
-        elif check; then
-            state="${GREEN}satisfied${NC}"
-        else
-            state="${RED}missing${NC}"
-        fi
+        verdict=0
+        _step_verdict || verdict=$?
+        case "$verdict" in
+            # Green is a claim about the cluster: this was asked, and verified.
+            "${CHECK_SATISFIED}") state="${GREEN}satisfied${NC}" ;;
+            "${CHECK_UNDEFINED}") state="${YELLOW}undefined${NC}" ;;
+            *)                    state="${RED}missing${NC}" ;;
+        esac
         printf '  [%s] %-26s %b\n' "$(step_number_of "$id")" "$(step_label_of "$id")" "$state"
     done
     echo ""

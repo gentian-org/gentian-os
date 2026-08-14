@@ -12,9 +12,13 @@
 # must be destroyed first has to be the last step.
 
 check() {
-    # Always satisfied: there is no install-time artefact to create. Reporting
-    # satisfied keeps it silent on the forward pass.
-    return 0
+    # Never satisfied and never missing: there is no install-time artefact to
+    # look for, because tenants arrive after the install. UNDEFINED keeps it
+    # silent on the forward pass without claiming a fresh cluster has tenants.
+    #
+    # The driver still runs destroy() on an UNDEFINED step, which is what this
+    # one exists for.
+    return "${CHECK_UNDEFINED}"
 }
 
 apply() {

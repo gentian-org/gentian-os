@@ -204,7 +204,7 @@ spec:
               value: {{ $lifecycleDeployments.path | default "/data/gentian-deployments" | quote }}
             - name: GENTIAN_DEPLOYMENTS_REPO
               value: {{ $lifecycleDeployments.repo | default "https://git.example.domain/gentian-deployments" | quote }}
-            - name: GENTIAN_DEPLOYMENTS_CLUSTER
+            - name: GENTIAN_DEPLOYMENTS_CLUSTER_ID
               value: {{ $lifecycleDeployments.cluster | default "default-cluster" | quote }}
             - name: GENTIAN_DEPLOYMENTS_STAGE
               value: {{ $lifecycleDeployments.stage | default (.Values.stage | default "dev") | quote }}

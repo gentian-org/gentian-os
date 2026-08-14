@@ -27,7 +27,11 @@ _oidc_configured() {
 check() {
     # Satisfied when the bootstrap token no longer authenticates. A token that
     # still works is unfinished business, not a completed step.
-    [[ -n "${BAO_TOKEN:-}" ]] || return 0
+    #
+    # No token in this shell is not the same as a revoked one: --status runs
+    # without loading credentials, and reporting "revoked" there would announce
+    # the install's last safety step as done on a cluster that never installed.
+    [[ -n "${BAO_TOKEN:-}" ]] || return "${CHECK_UNDEFINED}"
     ! bao token lookup >/dev/null 2>&1
 }
 

@@ -7,7 +7,9 @@
 # pins: cert-manager
 
 check() {
-    [[ "${INSTALL_CLUSTER_INFRA:-1}" == "1" ]] || return 0
+    # --no-cluster-infra: someone else owns cert-manager, so its presence or
+    # absence is not this installer's verdict to give.
+    [[ "${INSTALL_CLUSTER_INFRA:-1}" == "1" ]] || return "${CHECK_UNDEFINED}"
     kubectl get deployment cert-manager -n cert-manager >/dev/null 2>&1 &&
         kubectl get crd certificates.cert-manager.io >/dev/null 2>&1
 }

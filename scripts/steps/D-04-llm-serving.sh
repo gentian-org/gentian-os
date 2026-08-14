@@ -6,7 +6,9 @@
 # mutates: LLM workloads in platform-kernel
 
 check() {
-    [[ "${LLM_SUPPORT:-false}" == "true" ]] || return 0
+    # LLM serving off for this cluster: no verdict to give about a stack that
+    # was never meant to exist here.
+    [[ "${LLM_SUPPORT:-false}" == "true" ]] || return "${CHECK_UNDEFINED}"
     kubectl get deployment -n platform-kernel \
         -l app.kubernetes.io/name=litellm -o name 2>/dev/null | grep -q .
 }
