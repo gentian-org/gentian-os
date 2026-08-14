@@ -14,7 +14,7 @@ terraform.tfstate.backup
 install.env
 install.secrets.env
 install.env.backup
-install.secrets.env.backup
+*.backup
 
 # Go test binaries (produced by go test -c or go test -o)
 *.test
