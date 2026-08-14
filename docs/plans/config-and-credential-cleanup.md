@@ -1541,10 +1541,27 @@ The mail block carries the relay's *address and transport settings only*. Its cr
 Verified by server-side dry-run against a live API server, so the enums and defaults are known to
 admit.
 
-**10b — Redistribute the rest across existing layers.** Storage class and the LLM/GPU block move
-to layer 3 (`clusters/<name>/kernel/values.yaml`); tenant `LimitRange` and init-job defaults move
-to layer 2a (`profiles/_base.yaml`), since they are identical across this deployment's clusters.
-These are moves into files that already exist, with no new schema.
+**10b — Schema done; the move waits on 10c.** Tracing the consumers changed the shape of this
+step. Storage class, the LLM block and the tenant defaults do not feed the Helm values chain at
+all — every one of them feeds a single **`gentian-cluster-config` ConfigMap**, which Compositions
+read through `function-extra-resources` and which a **shell heredoc renders**. Moving them into
+`values.yaml` would put them somewhere nothing reads.
+
+So the real target is the ConfigMap, and it divides cleanly:
+
+| | Count | Examples |
+|---|---|---|
+| **Declared** — belongs on the claim | ~20 | storage class, mail mode, routing mode, namespaces, tenant defaults, LLM sizing |
+| **Discovered** — read from the cluster at install time | 3 | `kube-apiserver` CIDR, endpoint IP and port, from the `kubernetes` Service and Endpoints |
+
+`XCluster` now carries the whole declared half — `storageClass`, `llm`, `tenantDefaults` join the
+modes, mail, certificates and OIDC blocks added earlier. Every one of those values is now
+**expressible on the claim**, which is what 10b is for.
+
+The move itself is 10c, and it is one change rather than twenty: have the Cluster Composition emit
+`gentian-cluster-config` and delete the heredoc. That needs the three discovered values sourced
+another way — a provider-kubernetes `Object` observing the `kubernetes` Service would do it —
+which is the piece of design 10c still owes.
 
 **10c — Delete the old carriers.** Once Phase 6 gating proves the values are reconciled: delete
 `cluster-settings.env` and its template, `install.secrets.env` and its template, the 16 `.tmpl`

@@ -140,6 +140,74 @@ spec:
                     - random
                   default: derived
 
+                # ── Sizing and placement ─────────────────────────────────
+                # The rest of cluster-settings.env's declared half. Every field
+                # here feeds the gentian-cluster-config ConfigMap that
+                # Compositions read; today a shell heredoc renders it, which is
+                # what §2 prohibits and Phase 10c removes.
+                storageClass:
+                  type: string
+                  description: >
+                    StorageClass for kernel PVCs. Empty means the cluster's
+                    default, which is right for most installs and wrong for any
+                    cluster with more than one.
+                llm:
+                  type: object
+                  description: LLM serving sizing. Hardware-dependent, not stage-dependent.
+                  properties:
+                    enabled:
+                      type: boolean
+                      default: false
+                    gpuTimeSliceReplicas:
+                      type: integer
+                      description: >
+                        How many workloads share one physical GPU. Time slicing,
+                        not partitioning — they contend for the whole device
+                        rather than getting a fraction of it.
+                      default: 1
+                    vllmInstances:
+                      type: string
+                      description: Space-separated vLLM instance IDs; each needs its own sizing block.
+                tenantDefaults:
+                  type: object
+                  description: >
+                    Resource defaults applied to every tenant namespace. Usually
+                    identical across a deployment's clusters, so they belong in
+                    profiles/_base.yaml rather than being restated per cluster —
+                    they are on the claim so a cluster that genuinely differs
+                    can say so.
+                  properties:
+                    limitRange:
+                      type: object
+                      properties:
+                        defaultCpu:
+                          type: string
+                          default: 500m
+                        defaultMemory:
+                          type: string
+                          default: 512Mi
+                        defaultRequestCpu:
+                          type: string
+                          default: 100m
+                        defaultRequestMemory:
+                          type: string
+                          default: 128Mi
+                    initJob:
+                      type: object
+                      properties:
+                        limitsCpu:
+                          type: string
+                          default: 500m
+                        limitsMemory:
+                          type: string
+                          default: 512Mi
+                        requestsCpu:
+                          type: string
+                          default: 100m
+                        requestsMemory:
+                          type: string
+                          default: 128Mi
+
                 # ── OIDC write path ──────────────────────────────────────
                 oidc:
                   type: object
