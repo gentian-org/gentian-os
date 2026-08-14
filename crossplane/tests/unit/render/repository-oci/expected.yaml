@@ -4,13 +4,20 @@ kind: XRepository
 metadata:
   name: infra-charts
 status:
+  artefacts:
+  - credreq-infra-charts
+  - credprobe-infra-charts
+  - argocd-repo-infra-charts
+  - appproject-source-infra-charts
   conditions:
   - lastTransitionTime: "2024-01-01T00:00:00Z"
     message: 'Unready resources: appproject-source-infra-charts, argocd-repo-infra-charts,
-      credreq-infra-charts, and 2 more'
+      credprobe-infra-charts, and 3 more'
     reason: Creating
     status: "False"
     type: Ready
+  credentialMessage: credential present at gentian/registries/infra-charts
+  credentialSatisfied: true
 ---
 apiVersion: kubernetes.crossplane.io/v1alpha2
 kind: Object
@@ -93,6 +100,50 @@ spec:
             metadata:
               labels:
                 argocd.argoproj.io/secret-type: repository
+  providerConfigRef:
+    name: kubernetes
+---
+apiVersion: kubernetes.crossplane.io/v1alpha2
+kind: Object
+metadata:
+  annotations:
+    crossplane.io/composition-resource-name: credprobe-infra-charts
+  generateName: infra-charts-
+  labels:
+    crossplane.io/composite: infra-charts
+  ownerReferences:
+  - apiVersion: gentianos.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XRepository
+    name: infra-charts
+    uid: ""
+spec:
+  forProvider:
+    manifest:
+      apiVersion: external-secrets.io/v1
+      kind: ExternalSecret
+      metadata:
+        labels:
+          gentianos.io/credential-requirement: infra-charts
+        name: credreq-repository-infra-charts
+        namespace: gentian-system
+      spec:
+        data:
+        - remoteRef:
+            key: gentian/registries/infra-charts
+            property: username
+          secretKey: username
+        - remoteRef:
+            key: gentian/registries/infra-charts
+            property: password
+          secretKey: password
+        refreshInterval: 1h
+        secretStoreRef:
+          kind: ClusterSecretStore
+          name: openbao
+        target:
+          creationPolicy: None
   providerConfigRef:
     name: kubernetes
 ---

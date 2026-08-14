@@ -11,6 +11,36 @@ spec:
   mode: Pipeline
   pipeline:
 
+    # ── Is this repository's credential satisfied? ───────────────────────────
+    # ESO maintains the answer as a condition on the probe ExternalSecret this
+    # composition emits below. Fetching it here is the whole of the gate: no
+    # bespoke component polls OpenBao, and nothing holds a token to do so.
+    #
+    # minMatch: 0 because the probe does not exist on the very first
+    # reconcile — the composition has not created it yet. An absent probe is
+    # treated as unsatisfied, so the first pass emits the requirement and the
+    # probe and nothing else, and the second pass emits the consumers once ESO
+    # has had a chance to answer.
+    - step: fetch-credential-probe
+      functionRef:
+        name: function-extra-resources
+      input:
+        apiVersion: extra-resources.fn.crossplane.io/v1beta1
+        kind: Input
+        spec:
+          extraResources:
+            - kind: ExternalSecret
+              into: credentialProbe
+              apiVersion: external-secrets.io/v1
+              type: Selector
+              selector:
+                maxMatch: 1
+                minMatch: 0
+                matchLabels:
+                  - key: gentianos.io/credential-requirement
+                    type: FromCompositeFieldPath
+                    valueFromFieldPath: metadata.name
+
     # ── Emit the credential declaration and every consumer-shaped artefact ────
     # One OpenBao path per repository, one rotation point, N artefacts kept in
     # lockstep. Adding a repository is one claim and no new Composition.
@@ -40,6 +70,25 @@ spec:
                  an ApplicationSet.
             */ -}}
             {{- $url := $spec.endpoints.inCluster }}
+            {{- /*
+                 All-or-nothing per claim. A claim composing five resources
+                 where one consumes a missing credential must create ZERO of
+                 them, not four — otherwise "unsatisfied" degrades into
+                 "half-applied", which is the state a rollback would exist to
+                 clean up. The requirement and its probe are the exception:
+                 they are emitted unconditionally, because they are how an
+                 operator learns what to supply.
+            */ -}}
+            {{- $extra  := index .context "apiextensions.crossplane.io/extra-resources" }}
+            {{- $probes := dig "credentialProbe" list $extra }}
+            {{- $satisfied := false }}
+            {{- range $probes }}
+              {{- range (dig "status" "conditions" list .) }}
+                {{- if and (eq .type "Ready") (eq .status "True") }}
+                  {{- $satisfied = true }}
+                {{- end }}
+              {{- end }}
+            {{- end }}
 
             ---
             # The catalogue entry for this repository's credential.
@@ -71,6 +120,73 @@ spec:
               consumedBy:
                 - kind: XRepository
                   name: {{ $name }}
+
+            ---
+            # The satisfaction probe. creationPolicy: None means ESO resolves the
+            # remote reference and reports SecretSynced without creating a
+            # Secret — observable satisfaction, nothing materialised.
+            apiVersion: kubernetes.crossplane.io/v1alpha2
+            kind: Object
+            metadata:
+              annotations:
+                {{ setResourceNameAnnotation (printf "credprobe-%s" $name) }}
+            spec:
+              forProvider:
+                manifest:
+                  apiVersion: external-secrets.io/v1
+                  kind: ExternalSecret
+                  metadata:
+                    name: credreq-repository-{{ $name }}
+                    namespace: gentian-system
+                    labels:
+                      gentianos.io/credential-requirement: {{ $name }}
+                  spec:
+                    refreshInterval: 1h
+                    secretStoreRef:
+                      name: openbao
+                      kind: ClusterSecretStore
+                    target:
+                      creationPolicy: None
+                    data:
+                      - secretKey: username
+                        remoteRef:
+                          key: {{ $cred.vaultPath | quote }}
+                          property: username
+                      - secretKey: password
+                        remoteRef:
+                          key: {{ $cred.vaultPath | quote }}
+                          property: password
+              providerConfigRef:
+                name: kubernetes
+
+            ---
+            # Status on the composite itself. Emitting the XR's own GVK is how
+            # go-templating writes composite status; the message names the
+            # requirement and the path, so an operator reading `kubectl describe`
+            # learns WHICH credential is blocking rather than that "something is
+            # not Ready".
+            apiVersion: gentianos.io/v1alpha1
+            kind: XRepository
+            status:
+              credentialSatisfied: {{ $satisfied }}
+              {{- if $satisfied }}
+              credentialMessage: "credential present at {{ $cred.vaultPath }}"
+              artefacts:
+                - credreq-{{ $name }}
+                - credprobe-{{ $name }}
+                - argocd-repo-{{ $name }}
+                - appproject-source-{{ $name }}
+              {{- else }}
+              credentialMessage: >-
+                requirement {{ $name }} is unsatisfied: no value at
+                {{ $cred.vaultPath }}. Supply it through the credential manager,
+                or with the installer for phase: bootstrap.
+              artefacts:
+                - credreq-{{ $name }}
+                - credprobe-{{ $name }}
+              {{- end }}
+
+            {{- if $satisfied }}
 
             ---
             # ArgoCD reads repository credentials from Secrets carrying this
@@ -259,6 +375,7 @@ spec:
                           property: password
               providerConfigRef:
                 name: kubernetes
+            {{- end }}
             {{- end }}
 
     - step: auto-ready

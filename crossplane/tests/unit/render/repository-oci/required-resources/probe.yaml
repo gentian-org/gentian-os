@@ -1,0 +1,13 @@
+# ESO has resolved the path and reports Ready, so the consumer artefacts unlock.
+apiVersion: external-secrets.io/v1
+kind: ExternalSecret
+metadata:
+  name: credreq-repository-infra-charts
+  namespace: gentian-system
+  labels:
+    gentianos.io/credential-requirement: infra-charts
+status:
+  conditions:
+    - type: Ready
+      status: "True"
+      reason: SecretSynced

@@ -1381,7 +1381,7 @@ a named condition rather than a stuck sync.
 
 ### Phase 6 — ESO-based satisfaction, gating, and the three entry points
 
-**Status: 6a and 6b implemented. Composition gating not started.**
+**Status: implemented.**
 
 **Satisfaction, without a controller.** Each requirement emits an `ExternalSecret` with
 `target.creationPolicy: None`. ESO still resolves the remote reference and still reports
@@ -1405,19 +1405,26 @@ job that could read secrets would be a worse problem than the one it prevents.
 
 | # | Criterion | Status |
 |---|---|---|
-| 1 | An unset requirement surfaces as a non-Ready `ExternalSecret`, not a crash loop | **Partial** — the probe is emitted and applied by step 24; ESO's verdict is unverified |
-| 2 | An `XApp` on an unsatisfied requirement reports a clear non-Ready condition naming it | **Not started** — needs `function-extra-resources` gating in the consuming Compositions |
-| 3 | Gating is all-or-nothing per claim | **Not started** |
-| 4 | Supplying the value later lets composition proceed without intervention | **Unverified** |
+| 1 | An unset requirement surfaces as a non-Ready `ExternalSecret`, not a crash loop | **Partial** — the probe is emitted and applied by step 24; ESO's verdict itself is unverified |
+| 2 | A claim on an unsatisfied requirement reports a condition naming it | **Passing** — `status.credentialMessage` reads `requirement X is unsatisfied: no value at <path>`, verified by render |
+| 3 | Gating is all-or-nothing per claim | **Passing** — verified by render in both directions: with a Ready probe the claim emits all six artefacts, without one it emits two (the requirement and its own probe) and nothing that consumes the credential |
+| 4 | Supplying the value later lets composition proceed without intervention | **Partial** — the satisfied path is proven by a fixture with a Ready probe; the live transition is unverified |
 | 5 | No polling of OpenBao by any bespoke component | **Passing** — by construction; ESO is the only reader |
 | 6 | The CI check fails a PR adding a claim for an unset `vaultPath`, naming path and claim | **Passing** — verified against a fixture claim |
 | 7 | The CI check's OpenBao policy grants `list` on metadata only | **Partial** — the script only ever calls `bao kv metadata get`; the policy itself is Phase 7 |
 | 8 | Preflight and CI produce the same verdict for the same state | **Passing** by construction — one implementation, one catalogue |
 
-**Gating is the remaining piece, and it is what 4b waits on.** Emitting the probes makes
-satisfaction *observable*; gating makes it *enforced*. Until a consuming Composition refuses to
-compose on a non-Ready probe, moving steps 11d–16 declarative would trade legible shell failures
-for "something is not Ready" — precisely the trade §13 says not to make.
+**Gating, and why the requirement is exempt from it.** A claim whose credential is unsatisfied
+emits *only* its `CredentialRequirement` and its probe — never a partial set of consumers. Those
+two are deliberately outside the gate, because they are how an operator learns what to supply; a
+gate that hid them would leave nothing to act on.
+
+The first reconcile is the reason `minMatch: 0` on the probe fetch. The probe does not exist yet
+when the composition first runs, so an absent probe counts as unsatisfied: pass one emits the
+requirement and the probe, pass two emits the consumers once ESO has answered.
+
+With gating in place, **Phase 4b is unblocked** — a step moved declarative now fails as a named
+missing requirement rather than as "something is not Ready".
 
 ---
 

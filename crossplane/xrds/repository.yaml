@@ -131,6 +131,12 @@ spec:
                   description: >
                     Mirrors the emitted ExternalSecret's sync status. ESO is the
                     satisfaction probe; nothing here polls OpenBao.
+                credentialMessage:
+                  type: string
+                  description: >
+                    Names the unsatisfied requirement and its path, so
+                    `kubectl describe` answers "which credential is blocking"
+                    rather than "something is not Ready".
                 artefacts:
                   type: array
                   description: Names of the consumer artefacts emitted.

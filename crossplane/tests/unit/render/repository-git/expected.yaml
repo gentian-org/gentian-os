@@ -4,52 +4,24 @@ kind: XRepository
 metadata:
   name: deployments
 status:
+  artefacts:
+  - credreq-deployments
+  - credprobe-deployments
   conditions:
   - lastTransitionTime: "2024-01-01T00:00:00Z"
-    message: 'Unready resources: appproject-source-deployments, argocd-repo-deployments,
-      credreq-deployments, and 1 more'
+    message: 'Unready resources: credprobe-deployments, credreq-deployments'
     reason: Creating
     status: "False"
     type: Ready
+  credentialMessage: 'requirement deployments is unsatisfied: no value at gentian/repositories/deployments.
+    Supply it through the credential manager, or with the installer for phase: bootstrap.'
+  credentialSatisfied: false
 ---
 apiVersion: kubernetes.crossplane.io/v1alpha2
 kind: Object
 metadata:
   annotations:
-    crossplane.io/composition-resource-name: appproject-source-deployments
-  generateName: deployments-
-  labels:
-    crossplane.io/composite: deployments
-  ownerReferences:
-  - apiVersion: gentianos.io/v1alpha1
-    blockOwnerDeletion: true
-    controller: true
-    kind: XRepository
-    name: deployments
-    uid: ""
-spec:
-  forProvider:
-    manifest:
-      apiVersion: argoproj.io/v1alpha1
-      kind: AppProject
-      metadata:
-        name: gentianos-tenants
-        namespace: argocd
-      spec:
-        sourceRepos:
-        - https://git.internal.example/gentian-deployments
-  managementPolicies:
-  - Observe
-  - Create
-  - Update
-  providerConfigRef:
-    name: kubernetes
----
-apiVersion: kubernetes.crossplane.io/v1alpha2
-kind: Object
-metadata:
-  annotations:
-    crossplane.io/composition-resource-name: argocd-repo-deployments
+    crossplane.io/composition-resource-name: credprobe-deployments
   generateName: deployments-
   labels:
     crossplane.io/composite: deployments
@@ -66,8 +38,10 @@ spec:
       apiVersion: external-secrets.io/v1
       kind: ExternalSecret
       metadata:
-        name: repo-deployments
-        namespace: argocd
+        labels:
+          gentianos.io/credential-requirement: deployments
+        name: credreq-repository-deployments
+        namespace: gentian-system
       spec:
         data:
         - remoteRef:
@@ -83,16 +57,7 @@ spec:
           kind: ClusterSecretStore
           name: openbao
         target:
-          name: repo-deployments
-          template:
-            data:
-              password: '{{ .password }}'
-              type: git
-              url: https://git.internal.example/gentian-deployments
-              username: '{{ .username }}'
-            metadata:
-              labels:
-                argocd.argoproj.io/secret-type: repository
+          creationPolicy: None
   providerConfigRef:
     name: kubernetes
 ---
@@ -132,49 +97,3 @@ spec:
   validate:
     type: git-https
   vaultPath: gentian/repositories/deployments
----
-apiVersion: kubernetes.crossplane.io/v1alpha2
-kind: Object
-metadata:
-  annotations:
-    crossplane.io/composition-resource-name: git-credentials-deployments
-  generateName: deployments-
-  labels:
-    crossplane.io/composite: deployments
-  ownerReferences:
-  - apiVersion: gentianos.io/v1alpha1
-    blockOwnerDeletion: true
-    controller: true
-    kind: XRepository
-    name: deployments
-    uid: ""
-spec:
-  forProvider:
-    manifest:
-      apiVersion: external-secrets.io/v1
-      kind: ExternalSecret
-      metadata:
-        name: deployments-git-credentials
-        namespace: gentian-system
-      spec:
-        data:
-        - remoteRef:
-            key: gentian/repositories/deployments
-            property: username
-          secretKey: username
-        - remoteRef:
-            key: gentian/repositories/deployments
-            property: password
-          secretKey: password
-        refreshInterval: 1h
-        secretStoreRef:
-          kind: ClusterSecretStore
-          name: openbao
-        target:
-          name: deployments-git-credentials
-          template:
-            data:
-              .git-credentials: |
-                https://{{ .username }}:{{ .password }}@git.internal.example/gentian-deployments
-  providerConfigRef:
-    name: kubernetes
