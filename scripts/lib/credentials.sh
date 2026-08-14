@@ -75,7 +75,8 @@ catalogue_field_attr() {
 _env_var_for() {
     case "$1/$2" in
         master-password/password)          echo MASTER_PASSWORD ;;
-        master-password/salt)              echo DERIVATION_SALT ;;
+        # No mapping for the salt: it is generated after collection, not
+        # prompted for. A mapping here would put it in the prompt loop.
         deployments-repository/username)   echo GENTIAN_DEPLOYMENTS_GIT_USERNAME ;;
         deployments-repository/token)      echo GENTIAN_DEPLOYMENTS_GIT_TOKEN ;;
         infra-chart-registry/username)     echo REGISTRY_USER ;;

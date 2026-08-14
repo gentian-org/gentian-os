@@ -1226,10 +1226,17 @@ taxonomy predicts: the human-supplied class is small, and everything else needs 
 | Class | Count | Members |
 |---|---|---|
 | **External** — needs a human | 6 | Deployments repo token, master password (+salt), infra chart registry user/password, Cloudflare DNS token, SMTP relay credentials, ArgoCD GitHub webhook secret |
-| **Derived** — HMAC-SHA256 of master password + salt | 16 | 11 kernel credentials (`postgres` ×4, `mariadb`, `minio`, `redis`, `openfga`, `keycloak`, `dovecot` ×2), plus `VLLM_API_KEY`, `LITELLM_MASTER_KEY`, and three per-service OIDC client secrets (ArgoCD, portal BFF, LiteLLM SSO) |
+| **Derived** — HMAC-SHA256 of master password + salt, *when `secretMode: derived`* | 16 | 11 kernel credentials (`postgres` ×4, `mariadb`, `minio`, `redis`, `openfga`, `keycloak`, `dovecot` ×2), plus `VLLM_API_KEY`, `LITELLM_MASTER_KEY`, and three per-service OIDC client secrets (ArgoCD, portal BFF, LiteLLM SSO) |
 | **Generated** — produced at provision time | 7 | `DERIVATION_SALT`, `BAO_TOKEN`, `AUTOUNSEAL_TOKEN`, `TRANSIT_ROOT_TOKEN`, `TRANSIT_UNSEAL_KEY`, `ARGOCD_TOKEN`, `PORTAL_LOGIN_PASSWORD` |
 | **Config, not secret** | ~40 | Cluster modes, mail endpoints, LLM sizing, tenant defaults, repo pointers — destinations in §2 |
 | **Internal** | remainder | Script locals, colour codes, loaded-guards, timeouts |
+
+The derived class is conditional, and §15 depends on the distinction: under
+`secretMode: random` those sixteen are `openssl rand` output with no relationship to the master
+password, so nothing about them is reproducible. The salt is in the **generated** class, not the
+external one — it is produced at first install and stored beside the password, never supplied.
+Listing it as a field in `credentials.yaml` made the installer demand it: a non-interactive
+install aborted asking for `DERIVATION_SALT` and an interactive one asked a human to invent one.
 
 **Bootstrap-blocking set: four requirements** — deployments repo token, master password, infra
 chart registry, Cloudflare DNS token. The last two are `optional: true`, so a cluster pulling only

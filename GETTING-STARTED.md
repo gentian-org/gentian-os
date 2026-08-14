@@ -116,13 +116,29 @@ It asks for four things, two of which are optional:
 | | Required | What it is |
 |---|---|---|
 | Deployments repository token | yes | Read access to the repository above |
-| Master password | yes | At least 16 characters. Every database user, service account and app password in the cluster is derived from it |
+| Master password | yes | At least 16 characters. Under the default `secretMode`, kernel credentials are derived from it — see below |
 | Chart registry credentials | no | Only if you pull infrastructure charts from a private registry |
 | Cloudflare DNS token | no | Only if you want a wildcard TLS certificate via DNS-01 |
 
-> **The master password is the one to look after.** Losing it does not lock you
-> out of the cluster, but every derived credential is reproducible from it, so a
-> rebuild without it produces different credentials everywhere.
+**What the master password actually does** depends on the cluster's
+`secretMode`, which is a field on the `Cluster` claim:
+
+| `secretMode` | Kernel credentials are | Reproducible on a rebuild? |
+|---|---|---|
+| `derived` (default) | `HMAC-SHA256` of the master password **and** a per-cluster salt | Yes — with **both** |
+| `random` | Generated once by `openssl rand`, then stored | **No.** The master password reproduces nothing; it only guards the paths |
+
+The salt is generated at first install, not chosen, and stored in OpenBao beside
+the password itself. That has a consequence worth planning for:
+
+> Under `derived`, reproducing a cluster's credentials needs the master password
+> **and** the salt. The salt lives only in OpenBao — so a disaster that loses
+> OpenBao's storage also loses the salt, and the master password alone will not
+> reproduce anything. If reproducibility is part of your recovery plan, back up
+> `gentian-os/kernel/internal/master-password` (both keys), not just the
+> password you typed.
+
+Under `random` there is nothing to reproduce; recovery means restoring OpenBao.
 
 ---
 
