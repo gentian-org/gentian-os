@@ -70,6 +70,11 @@ phase, so a new step only ever affects its own phase.
 ./install.sh --dry-run    # run the checks, print the plan, apply nothing
 ```
 
+None of the three collects a credential. `--dry-run` runs the same preflight as
+an install except for that: it applies nothing, and no step's `check()` reads a
+credential, so it has everything it needs to print the plan. The install
+collects them; the preview does not.
+
 `--explain` needs no cluster connection. It reads the step headers, so it cannot
 drift from what will actually run.
 
@@ -107,6 +112,25 @@ Everything you supply belongs to one of three places.
 `install.env` is the only non-secret file the installer reads from local disk.
 [docs/deployment.md](deployment.md) covers the layering inside
 `gentian-deployments`.
+
+### Which credentials the installer handles
+
+`credentials.yaml` gives every requirement a `phase`, and the phase decides who
+asks for it:
+
+| `phase` | Asked by | Why |
+|---|---|---|
+| `bootstrap` | The installer, at the prompt | The cluster does not exist yet, so nothing on it can |
+| `runtime` | The credential manager, once the cluster runs | It can validate, record who set it, and gate the claims that need it |
+
+The bootstrap set is deliberately small and every member is validatable with
+`curl` or `openssl` alone. A credential needing an SDK or a signing algorithm is
+`runtime` by that fact, and the shell never sees it — which is what stops
+credential logic accumulating in the installer.
+
+The manager holds no OpenBao token of its own: it exchanges the caller's
+Keycloak token for a short-lived one, so the write carries a human identity into
+the audit device. It has no endpoint that returns a value.
 
 ### What the master password does
 

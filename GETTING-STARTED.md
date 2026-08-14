@@ -93,25 +93,51 @@ stops, so a cluster is never configured by a default nobody read.
 ./install.sh --dry-run
 ```
 
-Runs every check, prints what it would do, and changes nothing.
+Runs every step's check against the cluster and prints what it would do. It
+collects no credentials and changes nothing, so run it before you have gathered
+a single secret — it is how you find out what the install intends.
 
-## 7. Install
+## 7. Have the credentials ready
+
+The install asks for these, validates each against the system it belongs to, and
+stops before touching the cluster if any fail.
+
+| | Required | What it is |
+|---|---|---|
+| `deployments-repository` | yes | Read access to the repository from step 1 |
+| `master-password` | yes | At least 16 characters |
+| `infra-chart-registry` | no | Only for a private chart registry |
+| `acme-dns-cloudflare` | no | Needed by `issuerMode: acme-dns01`, the default — see below |
+
+**Nothing is written to this machine.** Your answers stay in the installer's
+memory for the run and reach OpenBao once it exists, at `B-09-seed-secrets`. A
+later run recovers them from OpenBao instead of asking again. Use
+`install.secrets.env` only for an unattended run — and note that the installer
+loads it whenever it exists, so a copy left from another cluster answers the
+prompts for you, with that cluster's values.
+
+**Everything else is supplied after the cluster is up, not now.** The SMTP relay
+and the ArgoCD webhook secret are `phase: runtime`: they belong to the
+credential manager on the cluster, and step 12 is where they get set. Only the
+four above block a bootstrap.
+
+**The Cloudflare token is only optional if this cluster's issuer does not need
+it.** Under the default `acme-dns01`, DNS-01 issues every kernel certificate,
+not just the wildcard, so an absent or rejected token leaves the cluster with no
+working TLS. Set `certificates.issuerMode` on the Cluster claim to `acme-http01`
+(public DNS, port 80 reachable, no wildcards) or `self-signed` (internal
+domains) if you do not want to supply one.
+
+If a value is rejected, the installer names where it came from and asks for a
+replacement rather than aborting.
+
+## 8. Install
 
 ```bash
 ./install.sh
 ```
 
-It asks for the credentials below, validates each against the system it belongs
-to, and stops before touching the cluster if any fail.
-
-| | Required | What it is |
-|---|---|---|
-| Deployments repository token | yes | Read access to the repository from step 1 |
-| Master password | yes | At least 16 characters |
-| Chart registry credentials | no | Only for a private chart registry |
-| Cloudflare DNS token | no | Only for a wildcard certificate via DNS-01 |
-
-Then it works through the steps, reporting each before acting:
+It works through the steps, reporting each before acting:
 
 ```
 [A-05] cert-manager      provides: cert-manager controller and its CRDs
@@ -119,7 +145,7 @@ Then it works through the steps, reporting each before acting:
      ✓ 34s
 ```
 
-## 8. Save the OpenBao keys when they appear
+## 9. Save the OpenBao keys when they appear
 
 Two steps print keys you cannot recover later:
 
@@ -131,7 +157,7 @@ They are also written to `/tmp/openbao-transit-init.json` and
 password manager before you continue.** After this the primary auto-unseals on
 every restart, which is why these are easy to lose.
 
-## 9. Export the recovery kit
+## 10. Export the recovery kit
 
 Do this now, while everything is still in the shell that installed it.
 
@@ -167,7 +193,7 @@ The kit does **not** back up your data, and it does not restore OpenBao — a
 fresh instance issues its own unseal material. It is only the part that nothing
 else can rebuild.
 
-## 10. Check it worked
+## 11. Check it worked
 
 ```bash
 ./install.sh --status
@@ -194,6 +220,25 @@ and ArgoCD keep reconciling after it exits:
 kubectl get managed
 kubectl get application,applicationset -n argocd
 ```
+
+## 12. Supply the runtime credentials
+
+The four from step 6 got the cluster up. The rest are supplied now, through the
+credential manager the cluster runs — the SMTP relay, the ArgoCD webhook secret,
+and anything a claim you add later declares.
+
+`make check-credentials` lists what is outstanding. A claim waiting on one says
+so itself, and resumes on its own when the value arrives; nothing has to be
+re-run.
+
+The manager serves `/v1/credentials` from the operator. It validates a value
+against its own endpoint before storing it, so a bad token is a rejection rather
+than a stalled provisioning run an hour later. It writes with **your** Keycloak
+identity, not a service token, so the audit device records who set what. It
+never returns a stored value — existence, who set it and when, and the last
+validation result, and nothing more.
+
+Lost credentials are rotated, not recovered.
 
 ---
 
