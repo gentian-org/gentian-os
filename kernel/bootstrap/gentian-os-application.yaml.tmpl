@@ -63,7 +63,7 @@ metadata:
     # When %GENTIAN_OS_BRANCH% is a release tag rather than a branch, no
     # candidate matches and the pinned image is left alone — which is what a
     # pinned release should do.
-    argocd-image-updater.argoproj.io/image-list: gentianos=ghcr.io/gentian-org/gentian-os
+    argocd-image-updater.argoproj.io/image-list: gentianos=${GENTIAN_OS_IMAGE_REPOSITORY}
     argocd-image-updater.argoproj.io/gentianos.allow-tags: regexp:^%GENTIAN_OS_BRANCH%-[0-9a-f]{7,}$
     argocd-image-updater.argoproj.io/gentianos.update-strategy: newest-build
     argocd-image-updater.argoproj.io/gentianos.helm.image-name: image.repository
@@ -154,10 +154,17 @@ spec:
   #   - $deploy/clusters/%CLUSTER%/kernel/values.yaml  (cluster deltas, incl. kernelDomain)
   # image.tag is further overridden in-cluster by
   # argocd-image-updater via the Application's Helm parameters.
-  - repoURL: https://github.com/gentian-org/gentian-os
+  - repoURL: %GENTIAN_OS_REPO%
     targetRevision: %GENTIAN_OS_BRANCH%
     path: charts/gentian-os
     helm:
+      # image.repository is passed rather than left to the chart default, so a
+      # mirrored install redirects images as well as Git. Without it, an
+      # air-gapped cluster clones from its mirror and then tries to pull the
+      # operator from the vendor's registry — Git redirected, images not.
+      parameters:
+      - name: image.repository
+        value: %GENTIAN_OS_IMAGE_REPOSITORY%
       valueFiles:
       - $deploy/profiles/_base.yaml
       - $deploy/profiles/%STAGE%.yaml

@@ -347,7 +347,13 @@ handoff_gentian_os_to_argocd() {
     local tmpl="${SCRIPT_DIR}/kernel/bootstrap/gentian-os-application.yaml.tmpl"
     local rendered
     rendered="$(mktemp)"
+    # Provenance defaults to the public origin, so an install that says nothing
+    # behaves as before; a mirrored install sets these in install.env (§2).
+    local os_repo="${GENTIAN_OS_REPO:-https://github.com/gentian-org/gentian-os}"
+    local os_image="${GENTIAN_OS_IMAGE_REPOSITORY:-ghcr.io/gentian-org/gentian-os}"
     sed -e "s|%GENTIAN_OS_BRANCH%|${GENTIAN_OS_BRANCH}|g" \
+        -e "s|%GENTIAN_OS_REPO%|${os_repo}|g" \
+        -e "s|%GENTIAN_OS_IMAGE_REPOSITORY%|${os_image}|g" \
         -e "s|%DEPLOYMENTS_REPO%|${GENTIAN_DEPLOYMENTS_REPO}|g" \
         -e "s|%DEPLOYMENTS_BRANCH%|${GENTIAN_DEPLOYMENTS_BRANCH}|g" \
         -e "s|%CLUSTER%|${cluster}|g" \
@@ -358,6 +364,8 @@ handoff_gentian_os_to_argocd() {
     info "  operator branch:    ${GENTIAN_OS_BRANCH}"
     info "  deployments repo:   ${GENTIAN_DEPLOYMENTS_REPO}"
     info "  deployments branch: ${GENTIAN_DEPLOYMENTS_BRANCH}"
+    info "  operator repo:      ${os_repo}"
+    info "  operator image:     ${os_image}"
     info "  deployments cluster:${cluster}"
     info "  deployments stage:  ${stage}"
     kubectl apply -f "$rendered"
