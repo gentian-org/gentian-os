@@ -1589,20 +1589,27 @@ than being artificially deferred.
 
 The compatibility layer and the checks that keep it honest. Migrating the call sites is Phase 13.
 
-**Scaffolding**
-- `scripts/lib/compat.sh` providing `sed_inplace()` and any other BSD/GNU divergence helper the
-  call-site audit turns up, each with a test exercising both behaviours.
-- CI runs `make lint-shell` on `macos-latest` as well as Linux.
-- A lint that fails on bash 4+ constructs (`declare -A`, `mapfile`, `${var^^}`), so the eight
-  known sites cannot be joined by a ninth while Phase 13 is in flight.
-- The four target-scope properties in §8 asserted mechanically in CI.
+**Status: implemented.**
 
-**Acceptance**
-- The bash-4 lint fails today, naming all eight known sites — a lint that passes before the work
-  is done is not enforcing anything.
-- `sed_inplace()` produces identical results under BSD and GNU `sed`, proven by a test run on
-  both CI platforms.
-- The macOS CI job runs and reports, even while it still fails.
+`scripts/lib/compat.sh` provides `sed_inplace`, `to_upper`, `to_lower` and `xargs_r`.
+`scripts/lint-portability.sh` reports violations by class with a fix for each, and CI gains a
+`macos-latest` job.
+
+`sed_inplace` writes to a temporary file and cats it back rather than detecting which `sed` is
+present — detection is one more thing to get wrong on a platform nobody tests on. `cat` over `mv`
+so the destination keeps ownership, permissions and hard links, which matters for the one site
+editing a root-owned kubelet arg file.
+
+| # | Criterion | Status |
+|---|---|---|
+| 1 | The lint fails today, naming the remaining sites | **Passing** — reports 25 across five classes and exits non-zero |
+| 2 | `sed_inplace` behaves identically under BSD and GNU | **Partial** — verified under GNU, including that permissions survive; the BSD half runs in the new macOS job but has not been observed |
+| 3 | The macOS CI job runs and reports while still failing | **Passing** — `continue-on-error`, running the lint and `install.sh --explain` under stock `/bin/bash` 3.2 |
+
+The macOS job is separate from `lint` deliberately. It is expected to fail until Phase 13, and
+burying that in the main lint job would either block every merge or teach everyone to ignore a red
+X. The lint job also gained step-contract validation and catalogue parity, which were previously
+enforced only locally.
 
 ---
 
@@ -1620,10 +1627,22 @@ templated, and third-party repoURLs are left alone.
 `GENTIAN_OS_IMAGE_REPOSITORY` is **not** done — the operator's image still comes from a hardcoded
 registry, so a mirrored install redirects Git but not images.
 
-**12b — CPU architecture (complete here).** A lint rejecting per-architecture digest pins,
-plus the fix it demands: manifest-list digests in `charts/infra/mariadb/values.yaml`, which pins
-`11.1.2-jammy@sha256:b6440c…` in two places today, and a buildx matrix producing `linux/amd64`
-and `linux/arm64`. There is no interface to define here, so deferring it would be ceremony.
+**12b — CPU architecture. Implemented.** `charts/infra/mariadb/values.yaml` pinned
+`sha256:b6440c…` in two places; querying Docker Hub confirmed it is a **single** manifest, so the
+image could not be pulled on arm64 at all. Replaced with `sha256:2403cc…`, the list digest for the
+same tag, which publishes amd64, arm64, ppc64le and s390x.
+
+Pinned differently, not dropped. Dropping the digest fixes arm64 by giving up the supply-chain
+guarantee a digest exists for; a list digest keeps both.
+
+`scripts/lint-image-digests.sh` keeps it fixed. A list digest and a single-arch digest are
+indistinguishable strings, so the lint has to ask the registry — which makes it network-dependent,
+its own target, and deliberately tolerant of an unreachable registry. A lint that fails on a flaky
+network teaches people to ignore it.
+
+The operator image cross-compiles (`FROM --platform=$BUILDPLATFORM`, `GOARCH=${TARGETARCH}`) and
+CI builds both platforms with Buildx set up explicitly — without it the default builder ignores
+`platforms:` and silently produces an amd64-only image, the same failure mode as the digest pin.
 
 **12c — Trust anchor (interface).** Add `XCluster.spec.certificates.issuerMode` as an enum over
 `acme-dns01`, `acme-http01`, `private-ca`, `self-signed`, and make `05-cluster-issuers` read it
