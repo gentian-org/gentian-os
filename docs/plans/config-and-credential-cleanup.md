@@ -1259,8 +1259,8 @@ catalogue; `scripts/gen-credential-requirements.py` renders it into
 
 | # | Criterion | Status |
 |---|---|---|
-| 1 | CRD applies cleanly; schema rejects a requirement lacking `vaultPath` or `fields` | **Partial** — both are required with `MinLength`/`MinItems` in the Go type and the generated CRD; not yet applied to a cluster |
-| 2 | `phase` and `scope` are enums, invalid values rejected at admission | **Partial** — declared as `+kubebuilder:validation:Enum`; admission untested |
+| 1 | CRD applies cleanly; schema rejects a requirement lacking `vaultPath` or `fields` | **Passing** — verified by server-side dry-run: a missing `vaultPath` gives `Required value`, an empty `fields` gives `should have at least 1 items` |
+| 2 | `phase` and `scope` are enums, invalid values rejected at admission | **Passing** — `phase: whenever` is rejected with `Unsupported value ... supported values: "bootstrap", "runtime"` |
 | 3 | CI fails when `credentials.yaml` is edited without regenerating | **Passing** — `--check` verified against a tampered target |
 | 4 | Every Phase 1 external credential has a requirement | **Passing** — all six |
 | 5 | No controller was written | **Passing** — satisfaction comes from ESO sync status |
@@ -1474,10 +1474,17 @@ shell-rendered artefacts, not the layering.
 
 Three parts with different dependencies.
 
-**10a — Extend the `XCluster` schema.** `crossplane/xrds/cluster.yaml` today declares only
-`kernelDomain`, `masterPasswordSecretRef`, `openbao`, and `argocd`. Add only the groups §2 assigns
-to layer 4 — cluster modes and mail — because those are consumed directly by Compositions.
-Depends only on Phase 0a and can land early.
+**10a — Extend the `XCluster` schema. Implemented.** `crossplane/xrds/cluster.yaml` now carries
+the groups §2 assigns to layer 4: `tenancyMode`, `networkMode`, `routingMode`, `secretMode`, and a
+`mail` object. Those are the ones Compositions consume directly; the rest of `cluster-settings.env`
+belongs to layers 2a and 3 and is 10b.
+
+The mail block carries the relay's *address and transport settings only*. Its credentials are the
+`smtp-relay` requirement in `credentials.yaml` — a claim may carry an OpenBao path, never a value
+(§2, Rules), and here it does not even need the path because ESO resolves it by requirement name.
+
+Verified by server-side dry-run against a live API server, so the enums and defaults are known to
+admit.
 
 **10b — Redistribute the rest across existing layers.** Storage class and the LLM/GPU block move
 to layer 3 (`clusters/<name>/kernel/values.yaml`); tenant `LimitRange` and init-job defaults move

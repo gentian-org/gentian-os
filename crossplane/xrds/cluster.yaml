@@ -99,6 +99,78 @@ spec:
                       description: >
                         ACME account e-mail for Let's Encrypt. Defaults to
                         "admin@{kernelDomain}" when omitted.
+                # ── Cluster modes ────────────────────────────────────────
+                # Consumed directly by Compositions, which is why these live on
+                # the claim rather than in the Helm values chain. Everything
+                # here came from cluster-settings.env, a shell file the
+                # installer read and no reconciler could see (§2).
+                tenancyMode:
+                  type: string
+                  description: Whether the cluster hosts one tenant or many.
+                  enum:
+                    - single
+                    - multi
+                  default: multi
+                networkMode:
+                  type: string
+                  description: >
+                    How traffic reaches the cluster. tunnel sits behind a
+                    reverse proxy and needs no reachable node IP; static-ip
+                    requires one and a load balancer in front of it.
+                  enum:
+                    - tunnel
+                    - static-ip
+                  default: tunnel
+                routingMode:
+                  type: string
+                  description: Which ingress implementation kernel routes use.
+                  enum:
+                    - gateway
+                    - ingress
+                  default: gateway
+                secretMode:
+                  type: string
+                  description: >
+                    derived reproduces every kernel credential by HMAC-SHA256 of
+                    the master password, so a rebuild yields the same values.
+                    random generates them once, which breaks that property and
+                    is only for clusters that never rebuild.
+                  enum:
+                    - derived
+                    - random
+                  default: derived
+
+                # ── Mail ─────────────────────────────────────────────────────
+                mail:
+                  type: object
+                  description: >
+                    Where the cluster sends mail. The relay's credentials are
+                    NOT here — they are the smtp-relay CredentialRequirement,
+                    and this carries only its address and transport settings.
+                  properties:
+                    serviceMode:
+                      type: string
+                      description: >
+                        external relays through an upstream provider; kernel
+                        runs Postfix in-cluster.
+                      enum:
+                        - external
+                        - kernel
+                      default: external
+                    host:
+                      type: string
+                      description: Relay hostname. Required when serviceMode is external.
+                    port:
+                      type: integer
+                      default: 587
+                    ssl:
+                      type: boolean
+                      description: Implicit TLS on connect, as opposed to STARTTLS.
+                      default: false
+                    starttls:
+                      type: boolean
+                      default: true
+
             status:
               type: object
               properties:
