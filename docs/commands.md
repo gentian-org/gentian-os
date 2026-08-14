@@ -106,7 +106,7 @@ Render and apply the active tenant set manually (optional):
 kubectl apply -k gentian-deployments/clusters/<cluster>/tenants/demo
 ```
 
-There's no `--env`/`--stage` flag to target another stage — `GENTIAN_DEPLOYMENTS_CLUSTER`
+There's no `--env`/`--stage` flag to target another stage — `GENTIAN_DEPLOYMENTS_CLUSTER_ID`
 already selects a cluster that's pinned to exactly one stage. To promote a
 tenant to a different stage, promote it to a *different cluster*'s
 `definitions/` tree instead (see [deployment.md](deployment.md) §6.3).
@@ -272,7 +272,7 @@ A cluster's stage (`dev`, `staging`, `prod`) is fixed at bootstrap via
 `GENTIAN_DEPLOYMENTS_STAGE` in `install.env` (see
 [deployment.md](deployment.md) §1) — `apps`/`tenants` commands don't take a
 `--env`/`--stage` flag; they always target the one cluster selected by
-`GENTIAN_DEPLOYMENTS_CLUSTER`.
+`GENTIAN_DEPLOYMENTS_CLUSTER_ID`.
 
 ## 7. Retrieve Admin Credentials
 

@@ -152,7 +152,7 @@ The only non-secret file the installer reads from the local filesystem. It answe
 # Where the configuration lives
 GENTIAN_DEPLOYMENTS_REPO=https://github.com/gentian-org/gentian-deployments
 GENTIAN_DEPLOYMENTS_BRANCH=main
-GENTIAN_DEPLOYMENTS_CLUSTER=default-cluster
+GENTIAN_DEPLOYMENTS_CLUSTER_ID=default-cluster
 GENTIAN_DEPLOYMENTS_STAGE=dev
 GENTIAN_APPS_REPO=https://github.com/gentian-org/gentian-apps
 GENTIAN_APPS_BRANCH=main

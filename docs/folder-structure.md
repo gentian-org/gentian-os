@@ -148,11 +148,12 @@ Configuration surfaces at the repo root:
 | `authz/model/v0/` | The OpenFGA authorization model (`model.fga`, `model.json`) and its test suite. Embedded into the operator by `internal/authz/model_embed.go` — the version directory is the migration unit. |
 | `config/crd/` | Two different things: controller-gen output for `gentianos.io_*`, **and** hand-maintained fixtures that only exist so envtest can start — third-party CRDs (Argo CD, cert-manager, Gateway API, CNPG, provider-helm) and stubs for the Crossplane-owned `apps`/`xtenants` kinds. |
 | `config/rbac/` | Gitignored controller-gen intermediate; the committed artifact is the chart's `clusterrole.yaml`. |
-| `docs/` | `architecture.md` and its `design/` deep-dives; `deployment.md`, `commands.md`, `app-customization.md`, `faq.md`, `roadmap.md`; `research/` for exploratory notes. |
+| `docs/` | `architecture.md` and its `design/` deep-dives; `deployment.md`, `install-reference.md`, `commands.md`, `app-customization.md`, `faq.md`, `roadmap.md`; `research/` for exploratory notes. |
 | `export/` | Tarballs and git bundles used to seed sibling repos when an agent lacks push access. Not part of the build. |
 
 Root docs: `README.md` (scope and what this repo is *not*), `AGENTS.md` (rules
-for coding agents), `GETTING-STARTED.md` (full bootstrap walkthrough).
+for coding agents), `GETTING-STARTED.md` (the steps to a running cluster; flags,
+troubleshooting and non-default installs are in `docs/install-reference.md`).
 
 ---
 

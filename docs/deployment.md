@@ -184,24 +184,28 @@ accumulate faster than anything else the kernel creates.
 safety rules:
 
 **A. Scaffolding `gentian-deployments` (new cluster only)** —
-`scaffold_cluster_deployment()`. Given `GENTIAN_DEPLOYMENTS_CLUSTER`,
+`scaffold_cluster_deployment()`, reached through
+`./install.sh --prepare-deployment`. Given `GENTIAN_DEPLOYMENTS_CLUSTER_ID`,
 `GENTIAN_DEPLOYMENTS_STAGE`, and `KERNEL_DOMAIN` in `install.env`:
 
 1. For each of `claims/cluster.yaml`, `claims/infra-data.yaml`,
-   `claims/suze.yaml`, `values.yaml`: generate it **only if it doesn't
-   already exist**. Per-file, not directory-level — a cluster whose
-   `cluster-settings.env` already exists but is missing the rest still
-   converges correctly, and re-running `install.sh` never overwrites a file
-   a human has since hand-edited.
-2. If anything was generated: `git commit` and push directly to `main`.
-3. Otherwise: no-op.
+   `claims/suze.yaml`, `values.yaml`, `cluster-settings.env`: generate it
+   **only if it doesn't already exist**. Per-file, not directory-level — a
+   cluster whose `cluster-settings.env` already exists but is missing the rest
+   still converges correctly, and re-running never overwrites a file a human
+   has since hand-edited.
+2. Stop. The files are left uncommitted for the operator to read and edit.
 
-No PR gate on this commit. A PR implies a reviewer protecting something
-already running; at this point nothing is running yet, and the values being
-committed are exactly what the operator just typed into `install.env`
-seconds earlier — a review step here would just be re-approving your own
-input. PR review is the right gate for **changes to a live cluster**
-(§8 Day-2 operations) — that's a materially different risk.
+Committing is the operator's step, and so is the review that comes with it.
+The generated claims are what the cluster becomes — its domain, stage, tenancy
+and exposure model — and `gentian-deployments` is shared with every other
+cluster, so a tree pushed unread configures a cluster nobody has agreed to. The
+inputs are also not self-evidently right: a mistyped
+`GENTIAN_DEPLOYMENTS_CLUSTER_ID` produces a complete, valid, wrong directory.
+
+`install.sh` therefore **never writes this directory**. When a required file is
+missing it names it and stops, pointing at `--prepare-deployment`. Nothing is
+prompted for and no cluster is contacted before that check runs.
 
 Note what `scaffold_cluster_deployment()` deliberately does **not**
 generate: the `gentian-os`/`gentian-portal` ArgoCD `Application` objects or
@@ -367,14 +371,14 @@ Example `install.env` per machine:
 
 ```bash
 # Homelab
-GENTIAN_DEPLOYMENTS_CLUSTER=test
+GENTIAN_DEPLOYMENTS_CLUSTER_ID=test
 GENTIAN_DEPLOYMENTS_STAGE=dev
 GENTIAN_DEPLOYMENTS_BRANCH=main
 KERNEL_DOMAIN=platform.example.com
 ACME_ENV=staging
 
 # Cloud production
-GENTIAN_DEPLOYMENTS_CLUSTER=pck-kulxwmm
+GENTIAN_DEPLOYMENTS_CLUSTER_ID=pck-kulxwmm
 GENTIAN_DEPLOYMENTS_STAGE=prod
 GENTIAN_DEPLOYMENTS_BRANCH=main
 KERNEL_DOMAIN=gentian.cloud
