@@ -1493,17 +1493,37 @@ breach.
 
 ### Phase 8 — Credential Manager service
 
-Read-only API over the CRD catalogue and ESO status, plus a write endpoint that performs a token
-exchange and writes as the user.
+**Status: implemented** as `internal/credentialmgr`, riding the operator's manager rather than
+being a second Deployment to secure, schedule and upgrade.
 
-**Acceptance**
-- The service has no OpenBao token in its own configuration — verified by inspecting its
-  Deployment and its ServiceAccount's OpenBao policy.
-- Removing the user's token causes writes to fail; the service cannot write on its own authority.
-- No endpoint returns a secret value. Asserted by a test enumerating every route.
-- Metadata surfaced: existence, setter identity, timestamp, last validation result.
-- Validation runs before the write; a failing value is not stored.
-- A tenant admin sees only `scope: tenant` requirements.
+Both §9 constraints are **structural** here — enforced by what the types can express rather than
+by reviewers remembering them:
+
+- `Server` and `OpenBao` have no field capable of holding a service token, and a test fails if one
+  is added. Every write takes the caller's token as an argument, so there is no service authority
+  for a bug to reach for.
+- `Status` has no field capable of carrying a value, and the OpenBao client implements only the
+  *metadata* endpoint — there is no method that could fetch one.
+
+| # | Criterion | Status |
+|---|---|---|
+| 1 | The service has no OpenBao token in its own configuration | **Passing** — asserted by a test on the struct shape, and by `OpenBao.Write` refusing an empty token one layer down |
+| 2 | Removing the user's token causes writes to fail | **Passing** — 401 before anything is stored |
+| 3 | No endpoint returns a secret value, asserted by enumerating every route | **Passing** — every route is exercised against a stub OpenBao that *would* return a sentinel if anything asked for one |
+| 4 | Metadata surfaced: existence, setter, timestamp, validation result | **Passing** — from KV custom metadata, `set_by` recorded at write time |
+| 5 | Validation runs before the write; a failing value is not stored | **Passing** — 422 with the endpoint's own reason, verified both ways |
+| 6 | A tenant admin sees only `scope: tenant` requirements | **Passing** — scope defaults to tenant; cluster is opt-in |
+| 7 | The service's ServiceAccount has no broad OpenBao policy | **Unverified** — it has no OpenBao identity at all by construction, but the deployed policy set has not been inspected |
+
+The write path is untested against a real OpenBao and Keycloak — the token exchange, the audit
+entry, and the policy decision all need both running. Criteria 1–6 hold against a stub.
+
+`smtp` validation **refuses** rather than pretending: it is not reachable over HTTP, and the
+installer's `openssl s_client` probe already covers it. A validator that silently passed would be
+worse than one that is honest about its range.
+
+This phase also closed an RBAC gap: the operator had no permission to read the
+`CredentialRequirement` objects it now serves.
 
 ---
 
