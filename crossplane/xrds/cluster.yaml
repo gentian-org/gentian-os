@@ -140,6 +140,41 @@ spec:
                     - random
                   default: derived
 
+                # ── OIDC write path ──────────────────────────────────────
+                oidc:
+                  type: object
+                  description: >
+                    Human write access to OpenBao, federated from Keycloak. When
+                    unset the OIDC backend is not created and the only write
+                    path is the installer's bootstrap token — which §7 requires
+                    be revoked, so leaving this unset means no day-2 writes at
+                    all. Set it once Keycloak is reachable.
+                  properties:
+                    discoveryUrl:
+                      type: string
+                      description: >
+                        The realm's OIDC discovery URL. Its presence is what
+                        creates the backend, so an incomplete block stays inert
+                        rather than half-configuring an auth method.
+                    clientId:
+                      type: string
+                      default: openbao
+                    clientSecretRef:
+                      type: string
+                      description: >
+                        Name of the Secret holding the client secret, in the
+                        OpenBao namespace. A reference, never the value — a
+                        secret in a spec field is the one thing §7 prohibits
+                        outright.
+                      default: openbao-oidc-client
+                    externalUrl:
+                      type: string
+                      description: OpenBao's browser-reachable URL, for the OIDC redirect.
+                    clusterAdminGroup:
+                      type: string
+                      description: Keycloak group whose members receive the cluster-admin policy.
+                      default: /platform-admins
+
                 # ── Trust anchor ─────────────────────────────────────────
                 certificates:
                   type: object

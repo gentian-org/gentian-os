@@ -22,7 +22,7 @@ CROSSPLANE_IMAGE ?= xpkg.crossplane.io/crossplane/crossplane:$(CROSSPLANE_CLI_VE
 KUBEBUILDER_ASSETS ?= /tmp/envtest-bins/k8s/1.32.0-linux-amd64
 export KUBEBUILDER_ASSETS
 
-.PHONY: all build generate manifests test lint docker-build clean install-plugin validate-steps gen-credentials check-credentials lint-portability lint-image-digests
+.PHONY: all build generate manifests test lint docker-build clean install-plugin validate-steps gen-credentials check-credentials lint-portability lint-image-digests check-render-fixtures
 
 all: generate build test
 
@@ -137,9 +137,14 @@ clean:
 # Crossplane unit tests (no cluster required)
 # ---------------------------------------------------------------------------
 
+## Assert each render test's Composition copy matches the deployed one. A stale
+## copy keeps the golden test green against a Composition nobody runs.
+check-render-fixtures:
+	@bash scripts/check-render-fixtures.sh
+
 ## Run crossplane render golden-file tests for all test cases in crossplane/tests/unit/render/
 ## Skip directories without an expected.yaml (run 'make test-unit-render-update' to generate them)
-test-unit-render:
+test-unit-render: check-render-fixtures
 	@echo "=== crossplane render golden tests ==="
 	@failed=0; \
 	for dir in crossplane/tests/unit/render/*/; do \

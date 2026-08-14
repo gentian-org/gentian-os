@@ -155,6 +155,137 @@ spec:
               providerConfigRef:
                 name: openbao
 
+            {{- /* ── OIDC write path (§7) ────────────────────────────────────
+                 Secret material enters through the OpenBao API with a Keycloak
+                 identity attached, so the audit device records WHO wrote a
+                 value rather than which service did. Bootstrap is the single
+                 exception, because there is no Keycloak yet.
+
+                 Declared here rather than by a script because §7 puts auth
+                 backends and policies on the provider-vault side of the
+                 boundary: they are infrastructure. Only secret VALUES stay out
+                 of Crossplane, and none appear below.
+            */}}
+            {{- $oidc := ($spec.oidc) | default dict }}
+            {{- if $oidc.discoveryUrl }}
+            ---
+            apiVersion: vault.vault.upbound.io/v1alpha1
+            kind: Policy
+            metadata:
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: vault-policy-cluster-admin
+              name: {{ $name }}-policy-cluster-admin
+            spec:
+              forProvider:
+                name: cluster-admin
+                policy: |
+                  # Every credential a cluster operator may supply.
+                  path "{{ $kvMount }}/data/gentian/*" {
+                    capabilities = ["create", "update", "read"]
+                  }
+                  path "{{ $kvMount }}/metadata/gentian/*" {
+                    capabilities = ["list", "read"]
+                  }
+                  path "{{ $kvMount }}/data/gentian-os/kernel/*" {
+                    capabilities = ["create", "update", "read"]
+                  }
+                  path "{{ $kvMount }}/metadata/gentian-os/kernel/*" {
+                    capabilities = ["list", "read"]
+                  }
+              providerConfigRef:
+                name: openbao
+
+            ---
+            apiVersion: vault.vault.upbound.io/v1alpha1
+            kind: Policy
+            metadata:
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: vault-policy-tenant-admin
+              name: {{ $name }}-policy-tenant-admin
+            spec:
+              forProvider:
+                name: tenant-admin
+                policy: |
+                  # A tenant admin reaches their own tenant's paths and nothing
+                  # else. The deny below is explicit rather than implied by
+                  # omission: §9 notes that showing a tenant admin a
+                  # cluster-scoped form and having OpenBao reject the write is
+                  # an annoyance, while the inverse is a breach. An explicit
+                  # deny cannot be widened by a later grant.
+                  path "{{ $kvMount }}/data/gentian-os/tenants/{{ `{{identity.entity.aliases.` }}{{ $oidc.accessorPlaceholder | default "AUTH_ACCESSOR" }}{{ `.metadata.tenant}}` }}/*" {
+                    capabilities = ["create", "update", "read"]
+                  }
+                  path "{{ $kvMount }}/data/gentian/registries/*" {
+                    capabilities = ["deny"]
+                  }
+                  path "{{ $kvMount }}/metadata/gentian/registries/*" {
+                    capabilities = ["deny"]
+                  }
+                  path "{{ $kvMount }}/data/gentian/repositories/*" {
+                    capabilities = ["deny"]
+                  }
+              providerConfigRef:
+                name: openbao
+
+            ---
+            # The OIDC auth backend itself. The client secret is NOT here: it is
+            # an ExternalSecret reference, because a value in a spec field is
+            # the one thing §7 prohibits outright.
+            apiVersion: jwt.vault.upbound.io/v1alpha1
+            kind: AuthBackend
+            metadata:
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: vault-auth-oidc
+              name: {{ $name }}-auth-oidc
+            spec:
+              forProvider:
+                type: oidc
+                path: oidc
+                oidcDiscoveryUrl: {{ $oidc.discoveryUrl | quote }}
+                oidcClientId: {{ $oidc.clientId | default "openbao" | quote }}
+                oidcClientSecretSecretRef:
+                  name: {{ $oidc.clientSecretRef | default "openbao-oidc-client" }}
+                  namespace: {{ $spec.openbao.namespace | default "openbao" }}
+                  key: client-secret
+                defaultRole: cluster-admin
+              providerConfigRef:
+                name: openbao
+
+            ---
+            # Group claim → policy. A cluster operator in the platform admin
+            # group gets cluster-admin; everyone else authenticates and gets
+            # nothing, which is the correct default for a write path.
+            apiVersion: jwt.vault.upbound.io/v1alpha1
+            kind: AuthBackendRole
+            metadata:
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: vault-auth-oidc-role-cluster-admin
+              name: {{ $name }}-auth-oidc-cluster-admin
+            spec:
+              forProvider:
+                backend: oidc
+                roleName: cluster-admin
+                roleType: oidc
+                userClaim: preferred_username
+                boundAudiences:
+                  - {{ $oidc.clientId | default "openbao" | quote }}
+                boundClaimsType: string
+                boundClaims:
+                  groups: {{ $oidc.clusterAdminGroup | default "/platform-admins" | quote }}
+                allowedRedirectUris:
+                  - {{ printf "%s/ui/vault/auth/oidc/oidc/callback" ($oidc.externalUrl | default "") | quote }}
+                  - http://localhost:8250/oidc/callback
+                tokenPolicies:
+                  - cluster-admin
+                # Short-lived by design: the write path is interactive, so a
+                # token outliving the session is a stolen credential waiting to
+                # happen.
+                tokenTtl: 1800
+                tokenMaxTtl: 3600
+              providerConfigRef:
+                name: openbao
+            {{- end }}
+
             ---
             apiVersion: kubernetes.vault.upbound.io/v1alpha1
             kind: AuthBackendConfig

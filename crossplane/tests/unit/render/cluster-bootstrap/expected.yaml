@@ -7,7 +7,7 @@ status:
   conditions:
   - lastTransitionTime: "2024-01-01T00:00:00Z"
     message: 'Unready resources: argocd-appproject-tenants, cert-issuer-http01, eso-cluster-secret-store,
-      and 16 more'
+      and 17 more'
     reason: Creating
     status: "False"
     type: Ready
@@ -192,8 +192,8 @@ spec:
   providerConfigRef:
     name: kubernetes
 ---
-apiVersion: auth.vault.upbound.io/v1alpha1
-kind: BackendConfig
+apiVersion: kubernetes.vault.upbound.io/v1alpha1
+kind: AuthBackendConfig
 metadata:
   annotations:
     crossplane.io/composition-resource-name: vault-auth-backend-config
@@ -219,6 +219,7 @@ kind: Backend
 metadata:
   annotations:
     crossplane.io/composition-resource-name: vault-auth-backend-kubernetes
+    crossplane.io/external-name: kubernetes
   labels:
     crossplane.io/composite: dev-cluster
   name: dev-cluster-auth-kubernetes
@@ -234,11 +235,14 @@ spec:
     description: Kubernetes service-account auth for Crossplane providers and ESO
     path: kubernetes
     type: kubernetes
+  managementPolicies:
+  - Observe
+  - Create
   providerConfigRef:
     name: openbao
 ---
-apiVersion: auth.vault.upbound.io/v1alpha1
-kind: BackendRole
+apiVersion: kubernetes.vault.upbound.io/v1alpha1
+kind: AuthBackendRole
 metadata:
   annotations:
     crossplane.io/composition-resource-name: vault-auth-role-crossplane
@@ -266,8 +270,8 @@ spec:
   providerConfigRef:
     name: openbao
 ---
-apiVersion: auth.vault.upbound.io/v1alpha1
-kind: BackendRole
+apiVersion: kubernetes.vault.upbound.io/v1alpha1
+kind: AuthBackendRole
 metadata:
   annotations:
     crossplane.io/composition-resource-name: vault-auth-role-eso
@@ -444,6 +448,35 @@ apiVersion: kv.vault.upbound.io/v1alpha1
 kind: SecretV2
 metadata:
   annotations:
+    crossplane.io/composition-resource-name: vault-kv-mail-dovecot
+  labels:
+    crossplane.io/composite: dev-cluster
+  name: dev-cluster-kv-mail-dovecot
+  ownerReferences:
+  - apiVersion: gentianos.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XCluster
+    name: dev-cluster
+    uid: ""
+spec:
+  forProvider:
+    dataJsonSecretRef:
+      key: data.json
+      name: gentian-os-kernel-mail-dovecot
+      namespace: crossplane-system
+    mount: secret
+    name: gentian-os/kernel/mail/dovecot
+  managementPolicies:
+  - Observe
+  - Create
+  providerConfigRef:
+    name: openbao
+---
+apiVersion: kv.vault.upbound.io/v1alpha1
+kind: SecretV2
+metadata:
+  annotations:
     crossplane.io/composition-resource-name: vault-kv-mail-postfix
   labels:
     crossplane.io/composite: dev-cluster
@@ -469,11 +502,12 @@ spec:
   providerConfigRef:
     name: openbao
 ---
-apiVersion: mount.vault.upbound.io/v1alpha1
-kind: SecretMount
+apiVersion: vault.vault.upbound.io/v1alpha1
+kind: Mount
 metadata:
   annotations:
     crossplane.io/composition-resource-name: vault-kv-mount
+    crossplane.io/external-name: secret
   labels:
     crossplane.io/composite: dev-cluster
   name: dev-cluster-kv-mount
@@ -491,6 +525,9 @@ spec:
       version: "2"
     path: secret
     type: kv
+  managementPolicies:
+  - Observe
+  - Create
   providerConfigRef:
     name: openbao
 ---
@@ -523,7 +560,7 @@ spec:
   providerConfigRef:
     name: openbao
 ---
-apiVersion: policy.vault.upbound.io/v1alpha1
+apiVersion: vault.vault.upbound.io/v1alpha1
 kind: Policy
 metadata:
   annotations:
@@ -542,22 +579,27 @@ spec:
   forProvider:
     name: crossplane-write
     policy: |
-      path "secret/data/gentian-os/*" {
-        capabilities = ["create", "read", "update", "delete"]
-      }
-      path "secret/metadata/gentian-os/*" {
-        capabilities = ["list", "read", "delete"]
-      }
-      path "auth/token/create" {
-        capabilities = ["update"]
-      }
-      path "auth/token/lookup-self" {
-        capabilities = ["read"]
-      }
+      # KV operations (create/manage kernel and tenant secrets)
+      path "secret/data/gentian-os/*"     { capabilities = ["create","read","update","delete"] }
+      path "secret/metadata/gentian-os/*" { capabilities = ["list","read","delete"] }
+      # Mount management — required for SecretMount MR (KV engine lifecycle)
+      path "sys/mounts/*"   { capabilities = ["create","read","update","delete","sudo"] }
+      path "sys/mounts"     { capabilities = ["read","list"] }
+      # Policy management — required for Policy MRs (eso-read, etc.)
+      path "sys/policies/acl/*" { capabilities = ["create","read","update","delete","list"] }
+      path "sys/policies/acl"   { capabilities = ["read","list"] }
+      # Auth method management — required for Backend/AuthBackendConfig/AuthBackendRole MRs
+      path "sys/auth/*"  { capabilities = ["create","read","update","delete","sudo"] }
+      path "sys/auth"    { capabilities = ["read"] }
+      path "auth/+/config"  { capabilities = ["create","read","update"] }
+      path "auth/+/role/*"  { capabilities = ["create","read","update","delete","list"] }
+      # Token operations
+      path "auth/token/create"      { capabilities = ["update"] }
+      path "auth/token/lookup-self" { capabilities = ["read"] }
   providerConfigRef:
     name: openbao
 ---
-apiVersion: policy.vault.upbound.io/v1alpha1
+apiVersion: vault.vault.upbound.io/v1alpha1
 kind: Policy
 metadata:
   annotations:
