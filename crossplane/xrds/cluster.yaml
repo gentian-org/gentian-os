@@ -140,6 +140,45 @@ spec:
                     - random
                   default: derived
 
+                # ── Trust anchor ─────────────────────────────────────────
+                certificates:
+                  type: object
+                  description: >
+                    How this cluster issues TLS certificates. The dimension that
+                    decides whether an install on an internal domain is possible
+                    at all — an installer that can only succeed with public ACME
+                    is not a self-hostable installer (§9).
+                  properties:
+                    issuerMode:
+                      type: string
+                      description: >
+                        acme-dns01   public DNS, wildcard capable, needs a DNS
+                                     provider credential.
+                        acme-http01  public DNS reachable on :80, no wildcards.
+                        private-ca   an existing CA the operator supplies.
+                        self-signed  a CA this cluster generates. Offline,
+                                     instant, and not publicly trusted — the
+                                     mode for an internal domain.
+                      enum:
+                        - acme-dns01
+                        - acme-http01
+                        - private-ca
+                        - self-signed
+                      default: acme-dns01
+                    caBundleSecretRef:
+                      type: object
+                      description: >
+                        Where the trust anchor's certificate lives, so consumers
+                        that validate kernel hostnames can be given it. Defaults
+                        to what the self-signed mode produces.
+                      properties:
+                        name:
+                          type: string
+                          default: gentian-root-ca-tls
+                        namespace:
+                          type: string
+                          default: cert-manager
+
                 # ── Mail ─────────────────────────────────────────────────────
                 mail:
                   type: object

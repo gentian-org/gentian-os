@@ -1,0 +1,69 @@
+# Trust anchor for a cluster with no public DNS and no reachable ACME endpoint.
+#
+# This is the dimension that decides whether an install on an internal domain is
+# possible at all (§9). Without it the installer assumes Let's Encrypt is
+# reachable, no certificate is ever issued, and every Gateway listener sits at
+# ResolvedRefs=False with a message about a missing Secret — a symptom that says
+# nothing about the actual cause.
+#
+# Two-stage, which is the canonical cert-manager pattern and not an accident:
+#
+#   1. gentian-selfsigned-bootstrap — a selfSigned issuer whose ONLY job is to
+#      sign the root CA below. Nothing else should reference it; a certificate
+#      signed directly by it has no shared trust anchor, so nothing can verify
+#      anything else.
+#   2. gentian-root-ca — the CA certificate. This is the trust anchor.
+#   3. gentian-ca — a ca issuer backed by that root. Every kernel and tenant
+#      Certificate references THIS.
+#
+# Issuance is offline and instant: no ACME, no DNS-01, no rate limits. The
+# certificates are not publicly trusted, so anything validating a kernel
+# hostname from outside the cluster needs gentian-root-ca-tls's tls.crt in its
+# trust store. In-cluster consumers get it from the CA bundle distribution.
+---
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: gentian-selfsigned-bootstrap
+  labels:
+    app.kubernetes.io/managed-by: gentian-install
+    app.kubernetes.io/part-of: gentian-os
+    gentianos.io/issuer-mode: self-signed
+spec:
+  selfSigned: {}
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: gentian-root-ca
+  namespace: cert-manager
+  labels:
+    app.kubernetes.io/managed-by: gentian-install
+    app.kubernetes.io/part-of: gentian-os
+    gentianos.io/issuer-mode: self-signed
+spec:
+  isCA: true
+  commonName: gentian-root-ca
+  secretName: gentian-root-ca-tls
+  # Ten years, because this is the trust anchor: rotating it means re-importing
+  # it into every client trust store that was told to trust it.
+  duration: 87600h
+  renewBefore: 720h
+  privateKey:
+    algorithm: ECDSA
+    size: 256
+  issuerRef:
+    name: gentian-selfsigned-bootstrap
+    kind: ClusterIssuer
+---
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: gentian-ca
+  labels:
+    app.kubernetes.io/managed-by: gentian-install
+    app.kubernetes.io/part-of: gentian-os
+    gentianos.io/issuer-mode: self-signed
+spec:
+  ca:
+    secretName: gentian-root-ca-tls
