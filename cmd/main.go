@@ -38,6 +38,7 @@ import (
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 	"github.com/gentian-org/gentian-os/internal/applifecycle"
 	"github.com/gentian-org/gentian-os/internal/controller"
+	"github.com/gentian-org/gentian-os/internal/credentialmgr"
 	"github.com/gentian-org/gentian-os/internal/kernel/secrets"
 	"github.com/gentian-org/gentian-os/internal/webhook"
 )
@@ -239,6 +240,23 @@ func main() {
 		setupLog.Info("app lifecycle API enabled", "addr", lifecycle.Server.Addr)
 	}
 
+	// Credential Manager — a view over the CredentialRequirement catalogue and
+	// ESO's satisfaction status, plus a write path that writes as the CALLER.
+	// It rides this manager rather than being a second Deployment, and holds no
+	// OpenBao token of its own: every write exchanges the user's OIDC token.
+	if os.Getenv("CREDENTIAL_MANAGER_ENABLED") == "true" {
+		credmgr, err := credentialmgr.NewRunnableFromEnv(mgr, credentialmgr.NewEndpointValidator())
+		if err != nil {
+			setupLog.Error(err, "unable to create the credential manager")
+			os.Exit(1)
+		}
+		if err := mgr.Add(credmgr); err != nil {
+			setupLog.Error(err, "unable to add the credential manager")
+			os.Exit(1)
+		}
+		setupLog.Info("credential manager API enabled", "addr", credmgr.Addr)
+	}
+
 	if err := mgr.AddHealthzCheck("healthz", healthz.Ping); err != nil {
 		setupLog.Error(err, "unable to set up health check")
 		os.Exit(1)
@@ -314,22 +332,23 @@ func buildSeeder() *secrets.Seeder {
 		"bao_addr", baoAddr, "bao_role", role, "deterministic", deriver != nil)
 	return secrets.NewSeeder(kv, deriver)
 }
+
 // buildCloudflareDNSClient constructs a cloudflareDNSClient from environment
 // variables. Returns nil (feature disabled) if any required variable is absent.
 //
-//   CLOUDFLARE_API_TOKEN        – Cloudflare API token (Zone:Read + DNS:Edit)
-//   CLOUDFLARE_TUNNEL_API_TOKEN – optional token with Account → Cloudflare Tunnel → Edit
-//   CLOUDFLARE_ZONE_ID          – Cloudflare zone ID for the kernel domain
-//   CLOUDFLARE_TUNNEL_CNAME     – tunnel target, e.g. <uuid>.cfargotunnel.com
+//	CLOUDFLARE_API_TOKEN        – Cloudflare API token (Zone:Read + DNS:Edit)
+//	CLOUDFLARE_TUNNEL_API_TOKEN – optional token with Account → Cloudflare Tunnel → Edit
+//	CLOUDFLARE_ZONE_ID          – Cloudflare zone ID for the kernel domain
+//	CLOUDFLARE_TUNNEL_CNAME     – tunnel target, e.g. <uuid>.cfargotunnel.com
 func buildCloudflareDNSClient() *controller.CloudflareDNSClient {
-        token := os.Getenv("CLOUDFLARE_API_TOKEN")
-        zoneID := os.Getenv("CLOUDFLARE_ZONE_ID")
-        tunnelCNAME := os.Getenv("CLOUDFLARE_TUNNEL_CNAME")
-        if token == "" || zoneID == "" || tunnelCNAME == "" {
-                setupLog.Info("Cloudflare DNS management disabled (CLOUDFLARE_API_TOKEN/CLOUDFLARE_ZONE_ID/CLOUDFLARE_TUNNEL_CNAME not set)")
-                return nil
-        }
-        tunnelToken := os.Getenv("CLOUDFLARE_TUNNEL_API_TOKEN")
-        setupLog.Info("Cloudflare DNS management enabled", "zone_id", zoneID, "tunnel_cname", tunnelCNAME, "tunnel_api_token", tunnelToken != "")
-        return controller.NewCloudflareDNSClient(token, zoneID, tunnelCNAME, tunnelToken)
+	token := os.Getenv("CLOUDFLARE_API_TOKEN")
+	zoneID := os.Getenv("CLOUDFLARE_ZONE_ID")
+	tunnelCNAME := os.Getenv("CLOUDFLARE_TUNNEL_CNAME")
+	if token == "" || zoneID == "" || tunnelCNAME == "" {
+		setupLog.Info("Cloudflare DNS management disabled (CLOUDFLARE_API_TOKEN/CLOUDFLARE_ZONE_ID/CLOUDFLARE_TUNNEL_CNAME not set)")
+		return nil
+	}
+	tunnelToken := os.Getenv("CLOUDFLARE_TUNNEL_API_TOKEN")
+	setupLog.Info("Cloudflare DNS management enabled", "zone_id", zoneID, "tunnel_cname", tunnelCNAME, "tunnel_api_token", tunnelToken != "")
+	return controller.NewCloudflareDNSClient(token, zoneID, tunnelCNAME, tunnelToken)
 }

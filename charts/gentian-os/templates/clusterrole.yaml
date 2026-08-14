@@ -221,6 +221,7 @@ rules:
   - apiGroups:
     - gentianos.io
     resources:
+    - credentialrequirements
     - oidcpackcatalogs
     - xapps
     verbs:
