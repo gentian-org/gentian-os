@@ -43,8 +43,52 @@ HEADER = """# GENERATED FILE — DO NOT EDIT.
 OPTIONAL_SPEC_KEYS = ("description", "optional", "validate", "consumedBy")
 
 
+# Namespace holding the satisfaction probes. Nothing else lives there.
+PROBE_NAMESPACE = "gentian-system"
+
+
+def build_probe(req):
+    """An ExternalSecret whose only job is to answer "does this path exist".
+
+    creationPolicy: None is the point. ESO still resolves the remote reference
+    and still reports SecretSynced, but it creates no Secret — so satisfaction
+    becomes observable without materialising cluster-wide credential material
+    into a namespace that has no use for it.
+
+    This is what makes "no controller" possible. Satisfaction is a Kubernetes
+    condition that ESO maintains, so function-extra-resources can gate a
+    Composition on it and the credential manager can read it, without anything
+    bespoke holding an OpenBao token to poll with.
+    """
+    return {
+        "apiVersion": "external-secrets.io/v1",
+        "kind": "ExternalSecret",
+        "metadata": {
+            "name": f"credreq-{req['name']}",
+            "namespace": PROBE_NAMESPACE,
+            "labels": {
+                "gentianos.io/credential-requirement": req["name"],
+                "gentianos.io/credential-phase": req["phase"],
+                "gentianos.io/credential-optional": str(req.get("optional", False)).lower(),
+            },
+        },
+        "spec": {
+            "refreshInterval": "1h",
+            "secretStoreRef": {"name": "openbao", "kind": "ClusterSecretStore"},
+            "target": {"creationPolicy": "None"},
+            "data": [
+                {
+                    "secretKey": f["key"],
+                    "remoteRef": {"key": req["vaultPath"], "property": f["key"]},
+                }
+                for f in req["fields"]
+            ],
+        },
+    }
+
+
 def build_documents(catalogue):
-    """Map catalogue entries onto CredentialRequirement objects."""
+    """Map catalogue entries onto CredentialRequirement objects and their probes."""
     docs = []
     for req in catalogue.get("requirements", []):
         name = req["name"]
@@ -76,6 +120,7 @@ def build_documents(catalogue):
                 "spec": spec,
             }
         )
+        docs.append(build_probe(req))
     return docs
 
 

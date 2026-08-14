@@ -84,7 +84,7 @@ spec:
             spec:
               forProvider:
                 manifest:
-                  apiVersion: external-secrets.io/v1beta1
+                  apiVersion: external-secrets.io/v1
                   kind: ExternalSecret
                   metadata:
                     name: repo-{{ $name }}
@@ -156,7 +156,7 @@ spec:
             spec:
               forProvider:
                 manifest:
-                  apiVersion: external-secrets.io/v1beta1
+                  apiVersion: external-secrets.io/v1
                   kind: ClusterExternalSecret
                   metadata:
                     name: pull-{{ $name }}
@@ -232,7 +232,7 @@ spec:
             spec:
               forProvider:
                 manifest:
-                  apiVersion: external-secrets.io/v1beta1
+                  apiVersion: external-secrets.io/v1
                   kind: ExternalSecret
                   metadata:
                     name: {{ $name }}-git-credentials

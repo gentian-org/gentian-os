@@ -22,7 +22,7 @@ CROSSPLANE_IMAGE ?= xpkg.crossplane.io/crossplane/crossplane:$(CROSSPLANE_CLI_VE
 KUBEBUILDER_ASSETS ?= /tmp/envtest-bins/k8s/1.32.0-linux-amd64
 export KUBEBUILDER_ASSETS
 
-.PHONY: all build generate manifests test lint docker-build clean install-plugin validate-steps gen-credentials
+.PHONY: all build generate manifests test lint docker-build clean install-plugin validate-steps gen-credentials check-credentials
 
 all: generate build test
 
@@ -104,6 +104,11 @@ lint-yaml:
 ## invocation is how an SC2153 reached develop green-looking.
 lint-shell: validate-steps
 	@git ls-files -z -- '*.sh' | xargs -0 shellcheck -x scripts/kubectl-gentian
+
+## Report which declared credentials are satisfied. --source picks where to look:
+## vault (installer preflight), cluster (day-2), git (CI on a deployments branch).
+check-credentials:
+	@bash scripts/check-credentials.sh --source=$${SOURCE:-cluster}
 
 ## Assert every scripts/steps/*.sh declares its contract and defines apply().
 ## Reads only the step files — no cluster, no kubeconfig.

@@ -1381,32 +1381,43 @@ a named condition rather than a stuck sync.
 
 ### Phase 6 — ESO-based satisfaction, gating, and the three entry points
 
-Emit an `ExternalSecret` per requirement. Use `function-extra-resources` so an `XApp` whose
-repository credential is unsatisfied does not compose. Then wire the same catalogue to the three
-entry points in §4.
+**Status: 6a and 6b implemented. Composition gating not started.**
 
-**6a — Satisfaction and gating.**
+**Satisfaction, without a controller.** Each requirement emits an `ExternalSecret` with
+`target.creationPolicy: None`. ESO still resolves the remote reference and still reports
+`SecretSynced`, but creates no Secret — so satisfaction becomes an observable Kubernetes condition
+*without materialising cluster-wide credential material into a namespace that has no use for it*.
+That is what makes the "no controller" claim in §4 hold: nothing bespoke polls OpenBao, because
+ESO already does and publishes the answer as a condition.
 
-**6b — The check, in all three contexts.** One implementation, three callers: the installer's
-preflight, a day-2 CLI report, and a `gentian-deployments` CI job that fails a pull request adding
-a claim whose `vaultPath` has no value.
+Step `24-credential-catalogue` applies both carriers to the cluster.
 
-**Acceptance**
-- A requirement with no value in OpenBao surfaces as a non-Ready `ExternalSecret`, not a crash
-  loop in a consuming workload.
-- An `XApp` depending on an unsatisfied requirement reports a clear, non-Ready condition naming
-  the missing requirement.
-- Gating is all-or-nothing per claim: a claim composing three resources where one is unsatisfied
-  creates zero, verified by inspecting the cluster mid-gate.
-- Supplying the value later causes composition to proceed without manual intervention and without
-  a Git commit.
-- No polling of OpenBao by any bespoke component.
-- The CI check fails a pull request that adds a `Repository` claim for an unset `vaultPath`, and
-  its failure message names the path and the claim.
-- The CI check's OpenBao policy grants `list` on metadata only. A test asserts it cannot read a
-  value.
-- The installer's preflight and the CI check produce the same verdict for the same repository
-  state — asserted by running both against one fixture.
+**The check, in all three contexts** — `scripts/check-credentials.sh`, one implementation:
+
+| `--source` | Caller | Reads |
+|---|---|---|
+| `vault` | Installer preflight, before ESO exists | `bao kv metadata get` — existence, never a value |
+| `cluster` | Day-2 report | The ExternalSecret probes; touches OpenBao not at all |
+| `git` | CI on `gentian-deployments` | `Repository` claims a branch declares, checking their paths |
+
+Every mode is metadata-only. The OpenBao policy this needs is `list` on the metadata path; a CI
+job that could read secrets would be a worse problem than the one it prevents.
+
+| # | Criterion | Status |
+|---|---|---|
+| 1 | An unset requirement surfaces as a non-Ready `ExternalSecret`, not a crash loop | **Partial** — the probe is emitted and applied by step 24; ESO's verdict is unverified |
+| 2 | An `XApp` on an unsatisfied requirement reports a clear non-Ready condition naming it | **Not started** — needs `function-extra-resources` gating in the consuming Compositions |
+| 3 | Gating is all-or-nothing per claim | **Not started** |
+| 4 | Supplying the value later lets composition proceed without intervention | **Unverified** |
+| 5 | No polling of OpenBao by any bespoke component | **Passing** — by construction; ESO is the only reader |
+| 6 | The CI check fails a PR adding a claim for an unset `vaultPath`, naming path and claim | **Passing** — verified against a fixture claim |
+| 7 | The CI check's OpenBao policy grants `list` on metadata only | **Partial** — the script only ever calls `bao kv metadata get`; the policy itself is Phase 7 |
+| 8 | Preflight and CI produce the same verdict for the same state | **Passing** by construction — one implementation, one catalogue |
+
+**Gating is the remaining piece, and it is what 4b waits on.** Emitting the probes makes
+satisfaction *observable*; gating makes it *enforced*. Until a consuming Composition refuses to
+compose on a non-Ready probe, moving steps 11d–16 declarative would trade legible shell failures
+for "something is not Ready" — precisely the trade §13 says not to make.
 
 ---
 
