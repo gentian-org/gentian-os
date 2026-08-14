@@ -730,7 +730,7 @@ print(json.dumps(s))
 
     # ACME staging: trust bundle for in-cluster OIDC clients.
     if [[ "${ACME_ENV:-production}" == "staging" ]]; then
-        local staging_ca_script="${SCRIPT_DIR}/scripts/create-staging-ca-secret.sh"
+        local staging_ca_script="${SCRIPT_DIR}/scripts/bootstrap/create-staging-ca-secret.sh"
         if [[ -x "${staging_ca_script}" ]]; then
             info "Creating gentian-staging-ca-tls in ${app_ns} (ACME staging)..."
             "${staging_ca_script}" "${app_ns}" || warn "gentian-staging-ca-tls creation failed (tenant apps may not trust id.${KERNEL_DOMAIN})."

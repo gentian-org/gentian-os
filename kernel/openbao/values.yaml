@@ -33,12 +33,12 @@ server:
 
   # Override the default standalone config to add the transit auto-unseal stanza.
   # The token is injected at runtime from the openbao-transit-token k8s Secret
-  # (created by scripts/init-openbao-transit.sh) using $AUTOUNSEAL_TOKEN env var.
+  # (created by scripts/bootstrap/init-openbao-transit.sh) using $AUTOUNSEAL_TOKEN env var.
   # OpenBao calls os.ExpandEnv() on the raw config, so $VAR_NAME syntax works.
   #
   # ⚠ MIGRATION NOTE (existing clusters with Shamir seal):
   #   1. Apply argocd/bootstrap/openbao-transit-application.yaml and wait for pod.
-  #   2. Run scripts/init-openbao-transit.sh  (creates k8s Secret openbao-transit-token).
+  #   2. Run scripts/bootstrap/init-openbao-transit.sh  (creates k8s Secret openbao-transit-token).
   #   3. Let ArgoCD reconcile this values.yaml (or force: `argocd app sync openbao`).
   #   4. Delete the primary pod to trigger restart with new config:
   #        kubectl delete pod -n openbao openbao-0
@@ -70,7 +70,7 @@ server:
       }
 
   # Injects the transit autounseal token from the openbao-transit-token k8s
-  # Secret.  The Secret is created by scripts/init-openbao-transit.sh and is
+  # Secret.  The Secret is created by scripts/bootstrap/init-openbao-transit.sh and is
   # NOT committed to Git.
   extraSecretEnvironmentVars:
     - envName: VAULT_TRANSIT_SEAL_TOKEN

@@ -414,7 +414,7 @@ Keycloak-native (Suze) is the only path.
 | Item | Status | Notes |
 |---|---|---|
 | Suze Keycloak + OpenFGA install | **Done** | `install.sh` Steps 14–15 |
-| Kernel realm + `gentian-portal` client | **Done** | `scripts/portal-login-bootstrap.sh` Job + optional Crossplane `gentian-portal` Client MR |
+| Kernel realm + `gentian-portal` client | **Done** | `scripts/lib/portal-login-bootstrap.sh` Job + optional Crossplane `gentian-portal` Client MR |
 | Platform admin bootstrap | **Done** | `administrator@<KERNEL_DOMAIN>` + `gentian:platform:superadmin`; password `MASTER_PASSWORD`-derived; `groups` scope on `gentian-portal` |
 | Tenant realm Jobs | **Done** | `keycloak-realm-*`, `keycloak-gentian-groups-*`, `keycloak-admin-*`, `keycloak-broker-idp-*` (`tenant_identity_manifests.go`) |
 | **`gentian:tenant:<t>:*` group taxonomy** | **Done** | `makeGentianGroupsJob` — `members`, `admins`, `app:<profile>` per tenant apps |

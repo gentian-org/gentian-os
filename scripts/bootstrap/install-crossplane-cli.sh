@@ -7,13 +7,13 @@
 # upstream main and has broken v2.2.1 installs when it pointed at cli.crossplane.io.
 #
 # Usage:
-#   XP_VERSION=v2.2.1 ./scripts/install-crossplane-cli.sh
+#   XP_VERSION=v2.2.1 ./scripts/bootstrap/install-crossplane-cli.sh
 #   sudo mv crossplane /usr/local/bin/crossplane
 
 set -euo pipefail
 
 # shellcheck source=scripts/lib/versions.sh
-source "$(cd "$(dirname "${BASH_SOURCE[0]}")/lib" && pwd)/versions.sh"
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")/../lib" && pwd)/versions.sh"
 XP_VERSION="${XP_VERSION:-$(gentian_pin crossplane cli)}"
 _ver="${XP_VERSION#v}"
 _major="${_ver%%.*}"

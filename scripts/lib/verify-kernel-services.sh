@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # =============================================================================
-# scripts/verify-kernel-services.sh — post-install smoke checks for kernel IdP/mail
+# scripts/lib/verify-kernel-services.sh — post-install smoke checks for kernel IdP/mail
 # =============================================================================
 # Sourced from scripts/lib/load.sh. Used by install.sh after Suze (Keycloak) and
 # install_kernel_mail (Dovecot when MAIL_SERVICE_MODE=kernel).

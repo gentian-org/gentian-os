@@ -6,7 +6,7 @@
 | Upstream | Bitnami `minio` chart |
 | Version | 16.0.10 (app 2025.4.22) |
 | Source | `oci://registry-1.docker.io/bitnamicharts/minio:16.0.10` |
-| Package repo | `charts/infra/packages/` — regenerate with `scripts/publish-infra-charts.sh` |
+| Package repo | `charts/infra/packages/` — regenerate with `scripts/tools/publish-infra-charts.sh` |
 | Runtime images | Overridden in `kernel/services/minio/values/_base.yaml` (`docker.io/bitnamilegacy/*`) |
 | Licence | Apache-2.0 (chart) |
 
@@ -19,5 +19,5 @@ Re-vendor:
 ```bash
 helm pull oci://registry-1.docker.io/bitnamicharts/minio --version 16.0.10 -d /tmp
 tar -xzf /tmp/minio-16.0.10.tgz -C /tmp && cp -a /tmp/minio charts/infra/minio
-./scripts/publish-infra-charts.sh
+./scripts/tools/publish-infra-charts.sh
 ```

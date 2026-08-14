@@ -15,7 +15,7 @@ set -euo pipefail
 # Argo CD's tested-compatibility table lists 3.5 against Kubernetes v1.33-v1.36,
 # so it covers this cluster (1.35) and the next upgrade too.
 # shellcheck source=scripts/lib/versions.sh
-source "$(cd "$(dirname "${BASH_SOURCE[0]}")/lib" && pwd)/versions.sh"
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")/../lib" && pwd)/versions.sh"
 ARGOCD_VERSION="${ARGOCD_VERSION:-$(gentian_pin argocd manifest)}"
 ARGOCD_NAMESPACE="argocd"
 

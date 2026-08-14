@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # =============================================================================
-# scripts/lint-portability.sh — hold the line on macOS compatibility
+# scripts/lint/lint-portability.sh — hold the line on macOS compatibility
 # =============================================================================
 # Bash-4-only constructs are not flagged by shellcheck's defaults, so nothing
 # stops a ninth `declare -A` appearing while the known ones are being migrated.
@@ -11,13 +11,14 @@
 # CI reports the exact remaining set, and the number only goes down.
 #
 # Usage:
-#   scripts/lint-portability.sh            report violations, exit 1 if any
-#   scripts/lint-portability.sh --count    print the count only
+#   scripts/lint/lint-portability.sh            report violations, exit 1 if any
+#   scripts/lint/lint-portability.sh --count    print the count only
 # =============================================================================
 
 set -euo pipefail
 
-cd "$(dirname "${BASH_SOURCE[0]}")/.."
+# scripts/lint/ -> repo root
+cd "$(dirname "${BASH_SOURCE[0]}")/../.."
 
 RED=$'\033[0;31m'; GREEN=$'\033[0;32m'; DIM=$'\033[2m'; NC=$'\033[0m'
 COUNT_ONLY=0

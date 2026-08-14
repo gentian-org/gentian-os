@@ -224,7 +224,7 @@ from `.tmpl` files that ship in `gentian-os` itself:
   `ImageUpdater` CR.
 - `kernel/bootstrap/gentian-portal-application.yaml.tmpl` — rendered and
   applied by `apply_gentian_portal_argocd_application()`
-  (`scripts/portal-login-bootstrap.sh`, called from
+  (`scripts/lib/portal-login-bootstrap.sh`, called from
   `install_portal_login()`, install.sh Step 14). Produces the
   `gentian-portal` Application, values layered the same way.
 

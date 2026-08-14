@@ -615,7 +615,7 @@ present and future.
 | Today | Problem |
 |---|---|
 | `kernel/argocd/repos/*.yaml` — hand-written ArgoCD repository Secrets, two of them | Does not scale to N private repositories, and a credential in a committed Secret cannot be private |
-| `scripts/create-deployments-git-credentials.sh` — `kubectl create secret generic` for the operator's `.git-credentials` | The §6 anti-pattern exactly: a Secret with no `ExternalSecret` pointing at it. Becomes the `writable: true` row above |
+| `scripts/bootstrap/create-deployments-git-credentials.sh` — `kubectl create secret generic` for the operator's `.git-credentials` | The §6 anti-pattern exactly: a Secret with no `ExternalSecret` pointing at it. Becomes the `writable: true` row above |
 
 ### The bootstrap case
 
@@ -801,7 +801,7 @@ different set of axes — see §9.
 
 | Hazard | Sites | Resolution |
 |---|---|---|
-| bash 4+ constructs — macOS ships bash 3.2 | 8 — `mapfile` ×4 (`uninstall.sh`), `declare -A`/`local -A` ×2 (`scripts/lib/common.sh`, `scripts/kubectl-gentian`), `${var^^}` ×2 (`scripts/llm-lib.sh`) | `while read` loops; `tr` for case conversion; parallel arrays instead of associative arrays |
+| bash 4+ constructs — macOS ships bash 3.2 | 8 — `mapfile` ×4 (`uninstall.sh`), `declare -A`/`local -A` ×2 (`scripts/lib/common.sh`, `scripts/kubectl-gentian`), `${var^^}` ×2 (`scripts/lib/llm-lib.sh`) | `while read` loops; `tr` for case conversion; parallel arrays instead of associative arrays |
 | `sed -i` — BSD requires an argument, GNU forbids one | 8 | A `sed_inplace()` primitive, or `sed -i.bak … && rm -f` which is valid on both |
 | `xargs -r` | 20 | Verify against a current macOS; BSD `xargs` skips empty input by default, but dropping `-r` changes GNU behaviour, so guard on non-empty input instead |
 
@@ -1256,7 +1256,7 @@ GitHub repositories so image-pin workflows can commit back — CI configuration,
 **Status: implemented.**
 
 `api/v1alpha1/credentialrequirement_types.go` defines the CRD; `credentials.yaml` is the
-catalogue; `scripts/gen-credential-requirements.py` renders it into
+catalogue; `scripts/gen/gen-credential-requirements.py` renders it into
 `kernel/credentials/credential-requirements.yaml`, wired into `make gen-all` and `make verify-gen`.
 
 **Acceptance**
@@ -1406,7 +1406,7 @@ One XRD plus one Composition covering `type: git` and `type: oci`, emitting the 
 | 7 | Rotation propagates to every consumer with no Git commit | **Unverified** |
 | 8 | Two claims sharing one `vaultPath` both work | **Unverified** — the schema permits it; the Phase 2 generator enforces that their field sets agree |
 | 9 | Deleting a claim removes everything it emitted | **Unverified** |
-| 10 | Every repository the cluster draws from is driven by this XR | **Partial** — the deployments repository is a claim (step `16b`), replacing `scripts/create-deployments-git-credentials.sh`. `kernel/argocd/repos/*.yaml` and the infra chart registry are not yet migrated |
+| 10 | Every repository the cluster draws from is driven by this XR | **Partial** — the deployments repository is a claim (step `16b`), replacing `scripts/bootstrap/create-deployments-git-credentials.sh`. `kernel/argocd/repos/*.yaml` and the infra chart registry are not yet migrated |
 | 11 | Adding a repository of either type needs one claim and no new Composition | **Passing** by construction |
 
 Criteria 5–9 need a cluster with Crossplane, ESO and ArgoCD running. Criterion 10 is the
@@ -1649,7 +1649,7 @@ The compatibility layer and the checks that keep it honest. Migrating the call s
 **Status: implemented.**
 
 `scripts/lib/compat.sh` provides `sed_inplace`, `to_upper`, `to_lower` and `xargs_r`.
-`scripts/lint-portability.sh` reports violations by class with a fix for each, and CI gains a
+`scripts/lint/lint-portability.sh` reports violations by class with a fix for each, and CI gains a
 `macos-latest` job.
 
 `sed_inplace` writes to a temporary file and cats it back rather than detecting which `sed` is
@@ -1698,7 +1698,7 @@ same tag, which publishes amd64, arm64, ppc64le and s390x.
 Pinned differently, not dropped. Dropping the digest fixes arm64 by giving up the supply-chain
 guarantee a digest exists for; a list digest keeps both.
 
-`scripts/lint-image-digests.sh` keeps it fixed. A list digest and a single-arch digest are
+`scripts/lint/lint-image-digests.sh` keeps it fixed. A list digest and a single-arch digest are
 indistinguishable strings, so the lint has to ask the registry — which makes it network-dependent,
 its own target, and deliberately tolerant of an unreachable registry. A lint that fails on a flaky
 network teaches people to ignore it.
@@ -1874,7 +1874,7 @@ scope and should be folded into it rather than fixed twice.
 | Finding | Evidence | Disposition |
 |---|---|---|
 | **Step knowledge is encoded three times** — `install.sh` applies it, `update.sh` re-applies it as `op_*`, `uninstall.sh` reverses it as 18 `_delete_*` helpers, and `uninstall.sh` does not source `scripts/lib/load.sh` so it duplicates the primitives too. Nothing enforces that the three agree, and a step added to one is silently absent from the others. | §1 baseline | **Phase 0b.** This is the finding the driver-and-steps structure exists to fix. |
-| **Repository credentials are applied imperatively.** `scripts/create-deployments-git-credentials.sh` runs `kubectl create secret generic` for the operator's `.git-credentials`, and `kernel/argocd/repos/*.yaml` are hand-written ArgoCD repository Secrets. Both are the §6 anti-pattern — a Secret with no `ExternalSecret` pointing at it — and neither can carry a private credential. | `scripts/create-deployments-git-credentials.sh`, `kernel/argocd/repos/` | **Phase 5.** Both become `Repository` claims. |
+| **Repository credentials are applied imperatively.** `scripts/bootstrap/create-deployments-git-credentials.sh` runs `kubectl create secret generic` for the operator's `.git-credentials`, and `kernel/argocd/repos/*.yaml` are hand-written ArgoCD repository Secrets. Both are the §6 anti-pattern — a Secret with no `ExternalSecret` pointing at it — and neither can carry a private credential. | `scripts/bootstrap/create-deployments-git-credentials.sh`, `kernel/argocd/repos/` | **Phase 5.** Both become `Repository` claims. |
 | **`manager` binary tracked in Git** — a 45.6 MB compiled artefact committed in `02235d7` (2026-06-07). `.gitignore` covers `bin/` and `*.test` but not this path. | `git ls-files manager` | `git rm --cached manager`, add `/manager` to `.gitignore`. History rewrite optional. |
 | ~~**Kernel mail install path applies directories that no longer exist.**~~ **Fixed.** `deploy_kernel_mail_services` and its call site are deleted; Postfix and Dovecot arrive through the `09-infra-helm` ApplicationSet, which was already doing the work. |  |  |
 | **(original finding, for reference)** `deploy_kernel_mail_services()` runs `kubectl apply -f kernel/services/{postfix,dovecot}/manifests/${env}/`, but those services were converted to env-parameterised Helm charts (`manifests/Chart.yaml` + `templates/` + `values.yaml`) with no per-stage subdirectory. It also waits on `externalsecret/dovecot-sensitive-values`, which the dovecot chart does not template. Any `MAIL_SERVICE_MODE=kernel` install fails here. | `scripts/lib/common.sh:2032`, `:2041` | **Phase 4b.** Postfix and Dovecot already arrive via the `09-infra-helm` ApplicationSet; delete `deploy_kernel_mail_services` rather than repair it. |
@@ -1885,10 +1885,10 @@ scope and should be folded into it rather than fixed twice.
 | Finding | Evidence | Disposition |
 |---|---|---|
 | `internal/tiles/` has zero importers outside its own test — `resolver.go` plus a 20 KB embedded `catalogue.json`. | `grep -r 'internal/tiles"'` | Delete, or state in the package doc which consumer is pending. |
-| `kernel/argocd/install/argocd.yaml` is unreferenced; its own header says "This is a reference file". It pins ArgoCD **v2.11.3**. | no callers | Delete. `scripts/install-argocd.sh` is the real path. |
+| `kernel/argocd/install/argocd.yaml` is unreferenced; its own header says "This is a reference file". It pins ArgoCD **v2.11.3**. | no callers | Delete. `scripts/bootstrap/install-argocd.sh` is the real path. |
 | `crossplane/tests/unit/functions/` contains only `.gitkeep`, so `make test-unit-functions` always prints SKIP — yet CI spends a step on `pip install pytest`. The root `.pytest_cache/` and `.ruff_cache/` are residue. | `Makefile:166`, `.github/workflows/ci.yaml:181` | Either land the first function test or drop the target and the CI step. |
 | `crossplane/functions/` and `crossplane/tests/e2e/fixtures/` are `.gitkeep`-only. | — | Keep only if a named piece of work will fill them; otherwise remove. |
-| `scripts/verify-authz-model.sh` and `scripts/normalize-go-headers.sh` are wired to neither `make` nor CI. | 0 references | Wire `verify-authz-model.sh` into the lint job (there is an `authz/model/v0/tests.fga.yaml` to run); `normalize-go-headers.sh` is a completed one-off — delete. |
+| `scripts/tools/verify-authz-model.sh` and `scripts/normalize-go-headers.sh` are wired to neither `make` nor CI. | 0 references | Wire `verify-authz-model.sh` into the lint job (there is an `authz/model/v0/tests.fga.yaml` to run); `normalize-go-headers.sh` is a completed one-off — delete. |
 | `export/gentian-apps.tar.gz` and `export/gentian-apps-*.bundle` (255 KB tracked) are no longer listed in `export/README.md`'s export table. | `export/README.md` | Delete; the catalogue has its own repo. |
 
 ### 14.3 Orphaned configuration — relevant to Phase 10

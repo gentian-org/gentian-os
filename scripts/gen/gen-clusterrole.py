@@ -29,7 +29,7 @@ from collections import defaultdict
 
 import yaml
 
-REPO = pathlib.Path(__file__).resolve().parent.parent
+REPO = pathlib.Path(__file__).resolve().parents[2]   # scripts/gen/ -> repo root
 ROLE = REPO / "config" / "rbac" / "role.yaml"
 OUT = REPO / "charts" / "gentian-os" / "templates" / "clusterrole.yaml"
 
@@ -40,7 +40,7 @@ VERB_ORDER = ["get", "list", "watch", "create", "update", "patch", "delete"]
 HEADER = """{{- /*
   GENERATED FILE — DO NOT EDIT.
 
-  Rendered by scripts/gen-clusterrole.py from the +kubebuilder:rbac markers in
+  Rendered by scripts/gen/gen-clusterrole.py from the +kubebuilder:rbac markers in
   internal/..., via controller-gen. To change a permission, edit the marker next
   to the code that needs it and run `make gen-all`. Editing this file by hand
   will be reverted by the next generation run, and CI's verify-gen job fails on

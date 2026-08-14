@@ -12,13 +12,13 @@ set -euo pipefail
 # Usage:
 #   export BAO_ADDR=http://localhost:8200     # port-forwarded OpenBao
 #   export BAO_TOKEN="<root-or-admin-token>"
-#   ./scripts/seed-openbao.sh <master-password> [smtp-relay-user] [smtp-relay-password]
+#   ./scripts/bootstrap/seed-openbao.sh <master-password> [smtp-relay-user] [smtp-relay-password]
 #
 # Typical local run (port-forward first):
 #   kubectl port-forward svc/openbao 8200:8200 -n openbao &
 #   export BAO_ADDR=http://localhost:8200
 #   export BAO_TOKEN="$(cat /path/to/root-token)"
-#   ./scripts/seed-openbao.sh "your-master-password" "oci-user" "oci-pass"
+#   ./scripts/bootstrap/seed-openbao.sh "your-master-password" "oci-user" "oci-pass"
 #
 # Secret paths written (under secret/gentian-os/kernel/):
 #   database/postgresql

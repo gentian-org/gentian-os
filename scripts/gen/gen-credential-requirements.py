@@ -12,8 +12,8 @@ fails when it is stale. Edit credentials.yaml and re-run `make gen-all`; never
 edit the generated file.
 
 Usage:
-    python3 scripts/gen-credential-requirements.py
-    python3 scripts/gen-credential-requirements.py --check   # CI parity check
+    python3 scripts/gen/gen-credential-requirements.py
+    python3 scripts/gen/gen-credential-requirements.py --check   # CI parity check
 """
 
 import sys
@@ -24,13 +24,13 @@ try:
 except ImportError:  # pragma: no cover
     sys.exit("PyYAML is required: pip install pyyaml")
 
-ROOT = Path(__file__).resolve().parent.parent
+ROOT = Path(__file__).resolve().parents[2]   # scripts/gen/ -> repo root
 SOURCE = ROOT / "credentials.yaml"
 TARGET = ROOT / "kernel" / "credentials" / "credential-requirements.yaml"
 
 HEADER = """# GENERATED FILE — DO NOT EDIT.
 #
-# Rendered by scripts/gen-credential-requirements.py from credentials.yaml.
+# Rendered by scripts/gen/gen-credential-requirements.py from credentials.yaml.
 # To change a requirement, edit credentials.yaml and run `make gen-all`.
 #
 # These are the catalogue's on-cluster carrier: the credential manager reads

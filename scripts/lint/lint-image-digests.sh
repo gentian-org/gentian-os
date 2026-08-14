@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # =============================================================================
-# scripts/lint-image-digests.sh — every pinned digest must be a manifest LIST
+# scripts/lint/lint-image-digests.sh — every pinned digest must be a manifest LIST
 # =============================================================================
 # A digest pin is good: it is the supply-chain guarantee a tag cannot give. But
 # a digest can point at either a manifest list (every architecture) or a single
@@ -18,11 +18,12 @@
 # flaky network teaches people to ignore it.
 #
 # Usage:
-#   scripts/lint-image-digests.sh
+#   scripts/lint/lint-image-digests.sh
 # =============================================================================
 
 set -euo pipefail
-cd "$(dirname "${BASH_SOURCE[0]}")/.."
+# scripts/lint/ -> repo root
+cd "$(dirname "${BASH_SOURCE[0]}")/../.."
 
 RED=$'\033[0;31m'; GREEN=$'\033[0;32m'; YELLOW=$'\033[1;33m'; DIM=$'\033[2m'; NC=$'\033[0m'
 

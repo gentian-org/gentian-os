@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # =============================================================================
-# scripts/lint-resolvable.sh — every function call must resolve
+# scripts/lint/lint-resolvable.sh — every function call must resolve
 # =============================================================================
 # Deleting a function whose last caller you did not check is the single most
 # repeated mistake in this repository's recent history. It has happened three
@@ -16,11 +16,12 @@
 # or on PATH.
 #
 # Usage:
-#   scripts/lint-resolvable.sh
+#   scripts/lint/lint-resolvable.sh
 # =============================================================================
 
 set -uo pipefail
-cd "$(dirname "${BASH_SOURCE[0]}")/.."
+# scripts/lint/ -> repo root
+cd "$(dirname "${BASH_SOURCE[0]}")/../.."
 SCRIPT_DIR="$PWD"
 export SCRIPT_DIR
 
@@ -29,8 +30,8 @@ source scripts/lib/load.sh >/dev/null 2>&1
 # shellcheck source=scripts/lib/driver.sh
 source scripts/lib/driver.sh >/dev/null 2>&1
 # Pulled in by steps at apply() time rather than by load.sh.
-# shellcheck source=scripts/portal-login-bootstrap.sh
-source scripts/portal-login-bootstrap.sh >/dev/null 2>&1 || true
+# shellcheck source=scripts/lib/portal-login-bootstrap.sh
+source scripts/lib/portal-login-bootstrap.sh >/dev/null 2>&1 || true
 
 # load.sh installs an ERR trap for install runs. This is a lint: a grep that
 # matches nothing is a normal outcome, not an aborted install.

@@ -146,7 +146,7 @@ create_deployments_git_credentials() {
     local host username
     host="$(_deployments_git_host)"
     username="${GENTIAN_DEPLOYMENTS_GIT_USERNAME:-x-access-token}"
-    bash "${SCRIPT_DIR}/scripts/create-deployments-git-credentials.sh" \
+    bash "${SCRIPT_DIR}/scripts/bootstrap/create-deployments-git-credentials.sh" \
         "${ns}" \
         "${GENTIAN_DEPLOYMENTS_GIT_TOKEN}" \
         "${username}" \

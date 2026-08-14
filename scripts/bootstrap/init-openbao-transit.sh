@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # =============================================================================
-# scripts/init-openbao-transit.sh
+# scripts/bootstrap/init-openbao-transit.sh
 # =============================================================================
 # Bootstrap the openbao-transit instance and create the Kubernetes Secret
 # that the primary OpenBao reads for its transit auto-unseal token.
@@ -34,7 +34,7 @@ TRANSIT_NS="${TRANSIT_NAMESPACE:-openbao}"
 # installer runs on a node (local k3s/minikube); against a remote cluster it
 # blackholes and the wait loop below times out on a perfectly healthy pod.
 # shellcheck source=scripts/lib/portforward.sh
-source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/portforward.sh"
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")/../lib" && pwd)/portforward.sh"
 
 info "Resolving openbao-transit address..."
 if ! kubectl get svc openbao-transit -n "${TRANSIT_NS}" >/dev/null 2>&1; then

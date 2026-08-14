@@ -3,7 +3,7 @@
 # scripts/lib/portforward.sh — reach in-cluster Services from the install host
 # =============================================================================
 # Deliberately self-contained: sourced both through scripts/lib/load.sh and
-# directly by standalone scripts (scripts/init-openbao-transit.sh). Depends only
+# directly by standalone scripts (scripts/bootstrap/init-openbao-transit.sh). Depends only
 # on kubectl, curl and python3 — all already required by pre-flight.
 #
 # Why this exists

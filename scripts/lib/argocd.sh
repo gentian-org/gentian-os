@@ -129,7 +129,7 @@ install_argocd() {
     if kubectl get deployment argocd-server -n argocd &>/dev/null; then
         success "ArgoCD already installed."
     else
-        bash "${SCRIPT_DIR}/scripts/install-argocd.sh"
+        bash "${SCRIPT_DIR}/scripts/bootstrap/install-argocd.sh"
         success "ArgoCD installed."
     fi
 

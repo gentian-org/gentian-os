@@ -2,7 +2,7 @@
 # Run OpenFGA model tests for authz/model/v0 (requires `fga` CLI).
 set -euo pipefail
 
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 MODEL_DIR="${ROOT}/authz/model/v0"
 
 if ! command -v fga >/dev/null 2>&1; then

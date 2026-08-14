@@ -685,7 +685,7 @@ install_provider_helm() {
 #   - provider-helm Healthy (Step 11)
 #   - gentian-infra-data AppSet synced ESO Secrets + values ConfigMaps (wave 8)
 #   - charts/infra/packages published on GitHub for the target git branch
-#     (run ./scripts/publish-infra-charts.sh and push before install when adding charts)
+#     (run ./scripts/tools/publish-infra-charts.sh and push before install when adding charts)
 # =============================================================================
 detect_infra_chart_repo() {
     if [[ -n "${INFRA_CHART_REPO:-}" ]]; then
@@ -707,7 +707,7 @@ verify_infra_chart_index() {
     local index
     if ! index="$(curl -fsSL "${index_url}" 2>/dev/null)"; then
         error "Could not fetch ${index_url}"
-        error "  Publish charts with: ./scripts/publish-infra-charts.sh && git push"
+        error "  Publish charts with: ./scripts/tools/publish-infra-charts.sh && git push"
         error "  Or set INFRA_CHART_REPO to a branch that contains redis/minio packages."
         return 1
     fi
@@ -841,9 +841,9 @@ print_summary_cp() {
     echo ""
     echo -e "${GREEN}  Completed      : Steps 14–17 (Stage 1 IdP, authz bridge, portal, app catalogue)${NC}"
     # Portal credentials (MASTER_PASSWORD-derived; same as keycloak-portal-bootstrap Job).
-    if [[ -f "${SCRIPT_DIR}/scripts/portal-login-bootstrap.sh" ]]; then
-        # shellcheck source=scripts/portal-login-bootstrap.sh
-        source "${SCRIPT_DIR}/scripts/portal-login-bootstrap.sh"
+    if [[ -f "${SCRIPT_DIR}/scripts/lib/portal-login-bootstrap.sh" ]]; then
+        # shellcheck source=scripts/lib/portal-login-bootstrap.sh
+        source "${SCRIPT_DIR}/scripts/lib/portal-login-bootstrap.sh"
         print_portal_login_summary
     fi
     echo ""
@@ -883,8 +883,8 @@ install_llm_serving() {
     # litellm-services.yaml references the litellm-dashboard-sso Secret
     # (GENERIC_CLIENT_ID/SECRET) — ensure it exists even though Step 14
     # (portal bootstrap) runs after this step.
-    # shellcheck source=scripts/portal-login-bootstrap.sh
-    source "${SCRIPT_DIR}/scripts/portal-login-bootstrap.sh"
+    # shellcheck source=scripts/lib/portal-login-bootstrap.sh
+    source "${SCRIPT_DIR}/scripts/lib/portal-login-bootstrap.sh"
     ensure_litellm_sso_secret >/dev/null
 
     local manifests_dir="${SCRIPT_DIR}/kernel/services/llm/manifests/${env}"

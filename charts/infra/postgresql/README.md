@@ -9,7 +9,7 @@ A Helm chart for running PostgreSQL (Postgres) database
 ## Gentian deployment
 
 Kernel installs this chart via Crossplane `Release`. Packaged charts are published
-to `charts/infra/packages/`; run `./scripts/publish-infra-charts.sh` after editing
+to `charts/infra/packages/`; run `./scripts/tools/publish-infra-charts.sh` after editing
 the chart source under `charts/infra/postgresql/`.
 
 ## Standalone install

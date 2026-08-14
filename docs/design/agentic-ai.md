@@ -383,7 +383,7 @@ see the licensing caveat in
 [llm-integration-research.md](../research/llm-integration-research.md).
 
 **Teams:** one free/OSS LiteLLM Team is created per `Tenant` CR by
-`ensure_litellm_teams()` (`scripts/llm-lib.sh`), run as part of
+`ensure_litellm_teams()` (`scripts/lib/llm-lib.sh`), run as part of
 `install_llm_serving` and `install.sh --only 29`. Re-run
 `./install.sh --only 29` after adding a tenant to sync its Team.
 
@@ -451,7 +451,7 @@ shared LiteLLM proxy sits in front of however many instances exist
 of this section for what running several concurrently actually costs.
 
 Which model(s) to serve is cluster instance data, not a gentian-os
-default — `render_and_apply_vllm_gpu_manifest()` (`scripts/llm-lib.sh`)
+default — `render_and_apply_vllm_gpu_manifest()` (`scripts/lib/llm-lib.sh`)
 reads `VLLM_INSTANCES` (a space-separated list of instance IDs) from
 the cluster's `cluster-settings.env` in `gentian-deployments`, and for
 each one renders the `.tmpl` from that instance's own
@@ -500,7 +500,7 @@ against real cluster GPU resources by `validate_config`, see
    for download/load progress.
 5. That's it — no separate LiteLLM registration step. The same
    `./install.sh --only 29` run also calls `ensure_litellm_vllm_model()`
-   (`scripts/llm-lib.sh`), which registers/updates every
+   (`scripts/lib/llm-lib.sh`), which registers/updates every
    `VLLM_INSTANCES` entry as a LiteLLM model, each keyed on its own
    `api_base` (one Service per instance, never shared): a swap to a
    different `VLLM_<ID>_MODEL_ID` deletes that instance's stale LiteLLM

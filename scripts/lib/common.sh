@@ -213,7 +213,7 @@ wait_for_running_pod() {
     return 1
 }
 
-# cri_cleanup() and kubelite_restart() are defined in scripts/lib-runtime.sh
+# cri_cleanup() and kubelite_restart() are defined in scripts/lib/lib-runtime.sh
 # (sourced near the top of this file) so they can be reused by uninstall.sh.
 
 # ─── Paths ────────────────────────────────────────────────────────────────────

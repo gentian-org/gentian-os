@@ -9,8 +9,8 @@ check() {
 }
 
 apply() {
-    # shellcheck source=scripts/portal-login-bootstrap.sh
-    source "${SCRIPT_DIR}/scripts/portal-login-bootstrap.sh"
+    # shellcheck source=scripts/lib/portal-login-bootstrap.sh
+    source "${SCRIPT_DIR}/scripts/lib/portal-login-bootstrap.sh"
     configure_keycloak_realm_smtp || warn "Keycloak realm SMTP configuration skipped."
     install_portal_login
 }

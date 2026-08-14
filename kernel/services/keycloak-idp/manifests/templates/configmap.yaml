@@ -65,7 +65,7 @@ data:
     # on the very first install (no prior state to patch against) but
     # fails every upgrade after, so the failure mode is easy to miss.
     # Gentian login theme — sources in kernel/services/keycloak-idp/theme/,
-    # rendered to a ConfigMap by scripts/gen-keycloak-theme-configmap.py.
+    # rendered to a ConfigMap by scripts/gen/gen-keycloak-theme-configmap.py.
     #
     # A ConfigMap key cannot contain "/", so the theme's directory tree is encoded
     # as "__" and expanded here at startup. Mounting the ConfigMap directly does

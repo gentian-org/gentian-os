@@ -25,8 +25,8 @@ check() {
 apply() {
     # portal-login-bootstrap.sh is not in scripts/lib/load.sh's list; step 30
     # sources it the same way.
-    # shellcheck source=scripts/portal-login-bootstrap.sh
-    source "${SCRIPT_DIR}/scripts/portal-login-bootstrap.sh"
+    # shellcheck source=scripts/lib/portal-login-bootstrap.sh
+    source "${SCRIPT_DIR}/scripts/lib/portal-login-bootstrap.sh"
 
     # Non-fatal throughout: a tenant whose realm is mid-provision must not abort
     # the run, and the next invocation picks it up.

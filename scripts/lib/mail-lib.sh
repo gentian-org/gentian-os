@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # =============================================================================
-# scripts/mail-lib.sh — MAIL_SERVICE_MODE install/update helpers
+# scripts/lib/mail-lib.sh — MAIL_SERVICE_MODE install/update helpers
 # =============================================================================
 # Sourced from scripts/lib/load.sh (and therefore install.sh / update.sh).
 #

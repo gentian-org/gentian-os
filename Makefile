@@ -14,7 +14,7 @@ IMG ?= ghcr.io/gentian-org/gentian-os:latest
 
 # Crossplane CLI/core version used for install-tools, CI, and schema validation.
 # Read from versions.yaml so the pin exists once — it was previously duplicated
-# here, in install.sh and in scripts/install-crossplane-cli.sh, in two spellings.
+# here, in install.sh and in scripts/bootstrap/install-crossplane-cli.sh, in two spellings.
 CROSSPLANE_CLI_VERSION ?= $(shell bash scripts/lib/versions.sh crossplane cli)
 CROSSPLANE_IMAGE ?= xpkg.crossplane.io/crossplane/crossplane:$(CROSSPLANE_CLI_VERSION)
 
@@ -63,24 +63,24 @@ manifests:
 	@# RBAC is generated from the +kubebuilder:rbac markers, which live in
 	@# ./internal/... — NOT ./api/..., where the CRD run above looks. Scanning
 	@# only ./api/... is what let the chart's hand-written ClusterRole drift from
-	@# the markers for eleven separate permissions; see scripts/gen-clusterrole.py.
+	@# the markers for eleven separate permissions; see scripts/gen/gen-clusterrole.py.
 	$(CONTROLLER_GEN) rbac:roleName=gentian-os paths="./internal/..." output:rbac:artifacts:config=config/rbac
-	python3 scripts/gen-clusterrole.py
+	python3 scripts/gen/gen-clusterrole.py
 
 ## Render the Keycloak login theme sources into the ConfigMap Argo CD applies
 gen-theme:
-	python3 scripts/gen-keycloak-theme-configmap.py
+	python3 scripts/gen/gen-keycloak-theme-configmap.py
 
 ## Render credentials.yaml into the packaged CredentialRequirement CRs
 gen-credentials:
-	python3 scripts/gen-credential-requirements.py
+	python3 scripts/gen/gen-credential-requirements.py
 
 ## Both generate and manifests in order
 gen-all: generate manifests gen-theme gen-credentials
 
 ## Verify generated files are up to date (CI check)
 verify-gen: gen-all
-	python3 scripts/gen-credential-requirements.py --check
+	python3 scripts/gen/gen-credential-requirements.py --check
 	git diff --exit-code api/ config/crd/ charts/gentian-os/crds/ charts/gentian-os/templates/clusterrole.yaml kernel/services/keycloak-idp/manifests/ kernel/credentials/ || (echo "Generated files are out of date. Run 'make gen-all'." && exit 1)
 
 ## Tidy module dependencies
@@ -114,17 +114,17 @@ check-credentials:
 ## architecture. Queries the registry, so it needs network and is not part of
 ## the offline lint set.
 lint-image-digests:
-	@bash scripts/lint-image-digests.sh
+	@bash scripts/lint/lint-image-digests.sh
 
 ## Assert every function call in every shell file resolves. Catches deleting a
 ## function whose last caller was not checked — the most repeated mistake here.
 lint-resolvable:
-	@bash scripts/lint-resolvable.sh
+	@bash scripts/lint/lint-resolvable.sh
 
 ## Report macOS/BSD portability violations. Expected non-zero until Phase 13
 ## migrates the call sites; the count must only go down.
 lint-portability:
-	@bash scripts/lint-portability.sh
+	@bash scripts/lint/lint-portability.sh
 
 ## Assert every scripts/steps/*.sh declares its contract and defines apply().
 ## Reads only the step files — no cluster, no kubeconfig.
@@ -145,7 +145,7 @@ clean:
 ## Assert each render test's Composition copy matches the deployed one. A stale
 ## copy keeps the golden test green against a Composition nobody runs.
 check-render-fixtures:
-	@bash scripts/check-render-fixtures.sh
+	@bash scripts/lint/check-render-fixtures.sh
 
 ## Run crossplane render golden-file tests for all test cases in crossplane/tests/unit/render/
 ## Skip directories without an expected.yaml (run 'make test-unit-render-update' to generate them)
@@ -265,7 +265,7 @@ install-tools:
 	@which crossplane >/dev/null 2>&1 || { \
 		echo "Installing crossplane CLI..."; \
 		tmpdir=$$(mktemp -d); \
-		( cd "$$tmpdir" && XP_VERSION=$(CROSSPLANE_CLI_VERSION) bash "$(shell pwd)/scripts/install-crossplane-cli.sh" \
+		( cd "$$tmpdir" && XP_VERSION=$(CROSSPLANE_CLI_VERSION) bash "$(shell pwd)/scripts/bootstrap/install-crossplane-cli.sh" \
 		  && sudo mv crossplane /usr/local/bin/crossplane ); \
 		rmdir "$$tmpdir"; \
 	}

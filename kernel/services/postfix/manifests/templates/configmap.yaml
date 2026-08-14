@@ -40,7 +40,7 @@ data:
         TZ: "UTC"
         # Rendered from the cluster's kernel domain, NOT patched in afterwards.
         #
-        # This used to ship the literal "example.domain" for scripts/mail-lib.sh
+        # This used to ship the literal "example.domain" for scripts/lib/mail-lib.sh
         # to kubectl-patch on install. That ConfigMap is Argo CD-managed with
         # selfHeal, so the patch was reverted to the placeholder on the next
         # sync. The failure is severe and silent: the bokysan chart builds
@@ -74,7 +74,7 @@ metadata:
     argocd.argoproj.io/sync-wave: "-1"
 data:
   values.yaml: |
-    # Env overrides — patched by scripts/mail-lib.sh when MAIL_SERVICE_MODE=kernel.
+    # Env overrides — patched by scripts/lib/mail-lib.sh when MAIL_SERVICE_MODE=kernel.
     # Schema is bokysan/mail (not the old proprietary chart).
     replicaCount: 1
     resources:

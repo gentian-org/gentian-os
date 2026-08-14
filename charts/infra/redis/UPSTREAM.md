@@ -6,7 +6,7 @@
 | Upstream | Bitnami `redis` chart |
 | Version | 18.6.1 (app 7.2.3) |
 | Source | `oci://registry-1.docker.io/bitnamicharts/redis:18.6.1` |
-| Package repo | `charts/infra/packages/` — regenerate with `scripts/publish-infra-charts.sh` |
+| Package repo | `charts/infra/packages/` — regenerate with `scripts/tools/publish-infra-charts.sh` |
 | Runtime images | Overridden in `kernel/services/redis/values/_base.yaml` (`docker.io/bitnamilegacy/redis`) |
 | Licence | Apache-2.0 (chart) |
 
@@ -19,5 +19,5 @@ Re-vendor:
 ```bash
 helm pull oci://registry-1.docker.io/bitnamicharts/redis --version 18.6.1 -d /tmp
 tar -xzf /tmp/redis-18.6.1.tgz -C /tmp && cp -a /tmp/redis charts/infra/redis
-./scripts/publish-infra-charts.sh
+./scripts/tools/publish-infra-charts.sh
 ```

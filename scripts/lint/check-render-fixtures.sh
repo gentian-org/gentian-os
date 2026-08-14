@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # =============================================================================
-# scripts/check-render-fixtures.sh — render tests must test the real thing
+# scripts/lint/check-render-fixtures.sh — render tests must test the real thing
 # =============================================================================
 # Each crossplane/tests/unit/render/*/ directory holds its own copy of the
 # Composition under test. A copy can drift from the original, and when it does
@@ -12,7 +12,8 @@
 # =============================================================================
 
 set -euo pipefail
-cd "$(dirname "${BASH_SOURCE[0]}")/.."
+# scripts/lint/ -> repo root
+cd "$(dirname "${BASH_SOURCE[0]}")/../.."
 
 RED=$'\033[0;31m'; GREEN=$'\033[0;32m'; NC=$'\033[0m'
 stale=0
