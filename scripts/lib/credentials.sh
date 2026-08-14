@@ -74,7 +74,7 @@ catalogue_field_attr() {
 # field has no shell consumer.
 _env_var_for() {
     case "$1/$2" in
-        master-password/password)          echo MASTER_PASSWORD ;;
+        master-password/value)             echo MASTER_PASSWORD ;;
         # No mapping for the salt: it is generated after collection, not
         # prompted for. A mapping here would put it in the prompt loop.
         deployments-repository/username)   echo GENTIAN_DEPLOYMENTS_GIT_USERNAME ;;
@@ -82,11 +82,32 @@ _env_var_for() {
         infra-chart-registry/username)     echo REGISTRY_USER ;;
         infra-chart-registry/password)     echo REGISTRY_PASSWORD ;;
         acme-dns-cloudflare/api-token)     echo CF_API_TOKEN ;;
-        smtp-relay/username)               echo SMTP_RELAY_USERNAME ;;
-        smtp-relay/password)               echo SMTP_RELAY_PASSWORD ;;
+        smtp-relay/relay_username)         echo SMTP_RELAY_USERNAME ;;
+        smtp-relay/relay_password)         echo SMTP_RELAY_PASSWORD ;;
         smtp-relay/host)                   echo EXTERNAL_SMTP_HOST ;;
         smtp-relay/port)                   echo EXTERNAL_SMTP_PORT ;;
         *)                                 echo "" ;;
+    esac
+}
+
+# _requirement_applies <req> — whether this cluster needs the credential at all.
+#
+# The catalogue describes the platform, so it can say a credential is optional
+# but not whether this particular cluster uses the thing it unlocks. That answer
+# comes from the cluster's own configuration, and it belongs here rather than in
+# `optional:`, which would then mean two different things at once.
+#
+# A requirement that does not apply is never prompted for and never validated.
+_requirement_applies() {
+    case "$1" in
+        infra-chart-registry)
+            # Infra charts come from a public URL unless the cluster says
+            # otherwise, and a public registry has no credential to give.
+            [[ "${INFRA_CHART_PRIVATE:-false}" == "true" ]]
+            ;;
+        *)
+            return 0
+            ;;
     esac
 }
 
@@ -122,6 +143,11 @@ _validate_requirement() {
             [[ -n "${CF_API_TOKEN:-}" ]] || return 0
             run_validator oidc-discovery "${vurl}" "${CF_API_TOKEN}"
             ;;
+        cloudflare-dns)
+            [[ -n "${CF_API_TOKEN:-}" ]] || return 0
+            # The zone is the kernel domain: that is the one DNS-01 solves in.
+            run_validator cloudflare-dns "${CF_ZONE_NAME:-${KERNEL_DOMAIN:-}}" "${CF_API_TOKEN}"
+            ;;
         smtp)
             [[ -n "${SMTP_RELAY_PASSWORD:-}" ]] || return 0
             run_validator smtp "${EXTERNAL_SMTP_HOST:-}" "${EXTERNAL_SMTP_PORT:-587}" \
@@ -141,11 +167,58 @@ _validate_requirement() {
 
 # _prompt_field <requirement> <key> — ask for one field, unless it is already
 # set from the environment, install.env, or OpenBao.
+# _requirement_source <req> — which file pre-supplied this requirement's value.
+#
+# install.env and the secrets file are auto-loaded when present, so a value can
+# reach a run without anyone typing it — commonly a file left over from another
+# cluster. Naming the file turns "fix the values above" into an instruction.
+_requirement_source() {
+    local req="$1" key var f
+    key="$(catalogue_field_keys "${req}" | head -1)"
+    var="$(_env_var_for "${req}" "${key}")"
+    [[ -n "${var}" ]] || { echo "the environment"; return 0; }
+
+    for f in "${INSTALL_SECRETS_FILE:-}" "${INSTALL_CONFIG_FILE:-}"; do
+        [[ -n "${f}" && -r "${f}" ]] || continue
+        if grep -qE "^[[:space:]]*(export[[:space:]]+)?${var}=" "${f}"; then
+            echo "${var} in ${f}"
+            return 0
+        fi
+    done
+    echo "${var} in the environment"
+}
+
+# _reprompt_requirement <req> — clear a requirement's fields and ask again, so a
+# rejected value can be corrected in place rather than by editing a file and
+# starting the run over.
+_reprompt_requirement() {
+    local req="$1" key var
+    for key in $(catalogue_field_keys "${req}"); do
+        var="$(_env_var_for "${req}" "${key}")"
+        [[ -n "${var}" ]] && unset "${var}"
+    done
+
+    for key in $(catalogue_field_keys "${req}"); do
+        _prompt_field "${req}" "${key}"
+    done
+}
+
 _prompt_field() {
     local req="$1" key="$2" var secret minlen example label value
 
     var="$(_env_var_for "${req}" "${key}")"
-    [[ -n "${var}" ]] || return 0
+    if [[ -z "${var}" ]]; then
+        # A field the catalogue declares and this mapping does not know. Skipping
+        # it silently is how a required credential goes uncollected: nothing
+        # prompts, the noop validator reports OK, and the install fails much
+        # later complaining that the variable is unset.
+        if [[ "$(catalogue_get "${req}" optional 2>/dev/null)" != "true" ]]; then
+            error "${req}/${key} has no environment-variable mapping in _env_var_for()."
+            error "  It is a required credential, so this run cannot collect it."
+            return 1
+        fi
+        return 0
+    fi
 
     # Already supplied — from the environment, a config file, or a previous
     # partial install recovered out of OpenBao. Invariant 3.
@@ -172,13 +245,41 @@ _prompt_field() {
     [[ "${minlen}" -gt 0 ]] 2>/dev/null && prompt+=" [min ${minlen} chars]"
     prompt+=": "
 
+    local read_rc
     while :; do
         # Secret fields are read without echo, so a shoulder-surfer and a
         # scrollback buffer see nothing.
-        if [[ "${secret}" == "true" ]]; then
-            read -rsp "${prompt}" value; echo ""
+        # Input is echoed, including for secret fields. These values are pasted
+        # far more often than typed, and a paste that lost a character or picked
+        # up a wrapped line is otherwise invisible until the endpoint probe
+        # rejects it — or, for a value with no probe, until something fails days
+        # later. Seeing what was entered is worth more here than hiding it from
+        # a terminal the operator is already installing a cluster from.
+        #
+        # Set GENTIAN_MASK_SECRETS=1 to read secret fields without echo, for a
+        # shared screen or a recorded session.
+        read_rc=0
+        if [[ "${secret}" == "true" && "${GENTIAN_MASK_SECRETS:-0}" == "1" ]]; then
+            read -rsp "${prompt}" value || read_rc=$?
+            echo ""
         else
-            read -rp "${prompt}" value
+            read -rp "${prompt}" value || read_rc=$?
+        fi
+
+        # No more input — a closed stdin, or a run driven from a pipe. Looping
+        # would spin forever on a required field, and letting the non-zero read
+        # escape aborts the whole install through the ERR trap.
+        if (( read_rc != 0 )); then
+            if [[ -z "${value}" ]]; then
+                # An optional field is simply left unset. A required one must
+                # say so: its validator treats an absent value as nothing to
+                # check, so staying quiet here turns a missing credential into a
+                # passing probe and a failure somewhere far away.
+                [[ "$(catalogue_get "${req}" optional)" == "true" ]] && return 0
+                error "${label} — ${key}: no input available."
+                return 1
+            fi
+            break
         fi
 
         # Optional and left blank: accept and move on.
@@ -217,29 +318,64 @@ collect_bootstrap_credentials() {
     info "From ${GENTIAN_CATALOGUE_FILE##*/} — phase: bootstrap only."
     info "Nothing is written to this machine; values go straight to OpenBao."
 
+    # Iterate over command substitution rather than `while read … done < <(…)`.
+    # That form redirects the loop body's stdin to the catalogue stream, so the
+    # `read` inside _prompt_field consumes the next requirement name instead of
+    # the operator's answer — every prompt returns empty and the install fails
+    # later complaining the variable is unset. Names and field keys never
+    # contain whitespace, so word splitting is the whole of the parsing.
     local req key
-    while IFS= read -r req; do
-        [[ -n "${req}" ]] || continue
-        while IFS= read -r key; do
-            [[ -n "${key}" ]] || continue
+    for req in $(catalogue_names bootstrap); do
+        if ! _requirement_applies "${req}"; then
+            # Said out loud: a prompt that silently does not happen is
+            # indistinguishable from one that was skipped by mistake.
+            info "${req}: not required by this cluster's configuration."
+            continue
+        fi
+        for key in $(catalogue_field_keys "${req}"); do
             _prompt_field "${req}" "${key}"
-        done < <(catalogue_field_keys "${req}")
-    done < <(catalogue_names bootstrap)
+        done
+    done
 
     # Validate only after everything is collected, so an operator answering a
     # long form is not stopped halfway by a probe against a host they have not
     # been asked about yet.
     echo ""
     info "Validating supplied credentials against their endpoints..."
+    # Same reason as the prompt loop above: this one re-prompts on failure.
     local failed=0
-    while IFS= read -r req; do
-        [[ -n "${req}" ]] || continue
+    for req in $(catalogue_names bootstrap); do
+        _requirement_applies "${req}" || continue
         if _validate_requirement "${req}"; then
             success "${req}"
-        else
-            failed=$((failed + 1))
+            continue
         fi
-    done < <(catalogue_names bootstrap)
+
+        # Successes are named, so a failure that is not leaves the operator
+        # matching an endpoint URL against the catalogue to find out which
+        # credential to fix.
+        error "  requirement: ${req} ($(catalogue_get "${req}" displayName 2>/dev/null))"
+        error "  value from:  $(_requirement_source "${req}")"
+
+        # A value that arrived from a file was never typed here, so "fix it and
+        # re-run" asks the operator to correct something they may not know they
+        # supplied — and the next run reads the same file and fails identically.
+        # Ask for it instead, which is what the prompt would have done had the
+        # file not pre-empted it.
+        if [[ "${GENTIAN_NONINTERACTIVE:-0}" != "1" ]]; then
+            if [[ "$(catalogue_get "${req}" optional 2>/dev/null)" == "true" ]]; then
+                info "  Enter a replacement, or leave it blank to continue without it."
+            else
+                info "  Enter a replacement."
+            fi
+            _reprompt_requirement "${req}"
+            if _validate_requirement "${req}"; then
+                success "${req}"
+                continue
+            fi
+        fi
+        failed=$((failed + 1))
+    done
 
     if [[ ${failed} -gt 0 ]]; then
         echo ""

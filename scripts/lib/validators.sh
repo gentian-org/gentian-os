@@ -129,6 +129,44 @@ validate_git_https() {
 # Also serves any endpoint whose validity check is "does this token authenticate
 # against this URL", such as Cloudflare's token-verify route.
 # =============================================================================
+# validate_cloudflare_dns <zone> <token>
+#
+# Asks whether the token can see the zone DNS-01 will write to, rather than what
+# kind of token it is. /user/tokens/verify answers the second question: it
+# accepts only user-owned tokens and rejects an account-owned one — the `cfat_`
+# prefix — with "Invalid API Token", even when that token has full DNS rights on
+# the zone. It also passes for a valid token with no access to this domain,
+# which is the failure that actually matters.
+validate_cloudflare_dns() {
+    local zone="$1" token="${2:-}" url body code count
+    url="https://api.cloudflare.com/client/v4/zones?name=${zone}"
+
+    body="$(curl -s -w $'\n%{http_code}' --max-time "${GENTIAN_VALIDATE_TIMEOUT}" \
+        -H "Authorization: Bearer ${token}" "${url}" 2>/dev/null)" || body=$'\n000'
+    code="${body##*$'\n'}"
+    body="${body%$'\n'*}"
+
+    case "${code}" in
+        200) ;;
+        401|403) _v_fail "${url}" "token rejected (HTTP ${code})" \
+                    "$(jq -r '.errors[0].message // empty' <<<"${body}" 2>/dev/null)"
+                 return 1 ;;
+        000) _v_fail "${url}" "unreachable" \
+                 "no HTTP response within ${GENTIAN_VALIDATE_TIMEOUT}s"
+             return 1 ;;
+        *)   _v_fail "${url}" "unexpected response (HTTP ${code})"
+             return 1 ;;
+    esac
+
+    count="$(jq -r '.result | length' <<<"${body}" 2>/dev/null || echo 0)"
+    if [[ "${count}" == "0" ]]; then
+        _v_fail "${url}" "the token cannot see zone ${zone}" \
+            "it authenticated, but has no access to this domain — check the token's Zone Resources"
+        return 1
+    fi
+    return 0
+}
+
 validate_oidc_discovery() {
     local url="$1" token="${2:-}" code auth=()
     [[ -n "${token}" ]] && auth=(-H "Authorization: Bearer ${token}")
@@ -196,6 +234,7 @@ run_validator() {
         oci-registry)   validate_oci_registry "$@" ;;
         git-https)      validate_git_https "$@" ;;
         oidc-discovery) validate_oidc_discovery "$@" ;;
+        cloudflare-dns) validate_cloudflare_dns "$@" ;;
         smtp)           validate_smtp "$@" ;;
         *)
             error "Unknown validator type '${type}'."
