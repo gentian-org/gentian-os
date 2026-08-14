@@ -1175,9 +1175,13 @@ Each step file carries `destroy()`, ported from `uninstall.sh`'s 18 `_delete_*` 
 `uninstall.sh` and `update.sh` are deleted: uninstall is the same list reversed, and update is the
 forward pass, because convergence *is* update.
 
-`install-legacy.sh`, `update-legacy.sh` and `uninstall-legacy.sh` are verbatim copies kept as
-reference while step bodies are still delegating into `scripts/lib/`. They are not an entrypoint
-and are removed once Phase 4b lands.
+The pre-driver scripts were kept briefly as `*-legacy.sh` copies and are now deleted. They had
+stopped working: Phase 4a removed `prompt_credentials`, `prompt_kernel_secrets` and
+`load_creds_cache` from `common.sh`, and `install-legacy.sh` calls the first of them eleven lines
+into `main_cp`. A broken script that looks runnable is worse than no script — it costs an hour at
+the wrong moment.
+
+Git history is the reference, and a better one: `git show d7bab42:install.sh` and its siblings.
 
 | # | Criterion | Status |
 |---|---|---|
@@ -1185,7 +1189,7 @@ and are removed once Phase 4b lands.
 | 2 | Uninstall is idempotent: running it twice succeeds | **Unverified** |
 | 3 | `install.sh --update` converges without a separate code path | **Unverified** as a run; structurally true — it is the same forward pass |
 | 4 | `uninstall.sh` and `update.sh` no longer exist, and no step logic was copied to preserve them | **Passing** |
-| 5 | Total shell surface falls by at least 2,254 lines; deletion, not relocation | **Not met while the `*-legacy.sh` copies are tracked.** The driver path is 1,375 lines against the 3,799 it replaces; the reduction only registers once the copies are dropped |
+| 5 | Total shell surface falls by at least 2,254 lines; deletion, not relocation | **Passing** — the copies are deleted, so the 3,799 lines they duplicated are gone |
 | 6 | Every `op_*` behaviour is reachable through a step or recorded as dropped, with the reason | **Passing** — audited; see below |
 
 **`op_*` disposition.** All ten are accounted for:

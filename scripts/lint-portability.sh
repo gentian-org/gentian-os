@@ -23,11 +23,8 @@ RED=$'\033[0;31m'; GREEN=$'\033[0;32m'; DIM=$'\033[2m'; NC=$'\033[0m'
 COUNT_ONLY=0
 [[ "${1:-}" == "--count" ]] && COUNT_ONLY=1
 
-# *-legacy.sh are frozen reference copies of the pre-driver scripts. They are
-# not on any execution path and are deleted when Phase 4b completes, so holding
-# them to a standard nobody will act on would only train people to ignore this.
 files() {
-    git ls-files '*.sh' scripts/kubectl-gentian 2>/dev/null | grep -v -- '-legacy\.sh$'
+    git ls-files '*.sh' scripts/kubectl-gentian 2>/dev/null
 }
 
 total=0

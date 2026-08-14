@@ -108,9 +108,6 @@ The kernel's static/GitOps side, ordered by bootstrap stage:
 forward to install or converge and backward (`--uninstall`) to tear down. It is
 **dev-cluster / documented-bootstrap only**; shared clusters change via GitOps.
 
-`install-legacy.sh`, `update-legacy.sh` and `uninstall-legacy.sh` are verbatim
-copies of the pre-driver scripts, kept for reference while step bodies are still
-being migrated out of `scripts/lib/`.
 
 `scripts/` splits into:
 

@@ -352,9 +352,18 @@ bao kv get -mount=secret gentian-os/kernel/mail/postfix
 grep -A8 'name: smtp-relay' credentials.yaml
 ```
 
-**The installer misbehaves in a way that blocks you.** The pre-driver scripts
-are kept verbatim as `install-legacy.sh`, `update-legacy.sh` and
-`uninstall-legacy.sh`. They still work and are a supported fallback.
+**You want to see what the pre-driver installer did.** It is in git history,
+not in the working tree:
+
+```bash
+git show d7bab42:install.sh      # the single-script installer
+git show d7bab42:uninstall.sh
+git show d7bab42:update.sh
+```
+
+They are not kept as files and are **not** a fallback: they call functions that
+no longer exist, so they fail within seconds of starting. Reading them is
+useful; running them is not.
 
 ---
 
