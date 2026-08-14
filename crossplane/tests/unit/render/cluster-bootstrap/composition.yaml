@@ -399,7 +399,7 @@ spec:
 
             {{- /* ── Certificate issuers: owned by step 05, not here ──────────
                  This composition used to emit a letsencrypt-http01
-                 ClusterIssuer under that exact name, while 05-cluster-issuers
+                 ClusterIssuer under that exact name, while A-06-cluster-issuers
                  applied a manifest declaring the same object. Two writers, last
                  one wins, and the disagreement stays invisible until a
                  certificate fails to issue.

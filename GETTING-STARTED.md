@@ -44,9 +44,9 @@ see [Installing on an internal domain](#7-installing-on-an-internal-domain).
 directory of steps:
 
 ```
-scripts/steps/00-crossplane.sh
-scripts/steps/07-eso.sh
-scripts/steps/16-cluster-xr.sh
+scripts/steps/A-01-crossplane.sh
+scripts/steps/A-08-eso.sh
+scripts/steps/B-07-cluster-xr.sh
 …
 ```
 
@@ -196,8 +196,8 @@ Then it works through the steps, reporting each one before acting:
 
 Two steps print keys you cannot recover later.
 
-- **`11-openbao-transit-init`** prints the transit instance's unseal key.
-- **`13-openbao-init`** prints the primary's recovery key and root token.
+- **`B-02-openbao-transit-init`** prints the transit instance's unseal key.
+- **`B-04-openbao-init`** prints the primary's recovery key and root token.
 
 They are also written to `/tmp/openbao-transit-init.json` and
 `/tmp/openbao-init.json`, which are **not** durable — `/tmp` is cleared on
@@ -218,10 +218,18 @@ The failure names the step and the file to open. Fix the cause and re-run:
 ./install.sh --phase secrets     # or one phase
 ```
 
-The steps are grouped into five phases, which `--explain` prints as headings:
-`control-plane`, `secrets`, `platform`, `applications`, `handover`. The phase is
-a grouping only — the numbers are a single sequence, so a step can be regrouped
-without renumbering anything.
+Steps are numbered `<phase letter>-<NN>`:
+
+| | Phase | What it does |
+|---|---|---|
+| **A** | `control-plane` | Crossplane, namespaces, cert-manager, ESO, ArgoCD |
+| **B** | `secrets` | OpenBao, the Cluster claim, credential seeding |
+| **C** | `platform` | Wildcard cert, root ApplicationSet, admission, catalogue |
+| **D** | `applications` | Operator, mail, LLM serving, portal, app profiles |
+| **E** | `handover` | Tenants, per-tenant reconcile, revoke the bootstrap token |
+
+The number orders steps *within* a phase, so `--from B-03` means "from there to
+the end" and `--phase C` runs one stage.
 
 ---
 
@@ -232,7 +240,7 @@ without renumbering anything.
 ```
 
 Everything should read `satisfied` except the steps that report their state
-differently by design — `03-prewarm`, `20-provider-helm` and `27-gateway-wait`
+differently by design — `A-04-prewarm`, `C-03-provider-helm` and `D-02-gateway-wait`
 have nothing persistent to check, and `13`, `14`, `17` and `34` re-run on every
 pass because they hold per-run tokens or reconcile continuously.
 
@@ -344,7 +352,7 @@ recovers the credentials rather than re-prompting.
 file; the failure names it:
 
 ```bash
-less scripts/steps/16-cluster-xr.sh
+less scripts/steps/B-07-cluster-xr.sh
 ```
 
 **A resource is not becoming Ready.** Most of the cluster is reconciled by

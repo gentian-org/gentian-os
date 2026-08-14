@@ -8,9 +8,9 @@
 # them.
 # Every step is a self-contained file you can read top to bottom:
 #
-#   scripts/steps/00-crossplane.sh   scripts/steps/16-cluster-xr.sh
-#   scripts/steps/07-eso.sh          scripts/steps/19-root-appset.sh
-#   scripts/steps/08-argocd.sh       ...
+#   scripts/steps/A-01-crossplane.sh   scripts/steps/B-07-cluster-xr.sh
+#   scripts/steps/A-08-eso.sh          scripts/steps/C-02-root-appset.sh
+#   scripts/steps/A-09-argocd.sh       ...
 #
 # Each declares a contract in its header and implements up to three verbs:
 #

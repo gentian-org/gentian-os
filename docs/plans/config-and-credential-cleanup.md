@@ -701,10 +701,10 @@ bottom, with no orchestration hidden behind it:
 
 ```text
 scripts/steps/
-  00-crossplane.sh       01-crossplane-providers.sh  02-namespaces.sh
-  04-cert-manager.sh     05-cluster-issuers.sh       07-eso.sh
-  08-argocd.sh           10-openbao-transit.sh       13-openbao-init.sh
-  16-cluster-xr.sh       19-root-appset.sh           ...
+  A-01-crossplane.sh       A-02-crossplane-providers.sh  A-03-namespaces.sh
+  A-05-cert-manager.sh     A-06-cluster-issuers.sh       A-08-eso.sh
+  A-09-argocd.sh           B-01-openbao-transit.sh       B-04-openbao-init.sh
+  B-07-cluster-xr.sh       C-02-root-appset.sh           ...
 ```
 
 They live under `scripts/` with the rest of the shell, next to `scripts/lib/`. The distinction the
@@ -1197,21 +1197,21 @@ Git history is the reference, and a better one: `git show d7bab42:install.sh` an
 
 | `op_*` | Disposition |
 |---|---|
-| `op_portal` | `30-portal-login` |
-| `op_mail` | `28-mail` and `30-portal-login`; the per-tenant half is `34-tenant-reconcile` |
-| `op_llm_serving` | `29-llm-serving`; the per-tenant half is `34-tenant-reconcile` |
-| `op_appprofiles_bootstrap` | `31-appprofiles` |
-| `op_acme_issuers` | `05-cluster-issuers` |
-| `op_staging_ca_secret` | `18-wildcard-cert`, via `certs.sh` |
-| `op_secrets` | `15-crossplane-secrets` and `17-seed-secrets` |
-| `op_crossplane_update` | `01-crossplane-providers`, which now globs the whole compositions directory instead of a named subset |
-| `op_argocd_bootstrap` | `19-root-appset`. **Dropped:** the hard-refresh of all Applications, which was a manual nudge for a reconciler that gets there on its own |
+| `op_portal` | `D-05-portal-login` |
+| `op_mail` | `D-03-mail` and `D-05-portal-login`; the per-tenant half is `E-02-tenant-reconcile` |
+| `op_llm_serving` | `D-04-llm-serving`; the per-tenant half is `E-02-tenant-reconcile` |
+| `op_appprofiles_bootstrap` | `D-06-appprofiles` |
+| `op_acme_issuers` | `A-06-cluster-issuers` |
+| `op_staging_ca_secret` | `C-01-wildcard-cert`, via `certs.sh` |
+| `op_secrets` | `B-06-crossplane-secrets` and `B-09-seed-secrets` |
+| `op_crossplane_update` | `A-02-crossplane-providers`, which now globs the whole compositions directory instead of a named subset |
+| `op_argocd_bootstrap` | `C-02-root-appset`. **Dropped:** the hard-refresh of all Applications, which was a manual nudge for a reconciler that gets there on its own |
 | `op_reconcile_releases` | `force_reconcile_failed_helm_releases` in `check_prereqs`. **Dropped:** the `--force` variant, which re-reconciled *healthy* Releases — a heal hook for a problem Phase 6 gating addresses at the source |
 
 The audit found four functions left with no caller when `update.sh` was deleted:
 `ensure_litellm_teams`, `ensure_litellm_vllm_model`, `configure_tenant_realms_smtp` and
 `apply_crossplane_platform_compositions_update`. The first three are per-*tenant* reconciliation,
-which no cluster-level `check()` can notice — `34-tenant-reconcile` exists because of them, and is
+which no cluster-level `check()` can notice — `E-02-tenant-reconcile` exists because of them, and is
 the one step that converges tenant state rather than cluster state.
 
 ---
@@ -1395,7 +1395,7 @@ come back empty.
 ### Phase 5 — `XRepository`
 
 **Status: implemented.** `crossplane/xrds/repository.yaml` and
-`crossplane/compositions/repository-default.yaml`, applied by `01-crossplane-providers`, with
+`crossplane/compositions/repository-default.yaml`, applied by `A-02-crossplane-providers`, with
 golden-file render tests for both types.
 
 One XRD plus one Composition covering `type: git` and `type: oci`, emitting the artefact set in
@@ -1434,7 +1434,7 @@ a named condition rather than a stuck sync.
 That is what makes the "no controller" claim in §4 hold: nothing bespoke polls OpenBao, because
 ESO already does and publishes the answer as a condition.
 
-Step `24-credential-catalogue` applies both carriers to the cluster.
+Step `C-06-credential-catalogue` applies both carriers to the cluster.
 
 **The check, in all three contexts** — `scripts/check-credentials.sh`, one implementation:
 
@@ -1484,7 +1484,7 @@ a value in a spec field is what §6 prohibits outright.
 The whole block is gated on `spec.oidc.discoveryUrl`, so an unset cluster stays exactly as it was
 rather than half-configuring an auth method.
 
-Step `35-revoke-bootstrap-token` ends the bootstrap exception, and **refuses to run when no OIDC
+Step `E-03-revoke-bootstrap-token` ends the bootstrap exception, and **refuses to run when no OIDC
 path exists** — revoking the only way in leaves a cluster nobody can supply a credential to. That
 is the one case where not revoking is correct, and it is reported rather than silently skipped.
 
@@ -1636,8 +1636,8 @@ Three properties make the split worth the extra phase boundary:
 
 1. **The step contract is already the extension point.** Most of the scaffolding is an edit to an
    existing step's header and a schema field, not a new step — provider RBAC belongs to
-   `01-crossplane-providers`, the trust anchor to `05-cluster-issuers`, provenance to
-   `19-root-appset`.
+   `A-02-crossplane-providers`, the trust anchor to `A-06-cluster-issuers`, provenance to
+   `C-02-root-appset`.
 2. **The implementations already exist and work.** They come from the first external install, so
    the interfaces are derived from working code rather than guessed at. This inverts the usual
    risk of interface-first design.
@@ -1716,7 +1716,7 @@ CI builds both platforms with Buildx set up explicitly — without it the defaul
 `platforms:` and silently produces an amd64-only image, the same failure mode as the digest pin.
 
 **12c — Trust anchor (interface).** Add `XCluster.spec.certificates.issuerMode` as an enum over
-`acme-dns01`, `acme-http01`, `private-ca`, `self-signed`, and make `05-cluster-issuers` read it
+`acme-dns01`, `acme-http01`, `private-ca`, `self-signed`, and make `A-06-cluster-issuers` read it
 and dispatch. Define the CA-bundle distribution contract — which consumers must receive it and
 by what carrier — without yet implementing the non-ACME modes. This is the dimension that decides
 whether an install on an internal domain is possible at all, and it has the largest
@@ -1730,7 +1730,7 @@ probes read `external`, anything written into the cluster reads `inCluster`.
 
 This sub-phase assumed provider RBAC was missing and the providers were running on their
 packages' defaults. They are not. `crossplane/providers/provider-rbac.yaml` exists, is applied by
-`01-crossplane-providers`, and binds both `provider-kubernetes` and `provider-helm` to
+`A-02-crossplane-providers`, and binds both `provider-kubernetes` and `provider-helm` to
 **`cluster-admin`** — using ServiceAccount names pinned by their `DeploymentRuntimeConfig`s so the
 bindings survive provider upgrades.
 

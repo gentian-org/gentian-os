@@ -5,9 +5,9 @@
 # The installer is a driver over scripts/steps/*.sh. Each step file is
 # self-contained and declares a contract in its header:
 #
-#   # step: 30-cert-manager
+#   # step: A-05-cert-manager
 #   # phase: control-plane
-#   # requires: 20-namespaces
+#   # requires: A-03-namespaces
 #   # provides: cert-manager, ClusterIssuers
 #   # mutates: cluster-scoped CRDs, namespace cert-manager
 #
@@ -31,11 +31,14 @@
 # check() must not mutate. --dry-run relies on it: the driver runs every
 # check() and prints what apply() would do without calling apply() at all.
 #
-# Phases group the steps for reading and for --phase selection. They are NOT
-# part of the ordering key: the numeric prefix is the total order the driver
-# executes, and the phase is one header line. Encoding the phase into the number
-# would make regrouping a step a renumbering, which is the thing the gaps and
-# letter suffixes exist to avoid.
+# Steps are numbered <PHASE>-<NN>: the letter groups them, the number orders
+# them WITHIN that group. Inserting a step therefore only ever affects its own
+# phase — there is always headroom, because each phase has its own sequence.
+# A flat sequence does not have that property: by the time nine steps sit
+# between 10 and 17 there is nowhere left to insert without a suffix.
+#
+# The `# phase:` header carries the readable name for the letter and drives
+# --phase selection.
 # =============================================================================
 
 [[ -n "${GENTIAN_DRIVER_LOADED:-}" ]] && return 0
@@ -71,17 +74,26 @@ step_id_of() {
     echo "${base%.sh}"
 }
 
-# step_number_of <id> — "30-cert-manager" → "30", "16b-repo" → "16b"
+# step_number_of <id> — "B-03-openbao-init" → "B-03"
 step_number_of() {
-    echo "${1%%-*}"
+    echo "${1%%-*}-$(echo "$1" | cut -d- -f2)"
 }
 
-# step_ordinal_of <id> — the numeric part only, for range comparisons.
-# "16b" → 16, so --from/--until compare on the number and a suffixed step sorts
-# with its parent rather than after everything.
+# step_label_of <id> — "B-03-openbao-init" → "openbao-init". Two segments to
+# strip now, not one: the phase letter and the number.
+step_label_of() {
+    local t="${1#*-}"
+    echo "${t#*-}"
+}
+
+# step_ordinal_of <id> — a sortable key for --from/--until: "B-03" → "B03".
+#
+# Compared as a STRING, not arithmetic. Phases order by letter and steps by a
+# zero-padded number within the phase, so byte order is the execution order —
+# which is the same property the filenames rely on.
 step_ordinal_of() {
-    local n="${1%%-*}"
-    echo "${n//[!0-9]/}"
+    local n; n="$(step_number_of "$1")"
+    echo "${n//-/}"
 }
 
 # discover_steps — populate _STEP_IDS/_STEP_FILES in numeric filename order.
@@ -97,17 +109,15 @@ discover_steps() {
     fi
 
     local f
-    # LC_ALL=C is load-bearing. Locale-aware collation ignores punctuation, so
-    # "16b-repo" sorts BEFORE "16-cluster" ('b' < 'c') instead of after it. The
-    # C locale compares bytes, where '-' (45) < 'b' (98), which is the order the
-    # numbering means. Every step is zero-padded to two digits, so byte order is
-    # numeric order.
+    # LC_ALL=C is load-bearing: locale-aware collation ignores punctuation and
+    # would reorder these. In the C locale bytes decide, and because the phase is
+    # a single letter and the number is zero-padded, byte order IS execution
+    # order — A-01 … A-10, then B-01.
     while IFS= read -r f; do
         [[ -n "$f" ]] || continue
         _STEP_IDS+=("$(step_id_of "$f")")
         _STEP_FILES+=("$f")
-    done < <(find "${GENTIAN_STEPS_DIR}" -maxdepth 1 -name '[0-9][0-9]-*.sh' \
-                  -o -maxdepth 1 -name '[0-9][0-9][a-z]-*.sh' | LC_ALL=C sort)
+    done < <(find "${GENTIAN_STEPS_DIR}" -maxdepth 1 -name '[A-Z]-[0-9][0-9]-*.sh' | LC_ALL=C sort)
 
     if [[ ${#_STEP_IDS[@]} -eq 0 ]]; then
         error "No step files found in ${GENTIAN_STEPS_DIR}"
@@ -117,10 +127,13 @@ discover_steps() {
     # A misspelled --phase would otherwise select nothing and report success,
     # which reads exactly like "there was nothing to do".
     if [[ -n "${GENTIAN_PHASE}" ]]; then
-        local known; known="$(step_phases)"
-        if ! printf '%s\n' "${known}" | grep -qx "${GENTIAN_PHASE}"; then
+        local known letters
+        known="$(step_phases)"
+        letters="$(printf '%s\n' "${_STEP_IDS[@]}" | cut -d- -f1 | sort -u)"
+        if ! printf '%s\n%s\n' "${known}" "${letters}" | grep -qx "${GENTIAN_PHASE}"; then
             error "Unknown phase: ${GENTIAN_PHASE}"
             error "  Known phases: $(printf '%s' "${known}" | tr '\n' ' ')"
+            error "  or by letter:  $(printf '%s' "${letters}" | tr '\n' ' ')"
             return 1
         fi
     fi
@@ -161,8 +174,8 @@ _in_csv() {
     local needle="$1" csv="$2" item
     local IFS=','
     for item in $csv; do
-        # Match either the full id or its numeric prefix, so `--only 30` and
-        # `--only 30-cert-manager` both work.
+        # Match either the full id or its number, so `--only B-03` and
+        # `--only B-03-openbao-init` both work.
         [[ "$item" == "$needle" || "$item" == "$(step_number_of "$needle")" ]] && return 0
     done
     return 1
@@ -178,8 +191,13 @@ step_selected() {
     # would make every re-grouping a renumbering — the problem the numbering
     # gaps and letter suffixes exist to avoid.
     if [[ -n "${GENTIAN_PHASE}" ]]; then
-        local ph; ph="$(step_header "$(_file_for "${id}")" phase)"
-        [[ "${ph}" == "${GENTIAN_PHASE}" ]] || return 1
+        # Accept either the readable name or the letter: --phase secrets and
+        # --phase B select the same steps, because both appear in the numbering
+        # an operator is reading off the screen.
+        local ph letter
+        ph="$(step_header "$(_file_for "${id}")" phase)"
+        letter="${id%%-*}"
+        [[ "${ph}" == "${GENTIAN_PHASE}" || "${letter}" == "${GENTIAN_PHASE}" ]] || return 1
     fi
 
     if [[ -n "${GENTIAN_ONLY}" ]]; then
@@ -191,10 +209,10 @@ step_selected() {
     # String comparison would order "9" after "10"; both are zero-padded, so
     # 10# forces base-10 and avoids octal on values like 08.
     local ord; ord="$(step_ordinal_of "$id")"
-    if [[ -n "${GENTIAN_FROM}" ]] && (( 10#${ord} < 10#$(step_ordinal_of "${GENTIAN_FROM}") )); then
+    if [[ -n "${GENTIAN_FROM}" ]] && [[ "${ord}" < "$(step_ordinal_of "${GENTIAN_FROM}")" ]]; then
         return 1
     fi
-    if [[ -n "${GENTIAN_UNTIL}" ]] && (( 10#${ord} > 10#$(step_ordinal_of "${GENTIAN_UNTIL}") )); then
+    if [[ -n "${GENTIAN_UNTIL}" ]] && [[ "${ord}" > "$(step_ordinal_of "${GENTIAN_UNTIL}")" ]]; then
         return 1
     fi
     return 0
@@ -220,7 +238,7 @@ _step_banner() {
     _phase_banner "$(step_header "$file" phase)"
     provides="$(step_header "$file" provides)"
     echo ""
-    echo -e "${CYAN}[$(step_number_of "$id")]${NC} ${id#*-}"
+    echo -e "${CYAN}[$(step_number_of "$id")]${NC} $(step_label_of "$id")"
     [[ -n "$provides" ]] && echo "     provides: ${provides}"
     return 0
 }
@@ -378,7 +396,7 @@ drive_explain() {
             printf '\n%b%s%b\n' "${CYAN}" "${ph}" "${NC}"
         fi
         printf '  %-4s %-26s %s\n' \
-            "$(step_number_of "$id")" "${id#*-}" "$(step_header "$file" provides)"
+            "$(step_number_of "$id")" "$(step_label_of "$id")" "$(step_header "$file" provides)"
     done
     echo ""
     for (( i = 0; i < ${#_STEP_IDS[@]}; i++ )); do
@@ -387,7 +405,7 @@ drive_explain() {
         step_selected "$id" || continue
         local mutates
         mutates="$(step_header "$file" mutates)"
-        [[ -n "$mutates" ]] && printf '  %-26s mutates: %s\n' "${id#*-}" "$mutates"
+        [[ -n "$mutates" ]] && printf '  %-26s mutates: %s\n' "$(step_label_of "$id")" "$mutates"
     done
     echo ""
     return 0
@@ -411,7 +429,7 @@ drive_status() {
         else
             state="${RED}missing${NC}"
         fi
-        printf '  [%s] %-26s %b\n' "$(step_number_of "$id")" "${id#*-}" "$state"
+        printf '  [%s] %-26s %b\n' "$(step_number_of "$id")" "$(step_label_of "$id")" "$state"
     done
     echo ""
     return 0
