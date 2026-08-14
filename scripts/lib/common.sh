@@ -297,8 +297,11 @@ INPUT_HIERARCHY_VARS=(
 )
 
 # ─── Versions ────────────────────────────────────────────────────────────────
-export ESO_CHART_VERSION="2.4.1"
-ENVOY_GATEWAY_CHART_VERSION="${ENVOY_GATEWAY_CHART_VERSION:-v1.2.5}"
+# Pinned in versions.yaml, read here. See scripts/lib/versions.sh for why the
+# inventory lives in one file rather than beside each helm invocation.
+ESO_CHART_VERSION="$(gentian_pin external-secrets chart)"
+export ESO_CHART_VERSION
+ENVOY_GATEWAY_CHART_VERSION="${ENVOY_GATEWAY_CHART_VERSION:-$(gentian_pin envoy-gateway chart)}"
 ENVOY_GATEWAY_NAMESPACE="${ENVOY_GATEWAY_NAMESPACE:-envoy-gateway-system}"
 GENTIAN_GATEWAY_CONTROLLER_NAME="${GENTIAN_GATEWAY_CONTROLLER_NAME:-gateway.envoyproxy.io/gentian-gatewayclass-controller}"
 
@@ -1383,6 +1386,10 @@ gentian_report_abort() {
     # of the failing command's own file.
     echo "" >&2
     echo -e "\033[0;31m[ABORT]\033[0m Install stopped: a command failed and was not handled." >&2
+    # The driver sets GENTIAN_CURRENT_STEP around each step, so the report names
+    # the step file to open rather than only the library frame that failed.
+    [[ -n "${GENTIAN_CURRENT_STEP:-}" ]] && \
+        echo "  step      : ${GENTIAN_CURRENT_STEP} (scripts/steps/${GENTIAN_CURRENT_STEP}.sh)" >&2
     echo "  exit code : ${exit_code}" >&2
     echo "  command   : ${cmd}" >&2
     echo "  call stack:" >&2

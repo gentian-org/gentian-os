@@ -399,13 +399,13 @@ to deliver locally via Dovecot LMTP instead of relaying to an external SMTP.
 MAIL_SERVICE_MODE=kernel
 ```
 
-**Step 2** — Run `update.sh`. It detects the drift and patches the cluster:
+**Step 2** — Run `./install.sh --update`. It detects the drift and patches the cluster:
 
 ```bash
-./update.sh
+./install.sh --update
 ```
 
-`update.sh` will detect that the deployed Postfix mode (`external`) does not match
+`install.sh --update` will detect that the deployed Postfix mode (`external`) does not match
 the desired mode (`kernel`), patch the `postfix-dev-values` ConfigMap in-cluster
 with the correct LMTP transport configuration, re-seed all mail secrets in OpenBao,
 and force-refresh the ESO ExternalSecrets. provider-helm reconciles the Release
@@ -413,7 +413,7 @@ within a few minutes (or run `argocd app sync gentian-infra-helm-dev` immediatel
 
 ### Check mail component health
 
-Install and `update.sh --mail` (kernel mode) run automated smoke checks:
+Install and `install.sh --only 28` (kernel mode) run automated smoke checks:
 Keycloak master-realm OIDC discovery (Step 12) and Dovecot IMAP/LMTP TCP
 (Step 13b). Re-run anytime:
 
@@ -449,6 +449,6 @@ SMTP_RELAY_PASSWORD=<app-password>
 ```
 
 ```bash
-./update.sh
+./install.sh --update
 ```
 

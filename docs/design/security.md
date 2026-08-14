@@ -633,7 +633,7 @@ disable discovery, set explicit https endpoints,
 Bootstrap / refresh staging trust:
 
 ```bash
-./update.sh --acme-issuers    # recreates gentian-staging-ca-tls in gentian-dev
+./install.sh --only 05,18    # recreates gentian-staging-ca-tls in gentian-dev
 # operator reconcile replicates the secret into tenant namespaces
 ```
 

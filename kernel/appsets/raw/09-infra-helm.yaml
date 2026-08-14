@@ -11,7 +11,7 @@
 #   dovecot-dev.gentian-dev.svc.cluster.local:24 (LMTP)
 #
 # NOTE: Charts/images are public placeholders marked UNTESTED in service READMEs.
-# Wire-up with MAIL_SERVICE_MODE=kernel + install.sh step 15b / update.sh --mail.
+# Wire-up with MAIL_SERVICE_MODE=kernel + install.sh step 15b / install.sh --only 28.
 apiVersion: argoproj.io/v1alpha1
 kind: ApplicationSet
 metadata:

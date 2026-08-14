@@ -28,7 +28,7 @@ kernel structural resources provisioned by the Cluster XR.
 ### Kubernetes cluster
 
 You need a running, reachable cluster. Both `install.sh` and
-`uninstall.sh` verify this at startup via `kubectl cluster-info`.
+`install.sh` verifies this at startup via `kubectl cluster-info`.
 
 **Requirements:**
 - Kubernetes 1.26+
@@ -58,7 +58,7 @@ Service in two steps:
    beyond the kubeconfig already in use.
 
 You do **not** need to start a port-forward yourself, and there is no flag to
-set: `install.sh`, `update.sh` and `uninstall.sh` all load this automatically.
+set: `install.sh` loads this automatically in every direction.
 Running against a managed cluster (Infomaniak, EKS, GKE…) where ClusterIPs are
 not routable from your laptop works the same as running against a local one.
 
@@ -648,23 +648,22 @@ The transit key is stored in your password manager (`gentian/openbao-transit`).
 
 ## Uninstalling
 
-By default, `./uninstall.sh` **undeploys all tenants first** (GitOps manifests
-removed from `gentian-deployments` and live `Tenant` CRs deleted from the
-cluster) so ArgoCD does not recreate them on the next install.
+Uninstall is the same driver run backwards: it walks `scripts/steps/` in reverse and
+calls each step's `destroy()`. Tenants are torn down first (step 33) so ArgoCD
+does not recreate them on the next install.
 
 ```bash
-# Safe mode — undeploy tenants, preserve PVC/PV data and OpenBao KV paths.
-./uninstall.sh
+# See what would be removed, in order, without touching the cluster.
+./install.sh --uninstall --dry-run
 
-# Force mode — tenant undeploy uses --purge, deletes data namespaces and bound PVs,
-# and removes Envoy Gateway, Kyverno, and orphaned gentianos.io CRDs/RBAC/catalogue.
-./uninstall.sh -f
+# Tear down.
+./install.sh --uninstall
 
-# Keep tenant workloads and Git manifests; only tear down Gentian OS kernel/infra.
-./uninstall.sh --keep-tenants
+# Keep tenant workloads and Git manifests; tear down everything else.
+./install.sh --uninstall --skip 33
 
-# Also remove cert-manager, Reloader, CNPG (only if Gentian-managed).
-./uninstall.sh -f --cluster-infra
+# Tear down only a range, e.g. leave Crossplane and the namespaces in place.
+./install.sh --uninstall --from 04
 ```
 
 > **Note:** OpenBao KV data is always preserved across uninstalls — `managementPolicies:

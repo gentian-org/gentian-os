@@ -335,7 +335,7 @@ install_argocd_image_updater() {
     banner "Step 4b — ArgoCD Image Updater"
 
     info "Adding Argo Helm repo..."
-    helm repo add argo https://argoproj.github.io/argo-helm --force-update >/dev/null
+    helm repo add argo "$(gentian_pin argocd repo)" --force-update >/dev/null
     helm repo update >/dev/null
 
     info "Installing/upgrading argocd-image-updater chart..."

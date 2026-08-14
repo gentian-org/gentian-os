@@ -81,7 +81,7 @@ install_eso() {
         return
     fi
 
-    helm repo add external-secrets https://charts.external-secrets.io --force-update
+    helm repo add external-secrets "$(gentian_pin external-secrets repo)" --force-update
     helm repo update
     helm install external-secrets external-secrets/external-secrets \
         -n external-secrets \

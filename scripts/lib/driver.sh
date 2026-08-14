@@ -1,0 +1,410 @@
+#!/usr/bin/env bash
+# =============================================================================
+# scripts/lib/driver.sh — step discovery and execution
+# =============================================================================
+# The installer is a driver over scripts/steps/*.sh. Each step file is
+# self-contained and declares a contract in its header:
+#
+#   # step: 30-cert-manager
+#   # requires: 20-namespaces
+#   # provides: cert-manager, ClusterIssuers
+#   # mutates: cluster-scoped CRDs, namespace cert-manager
+#
+# and implements up to three verbs:
+#
+#   check()   read-only. 0 = already satisfied, 1 = work to do.
+#   apply()   make it so. Idempotent.
+#   destroy() reverse it. Idempotent.
+#
+# check() is the load-bearing verb: it reads cluster state and answers whether
+# the step's `provides:` already holds. Because state is read from the cluster
+# rather than from a local file, a re-run converges and there is no install
+# state to keep on disk.
+#
+# One driver, three directions:
+#
+#   install.sh              forward; skip where check() is satisfied
+#   install.sh --update     identical — convergence IS update
+#   install.sh --uninstall  reverse order, destroy() each step
+#
+# check() must not mutate. --dry-run relies on it: the driver runs every
+# check() and prints what apply() would do without calling apply() at all.
+# =============================================================================
+
+[[ -n "${GENTIAN_DRIVER_LOADED:-}" ]] && return 0
+GENTIAN_DRIVER_LOADED=1
+
+GENTIAN_STEPS_DIR="${GENTIAN_STEPS_DIR:-${SCRIPT_DIR}/scripts/steps}"
+
+# Driver state. Parallel arrays rather than associative arrays: macOS ships
+# bash 3.2, which has no `declare -A` (see docs/plans §7, portability).
+_STEP_IDS=()
+_STEP_FILES=()
+
+# Set around each step so gentian_report_abort can name the step file to open.
+export GENTIAN_CURRENT_STEP=""
+
+# ─── Runtime flags, all driven by install.sh's argument parser ───────────────
+GENTIAN_DRY_RUN="${GENTIAN_DRY_RUN:-0}"
+GENTIAN_EXPLAIN="${GENTIAN_EXPLAIN:-0}"
+GENTIAN_ONLY="${GENTIAN_ONLY:-}"
+GENTIAN_FROM="${GENTIAN_FROM:-}"
+GENTIAN_UNTIL="${GENTIAN_UNTIL:-}"
+GENTIAN_SKIP="${GENTIAN_SKIP:-}"
+
+# =============================================================================
+# Discovery
+# =============================================================================
+
+# step_id_of <file> — "scripts/steps/30-cert-manager.sh" → "30-cert-manager"
+step_id_of() {
+    local base
+    base="$(basename "$1")"
+    echo "${base%.sh}"
+}
+
+# step_number_of <id> — "30-cert-manager" → "30"
+step_number_of() {
+    echo "${1%%-*}"
+}
+
+# discover_steps — populate _STEP_IDS/_STEP_FILES in numeric filename order.
+# Ordering is the filename prefix, so the sequence is visible from `ls scripts/steps/`
+# without reading any code.
+discover_steps() {
+    _STEP_IDS=()
+    _STEP_FILES=()
+
+    if [[ ! -d "${GENTIAN_STEPS_DIR}" ]]; then
+        error "Steps directory not found: ${GENTIAN_STEPS_DIR}"
+        return 1
+    fi
+
+    local f
+    # `sort` on the filename gives numeric order because every step is
+    # zero-padded to two digits.
+    while IFS= read -r f; do
+        [[ -n "$f" ]] || continue
+        _STEP_IDS+=("$(step_id_of "$f")")
+        _STEP_FILES+=("$f")
+    done < <(find "${GENTIAN_STEPS_DIR}" -maxdepth 1 -name '[0-9][0-9]-*.sh' | sort)
+
+    if [[ ${#_STEP_IDS[@]} -eq 0 ]]; then
+        error "No step files found in ${GENTIAN_STEPS_DIR}"
+        return 1
+    fi
+}
+
+# step_header <file> <field> — read a `# field: value` contract line.
+step_header() {
+    sed -n "s/^# $2:[[:space:]]*//p" "$1" | head -1
+}
+
+# =============================================================================
+# Selection
+# =============================================================================
+
+# _in_csv <needle> <csv> — substring-safe membership test on a comma list.
+_in_csv() {
+    local needle="$1" csv="$2" item
+    local IFS=','
+    for item in $csv; do
+        # Match either the full id or its numeric prefix, so `--only 30` and
+        # `--only 30-cert-manager` both work.
+        [[ "$item" == "$needle" || "$item" == "$(step_number_of "$needle")" ]] && return 0
+    done
+    return 1
+}
+
+# step_selected <id> — apply --only / --from / --until / --skip.
+step_selected() {
+    local id="$1" num
+    num="$(step_number_of "$id")"
+
+    if [[ -n "${GENTIAN_ONLY}" ]]; then
+        _in_csv "$id" "${GENTIAN_ONLY}" || return 1
+    fi
+    if [[ -n "${GENTIAN_SKIP}" ]] && _in_csv "$id" "${GENTIAN_SKIP}"; then
+        return 1
+    fi
+    # String comparison would order "9" after "10"; both are zero-padded, so
+    # 10# forces base-10 and avoids octal on values like 08.
+    if [[ -n "${GENTIAN_FROM}" ]] && (( 10#${num} < 10#$(step_number_of "${GENTIAN_FROM}") )); then
+        return 1
+    fi
+    if [[ -n "${GENTIAN_UNTIL}" ]] && (( 10#${num} > 10#$(step_number_of "${GENTIAN_UNTIL}") )); then
+        return 1
+    fi
+    return 0
+}
+
+# =============================================================================
+# Reporting
+# =============================================================================
+
+_step_banner() {
+    local id="$1" file="$2" provides
+    provides="$(step_header "$file" provides)"
+    echo ""
+    echo -e "${CYAN}[$(step_number_of "$id")]${NC} ${id#*-}"
+    [[ -n "$provides" ]] && echo "     provides: ${provides}"
+    return 0
+}
+
+# gentian_run — announce a mutating command, then run it (or not, under
+# --dry-run). Steps use this for the commands an operator most wants to see.
+# It is deliberately not a general wrapper: a step that pipes or captures
+# output should call the command directly.
+gentian_run() {
+    echo "     + $*"
+    if [[ "${GENTIAN_DRY_RUN}" == "1" ]]; then
+        return 0
+    fi
+    "$@"
+}
+
+# =============================================================================
+# Execution
+# =============================================================================
+
+# _load_step <file> — source a step in a clean slate so a verb left over from
+# the previous step can never be silently reused.
+_load_step() {
+    unset -f check apply destroy 2>/dev/null || true
+    # shellcheck source=/dev/null
+    source "$1"
+}
+
+# _has_verb <name>
+_has_verb() {
+    declare -F "$1" >/dev/null 2>&1
+}
+
+# run_step_forward <id> <file>
+# Reports check()'s verdict before doing anything, then applies if needed.
+run_step_forward() {
+    local id="$1" file="$2" start elapsed
+    GENTIAN_CURRENT_STEP="$id"
+
+    _load_step "$file"
+    _step_banner "$id" "$file"
+
+    if ! _has_verb apply; then
+        error "Step ${id} defines no apply()"
+        return 1
+    fi
+
+    if _has_verb check && check; then
+        echo "     check: satisfied  →  skip"
+        return 0
+    fi
+
+    if _has_verb check; then
+        echo "     check: not satisfied  →  applying"
+    else
+        # A step with no check() cannot be skipped and cannot be dry-run
+        # honestly. Steps that only wait on a condition are the legitimate case.
+        echo "     check: none  →  applying"
+    fi
+
+    if [[ "${GENTIAN_DRY_RUN}" == "1" ]]; then
+        echo "     (dry run — not applying)"
+        return 0
+    fi
+
+    start=$SECONDS
+    apply
+    elapsed=$((SECONDS - start))
+    echo -e "     ${GREEN}✓${NC} ${elapsed}s"
+}
+
+# run_step_reverse <id> <file> — teardown. Missing destroy() is not an error:
+# steps whose resources are owned by ArgoCD or Crossplane have nothing of their
+# own to remove, and saying so is more useful than an empty function.
+run_step_reverse() {
+    local id="$1" file="$2" start elapsed
+    GENTIAN_CURRENT_STEP="$id"
+
+    _load_step "$file"
+    _step_banner "$id" "$file"
+
+    if ! _has_verb destroy; then
+        echo "     destroy: not defined  →  skip"
+        return 0
+    fi
+
+    if _has_verb check && ! check; then
+        echo "     check: already absent  →  skip"
+        return 0
+    fi
+
+    if [[ "${GENTIAN_DRY_RUN}" == "1" ]]; then
+        echo "     (dry run — not destroying)"
+        return 0
+    fi
+
+    start=$SECONDS
+    # Teardown is best-effort by design: a half-installed cluster must still
+    # uninstall to completion rather than stopping at the first absent object.
+    destroy || warn "destroy() for ${id} reported errors; continuing teardown."
+    elapsed=$((SECONDS - start))
+    echo -e "     ${GREEN}✓${NC} ${elapsed}s"
+}
+
+# =============================================================================
+# Drive
+# =============================================================================
+
+# drive_forward — install / update.
+drive_forward() {
+    discover_steps || return 1
+    local i id file ran=0
+    for (( i = 0; i < ${#_STEP_IDS[@]}; i++ )); do
+        id="${_STEP_IDS[$i]}"
+        file="${_STEP_FILES[$i]}"
+        step_selected "$id" || continue
+        run_step_forward "$id" "$file"
+        ran=$((ran + 1))
+    done
+    echo ""
+    if [[ $ran -eq 0 ]]; then
+        warn "No steps matched the current selection."
+    fi
+    return 0
+}
+
+# drive_reverse — uninstall. Iterates the same list backwards, so teardown
+# order is a property of the step numbering rather than a second hand-kept list.
+drive_reverse() {
+    discover_steps || return 1
+    local i id file
+    for (( i = ${#_STEP_IDS[@]} - 1; i >= 0; i-- )); do
+        id="${_STEP_IDS[$i]}"
+        file="${_STEP_FILES[$i]}"
+        step_selected "$id" || continue
+        run_step_reverse "$id" "$file"
+    done
+    echo ""
+    return 0
+}
+
+# drive_explain — the contract table. No cluster access, so this works with no
+# kubeconfig and answers "what will this do to my cluster" before anything runs.
+drive_explain() {
+    discover_steps || return 1
+    local i id file
+    printf '\n%-4s %-26s %s\n' "#" "STEP" "PROVIDES"
+    printf '%-4s %-26s %s\n' "---" "--------------------------" "--------"
+    for (( i = 0; i < ${#_STEP_IDS[@]}; i++ )); do
+        id="${_STEP_IDS[$i]}"
+        file="${_STEP_FILES[$i]}"
+        step_selected "$id" || continue
+        printf '%-4s %-26s %s\n' \
+            "$(step_number_of "$id")" "${id#*-}" "$(step_header "$file" provides)"
+    done
+    echo ""
+    for (( i = 0; i < ${#_STEP_IDS[@]}; i++ )); do
+        id="${_STEP_IDS[$i]}"
+        file="${_STEP_FILES[$i]}"
+        step_selected "$id" || continue
+        local mutates
+        mutates="$(step_header "$file" mutates)"
+        [[ -n "$mutates" ]] && printf '  %-26s mutates: %s\n' "${id#*-}" "$mutates"
+    done
+    echo ""
+    return 0
+}
+
+# drive_status — run every check() and report, mutating nothing. The read-only
+# answer to "where did this install get to".
+drive_status() {
+    discover_steps || return 1
+    local i id file state
+    echo ""
+    for (( i = 0; i < ${#_STEP_IDS[@]}; i++ )); do
+        id="${_STEP_IDS[$i]}"
+        file="${_STEP_FILES[$i]}"
+        step_selected "$id" || continue
+        _load_step "$file"
+        if ! _has_verb check; then
+            state="${YELLOW}no check${NC}"
+        elif check; then
+            state="${GREEN}satisfied${NC}"
+        else
+            state="${RED}missing${NC}"
+        fi
+        printf '  [%s] %-26s %b\n' "$(step_number_of "$id")" "${id#*-}" "$state"
+    done
+    echo ""
+    return 0
+}
+
+# =============================================================================
+# Contract validation — used by CI and by `--validate`
+# =============================================================================
+
+# validate_steps — every step must declare `step:` and `provides:` and define
+# apply(). Enforced in CI so a new step cannot skip the contract.
+validate_steps() {
+    discover_steps || return 1
+    local i id file rc=0 declared
+    for (( i = 0; i < ${#_STEP_IDS[@]}; i++ )); do
+        id="${_STEP_IDS[$i]}"
+        file="${_STEP_FILES[$i]}"
+
+        declared="$(step_header "$file" step)"
+        if [[ "$declared" != "$id" ]]; then
+            error "${id}: header 'step: ${declared}' does not match filename"
+            rc=1
+        fi
+        if [[ -z "$(step_header "$file" provides)" ]]; then
+            error "${id}: missing 'provides:' header"
+            rc=1
+        fi
+        _load_step "$file"
+        if ! _has_verb apply; then
+            error "${id}: no apply() defined"
+            rc=1
+        fi
+        if ! _has_verb check; then
+            warn "${id}: no check() — cannot be skipped on re-run or dry-run"
+        fi
+    done
+
+    validate_pins || rc=1
+
+    [[ $rc -eq 0 ]] && success "Step contracts valid (${#_STEP_IDS[@]} steps)."
+    return $rc
+}
+
+# validate_pins — every `# pins:` names a component in versions.yaml, and every
+# component in versions.yaml is claimed by a step.
+#
+# The second half is the one that matters: versions.yaml is the mirror inventory
+# for an air-gapped install, and an unclaimed entry means either a component the
+# installer no longer pulls (so a mirror wastes effort on it) or, worse, a pin
+# that silently stopped being read while the installer went on pulling something
+# unpinned.
+validate_pins() {
+    local i file rc=0 c claimed=" " comp
+    for (( i = 0; i < ${#_STEP_IDS[@]}; i++ )); do
+        file="${_STEP_FILES[$i]}"
+        c="$(step_header "$file" pins)"
+        [[ -n "$c" ]] || continue
+        if ! _gentian_yq ".\"${c}\"" "${GENTIAN_VERSIONS_FILE}" >/dev/null 2>&1; then
+            error "$(step_id_of "$file"): pins '${c}', which is not in versions.yaml"
+            rc=1
+        fi
+        claimed+="${c} "
+    done
+
+    while IFS= read -r comp; do
+        [[ -n "$comp" ]] || continue
+        if [[ "${claimed}" != *" ${comp} "* ]]; then
+            error "versions.yaml pins '${comp}', which no step claims with '# pins:'"
+            rc=1
+        fi
+    done < <(gentian_pin_components)
+
+    return $rc
+}

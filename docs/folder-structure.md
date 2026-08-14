@@ -11,7 +11,7 @@ them:
 |---|---|---|
 | Operator source (Go) | `api/`, `cmd/`, `internal/`, `hack/` | `go build` → operator image |
 | Declarative kernel state (YAML) | `kernel/`, `crossplane/`, `charts/` | Argo CD / Crossplane / Helm |
-| Bootstrap tooling (Bash/Python) | `install.sh`, `update.sh`, `uninstall.sh`, `scripts/` | a human running an install |
+| Bootstrap tooling (Bash/Python) | `install.sh`, `scripts/steps/`, `scripts/` | a human running an install |
 | Contracts & docs | `authz/`, `config/crd/`, `docs/`, `export/` | tests, envtest, readers |
 
 ---
@@ -104,9 +104,13 @@ The kernel's static/GitOps side, ordered by bootstrap stage:
 
 ## 3. Bootstrap tooling
 
-`install.sh` / `update.sh` / `uninstall.sh` are the operator-facing entrypoints
-and are **dev-cluster / documented-bootstrap only** — shared clusters change via
-GitOps.
+`install.sh` is the operator-facing entrypoint — a driver over `scripts/steps/`, run
+forward to install or converge and backward (`--uninstall`) to tear down. It is
+**dev-cluster / documented-bootstrap only**; shared clusters change via GitOps.
+
+`install-legacy.sh`, `update-legacy.sh` and `uninstall-legacy.sh` are verbatim
+copies of the pre-driver scripts, kept for reference while step bodies are still
+being migrated out of `scripts/lib/`.
 
 `scripts/` splits into:
 

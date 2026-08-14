@@ -1,0 +1,54 @@
+# =============================================================================
+# versions.yaml — component pins for this gentian-os release
+# =============================================================================
+# Every external component the installer pulls, pinned once. This is NOT
+# per-cluster configuration: two clusters running the same gentian-os release
+# must run the same Crossplane, the same cert-manager, the same ESO. It is part
+# of the platform's source, versioned with it, and identical everywhere.
+#
+# Read it with scripts/lib/versions.sh:
+#
+#   source scripts/lib/versions.sh
+#   gentian_pin crossplane chart        # → 2.2.1
+#   gentian_pin crossplane repo         # → https://charts.crossplane.io/stable
+#
+# or from a Makefile / standalone script:
+#
+#   $(shell bash scripts/lib/versions.sh crossplane cli)
+#
+# Version strings are stored EXACTLY as the upstream publishes them. Some
+# projects prefix chart versions with "v" and some do not; normalising that here
+# would mean translating it back at every call site, and getting one case wrong
+# produces a "chart not found" that reads like a network fault. Where a project
+# publishes a chart and a CLI under different schemes, both are listed.
+#
+# This file is also the mirror inventory: an air-gapped install has to fetch
+# exactly what is listed here. Nothing may be pulled that is not pinned below —
+# `make validate-steps` enforces that every pin is claimed by a step and every
+# step's `# pins:` resolves.
+# =============================================================================
+
+crossplane:
+  chart: "2.2.1"
+  cli: "v2.2.1"
+  repo: https://charts.crossplane.io/stable
+
+cert-manager:
+  chart: "v1.21.0"
+  repo: https://charts.jetstack.io
+
+external-secrets:
+  chart: "2.4.1"
+  repo: https://charts.external-secrets.io
+
+envoy-gateway:
+  chart: "v1.2.5"
+  repo: oci://docker.io/envoyproxy/gateway-helm
+
+argocd:
+  manifest: "v3.5.0"
+  # argo-helm supplies argocd-image-updater; ArgoCD itself installs from manifests.
+  repo: https://argoproj.github.io/argo-helm
+
+openbao:
+  cli: "v2.5.0"

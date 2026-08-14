@@ -12,7 +12,9 @@
 
 set -euo pipefail
 
-XP_VERSION="${XP_VERSION:-v2.2.1}"
+# shellcheck source=scripts/lib/versions.sh
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")/lib" && pwd)/versions.sh"
+XP_VERSION="${XP_VERSION:-$(gentian_pin crossplane cli)}"
 _ver="${XP_VERSION#v}"
 _major="${_ver%%.*}"
 _minor_patch="${_ver#"${_major}".}"

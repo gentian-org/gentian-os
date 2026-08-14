@@ -110,10 +110,10 @@ Let's Encrypt production enforces per-account and per-registered-domain limits (
 
 | Environment | Recommendation |
 |---|---|
-| **Dev** | `ACME_ENV=staging` in `install.env`; staging `ClusterIssuer`s from `kernel/manifests/cert-manager/cluster-issuers-staging.yaml`; Helm `tenantDNS01ClusterIssuer: letsencrypt-staging-dns01-cloudflare` (see `gentian-deployments/profiles/dev.yaml`). Staging certs are **not** browser-trusted but use separate rate limits. `install.sh` and the operator bootstrap `gentian-staging-ca-tls`; compositions apply staging-only Synapse/Jitsi TLS workarounds when `ACME_STAGING=true`. See [security.md](security.md) §9. Re-apply with `./update.sh --acme-issuers`. |
-| **Prod** | Production issuers only. One DNS-01 wildcard per tenant at origin; avoid `uninstall.sh -f` loops that re-issue everything. |
+| **Dev** | `ACME_ENV=staging` in `install.env`; staging `ClusterIssuer`s from `kernel/manifests/cert-manager/cluster-issuers-staging.yaml`; Helm `tenantDNS01ClusterIssuer: letsencrypt-staging-dns01-cloudflare` (see `gentian-deployments/profiles/dev.yaml`). Staging certs are **not** browser-trusted but use separate rate limits. `install.sh` and the operator bootstrap `gentian-staging-ca-tls`; compositions apply staging-only Synapse/Jitsi TLS workarounds when `ACME_STAGING=true`. See [security.md](security.md) §9. Re-apply with `./install.sh --only 05,18`. |
+| **Prod** | Production issuers only. One DNS-01 wildcard per tenant at origin; avoid `install.sh --uninstall` loops that re-issue everything. |
 | **Tunnel + proxied (Cloudflare)** | Origin TLS (cert-manager) and **edge** TLS are independent. Enable **Total TLS** (or Advanced Certificate Manager) so `*.demo.platform.example.com` gets an edge cert — Universal SSL on `*.platform.example.com` does not cover multi-label tenant hosts. Optional: **Cloudflare Origin CA** at the origin to stop ordering public LE certs on every reinstall (edge still needs Total TLS when orange-cloud). |
-| **Switching issuer on a live cluster** | Patch operator Helm value, run `./update.sh --acme-issuers`, delete existing `Certificate` CRs (kernel `wildcard-kernel`, tenant `tenant-*-wildcard`) so cert-manager re-issues against the new issuer. |
+| **Switching issuer on a live cluster** | Patch operator Helm value, run `./install.sh --only 05,18`, delete existing `Certificate` CRs (kernel `wildcard-kernel`, tenant `tenant-*-wildcard`) so cert-manager re-issues against the new issuer. |
 
 Manifests: production `cluster-issuers.yaml`; staging `cluster-issuers-staging.yaml`. Kernel wildcard `wildcard-kernel-cert.yaml` templates `DNS01_CLUSTER_ISSUER` from `ACME_ENV` at install time.
 

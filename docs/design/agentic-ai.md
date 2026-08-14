@@ -384,8 +384,8 @@ see the licensing caveat in
 
 **Teams:** one free/OSS LiteLLM Team is created per `Tenant` CR by
 `ensure_litellm_teams()` (`scripts/llm-lib.sh`), run as part of
-`install_llm_serving` and `update.sh --llm`. Re-run
-`./update.sh --llm` after adding a tenant to sync its Team.
+`install_llm_serving` and `install.sh --only 29`. Re-run
+`./install.sh --only 29` after adding a tenant to sync its Team.
 
 **Re-enabling tenant-level access:** the app-catalogue `litellm` tile
 (reverse-proxied through `gentian-portal-api` at
@@ -487,7 +487,7 @@ against real cluster GPU resources by `validate_config`, see
    creating even for ungated ones too — unauthenticated HF Hub requests
    are rate-limited, which can turn a multi-GB first download into a
    race against the `startupProbe` deadline below).
-3. `./update.sh --llm` — applies the manifests; first startup pulls
+3. `./install.sh --only 29` — applies the manifests; first startup pulls
    weights into the PVC, which can take several minutes
    (`startupProbe` allows up to ~20 min before giving up). If it's a
    large model on a slow/unauthenticated HuggingFace connection, the
@@ -499,7 +499,7 @@ against real cluster GPU resources by `validate_config`, see
    then `kubectl logs -n platform-kernel deploy/vllm-<id>-inference -f`
    for download/load progress.
 5. That's it — no separate LiteLLM registration step. The same
-   `./update.sh --llm` run also calls `ensure_litellm_vllm_model()`
+   `./install.sh --only 29` run also calls `ensure_litellm_vllm_model()`
    (`scripts/llm-lib.sh`), which registers/updates every
    `VLLM_INSTANCES` entry as a LiteLLM model, each keyed on its own
    `api_base` (one Service per instance, never shared): a swap to a
@@ -512,7 +512,7 @@ against real cluster GPU resources by `validate_config`, see
    to check one instance directly).
 
 **Adding a second (or third) instance** is just adding another ID to
-`VLLM_INSTANCES` plus its own `VLLM_<ID>_*` block, then `./update.sh
+`VLLM_INSTANCES` plus its own `VLLM_<ID>_*` block, then `./install.sh --update
 --llm` — no manifest changes, no separate registration. The real
 constraint is GPU memory, not configuration: `--gpu-memory-utilization`
 is a fraction of *one physical card's* VRAM, and every instance
@@ -528,7 +528,7 @@ pins an instance to a specific node beyond `nvidia.com/gpu.present`.
 
 There is no separate "vLLM CLI" for the admin to run against a live
 cluster beyond this — configuration changes are GitOps (edit the
-manifest, `update.sh --llm`), and *operational* checks against a running
+manifest, `install.sh --only 29`), and *operational* checks against a running
 instance are plain HTTP: `GET /health`, `GET /v1/models`, `GET /metrics`
 (Prometheus), `GET /version`, or via the LiteLLM proxy sitting in front
 of it (`litellm --health`, or any OpenAI SDK pointed at

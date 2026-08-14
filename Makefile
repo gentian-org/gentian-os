@@ -13,14 +13,16 @@ BOILERPLATE := hack/boilerplate.go.txt
 IMG ?= ghcr.io/gentian-org/gentian-os:latest
 
 # Crossplane CLI/core version used for install-tools, CI, and schema validation.
-CROSSPLANE_CLI_VERSION ?= v2.2.1
+# Read from versions.yaml so the pin exists once — it was previously duplicated
+# here, in install.sh and in scripts/install-crossplane-cli.sh, in two spellings.
+CROSSPLANE_CLI_VERSION ?= $(shell bash scripts/lib/versions.sh crossplane cli)
 CROSSPLANE_IMAGE ?= xpkg.crossplane.io/crossplane/crossplane:$(CROSSPLANE_CLI_VERSION)
 
 # Envtest binaries — set KUBEBUILDER_ASSETS to override (e.g. in CI via setup-envtest)
 KUBEBUILDER_ASSETS ?= /tmp/envtest-bins/k8s/1.32.0-linux-amd64
 export KUBEBUILDER_ASSETS
 
-.PHONY: all build generate manifests test lint docker-build clean install-plugin
+.PHONY: all build generate manifests test lint docker-build clean install-plugin validate-steps
 
 all: generate build test
 
@@ -95,8 +97,13 @@ lint-yaml:
 ## The file list and flags must match CI exactly: -x follows sourced files, and no
 ## -S filter means info/style findings fail the build too. Hand-rolling a narrower
 ## invocation is how an SC2153 reached develop green-looking.
-lint-shell:
+lint-shell: validate-steps
 	@git ls-files -z -- '*.sh' | xargs -0 shellcheck -x scripts/kubectl-gentian
+
+## Assert every scripts/steps/*.sh declares its contract and defines apply().
+## Reads only the step files — no cluster, no kubeconfig.
+validate-steps:
+	@SCRIPT_DIR="$(CURDIR)" bash -c 'source scripts/lib/load.sh; source scripts/lib/driver.sh; validate_steps'
 
 ## Build the operator container image
 docker-build:

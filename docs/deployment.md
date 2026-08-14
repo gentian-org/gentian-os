@@ -55,7 +55,7 @@ stage, `profiles/<stage>.yaml`.
 Everything else that needs it *reads* from there rather than declaring it
 independently:
 
-- `install.sh`/`update.sh` read it via `yq '.spec.kernelDomain'` — there is
+- `install.sh` read it via `yq '.spec.kernelDomain'` — there is
   no `KERNEL_DOMAIN=` line in `cluster-settings.env` anymore.
 - Layer 3's `values.yaml` mirrors it for the operator's Helm chart, because
   a running Go process needs it as a boot-time env var
@@ -590,7 +590,7 @@ and review policy (PR approvals) provide the safety gate.
 | List tenant definitions | `kubectl gentian tenants list` |
 | Activate a tenant | `kubectl gentian tenants deploy <name>` |
 | Install an app on a tenant | `kubectl gentian apps install <profile> --tenant <name>` |
-| Re-apply Argo bootstrap apps | `./update.sh` (uses current `install.env` and git branch) |
+| Re-apply Argo bootstrap apps | `./install.sh --update` (uses current `install.env` and git branch) |
 | Monitor GitOps sync | `kubectl get applications -n argocd` |
 
 Kernel upgrades are **cluster-wide**: when the operator image updates, all

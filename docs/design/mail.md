@@ -32,7 +32,7 @@ kubectl get pods -n gentian-dev -l 'app.kubernetes.io/name in (postfix,dovecot)'
 kubectl get tenants -o custom-columns='NAME:.metadata.name,MAIL:.spec.mail.mode'
 ```
 
-Switching install mode: [commands.md](../commands.md) §9 (`./update.sh` after editing `cluster-settings.env`).
+Switching install mode: [commands.md](../commands.md) §9 (`./install.sh --update` after editing `cluster-settings.env`).
 
 ---
 
@@ -62,7 +62,7 @@ Selected via `Tenant.spec.mail.mode`:
 If `MAIL_SERVICE_MODE=external` at install time, kernel Dovecot/LMTP
 may be absent; tenants in `selfhosted` mode still get operator-managed
 secrets but full delivery requires switching install mode to `kernel`
-and re-running `update.sh`.
+and re-running `./install.sh --update`.
 
 ## 3. Shared Infrastructure with Tenant-Scoped Configuration
 

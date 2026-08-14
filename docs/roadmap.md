@@ -85,7 +85,7 @@ For the current baseline design of the system, refer to [architecture.md](archit
 * **Context**: Third-party binaries, Helm charts, and remote manifests are retrieved during installation without validating cryptographic digests or pinned versions.
 * **Proposed Solution**: Establish a secure supply chain by pinning all dependencies to exact versions and SHA-256 digests. Move remote manifests to a verified local repository or mirror.
 * **Backlog Items**:
-  - `[ ]` Audit and replace all remote mutable git/branch references with specific tags and commits in `install.sh` and `update.sh`.
+  - `[ ]` Audit and replace all remote mutable git/branch references with specific tags and commits in `install.sh` and `scripts/steps/`.
   - `[ ]` Pin all Helm chart dependencies to specific versions and SHA digests in ArgoCD files.
   - `[ ]` Implement local mirror targets for all third-party charts.
 
