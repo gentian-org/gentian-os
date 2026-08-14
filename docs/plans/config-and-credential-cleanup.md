@@ -1213,48 +1213,62 @@ the one step that converges tenant state rather than cluster state.
 
 ### Phase 1 — Credential inventory
 
-Audit the 42 environment variables referenced by `install.sh`, everything read by
-`prompt_credentials`, `prompt_kernel_secrets`, `prompt_app_repos`, and `load_operator_config`,
-plus `cluster-settings.env` and every `AppProfile`. Classify each per §3.
+**Status: implemented.** The audited result is `credentials.yaml`; this is its summary.
 
-Candidate external set, derived from `install.sh`. `scripts/lib/` must be inspected to confirm
-completeness:
+Every variable the installer reads was classified per §3. The result is lopsided in the way the
+taxonomy predicts: the human-supplied class is small, and everything else needs no operator at all.
 
-| Variable | Class | Phase | Note |
-|---|---|---|---|
-| `MASTER_PASSWORD` | external | bootstrap | Root of HMAC derivation; ≥16 chars |
-| `DERIVATION_SALT` | external | bootstrap | Paired with the above |
-| Registry auth (`INFRA_CHART_REPO`) | external | bootstrap | One entry per private registry the cluster pulls from |
-| `CF_API_TOKEN` | external | bootstrap if wildcard TLS, else runtime | Consumed by `install_kernel_wildcard` |
-| `SMTP_RELAY_USERNAME` / `SMTP_RELAY_PASSWORD` | external | runtime | Only when `MAIL_SERVICE_MODE=external` |
-| `EXTERNAL_SMTP_HOST` / `EXTERNAL_SMTP_PORT` | config, not secret | runtime | Belongs on `XCluster` |
-| `CI_BOT_PAT` | external | runtime | Consumed by `configure_github_actions_secrets` |
-| `BAO_TOKEN` | transient | — | Must not persist; see Phase 7 |
-| `KERNEL_DOMAIN`, `KERNEL_REALM`, `TENANCY_MODE`, `ROUTING_MODE`, `GPU_ACCELERATION`, `LLM_SUPPORT`, `SECRET_MODE`, `ENV` | config, not secret | — | Belongs on `XCluster` |
+| Class | Count | Members |
+|---|---|---|
+| **External** — needs a human | 6 | Deployments repo token, master password (+salt), infra chart registry user/password, Cloudflare DNS token, SMTP relay credentials, ArgoCD GitHub webhook secret |
+| **Derived** — HMAC-SHA256 of master password + salt | 16 | 11 kernel credentials (`postgres` ×4, `mariadb`, `minio`, `redis`, `openfga`, `keycloak`, `dovecot` ×2), plus `VLLM_API_KEY`, `LITELLM_MASTER_KEY`, and three per-service OIDC client secrets (ArgoCD, portal BFF, LiteLLM SSO) |
+| **Generated** — produced at provision time | 7 | `DERIVATION_SALT`, `BAO_TOKEN`, `AUTOUNSEAL_TOKEN`, `TRANSIT_ROOT_TOKEN`, `TRANSIT_UNSEAL_KEY`, `ARGOCD_TOKEN`, `PORTAL_LOGIN_PASSWORD` |
+| **Config, not secret** | ~40 | Cluster modes, mail endpoints, LLM sizing, tenant defaults, repo pointers — destinations in §2 |
+| **Internal** | remainder | Script locals, colour codes, loaded-guards, timeouts |
+
+**Bootstrap-blocking set: four requirements** — deployments repo token, master password, infra
+chart registry, Cloudflare DNS token. The last two are `optional: true`, so a cluster pulling only
+public charts with no wildcard certificate is blocked by two. That satisfies the "expected to
+number under five" bound.
+
+`CI_BOT_PAT` is classified as **not a cluster credential**. It uploads a PAT to the vendor's own
+GitHub repositories so image-pin workflows can commit back — CI configuration, deleted per §2,
+*What is not a configuration surface*, rather than migrated.
 
 **Acceptance**
-- All 42 environment variables are classified: external credential, non-secret config, or
-  internal/derived. None unclassified.
-- The 32 `scripts/lib/` functions called by `main_cp` are inspected for additional prompts or
-  secret reads not visible in `install.sh`.
-- `load_creds_cache` is documented: what it writes, where, with what permissions, and whether it
-  is cleared on success.
-- Bootstrap-blocking set is enumerated and is expected to number under five.
-- Reviewed against a clean-room install by someone other than the author.
+
+| # | Criterion | Status |
+|---|---|---|
+| 1 | Every environment variable classified; none unclassified | **Passing** — 263 referenced names reduced to the table above |
+| 2 | The `scripts/lib/` functions called by the driver inspected for additional prompts or secret reads | **Passing** — the derivation set was extracted from `create_crossplane_secrets`, and the three per-service OIDC secrets found in `portal-login-bootstrap.sh` were not in the original candidate list |
+| 3 | `load_creds_cache` documented: what it writes, where, with what permissions, whether it is cleared | **Passing** — `${INSTALL_SECRETS_CACHE}`, `install -m 0600`, holding `MASTER_PASSWORD`, `SMTP_RELAY_*`, `CF_API_TOKEN`, `GENTIAN_DEPLOYMENTS_GIT_TOKEN`, `CI_BOT_PAT`, `ARGOCD_TOKEN`. **Never cleared on success** — that is the §1 known concern, resolved by deletion in Phase 4a |
+| 4 | Bootstrap-blocking set enumerated and under five | **Passing** — four, two of them optional |
+| 5 | Reviewed against a clean-room install by someone other than the author | **Not met** — no second reviewer, no clean-room run |
 
 ---
 
 ### Phase 2 — `CredentialRequirement` CRD and dual-carrier catalogue
 
-Define the CRD. Author `credentials.yaml`. Generate CRD instances from it at release time. Add a
-CI job asserting the two carriers are byte-equivalent after normalisation.
+**Status: implemented.**
+
+`api/v1alpha1/credentialrequirement_types.go` defines the CRD; `credentials.yaml` is the
+catalogue; `scripts/gen-credential-requirements.py` renders it into
+`kernel/credentials/credential-requirements.yaml`, wired into `make gen-all` and `make verify-gen`.
 
 **Acceptance**
-- CRD applies cleanly; OpenAPI schema rejects a requirement lacking `vaultPath` or `fields`.
-- `phase` and `scope` are enums; invalid values rejected at admission.
-- CI fails when `credentials.yaml` is edited without regenerating the packaged CRDs.
-- Every Phase 1 external credential has a corresponding requirement.
-- No controller was written.
+
+| # | Criterion | Status |
+|---|---|---|
+| 1 | CRD applies cleanly; schema rejects a requirement lacking `vaultPath` or `fields` | **Partial** — both are required with `MinLength`/`MinItems` in the Go type and the generated CRD; not yet applied to a cluster |
+| 2 | `phase` and `scope` are enums, invalid values rejected at admission | **Partial** — declared as `+kubebuilder:validation:Enum`; admission untested |
+| 3 | CI fails when `credentials.yaml` is edited without regenerating | **Passing** — `--check` verified against a tampered target |
+| 4 | Every Phase 1 external credential has a requirement | **Passing** — all six |
+| 5 | No controller was written | **Passing** — satisfaction comes from ESO sync status |
+
+The generator also enforces two rules the CRD schema cannot: requirements sharing a `vaultPath`
+must declare identical fields, or a write through one silently truncates the other; and
+`phase: bootstrap` with `validate: noop` is rejected, which is what holds the validator set at the
+curl/openssl ceiling. Both are covered by negative tests.
 
 ---
 
@@ -1276,15 +1290,26 @@ Bootstrap set, all expressible in `curl` or `openssl`:
 `s3` and `dns-provider` are deliberately **not** in this set. Both need request signing or a
 provider SDK, which is the §7 boundary — they are `phase: runtime` by construction.
 
+**Status: implemented** as `scripts/lib/validators.sh`.
+
 **Acceptance**
-- Each validator has a passing and a failing test against a containerised endpoint.
-- Trailing whitespace and newline in a pasted secret is caught, not silently accepted.
-- A validator failure names the endpoint and the failure class, and distinguishes *unreachable*
-  from *rejected*.
-- Timeouts are bounded via the tool's own flag (`curl --max-time`); an unreachable endpoint does
-  not hang the installer, and no `timeout(1)` dependency is introduced (§7, *Installer-host portability*).
-- No validator requires a CLI outside the 11 already required.
-- A `phase: bootstrap` requirement whose `validate.type` is not in the table above fails CI.
+
+| # | Criterion | Status |
+|---|---|---|
+| 1 | Each validator has a passing and a failing test | **Partial** — `git-https` and `oidc-discovery` exercised against live endpoints in both directions; `oci-registry` and `smtp` have no test yet, and none are automated |
+| 2 | Trailing whitespace and newline in a pasted secret is caught | **Passing** — `validate_whitespace` runs before every probe, verified both ways |
+| 3 | Failures name the endpoint and the class, distinguishing unreachable from rejected | **Passing** — verified; a bad host reports `unreachable`, a bad token `credentials rejected (HTTP 401)` |
+| 4 | Timeouts bounded by the tool's own flag; no `timeout(1)` dependency | **Passing** — `curl --max-time`, default 15s, overridable |
+| 5 | No validator requires a CLI outside the 11 already required | **Passing** — `curl` and `openssl` only |
+| 6 | A `phase: bootstrap` requirement with an out-of-table `validate.type` fails CI | **Passing** — enforced by the Phase 2 generator, which also rejects `noop` at bootstrap |
+
+An unknown `validate.type` is an error rather than a pass. Silently accepting a credential the
+catalogue asked to have checked is the exact failure the validators exist to prevent.
+
+**Bug found while testing.** `validate_git_https` and `validate_oci_registry` passed `curl -u`
+unconditionally. An empty password makes a *public* repository answer 401, so a perfectly good
+public source reported as a rejected credential. Both now send credentials only when there are
+some — which is also what makes `optional: true` requirements work.
 
 ---
 

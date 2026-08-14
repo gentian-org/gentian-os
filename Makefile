@@ -22,7 +22,7 @@ CROSSPLANE_IMAGE ?= xpkg.crossplane.io/crossplane/crossplane:$(CROSSPLANE_CLI_VE
 KUBEBUILDER_ASSETS ?= /tmp/envtest-bins/k8s/1.32.0-linux-amd64
 export KUBEBUILDER_ASSETS
 
-.PHONY: all build generate manifests test lint docker-build clean install-plugin validate-steps
+.PHONY: all build generate manifests test lint docker-build clean install-plugin validate-steps gen-credentials
 
 all: generate build test
 
@@ -71,12 +71,17 @@ manifests:
 gen-theme:
 	python3 scripts/gen-keycloak-theme-configmap.py
 
+## Render credentials.yaml into the packaged CredentialRequirement CRs
+gen-credentials:
+	python3 scripts/gen-credential-requirements.py
+
 ## Both generate and manifests in order
-gen-all: generate manifests gen-theme
+gen-all: generate manifests gen-theme gen-credentials
 
 ## Verify generated files are up to date (CI check)
 verify-gen: gen-all
-	git diff --exit-code api/ config/crd/ charts/gentian-os/crds/ charts/gentian-os/templates/clusterrole.yaml kernel/services/keycloak-idp/manifests/ || (echo "Generated files are out of date. Run 'make gen-all'." && exit 1)
+	python3 scripts/gen-credential-requirements.py --check
+	git diff --exit-code api/ config/crd/ charts/gentian-os/crds/ charts/gentian-os/templates/clusterrole.yaml kernel/services/keycloak-idp/manifests/ kernel/credentials/ || (echo "Generated files are out of date. Run 'make gen-all'." && exit 1)
 
 ## Tidy module dependencies
 tidy:
