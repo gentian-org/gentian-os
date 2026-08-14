@@ -1655,9 +1655,35 @@ implementation behind it.
 `external` defaulting to `inCluster`. Establish the rule in code review terms: installer-side
 probes read `external`, anything written into the cluster reads `inCluster`.
 
-**12e — Cluster permission model (interface).** Have `01-crossplane-providers` apply
-`crossplane/providers/*-rbac.yaml` when present, and say so in its header. The files themselves
-are Phase 13.
+**12e — Cluster permission model. Premise corrected; work re-scoped.**
+
+This sub-phase assumed provider RBAC was missing and the providers were running on their
+packages' defaults. They are not. `crossplane/providers/provider-rbac.yaml` exists, is applied by
+`01-crossplane-providers`, and binds both `provider-kubernetes` and `provider-helm` to
+**`cluster-admin`** — using ServiceAccount names pinned by their `DeploymentRuntimeConfig`s so the
+bindings survive provider upgrades.
+
+So the gap is not a missing binding. It is that the binding is maximally permissive: two
+controllers with full cluster authority, which is a poor answer to "what RBAC can the operator
+actually grant" on a cluster whose admin will not grant that.
+
+The real work is **privilege reduction** — replacing `cluster-admin` with roles scoped to what the
+providers actually manage. Prior art exists: David Sommer's `7c38423` derives them by unpacking
+the exact chart versions pinned in the compositions and collecting every `kind:` their templates
+render (12 rule groups for helm, 9 for kubernetes).
+
+It is **not** done here, and deliberately. Swapping `cluster-admin` for a scoped role is only safe
+with a cluster to validate against: any resource kind the enumeration misses surfaces as a
+`forbidden` error at provision time, and the chart-derived list has to be re-checked whenever a
+pinned chart version moves. That belongs in the fresh-cluster run, not in a change nobody can
+exercise.
+
+**Acceptance for the reduction, when it happens**
+- No provider is bound to `cluster-admin`.
+- Removing a scoped role produces a named, diagnosable failure rather than a Release that fails as
+  if the workload were broken.
+- The rule list names the chart versions it was derived from, and a chart version bump re-checks
+  it.
 
 **Acceptance**
 - Every dimension in §9 is expressible in surface 1 or surface 2. None is detected at runtime.
