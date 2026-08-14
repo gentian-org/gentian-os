@@ -37,7 +37,7 @@ source "${__GENTIAN_LIB_DIR}/compat.sh"
 # shellcheck source=scripts/lib/lib-runtime.sh
 source "${__GENTIAN_LIB_DIR}/lib-runtime.sh"
 
-for _gentian_lib in portforward common certs openbao argocd catalogue validators credentials bootstrap teardown; do
+for _gentian_lib in portforward common certs openbao argocd catalogue validators credentials recovery bootstrap teardown; do
     # shellcheck source=/dev/null
     source "${__GENTIAN_LIB_DIR}/${_gentian_lib}.sh"
 done

@@ -122,9 +122,9 @@ The salt is generated at first install and stored in OpenBao beside the password
 > Under `derived`, reproducing a cluster's credentials needs the master password
 > **and** the salt. The salt lives only in OpenBao, so a disaster that loses
 > OpenBao's storage also loses it, and the master password alone reproduces
-> nothing. If reproducibility is part of your recovery plan, back up
-> `gentian-os/kernel/internal/master-password` — both keys, not just the
-> password you typed.
+> nothing. `./install.sh --export-recovery-kit` captures both, plus the unseal
+> material and the cluster's identity, in one encrypted file — see step 9 of
+> [GETTING-STARTED.md](../GETTING-STARTED.md).
 
 Under `random` there is nothing to reproduce; recovery means restoring OpenBao.
 

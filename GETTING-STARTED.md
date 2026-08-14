@@ -131,7 +131,43 @@ They are also written to `/tmp/openbao-transit-init.json` and
 password manager before you continue.** After this the primary auto-unseals on
 every restart, which is why these are easy to lose.
 
-## 9. Check it worked
+## 9. Export the recovery kit
+
+Do this now, while everything is still in the shell that installed it.
+
+```bash
+./install.sh --export-recovery-kit kit.age
+```
+
+Most of this cluster is reconstructible: configuration comes from Git, and the
+derived credentials are a function of the master password and the derivation
+salt. The salt, though, is generated during the install and lives only in
+OpenBao. Lose OpenBao's storage and the master password on its own reproduces
+nothing.
+
+The kit is that gap closed — the salt, the master password, the unseal material
+and this cluster's identity, in one encrypted file. Restoring it into a fresh
+cluster makes every derived credential come back byte-identical. Without it, a
+rebuild gives you a working cluster with entirely different credentials, which
+is a migration rather than a restore.
+
+```bash
+./install.sh --recover kit.age    # on the fresh cluster, before anything else
+```
+
+It is encrypted with `age` where available and `openssl` otherwise; there is no
+unencrypted path. Store it wherever your break-glass material already lives —
+anyone who can decrypt it holds every derived credential in the cluster.
+
+To export unattended, set `GENTIAN_KIT_RECIPIENT` to an age public key (`age -p`
+prompts on the terminal and so cannot run from a job); read such a kit back with
+`GENTIAN_KIT_IDENTITY` pointing at the private key.
+
+The kit does **not** back up your data, and it does not restore OpenBao — a
+fresh instance issues its own unseal material. It is only the part that nothing
+else can rebuild.
+
+## 10. Check it worked
 
 ```bash
 ./install.sh --status
@@ -140,7 +176,8 @@ every restart, which is why these are easy to lose.
 Every step reads `satisfied`, except steps that have nothing persistent to check
 and steps that do not apply to this cluster — those read `undefined`.
 `A-04-prewarm`, `C-03-provider-helm` and `D-02-gateway-wait` are always
-`undefined`.
+`undefined`. `B-04-openbao-init`, `B-09-seed-secrets` and `E-02-tenant-reconcile`
+re-run on every pass, because they hold per-run tokens or reconcile continuously.
 
 ```bash
 make check-credentials
@@ -169,3 +206,5 @@ kubectl get application,applicationset -n argocd
   [docs/deployment.md](docs/deployment.md) explains the layering.
 - **Understand the architecture** — [docs/architecture.md](docs/architecture.md)
   and [docs/design/kernel.md](docs/design/kernel.md).
+- **Back up the data** — the recovery kit in step 9 covers credentials, not
+  databases or object storage.
