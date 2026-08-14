@@ -873,6 +873,14 @@ install_llm_serving() {
 # as a file — see docs/deployment.md §3.1.
 # =============================================================================
 scaffold_cluster_deployment() {
+    # Writes claim files into the deployments repo and, further down, git
+    # commits and PUSHES them. Under --dry-run that is the most consequential
+    # mutation in the whole preflight — it changes a repository other clusters
+    # read. Nothing here is a check, so the whole function is skipped.
+    if [[ "${GENTIAN_DRY_RUN:-0}" == "1" ]]; then
+        info "Dry run: skipping cluster scaffolding (it writes and pushes to the deployments repo)."
+        return 0
+    fi
     local kernel_dir="${GENTIAN_DEPLOYMENTS_PATH}/clusters/${GENTIAN_DEPLOYMENTS_CLUSTER}/kernel"
     local stage="${GENTIAN_DEPLOYMENTS_STAGE:-dev}"
     local cluster="${GENTIAN_DEPLOYMENTS_CLUSTER}"
