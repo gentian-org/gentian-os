@@ -13,6 +13,17 @@ metadata:
   namespace: {{ .Release.Namespace }}
   labels:
     {{- include "gentian-os.labels" . | nindent 4 }}
+  annotations:
+    # Restart when the tokens below change. They reach the container as
+    # secretKeyRef env vars, which Kubernetes resolves once at pod start: a
+    # Secret that changes afterwards never reaches a running pod. The authz
+    # bridge read an empty OpenFGA token for an hour after ESO had populated
+    # its Secret, retrying 401 bearer_token_missing against a value that was
+    # by then sitting right beside it.
+    secret.reloader.stakater.com/reload: >-
+      {{ .Values.authzBridge.openfgaTokenSecretRef.name | default "gentian-os-openfga-token" }}
+      {{- with .Values.cloudflare.apiTokenSecretRef }}{{- if .name }},{{ .name }}{{- end }}{{- end }}
+      {{- if $lifecycleGitCredsSecret }},{{ $lifecycleGitCredsSecret }}{{- end }}
 spec:
   replicas: {{ .Values.replicaCount }}
   selector:
