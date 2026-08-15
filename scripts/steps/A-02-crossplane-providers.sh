@@ -11,7 +11,20 @@ check() {
     for p in provider-kubernetes provider-helm provider-vault; do
         kubectl get provider.pkg.crossplane.io "$p" >/dev/null 2>&1 || return 1
     done
-    kubectl get xrd xclusters.gentianos.io >/dev/null 2>&1
+
+    # Every XRD in the repo, not just xclusters. Testing one of six let a
+    # cluster missing xsuze and xinfradata — the XRDs that compose Keycloak,
+    # OpenFGA and the infra databases — report satisfied, so the step that
+    # would have restored them was skipped and the failure surfaced four
+    # phases later as a missing Keycloak Service.
+    local f name
+    for f in "${SCRIPT_DIR}"/crossplane/xrds/*.yaml; do
+        [[ -f "${f}" ]] || continue
+        name="$(awk '/^  name:/{print $2; exit}' "${f}")"
+        [[ -n "${name}" ]] || continue
+        kubectl get xrd "${name}" >/dev/null 2>&1 || return 1
+    done
+    return 0
 }
 
 apply() {

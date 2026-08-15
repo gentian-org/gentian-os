@@ -164,6 +164,30 @@ install_crossplane_providers() {
     # The XRD controller refuses to adopt CRDs owned by a different UID and
     # the XRD never reaches Established.  Fix: after applying an XRD, if any
     # of its owned CRDs still carry a stale UID, patch them to the current one.
+    # _unstick_terminating_xrds — clear XRDs wedged mid-deletion.
+    #
+    # An XRD stuck Terminating cannot be re-created, and its claim CRD stays
+    # absent, so every step that applies one of those claims fails with "no
+    # matches for kind" and no indication that the cause is a deletion from
+    # hours earlier that never finished. Composites hold a finalizer their
+    # controller clears — but when the XRD is already half-gone the controller
+    # no longer reconciles them, so the two wait on each other indefinitely.
+    _unstick_terminating_xrds() {
+        local xrd claim_kind leftover
+        for xrd in $(kubectl get xrd -o jsonpath='{range .items[?(@.metadata.deletionTimestamp)]}{.metadata.name}{"\n"}{end}' 2>/dev/null); do
+            warn "XRD ${xrd} is stuck Terminating; clearing what blocks it."
+            claim_kind="$(kubectl get xrd "${xrd}" -o jsonpath='{.spec.names.plural}' 2>/dev/null)"
+            [[ -n "${claim_kind}" ]] || continue
+            for leftover in $(kubectl get "${claim_kind}.gentianos.io" -A \
+                -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}' 2>/dev/null); do
+                kubectl patch "${claim_kind}.gentianos.io" "${leftover}" --type=merge \
+                    -p '{"metadata":{"finalizers":null}}' >/dev/null 2>&1 || true
+            done
+            kubectl wait xrd "${xrd}" --for=delete --timeout=60s >/dev/null 2>&1 || true
+        done
+    }
+    _unstick_terminating_xrds
+
     _adopt_xrd_crds() {
         local xrd_name="$1"; shift   # e.g. xapps.gentianos.io
         local -a crds=("$@")        # e.g. xapps.gentianos.io apps.gentianos.io
@@ -208,6 +232,29 @@ install_crossplane_providers() {
     _adopt_xrd_crds xtenants.gentianos.io xtenants.gentianos.io tenants.gentianos.io
     _kubectl_retry wait xrd xtenants.gentianos.io \
         --for=condition=Established --timeout=2m
+
+    # Everything else in the directory, so the step's `provides: XRDs` is the
+    # whole set rather than the four named above. infra-data and suze were only
+    # ever applied by the crossplane-xrds ArgoCD Application, which means a
+    # cluster whose Application had not synced yet — or had been pruned — was
+    # missing the XRDs that compose Keycloak, OpenFGA and the infra databases,
+    # with nothing in the installer able to put them back.
+    local xrd_file
+    for xrd_file in "${SCRIPT_DIR}"/crossplane/xrds/*.yaml; do
+        [[ -f "${xrd_file}" ]] || continue
+        case "${xrd_file##*/}" in
+            cluster.yaml|app.yaml|tenant.yaml|repository.yaml) continue ;;
+        esac
+        info "Applying XRD ($(basename "${xrd_file}" .yaml))..."
+        _kubectl_retry apply -f "${xrd_file}"
+    done
+
+    # Established, not merely applied: the claims that follow are rejected by an
+    # XRD whose CRD the API server has not finished registering.
+    local xrd_name
+    for xrd_name in $(kubectl get xrd -o name 2>/dev/null); do
+        kubectl wait "${xrd_name}" --for=condition=Established --timeout=2m >/dev/null 2>&1 || true
+    done
 
     success "Crossplane providers, XRDs, and Compositions are ready."
 }
