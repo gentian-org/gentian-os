@@ -10,10 +10,12 @@
 #
 # Two properties this file is built around:
 #
-#   1. No credential value is written to local disk. There is no cache. Re-run
-#      recovery comes from OpenBao (try_load_creds_from_openbao) and step state
-#      comes from the cluster (check()), so a local copy has no remaining job —
-#      it was only ever a workaround for not having either.
+#   1. OpenBao holds the credentials, and re-run recovery comes from it
+#      (try_load_creds_from_openbao); step state comes from the cluster
+#      (check()). The one gap is the bootstrap itself: the KV mount does not
+#      exist until B-07 creates it and B-09 seeds it, so a run that fails before
+#      then has nothing to recover from. A cache covers exactly that window and
+#      B-09 deletes it — see "Bootstrap credential cache" below.
 #
 #   2. Only `phase: bootstrap` credentials are collected. Everything else is
 #      `phase: runtime` and belongs to the on-cluster credential manager, which
