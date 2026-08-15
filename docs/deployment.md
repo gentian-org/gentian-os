@@ -344,6 +344,69 @@ stage-specific `ImageUpdater` CR. See [design/operations.md](design/operations.m
 | **staging** | Release candidates | Semver tags, including `v*-rc.*` |
 | **prod** | Conservative (`semver`) | Stable `v*.*.*` tags only |
 
+### Which tag to write in a cluster's values.yaml
+
+`image.tag` in `clusters/<cluster>/kernel/values.yaml` is the tag the cluster
+pulls. Argo CD reconciles the operator chart from that file continuously, so it
+wins over the `--set image.tag` the installer passes — a value here is the
+decision, not a default.
+
+**The stage name is not a tag.** CI (`.github/workflows/ci.yaml`) publishes:
+
+| Tag | Published when | Mutable? | Use for |
+| --- | --- | --- | --- |
+| `v1.2.3` | a `v*` git tag is pushed | no, by convention | **prod** |
+| `1.2` | same | yes — moves with each patch | nothing to pin |
+| `develop`, `main` | every build of that branch | yes | dev clusters |
+| `abc1234` | every commit, any branch | no | ambiguous across branches |
+| `develop-abc1234` | every commit on that branch | no | what Image Updater tracks |
+
+There is no `prod`, `staging` or `latest`, and none should be added. Writing one
+produces a manifest the registry answers 404 to, and the failure surfaces
+nowhere near its cause: the operator sits in `ImagePullBackOff`, so it never
+creates the kernel Gateway, so the install waits out a timeout and reports
+success over a cluster with no ingress and no tenant admission. Pre-flight now
+checks the tag exists before anything is deployed.
+
+### Why not a `prod` or `latest` tag
+
+A stage-named or `latest` tag is a *mutable pointer*: the same string resolves
+to different content over time. In production that costs more than it saves.
+
+- **You cannot tell what is running.** `image.tag: prod` in Git names a
+  pointer, not a build. Answering "what version is in production" needs a
+  registry lookup that is only true until the next push.
+- **Rollback stops being a revert.** Reverting the commit gives you the same
+  mutable tag, which still resolves to the bad image. You have to re-point the
+  tag — a registry operation nobody reviews and Git never records.
+- **Replicas drift.** A pod rescheduled after a re-push pulls the new content
+  while its siblings keep the old, so one Deployment runs two versions with no
+  indication that it does.
+- **It defeats the update policy above.** `semver` exists so a human decides
+  when prod moves. A mutable tag moves it whenever someone pushes.
+
+The industry practice is the opposite: **immutable, content-addressable
+references in production, and automation that proposes the change as a
+reviewable commit.** Concretely, in order of strength:
+
+```yaml
+# clusters/<cluster>/kernel/values.yaml
+
+# Best — a digest. Cannot be re-pointed at different content by anyone.
+# The chart prefers image.digest over image.tag when both are set.
+image:
+  digest: "sha256:…"
+
+# Good — an immutable release tag, never re-pushed once published.
+image:
+  tag: "v1.2.3"
+```
+
+If what you want is "prod follows releases without editing a file each time",
+that is the *update policy*, not a tag: Argo CD Image Updater tracks `semver`
+and writes the new version back as a commit, so the moving part is a reviewed
+change in Git rather than a pointer that shifts underneath you.
+
 `GENTIAN_OS_BRANCH` (`install.env`) is the ref every in-cluster Application
 tracks — the kernel ApplicationSets, the operator Application and the
 bootstrap Applications all follow it. Left empty it defaults to the branch

@@ -167,6 +167,50 @@ validate_cloudflare_dns() {
     return 0
 }
 
+# validate_image_tag <repository> <tag>
+#
+# A tag that does not exist is not discovered until kubelet has been retrying
+# for hours. ImagePullBackOff names the image but nothing connects it back to
+# the values file that chose the tag, and the visible symptom is somewhere else
+# entirely — an operator that never starts, so a Gateway that is never created,
+# so an install that waits out a timeout and reports success over a cluster with
+# no ingress. One request answers it before anything is deployed.
+validate_image_tag() {
+    local repo="$1" tag="$2" registry path token code
+    registry="${repo%%/*}"
+    path="${repo#*/}"
+
+    # ghcr.io is where the platform publishes. A mirror has its own auth, and
+    # guessing at it would fail installs that are perfectly fine.
+    if [[ "${registry}" != "ghcr.io" ]]; then
+        info "Image tag check skipped: ${registry} is not ghcr.io."
+        return 0
+    fi
+
+    token="$(curl -s --max-time "${GENTIAN_VALIDATE_TIMEOUT}" \
+        "https://ghcr.io/token?scope=repository:${path}:pull&service=ghcr.io" 2>/dev/null \
+        | jq -r '.token // empty' 2>/dev/null || true)"
+    if [[ -z "${token}" ]]; then
+        warn "Could not get a ghcr.io pull token; skipping the image tag check."
+        return 0
+    fi
+
+    code="$(curl -s -o /dev/null -w '%{http_code}' --max-time "${GENTIAN_VALIDATE_TIMEOUT}" \
+        -H "Authorization: Bearer ${token}" \
+        -H "Accept: application/vnd.oci.image.index.v1+json,application/vnd.docker.distribution.manifest.list.v2+json,application/vnd.docker.distribution.manifest.v2+json" \
+        "https://ghcr.io/v2/${path}/manifests/${tag}" 2>/dev/null || echo 000)"
+
+    case "${code}" in
+        200) return 0 ;;
+        404) _v_fail "${repo}:${tag}" "no such tag in the registry" \
+                 "CI publishes v1.2.3 for a release, develop/main for a branch, and develop-abc1234 for a commit — there is no stage-named tag" ;;
+        000) warn "ghcr.io unreachable; skipping the image tag check for ${repo}:${tag}."
+             return 0 ;;
+        *)   warn "HTTP ${code} checking ${repo}:${tag}; continuing without the check."
+             return 0 ;;
+    esac
+}
+
 validate_oidc_discovery() {
     local url="$1" token="${2:-}" code auth=()
     [[ -n "${token}" ]] && auth=(-H "Authorization: Bearer ${token}")

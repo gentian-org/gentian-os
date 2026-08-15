@@ -1189,6 +1189,30 @@ check_prereqs() {
         missing=$((missing + 1))
     fi
 
+    # ── Operator image ────────────────────────────────────────────────────────
+    # The tag the cluster will actually run. ArgoCD reconciles the chart from
+    # clusters/<id>/kernel/values.yaml continuously, so that file wins over the
+    # installer's --set: checking GENTIAN_OS_IMAGE_TAG alone would pass while
+    # the cluster pulled something else.
+    local _os_repo _os_tag _os_values
+    _os_repo="${GENTIAN_OS_IMAGE_REPOSITORY:-ghcr.io/gentian-org/gentian-os}"
+    _os_values="${GENTIAN_DEPLOYMENTS_PATH:-}/clusters/${GENTIAN_DEPLOYMENTS_CLUSTER_ID:-}/kernel/values.yaml"
+    # yq_get, not a bare `yq`: mikefarah/yq takes `eval` and kislyuk/yq takes a
+    # jq filter, and both ship as `yq`. Calling one syntax directly fails
+    # silently here, and the fallback below would then validate a tag the
+    # cluster is not going to pull — passing the check for the wrong image.
+    _os_tag=""
+    if [[ -r "${_os_values}" ]]; then
+        _os_tag="$(yq_get '.image.tag' "${_os_values}" 2>/dev/null || true)"
+    fi
+    _os_tag="${_os_tag:-${GENTIAN_OS_IMAGE_TAG:-develop}}"
+    if validate_image_tag "${_os_repo}" "${_os_tag}"; then
+        success "Operator image ${_os_repo}:${_os_tag} exists"
+    else
+        error "  Set image.tag in ${_os_values} to a tag that exists."
+        missing=$((missing + 1))
+    fi
+
     if [[ "$missing" -gt 0 ]]; then
         error "$missing prerequisite(s) missing. Aborting."
         exit 1
