@@ -13,8 +13,11 @@
 # =============================================================================
 try_load_creds_from_openbao() {
     # Fast path: if everything required for this mail mode is exported, skip.
+    # The deployments token counts — it is prompted for on every run that does
+    # not have it, so a fast path that ignores it skips the lookup that would
+    # have prevented the prompt.
     MAIL_SERVICE_MODE="${MAIL_SERVICE_MODE:-external}"
-    if [[ -n "${MASTER_PASSWORD:-}" ]]; then
+    if [[ -n "${MASTER_PASSWORD:-}" && -n "${GENTIAN_DEPLOYMENTS_GIT_TOKEN:-}" ]]; then
         if [[ "${MAIL_SERVICE_MODE}" == "external" \
             && -n "${SMTP_RELAY_USERNAME:-}" \
             && -n "${SMTP_RELAY_PASSWORD:-}" ]]; then
@@ -59,6 +62,36 @@ try_load_creds_from_openbao() {
     if [[ -z "${MASTER_PASSWORD:-}" ]]; then
         v=$(_bao_get "internal/master-password" '.data.data.value')
         [[ -n "$v" ]] && { export MASTER_PASSWORD="$v"; loaded=1; }
+    fi
+    # The salt lives beside the password, and recovering one without the other
+    # derives different credentials from the same input.
+    if [[ -z "${DERIVATION_SALT:-}" ]]; then
+        v=$(_bao_get "internal/master-password" '.data.data.salt')
+        [[ -n "$v" ]] && { export DERIVATION_SALT="$v"; loaded=1; }
+    fi
+    # The rest of the bootstrap set. Without these, every run after B-09 removes
+    # the local cache prompts again for credentials OpenBao already holds —
+    # which is the cache's whole reason to exist, undone one step later.
+    if [[ -z "${GENTIAN_DEPLOYMENTS_GIT_USERNAME:-}" ]]; then
+        v=$(_bao_get "repositories/deployments" '.data.data.username')
+        [[ -n "$v" ]] && { export GENTIAN_DEPLOYMENTS_GIT_USERNAME="$v"; loaded=1; }
+    fi
+    if [[ -z "${GENTIAN_DEPLOYMENTS_GIT_TOKEN:-}" ]]; then
+        v=$(_bao_get "repositories/deployments" '.data.data.password')
+        [[ -n "$v" ]] && { export GENTIAN_DEPLOYMENTS_GIT_TOKEN="$v"; loaded=1; }
+    fi
+    if [[ -z "${REGISTRY_USER:-}" ]]; then
+        v=$(_bao_get "storage/registry" '.data.data.username')
+        [[ -n "$v" ]] && { export REGISTRY_USER="$v"; loaded=1; }
+    fi
+    if [[ -z "${REGISTRY_PASSWORD:-}" ]]; then
+        v=$(_bao_get "storage/registry" '.data.data.password')
+        [[ -n "$v" ]] && { export REGISTRY_PASSWORD="$v"; loaded=1; }
+    fi
+    if [[ -z "${CF_API_TOKEN:-}" ]]; then
+        # Bracket notation: jq reads a hyphen in a bare path as subtraction.
+        v=$(_bao_get "dns/cloudflare" '.data.data["api-token"]')
+        [[ -n "$v" ]] && { export CF_API_TOKEN="$v"; loaded=1; }
     fi
     if [[ -z "${SMTP_RELAY_USERNAME:-}" ]]; then
         v=$(_bao_get "mail/postfix" '.data.data.relay_username')
