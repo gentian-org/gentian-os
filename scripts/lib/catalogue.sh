@@ -407,37 +407,16 @@ install_gentian_os_operator() {
 
     create_deployments_git_credentials "$ns"
 
-    local openfga_token=""
-    if kubectl get secret openfga-sensitive-values -n platform-kernel >/dev/null 2>&1; then
-        openfga_token=$(kubectl get secret openfga-sensitive-values -n platform-kernel \
-            -o jsonpath='{.data.sensitive-values\.yaml}' 2>/dev/null | base64 -d 2>/dev/null \
-            | grep -A1 'keys:' | tail -1 | sed 's/.*"\([^"]*\)".*/\1/' || true)
-    fi
-
-    # Route the token through OpenBao so the chart's ExternalSecret can sync it
-    # into a Secret the Deployment reads via secretKeyRef. It used to be passed
-    # as a Helm value AND pinned into the Argo CD Application's helm.parameters,
-    # which left it in cleartext in two widely-readable cluster objects: anyone
-    # with get on Applications could read it, `argocd app get` printed it, and
-    # every backup of that spec captured it.
-    #
-    # openfga_token_in_bao gates the fallback below rather than the write being
-    # fatal: OpenBao can legitimately be unreachable here (sealed, or the
-    # port-forward path unavailable), and failing the whole install over it
-    # would be worse than the leak it prevents. The fallback is announced.
-    local openfga_token_in_bao=0
-    if [[ -n "${openfga_token}" ]]; then
-        if gentian_openbao_put "authz/openfga" \
-            "$(jq -nc --arg t "${openfga_token}" '{"api-token":$t}')"; then
-            openfga_token_in_bao=1
-            info "OpenFGA API token stored in OpenBao (gentian-os/kernel/authz/openfga)."
-        else
-            warn "Could not write the OpenFGA API token to OpenBao."
-            warn "  Falling back to passing it as a Helm value, which leaves it"
-            warn "  in cleartext in the gentian-os Deployment and Application."
-            warn "  Re-run once OpenBao is reachable to move it behind a Secret."
-        fi
-    fi
+    # The OpenFGA token is not written here. B-06 derives it and writes
+    # gentian-os/kernel/authz/openfga with the field `preshared_key`, which is
+    # the name OpenFGA's own ExternalSecret reads, and the chart's ExternalSecret
+    # now reads the same field. Writing it again from this side re-derived the
+    # value out of a Kubernetes Secret by grepping a YAML blob, and stored it
+    # under a second field name — and because a KV v2 write replaces the whole
+    # secret version rather than merging, the later of the two writers silently
+    # removed the other's field. Whichever ran last decided whether the operator
+    # or OpenFGA itself lost its token.
+    local openfga_token="" openfga_token_in_bao=1
 
     # When the token reached OpenBao the chart's ExternalSecret supplies it and
     # nothing token-shaped crosses the Helm boundary — the chart's default

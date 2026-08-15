@@ -60,8 +60,15 @@ authzBridge:
   # a Helm value, an Application spec, or the installer's process arguments.
   openfgaTokenSecretRef:
     name: "gentian-os-openfga-token"
+    # The key inside the Kubernetes Secret the Deployment reads.
     key: "api-token"
     openbaoPath: "gentian-os/kernel/authz/openfga"
+    # The field name inside that OpenBao secret, which is a different thing from
+    # the key above and does not have to match it. The value is derived once as
+    # `preshared_key` and OpenFGA's own ExternalSecret reads it under that name;
+    # asking OpenBao for "api-token" finds nothing, and the bridge then calls
+    # OpenFGA with no bearer token and is refused with 401.
+    openbaoProperty: "preshared_key"
 
 # platformSecurityPolicy is the cluster singleton edited by platform administrators
 # (Admin Console → Platform security). AppProfile.spec.security.macWaivers requests
