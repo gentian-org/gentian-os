@@ -199,9 +199,8 @@ prepare_run() {
     prompt_kernel_domain
     prompt_network_mode
 
-    # One pass over credentials.yaml, replacing prompt_credentials and
-    # prompt_kernel_secrets. Validation runs here, before the first apply(), so
-    # a bad credential aborts with the cluster untouched.
+    # Driven by credentials.yaml. Validation runs here, before the first
+    # apply(), so a bad credential aborts with the cluster untouched.
     #
     # A dry run applies nothing, and no step's check() reads a credential, so it
     # has everything it needs to print the plan without one. Asking anyway turns

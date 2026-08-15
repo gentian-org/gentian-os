@@ -385,8 +385,9 @@ _prompt_field() {
 
 # collect_bootstrap_credentials — the whole of install-time credential entry.
 #
-# Replaces prompt_credentials, prompt_kernel_secrets and the hardcoded
-# MASTER_PASSWORD length check that used to live in two places.
+# One pass over credentials.yaml, so what the installer asks for is decided by
+# the catalogue rather than by a prompt written per credential. Adding a
+# bootstrap credential is an entry in that file and nothing here.
 collect_bootstrap_credentials() {
     if [[ ! -f "${GENTIAN_CATALOGUE_FILE}" ]]; then
         error "Credential catalogue not found: ${GENTIAN_CATALOGUE_FILE}"
