@@ -74,7 +74,7 @@ try_load_creds_from_openbao() {
     fi
 }
 install_eso() {
-    banner "Step 3 — Installing External Secrets Operator"
+    banner "Installing External Secrets Operator"
 
     if helm status external-secrets -n external-secrets &>/dev/null; then
         success "ESO already installed. Skipping."
@@ -94,7 +94,7 @@ install_eso() {
 # 5. Deploy OpenBao transit seal instance
 # =============================================================================
 bootstrap_transit_app() {
-    banner "Step 5 — OpenBao transit seal instance"
+    banner "OpenBao transit seal instance"
 
     # Note: CRI cleanup is intentionally NOT run here pre-flight. It is
     # invoked reactively by wait_for_running_pod's 2nd-tier escalation
@@ -115,12 +115,12 @@ bootstrap_transit_app() {
         openbao-transit openbao statefulset \
         "app.kubernetes.io/instance=openbao-transit" 300 \
     || {
-        error "Step 5 failed: Argo CD did not deploy openbao-transit StatefulSet."
+        error "Argo CD did not deploy openbao-transit StatefulSet."
         exit 1
     }
 
     if ! wait_for_running_pod openbao "app.kubernetes.io/instance=openbao-transit" "openbao-transit" 480; then
-        error "Step 5 failed: openbao-transit pod never became Ready. Aborting install."
+        error "openbao-transit pod never became Ready. Aborting install."
         exit 1
     fi
 }
@@ -166,9 +166,9 @@ gentian_openbao_put() {
 # 5b. Init the transit instance
 # =============================================================================
 init_openbao_transit() {
-    banner "Step 5b — Transit instance init + autounseal Secret"
+    banner "Transit instance init + autounseal Secret"
     if ! bash "${SCRIPT_DIR}/scripts/bootstrap/init-openbao-transit.sh"; then
-        error "Step 5b failed: init-openbao-transit.sh exited non-zero."
+        error "init-openbao-transit.sh exited non-zero."
         error "Without the openbao-transit-token Secret, the primary OpenBao"
         error "will be stuck in CreateContainerConfigError. Aborting install."
         exit 1
@@ -181,7 +181,7 @@ init_openbao_transit() {
     kubectl get secret -n openbao openbao-transit-token  >/dev/null 2>&1 || missing+=(openbao-transit-token)
     kubectl get secret -n openbao openbao-transit-unseal >/dev/null 2>&1 || missing+=(openbao-transit-unseal)
     if (( ${#missing[@]} > 0 )); then
-        error "Step 5 reported success but required Secrets are missing: ${missing[*]}"
+        error "Transit init reported success but required Secrets are missing: ${missing[*]}"
         error "Re-run init-openbao-transit.sh manually and re-run install.sh."
         exit 1
     fi
@@ -190,7 +190,7 @@ init_openbao_transit() {
 # 7. Initialize primary OpenBao (transit auto-unseal)
 # =============================================================================
 init_openbao() {
-    banner "Step 7 — OpenBao init"
+    banner "OpenBao init"
 
     info "Waiting for openbao service (up to 2 min)..."
     local i=0
@@ -323,7 +323,7 @@ init_openbao() {
 # 10b. Seed kernel secrets
 # =============================================================================
 seed_secrets() {
-    banner "Step 10b — Seeding kernel secrets"
+    banner "Seeding kernel secrets"
 
     if ! BAO_ADDR=$(gentian_service_addr openbao openbao 8200 https); then
         error "Could not reach the openbao Service on :8200."

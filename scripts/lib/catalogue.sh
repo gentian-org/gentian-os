@@ -9,7 +9,7 @@
 # 16. AppCatalogue CRD + kubectl-gentian plugin
 # =============================================================================
 install_app_catalogue() {
-    banner "Step 16 — AppCatalogue CRD + kubectl-gentian plugin"
+    banner "AppCatalogue CRD + kubectl-gentian plugin"
 
     kubectl apply -f "${SCRIPT_DIR}/config/crd/gentianos.io_appcatalogues.yaml"
     success "AppCatalogue CRD applied."
@@ -67,7 +67,7 @@ install_app_catalogue() {
 # profiles/<name>/ kustomization becomes an Application (catalogue-<name>) that
 # applies AppProfile, optional composition.yaml, and optional cluster assets.
 install_catalogue_sync() {
-    banner "Step 15 — Argo CD catalogue sync (gentian-apps profile bundles)"
+    banner "Argo CD catalogue sync (gentian-apps profile bundles)"
 
     local tmpl="${SCRIPT_DIR}/kernel/bootstrap/catalogue-applicationset.yaml.tmpl"
     local rendered
@@ -395,7 +395,7 @@ handoff_gentian_os_to_argocd() {
 }
 
 install_gentian_os_operator() {
-    banner "Step 13 — gentian-os operator (Stage 1 authz bridge + Cloudflare tunnel)"
+    banner "gentian-os operator (Stage 1 authz bridge + Cloudflare tunnel)"
 
     local chart_dir="${SCRIPT_DIR}/charts/gentian-os"
     local crd_dir="${chart_dir}/crds"

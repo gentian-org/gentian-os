@@ -14,7 +14,7 @@ install_cert_manager() {
         return
     fi
 
-    banner "Step 2 — Installing cert-manager"
+    banner "Installing cert-manager"
 
     if helm status cert-manager -n cert-manager &>/dev/null; then
         # Existing Helm release may have been created by a previous install.sh run.
@@ -194,7 +194,7 @@ install_kernel_cert_resources() {
         return
     fi
 
-    banner "Step 2b — Installing kernel cert-manager ClusterIssuers"
+    banner "Installing kernel cert-manager ClusterIssuers"
 
     if ! kubectl get deploy cert-manager-webhook -n "${CERT_MANAGER_NAMESPACE:-cert-manager}" &>/dev/null; then
         local detected_ns=""
@@ -245,7 +245,7 @@ install_envoy_gateway() {
         exit 1
     fi
 
-    banner "Step 2c — Installing Envoy Gateway and Gateway API CRDs"
+    banner "Installing Envoy Gateway and Gateway API CRDs"
 
     local ns="${ENVOY_GATEWAY_NAMESPACE}"
     local chart_version="${ENVOY_GATEWAY_CHART_VERSION}"
@@ -623,7 +623,7 @@ install_kernel_wildcard() {
         return
     fi
 
-    banner "Step 10c — Installing kernel wildcard Certificate"
+    banner "Installing kernel wildcard Certificate"
 
     : "${LETSENCRYPT_EMAIL:=admin@${KERNEL_DOMAIN}}"
     DNS01_CLUSTER_ISSUER="$(gentian_dns01_cluster_issuer_name)"

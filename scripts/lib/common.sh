@@ -1705,7 +1705,7 @@ delete_kernel_helm_releases() {
 # 1. Create namespaces (idempotent)
 # =============================================================================
 create_namespaces() {
-    banner "Step 1 — Creating namespaces"
+    banner "Creating namespaces"
 
     local namespaces=(openbao external-secrets argocd gentian-system platform-kernel)
     if [[ "$INSTALL_CLUSTER_INFRA" == "1" ]]; then
@@ -1749,7 +1749,7 @@ prewarm_cluster() {
         return
     fi
 
-    banner "Step 1b — Pre-warming cluster (PLEG/CRI race mitigation)"
+    banner "Pre-warming cluster (PLEG/CRI race mitigation)"
 
     # We pre-warm TWO things, in order, because they are independent races:
     #

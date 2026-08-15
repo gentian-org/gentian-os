@@ -1478,7 +1478,7 @@ install_gentian_portal_chart() {
 }
 
 install_portal_login() {
-    banner "Step 14 — Gentian portal login (OIDC + shell)"
+    banner "Gentian portal login (OIDC + shell)"
 
     if ! kubectl get secret keycloak-admin -n platform-kernel >/dev/null 2>&1; then
         warn "keycloak-admin Secret missing — run Steps 12-13 first."

@@ -317,11 +317,11 @@ _patch_postfix_configmap() {
 }
 
 # =============================================================================
-# Step 13b — Stage 1 mail delivery (external SMTP or in-cluster Postfix).
+# Stage 1 mail delivery (external SMTP or in-cluster Postfix).
 # =============================================================================
 install_kernel_mail() {
     local mode="${MAIL_SERVICE_MODE:-external}"
-    banner "Step 13b — Mail delivery (MAIL_SERVICE_MODE=${mode})"
+    banner "Mail delivery (MAIL_SERVICE_MODE=${mode})"
 
     case "${mode}" in
         external|kernel) ;;

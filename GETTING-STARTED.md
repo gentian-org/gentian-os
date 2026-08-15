@@ -6,9 +6,42 @@ and how to tell it worked.
 Re-running `./install.sh` is always safe. It reads the cluster to decide what is
 already done, so a second run continues rather than restarting.
 
-For flags, phases, troubleshooting and the non-default installs — internal
-domains, mirrors, uninstalling — see
+For flags, troubleshooting and the non-default installs — internal domains,
+mirrors, uninstalling — see
 [docs/install-reference.md](docs/install-reference.md).
+
+---
+
+## What the installer does
+
+`install.sh` works through a directory of small steps, each named
+`<phase>-<number>-<what-it-does>`. The letter is the phase; the number orders
+steps within it. Five phases, in this order:
+
+| | Phase | What it builds |
+|---|---|---|
+| **A** | `control-plane` | Crossplane, namespaces, cert-manager, External Secrets, ArgoCD |
+| **B** | `secrets` | OpenBao, the Cluster claim, the credentials seeded into it |
+| **C** | `platform` | Certificates, the root ApplicationSet, admission control, the catalogue |
+| **D** | `applications` | The operator, mail, LLM serving, portal login, app profiles |
+| **E** | `handover` | Tenants, per-tenant reconcile, revoking the installer's own token |
+
+Each step reports what it found before it changes anything:
+
+```text
+[A-05] cert-manager
+     provides: cert-manager controller and its CRDs
+     check: not satisfied  →  applying
+     ✓ 34s
+```
+
+`check: satisfied → skip` means that step's work is already present, which is
+why re-running continues rather than restarting. You can run one phase with
+`--phase secrets`, or one step with `--only A-05`.
+
+From phase C onward much of the work is ArgoCD and Crossplane converging on
+their own, so the installer finishing is not the same as the cluster being
+ready — step 11 covers how to tell the difference.
 
 ---
 
@@ -137,13 +170,9 @@ replacement rather than aborting.
 ./install.sh
 ```
 
-It works through the steps, reporting each before acting:
-
-```
-[A-05] cert-manager      provides: cert-manager controller and its CRDs
-     check: not satisfied  →  applying
-     ✓ 34s
-```
+It works through phases A to E, reporting each step before acting. Expect it to
+take a while in B, where OpenBao is deployed and initialised, and in C and D,
+where ArgoCD pulls and syncs the platform's own applications.
 
 ## 9. Save the OpenBao keys when they appear
 
