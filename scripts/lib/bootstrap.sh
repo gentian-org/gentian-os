@@ -78,7 +78,7 @@ _ensure_crossplane_package_crds() {
 }
 
 install_crossplane() {
-    banner "Step 0 — Install Crossplane core"
+    banner "Install Crossplane core"
 
     if kubectl get deployment crossplane -n "${CROSSPLANE_NAMESPACE}" >/dev/null 2>&1; then
         success "Crossplane deployment already present in ${CROSSPLANE_NAMESPACE}; skipping."
@@ -124,7 +124,7 @@ install_crossplane() {
 # (mirrors crossplane/tests/e2e/scripts/p1-kernel-dev.sh steps 1-3)
 # =============================================================================
 install_crossplane_providers() {
-    banner "Step 0b — Crossplane providers, XRD, Composition"
+    banner "Crossplane providers, XRD, Composition"
 
     info "Applying providers (function-go-templating, provider-kubernetes, provider-vault)..."
     _kubectl_retry apply -f "${SCRIPT_DIR}/crossplane/providers/providers.yaml"
@@ -232,7 +232,7 @@ install_crossplane_providers() {
 # composition and is deliberately absent here.
 # =============================================================================
 bootstrap_openbao_for_crossplane() {
-    banner "Step 14 — OpenBao bootstrap for Crossplane (mount, policy, token)"
+    banner "OpenBao bootstrap for Crossplane (mount, policy, token)"
 
     if ! VAULT_ADDR=$(gentian_service_addr openbao openbao 8200 https); then
         error "Could not reach the openbao Service on :8200."
@@ -363,7 +363,7 @@ POLICY
 # --dry-run=client | kubectl apply ensures idempotency.
 # =============================================================================
 create_crossplane_secrets() {
-    banner "Step 9 — Create derived-credential Secrets for Cluster XR"
+    banner "Create derived-credential Secrets for Cluster XR"
 
     # Enforce minimum-entropy on MASTER_PASSWORD
     if [[ ${#MASTER_PASSWORD} -lt 16 ]]; then
@@ -488,7 +488,7 @@ create_crossplane_secrets() {
 # ensures existing paths seeded by prior install runs are never overwritten.
 # =============================================================================
 apply_cluster_xr() {
-    banner "Step 10 — Apply Cluster XR (kernel structural provisioning)"
+    banner "Apply Cluster XR (kernel structural provisioning)"
 
     local claims_dir="${GENTIAN_DEPLOYMENTS_PATH}/clusters/${GENTIAN_DEPLOYMENTS_CLUSTER_ID}/kernel/claims"
     [[ -f "${claims_dir}/cluster.yaml" ]] || {
@@ -587,7 +587,7 @@ seed_repository_credentials() {
 }
 
 # =============================================================================
-# Step 10d — Apply root ArgoCD ApplicationSet
+# Apply root ArgoCD ApplicationSet
 #
 # gentian-appsets is the "app of apps" that syncs kernel/appsets/ into the
 # cluster. Each YAML in that directory becomes an ApplicationSet, driving:
@@ -601,7 +601,7 @@ seed_repository_credentials() {
 #   - seed_secrets_remaining must have run so ESO can sync the globals secrets.
 # =============================================================================
 bootstrap_root_appset() {
-    banner "Step 10d — Bootstrap root ArgoCD ApplicationSet (app-of-apps)"
+    banner "Bootstrap root ArgoCD ApplicationSet (app-of-apps)"
 
     export GENTIAN_DEPLOYMENTS_STAGE="${GENTIAN_DEPLOYMENTS_STAGE:-dev}"
     resolve_gentian_os_branch
@@ -636,19 +636,19 @@ bootstrap_root_appset() {
 }
 
 # =============================================================================
-# Step 15: Bootstrap gentian-catalogue ApplicationSet (profile bundles from gentian-apps)
+# Bootstrap gentian-catalogue ApplicationSet (profile bundles from gentian-apps)
 # =============================================================================
 bootstrap_appprofiles() {
     install_catalogue_sync
 }
 
 # =============================================================================
-# Step 11: Install provider-helm
+# Install provider-helm
 # provider-helm deploys Helm charts as Crossplane Managed Resources (InfraData XR,
 # kernel services, tenant apps via compositions).
 # =============================================================================
 install_provider_helm() {
-    banner "Step 11 — Install provider-helm"
+    banner "Install provider-helm"
 
     # providers.yaml already contains provider-helm; apply idempotently.
     kubectl apply -f "${SCRIPT_DIR}/crossplane/providers/providers.yaml"
@@ -667,12 +667,12 @@ install_provider_helm() {
 }
 
 # =============================================================================
-# Step 11b — Apply InfraData XR (shared PostgreSQL, MariaDB, Redis, MinIO)
+# Apply InfraData XR (shared PostgreSQL, MariaDB, Redis, MinIO)
 #
 # Provisions kernel data stores via Crossplane InfraData XR.
 #
 # Prerequisites:
-#   - provider-helm Healthy (Step 11)
+#   - provider-helm Healthy (C-03)
 #   - gentian-infra-data AppSet synced ESO Secrets + values ConfigMaps (wave 8)
 #   - charts/infra/packages published on GitHub for the target git branch
 #     (run ./scripts/tools/publish-infra-charts.sh and push before install when adding charts)
@@ -719,13 +719,13 @@ verify_infra_chart_index() {
 
 
 # =============================================================================
-# Step 11c — Kyverno admission controller (Stage 0 MAC)
+# Kyverno admission controller (Stage 0 MAC)
 #
 # Deployed by Argo CD via kernel/appsets/05-admission.yaml (sync wave 5–6).
 # This step waits for the controller so later workloads are admitted under policy.
 # =============================================================================
 install_mac_admission() {
-    banner "Step 11c — Kyverno admission controller (Stage 0 MAC)"
+    banner "Kyverno admission controller (Stage 0 MAC)"
 
     info "Kyverno is synced by gentian-appsets (kernel/appsets/05-admission.yaml)."
     info "Waiting for kyverno-admission-controller (up to 5m)..."
@@ -769,6 +769,12 @@ _reset_suze_ghost_helm_releases() {
 print_summary_cp() {
     local xr_name xr_ready mr_count infra_pg_ready infra_mdb_ready infra_redis_ready infra_minio_ready argocd_url argocd_pw
 
+    # Around a dozen cluster queries, and on a remote API server they add up to
+    # the better part of a minute. Announce it: the last thing printed before
+    # this was "Bootstrap complete", so silence here reads as a hang at exactly
+    # the moment the operator is waiting for their prompt back.
+    info "Collecting cluster status for the summary (a dozen queries; this takes a moment)..."
+
     local claim_name
     claim_name="$(gentian_cluster_claim_name)"
     xr_name=$(kubectl get cluster.gentianos.io "${claim_name}" -n crossplane-system \
@@ -800,10 +806,15 @@ print_summary_cp() {
     suze_ready=$(kubectl get xsuze -o jsonpath='{.items[0].status.conditions[?(@.type=="Ready")].status}' 2>/dev/null || echo "unknown")
     suze_xr=$(kubectl get suze.gentianos.io "$(gentian_suze_claim_name)" -n crossplane-system \
         -o jsonpath='{.spec.resourceRef.name}' 2>/dev/null || gentian_suze_claim_name)
+    # `|| true` on both: grep exits 1 when the release is absent, which is the
+    # normal state until phase D deploys Suze. Under pipefail and the ERR trap
+    # that ends the run — the summary, whose whole job is to report state, would
+    # abort the install for finding a component not deployed yet.
+    local openfga_rel keycloak_rel
     openfga_rel=$(kubectl get release.helm.crossplane.io -l "crossplane.io/composite=${suze_xr}" \
-        -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}' 2>/dev/null | grep openfga | head -1)
+        -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}' 2>/dev/null | grep openfga | head -1 || true)
     keycloak_rel=$(kubectl get release.helm.crossplane.io -l "crossplane.io/composite=${suze_xr}" \
-        -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}' 2>/dev/null | grep keycloak | head -1)
+        -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}' 2>/dev/null | grep keycloak | head -1 || true)
     openfga_ready=$(kubectl get release.helm.crossplane.io/"${openfga_rel}" \
         -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null || echo "unknown")
     keycloak_ready=$(kubectl get release.helm.crossplane.io/"${keycloak_rel}" \
@@ -866,7 +877,7 @@ install_llm_serving() {
         return 0
     fi
 
-    banner "Step 13c — Deploying LLM serving stack"
+    banner "Deploying LLM serving stack"
     local env="${ENV:-dev}"
     local ns="platform-kernel"
 

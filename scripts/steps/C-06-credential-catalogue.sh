@@ -29,6 +29,23 @@ check() {
 }
 
 apply() {
+    # The CRD before the objects that need it. It ships in the operator chart's
+    # crds/ directory, and the operator is D-01 — a whole phase after this step,
+    # so waiting for Helm to install it would mean this step can never succeed
+    # on a first install. Applying the same file Helm would is idempotent:
+    # Helm's crds/ handling installs a CRD only when it is absent.
+    local crd="${SCRIPT_DIR}/charts/gentian-os/crds/gentianos.io_credentialrequirements.yaml"
+    if [[ -f "${crd}" ]]; then
+        gentian_run kubectl apply --server-side --force-conflicts -f "${crd}"
+        # Established, not merely created: the objects below are rejected by a
+        # CRD the API server has not finished registering.
+        kubectl wait --for=condition=Established \
+            crd/credentialrequirements.gentianos.io --timeout=60s >/dev/null 2>&1 || true
+    else
+        error "CredentialRequirement CRD not found at ${crd}"
+        return 1
+    fi
+
     gentian_run kubectl apply -f "$(_catalogue_file)"
 }
 

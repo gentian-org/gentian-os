@@ -7,8 +7,10 @@
 # pins: argocd
 
 check() {
-    kubectl get deployment argocd-server -n argocd >/dev/null 2>&1 &&
-        kubectl get crd applications.argoproj.io >/dev/null 2>&1
+    # Includes the ApplicationSet CRD: the manifest creates Deployments before
+    # CRDs, so a run that failed on the CRDs leaves a server that answers this
+    # check and a cluster that cannot compose an ApplicationSet.
+    argocd_installed
 }
 
 apply() {

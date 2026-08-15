@@ -146,7 +146,11 @@ type CredentialValidation struct {
 	//
 	// noop is rejected for phase: bootstrap — a bootstrap credential with no
 	// probe is a design error, resolved by reclassifying it as runtime.
-	// +kubebuilder:validation:Enum=oci-registry;git-https;oidc-discovery;smtp;noop
+	// cloudflare-dns looks the kernel domain's zone up through the Cloudflare
+	// API: one authenticated GET, so it stays inside the curl-only ceiling, and
+	// it answers whether the token can reach the zone DNS-01 must write to
+	// rather than what kind of token it is.
+	// +kubebuilder:validation:Enum=oci-registry;git-https;oidc-discovery;cloudflare-dns;smtp;noop
 	Type string `json:"type"`
 
 	// Host is the endpoint probed, when the validator needs one that is not

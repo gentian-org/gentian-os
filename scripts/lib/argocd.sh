@@ -123,12 +123,27 @@ tune_argocd_runtime() {
     success "ArgoCD runtime tuned (status=${ARGOCD_STATUS_PROCESSORS:-4} operation=${ARGOCD_OPERATION_PROCESSORS:-2})."
 }
 
-install_argocd() {
-    banner "Step 4 — Installing ArgoCD"
+# argocd_installed — every artefact install-argocd.sh is responsible for.
+#
+# Keying "already installed" on the Deployment alone treats a partial apply as a
+# finished one. The manifest creates the Deployments before the CRDs, so a
+# failure part-way through leaves argocd-server running and applicationsets
+# absent — and the step then reports satisfied forever, while the root
+# ApplicationSet that needs that CRD fails much later for no visible reason.
+argocd_installed() {
+    kubectl get deployment argocd-server -n argocd >/dev/null 2>&1 &&
+        kubectl get crd applications.argoproj.io >/dev/null 2>&1 &&
+        kubectl get crd applicationsets.argoproj.io >/dev/null 2>&1
+}
 
-    if kubectl get deployment argocd-server -n argocd &>/dev/null; then
+install_argocd() {
+    banner "Installing ArgoCD"
+
+    if argocd_installed; then
         success "ArgoCD already installed."
     else
+        # Server-side apply is idempotent, so re-running over a partial install
+        # completes it rather than conflicting with it.
         bash "${SCRIPT_DIR}/scripts/bootstrap/install-argocd.sh"
         success "ArgoCD installed."
     fi
@@ -332,7 +347,7 @@ EOF
 # 4b. Install ArgoCD Image Updater controller
 # =============================================================================
 install_argocd_image_updater() {
-    banner "Step 4b — ArgoCD Image Updater"
+    banner "ArgoCD Image Updater"
 
     info "Adding Argo Helm repo..."
     helm repo add argo "$(gentian_pin argocd repo)" --force-update >/dev/null
@@ -408,7 +423,7 @@ _wait_for_argocd_application_workload() {
 # 6. Apply remaining ArgoCD bootstrap Applications
 # =============================================================================
 bootstrap_argocd_apps() {
-    banner "Step 6 — ArgoCD bootstrap Applications"
+    banner "ArgoCD bootstrap Applications"
 
     # Register public OCI chart repos used by bootstrap Applications.
     if [[ "$INSTALL_CLUSTER_INFRA" == "1" ]]; then
@@ -428,7 +443,7 @@ bootstrap_argocd_apps() {
     done
 
     wait_for_running_pod openbao "app.kubernetes.io/name=openbao,app.kubernetes.io/instance=openbao" "openbao" 300 || {
-        error "Step 6 failed: openbao pod never became Ready. Aborting install."
+        error "openbao pod never became Ready. Aborting install."
         exit 1
     }
 

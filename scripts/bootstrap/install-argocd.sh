@@ -46,8 +46,23 @@ echo "Creating namespace ${ARGOCD_NAMESPACE}..."
 kubectl create namespace "${ARGOCD_NAMESPACE}" --dry-run=client -o yaml | kubectl apply -f -
 
 # Install ArgoCD
+#
+# Server-side apply, because the ApplicationSet CRD does not fit in a
+# client-side one. `kubectl apply` records the whole object in the
+# kubectl.kubernetes.io/last-applied-configuration annotation, and annotations
+# are capped at 256KB:
+#
+#   The CustomResourceDefinition "applicationsets.argoproj.io" is invalid:
+#   metadata.annotations: Too long: may not be more than 262144 bytes
+#
+# Server-side apply keeps field ownership in the object's managedFields instead,
+# so there is no annotation to overflow. --force-conflicts takes ownership of
+# fields last written by a client-side apply, which is what an existing cluster
+# installed before this change will have.
 echo "Installing ArgoCD components..."
-kubectl apply -n "${ARGOCD_NAMESPACE}" -f "https://raw.githubusercontent.com/argoproj/argo-cd/${ARGOCD_VERSION}/manifests/install.yaml"
+kubectl apply --server-side --force-conflicts \
+    -n "${ARGOCD_NAMESPACE}" \
+    -f "https://raw.githubusercontent.com/argoproj/argo-cd/${ARGOCD_VERSION}/manifests/install.yaml"
 
 # NOTE: controller memory requests and concurrency limits are applied by
 # tune_argocd_runtime() in scripts/lib/argocd.sh, which runs on EVERY install.sh
