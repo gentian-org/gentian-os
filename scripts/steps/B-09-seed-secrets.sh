@@ -13,4 +13,10 @@ check() {
 
 apply() {
     seed_secrets_remaining
+
+    # OpenBao now holds every credential the cache was standing in for, and
+    # try_load_creds_from_openbao recovers them from here on, so the local copy
+    # is redundant — and a redundant credential on disk is just a credential on
+    # disk.
+    clear_credential_cache
 }

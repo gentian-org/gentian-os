@@ -90,6 +90,85 @@ _env_var_for() {
     esac
 }
 
+# =============================================================================
+# Bootstrap credential cache
+#
+# OpenBao is where credentials live, and try_load_creds_from_openbao recovers
+# them on any later run — but only once the KV mount exists, which the Cluster
+# XR creates at B-07 and B-09 seeds. Everything before that has no store, so a
+# run that fails anywhere in phase A or early B asks for every credential again.
+# On a bootstrap that takes several attempts, that is the same secrets retyped
+# each time, which is where operators start pasting them into files that
+# outlive the install.
+#
+# So: a cache with a fixed, short life. It is written after validation, read
+# before prompting, and deleted the moment OpenBao holds the values, at which
+# point it carries nothing OpenBao does not already have. It is a plain file
+# with 0600 in a 0700 directory, because a cache that removed prompting while
+# staying encrypted would need its key beside it — see docs/plans §2, surface 3.
+#
+# Set GENTIAN_NO_CREDENTIAL_CACHE=1 to keep credentials in the process only.
+# =============================================================================
+_credential_cache_file() {
+    echo "${GENTIAN_CREDENTIAL_CACHE:-${HOME}/.gentian/bootstrap-credentials.env}"
+}
+
+_load_credential_cache() {
+    [[ "${GENTIAN_NO_CREDENTIAL_CACHE:-0}" == "1" ]] && return 0
+    local f; f="$(_credential_cache_file)"
+    [[ -r "${f}" ]] || return 0
+
+    # Same precedence as every other source: what is already set wins, so an
+    # explicit export or a corrected value is never overwritten by the cache.
+    local var val
+    while IFS='=' read -r var val; do
+        [[ "${var}" =~ ^[A-Z_][A-Z0-9_]*$ ]] || continue
+        [[ -n "${!var:-}" ]] && continue
+        printf -v "${var}" '%s' "$(printf '%b' "${val}")"
+        export "${var?}"
+    done < "${f}"
+    info "Reusing credentials cached at ${f} (removed once OpenBao holds them)."
+}
+
+_save_credential_cache() {
+    [[ "${GENTIAN_NO_CREDENTIAL_CACHE:-0}" == "1" ]] && return 0
+    local f dir var
+    f="$(_credential_cache_file)"
+    dir="$(dirname "${f}")"
+    mkdir -p "${dir}" || return 0
+    chmod 0700 "${dir}" 2>/dev/null || true
+
+    local tmp="${f}.tmp.$$"
+    : >"${tmp}" && chmod 0600 "${tmp}" || return 0
+    for var in "${_GENTIAN_CACHED_CREDENTIAL_VARS[@]}"; do
+        [[ -n "${!var:-}" ]] || continue
+        # printf %q would quote for the shell; this file is read by the loader
+        # above, not sourced, so a literal newline is the only thing to escape.
+        printf '%s=%s\n' "${var}" "${!var//$'\n'/\\n}" >>"${tmp}"
+    done
+    mv -f "${tmp}" "${f}" 2>/dev/null || { rm -f "${tmp}"; return 0; }
+    info "Cached bootstrap credentials at ${f} (0600) so a re-run does not re-ask."
+}
+
+clear_credential_cache() {
+    local f; f="$(_credential_cache_file)"
+    [[ -e "${f}" ]] || return 0
+    rm -f "${f}"
+    success "Removed ${f} — OpenBao now holds these credentials."
+}
+
+# The bootstrap set, plus the salt: without the salt a recovered master password
+# derives different values, which is worse than asking again.
+_GENTIAN_CACHED_CREDENTIAL_VARS=(
+    MASTER_PASSWORD
+    DERIVATION_SALT
+    GENTIAN_DEPLOYMENTS_GIT_USERNAME
+    GENTIAN_DEPLOYMENTS_GIT_TOKEN
+    REGISTRY_USER
+    REGISTRY_PASSWORD
+    CF_API_TOKEN
+)
+
 # _requirement_applies <req> — whether this cluster needs the credential at all.
 #
 # The catalogue describes the platform, so it can say a credential is optional
@@ -316,7 +395,10 @@ collect_bootstrap_credentials() {
 
     banner "Credentials"
     info "From ${GENTIAN_CATALOGUE_FILE##*/} — phase: bootstrap only."
-    info "Nothing is written to this machine; values go straight to OpenBao."
+
+    # Before prompting: a previous attempt's answers, if this bootstrap has not
+    # reached OpenBao yet.
+    _load_credential_cache
 
     # Iterate over command substitution rather than `while read … done < <(…)`.
     # That form redirects the loop body's stdin to the catalogue stream, so the
@@ -391,6 +473,9 @@ collect_bootstrap_credentials() {
         export DERIVATION_SALT
         info "Generated a new derivation salt."
     fi
+
+    # After the salt, so a resumed run derives the same values it started with.
+    _save_credential_cache
 
     echo ""
     success "Credentials collected and validated."
