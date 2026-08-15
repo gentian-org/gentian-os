@@ -1377,6 +1377,34 @@ gentian_mail_namespace() {
 }
 
 # =============================================================================
+# gentian_kernel_namespaces — the namespaces the installer owns, in one place.
+#
+# A-03 checks this list and create_namespaces creates it. They used to be two
+# hand-kept lists and had drifted apart in both directions: the check demanded
+# gentian-infra-<stage>, which nothing created, so the step reported unsatisfied
+# on every run forever while cheerfully announcing that all nine namespaces
+# already existed; and gentian-<stage> was created by nothing at all, so the
+# mail step failed applying a ConfigMap into a namespace that did not exist.
+#
+# The stage-scoped pair is deliberately here and not on the Cluster XR, which
+# composes only gentian-system and platform-kernel. Two owners for one namespace
+# is worse than one owner in the wrong phase.
+# =============================================================================
+gentian_kernel_namespaces() {
+    local ns seen=""
+    for ns in openbao external-secrets argocd gentian-system platform-kernel \
+              "${INFRA_NAMESPACE:-gentian-infra-${ENV:-dev}}" \
+              "$(gentian_services_namespace)" \
+              "$(gentian_mail_namespace)"; do
+        # SERVICES_NAMESPACE defaults to platform-kernel, so the list can name
+        # the same namespace twice.
+        case " ${seen} " in *" ${ns} "*) continue ;; esac
+        seen="${seen} ${ns}"
+    done
+    echo "${seen# }"
+}
+
+# =============================================================================
 # gentian_cluster_claim_name — the Cluster claim's metadata.name for THIS cluster
 #
 # The name used to be the literal "dev-cluster" everywhere: the scaffolder wrote
@@ -1707,7 +1735,10 @@ delete_kernel_helm_releases() {
 create_namespaces() {
     banner "Creating namespaces"
 
-    local namespaces=(openbao external-secrets argocd gentian-system platform-kernel)
+    # The same list A-03's check() verifies, so "all namespaces already exist"
+    # and "not satisfied" can no longer both be true.
+    local namespaces=()
+    for ns in $(gentian_kernel_namespaces); do namespaces+=("$ns"); done
     if [[ "$INSTALL_CLUSTER_INFRA" == "1" ]]; then
         namespaces+=(stakater-system cnpg-system cert-manager)
         if [[ "${ROUTING_MODE:-gateway}" == "gateway" ]]; then

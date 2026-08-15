@@ -5,10 +5,9 @@
 # provides: kernel namespaces (openbao, external-secrets, argocd, gentian-system, platform-kernel, gentian-infra-<stage>)
 # mutates: namespaces only
 
-_kernel_namespaces() {
-    local stage="${GENTIAN_DEPLOYMENTS_STAGE:-${ENV:-dev}}"
-    echo "openbao external-secrets argocd gentian-system platform-kernel ${INFRA_NAMESPACE:-gentian-infra-${stage}}"
-}
+# One list, defined in common.sh, shared with create_namespaces. A local copy
+# here is how check() came to demand a namespace apply() never created.
+_kernel_namespaces() { gentian_kernel_namespaces; }
 
 check() {
     local ns
