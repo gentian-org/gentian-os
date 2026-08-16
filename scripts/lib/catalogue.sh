@@ -17,6 +17,8 @@ install_app_catalogue() {
     local plugin_src="${SCRIPT_DIR}/scripts/kubectl-gentian"
     local plugin_dst="/usr/local/bin/kubectl-gentian"
     local gtnctl_dst="/usr/local/bin/gtnctl"
+    # Destinations below are enumerated once more in _host_cli_paths, which
+    # D-07's destroy() removes. Adding one here means adding it there.
 
     # Idempotency: skip if destination is identical to source (no sudo needed).
     if [[ -f "$plugin_dst" ]] && cmp -s "$plugin_src" "$plugin_dst"; then
@@ -58,6 +60,20 @@ install_app_catalogue() {
             warn "${user_bin} is not writable — run: make -C ${SCRIPT_DIR} install-plugin"
         fi
     fi
+}
+
+# Every host path install_app_catalogue writes: the plugin and its gtnctl
+# symlink, in /usr/local/bin and in the ~/.local/bin mirror.
+#
+# Both destinations are real. ~/.local/bin usually precedes /usr/local/bin in
+# PATH, so removing only the system copy leaves `gtnctl` still resolving to a
+# plugin for a cluster that no longer exists.
+_host_cli_paths() {
+    printf '%s\n' \
+        /usr/local/bin/kubectl-gentian \
+        /usr/local/bin/gtnctl \
+        "${HOME}/.local/bin/kubectl-gentian" \
+        "${HOME}/.local/bin/gtnctl"
 }
 
 # =============================================================================

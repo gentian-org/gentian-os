@@ -20,8 +20,15 @@ apply() {
 destroy() {
     # Applications carry finalizers that block namespace deletion when their
     # controller is already gone, so strip them before uninstalling the chart.
-    _argocd_strip_kubectl || true
-    _argocd_strip_raw || true
+    #
+    # All three kinds, not just Applications: an ApplicationSet finalizer holds
+    # the namespace open just as effectively, and AppProjects are deleted last
+    # by the chart uninstall.
+    local kind
+    for kind in applications applicationsets appprojects; do
+        _argocd_strip_kubectl "${kind}.argoproj.io" || true
+        _argocd_strip_raw "/apis/argoproj.io/v1alpha1/namespaces/argocd/${kind}" || true
+    done
     if helm status argocd -n argocd >/dev/null 2>&1; then
         gentian_run helm uninstall argocd -n argocd || true
     fi
