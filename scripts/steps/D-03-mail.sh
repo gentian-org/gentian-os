@@ -13,8 +13,16 @@ check() {
     # the step reported missing on a cluster whose mail stack was running.
     case "${MAIL_SERVICE_MODE:-external}" in
         kernel)
-            kubectl get configmap postfix-kernel-virtual-mailbox-maps \
-                -n "$(gentian_mail_namespace)" >/dev/null 2>&1
+            # Both keys, not just the ConfigMap. Postfix mounts them as two
+            # separate texthash: files — virtual_mailbox_domains decides which
+            # recipients it accepts, virtual_mailbox_maps decides where they go
+            # — so a ConfigMap carrying only one of them leaves inbound mail
+            # broken while looking present.
+            local data
+            data="$(kubectl get configmap postfix-kernel-virtual-mailbox-maps \
+                -n "$(gentian_mail_namespace)" -o jsonpath='{.data}' 2>/dev/null)" || return "${CHECK_MISSING}"
+            [[ "${data}" == *'"virtual_mailbox_domains"'* ]] || return "${CHECK_MISSING}"
+            [[ "${data}" == *'"virtual_mailbox_maps"'* ]] || return "${CHECK_MISSING}"
             ;;
         *)
             # An external relay is configured on Postfix only if one is already

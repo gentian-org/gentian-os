@@ -2139,6 +2139,47 @@ id typed back before it runs.
 
 ---
 
+### 15.2c Anything the installer writes onto a GitOps-owned object is temporary
+
+A `check()` that disagrees with its `provides:` skips work that would have helped. This class is
+worse: the work runs, reports success, and is undone minutes later by the thing that owns the
+object.
+
+Both instances are the Postfix values ConfigMaps, which the `09-infra-helm` ApplicationSet manages
+with `selfHeal: true`:
+
+| What was written imperatively | How it failed |
+|---|---|
+| `ALLOWED_SENDER_DOMAINS` on `postfix-base-values` | The bokysan chart ends `smtpd_recipient_restrictions` in a bare `reject`, so with the placeholder restored every recipient drew `554 5.7.1 Access denied` and no invite or reset mail left the cluster |
+| `virtual_transport` and the virtual mailbox maps on `postfix-<env>-values` | Postfix ran with no inbound configuration at all — no LMTP transport to Dovecot, no mounted maps — so every tenant address, including the derived `admin@<tenant>.<kernel domain>`, was refused |
+
+Both now render from `kernel/services/postfix/manifests`, where Argo CD reconciling the object is
+what keeps them in place rather than what removes them.
+
+The rule the two share: **an object with a GitOps owner takes configuration from Git, and
+everything else from a controller that reconciles.** The installer is neither. Where a value is
+genuinely dynamic — the set of tenant domains is, and cannot live in a chart — the split is by
+object, not by field: the chart carries static Postfix settings and *mounts* a ConfigMap it does
+not template, and `TenantReconciler.syncPostfixVirtualMailboxMaps` owns that ConfigMap outright.
+Sharing one object between a chart and a controller only relocates the fight.
+
+Two mechanics make that split work, and both are load-bearing:
+
+- **`texthash:`, not `lmdb:`.** A ConfigMap mount is read-only, so a compiled map can never be
+  built; Postfix rejects every recipient in a virtual domain whose map it cannot read. `texthash:`
+  reads the file at lookup time and needs no `postmap`.
+- **A directory mount, not `subPath`.** A `subPath` mount is copied once at Pod start and never
+  tracks later updates, which would mean a Postfix restart per new tenant. Mounted as a directory,
+  kubelet swaps the files in place and the next lookup sees the new domain.
+
+**What is still not verified:** that a message reaches a tenant admin's mailbox. Postfix now
+accepts it and hands it to Dovecot over LMTP, but `kernel/services/dovecot/manifests` is a stock
+image with no mail configuration, no userdb and no persistent storage, so there is no mailbox to
+deliver into. Making that real needs decisions this plan does not yet record — storage, the
+passdb/userdb behind `mail-dovecot-domains`, and how IMAP authenticates against Keycloak.
+
+---
+
 ### 15.3 Migrations that are safer afterwards
 
 All of these swap a working imperative path for a composed one. The failure mode is "nothing
