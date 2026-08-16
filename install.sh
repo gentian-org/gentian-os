@@ -25,6 +25,8 @@
 #   ./install.sh                    install or converge
 #   ./install.sh --update           same thing, named for what you meant
 #   ./install.sh --uninstall        reverse order, destroy() each step
+#   ./install.sh --purge            the same, plus the data an uninstall keeps:
+#                                   OpenBao and infra volumes, and local state
 #
 # A cluster is its claims and values in gentian-deployments, so those come
 # first: --prepare-deployment generates them from install.env, and you edit,
@@ -84,6 +86,7 @@ export CLUSTER_XR_TIMEOUT="${CLUSTER_XR_TIMEOUT:-15m}"
 OPENBAO_CLI_VERSION="${OPENBAO_CLI_VERSION:-$(gentian_pin openbao cli)}"
 
 GENTIAN_DIRECTION="forward"
+GENTIAN_PURGE=0
 GENTIAN_KIT_PATH=""
 GENTIAN_RECOVER_FROM=""
 
@@ -119,6 +122,9 @@ parse_driver_args() {
             --update)            GENTIAN_DIRECTION="forward" ;;
             --prepare-deployment) GENTIAN_DIRECTION="prepare" ;;
             --uninstall|--destroy) GENTIAN_DIRECTION="reverse" ;;
+            # Purge is an uninstall that also removes what an uninstall keeps,
+            # so it selects the same direction rather than a fourth one.
+            --purge)             GENTIAN_DIRECTION="reverse"; GENTIAN_PURGE=1 ;;
             --explain)           GENTIAN_EXPLAIN=1 ;;
             --status)            GENTIAN_DIRECTION="status" ;;
             --dry-run)           GENTIAN_DRY_RUN=1 ;;
@@ -309,9 +315,36 @@ main() {
             ;;
         reverse)
             prepare_run
-            warn "Uninstalling — this removes Gentian OS from the current cluster."
+            if [[ "${GENTIAN_PURGE}" == "1" ]]; then
+                # Confirm before anything is touched, not between the reverse
+                # pass and the volume deletion — a teardown stopped half way is
+                # the state this is least able to reason about.
+                if [[ -n "${GENTIAN_PURGE_CONFIRM:-}" ]]; then
+                    [[ "${GENTIAN_PURGE_CONFIRM}" == "${GENTIAN_DEPLOYMENTS_CLUSTER_ID:-}" ]] || {
+                        error "GENTIAN_PURGE_CONFIRM does not match GENTIAN_DEPLOYMENTS_CLUSTER_ID."
+                        exit 1
+                    }
+                else
+                    purge_confirm || exit 1
+                fi
+                warn "Purging — this removes Gentian OS and its data from the current cluster."
+                if [[ "${GENTIAN_DRY_RUN}" == "1" ]]; then
+                    info "Dry run: volumes and local state would be removed; nothing is."
+                else
+                    purge_release_volumes
+                fi
+            else
+                warn "Uninstalling — this removes Gentian OS from the current cluster."
+            fi
             drive_reverse
-            success "Teardown complete."
+            if [[ "${GENTIAN_PURGE}" == "1" && "${GENTIAN_DRY_RUN}" != "1" ]]; then
+                purge_delete_volumes
+                purge_local_state
+                purge_report_remaining
+                success "Purge complete."
+            else
+                success "Teardown complete."
+            fi
             ;;
         forward)
             prepare_run

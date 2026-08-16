@@ -20,7 +20,17 @@ check() {
     kubectl get secret openfga-runtime -n platform-kernel >/dev/null 2>&1 || return 0
 
     kubectl get secret gentian-portal-secrets -n platform-kernel \
-        -o jsonpath='{.data.OPENFGA_STORE_ID}' 2>/dev/null | grep -q .
+        -o jsonpath='{.data.OPENFGA_STORE_ID}' 2>/dev/null | grep -q . || return "${CHECK_MISSING}"
+
+    # Realm SMTP is half this step's `provides:`. In kernel mode its inputs are
+    # derived, so the credential can always be produced and its absence means
+    # the step did not finish. In external mode it depends on relay values that
+    # may legitimately be unset, so it is not required here.
+    if [[ "${MAIL_SERVICE_MODE:-external}" == "kernel" ]]; then
+        kubectl get secret keycloak-smtp-credentials -n platform-kernel >/dev/null 2>&1 ||
+            return "${CHECK_MISSING}"
+    fi
+    return 0
 }
 
 apply() {
@@ -32,5 +42,8 @@ apply() {
 
 destroy() {
     kubectl delete application gentian-portal -n argocd \
+        --ignore-not-found=true 2>/dev/null || true
+    # Created by configure_keycloak_realm_smtp in this step's apply().
+    kubectl delete secret keycloak-smtp-credentials -n platform-kernel \
         --ignore-not-found=true 2>/dev/null || true
 }

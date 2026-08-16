@@ -435,3 +435,120 @@ _remove_host_cli() {
     fi
     success "Removed ${path}."
 }
+
+# =============================================================================
+# Purge — the data an uninstall deliberately keeps
+#
+# `--uninstall` reverses the steps: it removes what the installer created on the
+# cluster and stops there. OpenBao's KV survives, which is the documented and
+# usually correct behaviour — reinstalling onto the same cluster then recovers
+# the credentials instead of re-prompting.
+#
+# `--purge` is for when that is exactly wrong: handing a cluster back, or
+# proving a clean-room install. It removes the state the reverse pass keeps.
+#
+# Volumes outlive both. Every kernel StorageClass here reclaims with Retain, so
+# deleting a PVC releases the PV and leaves the data on the backend — an
+# "uninstalled" cluster whose OpenBao volume still holds every derived
+# credential. PVs also outlive their namespace, since claimRef survives, which
+# is why they are collected after the reverse pass rather than during it.
+# =============================================================================
+
+# purge_release_volumes — drain PVCs while their namespaces still exist.
+#
+# Runs before the reverse pass: a PVC whose pods are gone releases cleanly,
+# and pvc-protection finalizers are the usual reason a namespace delete hangs.
+purge_release_volumes() {
+    local ns
+    banner "Purge — releasing volumes"
+    for ns in $(gentian_kernel_namespaces); do
+        kubectl get namespace "${ns}" >/dev/null 2>&1 || continue
+        _has_pvc "${ns}" || continue
+        _drain_pvcs "${ns}"
+    done
+}
+
+# purge_delete_volumes — delete the PVs the drain released.
+#
+# After the reverse pass, because a Released PV keeps its claimRef and so can
+# still be attributed to the namespace it served.
+purge_delete_volumes() {
+    local ns
+    banner "Purge — deleting released volumes"
+    for ns in $(gentian_kernel_namespaces); do
+        _delete_pvs_for_namespace "${ns}"
+    done
+}
+
+# purge_local_state — the installer's own files.
+#
+# Not install.env: that is the operator's input, surface 1, and the one thing a
+# reinstall legitimately starts from. Everything here is derived — a plugin
+# config this run wrote, a cache with no cluster left to seed, and init files
+# holding unseal keys for storage that no longer exists.
+purge_local_state() {
+    banner "Purge — local state"
+    local f
+    for f in "${HOME}/.gentian/config" \
+             "${GENTIAN_CREDENTIAL_CACHE:-${HOME}/.gentian/bootstrap-credentials.env}" \
+             "${OPENBAO_INIT_FILE:-/tmp/openbao-init.json}" \
+             "/tmp/openbao-transit-init.json"; do
+        [[ -e "${f}" ]] || continue
+        rm -f "${f}" && success "Removed ${f}."
+    done
+}
+
+# purge_report_remaining — what a purge does not touch, said out loud.
+#
+# The cluster's configuration is in Git and is not this command's to delete:
+# it is shared with every other cluster in the repository, and removing it is a
+# commit somebody reviews. Saying so is the difference between "purged" and
+# "purged, except the part that would rebuild it identically".
+purge_report_remaining() {
+    local cluster="${GENTIAN_DEPLOYMENTS_CLUSTER_ID:-<cluster>}"
+    echo ""
+    info "Left in place, deliberately:"
+    info "  install.env — your input, and what a reinstall starts from."
+    info "  clusters/${cluster}/kernel in gentian-deployments — this cluster's"
+    info "    configuration. Remove it with a commit if the cluster is gone for good."
+    info "  Anything another workload put on this cluster."
+}
+
+# purge_confirm — the one prompt in the teardown path.
+#
+# Everything else the installer destroys is re-derivable: manifests come from
+# Git, and every derived credential is a function of the master password and
+# the derivation salt. The salt is generated at first install and stored only in
+# OpenBao, so deleting OpenBao's volume ends the derivation — the same master
+# password then produces different credentials, and a rebuild is a migration
+# rather than a restore. `--export-recovery-kit` is what closes that gap, so
+# whether one exists decides how bad this is.
+purge_confirm() {
+    echo ""
+    warn "PURGE removes what an uninstall keeps:"
+    warn "  • OpenBao's storage — every credential, and the derivation salt"
+    warn "  • the infra database, cache and object-store volumes"
+    warn "  • ~/.gentian and the OpenBao init files on this machine"
+    echo ""
+    warn "Without a recovery kit the salt is gone with it, and the same master"
+    warn "password will not reproduce this cluster's credentials. Export one first:"
+    warn "  ./install.sh --export-recovery-kit kit.age"
+    echo ""
+
+    if [[ "${GENTIAN_NONINTERACTIVE:-0}" == "1" ]]; then
+        # A prompt nobody can answer would hang a CI job forever, and defaulting
+        # to yes on a destructive path is not a default.
+        error "--purge needs confirmation and GENTIAN_NONINTERACTIVE=1 cannot give it."
+        error "  Set GENTIAN_PURGE_CONFIRM=${GENTIAN_DEPLOYMENTS_CLUSTER_ID:-<cluster-id>} to run unattended."
+        return 1
+    fi
+
+    local expected="${GENTIAN_DEPLOYMENTS_CLUSTER_ID:-}"
+    local answer
+    read -rp "  Type the cluster id (${expected}) to confirm: " answer
+    if [[ "${answer}" != "${expected}" || -z "${expected}" ]]; then
+        error "Cluster id did not match — nothing was purged."
+        return 1
+    fi
+    return 0
+}
