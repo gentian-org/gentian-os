@@ -28,12 +28,22 @@ check() {
     # and recreated underneath them. Testing only the requirements left this
     # step reporting satisfied with every probe gone, which is exactly the state
     # `make check-credentials` reads and reports as six missing credentials.
-    local name
+    # Existence is not enough — the probe has to ask for the fields the
+    # catalogue declares. An ExternalSecret left over from an earlier catalogue
+    # still exists while querying a field nobody writes, so it reports
+    # SecretSyncedError forever and check-credentials calls the credential
+    # missing; a check testing only that the object is there skips the apply
+    # that would correct it.
+    local name want have
     while IFS= read -r name; do
         [[ -n "${name}" ]] || continue
         kubectl get credentialrequirement "${name}" >/dev/null 2>&1 || return 1
-        kubectl get externalsecret "credreq-${name}" -n gentian-system \
-            >/dev/null 2>&1 || return 1
+
+        want="$(catalogue_field_keys "${name}" | sort | tr '\n' ' ')"
+        have="$(kubectl get externalsecret "credreq-${name}" -n gentian-system \
+            -o jsonpath='{range .spec.data[*]}{.remoteRef.property}{"\n"}{end}' \
+            2>/dev/null | sort | tr '\n' ' ')" || return 1
+        [[ -n "${have}" && "${want}" == "${have}" ]] || return 1
     done < <(catalogue_names)
     return 0
 }
