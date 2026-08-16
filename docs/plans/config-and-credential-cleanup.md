@@ -1,7 +1,8 @@
 # Configuration and Credential Architecture
 
-**Status:** Draft. Implemented through Phase 12, unverified against a cluster — see §15 for
-what the first real install is expected to settle.
+**Status:** Draft. Implemented through Phase 12. Phases A–D of the forward pass are verified on a
+real cluster; `destroy()`, handover (phase E) and the non-default targets are not — see §15 for
+what remains.
 **Scope:** `gentian-os` bootstrap and installer structure, cluster configuration surfaces,
 credential lifecycle
 **Applies to:** `install.sh`, `uninstall.sh`, `update.sh`, `scripts/lib/`, `gentian-deployments`
@@ -1296,8 +1297,16 @@ Bootstrap set, all expressible in `curl` or `openssl`:
 |---|---|
 | `oci-registry` | `curl -u user:pass https://<host>/v2/` — expect 200, not 401 |
 | `oidc-discovery` | Fetch `/.well-known/openid-configuration`, assert `issuer` matches |
+| `cloudflare-dns` | Look the kernel domain's zone up through the Cloudflare API |
 | `smtp` | `openssl s_client -starttls smtp`, then `AUTH LOGIN` |
 | `noop` | Permitted only for `phase: runtime`; a `phase: bootstrap` entry with no probe is a design error to be resolved by reclassifying it |
+
+A validator has to ask the question the cluster depends on, not a question that correlates with
+it. `acme-dns-cloudflare` was probed against `/user/tokens/verify`, which answers *what kind of
+token is this* — it accepts only user-owned tokens and rejects an account-scoped one however much
+DNS access it carries, while passing a valid token that cannot see this domain at all. The zone
+lookup answers *can this token reach the zone DNS-01 must write to*, which is the thing that
+decides whether certificates issue, and it stays one authenticated GET.
 
 `s3` and `dns-provider` are deliberately **not** in this set. Both need request signing or a
 provider SDK, which is the §7 boundary — they are `phase: runtime` by construction.
@@ -1342,15 +1351,15 @@ the prompt loop, instead of being hardcoded in two places.
 | # | Criterion | Status |
 |---|---|---|
 | 1 | No application name appears in the installer | **Not met** — the claims half of 4b landed; mail, LLM, portal and tenant reconcile still name applications |
-| 2 | Adding a prompt requires editing `credentials.yaml` only | **Passing** |
+| 2 | Adding a prompt requires editing `credentials.yaml` only | **Passing**, with a caveat the run exposed: the catalogue names the field, `_env_var_for` names the variable, and nothing checks the two agree. `master-password/value` was mapped as `master-password/password`, so the prompt was skipped in silence and the install failed later on an unset `MASTER_PASSWORD` — with a `noop` validator reporting OK in between. An unmapped field on a required requirement is now an error rather than a skip |
 | 3 | A failed validation aborts with zero cluster mutations | **Passing** — verified with a bogus token: every validator still runs, the run stops before `check_prereqs`, and the message says nothing was applied |
 | 4 | The reduction is deletion, not relocation | **Passing** for 4a — 93 lines removed with no new equivalent |
 | 5 | Step files deleted in 4b are deleted outright | **Not applicable yet** |
 | 6 | Audit device enabled before the first OpenBao write | **Unverified** |
 | 7 | Clean-room install on AWS and Infomaniak with only bootstrap credentials | **Unverified** |
-| 8 | Invariant 3 holds against a partial install | **Partial** — `_prompt_field` returns early when a value is already present from the environment or `try_load_creds_from_openbao`; not exercised against a real partial install |
+| 8 | Invariant 3 holds against a partial install | **Passing after correction.** Exercised across many partial installs. `try_load_creds_from_openbao` recovered only `MASTER_PASSWORD` and the SMTP pair, so every other bootstrap credential was re-typed on each attempt; it now recovers the whole set. Before B-07 creates the KV mount there is no store at all, and a cache covering only that window — written after validation, deleted by B-09 — closes it |
 | 9 | `--validate` performs config validation with no cluster changes | **Passing** |
-| 10 | No credential value is written to local disk | **Passing** — there is no cache to write to |
+| 10 | No credential value is written to local disk | **Qualified.** Holds once OpenBao can answer, which is only after B-09. The bootstrap window has no store, so a cache with a fixed life covers it: `0600` in a `0700` directory, read before prompting, deleted by B-09 once OpenBao holds the same values. Encrypting it would need its key beside it, which is why the old `INSTALL_SECRETS_CACHE` was wrong for being permanent rather than for existing |
 
 **4b, first half — the claims.** With Phase 6 gating in place, a step moved declarative now fails
 as a named missing requirement rather than as "something is not Ready", so the §13 objection is
@@ -1604,6 +1613,16 @@ Reduce `install.env.template` to the nine pointer variables in §2. Sweep the or
 files in §14.3 in the same pass — they are the same failure mode.
 
 `clusters/<name>/kernel/values.yaml` **is not deleted.** It is layer 3 and it is correct.
+
+The run sharpened what 10c is worth. Layer 3 is not a passive overlay: Argo CD reconciles the
+operator chart from that file continuously, so it beats anything the installer passes with
+`--set`. A wrong `image.tag` there is therefore the cluster's decision, not a default — and the
+one this cluster carried named a tag no CI job publishes, which the registry answered 404 to.
+The operator never started, so it never created the kernel Gateway, so the install waited out a
+timeout and reported success over a cluster with no ingress. Pre-flight now resolves the tag the
+way Argo CD will and checks it exists before anything is deployed. Two consequences for 10c:
+values that reach a running component through this file need the same treatment as a claim
+field, and a check belongs wherever the installer's view and the reconciler's view can differ.
 
 **Acceptance**
 - `install.env` is the only non-secret file the installer reads from local disk, and it contains
@@ -1934,10 +1953,27 @@ installer writes containing secret material, not just the cache.
 
 ## 15. After the first cluster run
 
-Nothing in this plan has been exercised against a cluster. `apply()` and `destroy()` have never
-run anywhere; every check made so far is structural — schemas, renders, contracts, unit tests and
-server-side dry-runs. This section is the list of work that is *waiting on that run*, so it does
-not get lost between the run and whatever comes next.
+The forward pass has now run on a real cluster: `apply()` has executed for every step in phases A
+through D. `destroy()` still has not run anywhere, phase E has not been reached, and the
+non-default targets — arm64, internal domain, mirror — remain structural claims only.
+
+What the run established, beyond the per-item verdicts below:
+
+- **The three invariants hold.** OpenBao arrives as a reconciled ArgoCD Application; transit
+  auto-unseal brings the primary up with no cloud KMS; and a partial install resumes without
+  re-prompting — though the third only became true once `try_load_creds_from_openbao` was
+  extended, having recovered `MASTER_PASSWORD` and the SMTP pair while leaving the deployments
+  token, the derivation salt and the DNS token to be typed again.
+- **`check()` is the load-bearing verb, and it is where the defects were.** Seven steps had a
+  `check()` that disagreed with their own `provides:` — six testing a subset, so a partially
+  applied state read as complete and the step that would have repaired it was skipped; one
+  testing more than `apply()` created, so a complete state read as incomplete forever. Every
+  install failure traced to this shape rather than to a step's actual work. §15.2 records the
+  audit that follows from it.
+- **Validation catches what it probes, and only that.** The bootstrap credentials were all
+  reachable through their validators, but a validator can be wrong about the question rather
+  than the answer: the DNS-01 probe tested what *kind* of token it held rather than whether the
+  token could reach the zone, and rejected a valid account-scoped one.
 
 Four categories, in the order they unblock each other.
 
@@ -1948,22 +1984,41 @@ Four categories, in the order they unblock each other.
 These are acceptance criteria already written into §11 and marked Unverified or Partial there.
 They are gathered here because they are the whole point of the run.
 
-| What | Where it is recorded | How to tell |
+| What | Where it is recorded | Status |
 |---|---|---|
-| A clean-room install reaches a running root ApplicationSet | Phase 0a, criterion 1 | Diff `kubectl get` output against a known-good cluster |
-| `--dry-run` makes zero cluster mutations | Phase 0a, criterion 2 | Snapshot cluster state, run it, diff. The three heal hooks and the repository scaffolding are guarded; this confirms nothing else is |
-| Install → uninstall returns the cluster to its prior state, and uninstall is idempotent | Phase 0b, criteria 1–2 | `destroy()` has never run. Expect this to be the roughest area |
-| ESO's actual verdict on the satisfaction probes | Phase 6, criterion 1 | `creationPolicy: None` is right in principle and has only ever been dry-run |
-| The unsatisfied → satisfied transition unblocks composition without intervention | Phase 6, criterion 4 | Supply a missing credential and watch the claim proceed |
-| OIDC login yields a policy set from Keycloak groups; a named write appears in the audit device | Phase 7, criteria 1–2 | Needs Keycloak running |
-| The bootstrap token is genuinely invalid afterwards | Phase 7, criterion 3 | Attempt a write with it and expect failure |
-| An arm64 install; an internal-domain install with `self-signed`; a mirrored install making no upstream request | Phase 12, criteria 4 and 6 | Three separate installs |
-| `sed_inplace` under BSD | Phase 11, criterion 2 | The macOS CI job runs it but nobody has watched it |
+| A clean-room install reaches a running root ApplicationSet | Phase 0a, criterion 1 | **Verified.** The root ApplicationSet generates its children and they sync. It required the cluster id to actually reach the template — `root-applicationset.yaml.tmpl` was rendering an empty `deploymentsCluster`, so every child pointed at `clusters//kernel/claims` and no claim ever synced |
+| `--dry-run` makes zero cluster mutations | Phase 0a, criterion 2 | **Verified** across repeated runs, and it now collects no credentials either: no step's `check()` reads one, so a preview needs no secret |
+| Install → uninstall returns the cluster to its prior state, and uninstall is idempotent | Phase 0b, criteria 1–2 | **Still unverified.** `destroy()` has not run. Expect this to be the roughest area |
+| ESO's actual verdict on the satisfaction probes | Phase 6, criterion 1 | **Partial.** The six `credreq-*` ExternalSecrets are created with `creationPolicy: None`; their sync verdicts have not been read back |
+| The unsatisfied → satisfied transition unblocks composition without intervention | Phase 6, criterion 4 | **Verified.** Every provider-vault resource sat `SYNCED=False` on a missing `openbao-crossplane-token`; when the credential arrived they reconciled and the XCluster reached Ready with nothing re-run |
+| OIDC login yields a policy set from Keycloak groups; a named write appears in the audit device | Phase 7, criteria 1–2 | **Still unverified.** Keycloak runs; the portal does not yet |
+| The bootstrap token is genuinely invalid afterwards | Phase 7, criterion 3 | **Still unverified.** Phase E not reached |
+| An arm64 install; an internal-domain install with `self-signed`; a mirrored install making no upstream request | Phase 12, criteria 4 and 6 | **Still unverified.** Three separate installs |
+| `sed_inplace` under BSD | Phase 11, criterion 2 | **Still unverified.** The macOS CI job runs it but nobody has watched it |
+| Transit auto-unseal brings the primary up with no cloud KMS | Invariant 2 | **Verified.** Both instances run; the primary unseals from transit |
+| A partial install resumes without re-prompting | Invariant 3 | **Verified after correction.** Recovery covered `MASTER_PASSWORD` and the SMTP pair only; the deployments token, salt, registry and DNS credentials are now recovered too |
 
 **The check to run first when something does not converge:** compare the *field names* a
-credential is stored under against what `credentials.yaml` declares, not just the path. A value
-under the right path with the wrong key reads as absent and looks like an ESO fault. Only the six
-paths in the catalogue have been checked against the seeder.
+credential is stored under against what the consumer asks for, not just the path. A value under
+the right path with the wrong key reads as absent and looks like an ESO fault.
+
+The run confirmed this, and showed the check has to extend past `credentials.yaml`. The failure
+was on `authz/openfga`, a path the catalogue does not describe: it holds `preshared_key`, written
+once by B-06 and read under that name by OpenFGA's own ExternalSecret, while the operator chart
+asked OpenBao for `api-token` — its `openfgaTokenSecretRef.key` naming both the Kubernetes Secret
+key and the remote field, which are different things and here had to differ. The authz bridge
+then called OpenFGA with no bearer token and was refused, so no store id was published and the
+portal never became Ready.
+
+Two habits follow, and they are cheap:
+
+- **Every OpenBao path wants exactly one writer.** That path had two — B-06 and
+  `install_gentian_os_operator`, under two field names — and a KV v2 write replaces the whole
+  version rather than merging, so whichever ran last silently removed the other's field.
+- **A `secretKeyRef` env var is resolved once, at pod start.** A Secret corrected afterwards
+  never reaches the running pod, so a component keeps failing against a value already sitting
+  beside it. Anything reading a credential this way needs a Reloader annotation, or the fix is
+  invisible until something happens to restart it.
 
 ---
 
@@ -1971,6 +2026,17 @@ paths in the catalogue have been checked against the seeder.
 
 Each of these is blocked on knowing how the cluster actually behaves. Guessing at them is how the
 Phase 0a regression happened.
+
+**Whether each `check()` agrees with its own `provides:`.** Seven of the thirty-five disagreed,
+and every install failure came from one of them. The shape repeats: a `check()` naming one
+artefact of several, so a run interrupted between them reports satisfied and skips the step that
+would finish the job — A-09 testing the ArgoCD Deployment while the ApplicationSet CRD was
+missing, B-02 testing a Secret that B-01 pre-creates as a placeholder, C-02 testing that an
+Application exists rather than that its parameters are right, C-06 and A-02 testing one CRD or
+XRD out of several. A-03 was the inverse: it demanded a namespace `create_namespaces` never made,
+so it could never report satisfied. The remaining twenty-eight are unaudited. The mechanical
+version — does the check touch every noun in the header — finds most of it, and the header is
+already there to compare against.
 
 **Which reconciler already covers which shell step.** Phase 4b's second half cannot proceed
 without it. Steps 28, 29, 30 and 34 call running services' APIs, which no ApplicationSet can
