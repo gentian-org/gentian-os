@@ -22,7 +22,7 @@ CROSSPLANE_IMAGE ?= xpkg.crossplane.io/crossplane/crossplane:$(CROSSPLANE_CLI_VE
 KUBEBUILDER_ASSETS ?= /tmp/envtest-bins/k8s/1.32.0-linux-amd64
 export KUBEBUILDER_ASSETS
 
-.PHONY: all build generate manifests test lint docker-build clean install-plugin validate-steps gen-credentials check-credentials lint-portability lint-image-digests check-render-fixtures lint-resolvable
+.PHONY: all build generate manifests test lint docker-build clean install-plugin validate-steps gen-credentials check-credentials lint-portability lint-image-digests check-render-fixtures lint-resolvable lint-step-contracts
 
 all: generate build test
 
@@ -102,7 +102,7 @@ lint-yaml:
 ## The file list and flags must match CI exactly: -x follows sourced files, and no
 ## -S filter means info/style findings fail the build too. Hand-rolling a narrower
 ## invocation is how an SC2153 reached develop green-looking.
-lint-shell: validate-steps lint-resolvable
+lint-shell: validate-steps lint-step-contracts lint-resolvable
 	@git ls-files -z -- '*.sh' | xargs -0 shellcheck -x scripts/kubectl-gentian
 
 ## Report which declared credentials are satisfied. --source picks where to look:
@@ -118,6 +118,9 @@ lint-image-digests:
 
 ## Assert every function call in every shell file resolves. Catches deleting a
 ## function whose last caller was not checked — the most repeated mistake here.
+lint-step-contracts:
+	@bash scripts/lint/lint-step-contracts.sh
+
 lint-resolvable:
 	@bash scripts/lint/lint-resolvable.sh
 

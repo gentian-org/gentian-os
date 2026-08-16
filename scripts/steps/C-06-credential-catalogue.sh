@@ -19,11 +19,21 @@ _catalogue_file() { echo "${SCRIPT_DIR}/kernel/credentials/credential-requiremen
 
 check() {
     kubectl get crd credentialrequirements.gentianos.io >/dev/null 2>&1 || return 1
-    # Every requirement in the bundled catalogue must exist on the cluster.
+    # Every requirement in the bundled catalogue must exist on the cluster,
+    # along with the ExternalSecret that makes its satisfaction observable.
+    #
+    # Both halves, because they have different lifetimes: the requirements are
+    # cluster-scoped and survive almost anything, while the probes live in
+    # gentian-system — a namespace the Cluster XR composes, so it can be removed
+    # and recreated underneath them. Testing only the requirements left this
+    # step reporting satisfied with every probe gone, which is exactly the state
+    # `make check-credentials` reads and reports as six missing credentials.
     local name
     while IFS= read -r name; do
         [[ -n "${name}" ]] || continue
         kubectl get credentialrequirement "${name}" >/dev/null 2>&1 || return 1
+        kubectl get externalsecret "credreq-${name}" -n gentian-system \
+            >/dev/null 2>&1 || return 1
     done < <(catalogue_names)
     return 0
 }

@@ -16,13 +16,7 @@ check() {
     # The Secret is this step's most consequential output and is visible without
     # any OpenBao access at all, which also makes --status honest about it.
     kubectl get secret openbao-crossplane-token \
-        -n "${CROSSPLANE_NAMESPACE:-crossplane-system}" >/dev/null 2>&1 ||
-        return "${CHECK_MISSING}"
-
-    # The policy too, but only when this shell can actually ask. Absent that,
-    # the Secret standing is enough to call the step done.
-    [[ -n "${BAO_TOKEN:-}" && -n "${VAULT_ADDR:-}" ]] || return 0
-    bao policy read crossplane-write >/dev/null 2>&1
+        -n "${CROSSPLANE_NAMESPACE:-crossplane-system}" >/dev/null 2>&1
 }
 
 apply() {

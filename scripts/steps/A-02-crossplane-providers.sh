@@ -24,6 +24,15 @@ check() {
         [[ -n "${name}" ]] || continue
         kubectl get xrd "${name}" >/dev/null 2>&1 || return 1
     done
+
+    # Compositions too — they are half this step's `provides:`, and an XRD with
+    # no Composition admits claims it can never satisfy.
+    for f in "${SCRIPT_DIR}"/crossplane/compositions/*.yaml; do
+        [[ -f "${f}" ]] || continue
+        name="$(awk '/^  name:/{print $2; exit}' "${f}")"
+        [[ -n "${name}" ]] || continue
+        kubectl get composition "${name}" >/dev/null 2>&1 || return 1
+    done
     return 0
 }
 
