@@ -32,6 +32,14 @@ check() {
     # without loading credentials, and reporting "revoked" there would announce
     # the install's last safety step as done on a cluster that never installed.
     [[ -n "${BAO_TOKEN:-}" ]] || return "${CHECK_UNDEFINED}"
+
+    # Revocation needs somewhere else to write credentials from afterwards, and
+    # apply() refuses without it — correctly, since the bootstrap token is
+    # otherwise the only write path. Reporting missing then is a step that
+    # applies on every run and declines every time, which reads as an unfinished
+    # install rather than a cluster that has not configured OIDC yet.
+    _oidc_configured || return "${CHECK_UNDEFINED}"
+
     ! bao token lookup >/dev/null 2>&1
 }
 
@@ -42,7 +50,7 @@ apply() {
         warn "  way to write a credential, and revoking it would leave this"
         warn "  cluster unable to accept one."
         warn "  Configure spec.oidc on the Cluster claim, then re-run:"
-        warn "    ./install.sh --only 35"
+        warn "    ./install.sh --only E-03"
         return 0
     fi
 

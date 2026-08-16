@@ -6,11 +6,22 @@
 # mutates: OpenBao auth backends and policies
 
 check() {
-    # Needs an authenticated OpenBao. On the forward pass B-04 has exported the
-    # token by now, so this resolves properly; a read-only pass has no token and
-    # genuinely cannot tell, which is not the same as knowing the policy is
-    # absent. Saying missing there reports a fault on a healthy cluster.
-    [[ -n "${BAO_TOKEN:-}" ]] || return "${CHECK_UNDEFINED}"
+    # Asked of Kubernetes, not of OpenBao. `bao policy read` needs both a token
+    # and VAULT_ADDR, and the driver sets neither before this runs — so the
+    # probe answered "cannot tell" on every pass, which must not become a skip:
+    # this step mints the credential provider-vault connects with, and skipping
+    # it leaves every SecretV2 and auth backend in the Cluster XR unable to
+    # sync, with the error pointing at a Secret no step admits to owning.
+    #
+    # The Secret is this step's most consequential output and is visible without
+    # any OpenBao access at all, which also makes --status honest about it.
+    kubectl get secret openbao-crossplane-token \
+        -n "${CROSSPLANE_NAMESPACE:-crossplane-system}" >/dev/null 2>&1 ||
+        return "${CHECK_MISSING}"
+
+    # The policy too, but only when this shell can actually ask. Absent that,
+    # the Secret standing is enough to call the step done.
+    [[ -n "${BAO_TOKEN:-}" && -n "${VAULT_ADDR:-}" ]] || return 0
     bao policy read crossplane-write >/dev/null 2>&1
 }
 
