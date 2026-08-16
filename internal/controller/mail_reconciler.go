@@ -34,6 +34,7 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 	"github.com/gentian-org/gentian-os/internal/kernel/secrets"
@@ -339,11 +340,13 @@ func (r *TenantReconciler) syncPostfixVirtualMailboxMaps(ctx context.Context) er
 	registry := &corev1.ConfigMap{}
 	if err := r.Get(ctx, types.NamespacedName{
 		Name: mailPostfixVirtualDomainsConfigMap, Namespace: kernelNamespace,
-	}, registry); err != nil {
-		// No registry yet means no tenant domains to route. The installer
-		// creates the files empty so Postfix can still mount them.
-		return client.IgnoreNotFound(err)
+	}, registry); client.IgnoreNotFound(err) != nil {
+		return err
 	}
+	// An absent registry is an empty one, and still writes both files. Postfix
+	// treats a map file it cannot open as a lookup failure, not as an empty
+	// result, so "no tenant domains" has to be spelled out rather than left to
+	// a missing file.
 
 	// Sorted, so an unchanged registry yields identical files and this does not
 	// rewrite the object on every reconcile.
@@ -399,6 +402,31 @@ func (r *TenantReconciler) syncPostfixVirtualMailboxMaps(ctx context.Context) er
 	maps.Data[postfixVirtualMailboxDomainsKey] = desiredDomains
 	maps.Data[postfixVirtualMailboxMapsKey] = desiredMaps
 	return r.Update(ctx, maps)
+}
+
+// postfixMapsBootstrap re-derives the Postfix inbound maps once, when the
+// operator starts.
+//
+// Tenant events are otherwise the only trigger, which leaves two states
+// uncovered: a cluster with no tenants, and one whose ConfigMap was written
+// before Postfix began reading a second file from it. Neither is quiet —
+// Postfix fails every recipient lookup against a map file that is not there, so
+// mail the cluster used to relay stops as well.
+//
+// Registered by SetupWithManager, so it cannot be forgotten when the operator
+// gains another entry point.
+type postfixMapsBootstrap struct{ reconciler *TenantReconciler }
+
+// Start runs after the manager's caches have synced.
+//
+// A failure is logged rather than returned: an unwritable ConfigMap is a mail
+// fault, and taking the whole operator down for it would stop every other
+// reconciler from making progress. The next tenant event retries.
+func (b postfixMapsBootstrap) Start(ctx context.Context) error {
+	if err := b.reconciler.syncPostfixVirtualMailboxMaps(ctx); err != nil {
+		log.FromContext(ctx).Error(err, "deriving Postfix inbound maps at startup")
+	}
+	return nil
 }
 
 // ensureDovecotDomainConfig adds the tenant's mail domain to the shared Dovecot

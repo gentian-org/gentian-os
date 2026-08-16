@@ -229,6 +229,12 @@ type TenantReconciler struct {
 
 // SetupWithManager registers the controller with the controller-manager.
 func (r *TenantReconciler) SetupWithManager(mgr ctrl.Manager) error {
+	// The Postfix inbound maps are derived from the tenant registry, so they
+	// need re-deriving on a cluster whose tenants are not currently changing.
+	if err := mgr.Add(postfixMapsBootstrap{reconciler: r}); err != nil {
+		return err
+	}
+
 	// mapToTenant maps any labelled object back to a reconcile request for the owning Tenant.
 	mapToTenant := func(_ context.Context, obj client.Object) []reconcile.Request {
 		tenantName := obj.GetLabels()[tenantLabel]
