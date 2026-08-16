@@ -1964,12 +1964,22 @@ What the run established, beyond the per-item verdicts below:
   re-prompting — though the third only became true once `try_load_creds_from_openbao` was
   extended, having recovered `MASTER_PASSWORD` and the SMTP pair while leaving the deployments
   token, the derivation salt and the DNS token to be typed again.
-- **`check()` is the load-bearing verb, and it is where the defects were.** Seven steps had a
-  `check()` that disagreed with their own `provides:` — six testing a subset, so a partially
-  applied state read as complete and the step that would have repaired it was skipped; one
-  testing more than `apply()` created, so a complete state read as incomplete forever. Every
-  install failure traced to this shape rather than to a step's actual work. §15.2 records the
-  audit that follows from it.
+- **A converged cluster re-runs as a no-op.** A full `install.sh` against a finished cluster
+  applies only the steps that have no state to report — the three pure waits and the three that
+  run every pass — and skips the other twenty-nine. That is the §7 claim, *convergence IS
+  update*, demonstrated rather than asserted.
+- **`check()` is the load-bearing verb, and it is where the defects were.** Sixteen steps had a
+  `check()` that disagreed with their own `provides:`, and every install failure traced to that
+  shape rather than to a step's actual work. §15.2 records the four variants and the audit that
+  follows. Two things about the distribution are worth carrying forward: the majority test a
+  *subset*, so the failure mode is silence rather than error; and they surface far from their
+  cause — a shallow check in D-06 appeared as a tenant refused admission, four steps later, in
+  another tool.
+- **Reporting is part of the contract.** `--status` skipped config loading and called eight
+  steps missing on a healthy cluster, six of them wrongly. A step that re-runs by design had no
+  way to say so and rendered as a fault. Both teach an operator to ignore red, which is more
+  expensive than either bug: the two genuine failures in that output were indistinguishable from
+  the six false ones.
 - **Validation catches what it probes, and only that.** The bootstrap credentials were all
   reachable through their validators, but a validator can be wrong about the question rather
   than the answer: the DNS-01 probe tested what *kind* of token it held rather than whether the
@@ -1988,8 +1998,10 @@ They are gathered here because they are the whole point of the run.
 |---|---|---|
 | A clean-room install reaches a running root ApplicationSet | Phase 0a, criterion 1 | **Verified.** The root ApplicationSet generates its children and they sync. It required the cluster id to actually reach the template — `root-applicationset.yaml.tmpl` was rendering an empty `deploymentsCluster`, so every child pointed at `clusters//kernel/claims` and no claim ever synced |
 | `--dry-run` makes zero cluster mutations | Phase 0a, criterion 2 | **Verified** across repeated runs, and it now collects no credentials either: no step's `check()` reads one, so a preview needs no secret |
-| Install → uninstall returns the cluster to its prior state, and uninstall is idempotent | Phase 0b, criteria 1–2 | **Still unverified.** `destroy()` has not run. Expect this to be the roughest area |
-| ESO's actual verdict on the satisfaction probes | Phase 6, criterion 1 | **Partial.** The six `credreq-*` ExternalSecrets are created with `creationPolicy: None`; their sync verdicts have not been read back |
+| Install → uninstall returns the cluster to its prior state, and uninstall is idempotent | Phase 0b, criteria 1–2 | **Still unverified.** `destroy()` has not run. Expect this to be the roughest area: it is gated by the same `check()` functions that were wrong sixteen times, and a check testing too little means a step whose artefacts are partly gone reports absent and is skipped, leaving the rest behind |
+| A purge leaves nothing behind | `--purge` | **Still unverified.** The flag exists; only its refusals have been exercised |
+| ESO's actual verdict on the satisfaction probes | Phase 6, criterion 1 | **Verified.** `make check-credentials` reads four required credentials Ready and two `optional unset` — `infra-chart-registry` because the cluster pulls charts publicly, `argocd-github-webhook` because it is `phase: runtime`. Satisfaction is observable as a Kubernetes condition with nothing polling OpenBao, which is what §4 claims |
+| A tenant can be provisioned | E-01/E-02, and the product's purpose | **Partial.** The admission webhook refuses a tenant naming an AppProfile the cluster does not have, names it, and the rollback leaves `definitions/` intact and the cluster unchanged — gating working as §4 describes. A tenant has not yet been admitted, because the catalogue sync was not installed |
 | The unsatisfied → satisfied transition unblocks composition without intervention | Phase 6, criterion 4 | **Verified.** Every provider-vault resource sat `SYNCED=False` on a missing `openbao-crossplane-token`; when the credential arrived they reconciled and the XCluster reached Ready with nothing re-run |
 | OIDC login yields a policy set from Keycloak groups; a named write appears in the audit device | Phase 7, criteria 1–2 | **Still unverified.** Keycloak runs; the portal does not yet |
 | The bootstrap token is genuinely invalid afterwards | Phase 7, criterion 3 | **Still unverified.** Phase E not reached |
@@ -2010,6 +2022,18 @@ key and the remote field, which are different things and here had to differ. The
 then called OpenFGA with no bearer token and was refused, so no store id was published and the
 portal never became Ready.
 
+It happened a second time, on a path the catalogue *does* describe. The deployments repository
+credential is written with `username` and `password` — by the seeder, and by the `XRepository`
+Composition that builds the ArgoCD repository Secret from the same two names — while
+`credentials.yaml` declared the second field as `token`. Its ESO probe reported
+`SecretSyncedError` and `check-credentials` called a required credential missing, with the value
+sitting beside it under the other name. Two clusters, one word each, in opposite directions: once
+the consumer was wrong, once the catalogue was.
+
+`make lint-credential-fields` would close this class exactly rather than heuristically — walk
+each `vaultPath`, compare the fields the catalogue declares against the ones the seeder writes
+and the Compositions read. It is the one lint here that needs no judgement.
+
 Two habits follow, and they are cheap:
 
 - **Every OpenBao path wants exactly one writer.** That path had two — B-06 and
@@ -2027,16 +2051,37 @@ Two habits follow, and they are cheap:
 Each of these is blocked on knowing how the cluster actually behaves. Guessing at them is how the
 Phase 0a regression happened.
 
-**Whether each `check()` agrees with its own `provides:`.** Seven of the thirty-five disagreed,
-and every install failure came from one of them. The shape repeats: a `check()` naming one
-artefact of several, so a run interrupted between them reports satisfied and skips the step that
-would finish the job — A-09 testing the ArgoCD Deployment while the ApplicationSet CRD was
-missing, B-02 testing a Secret that B-01 pre-creates as a placeholder, C-02 testing that an
-Application exists rather than that its parameters are right, C-06 and A-02 testing one CRD or
-XRD out of several. A-03 was the inverse: it demanded a namespace `create_namespaces` never made,
-so it could never report satisfied. The remaining twenty-eight are unaudited. The mechanical
-version — does the check touch every noun in the header — finds most of it, and the header is
-already there to compare against.
+**Whether each `check()` agrees with its own `provides:`.** Sixteen of the thirty-five disagreed,
+and every install failure came from one of them — none from a step's actual work. Four variants,
+all of the same question: *does this check test the thing, or only that something with the right
+name is there?*
+
+| Variant | Consequence | Instances |
+|---|---|---|
+| Tests a subset of what the step provides | A partial apply reads as complete, and the step that would repair it is skipped forever | A-09, B-02, A-02, C-06, D-05, D-06 |
+| Tests existence, not correctness | A stale object satisfies the check, so a committed fix cannot land | C-02, C-06 |
+| Tests another step's artefact | `apply()` can never satisfy `check()` | D-03 |
+| Cannot answer where the driver runs it | The verdict is whatever the failure happened to mean | B-05, E-03 |
+
+Three more re-run every pass by design — B-04 exports a per-run token, B-09 leans on
+`kv_put_once`, E-02's reconcile is its own check — and had no way to say so, returning `1` and
+rendering as a fault on a healthy cluster. `CHECK_ALWAYS` is that verdict.
+
+`make lint-step-contracts` now covers the mechanical part: an unconditional `return 1` and a
+`check()` invoking a tool the driver does not configure both fail the build, and a `provides:`
+noun the check never mentions warns. It found A-02 verifying its XRDs but not its Compositions.
+
+**Its limits are worth stating, because they bound how much of this audit is automatable.**
+Reintroducing A-09's defect passes the lint: `provides: ArgoCD server and controllers` names no
+artefact to compare against. A prose contract is checkable only as far as the prose goes, so the
+cheapest improvement to the audit is `provides:` headers that name artefacts rather than
+capabilities.
+
+The audit should not stop at install steps either. D-06 was found by *using* the platform: it
+reported satisfied on the strength of one AppProfile that arrived by another route while the
+catalogue ApplicationSet it installs had never been created, and the symptom appeared four steps
+later, in another tool, as a tenant refused admission for a profile that had been in
+`gentian-apps` all along.
 
 **Which reconciler already covers which shell step.** Phase 4b's second half cannot proceed
 without it. Steps 28, 29, 30 and 34 call running services' APIs, which no ApplicationSet can
@@ -2058,6 +2103,39 @@ unresolvable.
 resource kind the enumeration misses surfaces as `forbidden` at provision time, so this needs a
 cluster to validate against and re-checking whenever a pinned chart version moves. Prior art:
 `7c38423` derives them from the chart contents.
+
+---
+
+### 15.2b Teardown has more than one meaning
+
+`--uninstall` reverses the steps and keeps OpenBao's KV, so a reinstall recovers the credentials
+rather than re-prompting. That is right for *undo this install* and wrong for *hand this cluster
+back*, and the second had no command until `--purge`.
+
+The distinction that matters is **which of the three configuration surfaces a teardown clears**.
+An uninstall clears none of them: it removes cluster objects, and the pointer, the Git
+configuration and the credentials all survive. So "uninstall then reinstall" is not "clean-room
+install", and Phase 0b's *returns the cluster to its prior state* is ambiguous about which prior
+state it means. Naming the shapes:
+
+| Shape | Clears | For |
+|---|---|---|
+| `--uninstall` | Cluster objects | Undoing an install on a cluster you keep |
+| `--purge` | The above, plus volumes and local state | Handing a cluster back; proving a clean-room install |
+| Purge, then delete `clusters/<id>/kernel` | The above, plus the Git configuration | Retiring a cluster for good |
+
+Volumes were the part an uninstall could not reach. Every kernel StorageClass reclaims with
+`Retain`, so deleting a PVC releases the PV and leaves the data on the backend — an uninstalled
+cluster whose OpenBao volume still holds every derived credential.
+
+The Git tree is deliberately not purged: it is shared with every other cluster in the repository,
+and removing it is a commit somebody reviews. Purge says so rather than leaving it implied.
+
+One safety property is worth restating because it decides how reversible a purge is: the
+derivation salt lives only in OpenBao. Deleting that volume ends the derivation, so the same
+master password afterwards produces *different* credentials and a rebuild is a migration rather
+than a restore. `--export-recovery-kit` is what closes that gap, and purge requires the cluster
+id typed back before it runs.
 
 ---
 
