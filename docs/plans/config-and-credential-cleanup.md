@@ -2156,6 +2156,12 @@ with `selfHeal: true`:
 Both now render from `kernel/services/postfix/manifests`, where Argo CD reconciling the object is
 what keeps them in place rather than what removes them.
 
+One residual: `_patch_postfix_allowed_sender_domains` still writes `postfix-base-values`. It is a
+no-op wherever the chart already renders `ALLOWED_SENDER_DOMAINS` from `kernelDomain`, which the
+ApplicationSet supplies, so it costs nothing today — but a cluster whose `KERNEL_DOMAIN` differs
+from what Git renders gets a value that flips on every sync, restarting Postfix each time. Delete
+it, or make the case for a second writer.
+
 The rule the two share: **an object with a GitOps owner takes configuration from Git, and
 everything else from a controller that reconciles.** The installer is neither. Where a value is
 genuinely dynamic — the set of tenant domains is, and cannot live in a chart — the split is by
