@@ -123,6 +123,29 @@ install_crossplane() {
 # Crossplane 0b/0c — Install providers, XRD, Composition
 # (mirrors crossplane/tests/e2e/scripts/p1-kernel-dev.sh steps 1-3)
 # =============================================================================
+# _unstick_terminating_xrds — clear XRDs wedged mid-deletion.
+#
+# An XRD stuck Terminating cannot be re-created, and its claim CRD stays
+# absent, so every step that applies one of those claims fails with "no
+# matches for kind" and no indication that the cause is a deletion from
+# hours earlier that never finished. Composites hold a finalizer their
+# controller clears — but when the XRD is already half-gone the controller
+# no longer reconciles them, so the two wait on each other indefinitely.
+_unstick_terminating_xrds() {
+    local xrd claim_kind leftover
+    for xrd in $(kubectl get xrd -o jsonpath='{range .items[?(@.metadata.deletionTimestamp)]}{.metadata.name}{"\n"}{end}' 2>/dev/null); do
+        warn "XRD ${xrd} is stuck Terminating; clearing what blocks it."
+        claim_kind="$(kubectl get xrd "${xrd}" -o jsonpath='{.spec.names.plural}' 2>/dev/null)"
+        [[ -n "${claim_kind}" ]] || continue
+        for leftover in $(kubectl get "${claim_kind}.gentianos.io" -A \
+            -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}' 2>/dev/null); do
+            kubectl patch "${claim_kind}.gentianos.io" "${leftover}" --type=merge \
+                -p '{"metadata":{"finalizers":null}}' >/dev/null 2>&1 || true
+        done
+        kubectl wait xrd "${xrd}" --for=delete --timeout=60s >/dev/null 2>&1 || true
+    done
+}
+
 install_crossplane_providers() {
     banner "Crossplane providers, XRD, Composition"
 
@@ -164,28 +187,6 @@ install_crossplane_providers() {
     # The XRD controller refuses to adopt CRDs owned by a different UID and
     # the XRD never reaches Established.  Fix: after applying an XRD, if any
     # of its owned CRDs still carry a stale UID, patch them to the current one.
-    # _unstick_terminating_xrds — clear XRDs wedged mid-deletion.
-    #
-    # An XRD stuck Terminating cannot be re-created, and its claim CRD stays
-    # absent, so every step that applies one of those claims fails with "no
-    # matches for kind" and no indication that the cause is a deletion from
-    # hours earlier that never finished. Composites hold a finalizer their
-    # controller clears — but when the XRD is already half-gone the controller
-    # no longer reconciles them, so the two wait on each other indefinitely.
-    _unstick_terminating_xrds() {
-        local xrd claim_kind leftover
-        for xrd in $(kubectl get xrd -o jsonpath='{range .items[?(@.metadata.deletionTimestamp)]}{.metadata.name}{"\n"}{end}' 2>/dev/null); do
-            warn "XRD ${xrd} is stuck Terminating; clearing what blocks it."
-            claim_kind="$(kubectl get xrd "${xrd}" -o jsonpath='{.spec.names.plural}' 2>/dev/null)"
-            [[ -n "${claim_kind}" ]] || continue
-            for leftover in $(kubectl get "${claim_kind}.gentianos.io" -A \
-                -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}' 2>/dev/null); do
-                kubectl patch "${claim_kind}.gentianos.io" "${leftover}" --type=merge \
-                    -p '{"metadata":{"finalizers":null}}' >/dev/null 2>&1 || true
-            done
-            kubectl wait xrd "${xrd}" --for=delete --timeout=60s >/dev/null 2>&1 || true
-        done
-    }
     _unstick_terminating_xrds
 
     _adopt_xrd_crds() {
