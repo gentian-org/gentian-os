@@ -14,6 +14,13 @@
 #   UNDEFINED  the question does not apply, or cannot be answered yet: the
 #              feature is switched off, the step has no install-time artefact,
 #              or the config that would decide it was never loaded.
+#   ALWAYS     the step runs on every pass by design, so there is no state to
+#              report. Its work is idempotent and cheap, and answering the
+#              question properly would mean duplicating the work — B-09 would
+#              have to probe every path kv_put_once already guards, E-02 would
+#              have to do the reconcile it exists to perform, and B-04 exports a
+#              per-run token that a skip would leave unset for every later step.
+#              Applies like MISSING; reads as "always" rather than as a fault.
 #
 # UNDEFINED exists because a check that returns SATISFIED for "there was nothing
 # to do" is indistinguishable from one that returns it for "I verified this is
@@ -22,10 +29,11 @@
 CHECK_SATISFIED=0
 CHECK_MISSING=1
 CHECK_UNDEFINED=2
+CHECK_ALWAYS=3
 # Exported because the readers are the step files in scripts/steps/, which are
 # sourced rather than sourced-from-here — same reason install.sh exports the
 # Crossplane settings the step bodies read.
-export CHECK_SATISFIED CHECK_MISSING CHECK_UNDEFINED
+export CHECK_SATISFIED CHECK_MISSING CHECK_UNDEFINED CHECK_ALWAYS
 
 # ─── Colour helpers ──────────────────────────────────────────────────────────
 RED='\033[0;31m'; YELLOW='\033[1;33m'; GREEN='\033[0;32m'; CYAN='\033[0;36m'; NC='\033[0m'
@@ -1414,6 +1422,30 @@ gentian_mail_namespace() {
 # composes only gentian-system and platform-kernel. Two owners for one namespace
 # is worse than one owner in the wrong phase.
 # =============================================================================
+# =============================================================================
+# load_status_context — the configuration a read-only pass needs, and no more.
+#
+# --status skips prepare_run, because prepare_run prompts, writes ~/.gentian and
+# scaffolds a deployments tree. But every check() that resolves a stage-scoped
+# name, a claim name or a cluster id reads that same configuration, so without
+# it they answer against defaults: A-03 asks for gentian-infra-dev on a prod
+# cluster, C-02 compares against an empty cluster id, B-07 cannot name the claim
+# to look up. Each then reports missing on a cluster where the thing is present,
+# which is worse than not reporting at all — it is a wrong answer that looks
+# like a right one.
+#
+# Loads files and derives names. Prompts for nothing, writes nothing.
+# =============================================================================
+load_status_context() {
+    load_operator_config
+    load_deployments_cluster_settings
+
+    # Same derivation as prompt_app_repos, without the prompting: ENV is the
+    # stage, and a dozen namespace and hostname lookups are built from it.
+    ENV="${ENV:-${GENTIAN_DEPLOYMENTS_STAGE:-dev}}"
+    export ENV
+}
+
 gentian_kernel_namespaces() {
     local ns seen=""
     for ns in openbao external-secrets argocd gentian-system platform-kernel \

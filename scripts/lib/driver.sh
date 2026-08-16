@@ -291,6 +291,7 @@ _step_verdict() {
     case "$rc" in
         0) return "${CHECK_SATISFIED}" ;;
         2) return "${CHECK_UNDEFINED}" ;;
+        3) return "${CHECK_ALWAYS}" ;;
         # Any other nonzero — including a check() that died on `set -e` or a
         # kubectl that could not reach the API — is work to do. Guessing
         # "undefined" there would silently skip a step that was never verified.
@@ -326,6 +327,8 @@ run_step_forward() {
                 # claim it verified something.
                 echo "     check: undefined (nothing to do here)  →  skip"
                 return 0 ;;
+            "${CHECK_ALWAYS}")
+                echo "     check: runs every pass  →  applying" ;;
             *)
                 echo "     check: not satisfied  →  applying" ;;
         esac
@@ -459,6 +462,10 @@ drive_explain() {
 # drive_status — run every check() and report, mutating nothing. The read-only
 # answer to "where did this install get to".
 drive_status() {
+    # Before any check runs: the same configuration the install would resolve,
+    # or every stage-scoped and cluster-scoped check answers about a different
+    # cluster than the one in front of it.
+    load_status_context
     discover_steps || return 1
     local i id file state verdict
     echo ""
@@ -473,6 +480,9 @@ drive_status() {
             # Green is a claim about the cluster: this was asked, and verified.
             "${CHECK_SATISFIED}") state="${GREEN}satisfied${NC}" ;;
             "${CHECK_UNDEFINED}") state="${YELLOW}undefined${NC}" ;;
+            # Not a fault: the step reports no state because it has none to
+            # report, and red would say something is wrong with the cluster.
+            "${CHECK_ALWAYS}")    state="${YELLOW}always${NC}" ;;
             *)                    state="${RED}missing${NC}" ;;
         esac
         printf '  [%s] %-26s %b\n' "$(step_number_of "$id")" "$(step_label_of "$id")" "$state"

@@ -8,7 +8,7 @@
 check() {
     # kv_put_once makes seeding idempotent, so re-running is safe and cheap;
     # probing every path here would duplicate that logic without adding safety.
-    return 1
+    return "${CHECK_ALWAYS}"
 }
 
 apply() {

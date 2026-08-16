@@ -8,7 +8,10 @@
 check() {
     local claim
     claim="$(gentian_cluster_claim_name 2>/dev/null || true)"
-    [[ -n "$claim" ]] || return 1
+    # No claim name means the deployments checkout could not be read, so there
+    # is nothing to look the XR up by — a different answer from "the XR is not
+    # Ready", and reporting the latter blames the cluster for a local gap.
+    [[ -n "$claim" ]] || return "${CHECK_UNDEFINED}"
     kubectl get cluster.gentianos.io "$claim" -n crossplane-system \
         -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null |
         grep -q True

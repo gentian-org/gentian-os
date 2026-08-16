@@ -14,7 +14,7 @@ check() {
     # Returns 1 when unreachable so apply() produces the real diagnostic, and
     # because BAO_TOKEN is per-run: a satisfied check would skip the step that
     # exports it, leaving every later step without a token.
-    return 1
+    return "${CHECK_ALWAYS}"
 }
 
 apply() {

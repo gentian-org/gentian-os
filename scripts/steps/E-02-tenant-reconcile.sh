@@ -20,7 +20,7 @@ check() {
     # already has a Team and SMTP", which is precisely what the reconcilers
     # below determine — a check() would have to duplicate them to answer. They
     # are idempotent and cheap, so running them is the check.
-    return 1
+    return "${CHECK_ALWAYS}"
 }
 
 apply() {

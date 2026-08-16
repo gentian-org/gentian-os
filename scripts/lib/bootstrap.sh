@@ -403,6 +403,29 @@ POLICY
 }
 
 # =============================================================================
+# _derive <context> <purpose> — the derived-credential function, at file scope.
+#
+# Same derivation as seed-openbao.sh and
+# crossplane/functions/derive-secrets/derive.py.
+#
+# File scope because it has callers outside the step that first needed it.
+# Nested inside create_crossplane_secrets it existed only while B-06 ran, and
+# `declare -F _derive` — which _keycloak_smtp_settings tests before deriving the
+# Postfix password — was therefore false everywhere else. On every
+# MAIL_SERVICE_MODE=kernel cluster that test failed, so Keycloak realm SMTP was
+# skipped with "SMTP credentials incomplete" and the realm could not send an
+# invitation or a password reset, while the credentials it needed existed.
+# =============================================================================
+_derive() {
+    if [[ "${SECRET_MODE:-derived}" == "random" ]]; then
+        openssl rand -hex 32
+    else
+        echo -n "${1}:${2}" | openssl dgst -sha256 \
+            -hmac "${MASTER_PASSWORD}${DERIVATION_SALT}" | awk '{print $2}'
+    fi
+}
+
+# =============================================================================
 # Crossplane step 11 — Create derived-credential Secrets in crossplane-system.
 #
 # The Cluster XR's SecretV2 KV-seed MRs reference these K8s Secrets via
@@ -438,15 +461,6 @@ create_crossplane_secrets() {
         DERIVATION_SALT=$(openssl rand -hex 16)
     fi
     export DERIVATION_SALT
-
-    # Same derivation as seed-openbao.sh and crossplane/functions/derive-secrets/derive.py
-    _derive() {
-        if [[ "${SECRET_MODE:-derived}" == "random" ]]; then
-            openssl rand -hex 32
-        else
-            echo -n "${1}:${2}" | openssl dgst -sha256 -hmac "${MASTER_PASSWORD}${DERIVATION_SALT}" | awk '{print $2}';
-        fi
-    }
 
     # Helper: upsert a K8s Secret in crossplane-system with data.json key
     _kv_secret() {

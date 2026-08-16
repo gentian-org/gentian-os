@@ -6,9 +6,11 @@
 # mutates: OpenBao auth backends and policies
 
 check() {
-    # Needs an authenticated OpenBao; when we cannot talk to it, report unmet
-    # and let apply() produce the real diagnostic rather than guessing here.
-    [[ -n "${BAO_TOKEN:-}" ]] || return 1
+    # Needs an authenticated OpenBao. On the forward pass B-04 has exported the
+    # token by now, so this resolves properly; a read-only pass has no token and
+    # genuinely cannot tell, which is not the same as knowing the policy is
+    # absent. Saying missing there reports a fault on a healthy cluster.
+    [[ -n "${BAO_TOKEN:-}" ]] || return "${CHECK_UNDEFINED}"
     bao policy read crossplane-write >/dev/null 2>&1
 }
 
