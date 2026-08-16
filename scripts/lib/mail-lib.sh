@@ -17,10 +17,6 @@ _mail_kernel_namespace() {
     echo "${KERNEL_NAMESPACE:-gentian-${ENV:-dev}}"
 }
 
-_mail_dovecot_host() {
-    echo "dovecot-${ENV:-dev}.$(_mail_kernel_namespace).svc.cluster.local"
-}
-
 # Tenant mail domains registered by the operator (platform-kernel ConfigMap).
 _postfix_kernel_virtual_domains() {
     local template
@@ -77,21 +73,18 @@ _detect_deployed_mail_mode() {
 }
 
 # =============================================================================
-# Build postfix-${ENV:-dev}-values YAML for the given mode (external relay vs kernel LMTP).
+# Build postfix-${ENV:-dev}-values YAML for an external relay.
 #
 # Values target the public bokysan/mail chart (see kernel/services/postfix/).
-# Kernel mode delivers tenant-domain mail to Dovecot via LMTP; Dovecot domain
-# acceptance is still minimal (UNTESTED) — production stress tests may need more.
+# Kernel-mode inbound routing is NOT here: virtual_transport and the two
+# texthash maps live in the chart's postfix-base-values, because this ConfigMap
+# is Argo CD-managed with selfHeal and anything written here imperatively is
+# reverted on the next sync.
 # =============================================================================
-_postfix_dev_values_yaml() {
-    local mode="$1"
-    local ns
-    ns="$(_mail_kernel_namespace)"
-
-    if [[ "${mode}" == "external" ]]; then
-        local relay_host="${EXTERNAL_SMTP_HOST:-smtp.gmail.com}"
-        local relay_port="${EXTERNAL_SMTP_PORT:-587}"
-        cat <<YAML
+_postfix_external_values_yaml() {
+    local relay_host="${EXTERNAL_SMTP_HOST:-smtp.gmail.com}"
+    local relay_port="${EXTERNAL_SMTP_PORT:-587}"
+    cat <<YAML
 postfix:
   hostname: "postfix-${ENV:-dev}"
 
@@ -118,83 +111,33 @@ resources:
     cpu: 50m
     memory: 64Mi
 YAML
-    else
-        local dovecot_host domains
-        dovecot_host="$(_mail_dovecot_host)"
-        domains="$(_postfix_kernel_virtual_domains)"
-        if [[ -z "${domains}" ]]; then
-            domains="${KERNEL_DOMAIN:-gentian.local}"
-        fi
-        cat <<YAML
-config:
-  postfix:
-    myhostname: postfix-${ENV:-dev}
-    virtual_transport: "lmtp:[${dovecot_host}]:24"
-    virtual_mailbox_domains: "${domains}"
-    # texthash:, not lmdb:. The map is a ConfigMap mounted read-only, so it is
-    # plain text that can never be compiled — lmdb: made Postfix look for
-    # /etc/postfix/virtual_mailbox_maps.lmdb, log
-    #   error: open database /etc/postfix/virtual_mailbox_maps.lmdb: No such file
-    # and then reject every recipient in a virtual domain with
-    #   554 5.7.1 <user@domain>: Recipient address rejected: Access denied
-    # since a virtual_mailbox_domain whose map cannot be read has no valid
-    # addresses at all. texthash: reads the file directly at lookup time and
-    # needs no postmap run, which is what a read-only mount requires.
-    virtual_mailbox_maps: "texthash:/etc/postfix/virtual_mailbox_maps"
-
-extraVolumes:
-  - name: postfix-virtual-mailbox-maps
-    configMap:
-      name: postfix-kernel-virtual-mailbox-maps
-
-extraVolumeMounts:
-  - name: postfix-virtual-mailbox-maps
-    mountPath: /etc/postfix/virtual_mailbox_maps
-    subPath: virtual_mailbox_maps
-
-postfix:
-  hostname: "postfix-${ENV:-dev}"
-  relayHost:
-    enabled: false
-  smtpSASLAuthEnable: "no"
-  relayNets: "10.0.0.0/8 172.16.0.0/12 192.168.0.0/16"
-
-resources:
-  limits:
-    cpu: "500m"
-    memory: 256Mi
-  requests:
-    cpu: 50m
-    memory: 64Mi
-YAML
-    fi
 }
 
-# Build LMTP virtual_mailbox_maps from operator-registered tenant domains.
+# Seed the Postfix inbound maps from the operator's tenant domain registry.
+#
+# The ConfigMap holds both texthash: files the kernel Postfix mounts:
+#   virtual_mailbox_domains — which domains Postfix accepts mail FOR
+#   virtual_mailbox_maps    — where each address is delivered (catch-all per domain)
+# Both are needed: a domain listed in one but not the other either bounces or is
+# refused outright.
+#
+# The operator owns these once tenants come and go (syncPostfixVirtualMailboxMaps
+# in internal/controller/mail_reconciler.go). This runs at install time so the
+# files exist before any tenant does.
 _sync_kernel_postfix_virtual_mailbox_maps() {
-    local ns domains d map_lines=""
+    local ns domains d domain_lines="" map_lines=""
     ns="$(_mail_kernel_namespace)"
     domains="$(_postfix_kernel_virtual_domains)"
 
-    # The ConfigMap is created even with no domains yet, deliberately.
-    #
-    # It used to return early here, but the Helm values mount it
-    # UNCONDITIONALLY (extraVolumes -> configMap: postfix-kernel-virtual-mailbox-maps).
-    # On a fresh cluster no tenant has registered a mail domain, so the map was
-    # skipped, the volume could not be mounted, and Postfix sat in
-    # ContainerCreating forever:
-    #
-    #   FailedMount (x901 over 30h): configmap
-    #   "postfix-kernel-virtual-mailbox-maps" not found
-    #
-    # Nothing re-runs this when a tenant later registers a domain, so the kernel
-    # mail stack stayed dead until someone noticed and re-ran the installer.
-    # An empty map is valid: Postfix starts, serves no virtual mailboxes yet,
-    # and picks up domains the next time this runs.
+    # The ConfigMap is created even with no domains yet, deliberately: Postfix
+    # rejects every recipient in a virtual domain whose map it cannot read, so
+    # an absent file is worse than an empty one. Empty means Postfix starts,
+    # serves no virtual mailboxes yet, and picks up domains as they appear.
     if [[ -z "${domains}" ]]; then
-        info "  No tenant mail domains registered yet — writing an empty virtual_mailbox_maps"
+        info "  No tenant mail domains registered yet — writing empty Postfix inbound maps"
     else
         for d in ${domains}; do
+            domain_lines+="${d} OK"$'\n'
             map_lines+="@${d} ${d}/"$'\n'
         done
     fi
@@ -206,6 +149,7 @@ _sync_kernel_postfix_virtual_mailbox_maps() {
 
     kubectl create configmap postfix-kernel-virtual-mailbox-maps \
         -n "${ns}" \
+        --from-literal=virtual_mailbox_domains="${domain_lines}" \
         --from-literal=virtual_mailbox_maps="${map_lines}" \
         --dry-run=client -o yaml \
         | kubectl apply -f - >/dev/null
@@ -292,16 +236,18 @@ _patch_postfix_allowed_sender_domains() {
 }
 
 # =============================================================================
-# Patch postfix-${ENV:-dev}-values ConfigMap to match MAIL_SERVICE_MODE postfix layout.
+# Point postfix-${ENV:-dev}-values at the external relay.
+#
+# Only MAIL_SERVICE_MODE=external needs this. Kernel mode ships its whole
+# Postfix layout in the chart, so it writes nothing here.
 # =============================================================================
-_patch_postfix_configmap() {
-    local mode="$1"
+_patch_postfix_external_configmap() {
     local ns values_yaml
     ns="$(_mail_kernel_namespace)"
-    values_yaml=$(_postfix_dev_values_yaml "${mode}")
+    values_yaml=$(_postfix_external_values_yaml)
 
     if [[ "${DRY_RUN:-0}" == "1" ]]; then
-        info "  [dry-run] Would patch ConfigMap postfix-${ENV:-dev}-values (mode=${mode})"
+        info "  [dry-run] Would patch ConfigMap postfix-${ENV:-dev}-values (external relay)"
         return
     fi
 
@@ -313,7 +259,7 @@ _patch_postfix_configmap() {
             "argocd.argoproj.io/sync-wave=-1" \
             --dry-run=client -o yaml \
         | kubectl apply -f - >/dev/null
-    success "  patched postfix-${ENV:-dev}-values (mode=${mode})"
+    success "  patched postfix-${ENV:-dev}-values (external relay)"
 }
 
 # =============================================================================
@@ -348,7 +294,7 @@ install_kernel_mail() {
         fi
         if kubectl get namespace "$(_mail_kernel_namespace)" >/dev/null 2>&1 \
             && kubectl get configmap postfix-"${ENV:-dev}"-values -n "$(_mail_kernel_namespace)" >/dev/null 2>&1; then
-            _patch_postfix_configmap external
+            _patch_postfix_external_configmap
             _patch_postfix_allowed_sender_domains
             _patch_postfix_live_relay external
         fi
@@ -364,7 +310,6 @@ install_kernel_mail() {
     # every install. Deleted rather than repaired: the ApplicationSet is the
     # real path and was already doing the work.
     _sync_kernel_postfix_virtual_mailbox_maps
-    _patch_postfix_configmap kernel
     _patch_postfix_allowed_sender_domains
     _patch_postfix_live_relay kernel
     info "Keycloak realm SMTP will target postfix-${ENV:-dev}.${KERNEL_NAMESPACE}.svc.cluster.local:587"

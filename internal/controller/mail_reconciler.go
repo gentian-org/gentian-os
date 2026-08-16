@@ -24,6 +24,8 @@ import (
 	"encoding/base64"
 	"encoding/pem"
 	"fmt"
+	"sort"
+	"strings"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
@@ -48,6 +50,15 @@ const (
 	mailPostfixVirtualDomainsConfigMap = "mail-postfix-virtual-domains"
 	mailDovecotDomainsConfigMap        = "mail-dovecot-domains"
 	mailDovecotOIDCValuesConfigMap     = "dovecot-tenant-oidc-values"
+
+	// The two texthash: files kernel Postfix mounts, in the mail namespace. Both
+	// are derived from the registry above: the registry says which tenant domains
+	// exist, these say which of them Postfix accepts mail for and where each
+	// address is delivered. A domain present in one but not the other is either
+	// bounced or refused outright, so they are always written together.
+	postfixVirtualMailboxMapsConfigMap = "postfix-kernel-virtual-mailbox-maps"
+	postfixVirtualMailboxDomainsKey    = "virtual_mailbox_domains"
+	postfixVirtualMailboxMapsKey       = "virtual_mailbox_maps"
 
 	// mailSharedPostfixPort is the cluster-internal submission port for shared Postfix.
 	mailSharedPostfixPort = "587"
@@ -283,23 +294,111 @@ func (r *TenantReconciler) ensurePostfixVirtualDomain(ctx context.Context, tenan
 			},
 			Data: map[string]string{tenant.Name: domain},
 		}
-		return r.Create(ctx, cm)
+		if err := r.Create(ctx, cm); err != nil {
+			return err
+		}
+		return r.syncPostfixVirtualMailboxMaps(ctx)
 	}
 	if err != nil {
 		return err
 	}
 
-	// Entry already present — nothing to do.
-	if cm.Data[tenant.Name] == domain {
-		return nil
+	// Add or update the entry for this tenant.
+	if cm.Data[tenant.Name] != domain {
+		if cm.Data == nil {
+			cm.Data = make(map[string]string)
+		}
+		cm.Data[tenant.Name] = domain
+		if err := r.Update(ctx, cm); err != nil {
+			return err
+		}
 	}
 
-	// Add or update the entry for this tenant.
-	if cm.Data == nil {
-		cm.Data = make(map[string]string)
+	// Sync unconditionally rather than only when the registry changed: the map is
+	// a separate object that can be absent or stale for reasons this reconcile
+	// cannot see, and the sync is a no-op write when it already matches.
+	return r.syncPostfixVirtualMailboxMaps(ctx)
+}
+
+// syncPostfixVirtualMailboxMaps rebuilds the two texthash: files kernel Postfix
+// mounts from the tenant domain registry.
+//
+// Registering a domain and routing mail to it are otherwise two separate steps
+// with only one owner. The installer seeds these files from whatever tenants
+// exist at install time; a tenant provisioned afterwards registers its domain,
+// so without this the files would not name it and mail to that tenant —
+// including the admin address the platform derives for it — is refused. The
+// registry's owner owns what is derived from it.
+//
+// Postfix mounts the ConfigMap as a directory and reads both files at lookup
+// time, so a rewrite here takes effect without restarting Postfix.
+//
+// Rewritten whole rather than appended to: the files are a function of the
+// registry, and a partial update is how the two drift apart.
+func (r *TenantReconciler) syncPostfixVirtualMailboxMaps(ctx context.Context) error {
+	registry := &corev1.ConfigMap{}
+	if err := r.Get(ctx, types.NamespacedName{
+		Name: mailPostfixVirtualDomainsConfigMap, Namespace: kernelNamespace,
+	}, registry); err != nil {
+		// No registry yet means no tenant domains to route. The installer
+		// creates the files empty so Postfix can still mount them.
+		return client.IgnoreNotFound(err)
 	}
-	cm.Data[tenant.Name] = domain
-	return r.Update(ctx, cm)
+
+	// Sorted, so an unchanged registry yields identical files and this does not
+	// rewrite the object on every reconcile.
+	names := make([]string, 0, len(registry.Data))
+	for name := range registry.Data {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+
+	var domainsFile, mapsFile strings.Builder
+	for _, name := range names {
+		d := registry.Data[name]
+		if d == "" {
+			continue
+		}
+		// "OK" is only a non-empty lookup result; Postfix reads the presence of
+		// the key, not the value.
+		fmt.Fprintf(&domainsFile, "%s OK\n", d)
+		// Catch-all: every address at the domain is delivered into the domain's
+		// Dovecot mailbox directory.
+		fmt.Fprintf(&mapsFile, "@%s %s/\n", d, d)
+	}
+	desiredDomains, desiredMaps := domainsFile.String(), mapsFile.String()
+	desired := map[string]string{
+		postfixVirtualMailboxDomainsKey: desiredDomains,
+		postfixVirtualMailboxMapsKey:    desiredMaps,
+	}
+
+	maps := &corev1.ConfigMap{}
+	err := r.Get(ctx, types.NamespacedName{
+		Name: postfixVirtualMailboxMapsConfigMap, Namespace: servicesNamespace,
+	}, maps)
+	if errors.IsNotFound(err) {
+		return r.Create(ctx, &corev1.ConfigMap{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      postfixVirtualMailboxMapsConfigMap,
+				Namespace: servicesNamespace,
+				Labels:    map[string]string{managedByLabel: managedByValue},
+			},
+			Data: desired,
+		})
+	}
+	if err != nil {
+		return err
+	}
+	if maps.Data[postfixVirtualMailboxDomainsKey] == desiredDomains &&
+		maps.Data[postfixVirtualMailboxMapsKey] == desiredMaps {
+		return nil
+	}
+	if maps.Data == nil {
+		maps.Data = make(map[string]string)
+	}
+	maps.Data[postfixVirtualMailboxDomainsKey] = desiredDomains
+	maps.Data[postfixVirtualMailboxMapsKey] = desiredMaps
+	return r.Update(ctx, maps)
 }
 
 // ensureDovecotDomainConfig adds the tenant's mail domain to the shared Dovecot
@@ -507,6 +606,12 @@ func (r *TenantReconciler) deleteMail(ctx context.Context, tenant *gentianov1alp
 	if mode == gentianov1alpha1.MailModeSelfhosted || mode == gentianov1alpha1.MailModeTransportOnly {
 		if err := r.removeFromMailConfigMap(ctx, mailPostfixVirtualDomainsConfigMap, tenant.Name); err != nil {
 			return fmt.Errorf("remove Postfix virtual domain for tenant %s: %w", tenant.Name, err)
+		}
+		// The LMTP map is derived from that registry, so it has to follow the
+		// removal — otherwise Postfix keeps delivering to a domain it no longer
+		// accepts mail for.
+		if err := r.syncPostfixVirtualMailboxMaps(ctx); err != nil {
+			return fmt.Errorf("sync Postfix virtual mailbox maps for tenant %s: %w", tenant.Name, err)
 		}
 	}
 	if mode == gentianov1alpha1.MailModeSelfhosted {

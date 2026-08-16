@@ -1020,7 +1020,7 @@ func (r *TenantReconciler) buildXTenant(ctx context.Context, tenant *gentianov1a
 	})
 
 	spec := map[string]interface{}{
-		"displayName":  tenant.Spec.DisplayName,
+		"displayName": tenant.Spec.DisplayName,
 		// Derived when unset: the XTenant XRD requires this field, so an empty
 		// spec.adminEmail would be rejected at composition rather than defaulted.
 		"adminEmail":   r.tenantAdminEmail(tenant),

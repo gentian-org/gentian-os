@@ -64,6 +64,50 @@ data:
         DKIM_AUTOGENERATE: "1"
       postfix:
         myhostname: postfix-{{ .Values.env }}
+        # Inbound tenant mail: hand every message for a registered tenant domain
+        # to Dovecot over LMTP, which files it into /var/mail/<domain>/<user>.
+        virtual_transport: "lmtp:[dovecot-{{ .Values.env }}.gentian-{{ .Values.env }}.svc.cluster.local]:24"
+        # Both maps are texthash: files, not lmdb:.
+        #
+        # The files come from a ConfigMap mount, so they are read-only and can
+        # never be compiled — lmdb: makes Postfix look for
+        # /etc/postfix/kernel-maps/virtual_mailbox_maps.lmdb, log
+        #   error: open database ...lmdb: No such file
+        # and then reject every recipient in a virtual domain with
+        #   554 5.7.1 <user@domain>: Recipient address rejected: Access denied
+        # since a virtual_mailbox_domain whose map cannot be read has no valid
+        # addresses. texthash: reads the file at lookup time and needs no
+        # postmap run, which is also what makes tenant churn restart-free: the
+        # operator rewrites the ConfigMap, kubelet swaps the mounted files, and
+        # the next lookup sees the new domain.
+        virtual_mailbox_domains: "texthash:/etc/postfix/kernel-maps/virtual_mailbox_domains"
+        virtual_mailbox_maps: "texthash:/etc/postfix/kernel-maps/virtual_mailbox_maps"
+    # postfix-kernel-virtual-mailbox-maps is written by the operator from the
+    # tenant domain registry, and is therefore NOT part of this chart — a chart
+    # copy would be reverted onto the operator's content by Argo CD self-heal on
+    # every sync.
+    #
+    # optional: true because the ConfigMap only exists once the cluster has run
+    # the mail step. A required mount that is absent holds the Pod in
+    # ContainerCreating indefinitely:
+    #   FailedMount (x901 over 30h): configmap
+    #   "postfix-kernel-virtual-mailbox-maps" not found
+    # Optional means Postfix starts with the maps empty — accepting mail for no
+    # tenant domain, which is the truth at that point — and kubelet populates
+    # the mount when the ConfigMap appears.
+    #
+    # Mounted as a directory, without subPath: a subPath mount is copied once at
+    # Pod start and never tracks later ConfigMap updates, so every new tenant
+    # would need a Postfix restart to receive mail.
+    extraVolumes:
+      - name: kernel-maps
+        configMap:
+          name: postfix-kernel-virtual-mailbox-maps
+          optional: true
+    extraVolumeMounts:
+      - name: kernel-maps
+        mountPath: /etc/postfix/kernel-maps
+        readOnly: true
 ---
 apiVersion: v1
 kind: ConfigMap
@@ -74,7 +118,8 @@ metadata:
     argocd.argoproj.io/sync-wave: "-1"
 data:
   values.yaml: |
-    # Env overrides — patched by scripts/lib/mail-lib.sh when MAIL_SERVICE_MODE=kernel.
+    # Env overrides — rewritten by scripts/lib/mail-lib.sh for
+    # MAIL_SERVICE_MODE=external to point Postfix at an upstream relay.
     # Schema is bokysan/mail (not the old proprietary chart).
     replicaCount: 1
     resources:

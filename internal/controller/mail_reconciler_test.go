@@ -18,6 +18,7 @@ package controller_test
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -409,6 +410,61 @@ func TestMail_External_CopiesCredentialsSecret(t *testing.T) {
 	})
 	if cond := findCondition(updated, "MailReady"); cond.Reason != "External" {
 		t.Errorf("expected reason External, got %q", cond.Reason)
+	}
+}
+
+// TestMail_PostfixInboundMapsFollowTenant verifies that registering a tenant
+// domain also produces the two texthash: files kernel Postfix reads, and that
+// deleting the tenant removes it from both.
+//
+// The map ConfigMap is what makes inbound mail work at all: Postfix accepts a
+// recipient only if its domain is in virtual_mailbox_domains, and delivers it
+// only if the address matches virtual_mailbox_maps. A tenant present in the
+// registry but absent from these is refused with
+// "554 5.7.1 Recipient address rejected: Access denied".
+func TestMail_PostfixInboundMapsFollowTenant(t *testing.T) {
+	t.Parallel()
+	tenant := &gentianov1alpha1.Tenant{
+		ObjectMeta: metav1.ObjectMeta{Name: "mailmaps"},
+		Spec: gentianov1alpha1.TenantSpec{
+			DisplayName: "Mail Maps Co",
+			Domain:      "mailmaps.example.com",
+			AdminEmail:  "admin@mailmaps.example.com",
+		},
+	}
+	if err := testClient.Create(context.Background(), tenant); err != nil {
+		t.Fatalf("create tenant: %v", err)
+	}
+
+	maps := &corev1.ConfigMap{}
+	mapsKey := types.NamespacedName{
+		Name: "postfix-kernel-virtual-mailbox-maps", Namespace: "gentian-dev",
+	}
+	waitFor(t, jobAppearTimeout, func() bool {
+		if err := testClient.Get(context.Background(), mapsKey, maps); err != nil {
+			return false
+		}
+		return strings.Contains(maps.Data["virtual_mailbox_domains"], "mailmaps.example.com")
+	})
+
+	if got := maps.Data["virtual_mailbox_domains"]; !strings.Contains(got, "mailmaps.example.com OK") {
+		t.Errorf("expected virtual_mailbox_domains to accept mailmaps.example.com, got %q", got)
+	}
+	if got := maps.Data["virtual_mailbox_maps"]; !strings.Contains(got, "@mailmaps.example.com mailmaps.example.com/") {
+		t.Errorf("expected virtual_mailbox_maps catch-all for mailmaps.example.com, got %q", got)
+	}
+
+	if err := testClient.Delete(context.Background(), tenant); err != nil {
+		t.Fatalf("delete tenant: %v", err)
+	}
+	waitFor(t, jobAppearTimeout, func() bool {
+		if err := testClient.Get(context.Background(), mapsKey, maps); err != nil {
+			return false
+		}
+		return !strings.Contains(maps.Data["virtual_mailbox_domains"], "mailmaps.example.com")
+	})
+	if got := maps.Data["virtual_mailbox_maps"]; strings.Contains(got, "mailmaps.example.com") {
+		t.Errorf("expected deleted tenant to drop out of virtual_mailbox_maps, got %q", got)
 	}
 }
 
