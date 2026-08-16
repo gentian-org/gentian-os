@@ -41,9 +41,18 @@ type TenantSpec struct {
 	Domain string `json:"domain,omitempty"`
 
 	// AdminEmail is the contact address for platform notifications.
-	// +kubebuilder:validation:Required
-	// +kubebuilder:validation:Pattern=`^[^@\s]+@[^@\s]+\.[^@\s]+$`
-	AdminEmail string `json:"adminEmail"`
+	//
+	// Derived when empty, as `admin@<effectiveDomain>` — so a tenant in multi
+	// mode gets admin@<tenant>.<KERNEL_DOMAIN>, and one in single mode
+	// admin@<KERNEL_DOMAIN>. Required, it had to be written by hand for every
+	// tenant, and a definition copied between clusters carried the other
+	// cluster's domain into an address nothing would ever deliver to.
+	//
+	// Set it only to override that: a contact address outside the tenant's own
+	// domain, which is a decision rather than a default.
+	// +optional
+	// +kubebuilder:validation:Pattern=`^([^@\s]+@[^@\s]+\.[^@\s]+)?$`
+	AdminEmail string `json:"adminEmail,omitempty"`
 
 	// Isolation describes the workload isolation boundaries for this tenant.
 	// +optional
@@ -321,6 +330,30 @@ type TenantList struct {
 	metav1.TypeMeta `json:",inline"`
 	metav1.ListMeta `json:"metadata,omitempty"`
 	Items           []Tenant `json:"items"`
+}
+
+// AdminEmailOrDefault returns the tenant's contact address: spec.adminEmail
+// when set, otherwise `admin@<effectiveDomain>`.
+//
+// One rule, here rather than at each call site: the address goes into the
+// provisioning Job and into the XTenant, whose XRD requires it, and two copies
+// of a derivation are two things to keep in step.
+//
+// The local part is `admin`, not the generated login. The login carries the
+// tenant name so it stays unique across realms (admin-corp); inside the
+// tenant's own domain that reads as admin-corp@corp.example, naming the tenant
+// twice. The mailbox belongs to the domain, so the domain says whose it is.
+func (t *Tenant) AdminEmailOrDefault(kernelDomain, tenancyMode string) string {
+	if t.Spec.AdminEmail != "" {
+		return t.Spec.AdminEmail
+	}
+	domain := t.EffectiveDomain(kernelDomain, tenancyMode)
+	if domain == "" {
+		// No domain configured at all: .invalid is reserved by RFC 2606 and can
+		// never resolve, which is the honest representation of "unknown".
+		domain = t.Name + ".invalid"
+	}
+	return "admin@" + domain
 }
 
 // EffectiveDomain returns the domain to use for ingress and mail routing

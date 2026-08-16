@@ -336,6 +336,12 @@ func (r *TenantReconciler) tenantEffectiveDomain(tenant *gentianov1alpha1.Tenant
 	return tenant.EffectiveDomain(r.KernelDomain, r.TenancyMode)
 }
 
+// tenantAdminEmail resolves the tenant's contact address against this cluster's
+// domain and tenancy mode.
+func (r *TenantReconciler) tenantAdminEmail(tenant *gentianov1alpha1.Tenant) string {
+	return tenant.AdminEmailOrDefault(r.KernelDomain, r.TenancyMode)
+}
+
 // validateTenancyConstraints enforces single-tenancy cluster rules.
 func (r *TenantReconciler) validateTenancyConstraints(ctx context.Context, tenant *gentianov1alpha1.Tenant) error {
 	if gentianov1alpha1.NormalizeTenancyMode(r.TenancyMode) != gentianov1alpha1.TenancyModeSingle {
@@ -1015,7 +1021,9 @@ func (r *TenantReconciler) buildXTenant(ctx context.Context, tenant *gentianov1a
 
 	spec := map[string]interface{}{
 		"displayName":  tenant.Spec.DisplayName,
-		"adminEmail":   tenant.Spec.AdminEmail,
+		// Derived when unset: the XTenant XRD requires this field, so an empty
+		// spec.adminEmail would be rejected at composition rather than defaulted.
+		"adminEmail":   r.tenantAdminEmail(tenant),
 		"kernelDomain": r.KernelDomain,
 	}
 	if tenant.Spec.Domain != "" {

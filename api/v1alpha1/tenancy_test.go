@@ -53,3 +53,36 @@ func TestEffectiveDomainTenancyModes(t *testing.T) {
 		t.Fatalf("vanity overrides mode: got %q", got)
 	}
 }
+
+func TestAdminEmailOrDefault(t *testing.T) {
+	t.Parallel()
+	tenant := &Tenant{}
+	tenant.Name = "corp"
+
+	// Derived from the tenant's own domain, so a definition copied between
+	// clusters cannot carry the other cluster's domain into the address.
+	if got := tenant.AdminEmailOrDefault("gtn.host", TenancyModeMulti); got != "admin@corp.gtn.host" {
+		t.Fatalf("multi: got %q", got)
+	}
+	if got := tenant.AdminEmailOrDefault("gtn.host", TenancyModeSingle); got != "admin@gtn.host" {
+		t.Fatalf("single: got %q", got)
+	}
+
+	tenant.Spec.Domain = "acme.com"
+	if got := tenant.AdminEmailOrDefault("gtn.host", TenancyModeMulti); got != "admin@acme.com" {
+		t.Fatalf("vanity domain: got %q", got)
+	}
+
+	// An explicit address is a decision and is never overridden.
+	tenant.Spec.AdminEmail = "ops@example.org"
+	if got := tenant.AdminEmailOrDefault("gtn.host", TenancyModeMulti); got != "ops@example.org" {
+		t.Fatalf("explicit: got %q", got)
+	}
+
+	// No domain anywhere: .invalid can never resolve, which beats inventing one.
+	bare := &Tenant{}
+	bare.Name = "corp"
+	if got := bare.AdminEmailOrDefault("", TenancyModeMulti); got != "admin@corp.invalid" {
+		t.Fatalf("no domain: got %q", got)
+	}
+}

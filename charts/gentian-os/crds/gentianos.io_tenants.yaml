@@ -65,8 +65,18 @@ spec:
             description: TenantSpec defines the desired state of a Tenant.
             properties:
               adminEmail:
-                description: AdminEmail is the contact address for platform notifications.
-                pattern: ^[^@\s]+@[^@\s]+\.[^@\s]+$
+                description: |-
+                  AdminEmail is the contact address for platform notifications.
+
+                  Derived when empty, as `admin@<effectiveDomain>` — so a tenant in multi
+                  mode gets admin@<tenant>.<KERNEL_DOMAIN>, and one in single mode
+                  admin@<KERNEL_DOMAIN>. Required, it had to be written by hand for every
+                  tenant, and a definition copied between clusters carried the other
+                  cluster's domain into an address nothing would ever deliver to.
+
+                  Set it only to override that: a contact address outside the tenant's own
+                  domain, which is a decision rather than a default.
+                pattern: ^([^@\s]+@[^@\s]+\.[^@\s]+)?$
                 type: string
               apps:
                 description: Apps lists the applications to install for this tenant.
@@ -336,7 +346,6 @@ spec:
                     x-kubernetes-int-or-string: true
                 type: object
             required:
-            - adminEmail
             - displayName
             type: object
           status:
