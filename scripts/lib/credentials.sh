@@ -80,7 +80,7 @@ _env_var_for() {
         # No mapping for the salt: it is generated after collection, not
         # prompted for. A mapping here would put it in the prompt loop.
         deployments-repository/username)   echo GENTIAN_DEPLOYMENTS_GIT_USERNAME ;;
-        deployments-repository/token)      echo GENTIAN_DEPLOYMENTS_GIT_TOKEN ;;
+        deployments-repository/password)   echo GENTIAN_DEPLOYMENTS_GIT_TOKEN ;;
         infra-chart-registry/username)     echo REGISTRY_USER ;;
         infra-chart-registry/password)     echo REGISTRY_PASSWORD ;;
         acme-dns-cloudflare/api-token)     echo CF_API_TOKEN ;;
