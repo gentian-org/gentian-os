@@ -8,8 +8,8 @@ ignore: |
   charts/gentian-os/crds/
   charts/gentian-os/templates/
   charts/infra/
-  export/**/chart/templates/
-  export/gentian-apps/profiles/
+  repo-seeds/**/chart/templates/
+  repo-seeds/gentian-apps/profiles/
   kernel/manifests/flux-crds/
   crossplane/compositions/
   crossplane/tests/unit/render/**/composition.yaml

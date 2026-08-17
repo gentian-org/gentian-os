@@ -2138,7 +2138,7 @@ scope and should be folded into it rather than fixed twice.
 | `crossplane/tests/unit/functions/` contains only `.gitkeep`, so `make test-unit-functions` always prints SKIP — yet CI spends a step on `pip install pytest`. The root `.pytest_cache/` and `.ruff_cache/` are residue. | `Makefile:166`, `.github/workflows/ci.yaml:181` | Either land the first function test or drop the target and the CI step. |
 | `crossplane/functions/` and `crossplane/tests/e2e/fixtures/` are `.gitkeep`-only. | — | Keep only if a named piece of work will fill them; otherwise remove. |
 | `scripts/tools/verify-authz-model.sh` and `scripts/normalize-go-headers.sh` are wired to neither `make` nor CI. | 0 references | Wire `verify-authz-model.sh` into the lint job (there is an `authz/model/v0/tests.fga.yaml` to run); `normalize-go-headers.sh` is a completed one-off — delete. |
-| `export/gentian-apps.tar.gz` and `export/gentian-apps-*.bundle` (255 KB tracked) are no longer listed in `export/README.md`'s export table. | `export/README.md` | Delete; the catalogue has its own repo. |
+| `repo-seeds/gentian-apps.tar.gz` and `repo-seeds/gentian-apps-*.bundle` (255 KB tracked) are no longer listed in `repo-seeds/README.md`'s table. | `repo-seeds/README.md` | Delete; the catalogue has its own repo. |
 
 ### 14.3 Orphaned configuration — relevant to Phase 10
 

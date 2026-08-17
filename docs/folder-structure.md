@@ -12,7 +12,7 @@ them:
 | Operator source (Go) | `api/`, `cmd/`, `internal/`, `hack/` | `go build` → operator image |
 | Declarative kernel state (YAML) | `kernel/`, `crossplane/`, `charts/` | Argo CD / Crossplane / Helm |
 | Bootstrap tooling (Bash/Python) | `install.sh`, `scripts/` | a human running an install |
-| Contracts & docs | `authz/`, `config/crd/`, `docs/`, `export/` | tests, envtest, readers |
+| Contracts & docs | `authz/`, `config/crd/`, `docs/`, `repo-seeds/` | tests, envtest, readers |
 
 ---
 
@@ -149,7 +149,7 @@ Configuration surfaces at the repo root:
 | `config/crd/` | Two different things: controller-gen output for `gentianos.io_*`, **and** hand-maintained fixtures that only exist so envtest can start — third-party CRDs (Argo CD, cert-manager, Gateway API, CNPG, provider-helm) and stubs for the Crossplane-owned `apps`/`xtenants` kinds. |
 | `config/rbac/` | Gitignored controller-gen intermediate; the committed artifact is the chart's `clusterrole.yaml`. |
 | `docs/` | `architecture.md` and its `design/` deep-dives; `deployment.md`, `install-reference.md`, `commands.md`, `app-customization.md`, `faq.md`, `roadmap.md`; `research/` for exploratory notes. |
-| `export/` | Tarballs and git bundles used to seed sibling repos when an agent lacks push access. Not part of the build. |
+| `repo-seeds/` | Tarballs and git bundles used to seed sibling repos when an agent lacks push access. Not part of the build. Named so that "export" stays reserved for tenant data export. |
 
 Root docs: `README.md` (scope and what this repo is *not*), `AGENTS.md` (rules
 for coding agents), `GETTING-STARTED.md` (the steps to a running cluster; flags,
