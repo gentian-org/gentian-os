@@ -1011,6 +1011,29 @@ install_llm_serving() {
 # %CLUSTER%/%STAGE%, so there's nothing cluster-specific worth persisting
 # as a file — see docs/deployment.md §3.1.
 # =============================================================================
+# The cluster's settings, written into the claim explicitly.
+#
+# Every field the installer later reads is emitted, even where it equals the
+# XRD's default. A complete claim means the default path is a fallback for old
+# clusters rather than the norm — and it means a reviewer can see what a cluster
+# is from the claim alone, instead of inferring it from what is absent.
+#
+# Empty values are omitted rather than written blank: an empty string is a value
+# in YAML and would override the XRD default with nothing.
+_claim_cluster_fields() {
+    local pair var field
+    for pair in "TENANCY_MODE tenancyMode" "NETWORK_MODE networkMode" \
+                "ROUTING_MODE routingMode" "SECRET_MODE secretMode" \
+                "NODE_IP nodeIp" "STORAGE_CLASS storageClass"; do
+        # shellcheck disable=SC2086
+        set -- ${pair}
+        var="$1"; field="$2"
+        [[ -n "${!var:-}" ]] && printf '  %s: %s\n' "${field}" "${!var}"
+    done
+    [[ -n "${MAIL_SERVICE_MODE:-}" ]] && printf '  mail:\n    serviceMode: %s\n' "${MAIL_SERVICE_MODE}"
+    return 0
+}
+
 scaffold_cluster_deployment() {
     # The files are only useful inside the checkout they get committed from.
     # Writing them into a bare directory produces a tree nothing tracks, which
@@ -1055,7 +1078,7 @@ metadata:
   namespace: crossplane-system
 spec:
   kernelDomain: ${domain}
-$(if [[ -n "${NODE_IP:-}" ]]; then printf '  nodeIp: %s\n' "${NODE_IP}"; fi)EOF
+$(_claim_cluster_fields)EOF
         info "Scaffolded ${kernel_dir}/claims/cluster.yaml"
         generated=1
     fi
