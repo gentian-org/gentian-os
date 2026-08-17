@@ -147,8 +147,8 @@ func TestMail_Selfhosted_ProvisionsTenantInSharedInfra(t *testing.T) {
 		return testClient.Get(context.Background(),
 			types.NamespacedName{Name: "smtp-credentials-mailself", Namespace: "tenant-mailself"}, smtpSecret) == nil
 	})
-	if string(smtpSecret.Data["host"]) != "postfix-dev.gentian-dev.svc.cluster.local" {
-		t.Errorf("expected SMTP host=postfix-dev.gentian-dev.svc.cluster.local, got %q",
+	if string(smtpSecret.Data["host"]) != "postfix-dev.platform-kernel.svc.cluster.local" {
+		t.Errorf("expected SMTP host=postfix-dev.platform-kernel.svc.cluster.local, got %q",
 			string(smtpSecret.Data["host"]))
 	}
 	if string(smtpSecret.Data["username"]) != "smtp-mailself" {
@@ -438,7 +438,7 @@ func TestMail_PostfixInboundMapsFollowTenant(t *testing.T) {
 
 	maps := &corev1.ConfigMap{}
 	mapsKey := types.NamespacedName{
-		Name: "postfix-kernel-virtual-mailbox-maps", Namespace: "gentian-dev",
+		Name: "postfix-kernel-virtual-mailbox-maps", Namespace: "platform-kernel",
 	}
 	waitFor(t, jobAppearTimeout, func() bool {
 		if err := testClient.Get(context.Background(), mapsKey, maps); err != nil {

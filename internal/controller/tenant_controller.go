@@ -66,16 +66,21 @@ const (
 )
 
 // servicesNamespace is read from SERVICES_NAMESPACE at process startup.
-// When unset, derives gentian-{GENTIAN_STAGE|ENV} so the operator never hardcodes
-// a cluster-specific namespace name.
+//
+// The fallback is platform-kernel, which is what gentian_services_namespace in
+// scripts/lib/common.sh answers. Kernel services — the Gateway, Keycloak's
+// HTTPRoute, Postfix and Dovecot — are not stage-scoped, so deriving
+// gentian-{stage} pointed this operator at a namespace nothing creates and
+// nothing tears down. The chart sets SERVICES_NAMESPACE, so the fallback only
+// decides where an operator started without it writes, which is exactly the
+// case where being wrong is hardest to see.
 var servicesNamespace = defaultServicesNamespace()
 
 func defaultServicesNamespace() string {
 	if v := os.Getenv("SERVICES_NAMESPACE"); v != "" {
 		return v
 	}
-	stage := envOrDefault("GENTIAN_STAGE", envOrDefault("ENV", "dev"))
-	return "gentian-" + stage
+	return meta.KernelNamespace
 }
 
 // errDeleteJobPending is returned by delete helpers when a cleanup Job has been

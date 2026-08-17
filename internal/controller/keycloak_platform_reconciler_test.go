@@ -31,7 +31,11 @@ import (
 )
 
 func TestReconcileKeycloakIDPGatewayRoutePatchesHTTPRoute(t *testing.T) {
-	t.Setenv("SERVICES_NAMESPACE", "gentian-dev")
+	// No t.Setenv for SERVICES_NAMESPACE: servicesNamespace is resolved once at
+	// package load, so setting it here never reached the code under test. The
+	// test passed only while the default happened to equal what it set, and
+	// broke the moment the default moved — which is the failure a Setenv that
+	// does nothing is designed to hide.
 
 	tenant := &gentianov1alpha1.Tenant{}
 	tenant.Name = "demo"
@@ -40,7 +44,7 @@ func TestReconcileKeycloakIDPGatewayRoutePatchesHTTPRoute(t *testing.T) {
 	route := &gatewayv1.HTTPRoute{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      kernelKeycloakHTTPRouteName(),
-			Namespace: "gentian-dev",
+			Namespace: "platform-kernel",
 		},
 		Spec: gatewayv1.HTTPRouteSpec{
 			Rules: []gatewayv1.HTTPRouteRule{{
@@ -65,7 +69,7 @@ func TestReconcileKeycloakIDPGatewayRoutePatchesHTTPRoute(t *testing.T) {
 	}
 
 	got := &gatewayv1.HTTPRoute{}
-	if err := c.Get(context.Background(), types.NamespacedName{Name: kernelKeycloakHTTPRouteName(), Namespace: "gentian-dev"}, got); err != nil {
+	if err := c.Get(context.Background(), types.NamespacedName{Name: kernelKeycloakHTTPRouteName(), Namespace: "platform-kernel"}, got); err != nil {
 		t.Fatalf("get HTTPRoute: %v", err)
 	}
 	if len(got.Spec.Rules) != 1 || len(got.Spec.Rules[0].Filters) == 0 {
