@@ -549,6 +549,46 @@ func TestMail_MapsDedupeSharedDomain(t *testing.T) {
 	}
 }
 
+// TestTenant_PublishesResolvedAdminEmail verifies the resolved address reaches
+// status, which is the field consumers read.
+//
+// spec.adminEmail is empty whenever the address is derived — the normal case
+// since it became optional — so a consumer reading only the spec sees nothing
+// and reconstructs its own answer. `gtnctl tenants deploy` did exactly that and
+// printed admin-<tenant>@gentian.org: a domain belonging to no cluster, for an
+// account in no realm, on the one line an operator copies to sign in with.
+func TestTenant_PublishesResolvedAdminEmail(t *testing.T) {
+	t.Parallel()
+	tenant := &gentianov1alpha1.Tenant{
+		ObjectMeta: metav1.ObjectMeta{Name: "adminemail"},
+		Spec: gentianov1alpha1.TenantSpec{
+			DisplayName: "Admin Email Co",
+			Domain:      "adminemail.example.com",
+			// No AdminEmail: the derivation is what is under test.
+		},
+	}
+	if err := testClient.Create(context.Background(), tenant); err != nil {
+		t.Fatalf("create tenant: %v", err)
+	}
+	t.Cleanup(func() { _ = testClient.Delete(context.Background(), tenant) })
+
+	updated := &gentianov1alpha1.Tenant{}
+	waitFor(t, jobAppearTimeout, func() bool {
+		if err := testClient.Get(context.Background(),
+			types.NamespacedName{Name: "adminemail"}, updated); err != nil {
+			return false
+		}
+		return updated.Status.AdminEmail != ""
+	})
+
+	if got, want := updated.Status.AdminEmail, "admin@adminemail.example.com"; got != want {
+		t.Errorf("status.adminEmail = %q, want %q", got, want)
+	}
+	if updated.Spec.AdminEmail != "" {
+		t.Errorf("spec.adminEmail should stay empty when derived, got %q", updated.Spec.AdminEmail)
+	}
+}
+
 // --- helpers ----------------------------------------------------------------
 
 // findCondition returns the first condition with the given type, or nil.
