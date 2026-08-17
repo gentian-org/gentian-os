@@ -2007,6 +2007,7 @@ They are gathered here because they are the whole point of the run.
 | The bootstrap token is genuinely invalid afterwards | Phase 7, criterion 3 | **Still unverified.** Phase E not reached |
 | An arm64 install; an internal-domain install with `self-signed`; a mirrored install making no upstream request | Phase 12, criteria 4 and 6 | **Still unverified.** Three separate installs |
 | `sed_inplace` under BSD | Phase 11, criterion 2 | **Still unverified.** The macOS CI job runs it but nobody has watched it |
+| `--export-recovery-kit` produces a kit | Invariant 2, and the precondition for `--purge` | **Export verified, restore unverified.** A kit is written before a purge, 960 bytes, mode 0600. It took the openssl fallback because `age` was absent — encrypted but not authenticated, as that path warns. Nothing has yet rebuilt a cluster from one, which is the half that matters |
 | Transit auto-unseal brings the primary up with no cloud KMS | Invariant 2 | **Verified.** Both instances run; the primary unseals from transit |
 | A partial install resumes without re-prompting | Invariant 3 | **Verified after correction.** Recovery covered `MASTER_PASSWORD` and the SMTP pair only; the deployments token, salt, registry and DNS credentials are now recovered too |
 

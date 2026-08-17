@@ -308,7 +308,7 @@ main() {
             load_operator_config
             load_deployments_cluster_settings
             try_load_creds_from_openbao
-            export_recovery_kit "${GENTIAN_KIT_PATH:-gentian-recovery-kit.age}"
+            export_recovery_kit "${GENTIAN_KIT_PATH:-}"
             ;;
         status)
             drive_status

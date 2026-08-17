@@ -586,7 +586,7 @@ purge_confirm() {
     echo ""
     warn "Without a recovery kit the salt is gone with it, and the same master"
     warn "password will not reproduce this cluster's credentials. Export one first:"
-    warn "  ./install.sh --export-recovery-kit kit.age"
+    warn "  ./install.sh --export-recovery-kit"
     echo ""
 
     if [[ "${GENTIAN_NONINTERACTIVE:-0}" == "1" ]]; then
