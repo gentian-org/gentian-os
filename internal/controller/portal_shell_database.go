@@ -84,6 +84,31 @@ func portalShellSecretName(tenantName string) string {
 	return fmt.Sprintf("portal-shell-%s", tenantName)
 }
 
+// deletePortalShellSecret removes the cached portal shell credential, under both
+// deletion policies.
+//
+// The Secret is a projection of OpenBao, not a record. SeedDatabase writes the
+// generated password only when the path is empty and otherwise returns what
+// OpenBao already holds, so a redeployed tenant reads the same value back and
+// rewrites an identical Secret. Nothing is lost by removing it.
+//
+// Retaining it is not neutral. It carries a DATABASE_URL with a live password
+// for a tenant that no longer exists, in a namespace nothing associates with
+// that tenant, and one accumulates per tenant lifecycle — a working login that
+// nothing will rotate and nothing will notice. What Retain protects is state
+// that cannot be reconstructed without a human: the DKIM private key, whose
+// public half is published in DNS, and the realm, which holds users. A cache of
+// something durable is neither.
+func (r *TenantReconciler) deletePortalShellSecret(ctx context.Context, tenant *gentianov1alpha1.Tenant) error {
+	secret := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{
+		Name: portalShellSecretName(tenant.Name), Namespace: kernelNamespace,
+	}}
+	if err := r.Delete(ctx, secret); client.IgnoreNotFound(err) != nil {
+		return fmt.Errorf("delete portal shell secret for tenant %s: %w", tenant.Name, err)
+	}
+	return nil
+}
+
 func (r *TenantReconciler) ensurePortalShellSecret(ctx context.Context, tenant *gentianov1alpha1.Tenant, conn secrets.DatabaseCreds) error {
 	databaseURL, err := portalShellDatabaseURL(conn)
 	if err != nil {

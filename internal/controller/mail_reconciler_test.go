@@ -468,6 +468,45 @@ func TestMail_PostfixInboundMapsFollowTenant(t *testing.T) {
 	}
 }
 
+// TestTenantDelete_RemovesPortalShellSecret verifies the cached portal shell
+// credential goes on undeploy, under Retain — the policy that keeps the DKIM key
+// and the Keycloak realm.
+//
+// The distinction Retain draws is whether something can be reconstructed without
+// a human, not whether it is a credential. This Secret is a projection of
+// OpenBao, so a redeploy rewrites it identically; left behind it is a live
+// DATABASE_URL for a tenant that no longer exists.
+func TestTenantDelete_RemovesPortalShellSecret(t *testing.T) {
+	t.Parallel()
+	tenant := &gentianov1alpha1.Tenant{
+		ObjectMeta: metav1.ObjectMeta{Name: "shellsecret"},
+		Spec: gentianov1alpha1.TenantSpec{
+			DisplayName:    "Shell Secret Co",
+			Domain:         "shellsecret.example.com",
+			DeletionPolicy: gentianov1alpha1.DeletionPolicyRetain,
+		},
+	}
+	if err := testClient.Create(context.Background(), tenant); err != nil {
+		t.Fatalf("create tenant: %v", err)
+	}
+
+	key := types.NamespacedName{Name: "portal-shell-shellsecret", Namespace: "platform-kernel"}
+	secret := &corev1.Secret{}
+	waitFor(t, jobAppearTimeout, func() bool {
+		return testClient.Get(context.Background(), key, secret) == nil
+	})
+
+	if err := testClient.Delete(context.Background(), tenant); err != nil {
+		t.Fatalf("delete tenant: %v", err)
+	}
+	waitFor(t, jobAppearTimeout, func() bool {
+		return testClient.Get(context.Background(), key, secret) != nil
+	})
+	if err := testClient.Get(context.Background(), key, secret); err == nil {
+		t.Errorf("portal-shell-shellsecret survived undeploy under Retain")
+	}
+}
+
 // --- helpers ----------------------------------------------------------------
 
 // findCondition returns the first condition with the given type, or nil.

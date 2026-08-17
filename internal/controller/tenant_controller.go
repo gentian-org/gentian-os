@@ -480,6 +480,11 @@ func (r *TenantReconciler) reconcileDelete(ctx context.Context, tenant *gentiano
 		return ctrl.Result{}, err
 	}
 
+	// The portal shell credential goes with the database it addresses.
+	if err := r.deletePortalShellSecret(ctx, tenant); err != nil {
+		return ctrl.Result{}, err
+	}
+
 	// Clean up MariaDB resources before removing the namespace.
 	if requeue, res, err := awaitJob(r.deleteMariaDB(ctx, tenant)); requeue {
 		return res, err
