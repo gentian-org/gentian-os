@@ -20,10 +20,17 @@ spec:
       recurse: false   # only picks up eso-cluster-secret-store.yaml; secrets/ subdir handled by globals-secrets-dev
   destination:
     server: https://kubernetes.default.svc
-    namespace: gentian-dev   # ClusterSecretStore is cluster-scoped; namespace is nominal
+    # Nominal: this Application syncs one cluster-scoped ClusterSecretStore, so
+    # nothing is ever created in the destination namespace. argocd is named
+    # because it already exists — a namespace this Application does not deploy
+    # into must not be one it brings into being.
+    namespace: argocd
   syncPolicy:
     automated:
       prune: true
       selfHeal: true
-    syncOptions:
-    - CreateNamespace=true
+    # No CreateNamespace: paired with a nominal destination it manufactured a
+    # permanently empty gentian-dev on every cluster, whatever its stage, and
+    # outside the Application's resource tree — so deleting the Application
+    # never pruned it and no teardown step knew it existed.
+    syncOptions: []
