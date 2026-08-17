@@ -1998,10 +1998,10 @@ They are gathered here because they are the whole point of the run.
 |---|---|---|
 | A clean-room install reaches a running root ApplicationSet | Phase 0a, criterion 1 | **Verified.** The root ApplicationSet generates its children and they sync. It required the cluster id to actually reach the template — `root-applicationset.yaml.tmpl` was rendering an empty `deploymentsCluster`, so every child pointed at `clusters//kernel/claims` and no claim ever synced |
 | `--dry-run` makes zero cluster mutations | Phase 0a, criterion 2 | **Verified** across repeated runs, and it now collects no credentials either: no step's `check()` reads one, so a preview needs no secret |
-| Install → uninstall returns the cluster to its prior state, and uninstall is idempotent | Phase 0b, criteria 1–2 | **Still unverified.** `destroy()` has not run. Expect this to be the roughest area: it is gated by the same `check()` functions that were wrong sixteen times, and a check testing too little means a step whose artefacts are partly gone reports absent and is skipped, leaving the rest behind |
-| A purge leaves nothing behind | `--purge` | **Still unverified.** The flag exists; only its refusals have been exercised |
+| Install → uninstall returns the cluster to its prior state, and uninstall is idempotent | Phase 0b, criteria 1–2 | **Verified after seven corrections.** The prediction in this row was exact: `check()` gating `destroy()` is what left six namespaces and 422 provider CRDs behind on a run that printed *Teardown complete*. A teardown now clears every cluster-scoped object, and the residue is `cnpg-system` and `stakater-system`, which Argo CD prunes only while it is alive. See §15.2d |
+| A purge leaves nothing behind | `--purge` | **Verified.** Ten `Retain`/`Released` PVs across `openbao`, `platform-kernel` and `gentian-infra-<stage>` go to one, and `~/.gentian` is emptied. It clears nothing Argo CD owned, for the reason in §15.2d |
 | ESO's actual verdict on the satisfaction probes | Phase 6, criterion 1 | **Verified.** `make check-credentials` reads four required credentials Ready and two `optional unset` — `infra-chart-registry` because the cluster pulls charts publicly, `argocd-github-webhook` because it is `phase: runtime`. Satisfaction is observable as a Kubernetes condition with nothing polling OpenBao, which is what §4 claims |
-| A tenant can be provisioned | E-01/E-02, and the product's purpose | **Partial.** The admission webhook refuses a tenant naming an AppProfile the cluster does not have, names it, and the rollback leaves `definitions/` intact and the cluster unchanged — gating working as §4 describes. A tenant has not yet been admitted, because the catalogue sync was not installed |
+| A tenant can be provisioned | E-01/E-02, and the product's purpose | **Verified for provisioning, not for use.** A tenant is admitted, reaches Ready, and is removed again. The admission webhook refuses one naming an AppProfile the cluster does not have, and that rollback leaves `definitions/` intact. What a provisioned tenant cannot yet do is receive mail at the address the platform derives for it — Postfix accepts it, Dovecot has nowhere to put it (§15.2c) |
 | The unsatisfied → satisfied transition unblocks composition without intervention | Phase 6, criterion 4 | **Verified.** Every provider-vault resource sat `SYNCED=False` on a missing `openbao-crossplane-token`; when the credential arrived they reconciled and the XCluster reached Ready with nothing re-run |
 | OIDC login yields a policy set from Keycloak groups; a named write appears in the audit device | Phase 7, criteria 1–2 | **Still unverified.** Keycloak runs; the portal does not yet |
 | The bootstrap token is genuinely invalid afterwards | Phase 7, criterion 3 | **Still unverified.** Phase E not reached |
@@ -2030,9 +2030,17 @@ Composition that builds the ArgoCD repository Secret from the same two names —
 sitting beside it under the other name. Two clusters, one word each, in opposite directions: once
 the consumer was wrong, once the catalogue was.
 
-`make lint-credential-fields` would close this class exactly rather than heuristically — walk
-each `vaultPath`, compare the fields the catalogue declares against the ones the seeder writes
-and the Compositions read. It is the one lint here that needs no judgement.
+`make lint-credential-fields` closes this class exactly rather than heuristically. It walks every
+`vaultPath` and compares the fields the catalogue declares against the ones readers name and the
+seeder writes, in two tiers: catalogue against consumers is YAML on both sides, so a disagreement
+fails the build, while consumers against writers means reading heredocs and jq filters out of the
+seeder, where a missed writer would be a false accusation, so it warns.
+
+Its one subtlety is that the chart renders both halves through Helm — `key` from
+`.Values…openbaoPath`, `property` from `.Values…openbaoProperty` with a literal `default` — so a
+scan for literals sees neither, and the openfga case would pass unnoticed. The dotted reference is
+resolved against the chart's `values.yaml` and falls back to the `default` literal, which is where
+the wrong name actually lived.
 
 Two habits follow, and they are cheap:
 
@@ -2067,9 +2075,17 @@ Three more re-run every pass by design — B-04 exports a per-run token, B-09 le
 `kv_put_once`, E-02's reconcile is its own check — and had no way to say so, returning `1` and
 rendering as a fault on a healthy cluster. `CHECK_ALWAYS` is that verdict.
 
-`make lint-step-contracts` now covers the mechanical part: an unconditional `return 1` and a
-`check()` invoking a tool the driver does not configure both fail the build, and a `provides:`
-noun the check never mentions warns. It found A-02 verifying its XRDs but not its Compositions.
+`make lint-step-contracts` covers the mechanical part: an unconditional `return 1` and a `check()`
+invoking a tool the driver does not configure both fail the build, and a `provides:` noun the check
+never mentions warns. It found A-02 verifying its XRDs but not its Compositions.
+
+It also fails the build on a call that cannot supply what the callee reads. `local path="$1"` in a
+function called with no argument is fatal under `set -u` — the `|| true` such calls invariably
+carry does not contain it, because an unbound variable kills the shell rather than returning a
+status. Only the zero-argument case is reported: counting arguments means parsing shell quoting,
+and a first attempt at it called `_cat_yq ".requirements[] | …"` a zero-argument call five times
+over. A lint that fails the build answers the narrow question exactly rather than the broad one
+approximately.
 
 **Its limits are worth stating, because they bound how much of this audit is automatable.**
 Reintroducing A-09's defect passes the lint: `provides: ArgoCD server and controllers` names no
@@ -2186,6 +2202,64 @@ passdb/userdb behind `mail-dovecot-domains`, and how IMAP authenticates against 
 
 ---
 
+### 15.2d What teardown gets wrong, and why none of it showed up before
+
+`destroy()` is the only verb with no user. Every install exercises `check()` and `apply()`
+continuously; `destroy()` runs when somebody uninstalls, which on a platform under development is
+never — so it accumulated seven defects that a single teardown found in an afternoon.
+
+They are worth reading as a set, because they are not seven mistakes. They are one assumption,
+made seven times: **`destroy()` was written as though the cluster still looks the way `apply()`
+left it.** A live operator, a live Argo CD controller, both CRDs registered, every namespace
+present. The reverse pass falsifies that assumption by construction — each step removes part of
+what the steps before it depend on.
+
+| Shape | Instance | What it looked like |
+|---|---|---|
+| A call that cannot supply what the callee reads | D-07, A-09 | `set -u` kills the shell on the unbound read; `\|\| true` does not catch it. The uninstall stopped dead with every earlier phase installed |
+| An ambiguous resource name resolved differently once a CRD is gone | E-01 | `app` and `apps` are Argo CD `Application` shortnames. With `apps.gentianos.io` removed by an earlier run, `kubectl delete app` started deleting A-09's Applications |
+| Enumeration that discards the namespace | Envoy Gateway scaffold, both CRD force-cleanup paths | `kubectl get <kind> -A -o name` prints `kind/name`; piped to `delete` it addresses `default`, and `--ignore-not-found` swallows the miss |
+| A finalizer only the departing controller can clear | A-08, A-10 | ESO removed while nine ExternalSecrets were live stranded all nine; the ImageUpdater CR held `argocd` open |
+| A blocking delete before the loop that would unblock it | A-01, A-05, A-08, A-10, A-09 | `_delete_namespace` exists for this and says so; five callers used `kubectl delete namespace` directly and got the behaviour it was written to avoid |
+| `check()` gating `destroy()` | A-03, A-02, D-06 | A-03's check ANDs eight namespaces, two already deleted by A-08 and A-09, so it always reported missing and its `destroy()` never ran |
+| An artefact whose real owner is Argo CD, not Helm | D-01 | No local release, so `helm uninstall` did nothing and the operator ran through a completed teardown — reporting `satisfied` on a torn-down cluster |
+
+Three of those hang and four are silent, and the silent ones are the expensive half. A hang is
+self-reporting: somebody is watching a terminal. A `destroy()` built from `--ignore-not-found`
+deletes that address the wrong namespace reports exactly what a working one reports. **Every
+`--ignore-not-found` on a path that enumerates objects is a place where doing nothing looks like
+being done**, and teardown is made almost entirely of those.
+
+**`check()` does not gate `destroy()`, in either direction.** A check answers *is this step's work
+complete*; the reverse pass asks *is anything left*. Those differ for every partially-torn-down
+step, which is the state the reverse pass creates deliberately. Running `destroy()` regardless
+costs nothing — they are idempotent by convention, which is what made skipping look like a safe
+optimisation.
+
+**A controller's teardown clears the finalizers only it can clear, before it goes.** ESO's
+`externalsecret-cleanup` and the ImageUpdater's finalizer have exactly one remover each. Removing
+that controller with objects still holding its finalizer strands them permanently, and because
+controllers are torn down early in the reverse order, the failure surfaces several steps later in
+whichever step owns the namespace — by which point nothing in the cluster can fix it.
+
+**Stripping an Argo CD finalizer is how resources get orphaned, not cleaned.**
+`resources-finalizer.argocd.argoproj.io` is what triggers the cascading prune; removing it to
+unblock a namespace skips the prune for everything that Application managed. This is the one
+finding still open. B-03 deletes its Applications with finalizers intact and Argo prunes properly —
+*provided Argo is alive when B-03 runs*, which in reverse order it is. Whether that wait can hang
+is untested, and it is the last untested assumption in the reverse pass.
+
+**A namespace can be created without being observable.** `gentian-globals-cluster` syncs one
+cluster-scoped `ClusterSecretStore`, so its destination namespace is nominal — and it paired that
+nominal value with `CreateNamespace=true`, manufacturing an empty `gentian-dev` on every cluster
+whatever its stage. Argo creates such a namespace *outside* the Application's resource tree, so
+deleting the Application never prunes it; `orphanedResources.warn: false` means Argo never reports
+it; and `gentian_kernel_namespaces` computes `gentian-<stage>`, so no teardown step knows the name.
+Created, unobserved and unremovable, by three independent mechanisms at once. A namespace an
+Application does not deploy into must not be one it brings into being.
+
+---
+
 ### 15.3 Migrations that are safer afterwards
 
 All of these swap a working imperative path for a composed one. The failure mode is "nothing
@@ -2231,5 +2305,16 @@ non-zero until Phase 13 migrates the call sites. The number must only go down.
 
 **`docs/commands.md` and `docs/design/mail.md` have not been checked** against the new paradigm.
 `GETTING-STARTED.md` points at both for post-install operations.
+
+**Dovecot is a placeholder.** `kernel/services/dovecot/manifests` is a stock image with no mail
+configuration, no userdb and no persistent storage, so a tenant admin has no mailbox to deliver
+into. Postfix now accepts mail for a tenant domain and hands it over LMTP (§15.2c), which makes
+this the only remaining gap between a provisioned tenant and a reachable one. Closing it needs
+decisions this plan does not record: storage, the passdb/userdb behind `mail-dovecot-domains`, and
+how IMAP authenticates against Keycloak.
+
+**Nothing owns the teardown of an Argo CD-managed add-on.** `cnpg-system` and `stakater-system`
+survive an uninstall whenever Argo CD stops before B-03 prunes them, and no step names either.
+Their CRDs and webhook configurations survive with them.
 
 ---
