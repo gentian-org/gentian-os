@@ -4,7 +4,7 @@
 # =============================================================================
 # gentian-cluster-config is a contract with no enforcement on either side.
 #
-# The producer is a heredoc in scripts/lib/common.sh. The consumers are
+# The producer is the Cluster Composition. The consumers are
 # Compositions, which read it through function-extra-resources and pull values
 # out with sprig's `dig`:
 #
@@ -45,17 +45,17 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-PRODUCER = ROOT / "scripts" / "lib" / "common.sh"
+PRODUCER = ROOT / "crossplane" / "compositions" / "cluster-default.yaml"
 COMPOSITIONS = sorted((ROOT / "crossplane" / "compositions").glob("*.yaml"))
 FIXTURES = sorted((ROOT / "crossplane" / "tests" / "unit" / "render").glob("*/required-resources/cluster-config.yaml"))
 
 CONFIGMAP_NAME = "gentian-cluster-config"
 
-# The producer function and the ConfigMap key lines inside its heredoc. Keys are
-# dotted and unquoted on the left of a colon, two spaces in, e.g.
-#   network.routingMode: "${_routing_mode}"
-PRODUCER_FUNC = "upsert_gentian_cluster_config()"
-KEY_LINE = re.compile(r'^  ([A-Za-z][A-Za-z0-9.]*): ')
+# The ConfigMap the Composition emits, and the key lines in its data block.
+# Keys are dotted and unquoted on the left of a colon, e.g.
+#   node.ip: {{ default "" (dig "nodeIp" "" $spec) | quote }}
+PRODUCER_ANCHOR = "name: gentian-cluster-config"
+KEY_LINE = re.compile(r'^\s{20,}([A-Za-z][A-Za-z0-9.]*): ')
 
 # A Composition read: dig "<key>" <default> $ccData — the variable holding the
 # ConfigMap's .data map. Matching on that variable is what separates a
@@ -65,31 +65,31 @@ CC_READ = re.compile(r'dig\s+"([A-Za-z][A-Za-z0-9.]*)"\s+\S+\s+\$(?:ccData|clust
 
 
 def producer_keys() -> set[str]:
-    """Keys the installer writes, read out of the heredoc in common.sh."""
+    """Keys the Cluster Composition writes, read out of the ConfigMap it emits."""
     text = PRODUCER.read_text().splitlines()
     try:
-        start = next(i for i, line in enumerate(text) if line.startswith(PRODUCER_FUNC))
+        start = next(i for i, line in enumerate(text)
+                     if line.strip() == PRODUCER_ANCHOR)
     except StopIteration:
         sys.exit(
-            f"FATAL: {PRODUCER_FUNC} not found in {PRODUCER.relative_to(ROOT)}.\n"
-            "       If the producer moved — for example into the Cluster Composition —\n"
-            "       point this lint at the new one rather than deleting it: the\n"
-            "       agreement it checks matters more after that move, not less."
+            f"FATAL: the {CONFIGMAP_NAME} ConfigMap was not found in "
+            f"{PRODUCER.relative_to(ROOT)}.\n"
+            "       If the producer moved, point this lint at the new one rather\n"
+            "       than deleting it: the agreement it checks matters more after\n"
+            "       that move, not less."
         )
-    keys, in_heredoc = set(), False
+    keys, in_data = set(), False
     for line in text[start:]:
-        if line.startswith("}"):
-            break
-        if "<<EOF" in line:
-            in_heredoc = True
-            continue
-        if in_heredoc:
-            if line.startswith("EOF"):
+        stripped = line.strip()
+        if in_data:
+            # The data block ends at the next key of the enclosing mapping.
+            if stripped.startswith(("providerConfigRef:", "---")):
                 break
             m = KEY_LINE.match(line)
-            # Skip ConfigMap metadata, which uses the same shape as data keys.
-            if m and m.group(1) not in {"name", "namespace", "labels", "annotations"}:
+            if m:
                 keys.add(m.group(1))
+        elif stripped == "data:":
+            in_data = True
     return keys
 
 

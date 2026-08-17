@@ -596,8 +596,6 @@ apply_cluster_xr() {
     local mr_count
     mr_count=$(kubectl get managed -l "crossplane.io/composite=${xr_name}" --no-headers 2>/dev/null | wc -l | tr -d ' ')
     info "  ${mr_count} managed resource(s) reconciled."
-
-    upsert_gentian_cluster_config
 }
 
 # =============================================================================
@@ -1057,7 +1055,7 @@ metadata:
   namespace: crossplane-system
 spec:
   kernelDomain: ${domain}
-EOF
+$(if [[ -n "${NODE_IP:-}" ]]; then printf '  nodeIp: %s\n' "${NODE_IP}"; fi)EOF
         info "Scaffolded ${kernel_dir}/claims/cluster.yaml"
         generated=1
     fi

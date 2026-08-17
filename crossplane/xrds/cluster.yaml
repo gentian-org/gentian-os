@@ -143,8 +143,14 @@ spec:
                 # ── Sizing and placement ─────────────────────────────────
                 # The rest of cluster-settings.env's declared half. Every field
                 # here feeds the gentian-cluster-config ConfigMap that
-                # Compositions read; today a shell heredoc renders it, which is
-                # what §2 prohibits and Phase 10c removes.
+                # Compositions read, which this composition emits.
+                nodeIp:
+                  type: string
+                  description: >
+                    Node address that app profiles may reference as ${NODE_IP}
+                    in their values. The installer discovers it and writes it
+                    here, so it is declared rather than detected at runtime — a
+                    Composition cannot read a Node.
                 storageClass:
                   type: string
                   description: >

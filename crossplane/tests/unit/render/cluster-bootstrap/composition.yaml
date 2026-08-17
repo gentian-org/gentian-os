@@ -359,6 +359,47 @@ spec:
               providerConfigRef:
                 name: kubernetes
 
+            {{- /* ── gentian-cluster-config ────────────────────────────────────
+                 Cluster facts the app and tenant Compositions read through
+                 function-extra-resources. A shell heredoc used to render this,
+                 which put cluster configuration on the installing machine and
+                 outside the reconcile loop — the claim is the only writer now.
+
+                 Seven keys, because seven is what is read. The ConfigMap
+                 previously carried twenty-four; the other seventeen described
+                 storage, namespaces, cnpg and the kube-apiserver endpoint and
+                 had no reader at all. lint-cluster-config-keys.py holds the
+                 contract from both ends.
+              */}}
+            ---
+            apiVersion: kubernetes.crossplane.io/v1alpha2
+            kind: Object
+            metadata:
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: gentian-cluster-config
+              name: {{ $name }}-cluster-config
+            spec:
+              forProvider:
+                manifest:
+                  apiVersion: v1
+                  kind: ConfigMap
+                  metadata:
+                    name: gentian-cluster-config
+                    namespace: crossplane-system
+                    labels:
+                      app.kubernetes.io/managed-by: crossplane
+                      gentianos.io/config-type: cluster-config
+                  data:
+                    mail.smtpHost: {{ default "" (dig "mail" "host" "" $spec) | quote }}
+                    node.ip: {{ default "" (dig "nodeIp" "" $spec) | quote }}
+                    llm.enabled: {{ default false (dig "llm" "enabled" false $spec) | quote }}
+                    tenant.limitRange.default.cpu: {{ default "500m" (dig "tenantDefaults" "limitRange" "defaultCpu" "" $spec) | quote }}
+                    tenant.limitRange.default.memory: {{ default "512Mi" (dig "tenantDefaults" "limitRange" "defaultMemory" "" $spec) | quote }}
+                    tenant.limitRange.defaultRequest.cpu: {{ default "100m" (dig "tenantDefaults" "limitRange" "defaultRequestCpu" "" $spec) | quote }}
+                    tenant.limitRange.defaultRequest.memory: {{ default "128Mi" (dig "tenantDefaults" "limitRange" "defaultRequestMemory" "" $spec) | quote }}
+              providerConfigRef:
+                name: kubernetes
+
             {{- /* ── ESO ClusterSecretStore pointing at OpenBao ───────────────── */}}
             ---
             apiVersion: kubernetes.crossplane.io/v1alpha2

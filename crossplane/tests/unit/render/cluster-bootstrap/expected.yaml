@@ -7,7 +7,7 @@ status:
   conditions:
   - lastTransitionTime: "2024-01-01T00:00:00Z"
     message: 'Unready resources: argocd-appproject-tenants, eso-cluster-secret-store,
-      namespace-gentian-system, and 14 more'
+      gentian-cluster-config, and 15 more'
     reason: Creating
     status: "False"
     type: Ready
@@ -94,6 +94,43 @@ spec:
             path: secret
             server: https://openbao.openbao.svc.cluster.local:8200
             version: v2
+  providerConfigRef:
+    name: kubernetes
+---
+apiVersion: kubernetes.crossplane.io/v1alpha2
+kind: Object
+metadata:
+  annotations:
+    crossplane.io/composition-resource-name: gentian-cluster-config
+  labels:
+    crossplane.io/composite: dev-cluster
+  name: dev-cluster-cluster-config
+  ownerReferences:
+  - apiVersion: gentianos.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XCluster
+    name: dev-cluster
+    uid: ""
+spec:
+  forProvider:
+    manifest:
+      apiVersion: v1
+      data:
+        llm.enabled: "false"
+        mail.smtpHost: ""
+        node.ip: ""
+        tenant.limitRange.default.cpu: 500m
+        tenant.limitRange.default.memory: 512Mi
+        tenant.limitRange.defaultRequest.cpu: 100m
+        tenant.limitRange.defaultRequest.memory: 128Mi
+      kind: ConfigMap
+      metadata:
+        labels:
+          app.kubernetes.io/managed-by: crossplane
+          gentianos.io/config-type: cluster-config
+        name: gentian-cluster-config
+        namespace: crossplane-system
   providerConfigRef:
     name: kubernetes
 ---
