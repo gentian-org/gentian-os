@@ -29,4 +29,39 @@ webhooks:
         name: {{ include "gentian-os.fullname" . }}-webhook
         path: /validate-gentianos-io-v1alpha1-tenant
         port: 443
+  {{- /*
+    AppProfile admission. The operator has served this path since
+    internal/webhook/appprofile_validator.go was written, and cmd/main.go
+    registers it, but nothing routed to it — this configuration declared only
+    vtenant — so AllowedCategories never rejected anything and the validator was
+    dead code reachable only by hand.
+
+    The +kubebuilder:webhook marker on the validator does not produce this: the
+    manifests target generates crd and rbac only, so this file is hand-maintained
+    and a new webhook has to be added here by hand.
+
+    failurePolicy is shared with the tenant webhook deliberately. AppProfiles
+    arrive from the app catalogue through Argo CD, so with Fail a sync while the
+    operator is unavailable is refused rather than admitting a profile nothing
+    checked — the same trade the tenant webhook already makes.
+  */}}
+  - name: vappprofile.gentianos.io
+    admissionReviewVersions:
+      - v1
+    sideEffects: None
+    failurePolicy: {{ $failurePolicy }}
+    matchPolicy: Equivalent
+    timeoutSeconds: 10
+    rules:
+      - apiGroups: ["gentianos.io"]
+        apiVersions: ["v1alpha1"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["appprofiles"]
+        scope: "*"
+    clientConfig:
+      service:
+        namespace: {{ .Release.Namespace }}
+        name: {{ include "gentian-os.fullname" . }}-webhook
+        path: /validate-gentianos-io-v1alpha1-appprofile
+        port: 443
 {{- end }}
