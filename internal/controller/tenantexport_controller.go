@@ -222,8 +222,13 @@ func (r *TenantExportReconciler) captureApp(
 	if !allDone {
 		if entry.Attempts > exportMaxAttempts {
 			return r.failApp(ctx, export, tenant, appName,
-				fmt.Sprintf("capture did not succeed after %d attempts", entry.Attempts))
+				fmt.Sprintf("capture did not succeed after %d attempts (last waiting on %s)",
+					entry.Attempts, strings.Join(pending, ", ")))
 		}
+		// Name what is outstanding. An export sitting at Running with an app
+		// paused is the situation an operator most needs to diagnose, and
+		// "waiting" without saying for what sends them to the Job list to guess.
+		entry.Message = fmt.Sprintf("capturing; waiting on %s", strings.Join(pending, ", "))
 		return r.requeueExport(ctx, export, tenant)
 	}
 

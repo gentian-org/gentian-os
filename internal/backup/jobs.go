@@ -139,7 +139,7 @@ func VolumeArchiveJob(p JobParams, claim string, excludePaths []string) *batchv1
 	artefact := "volumes/" + claim + ".tar.gz"
 	var excludes strings.Builder
 	for _, pattern := range sortedUnique(excludePaths) {
-		excludes.WriteString(fmt.Sprintf(" --exclude=%s", shellSingleQuote(pattern)))
+		fmt.Fprintf(&excludes, " --exclude=%s", shellSingleQuote(pattern))
 	}
 	archive := corev1.Container{
 		Name:    "archive",
