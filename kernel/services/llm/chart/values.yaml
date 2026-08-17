@@ -1,0 +1,21 @@
+# vLLM instances to serve. One PVC, Deployment and Service each.
+#
+# The list is the cluster's, not a gentian-os default: it comes from the Cluster
+# claim's llm.vllmInstances and the per-instance settings beside it. An empty
+# list renders nothing, which is what a cluster with GPU_ACCELERATION=false
+# wants — the mock backend is a separate manifest.
+#
+# Removing an entry removes its Deployment and Service with the release. The PVC
+# is annotated helm.sh/resource-policy: keep, so a cached model survives and a
+# re-added instance picks it back up.
+instances: []
+  # - name: qwen
+  #   modelId: Qwen/Qwen2.5-7B-Instruct
+  #   gpuMemoryUtilization: "0.85"
+  #   maxModelLen: "8192"
+  #   modelCacheSize: 60Gi
+  #   imageTag: latest
+  #   toolCallParser: hermes
+
+# NVIDIA time-slicing replicas per GPU. 1 disables sharing.
+gpuTimeSliceReplicas: 1

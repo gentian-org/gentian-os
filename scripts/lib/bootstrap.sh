@@ -993,20 +993,19 @@ install_llm_serving() {
 
     local manifests_dir="${SCRIPT_DIR}/kernel/services/llm/manifests/${env}"
     kubectl apply -f "${manifests_dir}/llm-services.yaml" -f "${manifests_dir}/externalsecret.yaml"
-    render_and_apply_gpu_sharing_manifest "${manifests_dir}"
-
     GPU_ACCELERATION="${GPU_ACCELERATION:-false}"
     if [[ "${GPU_ACCELERATION}" == "true" ]]; then
         info "Deploying GPU vLLM inference backend(s)..."
-        render_and_apply_vllm_gpu_manifest "${manifests_dir}"
     else
-        info "Deploying mock inference backend (GPU_ACCELERATION=false) — see vllm-gpu.yaml.tmpl to serve a real model."
+        info "Deploying mock inference backend (GPU_ACCELERATION=false) — set VLLM_INSTANCES to serve a real model."
         kubectl apply -f "${manifests_dir}/vllm-mock.yaml"
-        # Mock uses a fixed name that never collides with vllm-<id>-inference,
-        # so flipping GPU_ACCELERATION back to false wouldn't otherwise clean
-        # up any real instances left running from before.
-        prune_stale_vllm_instances ""
     fi
+
+    # One release either way. It carries GPU time-slicing, which applies whether
+    # or not instances are served, and the instances themselves — so flipping
+    # GPU_ACCELERATION back to false removes them through the upgrade instead of
+    # a separate sweep that had to name the kinds it deleted.
+    render_and_apply_vllm_gpu_manifest
 
     info "Waiting for llm-sensitive-values ExternalSecret to sync (up to 60s)..."
     kubectl wait externalsecret/llm-sensitive-values \

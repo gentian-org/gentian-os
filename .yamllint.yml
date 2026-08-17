@@ -7,6 +7,7 @@ ignore: |
   config/crd/
   charts/gentian-os/crds/
   charts/gentian-os/templates/
+  kernel/services/llm/chart/templates/
   charts/infra/
   repo-seeds/**/chart/templates/
   repo-seeds/gentian-apps/profiles/

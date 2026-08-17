@@ -18,4 +18,4 @@ data:
       timeSlicing:
         resources:
         - name: nvidia.com/gpu
-          replicas: %GPU_TIME_SLICE_REPLICAS%
+          replicas: {{ .Values.gpuTimeSliceReplicas }}
