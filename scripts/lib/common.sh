@@ -1393,7 +1393,8 @@ gentian_report_abort() {
 # certificate land somewhere the Gateway could not see it, leaving the cluster
 # serving nothing. Both halves now resolve to the same place.
 #
-# NOT the same thing as the mail namespace — see gentian_mail_namespace below.
+# The mail namespace is now the same place — see gentian_mail_namespace below,
+# which delegates here rather than carrying its own default.
 # =============================================================================
 gentian_services_namespace() {
     echo "${SERVICES_NAMESPACE:-platform-kernel}"
@@ -1402,14 +1403,25 @@ gentian_services_namespace() {
 # =============================================================================
 # gentian_mail_namespace — where kernel Postfix/Dovecot live
 #
-# Deliberately separate from gentian_services_namespace. Mail is deployed by
-# per-stage manifests into gentian-<env> and is env-scoped; the kernel services
-# are not. update.sh used to derive KERNEL_NAMESPACE from SERVICES_NAMESPACE,
-# so pointing the services namespace at platform-kernel would silently send
-# every mail lookup to a namespace with no Postfix in it.
+# The same namespace as the kernel services, and no longer a separate default.
+#
+# It used to return gentian-<env>, because mail was deployed by per-stage
+# manifests into an env-scoped namespace while the kernel services were not.
+# That stopped being true when the mail stack moved to the operator's
+# SERVICES_NAMESPACE — a Pod can only mount a ConfigMap from its own namespace,
+# and the operator writes postfix-kernel-virtual-mailbox-maps there.
+#
+# Keeping the old default after the move produced a bug that only appeared in
+# check(): install_kernel_mail exports KERNEL_NAMESPACE before applying, so
+# apply() resolved platform-kernel and worked, while D-03's check() ran with
+# nothing exported, fell back to gentian-<env>, and reported the mail step
+# missing on a cluster whose mail stack was running.
+#
+# Delegating rather than repeating the expression is deliberate: two helpers
+# with one job is what drifted in the first place.
 # =============================================================================
 gentian_mail_namespace() {
-    echo "${KERNEL_NAMESPACE:-gentian-${ENV:-dev}}"
+    gentian_services_namespace
 }
 
 # =============================================================================
