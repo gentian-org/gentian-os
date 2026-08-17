@@ -1,6 +1,6 @@
 # Backup and Recovery
 
-**Status:** Phase 1 (the recovery kit) is implemented; Phases 2–7 are not
+**Status:** Phases 1–2 are implemented (recovery kit, `spec.backup` contract); Phases 3–7 are not
 **Scope:** cluster recovery, credential escrow, self-service tenant export/restore (Admin Console)
 **Applies to:** `install.sh`, OpenBao, CNPG, MinIO, Keycloak, tenant namespaces, `gentian-ui`
 
@@ -391,10 +391,24 @@ Read §2 (what must never be backed up), §4 (the consistency boundary) and §8
 Remaining acceptance (belongs with Phase 7): a fresh-cluster `--recover` run
 derives byte-identical credentials; kit-plus-Git rebuild drill.
 
-### Phase 2 — The `spec.backup` contract
+### Phase 2 — The `spec.backup` contract — **implemented**
 
 **Goal** — teach `AppProfile` how its app must be captured, so every later
 phase is profile-driven rather than app-aware.
+
+Shipped as `BackupSpec` in `api/v1alpha1/appprofile_types.go` (with the
+`BackupQuiesceMode` / `BackupConsistency` enums in `types.go`), nil-safe
+accessors that resolve the defaults in one place, `scripts/validate-backup-spec.py`
+in the gentian-apps `validate-profiles` job, §15 of the app-profile guide, and
+the first declaration on `nextcloud-base-ce`.
+
+One finding worth carrying into Phase 3: containment of `boundSecrets.openBaoPath`
+is enforced by **pattern, not CEL**. Kubernetes bounds the estimated cost of
+every CEL rule in a CRD, and a single `self.contains('..')` over an unbounded
+string inside an unbounded list put the whole AppProfile schema over budget —
+the API server refused to install the CRD at all, which envtest caught and no
+amount of unit testing would have. Prefer patterns to CEL on repeated fields,
+and if CEL is unavoidable, bound the string and the list.
 
 **Files**
 

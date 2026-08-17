@@ -90,6 +90,39 @@ const (
 	DeploymentMethodAPI DeploymentMethod = "api"
 )
 
+// BackupQuiesceMode selects how an app's writes are paused while it is captured.
+// +kubebuilder:validation:Enum=none;scaleDown;command
+type BackupQuiesceMode string
+
+const (
+	// BackupQuiesceNone captures the app while it keeps serving. Only safe for
+	// an app whose stores hold no references to each other, since nothing keeps
+	// two of them mutually consistent.
+	BackupQuiesceNone BackupQuiesceMode = "none"
+	// BackupQuiesceScaleDown scales the app's workloads to zero for the
+	// duration of the capture. The default: it works for every app, at the cost
+	// of the longest pause.
+	BackupQuiesceScaleDown BackupQuiesceMode = "scaleDown"
+	// BackupQuiesceCommand runs the profile's own maintenance-mode commands,
+	// which usually pauses writes without taking the app offline.
+	BackupQuiesceCommand BackupQuiesceMode = "command"
+)
+
+// BackupConsistency selects the window an app's stores must be captured within.
+// +kubebuilder:validation:Enum=app;perStore
+type BackupConsistency string
+
+const (
+	// BackupConsistencyApp captures every store of the app inside a single
+	// quiesce window, because its database, buckets and volumes reference each
+	// other. This is the boundary that matters; two different apps share no
+	// transactional state, so skew between them is harmless.
+	BackupConsistencyApp BackupConsistency = "app"
+	// BackupConsistencyPerStore lets each store be captured independently, for
+	// an app whose stores hold no references to each other.
+	BackupConsistencyPerStore BackupConsistency = "perStore"
+)
+
 // TenantPhase represents the overall lifecycle phase of a Tenant.
 // +kubebuilder:validation:Enum=Provisioning;Ready;Degraded;Deleting
 type TenantPhase string

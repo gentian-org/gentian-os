@@ -230,6 +230,164 @@ spec:
                   name is only a hint. See gentian-os/docs/app-customization.md §4.2.
                 maxLength: 128
                 type: string
+              backup:
+                description: |-
+                  Backup declares how this app must be captured and restored. Optional:
+                  omitting it selects the safe default (scale to zero, dump every store in
+                  kernelRequirements, archive every release-owned volume), which is correct
+                  for most apps.
+                properties:
+                  boundSecrets:
+                    description: |-
+                      BoundSecrets lists secrets this app's data is welded to: not derived, held
+                      outside the app's own captured data, and required to make sense of that
+                      data again. They travel inside the encrypted bundle.
+
+                      Most apps need none. Values under spec.appSecrets are HMAC-derived from
+                      the master password and reproduce byte-identically, and a secret an app
+                      writes into its own config file on a captured volume already travels with
+                      that volume.
+                    items:
+                      description: |-
+                        BackupBoundSecret references a secret in the tenant's OpenBao tree that must
+                        travel with the app's data.
+                      properties:
+                        keys:
+                          description: |-
+                            Keys selects individual keys at that path. When empty, every key there is
+                            captured.
+                          items:
+                            type: string
+                          type: array
+                        openBaoPath:
+                          description: |-
+                            OpenBaoPath is relative to this tenant's own prefix
+                            (gentian-os/tenants/{tenant}/), so a profile can only ever name secrets
+                            belonging to the tenant being captured.
+
+                            The pattern enforces that containment: it accepts slash-separated segments
+                            that each begin with an alphanumeric, which rejects a leading slash and
+                            any ".." segment — the only forms that escape the prefix. Expressing it as
+                            a pattern rather than a CEL rule is deliberate. CEL here costs more than
+                            it is worth: Kubernetes bounds the estimated cost of every rule in a CRD,
+                            and one rule over an unbounded string inside an unbounded list put the
+                            whole AppProfile schema over budget, so the API server refused to install
+                            it at all. The pattern is also the more precise statement, since a name
+                            like "my..app" traverses nothing and should be allowed.
+                          maxLength: 253
+                          minLength: 1
+                          pattern: ^[a-zA-Z0-9][a-zA-Z0-9._-]*(/[a-zA-Z0-9][a-zA-Z0-9._-]*)*$
+                          type: string
+                      required:
+                      - openBaoPath
+                      type: object
+                    type: array
+                  consistency:
+                    default: app
+                    description: |-
+                      Consistency selects whether all of this app's stores must be captured
+                      inside one quiesce window. Defaults to app.
+                    enum:
+                    - app
+                    - perStore
+                    type: string
+                  minRestoreVersion:
+                    description: |-
+                      MinRestoreVersion refuses to restore a bundle into an app older than this
+                      version, expressed as the app version the profile's chart deploys.
+                      Restoring older data into a newer app is allowed — that just runs the
+                      app's own migrations — but the reverse silently corrupts.
+                    type: string
+                  quiesce:
+                    description: Quiesce controls how writes are paused while the
+                      app is captured.
+                    properties:
+                      container:
+                        description: |-
+                          Container names the container to run Pre and Post in. Defaults to the
+                          first container in the app's pod.
+                        type: string
+                      mode:
+                        default: scaleDown
+                        description: |-
+                          Mode selects how writes are paused. Defaults to scaleDown, which works
+                          for every app; command is better where the app has a real maintenance
+                          mode, because it keeps the app reachable while it is captured.
+                        enum:
+                        - none
+                        - scaleDown
+                        - command
+                        type: string
+                      post:
+                        description: |-
+                          Post is the command that resumes writes. It must be safe to run when Pre
+                          never ran or already resumed — it also runs on the failure path, and an
+                          app left paused is an outage.
+                        items:
+                          type: string
+                        type: array
+                      pre:
+                        description: |-
+                          Pre is the command that pauses writes, required when mode is command.
+                          This is an argv, not a shell line: the first element is the binary and
+                          the rest are its arguments, so nothing is word-split or glob-expanded.
+                        items:
+                          type: string
+                        type: array
+                    type: object
+                    x-kubernetes-validations:
+                    - message: quiesce.pre is required when mode is command
+                      rule: self.mode != 'command' || (has(self.pre) && size(self.pre)
+                        > 0)
+                  restore:
+                    description: |-
+                      Restore declares what must run after this app's data is loaded and before
+                      it is resumed.
+                    properties:
+                      post:
+                        description: |-
+                          Post lists commands run in order once the app's data is loaded and before
+                          it is resumed — cache invalidation, re-indexing, fingerprinting. Each
+                          entry is an argv, for the same reason as BackupQuiesce.Pre.
+                        items:
+                          items:
+                            type: string
+                          type: array
+                        type: array
+                      verify:
+                        description: |-
+                          Verify is a single command that must exit zero before the restore is
+                          reported successful. Without one, a restore can only report that the data
+                          was written, not that the app can read it.
+                        items:
+                          type: string
+                        type: array
+                    type: object
+                  volumes:
+                    description: Volumes narrows what is captured from the app's PersistentVolumeClaims.
+                    properties:
+                      excludePaths:
+                        description: |-
+                          ExcludePaths drops matching paths from the captured archive, as glob
+                          patterns relative to each volume root. Use it for data the app rebuilds
+                          by itself — thumbnails, search indexes, caches — which is often most of
+                          an app's disk.
+
+                          Never exclude a path holding app configuration. An app that keeps the key
+                          its data was encrypted with in its own config file becomes unrestorable
+                          the moment that file is excluded, and nothing detects it until a restore.
+                        items:
+                          type: string
+                        type: array
+                      include:
+                        description: |-
+                          Include names the PersistentVolumeClaims to capture. When empty, every
+                          claim the app's Helm release owns is captured.
+                        items:
+                          type: string
+                        type: array
+                    type: object
+                type: object
               browserProxy:
                 description: |-
                   BrowserProxy declares HTTP routes the shell backend should transparently

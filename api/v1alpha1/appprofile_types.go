@@ -113,6 +113,13 @@ type AppProfileSpec struct {
 	// +optional
 	KernelRequirements *KernelRequirements `json:"kernelRequirements,omitempty"`
 
+	// Backup declares how this app must be captured and restored. Optional:
+	// omitting it selects the safe default (scale to zero, dump every store in
+	// kernelRequirements, archive every release-owned volume), which is correct
+	// for most apps.
+	// +optional
+	Backup *BackupSpec `json:"backup,omitempty"`
+
 	// Provides lists the integration contracts this app can act as a provider for.
 	// +optional
 	Provides []ContractRef `json:"provides,omitempty"`
@@ -1049,6 +1056,222 @@ type AppSidecarSpec struct {
 	// applies CRD defaults server-side.
 	// +optional
 	StableServicePort int32 `json:"stableServicePort,omitempty"`
+}
+
+// BackupSpec tells the platform how this app must be captured and put back.
+// spec.kernelRequirements already declares *which* stores the app has; this
+// declares how to pause it, what on its volumes is worth keeping, and what has
+// to run after a restore before the app is usable again — knowledge only the
+// app's author has.
+//
+// Every field is optional, and a profile that declares nothing gets the safe
+// default: scale the app to zero, dump every store in spec.kernelRequirements,
+// and archive every PersistentVolumeClaim its Helm release owns. That is
+// correct for most apps, so the section exists for the ones that deviate.
+//
+// Schedule, retention, encryption and destination are deliberately absent: they
+// are platform and tenant policy, and an app author must not be able to weaken
+// them. See docs/plans/backup-plan.md §5.
+type BackupSpec struct {
+	// Quiesce controls how writes are paused while the app is captured.
+	// +optional
+	Quiesce *BackupQuiesce `json:"quiesce,omitempty"`
+
+	// Volumes narrows what is captured from the app's PersistentVolumeClaims.
+	// +optional
+	Volumes *BackupVolumes `json:"volumes,omitempty"`
+
+	// BoundSecrets lists secrets this app's data is welded to: not derived, held
+	// outside the app's own captured data, and required to make sense of that
+	// data again. They travel inside the encrypted bundle.
+	//
+	// Most apps need none. Values under spec.appSecrets are HMAC-derived from
+	// the master password and reproduce byte-identically, and a secret an app
+	// writes into its own config file on a captured volume already travels with
+	// that volume.
+	// +optional
+	BoundSecrets []BackupBoundSecret `json:"boundSecrets,omitempty"`
+
+	// Restore declares what must run after this app's data is loaded and before
+	// it is resumed.
+	// +optional
+	Restore *BackupRestore `json:"restore,omitempty"`
+
+	// Consistency selects whether all of this app's stores must be captured
+	// inside one quiesce window. Defaults to app.
+	// +optional
+	// +kubebuilder:default=app
+	Consistency BackupConsistency `json:"consistency,omitempty"`
+
+	// MinRestoreVersion refuses to restore a bundle into an app older than this
+	// version, expressed as the app version the profile's chart deploys.
+	// Restoring older data into a newer app is allowed — that just runs the
+	// app's own migrations — but the reverse silently corrupts.
+	// +optional
+	MinRestoreVersion string `json:"minRestoreVersion,omitempty"`
+}
+
+// BackupQuiesce declares how to pause an app's writes for the duration of a
+// capture. Pausing is the only way to get a consistent view across an app's
+// database, buckets and volumes: nothing else coordinates independent stores.
+// +kubebuilder:validation:XValidation:rule="self.mode != 'command' || (has(self.pre) && size(self.pre) > 0)",message="quiesce.pre is required when mode is command"
+type BackupQuiesce struct {
+	// Mode selects how writes are paused. Defaults to scaleDown, which works
+	// for every app; command is better where the app has a real maintenance
+	// mode, because it keeps the app reachable while it is captured.
+	// +optional
+	// +kubebuilder:default=scaleDown
+	Mode BackupQuiesceMode `json:"mode,omitempty"`
+
+	// Pre is the command that pauses writes, required when mode is command.
+	// This is an argv, not a shell line: the first element is the binary and
+	// the rest are its arguments, so nothing is word-split or glob-expanded.
+	// +optional
+	Pre []string `json:"pre,omitempty"`
+
+	// Post is the command that resumes writes. It must be safe to run when Pre
+	// never ran or already resumed — it also runs on the failure path, and an
+	// app left paused is an outage.
+	// +optional
+	Post []string `json:"post,omitempty"`
+
+	// Container names the container to run Pre and Post in. Defaults to the
+	// first container in the app's pod.
+	// +optional
+	Container string `json:"container,omitempty"`
+}
+
+// BackupVolumes narrows what is captured from an app's volumes.
+type BackupVolumes struct {
+	// Include names the PersistentVolumeClaims to capture. When empty, every
+	// claim the app's Helm release owns is captured.
+	// +optional
+	Include []string `json:"include,omitempty"`
+
+	// ExcludePaths drops matching paths from the captured archive, as glob
+	// patterns relative to each volume root. Use it for data the app rebuilds
+	// by itself — thumbnails, search indexes, caches — which is often most of
+	// an app's disk.
+	//
+	// Never exclude a path holding app configuration. An app that keeps the key
+	// its data was encrypted with in its own config file becomes unrestorable
+	// the moment that file is excluded, and nothing detects it until a restore.
+	// +optional
+	ExcludePaths []string `json:"excludePaths,omitempty"`
+}
+
+// BackupBoundSecret references a secret in the tenant's OpenBao tree that must
+// travel with the app's data.
+type BackupBoundSecret struct {
+	// OpenBaoPath is relative to this tenant's own prefix
+	// (gentian-os/tenants/{tenant}/), so a profile can only ever name secrets
+	// belonging to the tenant being captured.
+	//
+	// The pattern enforces that containment: it accepts slash-separated segments
+	// that each begin with an alphanumeric, which rejects a leading slash and
+	// any ".." segment — the only forms that escape the prefix. Expressing it as
+	// a pattern rather than a CEL rule is deliberate. CEL here costs more than
+	// it is worth: Kubernetes bounds the estimated cost of every rule in a CRD,
+	// and one rule over an unbounded string inside an unbounded list put the
+	// whole AppProfile schema over budget, so the API server refused to install
+	// it at all. The pattern is also the more precise statement, since a name
+	// like "my..app" traverses nothing and should be allowed.
+	// +kubebuilder:validation:Required
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=253
+	// +kubebuilder:validation:Pattern=`^[a-zA-Z0-9][a-zA-Z0-9._-]*(/[a-zA-Z0-9][a-zA-Z0-9._-]*)*$`
+	OpenBaoPath string `json:"openBaoPath"`
+
+	// Keys selects individual keys at that path. When empty, every key there is
+	// captured.
+	// +optional
+	Keys []string `json:"keys,omitempty"`
+}
+
+// BackupRestore declares what runs after an app's data is put back.
+type BackupRestore struct {
+	// Post lists commands run in order once the app's data is loaded and before
+	// it is resumed — cache invalidation, re-indexing, fingerprinting. Each
+	// entry is an argv, for the same reason as BackupQuiesce.Pre.
+	// +optional
+	Post [][]string `json:"post,omitempty"`
+
+	// Verify is a single command that must exit zero before the restore is
+	// reported successful. Without one, a restore can only report that the data
+	// was written, not that the app can read it.
+	// +optional
+	Verify []string `json:"verify,omitempty"`
+}
+
+// QuiesceMode returns how this app's writes should be paused, resolving the
+// default for a profile that declares no backup block.
+func (b *BackupSpec) QuiesceMode() BackupQuiesceMode {
+	if b == nil || b.Quiesce == nil || b.Quiesce.Mode == "" {
+		return BackupQuiesceScaleDown
+	}
+	return b.Quiesce.Mode
+}
+
+// ConsistencyMode returns the window this app's stores must be captured within,
+// resolving the default.
+func (b *BackupSpec) ConsistencyMode() BackupConsistency {
+	if b == nil || b.Consistency == "" {
+		return BackupConsistencyApp
+	}
+	return b.Consistency
+}
+
+// QuiesceCommands returns the commands that pause and resume writes. Both are
+// empty unless the mode is command.
+func (b *BackupSpec) QuiesceCommands() (pre, post []string) {
+	if b.QuiesceMode() != BackupQuiesceCommand || b.Quiesce == nil {
+		return nil, nil
+	}
+	return b.Quiesce.Pre, b.Quiesce.Post
+}
+
+// QuiesceContainer returns the container to run quiesce commands in. Empty
+// means the first container in the app's pod.
+func (b *BackupSpec) QuiesceContainer() string {
+	if b == nil || b.Quiesce == nil {
+		return ""
+	}
+	return b.Quiesce.Container
+}
+
+// IncludedVolumes returns the claims to capture. Empty means every
+// PersistentVolumeClaim the app's Helm release owns, which is the default.
+func (b *BackupSpec) IncludedVolumes() []string {
+	if b == nil || b.Volumes == nil {
+		return nil
+	}
+	return b.Volumes.Include
+}
+
+// ExcludedPaths returns the glob patterns to drop from captured volumes.
+func (b *BackupSpec) ExcludedPaths() []string {
+	if b == nil || b.Volumes == nil {
+		return nil
+	}
+	return b.Volumes.ExcludePaths
+}
+
+// BoundSecretRefs returns the secrets that must travel with this app's data.
+func (b *BackupSpec) BoundSecretRefs() []BackupBoundSecret {
+	if b == nil {
+		return nil
+	}
+	return b.BoundSecrets
+}
+
+// RestoreCommands returns the commands to run once this app's data is loaded,
+// and the single command that must succeed before the restore is reported
+// successful.
+func (b *BackupSpec) RestoreCommands() (post [][]string, verify []string) {
+	if b == nil || b.Restore == nil {
+		return nil, nil
+	}
+	return b.Restore.Post, b.Restore.Verify
 }
 
 // AppPostInstallJob configures a Kubernetes Job the app-default composition

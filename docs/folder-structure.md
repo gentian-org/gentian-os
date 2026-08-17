@@ -137,7 +137,6 @@ Configuration surfaces at the repo root:
 |---|---|
 | `install.env.template` | Non-secret installer inputs. Cluster behaviour has moved out of here into `gentian-deployments`. |
 | `install.secrets.env.template` | `MASTER_PASSWORD`, registry, SMTP, Cloudflare, Git tokens. Real copies are gitignored and never committed. |
-| `cluster-settings.env.template` | The only template whose destination is `gentian-deployments/clusters/<cluster>/kernel/` — network mode, storage class, mail mode. |
 
 ---
 
