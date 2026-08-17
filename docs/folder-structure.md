@@ -136,7 +136,6 @@ Configuration surfaces at the repo root:
 | File | Scope |
 |---|---|
 | `install.env.template` | Non-secret installer inputs. Cluster behaviour has moved out of here into `gentian-deployments`. |
-| `install.secrets.env.template` | `MASTER_PASSWORD`, registry, SMTP, Cloudflare, Git tokens. Real copies are gitignored and never committed. |
 
 ---
 
