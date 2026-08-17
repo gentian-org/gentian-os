@@ -80,15 +80,33 @@ func NewOpenBao(addr, kvMount, oidcRole string) *OpenBao {
 	}
 }
 
-// ExchangeToken trades the caller's OIDC token for a short-lived OpenBao token.
+// Identity is OpenBao's verdict on a caller's token.
+//
+// Every field here was decided by OpenBao after it verified the JWT's
+// signature, issuer and audience and applied the role's bound claims. None of
+// it is asserted by the caller, which is the point: the alternative is this
+// service parsing the JWT itself, which would make it a second identity
+// authority that can disagree with the one enforcing the write.
+type Identity struct {
+	// Token is the short-lived OpenBao token the write is performed with.
+	Token string
+	// Policies are the policies OpenBao attached, from the role the token
+	// matched. This is what "is this caller a cluster admin" is read from.
+	Policies []string
+	// Metadata carries the role's claim mappings — the tenant among them.
+	Metadata map[string]string
+}
+
+// ExchangeToken trades the caller's OIDC token for a short-lived OpenBao token
+// and the identity that came with it.
 //
 // This is the whole of the service's authorisation model: it does not decide
 // what the caller may write. OpenBao's policy engine does, based on the claims
 // in the presented token, and the resulting token is what performs the write —
 // so the audit device records the human.
-func (b *OpenBao) ExchangeToken(ctx context.Context, oidcToken string) (string, error) {
+func (b *OpenBao) ExchangeToken(ctx context.Context, oidcToken string) (Identity, error) {
 	if oidcToken == "" {
-		return "", fmt.Errorf("no OIDC token presented")
+		return Identity{}, fmt.Errorf("no OIDC token presented")
 	}
 	body, _ := json.Marshal(map[string]string{
 		"role": b.OIDCRole,
@@ -97,33 +115,45 @@ func (b *OpenBao) ExchangeToken(ctx context.Context, oidcToken string) (string, 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
 		b.Addr+"/v1/auth/jwt/login", bytes.NewReader(body))
 	if err != nil {
-		return "", err
+		return Identity{}, err
 	}
 	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := b.HTTP.Do(req)
 	if err != nil {
-		return "", fmt.Errorf("openbao unreachable: %w", err)
+		return Identity{}, fmt.Errorf("openbao unreachable: %w", err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		// Deliberately not echoing OpenBao's body: it can name policies and
 		// paths the caller has no business learning about from a failed login.
-		return "", fmt.Errorf("token exchange rejected (HTTP %d)", resp.StatusCode)
+		return Identity{}, fmt.Errorf("token exchange rejected (HTTP %d)", resp.StatusCode)
 	}
 	var out struct {
 		Auth struct {
-			ClientToken string `json:"client_token"`
+			ClientToken   string            `json:"client_token"`
+			TokenPolicies []string          `json:"token_policies"`
+			Policies      []string          `json:"policies"`
+			Metadata      map[string]string `json:"metadata"`
 		} `json:"auth"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
-		return "", fmt.Errorf("malformed token exchange response: %w", err)
+		return Identity{}, fmt.Errorf("malformed token exchange response: %w", err)
 	}
 	if out.Auth.ClientToken == "" {
-		return "", fmt.Errorf("token exchange returned no token")
+		return Identity{}, fmt.Errorf("token exchange returned no token")
 	}
-	return out.Auth.ClientToken, nil
+	policies := out.Auth.TokenPolicies
+	if len(policies) == 0 {
+		// Older OpenBao releases report the same list under "policies".
+		policies = out.Auth.Policies
+	}
+	return Identity{
+		Token:    out.Auth.ClientToken,
+		Policies: policies,
+		Metadata: out.Auth.Metadata,
+	}, nil
 }
 
 // PathMetadata is what the API is allowed to say about a stored credential.

@@ -64,6 +64,17 @@ spec:
                   type: string
                   description: Git ref to track. Ignored when type is oci.
                   default: main
+                tenant:
+                  type: string
+                  description: >
+                    The tenant that owns this repository. Set it and the
+                    credential becomes tenant-scoped and visible only to that
+                    tenant's administrators; leave it empty and the repository
+                    belongs to the cluster.
+
+                    This is what keeps a tenant-proprietary repository's
+                    credential out of every other tenant's credential list —
+                    scope alone says "a tenant may see this", not which one.
                 writable:
                   type: boolean
                   description: >

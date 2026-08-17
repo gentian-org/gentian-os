@@ -55,6 +55,8 @@ type CredentialRequirement struct {
 }
 
 // CredentialRequirementSpec describes one credential an operator must supply.
+//
+// +kubebuilder:validation:XValidation:rule="self.scope == 'tenant' ? (has(self.tenant) && self.tenant != '') : (!has(self.tenant) || self.tenant == '')",message="tenant is required when scope is tenant, and must be empty when scope is cluster"
 type CredentialRequirementSpec struct {
 	// DisplayName is the label a form renders for this requirement.
 	// +kubebuilder:validation:MinLength=1
@@ -81,6 +83,20 @@ type CredentialRequirementSpec struct {
 	// the requirement. A tenant admin must not reach cluster-scoped paths.
 	// +kubebuilder:validation:Enum=cluster;tenant
 	Scope string `json:"scope"`
+
+	// Tenant names the tenant a tenant-scoped requirement belongs to.
+	//
+	// Scope alone is a class, not an identity: it separates "a tenant may see
+	// this" from "an operator may see this", but says nothing about WHICH
+	// tenant. Without this field every tenant admin sees every tenant-scoped
+	// requirement, which for a credential to a tenant-proprietary repository is
+	// a disclosure rather than an inconvenience.
+	//
+	// Empty for cluster scope, and required for tenant scope — the CEL rule on
+	// this type rejects either mistake at admission, because a tenant-scoped
+	// requirement with no tenant would otherwise be visible to all of them.
+	// +optional
+	Tenant string `json:"tenant,omitempty"`
 
 	// Optional marks an unsatisfied requirement as an informational gap rather
 	// than an error.

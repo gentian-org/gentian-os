@@ -175,6 +175,10 @@ spec:
               value: {{ .Values.credentialManager.probeNamespace | quote }}
             - name: BAO_OIDC_ROLE
               value: {{ .Values.credentialManager.oidcRole | quote }}
+            - name: CREDENTIAL_CLUSTER_ADMIN_POLICY
+              value: {{ .Values.credentialManager.clusterAdminPolicy | quote }}
+            - name: CREDENTIAL_TENANT_CLAIM
+              value: {{ .Values.credentialManager.tenantClaim | quote }}
             {{- end }}
             {{- /* Renamed keys: a cluster overlay still setting the old ones would
                    otherwise render a commerce block pointing at nothing, and the

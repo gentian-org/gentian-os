@@ -284,6 +284,14 @@ credentialManager:
   oidcRole: cluster-admin
   # Namespace holding the ESO satisfaction probes it reads.
   probeNamespace: gentian-system
+  # The OpenBao policy whose presence on an exchanged token means the caller may
+  # see cluster-scoped requirements. Read from the policies OpenBao attached
+  # rather than from a Keycloak group name, so the two cannot drift apart.
+  clusterAdminPolicy: cluster-admin
+  # The auth.metadata key the OIDC role maps the tenant into. A role that maps
+  # nothing here yields a caller who sees no tenant-scoped requirement, which is
+  # the safe direction.
+  tenantClaim: tenant
 
 appLifecycle:
   port: 8082

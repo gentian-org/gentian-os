@@ -61,6 +61,12 @@ spec:
             {{- $spec := .observed.composite.resource.spec }}
             {{- $name := .observed.composite.resource.metadata.name }}
             {{- $cred := $spec.credential }}
+            {{- /* A repository owned by a tenant produces a tenant-scoped
+                 credential. Scope on its own only says "a tenant may see this";
+                 the tenant name is what stops one tenant reading another's
+                 repository credential out of the catalogue. */}}
+            {{- $tenant := default "" (dig "tenant" "" $spec) }}
+            {{- $credScope := ternary "tenant" "cluster" (ne $tenant "") }}
             {{- $isOci := eq $spec.type "oci" }}
             {{- $isGit := eq $spec.type "git" }}
             {{- /*
@@ -98,14 +104,20 @@ spec:
               name: repository-{{ $name }}
               labels:
                 gentianos.io/credential-phase: {{ $cred.phase | default "runtime" }}
-                gentianos.io/credential-scope: cluster
+                gentianos.io/credential-scope: {{ $credScope }}
+                {{- if ne $tenant "" }}
+                gentianos.io/tenant: {{ $tenant | quote }}
+                {{- end }}
               annotations:
                 {{ setResourceNameAnnotation (printf "credreq-%s" $name) }}
             spec:
               displayName: {{ $cred.displayName | quote }}
               description: {{ $cred.description | default "" | quote }}
               phase: {{ $cred.phase | default "runtime" }}
-              scope: cluster
+              scope: {{ $credScope }}
+              {{- if ne $tenant "" }}
+              tenant: {{ $tenant | quote }}
+              {{- end }}
               optional: {{ $cred.optional | default false }}
               vaultPath: {{ $cred.vaultPath | quote }}
               fields:

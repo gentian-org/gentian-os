@@ -46,6 +46,12 @@ type Server struct {
 	Catalogue *Catalogue
 	Bao       *OpenBao
 	Validator Validator
+
+	// ClusterAdminPolicy is the OpenBao policy whose presence on an exchanged
+	// token means the caller may see cluster-scoped requirements.
+	ClusterAdminPolicy string
+	// TenantClaimKey is the auth.metadata key the role maps the tenant into.
+	TenantClaimKey string
 }
 
 // Validator checks a credential against its target before it is stored. The
@@ -110,7 +116,9 @@ func NewRunnableFromEnv(mgr manager.Manager, validator Validator) (*Server, erro
 			envOr("BAO_KV_MOUNT", "secret"),
 			envOr("BAO_OIDC_ROLE", "cluster-admin"),
 		),
-		Validator: validator,
+		Validator:          validator,
+		ClusterAdminPolicy: envOr("CREDENTIAL_CLUSTER_ADMIN_POLICY", "cluster-admin"),
+		TenantClaimKey:     envOr("CREDENTIAL_TENANT_CLAIM", "tenant"),
 	}, nil
 }
 
@@ -123,42 +131,100 @@ func envOr(key, def string) string {
 
 // caller carries the authenticated identity for one request.
 type caller struct {
-	token  string
-	name   string
-	scopes []string
+	// bao is the exchanged OpenBao token and the identity that came with it.
+	bao OpenBaoIdentity
+	// name is the human recorded as having set a credential.
+	name string
+	// view is what this caller may see, derived from bao — never from the
+	// request.
+	view Viewer
 }
 
-// identify extracts the caller's OIDC token.
+// OpenBaoIdentity is aliased so the handler signature reads as identity rather
+// than as a token string, which is what it used to be.
+type OpenBaoIdentity = Identity
+
+// bearer pulls the OIDC token out of the request. It performs no authorisation:
+// that is what the exchange is for.
+func bearer(r *http.Request) (string, error) {
+	auth := r.Header.Get("Authorization")
+	if !strings.HasPrefix(auth, "Bearer ") {
+		return "", fmt.Errorf("a bearer token is required")
+	}
+	tok := strings.TrimPrefix(auth, "Bearer ")
+	if tok == "" {
+		return "", fmt.Errorf("empty bearer token")
+	}
+	return tok, nil
+}
+
+// identify establishes who the caller is by asking OpenBao.
+//
+// Scope and tenant used to be read from a query parameter and a header, which
+// made them claims the caller made about itself: appending ?scope=cluster
+// widened the listing, and X-Gentian-User named whoever you liked in the audit
+// metadata. That was survivable only while every caller was already a cluster
+// admin. A tenant admin holding a token makes it a disclosure.
+//
+// So identity is now OpenBao's verdict. The exchange verifies the JWT's
+// signature, issuer and audience and applies the role's bound claims; this
+// service reads the result and never parses the token itself. Being a second
+// identity authority is precisely how the two come to disagree.
+//
+// The cost is that a listing now requires OpenBao to be reachable, where before
+// it degraded to a catalogue with no metadata. That is the right trade: an
+// unauthorised listing is not a degraded listing.
 //
 // The token is never logged and never stored. It lives for the duration of one
 // request, which is the longest a credential that can write every secret in the
 // cluster should exist anywhere in this process.
-func identify(r *http.Request) (caller, error) {
-	auth := r.Header.Get("Authorization")
-	if !strings.HasPrefix(auth, "Bearer ") {
-		return caller{}, fmt.Errorf("a bearer token is required")
+func (s *Server) identify(ctx context.Context, r *http.Request) (caller, error) {
+	tok, err := bearer(r)
+	if err != nil {
+		return caller{}, err
 	}
-	tok := strings.TrimPrefix(auth, "Bearer ")
-	if tok == "" {
-		return caller{}, fmt.Errorf("empty bearer token")
+	id, err := s.Bao.ExchangeToken(ctx, tok)
+	if err != nil {
+		return caller{}, err
 	}
 
-	// Scope defaults to tenant. Cluster scope is opt-in, so a mistake here
-	// hides a form rather than exposing one (§9).
-	scopes := []string{"tenant"}
-	if r.URL.Query().Get("scope") == "cluster" {
-		scopes = []string{"cluster", "tenant"}
+	c := caller{bao: id, view: s.viewerFor(id)}
+	// The username comes from the role's user_claim, so it is the verified
+	// subject rather than a header. Falling back to the claim-mapped name keeps
+	// this working across OpenBao versions that report it differently.
+	for _, k := range []string{"username", "preferred_username", "user"} {
+		if v := id.Metadata[k]; v != "" {
+			c.name = v
+			break
+		}
 	}
-	return caller{token: tok, name: r.Header.Get("X-Gentian-User"), scopes: scopes}, nil
+	return c, nil
+}
+
+// viewerFor turns OpenBao's verdict into a visibility decision.
+//
+// Cluster admin is recognised by the policy OpenBao attached, not by a group
+// name this service would have to keep in step with Keycloak. The tenant comes
+// from the role's claim mappings, so a role that maps no tenant yields a viewer
+// that sees no tenant-scoped requirement — closed by default.
+func (s *Server) viewerFor(id Identity) Viewer {
+	v := Viewer{Tenant: id.Metadata[s.TenantClaimKey]}
+	for _, p := range id.Policies {
+		if p == s.ClusterAdminPolicy {
+			v.ClusterAdmin = true
+			break
+		}
+	}
+	return v
 }
 
 func (s *Server) handleList(w http.ResponseWriter, r *http.Request) {
-	c, err := identify(r)
+	c, err := s.identify(r.Context(), r)
 	if err != nil {
 		writeErr(w, http.StatusUnauthorized, err)
 		return
 	}
-	items, err := s.Catalogue.List(r.Context(), c.scopes)
+	items, err := s.Catalogue.List(r.Context(), c.view)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err)
 		return
@@ -168,12 +234,12 @@ func (s *Server) handleList(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleGet(w http.ResponseWriter, r *http.Request) {
-	c, err := identify(r)
+	c, err := s.identify(r.Context(), r)
 	if err != nil {
 		writeErr(w, http.StatusUnauthorized, err)
 		return
 	}
-	item, err := s.Catalogue.Get(r.Context(), r.PathValue("name"), c.scopes)
+	item, err := s.Catalogue.Get(r.Context(), r.PathValue("name"), c.view)
 	if err != nil {
 		writeErr(w, http.StatusNotFound, err)
 		return
@@ -189,12 +255,8 @@ func (s *Server) handleGet(w http.ResponseWriter, r *http.Request) {
 // the catalogue and ESO's satisfaction verdict, which is the useful part. A
 // failure here must not turn a working list into an error page.
 func (s *Server) decorate(ctx context.Context, c caller, items []Status) {
-	baoToken, err := s.Bao.ExchangeToken(ctx, c.token)
-	if err != nil {
-		return
-	}
 	for i := range items {
-		md, err := s.Bao.Metadata(ctx, baoToken, items[i].VaultPath)
+		md, err := s.Bao.Metadata(ctx, c.bao.Token, items[i].VaultPath)
 		if err != nil {
 			continue
 		}
@@ -212,13 +274,13 @@ type setRequest struct {
 }
 
 func (s *Server) handleSet(w http.ResponseWriter, r *http.Request) {
-	c, err := identify(r)
+	c, err := s.identify(r.Context(), r)
 	if err != nil {
 		writeErr(w, http.StatusUnauthorized, err)
 		return
 	}
 	name := r.PathValue("name")
-	req, err := s.Catalogue.Get(r.Context(), name, c.scopes)
+	req, err := s.Catalogue.Get(r.Context(), name, c.view)
 	if err != nil {
 		writeErr(w, http.StatusNotFound, err)
 		return
@@ -245,15 +307,9 @@ func (s *Server) handleSet(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// The caller's token performs the write. If the exchange fails, or the
-	// caller's policy forbids the path, nothing is stored — the service has no
-	// authority to fall back on.
-	baoToken, err := s.Bao.ExchangeToken(r.Context(), c.token)
-	if err != nil {
-		writeErr(w, http.StatusUnauthorized, err)
-		return
-	}
-	if err := s.Bao.Write(r.Context(), baoToken, req.VaultPath, body.Fields, c.name); err != nil {
+	// The caller's token performs the write. If the caller's policy forbids the
+	// path, nothing is stored — the service has no authority to fall back on.
+	if err := s.Bao.Write(r.Context(), c.bao.Token, req.VaultPath, body.Fields, c.name); err != nil {
 		writeErr(w, http.StatusForbidden, err)
 		return
 	}

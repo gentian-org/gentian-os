@@ -70,6 +70,13 @@ func requirementWithValidator(name, scope, path string, minLen int, validator st
 	}
 }
 
+// tenantRequirement builds a requirement owned by one named tenant.
+func tenantRequirement(name, tenant, path string) *gentianv1alpha1.CredentialRequirement {
+	r := requirement(name, "tenant", path, 0)
+	r.Spec.Tenant = tenant
+	return r
+}
+
 func probe(name string, ready bool) *unstructured.Unstructured {
 	status := "False"
 	if ready {
@@ -85,7 +92,22 @@ func probe(name string, ready bool) *unstructured.Unstructured {
 	return u
 }
 
+// newServer builds a server whose caller is a cluster admin.
 func newServer(t *testing.T, objs ...runtime.Object) (*Server, *httptest.Server) {
+	return newServerAs(t, []string{"cluster-admin"}, map[string]string{"username": "alice@example.com"}, objs...)
+}
+
+// newServerAsTenant builds a server whose caller administers exactly one tenant
+// and holds no cluster policy.
+func newServerAsTenant(t *testing.T, tenant string, objs ...runtime.Object) (*Server, *httptest.Server) {
+	return newServerAs(t, []string{"tenant-admin"},
+		map[string]string{"username": "bob@example.com", "tenant": tenant}, objs...)
+}
+
+// newServerAs stands up the service against a stub OpenBao that reports the
+// given policies and claim metadata — which is the only thing the service is
+// allowed to derive identity from.
+func newServerAs(t *testing.T, policies []string, meta map[string]string, objs ...runtime.Object) (*Server, *httptest.Server) {
 	t.Helper()
 	scheme := testScheme(t)
 	u := &unstructured.UnstructuredList{}
@@ -100,7 +122,11 @@ func newServer(t *testing.T, objs ...runtime.Object) (*Server, *httptest.Server)
 		switch {
 		case strings.HasSuffix(r.URL.Path, "/auth/jwt/login"):
 			_ = json.NewEncoder(w).Encode(map[string]any{
-				"auth": map[string]any{"client_token": "exchanged-token"},
+				"auth": map[string]any{
+					"client_token":   "exchanged-token",
+					"token_policies": policies,
+					"metadata":       meta,
+				},
 			})
 		case strings.Contains(r.URL.Path, "/metadata/"):
 			_ = json.NewEncoder(w).Encode(map[string]any{
@@ -123,9 +149,11 @@ func newServer(t *testing.T, objs ...runtime.Object) (*Server, *httptest.Server)
 	t.Cleanup(bao.Close)
 
 	s := &Server{
-		Catalogue: &Catalogue{Client: c, ProbeNamespace: "gentian-system"},
-		Bao:       NewOpenBao(bao.URL, "secret", "cluster-admin"),
-		Validator: stubValidator{},
+		Catalogue:          &Catalogue{Client: c, ProbeNamespace: "gentian-system"},
+		Bao:                NewOpenBao(bao.URL, "secret", "cluster-admin"),
+		Validator:          stubValidator{},
+		ClusterAdminPolicy: "cluster-admin",
+		TenantClaimKey:     "tenant",
 	}
 	return s, bao
 }
@@ -159,9 +187,9 @@ func TestNoRouteReturnsASecretValue(t *testing.T) {
 
 	cases := []struct{ method, target, body string }{
 		{"GET", "/healthz", ""},
-		{"GET", "/v1/credentials?scope=cluster", ""},
-		{"GET", "/v1/credentials/smtp-relay?scope=cluster", ""},
-		{"PUT", "/v1/credentials/smtp-relay?scope=cluster",
+		{"GET", "/v1/credentials", ""},
+		{"GET", "/v1/credentials/smtp-relay", ""},
+		{"PUT", "/v1/credentials/smtp-relay",
 			fmt.Sprintf(`{"fields":{"password":%q}}`, theSecretValue)},
 	}
 
@@ -181,7 +209,7 @@ func TestNoRouteReturnsASecretValue(t *testing.T) {
 func TestWriteRequiresCallerToken(t *testing.T) {
 	s, _ := newServer(t, requirement("smtp-relay", "cluster", "gentian/mail/relay", 0))
 
-	r := httptest.NewRequest("PUT", "/v1/credentials/smtp-relay?scope=cluster",
+	r := httptest.NewRequest("PUT", "/v1/credentials/smtp-relay",
 		strings.NewReader(`{"fields":{"password":"whatever"}}`))
 	w := httptest.NewRecorder()
 	s.Routes().ServeHTTP(w, r)
@@ -204,22 +232,98 @@ func TestOpenBaoWriteRefusesEmptyToken(t *testing.T) {
 	}
 }
 
-// TestTenantAdminCannotSeeClusterScoped is §9's asymmetry: showing a tenant
+// TestTenantAdminCannotSeeClusterScoped is the asymmetry: showing a tenant
 // admin a cluster-scoped form is an annoyance, the inverse is a breach.
 func TestTenantAdminCannotSeeClusterScoped(t *testing.T) {
-	s, _ := newServer(t,
+	s, _ := newServerAsTenant(t, "acme",
 		requirement("registry", "cluster", "gentian/registries/x", 0),
-		requirement("tenant-smtp", "tenant", "gentian-os/tenants/a/smtp", 0),
+		tenantRequirement("tenant-smtp", "acme", "gentian-os/tenants/acme/smtp"),
 	)
 
-	// No scope query parameter: the default must be the narrow set.
 	w := do(t, s, "GET", "/v1/credentials", "")
 	body := w.Body.String()
 	if strings.Contains(body, "registry") {
-		t.Fatalf("cluster-scoped requirement visible at the default scope:\n%s", body)
+		t.Fatalf("cluster-scoped requirement visible to a tenant admin:\n%s", body)
 	}
 	if !strings.Contains(body, "tenant-smtp") {
-		t.Fatalf("tenant-scoped requirement missing:\n%s", body)
+		t.Fatalf("tenant admin cannot see its own requirement:\n%s", body)
+	}
+}
+
+// TestTenantAdminCannotSeeAnotherTenant is the property scope alone could not
+// express. Both requirements are tenant-scoped and equally "visible to tenant
+// admins"; only identity separates them. A credential to a tenant-proprietary
+// repository is the case that makes this a disclosure rather than clutter.
+func TestTenantAdminCannotSeeAnotherTenant(t *testing.T) {
+	s, _ := newServerAsTenant(t, "acme",
+		tenantRequirement("acme-repo", "acme", "gentian-os/tenants/acme/repo"),
+		tenantRequirement("globex-repo", "globex", "gentian-os/tenants/globex/repo"),
+	)
+
+	w := do(t, s, "GET", "/v1/credentials", "")
+	body := w.Body.String()
+	if strings.Contains(body, "globex-repo") {
+		t.Fatalf("one tenant can see another tenant's requirement:\n%s", body)
+	}
+	if !strings.Contains(body, "acme-repo") {
+		t.Fatalf("tenant admin cannot see its own requirement:\n%s", body)
+	}
+
+	// And cannot reach it by name either — filtering is not a listing cosmetic.
+	if w := do(t, s, "GET", "/v1/credentials/globex-repo", ""); w.Code != http.StatusNotFound {
+		t.Fatalf("expected 404 for another tenant's requirement, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+// TestScopeQueryParameterCannotWidenVisibility closes the escalation that came
+// from trusting the caller: ?scope=cluster used to turn a tenant listing into a
+// cluster one.
+func TestScopeQueryParameterCannotWidenVisibility(t *testing.T) {
+	s, _ := newServerAsTenant(t, "acme",
+		requirement("registry", "cluster", "gentian/registries/x", 0),
+	)
+
+	for _, target := range []string{
+		"/v1/credentials?scope=cluster",
+		"/v1/credentials/registry?scope=cluster",
+	} {
+		w := do(t, s, "GET", target, "")
+		if strings.Contains(w.Body.String(), "gentian/registries/x") {
+			t.Fatalf("%s widened visibility for a tenant admin:\n%s", target, w.Body.String())
+		}
+	}
+}
+
+// TestTenantWithoutClaimSeesNothing proves the closed-by-default direction: a
+// role that maps no tenant yields a viewer with no tenant, and a tenant-scoped
+// requirement is not visible to "any tenant".
+func TestTenantWithoutClaimSeesNothing(t *testing.T) {
+	s, _ := newServerAs(t, []string{"tenant-admin"}, map[string]string{"username": "nobody@example.com"},
+		tenantRequirement("acme-repo", "acme", "gentian-os/tenants/acme/repo"),
+	)
+	w := do(t, s, "GET", "/v1/credentials", "")
+	if strings.Contains(w.Body.String(), "acme-repo") {
+		t.Fatalf("a caller with no tenant claim saw a tenant-scoped requirement:\n%s", w.Body.String())
+	}
+}
+
+// TestAuditNameComesFromTheTokenNotAHeader closes the other half of the same
+// gap: X-Gentian-User used to decide who the audit trail blamed.
+func TestAuditNameComesFromTheTokenNotAHeader(t *testing.T) {
+	s, _ := newServer(t, requirement("smtp-relay", "cluster", "gentian/mail/relay", 0))
+
+	r := httptest.NewRequest("PUT", "/v1/credentials/smtp-relay",
+		strings.NewReader(`{"fields":{"password":"a-value"}}`))
+	r.Header.Set("Authorization", "Bearer caller-oidc-token")
+	r.Header.Set("X-Gentian-User", "mallory@example.com")
+	w := httptest.NewRecorder()
+	s.Routes().ServeHTTP(w, r)
+
+	if strings.Contains(w.Body.String(), "mallory@example.com") {
+		t.Fatalf("a header decided the audit identity:\n%s", w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), "alice@example.com") {
+		t.Fatalf("audit identity did not come from the verified token:\n%s", w.Body.String())
 	}
 }
 
@@ -230,7 +334,7 @@ func TestUnsatisfiedReportsESOReason(t *testing.T) {
 		requirement("smtp-relay", "cluster", "gentian/mail/relay", 0),
 		probe("smtp-relay", false),
 	)
-	w := do(t, s, "GET", "/v1/credentials/smtp-relay?scope=cluster", "")
+	w := do(t, s, "GET", "/v1/credentials/smtp-relay", "")
 
 	var got Status
 	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
@@ -251,7 +355,7 @@ func TestValidationRunsBeforeStore(t *testing.T) {
 		requirementWithValidator("smtp-relay", "cluster", "gentian/mail/relay", 0, "smtp"))
 	s.Validator = stubValidator{err: fmt.Errorf("relay rejected the credentials")}
 
-	w := do(t, s, "PUT", "/v1/credentials/smtp-relay?scope=cluster",
+	w := do(t, s, "PUT", "/v1/credentials/smtp-relay",
 		`{"fields":{"password":"plausible-but-wrong"}}`)
 
 	if w.Code != http.StatusUnprocessableEntity {
@@ -271,7 +375,7 @@ func TestValidationPassLeadsToStore(t *testing.T) {
 	s, _ := newServer(t,
 		requirementWithValidator("smtp-relay", "cluster", "gentian/mail/relay", 0, "smtp"))
 
-	w := do(t, s, "PUT", "/v1/credentials/smtp-relay?scope=cluster",
+	w := do(t, s, "PUT", "/v1/credentials/smtp-relay",
 		fmt.Sprintf(`{"fields":{"password":%q}}`, theSecretValue))
 
 	if w.Code != http.StatusOK {
@@ -300,7 +404,7 @@ func TestRejectsWhitespaceAndShortValues(t *testing.T) {
 		{"no fields", `{"fields":{}}`, "no fields"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			w := do(t, s, "PUT", "/v1/credentials/master?scope=cluster", tc.body)
+			w := do(t, s, "PUT", "/v1/credentials/master", tc.body)
 			if w.Code != http.StatusBadRequest {
 				t.Fatalf("expected 400, got %d: %s", w.Code, w.Body.String())
 			}

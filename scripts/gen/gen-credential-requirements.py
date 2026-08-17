@@ -97,6 +97,7 @@ def build_documents(catalogue):
             "displayName": req["displayName"],
             "phase": req["phase"],
             "scope": req["scope"],
+            **({"tenant": req["tenant"]} if req.get("tenant") else {}),
             "vaultPath": req["vaultPath"],
             "fields": req["fields"],
         }
@@ -115,6 +116,7 @@ def build_documents(catalogue):
                         # select by phase and scope without parsing the spec.
                         "gentianos.io/credential-phase": req["phase"],
                         "gentianos.io/credential-scope": req["scope"],
+                        **({"gentianos.io/tenant": req["tenant"]} if req.get("tenant") else {}),
                     },
                 },
                 "spec": spec,
@@ -154,6 +156,17 @@ def validate(catalogue):
             errors.append(f"{name}: phase must be bootstrap or runtime")
         if req.get("scope") not in ("cluster", "tenant"):
             errors.append(f"{name}: scope must be cluster or tenant")
+
+        # Scope is a class; tenant is an identity. A tenant-scoped requirement
+        # with no tenant is visible to every tenant admin, which for a
+        # tenant-proprietary repository credential is a disclosure. The CRD's CEL
+        # rule rejects this at admission; catching it here names the catalogue
+        # entry instead of the generated object.
+        tenant = req.get("tenant", "")
+        if req.get("scope") == "tenant" and not tenant:
+            errors.append(f"{name}: scope is tenant, so tenant must name which one")
+        if req.get("scope") == "cluster" and tenant:
+            errors.append(f"{name}: tenant is set but scope is cluster")
 
         if name in seen_names:
             errors.append(f"{name}: duplicate requirement name")

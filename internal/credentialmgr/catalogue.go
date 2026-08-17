@@ -47,6 +47,7 @@ type Status struct {
 	Description string  `json:"description,omitempty"`
 	Phase       string  `json:"phase"`
 	Scope       string  `json:"scope"`
+	Tenant      string  `json:"tenant,omitempty"`
 	Optional    bool    `json:"optional"`
 	VaultPath   string  `json:"vaultPath"`
 	Fields      []Field `json:"fields"`
@@ -76,28 +77,40 @@ type Catalogue struct {
 	ProbeNamespace string
 }
 
-// List returns the requirements visible to a caller with the given scopes.
+// Viewer is the verified identity a listing is filtered against.
 //
-// Scope filtering is a visibility decision, not an authorisation one — OpenBao
-// still refuses a write the caller's policy forbids. But §9 is explicit that
-// the asymmetry matters: showing a tenant admin a cluster-scoped form is an
-// annoyance, while the inverse is a breach. So the default is the narrow set,
-// and cluster scope has to be asked for.
-func (c *Catalogue) List(ctx context.Context, scopes []string) ([]Status, error) {
+// It is produced from OpenBao's verdict on the caller's token, never from
+// anything the caller states about itself — see identify in http.go.
+type Viewer struct {
+	// ClusterAdmin widens the listing to cluster-scoped requirements.
+	ClusterAdmin bool
+	// Tenant is the single tenant whose requirements this caller may see. Empty
+	// for a caller with no tenant, who therefore sees no tenant-scoped entry.
+	Tenant string
+}
+
+// List returns the requirements visible to one viewer.
+//
+// Filtering is a visibility decision, not an authorisation one — OpenBao still
+// refuses a write the caller's policy forbids. But the asymmetry matters:
+// showing a tenant admin a cluster-scoped form is an annoyance, while the
+// inverse is a breach. So visibility is granted, never assumed.
+//
+// Tenant scope is matched on IDENTITY, not on class. A tenant-scoped
+// requirement is visible only to its own tenant, because "every tenant admin
+// can see every tenant's repository credential" is the failure this exists to
+// prevent. A cluster admin sees everything, which is what makes the admin panel
+// useful.
+func (c *Catalogue) List(ctx context.Context, v Viewer) ([]Status, error) {
 	var reqs gentianv1alpha1.CredentialRequirementList
 	if err := c.Client.List(ctx, &reqs); err != nil {
 		return nil, fmt.Errorf("listing credential requirements: %w", err)
 	}
 
-	allowed := map[string]bool{}
-	for _, s := range scopes {
-		allowed[s] = true
-	}
-
 	out := make([]Status, 0, len(reqs.Items))
 	for i := range reqs.Items {
 		r := &reqs.Items[i]
-		if !allowed[r.Spec.Scope] {
+		if !v.canSee(r.Spec.Scope, r.Spec.Tenant) {
 			continue
 		}
 		st := Status{
@@ -106,6 +119,7 @@ func (c *Catalogue) List(ctx context.Context, scopes []string) ([]Status, error)
 			Description: r.Spec.Description,
 			Phase:       r.Spec.Phase,
 			Scope:       r.Spec.Scope,
+			Tenant:      r.Spec.Tenant,
 			Optional:    r.Spec.Optional,
 			VaultPath:   r.Spec.VaultPath,
 		}
@@ -128,9 +142,32 @@ func (c *Catalogue) List(ctx context.Context, scopes []string) ([]Status, error)
 	return out, nil
 }
 
+// canSee decides whether one requirement is visible to this viewer.
+//
+// Written as an explicit allow-list rather than a set of exclusions: a scope
+// value this function does not recognise is invisible, so adding a scope to the
+// enum without teaching this function about it hides requirements rather than
+// exposing them.
+func (v Viewer) canSee(scope, tenant string) bool {
+	switch scope {
+	case "cluster":
+		return v.ClusterAdmin
+	case "tenant":
+		if v.ClusterAdmin {
+			return true
+		}
+		// A requirement with no tenant is visible to nobody. The CRD's CEL rule
+		// rejects that combination at admission; this is the second line, for
+		// objects that predate the rule.
+		return tenant != "" && tenant == v.Tenant
+	default:
+		return false
+	}
+}
+
 // Get returns one requirement, or an error the handler maps to 404.
-func (c *Catalogue) Get(ctx context.Context, name string, scopes []string) (*Status, error) {
-	all, err := c.List(ctx, scopes)
+func (c *Catalogue) Get(ctx context.Context, name string, v Viewer) (*Status, error) {
+	all, err := c.List(ctx, v)
 	if err != nil {
 		return nil, err
 	}
