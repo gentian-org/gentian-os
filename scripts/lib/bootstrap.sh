@@ -433,6 +433,30 @@ _derive() {
 # dataJsonSecretRef. Uses the same HMAC-SHA256 derivation as seed-openbao.sh.
 # --dry-run=client | kubectl apply ensures idempotency.
 # =============================================================================
+# Every Secret create_crossplane_secrets writes, in one place.
+#
+# B-06's check tested only gentian-os-master-password, so nine others could be
+# absent while the step reported satisfied — which is how the cluster ran for
+# hours with no gentian-os-kernel-oidc-openbao, the Composition's SecretV2
+# referencing a Secret that did not exist, and provider-vault answering
+# "recovered from panic: value is null" rather than naming the missing input.
+#
+# Adding a _kv_secret call above means adding its name here. The check reads
+# this list, so a secret missing from it is a secret nothing verifies.
+gentian_crossplane_secret_names() {
+    printf '%s\n' \
+        gentian-os-master-password \
+        gentian-os-kernel-database-postgresql \
+        gentian-os-kernel-database-mariadb \
+        gentian-os-kernel-cache-redis \
+        gentian-os-kernel-storage-minio \
+        gentian-os-kernel-identity-keycloak-bootstrap \
+        gentian-os-kernel-authz-openfga \
+        gentian-os-kernel-mail-postfix \
+        gentian-os-kernel-mail-dovecot \
+        gentian-os-kernel-oidc-openbao
+}
+
 create_crossplane_secrets() {
     banner "Create derived-credential Secrets for Cluster XR"
 

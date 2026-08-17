@@ -6,7 +6,20 @@
 # mutates: Secrets in crossplane-system
 
 check() {
-    kubectl get secret gentian-os-master-password -n crossplane-system >/dev/null 2>&1
+    # Every Secret this step writes, not just the first one.
+    #
+    # Testing gentian-os-master-password alone let nine others be absent while
+    # the step reported satisfied. The cluster then ran with no
+    # gentian-os-kernel-oidc-openbao while the Cluster Composition referenced
+    # it, and the failure surfaced as provider-vault panicking with
+    # "value is null" — three layers from the step that never created it.
+    local name
+    while IFS= read -r name; do
+        [[ -n "${name}" ]] || continue
+        kubectl get secret "${name}" -n "${CROSSPLANE_NAMESPACE:-crossplane-system}" \
+            >/dev/null 2>&1 || return "${CHECK_MISSING}"
+    done < <(gentian_crossplane_secret_names)
+    return 0
 }
 
 apply() {
