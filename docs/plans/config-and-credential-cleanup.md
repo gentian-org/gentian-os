@@ -1999,7 +1999,7 @@ They are gathered here because they are the whole point of the run.
 | A clean-room install reaches a running root ApplicationSet | Phase 0a, criterion 1 | **Verified.** The root ApplicationSet generates its children and they sync. It required the cluster id to actually reach the template — `root-applicationset.yaml.tmpl` was rendering an empty `deploymentsCluster`, so every child pointed at `clusters//kernel/claims` and no claim ever synced |
 | `--dry-run` makes zero cluster mutations | Phase 0a, criterion 2 | **Verified** across repeated runs, and it now collects no credentials either: no step's `check()` reads one, so a preview needs no secret |
 | Install → uninstall returns the cluster to its prior state, and uninstall is idempotent | Phase 0b, criteria 1–2 | **Verified after seven corrections.** The prediction in this row was exact: `check()` gating `destroy()` is what left six namespaces and 422 provider CRDs behind on a run that printed *Teardown complete*. A teardown now clears every cluster-scoped object, and the residue is `cnpg-system` and `stakater-system`, which Argo CD prunes only while it is alive. See §15.2d |
-| A purge leaves nothing behind | `--purge` | **Verified.** Ten `Retain`/`Released` PVs across `openbao`, `platform-kernel` and `gentian-infra-<stage>` go to one, and `~/.gentian` is emptied. It clears nothing Argo CD owned, for the reason in §15.2d |
+| A purge leaves nothing behind | `--purge` | **Verified in the cluster, not in the cloud.** Ten `Retain`/`Released` PVs go to one and `~/.gentian` is emptied — but the PV object was all that went. Every kernel StorageClass reclaims with `Retain`, so the disk stayed allocated in the OpenStack project, one orphan per volume per purge, until `CreateVolume` returned `413 VolumeLimitExceeded: Maximum number of volumes allowed (20)` and an unrelated install failed on a PVC that would never bind. Purge now switches the reclaim policy to `Delete` before removing the object |
 | ESO's actual verdict on the satisfaction probes | Phase 6, criterion 1 | **Verified.** `make check-credentials` reads four required credentials Ready and two `optional unset` — `infra-chart-registry` because the cluster pulls charts publicly, `argocd-github-webhook` because it is `phase: runtime`. Satisfaction is observable as a Kubernetes condition with nothing polling OpenBao, which is what §4 claims |
 | A tenant can be provisioned | E-01/E-02, and the product's purpose | **Verified for provisioning, not for use.** A tenant is admitted, reaches Ready, and is removed again. The admission webhook refuses one naming an AppProfile the cluster does not have, and that rollback leaves `definitions/` intact. What a provisioned tenant cannot yet do is receive mail at the address the platform derives for it — Postfix accepts it, Dovecot has nowhere to put it (§15.2c) |
 | The unsatisfied → satisfied transition unblocks composition without intervention | Phase 6, criterion 4 | **Verified.** Every provider-vault resource sat `SYNCED=False` on a missing `openbao-crossplane-token`; when the credential arrived they reconciled and the XCluster reached Ready with nothing re-run |
@@ -2153,6 +2153,15 @@ machine, not only Gentian's — a judgement about the cluster, which the person 
 Volumes were the part an uninstall could not reach. Every kernel StorageClass reclaims with
 `Retain`, so deleting a PVC releases the PV and leaves the data on the backend — an uninstalled
 cluster whose OpenBao volume still holds every derived credential.
+
+`Retain` is why the volume survives an uninstall, and it is equally why a purge has to do more
+than delete the PV. Removing the object drops Kubernetes' record and leaves the disk allocated in
+the cloud project, invisible to the cluster that created it — a leak that is silent until the
+provider quota runs out, at which point it presents as an unrelated install failing to bind a PVC.
+A purge therefore sets the reclaim policy to `Delete` first, so the CSI driver is asked to remove
+the disk, and leaves `external-provisioner`'s finalizer in place until it has: that finalizer is
+what holds the object open until the deletion actually happened, so stripping it up front makes
+the PV disappear cleanly and leak the volume just the same.
 
 The Git tree is deliberately not purged: it is shared with every other cluster in the repository,
 and removing it is a commit somebody reviews. Purge says so rather than leaving it implied.

@@ -251,12 +251,49 @@ _delete_pvs_for_namespace() {
     [[ -z "${pvs}" ]] && return 0
 
     info "  Deleting PVs previously bound to namespace ${ns}..."
+    local pv deadline policy
     while IFS= read -r pv; do
         [[ -z "${pv}" ]] && continue
-        kubectl patch pv "${pv}" \
-            --type=json -p='[{"op":"remove","path":"/metadata/finalizers"}]' \
-            2>/dev/null || true
+
+        # Reclaim policy first, and it is the whole point.
+        #
+        # Every kernel StorageClass reclaims with Retain, so deleting the PV
+        # object removes Kubernetes' record of the volume and NOTHING else — the
+        # disk stays allocated in the cloud project, invisible to the cluster
+        # that created it. One orphan per volume per purge, until the provider
+        # refuses to create any more:
+        #
+        #   CreateVolume failed: 413 VolumeLimitExceeded: Maximum number of
+        #   volumes allowed (20) exceeded for quota 'volumes'
+        #
+        # and an install that has nothing to do with the volumes fails on a PVC
+        # that will never bind. Switching to Delete before removing the object
+        # is what makes the CSI driver call DeleteVolume.
+        policy="$(kubectl get pv "${pv}" -o jsonpath='{.spec.persistentVolumeReclaimPolicy}' 2>/dev/null || true)"
+        if [[ "${policy}" != "Delete" ]]; then
+            kubectl patch pv "${pv}" --type=merge \
+                -p '{"spec":{"persistentVolumeReclaimPolicy":"Delete"}}' >/dev/null 2>&1 || true
+        fi
+
+        # Finalizers are NOT stripped up front. external-provisioner's finalizer
+        # is what keeps the object alive until the driver has actually deleted
+        # the disk; removing it first makes the PV disappear cleanly and leak the
+        # volume just the same.
         kubectl delete pv "${pv}" --ignore-not-found=true --wait=false 2>/dev/null || true
+
+        deadline=$(( SECONDS + 60 ))
+        while kubectl get pv "${pv}" >/dev/null 2>&1; do
+            if (( SECONDS >= deadline )); then
+                warn "  PV ${pv} did not finalize in 60s — stripping finalizers."
+                warn "    Its backing volume may survive in the cloud project; check the"
+                warn "    provider console for a volume named ${pv}."
+                kubectl patch pv "${pv}" \
+                    --type=json -p='[{"op":"remove","path":"/metadata/finalizers"}]' \
+                    2>/dev/null || true
+                break
+            fi
+            sleep 2
+        done
     done <<< "${pvs}"
 }
 
