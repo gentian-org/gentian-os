@@ -64,7 +64,26 @@ echo ""
 echo "Claim default lint — does anything but the XRD decide a default?"
 echo ""
 
+# A field's default, straight from the XRD. The variable names differ from the
+# field names, so the mapping is spelled out rather than derived.
+yq_default() {
+    local field
+    case "$1" in
+        TENANCY_MODE)      field=tenancyMode ;;
+        NETWORK_MODE)      field=networkMode ;;
+        ROUTING_MODE)      field=routingMode ;;
+        SECRET_MODE)       field=secretMode ;;
+        NODE_IP)           field=nodeIp ;;
+        STORAGE_CLASS)     field=storageClass ;;
+        MAIL_SERVICE_MODE) field=mail.properties.serviceMode ;;
+        *) return 0 ;;
+    esac
+    yq eval ".spec.versions[0].schema.openAPIV3Schema.properties.spec.properties.${field}.default" \
+        crossplane/xrds/cluster.yaml 2>/dev/null | grep -v '^null$' || true
+}
+
 total=0
+contradictions=0
 # `while read`, not mapfile: bash 3.2 has no mapfile and macOS ships 3.2.
 _files=()
 while IFS= read -r _f; do
@@ -80,14 +99,35 @@ for var in "${CLAIM_BACKED[@]}"; do
     [[ -n "${hits}" ]] && n="$(printf '%s\n' "${hits}" | wc -l | tr -d ' ')"
     total=$((total + n))
 
+    # What the XRD says, so a literal can be compared with it rather than merely
+    # counted. This is the half that catches a real fault: a literal that RESTATES
+    # the schema is duplication, one that CONTRADICTS it is a value resolving two
+    # ways depending on which code path got there first.
+    want="$(yq_default "${var}")"
+
     if [[ ${n} -eq 0 ]]; then
         printf '  %s✓%s %-20s %s\n' "${GREEN}" "${NC}" "${var}" "0"
-    else
-        printf '  %s○%s %-20s %-4s %sreads the claim; drop the literal%s\n' \
-            "${YELLOW}" "${NC}" "${var}" "${n}" "${DIM}" "${NC}"
-        printf '%s\n' "${hits}" | head -3 | sed 's/^/        /'
-        [[ ${n} -gt 3 ]] && printf '        %s… %d more%s\n' "${DIM}" "$((n - 3))" "${NC}"
+        continue
     fi
+
+    # Literals that disagree with the schema, extracted from the hits above.
+    disagree="$(printf '%s\n' "${hits}" |
+        grep -oE "\\\$\{${var}:-[^}]*\}" |
+        sed -e "s/^\\\${${var}:-//" -e 's/}$//' |
+        sort -u |
+        { [[ -n "${want}" ]] && grep -vx "${want}" || cat; } || true)"
+
+    if [[ -n "${disagree}" ]]; then
+        printf '  %s✗%s %-20s %-4s %sCONTRADICTS the XRD default (%s)%s\n' \
+            "${RED}" "${NC}" "${var}" "${n}" "${RED}" "${want:-none}" "${NC}"
+        printf '%s\n' "${disagree}" | sed 's/^/        literal: /'
+        contradictions=$((contradictions + 1))
+    else
+        printf '  %s○%s %-20s %-4s %srestates the XRD default (%s)%s\n' \
+            "${YELLOW}" "${NC}" "${var}" "${n}" "${DIM}" "${want:-none}" "${NC}"
+    fi
+    printf '%s\n' "${hits}" | head -2 | sed 's/^/        /'
+    [[ ${n} -gt 2 ]] && printf '        %s… %d more%s\n' "${DIM}" "$((n - 2))" "${NC}"
 done
 
 echo ""
@@ -95,7 +135,13 @@ if (( total == 0 )); then
     echo "${GREEN}The XRD is the only default set.${NC}"
     exit 0
 fi
-echo "${YELLOW}${total} shell default(s) for claim-backed settings.${NC}"
+if (( contradictions > 0 )); then
+    echo "${RED}${contradictions} setting(s) with a literal that contradicts the XRD.${NC}"
+    echo "A value that resolves one way in the Composition and another in the shell is"
+    echo "the shape that made D-03 report a working mail stack missing. This one fails."
+    exit 1
+fi
+echo "${YELLOW}${total} shell default(s) for claim-backed settings, all restating the schema.${NC}"
 echo "Each is a second opinion on a value the Cluster XRD already answers."
 echo "The number must only go down — see docs/plans/config-and-credential-cleanup.md §10c."
 (( STRICT )) && { echo "${RED}--strict: failing.${NC}"; exit 1; }
