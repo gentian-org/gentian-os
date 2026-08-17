@@ -716,12 +716,16 @@ bootstrap_appprofiles() {
 # kernel services, tenant apps via compositions).
 # =============================================================================
 install_provider_helm() {
-    banner "Install provider-helm"
+    banner "Wait for provider-helm"
 
-    # providers.yaml already contains provider-helm; apply idempotently.
-    kubectl apply -f "${SCRIPT_DIR}/crossplane/providers/providers.yaml"
-    kubectl apply -f "${SCRIPT_DIR}/crossplane/providers/provider-configs.yaml"
-
+    # Applies nothing. A-02 already installed every provider from the same two
+    # files, and re-applying them here duplicated that with no check() to skip it,
+    # so every run rewrote the providers on the way past — while C-03's own header
+    # declared "mutates: nothing".
+    #
+    # The wait is the point: provider-helm has to be Healthy before the InfraData
+    # and Suze claims that C-02 just handed to Argo CD can be reconciled, and a
+    # provider that is installed is not yet a provider that is ready.
     info "Waiting for provider-helm to become Healthy (up to 3m)..."
     kubectl wait provider/provider-helm \
         --for=condition=Healthy --timeout=180s \

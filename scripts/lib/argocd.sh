@@ -258,14 +258,36 @@ install_argocd() {
     # syncs happen within seconds of a push.
     local github_webhook_secret="${ARGOCD_GITHUB_WEBHOOK_SECRET:-}"
     if [[ -z "$github_webhook_secret" ]]; then
-        warn "ARGOCD_GITHUB_WEBHOOK_SECRET not set — generating a random secret."
-        warn "Store it in OpenBao (identity/argocd/webhook-github-secret) and"
-        warn "register it as a webhook on the gentian-org GitHub organisation."
-        github_webhook_secret=$(openssl rand -hex 20)
+        # Generate once, then leave it alone.
+        #
+        # This used to mint a new random secret on every run, so each converge
+        # rewrote argocd-secret and invalidated the webhook already registered in
+        # GitHub — pushes silently stopped triggering syncs and ArgoCD fell back to
+        # its ~3 minute poll, which looks like "GitOps is just slow" rather than a
+        # broken webhook.
+        local existing
+        existing="$(kubectl get secret argocd-secret -n argocd \
+            -o jsonpath='{.data.webhook\.github\.secret}' 2>/dev/null || true)"
+        if [[ -n "${existing}" ]]; then
+            info "Keeping the existing ArgoCD GitHub webhook secret (set ARGOCD_GITHUB_WEBHOOK_SECRET to change it)."
+        else
+            warn "ARGOCD_GITHUB_WEBHOOK_SECRET not set — generating a random secret once."
+            warn "Store it in OpenBao (identity/argocd/webhook-github-secret) and"
+            warn "register it as a webhook on the gentian-org GitHub organisation."
+            warn "Read it back with: kubectl get secret argocd-secret -n argocd -o jsonpath='{.data.webhook\\.github\\.secret}' | base64 -d"
+            github_webhook_secret=$(openssl rand -hex 20)
+        fi
     fi
-    kubectl patch secret argocd-secret -n argocd --type merge \
-        -p "{\"stringData\":{\"webhook.github.secret\":\"${github_webhook_secret}\"}}"
-    success "ArgoCD GitHub webhook secret configured."
+    # Empty only when an existing secret is being kept, which is the one case that
+    # must not be overwritten. Everything after this point in the function still
+    # runs — an early return here would skip the ArgoCD edge route below.
+    if [[ -n "${github_webhook_secret}" ]]; then
+        kubectl patch secret argocd-secret -n argocd --type merge \
+            -p "{\"stringData\":{\"webhook.github.secret\":\"${github_webhook_secret}\"}}"
+        success "ArgoCD GitHub webhook secret configured."
+    else
+        success "ArgoCD GitHub webhook secret unchanged."
+    fi
     info "Register webhook at: https://argocd.${KERNEL_DOMAIN:-<KERNEL_DOMAIN>}/api/webhook"
 
     # Create Ingress for argocd.${KERNEL_DOMAIN} if KERNEL_DOMAIN is set.

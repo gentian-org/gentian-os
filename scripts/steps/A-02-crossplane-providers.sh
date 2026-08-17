@@ -36,11 +36,47 @@ check() {
     return 0
 }
 
+# _argocd_owns_crossplane_platform — have the XRD/Composition Applications been
+# created yet?
+#
+# kernel/appsets/raw/03-crossplane-platform.yaml defines these two over
+# crossplane/xrds and crossplane/compositions with prune and selfHeal, which makes
+# Git the authority for both directories from the moment they exist.
+_argocd_owns_crossplane_platform() {
+    local a
+    for a in crossplane-xrds crossplane-compositions; do
+        kubectl get application "${a}" -n argocd >/dev/null 2>&1 || return 1
+    done
+    return 0
+}
+
 apply() {
+    # Providers stay unconditional: they are this step's own `provides:` and no
+    # Application manages them.
     install_crossplane_providers
-    # install_crossplane_providers applies a *named* subset of compositions
-    # (cluster-default, the app set, tenant-default). This globs the whole
-    # directory, so a composition added to the repo is picked up without being
+
+    # XRDs and Compositions are applied from the local working tree ONLY before
+    # Argo CD is managing them.
+    #
+    # Once crossplane-xrds and crossplane-compositions exist, Git is the authority
+    # and this would apply whatever happens to be checked out over what Git says —
+    # then selfHeal reverts it, and a re-run does it again. That is how a cluster
+    # ends up matching the last person's working tree rather than any commit, and
+    # it is the same double-writer shape that kept gentian-appsets OutOfSync.
+    #
+    # Deliberately no kubectl-triggered refresh here: if Argo CD owns them and has
+    # not delivered them, check() stays unsatisfied and the driver reports THIS
+    # step — which is the honest signal — rather than the installer papering over a
+    # sync that is not happening.
+    if _argocd_owns_crossplane_platform; then
+        info "Argo CD owns crossplane/xrds and crossplane/compositions" \
+             "(Applications crossplane-xrds, crossplane-compositions) — not applying from the local tree."
+        return 0
+    fi
+
+    # Bootstrap only. install_crossplane_providers applies a *named* subset of
+    # compositions (cluster-default, the app set, tenant-default). This globs the
+    # whole directory, so a composition added to the repo is picked up without being
     # added to a second list — the divergence that made update.sh's
     # op_crossplane_update necessary in the first place. Re-applying the named
     # ones is idempotent.
