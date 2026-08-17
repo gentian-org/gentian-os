@@ -64,6 +64,16 @@ spec:
                   type: string
                   description: Git ref to track. Ignored when type is oci.
                   default: main
+                role:
+                  type: string
+                  enum: [apps, deployments]
+                  description: >
+                    What this repository is for. apps is additive — a private
+                    catalogue alongside the cluster's, and removing it removes
+                    those apps. deployments is a source of truth: repointing it
+                    changes what everything reconciles from, which is why the
+                    API makes that a confirmed operation rather than an edit.
+                  default: apps
                 tenant:
                   type: string
                   description: >

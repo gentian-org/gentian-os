@@ -175,6 +175,7 @@ rules:
     - apps
     - integrationbindings
     - platformsecuritypolicies
+    - repositories
     - tenants
     - xtenants
     verbs:

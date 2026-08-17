@@ -72,6 +72,9 @@ func (s *Server) Routes() *http.ServeMux {
 	mux.HandleFunc("GET /v1/credentials", s.handleList)
 	mux.HandleFunc("GET /v1/credentials/{name}", s.handleGet)
 	mux.HandleFunc("PUT /v1/credentials/{name}", s.handleSet)
+	mux.HandleFunc("GET /v1/repositories", s.handleListRepositories)
+	mux.HandleFunc("PUT /v1/repositories/{name}", s.handleSetRepository)
+	mux.HandleFunc("DELETE /v1/repositories/{name}", s.handleDeleteRepository)
 	return mux
 }
 

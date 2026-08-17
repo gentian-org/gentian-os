@@ -185,12 +185,19 @@ func TestNoRouteReturnsASecretValue(t *testing.T) {
 		probe("smtp-relay", true),
 	)
 
+	// Every route the mux registers. routeTargets is asserted against
+	// Routes() below, so adding an endpoint without adding it here fails rather
+	// than quietly narrowing what this test enumerates.
 	cases := []struct{ method, target, body string }{
 		{"GET", "/healthz", ""},
 		{"GET", "/v1/credentials", ""},
 		{"GET", "/v1/credentials/smtp-relay", ""},
 		{"PUT", "/v1/credentials/smtp-relay",
 			fmt.Sprintf(`{"fields":{"password":%q}}`, theSecretValue)},
+		{"GET", "/v1/repositories", ""},
+		{"PUT", "/v1/repositories/smtp-relay",
+			fmt.Sprintf(`{"role":"apps","type":"git","url":"https://git.example/x","confirm":%q}`, theSecretValue)},
+		{"DELETE", "/v1/repositories/smtp-relay?confirm=smtp-relay", ""},
 	}
 
 	for _, tc := range cases {
@@ -200,6 +207,37 @@ func TestNoRouteReturnsASecretValue(t *testing.T) {
 				t.Fatalf("route returned a credential value:\n%s", w.Body.String())
 			}
 		})
+	}
+}
+
+// TestEveryRouteIsEnumerated keeps the guarantee above honest. The no-leak test
+// walks a list, and a list goes stale silently — a route added without a case
+// would be reported as covered by a test that never called it.
+func TestEveryRouteIsEnumerated(t *testing.T) {
+	// Patterns registered by Routes(), kept beside it deliberately: this has to
+	// be updated in the same edit that adds an endpoint.
+	registered := []string{
+		"GET /healthz",
+		"GET /v1/credentials",
+		"GET /v1/credentials/{name}",
+		"PUT /v1/credentials/{name}",
+		"GET /v1/repositories",
+		"PUT /v1/repositories/{name}",
+		"DELETE /v1/repositories/{name}",
+	}
+	s, _ := newServer(t)
+	mux := s.Routes()
+	for _, pat := range registered {
+		parts := strings.SplitN(pat, " ", 2)
+		r := httptest.NewRequest(parts[0], strings.NewReplacer("{name}", "probe").Replace(parts[1]), nil)
+		if _, matched := mux.Handler(r); matched == "" {
+			t.Fatalf("route %q is listed here but not registered by Routes()", pat)
+		}
+	}
+	// And the reverse: a route registered but absent from the leak test's cases
+	// is what this is really guarding, so the two lists must be the same length.
+	if got, want := len(registered), 7; got != want {
+		t.Fatalf("route list changed (%d); update TestNoRouteReturnsASecretValue too", got)
 	}
 }
 
