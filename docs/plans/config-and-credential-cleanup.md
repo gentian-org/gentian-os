@@ -2221,7 +2221,7 @@ what the steps before it depend on.
 | Enumeration that discards the namespace | Envoy Gateway scaffold, both CRD force-cleanup paths | `kubectl get <kind> -A -o name` prints `kind/name`; piped to `delete` it addresses `default`, and `--ignore-not-found` swallows the miss |
 | A finalizer only the departing controller can clear | A-08, A-10 | ESO removed while nine ExternalSecrets were live stranded all nine; the ImageUpdater CR held `argocd` open |
 | A blocking delete before the loop that would unblock it | A-01, A-05, A-08, A-10, A-09 | `_delete_namespace` exists for this and says so; five callers used `kubectl delete namespace` directly and got the behaviour it was written to avoid |
-| `check()` gating `destroy()` | A-03, A-02, D-06 | A-03's check ANDs eight namespaces, two already deleted by A-08 and A-09, so it always reported missing and its `destroy()` never ran |
+| `check()` gating `destroy()` | A-03, A-02 | A-03's check ANDs eight namespaces, two already deleted by A-08 and A-09, so it always reported missing and its `destroy()` never ran |
 | An artefact whose real owner is Argo CD, not Helm | D-01 | No local release, so `helm uninstall` did nothing and the operator ran through a completed teardown — reporting `satisfied` on a torn-down cluster |
 
 Three of those hang and four are silent, and the silent ones are the expensive half. A hang is
@@ -2229,6 +2229,11 @@ self-reporting: somebody is watching a terminal. A `destroy()` built from `--ign
 deletes that address the wrong namespace reports exactly what a working one reports. **Every
 `--ignore-not-found` on a path that enumerates objects is a place where doing nothing looks like
 being done**, and teardown is made almost entirely of those.
+
+D-06 has the same exposure without having been observed to fail: its `check()` tests A-09's
+`gentian-catalogue` ApplicationSet, which a clean reverse pass has not yet removed when D-06 runs,
+but a re-run after a partial teardown has. A check that depends on another step's artefact answers
+correctly exactly once.
 
 **`check()` does not gate `destroy()`, in either direction.** A check answers *is this step's work
 complete*; the reverse pass asks *is anything left*. Those differ for every partially-torn-down
@@ -2301,7 +2306,9 @@ service has no OpenBao identity by construction, but "by construction" is an arg
 observation.
 
 **30 portability violations remain**, reported by `make lint-portability` and expected to be
-non-zero until Phase 13 migrates the call sites. The number must only go down.
+non-zero until Phase 13 migrates the call sites. The number must only go down. The job reports
+`failure` on every CI run for this reason; it is `continue-on-error`, so the run still concludes
+success. Reading a red job here as a regression is a mistake the workflow invites.
 
 **`docs/commands.md` and `docs/design/mail.md` have not been checked** against the new paradigm.
 `GETTING-STARTED.md` points at both for post-install operations.
