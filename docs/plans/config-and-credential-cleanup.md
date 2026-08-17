@@ -1604,7 +1604,42 @@ The move itself is 10c, and it is one change rather than twenty: have the Cluste
 another way — a provider-kubernetes `Object` observing the `kubernetes` Service would do it —
 which is the piece of design 10c still owes.
 
-**10c — Delete the old carriers.** Once Phase 6 gating proves the values are reconciled: delete
+**10c — Partly landed.**
+
+*Done.* The `gentian-cluster-config` ConfigMap is emitted by the Cluster
+Composition and the shell heredoc is gone, so the claim is its only writer. The
+move turned out to be far smaller than this section assumed: the key lint showed
+that **seventeen of the twenty-four keys had no reader at all**, and the three
+"discovered" values this step was blocked on — the kube-apiserver CIDR, endpoint
+IP and port — were among the dead ones. That leaves seven keys, six straight
+from the claim and one genuinely discovered: `node.ip`, now
+`XCluster.spec.nodeIp`, written to the claim at scaffold time so it is declared
+rather than detected on every run.
+
+The CI plumbing is gone too — `CI_BOT_PAT`, `GITHUB_ACTIONS_OS_REPO` and the
+`ARGOCD_SERVER`/`ARGOCD_TOKEN` pair that existed only to serve it. All four were
+already vestigial: declared, defaulted and warned about, with no consumer left
+after the upload script was deleted. `install.env.template` is already at the
+nine pointer variables plus two run-mode flags.
+
+*Left.* `cluster-settings.env` still exists and is still the installer's source
+for nine values. Eight of the nine are already expressible on the claim —
+`tenancyMode`, `networkMode`, `nodeIp`, `routingMode`, `mail.serviceMode`,
+`mail.host`, `secretMode`, `storageClass` — so the schema work is finished and
+what remains is changing who reads them: `load_deployments_cluster_settings`
+sources the file today and would instead parse `claims/cluster.yaml` from the
+deployments checkout, before the cluster exists.
+
+The ninth, `INFRA_CHART_PRIVATE`, should not move to the claim at all. It
+decides whether the *installer* asks for registry credentials, which is an
+install-time concern rather than a property of the cluster — it belongs with the
+credential catalogue.
+
+That change is deliberately not made while a cluster run is in progress: it
+rewrites the path the run exercises, and existing clusters carry a
+`cluster-settings.env` that would need a migration.
+
+The rest of the original 10c: delete
 `cluster-settings.env` and its template, `install.secrets.env` and its template, the 16 `.tmpl`
 files, and the 15 `envsubst` call sites. Delete `CI_BOT_PAT`, `GITHUB_ACTIONS_OS_REPO`,
 `GITHUB_ACTIONS_UI_REPO`, `configure_github_actions_secrets`, and
@@ -1686,7 +1721,7 @@ editing a root-owned kubelet arg file.
 
 | # | Criterion | Status |
 |---|---|---|
-| 1 | The lint fails today, naming the remaining sites | **Passing** — reports 25 across five classes and exits non-zero |
+| 1 | The lint fails today, naming the remaining sites | **Superseded** — Phase 13 migrated every site; the lint now reports 0 and exits zero |
 | 2 | `sed_inplace` behaves identically under BSD and GNU | **Partial** — verified under GNU, including that permissions survive; the BSD half runs in the new macOS job but has not been observed |
 | 3 | The macOS CI job runs and reports while still failing | **Passing** — `continue-on-error`, running the lint and `install.sh --explain` under stock `/bin/bash` 3.2 |
 
@@ -1799,9 +1834,21 @@ Supply what Phases 11 and 12 made room for. Every item has working prior art fro
 external install; that branch is the starting payload, rebased onto the interfaces rather than
 onto a moving installer.
 
+**Portability migration: done.** The lint reported 29; five were the lint
+matching its own pattern definitions, which it now excludes. The 24 real sites
+are migrated and it reports zero.
+
+Two things the migration surfaced. `kubectl-gentian` is installed as a single
+file to `~/.local/bin`, so it cannot source `compat.sh` — the repository need not
+exist on the machine that runs it — and carries its own copies. And two of its
+sites needed more than the `-i` wrapper: `sed` insert and append (`i\`, `a\`)
+want their text on a continuation line under BSD and accept it inline under GNU.
+That divergence is in the expression rather than the flag, so `sed_inplace`
+cannot cover it; those became `awk`, which parses identically on both.
+
 | Item | Interface from | Prior art |
 |---|---|---|
-| Migrate bash-4, `sed -i` and `xargs -r` call sites | Phase 11 `compat.sh` + lint | — |
+| ~~Migrate bash-4, `sed -i` and `xargs -r` call sites~~ **done** | Phase 11 `compat.sh` + lint | — |
 | Self-signed and private-CA issuers, CA secret, bundle distribution | 12c `issuerMode` | Self-signed CA support, with tests |
 | Thread provenance through appsets and operator chart values | 12a contract | `GENTIAN_OS_REPO`, image repository, appset `repoURL` |
 | `provider-helm` / `provider-kubernetes` ClusterRoles | 12e apply hook | Both RBAC files |
