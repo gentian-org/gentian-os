@@ -36,6 +36,50 @@ _gentian_err_trap() {
 trap '_gentian_err_trap $LINENO' ERR
 
 # ---------------------------------------------------------------------------
+# Portable file editing
+# ---------------------------------------------------------------------------
+# This plugin is installed as a single file (catalogue.sh copies it to
+# ~/.local/bin or /usr/local/bin), so it cannot source scripts/lib/compat.sh —
+# the repository need not exist on the machine that runs it. The helpers it
+# needs are therefore inlined rather than shared.
+#
+# GNU `sed -i` takes no argument and BSD `sed -i` requires a backup suffix, so
+# no single `sed -i` invocation works on both. Writing to a temporary file and
+# copying it back sidesteps the flag entirely.
+_sed_inplace() {
+  local expr="$1" file="$2" tmp
+  tmp="$(mktemp "${TMPDIR:-/tmp}/gentian-sed.XXXXXX")" || return 1
+  if ! sed "${expr}" "${file}" > "${tmp}"; then rm -f "${tmp}"; return 1; fi
+  cat "${tmp}" > "${file}"
+  rm -f "${tmp}"
+}
+
+# _insert_before / _insert_after <match-regex> <text> <file>
+#
+# `sed` insert and append (`i\`, `a\`) need their text on a continuation line
+# under BSD and accept it inline under GNU — a divergence _sed_inplace cannot
+# paper over, because it is in the expression rather than the flag. awk parses
+# identically on both, so the insert moves there.
+_insert_before() {
+  local match="$1" text="$2" file="$3" tmp
+  tmp="$(mktemp "${TMPDIR:-/tmp}/gentian-awk.XXXXXX")" || return 1
+  if ! awk -v m="${match}" -v t="${text}" '$0 ~ m { print t } { print }' "${file}" > "${tmp}"; then
+    rm -f "${tmp}"; return 1
+  fi
+  cat "${tmp}" > "${file}"
+  rm -f "${tmp}"
+}
+_insert_after() {
+  local match="$1" text="$2" file="$3" tmp
+  tmp="$(mktemp "${TMPDIR:-/tmp}/gentian-awk.XXXXXX")" || return 1
+  if ! awk -v m="${match}" -v t="${text}" '{ print } $0 ~ m { print t }' "${file}" > "${tmp}"; then
+    rm -f "${tmp}"; return 1
+  fi
+  cat "${tmp}" > "${file}"
+  rm -f "${tmp}"
+}
+
+# ---------------------------------------------------------------------------
 # Config resolution
 # ---------------------------------------------------------------------------
 CONFIG_FILE="${HOME}/.gentian/config"
@@ -232,9 +276,9 @@ set_tenant_deletion_policy() {
   local policy="${2}"
 
   if grep -q '^  deletionPolicy:' "${file}"; then
-    sed -i "s/^  deletionPolicy:.*/  deletionPolicy: ${policy}/" "${file}"
+    _sed_inplace "s/^  deletionPolicy:.*/  deletionPolicy: ${policy}/" "${file}"
   elif grep -q '^  apps:' "${file}"; then
-    sed -i "/^  apps:/i\\  deletionPolicy: ${policy}" "${file}"
+    _insert_before '^  apps:' "  deletionPolicy: ${policy}" "${file}"
   else
     printf '\n  deletionPolicy: %s\n' "${policy}" >> "${file}"
   fi
@@ -1565,7 +1609,7 @@ remove_instance_resource() {
   local kustom_file="${1}"
   local instance="${2}"
 
-  sed -i "/^[[:space:]]*-[[:space:]]*instances\/${instance}[[:space:]]*$/d" "${kustom_file}"
+  _sed_inplace "/^[[:space:]]*-[[:space:]]*instances\/${instance}[[:space:]]*$/d" "${kustom_file}"
 
   # Keep a valid empty list when no instances remain.
   if grep -Eq "^[[:space:]]*resources:[[:space:]]*$" "${kustom_file}"; then
@@ -1579,7 +1623,7 @@ remove_instance_resource() {
     ' "${kustom_file}")"
 
     if [[ "${resource_count}" == "0" ]]; then
-      sed -i 's/^resources:[[:space:]]*$/resources: []/' "${kustom_file}"
+      _sed_inplace 's/^resources:[[:space:]]*$/resources: []/' "${kustom_file}"
     fi
   fi
 }
@@ -1684,21 +1728,23 @@ tenant_collect_instance_names() {
   tenants_root="$(tenant_tenants_root)"
   definitions_root="$(tenant_definitions_root)"
 
-  declare -A instances=()
+  # A plain list, deduplicated by `sort -u` at the end. bash 3.2 on macOS has no
+  # associative arrays, and this one was only ever used as a set of names.
+  local instances=()
 
   for tenant_dir in "${tenants_root}"/* "${definitions_root}"/*; do
     [[ -d "${tenant_dir}" ]] || continue
     instance="$(basename "${tenant_dir}")"
     [[ "${instance}" == "components" ]] && continue
     [[ -f "${tenant_dir}/tenant.yaml" ]] || continue
-    instances["${instance}"]=1
+    instances+=("${instance}")
   done
 
   if [[ ${#instances[@]} -eq 0 ]]; then
     return 0
   fi
 
-  printf '%s\n' "${!instances[@]}" | sort
+  printf '%s\n' "${instances[@]}" | sort -u
 }
 
 cmd_tenant_list() {
@@ -2538,7 +2584,7 @@ cmd_install() {
     # The apps: key is always at 2-space indent; entries are "  - profile: <name>".
     # Insert immediately after the "  apps:" line (order within the list is irrelevant).
     if grep -q '^  apps:' "${file}"; then
-      sed -i "/^  apps:/a\\  - profile: ${app}" "${file}"
+      _insert_after '^  apps:' "  - profile: ${app}" "${file}"
     else
       # No apps key yet — append the block at the end of the file.
       printf '  apps:\n  - profile: %s\n' "${app}" >> "${file}"
@@ -2595,7 +2641,7 @@ cmd_uninstall() {
   fi
 
   # Remove the '- profile: <app>' line from spec.apps using sed.
-  sed -i "/^  - profile: ${app}$/d" "${file}"
+  _sed_inplace "/^  - profile: ${app}$/d" "${file}"
   echo "Removed '${app}' from spec.apps."
 
   # Commit and push.

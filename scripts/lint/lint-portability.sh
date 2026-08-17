@@ -25,7 +25,11 @@ COUNT_ONLY=0
 [[ "${1:-}" == "--count" ]] && COUNT_ONLY=1
 
 files() {
-    git ls-files '*.sh' scripts/kubectl-gentian 2>/dev/null
+    # This file is excluded because it *defines* the patterns: every `report`
+    # line below is a literal instance of the construct it looks for, and
+    # counting those would keep the total permanently five above the real one.
+    git ls-files '*.sh' scripts/kubectl-gentian 2>/dev/null |
+        grep -v '^scripts/lint/lint-portability\.sh$'
 }
 
 total=0
@@ -72,5 +76,5 @@ if [[ ${total} -eq 0 ]]; then
 fi
 echo "${RED}${total} portability violation(s).${NC}"
 echo "Expected to be non-zero until Phase 13 migrates the call sites."
-echo "The number must only go down — see docs/plans/config-and-credential-cleanup.md §7."
+echo "The number must only go down."
 exit 1

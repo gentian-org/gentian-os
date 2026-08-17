@@ -28,11 +28,17 @@ kubectl cluster-info --request-timeout=5s >/dev/null 2>&1 \
 # ── Kernel Pattern B Release MRs ─────────────────────────────────────────────
 
 info "Collecting kernel Helm Release MRs (namespace ${SERVICES_NS}, excluding tenant App Releases)..."
-mapfile -t releases < <(kubectl get release.helm.crossplane.io -n "${SERVICES_NS}" \
+releases=()
+while IFS= read -r _rel; do
+  [[ -n "${_rel}" ]] && releases+=("${_rel}")
+done < <(kubectl get release.helm.crossplane.io -n "${SERVICES_NS}" \
   -o jsonpath='{range .items[?(@.metadata.labels.crossplane\.io/composite=="")]}{.metadata.name}{"\n"}{end}' 2>/dev/null || true)
 # Fallback for clusters without empty-string selector support
 if [[ ${#releases[@]} -eq 0 ]]; then
-  mapfile -t releases < <(kubectl get release.helm.crossplane.io -n "${SERVICES_NS}" -o json \
+  releases=()
+  while IFS= read -r _rel; do
+    [[ -n "${_rel}" ]] && releases+=("${_rel}")
+  done < <(kubectl get release.helm.crossplane.io -n "${SERVICES_NS}" -o json \
     | jq -r '.items[] | select(.metadata.labels["crossplane.io/composite"] == null) | .metadata.name' 2>/dev/null || true)
 fi
 

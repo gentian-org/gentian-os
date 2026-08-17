@@ -117,7 +117,7 @@ _delete_crossplane_crds() {
 _argocd_strip_kubectl() {
     local _crd="${1}"
     kubectl get "${_crd}" -n argocd -o name 2>/dev/null \
-        | xargs -r -I{} kubectl patch {} -n argocd \
+        | xargs_r -I{} kubectl patch {} -n argocd \
             --type=merge -p='{"metadata":{"finalizers":[]}}' \
             2>/dev/null || true
 }
@@ -154,7 +154,7 @@ _clear_ns_finalizers() {
     info "  Clearing finalizers in namespace ${ns}..."
     # Patch everything returned by 'kubectl get all' first (fast, covers core types).
     kubectl get all -n "${ns}" -o name 2>/dev/null \
-        | xargs -r -I%% kubectl patch %% -n "${ns}" \
+        | xargs_r -I%% kubectl patch %% -n "${ns}" \
             --type=json -p='[{"op":"remove","path":"/metadata/finalizers"}]' \
             2>/dev/null || true
     # Then try a fixed list of custom resource types we know may linger.
@@ -172,7 +172,7 @@ _clear_ns_finalizers() {
         certificates.cert-manager.io \
         issuers.cert-manager.io; do
         kubectl get "${rt}" -n "${ns}" -o name 2>/dev/null \
-            | xargs -r -I%% kubectl patch %% -n "${ns}" \
+            | xargs_r -I%% kubectl patch %% -n "${ns}" \
                 --type=json -p='[{"op":"remove","path":"/metadata/finalizers"}]' \
                 2>/dev/null || true
     done
@@ -236,7 +236,7 @@ _drain_pvcs() {
     # Belt-and-suspenders: strip any lingering pvc-protection finalizers so
     # that a timed-out delete doesn't block namespace termination.
     kubectl get pvc -n "${ns}" -o name 2>/dev/null \
-        | xargs -r -I%% kubectl patch %% -n "${ns}" \
+        | xargs_r -I%% kubectl patch %% -n "${ns}" \
             --type=merge -p='{"metadata":{"finalizers":[]}}' \
             2>/dev/null || true
 }
@@ -457,7 +457,7 @@ _delete_kyverno_scaffold() {
     # install — explicitly sweep them regardless of how the helm step went.
     kubectl get mutatingwebhookconfiguration,validatingwebhookconfiguration -o name 2>/dev/null \
         | grep 'kyverno-' \
-        | xargs -r kubectl delete --ignore-not-found=true --wait=false 2>/dev/null || true
+        | xargs_r kubectl delete --ignore-not-found=true --wait=false 2>/dev/null || true
     success "Kyverno webhook configurations removed."
 }
 
@@ -482,7 +482,7 @@ _delete_gentianos_api_scaffold() {
         --ignore-not-found=true 2>/dev/null || true
     kubectl get clusterrolebinding -o name 2>/dev/null \
         | grep -E 'gentian-portal' \
-        | xargs -r kubectl delete --ignore-not-found=true 2>/dev/null || true
+        | xargs_r kubectl delete --ignore-not-found=true 2>/dev/null || true
 
     kubectl delete clusterrole \
         gentian-os \
@@ -493,7 +493,7 @@ _delete_gentianos_api_scaffold() {
         --ignore-not-found=true 2>/dev/null || true
     kubectl get clusterrole -o name 2>/dev/null \
         | grep -E 'gentian-portal' \
-        | xargs -r kubectl delete --ignore-not-found=true 2>/dev/null || true
+        | xargs_r kubectl delete --ignore-not-found=true 2>/dev/null || true
 
     success "Gentian OS API scaffold removed."
 }
@@ -679,7 +679,7 @@ purge_cluster_infra() {
     # rejects every create for the resources it intercepts.
     kubectl get validatingwebhookconfiguration,mutatingwebhookconfiguration -o name 2>/dev/null \
         | grep -E 'cnpg|reloader|stakater' \
-        | xargs -r kubectl delete --ignore-not-found=true --wait=false 2>/dev/null || true
+        | xargs_r kubectl delete --ignore-not-found=true --wait=false 2>/dev/null || true
 
     success "Cluster infrastructure removed."
 }

@@ -153,7 +153,10 @@ echo ""
 
 _arity_file="$(mktemp)"
 trap 'rm -f "${_arity_file}"' EXIT
-mapfile -t _lint_files < <(git ls-files -- 'scripts/*.sh')
+_lint_files=()
+while IFS= read -r _f; do
+    [[ -n "${_f}" ]] && _lint_files+=("${_f}")
+done < <(git ls-files -- 'scripts/*.sh')
 
 awk -v SQ="'" '
     /^[A-Za-z_][A-Za-z0-9_]*\(\)[[:space:]]*\{/ {

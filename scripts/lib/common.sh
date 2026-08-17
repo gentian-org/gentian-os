@@ -361,7 +361,10 @@ load_env_file() {
     local file="$1"
     local label="$2"
     local var
-    local -A before=()
+    # Parallel arrays rather than an associative one: stock macOS bash is 3.2,
+    # which has no `declare -A`. The two arrays are only ever appended together,
+    # so index i of one always matches index i of the other.
+    local before_keys=() before_vals=()
 
     [[ "${file}" == "/dev/null" ]] && return 0
     [[ -r "${file}" ]] || return 0
@@ -370,7 +373,8 @@ load_env_file() {
     # set by higher-precedence sources.
     for var in "${INPUT_HIERARCHY_VARS[@]}"; do
         if [[ -n "${!var+x}" ]]; then
-            before["$var"]="${!var}"
+            before_keys+=("${var}")
+            before_vals+=("${!var}")
         fi
     done
 
@@ -383,8 +387,9 @@ load_env_file() {
     fi
     set +a
 
-    for var in "${!before[@]}"; do
-        declare -gx "$var=${before[$var]}"
+    local i
+    for i in "${!before_keys[@]}"; do
+        declare -gx "${before_keys[$i]}=${before_vals[$i]}"
     done
 
     info "Loaded ${label} from ${file}."
@@ -1142,7 +1147,9 @@ check_prereqs() {
         local target_max_pods=220
         if (( cur_max_pods < target_max_pods )); then
             info "microk8s kubelet max-pods=${cur_max_pods} is below ${target_max_pods}; updating to ${target_max_pods}..."
-            sudo sed -i '/^--max-pods=/d' "${kubelet_args_file}"
+            local _kubelet_args_filtered
+            _kubelet_args_filtered="$(sed '/^--max-pods=/d' "${kubelet_args_file}")"
+            printf '%s\n' "${_kubelet_args_filtered}" | sudo tee "${kubelet_args_file}" >/dev/null
             echo "--max-pods=${target_max_pods}" | sudo tee -a "${kubelet_args_file}" >/dev/null
             info "Restarting microk8s to apply new max-pods limit (this takes ~30 s)..."
             sudo microk8s stop

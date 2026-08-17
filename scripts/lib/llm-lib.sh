@@ -41,7 +41,7 @@ render_and_apply_vllm_gpu_manifest() {
             continue
         fi
 
-        local instance_upper="${instance^^}"
+        local instance_upper; instance_upper="$(to_upper "${instance}")"
         local instance_k8s
         instance_k8s="$(_vllm_instance_k8s_name "${instance}")"
 
@@ -249,7 +249,7 @@ ensure_litellm_vllm_model() {
     for instance in ${instances}; do
         _vllm_instance_is_valid "${instance}" || continue
 
-        local instance_upper="${instance^^}"
+        local instance_upper; instance_upper="$(to_upper "${instance}")"
         local instance_k8s
         instance_k8s="$(_vllm_instance_k8s_name "${instance}")"
         local model_id_var="VLLM_${instance_upper}_MODEL_ID"

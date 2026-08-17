@@ -82,11 +82,11 @@ cri_cleanup() {
             exited_ctrs=$("${crictl[@]}" ps -a --state exited -q 2>/dev/null | wc -l | tr -d ' ')
             if (( notready_pods > 0 )); then
                 "${crictl[@]}" pods --state notready -q 2>/dev/null \
-                    | xargs -r "${crictl[@]}" rmp -f >/dev/null 2>&1 || true
+                    | xargs_r "${crictl[@]}" rmp -f >/dev/null 2>&1 || true
             fi
             if (( exited_ctrs > 0 )); then
                 "${crictl[@]}" ps -a --state exited -q 2>/dev/null \
-                    | xargs -r "${crictl[@]}" rm >/dev/null 2>&1 || true
+                    | xargs_r "${crictl[@]}" rm >/dev/null 2>&1 || true
             fi
             # Orphan RUNNING sandboxes: list every Ready pod, look up the
             # corresponding Kubernetes pod object; if it's gone or its UID
