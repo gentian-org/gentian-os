@@ -316,7 +316,6 @@ INPUT_HIERARCHY_VARS=(
     INFRA_CHART_PRIVATE
     INFRA_CHART_REPO
     MINIO_ENDPOINT
-    CNPG_HOST
     STORAGE_CLASS
 )
 
@@ -741,6 +740,35 @@ EOF
 # File path convention:
 #   ${GENTIAN_DEPLOYMENTS_PATH}/clusters/${GENTIAN_DEPLOYMENTS_CLUSTER_ID}/kernel/cluster-settings.env
 # =============================================================================
+# The XRD's default for a spec field, read from the schema rather than restated.
+#
+# The Composition and the installer must resolve an omitted field to the same
+# value. Writing `${NETWORK_MODE:-tunnel}` in shell creates a second default set
+# that agrees until one of them moves — which is exactly how the mail namespace
+# and the derived admin email came to differ from what the cluster actually used.
+# There is one place a default may live, and this reads it.
+xrd_default() {
+    local field="$1"
+    yq_get ".spec.versions[0].schema.openAPIV3Schema.properties.spec.properties.${field}.default" \
+        "${SCRIPT_DIR}/crossplane/xrds/cluster.yaml" 2>/dev/null || true
+}
+
+# One cluster setting, resolved: the claim if it says, else the XRD's default.
+#
+# Absence with no XRD default is deliberately empty rather than guessed. Where
+# empty is not a legal answer — nodeIp under networkMode=static-ip — the caller
+# that knows that says so, because this function cannot.
+claim_setting() {
+    local var="$1" field="$2" claim_file="$3" value
+    # An operator's environment still wins: an explicit export is an instruction.
+    [[ -n "${!var:-}" ]] && return 0
+    value="$(yq_get ".spec.${field}" "${claim_file}" 2>/dev/null || true)"
+    [[ -z "${value}" ]] && value="$(xrd_default "${field}")"
+    [[ -z "${value}" ]] && return 0
+    printf -v "${var}" '%s' "${value}"
+    export "${var?}"
+}
+
 load_deployments_cluster_settings() {
     # Whether the operator named a path, recorded before the default fills it
     # in. A configured path that does not exist is a mistake to report, not an
@@ -772,6 +800,28 @@ load_deployments_cluster_settings() {
         # Not an error here: --prepare-deployment runs this before writing the
         # file. Installing requires it, and says so.
         info "No deployments cluster settings file found at ${settings_file}."
+    fi
+
+    # The claim, for everything the Cluster XRD already models.
+    #
+    # These are read from the FILE, not the cluster: the installer needs
+    # networkMode and nodeIp at A-05 and A-07, and the Cluster XR is not created
+    # until B-07. The claim is authored before either, so one document serves
+    # both readers — yq here, Crossplane later — and there is no second surface
+    # to keep in step.
+    #
+    # After the .env, so a value still in cluster-settings.env keeps working
+    # while clusters migrate; each claim_setting is a no-op when the variable is
+    # already set.
+    local claim_file="${GENTIAN_DEPLOYMENTS_PATH}/clusters/${cluster}/kernel/claims/cluster.yaml"
+    if [[ -r "${claim_file}" ]]; then
+        claim_setting TENANCY_MODE      tenancyMode      "${claim_file}"
+        claim_setting NETWORK_MODE      networkMode      "${claim_file}"
+        claim_setting ROUTING_MODE      routingMode      "${claim_file}"
+        claim_setting SECRET_MODE       secretMode       "${claim_file}"
+        claim_setting NODE_IP           nodeIp           "${claim_file}"
+        claim_setting STORAGE_CLASS     storageClass     "${claim_file}"
+        claim_setting MAIL_SERVICE_MODE mail.serviceMode "${claim_file}"
     fi
 }
 
