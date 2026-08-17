@@ -248,6 +248,23 @@ spec:
                       type: string
                       description: Keycloak group whose members receive the cluster-admin policy.
                       default: /platform-admins
+                    tenantAdminGroup:
+                      type: string
+                      description: >
+                        Keycloak group whose members receive the tenant-admin
+                        policy. Membership alone grants nothing: the policy
+                        templates its path from the tenant claim, so a member
+                        without one reaches no tenant.
+                      default: /tenant-admins
+                    tenantClaim:
+                      type: string
+                      description: >
+                        Token claim naming the tenant a user administers. It is
+                        mapped into OpenBao alias metadata, which is both what
+                        the tenant-admin policy templates its path from and what
+                        the credential manager filters the catalogue by — so the
+                        write path and the read path cannot disagree.
+                      default: tenant
 
                 # ── Trust anchor ─────────────────────────────────────────
                 certificates:

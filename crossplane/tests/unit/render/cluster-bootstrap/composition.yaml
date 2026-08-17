@@ -31,6 +31,16 @@ spec:
             {{- $esoNs            := default "external-secrets" (dig "eso" "namespace" "" $spec) }}
             {{- $esoSa            := default "external-secrets" (dig "eso" "serviceAccount" "" $spec) }}
             {{- $letsencryptEmail := default (printf "admin@%s" $spec.kernelDomain) (dig "certManager" "letsencryptEmail" "" $spec) }}
+
+            {{- /* The OIDC auth backend's mount accessor, read back from the
+                 resource once OpenBao has created it. Vault policy templating
+                 addresses alias metadata by ACCESSOR — there is no way to name
+                 the mount by path — so this value cannot be declared, only
+                 observed. It is empty on the first reconcile and populated on
+                 the next, which is why the policy that needs it is gated on it
+                 rather than rendered with a placeholder. */}}
+            {{- $authObs   := dig "vault-auth-oidc" dict (default dict .observed.resources) }}
+            {{- $accessor  := dig "resource" "status" "atProvider" "accessor" "" $authObs }}
             {{- $defaultMasterRef := dict "name" "gentian-os-master-password" "namespace" "crossplane-system" }}
             {{- $masterRef        := default $defaultMasterRef (default (dict) $spec.masterPasswordSecretRef) }}
 
@@ -135,6 +145,7 @@ spec:
               providerConfigRef:
                 name: openbao
 
+            {{- if $accessor }}
             ---
             apiVersion: vault.vault.upbound.io/v1alpha1
             kind: Policy
@@ -148,11 +159,15 @@ spec:
                 policy: |
                   # A tenant admin reaches their own tenant's paths and nothing
                   # else. The deny below is explicit rather than implied by
-                  # omission: §9 notes that showing a tenant admin a
-                  # cluster-scoped form and having OpenBao reject the write is
-                  # an annoyance, while the inverse is a breach. An explicit
-                  # deny cannot be widened by a later grant.
-                  path "{{ $kvMount }}/data/gentian-os/tenants/{{ `{{identity.entity.aliases.` }}{{ $oidc.accessorPlaceholder | default "AUTH_ACCESSOR" }}{{ `.metadata.tenant}}` }}/*" {
+                  # omission: showing a tenant admin a cluster-scoped form and
+                  # having OpenBao reject the write is an annoyance, while the
+                  # inverse is a breach. An explicit deny cannot be widened by a
+                  # later grant.
+                  #
+                  # The tenant comes from the alias metadata the role's claim
+                  # mapping writes, so the path a token reaches is decided by the
+                  # verified claim rather than by anything the caller sends.
+                  path "{{ $kvMount }}/data/gentian-os/tenants/{{ `{{identity.entity.aliases.` }}{{ $accessor }}{{ `.metadata.tenant}}` }}/*" {
                     capabilities = ["create", "update", "read"]
                   }
                   path "{{ $kvMount }}/data/gentian-os/kernel/*" {
@@ -163,6 +178,7 @@ spec:
                   }
               providerConfigRef:
                 name: openbao
+            {{- end }}
 
             ---
             # The OIDC auth backend itself. The client secret is NOT here: it is
@@ -217,6 +233,52 @@ spec:
                 # Short-lived by design: the write path is interactive, so a
                 # token outliving the session is a stolen credential waiting to
                 # happen.
+                tokenTtl: 1800
+                tokenMaxTtl: 3600
+              providerConfigRef:
+                name: openbao
+
+            {{- /* ── The tenant-admin OIDC role ─────────────────────────────────
+                 Without this a tenant administrator cannot authenticate at all:
+                 the cluster-admin role above is bound to the platform-admins
+                 group, so their token exchange is refused before any
+                 scope decision is reached.
+
+                 claimMappings is the load-bearing line. It copies the verified
+                 `tenant` claim into the alias metadata that the tenant-admin
+                 policy templates its path from, and that the credential manager
+                 reads to decide which tenant's requirements to show. Both the
+                 write path and the read path therefore agree by construction,
+                 because they read the same value.
+
+                 boundClaims requires the group; a user without it falls through
+                 to no role rather than to a role with no tenant.
+              */}}
+            ---
+            apiVersion: jwt.vault.upbound.io/v1alpha1
+            kind: AuthBackendRole
+            metadata:
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: vault-auth-oidc-role-tenant-admin
+              name: {{ $name }}-auth-oidc-tenant-admin
+            spec:
+              forProvider:
+                backend: oidc
+                roleName: tenant-admin
+                roleType: oidc
+                userClaim: preferred_username
+                boundAudiences:
+                  - {{ $oidc.clientId | default "openbao" | quote }}
+                boundClaimsType: string
+                boundClaims:
+                  groups: {{ $oidc.tenantAdminGroup | default "/tenant-admins" | quote }}
+                claimMappings:
+                  {{ $oidc.tenantClaim | default "tenant" }}: tenant
+                allowedRedirectUris:
+                  - {{ printf "%s/ui/vault/auth/oidc/oidc/callback" ($oidc.externalUrl | default "") | quote }}
+                  - http://localhost:8250/oidc/callback
+                tokenPolicies:
+                  - tenant-admin
                 tokenTtl: 1800
                 tokenMaxTtl: 3600
               providerConfigRef:
