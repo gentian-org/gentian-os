@@ -315,7 +315,6 @@ INPUT_HIERARCHY_VARS=(
     SECRET_MODE
     INFRA_CHART_PRIVATE
     INFRA_CHART_REPO
-    MINIO_ENDPOINT
     STORAGE_CLASS
 )
 
@@ -822,6 +821,15 @@ load_deployments_cluster_settings() {
         claim_setting NODE_IP           nodeIp           "${claim_file}"
         claim_setting STORAGE_CLASS     storageClass     "${claim_file}"
         claim_setting MAIL_SERVICE_MODE mail.serviceMode "${claim_file}"
+        # The external relay, when mail.serviceMode is external. Same object,
+        # same claim; EXTERNAL_SMTP_* were only ever the shell's names for them.
+        claim_setting EXTERNAL_SMTP_HOST     mail.host     "${claim_file}"
+        claim_setting EXTERNAL_SMTP_PORT     mail.port     "${claim_file}"
+        claim_setting EXTERNAL_SMTP_SSL      mail.ssl      "${claim_file}"
+        claim_setting EXTERNAL_SMTP_STARTTLS mail.starttls "${claim_file}"
+        # LLM sizing. Hardware-dependent, and the XRD has said so all along.
+        claim_setting GPU_TIME_SLICE_REPLICAS llm.gpuTimeSliceReplicas "${claim_file}"
+        claim_setting VLLM_INSTANCES          llm.vllmInstances        "${claim_file}"
     fi
 }
 

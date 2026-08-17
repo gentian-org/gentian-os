@@ -1037,7 +1037,23 @@ _claim_cluster_fields() {
         var="${pair%% *}"; field="${pair##* }"
         [[ -n "${!var:-}" ]] && printf '  %s: %s\n' "${field}" "${!var}"
     done
-    [[ -n "${MAIL_SERVICE_MODE:-}" ]] && printf '  mail:\n    serviceMode: %s\n' "${MAIL_SERVICE_MODE}"
+    # Nested objects are emitted whole, and only when they have content: a bare
+    # `mail:` with nothing under it is not valid against the XRD.
+    #
+    # Newlines are appended explicitly. $(printf ...) strips trailing newlines,
+    # so building these with command substitution ran every field onto one line
+    # and produced a claim that did not parse.
+    local mail="" llm=""
+    [[ -n "${MAIL_SERVICE_MODE:-}"      ]] && mail+="    serviceMode: ${MAIL_SERVICE_MODE}"$'\n'
+    [[ -n "${EXTERNAL_SMTP_HOST:-}"     ]] && mail+="    host: ${EXTERNAL_SMTP_HOST}"$'\n'
+    [[ -n "${EXTERNAL_SMTP_PORT:-}"     ]] && mail+="    port: ${EXTERNAL_SMTP_PORT}"$'\n'
+    [[ -n "${EXTERNAL_SMTP_SSL:-}"      ]] && mail+="    ssl: ${EXTERNAL_SMTP_SSL}"$'\n'
+    [[ -n "${EXTERNAL_SMTP_STARTTLS:-}" ]] && mail+="    starttls: ${EXTERNAL_SMTP_STARTTLS}"$'\n'
+    [[ -n "${mail}" ]] && printf '  mail:\n%s' "${mail}"
+
+    [[ -n "${GPU_TIME_SLICE_REPLICAS:-}" ]] && llm+="    gpuTimeSliceReplicas: ${GPU_TIME_SLICE_REPLICAS}"$'\n'
+    [[ -n "${VLLM_INSTANCES:-}"          ]] && llm+="    vllmInstances: ${VLLM_INSTANCES}"$'\n'
+    [[ -n "${llm}" ]] && printf '  llm:\n%s' "${llm}"
     return 0
 }
 

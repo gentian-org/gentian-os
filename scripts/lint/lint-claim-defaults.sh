@@ -65,7 +65,11 @@ echo "Claim default lint — does anything but the XRD decide a default?"
 echo ""
 
 total=0
-mapfile -t _files < <(files)
+# `while read`, not mapfile: bash 3.2 has no mapfile and macOS ships 3.2.
+_files=()
+while IFS= read -r _f; do
+    [[ -n "${_f}" ]] && _files+=("${_f}")
+done < <(files)
 
 for var in "${CLAIM_BACKED[@]}"; do
     # ${VAR:-something}. The bare ${VAR:-} form is not a default: it is "empty
