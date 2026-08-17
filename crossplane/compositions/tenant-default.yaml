@@ -72,10 +72,19 @@ spec:
             {{- $jobs      := fromJson $jobsJSON }}
             {{- $objectsJSON := dig "data" "objects.json" "[]" $provCM }}
             {{- $objects     := fromJson $objectsJSON }}
-            {{- $routingMode := default "gateway" (dig "network.routingMode" "" $ccData) }}
-            {{- $kubeApiCIDR := dig "network.kubeApiServerCidr" "" $ccData }}
-            {{- $kubeApiEndpointIP := dig "network.kubeApiServerEndpointIp" "" $ccData }}
-            {{- $kubeApiEndpointPort := dig "network.kubeApiServerEndpointPort" "" $ccData }}
+            {{- /*
+              network.routingMode and the three network.kubeApiServer* keys used
+              to be read here and were never referenced again — assigned, then
+              discarded. Removed rather than left as documentation of an intent
+              that moved: the tenant NetworkPolicy is built by the operator, from
+              KUBE_APISERVER_CIDR and loadKubeAPIEndpointSlice in
+              tenant_network_policy.go, not from this ConfigMap.
+
+              They mattered because they were the only apparent consumer of the
+              three values the installer discovers from the live cluster, which
+              made those look like they had to be observed through Crossplane
+              before the ConfigMap could be composed. No Composition reads them.
+            */}}
             {{- $quotas      := default dict (dig "quotas" dict $spec) }}
             {{- $lrDefaultCPU := dig "tenant.limitRange.default.cpu" "500m" $ccData }}
             {{- $lrDefaultMem := dig "tenant.limitRange.default.memory" "512Mi" $ccData }}
