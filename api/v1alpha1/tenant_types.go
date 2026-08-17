@@ -273,6 +273,17 @@ type TenantStatus struct {
 	// Namespace is the resolved tenant namespace name.
 	// +optional
 	Namespace string `json:"namespace,omitempty"`
+
+	// AdminEmail is the resolved contact address for this tenant — spec.adminEmail
+	// when set, otherwise admin@<effective domain>.
+	//
+	// Published because the resolved value is what an operator signs in with, and
+	// spec.adminEmail is empty in the normal case where it is derived. A consumer
+	// reading only the spec sees nothing and has to re-derive it, which is how
+	// `gtnctl tenants deploy` came to print admin-<tenant>@gentian.org: a domain
+	// belonging to no cluster, for an account that does not exist.
+	// +optional
+	AdminEmail string `json:"adminEmail,omitempty"`
 	// ObservedGeneration is the last processed generation of the spec.
 	// +optional
 	ObservedGeneration int64 `json:"observedGeneration,omitempty"`

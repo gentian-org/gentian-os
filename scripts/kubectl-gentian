@@ -926,10 +926,22 @@ print_tenant_admin_login_instructions() {
   local username="${3}"
   local password="${4}"
 
+  # status.adminEmail, then spec. The status carries the RESOLVED address, which
+  # is the one Keycloak was given; the spec is empty whenever the address is
+  # derived, which is the normal case.
+  #
+  # There is no constructed fallback. This printed "${username}@gentian.org" —
+  # a domain belonging to no cluster, for an account that exists in no realm —
+  # and told the operator to sign in with it. An address this cannot read is an
+  # address it must not invent: the username below is real and sufficient to log
+  # in with.
   local login_email
-  login_email="$(kubectl --request-timeout=5s get tenant "${tenant_name}" -o jsonpath='{.spec.adminEmail}' 2>/dev/null || true)"
+  login_email="$(kubectl --request-timeout=5s get tenant "${tenant_name}" -o jsonpath='{.status.adminEmail}' 2>/dev/null || true)"
   if [[ -z "${login_email}" ]]; then
-    login_email="${username}@gentian.org"
+    login_email="$(kubectl --request-timeout=5s get tenant "${tenant_name}" -o jsonpath='{.spec.adminEmail}' 2>/dev/null || true)"
+  fi
+  if [[ -z "${login_email}" ]]; then
+    login_email="<not yet published — use the username>"
   fi
 
   local kernel_domain_name

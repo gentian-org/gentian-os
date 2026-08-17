@@ -121,6 +121,7 @@ func (r *TenantReconciler) persistTenantStageProgress(ctx context.Context, state
 	tenant := state.tenant
 	if state.nsName != "" {
 		tenant.Status.Namespace = state.nsName
+		tenant.Status.AdminEmail = r.tenantAdminEmail(tenant)
 	}
 	tenant.Status.AppCount = len(tenant.Spec.Apps)
 	provisioning := state.identityResult.RequeueAfter > 0 ||
@@ -341,6 +342,7 @@ func (r *TenantReconciler) reconcileTenantStageFinalize(ctx context.Context, sta
 	}
 	r.setCondition(tenant, conditionNamespaceReady, metav1.ConditionTrue, "Provisioned", "Tenant namespace is ready")
 	tenant.Status.Namespace = state.nsName
+	tenant.Status.AdminEmail = r.tenantAdminEmail(tenant)
 	tenant.Status.AppCount = len(tenant.Spec.Apps)
 	tenant.Status.ReadyApps = len(tenant.Status.ProvisionedApps)
 
