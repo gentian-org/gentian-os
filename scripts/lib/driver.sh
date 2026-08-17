@@ -364,17 +364,29 @@ run_step_reverse() {
         return 0
     fi
 
-    # Only a definite MISSING earns a skip. UNDEFINED must still run destroy():
-    # E-01-tenants is the case that matters — its check() has no install-time
-    # artefact to report on, but its destroy() does the whole tenant teardown.
-    # Skipping on a non-answer would leave resources behind; destroy() is
-    # idempotent, so running one that had nothing to do is free.
+    # check() does not gate destroy(), in any direction.
+    #
+    # A check answers "is this step's work complete", which on the reverse pass
+    # is the wrong question: what matters is whether anything is left. The two
+    # differ for every partially-torn-down step, and the reverse pass creates
+    # that state deliberately — each step removes part of what the steps before
+    # it tested for.
+    #
+    # A-03-namespaces is the case that proves it. Its check ANDs eight
+    # namespaces, two of which (external-secrets, argocd) A-08 and A-09 have
+    # already deleted by the time the reverse pass arrives. It therefore always
+    # reports MISSING, its destroy() was always skipped, and six kernel
+    # namespaces survived an uninstall that reported success. A-02 lost 422
+    # provider CRDs the same way.
+    #
+    # Running it regardless is free: every destroy() here is built from
+    # --ignore-not-found deletes, which is what made skipping look like a safe
+    # optimisation in the first place.
     if _has_verb check; then
         local verdict=0
         _step_verdict || verdict=$?
         if [[ "$verdict" == "${CHECK_MISSING}" ]]; then
-            echo "     check: already absent  →  skip"
-            return 0
+            echo "     check: reports absent  →  destroying anyway"
         fi
     fi
 
