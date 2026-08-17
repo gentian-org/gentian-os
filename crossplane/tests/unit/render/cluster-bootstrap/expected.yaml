@@ -586,6 +586,16 @@ spec:
       path "secret/data/gentian-os/tenants/+/apps/*" {
         capabilities = ["read"]
       }
+      # Tenant repository credentials. Without this a tenant admin's
+      # write succeeds and nothing works: the satisfaction probe
+      # never syncs, so the credential reads as missing while it is
+      # sitting in the path, and the Argo CD repository Secret is
+      # never materialised. Named rather than widened to
+      # tenants/+/* — ESO should read what becomes a Secret, not
+      # everything a tenant owns.
+      path "secret/data/gentian-os/tenants/+/repositories/*" {
+        capabilities = ["read"]
+      }
       path "secret/metadata/gentian-os/tenants/*" {
         capabilities = ["list"]
       }

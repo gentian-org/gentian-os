@@ -29,7 +29,7 @@ import (
 )
 
 // kernelTenantBrokerVersion bumps when the kernel→tenant IdP PUT payload changes.
-const kernelTenantBrokerVersion = "3"
+const kernelTenantBrokerVersion = "4"
 
 // kernelPortalBrokerClientID is the OIDC client in each tenant realm used when the
 // shared kernel realm brokers login to that tenant.
@@ -67,7 +67,7 @@ func buildKernelTenantBrokerScript() string {
 	return keycloak.ShellJSONIDExtractor() + keycloakShellResolveExternalBase + fmt.Sprintf(`
 set -eu
 
-if [ -z "${REALM_NAME:-}" ] || [ -z "${KERNEL_REALM:-}" ] || [ -z "${KERNEL_EXTERNAL_URL:-}" ]; then
+if [ -z "${REALM_NAME:-}" ] || [ -z "${KERNEL_REALM:-}" ] || [ -z "${KERNEL_EXTERNAL_URL:-}" ] || [ -z "${TENANT_NAME:-}" ]; then
   echo "kernel tenant broker skipped (REALM_NAME, KERNEL_REALM, or KERNEL_EXTERNAL_URL unset)"
   exit 0
 fi
@@ -148,6 +148,32 @@ else
     >/dev/null 2>&1 || echo "WARN: could not add groups IdP mapper (may require newer Keycloak)"
   echo "IdP mapper groups registered for kernel tenant IdP ${TENANT_REALM}"
 fi
+
+# 5. Stamp the tenant name onto every user brokered from this realm.
+#
+# The groups mapper above tells the kernel realm WHAT a user may do; this tells
+# it WHICH TENANT they are doing it for. OpenBao maps the claim into alias
+# metadata, its tenant-admin policy templates a path from it, and the credential
+# manager filters the catalogue by it — so all three agree because all three read
+# one value.
+#
+# Hardcoded rather than derived from a claim: the tenant is a property of the
+# identity provider the user came through, not something their token asserts. A
+# user cannot arrive through this IdP and belong to another tenant.
+#
+# Applied to every brokered user, not only admins. It grants nothing on its own —
+# the groups mapper decides that — and a member without an admin group matches no
+# OpenBao role at all.
+if echo "${IDP_M}" | grep -q '"name":"tenant"'; then
+  echo "IdP mapper tenant already on kernel tenant IdP ${TENANT_REALM}"
+else
+  curl -sf --max-time 30 -X POST \
+    "${KEYCLOAK_URL}/admin/realms/${KERNEL_REALM}/identity-provider/instances/${TENANT_REALM}/mappers" \
+    -H "${AUTH_HEADER}" -H "Content-Type: application/json" \
+    -d '{"name":"tenant","identityProviderMapper":"hardcoded-attribute-idp-mapper","identityProviderAlias":"'"${TENANT_REALM}"'","config":{"syncMode":"FORCE","attribute":"tenant","attribute.value":"'"${TENANT_NAME}"'"}}' \
+    >/dev/null 2>&1 || echo "WARN: could not add tenant IdP mapper"
+  echo "IdP mapper tenant=${TENANT_NAME} registered for kernel tenant IdP ${TENANT_REALM}"
+fi
 `, kernelPortalBrokerClientID,
 		keycloak.ShellWaitForRealm("${TENANT_REALM}"),
 		brokerResolveIDShell,
@@ -161,6 +187,9 @@ func makeKernelTenantBrokerJob(tenantName, realmName, kernelRealm, kernelExterna
 	c := keycloakContainer("kernel-tenant-broker", buildKernelTenantBrokerScript())
 	c.Env = append(c.Env,
 		corev1.EnvVar{Name: "REALM_NAME", Value: realmName},
+		// The tenant NAME, not its realm. They differ when a Tenant overrides
+		// spec.isolation.keycloakRealm, and the OpenBao paths are keyed by name.
+		corev1.EnvVar{Name: "TENANT_NAME", Value: tenantName},
 		corev1.EnvVar{Name: "KERNEL_REALM", Value: kernelRealm},
 		corev1.EnvVar{Name: "KERNEL_EXTERNAL_URL", Value: kernelExternalURL},
 	)

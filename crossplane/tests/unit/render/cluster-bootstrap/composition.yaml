@@ -88,6 +88,16 @@ spec:
                   path "{{ $kvMount }}/data/gentian-os/tenants/+/apps/*" {
                     capabilities = ["read"]
                   }
+                  # Tenant repository credentials. Without this a tenant admin's
+                  # write succeeds and nothing works: the satisfaction probe
+                  # never syncs, so the credential reads as missing while it is
+                  # sitting in the path, and the Argo CD repository Secret is
+                  # never materialised. Named rather than widened to
+                  # tenants/+/* — ESO should read what becomes a Secret, not
+                  # everything a tenant owns.
+                  path "{{ $kvMount }}/data/gentian-os/tenants/+/repositories/*" {
+                    capabilities = ["read"]
+                  }
                   path "{{ $kvMount }}/metadata/gentian-os/tenants/*" {
                     capabilities = ["list"]
                   }
@@ -170,6 +180,15 @@ spec:
                   path "{{ $kvMount }}/data/gentian-os/tenants/{{ `{{identity.entity.aliases.` }}{{ $accessor }}{{ `.metadata.tenant}}` }}/*" {
                     capabilities = ["create", "update", "read"]
                   }
+                  # Metadata on the same prefix. The write path records who set a
+                  # credential as custom metadata, and that write is deliberately
+                  # allowed to fail quietly — the value is already stored, so
+                  # failing the request would report a write that succeeded as
+                  # broken. Without this capability that silence would mean every
+                  # tenant credential is stored with no "who set this" at all.
+                  path "{{ $kvMount }}/metadata/gentian-os/tenants/{{ `{{identity.entity.aliases.` }}{{ $accessor }}{{ `.metadata.tenant}}` }}/*" {
+                    capabilities = ["create", "update", "read", "list"]
+                  }
                   path "{{ $kvMount }}/data/gentian-os/kernel/*" {
                     capabilities = ["deny"]
                   }
@@ -222,6 +241,9 @@ spec:
                 userClaim: preferred_username
                 boundAudiences:
                   - {{ $oidc.clientId | default "openbao" | quote }}
+                  {{- range (default (list "gentian-portal") $oidc.additionalAudiences) }}
+                  - {{ . | quote }}
+                  {{- end }}
                 boundClaimsType: string
                 boundClaims:
                   groups: {{ $oidc.clusterAdminGroup | default "/platform-admins" | quote }}
@@ -269,9 +291,15 @@ spec:
                 userClaim: preferred_username
                 boundAudiences:
                   - {{ $oidc.clientId | default "openbao" | quote }}
-                boundClaimsType: string
+                  {{- range (default (list "gentian-portal") $oidc.additionalAudiences) }}
+                  - {{ . | quote }}
+                  {{- end }}
+                # glob, not string: the kernel realm imports each tenant's own
+                # admins group under its own name, so there is no one group to
+                # match exactly.
+                boundClaimsType: glob
                 boundClaims:
-                  groups: {{ $oidc.tenantAdminGroup | default "/tenant-admins" | quote }}
+                  groups: {{ $oidc.tenantAdminGroup | default "/gentian:tenant:*:admins" | quote }}
                 claimMappings:
                   {{ $oidc.tenantClaim | default "tenant" }}: tenant
                 allowedRedirectUris:
@@ -427,10 +455,17 @@ spec:
               providerConfigRef:
                 name: keycloak
 
-            {{- /* The two groups the roles bind on. Declared here so the names
-                 in the roles above are not references to something an operator
-                 has to remember to create by hand. */}}
-            {{- range $g := list ($oidc.clusterAdminGroup | default "/platform-admins") ($oidc.tenantAdminGroup | default "/tenant-admins") }}
+            {{- /* The cluster admin group, declared here so the name the
+                 cluster-admin role binds is not a reference to something an
+                 operator has to remember to create by hand.
+
+                 Only this one. Tenant admin groups are not declared: the kernel
+                 realm imports each tenant's own admins group when a user is
+                 brokered, so they arrive named per tenant and the tenant-admin
+                 role matches them by glob. Creating a group from that glob would
+                 make a Keycloak group literally called
+                 gentian:tenant:*:admins. */}}
+            {{- range $g := list ($oidc.clusterAdminGroup | default "/platform-admins") }}
             {{- $gName := trimPrefix "/" $g }}
             ---
             apiVersion: group.keycloak.crossplane.io/v1alpha1

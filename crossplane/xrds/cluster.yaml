@@ -248,6 +248,19 @@ spec:
                       type: string
                       description: Keycloak group whose members receive the cluster-admin policy.
                       default: /platform-admins
+                    additionalAudiences:
+                      type: array
+                      items:
+                        type: string
+                      description: >
+                        Further client IDs whose tokens OpenBao accepts, beyond
+                        clientId. The console authenticates with its own Keycloak
+                        client, so its tokens carry its own audience; without it
+                        listed here every console request fails the token
+                        exchange. Group membership still gates what a token can
+                        do — this only decides which clients may present one.
+                      default:
+                        - gentian-portal
                     realm:
                       type: string
                       description: >
@@ -258,11 +271,16 @@ spec:
                     tenantAdminGroup:
                       type: string
                       description: >
-                        Keycloak group whose members receive the tenant-admin
-                        policy. Membership alone grants nothing: the policy
-                        templates its path from the tenant claim, so a member
-                        without one reaches no tenant.
-                      default: /tenant-admins
+                        Group pattern whose members receive the tenant-admin
+                        policy. A glob, because the kernel realm imports each
+                        tenant's own admins group by name rather than collecting
+                        everyone into one — so the pattern matches per-tenant
+                        groups instead of naming a single shared one.
+
+                        Membership alone grants nothing: the policy templates its
+                        path from the tenant claim, so a member without one
+                        reaches no tenant.
+                      default: "/gentian:tenant:*:admins"
                     tenantClaim:
                       type: string
                       description: >
