@@ -2139,7 +2139,16 @@ state it means. Naming the shapes:
 |---|---|---|
 | `--uninstall` | Cluster objects | Undoing an install on a cluster you keep |
 | `--purge` | The above, plus volumes and local state | Handing a cluster back; proving a clean-room install |
+| `--purge --cluster-infra` | The above, plus the shared operators this installer brought up and their CRDs | A cluster that ran nothing else |
 | Purge, then delete `clusters/<id>/kernel` | The above, plus the Git configuration | Retiring a cluster for good |
+
+The last two are separate because *this installer created it* and *this cluster can lose it* are
+different questions. CNPG and Reloader survive both an uninstall and a plain purge for reasons
+unrelated to Argo CD pruning: their CRDs carry `helm.sh/resource-policy: keep`, so Helm protects
+them deliberately, and their namespaces come from `CreateNamespace=true`, which creates them
+outside the Application's resource tree where nothing prunes them. A pruning Argo removes the
+workloads and leaves both standing. Removing CNPG's CRDs removes every Postgres cluster on the
+machine, not only Gentian's — a judgement about the cluster, which the person purging it holds.
 
 Volumes were the part an uninstall could not reach. Every kernel StorageClass reclaims with
 `Retain`, so deleting a PVC releases the PV and leaves the data on the backend — an uninstalled
@@ -2321,8 +2330,9 @@ this the only remaining gap between a provisioned tenant and a reachable one. Cl
 decisions this plan does not record: storage, the passdb/userdb behind `mail-dovecot-domains`, and
 how IMAP authenticates against Keycloak.
 
-**Nothing owns the teardown of an Argo CD-managed add-on.** `cnpg-system` and `stakater-system`
-survive an uninstall whenever Argo CD stops before B-03 prunes them, and no step names either.
-Their CRDs and webhook configurations survive with them.
+**`--cluster-infra` is unexercised.** `--purge --cluster-infra` removes `cnpg-system`,
+`stakater-system`, their CRDs and their webhook configurations; its namespace list is derived from
+the bootstrap Applications' destination namespaces rather than declared, so an add-on added later
+is covered without a second list to update. Only its dry run has been exercised.
 
 ---

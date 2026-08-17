@@ -558,6 +558,106 @@ purge_local_state() {
 # it is shared with every other cluster in the repository, and removing it is a
 # commit somebody reviews. Saying so is the difference between "purged" and
 # "purged, except the part that would rebuild it identically".
+# =============================================================================
+# Cluster infrastructure — the shared operators Gentian brings up alongside it
+# =============================================================================
+#
+# CNPG and Reloader arrive as Argo CD Applications (B-03) and survive both an
+# uninstall and a plain purge, for two reasons that have nothing to do with Argo
+# being alive to prune:
+#
+#   Their CRDs carry helm.sh/resource-policy: keep, so Helm deliberately leaves
+#   them behind — it protects data by refusing to remove the definitions of the
+#   objects holding it.
+#
+#   Their namespaces come from syncOptions: CreateNamespace=true, which creates
+#   them OUTSIDE the Application's resource tree. Deleting the Application never
+#   prunes them, and nothing else names them.
+#
+# So a pruning Argo removes the workloads and leaves the namespace and the CRDs
+# standing.
+#
+# Opt-in, via --purge --cluster-infra, because "this installer created it" and
+# "this cluster can lose it" are different questions. CNPG's CRDs define every
+# Postgres on the machine; a cluster that ran CNPG before Gentian keeps serving
+# other workloads from it, and removing the definitions takes those with it.
+# That is a judgement about the cluster, which the person purging it holds and
+# this script does not.
+#
+# Never on --uninstall, at any flag. An uninstall keeps data by design, and
+# these CRDs define the objects the data lives in.
+
+# Namespaces the bootstrap Applications deploy into, read from the Applications
+# themselves rather than from a list kept alongside them. A list would drift the
+# first time an add-on is added, and drift silently, because nothing fails when
+# a teardown forgets a namespace.
+_cluster_infra_namespaces() {
+    local tmpl ns
+    for tmpl in "${SCRIPT_DIR}"/kernel/bootstrap/*.yaml.tmpl; do
+        [[ -f "${tmpl}" ]] || continue
+        # The namespace on the line after `destination:`, which is where an
+        # Argo CD Application declares where it deploys.
+        ns="$(awk '/^  destination:/{f=1; next} f && /namespace:/{print $2; exit}' "${tmpl}")"
+        [[ -n "${ns}" ]] || continue
+        # Namespaces owned by a step are that step's to remove, and A-03 already
+        # does. Only the ones nothing else claims belong here.
+        case "${ns}" in
+            argocd|openbao|platform-kernel|gentian-system|gentian-*) continue ;;
+        esac
+        echo "${ns}"
+    done | sort -u
+}
+
+# CRD groups those operators register. Declared, because a CRD carries no record
+# of which release installed it — helm.sh/resource-policy: keep is the only mark
+# on them, and cert-manager and Crossplane wear it too.
+#
+# Anything missing here is reported by the sweep below rather than left silent.
+_cluster_infra_crd_patterns() {
+    printf '%s\n' \
+        'cnpg\.io$' \
+        'postgresql\.cnpg\.io$'
+}
+
+purge_cluster_infra() {
+    local ns pattern
+    banner "Cluster infrastructure"
+
+    if [[ "${DRY_RUN:-0}" == "1" || "${GENTIAN_DRY_RUN:-0}" == "1" ]]; then
+        info "  [dry-run] Would remove: $(_cluster_infra_namespaces | tr '\n' ' ')"
+        return 0
+    fi
+
+    for ns in $(_cluster_infra_namespaces); do
+        _delete_namespace "${ns}"
+    done
+
+    for pattern in $(_cluster_infra_crd_patterns); do
+        _delete_crds_matching "${pattern}" "cluster infrastructure CRDs (${pattern})"
+    done
+
+    # Webhook configurations outlive both, and a stale one whose service is gone
+    # rejects every create for the resources it intercepts.
+    kubectl get validatingwebhookconfiguration,mutatingwebhookconfiguration -o name 2>/dev/null \
+        | grep -E 'cnpg|reloader|stakater' \
+        | xargs -r kubectl delete --ignore-not-found=true --wait=false 2>/dev/null || true
+
+    success "Cluster infrastructure removed."
+}
+
+# What a purge leaves, stated rather than discovered later. Silence here is the
+# failure mode this whole teardown path kept producing.
+purge_report_cluster_residue() {
+    local left
+    left="$(kubectl get crd -o name 2>/dev/null \
+        | sed 's#.*/##' \
+        | grep -vE '\.k8s\.io$|\.kubernetes\.io$|cilium\.io$' \
+        | sed 's/^[^.]*\.//' | sort -u | tr '\n' ' ')"
+    [[ -n "${left// /}" ]] || return 0
+    warn "CRD groups still registered: ${left}"
+    warn "  Remove them with --cluster-infra, or leave them if another workload uses them."
+}
+
 purge_report_remaining() {
     local cluster="${GENTIAN_DEPLOYMENTS_CLUSTER_ID:-<cluster>}"
     echo ""
@@ -583,6 +683,11 @@ purge_confirm() {
     warn "  • OpenBao's storage — every credential, and the derivation salt"
     warn "  • the infra database, cache and object-store volumes"
     warn "  • ~/.gentian and the OpenBao init files on this machine"
+    if [[ "${GENTIAN_PURGE_CLUSTER_INFRA:-0}" == "1" ]]; then
+        warn "  • --cluster-infra: the shared operators this installer brought up —"
+        warn "    CNPG, Reloader — and their CRDs. Every Postgres cluster on this"
+        warn "    machine goes with them, not only Gentian's."
+    fi
     echo ""
     warn "Without a recovery kit the salt is gone with it, and the same master"
     warn "password will not reproduce this cluster's credentials. Export one first:"
