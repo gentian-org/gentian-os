@@ -283,6 +283,174 @@ spec:
                 tokenMaxTtl: 3600
               providerConfigRef:
                 name: openbao
+
+            {{- /* ── The Keycloak side of the OIDC handshake ────────────────────
+                 Everything above configures OpenBao to TRUST Keycloak. None of
+                 it works until Keycloak has a client to be trusted as — and
+                 until now nothing created one, so the OIDC write path was
+                 unusable for cluster admins as well as tenants. That is also
+                 why E-03 could never safely revoke the bootstrap token.
+
+                 Composed rather than provisioned by a Job because the objects
+                 are declarative and have no ordering problem: the client, its
+                 two mappers and the two groups are all plain state, and
+                 Crossplane retries until Keycloak is up.
+              */}}
+            {{- $realm := $oidc.realm | default "kernel" }}
+            {{- $obClientId := $oidc.clientId | default "openbao" }}
+            {{- $obSecretName := $oidc.clientSecretRef | default "openbao-oidc-client" }}
+            {{- $obNs := $spec.openbao.namespace | default "openbao" }}
+
+            {{- /* The client secret, materialised from the KV path seeded above.
+                 One Secret, read by both ends — the auth backend takes its
+                 client secret from here and so does the Keycloak client, so
+                 there is no second copy to drift. */}}
+            ---
+            apiVersion: kubernetes.crossplane.io/v1alpha2
+            kind: Object
+            metadata:
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: openbao-oidc-client-secret
+              name: {{ $name }}-oidc-client-secret
+            spec:
+              forProvider:
+                manifest:
+                  apiVersion: external-secrets.io/v1
+                  kind: ExternalSecret
+                  metadata:
+                    name: openbao-oidc-client
+                    namespace: {{ $obNs }}
+                  spec:
+                    refreshInterval: 1h
+                    secretStoreRef:
+                      name: openbao
+                      kind: ClusterSecretStore
+                    target:
+                      name: {{ $obSecretName }}
+                      creationPolicy: Owner
+                    data:
+                      - secretKey: client-secret
+                        remoteRef:
+                          key: gentian-os/kernel/oidc/openbao
+                          property: client_secret
+              providerConfigRef:
+                name: kubernetes
+
+            ---
+            apiVersion: openidclient.keycloak.crossplane.io/v1alpha1
+            kind: Client
+            metadata:
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: openbao-keycloak-client
+              name: {{ $name }}-openbao-keycloak-client
+              labels:
+                # E-03 reads this to decide whether revoking the bootstrap token
+                # would lock the cluster out.
+                gentianos.io/purpose: openbao-oidc
+            spec:
+              deletionPolicy: Delete
+              forProvider:
+                clientId: {{ $obClientId | quote }}
+                name: OpenBao
+                realmId: {{ $realm | quote }}
+                # CONFIDENTIAL because OpenBao is a server holding a secret, not
+                # a browser app that cannot keep one.
+                accessType: CONFIDENTIAL
+                standardFlowEnabled: true
+                directAccessGrantsEnabled: false
+                serviceAccountsEnabled: false
+                validRedirectUris:
+                  - {{ printf "%s/ui/vault/auth/oidc/oidc/callback" ($oidc.externalUrl | default "") | quote }}
+                  - http://localhost:8250/oidc/callback
+                clientSecretSecretRef:
+                  name: {{ $obSecretName }}
+                  namespace: {{ $obNs }}
+                  key: client-secret
+              providerConfigRef:
+                name: keycloak
+
+            {{- /* The groups claim. Both OIDC roles bind on it, so without this
+                 mapper the token carries no groups and every login matches no
+                 role — which fails as "permission denied" rather than as
+                 "misconfigured", and is the hardest form of this to diagnose.
+                 fullPath emits /platform-admins, matching what the roles bind. */}}
+            ---
+            apiVersion: openidgroup.keycloak.crossplane.io/v1alpha1
+            kind: GroupMembershipProtocolMapper
+            metadata:
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: openbao-groups-mapper
+              name: {{ $name }}-openbao-groups-mapper
+            spec:
+              deletionPolicy: Delete
+              forProvider:
+                realmId: {{ $realm | quote }}
+                clientIdRef:
+                  name: {{ $name }}-openbao-keycloak-client
+                name: groups
+                claimName: groups
+                fullPath: true
+                addToIdToken: true
+                addToAccessToken: true
+                addToUserinfo: true
+              providerConfigRef:
+                name: keycloak
+
+            {{- /* The tenant claim, from a user attribute. This is the value the
+                 tenant-admin role maps into alias metadata, which the policy
+                 templates its path from and the credential manager filters by.
+                 A user without the attribute gets no claim, so they reach no
+                 tenant — absent means nothing, never everything. */}}
+            ---
+            apiVersion: client.keycloak.crossplane.io/v1alpha1
+            kind: ProtocolMapper
+            metadata:
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: openbao-tenant-mapper
+              name: {{ $name }}-openbao-tenant-mapper
+            spec:
+              deletionPolicy: Delete
+              forProvider:
+                realmId: {{ $realm | quote }}
+                clientIdRef:
+                  name: {{ $name }}-openbao-keycloak-client
+                name: tenant
+                protocol: openid-connect
+                protocolMapper: oidc-usermodel-attribute-mapper
+                config:
+                  user.attribute: {{ $oidc.tenantClaim | default "tenant" | quote }}
+                  claim.name: {{ $oidc.tenantClaim | default "tenant" | quote }}
+                  jsonType.label: String
+                  id.token.claim: "true"
+                  access.token.claim: "true"
+                  userinfo.token.claim: "true"
+              providerConfigRef:
+                name: keycloak
+
+            {{- /* The two groups the roles bind on. Declared here so the names
+                 in the roles above are not references to something an operator
+                 has to remember to create by hand. */}}
+            {{- range $g := list ($oidc.clusterAdminGroup | default "/platform-admins") ($oidc.tenantAdminGroup | default "/tenant-admins") }}
+            {{- $gName := trimPrefix "/" $g }}
+            ---
+            apiVersion: group.keycloak.crossplane.io/v1alpha1
+            kind: Group
+            metadata:
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: keycloak-group-{{ $gName }}
+              name: {{ $name }}-keycloak-group-{{ $gName }}
+            spec:
+              # Orphan: a group holds memberships this composition did not create,
+              # and deleting the claim should not silently remove people's access.
+              deletionPolicy: Orphan
+              forProvider:
+                realmId: {{ $realm | quote }}
+                name: {{ $gName | quote }}
+              providerConfigRef:
+                name: keycloak
+            {{- end }}
+              providerConfigRef:
+                name: openbao
             {{- end }}
 
             ---
@@ -358,6 +526,7 @@ spec:
                   "authz/openfga"
                   "mail/postfix"
                   "mail/dovecot"
+                  "oidc/openbao"
             }}
             {{- range $kvSeeds }}
             {{- $safeName := . | replace "/" "-" }}

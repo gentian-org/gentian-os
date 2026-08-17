@@ -540,7 +540,16 @@ create_crossplane_secrets() {
             --arg oidc "$(_derive dovecot oidcClientSecret)" \
             '{doveadm_password:$doveadm,oidc_client_secret:$oidc}')"
 
-    success "All 9 input Secrets applied to ${CROSSPLANE_NAMESPACE}."
+    # ── oidc/openbao (the Keycloak client secret OpenBao authenticates with) ──
+    # Derived rather than operator-supplied: it is shared between two machines,
+    # never typed by a human, and so belongs to the generated class. Both ends
+    # read it from the same path, so they cannot drift.
+    _kv_secret "gentian-os-kernel-oidc-openbao" \
+        "$(jq -nc \
+            --arg a "$(_derive openbao oidcClientSecret)" \
+            '{client_secret:$a}')"
+
+    success "All 10 input Secrets applied to ${CROSSPLANE_NAMESPACE}."
 }
 
 # =============================================================================

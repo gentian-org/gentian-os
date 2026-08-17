@@ -14,14 +14,69 @@
 # for this as a scripted step rather than a runbook note precisely because a
 # runbook note is a step that does not happen.
 #
-# Refuses to run when there is no OIDC write path configured, because revoking
-# the only way in leaves a cluster nobody can supply a credential to. That is
-# the one case where NOT revoking is correct, and it is reported rather than
+# Refuses to run when there is no WORKING OIDC write path, because revoking the
+# only way in leaves a cluster nobody can supply a credential to. That is the
+# one case where NOT revoking is correct, and it is reported rather than
 # silently skipped.
+#
+# This used to check that spec.oidc.discoveryUrl was set — that a URL had been
+# DECLARED, not that anything answered at it. Declaring it is also what makes
+# the OIDC roles render at all, so the intended sequence (set the URL, let the
+# identity objects reconcile, revoke) passed the guard at the first step rather
+# than the last. A cluster whose Keycloak client did not exist would revoke its
+# only write path and need OpenBao re-initialising to recover.
+#
+# So the guard now reads the cluster the way every other check() does, and
+# checks the parts a human login actually needs. It cannot perform an
+# interactive login, so it verifies the chain rather than the outcome — each
+# link is a thing that is absent by default and present only when something
+# created it.
 
-_oidc_configured() {
-    kubectl get cluster.gentianos.io -n crossplane-system \
-        -o jsonpath='{.items[0].spec.oidc.discoveryUrl}' 2>/dev/null | grep -q .
+# _oidc_write_path_ready — every link between a human and an OpenBao token.
+#
+# Prints what is missing, because "refused to revoke" is only actionable if it
+# says which part to fix.
+_oidc_write_path_ready() {
+    local missing=()
+
+    local discovery
+    discovery="$(kubectl get cluster.gentianos.io -n crossplane-system \
+        -o jsonpath='{.items[0].spec.oidc.discoveryUrl}' 2>/dev/null || true)"
+    [[ -n "${discovery}" ]] || missing+=("spec.oidc.discoveryUrl is unset on the Cluster claim")
+
+    # The Keycloak client. Read as a Crossplane resource rather than by asking
+    # Keycloak, because Ready=True is that provider reporting the object exists
+    # at the far end — which is the fact this needs, and needs no admin
+    # credential to establish.
+    local client_ready
+    client_ready="$(kubectl get client.openidclient.keycloak.crossplane.io \
+        -l gentianos.io/purpose=openbao-oidc \
+        -o jsonpath='{.items[0].status.conditions[?(@.type=="Ready")].status}' 2>/dev/null || true)"
+    [[ "${client_ready}" == "True" ]] || missing+=("the OpenBao OIDC client in Keycloak is not Ready")
+
+    # The Secret the auth backend reads its client secret from. Present only if
+    # the ExternalSecret behind it synced.
+    local ns
+    ns="$(kubectl get cluster.gentianos.io -n crossplane-system \
+        -o jsonpath='{.items[0].spec.openbao.namespace}' 2>/dev/null || true)"
+    ns="${ns:-openbao}"
+    kubectl get secret openbao-oidc-client -n "${ns}" >/dev/null 2>&1 ||
+        missing+=("Secret ${ns}/openbao-oidc-client does not exist")
+
+    # OpenBao's own view: the backend mounted, and a role to log in against. A
+    # backend with no role accepts no one.
+    if [[ -n "${BAO_TOKEN:-}" ]]; then
+        bao read -field=oidc_client_id auth/oidc/config >/dev/null 2>&1 ||
+            missing+=("OpenBao's oidc auth backend is not configured")
+        bao read auth/oidc/role/cluster-admin >/dev/null 2>&1 ||
+            missing+=("OpenBao has no cluster-admin OIDC role")
+    fi
+
+    if [[ ${#missing[@]} -gt 0 ]]; then
+        _OIDC_MISSING="$(printf '%s\n' "${missing[@]}")"
+        return 1
+    fi
+    return 0
 }
 
 check() {
@@ -38,18 +93,22 @@ check() {
     # otherwise the only write path. Reporting missing then is a step that
     # applies on every run and declines every time, which reads as an unfinished
     # install rather than a cluster that has not configured OIDC yet.
-    _oidc_configured || return "${CHECK_UNDEFINED}"
+    _oidc_write_path_ready || return "${CHECK_UNDEFINED}"
 
     ! bao token lookup >/dev/null 2>&1
 }
 
 apply() {
-    if ! _oidc_configured; then
-        warn "No OIDC write path configured (spec.oidc.discoveryUrl is unset)."
+    if ! _oidc_write_path_ready; then
+        warn "The OIDC write path is not usable yet:"
+        while IFS= read -r _reason; do
+            [[ -n "${_reason}" ]] && warn "    - ${_reason}"
+        done <<< "${_OIDC_MISSING:-}"
         warn "  Refusing to revoke the bootstrap token: it is currently the ONLY"
         warn "  way to write a credential, and revoking it would leave this"
-        warn "  cluster unable to accept one."
-        warn "  Configure spec.oidc on the Cluster claim, then re-run:"
+        warn "  cluster unable to accept one — recovering means re-initialising"
+        warn "  OpenBao."
+        warn "  Fix the above, then re-run:"
         warn "    ./install.sh --only E-03"
         return 0
     fi

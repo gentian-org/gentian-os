@@ -248,6 +248,13 @@ spec:
                       type: string
                       description: Keycloak group whose members receive the cluster-admin policy.
                       default: /platform-admins
+                    realm:
+                      type: string
+                      description: >
+                        The shared Keycloak realm holding platform users. The
+                        OpenBao client, its mappers and the admin groups are
+                        created here.
+                      default: kernel
                     tenantAdminGroup:
                       type: string
                       description: >
