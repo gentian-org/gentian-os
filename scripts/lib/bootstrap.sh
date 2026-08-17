@@ -1025,9 +1025,7 @@ _claim_cluster_fields() {
     for pair in "TENANCY_MODE tenancyMode" "NETWORK_MODE networkMode" \
                 "ROUTING_MODE routingMode" "SECRET_MODE secretMode" \
                 "NODE_IP nodeIp" "STORAGE_CLASS storageClass"; do
-        # shellcheck disable=SC2086
-        set -- ${pair}
-        var="$1"; field="$2"
+        var="${pair%% *}"; field="${pair##* }"
         [[ -n "${!var:-}" ]] && printf '  %s: %s\n' "${field}" "${!var}"
     done
     [[ -n "${MAIL_SERVICE_MODE:-}" ]] && printf '  mail:\n    serviceMode: %s\n' "${MAIL_SERVICE_MODE}"

@@ -165,7 +165,11 @@ awk -v SQ="'" '
         infunc = 1; maxarg = 0; nest = ""
         next
     }
-    infunc && /^\}/ { if (maxarg > 0) print name, maxarg; infunc = 0; next }
+    # `set --` rebinds the positionals, so a $1 after it belongs to the function
+    # rather than to its caller. Without this, a function that parses its own
+    # pairs is reported as needing arguments it assigns itself.
+    infunc && /^[[:space:]]*set[[:space:]]+--/ { rebinds = 1 }
+    infunc && /^\}/ { if (maxarg > 0 && !rebinds) print name, maxarg; infunc = 0; rebinds = 0; next }
     infunc {
         line = $0
         if (nest == "" && line ~ /^[[:space:]]+[A-Za-z_][A-Za-z0-9_]*\(\)[[:space:]]*\{/) {
