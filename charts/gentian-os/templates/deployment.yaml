@@ -166,6 +166,16 @@ spec:
               value: {{ .Values.stage | default "dev" | quote }}
             - name: LLM_SUPPORT
               value: {{ .Values.llmSupport | default false | quote }}
+            {{- if .Values.credentialManager.enabled }}
+            - name: CREDENTIAL_MANAGER_ENABLED
+              value: "true"
+            - name: CREDENTIAL_MANAGER_ADDR
+              value: ":{{ .Values.credentialManager.port }}"
+            - name: CREDENTIAL_PROBE_NAMESPACE
+              value: {{ .Values.credentialManager.probeNamespace | quote }}
+            - name: BAO_OIDC_ROLE
+              value: {{ .Values.credentialManager.oidcRole | quote }}
+            {{- end }}
             {{- /* Renamed keys: a cluster overlay still setting the old ones would
                    otherwise render a commerce block pointing at nothing, and the
                    operator would fail every install-grant exchange at runtime. */}}
@@ -259,6 +269,11 @@ spec:
             - name: lifecycle
               containerPort: {{ .Values.appLifecycle.port }}
               protocol: TCP
+            {{- if .Values.credentialManager.enabled }}
+            - name: credentials
+              containerPort: {{ .Values.credentialManager.port }}
+              protocol: TCP
+            {{- end }}
             {{- if $webhookEnabled }}
             - name: webhook
               containerPort: {{ $webhookPort }}

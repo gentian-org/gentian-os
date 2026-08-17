@@ -269,6 +269,22 @@ metrics:
     additionalLabels: {}
 
 # App lifecycle HTTP API (install/uninstall/purge — shared by App Store and kubectl-gentian).
+# The credential manager: a view over the CredentialRequirement catalogue and
+# ESO's satisfaction status, plus a write path that writes AS THE CALLER —
+# it holds no OpenBao token of its own and exchanges the user's OIDC token.
+#
+# Off by default. It is the only component that can write credentials, and
+# bao.oidcRole below decides which OpenBao role the exchange targets: the
+# service's default is cluster-admin, so a tenant-scoped deployment must set it
+# deliberately rather than inherit it.
+credentialManager:
+  enabled: false
+  port: 9444
+  # OpenBao role the caller's OIDC token is exchanged for.
+  oidcRole: cluster-admin
+  # Namespace holding the ESO satisfaction probes it reads.
+  probeNamespace: gentian-system
+
 appLifecycle:
   port: 8082
   deployments:
