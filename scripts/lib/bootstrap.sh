@@ -1021,9 +1021,9 @@ install_llm_serving() {
 
 # =============================================================================
 # scaffold_cluster_deployment — write this cluster's kernel/ directory in
-# gentian-deployments: claims/{cluster,infra-data,suze}.yaml, values.yaml and
-# cluster-settings.env, generated from KERNEL_DOMAIN and
-# GENTIAN_DEPLOYMENTS_STAGE. Reached through `install.sh --prepare-deployment`.
+# gentian-deployments: claims/{cluster,infra-data,suze}.yaml and values.yaml,
+# generated from KERNEL_DOMAIN and GENTIAN_DEPLOYMENTS_STAGE. Reached through
+# `install.sh --prepare-deployment`.
 #
 # Per-file checks, not a directory-level one: an existing file is never
 # overwritten, so re-running converges a partially-written directory and
@@ -1057,7 +1057,8 @@ _claim_cluster_fields() {
     local pair var field
     for pair in "TENANCY_MODE tenancyMode" "NETWORK_MODE networkMode" \
                 "ROUTING_MODE routingMode" "SECRET_MODE secretMode" \
-                "NODE_IP nodeIp" "STORAGE_CLASS storageClass"; do
+                "NODE_IP nodeIp" "STORAGE_CLASS storageClass" \
+                "LB_PROVIDER lbProvider" "LB_ANNOTATIONS lbAnnotations"; do
         var="${pair%% *}"; field="${pair##* }"
         [[ -n "${!var:-}" ]] && printf '  %s: %s\n' "${field}" "${!var}"
     done
@@ -1125,7 +1126,8 @@ metadata:
   namespace: crossplane-system
 spec:
   kernelDomain: ${domain}
-$(_claim_cluster_fields)EOF
+$(_claim_cluster_fields)
+EOF
         info "Scaffolded ${kernel_dir}/claims/cluster.yaml"
         generated=1
     fi
@@ -1192,56 +1194,17 @@ EOF
         generated=1
     fi
 
-    # cluster-settings.env holds what KERNEL_DOMAIN and the stage cannot imply:
-    # exposure model, tenancy, mail. The values written are the ones this run
-    # resolved, so the file states the cluster's actual configuration rather
-    # than a set of defaults the operator then has to guess at.
-    if [[ ! -f "${kernel_dir}/cluster-settings.env" ]]; then
-        cat > "${kernel_dir}/cluster-settings.env" <<EOF
-# Runtime settings for cluster ${cluster} (stage ${stage}).
-#
-# KERNEL_DOMAIN is not here — it is authored in claims/cluster.yaml and nowhere
-# else. Every option, including the ones left out below, is documented in
-# gentian-os/cluster-settings.env.template.
-
-# multi — one subdomain and Keycloak realm per tenant. single — one tenant
-# occupies the whole cluster at KERNEL_DOMAIN.
-TENANCY_MODE=${TENANCY_MODE:-multi}
-
-# tunnel — reached through a reverse proxy or tunnel; NODE_IP is not needed.
-# static-ip — DNS points straight at NODE_IP, which is then required.
-NETWORK_MODE=${NETWORK_MODE:-tunnel}
-$(if [[ -n "${NODE_IP:-}" ]]; then printf 'NODE_IP=%s\n' "${NODE_IP}"; else printf '# NODE_IP=203.0.113.10\n'; fi)
-# gateway is the only supported value: Envoy Gateway plus the Gateway API.
-ROUTING_MODE=${ROUTING_MODE:-gateway}
-
-# external — relay through an external SMTP provider; needs EXTERNAL_SMTP_HOST
-# here and SMTP_RELAY_USERNAME/PASSWORD in install.secrets.env. kernel — use
-# in-cluster Postfix/Dovecot, which requires NETWORK_MODE=static-ip.
-MAIL_SERVICE_MODE=${MAIL_SERVICE_MODE:-external}
-$(if [[ -n "${EXTERNAL_SMTP_HOST:-}" ]]; then printf 'EXTERNAL_SMTP_HOST=%s\n' "${EXTERNAL_SMTP_HOST}"; else printf '# EXTERNAL_SMTP_HOST=smtp.example.com\n'; fi)
-# derived — every secret is HKDF-derived from MASTER_PASSWORD, so the whole
-# cluster rotates from one value. random — each secret is independent.
-SECRET_MODE=${SECRET_MODE:-derived}
-
-# true when INFRA_CHART_REPO needs a login. false means the installer never asks
-# for registry credentials, because a public chart URL has none to give.
-INFRA_CHART_PRIVATE=${INFRA_CHART_PRIVATE:-false}
-
-# Leave unset to use the cluster's default StorageClass.
-$(if [[ -n "${STORAGE_CLASS:-}" ]]; then printf 'STORAGE_CLASS=%s\n' "${STORAGE_CLASS}"; else printf '# STORAGE_CLASS=nfs-csi\n'; fi)
-EOF
-        info "Scaffolded ${kernel_dir}/cluster-settings.env"
-        generated=1
-    fi
+    # No cluster-settings.env is written. Everything it carried that describes
+    # the cluster is a field on claims/cluster.yaml, emitted above by
+    # _claim_cluster_fields and read back by claim_setting before Crossplane
+    # exists. Writing both would recreate the second surface this removed.
 
     if (( generated )); then
         echo ""
         success "Wrote clusters/${cluster}/kernel in ${GENTIAN_DEPLOYMENTS_PATH}."
         info "Nothing has been committed, pushed, or applied. Next:"
         info "  1. Read and edit clusters/${cluster}/kernel — the claims are what"
-        info "     the cluster becomes, and cluster-settings.env carries the"
-        info "     exposure and mail model."
+        info "     the cluster becomes, including its exposure and mail model."
         info "  2. Commit and push them to ${GENTIAN_DEPLOYMENTS_BRANCH:-main}."
         info "  3. Run ./install.sh"
     else

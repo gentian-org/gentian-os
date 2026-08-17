@@ -151,6 +151,21 @@ spec:
                     in their values. The installer discovers it and writes it
                     here, so it is declared rather than detected at runtime — a
                     Composition cannot read a Node.
+                lbProvider:
+                  type: string
+                  enum: [openstack, metallb, aws, gcp, ""]
+                  description: >
+                    Cloud whose LoadBalancer annotations the edge Service needs.
+                    Detected from the nodes' spec.providerID when absent, so this
+                    is an override rather than a required field — set it to ""
+                    to emit no provider annotations at all.
+                lbAnnotations:
+                  type: string
+                  description: >
+                    Extra annotations for the edge LoadBalancer Service, as
+                    comma-separated key=value pairs. The escape hatch for a
+                    provider lbProvider has no preset for, applied on top of
+                    whatever that preset contributes.
                 storageClass:
                   type: string
                   description: >
