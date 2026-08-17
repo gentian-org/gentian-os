@@ -142,3 +142,35 @@ spec:
                   description: Names of the consumer artefacts emitted.
                   items:
                     type: string
+---
+# Grant the Crossplane SA read access to ExternalSecrets so that
+# repository-default's fetch-credential-probe step can read the satisfaction
+# probe for the repository's credential.
+#
+# The failure without it is not a permission error. function-extra-resources
+# lists through an informer, the informer cannot sync because the list is
+# forbidden, and the step times out with
+#
+#   cannot run Composition pipeline step "fetch-credential-probe": fetching
+#   resources for credentialProbe: cannot list required resources: Timeout:
+#   failed waiting for *unstructured.Unstructured Informer to sync
+#
+# so the XRepository stays Synced=False forever while B-08 reports satisfied —
+# the imperative path having already produced the Secret the composed one is
+# meant to own. Nothing is visibly broken, and the declarative path simply
+# never runs.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: crossplane:extra-resources:externalsecrets.external-secrets.io
+  labels:
+    rbac.crossplane.io/aggregate-to-crossplane: "true"
+rules:
+  - apiGroups:
+      - external-secrets.io
+    resources:
+      - externalsecrets
+    verbs:
+      - get
+      - list
+      - watch

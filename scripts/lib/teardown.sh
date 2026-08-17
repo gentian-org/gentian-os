@@ -488,6 +488,8 @@ _delete_gentianos_api_scaffold() {
         gentian-os \
         gentian-job-gc \
         'crossplane:extra-resources:appprofiles.gentianos.io' \
+        'crossplane:extra-resources:oidcpackcatalogs.gentianos.io' \
+        'crossplane:extra-resources:externalsecrets.external-secrets.io' \
         --ignore-not-found=true 2>/dev/null || true
     kubectl get clusterrole -o name 2>/dev/null \
         | grep -E 'gentian-portal' \
