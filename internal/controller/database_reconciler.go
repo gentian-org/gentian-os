@@ -31,6 +31,7 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
+	"github.com/gentian-org/gentian-os/internal/backup"
 	"github.com/gentian-org/gentian-os/internal/kernel"
 	"github.com/gentian-org/gentian-os/internal/meta"
 )
@@ -374,36 +375,22 @@ func cnpgDatabaseIsReady(obj *unstructured.Unstructured) bool {
 
 // --- Name helpers ------------------------------------------------------------
 
+// The rules behind these names live in internal/backup, shared with purge and
+// export so all three agree on what a tenant's stores are called.
+
 // databaseName returns the PostgreSQL database name for a tenant + app.
-// Uses spec.isolation.databasePrefix if set, otherwise defaults to "{tenant}_".
 func databaseName(tenant *gentianov1alpha1.Tenant, appName string) string {
-	prefix := tenant.Name + "_"
-	if tenant.Spec.Isolation != nil && tenant.Spec.Isolation.DatabasePrefix != "" {
-		prefix = tenant.Spec.Isolation.DatabasePrefix
-	}
-	// Replace hyphens to satisfy PostgreSQL identifier rules
-	safe := func(s string) string {
-		result := make([]byte, len(s))
-		for i := 0; i < len(s); i++ {
-			if s[i] == '-' {
-				result[i] = '_'
-			} else {
-				result[i] = s[i]
-			}
-		}
-		return string(result)
-	}
-	return safe(prefix) + safe(appName)
+	return backup.DatabaseName(tenant, appName)
 }
 
 // databaseCRName returns the Kubernetes resource name for the CloudNativePG Database CR.
 func databaseCRName(tenantName, appName string) string {
-	return fmt.Sprintf("db-%s-%s", tenantName, appName)
+	return backup.CNPGDatabaseCR(tenantName, appName)
 }
 
 // roleUserName returns the PostgreSQL role/user name for a tenant + app.
 func roleUserName(tenantName, appName string) string {
-	return fmt.Sprintf("%s_%s", tenantName, appName)
+	return backup.PostgresRole(tenantName, appName)
 }
 
 func roleJobName(tenantName, appName string) string {

@@ -1,0 +1,219 @@
+/*
+Copyright 2026 Gentian Organization.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
+package controller
+
+import (
+	"context"
+	"testing"
+
+	appsv1 "k8s.io/api/apps/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
+	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+
+	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
+)
+
+func quiesceScheme(t *testing.T) *runtime.Scheme {
+	t.Helper()
+	s := runtime.NewScheme()
+	if err := clientgoscheme.AddToScheme(s); err != nil {
+		t.Fatalf("add client-go scheme: %v", err)
+	}
+	return s
+}
+
+func deployment(name, app string, replicas int32) *appsv1.Deployment {
+	return &appsv1.Deployment{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      name,
+			Namespace: "tenant-demo",
+			Labels:    map[string]string{"gentianos.io/app": app},
+		},
+		Spec: appsv1.DeploymentSpec{Replicas: &replicas},
+	}
+}
+
+func getDeployment(t *testing.T, c client.Client, name string) *appsv1.Deployment {
+	t.Helper()
+	got := &appsv1.Deployment{}
+	if err := c.Get(context.Background(), types.NamespacedName{Name: name, Namespace: "tenant-demo"}, got); err != nil {
+		t.Fatalf("get %s: %v", name, err)
+	}
+	return got
+}
+
+func quiesceReconciler(objs ...client.Object) *TenantReconciler {
+	s := runtime.NewScheme()
+	_ = clientgoscheme.AddToScheme(s)
+	c := fake.NewClientBuilder().WithScheme(s).WithObjects(objs...).Build()
+	return &TenantReconciler{Client: c, Scheme: s}
+}
+
+// The whole point of the memo: an app comes back at the size it was, not at
+// some default that silently rescales a tenant's workload.
+func TestQuiesceRemembersReplicaCountAndResumeRestoresIt(t *testing.T) {
+	_ = quiesceScheme(t)
+	r := quiesceReconciler(deployment("nextcloud", "nextcloud-base-ce", 3))
+	ctx := context.Background()
+
+	mode, err := r.quiesceApp(ctx, "demo", "nextcloud-base-ce", nil)
+	if err != nil {
+		t.Fatalf("quiesceApp: %v", err)
+	}
+	if mode != gentianov1alpha1.BackupQuiesceScaleDown {
+		t.Errorf("mode = %q, want scaleDown", mode)
+	}
+
+	paused := getDeployment(t, r.Client, "nextcloud")
+	if *paused.Spec.Replicas != 0 {
+		t.Errorf("replicas after pause = %d, want 0", *paused.Spec.Replicas)
+	}
+	if paused.Annotations[replicaMemoAnnotation] != "3" {
+		t.Errorf("memo = %q, want 3", paused.Annotations[replicaMemoAnnotation])
+	}
+
+	if err := r.resumeApp(ctx, "demo", "nextcloud-base-ce"); err != nil {
+		t.Fatalf("resumeApp: %v", err)
+	}
+	resumed := getDeployment(t, r.Client, "nextcloud")
+	if *resumed.Spec.Replicas != 3 {
+		t.Errorf("replicas after resume = %d, want 3", *resumed.Spec.Replicas)
+	}
+	if _, still := resumed.Annotations[replicaMemoAnnotation]; still {
+		t.Error("memo survived the resume; a later pause would read a stale count")
+	}
+}
+
+// Pausing twice is normal — a reconcile can be repeated at any point — and the
+// second pass must not overwrite the memo with the paused count of 0, or the
+// app resumes to nothing and stays down.
+func TestPausingTwiceDoesNotDestroyTheMemo(t *testing.T) {
+	r := quiesceReconciler(deployment("nextcloud", "nextcloud-base-ce", 2))
+	ctx := context.Background()
+
+	for i := 0; i < 3; i++ {
+		if _, err := r.quiesceApp(ctx, "demo", "nextcloud-base-ce", nil); err != nil {
+			t.Fatalf("quiesceApp pass %d: %v", i, err)
+		}
+	}
+	if got := getDeployment(t, r.Client, "nextcloud").Annotations[replicaMemoAnnotation]; got != "2" {
+		t.Fatalf("memo after repeated pauses = %q, want 2", got)
+	}
+
+	if err := r.resumeApp(ctx, "demo", "nextcloud-base-ce"); err != nil {
+		t.Fatalf("resumeApp: %v", err)
+	}
+	if got := *getDeployment(t, r.Client, "nextcloud").Spec.Replicas; got != 2 {
+		t.Errorf("replicas after resume = %d, want 2", got)
+	}
+}
+
+// Resume runs on the failure path and on every reconcile that finds a stale
+// entry, so calling it repeatedly, or on a workload that was never paused,
+// has to be a no-op rather than a rescale.
+func TestResumeIsSafeWhenNothingWasPaused(t *testing.T) {
+	r := quiesceReconciler(deployment("nextcloud", "nextcloud-base-ce", 4))
+	ctx := context.Background()
+
+	if err := r.resumeApp(ctx, "demo", "nextcloud-base-ce"); err != nil {
+		t.Fatalf("resumeApp on unpaused app: %v", err)
+	}
+	if got := *getDeployment(t, r.Client, "nextcloud").Spec.Replicas; got != 4 {
+		t.Errorf("resume rescaled an unpaused workload to %d", got)
+	}
+
+	if _, err := r.quiesceApp(ctx, "demo", "nextcloud-base-ce", nil); err != nil {
+		t.Fatalf("quiesceApp: %v", err)
+	}
+	for i := 0; i < 3; i++ {
+		if err := r.resumeApp(ctx, "demo", "nextcloud-base-ce"); err != nil {
+			t.Fatalf("resumeApp pass %d: %v", i, err)
+		}
+	}
+	if got := *getDeployment(t, r.Client, "nextcloud").Spec.Replicas; got != 4 {
+		t.Errorf("replicas after repeated resume = %d, want 4", got)
+	}
+}
+
+// Pausing one app must not touch another. This is the failure that would be
+// reported as "the export took my other app offline".
+func TestQuiesceLeavesOtherAppsRunning(t *testing.T) {
+	r := quiesceReconciler(
+		deployment("nextcloud", "nextcloud-base-ce", 2),
+		deployment("openproject", "openproject-ce", 5),
+	)
+	ctx := context.Background()
+
+	if _, err := r.quiesceApp(ctx, "demo", "nextcloud-base-ce", nil); err != nil {
+		t.Fatalf("quiesceApp: %v", err)
+	}
+
+	if got := *getDeployment(t, r.Client, "openproject").Spec.Replicas; got != 5 {
+		t.Errorf("neighbour was scaled to %d", got)
+	}
+	if _, memoed := getDeployment(t, r.Client, "openproject").Annotations[replicaMemoAnnotation]; memoed {
+		t.Error("neighbour was memoed, so a later resume would rescale it")
+	}
+}
+
+// A profile asking for command mode still gets its writes paused; only the
+// mechanism differs. The returned mode is what reaches the manifest, so it must
+// report what actually happened rather than what was requested.
+func TestCommandModeFallsBackToScaleDownAndSaysSo(t *testing.T) {
+	r := quiesceReconciler(deployment("nextcloud", "nextcloud-base-ce", 1))
+	spec := &gentianov1alpha1.BackupSpec{
+		Quiesce: &gentianov1alpha1.BackupQuiesce{
+			Mode: gentianov1alpha1.BackupQuiesceCommand,
+			Pre:  []string{"occ", "maintenance:mode", "--on"},
+			Post: []string{"occ", "maintenance:mode", "--off"},
+		},
+	}
+
+	mode, err := r.quiesceApp(context.Background(), "demo", "nextcloud-base-ce", spec)
+	if err != nil {
+		t.Fatalf("quiesceApp: %v", err)
+	}
+	if mode != gentianov1alpha1.BackupQuiesceScaleDown {
+		t.Errorf("reported mode = %q, want the mode actually used (scaleDown)", mode)
+	}
+	if got := *getDeployment(t, r.Client, "nextcloud").Spec.Replicas; got != 0 {
+		t.Errorf("writes were not paused: replicas = %d", got)
+	}
+}
+
+// mode: none means the app is captured live, so nothing may be scaled.
+func TestQuiesceNoneLeavesTheAppRunning(t *testing.T) {
+	r := quiesceReconciler(deployment("nextcloud", "nextcloud-base-ce", 2))
+	spec := &gentianov1alpha1.BackupSpec{
+		Quiesce: &gentianov1alpha1.BackupQuiesce{Mode: gentianov1alpha1.BackupQuiesceNone},
+	}
+
+	mode, err := r.quiesceApp(context.Background(), "demo", "nextcloud-base-ce", spec)
+	if err != nil {
+		t.Fatalf("quiesceApp: %v", err)
+	}
+	if mode != gentianov1alpha1.BackupQuiesceNone {
+		t.Errorf("mode = %q, want none", mode)
+	}
+	if got := *getDeployment(t, r.Client, "nextcloud").Spec.Replicas; got != 2 {
+		t.Errorf("mode none scaled the app to %d", got)
+	}
+}

@@ -1,6 +1,6 @@
 # Backup and Recovery
 
-**Status:** Phases 1–2 are implemented (recovery kit, `spec.backup` contract); Phases 3–7 are not
+**Status:** Phases 1–3 are implemented (recovery kit, `spec.backup` contract, `TenantExport`); Phases 4–7 are not
 **Scope:** cluster recovery, credential escrow, self-service tenant export/restore (Admin Console)
 **Applies to:** `install.sh`, OpenBao, CNPG, MinIO, Keycloak, tenant namespaces, `gentian-ui`
 
@@ -463,10 +463,45 @@ and if CEL is unavoidable, bound the string and the list.
 - `make verify-gen` is clean; a `boundSecrets` path escaping the tenant prefix
   fails CI.
 
-### Phase 3 — `TenantExport`
+### Phase 3 — `TenantExport` — **implemented**
 
 **Goal** — an encrypted, restorable bundle of one tenant, produced by the
 operator.
+
+Shipped as `api/v1alpha1/tenantexport_types.go`, the `internal/backup` package
+(inventory, capture Jobs, manifest), `internal/controller/tenantexport_*.go`,
+and RBAC via kubebuilder markers. purge now reads the shared inventory, so
+export and purge can no longer disagree about what a tenant is made of.
+
+Four things went differently from the design above, all worth carrying into
+Phase 5:
+
+- **The bundle bucket is not provisioned with the tenant.** Gating
+  `StorageReady` on it — as this plan originally said — couples every tenant's
+  readiness to backup infrastructure, and broke provisioning for tenants with no
+  S3-backed app. Each writer now runs `mc mb --ignore-existing` instead, so the
+  bucket appears when first needed and nothing waits on it.
+- **`quiesce.mode: command` falls back to scaling down.** Executing a command
+  inside a running pod needs a client the reconciler does not have. The data
+  guarantee is unchanged — no writes during the capture — but the app goes
+  offline instead of showing a maintenance page, and the manifest records the
+  mode actually used rather than the one requested. Wiring exec is the natural
+  first task of Phase 5, which needs it anyway for `restore.post`.
+- **Realm capture is three calls, not one.** Keycloak's `partial-export` returns
+  no users at all, so the Job also pages `/users` and collects per-user group
+  membership. A realm restored from `partial-export` alone is a correctly
+  configured workspace with nobody in it.
+- **Dumps stage on disk before upload.** Streaming into `mc pipe` needs the dump
+  tool and `mc` in one image, which the platform does not have. The scratch
+  volume is bounded (`exportScratchLimit`), so an oversized tenant fails its
+  capture rather than filling a node — but a tenant larger than that bound
+  cannot be exported until a combined image or a streaming path exists.
+
+**Not yet done in this phase:** `boundSecrets` are declared and validated but
+not yet fetched into the bundle, and the bundle is not yet encrypted — both wait
+on the key-custody decision in §10, which must be settled before either is
+built. Until then a bundle is unencrypted platform-internal data, so the console
+download of Phase 4 must not ship before encryption does.
 
 **Files**
 

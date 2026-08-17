@@ -54,10 +54,12 @@ rules:
     - apps
     resources:
     - deployments
+    - statefulsets
     verbs:
     - get
     - list
     - watch
+    - update
     - patch
   - apiGroups:
     - argoproj.io
@@ -176,6 +178,7 @@ rules:
     - integrationbindings
     - platformsecuritypolicies
     - repositories
+    - tenantexports
     - tenants
     - xtenants
     verbs:
@@ -194,6 +197,7 @@ rules:
     - customizations/status
     - integrationbindings/status
     - platformsecuritypolicies/status
+    - tenantexports/status
     - tenants/status
     verbs:
     - get
@@ -205,6 +209,7 @@ rules:
     - appgrants/finalizers
     - integrationbindings/finalizers
     - platformsecuritypolicies/finalizers
+    - tenantexports/finalizers
     - tenants/finalizers
     verbs:
     - update

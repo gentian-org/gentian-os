@@ -76,6 +76,22 @@ var (
 		Name: "gentianos_operator_cr_failed_total",
 		Help: "Total number of operator CRs that failed to reach Ready state.",
 	}, []string{"kind", "tenant"})
+
+	// tenantExportQuiesceDuration measures how long each app's writes were
+	// paused. This is the number a tenant actually feels, and the one that
+	// proves the pause is per app rather than per tenant, so it is a histogram
+	// per app rather than a single total per export.
+	tenantExportQuiesceDuration = prometheus.NewHistogramVec(prometheus.HistogramOpts{
+		Name:    "gentianos_tenant_export_quiesce_duration_seconds",
+		Help:    "Time an app's writes were paused for a tenant export.",
+		Buckets: prometheus.DefBuckets,
+	}, []string{"tenant", "app"})
+
+	// tenantExportTotal counts finished exports by outcome.
+	tenantExportTotal = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "gentianos_tenant_export_total",
+		Help: "Total number of tenant exports that reached a terminal phase.",
+	}, []string{"tenant", "phase"})
 )
 
 func init() {
@@ -89,5 +105,7 @@ func init() {
 		externalSecretsSync,
 		operatorCRReady,
 		operatorCRFailed,
+		tenantExportQuiesceDuration,
+		tenantExportTotal,
 	)
 }

@@ -33,6 +33,7 @@ import (
 	"k8s.io/client-go/tools/remotecommand"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
+	"github.com/gentian-org/gentian-os/internal/backup"
 	"github.com/gentian-org/gentian-os/internal/kernel"
 	"github.com/gentian-org/gentian-os/internal/meta"
 
@@ -89,33 +90,12 @@ func (s *Service) purge(ctx context.Context, tenant *gentianov1alpha1.Tenant, pr
 }
 
 func profileKernelReqs(profile *gentianov1alpha1.AppProfile) (db gentianov1alpha1.DatabaseEngine, s3, redis bool) {
-	if profile == nil || profile.Spec.KernelRequirements == nil {
-		return "", false, false
-	}
-	kr := profile.Spec.KernelRequirements
-	if kr.Database != nil {
-		db = kr.Database.Engine
-	}
-	if kr.Storage != nil && kr.Storage.S3 != nil {
-		s3 = true
-	}
-	if kr.Cache != nil && kr.Cache.Engine == gentianov1alpha1.CacheEngineRedis {
-		redis = true
-	}
-	return db, s3, redis
+	stores := backup.ProfileStores(profile)
+	return stores.Database, stores.S3, stores.Redis
 }
 
 func sidecarNames(profile *gentianov1alpha1.AppProfile) []string {
-	if profile == nil {
-		return nil
-	}
-	out := make([]string, 0, len(profile.Spec.Sidecars))
-	for _, sc := range profile.Spec.Sidecars {
-		if sc.Name != "" {
-			out = append(out, sc.Name)
-		}
-	}
-	return out
+	return backup.SidecarNames(profile)
 }
 
 func (s *Service) purgePostgres(ctx context.Context, tenant *gentianov1alpha1.Tenant, app string) []string {
@@ -631,27 +611,12 @@ func (s *Service) purgePVCs(ctx context.Context, tenantName, appName string, pro
 // substring test identifies our own releases without needing the composite,
 // which is already gone by the time purge runs.
 func ownedByOtherRelease(annotations map[string]string, appName string) (string, bool) {
-	release := annotations["meta.helm.sh/release-name"]
-	if release == "" || strings.Contains(release, appName) {
-		return release, false
-	}
-	return release, true
+	return backup.OwnedByOtherRelease(annotations, appName)
 }
 
 // pvcBelongsToApp reports whether a PVC was provisioned for this app.
 func pvcBelongsToApp(pvc corev1.PersistentVolumeClaim, appName, family string) bool {
-	if pvc.Labels["gentianos.io/app"] == appName {
-		return true
-	}
-	if instance, ok := pvc.Labels["app.kubernetes.io/instance"]; ok && strings.HasPrefix(instance, appName) {
-		return true
-	}
-	if name, ok := pvc.Labels["app.kubernetes.io/name"]; ok {
-		if name == appName || (family != "" && name == family) {
-			return true
-		}
-	}
-	return strings.Contains(pvc.Name, appName) || (family != "" && strings.Contains(pvc.Name, family))
+	return backup.PVCBelongsToApp(pvc, appName, family)
 }
 
 // releasePVCHolders deletes pods referencing any of the named claims so the
