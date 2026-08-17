@@ -153,6 +153,7 @@ echo ""
 
 _arity_file="$(mktemp)"
 trap 'rm -f "${_arity_file}"' EXIT
+# `while read`, not mapfile: bash 3.2 has no mapfile and macOS ships 3.2.
 _lint_files=()
 while IFS= read -r _f; do
     [[ -n "${_f}" ]] && _lint_files+=("${_f}")

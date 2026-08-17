@@ -2371,10 +2371,13 @@ rule where a mistake is a breach rather than an annoyance, and nothing currently
 service has no OpenBao identity by construction, but "by construction" is an argument, not an
 observation.
 
-**30 portability violations remain**, reported by `make lint-portability` and expected to be
-non-zero until Phase 13 migrates the call sites. The number must only go down. The job reports
-`failure` on every CI run for this reason; it is `continue-on-error`, so the run still concludes
-success. Reading a red job here as a regression is a mistake the workflow invites.
+**`make lint-portability` passes.** Every call site is migrated to the compat helpers, so the
+count is zero and the job is green rather than expected-red — the Phase 13 work §7 describes is
+done. The rule that replaces "the number must only go down" is simply that it stays at zero.
+
+The lint no longer scans itself. Its `report` lines carry each forbidden construct as a literal, so
+it counted one violation per rule in the file that defines them — five phantom entries that made
+the real number look worse than it was, in code that only names what it forbids.
 
 **`docs/commands.md` and `docs/design/mail.md` have not been checked** against the new paradigm.
 `GETTING-STARTED.md` points at both for post-install operations.
