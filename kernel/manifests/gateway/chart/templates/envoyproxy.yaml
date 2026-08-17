@@ -1,0 +1,70 @@
+{{- /*
+Provider annotations live here, not in shell.
+
+They were built by _edge_lb_annotations as an indented YAML fragment appended to
+a .tmpl by envsubst — a string whose correctness depended on the function
+getting the indentation right for a context it could not see. A template owns
+its own shape.
+*/ -}}
+{{- $ann := dict -}}
+{{- if eq .Values.lbProvider "openstack" -}}
+  {{- /*
+  keep-floatingip: the address survives Service deletion, so a reinstall can
+  adopt it again rather than stranding it.
+
+  enable-health-monitor: Envoy's Service is externalTrafficPolicy: Local, and
+  Octavia adds every node as a pool member without probing them — so without a
+  monitor the balancer keeps handing connections to nodes that drop them, and it
+  presents as intermittent TLS resets across every hostname the cluster serves.
+  Upstream calls this out: cloud-provider-openstack#2866.
+  */ -}}
+  {{- $_ := set $ann "loadbalancer.openstack.org/keep-floatingip" "true" -}}
+  {{- $_ := set $ann "loadbalancer.openstack.org/enable-health-monitor" "true" -}}
+{{- else if eq .Values.lbProvider "metallb" -}}
+  {{- if .Values.nodeIp -}}
+    {{- $_ := set $ann "metallb.universe.tf/loadBalancerIPs" .Values.nodeIp -}}
+  {{- end -}}
+{{- else if eq .Values.lbProvider "aws" -}}
+  {{- $_ := set $ann "service.beta.kubernetes.io/aws-load-balancer-type" "external" -}}
+  {{- $_ := set $ann "service.beta.kubernetes.io/aws-load-balancer-nlb-target-type" "instance" -}}
+  {{- $_ := set $ann "service.beta.kubernetes.io/aws-load-balancer-scheme" "internet-facing" -}}
+{{- end -}}
+{{- $ann = merge $ann .Values.extraAnnotations -}}
+apiVersion: gateway.envoyproxy.io/v1alpha1
+kind: EnvoyProxy
+metadata:
+  name: gentian-edge
+  namespace: {{ .Values.namespace }}
+  labels:
+    app.kubernetes.io/managed-by: gentian-os
+spec:
+  provider:
+    type: Kubernetes
+    kubernetes:
+      envoyDeployment:
+        replicas: {{ .Values.envoy.replicas }}
+        pod:
+          topologySpreadConstraints:
+            # ScheduleAnyway: a hard constraint on a one-node or cordoned
+            # cluster leaves the second replica Pending and availability no
+            # better than with one. Spreading is the preference, running is the
+            # requirement.
+            - maxSkew: 1
+              topologyKey: kubernetes.io/hostname
+              whenUnsatisfiable: ScheduleAnyway
+              labelSelector:
+                matchLabels:
+                  app.kubernetes.io/name: envoy
+      envoyService:
+        type: LoadBalancer
+        {{- if and .Values.nodeIp (ne .Values.lbProvider "aws") }}
+        # AWS NLBs ignore loadBalancerIP entirely, so emitting it there would be
+        # a lie; the address comes from an EIP allocation annotation instead.
+        loadBalancerIP: {{ .Values.nodeIp | quote }}
+        {{- end }}
+        {{- with $ann }}
+        annotations:
+          {{- range $k, $v := . }}
+          {{ $k }}: {{ $v | quote }}
+          {{- end }}
+        {{- end }}

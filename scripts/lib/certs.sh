@@ -295,44 +295,25 @@ install_envoy_gateway() {
     _pin_static_ip_edge_address
 }
 
-gentian_envoyproxy_static_ip_manifest() {
-    echo "${SCRIPT_DIR}/kernel/manifests/gateway/envoyproxy-static-ip.yaml.tmpl"
-}
 
 # =============================================================================
-# _edge_lb_address_field / _edge_lb_annotations — provider-agnostic edge address
+# Edge address, per provider
 #
 # Claiming a specific address for a LoadBalancer Service is not portable: every
-# provider spells it differently, and one of them refuses the portable field
-# outright. Rather than hardcode one cloud, both halves are generated from
-# LB_PROVIDER (a preset) plus LB_ANNOTATIONS (free-form escape hatch), so a new
-# provider needs a cluster-settings.env line, not a code change.
+# provider spells it differently, and AWS NLBs refuse the portable field
+# outright. The presets live in kernel/manifests/gateway/chart, keyed on
+# lbProvider, with lbAnnotations as the free-form escape hatch — so a new
+# provider is a values entry rather than a code change.
 #
-#   metallb    loadBalancerIP + metallb.universe.tf/loadBalancerIPs
-#   openstack  loadBalancerIP + keep-floatingip (survives Service deletion)
-#              + enable-health-monitor (see below)
-#   gcp        loadBalancerIP (reserved regional static address)
-#   aws        NLBs IGNORE loadBalancerIP — the address comes from an EIP
-#              allocation annotation, so the field is omitted entirely to avoid
-#              promising something the provider will not honour
-#   ""         loadBalancerIP only (works on MetalLB, OpenStack, GCP)
-#
-# NETWORK_MODE=tunnel never reaches here — the Service stays ClusterIP.
+# Only the detection is here, because it reads the cluster and a template
+# cannot. NETWORK_MODE=tunnel never reaches this: the Service stays ClusterIP.
 # =============================================================================
-_edge_lb_address_field() {
-    # AWS NLB: loadBalancerIP is silently ignored, so emitting it would be a lie.
-    if [[ "${LB_PROVIDER:-}" == "aws" ]]; then
-        return 0
-    fi
-    printf '        loadBalancerIP: "%s"\n' "${NODE_IP}"
-}
 
 # The cloud this cluster runs on, when the operator has not said.
 #
 # LB_PROVIDER decides whether the annotations below are emitted at all, and it is
-# commented out in cluster-settings.env.template — so the common case is unset,
-# the case falls through to the empty branch, and an OpenStack cluster gets a
-# LoadBalancer with no health monitor. That failure is silent and intermittent
+# absent from most claims — so the common case is unset, no preset is emitted,
+# and an OpenStack cluster gets a LoadBalancer with no health monitor. That failure is silent and intermittent
 # (see the openstack branch), which is the worst combination to leave behind a
 # setting somebody has to know to write.
 #
@@ -350,66 +331,6 @@ _detect_lb_provider() {
     esac
 }
 
-_edge_lb_annotations() {
-    local -a lines=()
-    if [[ -z "${LB_PROVIDER+x}" ]]; then
-        LB_PROVIDER="$(_detect_lb_provider)"
-        [[ -n "${LB_PROVIDER}" ]] &&
-            info "  Detected LB_PROVIDER=${LB_PROVIDER} from node providerID."
-    fi
-    case "${LB_PROVIDER:-}" in
-        openstack)
-            lines+=("loadbalancer.openstack.org/keep-floatingip: \"true\"")
-            # Envoy Gateway sets externalTrafficPolicy: Local on the data-plane
-            # Service, so only a node actually running an Envoy pod serves the
-            # NodePort — every other node refuses. Octavia adds all nodes as pool
-            # members and round-robins across them, so without a health monitor it
-            # keeps handing connections to members that cannot answer: it never
-            # probes them, and nothing removes them. One Envoy replica across two
-            # members means every second connection is dropped after the TCP
-            # handshake, which surfaces as intermittent TLS failures on every
-            # hostname the cluster serves.
-            #
-            # The CCM only creates the monitor when asked. Its defaults (delay,
-            # timeout, retries) are fine; override via LB_ANNOTATIONS with
-            # loadbalancer.openstack.org/health-monitor-* if a cluster needs it.
-            lines+=("loadbalancer.openstack.org/enable-health-monitor: \"true\"")
-            ;;
-        metallb)
-            lines+=("metallb.universe.tf/loadBalancerIPs: \"${NODE_IP}\"")
-            ;;
-        aws)
-            # EIP allocation IDs are account-specific, so they cannot be derived
-            # from NODE_IP; the operator supplies them via LB_ANNOTATIONS.
-            lines+=("service.beta.kubernetes.io/aws-load-balancer-type: \"external\"")
-            lines+=("service.beta.kubernetes.io/aws-load-balancer-nlb-target-type: \"instance\"")
-            lines+=("service.beta.kubernetes.io/aws-load-balancer-scheme: \"internet-facing\"")
-            ;;
-        gcp|"")
-            ;;
-        *)
-            warn "Unknown LB_PROVIDER='${LB_PROVIDER}'; using loadBalancerIP only."
-            ;;
-    esac
-
-    # Free-form "key=value" pairs, newline- or comma-separated.
-    local pair
-    while IFS= read -r pair; do
-        [[ -z "${pair}" ]] && continue
-        [[ "${pair}" != *=* ]] && { warn "Ignoring malformed LB_ANNOTATIONS entry: ${pair}"; continue; }
-        lines+=("${pair%%=*}: \"${pair#*=}\"")
-    # printf '%s\n' (not '%s'): without a trailing newline `read` returns
-    # non-zero on the final line, so the loop silently dropped the last — or
-    # only — annotation.
-    done < <(printf '%s\n' "${LB_ANNOTATIONS:-}" | tr ',' '\n' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
-
-    (( ${#lines[@]} == 0 )) && return 0
-    printf '        annotations:\n'
-    local l
-    for l in "${lines[@]}"; do
-        printf '          %s\n' "${l}"
-    done
-}
 
 # Pin the Envoy data-plane LoadBalancer to NODE_IP (NETWORK_MODE=static-ip only).
 #
@@ -433,11 +354,6 @@ _pin_static_ip_edge_address() {
         return 0
     fi
 
-    if ! command -v envsubst &>/dev/null; then
-        error "envsubst not found (install gettext-base). Aborting."
-        exit 1
-    fi
-
     # loadBalancerIP is create-time only, so pinning an already-provisioned data
     # plane would silently do nothing. Say so rather than reporting success.
     if kubectl get svc -n "${ns}" \
@@ -450,11 +366,29 @@ _pin_static_ip_edge_address() {
     fi
 
     info "Pinning Envoy data-plane LoadBalancer to NODE_IP=${NODE_IP}..."
-    EDGE_LB_ADDRESS_FIELD="$(_edge_lb_address_field)"
-    EDGE_LB_ANNOTATIONS="$(_edge_lb_annotations)"
-    export ENVOY_GATEWAY_NAMESPACE NODE_IP EDGE_LB_ADDRESS_FIELD EDGE_LB_ANNOTATIONS
-    envsubst "\${ENVOY_GATEWAY_NAMESPACE} \${EDGE_LB_ADDRESS_FIELD} \${EDGE_LB_ANNOTATIONS}" \
-        < "$(gentian_envoyproxy_static_ip_manifest)" \
+    # Detection stays here — it reads the cluster, which a template cannot — and
+    # the answer is passed in. The provider presets themselves are in the chart,
+    # where the indentation is the template's problem rather than a shell
+    # function's guess about a context it cannot see.
+    if [[ -z "${LB_PROVIDER+x}" ]]; then
+        LB_PROVIDER="$(_detect_lb_provider)"
+        [[ -n "${LB_PROVIDER}" ]] &&
+            info "  Detected LB_PROVIDER=${LB_PROVIDER} from node providerID."
+    fi
+
+    local extra=()
+    local pair
+    while IFS= read -r pair; do
+        [[ -z "${pair}" ]] && continue
+        [[ "${pair}" != *=* ]] && { warn "Ignoring malformed LB_ANNOTATIONS entry: ${pair}"; continue; }
+        extra+=(--set-string "extraAnnotations.${pair%%=*}=${pair#*=}")
+    done < <(printf '%s\n' "${LB_ANNOTATIONS:-}" | tr ',' '\n')
+
+    helm template gentian-edge "${SCRIPT_DIR}/kernel/manifests/gateway/chart" \
+        --set "namespace=${ns}" \
+        --set-string "nodeIp=${NODE_IP}" \
+        --set-string "lbProvider=${LB_PROVIDER:-}" \
+        "${extra[@]+"${extra[@]}"}" \
         | kubectl apply -f -
 
     # Create the GatewayClass here rather than waiting for the operator, so the
