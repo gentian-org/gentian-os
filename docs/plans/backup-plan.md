@@ -1,8 +1,8 @@
 # Backup and Recovery
 
-**Status:** Phase 1 (the recovery kit) is implemented; Phases 2–5 are not
-**Scope:** cluster recovery, tenant-level restore, credential escrow
-**Applies to:** `install.sh`, OpenBao, CNPG, MinIO, tenant namespaces
+**Status:** Phase 1 (the recovery kit) is implemented; Phases 2–7 are not
+**Scope:** cluster recovery, credential escrow, self-service tenant export/restore (Admin Console)
+**Applies to:** `install.sh`, OpenBao, CNPG, MinIO, Keycloak, tenant namespaces, `gentian-ui`
 
 ---
 
@@ -17,7 +17,8 @@ Three things cannot be reconstructed. They are the whole problem:
 
 1. The bootstrap material — the derivation salt, the transit unseal key, the
    primary's recovery keys.
-2. Stateful workload data — PostgreSQL, MariaDB, MinIO, the Dovecot maildir.
+2. Stateful workload data — PostgreSQL, MariaDB, MinIO, the Dovecot maildir,
+   Keycloak realm content.
 3. OpenBao's own storage, for anything not derivable from (1).
 
 Everything else is either in Git or a function of those.
@@ -34,23 +35,35 @@ Everything else is either in Git or a function of those.
 | **Bootstrap material** — salt, transit unseal key, recovery keys | nothing | **Yes. This is the one that gets lost** |
 | OpenBao Raft storage | — | Yes, snapshots |
 | Secrets materialised by ESO | OpenBao | **No — see below** |
+| Data-bound secrets — DKIM keys, app data-encryption secrets | nothing | Yes, inside the encrypted bundle — see §5 |
 | Crossplane claims and MRs | Git, then reconcile | No |
-| PostgreSQL, MariaDB, MinIO, maildir | — | Yes. This is the real payload |
+| PostgreSQL, MariaDB, MinIO, maildir, Keycloak realms | — | Yes. This is the real payload |
 | Redis | it is a cache | No |
 
-Two rows carry most of the design.
+**Secrets fall into three classes, with three policies.**
 
-**The derivation scheme is itself a backup strategy.** Under
-`secretMode: derived`, sixteen credentials are a pure function of the master
-password and the salt. That turns the credential backup surface from a system
-into a sealed envelope. It does not hold under `secretMode: random`, where those
-sixteen are unreproducible and must be treated as data.
-
-**Backing up ESO-materialised Secrets is actively harmful.** They are
-projections of OpenBao paths. A backup of them is a copy of credentials as they
-were at snapshot time, which survives rotation and sits in an archive nobody is
-watching. Any Velero configuration must exclude them explicitly; the absence of
-a backup here is a security property, not a gap.
+1. **Derived** — a pure function of master password + salt. Never backed up;
+   the derivation scheme *is* their backup. This covers more than the sixteen
+   kernel credentials: `AppProfile.spec.appSecrets` are HMAC'd from master
+   password + tenant + app + name, so an app's own generated passwords also
+   reproduce byte-identically. Does not hold under `secretMode: random`, where
+   they become class 3.
+2. **Projections** — ESO-materialised Kubernetes Secrets. Backing these up is
+   actively harmful: a copy of credentials as they were at snapshot time,
+   surviving rotation, in an archive nobody watches. Any backup tooling must
+   exclude them explicitly; the absence of a backup here is a security
+   property, not a gap.
+3. **Data-bound** — not derived, held outside the app's own captured data, and
+   the data is cryptographically or referentially welded to them. The clearest
+   real example is the per-tenant **DKIM private key**, generated once and never
+   rotated. (An app that keeps its own encryption secret in a config file on a
+   PVC is not in this class — the secret is captured with the volume.) Without
+   them the restored data is garbage, so they must travel with the backup —
+   envelope-encrypted, declared per app in
+   `AppProfile.spec.backup.boundSecrets` (§5) rather than guessed at by the
+   platform. Class 1 shrinks this set to a genuine residue, but does not empty
+   it, and a restore onto a cluster with a different master password moves the
+   whole of class 1 in here.
 
 ---
 
@@ -60,7 +73,7 @@ One encrypted bundle holding what no amount of reconciliation can rebuild:
 
 ```
 master password        the root of the derived class
-derivation salt        currently stored ONLY in OpenBao — see §7
+derivation salt        currently stored ONLY in OpenBao — see §8
 transit unseal key     without it the transit instance cannot be unsealed
 primary recovery keys  without them the primary cannot be unsealed if transit is gone
 external credentials   the six in credentials.yaml, or a note of where they live
@@ -72,7 +85,7 @@ break-glass material. It is the difference between "rebuild from Git" being a
 plan and being a hope.
 
 This part exists. `scripts/lib/recovery.sh` implements it, and `install.sh`
-exposes it as `--export-recovery-kit` and `--recover` — see §6.
+exposes it as `--export-recovery-kit` and `--recover` — see §7.
 
 **The whole point of the kit is that derived credentials come back identical.**
 Restore it into a fresh cluster before the first install and every database
@@ -94,15 +107,19 @@ handles the rare case will be used for neither.
 |---|---|---|
 | Namespace, quotas, LimitRange | composed from the `Tenant` claim | Re-apply the claim |
 | App workloads | composed from `AppProfile`s | Reconciles |
-| OpenBao paths | `gentian-os/kernel/tenants/<tenant>/…` | From an OpenBao snapshot, or re-derived |
-| **PostgreSQL databases** | **inside the shared CNPG cluster** | Logical dump — see below |
+| OpenBao paths | `gentian-os/tenants/<tenant>/…` | Re-derived, plus data-bound secrets from the bundle |
+| **PostgreSQL databases** — `<tenant>_<app>` and `<tenant>_shell` | **inside the shared CNPG cluster** | Logical dump — see below |
 | **MariaDB databases** | **inside the shared MariaDB** | Logical dump |
-| **Object data** | MinIO, per-tenant prefixes or buckets | Bucket-level restore |
-| PVC data (e.g. maildir) | the tenant's namespace | Velero / CSI snapshot |
+| **Object data** | MinIO, `<tenant>-<app>` buckets | Bucket-level restore |
+| **Keycloak realm** — users, groups, clients | the tenant realm | Realm export/import |
+| PVC data — app volumes, maildir | the tenant's namespace | Archive per PVC |
+| DKIM private key | kernel namespace Secret, generated once | From the bundle |
 
 Because a tenant's *shape* is composed from its claim, restoring a tenant is
 **re-apply the claim, then restore its data**. Nothing about the namespace,
-quotas or app set needs backing up at all.
+quotas or app set needs backing up beyond a snapshot of `tenant.yaml`. Data-only
+restore is also what keeps Crossplane's `external-name` annotations (§8) out of
+play: infrastructure is never restored, only re-converged.
 
 ### The constraint that decides the design
 
@@ -125,48 +142,160 @@ PITR. They answer different questions:
 
 Both are needed. Choosing one is choosing which outage you can survive.
 
-### Restore procedure
+### The consistency boundary is the app, not the tenant
 
-1. Re-apply the `Tenant` claim if the namespace is gone; wait for it to compose.
-2. Restore that tenant's databases from its most recent logical dump.
-3. Restore its MinIO prefix.
-4. Restore any PVC data from Velero.
-5. Let ESO re-materialise the Secrets. Do not restore them.
+No mechanism exists for a transactionally consistent snapshot across
+independent stores; the only honest way to get one is to pause writes. The
+useful observation is *where* consistency matters: an app's database references
+its bucket and its PVC — **those must be captured together** or the restored
+app is corrupt. Two *different* apps share no transactional state, only loose
+OIDC and contract coupling, so skew between them is harmless.
 
-Step 5 is the one people get wrong: restoring Secrets alongside data reinstates
-credentials that may since have been rotated.
+Export therefore quiesces **one app at a time**: pause app A, capture all of
+its stores, resume, move on. Each app's write-pause spans only its own dump,
+and the manifest records per-app timestamps so the skew is visible rather than
+hidden. The realm and the `<tenant>_shell` database are low-write and
+internally consistent, and are captured without quiescing anything.
 
 ---
 
-## 5. Tooling
+## 5. Self-service export and restore (Admin Console)
+
+Tenant admins export their tenant's data as an encrypted bundle and restore
+their tenant from one — the routine case of §4, made a product feature.
+
+### Shape
+
+Two namespaced CRs, **`TenantExport`** and **`TenantRestore`**, living in
+`tenant-<name>` and reconciled by a gentian-os controller that fans out kernel
+Jobs per subsystem and reports per-app status conditions — the same
+Job-and-condition machinery the tenant reconciler already uses. Namespacing
+keeps each tenant's operations inside its own blast radius, the way `App`
+claims are modelled; the access path is the Admin Console BFF, since no
+per-tenant kubectl RBAC on `gentianos.io` kinds exists today. One
+export-or-restore in flight per tenant, ever.
+
+The subsystem list is **driven by `AppProfile.spec.kernelRequirements`**, the
+same enumeration purge uses — never an app name in a reconciler.
+
+### The AppProfile backup contract
+
+`kernelRequirements` says *what stores* an app has; only the app developer
+knows *how* to capture them correctly. That knowledge goes in the profile, in
+an optional `spec.backup` section with safe defaults (scale down, dump every
+declared store, archive every release-owned PVC):
+
+```yaml
+backup:
+  quiesce:
+    mode: command            # none | scaleDown (default) | command
+    pre:  ["occ", "maintenance:mode", "--on"]
+    post: ["occ", "maintenance:mode", "--off"]
+    container: nextcloud
+  volumes:
+    include: [nextcloud-data]          # default: all release-owned PVCs
+    excludePaths: ["appdata_*/preview"]
+  boundSecrets: []                     # class-3 secrets (§2), by OpenBao path
+  restore:
+    post: [["occ", "maintenance:data-fingerprint"]]
+    verify: ["occ", "status"]
+  consistency: app          # app (default) | perStore
+  minRestoreVersion: "27.0"
+```
+
+Nextcloud declaring **no** `boundSecrets` is the expected case, and worth
+understanding before writing the field for another app. Its `admin_password` is
+an `appSecret`, so it re-derives (class 1); its `instanceid`, `secret` and
+`passwordsalt` are generated by Nextcloud itself into `config.php`, which sits
+on the captured PVC and therefore travels with the data automatically. The
+field is for the residue only: a non-derived secret held *outside* the app's own
+captured data. This is also why `excludePaths` must never be allowed to exclude
+an app's config directory — that would silently drop the key its data is
+encrypted with.
+
+Schedule, retention, encryption and destination are deliberately **not** in the
+profile — they are platform and tenant policy, and an app developer must not be
+able to weaken them. The profile says how to back this app up correctly; the
+platform says when, where, and under what key.
+
+### The bundle
+
+A prefix in a per-tenant backup bucket — not one giant archive — so export
+streams, restores can be partial, and no tenant-sized scratch space is needed.
+Per-subsystem native formats, because native tooling is the only thing
+guaranteed to restore across versions:
+
+| Store | Format |
+|---|---|
+| PostgreSQL | `pg_dump -Fc` per database |
+| MariaDB | `mariadb-dump \| zstd` per database |
+| MinIO buckets | `mc mirror`, objects as-is |
+| Keycloak realm | native JSON export |
+| PVCs, maildir | `tar --zstd`, honouring `excludePaths` |
+
+Plus `manifest.json` — tenant spec snapshot, gentian-os and per-app chart
+versions, per-app snapshot timestamps, subsystem inventory — and `SHA256SUMS`.
+The whole prefix is `age`-encrypted; bound secrets exist only inside it. The
+console offers "download as single archive" as a packaging step on top.
+
+**Keycloak, v1 decision:** the Admin API realm export carries users, groups and
+clients but not password hashes. Restore re-imports the realm and triggers
+password-reset emails. Preserving passwords would require the offline
+`kc.sh export` path and a more sensitive bundle — deferred (§10).
+
+### Restore
+
+In-place (the tenant-admin case): preflight against the manifest — refuse a
+bundle produced by *newer* app versions than installed (`minRestoreVersion`,
+chart versions); older-into-newer just runs app migrations. Then per app:
+quiesce → drop and recreate databases from dumps → mirror buckets back →
+restore PVCs → run `restore.post` hooks → `restore.verify` → resume. Realm
+re-import and bound-secret re-seeding to OpenBao happen before apps resume.
+
+Into a fresh cluster (the DR case): apply the snapshotted `tenant.yaml`, wait
+for `Phase=Ready`, then the same `TenantRestore` — a cluster-admin procedure,
+not a console feature.
+
+### Console
+
+A `Backup` tab in the Admin Console. BFF endpoints follow the house pattern:
+`_require_admin` + `resolve_admin_tenant` on every route, `record_admin_audit()`
+on every mutation, CR access via `CustomObjectsApi`, create-then-poll UX,
+download as a streaming response. Restore sits behind a typed-confirmation
+dialog — it is the most destructive thing a tenant admin can do.
+
+---
+
+## 6. Tooling
 
 | Layer | Tool | Why not something else |
 |---|---|---|
-| PostgreSQL | CNPG `ScheduledBackup` + WAL archiving to object storage | A volume snapshot of a running database is crash-consistent at best. The CNPG operator is installed and provides the `Backup` and `ScheduledBackup` CRDs, so the capability is present — no `barmanObjectStore` is configured on any Cluster, so none of it is in use |
-| Per-tenant PostgreSQL | `pg_dump` per tenant database, on a schedule | PITR cannot restore one tenant — §4 |
+| PostgreSQL | CNPG `ScheduledBackup` + WAL archiving to object storage | A volume snapshot of a running database is crash-consistent at best. The CNPG operator is installed and provides the `Backup` and `ScheduledBackup` CRDs — no `barmanObjectStore` is configured on any Cluster, so none of it is in use |
+| Per-tenant PostgreSQL | `pg_dump` per tenant database, via `TenantExport` | PITR cannot restore one tenant — §4 |
 | MariaDB | `mariabackup`, plus per-database logical dumps | Same reasoning |
 | MinIO | Bucket replication to a second endpoint, plus versioning | Versioning covers deletion; replication covers loss of the cluster |
+| Keycloak | Realm export Jobs, per tenant | Realm = tenant; a database-level backup of Keycloak cannot restore one realm |
 | OpenBao | `bao operator raft snapshot save`, encrypted | Storage is Raft (`kernel/openbao/values.yaml`) |
-| Everything else | Velero, with CSI snapshots where the storage class supports them | Namespaced objects and PVCs with no native path — the maildir being the obvious one |
+| Everything else | Velero, with CSI snapshots where the storage class supports them | Namespaced objects and PVCs with no native path |
 
-All destinations **outside the cluster**. The cluster is what is being protected
-against.
+All destinations **outside the cluster** for continuous protection; the
+cluster is what is being protected against. The self-service bundle (§5) lands
+in a MinIO backup bucket first — object-lock/versioning should make it
+immutable from inside the cluster — and is downloadable off-cluster.
 
 **Nothing above is in use today.** There is no Velero and no restic anywhere in
 the tree, no `barmanObjectStore` on any CNPG Cluster, no `ScheduledBackup`, no
-OpenBao snapshot job, and no MinIO replication. The CNPG operator ships the
-backup CRDs and nothing creates one. This document describes work that has not
-started, not work that needs tidying.
+OpenBao snapshot job, and no MinIO replication. This document describes work
+that has not started, not work that needs tidying.
 
 ---
 
-## 6. Where the installer fits — narrowly
+## 7. Where the installer fits — narrowly
 
 **No `--backup`.** Backup is continuous, scheduled, retained and in-cluster. The
-installer is one-shot, and §1 of the configuration plan sets its scope at four
-components. A `--backup` flag would also make the installer a dependency of
-restore, which is the wrong direction: recovery should need a bundle and a
-cluster, not a current checkout.
+installer is one-shot. A `--backup` flag would also make the installer a
+dependency of restore, which is the wrong direction: recovery should need a
+bundle and a cluster, not a current checkout.
 
 **`--export-recovery-kit` and `--recover <kit>`, both implemented.** The
 bootstrap material is the one thing only the installer holds, and priming a fresh
@@ -186,41 +315,37 @@ installer wrote, so it also works against a half-broken cluster. It refuses to
 write anything unless both the master password and the salt are present — a kit
 missing the salt reproduces nothing and would be worse than no kit at all.
 
-Encryption is `age` when installed and `openssl` otherwise, with the difference
-stated on the way past: age authenticates, so a tampered kit fails to decrypt
-rather than yielding plausible garbage. There is no unencrypted path.
+Encryption is `age` when installed and `openssl` otherwise: age authenticates,
+so a tampered kit fails to decrypt rather than yielding plausible garbage.
+There is no unencrypted path.
 
 | Variable | Effect |
 |---|---|
-| `GENTIAN_KIT_RECIPIENT` | An age public key. Encrypt to it instead of prompting — the only way to export unattended, since `age -p` reads its passphrase from the terminal |
+| `GENTIAN_KIT_RECIPIENT` | An age public key. Encrypt to it instead of prompting — the only way to export unattended |
 | `GENTIAN_KIT_IDENTITY` | The matching private key file, needed to read a kit written that way |
 
-On import the kit is parsed against a fixed key whitelist rather than sourced.
-Encrypted is not the same as trusted, and sourcing it would let a key name in the
-file decide what the installer sets. Values already in the environment win, so an
-explicit override on the command line is not silently undone by the kit.
+On import the kit is parsed against a fixed key whitelist rather than sourced —
+encrypted is not the same as trusted. Values already in the environment win.
 
 What it does **not** do is restore OpenBao. A fresh instance initialises itself
 and issues new unseal material; the keys in the kit belong to the old one and
-unseal a restored Raft snapshot, nothing else. Restoring that snapshot is a
-separate operation, and §4 still applies for data.
+unseal a restored Raft snapshot, nothing else.
 
 **Backup policy itself should be declarative**, following the pattern already in
-use: an `XBackup` claim per cluster and per tenant, composing Velero `Schedule`
-and CNPG `ScheduledBackup` objects. That keeps "what is backed up and how often"
-reviewable in Git and expressible per tenant, rather than a set of CronJobs
+use: an `XBackup` claim per cluster and per tenant, composing Velero `Schedule`,
+CNPG `ScheduledBackup`, and scheduled `TenantExport` objects. That keeps "what
+is backed up and how often" reviewable in Git, rather than a set of CronJobs
 nobody reads.
 
 ---
 
-## 7. Traps
+## 8. Traps
 
 **The salt lives only in OpenBao — unless a kit was exported.** A disaster that
 loses OpenBao's storage also loses the salt, and the master password alone then
 reproduces nothing. `--export-recovery-kit` is the fix, which makes *having run
-it* the actual dependency: the command exists, but a kit that was never exported
-protects nothing. Export after the first install, and again after any credential
-that is not derived changes.
+it* the actual dependency. Export after the first install, and again after any
+credential that is not derived changes.
 
 **Transit auto-unseal is a two-body problem.** The primary unseals from the
 transit instance. Restore the primary without it and the cluster is sealed. The
@@ -228,77 +353,367 @@ kit needs the transit key *and* the primary's recovery keys, because either can
 be the one that survives.
 
 **Restoring into an existing cluster hits Crossplane's `external-name`
-annotations** — the identity of resources already provisioned externally.
-Rebuild-from-scratch avoids this entirely; partial restore does not, and it is
-the reason to prefer the former.
+annotations** — the identity of resources already provisioned externally. The
+export/restore design (§5) avoids it by restoring data only and letting the
+platform re-converge infrastructure; anything that restores provisioned
+objects does not.
+
+**A generated secret the data was encrypted with is part of the data.** A
+restore that reproduces every byte of an app's files but not the key they were
+encrypted with has restored nothing. Two ways to lose it: a non-derived secret
+in OpenBao that no profile declared in `boundSecrets`, or an `excludePaths`
+pattern that quietly drops the config file holding it. Both fail silently at
+backup time and loudly a year later.
+
+**"Export" means tenant data, and only that.** The cross-repo source bundles
+that used to sit in `export/` now live in `repo-seeds/` for exactly this
+reason. Keep it that way in new code, CRD fields and docs.
 
 **An untested backup is a hypothesis.** The step everyone skips is the only one
 that establishes whether any of this works.
 
 ---
 
-## 8. Implementation
+## 9. Implementation plan
 
-Ordered by value per unit of effort.
+Phased so an agent can take one phase end-to-end. Each phase is independently
+shippable and names the files it touches. Standing rules: nothing app-specific
+in a gentian-os reconciler (`AGENTS.md`), no plaintext secret path, generated
+artifacts refreshed with `make gen-all` (CI gates it with `make verify-gen`),
+and work lands on `develop` for CI to roll out.
+
+Read §2 (what must never be backed up), §4 (the consistency boundary) and §8
+(traps) before starting any phase.
 
 ### Phase 1 — Recovery kit — **implemented**
 
-`install.sh --export-recovery-kit` writes an encrypted bundle;
-`--recover <kit>` primes a fresh cluster from it. See §6.
+`scripts/lib/recovery.sh`; `install.sh --export-recovery-kit` / `--recover`.
+Remaining acceptance (belongs with Phase 7): a fresh-cluster `--recover` run
+derives byte-identical credentials; kit-plus-Git rebuild drill.
+
+### Phase 2 — The `spec.backup` contract
+
+**Goal** — teach `AppProfile` how its app must be captured, so every later
+phase is profile-driven rather than app-aware.
+
+**Files**
+
+- `api/v1alpha1/appprofile_types.go` — `BackupSpec`, and `Backup *BackupSpec`
+  on `AppProfileSpec` as a sibling of `KernelRequirements` (field at `:114`,
+  struct at `:512`).
+- Generated by `make gen-all`: `api/v1alpha1/zz_generated.deepcopy.go`,
+  `config/crd/gentianos.io_appprofiles.yaml`,
+  `charts/gentian-os/crds/gentianos.io_appprofiles.yaml`.
+- `gentian-apps/scripts/validate-backup-spec.py` (new) plus a step in the
+  `validate-profiles` job of `gentian-apps/.github/workflows/apps-ci.yaml`.
+- `gentian-apps/docs/app-profile-guide.md` — a new `## 15. Backup and restore
+  contract`, and a line in `## 12. Checklist for a new AppProfile`, which is
+  the part authors actually read. §13a (`spec.postInstallJob`) is the
+  stylistic precedent for documenting a block that runs commands.
+- `gentian-apps/profiles/nextcloud/base/base-ce/profile.yaml` — the first real
+  declaration. Profiles are directory bundles (`profile.yaml` +
+  `kustomization.yaml`); addons are separate profiles under
+  `profiles/nextcloud/addons/`.
+
+**Detail**
+
+- Every field `+optional`; `quiesce.mode` and `consistency` get
+  `+kubebuilder:validation:Enum`. A nil `Backup` must behave exactly as
+  `scaleDown` + every store in `kernelRequirements` + every release-owned PVC.
+  That default is the contract for the ~10 profiles that will never set the
+  section, so encode it in one place and unit-test it.
+- `quiesce.pre/post` are `[]string` argv (no shell) executed in
+  `quiesce.container`; `restore.post` is `[][]string`, because ordering matters
+  and each entry is a separate exec.
+- `boundSecrets[].openBaoPath` is **relative to** `gentian-os/tenants/{tenant}/`
+  (`internal/kernel/secrets/paths.go`). Reject absolute paths and `..`, or a
+  profile could name another tenant's secrets.
+- Most app-internal secrets do **not** belong here. `spec.appSecrets` are
+  already HMAC-derived from master password + tenant + app + name, so they
+  reproduce byte-identically on the same cluster and on any cluster primed with
+  the recovery kit. `boundSecrets` is for the residue: values the platform did
+  not derive, and cross-cluster restores where the derivation inputs differ.
+- gentian-apps CI has no JSON Schema and never validates a profile against the
+  CRD — `kubectl kustomize` renders but does not schema-check, and unknown
+  fields are pruned only at apply time. The new script is what makes a typo'd
+  hook fail the catalogue PR instead of a tenant's restore.
 
 **Acceptance**
-- ✅ The kit contains the salt, and the salt is therefore recoverable without OpenBao.
-- ✅ The kit is encrypted at rest and the tool refuses to write it unencrypted — there is no plaintext path.
-- ✅ A tampered kit is rejected rather than partially loaded (age kits; openssl kits are unauthenticated by construction).
-- ⬜ A cluster installed with `--recover` derives credentials byte-identical to the original. **Verified only by round-tripping the kit itself; the end-to-end claim needs a fresh-cluster run.**
-- ⬜ Losing the cluster and holding only the kit is sufficient to rebuild from Git. Same — this is a drill, not a unit test, and belongs with Phase 5.
 
-### Phase 2 — Database backups
+- A profile with no `spec.backup` validates, and the defaults are asserted in a
+  Go unit test.
+- nextcloud base-ce declares maintenance-mode quiesce and preview excludes, and
+  **no** bound secrets — its `admin_password` re-derives and its `config.php`
+  rides on the captured PVC. If that profile ends up needing the field, the
+  design in §5 is wrong somewhere.
+- `make verify-gen` is clean; a `boundSecrets` path escaping the tenant prefix
+  fails CI.
 
-CNPG `ScheduledBackup` with WAL archiving, plus per-tenant logical dumps.
+### Phase 3 — `TenantExport`
+
+**Goal** — an encrypted, restorable bundle of one tenant, produced by the
+operator.
+
+**Files**
+
+- `api/v1alpha1/tenantexport_types.go` (new) — namespaced,
+  `+kubebuilder:object:root=true`, `+kubebuilder:subresource:status`, and
+  `SchemeBuilder.Register` at the bottom (pattern:
+  `api/v1alpha1/appgrant_types.go:121`). Spec: `apps []string` (empty = all
+  installed), `ttl`. Status: phase, per-app conditions, `bundle{bucket,prefix}`,
+  per-app snapshot timestamps. For the phase enum, `IntegrationBindingState`
+  (`api/v1alpha1/types.go:109`, `Pending`/`Ready`/`Failed`) is the existing
+  precedent for a one-shot CRD.
+- `internal/backup/` (new package): `inventory.go`, `jobs.go`, `manifest.go`,
+  `bundle.go`.
+- `internal/controller/tenantexport_controller.go` (new), registered in
+  `cmd/main.go` after the existing reconcilers (~`:216`).
+- `internal/applifecycle/purge.go` — switch to the shared inventory.
+- `internal/controller/storage_reconciler.go` — per-tenant backup bucket.
+- `internal/authz/keycloak_client.go` — realm export.
+- `internal/controller/metrics.go` — `gentianos_tenant_export_*`, following the
+  existing `gentianos_*` naming.
+- RBAC: `+kubebuilder:rbac` markers on the new controller (markers live beside
+  the code in `./internal/...`), then `make gen-all`.
+  `charts/gentian-os/templates/clusterrole.yaml` is generated — never edit it.
+
+**Detail**
+
+- **Extract the inventory first — it is the highest-value step in the phase.**
+  Everything needed to enumerate a tenant's stores already exists in
+  `internal/applifecycle/purge.go` (`profileKernelReqs:91`, `purgePVCs:550`,
+  `pvcBelongsToApp:642`) and `internal/applifecycle/names.go`, but those are
+  unexported, and `internal/controller` already carries near-duplicates
+  (`databaseName`, `roleUserName`, `s3BucketName` in the `*_reconciler.go`
+  files). Move one copy into `internal/backup/inventory.go` and have both
+  callers use it, or export will drift from purge the first time a naming rule
+  changes — and a store nobody enumerates is a store nobody backs up.
+- Resolve the **effective** app set through `internal/catalogue`:
+  `Tenant.spec.apps[].profile` *and* `.addons`, each its own `AppProfile` with
+  its own `kernelRequirements`. Add the portal shell database
+  (`internal/controller/portal_shell_database.go` — `<tenant>_shell`, Secret
+  `portal-shell-<tenant>`) and, when `mail.mode: selfhosted`, the maildir and
+  the DKIM key (Secret `dkim-<tenant>` in `platform-kernel`, key `tls.key`).
+- **Do not use `runKernelJob` (`purge.go:228`)** — it blocks with a five-minute
+  deadline and a real dump will exceed it. Use the reconciler pattern: create
+  the Job, return, and poll with `waitForProvisioningJob(ctx, tenantName,
+  jobName) (bool, error)` (`internal/controller/kernel_job_wait.go:66`),
+  requeueing through `requeueForPendingApps`
+  (`internal/controller/provisioning_requeue.go:77`). Note that
+  `waitForProvisioningJob` **deletes a failed Job so it gets recreated** —
+  correct for idempotent provisioning, wrong here. Bound the attempts in
+  `status` and fail the export rather than retrying forever.
+- Build Jobs with a helper modelled on
+  `kernelDeleteJob(ns, name, tenant, app, image, container, script, env)`
+  (`purge.go:291`). They run in `meta.KernelNamespace` (`platform-kernel`) and
+  carry `meta.TenantLabel` / `gentianos.io/app` / `meta.ManagedByLabel`. Use
+  `meta.ProvisioningJobTTLSeconds` and set a `backoffLimit`; the purge builder
+  hardcodes its own TTL and sets no backoff, so do not copy it verbatim.
+- Images and credentials already exist: `kernel.PostgresProvisionerImage()`
+  (`internal/kernel/images.go`) with Secret `postgres-admin`
+  (`PGHOST`/`PGPORT`/`PGUSER`/`PGPASSWORD`, assembled by `secretEnv`);
+  `kernel.MariaDBProvisionerImage()` with `mariadb-admin`; `minio/mc` with
+  `minio-admin`; `kernel.KeycloakProvisionerImage()` with `keycloak-admin`.
+  The CNPG endpoint is `<cnpgClusterName>-rw.platform-kernel.svc.cluster.local:5432`
+  (`CNPG_CLUSTER_NAME`, default `postgres`), and `pg_dump` must match the CNPG
+  major version. Never read an ESO-materialised app Secret, and never mount the
+  master password into a capture Job.
+- Keycloak realm export does not exist anywhere yet. Add
+  `POST /admin/realms/{realm}/partial-export` to `KeycloakAdminClient`
+  (`internal/authz/keycloak_client.go`); its admin credentials come from
+  `loadKeycloakAdmin` (`internal/controller/app_privilege_reconciler.go:226`).
+- Backup bucket: add `backupBucketName(tenant)` beside `s3BucketName`
+  (`storage_reconciler.go:238`) and a `makeBackupBucketJob` reusing
+  `minioContainer` / `minioSetupScript` unchanged — they are already
+  bucket-parameterised. Call it from `ensureStorage` **outside** the
+  `collectStorageApps` loop so every tenant gets one, and exclude it from the
+  app inventory, or the next export backs up the backups.
+- `manifest.json`: schema version, tenant name and spec snapshot, gentian-os
+  version, per app `{profile, chart version, stores captured, quiesce
+  start/end}`, bound-secret key names (never values), and checksums. This is
+  what makes a restore debuggable two years later.
+- Quiesce/resume must be **crash-safe**. An app left scaled to zero across an
+  operator restart is an outage. Record the quiesced app in `status`, make
+  resume idempotent, and run it on the failure path and on controller startup.
+- Mutual exclusion: refuse to start while another `TenantExport`/`TenantRestore`
+  in the namespace is non-terminal, and surface that as a condition rather than
+  an error loop. Conditions go through `setCondition`
+  (`internal/controller/tenant_controller.go:928`).
+- Tenant admins have **no kubectl RBAC on `gentianos.io` kinds today** — there
+  is no per-tenant `Role` anywhere in the repo; access is mediated by the
+  console BFF, Keycloak groups and OpenFGA. Keep it that way: grant the portal
+  ServiceAccount in Phase 4 and leave direct RBAC out of scope. If it is ever
+  wanted, the natural home is a `Role`/`RoleBinding` beside the LimitRange and
+  ResourceQuota in `crossplane/compositions/tenant-default.yaml`.
 
 **Acceptance**
+
+- Exporting a two-app tenant produces a bundle whose manifest covers every
+  store implied by `kernelRequirements` plus addons, with no app name anywhere
+  under `internal/`.
+- Each app's pause spans only its own capture — the manifest timestamps prove
+  it — and no app is left quiesced after a forced controller restart mid-export.
+- The bundle contains no ESO Secret and no derived credential, and does contain
+  the declared bound secrets.
+- A second concurrent export is rejected via status, not by crashing.
+- A capture Job that keeps failing fails the export instead of looping forever.
+
+### Phase 4 — Console: export
+
+**Goal** — a tenant admin produces and downloads a bundle without kubectl.
+
+**Files**
+
+- `gentian-ui/backend/app/services/k8s_backup.py` (new) — CR access, modelled
+  on `services/k8s_authorization.py` (namespaced `CustomObjectsApi` calls,
+  `tenant_namespace()`). Note there is no `create_namespaced_custom_object`
+  caller in the codebase yet; `replace_platform_security_policy` is the closest
+  create example.
+- `gentian-ui/backend/app/api/routes/admin.py` — the endpoints.
+- `gentian-ui/chart/templates/rbac.yaml` — the portal's ClusterRole is
+  **hand-written** (unlike the operator's); add `tenantexports` here, and
+  `tenantrestores` in Phase 5.
+- `gentian-ui/frontend/src/admin/BackupSection.tsx` (new), plus
+  `AdminConsole.tsx` (the `AdminTab` union at `:18`, a nav button, a ternary
+  arm — there is no tab registry), `frontend/src/api/admin.ts`,
+  `frontend/src/admin/admin.css`.
+- `docs/commands.md` — a section beside §5 "Tenant App Store".
+
+**Detail**
+
+- Endpoints: `POST /admin/backups`, `GET /admin/backups`,
+  `GET /admin/backups/{name}` (conditions → progress), and
+  `GET /admin/backups/{name}/download`.
+- House shape: `_require_admin(user, settings)` then
+  `resolve_admin_tenant(user, settings, tenant)` as the first two lines of the
+  handler — they are plain functions, not FastAPI dependencies — with `tenant`
+  from `Depends(admin_tenant_query)`. Mutations call `record_admin_audit(...)`
+  with dotted actions (`backup.created`, `backup.downloaded`,
+  `restore.started`).
+- The download copies `export_audit_events` (`admin.py:1154`) server-side —
+  `StreamingResponse` plus `Content-Disposition` — and `downloadAuditExport`
+  (`frontend/src/api/admin.ts:285`) client-side, which bypasses `apiFetch` for a
+  raw `fetch` + `blob()` + synthetic `<a download>`. Unlike the audit export, a
+  bundle download **should** be audited.
+- Streaming the bundle through the BFF is the simple path; a presigned MinIO URL
+  avoids holding the connection open for a large tenant. If the bundle ends up
+  served by an operator HTTP endpoint instead, follow the token-forwarding proxy
+  in `backend/app/api/routes/credentials.py` (`_forward`,
+  `credential_manager_url`) — not the applifecycle API, which authenticates on
+  an actor header alone.
+- Polling: no admin section polls today (the only `refetchInterval` in the app
+  is the notification inbox). Use TanStack Query with a function-form
+  `refetchInterval` that returns `false` on a terminal phase.
+
+**Acceptance**
+
+- A tenant admin starts an export, watches per-app progress, and downloads the
+  bundle; every action appears in the Audit tab.
+- A cross-tenant request 403s in `resolve_admin_tenant` and never reaches the
+  cluster.
+- Polling stops when the export reaches a terminal phase.
+
+### Phase 5 — `TenantRestore` (in place)
+
+**Goal** — put a bundle back into a live tenant.
+
+**Files** — `api/v1alpha1/tenantrestore_types.go`,
+`internal/controller/tenantrestore_controller.go`, the same `internal/backup/`
+package in reverse, console wiring as in Phase 4, a `tenants restore` verb in
+`scripts/kubectl-gentian` for the cluster-admin path, and
+`docs/design/operations.md` §2.
+
+**Detail**
+
+- Spec: a bundle reference (bucket/prefix, or a `TenantExport` name), an
+  optional `apps` subset, and an explicit confirmation field. Status mirrors
+  export.
+- Preflight, before touching anything: manifest app set versus installed apps;
+  refusal of a bundle produced by newer app versions (`minRestoreVersion` plus
+  the manifest's chart versions); `SHA256SUMS` verified; decryption confirmed.
+- Per app: quiesce → drop and recreate databases from the dumps → mirror the
+  buckets back → restore PVCs → `restore.post` hooks → `restore.verify` →
+  resume. Realm re-import and bound-secret re-seeding into OpenBao happen
+  before any app resumes.
+- **Take the app lifecycle lock.** `internal/applifecycle/service.go:81`
+  `lockApp(tenant, profile)` exists for exactly this hazard, and its doc comment
+  describes it: a restore racing an install or purge of the same app. A restore
+  that ignores the lock can write into a database being dropped.
+- Keycloak: `partialImport`, alongside the export call added in Phase 3. Per the
+  v1 decision passwords are not preserved — trigger reset emails, and say so in
+  the console *before* the operation starts, not after.
+- Console: a typed-confirmation dialog naming the tenant; audited.
+- Document restore-into-fresh (apply the snapshotted `tenant.yaml`, wait for
+  `Phase=Ready`, then the same CR) as a cluster-admin procedure — same Jobs, no
+  new mechanism.
+
+**Acceptance**
+
+- Export → mutate → restore round-trips a two-app tenant, `restore.verify`
+  passes, and other tenants are demonstrably untouched.
+- A bundle newer than the installed apps is refused in preflight, before any app
+  is quiesced.
+- Export and restore cannot overlap, and neither runs concurrently with an
+  install or purge of the same app.
+
+### Phase 6 — Continuous protection
+
+**Goal** — protection that does not depend on someone clicking Export.
+
+**Detail**
+
+- CNPG `ScheduledBackup` + WAL archiving to object storage for cluster-level
+  PITR. The operator already ships the CRDs; no `barmanObjectStore` is
+  configured on any Cluster today.
+- Scheduled `TenantExport`s: either a schedule field reconciled by an in-process
+  ticker — `internal/controller/metering_job.go`'s `MeteringWorker` is the
+  existing `mgr.Add` precedent — or the `XBackup` claim of §7. Prefer the claim
+  if backup policy should be reviewable in Git per tenant.
+- Retention GC for bundles, modelled on `kernel/manifests/job-gc/`, the only
+  CronJob in the tree.
+- MinIO versioning and replication, plus object-lock on the backup bucket so a
+  compromised cluster cannot erase its own backups.
+- Velero (or CSI snapshots) for the residue, with ESO-managed Secrets excluded
+  explicitly.
+
+**Acceptance**
+
 - PITR restores the shared cluster to an arbitrary point.
-- A single tenant's databases restore without affecting any other tenant.
-- Dump schedule and retention are declared in Git, not in a CronJob nobody reviews.
-
-### Phase 3 — Object and volume backups
-
-MinIO replication and versioning; Velero for the residue.
-
-**Acceptance**
-- ESO-managed Secrets are excluded, asserted by inspecting a backup's contents.
+- A tenant's schedule exists with no Git object beyond its claim.
 - A deleted object is recoverable without a cluster-level restore.
-- Every PVC with no native backup path is covered.
+- A Velero backup's contents verifiably exclude ESO Secrets.
+- Expired bundles are collected, and retention is stated per cluster.
 
-### Phase 4 — Declarative policy
+### Phase 7 — Restore drills
 
-`XBackup` claim composing the schedules above.
+**Goal** — turn the hypothesis into a measured RTO.
+
+A scheduled exercise against a scratch cluster: a full rebuild from recovery kit
+plus backups, timed end to end; and a per-tenant restore on a cluster with more
+than one tenant, with the others verified unaffected. This is also where
+Phase 1's two open acceptance items finally close — that `--recover` derives
+byte-identical credentials on a fresh cluster, and that kit-plus-Git is
+sufficient to rebuild.
 
 **Acceptance**
-- Adding a tenant produces its backup schedule with no new Git object beyond the claim.
-- Backup policy is visible with `kubectl get xbackup`.
 
-### Phase 5 — Restore drills
-
-A scheduled exercise restoring into a scratch cluster.
-
-**Acceptance**
-- A full rebuild from kit plus backups is performed and timed at least once.
-- A per-tenant restore is performed against a cluster with more than one tenant,
-  and the other tenants are verified unaffected.
-- The measured times become the stated RTO, rather than an assumed one.
+- Both drills are performed and timed at least once, and the measured times are
+  published as the RTO rather than an assumed one.
+- Every drill failure becomes a fix in an earlier phase, not a note in this
+  document.
 
 ---
 
-## 9. Open questions
+## 10. Open questions
 
 | Question | Notes |
 |---|---|
-| RPO and RTO per layer | Nothing below can be sized without these. Config is RPO=0; tenant data is probably minutes; credentials are hours. They should be stated before tools are chosen |
-| Kit custody | Encryption is settled — age, falling back to openssl. Who holds the kit, where, and how a restore is authorised remains open, and is a policy question rather than a technical one |
-| When to re-export | The kit is only as current as its last export. Nothing prompts for one today; a reminder on credential rotation, or an unattended scheduled export using `GENTIAN_KIT_RECIPIENT`, would both work |
-| Shared versus per-tenant database instances | Per-tenant CNPG clusters would make per-tenant PITR possible and remove the need for logical dumps, at a cost in footprint. Worth costing before Phase 2 hardens the current shape |
-| Tenant restore and OpenBao | Whether a tenant's paths are restored from a snapshot or re-derived. Re-derivation is cleaner but only works for the derived class |
+| RPO and RTO per layer | Nothing above can be sized without these. Config is RPO=0; tenant data is probably minutes; credentials are hours |
+| Kit custody | Who holds the kit, where, and how a restore is authorised — policy, not technology |
+| When to re-export the kit | Nothing prompts for one today; a reminder on credential rotation or an unattended scheduled export would both work |
+| Bundle key custody | Platform-held age recipient (restore works without the admin) versus a per-export passphrase shown once (platform cannot read the bundle). Decide before Phase 3 |
+| Preserving Keycloak passwords | v1 resets them on restore. The alternative is offline `kc.sh export` — includes hashes, whole-realm, and makes the bundle markedly more sensitive |
+| Export size and quota | Whether the backup bucket counts against tenant quota, and whether exports have a size cap |
+| Shared versus per-tenant database instances | Per-tenant CNPG clusters would make per-tenant PITR possible, at a cost in footprint. Worth costing before Phase 6 hardens the current shape |
 | Backup of the deployments repository | It is a Git remote, so it is somebody's backup already — but whose, and is that stated anywhere? |
 | Air-gapped restore | The recovery kit assumes the mirror in `versions.yaml` is still reachable. A restore during an outage of that mirror is a different exercise |

@@ -37,8 +37,12 @@ Restoring tenant `demo` means:
 4. Re-import the Keycloak realm `demo` from JSON export.
 5. Restore namespace `tenant-demo` via Velero.
 
-This sequence will be automated by a `RestoreTenant` CR in a future
-release.
+This sequence is being automated by the namespaced `TenantExport` /
+`TenantRestore` CRs, which also back self-service export and restore in the
+Admin Console. Restore is **data-only** — the tenant's shape is re-composed
+from its claim, never restored — and quiesces one app at a time, since the
+consistency boundary that matters is an app's database plus its bucket plus
+its PVC, not the tenant as a whole.
 
 ## 3. Tenant Migration Between Clusters
 
