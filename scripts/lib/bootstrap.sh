@@ -1262,13 +1262,28 @@ require_cluster_deployment() {
     local kernel_dir="${GENTIAN_DEPLOYMENTS_PATH}/clusters/${cluster}/kernel"
     local missing=() f
 
-    # cluster-settings.env counts: it carries the exposure and mail model, which
-    # nothing else can imply and which silently default to tunnel and external
-    # when the file is absent.
-    for f in claims/cluster.yaml claims/infra-data.yaml claims/suze.yaml \
-             values.yaml cluster-settings.env; do
+    # cluster-settings.env is NOT required. The exposure and mail model it used
+    # to carry are fields on the claim now, read by claim_setting before the
+    # cluster exists, so demanding the file rejected a cluster whose
+    # configuration is complete — this one, immediately after migrating it.
+    for f in claims/cluster.yaml claims/infra-data.yaml claims/suze.yaml values.yaml; do
         [[ -f "${kernel_dir}/${f}" ]] || missing+=("${f}")
     done
+
+    # What the file used to guarantee, checked where it now lives. networkMode
+    # decides whether the edge is a LoadBalancer, and static-ip without nodeIp
+    # produces a Service whose address nothing pins — the failure the old
+    # requirement existed to prevent, now stated against the claim.
+    local claim="${kernel_dir}/claims/cluster.yaml"
+    if [[ -f "${claim}" ]]; then
+        local net
+        net="$(yq_get '.spec.networkMode' "${claim}" 2>/dev/null || true)"
+        if [[ "${net}" == "static-ip" ]] && ! yq_get '.spec.nodeIp' "${claim}" >/dev/null 2>&1; then
+            error "claims/cluster.yaml sets networkMode: static-ip without nodeIp."
+            error "  DNS would point at an address the load balancer does not claim."
+            return 1
+        fi
+    fi
 
     if (( ${#missing[@]} == 0 )); then
         return 0
