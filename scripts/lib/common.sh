@@ -1158,14 +1158,18 @@ check_prereqs() {
     fi
 
     # ── Required environment variables ───────────────────────────────────────
-    # A dry run collects no credentials, so their absence is the expected state
-    # rather than a missing prerequisite. Reporting it as one would abort the
-    # preview over values it was never going to use.
+    # A dry run collects no credentials, and neither does a teardown, so their
+    # absence is the expected state rather than a missing prerequisite. Counting
+    # it as one aborts over values the run was never going to use — and on a
+    # teardown that means refusing to remove a cluster because the operator no
+    # longer has the password to the thing being removed.
     MAIL_SERVICE_MODE="${MAIL_SERVICE_MODE:-external}"
     export MAIL_SERVICE_MODE
 
     if [[ "${GENTIAN_DRY_RUN:-0}" == "1" ]]; then
         info "Dry run: credential variables not checked (none were collected)."
+    elif [[ "${GENTIAN_DIRECTION:-forward}" == "reverse" ]]; then
+        info "Teardown: credential variables not checked (none were collected)."
     else
         if [[ -z "${MASTER_PASSWORD:-}" ]]; then
             error "MASTER_PASSWORD is not set"

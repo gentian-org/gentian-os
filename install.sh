@@ -233,13 +233,24 @@ prepare_run() {
     # Driven by credentials.yaml. Validation runs here, before the first
     # apply(), so a bad credential aborts with the cluster untouched.
     #
+    # Only a forward run needs them, and only a forward run is asked.
+    #
     # A dry run applies nothing, and no step's check() reads a credential, so it
     # has everything it needs to print the plan without one. Asking anyway turns
     # "show me what you would do" into a credential hunt, and makes the preview
     # unavailable exactly when an operator most wants it — before they have
     # gathered the secrets.
+    #
+    # A teardown is the same argument, further along. No destroy() reads a
+    # credential and neither does any helper in teardown.sh: removing an object
+    # needs a kubeconfig, not a secret. Demanding one to uninstall is worse than
+    # pointless — a cluster is most often torn down because something is wrong
+    # with it, and the deployments token is exactly what an operator may no
+    # longer have. Purge then refuses over a secret it will delete moments later.
     if [[ "${GENTIAN_DRY_RUN}" == "1" ]]; then
         info "Dry run: skipping credential collection — nothing is applied, so nothing is needed."
+    elif [[ "${GENTIAN_DIRECTION}" == "reverse" ]]; then
+        info "Teardown: skipping credential collection — destroy() reads none."
     else
         collect_bootstrap_credentials
     fi
