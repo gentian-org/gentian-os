@@ -52,9 +52,19 @@ import (
 var testClient client.Client
 
 // envtestWaitTimeout is the default poll deadline for controller envtest waits.
-// Tests share one manager; under t.Parallel() load on CI runners, shorter
-// deadlines flake when many tenants reconcile and extra Keycloak Jobs run.
-const envtestWaitTimeout = 45 * time.Second
+//
+// 140 t.Parallel() tests share one manager and one envtest apiserver, so a test
+// that loses the scheduling race against the others exceeds a short deadline
+// and fails with "timed out waiting for condition" — and which test loses is
+// arbitrary. That makes a red build in this package ambiguous: a regression and
+// a starved runner are indistinguishable without re-running, which is the worst
+// property a suite can have.
+//
+// Three minutes is a bound on being starved, not on being wrong. These waits
+// poll reconcile loops rather than burn CPU, so the extra ceiling costs nothing
+// on a healthy run — it is only reached when the answer was never coming, and a
+// genuinely hung reconciler still reports, just later.
+const envtestWaitTimeout = 3 * time.Minute
 
 // tenantReadyTimeout is an alias for Phase=Ready waits (same ceiling as job waits).
 const tenantReadyTimeout = envtestWaitTimeout

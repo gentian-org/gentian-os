@@ -42,7 +42,10 @@ install-plugin:
 # all other packages are tested with the race detector enabled.
 test:
 	go test $$(go list ./... | grep -v 'internal/controller') -race
-	go test ./internal/controller/...
+	# -timeout, because envtest waits are bounded at 3 minutes each: enough
+	# simultaneous failures would exceed Go's 10-minute default and replace
+	# readable per-test failures with a whole-package panic dump.
+	go test ./internal/controller/... -timeout 20m
 
 ## Generate deepcopy methods
 generate:
