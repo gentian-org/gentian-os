@@ -409,6 +409,9 @@ _delete_kyverno_scaffold() {
 
     _delete_namespace "kyverno"
     _delete_crds_matching 'kyverno\.io$' 'Kyverno CRDs'
+    # PolicyReport/ClusterPolicyReport live under wgpolicyk8s.io, not kyverno.io,
+    # so the pattern above never matched them.
+    _delete_crds_matching 'wgpolicyk8s\.io$' 'Policy report CRDs'
 
     # Belt-and-suspenders: helm uninstall normally removes Kyverno's webhook
     # configs as chart-managed resources, but not if the Helm release was

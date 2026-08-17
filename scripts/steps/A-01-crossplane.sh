@@ -28,5 +28,11 @@ destroy() {
     kubectl delete clusterrolebinding \
         crossplane crossplane-admin crossplane-edit crossplane-view crossplane-browse \
         --ignore-not-found=true 2>/dev/null || true
+    # Registered by Crossplane core, cluster-scoped, and left behind by both
+    # the helm uninstall and the namespace delete. A stale no-usages webhook
+    # rejects deletes across the cluster once its service is gone.
+    kubectl delete validatingwebhookconfiguration crossplane-no-usages \
+        --ignore-not-found=true --wait=false 2>/dev/null || true
+
     _delete_namespace crossplane-system
 }

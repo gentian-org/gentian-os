@@ -23,4 +23,9 @@ destroy() {
         gentian_run helm uninstall cert-manager -n cert-manager || true
     fi
     _delete_namespace cert-manager
+
+    # CRDs are cluster-scoped and survive the namespace. The step's `mutates:`
+    # names them; leaving them behind means the next install adopts CRDs from a
+    # version it did not pin.
+    _delete_crds_matching 'cert-manager\.io$' 'cert-manager CRDs'
 }

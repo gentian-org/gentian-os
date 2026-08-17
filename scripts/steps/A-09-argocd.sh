@@ -61,4 +61,12 @@ destroy() {
         _argocd_strip_all_finalizers
         sleep 5
     done
+
+    # Cluster-scoped leftovers the namespace delete cannot reach. Argo CD's
+    # ClusterRoles carry broad permissions over every resource it manages, so
+    # leaving them is not merely untidy.
+    kubectl delete clusterrole,clusterrolebinding \
+        argocd-application-controller argocd-applicationset-controller argocd-server \
+        --ignore-not-found=true --wait=false 2>/dev/null || true
+    _delete_crds_matching 'argoproj\.io$' 'Argo CD CRDs'
 }
