@@ -259,7 +259,6 @@ INSTALL_CLUSTER_INFRA="${INSTALL_CLUSTER_INFRA:-1}"
 # present they are sourced automatically before prompting so installs can be
 # fully declarative and non-interactive.
 INSTALL_CONFIG_FILE="${INSTALL_CONFIG_FILE:-${SCRIPT_DIR}/install.env}"
-INSTALL_SECRETS_FILE="${INSTALL_SECRETS_FILE:-${SCRIPT_DIR}/install.secrets.env}"
 INSTALL_AUTO_LOAD_CONFIG="${INSTALL_AUTO_LOAD_CONFIG:-1}"
 INSTALL_VALIDATE_ONLY="${INSTALL_VALIDATE_ONLY:-0}"
 INSTALL_VERIFY_ONLY="${INSTALL_VERIFY_ONLY:-0}"
@@ -336,7 +335,7 @@ Options:
   --cluster-infra      Force cluster infra installation (default)
   --config-file PATH   Source non-secret installer config from PATH
   --secrets-file PATH  Source secret installer values from PATH
-  --no-config-files    Disable auto-loading of install.env / install.secrets.env
+  --no-config-files    Disable auto-loading of install.env
     --verify-only        Skip install steps and only run ArgoCD health verification
   --validate, --check  Validate config and secrets; print a report and exit (no
                        cluster actions are taken)
@@ -345,7 +344,6 @@ Options:
 Environment overrides:
   INSTALL_CLUSTER_INFRA=1|0
   INSTALL_CONFIG_FILE=/path/to/install.env
-  INSTALL_SECRETS_FILE=/path/to/install.secrets.env
   INSTALL_VALIDATE_ONLY=1
 EOF
 }
@@ -454,11 +452,11 @@ validate_config() {
         fi
     }
 
-    _file_header "${INSTALL_SECRETS_FILE}" "Secrets checks (install.secrets.env)"
-    _req_from MASTER_PASSWORD          "HKDF master secret — used to derive all app secrets" "${INSTALL_SECRETS_FILE}"
-    _opt_from CF_API_TOKEN       "Cloudflare token — needed for DNS-01 wildcard certificates" "${INSTALL_SECRETS_FILE}"
+    _file_header "the environment" "Secrets checks (environment, ~/.gentian cache, or OpenBao)"
+    _req_from MASTER_PASSWORD          "HKDF master secret — used to derive all app secrets" "the environment"
+    _opt_from CF_API_TOKEN       "Cloudflare token — needed for DNS-01 wildcard certificates" "the environment"
     if [[ -z "${CF_ZONE_NAME:-}" ]]; then
-        echo "  [OK]       CF_ZONE_NAME  (optional; derived from KERNEL_DOMAIN when unset; set override in ${INSTALL_SECRETS_FILE})"
+        echo "  [OK]       CF_ZONE_NAME  (optional; derived from KERNEL_DOMAIN when unset)"
     else
         echo "  [OK]       CF_ZONE_NAME"
     fi
@@ -475,8 +473,8 @@ validate_config() {
     if [[ "${MAIL_SERVICE_MODE}" == "external" ]]; then
         _req_from EXTERNAL_SMTP_HOST "External SMTP host (e.g. smtp.gmail.com)" "${cluster_settings_file}"
         _opt_from EXTERNAL_SMTP_PORT "External SMTP port (default 587)" "${cluster_settings_file}"
-        _req_from SMTP_RELAY_USERNAME "SMTP username (e.g. Gmail address)" "${INSTALL_SECRETS_FILE}"
-        _req_from SMTP_RELAY_PASSWORD "SMTP password (e.g. Gmail App Password)" "${INSTALL_SECRETS_FILE}"
+        _req_from SMTP_RELAY_USERNAME "SMTP username (e.g. Gmail address)" "the environment"
+        _req_from SMTP_RELAY_PASSWORD "SMTP password (e.g. Gmail App Password)" "the environment"
     else
         echo "  [OK]       SMTP_RELAY_USERNAME  (not required for MAIL_SERVICE_MODE=${MAIL_SERVICE_MODE})"
         echo "  [OK]       SMTP_RELAY_PASSWORD  (not required for MAIL_SERVICE_MODE=${MAIL_SERVICE_MODE})"
@@ -529,8 +527,8 @@ validate_config() {
     _opt_from GENTIAN_APPS_BRANCH     "defaults to 'main'" "${INSTALL_CONFIG_FILE}"
     _opt_from GENTIAN_DEPLOYMENTS_REPO    "defaults to https://git.example.domain/gentian-deployments" "${INSTALL_CONFIG_FILE}"
     _opt_from GENTIAN_DEPLOYMENTS_BRANCH  "defaults to 'main'" "${INSTALL_CONFIG_FILE}"
-    _opt_from GENTIAN_DEPLOYMENTS_GIT_TOKEN "GitHub PAT for operator in-cluster git push (install.secrets.env)" "${INSTALL_SECRETS_FILE}"
-    _opt_from GENTIAN_DEPLOYMENTS_GIT_USERNAME "defaults to x-access-token for GitHub PATs" "${INSTALL_SECRETS_FILE}"
+    _opt_from GENTIAN_DEPLOYMENTS_GIT_TOKEN "GitHub PAT for operator in-cluster git push" "the environment"
+    _opt_from GENTIAN_DEPLOYMENTS_GIT_USERNAME "defaults to x-access-token for GitHub PATs" "the environment"
 
     LLM_SUPPORT="${LLM_SUPPORT:-false}"
     if [[ "${LLM_SUPPORT}" != "true" && "${LLM_SUPPORT}" != "false" ]]; then
@@ -597,7 +595,11 @@ load_operator_config() {
         return 0
     fi
     load_env_file "${INSTALL_CONFIG_FILE}" "installer config"
-    load_env_file "${INSTALL_SECRETS_FILE}" "installer secrets"
+    # install.secrets.env is NOT loaded. Credentials come from the environment,
+    # the 0600 cache under ~/.gentian, or OpenBao — collect_bootstrap_credentials
+    # tries all three and prompts for what is left. A plaintext file of secrets
+    # beside the installer was a fourth source that nothing rotated and nothing
+    # audited, and the one on this machine held a live Cloudflare token.
 }
 
 
@@ -726,7 +728,7 @@ EOF
 
     if [[ -z "${GENTIAN_DEPLOYMENTS_GIT_TOKEN:-}" ]]; then
         warn "GENTIAN_DEPLOYMENTS_GIT_TOKEN not set — in-cluster App Store installs cannot push to gentian-deployments."
-        warn "  Add to install.secrets.env when needed."
+        warn "  Export it, or let the installer prompt and cache it, when needed."
     fi
     : "${GENTIAN_DEPLOYMENTS_GIT_USERNAME:=x-access-token}"
     export GENTIAN_DEPLOYMENTS_GIT_USERNAME

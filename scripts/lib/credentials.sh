@@ -259,13 +259,15 @@ _requirement_source() {
     var="$(_env_var_for "${req}" "${key}")"
     [[ -n "${var}" ]] || { echo "the environment"; return 0; }
 
-    for f in "${INSTALL_SECRETS_FILE:-}" "${INSTALL_CONFIG_FILE:-}"; do
-        [[ -n "${f}" && -r "${f}" ]] || continue
-        if grep -qE "^[[:space:]]*(export[[:space:]]+)?${var}=" "${f}"; then
-            echo "${var} in ${f}"
-            return 0
-        fi
-    done
+    # install.env, and nothing else. The secrets file is no longer read, so
+    # naming it here would report a source that cannot have supplied anything —
+    # which was the point of this function.
+    local f="${INSTALL_CONFIG_FILE:-}"
+    if [[ -n "${f}" && -r "${f}" ]] &&
+       grep -qE "^[[:space:]]*(export[[:space:]]+)?${var}=" "${f}"; then
+        echo "${var} in ${f}"
+        return 0
+    fi
     echo "${var} in the environment"
 }
 

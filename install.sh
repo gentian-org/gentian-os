@@ -120,7 +120,6 @@ Other options:
   --cluster-infra       with --purge, also remove them and their CRDs. They may
                         serve workloads that are not Gentian's
   --config-file PATH    override install.env
-  --secrets-file PATH   override the secrets file
   -h, --help            this message
 EOF
 }
@@ -169,7 +168,10 @@ parse_driver_args() {
                 INSTALL_CONFIG_FILE="$1" ;;
             --secrets-file)
                 shift; [[ $# -gt 0 ]] || { error "--secrets-file requires a value"; exit 1; }
-                INSTALL_SECRETS_FILE="$1" ;;
+                error "--secrets-file is no longer read."
+                error "  Credentials come from the environment, the ~/.gentian cache, or OpenBao."
+                error "  Export the variables, or let the installer prompt and cache them."
+                exit 1 ;;
             --no-config-files)   INSTALL_AUTO_LOAD_CONFIG="0" ;;
             --verify-only)       INSTALL_VERIFY_ONLY="1" ;;
             --validate|--check)  INSTALL_VALIDATE_ONLY="1" ;;
@@ -195,7 +197,7 @@ parse_driver_args() {
 
     export GENTIAN_DRY_RUN GENTIAN_ONLY GENTIAN_FROM GENTIAN_UNTIL GENTIAN_SKIP GENTIAN_PHASE
     export GENTIAN_PURGE_CLUSTER_INFRA
-    export INSTALL_CLUSTER_INFRA INSTALL_CONFIG_FILE INSTALL_SECRETS_FILE
+    export INSTALL_CLUSTER_INFRA INSTALL_CONFIG_FILE
     export INSTALL_AUTO_LOAD_CONFIG INSTALL_VERIFY_ONLY INSTALL_VALIDATE_ONLY
 }
 
