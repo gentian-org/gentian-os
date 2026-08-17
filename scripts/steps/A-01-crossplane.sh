@@ -28,5 +28,5 @@ destroy() {
     kubectl delete clusterrolebinding \
         crossplane crossplane-admin crossplane-edit crossplane-view crossplane-browse \
         --ignore-not-found=true 2>/dev/null || true
-    kubectl delete namespace crossplane-system --ignore-not-found=true 2>/dev/null || true
+    _delete_namespace crossplane-system
 }

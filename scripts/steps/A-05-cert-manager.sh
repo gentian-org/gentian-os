@@ -22,5 +22,5 @@ destroy() {
     if helm status cert-manager -n cert-manager >/dev/null 2>&1; then
         gentian_run helm uninstall cert-manager -n cert-manager || true
     fi
-    kubectl delete namespace cert-manager --ignore-not-found=true 2>/dev/null || true
+    _delete_namespace cert-manager
 }

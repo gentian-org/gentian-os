@@ -32,5 +32,5 @@ destroy() {
     kubectl delete imageupdaters.argocd-image-updater.argoproj.io --all \
         -n argocd --ignore-not-found=true 2>/dev/null || true
 
-    kubectl delete namespace argocd-image-updater --ignore-not-found=true 2>/dev/null || true
+    _delete_namespace argocd-image-updater
 }

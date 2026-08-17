@@ -100,7 +100,7 @@ install_crossplane() {
         kubectl delete clusterrolebinding \
             crossplane crossplane-admin crossplane-edit crossplane-view crossplane-browse \
             --ignore-not-found=true
-        kubectl delete namespace "${CROSSPLANE_NAMESPACE}" --ignore-not-found=true
+        _delete_namespace "${CROSSPLANE_NAMESPACE}"
     fi
 
     helm repo add crossplane-stable "${CROSSPLANE_HELM_REPO}" --force-update
