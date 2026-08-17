@@ -129,6 +129,81 @@ for file in scripts/steps/*.sh; do
     fi
 done
 
+# ── Arity: a call that cannot supply what the callee reads ───────────────────
+#
+# `local path="$1"` in a function called with NO argument is not a silent no-op.
+# Under `set -u` an unbound variable is fatal to the whole shell, so the `|| true`
+# such calls invariably carry does not contain it: the run stops there. D-07
+# called _remove_host_cli with nothing, A-09 called _argocd_strip_kubectl and
+# _argocd_strip_raw with nothing — three instances, every one in destroy(), the
+# path nobody runs until an uninstall.
+#
+# Only the zero-argument case is reported. Counting arguments means parsing shell
+# quoting, and a first attempt at it called `_cat_yq ".requirements[] | ..."` a
+# zero-argument call five times over — a lint that fails the build has to be
+# certain, so it answers the narrower question exactly rather than the broader
+# one approximately.
+#
+# Positionals inside single quotes belong to somebody else's program: awk -F=
+# with tolower($2) is awk's second field, not this function's second argument.
+# Nested helper bodies are skipped for the same reason — their $1 is their own.
+echo ""
+echo "Arity lint — can every call supply what the callee reads?"
+echo ""
+
+_arity_file="$(mktemp)"
+trap 'rm -f "${_arity_file}"' EXIT
+mapfile -t _lint_files < <(git ls-files -- 'scripts/*.sh')
+
+awk -v SQ="'" '
+    /^[A-Za-z_][A-Za-z0-9_]*\(\)[[:space:]]*\{/ {
+        name = $0; sub(/\(\).*/, "", name)
+        infunc = 1; maxarg = 0; nest = ""
+        next
+    }
+    infunc && /^\}/ { if (maxarg > 0) print name, maxarg; infunc = 0; next }
+    infunc {
+        line = $0
+        if (nest == "" && line ~ /^[[:space:]]+[A-Za-z_][A-Za-z0-9_]*\(\)[[:space:]]*\{/) {
+            match(line, /^[[:space:]]+/); nest = substr(line, 1, RLENGTH); next
+        }
+        if (nest != "") { if (line == nest "}") nest = ""; next }
+        sub(/#.*/, "", line)
+        gsub(SQ "[^" SQ "]*" SQ, "", line)
+        for (n = 1; n <= 5; n++) {
+            if (line ~ ("[$]" n "([^0-9]|$)") || line ~ ("[$][{]" n "[}]")) {
+                if (line !~ ("[$][{]" n "[:-]") && line !~ ("[$][{]" n "[:?]")) {
+                    if (n > maxarg) maxarg = n
+                }
+            }
+        }
+    }
+' scripts/lib/*.sh > "${_arity_file}"
+
+while IFS= read -r finding; do
+    [[ -n "${finding}" ]] || continue
+    _err "${finding}"
+done < <(
+    # A line ending in a backslash continues, and its arguments are on the next
+    # line — openbao.sh calls _wait_for_argocd_application_workload that way.
+    awk '
+        # One alternation tested first, the per-name loop only on a hit. A
+        # dynamic regex per known function per line is 82 compiles for every
+        # line in the tree, and made this rule take a minute on its own.
+        FNR == NR { need[$1] = $2; any = any (any ? "|" : "") $1; next }
+        /\\[[:space:]]*$/ { next }
+        {
+            line = $0; sub(/#.*/, "", line)
+            if (line !~ ("(^|[;|&(]|&&|\\|\\|)[ \t]*(" any ")[ \t]*($|[;)]|\\|\\||&&|\\|)")) next
+            for (fn in need) {
+                if (line ~ ("(^|[;|&(]|&&|\\|\\|)[ \t]*" fn "[ \t]*($|[;)]|\\|\\||&&|\\|)"))
+                    printf "%s:%d: %s is called with no arguments but reads $%d. Under set -u that aborts the run, and `|| true` does not catch it.\n", \
+                        FILENAME, FNR, fn, need[fn]
+            }
+        }
+    ' "${_arity_file}" "${_lint_files[@]}"
+)
+
 echo ""
 if (( errors > 0 )); then
     echo "${RED}${errors} error(s), ${warnings} warning(s).${NC}"
