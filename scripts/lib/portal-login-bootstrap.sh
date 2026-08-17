@@ -378,7 +378,7 @@ configure_keycloak_realm_smtp() {
     local kernel_realm="${KERNEL_REALM:-kernel}"
 
     if ! kubectl get secret keycloak-admin -n "${ns}" >/dev/null 2>&1; then
-        warn "keycloak-admin Secret missing — cannot configure realm SMTP."
+        warn "keycloak-admin Secret not present yet — cannot configure realm SMTP."
         return 1
     fi
 
@@ -1482,10 +1482,22 @@ install_gentian_portal_chart() {
 install_portal_login() {
     banner "Gentian portal login (OIDC + shell)"
 
-    if ! kubectl get secret keycloak-admin -n platform-kernel >/dev/null 2>&1; then
-        warn "keycloak-admin Secret missing — run Steps 12-13 first."
-        return 1
-    fi
+    # Waited for, not tested once. keycloak-admin is written by ESO once
+    # Keycloak is up, so at this point in a fresh install it is usually seconds
+    # away rather than absent: a single probe failed the step while the Secret
+    # appeared 100 seconds later. Anything ESO produces is eventually consistent
+    # with the step that needs it.
+    local deadline=$(( SECONDS + 180 ))
+    until kubectl get secret keycloak-admin -n platform-kernel >/dev/null 2>&1; do
+        if (( SECONDS >= deadline )); then
+            error "keycloak-admin Secret did not appear within 180s."
+            error "  It is written by ESO from OpenBao once Keycloak is running. Check:"
+            error "    kubectl get externalsecret -n platform-kernel"
+            error "    kubectl get pods -n platform-kernel -l app.kubernetes.io/name=keycloakx"
+            return 1
+        fi
+        sleep 5
+    done
 
     ensure_keycloak_admin_secret_url || return 1
     ensure_portal_gateway_readiness

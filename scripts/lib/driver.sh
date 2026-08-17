@@ -344,7 +344,22 @@ run_step_forward() {
     fi
 
     start=$SECONDS
-    apply
+    # Explicitly, rather than letting `set -e` end the run.
+    #
+    # The ERR trap stays deliberately silent when the failing command is a
+    # `return N`, because a function that returns has usually printed its own
+    # diagnosis. But `warn` then `return 1` prints something that reads as
+    # benign and stops the install anyway: D-05 ended on a WARN and a shell
+    # prompt, which is indistinguishable from a completed run. The driver knows
+    # which step failed, so the driver says so.
+    if ! apply; then
+        local rc=$?
+        elapsed=$((SECONDS - start))
+        error "Step ${id} failed after ${elapsed}s (apply() returned ${rc})."
+        error "  Nothing after it has run. Fix the cause and re-run — steps that"
+        error "  already succeeded report satisfied and are skipped."
+        return "${rc}"
+    fi
     elapsed=$((SECONDS - start))
     echo -e "     ${GREEN}✓${NC} ${elapsed}s"
 }
