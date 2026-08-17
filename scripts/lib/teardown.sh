@@ -86,18 +86,7 @@ _delete_crossplane_crds() {
                 [[ -z "${crd}" ]] && continue
 
                 # Clear any remaining custom resources that block CRD cleanup.
-                while IFS= read -r obj; do
-                    [[ -z "${obj}" ]] && continue
-                    # Ignore unexpected lines; valid resources are kind/name.
-                    [[ "${obj}" != */* ]] && continue
-                    kubectl patch "${obj}" \
-                        --type=merge -p='{"metadata":{"finalizers":[]}}' \
-                        2>/dev/null || true
-                    kubectl delete "${obj}" --ignore-not-found=true --wait=false 2>/dev/null || true
-                done < <(
-                    kubectl get "${crd}" -A -o name 2>/dev/null || true
-                    kubectl get "${crd}" -o name 2>/dev/null || true
-                )
+                _strip_and_delete_crd_instances "${crd}"
 
                 kubectl patch crd "${crd}" \
                     --type=merge -p='{"metadata":{"finalizers":[]}}' \
@@ -271,20 +260,51 @@ _delete_pvs_for_namespace() {
     done <<< "${pvs}"
 }
 
+# Every instance of a kind, as "<namespace>|<name>" lines. Cluster-scoped kinds
+# yield an empty first field. One call covers both scopes: -A is ignored for a
+# cluster-scoped kind rather than rejected.
+#
+# `|` rather than a space, and read with IFS='|'. Under the default IFS the
+# leading blank of a cluster-scoped line is collapsed, so `read ns name` puts
+# the name in ns and leaves name empty — a silent no-op on exactly the objects
+# that block a CRD from being deleted.
+#
+# `-o name` cannot be used for this. With -A it prints kind/name and drops the
+# namespace, so feeding it to kubectl silently addresses the `default`
+# namespace — and --ignore-not-found then swallows every miss, so a delete that
+# touched nothing reports exactly as one that worked.
+_kind_instances() {
+    local kind="$1"
+    kubectl get "${kind}" -A \
+        -o jsonpath='{range .items[*]}{.metadata.namespace}{"|"}{.metadata.name}{"\n"}{end}' \
+        2>/dev/null || true
+}
+
+# Strip finalizers and delete one object. An empty namespace means cluster-scoped.
+_strip_and_delete_one() {
+    local kind="$1" ns="$2" name="$3"
+    [[ -n "${name}" ]] || return 0
+    # Branching rather than an array of flags: bash 3.2 errors on an empty
+    # array expansion under `set -u`, and macOS ships 3.2 (docs/plans §7).
+    if [[ -n "${ns}" ]]; then
+        kubectl patch "${kind}" "${name}" -n "${ns}" \
+            --type=merge -p='{"metadata":{"finalizers":[]}}' 2>/dev/null || true
+        kubectl delete "${kind}" "${name}" -n "${ns}" \
+            --ignore-not-found=true --wait=false 2>/dev/null || true
+    else
+        kubectl patch "${kind}" "${name}" \
+            --type=merge -p='{"metadata":{"finalizers":[]}}' 2>/dev/null || true
+        kubectl delete "${kind}" "${name}" \
+            --ignore-not-found=true --wait=false 2>/dev/null || true
+    fi
+}
+
 # Strip finalizers and delete all instances of a CRD (cluster- and namespaced-scoped).
 _strip_and_delete_crd_instances() {
-    local crd="$1"
-    while IFS= read -r obj; do
-        [[ -z "${obj}" ]] && continue
-        [[ "${obj}" != */* ]] && continue
-        kubectl patch "${obj}" \
-            --type=merge -p='{"metadata":{"finalizers":[]}}' \
-            2>/dev/null || true
-        kubectl delete "${obj}" --ignore-not-found=true --wait=false 2>/dev/null || true
-    done < <(
-        kubectl get "${crd}" -A -o name 2>/dev/null || true
-        kubectl get "${crd}" -o name 2>/dev/null || true
-    )
+    local crd="$1" ns name
+    while IFS='|' read -r ns name; do
+        _strip_and_delete_one "${crd}" "${ns}" "${name}"
+    done < <(_kind_instances "${crd}")
 }
 
 # Delete CRDs whose names match an extended-regex pattern (e.g. 'gentianos\.io$').
@@ -318,22 +338,38 @@ _delete_envoy_gateway_scaffold() {
 
     info "Removing Gentian Gateway API edge scaffold..."
 
+    # --all -A, not `get -o name | xargs delete`: -o name drops the namespace,
+    # so every object outside `default` was left in place while the delete
+    # reported success. That is what held gateway-exists-finalizer on the
+    # GatewayClass, and the gatewayclass delete below then blocked forever.
     for rt in \
         backendtrafficpolicies.gateway.envoyproxy.io \
         clienttrafficpolicies.gateway.envoyproxy.io \
         securitypolicies.gateway.envoyproxy.io \
         envoyextensionpolicies.gateway.envoyproxy.io \
         envoypatchpolicies.gateway.envoyproxy.io \
-        backendtlspolicies.gateway.networking.k8s.io; do
-        kubectl get "${rt}" -A -o name 2>/dev/null \
-            | xargs -r kubectl delete --ignore-not-found=true --wait=false 2>/dev/null || true
+        backendtlspolicies.gateway.networking.k8s.io \
+        httproutes.gateway.networking.k8s.io \
+        gateways.gateway.networking.k8s.io; do
+        kubectl delete "${rt}" --all -A --ignore-not-found=true --wait=false 2>/dev/null || true
     done
 
-    kubectl get httproute -A -o name 2>/dev/null \
-        | xargs -r kubectl delete --ignore-not-found=true --wait=false 2>/dev/null || true
-    kubectl get gateway -A -o name 2>/dev/null \
-        | xargs -r kubectl delete --ignore-not-found=true --wait=false 2>/dev/null || true
-    kubectl delete gatewayclass "${gateway_class}" --ignore-not-found=true 2>/dev/null || true
+    # The GatewayClass carries gateway-exists-finalizer, which Envoy Gateway
+    # clears only once no Gateway references the class. So the Gateways have to
+    # be gone first, and the controller has to still be running to notice —
+    # which it is, until the helm uninstall below.
+    local deadline=$(( SECONDS + 120 ))
+    while kubectl get gateways.gateway.networking.k8s.io -A --no-headers 2>/dev/null | grep -q .; do
+        if (( SECONDS >= deadline )); then
+            warn "Gateways still present after 120s; stripping their finalizers."
+            _strip_and_delete_crd_instances gateways.gateway.networking.k8s.io
+            break
+        fi
+        sleep 3
+    done
+
+    kubectl delete gatewayclass "${gateway_class}" \
+        --ignore-not-found=true --wait=false 2>/dev/null || true
 
     if helm status eg -n "${ns}" >/dev/null 2>&1; then
         info "Uninstalling Envoy Gateway Helm release (eg) in ${ns}..."
