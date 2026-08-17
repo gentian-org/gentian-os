@@ -22,9 +22,7 @@ GENTIAN_MAIL_LIB_LOADED=1
 # the maps into gentian-<env> instead meant Postfix mounted a ConfigMap the
 # operator never updated: mail worked for the tenants that existed at install and
 # silently rejected every later one.
-_mail_kernel_namespace() {
-    echo "${KERNEL_NAMESPACE:-${SERVICES_NAMESPACE:-platform-kernel}}"
-}
+_mail_kernel_namespace() { gentian_mail_namespace; }
 
 # MAIL_SERVICE_MODE=kernel needs reachable SMTP ingress; Cloudflare tunnel is HTTP-only.
 mail_network_mode_compatible() {

@@ -1402,14 +1402,21 @@ gentian_services_namespace() {
 # =============================================================================
 # gentian_mail_namespace — where kernel Postfix/Dovecot live
 #
-# Deliberately separate from gentian_services_namespace. Mail is deployed by
-# per-stage manifests into gentian-<env> and is env-scoped; the kernel services
-# are not. update.sh used to derive KERNEL_NAMESPACE from SERVICES_NAMESPACE,
-# so pointing the services namespace at platform-kernel would silently send
-# every mail lookup to a namespace with no Postfix in it.
+# The services namespace, resolved identically to gentian_services_namespace
+# above: kernel Postfix and Dovecot are kernel services and are deployed
+# alongside the others.
+#
+# The two must agree, and agreeing is not enough — they have to be one
+# resolution. When this returned gentian-<env> while the mail charts deployed
+# into platform-kernel, D-03 looked for its own ConfigMap in an empty namespace
+# and reported a working mail stack missing. The operator wrote the map to the
+# services namespace and was right; the lookup was wrong.
+#
+# _mail_kernel_namespace in mail-lib.sh delegates here for that reason. One
+# definition, so a future move cannot leave half the callers behind.
 # =============================================================================
 gentian_mail_namespace() {
-    echo "${KERNEL_NAMESPACE:-gentian-${ENV:-dev}}"
+    echo "${KERNEL_NAMESPACE:-${SERVICES_NAMESPACE:-platform-kernel}}"
 }
 
 # =============================================================================
