@@ -48,6 +48,34 @@ spec:
   provider:
     type: Kubernetes
     kubernetes:
+      # Two replicas, spread across nodes.
+      #
+      # The data-plane Service is externalTrafficPolicy: Local, so a node serves
+      # only if an Envoy pod runs on it. With one replica the edge has exactly
+      # one working node: draining it, or losing it, takes every hostname the
+      # cluster serves offline — and the load balancer keeps sending traffic
+      # there until its health monitor notices.
+      #
+      # Two is the smallest number that survives one node, and it is paired with
+      # the health monitor rather than replacing it: replicas decide how many
+      # nodes CAN serve, the monitor decides which ones the balancer TRIES.
+      # Neither alone is sufficient — more replicas without a monitor still
+      # leaves dead members in the pool, and a monitor without replicas still
+      # leaves a single point of failure.
+      envoyDeployment:
+        replicas: 2
+        pod:
+          topologySpreadConstraints:
+            # ScheduleAnyway, not DoNotSchedule: on a single-node cluster, or
+            # while a node is cordoned, a hard constraint leaves the second
+            # replica Pending and the edge no more available than with one.
+            # Spreading is the preference; running is the requirement.
+            - maxSkew: 1
+              topologyKey: kubernetes.io/hostname
+              whenUnsatisfiable: ScheduleAnyway
+              labelSelector:
+                matchLabels:
+                  app.kubernetes.io/name: envoy
       envoyService:
         type: LoadBalancer
 ${EDGE_LB_ADDRESS_FIELD}

@@ -327,8 +327,36 @@ _edge_lb_address_field() {
     printf '        loadBalancerIP: "%s"\n' "${NODE_IP}"
 }
 
+# The cloud this cluster runs on, when the operator has not said.
+#
+# LB_PROVIDER decides whether the annotations below are emitted at all, and it is
+# commented out in cluster-settings.env.template — so the common case is unset,
+# the case falls through to the empty branch, and an OpenStack cluster gets a
+# LoadBalancer with no health monitor. That failure is silent and intermittent
+# (see the openstack branch), which is the worst combination to leave behind a
+# setting somebody has to know to write.
+#
+# Nodes carry the answer already: spec.providerID is "<cloud>://...". Detection
+# only fills a value the operator did not give, so an explicit LB_PROVIDER always
+# wins — including LB_PROVIDER="" to opt out deliberately.
+_detect_lb_provider() {
+    local pid
+    pid="$(kubectl get nodes -o jsonpath='{.items[0].spec.providerID}' 2>/dev/null || true)"
+    case "${pid}" in
+        openstack://*) echo openstack ;;
+        aws://*)       echo aws ;;
+        gce://*)       echo gcp ;;
+        *)             echo "" ;;
+    esac
+}
+
 _edge_lb_annotations() {
     local -a lines=()
+    if [[ -z "${LB_PROVIDER+x}" ]]; then
+        LB_PROVIDER="$(_detect_lb_provider)"
+        [[ -n "${LB_PROVIDER}" ]] &&
+            info "  Detected LB_PROVIDER=${LB_PROVIDER} from node providerID."
+    fi
     case "${LB_PROVIDER:-}" in
         openstack)
             lines+=("loadbalancer.openstack.org/keep-floatingip: \"true\"")
