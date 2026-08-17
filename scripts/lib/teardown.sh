@@ -649,10 +649,14 @@ purge_cluster_infra() {
 # failure mode this whole teardown path kept producing.
 purge_report_cluster_residue() {
     local left
+    # `|| true` is load-bearing. grep exits 1 when it filters everything out,
+    # and under `set -o pipefail` that failed the whole substitution — so the
+    # function whose job is to report leftovers aborted the run precisely when
+    # there were none, after a purge that had already succeeded.
     left="$(kubectl get crd -o name 2>/dev/null \
         | sed 's#.*/##' \
         | grep -vE '\.k8s\.io$|\.kubernetes\.io$|cilium\.io$' \
-        | sed 's/^[^.]*\.//' | sort -u | tr '\n' ' ')"
+        | sed 's/^[^.]*\.//' | sort -u | tr '\n' ' ' || true)"
     [[ -n "${left// /}" ]] || return 0
     warn "CRD groups still registered: ${left}"
     warn "  Remove them with --cluster-infra, or leave them if another workload uses them."

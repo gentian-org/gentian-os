@@ -422,6 +422,10 @@ drive_forward() {
     if [[ $ran -eq 0 ]]; then
         warn "No steps matched the current selection."
     fi
+    # No step is current once the pass is over. Anything that fails afterwards —
+    # a purge helper, a summary — was reported against whichever step happened to
+    # run last, which named A-01-crossplane for a fault in purge_report_cluster_residue.
+    GENTIAN_CURRENT_STEP=""
     return 0
 }
 
@@ -437,6 +441,10 @@ drive_reverse() {
         run_step_reverse "$id" "$file"
     done
     echo ""
+    # No step is current once the pass is over. Anything that fails afterwards —
+    # a purge helper, a summary — was reported against whichever step happened to
+    # run last, which named A-01-crossplane for a fault in purge_report_cluster_residue.
+    GENTIAN_CURRENT_STEP=""
     return 0
 }
 
