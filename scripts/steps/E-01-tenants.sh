@@ -37,30 +37,68 @@ destroy() {
     fi
 
     local tenant ns app deadline
-    # `while read` rather than mapfile: macOS ships bash 3.2 (docs/plans §7).
-    kubectl get tenant --no-headers -o custom-columns='NAME:.metadata.name' 2>/dev/null |
-        grep -v '^$' | while IFS= read -r tenant; do
-            info "Deleting App CRs for tenant ${tenant}..."
-            kubectl delete app --all -n "${tenant}" --ignore-not-found=true 2>/dev/null || true
-        done
+    # apps.gentianos.io in full, never the `app` shortname.
+    #
+    # Argo CD's Application registers shortNames `app` AND `apps`. While both
+    # CRDs are installed kubectl resolves the name to Gentian's App, but a second
+    # uninstall runs with apps.gentianos.io already gone — D-01 removed it — and
+    # then `kubectl delete app` means applications.argoproj.io. This step starts
+    # deleting A-09's Argo Applications, and blocks on a finalizer no controller
+    # is left to clear.
+    #
+    # Guarded on the CRD as well as fully qualified: with the CRD absent every
+    # call below is an error, and the loops would run for nothing.
+    if kubectl get crd apps.gentianos.io >/dev/null 2>&1; then
+        # `while read` rather than mapfile: macOS ships bash 3.2 (docs/plans §7).
+        kubectl get tenants.gentianos.io --no-headers -o custom-columns='NAME:.metadata.name' 2>/dev/null |
+            grep -v '^$' | while IFS= read -r tenant; do
+                info "Deleting App CRs for tenant ${tenant}..."
+                kubectl delete apps.gentianos.io --all -n "${tenant}" \
+                    --ignore-not-found=true --wait=false 2>/dev/null || true
+            done
 
-    # Any App CR left in another namespace, e.g. from a partially-removed tenant.
-    kubectl get app -A --no-headers 2>/dev/null |
-        while read -r ns app _; do
-            [[ -n "$ns" && -n "$app" ]] || continue
-            kubectl delete app "$app" -n "$ns" --ignore-not-found=true 2>/dev/null || true
-        done
+        # Any App CR left in another namespace, e.g. from a partially-removed tenant.
+        kubectl get apps.gentianos.io -A --no-headers 2>/dev/null |
+            while read -r ns app _; do
+                [[ -n "$ns" && -n "$app" ]] || continue
+                kubectl delete apps.gentianos.io "$app" -n "$ns" \
+                    --ignore-not-found=true --wait=false 2>/dev/null || true
+            done
 
-    kubectl get tenant --no-headers -o custom-columns='NAME:.metadata.name' 2>/dev/null |
+        # --wait=false above, so clear whatever the operator did not finalize.
+        # An App holding a finalizer blocks its tenant namespace, which blocks
+        # every namespace delete downstream of this step.
+        deadline=$(( SECONDS + 60 ))
+        while kubectl get apps.gentianos.io -A --no-headers 2>/dev/null | grep -q .; do
+            if (( SECONDS >= deadline )); then
+                warn "App CR finalizers did not clear; stripping them."
+                kubectl get apps.gentianos.io -A --no-headers 2>/dev/null |
+                    while read -r ns app _; do
+                        [[ -n "$ns" && -n "$app" ]] || continue
+                        kubectl patch apps.gentianos.io "$app" -n "$ns" --type=merge \
+                            -p '{"metadata":{"finalizers":null}}' 2>/dev/null || true
+                    done
+                break
+            fi
+            sleep 2
+        done
+    fi
+
+    kubectl get tenants.gentianos.io --no-headers -o custom-columns='NAME:.metadata.name' 2>/dev/null |
         grep -v '^$' | while IFS= read -r tenant; do
-            gentian_run kubectl delete tenant "$tenant" --ignore-not-found=true || true
+            # --wait=false: the wait below is the one that matters. Letting
+            # kubectl block here means blocking on the operator clearing a
+            # finalizer, and if the operator is already gone the loop written to
+            # force exactly that never gets to run.
+            gentian_run kubectl delete tenants.gentianos.io "$tenant" \
+                --ignore-not-found=true --wait=false || true
             # Wait for the operator to clear its finalizer, then force it. A
             # stuck finalizer here blocks every namespace deletion downstream.
             deadline=$((SECONDS + 60))
-            while kubectl get tenant "$tenant" >/dev/null 2>&1; do
+            while kubectl get tenants.gentianos.io "$tenant" >/dev/null 2>&1; do
                 if (( SECONDS >= deadline )); then
                     warn "Tenant ${tenant} finalizer did not clear; stripping it."
-                    kubectl patch tenant "$tenant" --type=merge \
+                    kubectl patch tenants.gentianos.io "$tenant" --type=merge \
                         -p '{"metadata":{"finalizers":null}}' 2>/dev/null || true
                     break
                 fi
