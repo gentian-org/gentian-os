@@ -700,11 +700,28 @@ func (r *TenantReconciler) ensureDovecotAuthReload(ctx context.Context) error {
 	if deploy.Spec.Template.Annotations[dovecotRealmAuthHashAnnotation] == want {
 		return nil
 	}
+
+	// Patched, not updated. Two reasons, and either alone is sufficient.
+	//
+	// Argo CD owns this Deployment, so writing the whole object back from a read
+	// that is already stale is how a concurrent sync gets clobbered. A merge
+	// patch carries the one annotation this reconciler owns and nothing else.
+	//
+	// The operator is granted get/list/watch/patch on deployments and not
+	// update, so the full write was refused outright:
+	//
+	//   reload Dovecot auth config: deployments.apps "dovecot-prod" is
+	//   forbidden: User "system:serviceaccount:gentian-system:gentian-os"
+	//   cannot update resource "deployments"
+	//
+	// which left MailReady=False on every tenant. Widening the grant would have
+	// worked; not needing it is better.
+	patch := client.MergeFrom(deploy.DeepCopy())
 	if deploy.Spec.Template.Annotations == nil {
 		deploy.Spec.Template.Annotations = map[string]string{}
 	}
 	deploy.Spec.Template.Annotations[dovecotRealmAuthHashAnnotation] = want
-	return r.Update(ctx, deploy)
+	return r.Patch(ctx, deploy, patch)
 }
 
 // secretValue reads one key from a Secret, treating an empty value as an error:
