@@ -350,6 +350,21 @@ func TestMain(m *testing.M) {
 		panic(err)
 	}
 
+	// The kernel OIDCPackCatalog, as the operator chart ships it. Selfhosted mail
+	// resolves the gentian-dovecot service pack from it to provision the client
+	// Dovecot introspects IMAP XOAUTH2 tokens with, so without it every tenant
+	// using mail waits on a catalogue that never arrives.
+	if err := testClient.Create(context.Background(), &gentianov1alpha1.OIDCPackCatalog{
+		ObjectMeta: metav1.ObjectMeta{Name: "gentian-kernel"},
+		Spec: gentianov1alpha1.OIDCPackCatalogSpec{
+			Packs: map[string]gentianov1alpha1.OIDCPackSpec{
+				"gentian-dovecot": {ServiceClient: true},
+			},
+		},
+	}); err != nil {
+		panic(err)
+	}
+
 	// minio-admin Secret is required by S3 provisioning Jobs in the kernel namespace.
 	if err := testClient.Create(context.Background(), &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{Name: "minio-admin", Namespace: "platform-kernel"},

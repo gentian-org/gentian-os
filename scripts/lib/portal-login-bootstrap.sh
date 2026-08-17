@@ -263,7 +263,9 @@ _keycloak_smtp_settings() {
             if ! declare -F _derive >/dev/null 2>&1; then
                 return 1
             fi
-            KC_SMTP_HOST="postfix-${env}.gentian-${env}.svc.cluster.local"
+            # platform-kernel, matching the operator's SERVICES_NAMESPACE and the
+            # namespace 09-infra-helm deploys Postfix into — not gentian-<env>.
+            KC_SMTP_HOST="postfix-${env}.${SERVICES_NAMESPACE:-platform-kernel}.svc.cluster.local"
             KC_SMTP_PORT="587"
             KC_SMTP_USER="gentian-system@${kernel_domain}"
             KC_SMTP_PASSWORD="$(_derive smtp password)"

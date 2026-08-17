@@ -14,6 +14,16 @@ targetRevision: develop
 # cluster domain. Passed by root-applicationset.yaml.tmpl from KERNEL_DOMAIN.
 kernelDomain: ""
 
+# The outbound SMTP relay for MAIL_SERVICE_MODE=external, replacing the
+# "external.smtp.host.placeholder" / "external.smtp.port.placeholder" literals in
+# raw/09-infra-helm.yaml. Passed by root-applicationset.yaml.tmpl from
+# EXTERNAL_SMTP_HOST / EXTERNAL_SMTP_PORT.
+#
+# Empty host is kernel mode: Postfix delivers directly and needs no upstream. The
+# mail mode is therefore not a value here — only whether a relay host exists.
+externalSmtpHost: ""
+externalSmtpPort: "587"
+
 # Where gentian-os itself comes from. The children hardcoded this URL, so a
 # mirrored or forked install could pin the ref but not the origin (§9, platform
 # provenance). Passed by root-applicationset.yaml.tmpl from GENTIAN_OS_REPO.

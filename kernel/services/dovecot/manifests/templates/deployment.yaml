@@ -1,11 +1,17 @@
-# UNTESTED — raw Deployment placeholder (no public Dovecot Helm chart).
-# Namespace gentian-{{ .Values.env }} → Service dovecot-{{ .Values.env }}.gentian-{{ .Values.env }}.svc.cluster.local
+# Raw Deployment — there is no public Dovecot Helm chart worth depending on.
+# Namespace {{ .Values.servicesNamespace }} → Service dovecot-{{ .Values.env }}.{{ .Values.servicesNamespace }}.svc.cluster.local
+#
+# This Pod is not yet configured: it runs the upstream image with no dovecot.conf,
+# no mail storage and none of the objects below mounted. LMTP on 24 is declared as
+# a port but the upstream default config does not listen on it, so Postfix's
+# virtual_transport currently has nowhere to deliver. Making it real is the next
+# change; this one only puts it in the namespace the operator already addresses.
 ---
 apiVersion: v1
 kind: ConfigMap
 metadata:
   name: dovecot-base-values
-  namespace: gentian-{{ .Values.env }}
+  namespace: {{ .Values.servicesNamespace }}
   annotations:
     argocd.argoproj.io/sync-wave: "-1"
 data:
@@ -17,7 +23,7 @@ apiVersion: v1
 kind: ConfigMap
 metadata:
   name: dovecot-{{ .Values.env }}-values
-  namespace: gentian-{{ .Values.env }}
+  namespace: {{ .Values.servicesNamespace }}
   annotations:
     argocd.argoproj.io/sync-wave: "-1"
 data:
@@ -29,7 +35,7 @@ apiVersion: external-secrets.io/v1
 kind: ExternalSecret
 metadata:
   name: dovecot-sensitive-values
-  namespace: gentian-{{ .Values.env }}
+  namespace: {{ .Values.servicesNamespace }}
   annotations:
     argocd.argoproj.io/sync-wave: "-1"
 spec:
@@ -56,11 +62,159 @@ spec:
         key: gentian-os/kernel/mail/dovecot
         property: oidc_client_secret
 ---
+# The running configuration. Self-contained on purpose: dovecot is started with
+# `-c` pointing at this file and it does not `!include conf.d/*.conf`, so what
+# runs is exactly what is here and not a merge with whatever the upstream image
+# ships. Mounted as a directory rather than with subPath — a subPath mount is
+# copied once at Pod start and never tracks later ConfigMap updates.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: dovecot-{{ .Values.env }}-config
+  namespace: {{ .Values.servicesNamespace }}
+  annotations:
+    argocd.argoproj.io/sync-wave: "8"
+data:
+  dovecot.conf: |
+    # LMTP on 24 is the reason this file exists. Postfix hands every message for a
+    # registered tenant domain to lmtp:[dovecot-<env>...]:24, but the upstream
+    # default ships `inet_listener lmtp { port = 0 }` — disabled — so port 24 was
+    # declared on both the Service and the Deployment while nothing listened on
+    # it, and inbound mail had nowhere to go.
+    protocols = imap lmtp
+    listen = *
+
+    # stderr, so a delivery failure shows up in `kubectl logs` rather than in a
+    # file inside a container nobody will exec into.
+    log_path = /dev/stderr
+    info_log_path = /dev/stderr
+
+    # No TLS here. Left at the default, Dovecot looks for
+    # /etc/dovecot/private/dovecot.pem, does not find it, and refuses to start.
+    # LMTP from Postfix is pod-network traffic; IMAP is reached through the
+    # gateway, which is where TLS belongs.
+    ssl = no
+    disable_plaintext_auth = no
+
+    # xoauth2 is how tenant and cluster-admin users authenticate: the client sends
+    # a Keycloak access token, and the per-realm passdb blocks included below
+    # validate it against the realm that issued it. plain and login stay listed so
+    # a client that cannot do XOAUTH2 gets a clean authentication failure from the
+    # passwd-file passdb rather than "no supported mechanism".
+    auth_mechanisms = plain login xoauth2
+
+    # Per-domain maildir, matching the catch-all the operator already writes into
+    # the Postfix map ("@<domain>  <domain>/"). %d is the domain and %n the local
+    # part, so mail for user@tenant.example is filed in
+    # /var/mail/tenant.example/user.
+    mail_location = maildir:/var/mail/%d/%n
+
+    # Numeric, so this does not depend on the image having a vmail user. A static
+    # userdb with numeric ids needs no /etc/passwd entry, and fsGroup on the Pod
+    # makes the volume writable by this gid.
+    mail_uid = 1000
+    mail_gid = 1000
+    first_valid_uid = 1000
+    first_valid_gid = 1000
+
+    # Accept any local part inside a domain Postfix already accepted.
+    #
+    # Postfix owns the domain allow-list — virtual_mailbox_domains, maintained by
+    # the operator from the tenant registry — so a message only reaches LMTP if
+    # its domain is registered. A static userdb therefore means "any address in a
+    # registered domain", which is precisely the catch-all the Postfix map
+    # declares. With no userdb at all, LMTP rejects every recipient as unknown.
+    #
+    # allow_all_users=yes is load-bearing, not decoration. Without it the static
+    # userdb still runs a passdb lookup to confirm the user exists, and since the
+    # passdb below is deliberately empty that lookup returns NOTFOUND and every
+    # delivery is refused with "550 5.1.1 User doesn't exist" — LMTP listening
+    # correctly and rejecting all mail regardless.
+    userdb {
+      driver = static
+      args = uid=1000 gid=1000 home=/var/mail/%d/%n allow_all_users=yes
+    }
+
+    # One oauth2 passdb per Keycloak realm, written by the operator's mail
+    # reconciler into the dovecot-realm-auth Secret — the kernel realm for the
+    # cluster admin, plus one per tenant using selfhosted mail.
+    #
+    # include_try, not include: the Secret does not exist until the operator has
+    # run, and a required include that is missing stops Dovecot from starting, so
+    # inbound LMTP delivery would break for want of IMAP configuration.
+    #
+    # Included BEFORE the passwd-file passdb so a valid token is accepted by its
+    # own realm rather than being refused by the catch-all first. Only *.conf is
+    # matched: each realm also has a .oauth2.ext holding its introspection
+    # settings, which is read through the passdb args and must not be parsed as
+    # configuration itself.
+    !include_try /etc/dovecot/realms/*.conf
+
+    # The final deny. Reached when no realm accepted the credentials, or when a
+    # client offered plain/login instead of XOAUTH2.
+    #
+    # The file is empty, so this always fails — which is correct: password logins
+    # are not a supported path, identities live in Keycloak. With no passdb at all
+    # Dovecot rejects the configuration outright, and a static passdb with
+    # nopassword=y would accept ANY password on port 143.
+    passdb {
+      driver = passwd-file
+      args = /etc/dovecot/gentian/users
+    }
+
+    service lmtp {
+      inet_listener lmtp {
+        port = 24
+      }
+    }
+
+    service imap-login {
+      inet_listener imap {
+        port = 143
+      }
+      # 993 is not served: TLS terminates at the gateway, so an imaps listener
+      # here would need the cert that `ssl = no` says this Pod does not have.
+      inet_listener imaps {
+        port = 0
+      }
+    }
+
+    # doveadm is not exposed over the network, so it needs no password. The
+    # doveadm_password in dovecot-sensitive-values stays unconsumed until
+    # something actually listens here.
+    service doveadm {
+      inet_listener {
+        port = 0
+      }
+    }
+  # Deliberately empty — see the passdb comment above. Provisioning tenant
+  # identities replaces this file with a real credential source.
+  users: ""
+---
+# All tenant mail. Without this, maildirs are written into the container
+# filesystem and vanish on the next restart.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: dovecot-{{ .Values.env }}-mail
+  namespace: {{ .Values.servicesNamespace }}
+  annotations:
+    argocd.argoproj.io/sync-wave: "8"
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: {{ .Values.mailStorageSize }}
+  {{- if .Values.storageClass }}
+  storageClassName: {{ .Values.storageClass }}
+  {{- end }}
+---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: dovecot-{{ .Values.env }}
-  namespace: gentian-{{ .Values.env }}
+  namespace: {{ .Values.servicesNamespace }}
   annotations:
     argocd.argoproj.io/sync-wave: "9"
   labels:
@@ -69,6 +223,11 @@ metadata:
     gentianos.io/component: kernel-mail
 spec:
   replicas: 1
+  # Recreate, not RollingUpdate: the mail volume is ReadWriteOnce, so a rolling
+  # update would leave the new Pod Pending on a volume the old one still holds
+  # until a timeout, with mail undeliverable in the meantime.
+  strategy:
+    type: Recreate
   selector:
     matchLabels:
       app.kubernetes.io/name: dovecot
@@ -79,16 +238,52 @@ spec:
         app.kubernetes.io/name: dovecot
         app.kubernetes.io/instance: dovecot-{{ .Values.env }}
     spec:
+      # Mail processes run as 1000 (mail_uid/mail_gid in dovecot.conf); fsGroup
+      # makes the volume group-writable by them. Without it the first delivery
+      # fails on a root-owned mount point.
+      securityContext:
+        fsGroup: 1000
+      volumes:
+        - name: config
+          configMap:
+            name: dovecot-{{ .Values.env }}-config
+        - name: mail
+          persistentVolumeClaim:
+            claimName: dovecot-{{ .Values.env }}-mail
+        # Written by the operator, one pair of files per Keycloak realm. optional
+        # because it does not exist until the operator has reconciled something —
+        # a required Secret volume that is absent holds the Pod in
+        # ContainerCreating, which would make inbound mail wait on IMAP config.
+        - name: realm-auth
+          secret:
+            secretName: dovecot-realm-auth
+            optional: true
+            defaultMode: 0400
       containers:
         - name: dovecot
           image: dovecot/dovecot:2.3.21
           imagePullPolicy: IfNotPresent
-          # Required by the Kyverno baseline (gentian-disallow-privilege-escalation,
-          # gentian-require-seccomp), which applies to gentian-<env> — that namespace
-          # is NOT in the policies' exclusion list, unlike platform-kernel and the
-          # other infrastructure namespaces. Without these the ReplicaSet cannot
-          # create a Pod at all: "denied the request ... failed at path
-          # /spec/containers/0/securityContext/".
+          # The image entrypoint builds configuration from its own environment
+          # into conf.d. Running the binary directly with -c bypasses that
+          # entirely, so the only configuration in play is the mounted file —
+          # otherwise what runs depends on which image tag was pulled.
+          command: ["dovecot"]
+          args: ["-F", "-c", "/etc/dovecot/gentian/dovecot.conf"]
+          volumeMounts:
+            - name: config
+              mountPath: /etc/dovecot/gentian
+              readOnly: true
+            # Must match dovecotRealmAuthMountPath in the mail reconciler, which
+            # writes this path into the generated passdb args.
+            - name: realm-auth
+              mountPath: /etc/dovecot/realms
+              readOnly: true
+            - name: mail
+              mountPath: /var/mail
+          # Kept deliberately, not required. platform-kernel IS in the exclusion
+          # list of the Kyverno baseline policies, so nothing here is enforced
+          # against this Pod — these are set anyway so the workload stays
+          # deployable if that exclusion is ever tightened.
           #
           # runAsNonRoot and a capability drop are deliberately NOT set: Dovecot
           # binds 143/993/24, all privileged ports. Kyverno's non-root and
@@ -104,9 +299,21 @@ spec:
               containerPort: 143
             - name: lmtp
               containerPort: 24
-          env:
-            - name: USER_PASSWORD
-              value: "{CRYPT}*"
+          # Both probe LMTP, not IMAP: LMTP is the port that has to work for mail
+          # to be delivered at all, and it is the one Postfix depends on. Without
+          # a probe the Pod reports Ready the moment the container starts, so
+          # `kubectl wait --for=condition=Available` in verify_dovecot_installation
+          # passed against a Dovecot that had failed to parse its config.
+          readinessProbe:
+            tcpSocket:
+              port: lmtp
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            tcpSocket:
+              port: lmtp
+            initialDelaySeconds: 15
+            periodSeconds: 20
           resources:
             limits:
               cpu: 500m
@@ -119,7 +326,7 @@ apiVersion: v1
 kind: Service
 metadata:
   name: dovecot-{{ .Values.env }}
-  namespace: gentian-{{ .Values.env }}
+  namespace: {{ .Values.servicesNamespace }}
   annotations:
     argocd.argoproj.io/sync-wave: "9"
   labels:

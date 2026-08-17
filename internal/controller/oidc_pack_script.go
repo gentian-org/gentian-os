@@ -35,6 +35,10 @@ func buildOIDCPackScript(
 	clientSecret string,
 	entitlementGroup string,
 ) string {
+	if pack.ServiceClient {
+		return buildOIDCServiceClientScript(realmName, clientID, pack)
+	}
+
 	redirectJSON, _ := json.Marshal(redirectURIs)
 	mapperBlocks := buildMapperPOSTBlocks(pack, templates)
 
@@ -143,6 +147,83 @@ echo "oidc pack ${CLIENT_ID} provisioned in realm ${REALM}"`,
 		realmName, clientID, pack.ScopeName, pack.ScopeDescription, pack.ClientRole, groupName,
 		string(redirectJSON), publicClient, fullScope,
 		scopeLookupBlock, mapperBlocks, secretClause, clientUUIDBlock, secretClause, groupIDBlock)
+}
+
+// buildOIDCServiceClientScript provisions only a confidential client.
+//
+// Kernel Dovecot is the case this exists for: it calls the realm's token
+// introspection endpoint to validate XOAUTH2 access tokens that OTHER clients
+// issued, so all it needs is credentials it can authenticate with. It is never
+// redirected to, so standardFlowEnabled is false and there are no redirect URIs;
+// nobody is granted access TO it, so there is no client scope, client role or
+// entitlement group. Running the app-shaped script for it would leave an unused
+// scope and an empty role in every tenant realm and suggest, in the Keycloak
+// admin UI, that users can be entitled to a mail server.
+//
+// The client secret comes from the OIDC_CLIENT_SECRET env the Job carries, never
+// from an argument, so it stays out of the rendered script and out of Job specs.
+func buildOIDCServiceClientScript(realmName, clientID string, pack oidc.Pack) string {
+	fullScope := "false"
+	if pack.FullScopeAllowed {
+		fullScope = "true"
+	}
+	clientUUIDBlock := keycloak.ShellRequireID("CLIENT_UUID", "${EXISTING}", "clientId", "${CLIENT_ID}")
+
+	// Written on both create and update: a client that already exists from an
+	// earlier release may predate serviceClient and still carry the browser flow.
+	body := `{\"clientId\":\"${CLIENT_ID}\",\"protocol\":\"openid-connect\",\"publicClient\":false,` +
+		`\"standardFlowEnabled\":false,\"implicitFlowEnabled\":false,\"directAccessGrantsEnabled\":false,` +
+		`\"serviceAccountsEnabled\":false,\"redirectUris\":[],\"webOrigins\":[],` +
+		`\"fullScopeAllowed\":` + fullScope + `,\"secret\":\"${OIDC_CLIENT_SECRET}\"}`
+
+	return keycloak.ShellJSONIDExtractor() + fmt.Sprintf(`set -eu
+REALM=%q
+CLIENT_ID=%q
+
+if [ -z "${OIDC_CLIENT_SECRET:-}" ]; then
+  echo "ERROR: OIDC_CLIENT_SECRET is empty; a confidential service client cannot be provisioned without it" >&2
+  exit 1
+fi
+
+TOKEN=$(curl -sf \
+  -X POST "${KEYCLOAK_URL}/realms/master/protocol/openid-connect/token" \
+  -H "Content-Type: application/x-www-form-urlencoded" \
+  -d "client_id=admin-cli&username=${KEYCLOAK_ADMIN_USERNAME}&password=${KEYCLOAK_ADMIN_PASSWORD}&grant_type=password" \
+  | sed 's/.*"access_token":"\([^"]*\)".*/\1/')
+AUTH_HEADER="Authorization: Bearer ${TOKEN}"
+
+EXISTING=$(curl -sf -H "${AUTH_HEADER}" \
+  "${KEYCLOAK_URL}/admin/realms/${REALM}/clients?clientId=${CLIENT_ID}")
+if echo "${EXISTING}" | grep -q '"id"'; then
+  echo "service client ${CLIENT_ID} already exists in realm ${REALM}"
+else
+  curl -sf -X POST -H "${AUTH_HEADER}" -H "Content-Type: application/json" \
+    "${KEYCLOAK_URL}/admin/realms/${REALM}/clients" \
+    -d "%s"
+  EXISTING=$(curl -sf -H "${AUTH_HEADER}" \
+    "${KEYCLOAK_URL}/admin/realms/${REALM}/clients?clientId=${CLIENT_ID}")
+  echo "service client ${CLIENT_ID} created in realm ${REALM}"
+fi
+%s
+curl -sf -X PUT -H "${AUTH_HEADER}" -H "Content-Type: application/json" \
+  "${KEYCLOAK_URL}/admin/realms/${REALM}/clients/${CLIENT_UUID}" \
+  -d "%s"
+
+# Prove the credentials work now, rather than discovering at the first IMAP login
+# that introspection returns 401. An access token is not needed for this: the
+# introspection endpoint authenticates the CALLER first, so a syntactically valid
+# but meaningless token still distinguishes "client cannot authenticate" (401)
+# from "token is not active" (200 with active=false).
+PROBE=$(curl -s -o /dev/null -w "%%{http_code}" \
+  -X POST "${KEYCLOAK_URL}/realms/${REALM}/protocol/openid-connect/token/introspect" \
+  -u "${CLIENT_ID}:${OIDC_CLIENT_SECRET}" \
+  -d "token=probe")
+if [ "${PROBE}" = "401" ] || [ "${PROBE}" = "403" ]; then
+  echo "ERROR: ${CLIENT_ID} cannot authenticate to introspection in realm ${REALM} (HTTP ${PROBE})" >&2
+  exit 1
+fi
+echo "service client ${CLIENT_ID} can introspect in realm ${REALM} (HTTP ${PROBE})"`,
+		realmName, clientID, body, clientUUIDBlock, body)
 }
 
 type protocolMapperPOST struct {

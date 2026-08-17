@@ -287,7 +287,9 @@ verify_dovecot_installation() {
     banner "Verify Dovecot deployment"
 
     local env="${ENV:-dev}"
-    local ns="gentian-${env}"
+    # platform-kernel, matching the operator's SERVICES_NAMESPACE and the
+    # namespace the 09-infra-helm ApplicationSet deploys the mail stack into.
+    local ns="${SERVICES_NAMESPACE:-platform-kernel}"
     local deploy="dovecot-${env}"
     local svc="dovecot-${env}"
     local timeout="${DOVECOT_VERIFY_TIMEOUT:-300}"

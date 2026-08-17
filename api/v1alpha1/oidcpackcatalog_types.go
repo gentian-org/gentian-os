@@ -68,22 +68,58 @@ type OIDCMapperTemplate struct {
 }
 
 // OIDCPackSpec is the OIDC configuration for one clientId.
+// Making scopeName, clientRole and entitlementGroup optional in the schema is
+// what lets a service pack omit them; these keep an APP pack from omitting them
+// by accident, which previously the Required markers guaranteed.
+// The presence checks are deliberately cheap — CEL costs are estimated against
+// worst-case string lengths, and comparing these three to '' as well pushed the
+// rule over the API server's budget. MinLength on each field rejects an empty
+// string when the key IS present, so presence is all this needs to test.
+// +kubebuilder:validation:XValidation:rule="(has(self.serviceClient) && self.serviceClient) || (has(self.scopeName) && has(self.clientRole) && has(self.entitlementGroup))",message="scopeName, clientRole and entitlementGroup are required unless serviceClient is true"
+// +kubebuilder:validation:XValidation:rule="!(has(self.serviceClient) && self.serviceClient) || !(has(self.publicClient) && self.publicClient)",message="a serviceClient pack cannot be a publicClient: it authenticates to the introspection endpoint with a secret"
 type OIDCPackSpec struct {
+	// ServiceClient provisions a confidential client for a backend service
+	// rather than an application users log in to.
+	//
+	// The default pack shape assumes a user-facing app: a client scope, protocol
+	// mappers, a client role, and an entitlement group that grants it. A service
+	// that only validates other clients' tokens — kernel Dovecot introspecting
+	// XOAUTH2 access tokens is the case this exists for — needs none of that. It
+	// needs client credentials and nothing else, and giving it a scope and an
+	// entitlement group would put an empty role in every realm and imply users
+	// can be granted access to it.
+	//
+	// When true, scopeName, clientRole and entitlementGroup are ignored (and may
+	// be empty), the browser flow is disabled on the client, and no scope, mapper,
+	// role or group mapping is created. publicClient must stay false: a service
+	// client with no secret cannot authenticate to the introspection endpoint.
+	// +optional
+	ServiceClient bool `json:"serviceClient,omitempty"`
+
 	// ScopeName is the Keycloak client scope created for this pack.
-	// +kubebuilder:validation:Required
-	ScopeName string `json:"scopeName"`
+	// Required unless serviceClient is true.
+	// +optional
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=255
+	ScopeName string `json:"scopeName,omitempty"`
 
 	// ScopeDescription is shown in the Keycloak admin UI.
 	// +optional
 	ScopeDescription string `json:"scopeDescription,omitempty"`
 
 	// ClientRole is the Keycloak client role mapped from the entitlement group.
-	// +kubebuilder:validation:Required
-	ClientRole string `json:"clientRole"`
+	// Required unless serviceClient is true.
+	// +optional
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=255
+	ClientRole string `json:"clientRole,omitempty"`
 
 	// EntitlementGroup is the Keycloak group name mapped to the pack client role.
-	// +kubebuilder:validation:Required
-	EntitlementGroup string `json:"entitlementGroup"`
+	// Required unless serviceClient is true.
+	// +optional
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=255
+	EntitlementGroup string `json:"entitlementGroup,omitempty"`
 
 	// PublicClient marks the OIDC client as PUBLIC (PKCE, no secret).
 	// +optional

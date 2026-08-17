@@ -63,6 +63,7 @@ func packFromCluster(ctx context.Context, c client.Reader, clientID string) (Pac
 
 func packFromCR(spec gentianov1alpha1.OIDCPackSpec) Pack {
 	return Pack{
+		ServiceClient:    spec.ServiceClient,
 		ScopeName:        spec.ScopeName,
 		ScopeDescription: spec.ScopeDescription,
 		ClientRole:       spec.ClientRole,

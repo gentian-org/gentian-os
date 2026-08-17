@@ -49,6 +49,13 @@ spec:
       # recipient with 554 "Access denied".
       - name: kernelDomain
         value: "${KERNEL_DOMAIN}"
+      # The outbound relay for MAIL_SERVICE_MODE=external. Unset in kernel mode,
+      # which renders an empty host and means direct delivery — so no mail-mode
+      # flag is threaded through, only the relay itself.
+      - name: externalSmtpHost
+        value: "${EXTERNAL_SMTP_HOST}"
+      - name: externalSmtpPort
+        value: "${EXTERNAL_SMTP_PORT}"
       # Every child ApplicationSet points back at this repo. Without this the
       # children would keep the literal branch baked into raw/*.yaml while the
       # parent tracked another one, so a cluster pinned to a release tag would

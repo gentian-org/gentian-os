@@ -382,7 +382,7 @@ Standard apps (path A — e.g. Odoo) use `app-default` Client MRs only and do
 relays (`external` vs `kernel`). **`Tenant.spec.mail.mode`** controls what the
 **operator** provisions per organisation. See [design/mail.md](design/mail.md) §0.
 
-On dev, in-cluster SMTP is `postfix-dev.gentian-dev.svc.cluster.local:587`.
+On dev, in-cluster SMTP is `postfix-dev.platform-kernel.svc.cluster.local:587`.
 
 **Tunnel clusters:** `MAIL_SERVICE_MODE=kernel` is rejected by `./install.sh --validate` when
 `NETWORK_MODE=tunnel`. Cloudflare tunnel exposes HTTP/HTTPS only — use

@@ -1,25 +1,27 @@
-# UNTESTED — public bokysan/mail chart placeholder (Pattern B).
-# Namespace gentian-{{ .Values.env }} → Service postfix-{{ .Values.env }}.gentian-{{ .Values.env }}.svc.cluster.local:587
+# Helm values for the public bokysan/mail chart (Pattern B).
+# Namespace {{ .Values.servicesNamespace }} → Service postfix-{{ .Values.env }}.{{ .Values.servicesNamespace }}.svc.cluster.local:587
 ---
 apiVersion: v1
 kind: ConfigMap
 metadata:
   name: postfix-base-values
-  namespace: gentian-{{ .Values.env }}
+  namespace: {{ .Values.servicesNamespace }}
   annotations:
     argocd.argoproj.io/sync-wave: "-1"
 data:
   values.yaml: |
     # Helm chart: bokysan/mail — https://bokysan.github.io/docker-postfix/
-    # Required by the Kyverno baseline (gentian-disallow-privilege-escalation,
-    # gentian-require-seccomp). gentian-<env> is not in those policies' exclusion
-    # list — unlike platform-kernel and the other infra namespaces — so without
-    # this the StatefulSet cannot create its Pod at all.
+    # Kept deliberately, not required. platform-kernel IS in the exclusion list
+    # of the Kyverno baseline policies (gentian-disallow-privilege-escalation,
+    # gentian-require-seccomp), so nothing here is enforced against this Pod —
+    # these are set anyway because a relay that can escalate is worth avoiding on
+    # its own merits, and because the exclusion list is a policy decision that
+    # could be tightened later without wanting mail to break.
     #
     # runAsNonRoot and a capability drop are deliberately omitted: Postfix binds
     # 25/587. Kyverno's non-root and capabilities rules are "=(securityContext)"
     # conditionals that only engage on keys that are present, so leaving them out
-    # keeps this compliant without needing a MAC waiver.
+    # stays compliant without needing a MAC waiver if the exclusion is ever removed.
     container:
       postfix:
         securityContext:
@@ -66,7 +68,7 @@ data:
         myhostname: postfix-{{ .Values.env }}
         # Inbound tenant mail: hand every message for a registered tenant domain
         # to Dovecot over LMTP, which files it into /var/mail/<domain>/<user>.
-        virtual_transport: "lmtp:[dovecot-{{ .Values.env }}.gentian-{{ .Values.env }}.svc.cluster.local]:24"
+        virtual_transport: "lmtp:[dovecot-{{ .Values.env }}.{{ .Values.servicesNamespace }}.svc.cluster.local]:24"
         # Both maps are texthash: files, not lmdb:.
         #
         # The files come from a ConfigMap mount, so they are read-only and can
@@ -113,14 +115,17 @@ apiVersion: v1
 kind: ConfigMap
 metadata:
   name: postfix-{{ .Values.env }}-values
-  namespace: gentian-{{ .Values.env }}
+  namespace: {{ .Values.servicesNamespace }}
   annotations:
     argocd.argoproj.io/sync-wave: "-1"
 data:
   values.yaml: |
-    # Env overrides — rewritten by scripts/lib/mail-lib.sh for
-    # MAIL_SERVICE_MODE=external to point Postfix at an upstream relay.
-    # Schema is bokysan/mail (not the old proprietary chart).
+    # Env overrides. Nothing rewrites this at install time any more: the relay for
+    # MAIL_SERVICE_MODE=external arrives as relayHost/relayPort from the
+    # ApplicationSet and is rendered into postfix-sensitive-values, because this
+    # object is Argo CD-managed and an imperative rewrite was reverted on the next
+    # sync. Schema is bokysan/mail, which has no top-level `postfix:` key — values
+    # written under one were silently discarded.
     replicaCount: 1
     resources:
       limits:

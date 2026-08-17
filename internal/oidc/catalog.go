@@ -30,6 +30,7 @@ type MapperTemplate struct {
 
 // Pack is the OIDC configuration applied per tenant realm for one clientId.
 type Pack struct {
+	ServiceClient    bool     `json:"serviceClient"`
 	ScopeName        string   `json:"scopeName"`
 	ScopeDescription string   `json:"scopeDescription"`
 	ClientRole       string   `json:"clientRole"`
@@ -41,6 +42,17 @@ type Pack struct {
 }
 
 func validatePack(clientID string, pack Pack, templates map[string]MapperTemplate) error {
+	// A service client provisions credentials and nothing else, so the three
+	// app-shaped fields are meaningless for it rather than merely optional.
+	if pack.ServiceClient {
+		if pack.PublicClient {
+			return fmt.Errorf("oidc pack %q: serviceClient cannot be publicClient — it needs a secret to authenticate to the introspection endpoint", clientID)
+		}
+		if len(pack.Mappers) > 0 {
+			return fmt.Errorf("oidc pack %q: serviceClient creates no client scope, so it cannot carry mappers", clientID)
+		}
+		return nil
+	}
 	if pack.ScopeName == "" || pack.ClientRole == "" || pack.EntitlementGroup == "" {
 		return fmt.Errorf("oidc pack %q: scopeName, clientRole, and entitlementGroup are required", clientID)
 	}

@@ -674,6 +674,12 @@ bootstrap_root_appset() {
     export GENTIAN_DEPLOYMENTS_REPO="${GENTIAN_DEPLOYMENTS_REPO:-}"
     export GENTIAN_DEPLOYMENTS_BRANCH="${GENTIAN_DEPLOYMENTS_BRANCH:-main}"
     export GENTIAN_DEPLOYMENTS_CLUSTER_ID="${GENTIAN_DEPLOYMENTS_CLUSTER_ID:-default-cluster}"
+    # The outbound relay reaches the Postfix chart through here. Exported even when
+    # empty: envsubst substitutes an unset variable with nothing either way, but an
+    # explicit default documents that empty is a valid, meaningful value — kernel
+    # mode, delivering directly — rather than a variable someone forgot to set.
+    export EXTERNAL_SMTP_HOST="${EXTERNAL_SMTP_HOST:-}"
+    export EXTERNAL_SMTP_PORT="${EXTERNAL_SMTP_PORT:-587}"
     envsubst < "${SCRIPT_DIR}/kernel/bootstrap/root-applicationset.yaml.tmpl" \
         | kubectl apply -f -
     success "gentian-appsets Application applied."

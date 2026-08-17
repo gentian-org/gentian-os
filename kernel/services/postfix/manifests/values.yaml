@@ -1,6 +1,20 @@
 # env is supplied by the ApplicationSet (helm.parameters). The default
 # only matters for `helm template` run by hand.
 env: dev
+
+# The namespace the kernel mail stack runs in.
+#
+# This MUST match the operator's SERVICES_NAMESPACE (charts/gentian-os/values.yaml
+# servicesNamespace, default platform-kernel). The operator writes
+# postfix-kernel-virtual-mailbox-maps there and hands every tenant app
+# postfix-<env>.<servicesNamespace>.svc.cluster.local as its SMTP host, and a Pod
+# can only mount a ConfigMap from its own namespace — so Postfix has to live where
+# the operator writes, not the other way round. Running here previously as
+# gentian-<env> meant the operator's tenant-domain updates landed in a namespace
+# Postfix never read: mail worked for whatever tenants existed at install and
+# every later tenant was rejected with "554 Recipient address rejected", with
+# nothing logged, because the domain simply was not one of Postfix's own.
+servicesNamespace: platform-kernel
 # storageClass empty = use the cluster's default StorageClass. Set per
 # stage in values-<env>.yaml only where a stage genuinely differs.
 storageClass: ""
@@ -11,10 +25,23 @@ storageClass: ""
 # from an unintended domain.
 kernelDomain: ""
 
-# Outbound relay, e.g. "[smtp.example.com]:587". Empty means deliver directly,
-# which is what MAIL_SERVICE_MODE=kernel wants — it runs its own Postfix and
-# needs no upstream. Set this only for MAIL_SERVICE_MODE=external, together
-# with relay credentials in OpenBao (gentian-os/kernel/mail/postfix); a relay
-# host without credentials bounces every message with 530 Authentication
-# Required, after Keycloak has already reported the invite as sent.
+# Outbound relay host and port, supplied by the ApplicationSet from
+# EXTERNAL_SMTP_HOST / EXTERNAL_SMTP_PORT.
+#
+# Empty host means deliver directly, which is what MAIL_SERVICE_MODE=kernel wants:
+# it runs its own Postfix and needs no upstream. Because kernel mode leaves
+# EXTERNAL_SMTP_HOST unset, the mode needs no switch here — an unset host IS
+# direct delivery.
+#
+# Set for MAIL_SERVICE_MODE=external, together with relay credentials in OpenBao
+# (gentian-os/kernel/mail/postfix); a relay host without credentials bounces every
+# message with 530 Authentication Required, after Keycloak has already reported the
+# invite as sent.
+#
+# The host is bare (no brackets) and the chart composes Postfix's "[host]:port"
+# form in externalsecret.yaml. This used to be one pre-bracketed string that only
+# scripts/lib/mail-lib.sh ever wrote — imperatively, into the live ConfigMap the
+# bokysan chart renders, so provider-helm reverted it and external relay stopped
+# working on the next sync.
 relayHost: ""
+relayPort: "587"

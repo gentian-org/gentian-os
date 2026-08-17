@@ -20,107 +20,78 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/gentian-org/gentian-os/internal/keycloak"
 	"github.com/gentian-org/gentian-os/internal/meta"
+	"github.com/gentian-org/gentian-os/internal/oidc"
 
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
+	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 )
 
 const (
-	dovecotTenantOIDCClientVersion = "2"
+	dovecotTenantOIDCClientVersion = "3"
 	dovecotOIDCClientID            = "gentian-dovecot"
+
+	// dovecotAdminSecretName carries doveadm_password and oidc_client_secret,
+	// synced from gentian-os/kernel/mail/dovecot in OpenBao.
+	//
+	// Note the duplication: the Dovecot chart's own ExternalSecret
+	// (dovecot-sensitive-values) pulls the same two properties from the same path
+	// into the same namespace under a different name. Both work; they should
+	// become one.
+	dovecotAdminSecretName = "dovecot-admin"
 )
 
 func tenantDovecotOIDCClientJobName(tenantName string) string {
 	return fmt.Sprintf("keycloak-dovecot-oidc-%s", tenantName)
 }
 
-// buildDovecotTenantOIDCClientScript ensures gentian-dovecot exists in the tenant
-// Keycloak realm. Dovecot introspects IMAP XOAUTH2 tokens in the realm that issued
-// them; kernel-only clients cannot validate tenant-realm tokens from OX App Suite.
-func buildDovecotTenantOIDCClientScript() string {
-	return keycloak.ShellJSONIDExtractor() + `
-set -eu
-
-if [ -z "${REALM_NAME:-}" ] || [ -z "${DOVECOT_CLIENT_SECRET:-}" ]; then
-  echo "dovecot tenant OIDC client skipped (REALM_NAME or DOVECOT_CLIENT_SECRET unset)"
-  exit 0
-fi
-
-TOKEN=$(curl -sf --max-time 30 \
-  -X POST "${KEYCLOAK_URL}/realms/master/protocol/openid-connect/token" \
-  -H "Content-Type: application/x-www-form-urlencoded" \
-  -d "client_id=admin-cli&username=${KEYCLOAK_ADMIN_USERNAME}&password=${KEYCLOAK_ADMIN_PASSWORD}&grant_type=password" \
-  | sed 's/.*"access_token":"\([^"]*\)".*/\1/')
-AUTH_HEADER="Authorization: Bearer ${TOKEN}"
-
-EXISTING=$(curl -sf --max-time 30 -H "${AUTH_HEADER}" \
-  "${KEYCLOAK_URL}/admin/realms/${REALM_NAME}/clients?clientId=gentian-dovecot" || echo "[]")
-keycloak_json_id_by_attr "${EXISTING}" "clientId" "gentian-dovecot"
-CLIENT_UUID="${_kj_id}"
-if [ -z "${CLIENT_UUID}" ]; then
-  curl -sf --max-time 30 -X POST -H "${AUTH_HEADER}" -H "Content-Type: application/json" \
-    "${KEYCLOAK_URL}/admin/realms/${REALM_NAME}/clients" \
-    -d '{"clientId":"gentian-dovecot","protocol":"openid-connect","publicClient":false,"standardFlowEnabled":false,"directAccessGrantsEnabled":false,"serviceAccountsEnabled":false,"fullScopeAllowed":false,"redirectUris":[],"webOrigins":[]}'
-  EXISTING=$(curl -sf --max-time 30 -H "${AUTH_HEADER}" \
-    "${KEYCLOAK_URL}/admin/realms/${REALM_NAME}/clients?clientId=gentian-dovecot")
-  keycloak_json_id_by_attr "${EXISTING}" "clientId" "gentian-dovecot"
-  CLIENT_UUID="${_kj_id}"
-  echo "client gentian-dovecot created in realm ${REALM_NAME}"
-else
-  echo "client gentian-dovecot already exists in realm ${REALM_NAME}"
-fi
-
-if [ -z "${CLIENT_UUID}" ]; then
-  echo "ERROR: could not resolve gentian-dovecot client id in realm ${REALM_NAME}" >&2
-  exit 1
-fi
-
-curl -sf --max-time 30 -X PUT -H "${AUTH_HEADER}" -H "Content-Type: application/json" \
-  "${KEYCLOAK_URL}/admin/realms/${REALM_NAME}/clients/${CLIENT_UUID}" \
-  -d "{\"clientId\":\"gentian-dovecot\",\"protocol\":\"openid-connect\",\"publicClient\":false,\"standardFlowEnabled\":false,\"directAccessGrantsEnabled\":false,\"serviceAccountsEnabled\":false,\"fullScopeAllowed\":false,\"redirectUris\":[],\"webOrigins\":[],\"secret\":\"${DOVECOT_CLIENT_SECRET}\"}"
-
-SECRET_HTTP=$(curl -s --max-time 30 -o /dev/null -w "%{http_code}" -H "${AUTH_HEADER}" \
-  "${KEYCLOAK_URL}/admin/realms/${REALM_NAME}/clients/${CLIENT_UUID}/client-secret")
-if [ "${SECRET_HTTP}" = "404" ]; then
-  curl -sf --max-time 30 -X POST -H "${AUTH_HEADER}" \
-    "${KEYCLOAK_URL}/admin/realms/${REALM_NAME}/clients/${CLIENT_UUID}/client-secret" >/dev/null
-fi
-
-echo "client gentian-dovecot configured in realm ${REALM_NAME}"
-`
+// kernelDovecotOIDCClientJobName is not tenant-scoped: there is one kernel realm
+// and one client in it, however many tenants exist.
+func kernelDovecotOIDCClientJobName() string {
+	return "keycloak-dovecot-oidc-kernel"
 }
 
-func makeDovecotTenantOIDCClientJob(tenant *gentianov1alpha1.Tenant, realmName string) *batchv1.Job {
+// makeDovecotOIDCClientJob provisions gentian-dovecot in one Keycloak realm.
+//
+// Dovecot introspects IMAP XOAUTH2 tokens in the realm that ISSUED them, and the
+// introspection endpoint authenticates its caller, so every realm whose users have
+// mailboxes needs this client. That includes the kernel realm, where the cluster
+// admin lives, not only tenant realms.
+//
+// The script comes from buildOIDCPackScript, the same builder every other client
+// in the platform goes through. This used to carry its own hand-written copy of
+// the Keycloak calls, which drifted from the pack path for no reason other than
+// having been written separately: it built precisely the serviceClient shape the
+// pack mechanism now expresses.
+//
+// The secret is injected by reference, never as a Job env Value. makeOIDCPackJob
+// passes app client secrets literally, which puts them in a Job spec readable by
+// anyone with get on Jobs in the kernel namespace; this path keeps the secretKeyRef
+// the hand-rolled version had.
+func makeDovecotOIDCClientJob(jobName, realmName string, pack oidc.Pack, labels map[string]string) *batchv1.Job {
 	ttl := meta.ProvisioningJobTTLSeconds
-	c := keycloakContainer("dovecot-oidc-client", buildDovecotTenantOIDCClientScript())
-	c.Env = append(c.Env,
-		corev1.EnvVar{Name: "REALM_NAME", Value: realmName},
-		corev1.EnvVar{
-			Name: "DOVECOT_CLIENT_SECRET",
-			ValueFrom: &corev1.EnvVarSource{
-				SecretKeyRef: &corev1.SecretKeySelector{
-					LocalObjectReference: corev1.LocalObjectReference{Name: "dovecot-admin"},
-					Key:                  "oidc_client_secret",
-				},
+	c := keycloakContainer("dovecot-oidc-client",
+		buildOIDCPackScript(realmName, dovecotOIDCClientID, pack, nil, nil, "", ""))
+	c.Env = append(c.Env, corev1.EnvVar{
+		Name: "OIDC_CLIENT_SECRET",
+		ValueFrom: &corev1.EnvVarSource{
+			SecretKeyRef: &corev1.SecretKeySelector{
+				LocalObjectReference: corev1.LocalObjectReference{Name: dovecotAdminSecretName},
+				Key:                  "oidc_client_secret",
 			},
 		},
-	)
+	})
 	return &batchv1.Job{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      tenantDovecotOIDCClientJobName(tenant.Name),
+			Name:      jobName,
 			Namespace: kernelNamespace,
-			Labels: map[string]string{
-				tenantLabel:    tenant.Name,
-				managedByLabel: managedByValue,
-				"gentianos.io/keycloak-dovecot-oidc-client": dovecotTenantOIDCClientVersion,
-			},
+			Labels:    labels,
 		},
 		Spec: batchv1.JobSpec{
 			TTLSecondsAfterFinished: &ttl,
@@ -134,13 +105,80 @@ func makeDovecotTenantOIDCClientJob(tenant *gentianov1alpha1.Tenant, realmName s
 	}
 }
 
+// resolveDovecotPack reads the gentian-dovecot service pack from the kernel
+// OIDCPackCatalog shipped in the operator chart.
+//
+// A missing catalogue is reported as not-found rather than an error, so the caller
+// requeues instead of failing the tenant. The catalogue is a chart object that Argo
+// CD may not have synced when the operator first reconciles a tenant, and treating
+// startup ordering as an error blocks the whole tenant — mail included — behind a
+// condition that resolves itself seconds later.
+//
+// A pack that exists but is not a serviceClient IS an error: that is a mistake in
+// the catalogue, not a race, and provisioning it as an app client would put a
+// pointless scope and role in every realm.
+func (r *TenantReconciler) resolveDovecotPack(ctx context.Context) (oidc.Pack, bool, error) {
+	pack, _, ok, err := oidc.ResolvePack(ctx, r.Client, dovecotOIDCClientID)
+	if err != nil {
+		return oidc.Pack{}, false, fmt.Errorf("resolve %s pack: %w", dovecotOIDCClientID, err)
+	}
+	if !ok {
+		return oidc.Pack{}, false, nil
+	}
+	if !pack.ServiceClient {
+		return oidc.Pack{}, false, fmt.Errorf("pack %q must set serviceClient: Dovecot needs a confidential client with no scope or entitlement group", dovecotOIDCClientID)
+	}
+	return pack, true, nil
+}
+
 func (r *TenantReconciler) ensureDovecotTenantOIDCClientJob(ctx context.Context, tenant *gentianov1alpha1.Tenant) (bool, error) {
+	pack, ok, err := r.resolveDovecotPack(ctx)
+	if err != nil {
+		return false, err
+	}
+	if !ok {
+		log.FromContext(ctx).Info("waiting for the kernel OIDCPackCatalog before provisioning the Dovecot client",
+			"pack", dovecotOIDCClientID)
+		return false, nil
+	}
 	realmName := keycloakRealmName(tenant)
 	jobName := tenantDovecotOIDCClientJobName(tenant.Name)
+	job := makeDovecotOIDCClientJob(jobName, realmName, pack, map[string]string{
+		tenantLabel:    tenant.Name,
+		managedByLabel: managedByValue,
+		"gentianos.io/keycloak-dovecot-oidc-client": dovecotTenantOIDCClientVersion,
+	})
+	return r.ensureDovecotOIDCClientJob(ctx, tenant.Name, jobName, job)
+}
+
+// ensureKernelDovecotOIDCClientJob provisions the client in the KERNEL realm, so
+// the cluster admin has a working mailbox on a cluster with no tenants at all.
+func (r *TenantReconciler) ensureKernelDovecotOIDCClientJob(ctx context.Context) (bool, error) {
+	if r.KernelRealm == "" {
+		return false, fmt.Errorf("KERNEL_REALM is empty; cannot provision %s in the kernel realm", dovecotOIDCClientID)
+	}
+	pack, ok, err := r.resolveDovecotPack(ctx)
+	if err != nil {
+		return false, err
+	}
+	if !ok {
+		log.FromContext(ctx).Info("waiting for the kernel OIDCPackCatalog before provisioning the kernel-realm Dovecot client",
+			"pack", dovecotOIDCClientID)
+		return false, nil
+	}
+	jobName := kernelDovecotOIDCClientJobName()
+	job := makeDovecotOIDCClientJob(jobName, r.KernelRealm, pack, map[string]string{
+		managedByLabel: managedByValue,
+		"gentianos.io/keycloak-dovecot-oidc-client": dovecotTenantOIDCClientVersion,
+	})
+	return r.ensureDovecotOIDCClientJob(ctx, "", jobName, job)
+}
+
+func (r *TenantReconciler) ensureDovecotOIDCClientJob(ctx context.Context, tenantName, jobName string, desired *batchv1.Job) (bool, error) {
 	existing := &batchv1.Job{}
 	err := r.Get(ctx, types.NamespacedName{Name: jobName, Namespace: kernelNamespace}, existing)
 	if errors.IsNotFound(err) {
-		if err := r.Create(ctx, makeDovecotTenantOIDCClientJob(tenant, realmName)); err != nil {
+		if err := r.Create(ctx, desired); err != nil {
 			return false, err
 		}
 		return false, nil
@@ -148,5 +186,5 @@ func (r *TenantReconciler) ensureDovecotTenantOIDCClientJob(ctx context.Context,
 	if err != nil {
 		return false, err
 	}
-	return r.waitForProvisioningJob(ctx, tenant.Name, jobName)
+	return r.waitForProvisioningJob(ctx, tenantName, jobName)
 }

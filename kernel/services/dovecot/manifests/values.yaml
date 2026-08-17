@@ -1,6 +1,20 @@
 # env is supplied by the ApplicationSet (helm.parameters). The default
 # only matters for `helm template` run by hand.
 env: dev
+
+# The namespace the kernel mail stack runs in. MUST match the operator's
+# SERVICES_NAMESPACE (charts/gentian-os/values.yaml servicesNamespace) and the
+# same value in kernel/services/postfix — Postfix reaches Dovecot at
+# dovecot-<env>.<servicesNamespace>.svc.cluster.local:24 over LMTP, and the
+# operator writes dovecot-tenant-oidc-values into that namespace.
+servicesNamespace: platform-kernel
 # storageClass empty = use the cluster's default StorageClass. Set per
 # stage in values-<env>.yaml only where a stage genuinely differs.
 storageClass: ""
+
+# Mailbox storage. Every tenant mailbox lives under this one volume as
+# /var/mail/<domain>/<user>, so this is the whole cluster's mail, not one
+# tenant's. Without a volume at all, Dovecot writes maildirs into the container
+# filesystem and every message is lost on restart — including the restart that
+# a config change or a node drain causes.
+mailStorageSize: 5Gi

@@ -543,7 +543,7 @@ SASL credentials, per-domain DKIM keys, isolated mailbox paths).
 On the dev cluster today, Postfix (and Dovecot when enabled) run in
 **`gentian-dev`** as helm Releases `postfix-dev` /
 `dovecot-dev` — in-cluster SMTP is
-`postfix-dev.gentian-dev.svc.cluster.local:587`, not
+`postfix-dev.platform-kernel.svc.cluster.local:587`, not
 `postfix.platform-kernel.svc.cluster.local`.
 
 **Install-time vs per-tenant:** `MAIL_SERVICE_MODE` in

@@ -17,7 +17,7 @@ Three layers are easy to conflate:
 **In-cluster SMTP today (when kernel Postfix is deployed):**
 
 ```
-postfix-dev.gentian-dev.svc.cluster.local:587
+postfix-dev.platform-kernel.svc.cluster.local:587
 ```
 
 Legacy docs referred to `postfix.platform-kernel.svc.cluster.local`; that
@@ -27,7 +27,7 @@ Service does not exist on the current dev layout. The operator writes the
 **Operational checks (dev):**
 
 ```bash
-kubectl get release postfix-dev dovecot-dev -n gentian-dev
+kubectl get release postfix-dev dovecot-dev -n platform-kernel
 kubectl get pods -n gentian-dev -l 'app.kubernetes.io/name in (postfix,dovecot)'
 kubectl get tenants -o custom-columns='NAME:.metadata.name,MAIL:.spec.mail.mode'
 ```
@@ -109,7 +109,7 @@ When a Tenant with `mail.mode: selfhosted` is reconciled, the
    `mail-postfix-virtual-domains` ConfigMap (registers the tenant's
    mail domain).
 3. **SASL credentials Secret** in the tenant namespace
-   (`smtp-credentials-{name}`) — host `postfix-dev.gentian-dev.svc.cluster.local:587` on dev.
+   (`smtp-credentials-{name}`) — host `postfix-dev.platform-kernel.svc.cluster.local:587` on dev.
 4. **Dovecot domain config** patched into the shared
    `mail-dovecot-domains` ConfigMap when Dovecot is deployed.
 5. **Status update** on the Tenant CR with the DNS records the customer
@@ -130,7 +130,7 @@ For each app in the tenant that declares `mail.smtp` and/or
 `mail.imap` in its `AppProfile`, the operator (and app Composition
 `ExternalSecret` paths) materialise:
 
-- SMTP host (`postfix-dev.gentian-dev.svc.cluster.local` on dev), port,
+- SMTP host (`postfix-dev.platform-kernel.svc.cluster.local` on dev), port,
   user (per-app SASL identity), password.
 - IMAP host (Dovecot service in `gentian-dev` when deployed), port,
   per-tenant bind credentials from OpenBao.

@@ -20,14 +20,17 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/rsa"
+	"crypto/sha256"
 	"crypto/x509"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/pem"
 	"fmt"
 	"sort"
 	"strings"
 	"time"
 
+	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -50,7 +53,24 @@ const (
 	// provisioned or deleted.
 	mailPostfixVirtualDomainsConfigMap = "mail-postfix-virtual-domains"
 	mailDovecotDomainsConfigMap        = "mail-dovecot-domains"
-	mailDovecotOIDCValuesConfigMap     = "dovecot-tenant-oidc-values"
+
+	// dovecotRealmAuthSecret holds Dovecot's XOAUTH2 configuration, two files per
+	// Keycloak realm whose users have mailboxes. A Secret rather than a ConfigMap
+	// because the files carry the introspection client secret.
+	//
+	// It replaces dovecot-tenant-oidc-values, which held a single values.yaml key
+	// rewritten by every tenant reconcile — so the last tenant to reconcile owned
+	// the only introspection target and every other tenant's IMAP logins failed.
+	dovecotRealmAuthSecret = "dovecot-realm-auth"
+
+	// Where the Dovecot Pod mounts the above. Referenced from the generated passdb
+	// args, so it has to agree with the volumeMount in
+	// kernel/services/dovecot/manifests/templates/deployment.yaml.
+	dovecotRealmAuthMountPath = "/etc/dovecot/realms"
+
+	// Stamped on the Dovecot Pod template to restart it when the realm set changes.
+	// Excluded from the Argo CD diff by the 09-infra-helm ApplicationSet.
+	dovecotRealmAuthHashAnnotation = "gentianos.io/realm-auth-hash"
 
 	// The two texthash: files kernel Postfix mounts, in the mail namespace. Both
 	// are derived from the registry above: the registry says which tenant domains
@@ -205,9 +225,16 @@ func (r *TenantReconciler) ensureMailSelfhosted(ctx context.Context, tenant *gen
 		return false, nil
 	}
 
-	// 6. Point shared Dovecot token introspection at the tenant realm that issues OX tokens.
-	if err := r.ensureDovecotTenantOIDCIntrospection(ctx, tenant); err != nil {
-		return false, fmt.Errorf("configure Dovecot tenant OIDC introspection: %w", err)
+	// 6. Add this tenant's realm to Dovecot's XOAUTH2 configuration. Additive, so a
+	//    second tenant does not displace the first — see ensureDovecotRealmAuth.
+	if err := r.ensureDovecotRealmAuth(ctx, keycloakRealmName(tenant)); err != nil {
+		return false, fmt.Errorf("configure Dovecot realm auth: %w", err)
+	}
+
+	// 7. Restart Dovecot if the realm set changed. A no-op when it did not, so this
+	//    does not bounce mail on every reconcile.
+	if err := r.ensureDovecotAuthReload(ctx); err != nil {
+		return false, fmt.Errorf("reload Dovecot auth config: %w", err)
 	}
 
 	return true, nil
@@ -423,10 +450,84 @@ type postfixMapsBootstrap struct{ reconciler *TenantReconciler }
 // fault, and taking the whole operator down for it would stop every other
 // reconciler from making progress. The next tenant event retries.
 func (b postfixMapsBootstrap) Start(ctx context.Context) error {
+	logger := log.FromContext(ctx)
+	// The kernel side first, so the maps derived below already include the kernel
+	// domain on a cluster that has no tenants.
+	if err := b.reconciler.ensureKernelMail(ctx); err != nil {
+		logger.Error(err, "provisioning kernel-realm mail at startup")
+	}
 	if err := b.reconciler.syncPostfixVirtualMailboxMaps(ctx); err != nil {
-		log.FromContext(ctx).Error(err, "deriving Postfix inbound maps at startup")
+		logger.Error(err, "deriving Postfix inbound maps at startup")
 	}
 	return nil
+}
+
+// kernelMailRegistryKey is the entry in the tenant domain registry that holds the
+// KERNEL domain rather than a tenant's.
+//
+// The underscore is deliberate: registry keys are otherwise tenant names, which
+// are DNS labels and cannot contain one, so this cannot collide with a tenant or
+// be mistaken for one by the per-tenant delete path.
+const kernelMailRegistryKey = "_kernel"
+
+// ensureKernelMail gives the cluster admin a working mailbox.
+//
+// Everything else in this file is driven by a Tenant, so on a cluster with no
+// tenants none of it runs: the kernel domain was never a virtual mailbox domain,
+// the kernel realm never appeared in Dovecot's auth config, and the introspection
+// client was only ever created in tenant realms. The cluster admin lives in the
+// kernel realm with an address at the kernel domain, so all three are needed
+// before that mailbox works — and none of them depend on a tenant existing.
+func (r *TenantReconciler) ensureKernelMail(ctx context.Context) error {
+	if r.KernelDomain == "" {
+		return fmt.Errorf("KERNEL_DOMAIN is empty; cannot provision kernel-realm mail")
+	}
+
+	// 1. Accept mail for the kernel domain.
+	if err := r.ensureRegistryDomain(ctx, kernelMailRegistryKey, r.KernelDomain); err != nil {
+		return fmt.Errorf("register kernel mail domain: %w", err)
+	}
+
+	// 2. The introspection client in the kernel realm. Returns false while its Job
+	//    is still running; the next operator start or tenant event picks it up.
+	if ready, err := r.ensureKernelDovecotOIDCClientJob(ctx); err != nil {
+		return fmt.Errorf("ensure kernel Dovecot OIDC client: %w", err)
+	} else if !ready {
+		return nil
+	}
+
+	// 3. Kernel realm in Dovecot's XOAUTH2 configuration, then reload if changed.
+	if err := r.ensureDovecotRealmAuth(ctx, r.KernelRealm); err != nil {
+		return fmt.Errorf("configure kernel realm auth: %w", err)
+	}
+	return r.ensureDovecotAuthReload(ctx)
+}
+
+// ensureRegistryDomain upserts one key in the shared tenant domain registry.
+func (r *TenantReconciler) ensureRegistryDomain(ctx context.Context, key, domain string) error {
+	cm := &corev1.ConfigMap{}
+	err := r.Get(ctx, types.NamespacedName{Name: mailPostfixVirtualDomainsConfigMap, Namespace: kernelNamespace}, cm)
+	if errors.IsNotFound(err) {
+		return r.Create(ctx, &corev1.ConfigMap{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      mailPostfixVirtualDomainsConfigMap,
+				Namespace: kernelNamespace,
+				Labels:    map[string]string{managedByLabel: managedByValue},
+			},
+			Data: map[string]string{key: domain},
+		})
+	}
+	if err != nil {
+		return err
+	}
+	if cm.Data[key] == domain {
+		return nil
+	}
+	if cm.Data == nil {
+		cm.Data = make(map[string]string)
+	}
+	cm.Data[key] = domain
+	return r.Update(ctx, cm)
 }
 
 // ensureDovecotDomainConfig adds the tenant's mail domain to the shared Dovecot
@@ -463,43 +564,162 @@ func (r *TenantReconciler) ensureDovecotDomainConfig(ctx context.Context, tenant
 	return r.Update(ctx, cm)
 }
 
-// ensureDovecotTenantOIDCIntrospection patches the shared Dovecot Helm values
-// ConfigMap so IMAP XOAUTH2 introspection targets the tenant Keycloak realm.
-// OX App Suite issues access tokens in the tenant realm; kernel-realm introspection
-// rejects them and the App Suite UI fails to load its configuration namespace.
-func (r *TenantReconciler) ensureDovecotTenantOIDCIntrospection(ctx context.Context, tenant *gentianov1alpha1.Tenant) error {
-	realmName := keycloakRealmName(tenant)
-	ns := servicesNamespace
-	path := fmt.Sprintf("/realms/%s/protocol/openid-connect/token/introspect", realmName)
-	values := fmt.Sprintf(`dovecot:
-  oidc:
-    introspectionPath: %q
-`, path)
+// dovecotRealmAuthFiles renders the two Dovecot files that let one Keycloak realm
+// authenticate IMAP.
+//
+// Dovecot's oauth2 passdb takes a single introspection URL, so multi-realm support
+// is multiple passdb blocks rather than one parameterised block. Each realm gets a
+// `<realm>.conf` holding the passdb and a `<realm>.oauth2.ext` holding its
+// settings; dovecot.conf includes only *.conf, so the .ext files are read via the
+// passdb args and never included as configuration themselves.
+//
+// result_failure = continue is what makes several realms work at all. Dovecot
+// stops at the first passdb that answers definitively, so without it a token from
+// the second realm would be rejected by the first realm's introspection and never
+// reach its own.
+func dovecotRealmAuthFiles(realmName, keycloakURL, clientSecret string) (passdbConf string, ext string) {
+	passdbConf = fmt.Sprintf(`# Realm %[1]s — generated by the gentian-os mail reconciler. Do not edit.
+passdb {
+  driver = oauth2
+  mechanisms = xoauth2
+  args = %[2]s/%[1]s.oauth2.ext
+  result_failure = continue
+  result_internalfail = continue
+}
+`, realmName, dovecotRealmAuthMountPath)
 
-	cm := &corev1.ConfigMap{}
-	err := r.Get(ctx, types.NamespacedName{Name: mailDovecotOIDCValuesConfigMap, Namespace: ns}, cm)
+	ext = fmt.Sprintf(`introspection_mode = post
+introspection_url = %s/realms/%s/protocol/openid-connect/token/introspect
+client_id = %s
+client_secret = %s
+username_attribute = email
+active_attribute = active
+active_value = true
+`, strings.TrimSuffix(keycloakURL, "/"), realmName, dovecotOIDCClientID, clientSecret)
+	return passdbConf, ext
+}
+
+// ensureDovecotRealmAuth adds one realm's XOAUTH2 configuration to the shared
+// Dovecot auth Secret, keyed by realm.
+//
+// A Secret, not a ConfigMap, because the files carry the client secret Dovecot
+// authenticates to Keycloak with.
+//
+// Keyed by realm, because the object this replaced held a single "values.yaml" and
+// rewrote it on every tenant reconcile — so with two tenants the last one to
+// reconcile owned the only introspection target and the other tenant's users could
+// not log in. Its shape assumed one tenant.
+func (r *TenantReconciler) ensureDovecotRealmAuth(ctx context.Context, realmName string) error {
+	if realmName == "" {
+		return fmt.Errorf("realm name is empty")
+	}
+
+	keycloakURL, err := r.secretValue(ctx, keycloakAdminSecret, kernelNamespace, "url")
+	if err != nil {
+		return fmt.Errorf("read Keycloak URL: %w", err)
+	}
+	clientSecret, err := r.secretValue(ctx, dovecotAdminSecretName, kernelNamespace, "oidc_client_secret")
+	if err != nil {
+		return fmt.Errorf("read Dovecot OIDC client secret: %w", err)
+	}
+
+	passdbConf, ext := dovecotRealmAuthFiles(realmName, keycloakURL, clientSecret)
+	confKey := realmName + ".conf"
+	extKey := realmName + ".oauth2.ext"
+
+	secret := &corev1.Secret{}
+	err = r.Get(ctx, types.NamespacedName{Name: dovecotRealmAuthSecret, Namespace: servicesNamespace}, secret)
 	if errors.IsNotFound(err) {
-		cm = &corev1.ConfigMap{
+		return r.Create(ctx, &corev1.Secret{
 			ObjectMeta: metav1.ObjectMeta{
-				Name:      mailDovecotOIDCValuesConfigMap,
-				Namespace: ns,
+				Name:      dovecotRealmAuthSecret,
+				Namespace: servicesNamespace,
 				Labels:    map[string]string{managedByLabel: managedByValue},
 			},
-			Data: map[string]string{"values.yaml": values},
-		}
-		return r.Create(ctx, cm)
+			StringData: map[string]string{confKey: passdbConf, extKey: ext},
+		})
 	}
 	if err != nil {
 		return err
 	}
-	if cm.Data["values.yaml"] == values {
+	if string(secret.Data[confKey]) == passdbConf && string(secret.Data[extKey]) == ext {
 		return nil
 	}
-	if cm.Data == nil {
-		cm.Data = make(map[string]string)
+	if secret.Data == nil {
+		secret.Data = make(map[string][]byte)
 	}
-	cm.Data["values.yaml"] = values
-	return r.Update(ctx, cm)
+	secret.Data[confKey] = []byte(passdbConf)
+	secret.Data[extKey] = []byte(ext)
+	return r.Update(ctx, secret)
+}
+
+// ensureDovecotAuthReload makes Dovecot pick up a realm that was just added.
+//
+// Dovecot reads its passdb blocks once, at startup, so a new realm file appearing
+// in the mount changes nothing until the process restarts — unlike the Postfix
+// domain maps, which are texthash: files re-read per lookup and therefore
+// restart-free. Stamping a hash of the realm set on the Pod template is what turns
+// "the Secret changed" into "the Pod restarts", and it is a no-op once the hash
+// matches, so this does not restart Dovecot on every reconcile.
+//
+// The Deployment is Argo CD-managed, so the 09-infra-helm ApplicationSet excludes
+// this annotation from its diff; without that exclusion Argo would revert the
+// stamp and the two would fight indefinitely.
+func (r *TenantReconciler) ensureDovecotAuthReload(ctx context.Context) error {
+	secret := &corev1.Secret{}
+	if err := r.Get(ctx, types.NamespacedName{Name: dovecotRealmAuthSecret, Namespace: servicesNamespace}, secret); err != nil {
+		if errors.IsNotFound(err) {
+			return nil
+		}
+		return err
+	}
+
+	keys := make([]string, 0, len(secret.Data))
+	for k := range secret.Data {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	h := sha256.New()
+	for _, k := range keys {
+		h.Write([]byte(k))
+		h.Write(secret.Data[k])
+	}
+	want := hex.EncodeToString(h.Sum(nil))[:16]
+
+	stage := envOrDefault("GENTIAN_STAGE", envOrDefault("ENV", "dev"))
+	deploy := &appsv1.Deployment{}
+	name := fmt.Sprintf("dovecot-%s", stage)
+	if err := r.Get(ctx, types.NamespacedName{Name: name, Namespace: servicesNamespace}, deploy); err != nil {
+		// Not an error: on a cluster where kernel mail is not deployed there is no
+		// Dovecot to reload, and tenant reconcile must not block on its absence.
+		if errors.IsNotFound(err) {
+			return nil
+		}
+		return err
+	}
+	if deploy.Spec.Template.Annotations[dovecotRealmAuthHashAnnotation] == want {
+		return nil
+	}
+	if deploy.Spec.Template.Annotations == nil {
+		deploy.Spec.Template.Annotations = map[string]string{}
+	}
+	deploy.Spec.Template.Annotations[dovecotRealmAuthHashAnnotation] = want
+	return r.Update(ctx, deploy)
+}
+
+// secretValue reads one key from a Secret, treating an empty value as an error:
+// an empty introspection URL or client secret produces a Dovecot config that
+// parses and then fails every login.
+func (r *TenantReconciler) secretValue(ctx context.Context, name, namespace, key string) (string, error) {
+	secret := &corev1.Secret{}
+	if err := r.Get(ctx, types.NamespacedName{Name: name, Namespace: namespace}, secret); err != nil {
+		return "", fmt.Errorf("get Secret %s/%s: %w", namespace, name, err)
+	}
+	v := strings.TrimSpace(string(secret.Data[key]))
+	if v == "" {
+		return "", fmt.Errorf("secret %s/%s has no %s", namespace, name, key)
+	}
+	return v, nil
 }
 
 // ensureSmtpCredentialsSecret creates a per-tenant SMTP credentials Secret in the
