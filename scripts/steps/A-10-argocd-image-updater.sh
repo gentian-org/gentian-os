@@ -22,5 +22,15 @@ destroy() {
     if helm status argocd-image-updater -n argocd-image-updater >/dev/null 2>&1; then
         gentian_run helm uninstall argocd-image-updater -n argocd-image-updater || true
     fi
+
+    # The ImageUpdater CR lives in the argocd namespace, not this step's own, so
+    # deleting only argocd-image-updater leaves it behind. Its finalizer is
+    # cleared by the controller the uninstall above has just removed, so it then
+    # holds the argocd namespace in Terminating indefinitely — a failure that
+    # surfaces one step later, in A-09, as a namespace delete that never returns.
+    _argocd_strip_kubectl imageupdaters.argocd-image-updater.argoproj.io || true
+    kubectl delete imageupdaters.argocd-image-updater.argoproj.io --all \
+        -n argocd --ignore-not-found=true 2>/dev/null || true
+
     kubectl delete namespace argocd-image-updater --ignore-not-found=true 2>/dev/null || true
 }
