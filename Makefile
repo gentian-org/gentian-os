@@ -102,7 +102,7 @@ lint-yaml:
 ## The file list and flags must match CI exactly: -x follows sourced files, and no
 ## -S filter means info/style findings fail the build too. Hand-rolling a narrower
 ## invocation is how an SC2153 reached develop green-looking.
-lint-shell: validate-steps lint-step-contracts lint-resolvable
+lint-shell: validate-steps lint-step-contracts lint-resolvable lint-credential-fields
 	@git ls-files -z -- '*.sh' | xargs -0 shellcheck -x scripts/kubectl-gentian
 
 ## Report which declared credentials are satisfied. --source picks where to look:
@@ -123,6 +123,12 @@ lint-step-contracts:
 
 lint-resolvable:
 	@bash scripts/lint/lint-resolvable.sh
+
+## Assert every reader of an OpenBao path names a field the catalogue declares
+## and the installer writes. A value under the right path with the wrong key
+## reads as absent and presents as an ESO fault; it has cost two clusters.
+lint-credential-fields:
+	@python3 scripts/lint/lint-credential-fields.py
 
 ## Report macOS/BSD portability violations. Expected non-zero until Phase 13
 ## migrates the call sites; the count must only go down.
