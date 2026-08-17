@@ -507,6 +507,48 @@ func TestTenantDelete_RemovesPortalShellSecret(t *testing.T) {
 	}
 }
 
+// TestMail_MapsDedupeSharedDomain verifies two tenants naming the same mail
+// domain produce one texthash line, not two.
+//
+// The registry is keyed by tenant, and a defaults component that hardcodes
+// mail.domain gives every tenant the same one — which emitted the kernel entry
+// and the tenant entry as duplicate lines in both files.
+func TestMail_MapsDedupeSharedDomain(t *testing.T) {
+	t.Parallel()
+	shared := "shareddomain.example.com"
+	for _, name := range []string{"sharedone", "sharedtwo"} {
+		tenant := &gentianov1alpha1.Tenant{
+			ObjectMeta: metav1.ObjectMeta{Name: name},
+			Spec: gentianov1alpha1.TenantSpec{
+				DisplayName: name,
+				Mail:        &gentianov1alpha1.TenantMail{Domain: shared},
+			},
+		}
+		if err := testClient.Create(context.Background(), tenant); err != nil {
+			t.Fatalf("create tenant %s: %v", name, err)
+		}
+		t.Cleanup(func() { _ = testClient.Delete(context.Background(), tenant) })
+	}
+
+	maps := &corev1.ConfigMap{}
+	key := types.NamespacedName{
+		Name: "postfix-kernel-virtual-mailbox-maps", Namespace: "platform-kernel",
+	}
+	waitFor(t, jobAppearTimeout, func() bool {
+		if err := testClient.Get(context.Background(), key, maps); err != nil {
+			return false
+		}
+		return strings.Contains(maps.Data["virtual_mailbox_domains"], shared)
+	})
+
+	if got := strings.Count(maps.Data["virtual_mailbox_domains"], shared+" OK"); got != 1 {
+		t.Errorf("expected one accept line for %s, got %d:\n%s", shared, got, maps.Data["virtual_mailbox_domains"])
+	}
+	if got := strings.Count(maps.Data["virtual_mailbox_maps"], "@"+shared+" "); got != 1 {
+		t.Errorf("expected one route line for %s, got %d:\n%s", shared, got, maps.Data["virtual_mailbox_maps"])
+	}
+}
+
 // --- helpers ----------------------------------------------------------------
 
 // findCondition returns the first condition with the given type, or nil.

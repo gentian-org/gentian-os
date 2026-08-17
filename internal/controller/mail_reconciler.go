@@ -383,12 +383,18 @@ func (r *TenantReconciler) syncPostfixVirtualMailboxMaps(ctx context.Context) er
 	}
 	sort.Strings(names)
 
+	// Deduplicated by domain, not by tenant. The registry is keyed by tenant and
+	// two tenants can name the same mail domain — the kernel entry and a tenant
+	// that inherited the kernel domain from a defaults component, for instance —
+	// which emitted the same texthash line twice.
 	var domainsFile, mapsFile strings.Builder
+	emitted := make(map[string]bool, len(names))
 	for _, name := range names {
 		d := registry.Data[name]
-		if d == "" {
+		if d == "" || emitted[d] {
 			continue
 		}
+		emitted[d] = true
 		// "OK" is only a non-empty lookup result; Postfix reads the presence of
 		// the key, not the value.
 		fmt.Fprintf(&domainsFile, "%s OK\n", d)
