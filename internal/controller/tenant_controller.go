@@ -246,6 +246,13 @@ func (r *TenantReconciler) SetupWithManager(mgr ctrl.Manager) error {
 
 	// mapAppProfileToTenants maps an AppProfile change to reconcile requests for
 	// every Tenant that references the profile in its spec.apps list.
+	//
+	// Resolution has to match catalogue.ResolveTenantAppProfile, which accepts
+	// EITHER spec.apps[].profile or spec.apps[].profileRef. Comparing only the
+	// literal profile name meant a Tenant selecting its app by catalogue identity
+	// got no event when its AppProfile was created or changed — so the profile it
+	// was waiting for could appear and nothing would notice, leaving the Tenant
+	// Degraded until an unrelated event happened to wake it.
 	mapAppProfileToTenants := func(ctx context.Context, obj client.Object) []reconcile.Request {
 		profileName := obj.GetName()
 		tenantList := &gentianov1alpha1.TenantList{}
@@ -255,7 +262,14 @@ func (r *TenantReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		var requests []reconcile.Request
 		for _, t := range tenantList.Items {
 			for _, app := range t.Spec.Apps {
-				if app.Profile == profileName {
+				resolved, err := catalogue.ResolveTenantAppProfile(ctx, mgr.GetClient(), app)
+				if err != nil {
+					// An app that resolves to nothing cannot match. Skipped rather
+					// than dropping the whole Tenant, so one unresolvable entry does
+					// not hide the others.
+					continue
+				}
+				if resolved == profileName {
 					requests = append(requests, reconcile.Request{
 						NamespacedName: types.NamespacedName{Name: t.Name},
 					})

@@ -29,6 +29,16 @@ import (
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 )
 
+// tenantBlockedRequeueAfter is how long to wait before retrying a Tenant whose
+// stage reported blocked without naming its own interval.
+//
+// 30s matches the platform gateway reconciler's retry on an unsatisfied
+// dependency. Blocked preconditions are usually resolved by something outside the
+// Tenant's watches — a cluster admin approving a waiver, an AppProfile being
+// published, ESO syncing a Secret — so this is a poll, and the interval trades
+// how long a fixed cluster stays Degraded against reconcile churn per tenant.
+const tenantBlockedRequeueAfter = 30 * time.Second
+
 // ReconcileStage names a tenant reconcile pipeline phase. Stages run in order;
 // the first stage that returns RequeueAfter or error short-circuits the pipeline.
 type ReconcileStage string
@@ -73,7 +83,22 @@ func (r *TenantReconciler) runTenantReconcileStages(ctx context.Context, state *
 	for _, step := range stages {
 		res, err := step.run(ctx, state)
 		if state.blocked {
-			return ctrl.Result{}, nil
+			// Requeue rather than stopping dead.
+			//
+			// Blocked means a stage found a precondition it cannot satisfy itself —
+			// a missing AppProfile, an unapproved waiver, a Secret that has not
+			// synced. Returning an empty Result meant nothing was scheduled, so the
+			// Tenant only moved again if some watched object happened to fire an
+			// event. For a precondition owned by something the Tenant does not
+			// watch, that is never, and the Tenant sat Degraded indefinitely with
+			// the cluster otherwise healthy.
+			//
+			// Preserve an explicit RequeueAfter from the stage: a stage that knows
+			// how long to wait knows better than this default.
+			if res.RequeueAfter > 0 {
+				return res, nil
+			}
+			return ctrl.Result{RequeueAfter: tenantBlockedRequeueAfter}, nil
 		}
 		if res.RequeueAfter > 0 || err != nil {
 			if res.RequeueAfter > 0 && err == nil {
@@ -127,7 +152,7 @@ func (r *TenantReconciler) reconcileTenantStagePreflight(ctx context.Context, st
 			"Identity provisioning blocked because one or more requested AppProfiles are missing")
 		tenant.Status.Phase = gentianov1alpha1.TenantPhaseDegraded
 		state.blocked = true
-		_ = r.Status().Update(ctx, tenant)
+		r.updateBlockedStatus(ctx, tenant)
 		return ctrl.Result{}, nil
 	}
 
@@ -135,7 +160,7 @@ func (r *TenantReconciler) reconcileTenantStagePreflight(ctx context.Context, st
 		r.setCondition(tenant, conditionAppsReady, metav1.ConditionFalse, "TenancyConstraint", err.Error())
 		tenant.Status.Phase = gentianov1alpha1.TenantPhaseDegraded
 		state.blocked = true
-		_ = r.Status().Update(ctx, tenant)
+		r.updateBlockedStatus(ctx, tenant)
 		return ctrl.Result{}, nil
 	}
 	return ctrl.Result{}, nil
@@ -154,7 +179,7 @@ func (r *TenantReconciler) reconcileTenantStageBootstrap(ctx context.Context, st
 	}
 	if res, err := r.waitForTenantShell(ctx, tenant, state.nsName); res.RequeueAfter > 0 || err != nil {
 		_ = r.aggregateCrossplaneStatus(ctx, tenant)
-		_ = r.Status().Update(ctx, tenant)
+		r.updateBlockedStatus(ctx, tenant)
 		return res, err
 	}
 	if err := r.ensureNetworkPolicies(ctx, tenant); err != nil {
@@ -164,7 +189,7 @@ func (r *TenantReconciler) reconcileTenantStageBootstrap(ctx context.Context, st
 		r.setCondition(tenant, conditionAppsReady, metav1.ConditionFalse, "EntitlementRequired", err.Error())
 		tenant.Status.Phase = gentianov1alpha1.TenantPhaseDegraded
 		state.blocked = true
-		_ = r.Status().Update(ctx, tenant)
+		r.updateBlockedStatus(ctx, tenant)
 		return ctrl.Result{}, fmt.Errorf("registry credentials error: %w", err)
 	}
 	if err := r.ensureStagingCaTrust(ctx, tenant, state.nsName); err != nil {
@@ -179,7 +204,7 @@ func (r *TenantReconciler) reconcileTenantStageDataPlane(ctx context.Context, st
 	identityResult, err := r.ensureIdentity(ctx, tenant)
 	if err != nil {
 		r.setCondition(tenant, conditionIdentityReady, metav1.ConditionFalse, "EnsureFailed", err.Error())
-		_ = r.Status().Update(ctx, tenant)
+		r.updateBlockedStatus(ctx, tenant)
 		return ctrl.Result{}, err
 	}
 	state.identityResult = identityResult
@@ -190,7 +215,7 @@ func (r *TenantReconciler) reconcileTenantStageDataPlane(ctx context.Context, st
 	databaseResult, err := r.ensureDatabase(ctx, tenant)
 	if err != nil {
 		r.setCondition(tenant, conditionDatabaseReady, metav1.ConditionFalse, "EnsureFailed", err.Error())
-		_ = r.Status().Update(ctx, tenant)
+		r.updateBlockedStatus(ctx, tenant)
 		return ctrl.Result{}, err
 	}
 	state.databaseResult = databaseResult
@@ -201,7 +226,7 @@ func (r *TenantReconciler) reconcileTenantStageDataPlane(ctx context.Context, st
 	mariadbResult, err := r.ensureMariaDB(ctx, tenant)
 	if err != nil {
 		r.setCondition(tenant, conditionMariaDBReady, metav1.ConditionFalse, "EnsureFailed", err.Error())
-		_ = r.Status().Update(ctx, tenant)
+		r.updateBlockedStatus(ctx, tenant)
 		return ctrl.Result{}, err
 	}
 	state.mariadbResult = mariadbResult
@@ -212,7 +237,7 @@ func (r *TenantReconciler) reconcileTenantStageDataPlane(ctx context.Context, st
 	storageResult, err := r.ensureStorage(ctx, tenant)
 	if err != nil {
 		r.setCondition(tenant, conditionStorageReady, metav1.ConditionFalse, "EnsureFailed", err.Error())
-		_ = r.Status().Update(ctx, tenant)
+		r.updateBlockedStatus(ctx, tenant)
 		return ctrl.Result{}, err
 	}
 	state.storageResult = storageResult
@@ -223,7 +248,7 @@ func (r *TenantReconciler) reconcileTenantStageDataPlane(ctx context.Context, st
 	cacheResult, err := r.ensureCache(ctx, tenant)
 	if err != nil {
 		r.setCondition(tenant, conditionCacheReady, metav1.ConditionFalse, "EnsureFailed", err.Error())
-		_ = r.Status().Update(ctx, tenant)
+		r.updateBlockedStatus(ctx, tenant)
 		return ctrl.Result{}, err
 	}
 	state.cacheResult = cacheResult
@@ -245,7 +270,7 @@ func (r *TenantReconciler) reconcileTenantStageAppsAndEdge(ctx context.Context, 
 	appsResult, err := r.ensureAppDeployment(ctx, tenant)
 	if err != nil {
 		r.setCondition(tenant, conditionAppsReady, metav1.ConditionFalse, "EnsureFailed", err.Error())
-		_ = r.Status().Update(ctx, tenant)
+		r.updateBlockedStatus(ctx, tenant)
 		return ctrl.Result{}, err
 	}
 	state.appsResult = appsResult
@@ -253,14 +278,14 @@ func (r *TenantReconciler) reconcileTenantStageAppsAndEdge(ctx context.Context, 
 	privilegeResult, err := r.ensureAppPrivileges(ctx, tenant)
 	if err != nil {
 		r.setCondition(tenant, conditionAppPrivilegesReady, metav1.ConditionFalse, "EnsureFailed", err.Error())
-		_ = r.Status().Update(ctx, tenant)
+		r.updateBlockedStatus(ctx, tenant)
 		return ctrl.Result{}, err
 	}
 	state.privilegeResult = privilegeResult
 
 	if _, err := r.ensureGateway(ctx, tenant); err != nil {
 		r.setCondition(tenant, conditionGatewayReady, metav1.ConditionFalse, "EnsureFailed", err.Error())
-		_ = r.Status().Update(ctx, tenant)
+		r.updateBlockedStatus(ctx, tenant)
 		return ctrl.Result{}, err
 	}
 	return ctrl.Result{}, nil
@@ -270,11 +295,11 @@ func (r *TenantReconciler) reconcileTenantStageIntegrations(ctx context.Context,
 	tenant := state.tenant
 	if _, err := r.ensureIntegrationBindings(ctx, tenant); err != nil {
 		r.setCondition(tenant, conditionBindingsReady, metav1.ConditionFalse, "EnsureFailed", err.Error())
-		_ = r.Status().Update(ctx, tenant)
+		r.updateBlockedStatus(ctx, tenant)
 		return ctrl.Result{}, err
 	}
 	if _, err := r.ensureAppGrants(ctx, tenant); err != nil {
-		_ = r.Status().Update(ctx, tenant)
+		r.updateBlockedStatus(ctx, tenant)
 		return ctrl.Result{}, fmt.Errorf("ensure app grants: %w", err)
 	}
 	return ctrl.Result{}, nil
@@ -288,7 +313,7 @@ func (r *TenantReconciler) reconcileTenantStageSharedKernel(ctx context.Context,
 	logger := log.FromContext(ctx)
 	mailResult, err := r.ensureMail(ctx, tenant)
 	if err != nil {
-		_ = r.Status().Update(ctx, tenant)
+		r.updateBlockedStatus(ctx, tenant)
 		return ctrl.Result{}, err
 	}
 	state.mailResult = mailResult
@@ -377,4 +402,20 @@ func (r *TenantReconciler) reconcileTenantStageFinalize(ctx context.Context, sta
 	}
 	logger.Info("tenant reconciled successfully", "tenant", tenant.Name)
 	return ctrl.Result{}, nil
+}
+
+// updateBlockedStatus writes the Degraded phase and the conditions explaining why,
+// and logs a failure instead of discarding it.
+//
+// These sites previously did `_ = r.Status().Update(...)`. The write is genuinely
+// non-fatal — the stage has already decided to block, and the next reconcile
+// recomputes the same status — but silently dropping it meant a conflict left the
+// Tenant reporting the wrong phase with no trace of why, which is the state that
+// makes a stuck tenant unexplainable. Not returned as an error, because a stale
+// status is not a reason to abandon the reconcile that produced it.
+func (r *TenantReconciler) updateBlockedStatus(ctx context.Context, tenant *gentianov1alpha1.Tenant) {
+	if err := r.Status().Update(ctx, tenant); err != nil {
+		log.FromContext(ctx).Error(err, "recording blocked tenant status",
+			"tenant", tenant.Name, "phase", tenant.Status.Phase)
+	}
 }
