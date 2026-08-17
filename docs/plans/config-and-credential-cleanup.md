@@ -1622,18 +1622,52 @@ already vestigial: declared, defaulted and warned about, with no consumer left
 after the upload script was deleted. `install.env.template` is already at the
 nine pointer variables plus two run-mode flags.
 
-*Left.* `cluster-settings.env` still exists and is still the installer's source
-for nine values. Eight of the nine are already expressible on the claim —
-`tenancyMode`, `networkMode`, `nodeIp`, `routingMode`, `mail.serviceMode`,
-`mail.host`, `secretMode`, `storageClass` — so the schema work is finished and
-what remains is changing who reads them: `load_deployments_cluster_settings`
-sources the file today and would instead parse `claims/cluster.yaml` from the
-deployments checkout, before the cluster exists.
+*Left.* `cluster-settings.env` still exists. Counting what is actually there, rather than what the
+file appears to hold: the template declares **35** variables, and excluding the template itself and
+the export-list block in `common.sh` — a declaration, not a consumer — **18 have a reader and 17
+have none.**
 
-The ninth, `INFRA_CHART_PRIVATE`, should not move to the claim at all. It
-decides whether the *installer* asks for registry credentials, which is an
-install-time concern rather than a property of the cluster — it belongs with the
-credential catalogue.
+The dead 17 are two coherent groups and one straggler, and they are deletions rather than
+migrations: every `TENANT_INITJOB_*` and `TENANT_LIMITRANGE_*` (eight), every per-model `VLLM_*`
+except `VLLM_INSTANCES` (eight), and `CNPG_HOST`. Declared, documented, exported in some cases, and
+read by nothing. This is the same collapse the key lint produced for `gentian-cluster-config`,
+where seventeen of twenty-four keys turned out to have no reader: **the surface is roughly half the
+size the file suggests, and the first step is deleting what nobody reads.**
+
+The surviving 18 split three ways:
+
+| Group | Variables | Where they go |
+|---|---|---|
+| Already on the claim | `TENANCY_MODE`, `NETWORK_MODE`, `NODE_IP`, `ROUTING_MODE`, `SECRET_MODE`, `STORAGE_CLASS`, `MAIL_SERVICE_MODE` | Read from `claims/cluster.yaml`; schema work is done |
+| Need a home | `EXTERNAL_SMTP_*` (4), `LB_PROVIDER`, `LB_ANNOTATIONS`, `INFRA_CHART_REPO`, `GPU_TIME_SLICE_REPLICAS`, `VLLM_INSTANCES`, `MINIO_ENDPOINT` | Claim fields where they describe the cluster; `LB_PROVIDER` is now detected from `spec.providerID` and may need no field at all |
+| Stays put | `INFRA_CHART_PRIVATE` | Decides whether the *installer* prompts for registry credentials — an install-time concern, not a property of the cluster |
+
+**Reading configuration before the cluster exists.** The installer needs `NETWORK_MODE` and
+`NODE_IP` at A-05 and A-07, and the Cluster XR is not created until B-07 — so these cannot be read
+from the cluster, and that is what has kept a second file alive.
+
+They do not have to be. `resolve_kernel_domain_from_claim` already reads `.spec.kernelDomain` out
+of `clusters/<id>/kernel/claims/cluster.yaml` with `yq`, before Crossplane exists, and that is the
+whole pattern: **the claim file in Git is the source, read as a file at install time and as an
+object afterwards.** One document, two readers, no second surface.
+
+The risk is not the reading, it is the defaults. The XRD declares `tenancyMode: multi`,
+`networkMode: tunnel`, `routingMode: gateway`, `secretMode: derived`; the shell independently
+carries `${NETWORK_MODE:-tunnel}` and its siblings. Two default sets that agree today drift the
+first time one moves, and a value that resolves differently in the installer than in the
+Composition is precisely the shape that produced the mail-namespace and admin-email failures. So:
+
+- The claim is read first.
+- Where the claim omits a field, the default comes from **the XRD**, read out of
+  `crossplane/xrds/cluster.yaml` rather than restated in shell. One default set, mechanically.
+- Where the XRD declares no default — `nodeIp`, `storageClass`, `mail` — absence is either
+  legitimately empty (`storageClass` means "the cluster's default") or an error that says so
+  (`nodeIp` with `networkMode: static-ip`). It is never a guess.
+- `--prepare-deployment` writes every field it knows explicitly, so a fresh cluster's claim is
+  complete and the default path is a fallback rather than the norm.
+
+A lint keeps it honest: no `${VAR:-literal}` fallback may exist for a claim-backed variable. That
+is the mechanical half of "one source of truth", and without it the shell defaults grow back.
 
 That change is deliberately not made while a cluster run is in progress: it
 rewrites the path the run exercises, and existing clusters carry a
@@ -1660,13 +1694,23 @@ values that reach a running component through this file need the same treatment 
 field, and a check belongs wherever the installer's view and the reconciler's view can differ.
 
 **Acceptance**
+
+Measured against the tree, one of these holds today: `install.env.template` is at eleven variables,
+the nine pointers plus two run-mode flags. The others are open — 17 `envsubst` call sites, 16
+`.tmpl` files, and two `.env` templates besides `install.env.template`, with `install.secrets.env`
+still read by `common.sh` and `credentials.sh`. Stating that here rather than in prose above,
+because "partly landed" hid which parts.
+
 - `install.env` is the only non-secret file the installer reads from local disk, and it contains
   nothing but repository URLs, branches, an image repository, cluster name, and stage.
 - No `.env`, `.env.template`, or `.tmpl` remains in `gentian-os` or `gentian-deployments`, other
   than `install.env.template`.
 - `grep -r envsubst` across the repository returns nothing.
-- Every one of the 26 `cluster-settings.env` variables lands in the layer §2 assigns it, and a
-  reviewer can name the layer for each without reading a script.
+- Every one of the 18 `cluster-settings.env` variables that has a reader lands in the layer §2
+  assigns it, and a reviewer can name the layer for each without reading a script. The 17 with no
+  reader are deleted, not placed.
+- No claim-backed variable carries a `${VAR:-literal}` fallback in shell: the XRD holds the only
+  default set, and a lint enforces it.
 - The four-layer chain in `deployment.md` §1 still holds; that document is updated in the same
   pass rather than left describing a superseded model.
 - Two clusters of the same stage differing only in domain differ only in their `Cluster` claim —
