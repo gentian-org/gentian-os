@@ -36,29 +36,35 @@ install_app_catalogue() {
         fi
     fi
 
-    if [[ ! -x "${plugin_dst}" ]]; then
-        warn "Skipping gtnctl symlink — kubectl-gentian is not installed."
-        return 0
-    fi
-
-    if [[ -w /usr/local/bin ]]; then
-        ln -sf kubectl-gentian "${gtnctl_dst}"
-    else
-        sudo ln -sf kubectl-gentian "${gtnctl_dst}" || warn "Failed to link gtnctl -> kubectl-gentian at ${gtnctl_dst}"
-    fi
-
-    # Mirror to ~/.local/bin when present — it often precedes /usr/local/bin in PATH.
-    local user_bin="${HOME}/.local/bin"
-    local user_plugin_dst="${user_bin}/kubectl-gentian"
-    local user_gtnctl_dst="${user_bin}/gtnctl"
-    if [[ -d "${user_bin}" ]]; then
-        if [[ -w "${user_bin}" ]]; then
-            install -m 755 "$plugin_src" "$user_plugin_dst"
-            ln -sf kubectl-gentian "${user_gtnctl_dst}"
-            success "kubectl-gentian and gtnctl (-> kubectl-gentian) installed to ${user_bin}."
+    # The gtnctl symlink only where the plugin it points at exists.
+    if [[ -x "${plugin_dst}" ]]; then
+        if [[ -w /usr/local/bin ]]; then
+            ln -sf kubectl-gentian "${gtnctl_dst}"
         else
-            warn "${user_bin} is not writable — run: make -C ${SCRIPT_DIR} install-plugin"
+            sudo ln -sf kubectl-gentian "${gtnctl_dst}" || warn "Failed to link gtnctl -> kubectl-gentian at ${gtnctl_dst}"
         fi
+    else
+        warn "Skipping ${gtnctl_dst} — kubectl-gentian is not installed there."
+    fi
+
+    # The ~/.local/bin mirror, always, and NOT conditional on the system copy.
+    #
+    # /usr/local/bin needs root; ~/.local/bin does not, and usually precedes it
+    # on PATH. Returning early when the privileged install failed skipped the
+    # unprivileged one that would have worked — so a non-interactive install,
+    # where sudo cannot prompt, left no gtnctl anywhere and D-07 still reported
+    # satisfied.
+    #
+    # The directory is created rather than required: `make install-plugin` does
+    # the same, and skipping the mirror because the directory does not exist yet
+    # is a distinction without a reason.
+    local user_bin="${HOME}/.local/bin"
+    if install -d "${user_bin}" 2>/dev/null && [[ -w "${user_bin}" ]]; then
+        install -m 755 "$plugin_src" "${user_bin}/kubectl-gentian"
+        ln -sf kubectl-gentian "${user_bin}/gtnctl"
+        success "kubectl-gentian and gtnctl (-> kubectl-gentian) installed to ${user_bin}."
+    else
+        warn "${user_bin} is not writable — run: make -C ${SCRIPT_DIR} install-plugin"
     fi
 }
 
