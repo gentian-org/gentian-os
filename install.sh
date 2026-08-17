@@ -27,6 +27,15 @@
 #   ./install.sh --uninstall        reverse order, destroy() each step
 #   ./install.sh --purge            the same, plus the data an uninstall keeps:
 #                                   OpenBao and infra volumes, and local state
+#   ./install.sh --purge --cluster-infra
+#                                   the same, plus the shared operators this
+#                                   installer brought up (CNPG, Reloader) and
+#                                   their CRDs
+#
+# The last two are separate commands because "this installer created it" and
+# "this cluster can lose it" are different questions. CNPG's CRDs define every
+# Postgres on the machine, not only Gentian's, so a purge keeps them unless
+# asked. --cluster-infra is that ask.
 #
 # A cluster is its claims and values in gentian-deployments, so those come
 # first: --prepare-deployment generates them from install.env, and you edit,
@@ -87,6 +96,7 @@ OPENBAO_CLI_VERSION="${OPENBAO_CLI_VERSION:-$(gentian_pin openbao cli)}"
 
 GENTIAN_DIRECTION="forward"
 GENTIAN_PURGE=0
+GENTIAN_PURGE_CLUSTER_INFRA=0
 GENTIAN_KIT_PATH=""
 GENTIAN_RECOVER_FROM=""
 
@@ -106,7 +116,9 @@ Other options:
                         install.env, then stop — nothing is committed or applied
   --validate            validate config and step contracts, no cluster changes
   --verify-only         run post-install verification and print the summary
-  --no-cluster-infra    skip cert-manager / CNPG / reloader
+  --no-cluster-infra    skip cert-manager / CNPG / reloader on install
+  --cluster-infra       with --purge, also remove them and their CRDs. They may
+                        serve workloads that are not Gentian's
   --config-file PATH    override install.env
   --secrets-file PATH   override the secrets file
   -h, --help            this message
@@ -151,7 +163,7 @@ parse_driver_args() {
                 shift; [[ $# -gt 0 ]] || { error "$0: --recover requires a kit path"; exit 1; }
                 GENTIAN_RECOVER_FROM="$1" ;;
             --no-cluster-infra)  INSTALL_CLUSTER_INFRA="0" ;;
-            --cluster-infra)     INSTALL_CLUSTER_INFRA="1" ;;
+            --cluster-infra)     INSTALL_CLUSTER_INFRA="1"; GENTIAN_PURGE_CLUSTER_INFRA=1 ;;
             --config-file)
                 shift; [[ $# -gt 0 ]] || { error "--config-file requires a value"; exit 1; }
                 INSTALL_CONFIG_FILE="$1" ;;
@@ -169,7 +181,20 @@ parse_driver_args() {
         esac
         shift
     done
+    # Refused rather than ignored, and refused here rather than mid-teardown: a
+    # flag that silently does nothing is how somebody hands back a cluster still
+    # carrying CNPG, having asked for it to be gone. Argument errors must not
+    # depend on reaching a cluster — the earlier attempt at this sat after
+    # credential collection and never ran.
+    if [[ "${GENTIAN_PURGE_CLUSTER_INFRA}" == "1" && "${GENTIAN_DIRECTION}" == "reverse" \
+          && "${GENTIAN_PURGE}" != "1" ]]; then
+        error "--cluster-infra removes shared operators and their CRDs, which only --purge does."
+        error "  Did you mean: ./install.sh --purge --cluster-infra"
+        exit 1
+    fi
+
     export GENTIAN_DRY_RUN GENTIAN_ONLY GENTIAN_FROM GENTIAN_UNTIL GENTIAN_SKIP GENTIAN_PHASE
+    export GENTIAN_PURGE_CLUSTER_INFRA
     export INSTALL_CLUSTER_INFRA INSTALL_CONFIG_FILE INSTALL_SECRETS_FILE
     export INSTALL_AUTO_LOAD_CONFIG INSTALL_VERIFY_ONLY INSTALL_VALIDATE_ONLY
 }
@@ -308,7 +333,7 @@ main() {
             load_operator_config
             load_deployments_cluster_settings
             try_load_creds_from_openbao
-            export_recovery_kit "${GENTIAN_KIT_PATH:-gentian-recovery-kit.age}"
+            export_recovery_kit "${GENTIAN_KIT_PATH:-}"
             ;;
         status)
             drive_status
@@ -330,6 +355,12 @@ main() {
                 warn "Purging — this removes Gentian OS and its data from the current cluster."
                 if [[ "${GENTIAN_DRY_RUN}" == "1" ]]; then
                     info "Dry run: volumes and local state would be removed; nothing is."
+                    # The most destructive option is the one a preview most has
+                    # to name, so it reports the namespaces by the same
+                    # derivation the real run uses rather than describing them.
+                    if [[ "${GENTIAN_PURGE_CLUSTER_INFRA}" == "1" ]]; then
+                        purge_cluster_infra
+                    fi
                 else
                     purge_release_volumes
                 fi
@@ -339,8 +370,15 @@ main() {
             drive_reverse
             if [[ "${GENTIAN_PURGE}" == "1" && "${GENTIAN_DRY_RUN}" != "1" ]]; then
                 purge_delete_volumes
+                # After the volumes: the CRDs removed here define the objects
+                # those volumes back, and taking the definitions first strands
+                # the claims that release them.
+                if [[ "${GENTIAN_PURGE_CLUSTER_INFRA}" == "1" ]]; then
+                    purge_cluster_infra
+                fi
                 purge_local_state
                 purge_report_remaining
+                purge_report_cluster_residue
                 success "Purge complete."
             else
                 success "Teardown complete."

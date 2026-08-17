@@ -2007,6 +2007,7 @@ They are gathered here because they are the whole point of the run.
 | The bootstrap token is genuinely invalid afterwards | Phase 7, criterion 3 | **Still unverified.** Phase E not reached |
 | An arm64 install; an internal-domain install with `self-signed`; a mirrored install making no upstream request | Phase 12, criteria 4 and 6 | **Still unverified.** Three separate installs |
 | `sed_inplace` under BSD | Phase 11, criterion 2 | **Still unverified.** The macOS CI job runs it but nobody has watched it |
+| `--export-recovery-kit` produces a kit | Invariant 2, and the precondition for `--purge` | **Export verified, restore unverified.** A kit is written before a purge, 960 bytes, mode 0600. It took the openssl fallback because `age` was absent — encrypted but not authenticated, as that path warns. Nothing has yet rebuilt a cluster from one, which is the half that matters |
 | Transit auto-unseal brings the primary up with no cloud KMS | Invariant 2 | **Verified.** Both instances run; the primary unseals from transit |
 | A partial install resumes without re-prompting | Invariant 3 | **Verified after correction.** Recovery covered `MASTER_PASSWORD` and the SMTP pair only; the deployments token, salt, registry and DNS credentials are now recovered too |
 
@@ -2138,7 +2139,16 @@ state it means. Naming the shapes:
 |---|---|---|
 | `--uninstall` | Cluster objects | Undoing an install on a cluster you keep |
 | `--purge` | The above, plus volumes and local state | Handing a cluster back; proving a clean-room install |
+| `--purge --cluster-infra` | The above, plus the shared operators this installer brought up and their CRDs | A cluster that ran nothing else |
 | Purge, then delete `clusters/<id>/kernel` | The above, plus the Git configuration | Retiring a cluster for good |
+
+The last two are separate because *this installer created it* and *this cluster can lose it* are
+different questions. CNPG and Reloader survive both an uninstall and a plain purge for reasons
+unrelated to Argo CD pruning: their CRDs carry `helm.sh/resource-policy: keep`, so Helm protects
+them deliberately, and their namespaces come from `CreateNamespace=true`, which creates them
+outside the Application's resource tree where nothing prunes them. A pruning Argo removes the
+workloads and leaves both standing. Removing CNPG's CRDs removes every Postgres cluster on the
+machine, not only Gentian's — a judgement about the cluster, which the person purging it holds.
 
 Volumes were the part an uninstall could not reach. Every kernel StorageClass reclaims with
 `Retain`, so deleting a PVC releases the PV and leaves the data on the backend — an uninstalled
@@ -2320,8 +2330,9 @@ this the only remaining gap between a provisioned tenant and a reachable one. Cl
 decisions this plan does not record: storage, the passdb/userdb behind `mail-dovecot-domains`, and
 how IMAP authenticates against Keycloak.
 
-**Nothing owns the teardown of an Argo CD-managed add-on.** `cnpg-system` and `stakater-system`
-survive an uninstall whenever Argo CD stops before B-03 prunes them, and no step names either.
-Their CRDs and webhook configurations survive with them.
+**`--cluster-infra` is unexercised.** `--purge --cluster-infra` removes `cnpg-system`,
+`stakater-system`, their CRDs and their webhook configurations; its namespace list is derived from
+the bootstrap Applications' destination namespaces rather than declared, so an add-on added later
+is covered without a second list to update. Only its dry run has been exercised.
 
 ---

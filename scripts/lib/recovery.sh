@@ -69,6 +69,7 @@ _kit_encrypt() {
         openssl)
             warn "age not found; using openssl. The kit will be encrypted but NOT authenticated —"
             warn "  tampering yields garbage rather than an error. Install age for a stronger kit."
+            warn "  This kit is NOT an age file: name it .enc, not .age."
             openssl enc -aes-256-cbc -pbkdf2 -iter 600000 -salt -out "${out}"
             ;;
     esac
@@ -143,8 +144,18 @@ _kit_gather() {
 # Export
 # =============================================================================
 
+# The default name follows the cipher actually used. Naming an openssl kit .age
+# produces a file `age` refuses to open, and the person who reaches for it is by
+# definition rebuilding a cluster from nothing.
+_kit_default_path() {
+    case "$(_kit_cipher)" in
+        age) echo "gentian-recovery-kit.age" ;;
+        *)   echo "gentian-recovery-kit.enc" ;;
+    esac
+}
+
 export_recovery_kit() {
-    local out="${1:-gentian-recovery-kit.age}"
+    local out="${1:-$(_kit_default_path)}"
 
     banner "Recovery kit"
     _kit_gather
