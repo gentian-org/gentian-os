@@ -1393,8 +1393,8 @@ gentian_report_abort() {
 # certificate land somewhere the Gateway could not see it, leaving the cluster
 # serving nothing. Both halves now resolve to the same place.
 #
-# The mail namespace is now the same place — see gentian_mail_namespace below,
-# which delegates here rather than carrying its own default.
+# The mail namespace resolves to the same place — see gentian_mail_namespace
+# below. It used to be deliberately different, and this line used to say so.
 # =============================================================================
 gentian_services_namespace() {
     echo "${SERVICES_NAMESPACE:-platform-kernel}"
@@ -1403,25 +1403,21 @@ gentian_services_namespace() {
 # =============================================================================
 # gentian_mail_namespace — where kernel Postfix/Dovecot live
 #
-# The same namespace as the kernel services, and no longer a separate default.
+# The services namespace, resolved identically to gentian_services_namespace
+# above: kernel Postfix and Dovecot are kernel services and are deployed
+# alongside the others.
 #
-# It used to return gentian-<env>, because mail was deployed by per-stage
-# manifests into an env-scoped namespace while the kernel services were not.
-# That stopped being true when the mail stack moved to the operator's
-# SERVICES_NAMESPACE — a Pod can only mount a ConfigMap from its own namespace,
-# and the operator writes postfix-kernel-virtual-mailbox-maps there.
+# The two must agree, and agreeing is not enough — they have to be one
+# resolution. When this returned gentian-<env> while the mail charts deployed
+# into platform-kernel, D-03 looked for its own ConfigMap in an empty namespace
+# and reported a working mail stack missing. The operator wrote the map to the
+# services namespace and was right; the lookup was wrong.
 #
-# Keeping the old default after the move produced a bug that only appeared in
-# check(): install_kernel_mail exports KERNEL_NAMESPACE before applying, so
-# apply() resolved platform-kernel and worked, while D-03's check() ran with
-# nothing exported, fell back to gentian-<env>, and reported the mail step
-# missing on a cluster whose mail stack was running.
-#
-# Delegating rather than repeating the expression is deliberate: two helpers
-# with one job is what drifted in the first place.
+# _mail_kernel_namespace in mail-lib.sh delegates here for that reason. One
+# definition, so a future move cannot leave half the callers behind.
 # =============================================================================
 gentian_mail_namespace() {
-    gentian_services_namespace
+    echo "${KERNEL_NAMESPACE:-${SERVICES_NAMESPACE:-platform-kernel}}"
 }
 
 # =============================================================================

@@ -13,10 +13,16 @@
 [[ -n "${GENTIAN_MAIL_LIB_LOADED:-}" ]] && return 0
 GENTIAN_MAIL_LIB_LOADED=1
 
-# The namespace the kernel mail stack runs in comes from gentian_mail_namespace in
-# common.sh — the single definition. This file used to carry a third copy of the
-# expression, which is how the installer ended up with two answers to the same
-# question and D-03 reporting missing against a working mail stack.
+# The namespace the kernel mail stack runs in.
+#
+# platform-kernel, matching the operator's SERVICES_NAMESPACE — not gentian-<env>.
+# The operator writes postfix-kernel-virtual-mailbox-maps here and hands tenant
+# apps postfix-<env>.platform-kernel as their SMTP host, and a Pod can only mount
+# a ConfigMap from its own namespace, so this is where Postfix has to run. Seeding
+# the maps into gentian-<env> instead meant Postfix mounted a ConfigMap the
+# operator never updated: mail worked for the tenants that existed at install and
+# silently rejected every later one.
+_mail_kernel_namespace() { gentian_mail_namespace; }
 
 # MAIL_SERVICE_MODE=kernel needs reachable SMTP ingress; Cloudflare tunnel is HTTP-only.
 mail_network_mode_compatible() {
@@ -48,7 +54,7 @@ install_kernel_mail() {
             ;;
     esac
 
-    KERNEL_NAMESPACE="$(gentian_mail_namespace)"
+    KERNEL_NAMESPACE="$(_mail_kernel_namespace)"
     export KERNEL_NAMESPACE
 
     if ! mail_network_mode_compatible "${mode}" "${NETWORK_MODE:-tunnel}"; then
