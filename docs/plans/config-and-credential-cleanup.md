@@ -1044,9 +1044,48 @@ magnitude, this is closer to core product than to internal tooling.
 
 Most requirements are cluster-scoped (registries, ACME DNS, upstream relays). The tenant-scoped
 set is narrower: a customer's own SMTP relay, their own S3 endpoint, external OIDC federation.
-The `scope` field drives visibility, and a tenant admin's OpenBao policy must not reach
-`gentian/repositories/*`. A UI showing a tenant admin a cluster-scoped form and OpenBao rejecting
-the write is an annoyance; the inverse is a breach.
+A UI showing a tenant admin a cluster-scoped form and OpenBao rejecting the write is an annoyance;
+the inverse is a breach.
+
+**Scope is a class; the tenant is an identity, and both are needed.** `scope` separates "a tenant
+may see this" from "an operator may see this" and says nothing about *which* tenant, so on its own
+it makes every tenant-scoped requirement visible to every tenant admin — for a credential to a
+tenant-proprietary repository that is a disclosure rather than clutter. `spec.tenant` names the
+owner, required for tenant scope and forbidden for cluster scope, and visibility is matched on it.
+
+**Identity is OpenBao's verdict, never the caller's claim.** The service does not parse the token:
+it exchanges it, and reads the policies and claim metadata that come back. Cluster admin is
+recognised by the policy OpenBao attached rather than by a Keycloak group name this service would
+have to keep in step with, and the tenant comes from the role's claim mapping — the same value the
+`tenant-admin` policy templates its path from, so the read path and the write path cannot disagree.
+Parsing the token here would make this a second identity authority able to contradict the one
+enforcing the write.
+
+The cost is that a listing now needs OpenBao reachable, where it could once degrade to a catalogue
+with no metadata. An unauthorised listing is not a degraded listing, so that is the right trade.
+
+### Tenants declare their own repositories
+
+A tenant adds a private apps repository alongside the cluster's, or points its deployments
+elsewhere, without an operator editing Git. This lives on the credential manager rather than the
+app-lifecycle API, which takes its tenant from the request path and its actor from a header — safe
+while every caller is already trusted, and this is not.
+
+Danger is graded by what an operation costs, and confirmation is retyping the repository name:
+
+| Operation | Confirm |
+|---|---|
+| Add an `apps` repository | No — it is additive, and ceremony everywhere is ceremony nowhere |
+| Repoint an existing repository | Yes, naming the URL being replaced |
+| Any `deployments` repository, even new | Yes — it redirects everything reconciled from it |
+| Delete | Yes — it stops every app the repository provided |
+
+Enforced in the API rather than the console: a confirmation only the UI applies is one a script
+skips. The refusal is `428` carrying the string to type, so the console renders the rule instead of
+holding a second copy of it. Cross-tenant access answers `404`, not `403` — learning that a name is
+taken by another tenant is itself a disclosure. The vault path is derived, never accepted from the
+caller, because a path outside the tenant's prefix produces a requirement the tenant can see and
+OpenBao refuses to satisfy.
 
 ### The service runs on the cluster; the installer does not duplicate it
 
@@ -1079,6 +1118,33 @@ implementation of it is not.
 ## 11. Implementation Plan
 
 Sequential phases. Each phase is independently useful and independently revertible.
+
+### Where each phase stands
+
+Built and exercised on a cluster, built but unexercised, and not built are three different things,
+and the distinction is the point of this table. The forward pass has run on a real cluster for
+phases A–D; `destroy()` has run nowhere and phase E has not been reached, so "exercised" below
+never means more than that.
+
+| Phase | State | What is left |
+|---|---|---|
+| 0a, 0b | Exercised | Verification only: `--dry-run` state diff, `check()` read-only diff |
+| 1, 2 | Built | A clean-room review by someone other than the author |
+| 3 | Built | `oci-registry` and `smtp` have no test; none of the validators is automated |
+| 4 | 4a exercised, **4b half** | Mail, LLM, portal and tenant reconcile still name applications. Blocked on the reconciler audit (§15.2) |
+| 5 | Exercised | `kernel/argocd/repos/*.yaml` and the infra chart registry are not yet claims |
+| 6 | Built | ESO's live verdict and the unsatisfied→satisfied transition are unverified |
+| 7 | **Built, unexercised** | Nothing has authenticated through it. No policy allow/deny tests |
+| 8 | Built | The service's own ServiceAccount policy is uninspected |
+| 9 | Built | No shared API contract tests; validation errors are not attributed per field |
+| 10 | **10a/10b done, 10c part** | `cluster-settings.env`, the ten `.tmpl` Applications and 15 `envsubst` sites |
+| 11 | Done | BSD `sed_inplace` has not been observed running |
+| 12 | 12a–12d built, **12e not** | Provider RBAC is still `cluster-admin`, deliberately |
+| 13 | Portability done | arm64, internal domain and mirror remain structural claims |
+
+Two things this table is careful not to say. *Built* is not *works*: Phase 7 read as implemented
+for some time while one side of its federation did not exist. And a phase marked exercised was
+exercised on one cluster, on one architecture, with a public domain and no mirror.
 
 Phases 0a and 0b are pure structure: no cluster behaviour changes, no architectural commitment,
 and they can be reverted by moving files back. They come first because every later phase edits the
@@ -1410,6 +1476,14 @@ golden-file render tests for both types.
 One XRD plus one Composition covering `type: git` and `type: oci`, emitting the artefact set in
 §5 and the `CredentialRequirement` alongside it.
 
+**A repository may belong to a tenant.** `spec.tenant` makes the emitted requirement tenant-scoped
+and labelled with its owner; empty keeps it cluster-owned. Without it every repository credential
+was cluster-scoped, which for a tenant's private catalogue meant the one person who should supply
+it was the one person who could not see it.
+
+`spec.role` distinguishes what losing the repository costs — `apps` is additive, `deployments` is a
+source of truth — which is what the API grades its confirmations by (§10).
+
 **Acceptance**
 
 | # | Criterion | Status |
@@ -1483,23 +1557,62 @@ missing requirement rather than as "something is not Ready".
 
 ### Phase 7 — OIDC write path and root token revocation
 
-**Status: implemented.**
+**Status: built end to end, exercised nowhere.**
 
-The Cluster composition carries an OIDC auth backend federated from Keycloak plus `cluster-admin`
-and `tenant-admin` policies, declared as provider-vault resources — §6 puts auth backends and
-policies on the infrastructure side of that boundary. The client secret is a Secret reference;
-a value in a spec field is what §6 prohibits outright.
+Both halves of the handshake are now declared, which they were not when this phase first read as
+implemented: OpenBao was configured to *trust* Keycloak, and nothing created the client to be
+trusted as. `clientId: openbao` and the `openbao-oidc-client` Secret were referenced in four places
+and produced in none, so the write path was unusable for cluster admins as much as for tenants.
+The lesson generalises: a federation is two systems agreeing, and declaring one side of it reads
+as finished.
+
+The chain, each link read by both ends so they cannot drift:
+
+```
+installer derives  → gentian-os-kernel-oidc-openbao (crossplane-system)
+SecretV2 seeds     → gentian-os/kernel/oidc/openbao
+ExternalSecret     → openbao/openbao-oidc-client
+AuthBackend reads it, and so does the Keycloak Client
+```
+
+The client secret is derived rather than prompted for: it is shared between two machines and never
+typed by a human, which makes it generated, not external, and keeps it out of `credentials.yaml`.
+
+The Cluster composition carries the auth backend, the `cluster-admin` and `tenant-admin` policies,
+both OIDC roles, the Keycloak client, its two protocol mappers and the cluster admin group — all
+as provider-vault and provider-keycloak resources, since §6 puts auth backends and policies on the
+infrastructure side of that boundary. The client secret is a Secret reference; a value in a spec
+field is what §6 prohibits outright.
+
+Two of those objects are worth naming because their absence fails as *permission denied* rather
+than as *misconfigured*, which is the hardest form to diagnose:
+
+- **The groups mapper.** Both roles bind on a `groups` claim. Without it every token carries none,
+  matches no role, and is refused.
+- **The tenant-admin policy's accessor.** Vault policy templating addresses alias metadata by mount
+  accessor and offers no way to name the mount by path, so the accessor cannot be declared — only
+  observed. It is read from the AuthBackend's `status.atProvider.accessor`, and the policy is gated
+  on having it rather than rendered with a placeholder: absent on the first reconcile, present on
+  the next.
 
 The whole block is gated on `spec.oidc.discoveryUrl`, so an unset cluster stays exactly as it was
 rather than half-configuring an auth method.
 
-Step `E-03-revoke-bootstrap-token` ends the bootstrap exception, and **refuses to run when no OIDC
-path exists** — revoking the only way in leaves a cluster nobody can supply a credential to. That
-is the one case where not revoking is correct, and it is reported rather than silently skipped.
+Step `E-03-revoke-bootstrap-token` ends the bootstrap exception, and **refuses to run unless a
+human can actually get a token** — revoking the only way in leaves a cluster nobody can supply a
+credential to. It checks the chain rather than the outcome, because it cannot perform an
+interactive login: the Keycloak client Ready, the Secret present, the backend configured, a role to
+log in against. It names which link is missing, since "refused to revoke" is only actionable if it
+says what to fix.
+
+That guard is deliberately stricter than a declared `discoveryUrl`. Declaring the URL is also what
+makes the OIDC objects render, so a guard testing for it passes at the *first* step of the sequence
+it is meant to gate rather than the last — and a cluster with no Keycloak client would revoke its
+only write path and need OpenBao re-initialising to recover.
 
 | # | Criterion | Status |
 |---|---|---|
-| 1 | `bao login -method=oidc` yields a policy set derived from Keycloak groups | **Unverified** — needs a running Keycloak |
+| 1 | `bao login -method=oidc` yields a policy set derived from Keycloak groups | **Unverified** — every object it needs is now declared; none has been exercised against a running Keycloak |
 | 2 | A write by a named operator appears in the audit device with that identity | **Unverified** |
 | 3 | The installer root token is invalid after installation | **Partial** — the step exists and self-revokes; its refusal path is verified, the revocation itself is not |
 | 4 | A tenant-admin identity is denied read and write on `gentian/registries/*` | **Partial** — an explicit `deny` is emitted, verified by render; not exercised against OpenBao |
@@ -1550,14 +1663,32 @@ This phase also closed an RBAC gap: the operator had no permission to read the
 
 ### Phase 9 — gentian-ui surface
 
-Credential Manager view in the desktop shell, consuming the Phase 8 API. Auth through Keycloak,
-consistent with all other gentian-ui flows.
+**Status: implemented.** A Credentials tab in the admin console, plus a backend proxy.
+
+The browser does not call the Credential Manager. It serves no CORS headers, and proxying through
+the console's backend keeps it on the cluster network behind one origin. The proxy adds transport
+and nothing else: it holds no credential of its own and makes no authorisation decision, forwarding
+the caller's bearer token so OpenBao decides what they may see and write and the audit device
+records the human. A proxy authenticating on its own behalf would reintroduce exactly the component
+with every permission that §10 exists to avoid.
+
+Status codes pass through untouched, `428` included. That is how the danger zone works — the API
+decides what is dangerous and what must be retyped, and the console renders that answer. Encoding
+the rules in the browser as well would put them in two places, and the browser copy is the one an
+operator can skip.
 
 **Acceptance**
-- No credential value is ever rendered in the DOM.
-- Unsatisfied required credentials are visible without navigating into a detail view.
-- Validation failure is presented inline against the offending field.
-- Behaviour is equivalent to the CLI; both are exercised by the same API contract tests.
+
+| # | Criterion | Status |
+|---|---|---|
+| 1 | No credential value is ever rendered in the DOM | **Passing, structurally** — the API has no field able to carry one, so the console cannot display what it cannot receive. Submitted values are cleared from component state on success rather than surviving into a later render |
+| 2 | Unsatisfied required credentials are visible without navigating into a detail view | **Passing** — the count leads the section, and each row carries ESO's verdict |
+| 3 | Validation failure is presented inline against the offending field | **Partial** — the failure is shown inline on the form; it is not yet attributed to a specific field, because the API returns one message rather than a per-field map |
+| 4 | Behaviour is equivalent to the CLI; both exercised by the same API contract tests | **Not met** — no shared contract tests exist. The Go side has route-level tests; the console has none |
+
+`credentialManager.url` is unset by default, so the section reports the manager as unavailable
+rather than failing obscurely. Disabled beats broken, but it does mean the tab does nothing until
+a deployment points it at the service.
 
 ---
 
@@ -1927,16 +2058,16 @@ the sections are the record, not this list.
 | # | Question | Notes |
 |---|---|---|
 | Q1 | Step granularity | How fine is a step? Too coarse and `check()` becomes a partial answer; too fine and the driver output stops reading as a narrative. The §7 test — an operator can predict what the file does — is a judgement, not a rule, and needs calibrating against the first real `steps/` directory. |
-| Q2 | `requires:` enforcement | Whether the driver validates the dependency header or treats it as documentation and relies on numeric ordering. Enforcement catches mis-ordered `--from` invocations; it also adds driver complexity that §7 would rather not spend. |
+| Q2 | `requires:` enforcement (still documentation-only) | Whether the driver validates the dependency header or treats it as documentation and relies on numeric ordering. Enforcement catches mis-ordered `--from` invocations; it also adds driver complexity that §7 would rather not spend. |
 | Q3 | `scripts/lib/` surface | The 32 functions called by `main_cp` from `scripts/lib/` are unaudited. Additional prompts, secret reads, or application-specific knowledge there would change Phase 0a, Phase 1, and Phase 4b scope. Blocks estimation of Phase 0a. |
 | Q4 | `scripts/kubectl-gentian` | 2,765 lines, explicitly out of scope for §7 as a day-2 tool. Whether it eventually becomes a client of the on-cluster API (§10) rather than a second implementation of cluster manipulation is unresolved, and it is the largest remaining shell artefact once Phase 0b lands. |
 | Q5 | `gentian-os-operator` boundary | `install_gentian_os_operator` deploys an operator with an authz bridge alongside the Crossplane control plane. Which credential-related responsibilities belong to it versus to Crossplane compositions is unresolved. |
 | Q6 | Transit seal root of trust | Auto-unseal works, but the transit OpenBao is itself unsealed somehow. Where that key lives and how it is protected in a customer-operated cluster needs stating explicitly for audit. |
 | Q7 | Rotation triggers | Rotation is operator-initiated. Whether `CredentialRequirement` should carry a `maxAge` and surface staleness is unresolved. |
-| Q8 | Tenant-scoped requirement authoring | Cluster admins may declare requirements via `Repository` claims (§4). Whether *tenant* admins may declare their own — their own SMTP relay, their own S3 endpoint — is still open and materially larger in scope. |
+| Q8 | Tenant-scoped requirement authoring | **Partly settled.** Tenant admins may declare *repositories*, which emit their own requirements (§10). Whether that extends to arbitrary requirements — their own SMTP relay, their own S3 endpoint — is still open. Repositories were tractable because the artefact set is fixed and the vault path can be derived; an arbitrary requirement has neither property, so the caller would be choosing where a credential lives. |
 | Q9 | Offline install | The dual-carrier catalogue assumes the installer is current for the target release. Air-gapped installation needs an explicit version-compatibility check. |
 | Q10 | CI check access to OpenBao | The `gentian-deployments` CI job needs `list` on requirement metadata (§4). How that identity authenticates from CI — a long-lived token in Actions secrets is exactly what this plan removes elsewhere — is unresolved. OIDC federation from the CI provider into OpenBao's JWT backend is the candidate. |
-| Q11 | Repository deletion semantics | Deleting a `Repository` claim removes its emitted artefacts (Phase 5), but not the value in OpenBao. Whether an orphaned path is garbage, an audit record, or a rotation hazard needs a decision. |
+| Q11 | Repository deletion semantics | Deleting a `Repository` claim removes its emitted artefacts (Phase 5), but not the value in OpenBao. Whether an orphaned path is garbage, an audit record, or a rotation hazard needs a decision — and it is now sharper rather than resolved, because a tenant admin can trigger the deletion themselves (§10) and OpenBao retains a path nobody lists. |
 | Q12 | `writable: true` scope | The operator's `.git-credentials` grants push access to `gentian-deployments` for GitOps app lifecycle. Whether that warrants a distinct credential from the read path — different token, different rotation, narrower scope — rather than reusing one. |
 | Q13 | Mixed-architecture clusters | §9 treats architecture as a cluster-level property. A cluster with both amd64 and arm64 nodes needs per-workload node affinity or multi-arch images everywhere, and which of those the platform guarantees is undecided. |
 | Q14 | Trust-anchor distribution | `self-signed` and `private-ca` modes require the CA bundle to reach every workload that makes TLS calls to a kernel service, plus the operator's own HTTP clients. Whether that is a `ClusterExternalSecret`, a chart value, or a node-level trust store is unresolved. `internal/kernel/stagingca/` is the existing precedent and should be reviewed before choosing. |
@@ -2383,10 +2514,16 @@ cluster to compare against.
 
 | Move | Why it is right | What it is waiting on |
 |---|---|---|
-| `gentian-cluster-config` ConfigMap → Cluster XR | ~20 declared values rendered by a shell heredoc and read back by Compositions through `function-extra-resources` | The three *discovered* values — kube-apiserver CIDR, endpoint IP and port — need another source. A provider-kubernetes `Object` observing the `kubernetes` Service would do it. This is Phase 10c and it is one change, not twenty |
 | The ten `.tmpl` bootstrap Applications and 15 `envsubst` sites → Cluster XR | Every one is a rendered artefact applied by a script, which §2 prohibits because the reconciler cannot detect drift in it | Nothing but confidence; it is the largest single reduction left |
 | Wildcard `Certificate` and `gentian-kernel-services` ConfigMap → Cluster XR | Small, and natural neighbours of resources already composed | Same |
 | ClusterIssuers → Cluster XR | Issuers have a lifecycle, so they belong to a reconciler. Step 05 owns them today only because it is more capable — it dispatches on all four `issuerMode` values and waits for the cert-manager webhook | Bootstrap ordering: **nothing between step 05 and step 16 may need an issuer.** Confirm that on a real run before moving them |
+
+**Count the readers before believing a blocker.** The `gentian-cluster-config` move is done, and
+the obstacle this section recorded for it — three *discovered* values needing another source —
+turned out not to exist: the kube-apiserver CIDR, endpoint IP and port were among seventeen keys
+with no reader at all. Seven survive, six straight from the claim and one genuinely discovered.
+The same measurement halved `cluster-settings.env` (§10c). A surface is usually smaller than the
+file suggests, and the part that looks hard is often the part nothing uses.
 
 The test that decides all of these, learned from removing the OpenBao double-writer:
 
@@ -2406,6 +2543,11 @@ creates `gentian-deployments-git-credentials` imperatively; the `XRepository` co
 `appLifecycle.gitCredentialsSecret` is set to in the deployments values, so resolving it means
 picking a winner and updating that value. **If the operator cannot push, check which Secret it is
 actually mounting.**
+
+**Nothing sets the tenant attribute a claim mapping reads.** The kernel realm stamps it onto every
+user brokered from a tenant realm, and users provisioned only in a tenant realm never pass through
+that IdP. Such a tenant admin authenticates and sees an empty catalogue — the safe direction, and
+still the last gap before the tenant path works end to end.
 
 **No policy tests exist.** Phase 7, criterion 5: cluster-admin and tenant-admin should be covered
 by explicit allow *and* deny tests. The `tenant-admin` deny on `gentian-os/kernel/*` is the one
