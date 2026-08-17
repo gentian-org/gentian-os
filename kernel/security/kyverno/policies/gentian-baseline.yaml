@@ -131,6 +131,13 @@ spec:
           selector:
             matchLabels:
               mac-waiver.gentianos.io/gentian-require-non-root: "approved"
+          # AND the tenant namespace must carry the same key, written only by
+          # the operator from the PlatformSecurityPolicy allowlist. Without this
+          # the pod label above was the entire check, so any chart could exempt
+          # itself from this policy and the allowlist was never consulted.
+          namespaceSelector:
+            matchLabels:
+              mac-waiver.gentianos.io/gentian-require-non-root: "approved"
     validate:
       message: Containers must run as non-root or declare runAsNonRoot.
       pattern:
@@ -179,6 +186,13 @@ spec:
           selector:
             matchLabels:
               mac-waiver.gentianos.io/gentian-disallow-host-path: "approved"
+          # AND the tenant namespace must carry the same key, written only by
+          # the operator from the PlatformSecurityPolicy allowlist. Without this
+          # the pod label above was the entire check, so any chart could exempt
+          # itself from this policy and the allowlist was never consulted.
+          namespaceSelector:
+            matchLabels:
+              mac-waiver.gentianos.io/gentian-disallow-host-path: "approved"
     validate:
       message: hostPath volumes are not allowed in tenant workloads.
       pattern:
@@ -222,6 +236,13 @@ spec:
           - gpu-operator-resources
       - resources:
           selector:
+            matchLabels:
+              mac-waiver.gentianos.io/gentian-restrict-capabilities: "approved"
+          # AND the tenant namespace must carry the same key, written only by
+          # the operator from the PlatformSecurityPolicy allowlist. Without this
+          # the pod label above was the entire check, so any chart could exempt
+          # itself from this policy and the allowlist was never consulted.
+          namespaceSelector:
             matchLabels:
               mac-waiver.gentianos.io/gentian-restrict-capabilities: "approved"
     validate:
@@ -289,6 +310,13 @@ spec:
           selector:
             matchLabels:
               mac-waiver.gentianos.io/gentian-disallow-privilege-escalation: "approved"
+          # AND the tenant namespace must carry the same key, written only by
+          # the operator from the PlatformSecurityPolicy allowlist. Without this
+          # the pod label above was the entire check, so any chart could exempt
+          # itself from this policy and the allowlist was never consulted.
+          namespaceSelector:
+            matchLabels:
+              mac-waiver.gentianos.io/gentian-disallow-privilege-escalation: "approved"
     validate:
       message: Privilege escalation is not allowed in tenant workloads. Containers must set allowPrivilegeEscalation to false.
       pattern:
@@ -339,6 +367,13 @@ spec:
           - gpu-operator-resources
       - resources:
           selector:
+            matchLabels:
+              mac-waiver.gentianos.io/gentian-require-seccomp: "approved"
+          # AND the tenant namespace must carry the same key, written only by
+          # the operator from the PlatformSecurityPolicy allowlist. Without this
+          # the pod label above was the entire check, so any chart could exempt
+          # itself from this policy and the allowlist was never consulted.
+          namespaceSelector:
             matchLabels:
               mac-waiver.gentianos.io/gentian-require-seccomp: "approved"
     validate:

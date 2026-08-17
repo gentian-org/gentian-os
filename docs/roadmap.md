@@ -39,12 +39,13 @@ For the current baseline design of the system, refer to [architecture.md](archit
 
 ### 1.4 Waiver Exclusion Verification Hardening (**)
 * **Target Domain**: Platform Security & Admission Control
-* **Context**: The Kyverno baseline policy waiver exclusions currently key off a pod label (`mac-waiver.gentianos.io/<policy>: approved`). Because pods can assert this label themselves, this control is weak.
-* **Proposed Solution**: Migrate waiver validation logic from self-asserted pod labels to platform-owned, cluster-admin-managed objects. Map exclusions using service accounts and namespaces derived directly from `PlatformSecurityPolicy` definitions.
+* **Context**: The exclusions keyed off a pod label (`mac-waiver.gentianos.io/<policy>: approved`) alone, which was not weak but a full bypass — any chart could exempt itself and the `PlatformSecurityPolicy` allowlist was never consulted by anything. The approval half was equally inert: approvals were recorded on the Tenant in an annotation nothing read, so a properly approved waiver was still denied.
+* **Solution**: Each exclusion now requires the pod label **and** a matching label on the tenant namespace, which only the operator writes, from the allowlist intersection. Forging the pod label alone achieves nothing; revoking an approval removes the namespace grant.
 * **Backlog Items**:
-  - `[ ]` Refactor Kyverno exclusion rules in `gentian-baseline.yaml` to evaluate namespace and service account configurations.
-  - `[ ]` Deprecate waiver checks relying on self-asserted pod labels.
-  - `[ ]` Validate the updated PSP waiver checks against live workload deployments.
+  - `[x]` Refactor Kyverno exclusion rules in `gentian-baseline.yaml` to evaluate namespace configuration (namespace labels, not service accounts — a `namespaceSelector` is native to Kyverno's exclusion matching and needs no API call per admission).
+  - `[x]` Deprecate waiver checks relying on self-asserted pod labels — the pod label is now necessary but no longer sufficient.
+  - `[ ]` Validate the updated PSP waiver checks against live workload deployments. Unit-covered; needs a cluster.
+  - `[ ]` Have app pod templates carry the waiver label so approvals take effect. Until then the Tenant reports `AwaitingWorkloadOptIn` rather than a misleading `Approved`.
 
 ### 1.5 Gateway Routing & Listener Security (*)
 * **Target Domain**: Platform Security & Gateways
