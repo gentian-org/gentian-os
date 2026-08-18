@@ -353,6 +353,62 @@ derived credential, which is an inconvenience on an empty cluster and a data
 loss on one carrying tenants. The gate keeps the cheap recovery available until
 you no longer need it.
 
+## 14. Create your first tenant
+
+A tenant is a directory in your deployments repository, exactly as the cluster
+is. Scaffold it:
+
+```bash
+./install.sh --prepare-tenant acme
+```
+
+It asks for a display name and an administrator email, then writes
+`clusters/<cluster-id>/tenants/acme/` into your checkout. The first tenant on a
+cluster also gets `definitions/components/tenant-defaults/`, which holds the
+quotas and mail settings every tenant on this cluster shares. Nothing is
+applied and nothing is pushed.
+
+Choose the tenant's apps in `tenants/acme/tenant.yaml`:
+
+```bash
+kubectl gentian apps list          # what this cluster offers
+```
+
+```yaml
+  apps:
+  - profile: nextcloud-base-ce
+    addons:
+    - nextcloud-calendar-ce
+```
+
+A profile that is not in the catalogue is refused when the Tenant is created,
+naming the profile.
+
+Read `definitions/components/tenant-defaults/defaults.yaml` before the first
+push. Its quotas are a starting point, not a measurement — they are a ceiling on
+what one tenant may request, and a ceiling above what the nodes can deliver
+admits tenants that never schedule.
+
+Then commit and push:
+
+```bash
+cd ~/.gentian/gentian-deployments
+git add clusters/<cluster-id>/tenants/acme clusters/<cluster-id>/definitions
+git commit -m "Add tenant acme"
+git push
+```
+
+ArgoCD creates it:
+
+```bash
+kubectl get tenant acme -w
+```
+
+Delete a tenant by reverting the commit, not with `kubectl delete` — the
+directory is what the cluster reconciles towards.
+
+---
+
 ## Advanced install options
 
 None of this is needed for a normal install. Skip it unless one of the headings
@@ -423,7 +479,8 @@ what is already done, so convergence and update are the same operation.
 
 ## Next steps
 
-- **Provision a tenant** and install apps — [docs/commands.md](docs/commands.md).
+- **Add more tenants** — repeat step 14. Day-to-day operations are in
+  [docs/commands.md](docs/commands.md).
 - **Configure mail** — [docs/design/mail.md](docs/design/mail.md). Mail between
   users of this cluster works once the kernel mail stack is deployed; mail to and
   from the internet additionally needs port 25 exposed and the MX, SPF, DKIM,

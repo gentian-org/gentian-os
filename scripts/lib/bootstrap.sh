@@ -1147,6 +1147,178 @@ print_handover_summary() {
 
 
 # =============================================================================
+# scaffold_tenant_deployment — write one tenant's directory in gentian-deployments
+# and stop.
+#
+# The counterpart to scaffold_cluster_deployment, and it exists for the same
+# reason: a tenant is its file in the deployments repository, and until now the
+# only way to learn that file's shape was to find another cluster that already
+# had one. The gentian-tenants ApplicationSet syncs clusters/<cluster>/tenants/*,
+# one directory per tenant, so a tenant that is not a directory there does not
+# exist no matter what was applied by hand.
+#
+# Writes, never applies. The file is committed and pushed like every other
+# deployment artefact, and Argo CD creates the Tenant — which is what makes the
+# tenant reproducible and what makes deleting it a revert rather than an
+# archaeology exercise.
+# =============================================================================
+scaffold_tenant_deployment() {
+    if [[ ! -d "${GENTIAN_DEPLOYMENTS_PATH}/.git" ]]; then
+        error "${GENTIAN_DEPLOYMENTS_PATH} is not a git checkout of gentian-deployments."
+        error "  Clone it there first, or point GENTIAN_DEPLOYMENTS_PATH at an existing checkout."
+        return 1
+    fi
+
+    local cluster="${GENTIAN_DEPLOYMENTS_CLUSTER_ID:?GENTIAN_DEPLOYMENTS_CLUSTER_ID must be set}"
+    local name="${GENTIAN_TENANT_NAME:?GENTIAN_TENANT_NAME must be set}"
+    local domain="${KERNEL_DOMAIN:?KERNEL_DOMAIN must be resolved before scaffolding a tenant}"
+    local cluster_dir="${GENTIAN_DEPLOYMENTS_PATH}/clusters/${cluster}"
+    local tenant_dir="${cluster_dir}/tenants/${name}"
+
+    if [[ ! -d "${cluster_dir}/kernel" ]]; then
+        error "Cluster ${cluster} has no kernel/ directory in ${GENTIAN_DEPLOYMENTS_PATH}."
+        error "  A tenant belongs to a cluster that exists. Run this first:"
+        error "    ./install.sh --prepare-deployment"
+        return 1
+    fi
+
+    banner "Scaffolding tenant ${name} for cluster ${cluster}"
+
+    # The shared defaults component, if this cluster has none yet.
+    #
+    # Written once per cluster rather than copied into every tenant: quotas and
+    # mail settings are properties of the cluster's hardware and domain, and a
+    # copy per tenant is how two tenants come to be sized for different machines.
+    local defaults_dir="${cluster_dir}/definitions/components/tenant-defaults"
+    if [[ ! -f "${defaults_dir}/kustomization.yaml" ]]; then
+        mkdir -p "${defaults_dir}"
+        cat >"${defaults_dir}/kustomization.yaml" <<'KUSTEOF'
+apiVersion: kustomize.config.k8s.io/v1alpha1
+kind: Component
+patches:
+- path: defaults.yaml
+  target:
+    group: gentianos.io
+    version: v1alpha1
+    kind: Tenant
+KUSTEOF
+        cat >"${defaults_dir}/defaults.yaml" <<DEFEOF
+apiVersion: gentianos.io/v1alpha1
+kind: Tenant
+metadata:
+  name: placeholder  # matched via the target selector in kustomization.yaml
+  annotations:
+    argocd.argoproj.io/sync-wave: "2"
+spec:
+  isolation:
+    mode: namespace
+  mail:
+    domain: ${domain}
+    mode: selfhosted
+    quotaPerUser: 2Gi
+    rateLimit: 100/h
+
+  # A CEILING on everything one tenant may request, not a reservation.
+  #
+  # Size it against this cluster's allocatable capacity minus what the kernel
+  # already requests — not against another cluster's file. A quota larger than
+  # the hardware admits tenants that can never schedule; a quota smaller than
+  # the apps request rejects them at admission with a message about the quota
+  # rather than about the app.
+  #
+  # Start here and measure: 'kubectl describe resourcequota -n tenant-<name>'
+  # after the first app is installed tells you what it actually wanted.
+  quotas:
+    cpu: 4
+    memory: 4Gi
+    storage: 100Gi
+    maxApps: 10
+DEFEOF
+        success "Wrote ${defaults_dir#"${GENTIAN_DEPLOYMENTS_PATH}/"}/ (shared by every tenant on this cluster)"
+    else
+        info "Using this cluster's existing tenant-defaults component."
+    fi
+
+    if [[ -f "${tenant_dir}/tenant.yaml" ]]; then
+        warn "${tenant_dir#"${GENTIAN_DEPLOYMENTS_PATH}/"}/tenant.yaml already exists; leaving it alone."
+        _print_tenant_next_steps "${name}" "${cluster}" "${tenant_dir}"
+        return 0
+    fi
+
+    mkdir -p "${tenant_dir}"
+    cat >"${tenant_dir}/kustomization.yaml" <<'KEOF'
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+- tenant.yaml
+components:
+- ../../definitions/components/tenant-defaults
+KEOF
+
+    {
+        printf 'apiVersion: gentianos.io/v1alpha1\n'
+        printf 'kind: Tenant\n'
+        printf 'metadata:\n'
+        printf '  name: %s\n' "${name}"
+        printf 'spec:\n'
+        printf '  displayName: %s\n' "${GENTIAN_TENANT_DISPLAY_NAME:-${name}}"
+        printf '  adminEmail: %s\n' "${GENTIAN_TENANT_ADMIN_EMAIL:-admin-${name}@${domain}}"
+        printf '\n'
+        printf '  # Where this tenant is served. Left unset it is %s.%s,\n' "${name}" "${domain}"
+        printf '  # which is what a multi-tenant cluster wants. Set it to serve the\n'
+        printf '  # tenant on a domain they own instead.\n'
+        if [[ -n "${GENTIAN_TENANT_DOMAIN:-}" ]]; then
+            printf '  domain: %s\n' "${GENTIAN_TENANT_DOMAIN}"
+        else
+            printf '  # domain: %s.example.org\n' "${name}"
+        fi
+        printf '\n'
+        printf '  # Prefixes keep one tenant out of another tenant name-space in the\n'
+        printf '  # shared data stores. Changing them after provisioning strands what\n'
+        printf '  # was created under the old ones.\n'
+        printf '  isolation:\n'
+        printf '    keycloakRealm: %s\n' "${name}"
+        printf '    databasePrefix: %s_\n' "${name//-/_}"
+        printf '    s3Prefix: %s-\n' "${name}"
+        printf '\n'
+        printf '  # Retain keeps the data when the Tenant is deleted; Delete removes it.\n'
+        printf '  deletionPolicy: %s\n' "${GENTIAN_TENANT_DELETION_POLICY:-Retain}"
+        printf '\n'
+        printf '  # Apps are installed by profile name from the catalogue.\n'
+        printf '  #   kubectl gentian apps list      what this cluster offers\n'
+        printf '  #\n'
+        printf '  # A profile that is not in the catalogue is refused at admission,\n'
+        printf '  # naming the profile — so a typo here fails on push, not later.\n'
+        printf '  apps: []\n'
+        printf '  # apps:\n'
+        printf '  # - profile: nextcloud-base-ce\n'
+        printf '  #   addons:\n'
+        printf '  #   - nextcloud-calendar-ce\n'
+    } >"${tenant_dir}/tenant.yaml"
+
+    success "Wrote ${tenant_dir#"${GENTIAN_DEPLOYMENTS_PATH}/"}/"
+    _print_tenant_next_steps "${name}" "${cluster}" "${tenant_dir}"
+}
+
+_print_tenant_next_steps() {
+    local name="$1" cluster="$2" dir="$3"
+    local rel="${dir#"${GENTIAN_DEPLOYMENTS_PATH}/"}"
+    echo ""
+    info "Nothing has been applied. To deploy this tenant:"
+    info "  1. Choose its apps:  \$EDITOR ${GENTIAN_DEPLOYMENTS_PATH}/${rel}/tenant.yaml"
+    info "  2. Commit and push:"
+    info "       cd ${GENTIAN_DEPLOYMENTS_PATH}"
+    info "       git add clusters/${cluster}/tenants/${name} clusters/${cluster}/definitions"
+    info "       git commit -m 'Add tenant ${name} to ${cluster}'"
+    info "       git push"
+    info "  3. Argo CD picks it up:  kubectl get tenant ${name} -w"
+    echo ""
+    info "If step 3 reports the tenant was refused because handover is not"
+    info "finished, sign in to the portal as the administrator first — see"
+    info "GETTING-STARTED.md, 'Hand the cluster over'."
+}
+
+# =============================================================================
 # Stage 1: LLM serving (vLLM / LocalAI serving backend + LiteLLM proxy)
 # =============================================================================
 install_llm_serving() {

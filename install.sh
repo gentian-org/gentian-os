@@ -22,6 +22,7 @@
 # running cluster IS the update, so it is the same forward pass.
 #
 #   ./install.sh --prepare-deployment   write this cluster's files, change nothing
+#   ./install.sh --prepare-tenant NAME  write one tenant's files, change nothing
 #   ./install.sh                    install or converge
 #   ./install.sh --update           same thing, named for what you meant
 #   ./install.sh --uninstall        reverse order, destroy() each step
@@ -40,6 +41,10 @@
 # A cluster is its claims and values in gentian-deployments, so those come
 # first: --prepare-deployment generates them from install.env, and you edit,
 # commit and push them before installing. Installing does not write them.
+#
+# A tenant is the same shape one level down: --prepare-tenant writes its
+# directory under the cluster, you choose its apps, commit and push. Argo CD
+# creates it. The installer never applies a Tenant.
 #
 # Read before you run:
 #
@@ -99,6 +104,7 @@ GENTIAN_PURGE=0
 GENTIAN_PURGE_CLUSTER_INFRA=0
 GENTIAN_KIT_PATH=""
 GENTIAN_RECOVER_FROM=""
+GENTIAN_TENANT_NAME="${GENTIAN_TENANT_NAME:-}"
 
 driver_usage() {
     sed -n '3,42p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
@@ -132,6 +138,8 @@ Running part of it. A step is named by its number or its full id, so
 Other options:
   --prepare-deployment  write clusters/<id>/kernel in gentian-deployments from
                         install.env, then stop — nothing is committed or applied
+  --prepare-tenant NAME write clusters/<id>/tenants/NAME the same way, then
+                        stop. Needs the cluster's own files to exist already
   --validate            validate config and step contracts, no cluster changes
   --verify-only         run post-install verification and print the summary
   --no-cluster-infra    skip cert-manager / CNPG / reloader on install
@@ -155,6 +163,12 @@ parse_driver_args() {
         case "$1" in
             --update)            GENTIAN_DIRECTION="forward" ;;
             --prepare-deployment) GENTIAN_DIRECTION="prepare" ;;
+            --prepare-tenant)
+                GENTIAN_DIRECTION="prepare-tenant"
+                # The name is optional here and prompted for when absent, so a
+                # bare --prepare-tenant is a question rather than an error.
+                if [[ -z "${2:-}" || "${2:-}" == -* ]]; then GENTIAN_TENANT_NAME=""
+                else shift; GENTIAN_TENANT_NAME="$1"; fi ;;
             --uninstall|--destroy) GENTIAN_DIRECTION="reverse" ;;
             # Purge is an uninstall that also removes what an uninstall keeps,
             # so it selects the same direction rather than a fourth one.
@@ -221,7 +235,7 @@ parse_driver_args() {
 
     export GENTIAN_DRY_RUN GENTIAN_ONLY GENTIAN_FROM GENTIAN_UNTIL GENTIAN_SKIP GENTIAN_PHASE
     export GENTIAN_PURGE_CLUSTER_INFRA
-    export INSTALL_CLUSTER_INFRA INSTALL_CONFIG_FILE
+    export INSTALL_CLUSTER_INFRA INSTALL_CONFIG_FILE GENTIAN_TENANT_NAME
     export INSTALL_AUTO_LOAD_CONFIG INSTALL_VERIFY_ONLY INSTALL_VALIDATE_ONLY
 }
 
@@ -305,6 +319,22 @@ prepare_deployment_run() {
     scaffold_cluster_deployment
 }
 
+# =============================================================================
+# prepare_tenant_run — write one tenant's directory and stop.
+#
+# Reads less than prepare_deployment_run: a tenant needs the cluster's identity
+# and its domain, and nothing else. No credentials, no cluster contact — the
+# same reasoning as --prepare-deployment, one level down.
+# =============================================================================
+prepare_tenant_run() {
+    load_operator_config
+    load_deployments_cluster_settings
+    resolve_kernel_domain_from_claim
+    prompt_kernel_domain
+    prompt_tenant_identity
+    scaffold_tenant_deployment
+}
+
 # _ensure_bao — install the OpenBao CLI to ~/.local/bin when absent.
 _ensure_bao() {
     if command -v bao >/dev/null 2>&1; then
@@ -366,6 +396,9 @@ main() {
     case "${GENTIAN_DIRECTION}" in
         prepare)
             prepare_deployment_run
+            ;;
+        prepare-tenant)
+            prepare_tenant_run
             ;;
         export-kit)
             # Reads the cluster and OpenBao; changes neither.

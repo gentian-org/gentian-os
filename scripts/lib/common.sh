@@ -1071,6 +1071,56 @@ prompt_mail_mode() {
     fi
 }
 
+# =============================================================================
+# prompt_tenant_identity — the three things a tenant file cannot be written
+# without: its name, what to call it, and who administers it.
+#
+# Everything else on a Tenant has a workable default or belongs to the cluster's
+# shared defaults component, so asking for it here would be asking an operator
+# to decide something before they have any reason to.
+# =============================================================================
+prompt_tenant_identity() {
+    if [[ -z "${GENTIAN_TENANT_NAME:-}" ]]; then
+        if [[ "${GENTIAN_NONINTERACTIVE:-0}" == "1" ]]; then
+            error "No tenant name given and this is a non-interactive run."
+            error "  ./install.sh --prepare-tenant <name>"
+            exit 1
+        fi
+        echo ""
+        info "Tenant name — the Kubernetes object name, its namespace suffix and"
+        info "its subdomain. Lower-case letters, digits and hyphens."
+        local v
+        while true; do
+            read -rp "  Tenant name: " v
+            # The same shape Kubernetes will insist on, checked here so the
+            # failure is a re-prompt rather than a rejected push.
+            if [[ "${v}" =~ ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$ && ${#v} -le 40 ]]; then
+                break
+            fi
+            warn "Not a valid name. Lower-case letters, digits and hyphens; must start and end with one."
+        done
+        GENTIAN_TENANT_NAME="${v}"
+    fi
+    export GENTIAN_TENANT_NAME
+
+    if [[ -z "${GENTIAN_TENANT_DISPLAY_NAME:-}" && "${GENTIAN_NONINTERACTIVE:-0}" != "1" ]]; then
+        local d
+        read -rp "  Display name (default: ${GENTIAN_TENANT_NAME}): " d
+        GENTIAN_TENANT_DISPLAY_NAME="${d:-${GENTIAN_TENANT_NAME}}"
+    fi
+    GENTIAN_TENANT_DISPLAY_NAME="${GENTIAN_TENANT_DISPLAY_NAME:-${GENTIAN_TENANT_NAME}}"
+    export GENTIAN_TENANT_DISPLAY_NAME
+
+    local default_email="admin-${GENTIAN_TENANT_NAME}@${KERNEL_DOMAIN}"
+    if [[ -z "${GENTIAN_TENANT_ADMIN_EMAIL:-}" && "${GENTIAN_NONINTERACTIVE:-0}" != "1" ]]; then
+        local e
+        read -rp "  Tenant administrator email (default: ${default_email}): " e
+        GENTIAN_TENANT_ADMIN_EMAIL="${e:-${default_email}}"
+    fi
+    GENTIAN_TENANT_ADMIN_EMAIL="${GENTIAN_TENANT_ADMIN_EMAIL:-${default_email}}"
+    export GENTIAN_TENANT_ADMIN_EMAIL
+}
+
 prompt_network_mode() {
     if [[ -n "${NETWORK_MODE:-}" ]]; then
         if [[ "${NETWORK_MODE}" != "tunnel" && "${NETWORK_MODE}" != "static-ip" ]]; then
