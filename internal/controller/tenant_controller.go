@@ -41,6 +41,7 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/controller"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/log"
@@ -326,6 +327,20 @@ func (r *TenantReconciler) SetupWithManager(mgr ctrl.Manager) error {
 
 	ctrlBuilder := ctrl.NewControllerManagedBy(mgr).
 		For(&gentianov1alpha1.Tenant{}).
+		// One worker is controller-runtime's default, and it is the wrong one
+		// here. A tenant waiting on its provisioning Jobs requeues every two
+		// seconds (see the RequeueAfter below), so every tenant that has not
+		// finished converging occupies the queue continuously. With a single
+		// worker one tenant's provisioning delays every other tenant's
+		// reconcile — including a deletion, which is the one that must get
+		// through promptly.
+		//
+		// It showed up first in CI, where envtest has no kubelet: Jobs never
+		// complete, so every test tenant requeues forever, and a deletion
+		// reconcile was starved past a three-minute wait. Tenants are
+		// independent — the reconciler holds no state shared between them — so
+		// they can converge alongside each other.
+		WithOptions(controller.Options{MaxConcurrentReconciles: 4}).
 		Owns(&corev1.Namespace{}).
 		Watches(
 			&batchv1.Job{},

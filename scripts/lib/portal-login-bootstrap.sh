@@ -903,6 +903,35 @@ spec:
               if [ -n "\${CLIENT_ID}" ]; then
                 SCOPE_LIST=\$(curl -sf -H "\${AUTH}" "\${KEYCLOAK_BASE}/admin/realms/\${REALM}/client-scopes")
                 GROUPS_SCOPE_ID=\$(printf '%s' "\${SCOPE_LIST}" | jq -r '.[] | select(.name=="groups") | .id' | head -1)
+
+                # Create the scope when the realm has none.
+                #
+                # Keycloak ships a groups scope in some distributions and not others,
+                # and this realm had none — so the attach below found nothing, did
+                # nothing, and said nothing. The portal's tokens then carried no groups
+                # claim, OpenBao refused every one, and it surfaced three layers away as
+                # a 401 from the credential manager.
+                #
+                # full.path is what OpenBao matches: its roles bind /group-name with a
+                # leading slash, and the bare name matches nothing.
+                if [ -z "\${GROUPS_SCOPE_ID}" ] || [ "\${GROUPS_SCOPE_ID}" = "null" ]; then
+                  echo "No groups client scope in realm \${REALM}; creating one."
+                  curl -sf -X POST -H "\${AUTH}" -H "Content-Type: application/json" \\
+                    "\${KEYCLOAK_BASE}/admin/realms/\${REALM}/client-scopes" \\
+                    -d '{"name":"groups","protocol":"openid-connect","attributes":{"include.in.token.scope":"true","display.on.consent.screen":"false"}}' \\
+                    >/dev/null || { echo "ERROR: could not create the groups client scope." >&2; exit 1; }
+                  GROUPS_SCOPE_ID=\$(curl -sf -H "\${AUTH}" "\${KEYCLOAK_BASE}/admin/realms/\${REALM}/client-scopes" \\
+                    | jq -r '.[] | select(.name=="groups") | .id' | head -1)
+                  if [ -z "\${GROUPS_SCOPE_ID}" ] || [ "\${GROUPS_SCOPE_ID}" = "null" ]; then
+                    echo "ERROR: created the groups scope but cannot find it." >&2
+                    exit 1
+                  fi
+                  curl -sf -X POST -H "\${AUTH}" -H "Content-Type: application/json" \\
+                    "\${KEYCLOAK_BASE}/admin/realms/\${REALM}/client-scopes/\${GROUPS_SCOPE_ID}/protocol-mappers/models" \\
+                    -d '{"name":"groups","protocol":"openid-connect","protocolMapper":"oidc-group-membership-mapper","config":{"claim.name":"groups","full.path":"true","id.token.claim":"true","access.token.claim":"true","userinfo.token.claim":"true"}}' \\
+                    >/dev/null || { echo "ERROR: could not add the group-membership mapper." >&2; exit 1; }
+                  echo "Created groups client scope with full.path=true"
+                fi
                 if [ -n "\${GROUPS_SCOPE_ID}" ] && [ "\${GROUPS_SCOPE_ID}" != "null" ]; then
                   # The success line used to print whether or not the PUT worked,
                   # and the PUT swallowed its own failure. The portal then minted
@@ -1101,14 +1130,25 @@ ${refresh_shell}
                       "userinfo.token.claim": "true"
                     }
                   }'
+                  # Reported, not fatal. This mapper adds a convenience claim to an LLM
+                  # dashboard. Ending the portal bootstrap over it leaves the cluster with
+                  # no working login at all, which is far worse — and it did exactly that:
+                  # a failing POST exited 22 under set -e, so every later step, including
+                  # the groups scope the login depends on, never ran.
+                  MAPPER_RC=0
                   if [ -n "\${MAPPER_ID}" ] && [ "\${MAPPER_ID}" != "null" ]; then
                     curl -sf -X PUT -H "\${AUTH}" -H "Content-Type: application/json" \\
-                      "\${KEYCLOAK_BASE}/admin/realms/\${REALM}/clients/\${LITELLM_CLIENT_ID}/protocol-mappers/models/\${MAPPER_ID}" -d "\${MAPPER_BODY}" >/dev/null
+                      "\${KEYCLOAK_BASE}/admin/realms/\${REALM}/clients/\${LITELLM_CLIENT_ID}/protocol-mappers/models/\${MAPPER_ID}" -d "\${MAPPER_BODY}" >/dev/null || MAPPER_RC=\$?
                   else
                     curl -sf -X POST -H "\${AUTH}" -H "Content-Type: application/json" \\
-                      "\${KEYCLOAK_BASE}/admin/realms/\${REALM}/clients/\${LITELLM_CLIENT_ID}/protocol-mappers/models" -d "\${MAPPER_BODY}" >/dev/null
+                      "\${KEYCLOAK_BASE}/admin/realms/\${REALM}/clients/\${LITELLM_CLIENT_ID}/protocol-mappers/models" -d "\${MAPPER_BODY}" >/dev/null || MAPPER_RC=\$?
                   fi
-                  echo "litellm-dashboard role mapper: litellm_role=proxy_admin"
+                  if [ "\${MAPPER_RC}" = "0" ]; then
+                    echo "litellm-dashboard role mapper: litellm_role=proxy_admin"
+                  else
+                    echo "WARN: litellm-dashboard role mapper not applied (curl exit \${MAPPER_RC})." >&2
+                    echo "  The LLM dashboard will not see litellm_role; nothing else is affected." >&2
+                  fi
                 fi
               fi
 
