@@ -133,15 +133,17 @@ check() {
 
 apply() {
     if ! _handover_proven; then
-        warn "Nobody has signed in to this cluster as an administrator yet."
+        warn "No administrator has exchanged a token on this cluster yet."
         warn "  Refusing to revoke the bootstrap token: it is currently the ONLY"
-        warn "  way to write a credential, and revoking it before the sign-in"
-        warn "  path is known to work would leave this cluster unable to accept"
-        warn "  one — recovering means re-initialising OpenBao."
+        warn "  way to write a credential, and revoking it before the exchange is"
+        warn "  known to work would leave this cluster unable to accept one —"
+        warn "  recovering means re-initialising OpenBao."
         warn ""
-        warn "  Sign in to the portal as the cluster administrator. The first"
-        warn "  successful sign-in records the proof, and then:"
-        warn "    ./install.sh --only E-03"
+        warn "  Signing in is not enough. The exchange happens when the portal"
+        warn "  lists credentials, so:"
+        warn "    1. sign in to the portal as the cluster administrator"
+        warn "    2. open the Admin Console and select the Credentials tab"
+        warn "    3. ./install.sh --only E-03"
         warn ""
         # The chain is the diagnosis, not the guard. "Nobody has logged in" is
         # true whether the operator simply has not got to it or the login is
@@ -152,8 +154,8 @@ apply() {
                 [[ -n "${_reason}" ]] && warn "    - ${_reason}"
             done <<< "${_OIDC_MISSING:-}"
         else
-            warn "  Every part of the sign-in path is in place; it has just not"
-            warn "  been used. That is the one thing this installer cannot do"
+            warn "  Every part of the path is in place; it has just not been"
+            warn "  exercised. That is the one thing this installer cannot do"
             warn "  for you — the exchange needs a human at a browser."
         fi
         return 0

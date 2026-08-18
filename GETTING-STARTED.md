@@ -322,10 +322,18 @@ account in its closing summary:
 The password is derived, so `./install.sh --verify-only` prints it again if you
 have lost the output.
 
-That sign-in is the test. Logging in exchanges your Keycloak token for a
-short-lived OpenBao token, which is the path every future credential write uses,
-and it is the one thing the installer cannot try for you: it needs a human at a
-browser. The cluster records the first successful sign-in.
+Then **open the Admin Console and select the Credentials tab.**
+
+That second step is the actual test, and it is not optional. Signing in proves
+Keycloak works, which was never in doubt. What has never been proven is the
+*exchange*: trading your Keycloak token for a short-lived OpenBao one, which is
+what every future credential write uses and what the bootstrap token is being
+traded away for. The portal performs that exchange when it lists credentials,
+and nowhere else — so opening the tab is what proves it, and the cluster records
+the first success.
+
+It is the one thing the installer cannot do for you: the exchange needs a human
+at a browser.
 
 Then revoke the installer's credential:
 
@@ -344,7 +352,7 @@ To see where a cluster stands:
 kubectl get configmap gentian-handover -n gentian-system -o yaml
 ```
 
-`writePathProven: "true"` means someone has signed in.
+`writePathProven: "true"` means the exchange has succeeded at least once.
 `bootstrapCredentialRevoked: "true"` means handover is complete.
 
 Until it is, **creating tenants is held back.** Not because tenants need this

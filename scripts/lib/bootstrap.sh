@@ -1130,17 +1130,21 @@ print_handover_summary() {
 
     echo -e "${YELLOW}  HANDOVER IS NOT FINISHED${NC}"
     if [[ "${proven}" == "true" ]]; then
-        echo -e "${YELLOW}    An administrator has signed in, so the write path works.${NC}"
+        echo -e "${YELLOW}    An administrator has exchanged a token, so the write path works.${NC}"
         echo -e "${YELLOW}    Revoke the installer's credential to finish:${NC}"
         echo -e "${YELLOW}      ./install.sh --only E-03${NC}"
     else
-        echo -e "${YELLOW}    Nobody has signed in yet, so this cluster cannot yet show${NC}"
-        echo -e "${YELLOW}    that its administrator can write credentials. Until it can:${NC}"
+        echo -e "${YELLOW}    No administrator has exchanged a token yet, so this cluster${NC}"
+        echo -e "${YELLOW}    cannot show that anyone but the installer can write${NC}"
+        echo -e "${YELLOW}    credentials. Until it can:${NC}"
         echo -e "${YELLOW}      - the installer's bootstrap credential stays live${NC}"
         echo -e "${YELLOW}      - creating tenants is held back${NC}"
         echo ""
-        echo -e "${YELLOW}    Sign in to the portal as the administrator, then:${NC}"
-        echo -e "${YELLOW}      ./install.sh --only E-03${NC}"
+        echo -e "${YELLOW}    Signing in alone does not do it — the exchange happens when${NC}"
+        echo -e "${YELLOW}    the portal lists credentials:${NC}"
+        echo -e "${YELLOW}      1. sign in at https://portal.${KERNEL_DOMAIN:-<kernel-domain>}/login${NC}"
+        echo -e "${YELLOW}      2. Admin Console → Credentials${NC}"
+        echo -e "${YELLOW}      3. ./install.sh --only E-03${NC}"
     fi
     echo ""
 }
