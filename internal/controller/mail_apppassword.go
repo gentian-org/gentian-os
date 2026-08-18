@@ -228,7 +228,10 @@ func (r *TenantReconciler) syncMailAppPasswords(ctx context.Context, tenant *gen
 			return err
 		}
 		lines.WriteString(line + "\n")
-		plain[u] = []byte(pw)
+		// Secret keys allow only [-._a-zA-Z0-9], and a Keycloak username is
+		// frequently an email address — the @ makes the whole Secret invalid and
+		// rejected, so every user's password is lost, not just that one's.
+		plain[secretKeySafe(u)] = []byte(pw)
 	}
 
 	// The tenant's own copy, in its own namespace, for its mail client.
@@ -243,6 +246,20 @@ func (r *TenantReconciler) syncMailAppPasswords(ctx context.Context, tenant *gen
 				"  result_failure = continue\n  result_internalfail = continue\n}\n",
 			mailAppPasswordApp)),
 	})
+}
+
+// secretKeySafe maps a username onto the charset a Secret key permits.
+func secretKeySafe(s string) string {
+	out := []rune(s)
+	for i, r := range out {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9',
+			r == '-', r == '.', r == '_':
+		default:
+			out[i] = '_'
+		}
+	}
+	return string(out)
 }
 
 func (r *TenantReconciler) upsertSecret(ctx context.Context, name, ns string, data map[string][]byte) error {
