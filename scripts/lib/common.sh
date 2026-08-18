@@ -912,6 +912,93 @@ prompt_kernel_domain() {
 #
 # Persisted to ${INSTALL_STATE_FILE} so re-runs do not re-prompt.
 # =============================================================================
+# =============================================================================
+# prompt_issuer_mode — who issues this cluster's certificates.
+#
+# Asked rather than defaulted because getting it wrong is not a preference, it
+# is a failed install: on a domain Let's Encrypt cannot resolve, every Gateway
+# waits for a certificate that will never be issued, and the symptom names a
+# missing Secret rather than an unreachable ACME endpoint.
+# =============================================================================
+prompt_issuer_mode() {
+    local valid="acme-dns01 acme-http01 private-ca self-signed"
+    if [[ -n "${CERT_ISSUER_MODE:-}" ]]; then
+        case " ${valid} " in
+            *" ${CERT_ISSUER_MODE} "*) ;;
+            *) error "CERT_ISSUER_MODE=${CERT_ISSUER_MODE} is invalid. One of: ${valid}."; exit 1 ;;
+        esac
+        info "Using CERT_ISSUER_MODE=${CERT_ISSUER_MODE}"
+        export CERT_ISSUER_MODE
+        return
+    fi
+
+    if [[ "${GENTIAN_NONINTERACTIVE:-0}" == "1" ]]; then
+        CERT_ISSUER_MODE="acme-dns01"
+        info "CERT_ISSUER_MODE not set; defaulting to acme-dns01 (non-interactive)."
+        export CERT_ISSUER_MODE
+        return
+    fi
+
+    echo ""
+    info "Certificate issuer — how this cluster gets TLS certificates:"
+    info "  acme-dns01  : Let's Encrypt over DNS-01. Needs the Cloudflare API token."
+    info "  acme-http01 : Let's Encrypt over HTTP-01. Needs port 80 reachable from the internet."
+    info "  private-ca  : an existing CA you supply as a Secret."
+    info "  self-signed : no public DNS and no ACME reachability. Browsers will warn."
+    local v
+    while true; do
+        read -rp "  issuerMode [${valid// /|}] (default: acme-dns01): " v
+        v="${v:-acme-dns01}"
+        case " ${valid} " in *" ${v} "*) break ;; esac
+        warn "Invalid value '${v}'."
+    done
+    export CERT_ISSUER_MODE="$v"
+}
+
+# =============================================================================
+# prompt_mail_mode — where this cluster's mail goes.
+#
+# Asked because both answers need something else supplied with them: external
+# needs a relay address here and a credential at install time, kernel needs
+# static-ip. A silent default leaves a cluster that cannot send an invitation
+# or a password reset, and nothing reports that until someone tries.
+# =============================================================================
+prompt_mail_mode() {
+    if [[ -z "${MAIL_SERVICE_MODE:-}" ]]; then
+        if [[ "${GENTIAN_NONINTERACTIVE:-0}" == "1" ]]; then
+            MAIL_SERVICE_MODE="external"
+        else
+            echo ""
+            info "Mail — how this cluster sends mail:"
+            info "  external : relay through an SMTP provider. Needs its address and credentials."
+            info "  kernel   : in-cluster Postfix/Dovecot. Requires networkMode=static-ip."
+            local v
+            while true; do
+                read -rp "  mail.serviceMode [external|kernel] (default: external): " v
+                v="${v:-external}"
+                [[ "$v" == "external" || "$v" == "kernel" ]] && break
+                warn "Invalid value '${v}'."
+            done
+            MAIL_SERVICE_MODE="$v"
+        fi
+    fi
+    export MAIL_SERVICE_MODE
+
+    if [[ "${MAIL_SERVICE_MODE}" == "kernel" && "${NETWORK_MODE:-tunnel}" != "static-ip" ]]; then
+        error "mail.serviceMode=kernel requires networkMode=static-ip; this cluster is ${NETWORK_MODE:-tunnel}."
+        error "  Choose external, or re-run with NETWORK_MODE=static-ip."
+        exit 1
+    fi
+
+    # Only external mode has a relay to name.
+    if [[ "${MAIL_SERVICE_MODE}" == "external" && -z "${EXTERNAL_SMTP_HOST:-}" ]]; then
+        if [[ "${GENTIAN_NONINTERACTIVE:-0}" != "1" ]]; then
+            read -rp "  mail.host (SMTP relay, blank to set later): " EXTERNAL_SMTP_HOST
+        fi
+        [[ -n "${EXTERNAL_SMTP_HOST:-}" ]] && export EXTERNAL_SMTP_HOST
+    fi
+}
+
 prompt_network_mode() {
     if [[ -n "${NETWORK_MODE:-}" ]]; then
         if [[ "${NETWORK_MODE}" != "tunnel" && "${NETWORK_MODE}" != "static-ip" ]]; then

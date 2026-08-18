@@ -1063,32 +1063,97 @@ install_llm_serving() {
 # Empty values are omitted rather than written blank: an empty string is a value
 # in YAML and would override the XRD default with nothing.
 _claim_cluster_fields() {
-    local pair var field
-    for pair in "TENANCY_MODE tenancyMode" "NETWORK_MODE networkMode" \
-                "ROUTING_MODE routingMode" "SECRET_MODE secretMode" \
-                "NODE_IP nodeIp" "STORAGE_CLASS storageClass" \
-                "LB_PROVIDER lbProvider" "LB_ANNOTATIONS lbAnnotations"; do
-        var="${pair%% *}"; field="${pair##* }"
-        [[ -n "${!var:-}" ]] && printf '  %s: %s\n' "${field}" "${!var}"
-    done
-    # Nested objects are emitted whole, and only when they have content: a bare
-    # `mail:` with nothing under it is not valid against the XRD.
+    # Emits the whole spec below kernelDomain, and emits EVERY field that
+    # decides how the cluster behaves — set, or commented with its default and
+    # the reason it is not set.
     #
-    # Newlines are appended explicitly. $(printf ...) strips trailing newlines,
-    # so building these with command substitution ran every field onto one line
-    # and produced a claim that did not parse.
-    local mail="" llm=""
-    [[ -n "${MAIL_SERVICE_MODE:-}"      ]] && mail+="    serviceMode: ${MAIL_SERVICE_MODE}"$'\n'
-    [[ -n "${EXTERNAL_SMTP_HOST:-}"     ]] && mail+="    host: ${EXTERNAL_SMTP_HOST}"$'\n'
-    [[ -n "${EXTERNAL_SMTP_PORT:-}"     ]] && mail+="    port: ${EXTERNAL_SMTP_PORT}"$'\n'
-    [[ -n "${EXTERNAL_SMTP_SSL:-}"      ]] && mail+="    ssl: ${EXTERNAL_SMTP_SSL}"$'\n'
-    [[ -n "${EXTERNAL_SMTP_STARTTLS:-}" ]] && mail+="    starttls: ${EXTERNAL_SMTP_STARTTLS}"$'\n'
-    [[ -n "${mail}" ]] && printf '  mail:\n%s' "${mail}"
+    # The alternative, writing only what the environment happened to carry,
+    # produced a claim that was correct and unreadable: a reader could not tell
+    # a deliberate default from a forgotten setting without opening the XRD, and
+    # a field that does nothing in this configuration looked the same as one
+    # that does. Both questions are answered here, in the file the operator
+    # actually edits.
+    local nm="${NETWORK_MODE:-tunnel}"
+    local mm="${MAIL_SERVICE_MODE:-external}"
+    local im="${CERT_ISSUER_MODE:-acme-dns01}"
 
-    [[ -n "${GPU_TIME_SLICE_REPLICAS:-}" ]] && llm+="    gpuTimeSliceReplicas: ${GPU_TIME_SLICE_REPLICAS}"$'\n'
-    [[ -n "${VLLM_INSTANCES:-}"          ]] && llm+="    vllmInstances: ${VLLM_INSTANCES}"$'\n'
-    [[ -n "${llm}" ]] && printf '  llm:\n%s' "${llm}"
+    printf '\n'
+    printf '  # How traffic reaches this cluster.\n'
+    printf '  #   tunnel     behind a reverse proxy or tunnel; nodeIp is not used\n'
+    printf '  #   static-ip  DNS points straight at nodeIp, which is then required\n'
+    printf '  networkMode: %s\n' "${nm}"
+    if [[ "${nm}" == "static-ip" ]]; then
+        printf '  nodeIp: %s\n' "${NODE_IP:-}"
+    else
+        printf '  # nodeIp:                      not used while networkMode is tunnel\n'
+    fi
+
+    printf '\n'
+    printf '  # Who issues TLS certificates.\n'
+    printf '  #   acme-dns01   Lets Encrypt over DNS-01; needs the Cloudflare API token\n'
+    printf '  #   acme-http01  Lets Encrypt over HTTP-01; needs port 80 reachable\n'
+    printf '  #   private-ca   your own CA, supplied as certificates.caBundleSecretRef\n'
+    printf '  #   self-signed  no public DNS and no ACME reachability; browsers warn\n'
+    printf '  certificates:\n'
+    printf '    issuerMode: %s\n' "${im}"
+    if [[ "${im}" == "private-ca" ]]; then
+        printf '    caBundleSecretRef:\n'
+        printf '      name: %s\n' "${CA_BUNDLE_SECRET_NAME:-gentian-root-ca-tls}"
+        printf '      namespace: %s\n' "${CA_BUNDLE_SECRET_NAMESPACE:-cert-manager}"
+    else
+        printf '    # caBundleSecretRef:         only read when issuerMode is private-ca\n'
+    fi
+
+    printf '\n'
+    printf '  # Where mail goes.\n'
+    printf '  #   external  relay through an SMTP provider; supply the smtp-relay\n'
+    printf '  #             credential to the credential manager after install\n'
+    printf '  #   kernel    in-cluster Postfix/Dovecot; requires networkMode static-ip\n'
+    printf '  mail:\n'
+    printf '    serviceMode: %s\n' "${mm}"
+    if [[ "${mm}" == "external" ]]; then
+        if [[ -n "${EXTERNAL_SMTP_HOST:-}" ]]; then
+            printf '    host: %s\n' "${EXTERNAL_SMTP_HOST}"
+        else
+            printf '    # host:                    the relay address; set before mail will send\n'
+        fi
+        printf '    # port: 587                 defaults to 587\n'
+        printf '    # starttls: true            defaults to true\n'
+    else
+        printf '    # host:                     not used while serviceMode is kernel\n'
+    fi
+
+    printf '\n'
+    printf '  # Defaults below are in effect. Uncomment a line to change it.\n'
+    _claim_default_line tenancyMode  "${TENANCY_MODE:-}"  multi   'one subdomain and Keycloak realm per tenant; single = one tenant owns the cluster'
+    _claim_default_line secretMode   "${SECRET_MODE:-}"   derived 'every kernel secret reproducible from the master password; random = independent'
+    _claim_default_line routingMode  "${ROUTING_MODE:-}"  gateway 'Envoy Gateway plus the Gateway API; the only supported value'
+    _claim_default_line storageClass "${STORAGE_CLASS:-}" ''      'empty means the clusters default StorageClass'
+
+    if [[ "${LLM_SUPPORT:-false}" == "true" ]]; then
+        printf '  llm:\n'
+        printf '    enabled: true\n'
+        [[ -n "${GPU_TIME_SLICE_REPLICAS:-}" ]] && printf '    gpuTimeSliceReplicas: %s\n' "${GPU_TIME_SLICE_REPLICAS}"
+        [[ -n "${VLLM_INSTANCES:-}" ]] && printf '    vllmInstances: %s\n' "${VLLM_INSTANCES}"
+    else
+        printf '  # llm:\n'
+        printf '  #   enabled: false            set true on a cluster that serves models\n'
+    fi
     return 0
+}
+
+# _claim_default_line <field> <value> <default> <explanation>
+#
+# Sets the field when the operator chose something, and otherwise records the
+# default that is active. Either way the field appears, so the file lists the
+# cluster's whole configuration rather than the part someone happened to set.
+_claim_default_line() {
+    local field="$1" value="$2" default="$3" why="$4"
+    if [[ -n "${value}" && "${value}" != "${default}" ]]; then
+        printf '  %s: %s\n' "${field}" "${value}"
+    else
+        printf '  # %-13s %-10s %s\n' "${field}:" "${default:-\"\"}" "${why}"
+    fi
 }
 
 scaffold_cluster_deployment() {

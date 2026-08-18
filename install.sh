@@ -276,6 +276,8 @@ prepare_deployment_run() {
     resolve_kernel_domain_from_claim   # a re-run reads back what it wrote
     prompt_kernel_domain
     prompt_network_mode
+    prompt_issuer_mode
+    prompt_mail_mode
     scaffold_cluster_deployment
 }
 

@@ -107,12 +107,25 @@ These files are what the cluster becomes. Read them.
 - `claims/suze.yaml` — Keycloak and OpenFGA.
 - `values.yaml` — this cluster's Helm overlay.
 
-The scaffold writes only `kernelDomain`, because everything else has a default
-that is right for most clusters. Set a field when your cluster differs; the
-schema rejects a name it does not know, so a typo fails at `kubectl apply`
-rather than being silently ignored.
+`--prepare-deployment` asks for the four settings that decide whether the
+install works at all — domain, network mode, certificate issuer and mail — and
+writes every other setting into the claim as a comment showing the default that
+is in effect. So the file lists the cluster's whole configuration: a value is
+either set, or commented with what it defaults to and why.
 
-The ones worth a decision:
+A field that does nothing in your configuration says so rather than being
+absent. On a `tunnel` cluster you get:
+
+```yaml
+  networkMode: tunnel
+  # nodeIp:                      not used while networkMode is tunnel
+```
+
+To change a default, uncomment the line and edit it. The schema rejects a name
+it does not know, so a typo fails at `kubectl apply` rather than being silently
+ignored.
+
+The settings the file carries:
 
 | Field | Default | Set it when |
 |---|---|---|
