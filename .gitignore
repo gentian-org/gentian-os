@@ -19,6 +19,11 @@ install.env.backup
 # Go test binaries (produced by go test -c or go test -o)
 *.test
 bin/
+# The operator binary. `make build` writes bin/manager, covered above, but the
+# Dockerfile builds `-o manager` at the workspace root — run that outside Docker
+# and a 45 MB artefact lands next to the Makefile, which is how one reached Git.
+# Anchored, so cmd/manager or any package named manager is unaffected.
+/manager
 __pycache__/
 *.tgz
 
