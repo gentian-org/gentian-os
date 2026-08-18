@@ -1,0 +1,13 @@
+# ACME account email. Defaults to admin@<kernelDomain> when the operator gives
+# none, which is why kernelDomain is required for the issuers too.
+letsencryptEmail: ""
+kernelDomain: ""
+
+# The Gateway the HTTP-01 solver routes through.
+gatewayNamespace: platform-kernel
+gatewayName: kernel-public-gateway
+
+# The issuer the wildcard Certificate asks for. Derived by
+# gentian_dns01_cluster_issuer_name, which knows whether this cluster uses
+# Cloudflare DNS-01 or a self-signed chain.
+dns01ClusterIssuer: ""

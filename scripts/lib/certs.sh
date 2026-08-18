@@ -95,9 +95,9 @@ gentian_dns01_cluster_issuer_name() {
 
 gentian_cluster_issuers_manifest() {
     if [[ "${ACME_ENV:-production}" == "staging" ]]; then
-        echo "${SCRIPT_DIR}/kernel/manifests/cert-manager/cluster-issuers-staging.yaml"
+        echo "cluster-issuers-staging.yaml"
     else
-        echo "${SCRIPT_DIR}/kernel/manifests/cert-manager/cluster-issuers.yaml"
+        echo "cluster-issuers.yaml"
     fi
 }
 
@@ -113,8 +113,8 @@ apply_gentian_cluster_issuers() {
     : "${KERNEL_PUBLIC_GATEWAY_NAME:=kernel-public-gateway}"
     export LETSENCRYPT_EMAIL KERNEL_DOMAIN KERNEL_PUBLIC_GATEWAY_NAMESPACE KERNEL_PUBLIC_GATEWAY_NAME
 
-    if ! command -v envsubst &>/dev/null; then
-        error "envsubst not found (install gettext-base). Aborting."
+    if ! command -v helm &>/dev/null; then
+        error "helm not found. Aborting."
         exit 1
     fi
 
@@ -138,8 +138,12 @@ apply_gentian_cluster_issuers() {
         info "ACME_ENV=staging: using Let's Encrypt staging (untrusted certs, separate rate limits)."
     fi
 
-    envsubst "\${LETSENCRYPT_EMAIL} \${KERNEL_PUBLIC_GATEWAY_NAMESPACE} \${KERNEL_PUBLIC_GATEWAY_NAME}" \
-        < "$(gentian_cluster_issuers_manifest)" \
+    helm template gentian-cert-manager "${SCRIPT_DIR}/kernel/manifests/cert-manager/chart" \
+        -s "templates/$(gentian_cluster_issuers_manifest)" \
+        --set-string letsencryptEmail="${LETSENCRYPT_EMAIL}" \
+        --set-string kernelDomain="${KERNEL_DOMAIN}" \
+        --set-string gatewayNamespace="${KERNEL_PUBLIC_GATEWAY_NAMESPACE}" \
+        --set-string gatewayName="${KERNEL_PUBLIC_GATEWAY_NAME}" \
         | kubectl apply -f -
 }
 
@@ -337,7 +341,7 @@ _detect_lb_provider() {
 # Without this the cloud controller allocates an arbitrary public IP for the
 # Envoy Service, so NODE_IP — which is what DNS and gentian-cluster-config point
 # at — never matches the address traffic actually arrives on. See
-# kernel/manifests/gateway/envoyproxy-static-ip.yaml.tmpl for the full rationale.
+# kernel/manifests/gateway/chart for the full rationale.
 #
 # Must run before the operator creates kernel-public-gateway: loadBalancerIP is
 # honoured at Service creation only, never on update.
@@ -626,8 +630,10 @@ install_kernel_wildcard() {
         || warn "Continuing — wildcard Certificate will issue once the issuer recovers."
 
     # 3) Apply the wildcard Certificate (with domain name templating).
-    envsubst "\${KERNEL_DOMAIN} \${DNS01_CLUSTER_ISSUER}" \
-        < "${SCRIPT_DIR}/kernel/manifests/cert-manager/wildcard-kernel-cert.yaml" \
+    helm template gentian-cert-manager "${SCRIPT_DIR}/kernel/manifests/cert-manager/chart" \
+        -s templates/wildcard-kernel-cert.yaml \
+        --set-string kernelDomain="${KERNEL_DOMAIN}" \
+        --set-string dns01ClusterIssuer="${DNS01_CLUSTER_ISSUER}" \
         | kubectl apply -f -
     success "Kernel wildcard Certificate wildcard-kernel applied (cert-manager namespace)."
     info "Issuance status:  kubectl get certificate wildcard-kernel -n cert-manager"

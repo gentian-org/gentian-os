@@ -8,7 +8,10 @@ ignore: |
   charts/gentian-os/crds/
   charts/gentian-os/templates/
   kernel/services/llm/chart/templates/
-  kernel/manifests/gateway/chart/templates/
+  # Every chart under kernel/manifests/, by pattern rather than by name, for the
+  # reason spelled out below: a chart added here must not be able to break CI by
+  # being forgotten in this list.
+  kernel/manifests/*/chart/templates/
   kernel/bootstrap/chart/templates/
   charts/infra/
   repo-seeds/**/chart/templates/

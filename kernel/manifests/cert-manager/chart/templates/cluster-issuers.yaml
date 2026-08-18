@@ -5,9 +5,9 @@
 # `cert-manager.io/cluster-issuer` annotation on Certificates.
 #
 # Templated on:
-#   ${LETSENCRYPT_EMAIL}                 — ACME account email (default admin@${KERNEL_DOMAIN})
-#   ${KERNEL_PUBLIC_GATEWAY_NAMESPACE}   — namespace of kernel-public-gateway (default gentian-dev)
-#   ${KERNEL_PUBLIC_GATEWAY_NAME}        — Gateway API parent for HTTP-01 challenges
+#   {{ .Values.letsencryptEmail }}                 — ACME account email (default admin@{{ .Values.kernelDomain }})
+#   {{ .Values.gatewayNamespace }}   — namespace of kernel-public-gateway (default gentian-dev)
+#   {{ .Values.gatewayName }}        — Gateway API parent for HTTP-01 challenges
 #
 # For dev / rate-limit relief use cluster-issuers-staging.yaml (ACME_ENV=staging).
 # See docs/design/multi-tenancy.md §3.
@@ -22,7 +22,7 @@ metadata:
 spec:
   acme:
     server: https://acme-v02.api.letsencrypt.org/directory
-    email: ${LETSENCRYPT_EMAIL}
+    email: {{ .Values.letsencryptEmail }}
     privateKeySecretRef:
       name: letsencrypt-http01-account-key
     solvers:
@@ -31,8 +31,8 @@ spec:
             parentRefs:
               - group: gateway.networking.k8s.io
                 kind: Gateway
-                name: ${KERNEL_PUBLIC_GATEWAY_NAME}
-                namespace: ${KERNEL_PUBLIC_GATEWAY_NAMESPACE}
+                name: {{ .Values.gatewayName }}
+                namespace: {{ .Values.gatewayNamespace }}
 ---
 apiVersion: cert-manager.io/v1
 kind: ClusterIssuer
@@ -44,7 +44,7 @@ metadata:
 spec:
   acme:
     server: https://acme-v02.api.letsencrypt.org/directory
-    email: ${LETSENCRYPT_EMAIL}
+    email: {{ .Values.letsencryptEmail }}
     privateKeySecretRef:
       name: letsencrypt-dns01-cloudflare-account-key
     solvers:
