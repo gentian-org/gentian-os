@@ -225,6 +225,16 @@ func (r *TenantReconciler) ensureMailSelfhosted(ctx context.Context, tenant *gen
 		return false, fmt.Errorf("ensure SMTP credentials Secret: %w", err)
 	}
 
+	// 3b. A mail password per user, per client app, so a webmail client can
+	// reach IMAP without anyone holding a password an OIDC login never issued.
+	//
+	// Logged rather than returned: Keycloak being briefly unreachable should not
+	// fail the whole tenant reconcile, and a user without a password yet sees a
+	// mail client that cannot sign in — not a tenant that fails to provision.
+	if err := r.syncMailAppPasswords(ctx, tenant); err != nil {
+		log.FromContext(ctx).Error(err, "sync mail app passwords", "tenant", tenant.Name)
+	}
+
 	// 4. Register the tenant domain in the shared Dovecot domains ConfigMap.
 	if err := r.ensureDovecotDomainConfig(ctx, tenant); err != nil {
 		return false, fmt.Errorf("register Dovecot domain config: %w", err)
