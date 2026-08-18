@@ -632,10 +632,30 @@ purge_local_state() {
 # a teardown forgets a namespace.
 _cluster_infra_namespaces() {
     local tmpl ns
-    for tmpl in "${SCRIPT_DIR}"/kernel/bootstrap/*.yaml.tmpl; do
-        [[ -f "${tmpl}" ]] || continue
+
+    # Checked before the loop, not inside it: `for ... done | sort -u` runs the
+    # loop in a subshell, so a flag set in there never reaches this function.
+    #
+    # A glob that matches nothing is indistinguishable from a set of
+    # Applications that deploy nowhere — both produce no output and no error.
+    # The chart moved once already, and --cluster-infra silently removed
+    # nothing until someone noticed.
+    local -a templates=()
+    for tmpl in "${SCRIPT_DIR}"/kernel/bootstrap/chart/templates/*.yaml; do
+        [[ -f "${tmpl}" ]] && templates+=("${tmpl}")
+    done
+    if [[ ${#templates[@]} -eq 0 ]]; then
+        warn "No bootstrap Application templates under kernel/bootstrap/chart/templates —" \
+             "cluster infrastructure namespaces cannot be determined and will be left in place."
+        return 0
+    fi
+
+    for tmpl in "${templates[@]}"; do
         # The namespace on the line after `destination:`, which is where an
-        # Argo CD Application declares where it deploys.
+        # Argo CD Application declares where it deploys. Read from the chart
+        # template rather than a rendered manifest: destination.namespace is a
+        # literal in every one of them, and rendering would need the values a
+        # teardown no longer has.
         ns="$(awk '/^  destination:/{f=1; next} f && /namespace:/{print $2; exit}' "${tmpl}")"
         [[ -n "${ns}" ]] || continue
         # Namespaces owned by a step are that step's to remove, and A-03 already
