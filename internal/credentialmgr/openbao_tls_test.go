@@ -22,6 +22,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
@@ -121,5 +122,39 @@ func TestExchange_RoleRefusal_IsNotUpstream(t *testing.T) {
 	}
 	if errors.Is(err, ErrUpstream) {
 		t.Fatalf("a role refusal is not an upstream failure; got: %v", err)
+	}
+}
+
+// A rejected write must carry OpenBao's own explanation. "the caller's policy
+// may not permit this" was a guess that happened to be wrong, and it sent an
+// operator to audit a policy that already granted the path.
+func TestWrite_RejectionCarriesOpenBaosAnswer(t *testing.T) {
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusForbidden)
+		_, _ = w.Write([]byte(`{"errors":["1 error occurred:\n\t* permission denied\n\n"]}`))
+	}))
+	defer srv.Close()
+	b := NewOpenBao(srv.URL, "secret", "oidc", []string{"r"}, serverCAPEM(t, srv), false)
+
+	err := b.Write(context.Background(), "s.tok", "gentian-os/kernel/mail/postfix", map[string]string{"k": "v"}, "admin")
+	if err == nil {
+		t.Fatal("expected the write to fail")
+	}
+	for _, want := range []string{"403", "permission denied", "gentian-os/kernel/mail/postfix"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error should contain %q; got: %v", want, err)
+		}
+	}
+	if errors.Is(err, ErrUpstream) {
+		t.Error("a rejection is not an upstream failure")
+	}
+}
+
+// And an unreachable OpenBao on the write path must not read as a policy problem.
+func TestWrite_UnreachableIsUpstream(t *testing.T) {
+	b := NewOpenBao("https://127.0.0.1:1", "secret", "oidc", []string{"r"}, nil, false)
+	err := b.Write(context.Background(), "s.tok", "gentian-os/kernel/mail/postfix", map[string]string{"k": "v"}, "admin")
+	if !errors.Is(err, ErrUpstream) {
+		t.Fatalf("expected an upstream failure; got: %v", err)
 	}
 }

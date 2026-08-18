@@ -53,6 +53,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"strings"
 	"time"
@@ -318,13 +319,24 @@ func (b *OpenBao) Write(ctx context.Context, token, path string, fields map[stri
 
 	resp, err := b.HTTP.Do(req)
 	if err != nil {
-		return fmt.Errorf("openbao unreachable: %w", err)
+		return fmt.Errorf("%w: %w", ErrUpstream, err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusNoContent {
-		return fmt.Errorf("write rejected (HTTP %d) — the caller's policy may not permit %s",
-			resp.StatusCode, path)
+		// OpenBao's own words, not a guess at them. "the caller's policy may
+		// not permit this" was a plausible reading of every non-2xx, and it
+		// sent an operator to audit a policy that already granted the path
+		// while the actual answer was in a response body nobody read.
+		//
+		// Safe to relay: reaching here means the caller already authenticated
+		// and holds the cluster-admin policy, so the path and the reason are
+		// things they may see. The value is not in the response.
+		detail := strings.TrimSpace(readCapped(resp.Body, 2048))
+		if detail == "" {
+			detail = "no detail returned"
+		}
+		return fmt.Errorf("openbao rejected the write to %s (HTTP %d): %s", path, resp.StatusCode, detail)
 	}
 	return b.setCustomMetadata(ctx, token, path, setBy)
 }
@@ -352,4 +364,14 @@ func (b *OpenBao) setCustomMetadata(ctx context.Context, token, path, setBy stri
 	}
 	defer func() { _ = resp.Body.Close() }()
 	return nil
+}
+
+// readCapped reads at most n bytes, so a large or hostile error body cannot
+// become the log line.
+func readCapped(r io.Reader, n int64) string {
+	b, err := io.ReadAll(io.LimitReader(r, n))
+	if err != nil {
+		return ""
+	}
+	return string(b)
 }

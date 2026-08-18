@@ -497,7 +497,22 @@ func (s *Server) handleSet(w http.ResponseWriter, r *http.Request) {
 
 	// The caller's token performs the write. If the caller's policy forbids the
 	// path, nothing is stored — the service has no authority to fall back on.
+	//
+	// Logged either way, and not all one status. Every failure here used to be
+	// 403, which reads as "your policy forbids this" — so a write that failed
+	// because OpenBao was unreachable, or because the mount rejected the
+	// payload, presented as a permissions problem and sent an operator to audit
+	// a policy that was already correct. The same collapse cost an afternoon
+	// one layer up, in identify.
 	if err := s.Bao.Write(r.Context(), c.bao.Token, req.VaultPath, body.Fields, c.name); err != nil {
+		log := ctrl.Log.WithName("credentialmgr")
+		if errors.Is(err, ErrUpstream) {
+			log.Error(err, "cannot reach OpenBao to store this credential", "path", req.VaultPath)
+			writeErr(w, http.StatusBadGateway,
+				fmt.Errorf("the credential manager cannot reach OpenBao; the credential was not stored"))
+			return
+		}
+		log.Error(err, "OpenBao refused the write", "path", req.VaultPath, "setBy", c.name)
 		writeErr(w, http.StatusForbidden, err)
 		return
 	}
