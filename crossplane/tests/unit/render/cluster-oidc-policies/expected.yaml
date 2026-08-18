@@ -327,7 +327,7 @@ spec:
     protocolMapper: oidc-usermodel-attribute-mapper
     realmId: kernel
   providerConfigRef:
-    name: openbao
+    name: keycloak
 ---
 apiVersion: kubernetes.vault.upbound.io/v1alpha1
 kind: AuthBackendConfig
@@ -383,6 +383,7 @@ kind: AuthBackend
 metadata:
   annotations:
     crossplane.io/composition-resource-name: vault-auth-oidc
+    crossplane.io/external-name: oidc
   labels:
     crossplane.io/composite: dev-cluster
   name: dev-cluster-auth-oidc

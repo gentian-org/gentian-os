@@ -110,6 +110,10 @@ spec:
             metadata:
               annotations:
                 gotemplating.fn.crossplane.io/composition-resource-name: vault-auth-backend-kubernetes
+                # Same reasoning as the oidc mount above: a fixed path, adopted
+                # rather than created, so an async create that lost its result
+                # cannot deadlock every later reconcile.
+                crossplane.io/external-name: {{ $authMount }}
                 crossplane.io/external-name: {{ $authMount }}
               name: {{ $name }}-auth-kubernetes
             spec:
@@ -208,6 +212,19 @@ spec:
             metadata:
               annotations:
                 gotemplating.fn.crossplane.io/composition-resource-name: vault-auth-oidc
+                # Adopt the mount at this path rather than create it.
+                #
+                # sys/auth/<path> is not idempotent: a second create answers 400
+                # "path is already in use". This provider creates asynchronously,
+                # so a create that succeeded in OpenBao while the controller lost
+                # track of the result leaves a mount nothing claims — and every
+                # retry collides with it, forever, blocking the whole XCluster.
+                #
+                # The path is known here and fixed, so there is nothing to
+                # discover: naming it turns "create and hope" into "adopt
+                # whatever is at oidc/", which is the same thing on a clean
+                # cluster and recoverable on one that has been here before.
+                crossplane.io/external-name: oidc
               name: {{ $name }}-auth-oidc
             spec:
               forProvider:
@@ -464,8 +481,6 @@ spec:
                  membership, and the earlier default named a group
                  (/platform-admins) that nothing ever joined, so cluster admins
                  authenticated and matched no role. */}}
-              providerConfigRef:
-                name: openbao
             {{- end }}
 
             ---
