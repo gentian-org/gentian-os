@@ -154,6 +154,26 @@ For the current baseline design of the system, refer to [architecture.md](archit
   - `[ ]` Surface provider permission errors on the XR status so a missing rule fails fast instead of exhausting the install timeout.
   - `[ ]` Document the "add a Composition → extend the provider role" step in `docs/deployment.md`.
 
+### 1.17 IMAP Transport Encryption with the Cluster CA (**)
+* **Target Domain**: Kernel Mail Security
+* **Context**: Dovecot serves IMAP with `ssl = no` and `disable_plaintext_auth = no`, so a mail password crosses the pod network in the clear on every login. The credential is password-equivalent and, for a mailbox, is the reset vector for every other account its owner holds — anything able to observe pod traffic (a sidecar, a CNI plugin, a node-level capture) sees a live one. The chart already implements the encrypted path behind `tls.enabled`, which issues a certificate for the in-cluster names, serves implicit TLS on 993 alongside STARTTLS on 143, and refuses plaintext auth outside TLS. It is off by default because turning it on without a certificate is worse than leaving it off: Dovecot exits when `ssl = yes` and the files are absent, and the same process serves LMTP, so a premature switch takes **inbound delivery** down rather than only retrieval.
+* **Proposed Solution**: Apply the `gentian-ca` issuer chain from `kernel/manifests/cert-manager/cluster-issuers-selfsigned.yaml`, which is defined in the repo but not applied on any cluster. Let's Encrypt cannot serve this: the name clients dial is `dovecot-<env>.<ns>.svc.cluster.local`, which is not publicly resolvable, so the certificate has to come from the cluster's own CA. Every mail client must then trust that CA — a client that does not will fail to connect rather than fall back, because `disable_plaintext_auth` is set alongside. That trust distribution, not the Dovecot change, is the real work.
+* **Backlog Items**:
+  - `[ ]` Apply the `gentian-ca` ClusterIssuer chain and confirm the root CA Certificate reaches Ready.
+  - `[ ]` Distribute the CA bundle to every mail client image, starting with the tenant Nextcloud pods.
+  - `[ ]` Flip `tls.enabled` per cluster and verify LMTP delivery survives the restart before trusting retrieval.
+  - `[ ]` Re-check the assumption that IMAP stays ClusterIP-only; exposing 993 through a gateway TCP listener needs a publicly-valid certificate instead.
+
+### 1.18 Kubernetes Secret Encryption at Rest (**)
+* **Target Domain**: Control Plane Security
+* **Context**: The API server runs without `--encryption-provider-config`, so every Kubernetes Secret is stored base64-encoded in etcd rather than encrypted. Base64 is an encoding, not a protection: anyone with an etcd snapshot, a backup of one, or read access to the datastore holds every credential the cluster carries. This undercuts controls that are otherwise sound — ESO materialises OpenBao values into Secrets, so a credential protected by policy in OpenBao lands unprotected in etcd the moment it is consumed. It is the reason the mail passdb is specified to hold ARGON2ID hashes rather than passwords, and `lint-password-schemes` enforces that; but hashing is a mitigation for one credential class, not a substitute for encrypting the store.
+* **Proposed Solution**: Add an `EncryptionConfiguration` with `aescbc` or a KMS provider ahead of the `identity` provider and restart the API server. Note the migration trap: enabling encryption does **not** rewrite existing Secrets, which stay readable in etcd until rewritten, so the change is incomplete without a `kubectl get secrets --all-namespaces -o json | kubectl replace -f -` sweep. Determine first whether the control plane is ours to configure — on a managed OpenStack control plane this may be the provider's, in which case the item becomes a procurement requirement rather than an engineering task.
+* **Backlog Items**:
+  - `[ ]` Establish whether the API server configuration is under our control or the provider's.
+  - `[ ]` Define the `EncryptionConfiguration` and decide between `aescbc` and a KMS provider backed by OpenBao transit.
+  - `[ ]` Rewrite all existing Secrets after enabling, and verify a fresh etcd read no longer returns plaintext.
+  - `[ ]` Add the check to the install pre-flight so a cluster without encryption at rest is reported rather than assumed.
+
 ---
 
 ## 2. Platform, Infrastructure & Lifecycle
