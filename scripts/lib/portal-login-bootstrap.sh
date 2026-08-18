@@ -904,9 +904,38 @@ spec:
                 SCOPE_LIST=\$(curl -sf -H "\${AUTH}" "\${KEYCLOAK_BASE}/admin/realms/\${REALM}/client-scopes")
                 GROUPS_SCOPE_ID=\$(printf '%s' "\${SCOPE_LIST}" | jq -r '.[] | select(.name=="groups") | .id' | head -1)
                 if [ -n "\${GROUPS_SCOPE_ID}" ] && [ "\${GROUPS_SCOPE_ID}" != "null" ]; then
-                  curl -sf -X PUT -H "\${AUTH}" \\
-                    "\${KEYCLOAK_BASE}/admin/realms/\${REALM}/clients/\${CLIENT_ID}/default-client-scopes/\${GROUPS_SCOPE_ID}" >/dev/null 2>&1 || true
-                  echo "gentian-portal default scope: groups"
+                  # The success line used to print whether or not the PUT worked,
+                  # and the PUT swallowed its own failure. The portal then minted
+                  # tokens with no groups claim, OpenBao refused every one, and
+                  # the log said the scope was attached.
+                  if curl -sf -X PUT -H "\${AUTH}" \\
+                    "\${KEYCLOAK_BASE}/admin/realms/\${REALM}/clients/\${CLIENT_ID}/default-client-scopes/\${GROUPS_SCOPE_ID}" >/dev/null 2>&1; then
+                    echo "gentian-portal default scope: groups"
+                  else
+                    echo "ERROR: could not attach the groups scope to gentian-portal." >&2
+                    echo "  Without it the portal's tokens carry no groups claim, and" >&2
+                    echo "  OpenBao refuses them — which reads as a permissions problem." >&2
+                    exit 1
+                  fi
+
+                  # Emit the FULL path. OpenBao's roles bind /group-name with a
+                  # leading slash; the bare name matches nothing and fails as a
+                  # denied login rather than as a misconfigured claim.
+                  GM_ID=\$(curl -sf -H "\${AUTH}" \\
+                    "\${KEYCLOAK_BASE}/admin/realms/\${REALM}/client-scopes/\${GROUPS_SCOPE_ID}/protocol-mappers/models" \\
+                    | jq -r '.[] | select(.protocolMapper=="oidc-group-membership-mapper") | .id' | head -1)
+                  if [ -n "\${GM_ID}" ] && [ "\${GM_ID}" != "null" ]; then
+                    GM=\$(curl -sf -H "\${AUTH}" \\
+                      "\${KEYCLOAK_BASE}/admin/realms/\${REALM}/client-scopes/\${GROUPS_SCOPE_ID}/protocol-mappers/models/\${GM_ID}")
+                    GM_NEW=\$(printf '%s' "\${GM}" | jq '.config["full.path"]="true" | .config["access.token.claim"]="true"')
+                    if curl -sf -X PUT -H "\${AUTH}" -H "Content-Type: application/json" \\
+                      "\${KEYCLOAK_BASE}/admin/realms/\${REALM}/client-scopes/\${GROUPS_SCOPE_ID}/protocol-mappers/models/\${GM_ID}" \\
+                      -d "\${GM_NEW}" >/dev/null 2>&1; then
+                      echo "groups mapper: full.path=true"
+                    else
+                      echo "WARN: could not set full.path on the groups mapper" >&2
+                    fi
+                  fi
                 fi
               fi
 
