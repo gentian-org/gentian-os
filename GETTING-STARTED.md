@@ -369,7 +369,12 @@ what is already done, so convergence and update are the same operation.
 ## Next steps
 
 - **Provision a tenant** and install apps — [docs/commands.md](docs/commands.md).
-- **Configure mail** — [docs/design/mail.md](docs/design/mail.md).
+- **Configure mail** — [docs/design/mail.md](docs/design/mail.md). Mail between
+  users of this cluster works once the kernel mail stack is deployed; mail to and
+  from the internet additionally needs port 25 exposed and the MX, SPF, DKIM,
+  DMARC and PTR records described in
+  [§10 DNS for real mail](docs/design/mail.md#10-dns-for-real-mail) — including
+  the Cloudflare rule that MX records must stay DNS-only, never proxied.
 - **Change this cluster's configuration** — edit its claims in
   `gentian-deployments`; the cluster reconciles.
   [docs/deployment.md](docs/deployment.md) explains the layering.
