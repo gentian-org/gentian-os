@@ -1,4 +1,18 @@
-// SPDX-License-Identifier: AGPL-3.0-or-later
+/*
+Copyright 2026 Gentian Organization.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
 
 package controller
 
@@ -15,12 +29,12 @@ import (
 	"sort"
 	"strings"
 
+	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 	"golang.org/x/crypto/argon2"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
-	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 )
 
 // Per-app mail passwords.
@@ -105,7 +119,7 @@ func (r *TenantReconciler) keycloakRealmUsers(ctx context.Context, realm string)
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	var tok struct {
 		AccessToken string `json:"access_token"`
 	}
@@ -136,7 +150,7 @@ func (r *TenantReconciler) keycloakRealmUsers(ctx context.Context, realm string)
 			Enabled  bool   `json:"enabled"`
 		}
 		err = json.NewDecoder(page.Body).Decode(&users)
-		page.Body.Close()
+		_ = page.Body.Close()
 		if err != nil {
 			return nil, err
 		}
