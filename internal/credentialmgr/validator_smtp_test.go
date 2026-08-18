@@ -61,7 +61,7 @@ func startFakeRelay(t *testing.T, advertiseSTARTTLS bool) *fakeRelay {
 func (r *fakeRelay) serve(conn net.Conn) {
 	defer func() { _ = conn.Close() }()
 	br := bufio.NewReader(conn)
-	fmt.Fprintf(conn, "220 fake ESMTP\r\n")
+	_, _ = fmt.Fprintf(conn, "220 fake ESMTP\r\n")
 	for {
 		line, err := br.ReadString('\n')
 		if err != nil {
@@ -71,15 +71,15 @@ func (r *fakeRelay) serve(conn net.Conn) {
 		switch {
 		case strings.HasPrefix(cmd, "EHLO"), strings.HasPrefix(cmd, "HELO"):
 			if r.advertiseSTARTTLS {
-				fmt.Fprintf(conn, "250-fake\r\n250-STARTTLS\r\n250 AUTH PLAIN LOGIN\r\n")
+				_, _ = fmt.Fprintf(conn, "250-fake\r\n250-STARTTLS\r\n250 AUTH PLAIN LOGIN\r\n")
 			} else {
-				fmt.Fprintf(conn, "250-fake\r\n250 AUTH PLAIN LOGIN\r\n")
+				_, _ = fmt.Fprintf(conn, "250-fake\r\n250 AUTH PLAIN LOGIN\r\n")
 			}
 		case strings.HasPrefix(cmd, "QUIT"):
-			fmt.Fprintf(conn, "221 bye\r\n")
+			_, _ = fmt.Fprintf(conn, "221 bye\r\n")
 			return
 		default:
-			fmt.Fprintf(conn, "502 not implemented\r\n")
+			_, _ = fmt.Fprintf(conn, "502 not implemented\r\n")
 		}
 	}
 }
