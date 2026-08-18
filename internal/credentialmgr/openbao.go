@@ -302,11 +302,24 @@ func (b *OpenBao) Write(ctx context.Context, token, path string, fields map[stri
 	if token == "" {
 		return fmt.Errorf("no caller token: the credential manager cannot write on its own authority")
 	}
+	// No options block, and specifically no check-and-set.
+	//
+	// This sent {"options":{"cas":null}}. cas is KV v2's check-and-set: a
+	// value of 0 means "write only if this path does not exist", and a null
+	// is not a way of saying "no opinion" — it is a cas the server has to
+	// parse, which it either rejects or reads as zero. Either way the write
+	// fails the moment the path already has a version.
+	//
+	// Every path here has one. The installer seeds this mount at bootstrap,
+	// so supplying a credential through the credential manager is always an
+	// UPDATE of a path that exists, never a create — which made the one
+	// operation this service exists to perform the one it could never do.
+	//
+	// Omitting options entirely is an unconditional write, which is what
+	// "supply this credential" means. The mount does not set cas_required,
+	// so nothing is being bypassed.
 	payload := map[string]any{
 		"data": fields,
-		"options": map[string]any{
-			"cas": nil,
-		},
 	}
 	body, _ := json.Marshal(payload)
 	url := fmt.Sprintf("%s/v1/%s/data/%s", b.Addr, b.KVMount, strings.TrimPrefix(path, "/"))

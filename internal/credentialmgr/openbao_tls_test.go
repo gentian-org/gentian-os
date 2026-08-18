@@ -18,6 +18,7 @@ package credentialmgr
 
 import (
 	"context"
+	"encoding/json"
 	"encoding/pem"
 	"errors"
 	"net/http"
@@ -156,5 +157,35 @@ func TestWrite_UnreachableIsUpstream(t *testing.T) {
 	err := b.Write(context.Background(), "s.tok", "gentian-os/kernel/mail/postfix", map[string]string{"k": "v"}, "admin")
 	if !errors.Is(err, ErrUpstream) {
 		t.Fatalf("expected an upstream failure; got: %v", err)
+	}
+}
+
+// The write must not carry a check-and-set.
+//
+// It sent {"options":{"cas":null}}. cas 0 means "only if absent", and null is
+// not "no opinion" — so every write to a path that already had a version was
+// rejected. The installer seeds this mount at bootstrap, so every credential
+// supplied afterwards is an update of an existing path: the one operation this
+// service exists for was the one it could never perform.
+func TestWrite_SendsNoCheckAndSet(t *testing.T) {
+	var got map[string]any
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewDecoder(r.Body).Decode(&got)
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"data":{"version":2}}`))
+	}))
+	defer srv.Close()
+	b := NewOpenBao(srv.URL, "secret", "oidc", []string{"r"}, serverCAPEM(t, srv), false)
+
+	if err := b.Write(context.Background(), "s.tok",
+		"gentian-os/kernel/mail/postfix", map[string]string{"relay_username": "u"}, ""); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	if _, present := got["options"]; present {
+		t.Errorf("the write must send no options block; got %v", got["options"])
+	}
+	data, _ := got["data"].(map[string]any)
+	if data["relay_username"] != "u" {
+		t.Errorf("data = %v, want the supplied fields", got["data"])
 	}
 }
