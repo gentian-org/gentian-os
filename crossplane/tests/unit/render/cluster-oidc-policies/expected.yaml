@@ -874,3 +874,53 @@ spec:
       }
   providerConfigRef:
     name: openbao
+---
+apiVersion: vault.vault.upbound.io/v1alpha1
+kind: Policy
+metadata:
+  annotations:
+    crossplane.io/composition-resource-name: vault-policy-tenant-admin
+  labels:
+    crossplane.io/composite: dev-cluster
+  name: dev-cluster-policy-tenant-admin
+  ownerReferences:
+  - apiVersion: gentianos.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XCluster
+    name: dev-cluster
+    uid: ""
+spec:
+  forProvider:
+    name: tenant-admin
+    policy: |
+      # A tenant admin reaches their own tenant's paths and nothing
+      # else. The deny below is explicit rather than implied by
+      # omission: showing a tenant admin a cluster-scoped form and
+      # having OpenBao reject the write is an annoyance, while the
+      # inverse is a breach. An explicit deny cannot be widened by a
+      # later grant.
+      #
+      # The tenant comes from the alias metadata the role's claim
+      # mapping writes, so the path a token reaches is decided by the
+      # verified claim rather than by anything the caller sends.
+      path "secret/data/gentian-os/tenants/{{identity.entity.aliases.auth_oidc_1a2b3c4d.metadata.tenant}}/*" {
+        capabilities = ["create", "update", "read"]
+      }
+      # Metadata on the same prefix. The write path records who set a
+      # credential as custom metadata, and that write is deliberately
+      # allowed to fail quietly — the value is already stored, so
+      # failing the request would report a write that succeeded as
+      # broken. Without this capability that silence would mean every
+      # tenant credential is stored with no "who set this" at all.
+      path "secret/metadata/gentian-os/tenants/{{identity.entity.aliases.auth_oidc_1a2b3c4d.metadata.tenant}}/*" {
+        capabilities = ["create", "update", "read", "list"]
+      }
+      path "secret/data/gentian-os/kernel/*" {
+        capabilities = ["deny"]
+      }
+      path "secret/metadata/gentian-os/kernel/*" {
+        capabilities = ["deny"]
+      }
+  providerConfigRef:
+    name: openbao
