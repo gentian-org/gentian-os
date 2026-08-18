@@ -48,11 +48,16 @@ package credentialmgr
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
 	"time"
+
+	ctrl "sigs.k8s.io/controller-runtime"
 )
 
 // OpenBao is a minimal client. It deliberately implements only the four calls
@@ -76,15 +81,53 @@ type OpenBao struct {
 	HTTP *http.Client
 }
 
+// ErrUpstream marks a failure to REACH OpenBao, as opposed to OpenBao
+// declining the caller.
+//
+// The distinction is the whole reason this exists. Every transport failure used
+// to arrive at the handler as an ordinary error and leave as 401, so the portal
+// told an administrator "OpenBao refused the token — check that you are in the
+// cluster-admin group" when the truth was that no request had reached OpenBao
+// at all. The advice was correct, actionable, and about the wrong thing, which
+// is worse than no advice: it sends someone to audit group membership that is
+// already right.
+var ErrUpstream = errors.New("openbao unreachable")
+
 // NewOpenBao builds a client with a bounded HTTP timeout, so a hung OpenBao
 // surfaces as a failed request rather than a wedged handler.
-func NewOpenBao(addr, kvMount, authMount string, oidcRoles []string) *OpenBao {
+//
+// caCert, when non-empty, is the PEM OpenBao's certificate is verified against.
+// It is not optional in practice: OpenBao serves a self-signed certificate on
+// this platform, so the default transport — which verifies against the system
+// roots — fails every exchange. ESO reaches the same endpoint by loading the
+// same CA out of the openbao-tls Secret, and this is that pattern in Go.
+//
+// An empty caCert keeps the system roots, which is right for a cluster that
+// gave OpenBao a publicly trusted certificate.
+func NewOpenBao(addr, kvMount, authMount string, oidcRoles []string, caCert []byte, skipVerify bool) *OpenBao {
+	tlsConf := &tls.Config{MinVersion: tls.VersionTLS12}
+	if skipVerify {
+		// An escape hatch, not a mode. Named so it appears in the Deployment
+		// for anyone wondering why verification is not happening.
+		tlsConf.InsecureSkipVerify = true
+	} else if len(caCert) > 0 {
+		pool := x509.NewCertPool()
+		if pool.AppendCertsFromPEM(caCert) {
+			tlsConf.RootCAs = pool
+		} else {
+			ctrl.Log.WithName("credentialmgr").Info(
+				"the configured OpenBao CA is not valid PEM; falling back to the system roots")
+		}
+	}
 	return &OpenBao{
 		Addr:      strings.TrimSuffix(addr, "/"),
 		KVMount:   kvMount,
 		AuthMount: authMount,
 		OIDCRoles: oidcRoles,
-		HTTP:      &http.Client{Timeout: 15 * time.Second},
+		HTTP: &http.Client{
+			Timeout:   15 * time.Second,
+			Transport: &http.Transport{TLSClientConfig: tlsConf},
+		},
 	}
 }
 
@@ -156,7 +199,7 @@ func (b *OpenBao) exchangeWithRole(ctx context.Context, oidcToken, role string) 
 
 	resp, err := b.HTTP.Do(req)
 	if err != nil {
-		return Identity{}, 0, fmt.Errorf("openbao unreachable: %w", err)
+		return Identity{}, 0, fmt.Errorf("%w: %w", ErrUpstream, err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 

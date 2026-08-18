@@ -26,7 +26,9 @@ import (
 	"strings"
 	"time"
 
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
@@ -138,6 +140,8 @@ func NewRunnableFromEnv(mgr manager.Manager, validator Validator) (*Server, erro
 			// JWT-typed roles, not the oidc-typed ones behind the browser flow:
 			// a role with role_type oidc refuses a direct token exchange.
 			splitList(envOr("BAO_OIDC_ROLES", "cluster-admin-jwt,tenant-admin-jwt")),
+			loadBaoCA(mgr),
+			os.Getenv("BAO_TLS_SKIP_VERIFY") == "true",
 		),
 		Validator:          validator,
 		ClusterAdminPolicy: envOr("CREDENTIAL_CLUSTER_ADMIN_POLICY", "cluster-admin"),
@@ -147,6 +151,55 @@ func NewRunnableFromEnv(mgr manager.Manager, validator Validator) (*Server, erro
 		// the thing that gates on it, not beside the credentials.
 		HandoverNamespace: envOr("HANDOVER_NAMESPACE", envOr("OPERATOR_NAMESPACE", "gentian-system")),
 	}, nil
+}
+
+// loadBaoCA reads the CA that signs OpenBao's serving certificate.
+//
+// Read from the API rather than mounted, because a Pod can only mount Secrets
+// from its own namespace and this one lives in OpenBao's. That is the same
+// reason ESO's ClusterSecretStore uses a caProvider instead of a volume, and
+// this reads the same Secret and the same key.
+//
+// Read once, at startup, through the API reader rather than the manager's
+// cache — the cache is not running yet, and caching every Secret in the
+// cluster to fetch one certificate is not a trade worth making.
+//
+// Returns nil when it cannot be found, which keeps the system roots: a cluster
+// that gave OpenBao a publicly trusted certificate needs no CA here, and
+// failing startup over a missing one would break it.
+func loadBaoCA(mgr manager.Manager) []byte {
+	log := ctrl.Log.WithName("credentialmgr")
+	if path := os.Getenv("BAO_CACERT"); path != "" {
+		pem, err := os.ReadFile(path)
+		if err != nil {
+			log.Error(err, "reading BAO_CACERT", "path", path)
+			return nil
+		}
+		return pem
+	}
+
+	name := envOr("BAO_CA_SECRET", "openbao-tls")
+	namespace := envOr("BAO_CA_SECRET_NAMESPACE", "openbao")
+	sec := &corev1.Secret{}
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	if err := mgr.GetAPIReader().Get(ctx, types.NamespacedName{Name: name, Namespace: namespace}, sec); err != nil {
+		log.Info("no OpenBao CA available; verifying against the system roots instead. "+
+			"If OpenBao serves a self-signed certificate, every token exchange will fail to connect.",
+			"secret", namespace+"/"+name, "reason", err.Error())
+		return nil
+	}
+	// ca.crt first: on a cert-manager-issued Secret it is the issuer, while
+	// tls.crt is the leaf. A leaf works only while it is the one being served,
+	// so trusting the issuer survives renewal.
+	for _, key := range []string{"ca.crt", "tls.crt"} {
+		if pem, ok := sec.Data[key]; ok && len(pem) > 0 {
+			log.Info("trusting OpenBao's CA", "secret", namespace+"/"+name, "key", key)
+			return pem
+		}
+	}
+	log.Info("OpenBao CA Secret has neither ca.crt nor tls.crt", "secret", namespace+"/"+name)
+	return nil
 }
 
 // splitList parses a comma-separated env value, dropping blanks so a trailing
@@ -289,10 +342,32 @@ func (s *Server) viewerFor(id Identity) Viewer {
 	return v
 }
 
+// writeIdentityErr maps an identify() failure onto a status an operator can act on.
+//
+// A caller who could not be authorised and an OpenBao that could not be reached
+// are different faults with different owners, and collapsing them into 401 cost
+// a real afternoon: the portal renders 401 as "OpenBao refused the token —
+// check that you are in the cluster-admin group", which was sound advice about
+// entirely the wrong thing while the actual fault was a TLS trust gap that
+// produced no log line anywhere.
+//
+// So an upstream failure is 502 and is logged. The log is the point: the
+// caller gets a deliberately vague message either way, and without a log an
+// operator has nothing at all to work from.
+func (s *Server) writeIdentityErr(w http.ResponseWriter, err error) {
+	if errors.Is(err, ErrUpstream) {
+		ctrl.Log.WithName("credentialmgr").Error(err, "cannot reach OpenBao to authorise this request")
+		writeErr(w, http.StatusBadGateway,
+			fmt.Errorf("the credential manager cannot reach OpenBao; this is not a problem with your account"))
+		return
+	}
+	writeErr(w, http.StatusUnauthorized, err)
+}
+
 func (s *Server) handleList(w http.ResponseWriter, r *http.Request) {
 	c, err := s.identify(r.Context(), r)
 	if err != nil {
-		writeErr(w, http.StatusUnauthorized, err)
+		s.writeIdentityErr(w, err)
 		return
 	}
 	items, err := s.Catalogue.List(r.Context(), c.view)
@@ -307,7 +382,7 @@ func (s *Server) handleList(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleGet(w http.ResponseWriter, r *http.Request) {
 	c, err := s.identify(r.Context(), r)
 	if err != nil {
-		writeErr(w, http.StatusUnauthorized, err)
+		s.writeIdentityErr(w, err)
 		return
 	}
 	item, err := s.Catalogue.Get(r.Context(), r.PathValue("name"), c.view)
@@ -347,7 +422,7 @@ type setRequest struct {
 func (s *Server) handleSet(w http.ResponseWriter, r *http.Request) {
 	c, err := s.identify(r.Context(), r)
 	if err != nil {
-		writeErr(w, http.StatusUnauthorized, err)
+		s.writeIdentityErr(w, err)
 		return
 	}
 	name := r.PathValue("name")

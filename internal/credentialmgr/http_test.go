@@ -150,7 +150,7 @@ func newServerAs(t *testing.T, policies []string, meta map[string]string, objs .
 
 	s := &Server{
 		Catalogue:          &Catalogue{Client: c, ProbeNamespace: "gentian-system"},
-		Bao:                NewOpenBao(bao.URL, "secret", "oidc", []string{"cluster-admin-jwt"}),
+		Bao:                NewOpenBao(bao.URL, "secret", "oidc", []string{"cluster-admin-jwt"}, nil, false),
 		Validator:          stubValidator{},
 		ClusterAdminPolicy: "cluster-admin",
 		TenantClaimKey:     "tenant",
@@ -260,7 +260,7 @@ func TestWriteRequiresCallerToken(t *testing.T) {
 // TestOpenBaoWriteRefusesEmptyToken guards the same property one layer down, so
 // a future handler that forgets the check still cannot write anonymously.
 func TestOpenBaoWriteRefusesEmptyToken(t *testing.T) {
-	b := NewOpenBao("http://openbao.invalid", "secret", "oidc", []string{"cluster-admin-jwt"})
+	b := NewOpenBao("http://openbao.invalid", "secret", "oidc", []string{"cluster-admin-jwt"}, nil, false)
 	err := b.Write(context.Background(), "", "gentian/x", map[string]string{"a": "b"}, "alice")
 	if err == nil {
 		t.Fatal("Write accepted an empty caller token")
@@ -482,7 +482,7 @@ func TestExchangeUsesConfiguredMount(t *testing.T) {
 	}))
 	t.Cleanup(srv.Close)
 
-	b := NewOpenBao(srv.URL, "secret", "oidc", []string{"cluster-admin-jwt"})
+	b := NewOpenBao(srv.URL, "secret", "oidc", []string{"cluster-admin-jwt"}, nil, false)
 	if _, err := b.ExchangeToken(context.Background(), "a.b.c"); err != nil {
 		t.Fatalf("exchange failed: %v", err)
 	}
@@ -518,7 +518,7 @@ func TestExchangeFallsThroughToNextRole(t *testing.T) {
 	}))
 	t.Cleanup(srv.Close)
 
-	b := NewOpenBao(srv.URL, "secret", "oidc", []string{"cluster-admin-jwt", "tenant-admin-jwt"})
+	b := NewOpenBao(srv.URL, "secret", "oidc", []string{"cluster-admin-jwt", "tenant-admin-jwt"}, nil, false)
 	id, err := b.ExchangeToken(context.Background(), "a.b.c")
 	if err != nil {
 		t.Fatalf("exchange failed: %v", err)
@@ -539,7 +539,7 @@ func TestExchangeRejectedByEveryRole(t *testing.T) {
 	}))
 	t.Cleanup(srv.Close)
 
-	b := NewOpenBao(srv.URL, "secret", "oidc", []string{"cluster-admin-jwt", "tenant-admin-jwt"})
+	b := NewOpenBao(srv.URL, "secret", "oidc", []string{"cluster-admin-jwt", "tenant-admin-jwt"}, nil, false)
 	_, err := b.ExchangeToken(context.Background(), "a.b.c")
 	if err == nil {
 		t.Fatal("exchange should fail when every role refuses")

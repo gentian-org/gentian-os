@@ -87,6 +87,22 @@ spec:
             silently does nothing. A boolean that cannot be turned off is worse
             than no switch, because the operator believes it is off.
             */}}
+            {{- /*
+            OpenBao serves a self-signed certificate, so the credential manager
+            has to be told what signs it or every token exchange fails at TLS —
+            and used to report that as "not authorised".
+            Read from the Secret rather than mounted: a Pod cannot mount a
+            Secret from another namespace, which is why ESO's ClusterSecretStore
+            uses a caProvider for the same certificate.
+            */}}
+            - name: BAO_CA_SECRET
+              value: {{ (.Values.credentialManager).caSecret | default "openbao-tls" | quote }}
+            - name: BAO_CA_SECRET_NAMESPACE
+              value: {{ (.Values.credentialManager).caSecretNamespace | default "openbao" | quote }}
+            {{- if (.Values.credentialManager).tlsSkipVerify }}
+            - name: BAO_TLS_SKIP_VERIFY
+              value: "true"
+            {{- end }}
             - name: HANDOVER_GATE_TENANTS
               value: {{ if hasKey (.Values.handover | default dict) "gateTenants" }}{{ .Values.handover.gateTenants | quote }}{{ else }}"true"{{ end }}
             - name: TENANT_DNS01_CLUSTER_ISSUER

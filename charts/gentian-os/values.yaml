@@ -332,6 +332,14 @@ credentialManager:
     - tenant-admin-jwt
   # Namespace holding the ESO satisfaction probes it reads.
   probeNamespace: gentian-system
+  # Where the CA that signs OpenBao's serving certificate lives. Read through
+  # the API, because a Pod cannot mount a Secret from another namespace — the
+  # same reason ESO's ClusterSecretStore names it as a caProvider.
+  caSecret: openbao-tls
+  caSecretNamespace: openbao
+  # Last resort for a cluster whose CA cannot be read at all. Prefer fixing the
+  # Secret reference: this turns off verification for every exchange.
+  tlsSkipVerify: false
   # The OpenBao policy whose presence on an exchanged token means the caller may
   # see cluster-scoped requirements. Read from the policies OpenBao attached
   # rather than from a Keycloak group name, so the two cannot drift apart.
