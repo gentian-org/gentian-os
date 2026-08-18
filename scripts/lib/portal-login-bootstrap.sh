@@ -947,6 +947,44 @@ spec:
                     exit 1
                   fi
 
+                  # The audience. OpenBao's roles bind bound_audiences to openbao, and a
+                  # Keycloak ACCESS token does not carry the requesting client in aud —
+                  # azp names the client, aud gets only what an audience mapper puts there.
+                  # Nothing created one, so every exchange failed on the audience even with
+                  # the right group, and the refusal was indistinguishable from a
+                  # permissions problem.
+                  AUD_BODY='{
+                    "name": "openbao-audience",
+                    "protocol": "openid-connect",
+                    "protocolMapper": "oidc-audience-mapper",
+                    "config": {
+                      "included.client.audience": "openbao",
+                      "id.token.claim": "false",
+                      "access.token.claim": "true"
+                    }
+                  }'
+                  AUD_ID=\$(curl -sf -H "\${AUTH}" \\
+                    "\${KEYCLOAK_BASE}/admin/realms/\${REALM}/clients/\${CLIENT_ID}/protocol-mappers/models" \\
+                    | jq -r '.[] | select(.name=="openbao-audience") | .id' | head -1)
+                  if [ -n "\${AUD_ID}" ] && [ "\${AUD_ID}" != "null" ]; then
+                    AUD_HTTP=\$(printf '%s' "\${AUD_BODY}" | jq --arg id "\${AUD_ID}" '. + {id: \$id}' \\
+                      | curl -s -o /tmp/aud.err -w '%{http_code}' -X PUT -H "\${AUTH}" -H "Content-Type: application/json" \\
+                        "\${KEYCLOAK_BASE}/admin/realms/\${REALM}/clients/\${CLIENT_ID}/protocol-mappers/models/\${AUD_ID}" -d @-)
+                  else
+                    AUD_HTTP=\$(curl -s -o /tmp/aud.err -w '%{http_code}' -X POST -H "\${AUTH}" -H "Content-Type: application/json" \\
+                      "\${KEYCLOAK_BASE}/admin/realms/\${REALM}/clients/\${CLIENT_ID}/protocol-mappers/models" -d "\${AUD_BODY}")
+                  fi
+                  case "\${AUD_HTTP}" in
+                    2*) echo "gentian-portal audience mapper: aud += openbao" ;;
+                    *)
+                      printf '\033[0;31m[ERROR]\033[0m %s\n' "could not add the openbao audience mapper (HTTP \${AUD_HTTP})." >&2
+                      if [ -s /tmp/aud.err ]; then head -c 300 /tmp/aud.err >&2; echo >&2; fi
+                      echo "  Without it the portal's tokens carry no openbao audience and" >&2
+                      echo "  OpenBao refuses them — which reads as a permissions problem." >&2
+                      exit 1
+                      ;;
+                  esac
+
                   # Emit the FULL path. OpenBao's roles bind /group-name with a
                   # leading slash; the bare name matches nothing and fails as a
                   # denied login rather than as a misconfigured claim.
