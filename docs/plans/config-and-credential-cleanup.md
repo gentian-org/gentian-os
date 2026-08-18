@@ -1768,11 +1768,19 @@ the export-list block in `common.sh` — a declaration, not a consumer — **18 
 have none.**
 
 The dead 17 are two coherent groups and one straggler, and they are deletions rather than
-migrations: every `TENANT_INITJOB_*` and `TENANT_LIMITRANGE_*` (eight), every per-model `VLLM_*`
-except `VLLM_INSTANCES` (eight), and `CNPG_HOST`. Declared, documented, exported in some cases, and
+migrations: every `TENANT_INITJOB_*` and `TENANT_LIMITRANGE_*` (eight) and `CNPG_HOST`. Declared,
+documented, exported in some cases, and
 read by nothing. This is the same collapse the key lint produced for `gentian-cluster-config`,
 where seventeen of twenty-four keys turned out to have no reader: **the surface is roughly half the
 size the file suggests, and the first step is deleting what nobody reads.**
+
+**The per-model `VLLM_*` are not among them, and the count that said so was wrong.**
+`scripts/lib/llm-lib.sh` reads them by INDIRECT expansion — it builds
+`VLLM_${instance_upper}_MODEL_ID` and dereferences `${!var}` — so no grep for the literal
+name finds a reader, and a reader-count that greps declares eight live variables dead. It is
+worth stating as a method note rather than a correction: a variable read through `${!var}` is
+invisible to exactly the technique this section used to size the surface, so the same count
+should be treated as a lower bound elsewhere.
 
 The surviving 18 split three ways:
 

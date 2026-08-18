@@ -1134,12 +1134,24 @@ _claim_cluster_fields() {
         printf '  llm:\n'
         printf '    enabled: true\n'
         printf '    gpuAcceleration: %s\n' "${GPU_ACCELERATION:-false}"
-        [[ -n "${GPU_TIME_SLICE_REPLICAS:-}" ]] && printf '    gpuTimeSliceReplicas: %s\n' "${GPU_TIME_SLICE_REPLICAS}"
-        [[ -n "${VLLM_INSTANCES:-}" ]] && printf '    vllmInstances: %s\n' "${VLLM_INSTANCES}"
+        if [[ -n "${GPU_TIME_SLICE_REPLICAS:-}" ]]; then
+            printf '    gpuTimeSliceReplicas: %s\n' "${GPU_TIME_SLICE_REPLICAS}"
+        else
+            printf '    # gpuTimeSliceReplicas: 1   workloads sharing one physical GPU\n'
+        fi
+        if [[ -n "${VLLM_INSTANCES:-}" ]]; then
+            printf '    vllmInstances: %s\n' "${VLLM_INSTANCES}"
+        else
+            printf '    # vllmInstances: ""         space-separated instance ids; each\n'
+            printf '    #                           needs VLLM_<ID>_MODEL_ID and sizing\n'
+            printf '    #                           in the environment — see below\n'
+        fi
     else
         printf '  # llm:\n'
-        printf '  #   enabled: false          set true on a cluster that serves models\n'
-        printf '  #   gpuAcceleration: false  set true when the cluster has GPUs\n'
+        printf '  #   enabled: false            set true on a cluster that serves models\n'
+        printf '  #   gpuAcceleration: false    set true when the cluster has GPUs\n'
+        printf '  #   gpuTimeSliceReplicas: 1   workloads sharing one physical GPU\n'
+        printf '  #   vllmInstances: ""         space-separated instance ids\n'
     fi
     return 0
 }
