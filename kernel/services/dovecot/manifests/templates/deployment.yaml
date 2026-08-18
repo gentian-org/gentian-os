@@ -93,12 +93,29 @@ data:
     log_path = /dev/stderr
     info_log_path = /dev/stderr
 
-    # No TLS here. Left at the default, Dovecot looks for
-    # /etc/dovecot/private/dovecot.pem, does not find it, and refuses to start.
-    # LMTP from Postfix is pod-network traffic; IMAP is reached through the
-    # gateway, which is where TLS belongs.
+    {{- if .Values.tls.enabled }}
+    # IMAP passwords are password-equivalent and must not cross the network in
+    # the clear, even a pod network: anything able to observe it — a sidecar, a
+    # CNI plugin, a node-level capture — sees a live mail credential.
+    #
+    # The certificate is issued for the in-cluster DNS name, so it cannot come
+    # from Let's Encrypt: nothing public can validate .svc.cluster.local. It is
+    # issued by the cluster's own CA instead, which is why the client has to
+    # trust that CA — see values.yaml.
+    ssl = yes
+    ssl_cert = </etc/dovecot/tls/tls.crt
+    ssl_key = </etc/dovecot/tls/tls.key
+    # Plaintext auth only inside TLS. STARTTLS on 143 and implicit TLS on 993
+    # both satisfy this; an unencrypted login is refused rather than downgraded.
+    disable_plaintext_auth = yes
+    {{- else }}
+    # TLS off. Dovecot refuses to start when ssl = yes and the certificate files
+    # are absent, so this stays the default until the cluster's CA issuer exists
+    # and the mail client trusts it — enabling it before then takes inbound
+    # delivery down with it, since the same process serves LMTP.
     ssl = no
     disable_plaintext_auth = no
+    {{- end }}
 
     # xoauth2 is how tenant and cluster-admin users authenticate: the client sends
     # a Keycloak access token, and the per-realm passdb blocks included below
@@ -197,10 +214,14 @@ data:
       inet_listener imap {
         port = 143
       }
-      # 993 is not served: TLS terminates at the gateway, so an imaps listener
-      # here would need the cert that `ssl = no` says this Pod does not have.
       inet_listener imaps {
+        {{- if .Values.tls.enabled }}
+        port = 993
+        ssl = yes
+        {{- else }}
+        # Not served without a certificate — see the ssl block above.
         port = 0
+        {{- end }}
       }
     }
 
@@ -215,6 +236,29 @@ data:
   # Deliberately empty — see the passdb comment above. Provisioning tenant
   # identities replaces this file with a real credential source.
   users: ""
+{{- if .Values.tls.enabled }}
+---
+# The serving certificate, for the name clients actually dial. Let's Encrypt
+# cannot issue this — .svc.cluster.local is not publicly resolvable — so it comes
+# from the cluster's own CA.
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: dovecot-{{ .Values.env }}-tls
+  namespace: {{ .Values.servicesNamespace }}
+  annotations:
+    argocd.argoproj.io/sync-wave: "7"
+spec:
+  secretName: dovecot-{{ .Values.env }}-tls
+  issuerRef:
+    name: {{ .Values.tls.issuerRef.name }}
+    kind: {{ .Values.tls.issuerRef.kind }}
+  dnsNames:
+    - dovecot-{{ .Values.env }}
+    - dovecot-{{ .Values.env }}.{{ .Values.servicesNamespace }}
+    - dovecot-{{ .Values.env }}.{{ .Values.servicesNamespace }}.svc
+    - dovecot-{{ .Values.env }}.{{ .Values.servicesNamespace }}.svc.cluster.local
+{{- end }}
 ---
 # All tenant mail. Without this, maildirs are written into the container
 # filesystem and vanish on the next restart.
@@ -293,6 +337,16 @@ spec:
             secretName: dovecot-app-passwords
             optional: true
             defaultMode: 0400
+        {{- if .Values.tls.enabled }}
+        # NOT optional: ssl = yes is already rendered above, and Dovecot exits
+        # rather than start without the files. Holding the Pod in
+        # ContainerCreating until cert-manager has issued is the better failure —
+        # it is visible, and it does not crashloop LMTP alongside IMAP.
+        - name: tls
+          secret:
+            secretName: dovecot-{{ .Values.env }}-tls
+            defaultMode: 0400
+        {{- end }}
       containers:
         - name: dovecot
           image: dovecot/dovecot:2.3.21
@@ -315,6 +369,11 @@ spec:
             - name: app-passwords
               mountPath: /etc/dovecot/apppw
               readOnly: true
+            {{- if .Values.tls.enabled }}
+            - name: tls
+              mountPath: /etc/dovecot/tls
+              readOnly: true
+            {{- end }}
             - name: mail
               mountPath: /var/mail
           # Kept deliberately, not required. platform-kernel IS in the exclusion
@@ -334,6 +393,10 @@ spec:
           ports:
             - name: imap
               containerPort: 143
+            {{- if .Values.tls.enabled }}
+            - name: imaps
+              containerPort: 993
+            {{- end }}
             - name: lmtp
               containerPort: 24
           # Both probe LMTP, not IMAP: LMTP is the port that has to work for mail
@@ -382,3 +445,8 @@ spec:
     - name: imap
       port: 143
       targetPort: imap
+    {{- if .Values.tls.enabled }}
+    - name: imaps
+      port: 993
+      targetPort: imaps
+    {{- end }}

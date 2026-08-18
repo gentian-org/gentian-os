@@ -18,3 +18,20 @@ storageClass: ""
 # filesystem and every message is lost on restart — including the restart that
 # a config change or a node drain causes.
 mailStorageSize: 5Gi
+
+# TLS for IMAP.
+#
+# Off by default, deliberately. Dovecot exits when ssl = yes and the certificate
+# is absent, and the same process serves LMTP — so enabling this before the
+# issuer below exists takes INBOUND mail down, not just retrieval.
+#
+# Turning it on needs two things:
+#   1. The cluster CA issuer (kernel/manifests/cert-manager/cluster-issuers-selfsigned.yaml
+#      defines gentian-ca). Let's Encrypt cannot issue for .svc.cluster.local.
+#   2. Every mail client trusting that CA. A client that does not will fail to
+#      connect rather than fall back, because disable_plaintext_auth is set with it.
+tls:
+  enabled: false
+  issuerRef:
+    name: gentian-ca
+    kind: ClusterIssuer
