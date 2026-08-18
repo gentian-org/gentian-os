@@ -1253,7 +1253,7 @@ Git history is the reference, and a better one: `git show d7bab42:install.sh` an
 
 | # | Criterion | Status |
 |---|---|---|
-| 1 | Install then uninstall returns the cluster to its pre-install state, diffed | **Unverified** — `destroy()` has never been run against any cluster |
+| 1 | Install then uninstall returns the cluster to its pre-install state, diffed | **Partial** — `--uninstall` has been run repeatedly against a separate cluster; the before/after diff that would make "returns to its pre-install state" a measurement rather than an impression has not been taken |
 | 2 | Uninstall is idempotent: running it twice succeeds | **Unverified** |
 | 3 | `install.sh --update` converges without a separate code path | **Unverified** as a run; structurally true — it is the same forward pass |
 | 4 | `uninstall.sh` and `update.sh` no longer exist, and no step logic was copied to preserve them | **Passing** |
@@ -2197,7 +2197,8 @@ installer writes containing secret material, not just the cache.
 ## 15. After the first cluster run
 
 The forward pass has now run on a real cluster: `apply()` has executed for every step in phases A
-through D. `destroy()` still has not run anywhere, phase E has not been reached, and the
+through D. `--uninstall` has been run repeatedly against a separate cluster, so `destroy()` is
+exercised rather than theoretical; phase E has not been reached on this one, and the
 non-default targets — arm64, internal domain, mirror — remain structural claims only.
 
 What the run established, beyond the per-item verdicts below:
