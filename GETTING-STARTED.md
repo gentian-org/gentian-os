@@ -175,37 +175,10 @@ stops before touching the cluster if any fail.
 | `infra-chart-registry` | no | Only for a private chart registry |
 | `acme-dns-cloudflare` | no | Needed by `issuerMode: acme-dns01`, the default — see below |
 
-Each one reaches OpenBao once it exists, at `B-09-seed-secrets`, and a later run
-recovers it from there instead of asking again.
-
-Between being typed and reaching OpenBao there is a window where an install can
-fail with nothing to recover from, so validated answers are cached at
-`~/.gentian/bootstrap-credentials.env` (0600, in a 0700 directory) and
-`B-09-seed-secrets` deletes the cache once OpenBao holds them. To opt out and
-retype on every resumed run:
-
-```bash
-GENTIAN_NO_CREDENTIAL_CACHE=1 ./install.sh
-```
-
-Put it in `install.env` instead to make it permanent for this machine — that
-file is read before any credential is collected, so anything set there applies
-to the whole run.
-
-**There is no secrets file.** For an unattended run, export the credentials
-instead:
-
-| Credential | Environment variable |
-|---|---|
-| `deployments-repository` | `GENTIAN_DEPLOYMENTS_GIT_USERNAME`, `GENTIAN_DEPLOYMENTS_GIT_TOKEN` |
-| `master-password` | `MASTER_PASSWORD` |
-| `infra-chart-registry` | `REGISTRY_USER`, `REGISTRY_PASSWORD` |
-| `acme-dns-cloudflare` | `CF_API_TOKEN` |
-
-The installer reads the environment, then the cache, then OpenBao, and prompts
-for whatever is still missing. A plaintext file of secrets beside the installer
-was a fourth source that nothing rotated and nothing audited, so it was removed
-rather than kept working.
+Type them when asked. Each reaches OpenBao once it exists, and a later run
+recovers it from there instead of asking again — so a resumed install does not
+re-ask. Nothing is written to this machine except a short-lived cache that step
+`B-09-seed-secrets` deletes.
 
 **Everything else is supplied after the cluster is up, not now.** The SMTP relay
 and the ArgoCD webhook secret are `phase: runtime`: they belong to the
@@ -272,15 +245,6 @@ It is encrypted with `age` where available and `openssl` otherwise; there is no
 unencrypted path. Store it wherever your break-glass material already lives —
 anyone who can decrypt it holds every derived credential in the cluster.
 
-To export unattended, pass an age public key — `age -p` prompts on the terminal
-and so cannot run from a job — and read such a kit back with the matching
-private key:
-
-```bash
-GENTIAN_KIT_RECIPIENT=age1... ./install.sh --export-recovery-kit kit.age
-GENTIAN_KIT_IDENTITY=~/.age/key.txt ./install.sh --recover kit.age
-```
-
 The kit does **not** back up your data, and it does not restore OpenBao — a
 fresh instance issues its own unseal material. It is only the part that nothing
 else can rebuild.
@@ -331,6 +295,74 @@ never returns a stored value — existence, who set it and when, and the last
 validation result, and nothing more.
 
 Lost credentials are rotated, not recovered.
+
+---
+
+## Advanced install options
+
+None of this is needed for a normal install. Skip it unless one of the headings
+is the problem you have.
+
+### Installing unattended
+
+Set `GENTIAN_NONINTERACTIVE=1` in `install.env`, and supply the four bootstrap
+credentials through the environment instead of the prompt:
+
+| Credential | Environment variable |
+|---|---|
+| `deployments-repository` | `GENTIAN_DEPLOYMENTS_GIT_USERNAME`, `GENTIAN_DEPLOYMENTS_GIT_TOKEN` |
+| `master-password` | `MASTER_PASSWORD` |
+| `infra-chart-registry` | `REGISTRY_USER`, `REGISTRY_PASSWORD` |
+| `acme-dns-cloudflare` | `CF_API_TOKEN` |
+
+The installer reads the environment first, then its cache, then OpenBao, and
+prompts for whatever is still missing — so a partly-supplied environment still
+works interactively.
+
+**There is no secrets file.** A plaintext file of secrets beside the installer
+was a fourth source that nothing rotated and nothing audited, so it was removed
+rather than kept working.
+
+### The bootstrap credential cache
+
+Between being typed and reaching OpenBao there is a window where an install can
+fail with nothing to recover from. Validated answers are cached at
+`~/.gentian/bootstrap-credentials.env` — 0600, in a 0700 directory — and
+`B-09-seed-secrets` deletes it once OpenBao holds them.
+
+To keep credentials in the process only, and retype on every resumed run:
+
+```bash
+GENTIAN_NO_CREDENTIAL_CACHE=1 ./install.sh
+```
+
+Put it in `install.env` to make that permanent for the machine. That file is
+read before any credential is collected, so anything set there applies to the
+whole run.
+
+### Exporting a recovery kit from a job
+
+`age -p` prompts on the terminal, so an unattended export needs a public key
+instead, and reading the kit back needs the matching private key:
+
+```bash
+GENTIAN_KIT_RECIPIENT=age1... ./install.sh --export-recovery-kit kit.age
+GENTIAN_KIT_IDENTITY=~/.age/key.txt ./install.sh --recover kit.age
+```
+
+### Running one step, or stopping early
+
+```bash
+./install.sh --explain            # what each step does, in order
+./install.sh --status             # which steps this cluster has already satisfied
+./install.sh --only B-09          # a single step
+./install.sh --from C-01          # resume from a step
+./install.sh --phase secrets      # one phase: control-plane, secrets,
+                                  # platform, applications, handover
+```
+
+Re-running the whole installer is safe: each step checks the cluster and skips
+what is already done, so convergence and update are the same operation.
 
 ---
 
