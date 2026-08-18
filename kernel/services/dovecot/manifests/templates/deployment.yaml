@@ -327,7 +327,16 @@ spec:
           secret:
             secretName: dovecot-realm-auth
             optional: true
-            defaultMode: 0400
+            # 0444, not 0400. fsGroup 1000 gives every mounted file group vmail,
+            # but the auth process runs as dovecot (uid 101, gid 102) and is not
+            # in that group — so 0400 is unreadable by the one process that needs
+            # it, and the passdb fails with "Permission denied ... we're not in
+            # group 1000(vmail)" rather than with a wrong-password error.
+            #
+            # World-readable is bounded here: this container runs Dovecot and
+            # nothing else, so "other" is Dovecot's own processes. The passdb
+            # holds ARGON2ID hashes rather than passwords in any case.
+            defaultMode: 0444
         # One passwd-file plus one .conf per client type, written by the
         # operator. optional so a cluster with no mail clients yet still starts
         # and serves LMTP — inbound delivery does not depend on this, only
@@ -336,7 +345,16 @@ spec:
           secret:
             secretName: dovecot-app-passwords
             optional: true
-            defaultMode: 0400
+            # 0444, not 0400. fsGroup 1000 gives every mounted file group vmail,
+            # but the auth process runs as dovecot (uid 101, gid 102) and is not
+            # in that group — so 0400 is unreadable by the one process that needs
+            # it, and the passdb fails with "Permission denied ... we're not in
+            # group 1000(vmail)" rather than with a wrong-password error.
+            #
+            # World-readable is bounded here: this container runs Dovecot and
+            # nothing else, so "other" is Dovecot's own processes. The passdb
+            # holds ARGON2ID hashes rather than passwords in any case.
+            defaultMode: 0444
         {{- if .Values.tls.enabled }}
         # NOT optional: ssl = yes is already rendered above, and Dovecot exits
         # rather than start without the files. Holding the Pod in
