@@ -67,6 +67,8 @@ GENTIAN_ONLY="${GENTIAN_ONLY:-}"
 GENTIAN_FROM="${GENTIAN_FROM:-}"
 GENTIAN_UNTIL="${GENTIAN_UNTIL:-}"
 GENTIAN_SKIP="${GENTIAN_SKIP:-}"
+# Apply even where check() says satisfied — see run_step_forward.
+GENTIAN_FORCE="${GENTIAN_FORCE:-0}"
 GENTIAN_PHASE="${GENTIAN_PHASE:-}"
 
 # =============================================================================
@@ -316,6 +318,24 @@ run_step_forward() {
     if _has_verb check; then
         local verdict=0
         _step_verdict || verdict=$?
+        # --force runs apply() whatever check() concluded.
+        #
+        # Every step is gated on its own check(), so a check that tests the wrong
+        # thing makes its step unreachable: it reports satisfied, apply() never
+        # runs, and the only ways out are editing the step or fixing the cluster
+        # by hand. That has happened for real — a step whose work was half done
+        # reported satisfied and could not be re-run.
+        #
+        # The verdict is still printed. An operator who forces past a satisfied
+        # check should see that it said satisfied.
+        if [[ "${GENTIAN_FORCE:-0}" == "1" ]]; then
+            case "$verdict" in
+                "${CHECK_SATISFIED}") echo "     check: satisfied  →  applying anyway (--force)" ;;
+                "${CHECK_UNDEFINED}") echo "     check: undefined  →  applying anyway (--force)" ;;
+                "${CHECK_ALWAYS}")    echo "     check: runs every pass  →  applying" ;;
+                *)                    echo "     check: not satisfied  →  applying" ;;
+            esac
+        else
         case "$verdict" in
             "${CHECK_SATISFIED}")
                 echo "     check: satisfied  →  skip"
@@ -332,6 +352,7 @@ run_step_forward() {
             *)
                 echo "     check: not satisfied  →  applying" ;;
         esac
+        fi
     else
         # A step with no check() cannot be skipped and cannot be dry-run
         # honestly. Steps that only wait on a condition are the legitimate case.

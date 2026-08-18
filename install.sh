@@ -115,6 +115,9 @@ Looking before running:
   --explain             print what every step does, in order, and stop
   --status              report which steps this cluster has already satisfied
   --dry-run             run every check() and print the plan; applies nothing
+  --force               apply even where check() says satisfied. For a step
+                        whose check tests the wrong thing, this is the way past
+                        it without editing code
 
 Running part of it. A step is named by its number or its full id, so
 --only B-10 and --only B-10-seed-secrets are the same thing:
@@ -158,6 +161,7 @@ parse_driver_args() {
             --explain)           GENTIAN_EXPLAIN=1 ;;
             --status)            GENTIAN_DIRECTION="status" ;;
             --dry-run)           GENTIAN_DRY_RUN=1 ;;
+            --force)             GENTIAN_FORCE=1 ;;
             --step|--only)
                 shift; [[ $# -gt 0 ]] || { error "$0: --only requires a value"; exit 1; }
                 GENTIAN_ONLY="$1" ;;
