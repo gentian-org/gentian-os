@@ -184,6 +184,17 @@ For the current baseline design of the system, refer to [architecture.md](archit
   - `[ ]` Retire the per-app password minting once token auth works for the webmail client.
   - `[ ]` Keep app passwords only for clients that genuinely cannot do OAuth (phones, Thunderbird), as Google and Fastmail do.
 
+### 1.20 Wire Per-Tenant DKIM Keys into OpenDKIM (**)
+* **Target Domain**: Kernel Mail Security
+* **Context**: The operator already generates an RSA-2048 DKIM key per tenant (`dkim-<tenant>` Secret in the kernel namespace, created once, never auto-rotated) and publishes the public half on `Tenant.status.mail.dkimPublicKey` for DNS. But OpenDKIM selects a signing key from `/etc/opendkim/KeyTable` and `/etc/opendkim/SigningTable`, and nothing writes tenant entries into either — the image builds them once at start from `ALLOWED_SENDER_DOMAINS`, which carries the kernel domain alone. So a tenant's key exists, its DNS record can be published, and its mail still leaves unsigned. Unsigned mail from a young IP is the classic spam profile; SPF alone is weighted far less by the large providers, so this is the difference between tenant mail arriving and tenant mail being filtered.
+* **Proposed Solution**: Have the operator maintain the two tables and the key files the same way it already maintains the Postfix address maps — a Secret mounted into Postfix, rewritten from the tenant registry, with the private keys sourced from the existing `dkim-<tenant>` Secrets. OpenDKIM re-reads `refile:` tables less eagerly than Postfix re-reads `texthash:`, so adding a tenant needs a reload; Reloader is already deployed and can watch the Secret. Note the key must never be regenerated once published, since the DNS record would silently stop matching.
+* **Backlog Items**:
+  - `[ ]` Emit KeyTable and SigningTable entries per tenant domain from the mail reconciler.
+  - `[ ]` Mount the tenant DKIM private keys into the Postfix Pod and reload OpenDKIM on change.
+  - `[ ]` Surface the full DNS record — selector, `v=DKIM1` prefix and key — on tenant status rather than the bare key, so it can be pasted into a zone.
+  - `[ ]` Verify with a message to a major provider that the received headers report `dkim=pass` and `dmarc=pass`.
+  - `[ ]` Decide a rotation story: keys are created once and never rotated, which is safe but leaves no answer to a compromised key.
+
 ---
 
 ## 2. Platform, Infrastructure & Lifecycle

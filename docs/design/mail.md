@@ -115,6 +115,25 @@ simultaneously. This is mitigated by standard HA practices (2+
 replicas, PodDisruptionBudget) — the same approach used for every
 other shared kernel component.
 
+
+### Shared sending reputation
+
+Every tenant sends from one IP, so they share one reputation. A tenant that
+sends spam degrades deliverability for every other tenant on the cluster, and
+there is no per-tenant remedy once an IP is listed — the block is on the
+address, not the domain.
+
+This is not fixable by DNS. PTR is a property of the IP and there is exactly one
+per address, which is correct and normal: receivers check that the IP's PTR name
+resolves back to the IP, never that it matches the sender's domain. Shared mail
+platforms all work this way. What *is* per-tenant is SPF, DKIM and DMARC, and
+DMARC alignment compares the From: domain against the DKIM signing domain and
+the envelope sender — the PTR takes no part in it.
+
+So multi-tenant sending is sound, but the reputation is collective. The
+mitigations are per-tenant outbound rate limits, bounce and complaint
+monitoring, and a dedicated IP for any tenant whose volume justifies one.
+
 ## 5. Provisioning Flow (selfhosted mode)
 
 When a Tenant with `mail.mode: selfhosted` is reconciled, the
@@ -231,7 +250,26 @@ LoadBalancer first, then publish the records below.
 | **DMARC** (TXT) | `_dmarc.<tenant-domain>` | `v=DMARC1; p=quarantine; rua=mailto:postmaster@<domain>` | Tells recipients what to do when SPF or DKIM fail, and where to report. |
 | **PTR** | the outbound IP | `mail.<kernel-domain>` | Reverse DNS. Set at the cloud provider, not in DNS hosting. Many providers refuse mail from an IP with no PTR. |
 
-**DKIM keys are generated per domain** by the Postfix image, from the domains in
+**Tenant DKIM is generated but not yet used.** The operator already creates an
+RSA-2048 key per tenant — a `dkim-<tenant>` Secret in the kernel namespace,
+created once and never rotated automatically — and publishes the public half on
+`Tenant.status.mail.dkimPublicKey` for the operator to put in DNS:
+
+```bash
+kubectl get tenant <name> -o jsonpath='{.status.mail.dkimPublicKey}'
+```
+
+What is missing is the last mile. OpenDKIM decides which key signs which domain
+from two files, `/etc/opendkim/KeyTable` and `/etc/opendkim/SigningTable`, and
+nothing writes tenant entries into them — so the key exists, the DNS record can
+be published, and the mail still goes out unsigned. Closing this means the
+operator maintaining those two tables and the key files the way it already
+maintains the Postfix maps, and reloading OpenDKIM when a tenant is added.
+
+Until then a tenant domain sends with SPF only, which the large providers weight
+far less than DKIM.
+
+**Kernel DKIM keys are generated per domain** by the Postfix image, from the domains in
 `ALLOWED_SENDER_DOMAINS`, into `/etc/opendkim/keys/<domain>.txt`. Read the
 public key to publish it:
 
