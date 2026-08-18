@@ -16,7 +16,10 @@ limitations under the License.
 
 package controller
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestDeriveAndHash(t *testing.T) {
 	seed := []byte("0123456789abcdef0123456789abcdef")
@@ -72,5 +75,21 @@ func TestTenantMailDNSRecords(t *testing.T) {
 	}
 	if recs[0]["recordTTL"].(int64) != 300 {
 		t.Fatal("TTL must be explicit; a zero TTL is rejected by some providers")
+	}
+}
+
+func TestMailAddressNotDoubleSuffixed(t *testing.T) {
+	for _, tc := range []struct{ user, domain, want string }{
+		{"admin-corp", "corp.gtn.host", "admin-corp@corp.gtn.host"},
+		{"christian@corp.gtn.host", "corp.gtn.host", "christian@corp.gtn.host"},
+		{"someone@elsewhere.test", "corp.gtn.host", "someone@elsewhere.test"},
+	} {
+		got := tc.user
+		if !strings.Contains(got, "@") {
+			got = tc.user + "@" + tc.domain
+		}
+		if got != tc.want {
+			t.Fatalf("user %q: got %q, want %q", tc.user, got, tc.want)
+		}
 	}
 }

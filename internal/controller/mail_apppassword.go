@@ -221,7 +221,15 @@ func (r *TenantReconciler) syncMailAppPasswords(ctx context.Context, tenant *gen
 	var lines strings.Builder
 	plain := map[string][]byte{}
 	for _, u := range users {
-		addr := u + "@" + domain
+		// A Keycloak username is frequently already an email address, and
+		// appending the domain to one yields christian@corp.gtn.host@corp.gtn.host
+		// — an address Dovecot will never be asked about, so the user's mail
+		// client authenticates against an entry that does not match and the
+		// failure reads as a wrong password.
+		addr := u
+		if !strings.Contains(addr, "@") {
+			addr = u + "@" + domain
+		}
 		pw := deriveMailPassword(seed, addr)
 		line, err := argon2idPasswdLine(addr, pw)
 		if err != nil {
