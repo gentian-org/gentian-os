@@ -1604,30 +1604,31 @@ resolve_gentian_os_branch() {
 # =============================================================================
 apply_bootstrap_application() {
     local name="$1"
-    local base="${SCRIPT_DIR}/kernel/bootstrap/${name}-application"
+    local chart="${SCRIPT_DIR}/kernel/bootstrap/chart"
 
-    if [[ -f "${base}.yaml.tmpl" ]]; then
-        if ! command -v envsubst &>/dev/null; then
-            error "envsubst not found (install gettext-base). Aborting."
-            exit 1
-        fi
+    # One chart, one template per Application. This rendered a .tmpl with an
+    # allowlisted envsubst — allowlisted because these manifests also carry Argo
+    # CD's $values expressions, and a substitute-everything run blanked them.
+    # Helm cannot make that mistake: $values is not its syntax, so there is no
+    # list to keep in step with the manifests.
+    if [[ -f "${chart}/templates/${name}.yaml" ]]; then
         if [[ -z "${STORAGE_CLASS:-}" ]]; then
-            error "STORAGE_CLASS is empty while rendering ${name}-application.yaml.tmpl."
+            error "STORAGE_CLASS is empty while rendering ${name}."
             error "  resolve_storage_class() should have set it during pre-flight."
             exit 1
         fi
         if [[ -z "${GENTIAN_DEPLOYMENTS_STAGE:-}" ]]; then
-            error "GENTIAN_DEPLOYMENTS_STAGE is empty while rendering ${name}-application.yaml.tmpl."
+            error "GENTIAN_DEPLOYMENTS_STAGE is empty while rendering ${name}."
             exit 1
         fi
         resolve_gentian_os_branch
-        # Allowlisted, not a bare envsubst: these templates also contain Argo CD
-        # and Helm expressions such as $values, which a substitute-everything run
-        # would silently blank.
-        envsubst "\${STORAGE_CLASS} \${GENTIAN_DEPLOYMENTS_STAGE} \${GENTIAN_OS_BRANCH}" \
-            < "${base}.yaml.tmpl" | kubectl apply -f -
+        helm template gentian-bootstrap "${chart}" -s "templates/${name}.yaml" \
+            --set-string "gentianOsBranch=${GENTIAN_OS_BRANCH}" \
+            --set-string "storageClass=${STORAGE_CLASS}" \
+            --set-string "stage=${GENTIAN_DEPLOYMENTS_STAGE}" \
+            | kubectl apply -f -
     else
-        kubectl apply -f "${base}.yaml"
+        kubectl apply -f "${SCRIPT_DIR}/kernel/bootstrap/${name}-application.yaml"
     fi
 }
 

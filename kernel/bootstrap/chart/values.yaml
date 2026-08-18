@@ -1,0 +1,9 @@
+# The three values the bootstrap Applications are parameterised on.
+#
+# They were substituted by an allowlisted envsubst, allowlisted because these
+# manifests also carry Argo CD's $values expressions and a substitute-everything
+# run would silently blank them. Helm has no such hazard: $values is not its
+# syntax, so nothing needs listing and nothing can be blanked by omission.
+gentianOsBranch: develop
+storageClass: ""
+stage: dev

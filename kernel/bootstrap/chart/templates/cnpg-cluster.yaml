@@ -28,7 +28,7 @@
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
-  name: cnpg-cluster-${GENTIAN_DEPLOYMENTS_STAGE}
+  name: cnpg-cluster-{{ .Values.stage }}
   namespace: argocd
   annotations:
     argocd.argoproj.io/sync-wave: "14"   # after infra (wave 12–13), before kernel services (wave 30+)
@@ -38,8 +38,8 @@ spec:
   project: gentian
   source:
     repoURL: https://github.com/gentian-org/gentian-os
-    targetRevision: ${GENTIAN_OS_BRANCH}
-    path: kernel/services/postgresql/manifests/${GENTIAN_DEPLOYMENTS_STAGE}
+    targetRevision: {{ .Values.gentianOsBranch }}
+    path: kernel/services/postgresql/manifests/{{ .Values.stage }}
   destination:
     server: https://kubernetes.default.svc
     namespace: platform-kernel

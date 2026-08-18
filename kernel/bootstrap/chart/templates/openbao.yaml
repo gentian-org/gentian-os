@@ -32,10 +32,10 @@ spec:
       # in scripts/lib/common.sh. A Helm parameter overrides valueFiles.
       parameters:
       - name: server.dataStorage.storageClass
-        value: "${STORAGE_CLASS}"
+        value: "{{ .Values.storageClass }}"
   # Source 2: Values file from Git (referenced as $values by Source 1)
   - repoURL: https://github.com/gentian-org/gentian-os
-    targetRevision: ${GENTIAN_OS_BRANCH}
+    targetRevision: {{ .Values.gentianOsBranch }}
     ref: values
   destination:
     server: https://kubernetes.default.svc

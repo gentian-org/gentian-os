@@ -14,7 +14,7 @@ spec:
   project: gentian
   source:
     repoURL: https://github.com/gentian-org/gentian-os
-    targetRevision: ${GENTIAN_OS_BRANCH}
+    targetRevision: {{ .Values.gentianOsBranch }}
     path: kernel/services/_globals
     directory:
       recurse: false   # only picks up eso-cluster-secret-store.yaml; secrets/ subdir handled by globals-secrets-dev

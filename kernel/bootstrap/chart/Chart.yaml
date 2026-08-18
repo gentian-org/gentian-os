@@ -1,0 +1,5 @@
+apiVersion: v2
+name: gentian-bootstrap
+description: The Argo CD Applications that stand a Gentian cluster up
+type: application
+version: 0.1.0
