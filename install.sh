@@ -115,9 +115,6 @@ Looking before running:
   --explain             print what every step does, in order, and stop
   --status              report which steps this cluster has already satisfied
   --dry-run             run every check() and print the plan; applies nothing
-  --force               apply even where check() says satisfied. For a step
-                        whose check tests the wrong thing, this is the way past
-                        it without editing code
 
 Running part of it. A step is named by its number or its full id, so
 --only B-10 and --only B-10-seed-secrets are the same thing:
@@ -127,6 +124,10 @@ Running part of it. A step is named by its number or its full id, so
   --until ID            start at the beginning and stop after this one
   --phase NAME          one phase: control-plane, secrets, platform,
                         applications, handover — or its letter, A through E
+  --force               apply even where check() says satisfied. The way past a
+                        step whose check tests the wrong thing, without editing
+                        code. A step needing this routinely has a check() that
+                        is asking the wrong question
 
 Other options:
   --prepare-deployment  write clusters/<id>/kernel in gentian-deployments from
