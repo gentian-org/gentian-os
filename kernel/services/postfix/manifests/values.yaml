@@ -45,3 +45,22 @@ kernelDomain: ""
 # working on the next sync.
 relayHost: ""
 relayPort: "587"
+
+# The public MX endpoint on port 25.
+#
+# Enabled by default: a cluster running kernel mail that cannot receive is only
+# half a mail system, and 25 is the only port the internet delivers to. It
+# provisions a cloud load balancer, which costs money on most providers — set
+# enabled: false on clusters that use kernel mail for outbound notifications
+# only and publish no MX record.
+#
+# Publishing an MX record before this exists is what makes mail "disappear":
+# senders resolve the record, fail to connect, and retry for days before
+# bouncing.
+smtpIngress:
+  enabled: true
+  # Pin the address when the MX record already names one, so a rebuild does not
+  # hand out a different IP and silently break inbound mail.
+  loadBalancerIP: ""
+  # Provider-specific hints, e.g. an Octavia flavor or a floating-IP pool.
+  annotations: {}

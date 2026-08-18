@@ -1,0 +1,46 @@
+{{- if .Values.smtpIngress.enabled }}
+# Public MX endpoint.
+#
+# Separate from the chart's own Service, which stays ClusterIP on 587 for
+# in-cluster submission. Inbound mail from the internet arrives on 25, and the
+# two have opposite exposure: 587 must never be public, 25 must be.
+#
+# Postfix already listens on 25 — `smtp inet n - n - - smtpd` is in master.cf —
+# so this exposes an existing listener rather than enabling one.
+apiVersion: v1
+kind: Service
+metadata:
+  name: postfix-{{ .Values.env }}-smtp
+  namespace: {{ .Values.servicesNamespace }}
+  annotations:
+    argocd.argoproj.io/sync-wave: "9"
+    {{- with .Values.smtpIngress.annotations }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+  labels:
+    app.kubernetes.io/name: postfix
+    gentianos.io/component: kernel-mail
+spec:
+  type: LoadBalancer
+  # Local, not Cluster. A sending server's IP is evidence: it is checked against
+  # blocklists, recorded in Received headers, and is how a relay decides whether
+  # to trust the connection. Cluster policy SNATs it to a node address, so every
+  # message would appear to come from inside the cluster and reputation checks
+  # would be meaningless.
+  #
+  # The cost is that only nodes running a Postfix Pod can serve traffic, so the
+  # load balancer must health-check healthCheckNodePort rather than the port
+  # itself — the same arrangement the kernel gateway uses.
+  externalTrafficPolicy: Local
+  {{- with .Values.smtpIngress.loadBalancerIP }}
+  loadBalancerIP: {{ . | quote }}
+  {{- end }}
+  selector:
+    app.kubernetes.io/name: postfix
+    app.kubernetes.io/instance: postfix-{{ .Values.env }}
+  ports:
+    - name: smtp
+      port: 25
+      targetPort: 25
+      protocol: TCP
+{{- end }}
