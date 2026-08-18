@@ -815,6 +815,27 @@ load_deployments_cluster_settings() {
     # while clusters migrate; each claim_setting is a no-op when the variable is
     # already set.
     local claim_file="${GENTIAN_DEPLOYMENTS_PATH}/clusters/${cluster}/kernel/claims/cluster.yaml"
+
+    # A cluster property in install.env beats the claim, silently.
+    #
+    # install.env is loaded first and claim_setting is a no-op for a variable
+    # that already has a value, so setting one of these there means editing
+    # claims/cluster.yaml has no effect and nothing says why. install.env is the
+    # pointer file (§2); what the cluster IS belongs on the claim.
+    #
+    # Reported, not overridden: an operator who wrote it there meant something,
+    # and silently reversing the precedence would be the same fault in the other
+    # direction.
+    local v
+    for v in TENANCY_MODE NETWORK_MODE NODE_IP ROUTING_MODE SECRET_MODE \
+             STORAGE_CLASS MAIL_SERVICE_MODE LB_PROVIDER LB_ANNOTATIONS; do
+        [[ -n "${!v:-}" ]] || continue
+        [[ -r "${INSTALL_CONFIG_FILE:-}" ]] || continue
+        grep -qE "^[[:space:]]*(export[[:space:]]+)?${v}=" "${INSTALL_CONFIG_FILE}" || continue
+        warn "${v} is set in ${INSTALL_CONFIG_FILE} — it overrides claims/cluster.yaml."
+        warn "  Move it to the claim: install.env is the pointer file, the claim is the cluster."
+    done
+
     if [[ -r "${claim_file}" ]]; then
         claim_setting TENANCY_MODE      tenancyMode      "${claim_file}"
         claim_setting NETWORK_MODE      networkMode      "${claim_file}"
