@@ -1,0 +1,728 @@
+apiVersion: apiextensions.crossplane.io/v1
+kind: Composition
+metadata:
+  name: cluster-default
+  labels:
+    gentianos.io/composition: cluster
+spec:
+  compositeTypeRef:
+    apiVersion: gentianos.io/v1alpha1
+    kind: XCluster
+  mode: Pipeline
+  pipeline:
+    - step: render-cluster-resources
+      functionRef:
+        name: function-go-templating
+      input:
+        apiVersion: gotemplating.fn.crossplane.io/v1beta1
+        kind: GoTemplate
+        source: Inline
+        inline:
+          template: |
+            {{- $xr := .observed.composite.resource }}
+            {{- $spec := $xr.spec }}
+            {{- $name := $xr.metadata.name }}
+
+            {{- $openbaoServer    := default "https://openbao.openbao.svc.cluster.local:8200" (dig "openbao" "server" "" $spec) }}
+            {{- $kvMount          := default "secret" (dig "openbao" "kvMount" "" $spec) }}
+            {{- $authMount        := default "kubernetes" (dig "openbao" "authMount" "" $spec) }}
+            {{- $k8sHost          := default "https://kubernetes.default.svc" (dig "openbao" "kubernetesHost" "" $spec) }}
+            {{- $argoNs           := default "argocd" (dig "argocd" "namespace" "" $spec) }}
+            {{- $esoNs            := default "external-secrets" (dig "eso" "namespace" "" $spec) }}
+            {{- $esoSa            := default "external-secrets" (dig "eso" "serviceAccount" "" $spec) }}
+            {{- $letsencryptEmail := default (printf "admin@%s" $spec.kernelDomain) (dig "certManager" "letsencryptEmail" "" $spec) }}
+
+            {{- /* The OIDC auth backend's mount accessor, read back from the
+                 resource once OpenBao has created it. Vault policy templating
+                 addresses alias metadata by ACCESSOR — there is no way to name
+                 the mount by path — so this value cannot be declared, only
+                 observed. It is empty on the first reconcile and populated on
+                 the next, which is why the policy that needs it is gated on it
+                 rather than rendered with a placeholder. */}}
+            {{- $authObs   := dig "vault-auth-oidc" dict (default dict .observed.resources) }}
+            {{- $accessor  := dig "resource" "status" "atProvider" "accessor" "" $authObs }}
+            {{- $defaultMasterRef := dict "name" "gentian-os-master-password" "namespace" "crossplane-system" }}
+            {{- $masterRef        := default $defaultMasterRef (default (dict) $spec.masterPasswordSecretRef) }}
+
+            {{- /* ── Kernel namespaces ─────────────────────────────────────────── */}}
+            {{- range list "platform-kernel" "gentian-system" }}
+            ---
+            apiVersion: kubernetes.crossplane.io/v1alpha2
+            kind: Object
+            metadata:
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: namespace-{{ . }}
+              name: {{ $name }}-ns-{{ . }}
+            spec:
+              forProvider:
+                manifest:
+                  apiVersion: v1
+                  kind: Namespace
+                  metadata:
+                    name: {{ . }}
+                    labels:
+                      gentianos.io/managed-by: crossplane
+                      gentianos.io/cluster: {{ $name }}
+              providerConfigRef:
+                name: kubernetes
+            {{- end }}
+
+            {{- /* ── OpenBao KV v2 mount ───────────────────────────────────────── */}}
+            ---
+            apiVersion: vault.vault.upbound.io/v1alpha1
+            kind: Policy
+            metadata:
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: vault-policy-eso-read
+              name: {{ $name }}-policy-eso-read
+            spec:
+              forProvider:
+                name: eso-read
+                policy: |
+                  path "{{ $kvMount }}/data/gentian-os/kernel/*" {
+                    capabilities = ["read"]
+                  }
+                  path "{{ $kvMount }}/metadata/gentian-os/kernel/*" {
+                    capabilities = ["list"]
+                  }
+                  path "{{ $kvMount }}/data/gentian-os/tenants/+/apps/*" {
+                    capabilities = ["read"]
+                  }
+                  # Tenant repository credentials. Without this a tenant admin's
+                  # write succeeds and nothing works: the satisfaction probe
+                  # never syncs, so the credential reads as missing while it is
+                  # sitting in the path, and the Argo CD repository Secret is
+                  # never materialised. Named rather than widened to
+                  # tenants/+/* — ESO should read what becomes a Secret, not
+                  # everything a tenant owns.
+                  path "{{ $kvMount }}/data/gentian-os/tenants/+/repositories/*" {
+                    capabilities = ["read"]
+                  }
+                  path "{{ $kvMount }}/metadata/gentian-os/tenants/*" {
+                    capabilities = ["list"]
+                  }
+              providerConfigRef:
+                name: openbao
+
+            ---
+            apiVersion: auth.vault.upbound.io/v1alpha1
+            kind: Backend
+            metadata:
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: vault-auth-backend-kubernetes
+                crossplane.io/external-name: {{ $authMount }}
+              name: {{ $name }}-auth-kubernetes
+            spec:
+              managementPolicies: ["Observe", "Create"]
+              forProvider:
+                type: kubernetes
+                path: {{ $authMount }}
+                description: "Kubernetes service-account auth for Crossplane providers and ESO"
+              providerConfigRef:
+                name: openbao
+
+            {{- /* ── OIDC write path (§7) ────────────────────────────────────
+                 Secret material enters through the OpenBao API with a Keycloak
+                 identity attached, so the audit device records WHO wrote a
+                 value rather than which service did. Bootstrap is the single
+                 exception, because there is no Keycloak yet.
+
+                 Declared here rather than by a script because §7 puts auth
+                 backends and policies on the provider-vault side of the
+                 boundary: they are infrastructure. Only secret VALUES stay out
+                 of Crossplane, and none appear below.
+            */}}
+            {{- $oidc := ($spec.oidc) | default dict }}
+            {{- if $oidc.discoveryUrl }}
+            ---
+            apiVersion: vault.vault.upbound.io/v1alpha1
+            kind: Policy
+            metadata:
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: vault-policy-cluster-admin
+              name: {{ $name }}-policy-cluster-admin
+            spec:
+              forProvider:
+                name: cluster-admin
+                policy: |
+                  # Every credential a cluster operator may supply.
+                  path "{{ $kvMount }}/data/gentian-os/kernel/*" {
+                    capabilities = ["create", "update", "read"]
+                  }
+                  path "{{ $kvMount }}/metadata/gentian-os/kernel/*" {
+                    capabilities = ["list", "read"]
+                  }
+              providerConfigRef:
+                name: openbao
+
+            {{- if $accessor }}
+            ---
+            apiVersion: vault.vault.upbound.io/v1alpha1
+            kind: Policy
+            metadata:
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: vault-policy-tenant-admin
+              name: {{ $name }}-policy-tenant-admin
+            spec:
+              forProvider:
+                name: tenant-admin
+                policy: |
+                  # A tenant admin reaches their own tenant's paths and nothing
+                  # else. The deny below is explicit rather than implied by
+                  # omission: showing a tenant admin a cluster-scoped form and
+                  # having OpenBao reject the write is an annoyance, while the
+                  # inverse is a breach. An explicit deny cannot be widened by a
+                  # later grant.
+                  #
+                  # The tenant comes from the alias metadata the role's claim
+                  # mapping writes, so the path a token reaches is decided by the
+                  # verified claim rather than by anything the caller sends.
+                  path "{{ $kvMount }}/data/gentian-os/tenants/{{ `{{identity.entity.aliases.` }}{{ $accessor }}{{ `.metadata.tenant}}` }}/*" {
+                    capabilities = ["create", "update", "read"]
+                  }
+                  # Metadata on the same prefix. The write path records who set a
+                  # credential as custom metadata, and that write is deliberately
+                  # allowed to fail quietly — the value is already stored, so
+                  # failing the request would report a write that succeeded as
+                  # broken. Without this capability that silence would mean every
+                  # tenant credential is stored with no "who set this" at all.
+                  path "{{ $kvMount }}/metadata/gentian-os/tenants/{{ `{{identity.entity.aliases.` }}{{ $accessor }}{{ `.metadata.tenant}}` }}/*" {
+                    capabilities = ["create", "update", "read", "list"]
+                  }
+                  path "{{ $kvMount }}/data/gentian-os/kernel/*" {
+                    capabilities = ["deny"]
+                  }
+                  path "{{ $kvMount }}/metadata/gentian-os/kernel/*" {
+                    capabilities = ["deny"]
+                  }
+              providerConfigRef:
+                name: openbao
+            {{- end }}
+
+            ---
+            # The OIDC auth backend itself. The client secret is NOT here: it is
+            # an ExternalSecret reference, because a value in a spec field is
+            # the one thing §7 prohibits outright.
+            apiVersion: jwt.vault.upbound.io/v1alpha1
+            kind: AuthBackend
+            metadata:
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: vault-auth-oidc
+              name: {{ $name }}-auth-oidc
+            spec:
+              forProvider:
+                type: oidc
+                path: oidc
+                oidcDiscoveryUrl: {{ $oidc.discoveryUrl | quote }}
+                oidcClientId: {{ $oidc.clientId | default "openbao" | quote }}
+                oidcClientSecretSecretRef:
+                  name: {{ $oidc.clientSecretRef | default "openbao-oidc-client" }}
+                  namespace: {{ $spec.openbao.namespace | default "openbao" }}
+                  key: client-secret
+                defaultRole: cluster-admin
+              providerConfigRef:
+                name: openbao
+
+            ---
+            # Group claim → policy. A cluster operator in the platform admin
+            # group gets cluster-admin; everyone else authenticates and gets
+            # nothing, which is the correct default for a write path.
+            apiVersion: jwt.vault.upbound.io/v1alpha1
+            kind: AuthBackendRole
+            metadata:
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: vault-auth-oidc-role-cluster-admin
+              name: {{ $name }}-auth-oidc-cluster-admin
+            spec:
+              forProvider:
+                backend: oidc
+                roleName: cluster-admin
+                roleType: oidc
+                userClaim: preferred_username
+                boundAudiences:
+                  - {{ $oidc.clientId | default "openbao" | quote }}
+                  {{- range (default (list "gentian-portal") $oidc.additionalAudiences) }}
+                  - {{ . | quote }}
+                  {{- end }}
+                boundClaimsType: string
+                boundClaims:
+                  groups: {{ $oidc.clusterAdminGroup | default "/platform-admins" | quote }}
+                allowedRedirectUris:
+                  - {{ printf "%s/ui/vault/auth/oidc/oidc/callback" ($oidc.externalUrl | default "") | quote }}
+                  - http://localhost:8250/oidc/callback
+                tokenPolicies:
+                  - cluster-admin
+                # Short-lived by design: the write path is interactive, so a
+                # token outliving the session is a stolen credential waiting to
+                # happen.
+                tokenTtl: 1800
+                tokenMaxTtl: 3600
+              providerConfigRef:
+                name: openbao
+
+            {{- /* ── The tenant-admin OIDC role ─────────────────────────────────
+                 Without this a tenant administrator cannot authenticate at all:
+                 the cluster-admin role above is bound to the platform-admins
+                 group, so their token exchange is refused before any
+                 scope decision is reached.
+
+                 claimMappings is the load-bearing line. It copies the verified
+                 `tenant` claim into the alias metadata that the tenant-admin
+                 policy templates its path from, and that the credential manager
+                 reads to decide which tenant's requirements to show. Both the
+                 write path and the read path therefore agree by construction,
+                 because they read the same value.
+
+                 boundClaims requires the group; a user without it falls through
+                 to no role rather than to a role with no tenant.
+              */}}
+            ---
+            apiVersion: jwt.vault.upbound.io/v1alpha1
+            kind: AuthBackendRole
+            metadata:
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: vault-auth-oidc-role-tenant-admin
+              name: {{ $name }}-auth-oidc-tenant-admin
+            spec:
+              forProvider:
+                backend: oidc
+                roleName: tenant-admin
+                roleType: oidc
+                userClaim: preferred_username
+                boundAudiences:
+                  - {{ $oidc.clientId | default "openbao" | quote }}
+                  {{- range (default (list "gentian-portal") $oidc.additionalAudiences) }}
+                  - {{ . | quote }}
+                  {{- end }}
+                # glob, not string: the kernel realm imports each tenant's own
+                # admins group under its own name, so there is no one group to
+                # match exactly.
+                boundClaimsType: glob
+                boundClaims:
+                  groups: {{ $oidc.tenantAdminGroup | default "/gentian:tenant:*:admins" | quote }}
+                claimMappings:
+                  {{ $oidc.tenantClaim | default "tenant" }}: tenant
+                allowedRedirectUris:
+                  - {{ printf "%s/ui/vault/auth/oidc/oidc/callback" ($oidc.externalUrl | default "") | quote }}
+                  - http://localhost:8250/oidc/callback
+                tokenPolicies:
+                  - tenant-admin
+                tokenTtl: 1800
+                tokenMaxTtl: 3600
+              providerConfigRef:
+                name: openbao
+
+            {{- /* ── The Keycloak side of the OIDC handshake ────────────────────
+                 Everything above configures OpenBao to TRUST Keycloak. None of
+                 it works until Keycloak has a client to be trusted as — and
+                 until now nothing created one, so the OIDC write path was
+                 unusable for cluster admins as well as tenants. That is also
+                 why E-03 could never safely revoke the bootstrap token.
+
+                 Composed rather than provisioned by a Job because the objects
+                 are declarative and have no ordering problem: the client, its
+                 two mappers and the two groups are all plain state, and
+                 Crossplane retries until Keycloak is up.
+              */}}
+            {{- $realm := $oidc.realm | default "kernel" }}
+            {{- $obClientId := $oidc.clientId | default "openbao" }}
+            {{- $obSecretName := $oidc.clientSecretRef | default "openbao-oidc-client" }}
+            {{- $obNs := $spec.openbao.namespace | default "openbao" }}
+
+            {{- /* The client secret, materialised from the KV path seeded above.
+                 One Secret, read by both ends — the auth backend takes its
+                 client secret from here and so does the Keycloak client, so
+                 there is no second copy to drift. */}}
+            ---
+            apiVersion: kubernetes.crossplane.io/v1alpha2
+            kind: Object
+            metadata:
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: openbao-oidc-client-secret
+              name: {{ $name }}-oidc-client-secret
+            spec:
+              forProvider:
+                manifest:
+                  apiVersion: external-secrets.io/v1
+                  kind: ExternalSecret
+                  metadata:
+                    name: openbao-oidc-client
+                    namespace: {{ $obNs }}
+                  spec:
+                    refreshInterval: 1h
+                    secretStoreRef:
+                      name: openbao
+                      kind: ClusterSecretStore
+                    target:
+                      name: {{ $obSecretName }}
+                      creationPolicy: Owner
+                    data:
+                      - secretKey: client-secret
+                        remoteRef:
+                          key: gentian-os/kernel/oidc/openbao
+                          property: client_secret
+              providerConfigRef:
+                name: kubernetes
+
+            ---
+            apiVersion: openidclient.keycloak.crossplane.io/v1alpha1
+            kind: Client
+            metadata:
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: openbao-keycloak-client
+              name: {{ $name }}-openbao-keycloak-client
+              labels:
+                # E-03 reads this to decide whether revoking the bootstrap token
+                # would lock the cluster out.
+                gentianos.io/purpose: openbao-oidc
+            spec:
+              deletionPolicy: Delete
+              forProvider:
+                clientId: {{ $obClientId | quote }}
+                name: OpenBao
+                realmId: {{ $realm | quote }}
+                # CONFIDENTIAL because OpenBao is a server holding a secret, not
+                # a browser app that cannot keep one.
+                accessType: CONFIDENTIAL
+                standardFlowEnabled: true
+                directAccessGrantsEnabled: false
+                serviceAccountsEnabled: false
+                validRedirectUris:
+                  - {{ printf "%s/ui/vault/auth/oidc/oidc/callback" ($oidc.externalUrl | default "") | quote }}
+                  - http://localhost:8250/oidc/callback
+                clientSecretSecretRef:
+                  name: {{ $obSecretName }}
+                  namespace: {{ $obNs }}
+                  key: client-secret
+              providerConfigRef:
+                name: keycloak
+
+            {{- /* The groups claim. Both OIDC roles bind on it, so without this
+                 mapper the token carries no groups and every login matches no
+                 role — which fails as "permission denied" rather than as
+                 "misconfigured", and is the hardest form of this to diagnose.
+                 fullPath emits /platform-admins, matching what the roles bind. */}}
+            ---
+            apiVersion: openidgroup.keycloak.crossplane.io/v1alpha1
+            kind: GroupMembershipProtocolMapper
+            metadata:
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: openbao-groups-mapper
+              name: {{ $name }}-openbao-groups-mapper
+            spec:
+              deletionPolicy: Delete
+              forProvider:
+                realmId: {{ $realm | quote }}
+                clientIdRef:
+                  name: {{ $name }}-openbao-keycloak-client
+                name: groups
+                claimName: groups
+                fullPath: true
+                addToIdToken: true
+                addToAccessToken: true
+                addToUserinfo: true
+              providerConfigRef:
+                name: keycloak
+
+            {{- /* The tenant claim, from a user attribute. This is the value the
+                 tenant-admin role maps into alias metadata, which the policy
+                 templates its path from and the credential manager filters by.
+                 A user without the attribute gets no claim, so they reach no
+                 tenant — absent means nothing, never everything. */}}
+            ---
+            apiVersion: client.keycloak.crossplane.io/v1alpha1
+            kind: ProtocolMapper
+            metadata:
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: openbao-tenant-mapper
+              name: {{ $name }}-openbao-tenant-mapper
+            spec:
+              deletionPolicy: Delete
+              forProvider:
+                realmId: {{ $realm | quote }}
+                clientIdRef:
+                  name: {{ $name }}-openbao-keycloak-client
+                name: tenant
+                protocol: openid-connect
+                protocolMapper: oidc-usermodel-attribute-mapper
+                config:
+                  user.attribute: {{ $oidc.tenantClaim | default "tenant" | quote }}
+                  claim.name: {{ $oidc.tenantClaim | default "tenant" | quote }}
+                  jsonType.label: String
+                  id.token.claim: "true"
+                  access.token.claim: "true"
+                  userinfo.token.claim: "true"
+              providerConfigRef:
+                name: keycloak
+
+            {{- /* The cluster admin group, declared here so the name the
+                 cluster-admin role binds is not a reference to something an
+                 operator has to remember to create by hand.
+
+                 Only this one. Tenant admin groups are not declared: the kernel
+                 realm imports each tenant's own admins group when a user is
+                 brokered, so they arrive named per tenant and the tenant-admin
+                 role matches them by glob. Creating a group from that glob would
+                 make a Keycloak group literally called
+                 gentian:tenant:*:admins. */}}
+            {{- range $g := list ($oidc.clusterAdminGroup | default "/platform-admins") }}
+            {{- $gName := trimPrefix "/" $g }}
+            ---
+            apiVersion: group.keycloak.crossplane.io/v1alpha1
+            kind: Group
+            metadata:
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: keycloak-group-{{ $gName }}
+              name: {{ $name }}-keycloak-group-{{ $gName }}
+            spec:
+              # Orphan: a group holds memberships this composition did not create,
+              # and deleting the claim should not silently remove people's access.
+              deletionPolicy: Orphan
+              forProvider:
+                realmId: {{ $realm | quote }}
+                name: {{ $gName | quote }}
+              providerConfigRef:
+                name: keycloak
+            {{- end }}
+              providerConfigRef:
+                name: openbao
+            {{- end }}
+
+            ---
+            apiVersion: kubernetes.vault.upbound.io/v1alpha1
+            kind: AuthBackendConfig
+            metadata:
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: vault-auth-backend-config
+              name: {{ $name }}-auth-k8s-config
+            spec:
+              forProvider:
+                backend: {{ $authMount }}
+                kubernetesHost: {{ $k8sHost }}
+              providerConfigRef:
+                name: openbao
+
+            ---
+            apiVersion: kubernetes.vault.upbound.io/v1alpha1
+            kind: AuthBackendRole
+            metadata:
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: vault-auth-role-eso
+              name: {{ $name }}-auth-role-eso
+            spec:
+              forProvider:
+                backend: {{ $authMount }}
+                roleName: eso
+                boundServiceAccountNames:
+                  - {{ $esoSa }}
+                boundServiceAccountNamespaces:
+                  - {{ $esoNs }}
+                tokenPolicies:
+                  - eso-read
+                tokenTtl: 3600
+              providerConfigRef:
+                name: openbao
+
+            ---
+            apiVersion: kubernetes.vault.upbound.io/v1alpha1
+            kind: AuthBackendRole
+            metadata:
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: vault-auth-role-crossplane
+              name: {{ $name }}-auth-role-crossplane
+            spec:
+              forProvider:
+                backend: {{ $authMount }}
+                roleName: crossplane-provider
+                boundServiceAccountNames:
+                  - crossplane-provider-vault
+                boundServiceAccountNamespaces:
+                  - crossplane-system
+                tokenPolicies:
+                  - crossplane-write
+                tokenTtl: 3600
+              providerConfigRef:
+                name: openbao
+
+            {{- /* ── OpenBao KV seed paths (Observe+Create, never overwrite) ────── */}}
+            {{- /*
+                 These MRs adopt existing paths seeded by seed-openbao.sh and
+                 create them on first-run if absent. dataJsonSecretRef points at
+                 K8s Secrets in crossplane-system that contain the derived values.
+                 managementPolicies: ["Observe","Create"] ensures Crossplane never
+                 overwrites an existing secret version.
+            */}}
+            {{- $kvSeeds := list
+                  "database/postgresql"
+                  "database/mariadb"
+                  "cache/redis"
+                  "storage/minio"
+                  "identity/keycloak-bootstrap"
+                  "authz/openfga"
+                  "mail/postfix"
+                  "mail/dovecot"
+                  "oidc/openbao"
+            }}
+            {{- range $kvSeeds }}
+            {{- $safeName := . | replace "/" "-" }}
+            ---
+            apiVersion: kv.vault.upbound.io/v1alpha1
+            kind: SecretV2
+            metadata:
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: vault-kv-{{ $safeName }}
+              name: {{ $name }}-kv-{{ $safeName }}
+            spec:
+              managementPolicies:
+                - Observe
+                - Create
+              forProvider:
+                mount: {{ $kvMount }}
+                name: gentian-os/kernel/{{ . }}
+                dataJsonSecretRef:
+                  name: gentian-os-kernel-{{ $safeName }}
+                  namespace: crossplane-system
+                  key: data.json
+              providerConfigRef:
+                name: openbao
+            {{- end }}
+
+            {{- /* ── ArgoCD AppProject for tenant workloads ───────────────────── */}}
+            ---
+            apiVersion: kubernetes.crossplane.io/v1alpha2
+            kind: Object
+            metadata:
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: argocd-appproject-tenants
+              name: {{ $name }}-appproject-tenants
+            spec:
+              forProvider:
+                manifest:
+                  apiVersion: argoproj.io/v1alpha1
+                  kind: AppProject
+                  metadata:
+                    name: gentianos-tenants
+                    namespace: {{ $argoNs }}
+                  spec:
+                    description: "Gentian OS — tenant workloads managed by Crossplane"
+                    sourceRepos:
+                      - "https://github.com/gentian-org/gentian-os"
+                      - "https://github.com/gentian-org/gentian-apps"
+                      - "https://github.com/gentian-org/gentian-deployments"
+                      {{- range (default list (dig "argocd" "sourceRepos" list $spec)) }}
+                      - {{ . | quote }}
+                      {{- end }}
+                    destinations:
+                      - namespace: "tenant-*"
+                        server: "https://kubernetes.default.svc"
+                      - namespace: {{ $argoNs }}
+                        server: "https://kubernetes.default.svc"
+                    clusterResourceWhitelist:
+                      - group: ""
+                        kind: Namespace
+                      - group: "cert-manager.io"
+                        kind: ClusterIssuer
+              providerConfigRef:
+                name: kubernetes
+
+            {{- /* ── gentian-cluster-config ────────────────────────────────────
+                 Cluster facts the app and tenant Compositions read through
+                 function-extra-resources. A shell heredoc used to render this,
+                 which put cluster configuration on the installing machine and
+                 outside the reconcile loop — the claim is the only writer now.
+
+                 Seven keys, because seven is what is read. The ConfigMap
+                 previously carried twenty-four; the other seventeen described
+                 storage, namespaces, cnpg and the kube-apiserver endpoint and
+                 had no reader at all. lint-cluster-config-keys.py holds the
+                 contract from both ends.
+              */}}
+            ---
+            apiVersion: kubernetes.crossplane.io/v1alpha2
+            kind: Object
+            metadata:
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: gentian-cluster-config
+              name: {{ $name }}-cluster-config
+            spec:
+              forProvider:
+                manifest:
+                  apiVersion: v1
+                  kind: ConfigMap
+                  metadata:
+                    name: gentian-cluster-config
+                    namespace: crossplane-system
+                    labels:
+                      app.kubernetes.io/managed-by: crossplane
+                      gentianos.io/config-type: cluster-config
+                  data:
+                    mail.smtpHost: {{ default "" (dig "mail" "host" "" $spec) | quote }}
+                    node.ip: {{ default "" (dig "nodeIp" "" $spec) | quote }}
+                    llm.enabled: {{ default false (dig "llm" "enabled" false $spec) | quote }}
+                    tenant.limitRange.default.cpu: {{ default "500m" (dig "tenantDefaults" "limitRange" "defaultCpu" "" $spec) | quote }}
+                    tenant.limitRange.default.memory: {{ default "512Mi" (dig "tenantDefaults" "limitRange" "defaultMemory" "" $spec) | quote }}
+                    tenant.limitRange.defaultRequest.cpu: {{ default "100m" (dig "tenantDefaults" "limitRange" "defaultRequestCpu" "" $spec) | quote }}
+                    tenant.limitRange.defaultRequest.memory: {{ default "128Mi" (dig "tenantDefaults" "limitRange" "defaultRequestMemory" "" $spec) | quote }}
+              providerConfigRef:
+                name: kubernetes
+
+            {{- /* ── ESO ClusterSecretStore pointing at OpenBao ───────────────── */}}
+            ---
+            apiVersion: kubernetes.crossplane.io/v1alpha2
+            kind: Object
+            metadata:
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: eso-cluster-secret-store
+              name: {{ $name }}-cluster-secret-store
+            spec:
+              forProvider:
+                manifest:
+                  apiVersion: external-secrets.io/v1
+                  kind: ClusterSecretStore
+                  metadata:
+                    name: openbao
+                  spec:
+                    provider:
+                      vault:
+                        server: {{ $openbaoServer }}
+                        path: {{ $kvMount }}
+                        version: v2
+                        {{- if hasPrefix "https://" $openbaoServer }}
+                        caProvider:
+                          type: Secret
+                          name: openbao-tls
+                          namespace: openbao
+                          key: tls.crt
+                        {{- end }}
+                        auth:
+                          kubernetes:
+                            mountPath: {{ $authMount }}
+                            role: eso
+                            serviceAccountRef:
+                              name: {{ $esoSa }}
+                              namespace: {{ $esoNs }}
+              providerConfigRef:
+                name: kubernetes
+
+            {{- /* ── Certificate issuers: owned by step 05, not here ──────────
+                 This composition used to emit a letsencrypt-http01
+                 ClusterIssuer under that exact name, while A-06-cluster-issuers
+                 applied a manifest declaring the same object. Two writers, last
+                 one wins, and the disagreement stays invisible until a
+                 certificate fails to issue.
+
+                 Step 05 owns them because it is strictly more capable: it
+                 dispatches on spec.certificates.issuerMode across acme-dns01,
+                 acme-http01, private-ca and self-signed, and waits for the
+                 cert-manager webhook first. A single hardcoded ACME issuer here
+                 cannot express a cluster on an internal domain.
+
+                 Moving all four modes into this composition is the better end
+                 state — issuers have a lifecycle and belong to a reconciler —
+                 but it needs the bootstrap ordering verified on a real cluster
+                 first: nothing between step 05 and step 16 may need an issuer.
+            */}}
+
+    - step: automatically-detect-ready-composed-resources
+      functionRef:
+        name: function-auto-ready

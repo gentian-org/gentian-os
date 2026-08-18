@@ -1,0 +1,36 @@
+# The same cluster as cluster-bootstrap, with spec.oidc supplied.
+#
+# cluster-bootstrap deliberately omits it, so `{{- if $oidc.discoveryUrl }}`
+# is false there and neither the cluster-admin nor the tenant-admin Policy is
+# rendered. That left the OpenBao policies carrying the tenant-admin deny on
+# gentian-os/kernel/* — the one authz rule where a mistake is a breach rather
+# than an annoyance — outside every test in the suite.
+apiVersion: gentianos.io/v1alpha1
+kind: XCluster
+metadata:
+  name: dev-cluster
+  annotations:
+    crossplane.io/external-name: dev-cluster
+spec:
+  kernelDomain: platform.example.test
+  masterPasswordSecretRef:
+    name: gentian-os-master-password
+    namespace: crossplane-system
+  openbao:
+    server: https://openbao.openbao.svc.cluster.local:8200
+    kvMount: secret
+    authMount: kubernetes
+    kubernetesHost: https://kubernetes.default.svc
+  oidc:
+    discoveryUrl: https://id.platform.example.test/auth/realms/kernel
+    externalUrl: https://bao.platform.example.test
+  argocd:
+    namespace: argocd
+    sourceRepos: []
+  eso:
+    namespace: external-secrets
+    serviceAccount: external-secrets
+  certManager:
+    letsencryptEmail: admin@platform.example.test
+  compositeDeletePolicy: Background
+  resourceRefs: []
