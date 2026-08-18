@@ -363,20 +363,25 @@ you no longer need it.
 
 ## 14. Create your first tenant
 
-A tenant is a directory in your deployments repository, exactly as the cluster
-is. Scaffold it:
+A tenant is authored, then deployed. Two directories, and the difference
+matters:
+
+- `definitions/<name>/tenant.yaml` — what the tenant is *meant to be*. Yours to
+  edit.
+- `tenants/<name>/` — what Argo CD syncs. Written by the deploy command, and
+  written again by the operator every time an app is installed from the store.
+
+Scaffold the definition:
 
 ```bash
 ./install.sh --prepare-tenant acme
 ```
 
 It asks for a display name and an administrator email, then writes
-`clusters/<cluster-id>/tenants/acme/` into your checkout. The first tenant on a
-cluster also gets `definitions/components/tenant-defaults/`, which holds the
-quotas and mail settings every tenant on this cluster shares. Nothing is
-applied and nothing is pushed.
+`clusters/<cluster-id>/definitions/acme/tenant.yaml`. Nothing is deployed,
+committed or applied.
 
-Choose the tenant's apps in `tenants/acme/tenant.yaml`:
+Choose the tenant's apps in that file:
 
 ```bash
 kubectl gentian apps list          # what this cluster offers
@@ -389,31 +394,27 @@ kubectl gentian apps list          # what this cluster offers
     - nextcloud-calendar-ce
 ```
 
-A profile that is not in the catalogue is refused when the Tenant is created,
-naming the profile.
+Quotas and mail are not in the definition. They come from this cluster's shared
+`definitions/components/tenant-defaults` component, so every tenant is sized the
+same way — override in the definition only what this tenant needs differently.
 
-Read `definitions/components/tenant-defaults/defaults.yaml` before the first
-push. Its quotas are a starting point, not a measurement — they are a ceiling on
-what one tenant may request, and a ceiling above what the nodes can deliver
-admits tenants that never schedule.
-
-Then commit and push:
+Then deploy it:
 
 ```bash
-cd ~/.gentian/gentian-deployments
-git add clusters/<cluster-id>/tenants/acme clusters/<cluster-id>/definitions
-git commit -m "Add tenant acme"
-git push
+kubectl gentian tenants deploy acme
 ```
 
-ArgoCD creates it:
+That copies the definition into `clusters/<cluster-id>/tenants/acme/`, creates
+the defaults component if this is the cluster's first tenant, commits and
+pushes. Argo CD creates the Tenant:
 
 ```bash
 kubectl get tenant acme -w
 ```
 
-Delete a tenant by reverting the commit, not with `kubectl delete` — the
-directory is what the cluster reconciles towards.
+To remove one, `kubectl gentian tenants undeploy acme` — not `kubectl delete`.
+The directory is what the cluster reconciles towards, so deleting the object
+just brings it back.
 
 ---
 

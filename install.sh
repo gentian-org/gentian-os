@@ -22,7 +22,7 @@
 # running cluster IS the update, so it is the same forward pass.
 #
 #   ./install.sh --prepare-deployment   write this cluster's files, change nothing
-#   ./install.sh --prepare-tenant NAME  write one tenant's files, change nothing
+#   ./install.sh --prepare-tenant NAME  write one tenant's definition, change nothing
 #   ./install.sh                    install or converge
 #   ./install.sh --update           same thing, named for what you meant
 #   ./install.sh --uninstall        reverse order, destroy() each step
@@ -42,9 +42,12 @@
 # first: --prepare-deployment generates them from install.env, and you edit,
 # commit and push them before installing. Installing does not write them.
 #
-# A tenant is the same shape one level down: --prepare-tenant writes its
-# directory under the cluster, you choose its apps, commit and push. Argo CD
-# creates it. The installer never applies a Tenant.
+# A tenant is the same shape one level down, and stops in the same place:
+# --prepare-tenant writes its DEFINITION, you choose its apps, and
+# `kubectl gentian tenants deploy <name>` is what turns a definition into
+# something Argo CD syncs. The installer never applies a Tenant, and never
+# writes the deployed copy — the operator writes into that one too, as apps
+# are installed from the store.
 #
 # Read before you run:
 #
@@ -138,8 +141,9 @@ Running part of it. A step is named by its number or its full id, so
 Other options:
   --prepare-deployment  write clusters/<id>/kernel in gentian-deployments from
                         install.env, then stop — nothing is committed or applied
-  --prepare-tenant NAME write clusters/<id>/tenants/NAME the same way, then
-                        stop. Needs the cluster's own files to exist already
+  --prepare-tenant NAME write clusters/<id>/definitions/NAME the same way,
+                        then stop. Deploy it with `kubectl gentian tenants
+                        deploy NAME`. Needs the cluster's files to exist already
   --validate            validate config and step contracts, no cluster changes
   --verify-only         run post-install verification and print the summary
   --no-cluster-infra    skip cert-manager / CNPG / reloader on install
