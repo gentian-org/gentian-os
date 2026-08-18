@@ -5,7 +5,7 @@
 # "env: dev" generator element for the cluster's actual stage — see
 # kernel/appsets/templates/appsets.yaml). Adding a new app = add
 # appsets/raw/<app>.yaml. Removing one = delete the file.
-# ${GENTIAN_DEPLOYMENTS_STAGE} is substituted by install.sh (envsubst) —
+# {{ .Values.stage }} is substituted by install.sh (envsubst) —
 # this file is a .tmpl, not applied directly.
 apiVersion: argoproj.io/v1alpha1
 kind: Application
@@ -37,43 +37,43 @@ spec:
     - /metadata/finalizers
   source:
     repoURL: https://github.com/gentian-org/gentian-os
-    targetRevision: ${GENTIAN_OS_BRANCH}
+    targetRevision: {{ .Values.gentianOsBranch }}
     path: kernel/appsets
     helm:
       parameters:
       - name: stage
-        value: "${GENTIAN_DEPLOYMENTS_STAGE}"
+        value: "{{ .Values.stage }}"
       # Reaches the per-service charts through kernel/appsets, which rewrites
       # the kernel.domain.placeholder literal in raw/*.yaml. Postfix needs it
       # for ALLOWED_SENDER_DOMAINS; without a real value it rejects every
       # recipient with 554 "Access denied".
       - name: kernelDomain
-        value: "${KERNEL_DOMAIN}"
+        value: "{{ .Values.kernelDomain }}"
       # The outbound relay for MAIL_SERVICE_MODE=external. Unset in kernel mode,
       # which renders an empty host and means direct delivery — so no mail-mode
       # flag is threaded through, only the relay itself.
       - name: externalSmtpHost
-        value: "${EXTERNAL_SMTP_HOST}"
+        value: "{{ .Values.smtpHost }}"
       - name: externalSmtpPort
-        value: "${EXTERNAL_SMTP_PORT}"
+        value: "{{ .Values.smtpPort }}"
       # Every child ApplicationSet points back at this repo. Without this the
       # children would keep the literal branch baked into raw/*.yaml while the
       # parent tracked another one, so a cluster pinned to a release tag would
       # still pull its kernel services off develop.
       - name: targetRevision
-        value: "${GENTIAN_OS_BRANCH}"
+        value: "{{ .Values.gentianOsBranch }}"
       # Where gentian-os itself comes from. The children hardcoded this URL, so
       # a mirrored or air-gapped install could pin the ref but not the origin.
       - name: gentianOsRepo
-        value: "${GENTIAN_OS_REPO}"
+        value: "{{ .Values.osRepo }}"
       # The deployments repository and which cluster's directory holds its
       # claims. Claims are per-cluster configuration and live there, not here.
       - name: deploymentsRepo
-        value: "${GENTIAN_DEPLOYMENTS_REPO}"
+        value: "{{ .Values.deploymentsRepo }}"
       - name: deploymentsRevision
-        value: "${GENTIAN_DEPLOYMENTS_BRANCH}"
+        value: "{{ .Values.deploymentsBranch }}"
       - name: deploymentsCluster
-        value: "${GENTIAN_DEPLOYMENTS_CLUSTER_ID}"
+        value: "{{ required "deploymentsCluster is empty: every generated Application would point at clusters//kernel and never sync" .Values.cluster }}"
   destination:
     server: https://kubernetes.default.svc
     namespace: argocd

@@ -85,18 +85,20 @@ _host_cli_paths() {
 # =============================================================================
 # 15. Install Argo CD ApplicationSet syncing catalogue bundles from gentian-apps
 # =============================================================================
-# Renders kernel/bootstrap/catalogue-applicationset.yaml.tmpl. Once synced, each
+# Renders the catalogue ApplicationSet from kernel/bootstrap/chart. Once synced, each
 # profiles/<name>/ kustomization becomes an Application (catalogue-<name>) that
 # applies AppProfile, optional composition.yaml, and optional cluster assets.
 install_catalogue_sync() {
     banner "Argo CD catalogue sync (gentian-apps profile bundles)"
 
-    local tmpl="${SCRIPT_DIR}/kernel/bootstrap/catalogue-applicationset.yaml.tmpl"
     local rendered
     rendered="$(mktemp)"
-    sed -e "s|%REPO_URL%|${GENTIAN_APPS_REPO}|g" \
-        -e "s|%BRANCH%|${GENTIAN_APPS_BRANCH}|g" \
-        "$tmpl" >"$rendered"
+    # The generator's own {{ .metadata.name }} and {{ .path.path }} are wrapped
+    # in raw strings by the chart, so Helm hands them to Argo untouched.
+    helm template gentian-bootstrap "${SCRIPT_DIR}/kernel/bootstrap/chart" \
+        -s templates/catalogue-applicationset.yaml \
+        --set-string "appsRepo=${GENTIAN_APPS_REPO}" \
+        --set-string "appsBranch=${GENTIAN_APPS_BRANCH}" >"$rendered"
 
     info "Applying gentian-catalogue ApplicationSet:"
     info "  repo:   ${GENTIAN_APPS_REPO}"

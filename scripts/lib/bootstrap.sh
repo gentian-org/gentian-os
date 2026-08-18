@@ -709,9 +709,22 @@ bootstrap_root_appset() {
     # empty: envsubst substitutes an unset variable with nothing either way, but an
     # explicit default documents that empty is a valid, meaningful value — kernel
     # mode, delivering directly — rather than a variable someone forgot to set.
-    export EXTERNAL_SMTP_HOST="${EXTERNAL_SMTP_HOST:-}"
-    export EXTERNAL_SMTP_PORT="${EXTERNAL_SMTP_PORT:-587}"
-    envsubst < "${SCRIPT_DIR}/kernel/bootstrap/root-applicationset.yaml.tmpl" \
+    # A bare envsubst rendered this: no allowlist, so every $NAME in the file was
+    # a substitution target whether or not it was meant as one, and an unset
+    # variable became empty with exit 0. That is how deploymentsCluster once
+    # rendered clusters//kernel/claims and nothing synced. The chart marks the
+    # cluster id required, so an empty one refuses to render.
+    helm template gentian-bootstrap "${SCRIPT_DIR}/kernel/bootstrap/chart" \
+        -s templates/root-applicationset.yaml \
+        --set-string "deploymentsRepo=${GENTIAN_DEPLOYMENTS_REPO}" \
+        --set-string "deploymentsBranch=${GENTIAN_DEPLOYMENTS_BRANCH}" \
+        --set-string "cluster=${GENTIAN_DEPLOYMENTS_CLUSTER_ID}" \
+        --set-string "stage=${GENTIAN_DEPLOYMENTS_STAGE}" \
+        --set-string "osRepo=${GENTIAN_OS_REPO:-https://github.com/gentian-org/gentian-os}" \
+        --set-string "gentianOsBranch=${GENTIAN_OS_BRANCH}" \
+        --set-string "kernelDomain=${KERNEL_DOMAIN:-}" \
+        --set-string "smtpHost=${EXTERNAL_SMTP_HOST:-}" \
+        --set-string "smtpPort=${EXTERNAL_SMTP_PORT:-587}" \
         | kubectl apply -f -
     success "gentian-appsets Application applied."
 

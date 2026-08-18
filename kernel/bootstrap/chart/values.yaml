@@ -18,3 +18,12 @@ deploymentsBranch: main
 uiBranch: develop
 portalImageTag: develop
 cluster: ""
+
+# The app catalogue: where profile bundles come from.
+appsRepo: https://github.com/gentian-org/gentian-apps
+appsBranch: main
+
+# The root ApplicationSet's own parameters.
+kernelDomain: ""
+smtpHost: ""
+smtpPort: "587"

@@ -44,21 +44,21 @@ spec:
   goTemplateOptions: ["missingkey=error"]
   generators:
   - git:
-      repoURL: %REPO_URL%
-      revision: %BRANCH%
+      repoURL: {{ .Values.appsRepo }}
+      revision: {{ .Values.appsBranch }}
       files:
       - path: profiles/**/profile.yaml
   template:
     metadata:
-      name: 'catalogue-{{ .metadata.name }}'
+      name: 'catalogue-{{ `{{ .metadata.name }}` }}'
       finalizers:
       - resources-finalizer.argocd.argoproj.io
     spec:
       project: gentian
       source:
-        repoURL: %REPO_URL%
-        targetRevision: %BRANCH%
-        path: '{{ .path.path }}'
+        repoURL: {{ .Values.appsRepo }}
+        targetRevision: {{ .Values.appsBranch }}
+        path: '{{ `{{ .path.path }}` }}'
       destination:
         server: https://kubernetes.default.svc
         namespace: gentian-system
