@@ -12,9 +12,15 @@ check() {
     # is nothing to look the XR up by — a different answer from "the XR is not
     # Ready", and reporting the latter blames the cluster for a local gap.
     [[ -n "$claim" ]] || return "${CHECK_UNDEFINED}"
+
     kubectl get cluster.gentianos.io "$claim" -n crossplane-system \
         -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null |
-        grep -q True
+        grep -q True || return 1
+
+    # Ready is not the same as current: this step is the claim's only applier
+    # (the claims ApplicationSet excludes it), so a claim edited in Git and
+    # never applied would otherwise report satisfied.
+    cluster_claim_is_current "$claim"
 }
 
 apply() {

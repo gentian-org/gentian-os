@@ -588,6 +588,56 @@ create_crossplane_secrets() {
 # provider-kubernetes. managementPolicies: [Observe,Create] on KV seeds
 # ensures existing paths seeded by prior install runs are never overwritten.
 # =============================================================================
+# =============================================================================
+# cluster_claim_is_current <claim-name> — does the cluster have what the file asks?
+#
+# The Cluster claim is the one file the claims ApplicationSet deliberately
+# excludes, because two writers on the claim that owns the ClusterSecretStore is
+# how a cluster loses its secret store. B-07 is therefore its only applier, and
+# a check that asked only "is the XR Ready?" reported satisfied over a claim
+# edited in Git and never applied — the fields were in the file, the CRD
+# accepted them, and the live object simply never grew them.
+#
+# Compares what the file states against what the cluster has. Fields the cluster
+# adds on its own — resourceRef, compositionRef, XRD defaults — are ignored:
+# the question is whether everything the file says is true, not whether the two
+# documents are identical.
+#
+# Returns 0 when current, 1 when the file asks for something the cluster lacks.
+# =============================================================================
+cluster_claim_is_current() {
+    local claim="$1"
+    local claim_file="${GENTIAN_DEPLOYMENTS_PATH}/clusters/${GENTIAN_DEPLOYMENTS_CLUSTER_ID}/kernel/claims/cluster.yaml"
+    [[ -r "${claim_file}" ]] || return 0
+
+    local live
+    live="$(kubectl get cluster.gentianos.io "${claim}" -n crossplane-system \
+        -o jsonpath='{.spec}' 2>/dev/null)" || return 0
+    [[ -n "${live}" ]] || return 0
+
+    CLUSTER_CLAIM_DRIFT="$(python3 - "${claim_file}" "${live}" <<'PYEOF'
+import sys, json, yaml
+want = (yaml.safe_load(open(sys.argv[1])) or {}).get("spec") or {}
+have = json.loads(sys.argv[2] or "{}")
+
+def drifted(w, h, path=""):
+    out = []
+    for k, v in w.items():
+        p = f"{path}.{k}" if path else k
+        if k not in h:
+            out.append(p)
+        elif isinstance(v, dict) and isinstance(h[k], dict):
+            out += drifted(v, h[k], p)
+        elif str(v) != str(h[k]):
+            out.append(p)
+    return out
+
+print(" ".join(drifted(want, have)))
+PYEOF
+)"
+    [[ -z "${CLUSTER_CLAIM_DRIFT}" ]]
+}
+
 apply_cluster_xr() {
     banner "Apply Cluster XR (kernel structural provisioning)"
 
