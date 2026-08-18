@@ -857,7 +857,6 @@ load_deployments_cluster_settings() {
         claim_setting LLM_SUPPORT             llm.enabled              "${claim_file}"
         claim_setting GPU_ACCELERATION        llm.gpuAcceleration      "${claim_file}"
         claim_setting GPU_TIME_SLICE_REPLICAS llm.gpuTimeSliceReplicas "${claim_file}"
-        claim_setting VLLM_INSTANCES          llm.vllmInstances        "${claim_file}"
         # The edge load balancer. lbProvider is detected from the nodes when
         # neither the claim nor the environment says, so this is an override.
         claim_setting LB_PROVIDER    lbProvider    "${claim_file}"

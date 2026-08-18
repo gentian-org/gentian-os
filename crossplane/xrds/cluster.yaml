@@ -194,9 +194,51 @@ spec:
                         not partitioning — they contend for the whole device
                         rather than getting a fraction of it.
                       default: 1
-                    vllmInstances:
-                      type: string
-                      description: Space-separated vLLM instance IDs; each needs its own sizing block.
+                    instances:
+                      type: array
+                      description: >
+                        The models this cluster serves. One Deployment, Service
+                        and PVC each, and removing an entry removes its workload
+                        — the cached weights survive, so re-adding the same name
+                        does not re-download tens of gigabytes.
+
+                        Read only when gpuAcceleration is true. An empty list is
+                        a CPU-only cluster, which is the default.
+                      items:
+                        type: object
+                        required: [name, modelId]
+                        properties:
+                          name:
+                            type: string
+                            description: >
+                              Kubernetes name for this instance, and the key its
+                              cached weights are kept under.
+                            pattern: '^[a-z0-9]([-a-z0-9]*[a-z0-9])?$'
+                          modelId:
+                            type: string
+                            description: Hugging Face model id, e.g. Qwen/Qwen2.5-7B-Instruct.
+                          gpuMemoryUtilization:
+                            type: string
+                            description: Fraction of GPU memory vLLM may use, e.g. "0.85".
+                            default: "0.85"
+                          maxModelLen:
+                            type: string
+                            description: Context window to serve, in tokens.
+                            default: "8192"
+                          modelCacheSize:
+                            type: string
+                            description: PVC size for the downloaded weights.
+                            default: 60Gi
+                          imageTag:
+                            type: string
+                            description: vLLM image tag.
+                            default: latest
+                          toolCallParser:
+                            type: string
+                            description: >
+                              vLLM tool-call parser for this model, e.g. hermes.
+                              Empty disables tool calling.
+                      default: []
                 tenantDefaults:
                   type: object
                   description: >

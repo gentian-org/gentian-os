@@ -24,57 +24,53 @@ _vllm_instance_k8s_name() {
 # was previously deployed but is no longer in VLLM_INSTANCES gets pruned
 # (Deployment+Service only; PVCs are kept — see the warn below for why).
 render_and_apply_vllm_gpu_manifest() {
-    local instances="${VLLM_INSTANCES:-}"
-
-    # Values, then one helm release, always. The loop moved into the chart.
+    # The instance list comes from the claim, and the claim's shape is the
+    # chart's shape — same field names, same defaults. There is no translation
+    # step because there is nothing to translate.
     #
-    # This rendered the manifest once per instance with sed and applied each,
-    # then called prune_stale_vllm_instances to delete what the loop no longer
-    # produced — because `kubectl apply` cannot remove what it was not given.
-    # A release tracks its own objects, so removing an instance from the values
-    # removes its Deployment and Service, and the prune has nothing left to do.
+    # It used to be assembled from VLLM_<ID>_MODEL_ID and five siblings per
+    # instance, read by indirect expansion. That put what a cluster serves in
+    # variables no reviewer could find and no schema could check: a typo in an
+    # instance id silently produced a default model, and grepping for a reader
+    # found none.
+    local claim_file
+    claim_file="${GENTIAN_DEPLOYMENTS_PATH}/clusters/${GENTIAN_DEPLOYMENTS_CLUSTER_ID}/kernel/claims/cluster.yaml"
+
     local values
     values="$(mktemp)"
-    printf 'gpuTimeSliceReplicas: %s\ninstances:\n' "${GPU_TIME_SLICE_REPLICAS:-1}" > "${values}"
+    printf 'gpuTimeSliceReplicas: %s\n' "${GPU_TIME_SLICE_REPLICAS:-1}" > "${values}"
 
-    local instance count=0
     # No instances when GPU acceleration is off: the release still applies, so
     # GPU time-slicing stays configured and any instance from a previous run is
     # removed by the upgrade rather than by a separate sweep.
-    [[ "${GPU_ACCELERATION:-false}" == "true" ]] || instances=""
-    for instance in ${instances}; do
-        if ! _vllm_instance_is_valid "${instance}"; then
-            warn "Skipping invalid VLLM_INSTANCES entry '${instance}' — must be letters/digits/underscore, starting with a letter or underscore."
-            continue
-        fi
+    if [[ "${GPU_ACCELERATION:-false}" != "true" ]]; then
+        printf 'instances: []\n' >> "${values}"
+    elif [[ -r "${claim_file}" ]]; then
+        # A straight projection of the claim, not a translation of it: the
+        # chart's value names ARE the claim's field names, so the list is copied
+        # across and nothing in between can rename or drop a field. Per-instance
+        # defaults live in the chart, which is what reads them.
+        #
+        # python3 rather than yq because both yq flavours are seen in the wild
+        # with incompatible syntax — the same reason yq_get exists — and this
+        # needs to emit a list rather than read one scalar.
+        python3 -c '
+import sys, yaml
+doc = yaml.safe_load(open(sys.argv[1])) or {}
+items = (((doc.get("spec") or {}).get("llm") or {}).get("instances")) or []
+yaml.safe_dump({"instances": items}, sys.stdout, default_flow_style=False, sort_keys=False)
+' "${claim_file}" >> "${values}"
+    else
+        printf 'instances: []\n' >> "${values}"
+    fi
 
-        local instance_upper; instance_upper="$(to_upper "${instance}")"
-        local instance_k8s;   instance_k8s="$(_vllm_instance_k8s_name "${instance}")"
-
-        local model_id_var="VLLM_${instance_upper}_MODEL_ID"
-        local gpu_mem_var="VLLM_${instance_upper}_GPU_MEMORY_UTILIZATION"
-        local max_len_var="VLLM_${instance_upper}_MAX_MODEL_LEN"
-        local cache_var="VLLM_${instance_upper}_MODEL_CACHE_SIZE"
-        local tag_var="VLLM_${instance_upper}_IMAGE_TAG"
-        local tool_parser_var="VLLM_${instance_upper}_TOOL_CALL_PARSER"
-
-        info "Serving vLLM instance '${instance}': ${!model_id_var:-Qwen/Qwen2.5-7B-Instruct}"
-        # Quoted scalars: a model tag like 0.85 or 8192 is a string to the chart,
-        # and an unquoted one would reach the manifest as a number.
-        {
-            printf '  - name: %s\n'                 "${instance_k8s}"
-            printf '    modelId: "%s"\n'            "${!model_id_var:-Qwen/Qwen2.5-7B-Instruct}"
-            printf '    gpuMemoryUtilization: "%s"\n' "${!gpu_mem_var:-0.85}"
-            printf '    maxModelLen: "%s"\n'        "${!max_len_var:-8192}"
-            printf '    modelCacheSize: "%s"\n'     "${!cache_var:-60Gi}"
-            printf '    imageTag: "%s"\n'           "${!tag_var:-latest}"
-            printf '    toolCallParser: "%s"\n'     "${!tool_parser_var:-}"
-        } >> "${values}"
-        count=$((count + 1))
-    done
-
-    if (( count == 0 )) && [[ "${GPU_ACCELERATION:-false}" == "true" ]]; then
-        warn "GPU_ACCELERATION=true but no valid vLLM instance — the release will carry none."
+    local count
+    count="$(grep -c '^  - name:' "${values}" || true)"
+    if [[ "${count}" == "0" && "${GPU_ACCELERATION:-false}" == "true" ]]; then
+        warn "llm.gpuAcceleration is true but the claim lists no instances under llm.instances."
+        warn "  The release will carry none. Add them to claims/cluster.yaml."
+    else
+        info "Serving ${count} vLLM instance(s) from the claim."
     fi
 
     gentian_run helm upgrade --install gentian-llm "${SCRIPT_DIR}/kernel/services/llm/chart" \
@@ -190,7 +186,12 @@ EOF
 ensure_litellm_vllm_model() {
     local ns="platform-kernel"
     local job_name="litellm-vllm-model-sync"
-    local instances="${VLLM_INSTANCES:-}"
+
+    # The same claim the vLLM release is rendered from, so LiteLLM advertises
+    # exactly what is being served. Reading a second source here is how the
+    # gateway and the backends came to disagree about which models exist.
+    local claim_file
+    claim_file="${GENTIAN_DEPLOYMENTS_PATH}/clusters/${GENTIAN_DEPLOYMENTS_CLUSTER_ID}/kernel/claims/cluster.yaml"
 
     if ! kubectl get secret llm-sensitive-values -n "${ns}" >/dev/null 2>&1; then
         warn "llm-sensitive-values Secret not found — skipping LiteLLM model sync (run after the LLM ExternalSecret syncs)."
@@ -201,29 +202,32 @@ ensure_litellm_vllm_model() {
     # tool — see check_prereqs) rather than parsing a delimited string
     # inside the Job's alpine/busybox shell.
     local desired_json="[]"
-    local instance
-    for instance in ${instances}; do
-        _vllm_instance_is_valid "${instance}" || continue
-
-        local instance_upper; instance_upper="$(to_upper "${instance}")"
-        local instance_k8s
-        instance_k8s="$(_vllm_instance_k8s_name "${instance}")"
-        local model_id_var="VLLM_${instance_upper}_MODEL_ID"
-        local model_id="${!model_id_var:-Qwen/Qwen2.5-7B-Instruct}"
-        # Deterministic, reproducible from the model id — not a hand-picked
-        # nickname — so re-running with the same model is a true no-op.
-        local model_name
-        model_name="$(printf '%s' "${model_id}" | tr '[:upper:]/' '[:lower:]-')"
-        local api_base="http://vllm-${instance_k8s}-inference.platform-kernel.svc.cluster.local:8000/v1"
-
-        # api_key is a required-but-unchecked field: LiteLLM's openai/
-        # provider integration refuses to even build a client without a
-        # non-empty api_key, regardless of whether the actual backend (vLLM
-        # here) enforces auth at all — confirmed live, chat completions
-        # 500'd with litellm.AuthenticationError until this was added.
-        desired_json="$(jq -c --arg name "${model_name}" --arg model "openai/${model_id}" --arg base "${api_base}" \
-            '. + [{"model_name":$name,"api_base":$base,"model":$model,"api_key":"not-needed"}]' <<<"${desired_json}")"
-    done
+    if [[ "${GPU_ACCELERATION:-false}" == "true" && -r "${claim_file}" ]]; then
+        # model_name is derived from the model id rather than being a hand-picked
+        # nickname, so re-running with the same model is a true no-op.
+        #
+        # api_key is a required-but-unchecked field: LiteLLM's openai/ provider
+        # refuses to build a client without a non-empty api_key, regardless of
+        # whether vLLM enforces auth at all — chat completions 500'd with
+        # litellm.AuthenticationError until this was added.
+        desired_json="$(python3 -c '
+import sys, json, yaml
+doc = yaml.safe_load(open(sys.argv[1])) or {}
+items = (((doc.get("spec") or {}).get("llm") or {}).get("instances")) or []
+out = []
+for i in items:
+    name, model_id = i.get("name"), i.get("modelId")
+    if not name or not model_id:
+        continue
+    out.append({
+        "model_name": model_id.lower().replace("/", "-"),
+        "api_base": f"http://vllm-{name}-inference.platform-kernel.svc.cluster.local:8000/v1",
+        "model": f"openai/{model_id}",
+        "api_key": "not-needed",
+    })
+json.dump(out, sys.stdout)
+' "${claim_file}")"
+    fi
 
     # Note: deliberately NOT returning early when desired_json is still
     # "[]" (no vLLM instances configured) — the Job below also removes any
@@ -235,7 +239,7 @@ ensure_litellm_vllm_model() {
     if [[ "${desired_json}" == "[]" ]]; then
         info "No vLLM instances configured — checking for stale LiteLLM registrations to remove."
     else
-        info "Syncing LiteLLM model registrations for instances: ${instances}"
+        info "Syncing LiteLLM model registrations from the claim ($(jq -r 'length' <<<"${desired_json}") model(s))."
     fi
     kubectl delete job "${job_name}" -n "${ns}" --ignore-not-found=true 2>/dev/null || true
 

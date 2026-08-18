@@ -29,7 +29,7 @@ spec:
     requests:
       # HF model caches run 15-40GB per 7-8B model; bump (VLLM_<INSTANCE>_MODEL_CACHE_SIZE)
       # for a larger model.
-      storage: {{ $i.modelCacheSize }}
+      storage: {{ $i.modelCacheSize | default "60Gi" }}
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -57,7 +57,7 @@ spec:
         nvidia.com/gpu.present: "true"
       containers:
       - name: vllm-server
-        image: vllm/vllm-openai:{{ $i.imageTag }}
+        image: vllm/vllm-openai:{{ $i.imageTag | default "latest" }}
         command: ["/bin/sh", "-c"]
         args:
           - |
@@ -84,9 +84,9 @@ spec:
         # well under 1.0, and under what's left after every other instance's
         # own budget, so this pod doesn't starve/OOM its neighbors.
         - name: VLLM_GPU_MEMORY_UTILIZATION
-          value: "{{ $i.gpuMemoryUtilization }}"
+          value: "{{ $i.gpuMemoryUtilization | default "0.85" }}"
         - name: VLLM_MAX_MODEL_LEN
-          value: "{{ $i.maxModelLen }}"
+          value: "{{ $i.maxModelLen | default "8192" }}"
         # Empty (default) disables tool calling entirely -- matches vLLM's
         # own default and today's behaviour for every existing instance.
         # The correct value is model-family-specific (e.g. "hermes" for
@@ -94,7 +94,7 @@ spec:
         # "llama3_json" for Llama 3) -- see vLLM's tool-calling docs for
         # the model you're actually serving before setting this.
         - name: VLLM_TOOL_CALL_PARSER
-          value: "{{ $i.toolCallParser }}"
+          value: "{{ $i.toolCallParser | default "" }}"
         - name: HUGGING_FACE_HUB_TOKEN
           valueFrom:
             secretKeyRef:

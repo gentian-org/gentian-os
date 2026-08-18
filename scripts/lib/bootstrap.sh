@@ -1139,19 +1139,23 @@ _claim_cluster_fields() {
         else
             printf '    # gpuTimeSliceReplicas: 1   workloads sharing one physical GPU\n'
         fi
-        if [[ -n "${VLLM_INSTANCES:-}" ]]; then
-            printf '    vllmInstances: %s\n' "${VLLM_INSTANCES}"
-        else
-            printf '    # vllmInstances: ""         space-separated instance ids; each\n'
-            printf '    #                           needs VLLM_<ID>_MODEL_ID and sizing\n'
-            printf '    #                           in the environment — see below\n'
-        fi
+        printf '    # The models this cluster serves. Removing an entry removes its\n'
+        printf '    # workload; the cached weights survive, so re-adding the same\n'
+        printf '    # name does not download tens of gigabytes again.\n'
+        printf '    instances: []\n'
+        printf '    #  - name: qwen\n'
+        printf '    #    modelId: Qwen/Qwen2.5-7B-Instruct\n'
+        printf '    #    gpuMemoryUtilization: "0.85"   fraction of GPU memory\n'
+        printf '    #    maxModelLen: "8192"            context window, tokens\n'
+        printf '    #    modelCacheSize: 60Gi           PVC for the weights\n'
+        printf '    #    imageTag: latest               vLLM image tag\n'
+        printf '    #    toolCallParser: hermes         empty disables tool calling\n'
     else
         printf '  # llm:\n'
         printf '  #   enabled: false            set true on a cluster that serves models\n'
         printf '  #   gpuAcceleration: false    set true when the cluster has GPUs\n'
         printf '  #   gpuTimeSliceReplicas: 1   workloads sharing one physical GPU\n'
-        printf '  #   vllmInstances: ""         space-separated instance ids\n'
+        printf '  #   instances: []             the models to serve; see the XRD for fields\n'
     fi
     return 0
 }
