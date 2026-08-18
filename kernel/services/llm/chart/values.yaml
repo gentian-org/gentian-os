@@ -17,5 +17,14 @@ instances: []
   #   imageTag: latest
   #   toolCallParser: hermes
 
+# Whether this release owns GPU time-slicing for the node.
+#
+# The ConfigMap below is cluster-wide and shared with every GPU workload on the
+# machine, not only this platform's. A cluster that already configures it — its
+# own GPU operator install, another chart, an operator team — keeps that
+# configuration, and the installer sets this to false rather than fighting for
+# ownership of an object it did not create.
+manageTimeSlicing: true
+
 # NVIDIA time-slicing replicas per GPU. 1 disables sharing.
 gpuTimeSliceReplicas: 1

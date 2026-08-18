@@ -1,3 +1,4 @@
+{{- if .Values.manageTimeSlicing }}
 # Must be named/namespaced exactly as referenced by the GPU Operator's
 # ClusterPolicy (spec.devicePlugin.config.name) — the operator's device
 # plugin daemonset only reads config from its own namespace.
@@ -19,3 +20,4 @@ data:
         resources:
         - name: nvidia.com/gpu
           replicas: {{ .Values.gpuTimeSliceReplicas }}
+{{- end }}

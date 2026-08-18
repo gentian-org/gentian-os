@@ -24,46 +24,44 @@ _vllm_instance_k8s_name() {
 # was previously deployed but is no longer in VLLM_INSTANCES gets pruned
 # (Deployment+Service only; PVCs are kept — see the warn below for why).
 # =============================================================================
-# _check_time_slicing_ownership — the chart manages a cluster-wide ConfigMap.
+# _time_slicing_is_foreign — is GPU sharing already somebody else's?
 #
-# kernel/services/llm/chart templates time-slicing-config in
-# gpu-operator-resources, which is where the NVIDIA GPU operator reads GPU
-# sharing from. On a cluster that already had one, Helm refuses to adopt an
-# object it did not create, and the release fails with a wall of ownership
-# metadata that never mentions GPUs.
+# The chart templates time-slicing-config in gpu-operator-resources: the
+# ConfigMap the NVIDIA GPU operator reads GPU sharing from. It is cluster-wide
+# and shared with every GPU workload on the node, not only this platform's.
 #
-# Two things are worth saying before that happens: which command fixes it, and
-# that adopting a cluster-wide object into this release means `helm uninstall`
-# later removes GPU sharing for every workload on the node, not only ours.
+# A cluster that already has one has already decided how its GPUs are carved up,
+# usually when the GPU operator was installed and often long before this
+# platform existed. Taking it over is wrong twice: Helm refuses to adopt an
+# object it did not create, and if it did, the key name differs — the operator's
+# own convention is `any`, this chart writes `time-slicing-config.yaml` — so
+# adoption would rewrite the node's GPU configuration rather than inherit it.
+#
+# So: detect it, leave it alone, and say what it says.
+#
+# Echoes a human description of the existing configuration; returns 1 when the
+# ConfigMap is absent or already ours, in which case this release manages it.
 # =============================================================================
-_check_time_slicing_ownership() {
-    local cm="time-slicing-config" ns="gpu-operator-resources"
-    kubectl get configmap "${cm}" -n "${ns}" >/dev/null 2>&1 || return 0
+_time_slicing_is_foreign() {
+    local cm="time-slicing-config" ns="gpu-operator-resources" json
+    json="$(kubectl get configmap "${cm}" -n "${ns}" -o json 2>/dev/null)" || return 1
+    [[ -n "${json}" ]] || return 1
 
     local owner
-    owner="$(kubectl get configmap "${cm}" -n "${ns}" \
-        -o jsonpath='{.metadata.annotations.meta\.helm\.sh/release-name}' 2>/dev/null || true)"
-    [[ "${owner}" == "gentian-llm" ]] && return 0
+    owner="$(jq -r '.metadata.annotations["meta.helm.sh/release-name"] // ""' <<<"${json}" 2>/dev/null)"
+    [[ "${owner}" == "gentian-llm" ]] && return 1
 
+    # Replicas out of whichever key the existing config uses — the operator's
+    # `any`, this chart's `time-slicing-config.yaml`, or a per-node key.
     local replicas
-    replicas="$(kubectl get configmap "${cm}" -n "${ns}" -o jsonpath='{.data.any}' 2>/dev/null \
-        | grep -oE 'replicas: [0-9]+' | head -1 || true)"
+    replicas="$(jq -r '.data // {} | to_entries[].value' <<<"${json}" 2>/dev/null \
+        | grep -oE 'replicas:[[:space:]]*[0-9]+' | grep -oE '[0-9]+' | head -1)"
 
-    error "${ns}/${cm} already exists and this release cannot adopt it."
-    error "  It configures GPU time-slicing for the whole node${replicas:+ (${replicas})}."
-    [[ -n "${owner}" ]] && error "  It belongs to the Helm release '${owner}'."
-    error ""
-    error "  Set llm.gpuTimeSliceReplicas on the claim to match what it already"
-    error "  says, then hand it to this release:"
-    error "    kubectl annotate configmap ${cm} -n ${ns} \\"
-    error "      meta.helm.sh/release-name=gentian-llm \\"
-    error "      meta.helm.sh/release-namespace=platform-kernel --overwrite"
-    error "    kubectl label configmap ${cm} -n ${ns} \\"
-    error "      app.kubernetes.io/managed-by=Helm --overwrite"
-    error ""
-    error "  Adopting it means a later 'helm uninstall gentian-llm' removes GPU"
-    error "  sharing for every workload on this node, not only this platform's."
-    return 1
+    local desc="${ns}/${cm}"
+    [[ -n "${owner}" ]] && desc="${desc}, owned by the Helm release '${owner}'"
+    [[ -n "${replicas}" ]] && desc="${desc}, ${replicas} replica(s) per GPU"
+    echo "${desc}"
+    return 0
 }
 
 render_and_apply_vllm_gpu_manifest() {
@@ -108,7 +106,9 @@ yaml.safe_dump({"instances": items}, sys.stdout, default_flow_style=False, sort_
     fi
 
     local count
-    count="$(grep -c '^  - name:' "${values}" || true)"
+    # Indentation-agnostic: PyYAML writes a list under a key unindented, and a
+    # hand-written values file usually indents it.
+    count="$(grep -cE '^[[:space:]]*-[[:space:]]+name:' "${values}" || true)"
     if [[ "${count}" == "0" && "${GPU_ACCELERATION:-false}" == "true" ]]; then
         warn "llm.gpuAcceleration is true but the claim lists no instances under llm.instances."
         warn "  The release will carry none. Add them to claims/cluster.yaml."
@@ -116,10 +116,24 @@ yaml.safe_dump({"instances": items}, sys.stdout, default_flow_style=False, sort_
         info "Serving ${count} vLLM instance(s) from the claim."
     fi
 
-    _check_time_slicing_ownership || { rm -f "${values}"; return 1; }
+    # GPU sharing is the node's, not this release's, when something else already
+    # configured it.
+    local manage_slicing="true" existing
+    if existing="$(_time_slicing_is_foreign)"; then
+        manage_slicing="false"
+        info "GPU time-slicing is already configured on this cluster — leaving it alone."
+        info "  ${existing}"
+        local want="${GPU_TIME_SLICE_REPLICAS:-1}"
+        local have="${existing##*, }"; have="${have%% *}"
+        if [[ -n "${have}" && "${have}" =~ ^[0-9]+$ && "${have}" != "${want}" ]]; then
+            warn "  llm.gpuTimeSliceReplicas is ${want} on the claim, but the cluster is set to ${have}."
+            warn "  The cluster's value wins. Set the claim to ${have}, or change it where it is owned."
+        fi
+    fi
 
     gentian_run helm upgrade --install gentian-llm "${SCRIPT_DIR}/kernel/services/llm/chart" \
-        --namespace platform-kernel -f "${values}"
+        --namespace platform-kernel \
+        --set "manageTimeSlicing=${manage_slicing}" -f "${values}"
     rm -f "${values}"
 }
 
