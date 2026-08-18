@@ -86,16 +86,20 @@ rm -f /tmp/identity`, IdentityEnvVar, plain, cipher)
 
 	script := fmt.Sprintf(`set -eu
 %s
-apk add --no-cache --quiet mc >/dev/null 2>&1 || true
-if ! command -v mc >/dev/null 2>&1; then
-  # The mc binary is not packaged on every Alpine release; fetch it rather than
-  # failing a restore over a missing convenience.
-  wget -qO /usr/local/bin/mc https://dl.min.io/client/mc/release/linux-amd64/mc && chmod +x /usr/local/bin/mc
+# Deliberately NOT apk-installing "mc": on Alpine that package is Midnight
+# Commander, which installs a binary of the same name, satisfies any "is mc
+# present" check, and then fails on the first alias call with something
+# unrecognisable. The MinIO client is fetched to its own path instead.
+MCLI=/usr/local/bin/mcli
+if [ ! -x "${MCLI}" ]; then
+  wget -qO "${MCLI}" https://dl.min.io/client/mc/release/linux-amd64/mc \
+    || { echo "ERROR: could not fetch the MinIO client" >&2; exit 1; }
+  chmod +x "${MCLI}"
 fi
-mc alias set gentian "${MINIO_ENDPOINT}" "${MINIO_ACCESS_KEY}" "${MINIO_SECRET_KEY}"
+"${MCLI}" alias set gentian "${MINIO_ENDPOINT}" "${MINIO_ACCESS_KEY}" "${MINIO_SECRET_KEY}"
 
-mc cp "%[2]s" '%[3]s'
-mc cat "%[2]s.sha256" > /tmp/expected.sha256
+"${MCLI}" cp "%[2]s" '%[3]s'
+"${MCLI}" cat "%[2]s.sha256" > /tmp/expected.sha256
 actual="$(sha256sum '%[3]s' | cut -d' ' -f1)"
 expected="$(cat /tmp/expected.sha256 | tr -d '[:space:]')"
 if [ "${actual}" != "${expected}" ]; then

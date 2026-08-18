@@ -191,3 +191,26 @@ func TestRealmImportRestoresPeopleAndWarnsAboutPasswords(t *testing.T) {
 		t.Error("realm import does not warn that members cannot sign in yet")
 	}
 }
+
+// Alpine's "mc" package is Midnight Commander. Installing it would satisfy any
+// "is mc present" check with a binary that knows nothing about object storage,
+// and the failure surfaces as an unrecognisable error on the first alias call.
+func TestRestoreDoesNotConfuseMinioClientWithMidnightCommander(t *testing.T) {
+	script := strings.Join(
+		containerByName(PostgresRestoreJob(params(), recipientDecryption(), "demo_app"), "fetch").Args, "\n")
+
+	if strings.Contains(script, "apk add --no-cache --quiet mc") ||
+		strings.Contains(script, "apk add mc") {
+		t.Errorf("restore apk-installs 'mc', which is Midnight Commander on Alpine:\n%s", script)
+	}
+	if !strings.Contains(script, "MCLI=/usr/local/bin/mcli") {
+		t.Errorf("restore does not fetch the MinIO client to its own path:\n%s", script)
+	}
+	// And every call goes through that path, not a bare `mc`.
+	for _, line := range strings.Split(script, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "mc ") {
+			t.Errorf("bare mc invocation could pick up the wrong binary: %q", trimmed)
+		}
+	}
+}
