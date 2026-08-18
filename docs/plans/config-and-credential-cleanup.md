@@ -1826,11 +1826,32 @@ field, and a check belongs wherever the installer's view and the reconciler's vi
 
 **Acceptance**
 
-Measured against the tree, one of these holds today: `install.env.template` is at eleven variables,
-the nine pointers plus two run-mode flags. The others are open — 17 `envsubst` call sites, 16
-`.tmpl` files, and two `.env` templates besides `install.env.template`, with `install.secrets.env`
-still read by `common.sh` and `credentials.sh`. Stating that here rather than in prose above,
-because "partly landed" hid which parts.
+Measured against the tree, four of these now hold. `install.env.template` is at eleven variables,
+the nine pointers plus two run-mode flags. `install.env.template` is the only `.env` template —
+`cluster-settings.env` is retired and `install.secrets.env` is no longer read. **No `.tmpl` renders
+deployment configuration:** sixteen became one, and the one that remains,
+`repo-seeds/gentian-app-template/profile/appprofile.yaml.tmpl`, is a scaffold a human copies into
+`gentian-apps` and edits. It renders nothing and no code reads it, so it is excluded from this
+criterion rather than converted — the criterion is about a shell rendering config, and that file is
+not config.
+
+Two `envsubst` call sites remain, both in `certs.sh` and both allowlisted: the ClusterIssuers and
+the wildcard Certificate. The `grep -c envsubst` figure reads higher because most matches are now
+comments explaining why the construct was removed.
+
+What replaced them is three small charts — `kernel/bootstrap/chart`,
+`kernel/services/llm/chart`, `kernel/manifests/gateway/chart`. Net effect on the tree: 191 fewer
+lines, of which 92 are shell, and six more files, because a chart costs a `Chart.yaml` and a
+`values.yaml`. The saving concentrates where logic was deleted rather than moved — a hand-rolled
+render loop and its prune, two functions that built indented YAML in bash, and an envsubst
+allowlist that had to be kept in step with the manifests by hand. Relocating a template is roughly
+break-even; deleting the machinery around it is not.
+
+One conversion made the system safer rather than tidier. The root ApplicationSet was rendered by a
+bare `envsubst`, where an unset variable becomes empty and exits 0 — which is how
+`deploymentsCluster` once rendered `clusters//kernel/claims` and every generated Application
+pointed at a path that does not exist. The chart marks it `required`, so that manifest can no
+longer be produced.
 
 - `install.env` is the only non-secret file the installer reads from local disk, and it contains
   nothing but repository URLs, branches, an image repository, cluster name, and stage.
@@ -2223,9 +2244,9 @@ They are gathered here because they are the whole point of the run.
 | Install → uninstall returns the cluster to its prior state, and uninstall is idempotent | Phase 0b, criteria 1–2 | **Verified after seven corrections.** The prediction in this row was exact: `check()` gating `destroy()` is what left six namespaces and 422 provider CRDs behind on a run that printed *Teardown complete*. A teardown now clears every cluster-scoped object, and the residue is `cnpg-system` and `stakater-system`, which Argo CD prunes only while it is alive. See §15.2d |
 | A purge leaves nothing behind | `--purge` | **Verified in the cluster, not in the cloud.** Ten `Retain`/`Released` PVs go to one and `~/.gentian` is emptied — but the PV object was all that went. Every kernel StorageClass reclaims with `Retain`, so the disk stayed allocated in the OpenStack project, one orphan per volume per purge, until `CreateVolume` returned `413 VolumeLimitExceeded: Maximum number of volumes allowed (20)` and an unrelated install failed on a PVC that would never bind. Purge now switches the reclaim policy to `Delete` before removing the object |
 | ESO's actual verdict on the satisfaction probes | Phase 6, criterion 1 | **Verified.** `make check-credentials` reads four required credentials Ready and two `optional unset` — `infra-chart-registry` because the cluster pulls charts publicly, `argocd-github-webhook` because it is `phase: runtime`. Satisfaction is observable as a Kubernetes condition with nothing polling OpenBao, which is what §4 claims |
-| A tenant can be provisioned | E-01/E-02, and the product's purpose | **Verified for provisioning, not for use.** A tenant is admitted, reaches Ready, and is removed again. The admission webhook refuses one naming an AppProfile the cluster does not have, and that rollback leaves `definitions/` intact. What a provisioned tenant cannot yet do is receive mail at the address the platform derives for it — Postfix accepts it, Dovecot has nowhere to put it (§15.2c) |
+| A tenant can be provisioned | E-01/E-02, and the product's purpose | **Verified.** A tenant is admitted, reaches Ready, serves its apps through the portal, and is removed again cleanly. Its admin signs in at the derived address, and Postfix accepts mail for the tenant's own domain. The admission webhook refuses one naming an AppProfile the cluster does not have, and that rollback leaves `definitions/` intact. The remaining gap is Dovecot, which has nowhere to store what Postfix accepts (§15.4) |
 | The unsatisfied → satisfied transition unblocks composition without intervention | Phase 6, criterion 4 | **Verified.** Every provider-vault resource sat `SYNCED=False` on a missing `openbao-crossplane-token`; when the credential arrived they reconciled and the XCluster reached Ready with nothing re-run |
-| OIDC login yields a policy set from Keycloak groups; a named write appears in the audit device | Phase 7, criteria 1–2 | **Still unverified.** Keycloak runs; the portal does not yet |
+| OIDC login yields a policy set from Keycloak groups; a named write appears in the audit device | Phase 7, criteria 1–2 | **Login verified, audit device not.** A tenant admin signs in at the shared portal with the derived address and reaches the desktop and Admin Console. Whether a named write reaches the audit device is still unobserved |
 | The bootstrap token is genuinely invalid afterwards | Phase 7, criterion 3 | **Still unverified.** Phase E not reached |
 | An arm64 install; an internal-domain install with `self-signed`; a mirrored install making no upstream request | Phase 12, criteria 4 and 6 | **Still unverified.** Three separate installs |
 | `sed_inplace` under BSD | Phase 11, criterion 2 | **Still unverified.** The macOS CI job runs it but nobody has watched it |
@@ -2575,9 +2596,10 @@ this the only remaining gap between a provisioned tenant and a reachable one. Cl
 decisions this plan does not record: storage, the passdb/userdb behind `mail-dovecot-domains`, and
 how IMAP authenticates against Keycloak.
 
-**`--cluster-infra` is unexercised.** `--purge --cluster-infra` removes `cnpg-system`,
-`stakater-system`, their CRDs and their webhook configurations; its namespace list is derived from
-the bootstrap Applications' destination namespaces rather than declared, so an add-on added later
-is covered without a second list to update. Only its dry run has been exercised.
+**`--cluster-infra` is exercised.** `--purge --cluster-infra` removed `cnpg-system`,
+`stakater-system`, their CRDs and their webhook configurations on a live cluster, leaving only the
+host cluster's own cilium namespaces. Its namespace list is derived from the bootstrap
+Applications' destination namespaces rather than declared, so an add-on added later is covered
+without a second list to update.
 
 ---
