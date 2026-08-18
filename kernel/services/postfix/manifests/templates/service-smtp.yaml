@@ -35,8 +35,12 @@ spec:
   {{- with .Values.smtpIngress.loadBalancerIP }}
   loadBalancerIP: {{ . | quote }}
   {{- end }}
+  # Must match the upstream chart's own labels, not the service name. The chart
+  # is bokysan/mail, so its pods carry app.kubernetes.io/name: mail — selecting
+  # "postfix" matches nothing, and a Service with no endpoints answers nothing
+  # while still reporting an external IP, which reads as a firewall problem.
   selector:
-    app.kubernetes.io/name: postfix
+    app.kubernetes.io/name: mail
     app.kubernetes.io/instance: postfix-{{ .Values.env }}
   ports:
     - name: smtp
