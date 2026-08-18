@@ -139,19 +139,6 @@ data:
       - name: dkim-tenants
         mountPath: /etc/opendkim/tenant-keys
         readOnly: true
-      # The tables replace the image's, which name only the kernel domain.
-      # subPath because the surrounding directory holds the image-generated
-      # kernel key that must survive. OpenDKIM reads these at start, so a new
-      # TENANT needs a Postfix restart — unlike the maps above, re-read per
-      # lookup. Reloader watches this Secret for that reason.
-      - name: dkim-tenants
-        mountPath: /etc/opendkim/KeyTable
-        subPath: KeyTable
-        readOnly: true
-      - name: dkim-tenants
-        mountPath: /etc/opendkim/SigningTable
-        subPath: SigningTable
-        readOnly: true
 ---
 apiVersion: v1
 kind: ConfigMap
