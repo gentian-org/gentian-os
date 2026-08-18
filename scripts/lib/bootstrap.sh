@@ -546,13 +546,19 @@ create_crossplane_secrets() {
             '{preshared_key:$a}')"
 
     # ── mail/postfix (HMAC-derived fields + operator-supplied relay credentials) ─
+    # relay_username and relay_password are omitted when unset rather than written
+    # as empty strings. An empty string is a value: it made the path complete, the
+    # satisfaction probe Ready, and check-credentials report a credential nobody
+    # had supplied as satisfied — while Postfix relayed unauthenticated.
     _kv_secret "gentian-os-kernel-mail-postfix" \
         "$(jq -nc \
             --arg host "${EXTERNAL_SMTP_HOST:-}" \
             --arg port "${EXTERNAL_SMTP_PORT:-587}" \
             --arg user "${SMTP_RELAY_USERNAME:-}" \
             --arg pass "${SMTP_RELAY_PASSWORD:-}" \
-            '{relay_host:$host,relay_port:$port,relay_username:$user,relay_password:$pass}')"
+            '{relay_host:$host,relay_port:$port}
+             + (if $user != "" then {relay_username:$user} else {} end)
+             + (if $pass != "" then {relay_password:$pass} else {} end)')"
 
     # ── mail/dovecot (HMAC-derived; only active when MAIL_SERVICE_MODE=kernel) ─
     # The Cluster XR creates a SecretV2 MR for this path and will seed OpenBao
