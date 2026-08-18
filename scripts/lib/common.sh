@@ -1002,7 +1002,24 @@ prompt_mail_mode() {
             info "  The username and password are supplied after the install, through"
             info "  the credential manager. They are not asked for here and are not"
             info "  written to Git."
-            read -rp "  mail.host [blank to set later]: " EXTERNAL_SMTP_HOST
+            while true; do
+                read -rp "  mail.host [blank to set later]: " EXTERNAL_SMTP_HOST
+                [[ -z "${EXTERNAL_SMTP_HOST}" ]] && break
+                # An @ means an account was entered where a host belongs. The
+                # claim would then carry a value that looks configured, and mail
+                # would fail at send time against a hostname that never resolves.
+                if [[ "${EXTERNAL_SMTP_HOST}" == *"@"* ]]; then
+                    warn "That looks like an account, not a hostname."
+                    warn "  The relay for user@gmail.com is smtp.gmail.com."
+                    warn "  The username goes to the credential manager after the install."
+                    continue
+                fi
+                if [[ "${EXTERNAL_SMTP_HOST}" != *.* ]]; then
+                    warn "A relay hostname has a domain in it, e.g. smtp.gmail.com."
+                    continue
+                fi
+                break
+            done
         fi
         [[ -n "${EXTERNAL_SMTP_HOST:-}" ]] && export EXTERNAL_SMTP_HOST
     fi
