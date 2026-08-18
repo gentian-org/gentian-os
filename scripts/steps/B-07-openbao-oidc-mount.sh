@@ -106,6 +106,27 @@ apply() {
         }
     fi
 
+    # Check the discovery document before handing the URL to OpenBao. OpenBao's
+    # own refusal is "error checking oidc discovery URL", which does not say
+    # whether the name failed to resolve, the TLS was rejected, or the realm
+    # simply is not at that path — and the last is the common one, because
+    # Keycloak serves either /realms/<realm> or /auth/realms/<realm> depending on
+    # how it was deployed.
+    local well_known="${OIDC_DISCOVERY_URL%/}/.well-known/openid-configuration"
+    if ! run_validator oidc-discovery "${well_known}" >/dev/null 2>&1; then
+        error "The OIDC discovery document is not readable at:"
+        error "  ${well_known}"
+        error "  OpenBao must fetch this to accept the config, so it is checked first."
+        case "${OIDC_DISCOVERY_URL}" in
+            */auth/realms/*) : ;;
+            */realms/*)
+                error "  Some Keycloak deployments serve the realm under /auth. Try:"
+                error "    ${OIDC_DISCOVERY_URL/\/realms\//\/auth\/realms\/}" ;;
+        esac
+        error "  Fix spec.oidc.discoveryUrl on the Cluster claim and re-run."
+        return 1
+    fi
+
     info "Configuring auth/oidc/config against ${OIDC_DISCOVERY_URL}..."
     gentian_run bao write auth/oidc/config \
         oidc_discovery_url="${OIDC_DISCOVERY_URL}" \
