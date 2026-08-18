@@ -338,7 +338,7 @@ _keycloak_refresh_token_shell() {
                 --data-urlencode "password=${KEYCLOAK_ADMIN_PASSWORD}" \
                 --data-urlencode "grant_type=password" | jq -r .access_token)
               if [ -z "${TOKEN}" ] || [ "${TOKEN}" = "null" ]; then
-                echo "ERROR: Keycloak admin token refresh failed at ${KEYCLOAK_BASE}" >&2
+                printf '\033[0;31m[ERROR]\033[0m %s\n' "Keycloak admin token refresh failed at ${KEYCLOAK_BASE}" >&2
                 exit 1
               fi
               AUTH="Authorization: Bearer ${TOKEN}"
@@ -430,7 +430,7 @@ spec:
                 return 1
               }
               KEYCLOAK_BASE=\$(resolve_keycloak_base) || {
-                echo "ERROR: could not resolve Keycloak OIDC base from KEYCLOAK_URL=\${KEYCLOAK_URL}" >&2
+                printf '\033[0;31m[ERROR]\033[0m %s\n' "could not resolve Keycloak OIDC base from KEYCLOAK_URL=\${KEYCLOAK_URL}" >&2
                 exit 1
               }
               TOKEN=\$(curl -sf -X POST "\${KEYCLOAK_BASE}/realms/master/protocol/openid-connect/token" \\
@@ -598,7 +598,7 @@ spec:
                 return 1
               }
               KEYCLOAK_BASE=\$(resolve_keycloak_base) || {
-                echo "ERROR: could not resolve Keycloak OIDC base from KEYCLOAK_URL=\${KEYCLOAK_URL}" >&2
+                printf '\033[0;31m[ERROR]\033[0m %s\n' "could not resolve Keycloak OIDC base from KEYCLOAK_URL=\${KEYCLOAK_URL}" >&2
                 exit 1
               }
               TOKEN=\$(curl -sf -X POST "\${KEYCLOAK_BASE}/realms/master/protocol/openid-connect/token" \\
@@ -806,7 +806,7 @@ spec:
                 return 1
               }
               KEYCLOAK_BASE=\$(resolve_keycloak_base) || {
-                echo "ERROR: could not resolve Keycloak OIDC base from KEYCLOAK_URL=\${KEYCLOAK_URL}" >&2
+                printf '\033[0;31m[ERROR]\033[0m %s\n' "could not resolve Keycloak OIDC base from KEYCLOAK_URL=\${KEYCLOAK_URL}" >&2
                 exit 1
               }
               echo "Using Keycloak base \${KEYCLOAK_BASE}"
@@ -817,7 +817,7 @@ spec:
                 --data-urlencode "password=\${KEYCLOAK_ADMIN_PASSWORD}" \\
                 --data-urlencode "grant_type=password" | jq -r .access_token)
               if [ -z "\${TOKEN}" ] || [ "\${TOKEN}" = "null" ]; then
-                echo "ERROR: Keycloak admin token request failed at \${KEYCLOAK_BASE}" >&2
+                printf '\033[0;31m[ERROR]\033[0m %s\n' "Keycloak admin token request failed at \${KEYCLOAK_BASE}" >&2
                 exit 1
               fi
               AUTH="Authorization: Bearer \${TOKEN}"
@@ -835,7 +835,7 @@ spec:
                   "\${KEYCLOAK_BASE}/admin/realms/\${REALM}" -d '{"enabled":true}'
                 echo "Realm \${REALM} enabled"
               else
-                echo "ERROR: realm \${REALM} check returned HTTP \${realm_http}" >&2
+                printf '\033[0;31m[ERROR]\033[0m %s\n' "realm \${REALM} check returned HTTP \${realm_http}" >&2
                 exit 1
               fi
 
@@ -919,17 +919,17 @@ spec:
                   curl -sf -X POST -H "\${AUTH}" -H "Content-Type: application/json" \\
                     "\${KEYCLOAK_BASE}/admin/realms/\${REALM}/client-scopes" \\
                     -d '{"name":"groups","protocol":"openid-connect","attributes":{"include.in.token.scope":"true","display.on.consent.screen":"false"}}' \\
-                    >/dev/null || { echo "ERROR: could not create the groups client scope." >&2; exit 1; }
+                    >/dev/null || { printf '\033[0;31m[ERROR]\033[0m %s\n' "could not create the groups client scope." >&2; exit 1; }
                   GROUPS_SCOPE_ID=\$(curl -sf -H "\${AUTH}" "\${KEYCLOAK_BASE}/admin/realms/\${REALM}/client-scopes" \\
                     | jq -r '.[] | select(.name=="groups") | .id' | head -1)
                   if [ -z "\${GROUPS_SCOPE_ID}" ] || [ "\${GROUPS_SCOPE_ID}" = "null" ]; then
-                    echo "ERROR: created the groups scope but cannot find it." >&2
+                    printf '\033[0;31m[ERROR]\033[0m %s\n' "created the groups scope but cannot find it." >&2
                     exit 1
                   fi
                   curl -sf -X POST -H "\${AUTH}" -H "Content-Type: application/json" \\
                     "\${KEYCLOAK_BASE}/admin/realms/\${REALM}/client-scopes/\${GROUPS_SCOPE_ID}/protocol-mappers/models" \\
                     -d '{"name":"groups","protocol":"openid-connect","protocolMapper":"oidc-group-membership-mapper","config":{"claim.name":"groups","full.path":"true","id.token.claim":"true","access.token.claim":"true","userinfo.token.claim":"true"}}' \\
-                    >/dev/null || { echo "ERROR: could not add the group-membership mapper." >&2; exit 1; }
+                    >/dev/null || { printf '\033[0;31m[ERROR]\033[0m %s\n' "could not add the group-membership mapper." >&2; exit 1; }
                   echo "Created groups client scope with full.path=true"
                 fi
                 if [ -n "\${GROUPS_SCOPE_ID}" ] && [ "\${GROUPS_SCOPE_ID}" != "null" ]; then
@@ -941,7 +941,7 @@ spec:
                     "\${KEYCLOAK_BASE}/admin/realms/\${REALM}/clients/\${CLIENT_ID}/default-client-scopes/\${GROUPS_SCOPE_ID}" >/dev/null 2>&1; then
                     echo "gentian-portal default scope: groups"
                   else
-                    echo "ERROR: could not attach the groups scope to gentian-portal." >&2
+                    printf '\033[0;31m[ERROR]\033[0m %s\n' "could not attach the groups scope to gentian-portal." >&2
                     echo "  Without it the portal's tokens carry no groups claim, and" >&2
                     echo "  OpenBao refuses them — which reads as a permissions problem." >&2
                     exit 1
@@ -962,7 +962,7 @@ spec:
                       -d "\${GM_NEW}" >/dev/null 2>&1; then
                       echo "groups mapper: full.path=true"
                     else
-                      echo "WARN: could not set full.path on the groups mapper" >&2
+                      printf '\033[1;33m[WARN]\033[0m  %s\n' "could not set full.path on the groups mapper" >&2
                     fi
                   fi
                 fi
@@ -1136,19 +1136,38 @@ ${refresh_shell}
                   # a failing POST exited 22 under set -e, so every later step, including
                   # the groups scope the login depends on, never ran.
                   MAPPER_RC=0
+                  MAPPER_HTTP=""
                   if [ -n "\${MAPPER_ID}" ] && [ "\${MAPPER_ID}" != "null" ]; then
-                    curl -sf -X PUT -H "\${AUTH}" -H "Content-Type: application/json" \\
-                      "\${KEYCLOAK_BASE}/admin/realms/\${REALM}/clients/\${LITELLM_CLIENT_ID}/protocol-mappers/models/\${MAPPER_ID}" -d "\${MAPPER_BODY}" >/dev/null || MAPPER_RC=\$?
+                    # Keycloak's update takes a full ProtocolMapperRepresentation and reads
+                    # the target from the body's id, not from the path alone. Re-sending the
+                    # create body unchanged is rejected, which is where the 4xx came from.
+                    MAPPER_HTTP=\$(printf '%s' "\${MAPPER_BODY}" | jq --arg id "\${MAPPER_ID}" '. + {id: \$id}' \\
+                      | curl -s -o /tmp/mapper.err -w '%{http_code}' -X PUT -H "\${AUTH}" -H "Content-Type: application/json" \\
+                        "\${KEYCLOAK_BASE}/admin/realms/\${REALM}/clients/\${LITELLM_CLIENT_ID}/protocol-mappers/models/\${MAPPER_ID}" -d @-) || MAPPER_RC=\$?
                   else
-                    curl -sf -X POST -H "\${AUTH}" -H "Content-Type: application/json" \\
-                      "\${KEYCLOAK_BASE}/admin/realms/\${REALM}/clients/\${LITELLM_CLIENT_ID}/protocol-mappers/models" -d "\${MAPPER_BODY}" >/dev/null || MAPPER_RC=\$?
+                    MAPPER_HTTP=\$(curl -s -o /tmp/mapper.err -w '%{http_code}' -X POST -H "\${AUTH}" -H "Content-Type: application/json" \\
+                      "\${KEYCLOAK_BASE}/admin/realms/\${REALM}/clients/\${LITELLM_CLIENT_ID}/protocol-mappers/models" -d "\${MAPPER_BODY}") || MAPPER_RC=\$?
                   fi
-                  if [ "\${MAPPER_RC}" = "0" ]; then
-                    echo "litellm-dashboard role mapper: litellm_role=proxy_admin"
-                  else
-                    echo "WARN: litellm-dashboard role mapper not applied (curl exit \${MAPPER_RC})." >&2
-                    echo "  The LLM dashboard will not see litellm_role; nothing else is affected." >&2
-                  fi
+                  case "\${MAPPER_HTTP}" in
+                    2*) echo "litellm-dashboard role mapper: litellm_role=proxy_admin" ;;
+                    *)
+                      # The status and Keycloak's own message, not just a curl exit code. "exit
+                      # 22" says a 4xx happened and nothing about which or why, which is a
+                      # dead end for whoever reads the log next.
+                      if [ "\${MAPPER_RC}" -ne 0 ]; then
+                        # curl never got an answer, so there is no status to report.
+                        # Distinguishing this from a 4xx matters: one is the network, the
+                        # other is Keycloak rejecting what we sent.
+                        printf '\033[1;33m[WARN]\033[0m  litellm-dashboard role mapper not applied (curl exit %s, no response).\n' "\${MAPPER_RC}" >&2
+                      else
+                        printf '\033[1;33m[WARN]\033[0m  litellm-dashboard role mapper not applied (HTTP %s).\n' "\${MAPPER_HTTP:-none}" >&2
+                      fi
+                      if [ -s /tmp/mapper.err ]; then
+                        printf '\033[1;33m[WARN]\033[0m    Keycloak said: %s\n' "\$(head -c 300 /tmp/mapper.err)" >&2
+                      fi
+                      printf '\033[1;33m[WARN]\033[0m    The LLM dashboard will not see litellm_role; nothing else is affected.\n' >&2
+                      ;;
+                  esac
                 fi
               fi
 
