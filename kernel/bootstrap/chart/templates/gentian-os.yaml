@@ -63,7 +63,14 @@ metadata:
     # When {{ .Values.gentianOsBranch }} is a release tag rather than a branch, no
     # candidate matches and the pinned image is left alone — which is what a
     # pinned release should do.
-    argocd-image-updater.argoproj.io/image-list: gentianos=${GENTIAN_OS_IMAGE_REPOSITORY}
+    # {{ `{{ .Values.osImageRepository }}` }}, not ${GENTIAN_OS_IMAGE_REPOSITORY}: this is a
+    # Helm template and nothing runs envsubst over it, so the shell form reached the
+    # cluster verbatim. The updater then looked for a repository literally named
+    # "${GENTIAN_OS_IMAGE_REPOSITORY}", found none, and skipped it every cycle —
+    # reporting images_considered=2 images_skipped=1 images_updated=0 with no
+    # errors, the same "perfectly healthy" silence the comment above describes.
+    # The value is the one already passed to image.repository below.
+    argocd-image-updater.argoproj.io/image-list: gentianos={{ .Values.osImageRepository }}
     argocd-image-updater.argoproj.io/gentianos.allow-tags: regexp:^{{ .Values.gentianOsBranch }}-[0-9a-f]{7,}$
     argocd-image-updater.argoproj.io/gentianos.update-strategy: newest-build
     argocd-image-updater.argoproj.io/gentianos.helm.image-name: image.repository
