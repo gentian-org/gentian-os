@@ -6,70 +6,73 @@ tests:
       - user: user:alice
         relation: member
         object: tenant:demo
-      - object: tenant:demo
+      - object: shell_app:launcher
         relation: parent
-        user: shell_app:launcher
+        user: tenant:demo
     check:
-      user: user:alice
-      object: shell_app:launcher
-      assertions:
-        can_launch: true
+      - user: user:alice
+        object: shell_app:launcher
+        assertions:
+          can_launch: true
 
   - name: outsider_cannot_launch_shell_app
     tuples:
       - user: user:alice
         relation: member
         object: tenant:demo
-      - object: tenant:demo
+      - object: shell_app:launcher
         relation: parent
-        user: shell_app:launcher
+        user: tenant:demo
     check:
-      user: user:bob
-      object: shell_app:launcher
-      assertions:
-        can_launch: false
+      - user: user:bob
+        object: shell_app:launcher
+        assertions:
+          can_launch: false
 
   - name: tenant_member_can_read_document
     tuples:
       - user: user:alice
         relation: member
         object: tenant:demo
-      - object: tenant:demo
+      - object: document:doc-1
         relation: parent
-        user: document:doc-1
+        user: tenant:demo
     check:
-      user: user:alice
-      object: document:doc-1
-      assertions:
-        can_read: true
+      - user: user:alice
+        object: document:doc-1
+        assertions:
+          can_read: true
 
   - name: acting_for_grants_document_read
     tuples:
       - user: user:alice
         relation: member
         object: tenant:demo
-      - object: tenant:demo
+      - object: document:doc-1
         relation: parent
-        user: document:doc-1
+        user: tenant:demo
+      - user: user:agent-1
+        relation: member
+        object: tenant:demo
       - user: user:agent-1
         relation: acting_for
         object: document:doc-1
     check:
-      user: user:agent-1
-      object: document:doc-1
-      assertions:
-        can_read: true
+      - user: user:agent-1
+        object: document:doc-1
+        assertions:
+          can_read: true
 
   - name: acting_for_without_membership_denies
     tuples:
-      - object: tenant:demo
+      - object: document:doc-1
         relation: parent
-        user: document:doc-1
+        user: tenant:demo
       - user: user:agent-1
         relation: acting_for
         object: document:doc-1
     check:
-      user: user:agent-1
-      object: document:doc-1
-      assertions:
-        can_read: false
+      - user: user:agent-1
+        object: document:doc-1
+        assertions:
+          can_read: false

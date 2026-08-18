@@ -1143,7 +1143,7 @@ mirror, so "exercised" below never means more than that.
 | 4 | 4a exercised, **4b half** | Mail, LLM, portal and tenant reconcile still name applications. Blocked on the reconciler audit (§15.2) |
 | 5 | Exercised | `kernel/argocd/repos/*.yaml` and the infra chart registry are not yet claims |
 | 6 | Built | ESO's live verdict and the unsatisfied→satisfied transition are unverified |
-| 7 | **Built, unexercised** | Nothing has authenticated through it. No policy allow/deny tests |
+| 7 | **Built, partly exercised** | Login works and the policies are asserted by `make test-policy`. Nothing has authenticated through the *live* OIDC path, and the audit device is unobserved |
 | 8 | Built | The service's own ServiceAccount policy is uninspected |
 | 9 | Built | No shared API contract tests; validation errors are not attributed per field |
 | 10 | **10a/10b done, 10c mostly** | `envsubst`, the `.tmpl` files and `cluster-settings.env` are gone; the credential manager is built but unexercised (row 7) |
@@ -2167,7 +2167,7 @@ scope and should be folded into it rather than fixed twice.
 | `kernel/argocd/install/argocd.yaml` is unreferenced; its own header says "This is a reference file". It pins ArgoCD **v2.11.3**. | no callers | Delete. `scripts/bootstrap/install-argocd.sh` is the real path. |
 | `crossplane/tests/unit/functions/` contains only `.gitkeep`, so `make test-unit-functions` always prints SKIP — yet CI spends a step on `pip install pytest`. The root `.pytest_cache/` and `.ruff_cache/` are residue. | `Makefile:166`, `.github/workflows/ci.yaml:181` | Either land the first function test or drop the target and the CI step. |
 | `crossplane/functions/` and `crossplane/tests/e2e/fixtures/` are `.gitkeep`-only. | — | Keep only if a named piece of work will fill them; otherwise remove. |
-| `scripts/tools/verify-authz-model.sh` and `scripts/normalize-go-headers.sh` are wired to neither `make` nor CI. | 0 references | Wire `verify-authz-model.sh` into the lint job (there is an `authz/model/v0/tests.fga.yaml` to run); `normalize-go-headers.sh` is a completed one-off — delete. |
+| ~~`verify-authz-model.sh` wired to neither `make` nor CI~~ **Fixed.** It runs from `make test-policy`. Being unwired hid three faults: `tests.fga.yaml` did not parse (`check` needs a list, not a map), every `parent` tuple had object and user inverted, and the model contradicted its own `acting_for_without_membership_denies` case by granting read on an `acting_for` tuple alone. `normalize-go-headers.sh` was a completed one-off and is deleted. | | |
 | `repo-seeds/gentian-apps.tar.gz` and `repo-seeds/gentian-apps-*.bundle` (255 KB tracked) are no longer listed in `repo-seeds/README.md`'s table. | `repo-seeds/README.md` | Delete; the catalogue has its own repo. |
 
 ### 14.3 Orphaned configuration — relevant to Phase 10
@@ -2257,6 +2257,7 @@ They are gathered here because they are the whole point of the run.
 | A tenant can be provisioned | E-01/E-02, and the product's purpose | **Verified.** A tenant is admitted, reaches Ready, serves its apps through the portal, and is removed again cleanly. Its admin signs in at the derived address, and Postfix accepts mail for the tenant's own domain. The admission webhook refuses one naming an AppProfile the cluster does not have, and that rollback leaves `definitions/` intact. The remaining gap is Dovecot, which has nowhere to store what Postfix accepts (§15.4) |
 | The unsatisfied → satisfied transition unblocks composition without intervention | Phase 6, criterion 4 | **Verified.** Every provider-vault resource sat `SYNCED=False` on a missing `openbao-crossplane-token`; when the credential arrived they reconciled and the XCluster reached Ready with nothing re-run |
 | OIDC login yields a policy set from Keycloak groups; a named write appears in the audit device | Phase 7, criteria 1–2 | **Login verified, audit device not.** A tenant admin signs in at the shared portal with the derived address and reaches the desktop and Admin Console. Whether a named write reaches the audit device is still unobserved |
+| The policies permit and deny what they claim | Phase 7, criterion 5 | **Verified.** `make test-policy` asserts 17 capabilities against a throwaway OpenBao and 5 checks against the OpenFGA model, and is mutation-tested. Until this ran, the cluster-admin and tenant-admin policies were outside every test: the render fixture omitted `spec.oidc`, so `{{- if $oidc.discoveryUrl }}` was false and neither policy was emitted |
 | The bootstrap token is genuinely invalid afterwards | Phase 7, criterion 3 | **Still unverified.** Phase E is reached now, so the check is available: `bao token lookup` with the root token from the init file must be refused. Nobody has run it |
 | An arm64 install; an internal-domain install with `self-signed`; a mirrored install making no upstream request | Phase 12, criteria 4 and 6 | **Still unverified.** Three separate installs |
 | `sed_inplace` under BSD | Phase 11, criterion 2 | **Still unverified.** The macOS CI job runs it but nobody has watched it |
@@ -2580,9 +2581,25 @@ user brokered from a tenant realm, and users provisioned only in a tenant realm 
 that IdP. Such a tenant admin authenticates and sees an empty catalogue — the safe direction, and
 still the last gap before the tenant path works end to end.
 
-**No policy tests exist.** Phase 7, criterion 5: cluster-admin and tenant-admin should be covered
-by explicit allow *and* deny tests. The `tenant-admin` deny on `gentian-os/kernel/*` is the one
-rule where a mistake is a breach rather than an annoyance, and nothing currently asserts it.
+**Policy tests exist and run.** Phase 7, criterion 5. `make test-policy` covers both layers.
+
+`scripts/tools/verify-openbao-policies.sh` loads the three rendered policies into a throwaway
+OpenBao and asserts 17 capabilities: the `tenant-admin` deny on `gentian-os/kernel/*` for data and
+metadata, isolation between two tenants in both directions, `cluster-admin` reaching kernel paths
+but not a tenant's, and `eso-read` being read-only. The tenant path is templated on alias
+metadata, so the test drives the real chain — a signed JWT carrying a `tenant` claim, a role whose
+`claim_mappings` turn it into alias metadata, and a policy addressing the alias by mount accessor.
+That is the property the composition claims: the path a token reaches is decided by the verified
+claim, not by anything the caller sends.
+
+The policies are read from the render fixture rather than restated, so the test follows the
+Composition. Three mutations confirm it fails when it should: weakening the kernel deny to `read`,
+widening the tenant path to `tenants/*`, and granting `cluster-admin` a tenant path are each
+caught.
+
+The two layers are complementary. `cluster-oidc-policies` asserts the policy *text* renders;
+this asserts what the text *means*. Neither subsumes the other — a golden file is regenerated by
+`make test-unit-render-update`, so text alone would let a weakened policy through.
 
 **The credential manager's ServiceAccount policy is uninspected.** Phase 8, criterion 7. The
 service has no OpenBao identity by construction, but "by construction" is an argument, not an
