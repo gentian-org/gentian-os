@@ -40,6 +40,92 @@ type TenantExportSpec struct {
 	// +optional
 	// +kubebuilder:validation:Minimum=0
 	TTLSeconds int64 `json:"ttlSeconds,omitempty"`
+
+	// Encryption selects how the bundle is protected. Omitting it uses the
+	// cluster's configured recipients, which is what an unattended export
+	// wants; there is no way to ask for no encryption at all.
+	// +optional
+	Encryption *ExportEncryption `json:"encryption,omitempty"`
+}
+
+// ExportEncryptionMode selects who is able to decrypt a bundle.
+// +kubebuilder:validation:Enum=recipient;passphrase
+type ExportEncryptionMode string
+
+const (
+	// ExportEncryptionRecipient encrypts to age public keys. With the cluster's
+	// configured recipients this needs nobody present, which is what makes it
+	// the mode for scheduled exports and for disaster recovery: the matching
+	// identity is escrowed with the recovery kit, so the platform can still
+	// read the bundle when the tenant admin who took it is unreachable.
+	ExportEncryptionRecipient ExportEncryptionMode = "recipient"
+	// ExportEncryptionPassphrase encrypts under a passphrase the requester
+	// supplies and the platform does not keep. Nobody but the holder can read
+	// the bundle afterwards — including the platform, including support, and
+	// including anyone who later compromises the cluster. That is the point,
+	// and it is also the risk: a lost passphrase is a lost bundle.
+	ExportEncryptionPassphrase ExportEncryptionMode = "passphrase"
+)
+
+// ExportEncryption configures bundle protection.
+//
+// Both modes produce an ordinary age file. A passphrase bundle opens with
+// `age -d`, and a recipient bundle with `age -d -i <identity>` — no Gentian
+// tooling required, which matters most in exactly the situation a backup is
+// for.
+type ExportEncryption struct {
+	// Mode selects the protection. Defaults to recipient.
+	// +optional
+	// +kubebuilder:default=recipient
+	Mode ExportEncryptionMode `json:"mode,omitempty"`
+
+	// Recipients are age public keys (age1…) to encrypt to, used with
+	// mode: recipient. When empty the cluster's configured recipients are
+	// used; naming them here instead lets an admin encrypt to a key the
+	// platform has no identity for, so the bundle is readable only by them.
+	//
+	// Every listed recipient can decrypt independently, so this is also how an
+	// export is made readable both by its requester and by platform escrow.
+	// +optional
+	Recipients []string `json:"recipients,omitempty"`
+
+	// PassphraseSecretRef names a Secret in this tenant's namespace holding the
+	// passphrase, used with mode: passphrase.
+	//
+	// A reference rather than a literal: a passphrase written into the spec
+	// would be readable by anyone who can get the resource, would sit in
+	// etcd, and would be echoed back by every kubectl get. The controller
+	// copies the Secret next to the capture Job and removes the copy when the
+	// export finishes.
+	// +optional
+	PassphraseSecretRef *SecretKeyRef `json:"passphraseSecretRef,omitempty"`
+}
+
+// SecretKeyRef points at one key in a Secret.
+type SecretKeyRef struct {
+	// +kubebuilder:validation:Required
+	// +kubebuilder:validation:MinLength=1
+	Name string `json:"name"`
+
+	// Key defaults to "passphrase".
+	// +optional
+	Key string `json:"key,omitempty"`
+}
+
+// Resolved reports the mode to use, applying the default.
+func (e *ExportEncryption) Resolved() ExportEncryptionMode {
+	if e == nil || e.Mode == "" {
+		return ExportEncryptionRecipient
+	}
+	return e.Mode
+}
+
+// PassphraseKey returns the Secret key holding the passphrase.
+func (e *ExportEncryption) PassphraseKey() string {
+	if e == nil || e.PassphraseSecretRef == nil || e.PassphraseSecretRef.Key == "" {
+		return "passphrase"
+	}
+	return e.PassphraseSecretRef.Key
 }
 
 // TenantExportPhase is the overall lifecycle phase of an export.
@@ -106,9 +192,34 @@ type TenantExportStatus struct {
 	// +optional
 	CompletedAt *metav1.Time `json:"completedAt,omitempty"`
 
+	// Encryption records how the bundle was protected, so a restore knows what
+	// it needs before it starts and an operator can tell at a glance whether a
+	// bundle is one the platform can still read.
+	// +optional
+	Encryption *ExportEncryptionStatus `json:"encryption,omitempty"`
+
 	// ObservedGeneration is the spec generation this status was computed from.
 	// +optional
 	ObservedGeneration int64 `json:"observedGeneration,omitempty"`
+}
+
+// ExportEncryptionStatus reports the protection actually applied.
+type ExportEncryptionStatus struct {
+	// Mode is the protection used.
+	// +optional
+	Mode ExportEncryptionMode `json:"mode,omitempty"`
+
+	// Recipients are the public keys the bundle was encrypted to. Public keys
+	// only — they are not secret, and recording them is what lets an operator
+	// work out which escrowed identity opens a given bundle.
+	// +optional
+	Recipients []string `json:"recipients,omitempty"`
+
+	// PlatformReadable states plainly whether any platform-held identity can
+	// decrypt this bundle. False means the requester's key is the only way in,
+	// and no amount of cluster access will substitute for it.
+	// +optional
+	PlatformReadable bool `json:"platformReadable,omitempty"`
 }
 
 // BundleRef locates an export bundle in object storage.

@@ -108,7 +108,7 @@ func (r *TenantExportReconciler) Reconcile(ctx context.Context, req ctrl.Request
 		if err := r.resumeAll(ctx, export, tenantName); err != nil {
 			return ctrl.Result{}, err
 		}
-		return ctrl.Result{}, nil
+		return ctrl.Result{}, r.discardPassphrase(ctx, export)
 	}
 
 	tenant := &gentianov1alpha1.Tenant{}
@@ -145,6 +145,15 @@ func (r *TenantExportReconciler) Reconcile(ctx context.Context, req ctrl.Request
 		}
 	}
 
+	// Encryption is resolved before any capture starts. Discovering halfway
+	// through that a bundle cannot be protected would leave half a tenant's
+	// data already written in the clear.
+	encryption, err := r.resolveEncryption(ctx, export)
+	if err != nil {
+		return r.fail(ctx, export, "EncryptionUnavailable", err.Error())
+	}
+	recordEncryption(export, encryption)
+
 	apps, err := r.exportAppSet(ctx, tenant, export)
 	if err != nil {
 		return ctrl.Result{}, err
@@ -159,20 +168,20 @@ func (r *TenantExportReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	}
 
 	if current != "" {
-		return r.captureApp(ctx, export, tenant, current, logger)
+		return r.captureApp(ctx, export, tenant, current, encryption, logger)
 	}
 
 	// Every app is done; capture what belongs to the tenant rather than to an
 	// app. Neither is quiesced: the realm and the shell database are low-write
 	// and internally consistent, and pausing identity would lock every member
 	// out of every app for the duration.
-	if done, err := r.captureTenantWide(ctx, export, tenant); err != nil {
+	if done, err := r.captureTenantWide(ctx, export, tenant, encryption); err != nil {
 		return ctrl.Result{}, err
 	} else if !done {
 		return r.requeueExport(ctx, export, tenant)
 	}
 
-	return r.complete(ctx, export, tenant)
+	return r.complete(ctx, export, tenant, encryption)
 }
 
 // captureApp drives one app through pause, capture and resume.
@@ -181,6 +190,7 @@ func (r *TenantExportReconciler) captureApp(
 	export *gentianov1alpha1.TenantExport,
 	tenant *gentianov1alpha1.Tenant,
 	appName string,
+	encryption backup.Encryption,
 	logger logr.Logger,
 ) (ctrl.Result, error) {
 	profile, err := resolveProfile(ctx, r.Client, tenant, appName)
@@ -205,7 +215,7 @@ func (r *TenantExportReconciler) captureApp(
 		}
 	}
 
-	units := r.captureUnits(tenant, appName, profile, export)
+	units := r.captureUnits(tenant, appName, profile, export, encryption)
 	allDone := true
 	var pending []string
 	for _, unit := range units {
@@ -269,10 +279,11 @@ func (r *TenantExportReconciler) captureUnits(
 	appName string,
 	profile *gentianov1alpha1.AppProfile,
 	export *gentianov1alpha1.TenantExport,
+	encryption backup.Encryption,
 ) []captureUnit {
 	stores := backup.ProfileStores(profile)
 	spec := profileBackupSpec(profile)
-	params := r.jobParams(tenant, appName, export)
+	params := r.jobParams(tenant, appName, export, encryption)
 
 	var units []captureUnit
 	switch stores.Database {
@@ -299,8 +310,8 @@ func (r *TenantExportReconciler) captureUnits(
 		p := params
 		p.Name = exportJobName(export.Name, appName, "s3")
 		units = append(units, captureUnit{
-			Kind: "s3", Name: bucket, Path: "s3/" + bucket,
-			JobName: p.Name, Job: backup.S3MirrorJob(p, bucket),
+			Kind: "s3", Name: bucket, Path: "s3/" + bucket + ".tar.gz",
+			JobName: p.Name, Job: backup.S3ArchiveJob(p, bucket),
 		})
 	}
 
@@ -383,8 +394,9 @@ func (r *TenantExportReconciler) captureTenantWide(
 	ctx context.Context,
 	export *gentianov1alpha1.TenantExport,
 	tenant *gentianov1alpha1.Tenant,
+	encryption backup.Encryption,
 ) (bool, error) {
-	params := r.jobParams(tenant, backupTenantComponent, export)
+	params := r.jobParams(tenant, backupTenantComponent, export, encryption)
 
 	realmParams := params
 	realmParams.Name = exportJobName(export.Name, backupTenantComponent, "realm")
@@ -419,6 +431,7 @@ func (r *TenantExportReconciler) jobParams(
 	tenant *gentianov1alpha1.Tenant,
 	appName string,
 	export *gentianov1alpha1.TenantExport,
+	encryption backup.Encryption,
 ) backup.JobParams {
 	return backup.JobParams{
 		Namespace:    kernelNamespace,
@@ -429,6 +442,7 @@ func (r *TenantExportReconciler) jobParams(
 		Prefix:       export.Status.Bundle.Prefix,
 		ScratchLimit: exportScratchLimit,
 		BackoffLimit: exportCaptureBackoffLimit,
+		Encryption:   encryption,
 	}
 }
 
@@ -438,11 +452,13 @@ func (r *TenantExportReconciler) complete(
 	ctx context.Context,
 	export *gentianov1alpha1.TenantExport,
 	tenant *gentianov1alpha1.Tenant,
+	encryption backup.Encryption,
 ) (ctrl.Result, error) {
-	params := r.jobParams(tenant, backupTenantComponent, export)
+	params := r.jobParams(tenant, backupTenantComponent, export, encryption)
 	params.Name = exportJobName(export.Name, backupTenantComponent, "manifest")
 
-	job, err := backup.ManifestJob(params, r.buildManifest(export, tenant))
+	info := backup.NewBundleInfo(tenant.Name, export.Name, timeOrNow(export.Status.StartedAt), encryption)
+	job, err := backup.ManifestJob(params, r.buildManifest(export, tenant), info)
 	if err != nil {
 		return r.fail(ctx, export, "ManifestFailed", err.Error())
 	}
@@ -457,6 +473,9 @@ func (r *TenantExportReconciler) complete(
 		return r.requeueExport(ctx, export, tenant)
 	}
 
+	if err := r.discardPassphrase(ctx, export); err != nil {
+		return ctrl.Result{}, err
+	}
 	export.Status.Phase = gentianov1alpha1.TenantExportPhaseReady
 	export.Status.CompletedAt = ptrNow()
 	tenantExportTotal.WithLabelValues(tenant.Name, string(gentianov1alpha1.TenantExportPhaseReady)).Inc()
@@ -526,6 +545,9 @@ func (r *TenantExportReconciler) fail(
 	export *gentianov1alpha1.TenantExport,
 	reason, message string,
 ) (ctrl.Result, error) {
+	// Best effort: a failure to tidy the passphrase must not mask the failure
+	// being reported, but it is still attempted on the way out.
+	_ = r.discardPassphrase(ctx, export)
 	export.Status.Phase = gentianov1alpha1.TenantExportPhaseFailed
 	export.Status.CompletedAt = ptrNow()
 	tenantExportTotal.WithLabelValues(

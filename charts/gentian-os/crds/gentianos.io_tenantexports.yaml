@@ -71,6 +71,52 @@ spec:
                 items:
                   type: string
                 type: array
+              encryption:
+                description: |-
+                  Encryption selects how the bundle is protected. Omitting it uses the
+                  cluster's configured recipients, which is what an unattended export
+                  wants; there is no way to ask for no encryption at all.
+                properties:
+                  mode:
+                    default: recipient
+                    description: Mode selects the protection. Defaults to recipient.
+                    enum:
+                    - recipient
+                    - passphrase
+                    type: string
+                  passphraseSecretRef:
+                    description: |-
+                      PassphraseSecretRef names a Secret in this tenant's namespace holding the
+                      passphrase, used with mode: passphrase.
+
+                      A reference rather than a literal: a passphrase written into the spec
+                      would be readable by anyone who can get the resource, would sit in
+                      etcd, and would be echoed back by every kubectl get. The controller
+                      copies the Secret next to the capture Job and removes the copy when the
+                      export finishes.
+                    properties:
+                      key:
+                        description: Key defaults to "passphrase".
+                        type: string
+                      name:
+                        minLength: 1
+                        type: string
+                    required:
+                    - name
+                    type: object
+                  recipients:
+                    description: |-
+                      Recipients are age public keys (age1…) to encrypt to, used with
+                      mode: recipient. When empty the cluster's configured recipients are
+                      used; naming them here instead lets an admin encrypt to a key the
+                      platform has no identity for, so the bundle is readable only by them.
+
+                      Every listed recipient can decrypt independently, so this is also how an
+                      export is made readable both by its requester and by platform escrow.
+                    items:
+                      type: string
+                    type: array
+                type: object
               ttlSeconds:
                 description: |-
                   TTLSeconds is how long the bundle should be kept before it may be
@@ -225,6 +271,33 @@ spec:
                 x-kubernetes-list-map-keys:
                 - type
                 x-kubernetes-list-type: map
+              encryption:
+                description: |-
+                  Encryption records how the bundle was protected, so a restore knows what
+                  it needs before it starts and an operator can tell at a glance whether a
+                  bundle is one the platform can still read.
+                properties:
+                  mode:
+                    description: Mode is the protection used.
+                    enum:
+                    - recipient
+                    - passphrase
+                    type: string
+                  platformReadable:
+                    description: |-
+                      PlatformReadable states plainly whether any platform-held identity can
+                      decrypt this bundle. False means the requester's key is the only way in,
+                      and no amount of cluster access will substitute for it.
+                    type: boolean
+                  recipients:
+                    description: |-
+                      Recipients are the public keys the bundle was encrypted to. Public keys
+                      only — they are not secret, and recording them is what lets an operator
+                      work out which escrowed identity opens a given bundle.
+                    items:
+                      type: string
+                    type: array
+                type: object
               observedGeneration:
                 description: ObservedGeneration is the spec generation this status
                   was computed from.

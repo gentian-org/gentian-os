@@ -85,6 +85,10 @@ spec:
               value: {{ .Values.tenantDNS01ClusterIssuer | default "letsencrypt-dns01-cloudflare" | quote }}
             - name: KERNEL_REALM
               value: {{ .Values.kernelRealm | default "kernel" | quote }}
+            {{- if .Values.backupRecipients }}
+            - name: BACKUP_AGE_RECIPIENTS
+              value: {{ join "," .Values.backupRecipients | quote }}
+            {{- end }}
             {{- if .Values.authzBridge.enabled }}
             - name: AUTHZ_BRIDGE_ENABLED
               value: "true"

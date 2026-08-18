@@ -83,6 +83,10 @@ type JobParams struct {
 	// shared Job waiter recreates a failed Job, so an unbounded capture would
 	// retry a genuinely broken dump forever while holding an app paused.
 	BackoffLimit int32
+	// Encryption protects every artefact this Job writes. There is no unset
+	// value that means plaintext; Encryption.Validate rejects that before any
+	// Job is built.
+	Encryption Encryption
 }
 
 // PostgresDumpJob captures one PostgreSQL database as a custom-format dump.
@@ -165,32 +169,36 @@ echo "archived %s"`, workDir, excludes.String(), claim)},
 	return uploadJob(p, "volume.tar.gz", artefact, []corev1.Container{archive}, []corev1.Volume{source})
 }
 
-// S3MirrorJob copies one app bucket into the bundle.
+// S3ArchiveJob captures one app bucket into the bundle.
 //
-// Objects are mirrored as-is rather than re-encoded: they are already opaque,
-// and preserving keys is what lets a restore put them back under the same
-// names the app's database refers to.
-func S3MirrorJob(p JobParams, sourceBucket string) *batchv1.Job {
-	target := fmt.Sprintf("gentian/%s/%s/s3/%s", p.Bucket, p.Prefix, sourceBucket)
-	mirror := corev1.Container{
-		Name:    "mirror",
+// It copies the bucket to disk and archives it rather than mirroring object to
+// object. Mirroring was the obvious shape and the wrong one: bundle artefacts
+// are encrypted individually, and a mirrored bucket would have landed as
+// plaintext objects — leaving the largest part of most tenants' data readable
+// by anyone who could list the bundle, in a bundle whose whole premise is that
+// it is encrypted. The cost is staging space bounded by ScratchLimit.
+//
+// Object keys are preserved inside the archive, which is what lets a restore
+// put each object back under the name the app's database refers to.
+func S3ArchiveJob(p JobParams, sourceBucket string) *batchv1.Job {
+	artefact := "s3/" + sourceBucket + ".tar.gz"
+	fetch := corev1.Container{
+		Name:    "fetch-bucket",
 		Image:   mcImage,
 		Command: []string{"/bin/sh", "-c"},
 		Args: []string{fmt.Sprintf(`set -eu
 mc alias set gentian "${MINIO_ENDPOINT}" "${MINIO_ACCESS_KEY}" "${MINIO_SECRET_KEY}"
-# The bundle bucket is created here rather than during tenant provisioning.
-# Gating a tenant's readiness on backup infrastructure would couple every
-# install to a bucket only exports need; --ignore-existing makes this
-# idempotent, and anonymous access is denied on every pass.
-mc mb --ignore-existing "gentian/${BUNDLE_BUCKET}"
-mc anonymous set none "gentian/${BUNDLE_BUCKET}"
-# --preserve keeps object metadata; without it a restored object loses its
-# content-type and apps that serve it directly start handing out octet-stream.
-mc mirror --preserve --overwrite "gentian/%s" "%s"
-echo "mirrored %s"`, sourceBucket, target, sourceBucket)},
-		Env: bundleEnv(p),
+mkdir -p %[1]s/bucket
+# An empty bucket is normal (an app may never have written), so mirror into a
+# directory that already exists and let the archive below be empty too.
+mc mirror --preserve "gentian/%[2]s" %[1]s/bucket
+tar czf %[1]s/bucket.tar.gz -C %[1]s/bucket .
+rm -rf %[1]s/bucket
+echo "archived bucket %[2]s"`, workDir, sourceBucket)},
+		Env:          bundleEnv(p),
+		VolumeMounts: []corev1.VolumeMount{{Name: "work", MountPath: workDir}},
 	}
-	return newJob(p, []corev1.Container{mirror}, nil, nil)
+	return uploadJob(p, "bucket.tar.gz", artefact, []corev1.Container{fetch}, nil)
 }
 
 // RealmExportJob captures a tenant's Keycloak realm: its configuration, and
@@ -276,8 +284,11 @@ echo "exported realm ${REALM} ($(wc -l < %[2]s/users.ndjson) users)"`, quoted, w
 // truncated artefact in the bundle and report success, which is the one failure
 // mode a backup must never have.
 func uploadJob(p JobParams, localFile, artefact string, producers []corev1.Container, extraVolumes []corev1.Volume) *batchv1.Job {
-	local := workDir + "/" + localFile
-	target := fmt.Sprintf("gentian/%s/%s/%s", p.Bucket, p.Prefix, artefact)
+	// Encryption runs as the last init container, so the uploader below can
+	// only ever see ciphertext: the plaintext is removed before it starts.
+	producers = append(producers, encryptContainer(p.Encryption, localFile))
+	local := workDir + "/" + localFile + EncryptedSuffix
+	target := fmt.Sprintf("gentian/%s/%s/%s%s", p.Bucket, p.Prefix, artefact, EncryptedSuffix)
 	upload := corev1.Container{
 		Name:    "upload",
 		Image:   mcImage,

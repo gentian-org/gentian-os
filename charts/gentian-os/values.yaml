@@ -27,6 +27,20 @@ routingMode: gateway
 # tenants, customer zone for vanity domains). Plumbed as TENANT_DNS01_CLUSTER_ISSUER.
 tenantDNS01ClusterIssuer: ""
 
+# backupRecipients are age public keys (age1...) that tenant export bundles are
+# encrypted to. Plumbed as BACKUP_AGE_RECIPIENTS.
+#
+# Set this before anyone expects a backup: with no recipient configured, an
+# export requested without its own key fails rather than writing a tenant's
+# data unencrypted. Scheduled exports have nobody to prompt, so this is what
+# makes them possible at all.
+#
+# Keep the matching identity OFF the cluster — in the recovery kit alongside
+# the master password. An identity stored in the cluster it protects is
+# readable by whoever compromises that cluster, which is the case backups exist
+# for. List more than one to allow independent recovery keys.
+backupRecipients: []
+
 # tenantProvisioning controls operator orchestration behaviour. When crossplaneOnly
 # is true the operator skips shared-kernel side effects (mail, portal redirect)
 # so tenant lifecycle is validated via the Crossplane graph alone (P3/P4 e2e).

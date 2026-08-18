@@ -497,11 +497,46 @@ Phase 5:
   capture rather than filling a node — but a tenant larger than that bound
   cannot be exported until a combined image or a streaming path exists.
 
-**Not yet done in this phase:** `boundSecrets` are declared and validated but
-not yet fetched into the bundle, and the bundle is not yet encrypted — both wait
-on the key-custody decision in §10, which must be settled before either is
-built. Until then a bundle is unencrypted platform-internal data, so the console
-download of Phase 4 must not ship before encryption does.
+**Encryption is implemented, in both custody models** — the §10 question is
+settled by supporting both rather than choosing:
+
+| `spec.encryption.mode` | Who can decrypt | For |
+|---|---|---|
+| `recipient` (default) | whoever holds an identity for the configured recipients — escrowed off-cluster with the recovery kit | scheduled and unattended exports, and disaster recovery |
+| `recipient` + own `recipients` | only the requester | an admin who wants a bundle the platform cannot read |
+| `passphrase` | only the passphrase holder | admin-triggered exports, where the platform should retain nothing |
+
+Both produce an ordinary age file, so a bundle opens with `age -d` or
+`age -d -i <identity>` and needs no Gentian tooling — which matters most in the
+situation a backup exists for. `status.encryption.platformReadable` states
+plainly whether any platform-held key still opens a given bundle, because
+support reading that field will otherwise promise a recovery they cannot
+perform.
+
+Three things fell out of building it:
+
+- **There is no unencrypted path, and no fallback.** An export that cannot be
+  protected fails. A cluster with no `backupRecipients` configured cannot take
+  an export unless the requester supplies a key or a passphrase — deliberately,
+  because the alternative is writing an entire tenant to object storage in the
+  clear.
+- **`age -p` cannot be scripted**, which `--export-recovery-kit` already knew
+  (§7). It reads from the terminal and refuses a pipe, so passphrase mode gives
+  it a pty via `script(1)`. age still does the cryptography; the output is a
+  standard scrypt-stanza age file.
+- **Bucket capture had to stop being a mirror.** Artefacts are encrypted
+  individually, so `mc mirror` would have landed bucket objects in the bundle as
+  plaintext — the largest part of most tenants' data, readable, inside a bundle
+  whose whole premise is that it is not. Buckets are now staged and archived
+  like volumes, at the cost of scratch space.
+
+`bundle-info.json` is the single unencrypted file: tenant, export name,
+timestamp, mode, recipients, and the literal command to decrypt the rest. The
+manifest is encrypted with everything else, since it carries the tenant's spec
+and app inventory.
+
+**Still not done:** `boundSecrets` are declared and validated but not yet
+fetched into the bundle.
 
 **Files**
 
@@ -760,7 +795,7 @@ sufficient to rebuild.
 | RPO and RTO per layer | Nothing above can be sized without these. Config is RPO=0; tenant data is probably minutes; credentials are hours |
 | Kit custody | Who holds the kit, where, and how a restore is authorised — policy, not technology |
 | When to re-export the kit | Nothing prompts for one today; a reminder on credential rotation or an unattended scheduled export would both work |
-| Bundle key custody | Platform-held age recipient (restore works without the admin) versus a per-export passphrase shown once (platform cannot read the bundle). Decide before Phase 3 |
+| Who holds the recovery-kit identity | Settled in code: both custody models are supported per export (§9, Phase 3). What remains is operational — the identity matching `backupRecipients` must live off-cluster with the kit, and nothing yet enforces or checks that |
 | Preserving Keycloak passwords | v1 resets them on restore. The alternative is offline `kc.sh export` — includes hashes, whole-realm, and makes the bundle markedly more sensitive |
 | Export size and quota | Whether the backup bucket counts against tenant quota, and whether exports have a size cap |
 | Shared versus per-tenant database instances | Per-tenant CNPG clusters would make per-tenant PITR possible, at a cost in footprint. Worth costing before Phase 6 hardens the current shape |

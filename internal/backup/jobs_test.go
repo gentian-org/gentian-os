@@ -22,6 +22,8 @@ import (
 
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
+
+	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 )
 
 func params() JobParams {
@@ -35,6 +37,10 @@ func params() JobParams {
 		Prefix:       "nightly",
 		ScratchLimit: "20Gi",
 		BackoffLimit: 2,
+		Encryption: Encryption{
+			Mode:       gentianov1alpha1.ExportEncryptionRecipient,
+			Recipients: []string{"age1testkeyxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"},
+		},
 	}
 }
 
@@ -63,9 +69,11 @@ func TestPostgresDumpUploadsTheFileItActuallyWrote(t *testing.T) {
 		t.Fatalf("dump does not write the expected path:\n%s", dump)
 	}
 
+	// The upload reads the encrypted form of exactly that file: the encrypt
+	// step renames it, and losing that correspondence uploads nothing.
 	upload := mainScript(job)
-	if !strings.Contains(upload, `mc cp "/work/dump.pgc"`) {
-		t.Errorf("upload does not read the file the dump wrote:\n%s", upload)
+	if !strings.Contains(upload, `mc cp "/work/dump.pgc`+EncryptedSuffix+`"`) {
+		t.Errorf("upload does not read the encrypted file the dump wrote:\n%s", upload)
 	}
 	if !strings.Contains(upload, "demo-gentian-backup/nightly/postgres/demo_nextcloud_base_ce.pgc") {
 		t.Errorf("upload target is wrong:\n%s", upload)
@@ -76,17 +84,23 @@ func TestPostgresDumpUploadsTheFileItActuallyWrote(t *testing.T) {
 }
 
 // A dump that fails must never be followed by an upload, or the bundle gains a
-// truncated artefact and the export reports success.
-func TestDumpRunsAsInitContainerSoFailureStopsTheUpload(t *testing.T) {
+// truncated artefact and the export reports success. Init containers give that
+// for free: they run in order and a failure stops the pod.
+func TestProducerAndEncryptRunAsInitContainersBeforeUpload(t *testing.T) {
 	for name, job := range map[string]*batchv1.Job{
 		"postgres": PostgresDumpJob(params(), "demo_app"),
 		"mariadb":  MariaDBDumpJob(params(), "demo_app"),
 		"volume":   VolumeArchiveJob(params(), "data", nil),
+		"s3":       S3ArchiveJob(params(), "demo-app"),
 		"realm":    RealmExportJob(params(), "demo"),
 	} {
-		if len(job.Spec.Template.Spec.InitContainers) != 1 {
-			t.Errorf("%s: want exactly one init container, got %d",
-				name, len(job.Spec.Template.Spec.InitContainers))
+		inits := job.Spec.Template.Spec.InitContainers
+		if len(inits) != 2 {
+			t.Errorf("%s: want a producer and an encrypt step, got %d", name, len(inits))
+			continue
+		}
+		if inits[1].Name != "encrypt" {
+			t.Errorf("%s: encrypt is not the final init step: %s", name, inits[1].Name)
 		}
 		if len(job.Spec.Template.Spec.Containers) != 1 {
 			t.Errorf("%s: want exactly one main container, got %d",
@@ -100,7 +114,7 @@ func TestMariaDBDumpUploadsTheFileItWrote(t *testing.T) {
 	if !strings.Contains(initContainerScript(job), "> /work/dump.sql.gz") {
 		t.Errorf("dump path unexpected:\n%s", initContainerScript(job))
 	}
-	if !strings.Contains(mainScript(job), `mc cp "/work/dump.sql.gz"`) {
+	if !strings.Contains(mainScript(job), `mc cp "/work/dump.sql.gz`+EncryptedSuffix+`"`) {
 		t.Errorf("upload path unexpected:\n%s", mainScript(job))
 	}
 }
@@ -134,15 +148,30 @@ func TestVolumeArchiveMountsClaimReadOnlyAndAppliesExcludes(t *testing.T) {
 	}
 }
 
-func TestS3MirrorNeedsNoScratchSpace(t *testing.T) {
-	job := S3MirrorJob(params(), "demo-nextcloud-base-ce")
+// Bucket capture stages on disk rather than mirroring object to object, and
+// that is a deliberate reversal: mirroring needed no scratch space but put the
+// objects into the bundle as plaintext, since artefacts are encrypted
+// individually. Paying for staging is what makes bucket contents as protected
+// as everything else.
+func TestS3CaptureStagesSoItCanBeEncrypted(t *testing.T) {
+	job := S3ArchiveJob(params(), "demo-nextcloud-base-ce")
+
+	var staged bool
 	for _, v := range job.Spec.Template.Spec.Volumes {
 		if v.Name == "work" {
-			t.Error("mirror should stream between buckets, not stage on disk")
+			staged = true
 		}
 	}
-	if !strings.Contains(mainScript(job), "mc mirror --preserve --overwrite") {
-		t.Errorf("unexpected mirror command:\n%s", mainScript(job))
+	if !staged {
+		t.Error("bucket capture has no scratch volume, so it cannot encrypt before upload")
+	}
+
+	fetch := initContainerScript(job)
+	if !strings.Contains(fetch, "mc mirror --preserve") {
+		t.Errorf("bucket is not fetched with metadata preserved:\n%s", fetch)
+	}
+	if !strings.Contains(fetch, "tar czf") {
+		t.Errorf("bucket is not archived before encryption:\n%s", fetch)
 	}
 }
 
@@ -199,7 +228,7 @@ func TestCapturesNeverMountTheMasterPassword(t *testing.T) {
 	jobs := []*batchv1.Job{
 		PostgresDumpJob(params(), "demo_app"),
 		MariaDBDumpJob(params(), "demo_app"),
-		S3MirrorJob(params(), "demo-app"),
+		S3ArchiveJob(params(), "demo-app"),
 		VolumeArchiveJob(params(), "data", nil),
 		RealmExportJob(params(), "demo"),
 	}
@@ -239,21 +268,45 @@ func TestManifestJobEmbedsCompactJSON(t *testing.T) {
 		// A display name with a quote and a newline is the shape that breaks
 		// naive here-doc embedding.
 		Apps: []ManifestApp{{Name: "app\"one", ChartVersion: "1.0.0"}},
-	})
+	}, NewBundleInfo("demo", "nightly", "now", params().Encryption))
 	if err != nil {
 		t.Fatalf("ManifestJob: %v", err)
 	}
-	script := mainScript(job)
-	if strings.Count(script, "GENTIAN_MANIFEST_EOF") != 2 {
-		t.Errorf("heredoc delimiters unbalanced:\n%s", script)
+	// The manifest is staged, then encrypted, then uploaded like any other
+	// artefact — it carries the tenant's spec and app inventory, which has no
+	// business sitting readable beside an encrypted bundle.
+	staged := initContainerScript(job)
+	if strings.Count(staged, "GENTIAN_MANIFEST_EOF") != 2 {
+		t.Errorf("heredoc delimiters unbalanced:\n%s", staged)
 	}
-	if !strings.Contains(script, `mc pipe "gentian/demo-gentian-backup/nightly/manifest.json"`) {
-		t.Errorf("manifest target unexpected:\n%s", script)
+	if !strings.Contains(staged, "> /work/manifest.json") {
+		t.Errorf("manifest is not staged for encryption:\n%s", staged)
 	}
 	// Compact JSON is what keeps a display name from ever producing a line that
 	// matches the delimiter.
-	if strings.Contains(script, "\n  \"tenant\"") {
+	if strings.Contains(staged, "\n  \"tenant\"") {
 		t.Error("manifest JSON is indented; it must be compact")
+	}
+
+	upload := strings.Join(containerByName(job, "upload").Args, "\n")
+	if !strings.Contains(upload, "nightly/manifest.json"+EncryptedSuffix) {
+		t.Errorf("manifest is not uploaded encrypted:\n%s", upload)
+	}
+
+	// bundle-info.json is the deliberate exception, and goes up in the clear.
+	info := containerByName(job, "bundle-info")
+	if info == nil {
+		t.Fatal("no bundle-info container")
+	}
+	infoScript := strings.Join(info.Args, "\n")
+	if !strings.Contains(infoScript, `mc pipe "gentian/demo-gentian-backup/nightly/bundle-info.json"`) {
+		t.Errorf("bundle info target unexpected:\n%s", infoScript)
+	}
+	if strings.Contains(infoScript, "bundle-info.json"+EncryptedSuffix) {
+		t.Error("bundle info must stay readable; it is how you learn to open the rest")
+	}
+	if !strings.Contains(infoScript, "howToDecrypt") {
+		t.Errorf("bundle info does not say how to open the bundle:\n%s", infoScript)
 	}
 }
 
@@ -261,7 +314,8 @@ func TestManifestJobEmbedsCompactJSON(t *testing.T) {
 // install to backup infrastructure would be the wrong trade — so each writer
 // creates it. Every one of them, because any can be the first to run.
 func TestBundleWritersCreateTheirOwnBucket(t *testing.T) {
-	manifest, err := ManifestJob(params(), &Manifest{Tenant: "demo"})
+	manifest, err := ManifestJob(params(), &Manifest{Tenant: "demo"},
+		NewBundleInfo("demo", "nightly", "now", params().Encryption))
 	if err != nil {
 		t.Fatalf("ManifestJob: %v", err)
 	}
@@ -270,7 +324,7 @@ func TestBundleWritersCreateTheirOwnBucket(t *testing.T) {
 		"mariadb upload":  MariaDBDumpJob(params(), "demo_app"),
 		"volume upload":   VolumeArchiveJob(params(), "data", nil),
 		"realm upload":    RealmExportJob(params(), "demo"),
-		"s3 mirror":       S3MirrorJob(params(), "demo-app"),
+		"s3 mirror":       S3ArchiveJob(params(), "demo-app"),
 		"manifest":        manifest,
 	}
 
