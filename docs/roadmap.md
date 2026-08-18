@@ -174,6 +174,16 @@ For the current baseline design of the system, refer to [architecture.md](archit
   - `[ ]` Rewrite all existing Secrets after enabling, and verify a fresh etcd read no longer returns plaintext.
   - `[ ]` Add the check to the install pre-flight so a cluster without encryption at rest is reported rather than assumed.
 
+### 1.19 Replace Mail App Passwords with OIDC Token Authentication (**)
+* **Target Domain**: Kernel Mail Security
+* **Context**: Identities live in Keycloak and an OIDC login never yields a password, but IMAP clients expect one. The industry has settled this the other way: Google stopped accepting passwords for mail in May 2022 and Microsoft ends basic authentication for IMAP in December 2026, both in favour of OAuth tokens (XOAUTH2/OAUTHBEARER). App passwords are explicitly the fallback for clients that cannot do OAuth, not the multi-user default. Dovecot is already configured for the correct path — per-realm oauth2 passdbs pointed at Keycloak introspection — so the platform side is largely built. The blocker is the client: Nextcloud Mail's OAuth support covers hosted Google and Microsoft only.
+* **Proposed Solution**: Track and, where useful, help land [nextcloud/mail#13317](https://github.com/nextcloud/mail/pull/13317), which implements generic OIDC/XOAUTH2 for any compliant provider and names Keycloak explicitly. It was ready for review on 2026-07-20 and reviewed by the Mail lead on 2026-07-21 (error handling, validation codes, test coverage); as of 2026-08-18 it is open, has no release milestone, and awaits code-owner approval — see [issue #12491](https://github.com/nextcloud/mail/issues/12491), which is assigned and marked in progress. Note [#12483](https://github.com/nextcloud/mail/issues/12483) is closed as *not planned* and is a duplicate; reading it alone gives the wrong impression. This cluster is an unusually good test bed for that PR — Keycloak plus Dovecot with introspection already configured — and validating it against a real third-party provider is plausibly the fastest route to a merge. Nextcloud's Community Conference is 2026-09-19/20 with Contributor Week immediately after, which is when stalled PRs tend to move.
+* **Backlog Items**:
+  - `[ ]` Run #13317 against this cluster's Keycloak and Dovecot and report results upstream.
+  - `[ ]` Confirm behaviour on Dovecot 2.3.21 — 2.4 changed OAuth handling — and with Keycloak 26+ audience validation during introspection.
+  - `[ ]` Retire the per-app password minting once token auth works for the webmail client.
+  - `[ ]` Keep app passwords only for clients that genuinely cannot do OAuth (phones, Thunderbird), as Google and Fastmail do.
+
 ---
 
 ## 2. Platform, Infrastructure & Lifecycle
