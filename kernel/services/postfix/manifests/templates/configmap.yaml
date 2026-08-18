@@ -120,9 +120,37 @@ data:
         configMap:
           name: postfix-kernel-virtual-mailbox-maps
           optional: true
+      # Per-tenant DKIM: the two OpenDKIM tables plus the private keys they
+      # name, written by the operator from the tenant registry.
+      #
+      # NOT optional, deliberately. The tables are mounted over the image's own
+      # with subPath, and a subPath naming a key that does not exist stops the
+      # container starting — which would take all mail down, not just signing.
+      - name: dkim-tenants
+        secret:
+          secretName: postfix-dkim-tenants
+          defaultMode: 0400
     extraVolumeMounts:
       - name: kernel-maps
         mountPath: /etc/postfix/kernel-maps
+        readOnly: true
+      # The keys as a directory, so a tenant added later appears without a
+      # restart. KeyTable references /etc/opendkim/tenant-keys/<domain>.private.
+      - name: dkim-tenants
+        mountPath: /etc/opendkim/tenant-keys
+        readOnly: true
+      # The tables replace the image's, which name only the kernel domain.
+      # subPath because the surrounding directory holds the image-generated
+      # kernel key that must survive. OpenDKIM reads these at start, so a new
+      # TENANT needs a Postfix restart — unlike the maps above, re-read per
+      # lookup. Reloader watches this Secret for that reason.
+      - name: dkim-tenants
+        mountPath: /etc/opendkim/KeyTable
+        subPath: KeyTable
+        readOnly: true
+      - name: dkim-tenants
+        mountPath: /etc/opendkim/SigningTable
+        subPath: SigningTable
         readOnly: true
 ---
 apiVersion: v1
