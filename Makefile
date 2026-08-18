@@ -22,7 +22,7 @@ CROSSPLANE_IMAGE ?= xpkg.crossplane.io/crossplane/crossplane:$(CROSSPLANE_CLI_VE
 KUBEBUILDER_ASSETS ?= /tmp/envtest-bins/k8s/1.32.0-linux-amd64
 export KUBEBUILDER_ASSETS
 
-.PHONY: all build generate manifests test lint docker-build clean install-plugin validate-steps gen-credentials check-credentials lint-cluster-config-keys lint-portability lint-image-digests check-render-fixtures lint-resolvable lint-step-contracts lint-claim-defaults
+.PHONY: all build generate manifests test lint docker-build clean install-plugin validate-steps gen-credentials check-credentials lint-cluster-config-keys lint-portability lint-image-digests check-render-fixtures lint-resolvable lint-step-contracts lint-claim-defaults test-policy test-policy-openbao test-policy-authz
 
 all: generate build test
 
@@ -279,6 +279,22 @@ test-unit-schema:
 ## Run all crossplane unit tests (render + functions + schema)
 test-unit: test-unit-render test-unit-functions test-unit-schema
 	@echo "=== all crossplane unit tests passed ==="
+
+## Assert what the authorization rules actually permit, not just what they say.
+## Two layers that fail in different ways:
+##   OpenBao path policies — who may read which secret path. The tenant-admin
+##   deny on gentian-os/kernel/* is the one rule where a mistake is a breach.
+##   Skips cleanly when `bao` is absent.
+##   The OpenFGA model — who may launch an app or read a document.
+## test-unit-render covers the same policies as TEXT; these run them.
+test-policy: test-policy-openbao test-policy-authz
+	@echo "=== authorization policy tests passed ==="
+
+test-policy-openbao:
+	@bash scripts/tools/verify-openbao-policies.sh
+
+test-policy-authz:
+	@bash scripts/tools/verify-authz-model.sh
 
 # ---------------------------------------------------------------------------
 # E2E tests (live dev cluster required)
