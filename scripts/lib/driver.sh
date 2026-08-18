@@ -352,8 +352,13 @@ run_step_forward() {
     # benign and stops the install anyway: D-05 ended on a WARN and a shell
     # prompt, which is indistinguishable from a completed run. The driver knows
     # which step failed, so the driver says so.
-    if ! apply; then
-        local rc=$?
+    # rc is captured from apply() directly, not from `if ! apply`. In the latter
+    # $? is the status of the NEGATION, which is 0 whenever apply failed — so the
+    # message read "apply() returned 0" for every failure, and the driver returned
+    # success from a step that had just failed.
+    local rc=0
+    apply || rc=$?
+    if (( rc != 0 )); then
         elapsed=$((SECONDS - start))
         error "Step ${id} failed after ${elapsed}s (apply() returned ${rc})."
         error "  Nothing after it has run. Fix the cause and re-run — steps that"

@@ -27,6 +27,21 @@
 # Only the write is imperative. Every value comes from the claim or from
 # OpenBao, exactly as A-06 reads certificates.issuerMode.
 
+# The address, resolved the same way seed_secrets does: ClusterIP if it answers,
+# a port-forward otherwise. Steps cannot assume BAO_ADDR is already pointing
+# anywhere — this one inherited http://127.0.0.1:8200 with nothing listening and
+# failed on connection refused, which reads as OpenBao being down rather than as
+# nobody having opened the tunnel.
+_oidc_bao_addr() {
+    [[ -n "${BAO_TOKEN:-}" ]] || return 1
+    if BAO_ADDR="$(gentian_service_addr openbao openbao 8200 https)"; then
+        export BAO_ADDR
+        export VAULT_SKIP_VERIFY=true BAO_SKIP_VERIFY=true
+        return 0
+    fi
+    return 1
+}
+
 _oidc_values() {
     OIDC_DISCOVERY_URL="$(kubectl get cluster.gentianos.io -n crossplane-system \
         -o jsonpath='{.items[0].spec.oidc.discoveryUrl}' 2>/dev/null || true)"
@@ -44,7 +59,9 @@ check() {
     # No OIDC configured for this cluster: nothing to say about a mount that is
     # not meant to exist here.
     [[ -n "${OIDC_DISCOVERY_URL}" ]] || return "${CHECK_UNDEFINED}"
-    [[ -n "${BAO_TOKEN:-}" ]] || return "${CHECK_UNDEFINED}"
+    # No token, or no route to OpenBao, is "cannot tell" rather than "missing":
+    # reporting missing would blame the cluster for a gap in this shell.
+    _oidc_bao_addr || return "${CHECK_UNDEFINED}"
 
     # Configured means the discovery URL matches the claim, not merely that some
     # config exists — a mount pointed at the wrong realm authenticates nobody and
@@ -59,6 +76,12 @@ apply() {
     if [[ -z "${OIDC_DISCOVERY_URL}" ]]; then
         info "spec.oidc.discoveryUrl is unset; no OIDC mount to configure."
         return 0
+    fi
+
+    if ! _oidc_bao_addr; then
+        error "Cannot reach OpenBao on :8200, and no BAO_TOKEN in this shell."
+        error "  Neither the ClusterIP nor a kubectl port-forward responded."
+        return 1
     fi
 
     local secret
@@ -98,7 +121,7 @@ apply() {
 destroy() {
     # Removing the mount takes every role and policy under it with it, which is
     # what an uninstall wants and what a re-run must never do.
-    [[ -n "${BAO_TOKEN:-}" ]] || return 0
+    _oidc_bao_addr || return 0
     if bao auth list -format=json 2>/dev/null | jq -e '."oidc/"' >/dev/null 2>&1; then
         gentian_run bao auth disable oidc || true
     fi
