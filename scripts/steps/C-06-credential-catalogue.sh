@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # step: C-06-credential-catalogue
 # phase: platform
-# requires: B-07-cluster-xr
+# requires: B-08-cluster-xr
 # provides: CredentialRequirement catalogue and its ESO satisfaction probes
 # mutates: cluster-scoped CredentialRequirement objects, ExternalSecrets in gentian-system
 

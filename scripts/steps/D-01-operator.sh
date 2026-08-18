@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # step: D-01-operator
 # phase: applications
-# requires: B-07-cluster-xr
+# requires: B-08-cluster-xr
 # provides: gentian-os operator with the authz bridge
 # mutates: namespace gentian-system, gentianos.io CRDs
 

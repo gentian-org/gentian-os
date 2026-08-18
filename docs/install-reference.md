@@ -12,7 +12,7 @@ see [GETTING-STARTED.md](../GETTING-STARTED.md).
 ```text
 scripts/steps/A-01-crossplane.sh
 scripts/steps/A-08-eso.sh
-scripts/steps/B-07-cluster-xr.sh
+scripts/steps/B-08-cluster-xr.sh
 …
 ```
 
@@ -94,7 +94,7 @@ A failure names the step and its file. Fix the cause and re-run — completed
 steps are skipped.
 
 ```bash
-less scripts/steps/B-07-cluster-xr.sh
+less scripts/steps/B-08-cluster-xr.sh
 ```
 
 ---

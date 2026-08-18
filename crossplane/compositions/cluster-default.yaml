@@ -226,20 +226,23 @@ spec:
                 crossplane.io/external-name: oidc
               name: {{ $name }}-auth-oidc
             spec:
-              # Observe before Create, exactly as the kubernetes mount above —
-              # which is why that one came up and this one did not.
+              # Observe only. B-07-openbao-oidc-mount creates and configures this
+              # mount; this resource exists to READ it.
               #
-              # The provider creates asynchronously and writes the result back to
-              # status. When the composition controller touches the object in
-              # that window the status write loses a conflict, the id is never
-              # recorded, and the next reconcile creates again: the mount exists
-              # in OpenBao, Crossplane does not know it owns it, and every retry
-              # answers 400 "path is already in use" forever.
+              # It is here at all because the tenant-admin policy below templates
+              # its path from the mount accessor, and an accessor can only be
+              # observed. Letting Crossplane create the mount instead does not
+              # work: provider-vault's jwt AuthBackend cannot adopt a mount it did
+              # not create, and its async create writes the result back to status,
+              # so a status write that loses a conflict leaves a mount nothing
+              # claims — after which every reconcile answers 400 "path is already
+              # in use", permanently, taking the whole XCluster with it.
               #
-              # Observing first breaks the loop — the mount is found by
-              # external-name and adopted. The annotation alone was not enough:
-              # without Observe the provider still calls create.
-              managementPolicies: ["Observe", "Create"]
+              # Observe cannot fail that way. If it finds nothing the accessor
+              # stays empty and only the tenant-admin policy is skipped, which is
+              # already how that policy is gated — a missing policy rather than a
+              # cluster that will not converge.
+              managementPolicies: ["Observe"]
               forProvider:
                 type: oidc
                 path: oidc

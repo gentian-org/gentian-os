@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# step: B-07-cluster-xr
+# step: B-08-cluster-xr
 # phase: secrets
-# requires: B-06-crossplane-secrets
+# requires: B-07-openbao-oidc-mount
 # provides: Cluster claim — KV mount, policies, AppProject, ClusterSecretStore
 # mutates: Cluster claim in crossplane-system and everything it composes
 

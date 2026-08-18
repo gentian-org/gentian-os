@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# step: B-09-seed-secrets
+# step: B-10-seed-secrets
 # phase: secrets
-# requires: B-07-cluster-xr
+# requires: B-08-cluster-xr
 # provides: remaining OpenBao paths (registry, DNS, mail)
 # mutates: OpenBao KV paths only
 

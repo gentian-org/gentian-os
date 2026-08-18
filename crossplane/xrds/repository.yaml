@@ -176,7 +176,7 @@ spec:
 #   resources for credentialProbe: cannot list required resources: Timeout:
 #   failed waiting for *unstructured.Unstructured Informer to sync
 #
-# so the XRepository stays Synced=False forever while B-08 reports satisfied —
+# so the XRepository stays Synced=False forever while B-09 reports satisfied —
 # the imperative path having already produced the Secret the composed one is
 # meant to own. Nothing is visibly broken, and the declarative path simply
 # never runs.

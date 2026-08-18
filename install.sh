@@ -8,7 +8,7 @@
 # them.
 # Every step is a self-contained file you can read top to bottom:
 #
-#   scripts/steps/A-01-crossplane.sh   scripts/steps/B-07-cluster-xr.sh
+#   scripts/steps/A-01-crossplane.sh   scripts/steps/B-08-cluster-xr.sh
 #   scripts/steps/A-08-eso.sh          scripts/steps/C-02-root-appset.sh
 #   scripts/steps/A-09-argocd.sh       ...
 #
@@ -117,7 +117,7 @@ Looking before running:
   --dry-run             run every check() and print the plan; applies nothing
 
 Running part of it. A step is named by its number or its full id, so
---only B-09 and --only B-09-seed-secrets are the same thing:
+--only B-10 and --only B-10-seed-secrets are the same thing:
   --only ID[,ID...]     run only these steps (--step is a synonym)
   --skip ID[,ID...]     run everything except these
   --from ID             start here and continue to the end

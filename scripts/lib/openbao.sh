@@ -69,7 +69,7 @@ try_load_creds_from_openbao() {
         v=$(_bao_get "internal/master-password" '.data.data.salt')
         [[ -n "$v" ]] && { export DERIVATION_SALT="$v"; loaded=1; }
     fi
-    # The rest of the bootstrap set. Without these, every run after B-09 removes
+    # The rest of the bootstrap set. Without these, every run after B-10 removes
     # the local cache prompts again for credentials OpenBao already holds —
     # which is the cache's whole reason to exist, undone one step later.
     if [[ -z "${GENTIAN_DEPLOYMENTS_GIT_USERNAME:-}" ]]; then

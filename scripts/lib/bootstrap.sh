@@ -593,7 +593,7 @@ create_crossplane_secrets() {
 #
 # The Cluster claim is the one file the claims ApplicationSet deliberately
 # excludes, because two writers on the claim that owns the ClusterSecretStore is
-# how a cluster loses its secret store. B-07 is therefore its only applier, and
+# how a cluster loses its secret store. B-08 is therefore its only applier, and
 # a check that asked only "is the XR Ready?" reported satisfied over a claim
 # edited in Git and never applied — the fields were in the file, the CRD
 # accepted them, and the live object simply never grew them.

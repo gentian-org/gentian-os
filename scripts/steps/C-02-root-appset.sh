@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # step: C-02-root-appset
 # phase: platform
-# requires: B-07-cluster-xr
+# requires: B-08-cluster-xr
 # provides: root ApplicationSet — the app-of-apps everything else arrives through
 # mutates: ApplicationSet gentian-appsets in argocd
 

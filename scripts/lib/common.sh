@@ -16,7 +16,7 @@
 #              or the config that would decide it was never loaded.
 #   ALWAYS     the step runs on every pass by design, so there is no state to
 #              report. Its work is idempotent and cheap, and answering the
-#              question properly would mean duplicating the work — B-09 would
+#              question properly would mean duplicating the work — B-10 would
 #              have to probe every path kv_put_once already guards, E-02 would
 #              have to do the reconcile it exists to perform, and B-04 exports a
 #              per-run token that a skip would leave unset for every later step.
@@ -805,7 +805,7 @@ load_deployments_cluster_settings() {
     #
     # These are read from the FILE, not the cluster: the installer needs
     # networkMode and nodeIp at A-05 and A-07, and the Cluster XR is not created
-    # until B-07. The claim is authored before either, so one document serves
+    # until B-08. The claim is authored before either, so one document serves
     # both readers — yq here, Crossplane later — and there is no second surface
     # to keep in step.
     #
@@ -1647,7 +1647,7 @@ gentian_mail_namespace() {
 # scaffolds a deployments tree. But every check() that resolves a stage-scoped
 # name, a claim name or a cluster id reads that same configuration, so without
 # it they answer against defaults: A-03 asks for gentian-infra-dev on a prod
-# cluster, C-02 compares against an empty cluster id, B-07 cannot name the claim
+# cluster, C-02 compares against an empty cluster id, B-08 cannot name the claim
 # to look up. Each then reports missing on a cluster where the thing is present,
 # which is worse than not reporting at all — it is a wrong answer that looks
 # like a right one.

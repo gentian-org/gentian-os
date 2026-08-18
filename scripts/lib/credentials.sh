@@ -13,9 +13,9 @@
 #   1. OpenBao holds the credentials, and re-run recovery comes from it
 #      (try_load_creds_from_openbao); step state comes from the cluster
 #      (check()). The one gap is the bootstrap itself: the KV mount does not
-#      exist until B-07 creates it and B-09 seeds it, so a run that fails before
+#      exist until B-08 creates it and B-10 seeds it, so a run that fails before
 #      then has nothing to recover from. A cache covers exactly that window and
-#      B-09 deletes it — see "Bootstrap credential cache" below.
+#      B-10 deletes it — see "Bootstrap credential cache" below.
 #
 #   2. Only `phase: bootstrap` credentials are collected. Everything else is
 #      `phase: runtime` and belongs to the on-cluster credential manager, which
@@ -97,7 +97,7 @@ _env_var_for() {
 #
 # OpenBao is where credentials live, and try_load_creds_from_openbao recovers
 # them on any later run — but only once the KV mount exists, which the Cluster
-# XR creates at B-07 and B-09 seeds. Everything before that has no store, so a
+# XR creates at B-08 and B-10 seeds. Everything before that has no store, so a
 # run that fails anywhere in phase A or early B asks for every credential again.
 # On a bootstrap that takes several attempts, that is the same secrets retyped
 # each time, which is where operators start pasting them into files that

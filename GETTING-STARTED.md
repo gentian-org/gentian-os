@@ -178,7 +178,7 @@ stops before touching the cluster if any fail.
 Type them when asked. Each reaches OpenBao once it exists, and a later run
 recovers it from there instead of asking again — so a resumed install does not
 re-ask. Nothing is written to this machine except a short-lived cache that step
-`B-09-seed-secrets` deletes.
+`B-10-seed-secrets` deletes.
 
 **Everything else is supplied after the cluster is up, not now.** The SMTP relay
 and the ArgoCD webhook secret are `phase: runtime`: they belong to the
@@ -258,7 +258,7 @@ else can rebuild.
 Every step reads `satisfied`, except steps that have nothing persistent to check
 and steps that do not apply to this cluster — those read `undefined`.
 `A-04-prewarm`, `C-03-provider-helm` and `D-02-gateway-wait` are always
-`undefined`. `B-04-openbao-init`, `B-09-seed-secrets` and `E-02-tenant-reconcile`
+`undefined`. `B-04-openbao-init`, `B-10-seed-secrets` and `E-02-tenant-reconcile`
 re-run on every pass, because they hold per-run tokens or reconcile continuously.
 
 ```bash
@@ -328,7 +328,7 @@ rather than kept working.
 Between being typed and reaching OpenBao there is a window where an install can
 fail with nothing to recover from. Validated answers are cached at
 `~/.gentian/bootstrap-credentials.env` — 0600, in a 0700 directory — and
-`B-09-seed-secrets` deletes it once OpenBao holds them.
+`B-10-seed-secrets` deletes it once OpenBao holds them.
 
 To keep credentials in the process only, and retype on every resumed run:
 
@@ -355,7 +355,7 @@ GENTIAN_KIT_IDENTITY=~/.age/key.txt ./install.sh --recover kit.age
 ```bash
 ./install.sh --explain            # what each step does, in order
 ./install.sh --status             # which steps this cluster has already satisfied
-./install.sh --only B-09          # a single step
+./install.sh --only B-10          # a single step
 ./install.sh --from C-01          # resume from a step
 ./install.sh --phase secrets      # one phase: control-plane, secrets,
                                   # platform, applications, handover

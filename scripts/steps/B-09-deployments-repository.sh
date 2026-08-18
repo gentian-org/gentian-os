@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# step: B-08-deployments-repository
+# step: B-09-deployments-repository
 # phase: secrets
-# requires: B-07-cluster-xr
+# requires: B-08-cluster-xr
 # provides: Repository claim for gentian-deployments — ArgoCD credential and operator push access
 # mutates: Repository claim in crossplane-system
 

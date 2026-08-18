@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # step: C-05-kernel-services-configmap
 # phase: platform
-# requires: B-07-cluster-xr
+# requires: B-08-cluster-xr
 # provides: ConfigMap gentian-kernel-services in platform-kernel
 # mutates: one ConfigMap
 
