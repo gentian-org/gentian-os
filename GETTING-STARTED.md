@@ -45,7 +45,7 @@ ready — step 11 covers how to tell the difference.
 
 ---
 
-## Before you start
+## What you need before you start
 
 - **A Kubernetes cluster you are an admin on.** The installer does not create
   one. It runs 100+ pods, so a laptop-sized node pool will be tight.
