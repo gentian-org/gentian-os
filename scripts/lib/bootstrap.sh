@@ -638,6 +638,81 @@ PYEOF
     [[ -z "${CLUSTER_CLAIM_DRIFT}" ]]
 }
 
+# =============================================================================
+# report_unready_composed <xr-name> — which composed resources are holding it up
+#
+# Prints the kind, name and the provider's own message for anything not Ready
+# and Synced. The messages are the diagnosis: "path is already in use at oidc/"
+# and "ProviderConfig openbao not found" each name their cause exactly.
+# =============================================================================
+report_unready_composed() {
+    local xr_name="$1"
+    kubectl get managed -l "crossplane.io/composite=${xr_name}" -o json 2>/dev/null |
+        python3 -c '
+import json, sys
+try:
+    doc = json.load(sys.stdin)
+except Exception:
+    sys.exit(0)
+for x in doc.get("items", []):
+    conds = {c["type"]: c for c in (x.get("status", {}).get("conditions") or [])}
+    ready = conds.get("Ready", {}).get("status")
+    synced = conds.get("Synced", {}).get("status")
+    if ready == "True" and synced == "True":
+        continue
+    kind = x.get("kind", "?")
+    name = x.get("metadata", {}).get("name", "?")
+    print(f"    {kind}/{name}  Ready={ready} Synced={synced}")
+    msg = (conds.get("Synced", {}).get("message")
+           or conds.get("Ready", {}).get("message") or "").strip()
+    if msg:
+        first = " ".join(msg.split())[:220]
+        print(f"      {first}")
+'
+}
+
+# =============================================================================
+# wait_for_xcluster_ready <xr-name> <timeout> — wait, and say what is blocking
+#
+# A silent wait on a composite is the wrong shape: the XR is not Ready because
+# some composed resource is not, and that resource already knows why. Reporting
+# only after the deadline means the operator watches a still cursor for fifteen
+# minutes and then reads a message that was available in the first thirty
+# seconds.
+#
+# So the not-Ready set is printed periodically. The deadline still ends the
+# wait; it just stops being the first moment anything is said.
+# =============================================================================
+wait_for_xcluster_ready() {
+    local xr_name="$1" timeout="$2"
+    local secs="${timeout%s}"; secs="${secs%m}"
+    case "${timeout}" in *m) secs=$(( secs * 60 )) ;; esac
+
+    local waited=0 interval=15 report_every=60 since_report=0
+    while (( waited < secs )); do
+        if kubectl get "xcluster.gentianos.io/${xr_name}" \
+            -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null | grep -q True; then
+            return 0
+        fi
+        sleep "${interval}"
+        waited=$(( waited + interval ))
+        since_report=$(( since_report + interval ))
+        if (( since_report >= report_every )); then
+            since_report=0
+            info "  still waiting (${waited}s of ${secs}s) — not Ready:"
+            report_unready_composed "${xr_name}"
+        fi
+    done
+
+    error "XCluster ${xr_name} did not become Ready within ${timeout}."
+    error "Still not Ready:"
+    report_unready_composed "${xr_name}"
+    error "Diagnose with:"
+    error "  kubectl describe xcluster.gentianos.io ${xr_name}"
+    error "  kubectl get managed -l crossplane.io/composite=${xr_name}"
+    return 1
+}
+
 apply_cluster_xr() {
     banner "Apply Cluster XR (kernel structural provisioning)"
 
@@ -670,15 +745,7 @@ apply_cluster_xr() {
     info "  Composite name: ${xr_name}"
 
     info "Waiting for XCluster ${xr_name} to be Ready (timeout: ${CLUSTER_XR_TIMEOUT})..."
-    kubectl wait "xcluster.gentianos.io/${xr_name}" \
-        --for=condition=Ready --timeout="${CLUSTER_XR_TIMEOUT}" \
-    || {
-        error "XCluster ${xr_name} did not become Ready within ${CLUSTER_XR_TIMEOUT}."
-        error "Diagnose with:"
-        error "  kubectl describe xcluster.gentianos.io ${xr_name}"
-        error "  kubectl get managed -l crossplane.io/composite=${xr_name}"
-        exit 1
-    }
+    wait_for_xcluster_ready "${xr_name}" "${CLUSTER_XR_TIMEOUT}" || exit 1
 
     success "Cluster XR ${xr_name} is Ready — kernel structural resources provisioned."
 
