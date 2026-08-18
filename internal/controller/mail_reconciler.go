@@ -82,6 +82,17 @@ const (
 	postfixSenderAccessKey             = "sender_access"
 	postfixVirtualMailboxMapsKey       = "virtual_mailbox_maps"
 
+	// OpenDKIM decides which key signs which domain from these two tables. The
+	// operator generates a key per tenant already; without the tables OpenDKIM
+	// never learns of it, so tenant mail leaves unsigned while its DNS record
+	// sits published and unused.
+	postfixDKIMSecret       = "postfix-dkim-tenants"
+	postfixDKIMKeyTableKey  = "KeyTable"
+	postfixDKIMSignTableKey = "SigningTable"
+	// The selector the Postfix image uses for its own key. Tenants reuse it so
+	// one published record shape covers every domain.
+	postfixDKIMSelector = "mail"
+
 	// mailSharedPostfixPort is the cluster-internal submission port for shared Postfix.
 	mailSharedPostfixPort = "587"
 
@@ -346,7 +357,16 @@ func (r *TenantReconciler) ensurePostfixVirtualDomain(ctx context.Context, tenan
 	// Sync unconditionally rather than only when the registry changed: the map is
 	// a separate object that can be absent or stale for reasons this reconcile
 	// cannot see, and the sync is a no-op write when it already matches.
-	return r.syncPostfixVirtualMailboxMaps(ctx)
+	if err := r.syncPostfixVirtualMailboxMaps(ctx); err != nil {
+		return err
+	}
+	// Signing tables follow the same registry. A failure here must not fail the
+	// address maps: unsigned mail is deliverable, mail refused for an unknown
+	// domain is not.
+	if err := r.syncPostfixDKIMTables(ctx); err != nil {
+		log.FromContext(ctx).Error(err, "sync OpenDKIM tables; tenant mail will send unsigned")
+	}
+	return nil
 }
 
 // syncPostfixVirtualMailboxMaps rebuilds the two texthash: files kernel Postfix
@@ -446,6 +466,112 @@ func (r *TenantReconciler) syncPostfixVirtualMailboxMaps(ctx context.Context) er
 	maps.Data[postfixVirtualMailboxMapsKey] = desiredMaps
 	maps.Data[postfixSenderAccessKey] = desiredDomains
 	return r.Update(ctx, maps)
+}
+
+// syncPostfixDKIMTables publishes the OpenDKIM KeyTable and SigningTable, plus
+// the private keys they reference, as one Secret for Postfix to mount.
+//
+// The keys themselves are not created here — ensureDKIMSecret already generates
+// one per tenant and never rotates it, because a rotated key silently stops
+// matching the DNS record an operator published. This only tells OpenDKIM they
+// exist.
+//
+// The kernel domain's own key is left to the image, which generates it at start
+// from ALLOWED_SENDER_DOMAINS and writes it under /etc/opendkim/keys. Its
+// KeyTable line is emitted here too, pointing at that path, because mounting a
+// table over the image's own replaces the whole file — so a table that named
+// only tenants would silently stop the kernel domain signing.
+func (r *TenantReconciler) syncPostfixDKIMTables(ctx context.Context) error {
+	kernelNamespace := defaultServicesNamespace()
+
+	registry := &corev1.ConfigMap{}
+	if err := r.Get(ctx, types.NamespacedName{
+		Name: mailPostfixVirtualDomainsConfigMap, Namespace: kernelNamespace,
+	}, registry); client.IgnoreNotFound(err) != nil {
+		return err
+	}
+
+	names := make([]string, 0, len(registry.Data))
+	for name := range registry.Data {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+
+	var keyTable, signTable strings.Builder
+	data := map[string][]byte{}
+
+	// The kernel domain first, referencing the image-generated key.
+	if r.KernelDomain != "" {
+		fmt.Fprintf(&keyTable, "%s._domainkey.%s %s:%s:/etc/opendkim/keys/%s.private\n",
+			postfixDKIMSelector, r.KernelDomain, r.KernelDomain, postfixDKIMSelector, r.KernelDomain)
+		fmt.Fprintf(&signTable, "*@%s %s._domainkey.%s\n",
+			r.KernelDomain, postfixDKIMSelector, r.KernelDomain)
+	}
+
+	emitted := map[string]bool{r.KernelDomain: true}
+	for _, name := range names {
+		domain := registry.Data[name]
+		if domain == "" || emitted[domain] {
+			continue
+		}
+
+		// The key must exist before the domain is named in the table: OpenDKIM
+		// refuses to load a table whose key file is missing, which would stop it
+		// signing for every domain rather than just this one.
+		keySecret := &corev1.Secret{}
+		if err := r.Get(ctx, types.NamespacedName{
+			Name: "dkim-" + name, Namespace: kernelNamespace,
+		}, keySecret); err != nil {
+			if errors.IsNotFound(err) {
+				continue
+			}
+			return err
+		}
+		priv, ok := keySecret.Data["tls.key"]
+		if !ok || len(priv) == 0 {
+			continue
+		}
+
+		emitted[domain] = true
+		data[domain+".private"] = priv
+		fmt.Fprintf(&keyTable, "%s._domainkey.%s %s:%s:/etc/opendkim/tenant-keys/%s.private\n",
+			postfixDKIMSelector, domain, domain, postfixDKIMSelector, domain)
+		fmt.Fprintf(&signTable, "*@%s %s._domainkey.%s\n",
+			domain, postfixDKIMSelector, domain)
+	}
+
+	data[postfixDKIMKeyTableKey] = []byte(keyTable.String())
+	data[postfixDKIMSignTableKey] = []byte(signTable.String())
+
+	existing := &corev1.Secret{}
+	err := r.Get(ctx, types.NamespacedName{Name: postfixDKIMSecret, Namespace: kernelNamespace}, existing)
+	if errors.IsNotFound(err) {
+		return r.Create(ctx, &corev1.Secret{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      postfixDKIMSecret,
+				Namespace: kernelNamespace,
+				Labels:    map[string]string{managedByLabel: managedByValue},
+			},
+			Data: data,
+		})
+	}
+	if err != nil {
+		return err
+	}
+	same := len(existing.Data) == len(data)
+	if same {
+		for k, v := range data {
+			if string(existing.Data[k]) != string(v) {
+				same = false
+				break
+			}
+		}
+	}
+	if same {
+		return nil
+	}
+	existing.Data = data
+	return r.Update(ctx, existing)
 }
 
 // postfixMapsBootstrap re-derives the Postfix inbound maps once, when the
