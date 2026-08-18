@@ -1,0 +1,51 @@
+# external-dns values.
+#
+# The safety settings here are the point of the file; read them before widening
+# anything. external-dns is a controller with write access to a production DNS
+# zone, and a misconfigured one removes records it did not create.
+provider: cloudflare
+
+# Never delete. external-dns decides a record is "unused" from cluster state
+# alone, so anything managed outside the cluster — the apex, an MX added by
+# hand, a verification TXT — looks orphaned to it.
+#
+# upsert-only creates and updates but never removes. Move to sync only once the
+# TXT registry below shows it owns exactly what you expect, and understand that
+# sync WILL delete records it believes it owns.
+policy: upsert-only
+
+# Ownership is recorded in TXT records, so external-dns only ever touches names
+# it registered itself. Without a registry it assumes ownership of everything
+# matching the domain filter, which is how unrelated records get removed.
+registry: txt
+txtOwnerId: gentian
+txtPrefix: _extdns.
+
+# Scope. Without this it manages every zone the token can reach.
+domainFilters:
+  - gtn.host
+
+sources:
+  - gateway-httproute
+  - crd
+
+# The token cert-manager already uses for DNS-01, materialised from
+# gentian-os/kernel/dns/cloudflare. One credential, one writer of record.
+cloudflare:
+  secretName: cloudflare-api-token
+  # Proxied would send mail and non-HTTP traffic through Cloudflare's HTTP
+  # edge, which does not carry SMTP — an orange-clouded MX target breaks mail
+  # delivery silently. Records are created DNS-only; turn the proxy on per
+  # record where it is wanted.
+  proxied: false
+
+policyOptions: {}
+interval: 1m
+logLevel: info
+
+serviceAccount:
+  create: true
+  name: external-dns
+
+rbac:
+  create: true

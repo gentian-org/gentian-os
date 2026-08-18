@@ -1,0 +1,86 @@
+# The namespace and credential, ahead of the Application.
+#
+# Both are applied by the installer rather than left to Argo: the ExternalSecret
+# must exist before the chart's Pod starts, and CreateNamespace only runs at
+# sync time, so a token arriving second means a controller that starts, fails to
+# authenticate, and backs off.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: external-dns
+---
+# The same Cloudflare token cert-manager uses for DNS-01, from the same OpenBao
+# path. One credential with one writer of record, rather than a second token to
+# rotate separately and forget.
+apiVersion: external-secrets.io/v1
+kind: ExternalSecret
+metadata:
+  name: cloudflare-api-token
+  namespace: external-dns
+spec:
+  refreshInterval: 1h
+  secretStoreRef:
+    kind: ClusterSecretStore
+    name: openbao
+  target:
+    name: cloudflare-api-token
+    creationPolicy: Owner
+    deletionPolicy: Retain
+    template:
+      engineVersion: v2
+      data:
+        # The key name the external-dns chart reads.
+        # index, not a dotted field: the remote property is api-token and a hyphen in
+        # a Go template parses as subtraction, so {{ "{{" }} .api-token }} fails to render.
+        cloudflare_api_token: "{{ "{{" }} index . "api-token" }}"
+  data:
+    - secretKey: api-token
+      remoteRef:
+        key: gentian-os/kernel/dns/cloudflare
+        property: api-token
+---
+# external-dns — DNS records follow the cluster, rather than being kept by hand.
+#
+# Chart: oci://registry-1.docker.io/bitnamicharts/external-dns
+#
+# Two sources, for two kinds of record:
+#
+#   gateway-httproute — every tenant hostname already lives on an HTTPRoute the
+#   operator writes, so an app's DNS record appears as a side effect of
+#   installing it. Nothing new to declare.
+#
+#   crd — DNSEndpoint objects for records with no HTTP object behind them: MX,
+#   SPF, DKIM, DMARC. The operator emits these per tenant.
+#
+# This also removes a whole class of outage. A wildcard only covers names that
+# have no records of their own, so the moment a tenant gained an MX record it
+# stopped inheriting *.<kernel-domain> and its web addresses stopped resolving.
+# Explicit records for every name means nothing depends on wildcard coverage.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: external-dns
+  namespace: argocd
+  finalizers: []   # intentionally empty — never cascade-delete the controller
+spec:
+  project: gentian
+  sources:
+  - repoURL: registry-1.docker.io/bitnamicharts
+    chart: external-dns
+    targetRevision: "8.3.5"
+    helm:
+      valueFiles:
+      - $values/kernel/values/external-dns.yaml
+  - repoURL: {{ .Values.gentianOsRepo | default "https://github.com/gentian-org/gentian-os" }}
+    targetRevision: {{ .Values.gentianOsBranch }}
+    ref: values
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: external-dns
+  syncPolicy:
+    automated:
+      prune: false
+      selfHeal: true
+    syncOptions:
+    - CreateNamespace=true
+    - ServerSideApply=true
