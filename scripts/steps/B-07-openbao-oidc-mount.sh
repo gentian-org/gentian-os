@@ -42,16 +42,35 @@ _oidc_bao_addr() {
     return 1
 }
 
+# Values come from the claim FILE, not the live claim.
+#
+# This step runs before B-08, which is the only thing that applies that claim —
+# the claims ApplicationSet deliberately excludes it. So the object on the
+# cluster is always one step behind the file here, and reading it made this step
+# act on the previous run's configuration: a corrected discoveryUrl in Git was
+# invisible, and the same wrong URL was reported forever.
+#
+# The file is authored before either reader, which is the same reasoning
+# load_deployments_cluster_settings gives for reading networkMode and nodeIp
+# from it: one document, two readers, no second surface to keep in step.
+#
+# The live claim is the fallback, for a cluster whose checkout is not to hand.
 _oidc_values() {
-    OIDC_DISCOVERY_URL="$(kubectl get cluster.gentianos.io -n crossplane-system \
-        -o jsonpath='{.items[0].spec.oidc.discoveryUrl}' 2>/dev/null || true)"
-    OIDC_CLIENT_ID="$(kubectl get cluster.gentianos.io -n crossplane-system \
-        -o jsonpath='{.items[0].spec.oidc.clientId}' 2>/dev/null || true)"
+    local claim_file
+    claim_file="${GENTIAN_DEPLOYMENTS_PATH}/clusters/${GENTIAN_DEPLOYMENTS_CLUSTER_ID}/kernel/claims/cluster.yaml"
+
+    OIDC_DISCOVERY_URL="$(yq_get '.spec.oidc.discoveryUrl' "${claim_file}" 2>/dev/null || true)"
+    OIDC_CLIENT_ID="$(yq_get '.spec.oidc.clientId' "${claim_file}" 2>/dev/null || true)"
+    OIDC_SECRET_NS="$(yq_get '.spec.openbao.namespace' "${claim_file}" 2>/dev/null || true)"
+
+    if [[ -z "${OIDC_DISCOVERY_URL}" ]]; then
+        OIDC_DISCOVERY_URL="$(kubectl get cluster.gentianos.io -n crossplane-system \
+            -o jsonpath='{.items[0].spec.oidc.discoveryUrl}' 2>/dev/null || true)"
+        [[ -n "${OIDC_DISCOVERY_URL}" ]] &&
+            info "  Using spec.oidc from the live claim; ${claim_file} was not readable."
+    fi
     OIDC_CLIENT_ID="${OIDC_CLIENT_ID:-openbao}"
-    local ns
-    ns="$(kubectl get cluster.gentianos.io -n crossplane-system \
-        -o jsonpath='{.items[0].spec.openbao.namespace}' 2>/dev/null || true)"
-    OIDC_SECRET_NS="${ns:-openbao}"
+    OIDC_SECRET_NS="${OIDC_SECRET_NS:-openbao}"
 }
 
 check() {
