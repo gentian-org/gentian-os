@@ -114,7 +114,6 @@ spec:
                 # rather than created, so an async create that lost its result
                 # cannot deadlock every later reconcile.
                 crossplane.io/external-name: {{ $authMount }}
-                crossplane.io/external-name: {{ $authMount }}
               name: {{ $name }}-auth-kubernetes
             spec:
               managementPolicies: ["Observe", "Create"]
@@ -227,6 +226,20 @@ spec:
                 crossplane.io/external-name: oidc
               name: {{ $name }}-auth-oidc
             spec:
+              # Observe before Create, exactly as the kubernetes mount above —
+              # which is why that one came up and this one did not.
+              #
+              # The provider creates asynchronously and writes the result back to
+              # status. When the composition controller touches the object in
+              # that window the status write loses a conflict, the id is never
+              # recorded, and the next reconcile creates again: the mount exists
+              # in OpenBao, Crossplane does not know it owns it, and every retry
+              # answers 400 "path is already in use" forever.
+              #
+              # Observing first breaks the loop — the mount is found by
+              # external-name and adopted. The annotation alone was not enough:
+              # without Observe the provider still calls create.
+              managementPolicies: ["Observe", "Create"]
               forProvider:
                 type: oidc
                 path: oidc

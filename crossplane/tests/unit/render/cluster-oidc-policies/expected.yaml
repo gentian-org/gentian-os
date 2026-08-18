@@ -405,6 +405,9 @@ spec:
     oidcDiscoveryUrl: https://id.platform.example.test/auth/realms/kernel
     path: oidc
     type: oidc
+  managementPolicies:
+  - Observe
+  - Create
   providerConfigRef:
     name: openbao
 ---
