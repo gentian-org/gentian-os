@@ -111,6 +111,20 @@ Recovery:
   --recover PATH                load a kit before installing, so derived
                                 credentials reproduce their original values
 
+Looking before running:
+  --explain             print what every step does, in order, and stop
+  --status              report which steps this cluster has already satisfied
+  --dry-run             run every check() and print the plan; applies nothing
+
+Running part of it. A step is named by its number or its full id, so
+--only B-09 and --only B-09-seed-secrets are the same thing:
+  --only ID[,ID...]     run only these steps (--step is a synonym)
+  --skip ID[,ID...]     run everything except these
+  --from ID             start here and continue to the end
+  --until ID            start at the beginning and stop after this one
+  --phase NAME          one phase: control-plane, secrets, platform,
+                        applications, handover — or its letter, A through E
+
 Other options:
   --prepare-deployment  write clusters/<id>/kernel in gentian-deployments from
                         install.env, then stop — nothing is committed or applied
@@ -120,7 +134,12 @@ Other options:
   --cluster-infra       with --purge, also remove them and their CRDs. They may
                         serve workloads that are not Gentian's
   --config-file PATH    override install.env
+  --no-config-files     ignore install.env entirely; take everything from the
+                        environment
   -h, --help            this message
+
+Re-running is safe. Every step reads the cluster before it acts and skips what
+is already done, which is why converging and updating are the same pass.
 EOF
 }
 
