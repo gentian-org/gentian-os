@@ -452,3 +452,84 @@ SMTP_RELAY_PASSWORD=<app-password>
 ./install.sh --update
 ```
 
+
+## 11. Tenant Backup (Export)
+
+Tenant admins take backups from the **Admin Console → Backup** tab. An export
+captures the workspace's databases, buckets, volumes and Keycloak realm into one
+encrypted bundle, pausing each app in turn so its data is internally consistent.
+
+### Encryption — choose before you need it
+
+| Choice | Who can decrypt | Use for |
+|---|---|---|
+| **Platform key** (default) | whoever holds the identity for `backupRecipients`, escrowed with the recovery kit | routine and scheduled backups; the only mode support can help restore |
+| **My passphrase** | only the passphrase holder | a bundle the platform must not be able to read |
+
+Both produce ordinary [age](https://age-encryption.org) files. A lost passphrase
+means a lost bundle — there is no recovery path, by design.
+
+A cluster must set `backupRecipients` before the default mode works:
+
+```yaml
+# gentian-deployments/clusters/<cluster>/kernel/... (gentian-os Helm values)
+backupRecipients:
+  - age1...          # public key; keep the identity OFF this cluster
+```
+
+With none configured, an export fails rather than writing a tenant's data
+unencrypted. Generate the pair with `age-keygen` and store the identity with the
+recovery kit.
+
+### From the CLI
+
+```bash
+kubectl apply -f - <<'EOF'
+apiVersion: gentianos.io/v1alpha1
+kind: TenantExport
+metadata:
+  name: nightly-2026-08-18
+  namespace: tenant-demo
+spec: {}                 # every installed app; platform-key encryption
+EOF
+
+kubectl get tenantexports -n tenant-demo
+kubectl describe tenantexport nightly-2026-08-18 -n tenant-demo
+```
+
+Because the default mode needs no input, a `CronJob` that applies a resource
+like this is all a scheduled backup requires.
+
+### Watching one
+
+```bash
+# Phase, bundle location, and which apps are paused right now
+kubectl get tenantexport nightly-2026-08-18 -n tenant-demo \
+  -o custom-columns=PHASE:.status.phase,BUNDLE:.status.bundle.prefix,PAUSED:.status.quiesced
+
+# The capture Jobs themselves
+kubectl get jobs -n platform-kernel -l gentianos.io/tenant-export=nightly-2026-08-18
+```
+
+An app listed in `.status.quiesced` is **offline right now**. That is normal
+mid-export and worth investigating if it persists: the operator resumes an app
+as soon as its capture finishes, and resumes anything it finds paused on every
+reconcile, including after a restart.
+
+### Reading a bundle
+
+The bundle is a prefix in the tenant's backup bucket. Every artefact is
+encrypted; `bundle-info.json` is deliberately not, and names the command that
+opens the rest:
+
+```bash
+mc cat gentian/demo-gentian-backup/nightly-2026-08-18/bundle-info.json
+
+# Platform key
+age -d -i /path/to/identity manifest.json.age > manifest.json
+# Your passphrase
+age -d manifest.json.age > manifest.json
+```
+
+`manifest.json` lists what was captured per app, the chart versions at capture
+time, and the pause window each app saw.

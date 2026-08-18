@@ -1,6 +1,6 @@
 # Backup and Recovery
 
-**Status:** Phases 1–3 are implemented (recovery kit, `spec.backup` contract, `TenantExport`); Phases 4–7 are not
+**Status:** Phases 1–4 are implemented (recovery kit, `spec.backup` contract, `TenantExport`, Admin Console); Phases 5–7 are not
 **Scope:** cluster recovery, credential escrow, self-service tenant export/restore (Admin Console)
 **Applies to:** `install.sh`, OpenBao, CNPG, MinIO, Keycloak, tenant namespaces, `gentian-ui`
 
@@ -642,9 +642,38 @@ fetched into the bundle.
 - A second concurrent export is rejected via status, not by crashing.
 - A capture Job that keeps failing fails the export instead of looping forever.
 
-### Phase 4 — Console: export
+### Phase 4 — Console: export — **implemented, except in-browser download**
 
 **Goal** — a tenant admin produces and downloads a bundle without kubectl.
+
+Shipped in `gentian-ui`: `services/k8s_backup.py`, the `/admin/backups`
+endpoints, `admin/BackupSection.tsx` behind a Backup tab, and the RBAC to go
+with it. Documented in `docs/commands.md` §11.
+
+The encryption choice is put in front of the admin rather than defaulted
+silently, because it decides whether anyone but them can ever read the bundle:
+**Platform key** (support can help restore) or **My passphrase** (nobody else
+can, ever). A passphrase never enters the `TenantExport` spec — the BFF writes
+it to a Secret in the tenant namespace and the export references that, so it
+stays out of etcd-as-spec-data and out of `kubectl get -o yaml`. A create that
+fails afterwards deletes the Secret rather than leaving a passphrase with no
+export attached to it.
+
+**In-browser download is deliberately not implemented.** Serving one needs
+either MinIO credentials in the portal — which today has no S3 access at all,
+and giving it the admin credentials that can read every tenant's bundles is a
+poor trade for a convenience — or a new operator endpoint minting presigned
+URLs. A tenant-sized bundle is also not a browser download. The console shows
+the bundle location and points at `bundle-info.json`, which is unencrypted and
+names the exact decrypt command. Presigned, time-limited URLs minted by the
+operator are the right shape when this is picked up; it belongs with Phase 6,
+alongside retention.
+
+**Acceptance, as met:** an admin starts an export, watches per-app progress and
+pause windows, and sees whether the result is platform-readable; every creation
+is audited as `backup.created`; a cross-tenant request 403s in
+`resolve_admin_tenant` before reaching the cluster; polling stops when nothing
+can change on its own.
 
 **Files**
 
