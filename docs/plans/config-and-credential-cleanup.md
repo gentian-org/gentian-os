@@ -962,7 +962,13 @@ set of fixes of which **the majority address target variability rather than conf
 Optimising for that persona while treating the target as fixed addresses the wrong half of what
 they hit.
 
-### The five dimensions
+### The seven dimensions
+
+The first five were written from the first external install. The last two were added after a
+second reading of the same evidence: that install ran on OpenStack against a Cloudflare zone, and
+both facts were so thoroughly assumed that neither looked like a variable. They are listed last
+because they were found last, not because they bind least — an edge Service with no address is as
+total a failure as an image that will not pull.
 
 | Dimension | Question a cluster must answer | Consequence when unstated |
 |---|---|---|
@@ -971,6 +977,8 @@ they hit.
 | **Network topology** | Do the install host and in-cluster pods reach the same endpoints at the same addresses? | A single URL field cannot express two paths; the installer's own reachability check and the cluster's differ, and one of them is wrong |
 | **Platform provenance** | Which repository and registry does the *platform itself* come from? | A mirrored, forked, or air-gapped install has nowhere to say so, and ApplicationSets track back to an unreachable upstream |
 | **Cluster permission model** | What RBAC can the operator actually grant? | Crossplane providers run with insufficient permissions and their Releases fail in ways that read as workload bugs |
+| **Edge integration** | Whose load balancer answers for a `Service` of type `LoadBalancer`, and how is its address claimed? | Every provider spells the answer differently and two refuse the portable field outright. Unstated, the edge Service is created bare: on Hetzner it is never placed and stays `Pending`; on OpenStack it comes up with no health monitor and presents as intermittent TLS resets across every hostname; on AWS the address is dropped in silence |
+| **Zone host** | Who hosts the kernel domain's DNS zone? | DNS-01 is solvable by exactly one provider's API. Unstated it means Cloudflare, so a cluster whose zone lives anywhere else can issue no wildcard, and the controller that makes tenant hostnames resolve has no credential to write with |
 
 Each is a property of the target, fixed before installation, and knowable in advance. Each
 therefore belongs in surface 2 or surface 1 — not discovered by the installer at runtime, and not
@@ -985,14 +993,38 @@ patched into a live cluster afterwards.
 | Network topology | `XRepository.spec.endpoints` — see §5 |
 | Platform provenance | Surface 1 — see §2, *Surface 1* |
 | Cluster permission model | Explicit ClusterRoles applied by the provider step, not assumed from the provider package's defaults |
+| Edge integration | `XCluster.spec.platform`, with `platformParams` and `addressRef` — resolved against `kernel/platforms.yaml` |
+| Zone host | `XCluster.spec.certificates.dnsProvider`, with `dnsParams` — resolved against the same table |
+
+The last two share a carrier and are still two dimensions. `kernel/platforms.yaml` holds one table
+per question, and a cluster answers them independently: a Hetzner cluster on a Cloudflare zone is
+an ordinary arrangement, and a single field could not describe it.
+
+That file is also the only place either answer is written down. It carries, per provider, the edge
+annotations, the cert-manager DNS-01 solver, the external-dns provider name, and the one credential
+the last two share — so the issuer and the record-writer cannot end up pointed at different zones,
+which is the drift a second copy would eventually produce.
 
 The interfaces for these land in Phases 11–12 and the implementations in Phase 13; see
 *Interfaces before implementations* in §11.
 
 ### Rules for target properties
 
-- **A target property is declared, never detected.** Probing the cluster to guess its architecture
-  or its DNS reachability produces installs that behave differently on reruns.
+- **A target property is declared. Detection may only fill what was not declared.** Probing the
+  cluster to *decide* a property produces installs that behave differently on reruns. But the rule
+  as first written — never detected — was already contradicted by the edge integration dimension
+  before that dimension was named, and refusing to install on a cloud whose identity is sitting in
+  `spec.providerID` until somebody finds the right table is a worse failure than a detected
+  default. So the rule is narrowed rather than broken: an explicitly declared value always wins,
+  **including the empty string**, which is how an operator opts out of a preset deliberately; and
+  a detected value is announced in the run's output, never applied silently.
+- **Provider variation is data, not branches.** A new cloud or zone host is an entry in
+  `kernel/platforms.yaml`. No template, script or Composition may branch on a provider name —
+  the moment one does, the next provider is a code change in a file about something else, which
+  is the shape that made `acme-dns01` mean Cloudflare.
+- **How control is proved and who hosts the zone are separate fields.** Folding them together is
+  what made a challenge type name a vendor. The same separation applies to the platform: where a
+  cluster runs does not decide who hosts its DNS.
 - **No image is pinned to a per-architecture digest.** Pin to the manifest-list digest, which
   keeps supply-chain provenance without excluding an architecture. Dropping the digest entirely is
   not the fix.
@@ -1148,8 +1180,8 @@ mirror, so "exercised" below never means more than that.
 | 9 | Built | No shared API contract tests; validation errors are not attributed per field |
 | 10 | **10a/10b done, 10c mostly** | `envsubst`, the `.tmpl` files and `cluster-settings.env` are gone; the credential manager is built but unexercised (row 7) |
 | 11 | Done | BSD `sed_inplace` has not been observed running |
-| 12 | 12a–12d built, **12e not** | Provider RBAC is still `cluster-admin`, deliberately |
-| 13 | Portability done | arm64, internal domain and mirror remain structural claims |
+| 12 | 12a–12d and 12f built, **12e not** | Provider RBAC is still `cluster-admin`, deliberately. 12f is built against renders only — no cluster has been installed on a platform other than OpenStack, or a zone other than Cloudflare |
+| 13 | Portability done | arm64, internal domain and mirror remain structural claims. The CA-bundle distribution contract (12c) is undefined, so `self-signed` and `private-ca` install without giving any client the anchor |
 
 Two things this table is careful not to say. *Built* is not *works*: Phase 7 read as implemented
 for some time while one side of its federation did not exist. And a phase marked exercised was
@@ -1301,7 +1333,7 @@ taxonomy predicts: the human-supplied class is small, and everything else needs 
 
 | Class | Count | Members |
 |---|---|---|
-| **External** — needs a human | 6 | Deployments repo token, master password (+salt), infra chart registry user/password, Cloudflare DNS token, SMTP relay credentials, ArgoCD GitHub webhook secret |
+| **External** — needs a human | 6 | Deployments repo token, master password (+salt), infra chart registry user/password, the zone-host DNS credential, SMTP relay credentials, ArgoCD GitHub webhook secret |
 | **Derived** — HMAC-SHA256 of master password + salt, *when `secretMode: derived`* | 16 | 11 kernel credentials (`postgres` ×4, `mariadb`, `minio`, `redis`, `openfga`, `keycloak`, `dovecot` ×2), plus `VLLM_API_KEY`, `LITELLM_MASTER_KEY`, and three per-service OIDC client secrets (ArgoCD, portal BFF, LiteLLM SSO) |
 | **Generated** — produced at provision time | 7 | `DERIVATION_SALT`, `BAO_TOKEN`, `AUTOUNSEAL_TOKEN`, `TRANSIT_ROOT_TOKEN`, `TRANSIT_UNSEAL_KEY`, `ARGOCD_TOKEN`, `PORTAL_LOGIN_PASSWORD` |
 | **Config, not secret** | ~40 | Cluster modes, mail endpoints, LLM sizing, tenant defaults, repo pointers — destinations in §2 |
@@ -1315,9 +1347,23 @@ Listing it as a field in `credentials.yaml` made the installer demand it: a non-
 install aborted asking for `DERIVATION_SALT` and an interactive one asked a human to invent one.
 
 **Bootstrap-blocking set: four requirements** — deployments repo token, master password, infra
-chart registry, Cloudflare DNS token. The last two are `optional: true`, so a cluster pulling only
-public charts with no wildcard certificate is blocked by two. That satisfies the "expected to
-number under five" bound.
+chart registry, the zone-host DNS credential. The last two are `optional: true`, so a cluster
+pulling only public charts with no wildcard certificate is blocked by two. That satisfies the
+"expected to number under five" bound.
+
+**The DNS credential is one requirement with a provider's name on it, not one credential.** Since
+12f the catalogue carries one per zone host, generated from `kernel/platforms.yaml` rather than
+listed in `credentials.yaml`, and the installer offers only the one this cluster's
+`certificates.dnsProvider` names — a cluster on Route 53 is never asked for a Cloudflare token.
+The count above is unchanged because a cluster uses at most one.
+
+Only Cloudflare is `phase: bootstrap`. Phase 3 holds bootstrap validators to curl and openssl, and
+Route 53, Cloud DNS and Azure DNS all authenticate with request signing — SigV4, OAuth2, AAD — so
+none of them can have a probe that meets the ceiling. They are `phase: runtime` instead: collected
+by the credential manager after install, with `C-01-wildcard-cert` issuing the wildcard on the
+next pass. That is a consequence of the validator rule rather than an exception to it, and it is
+the first time the rule has decided a *phase* rather than a validator. Hetzner and Infomaniak are
+bearer-token REST APIs and could be promoted with a probe each; see Phase 13.
 
 `CI_BOT_PAT` is classified as **not a cluster credential**. It uploads a PAT to the vendor's own
 GitHub repositories so image-pin workflows can commit back — CI configuration, deleted per §2,
@@ -1329,7 +1375,7 @@ GitHub repositories so image-pin workflows can commit back — CI configuration,
 |---|---|---|
 | 1 | Every environment variable classified; none unclassified | **Passing** — 263 referenced names reduced to the table above |
 | 2 | The `scripts/lib/` functions called by the driver inspected for additional prompts or secret reads | **Passing** — the derivation set was extracted from `create_crossplane_secrets`, and the three per-service OIDC secrets found in `portal-login-bootstrap.sh` were not in the original candidate list |
-| 3 | `load_creds_cache` documented: what it writes, where, with what permissions, whether it is cleared | **Passing** — `${INSTALL_SECRETS_CACHE}`, `install -m 0600`, holding `MASTER_PASSWORD`, `SMTP_RELAY_*`, `CF_API_TOKEN`, `GENTIAN_DEPLOYMENTS_GIT_TOKEN`, `CI_BOT_PAT`, `ARGOCD_TOKEN`. **Never cleared on success** — that is the §1 known concern, resolved by deletion in Phase 4a |
+| 3 | `load_creds_cache` documented: what it writes, where, with what permissions, whether it is cleared | **Passing** — `${INSTALL_SECRETS_CACHE}`, `install -m 0600`, holding `MASTER_PASSWORD`, `SMTP_RELAY_*`, `CF_API_TOKEN`, `GENTIAN_DEPLOYMENTS_GIT_TOKEN`, `CI_BOT_PAT`, `ARGOCD_TOKEN`. **Never cleared on success** — that is the §1 known concern, resolved by deletion in Phase 4a. The cache still names `CF_API_TOKEN` specifically: a non-Cloudflare zone host's credential is `phase: runtime` and never reaches the cache, so the omission is correct today and would need revisiting if either is promoted |
 | 4 | Bootstrap-blocking set enumerated and under five | **Passing** — four, two of them optional |
 | 5 | Reviewed against a clean-room install by someone other than the author | **Not met** — no second reviewer, no clean-room run |
 
@@ -1982,12 +2028,59 @@ The operator image cross-compiles (`FROM --platform=$BUILDPLATFORM`, `GOARCH=${T
 CI builds both platforms with Buildx set up explicitly — without it the default builder ignores
 `platforms:` and silently produces an amd64-only image, the same failure mode as the digest pin.
 
-**12c — Trust anchor (interface).** Add `XCluster.spec.certificates.issuerMode` as an enum over
-`acme-dns01`, `acme-http01`, `private-ca`, `self-signed`, and make `A-06-cluster-issuers` read it
-and dispatch. Define the CA-bundle distribution contract — which consumers must receive it and
-by what carrier — without yet implementing the non-ACME modes. This is the dimension that decides
-whether an install on an internal domain is possible at all, and it has the largest
-implementation behind it.
+**12c — Trust anchor (interface). Implemented; one half outstanding.**
+`XCluster.spec.certificates.issuerMode` is an enum over `acme-dns01`, `acme-http01`, `private-ca`
+and `self-signed`, and `A-06-cluster-issuers` reads it and dispatches. This is the dimension that
+decides whether an install on an internal domain is possible at all.
+
+The CA-bundle distribution contract — which consumers must receive the anchor and by what carrier
+— is **not defined and not implemented**. `caBundleSecretRef` is declared on the XRD and read by
+nothing outside it, so `self-signed` and `private-ca` install and then leave every client that
+validates a kernel hostname from outside the cluster unable to. That is Phase 13's row, and it is
+the half that makes the mode usable rather than merely selectable.
+
+`issuerMode` answers *how control is proved*. It does not answer *by whom* — see 12f.
+
+**12f — Edge integration and zone host. Implemented.** The two dimensions added to §9 after the
+first external install, both carried by `kernel/platforms.yaml`.
+
+`XCluster.spec.platform` selects the edge preset (`self-hosted`, `openstack`, `infomaniak`,
+`hetzner`, `aws`, `gcp`, `azure`, `none`), with `platformParams` for what a provider needs beyond
+an address and `addressRef` for the providers that will not take one by IP.
+`XCluster.spec.certificates.dnsProvider` selects the zone host (`cloudflare`, `route53`,
+`clouddns`, `azuredns`, `rfc2136`, `hetzner`, `infomaniak`, `none`), with `dnsParams`.
+
+Three mechanisms keep it from growing a limb per provider, and they are the reason this is an
+interface rather than a list. Edge annotations are templates rendered against the chart's values
+and dropped when they render empty, so one entry expresses both *pin this address* and *let the
+cloud allocate one* without a second field saying which. The DNS-01 solver block is passed to
+cert-manager verbatim, so six providers cost no template code. And one entry feeds three
+consumers — solver, external-dns, credential — so they cannot disagree about a zone.
+
+The credential catalogue is generated from the same entry rather than restating it: `credentials.yaml`
+lists no DNS credential at all. Only Cloudflare is `phase: bootstrap`, because §11 Phase 3 holds
+bootstrap validators to curl and openssl and Route 53, Cloud DNS and Azure DNS all require request
+signing. The rest are `phase: runtime` — collected by the credential manager after install, with
+`C-01` issuing the wildcard on the next pass.
+
+Detection is retained for `platform` only, under the narrowed rule in §9: `spec.providerID` fills
+a value the operator did not declare, an explicit value always wins, and what was detected is
+printed. Zone host is never detected — nothing on the cluster knows it.
+
+**Four defects this surfaced**, each of which had been present long enough to look like design:
+
+- AWS `static-ip` dropped the edge address entirely. `loadBalancerIP` was suppressed for NLBs,
+  correctly, and the EIP allocation annotation the comment promised in its place was emitted by
+  nothing.
+- The platform profile was applied only when an address was set, so a cluster letting its cloud
+  allocate one got no preset at all — and Hetzner, whose location annotation is mandatory, would
+  have sat `Pending` with no event naming the cause.
+- `external-dns` was written and never applied. No bootstrap step named it, and the chart renders
+  only the templates it is asked for, so the controller that makes tenant hostnames resolve was in
+  the repository and absent from every cluster. This is the §14.2 failure mode — scaffolding that
+  reads as a decision — in a file that was never listed as scaffolding.
+- `kernel/values/external-dns.yaml` pinned `domainFilters` to one cluster's zone in a file every
+  cluster reads from Git.
 
 **12d — Network topology (interface).** Add `XRepository.spec.endpoints` (§5) to the XRD, with
 `external` defaulting to `inCluster`. Establish the rule in code review terms: installer-side
@@ -2027,11 +2120,13 @@ exercise.
 
 | # | Criterion | Status |
 |---|---|---|
-| 1 | Every dimension in §9 is expressible in surface 1 or surface 2; none is detected at runtime | **Passing** — architecture in chart values, trust anchor and topology in claims, provenance in surface 1. Permission model is the exception: it is expressible only as the binding that already exists |
-| 2 | `XCluster` rejects an `issuerMode` outside the enum at admission | **Partial** — declared as an enum and the XRD applies by server-side dry-run; rejection of a bad claim is untested |
+| 1 | Every dimension in §9 is expressible in surface 1 or surface 2; none is *decided* at runtime | **Passing over seven** — architecture in chart values, trust anchor, topology, edge integration and zone host in claims, provenance in surface 1. Two caveats, both recorded rather than waved through: the permission model is expressible only as the binding that already exists, and `platform` retains detection as a fallback under the narrowed rule in §9 |
+| 2 | `XCluster` rejects a value outside an enum at admission | **Partial** — `issuerMode`, `platform` and `dnsProvider` are all declared as enums and the XRD applies by server-side dry-run; rejection of a bad claim is untested for any of them, and 12f widened the surface |
 | 3 | A `Repository` claim with only `endpoints.inCluster` behaves as one with a single `url` did | **Passing** — `external` defaults to `inCluster`, verified by render |
 | 4 | The digest lint passes, and an arm64 install reaches a running root ApplicationSet | **Partial** — the lint passes and the pins are manifest lists; no arm64 install has been run |
 | 5 | Selecting an unimplemented `issuerMode` fails naming the mode — never a silent fallback to ACME | **Passing** — verified; an unknown mode is rejected naming the four supported values |
+| 7 | An unknown `platform` or `dnsProvider`, or a missing required param, fails naming what is missing — never a Service that renders bare | **Passing** — verified by render: `platform "hetzner" requires platformParams.location`, `unknown dnsProvider "x" — add an entry to kernel/platforms.yaml` |
+| 8 | Adding a provider touches `kernel/platforms.yaml` and nothing else | **Passing** — verified for all eight platforms and eight zone hosts; no template branches on a provider name |
 | 6 | A mirrored install makes no request to the upstream origin | **Partial** — the Application template renders with zero vendor references, Git and image both; egress has not been observed |
 
 Criterion 1's exception is worth keeping in view: `self-signed`, `private-ca`, `endpoints` and the
@@ -2063,6 +2158,8 @@ cannot cover it; those became `awk`, which parses identically on both.
 |---|---|---|
 | ~~Migrate bash-4, `sed -i` and `xargs -r` call sites~~ **done** | Phase 11 `compat.sh` + lint | — |
 | Self-signed and private-CA issuers, CA secret, bundle distribution | 12c `issuerMode` | Self-signed CA support, with tests |
+| Edge and zone-host entries for a target that has none | 12f `kernel/platforms.yaml` | Eight platforms and eight zone hosts shipped; a ninth is an entry, not a change |
+| A curl-only probe for Hetzner and Infomaniak DNS, promoting them to `phase: bootstrap` | 12f + Phase 3 | Both are bearer-token REST APIs, so both are inside the ceiling |
 | Thread provenance through appsets and operator chart values | 12a contract | `GENTIAN_OS_REPO`, image repository, appset `repoURL` |
 | `provider-helm` / `provider-kubernetes` ClusterRoles | 12e apply hook | Both RBAC files |
 | Route probes to `endpoints.external` | 12d field | Split chart-repo verify URL |
@@ -2173,6 +2270,7 @@ scope and should be folded into it rather than fixed twice.
 |---|---|---|
 | `internal/tiles/` has zero importers outside its own test — `resolver.go` plus a 20 KB embedded `catalogue.json`. | `grep -r 'internal/tiles"'` | Delete, or state in the package doc which consumer is pending. |
 | `kernel/argocd/install/argocd.yaml` is unreferenced; its own header says "This is a reference file". It pins ArgoCD **v2.11.3**. | no callers | Delete. `scripts/bootstrap/install-argocd.sh` is the real path. |
+| ~~`kernel/bootstrap/chart/templates/external-dns.yaml` was rendered by nothing~~ **Fixed in 12f.** The bootstrap chart renders only the templates it is asked for, and no step asked for this one — so a complete Application, its namespace and its ExternalSecret sat in the repository while every cluster ran without the controller that makes tenant hostnames resolve. Unlike the rest of this section it did not *look* unused: it was well-formed, commented, and referenced the same OpenBao path cert-manager did. | `grep -rn 'external-dns' scripts/` returned nothing | Named in `bootstrap_argocd_apps`; renders to nothing when the cluster has no zone host. **The general lesson: a `.gitkeep` announces scaffolding, a finished file does not.** |
 | `crossplane/tests/unit/functions/` contains only `.gitkeep`, so `make test-unit-functions` always prints SKIP — yet CI spends a step on `pip install pytest`. The root `.pytest_cache/` and `.ruff_cache/` are residue. | `Makefile:166`, `.github/workflows/ci.yaml:181` | Either land the first function test or drop the target and the CI step. |
 | `crossplane/functions/` and `crossplane/tests/e2e/fixtures/` are `.gitkeep`-only. | — | Keep only if a named piece of work will fill them; otherwise remove. |
 | ~~`verify-authz-model.sh` wired to neither `make` nor CI~~ **Fixed.** It runs from `make test-policy`. Being unwired hid three faults: `tests.fga.yaml` did not parse (`check` needs a list, not a map), every `parent` tuple had object and user inverted, and the model contradicted its own `acting_for_without_membership_denies` case by granting read on an `acting_for` tuple alone. `normalize-go-headers.sh` was a completed one-off and is deleted. | | |
@@ -2612,6 +2710,23 @@ this asserts what the text *means*. Neither subsumes the other — a golden file
 **The credential manager's ServiceAccount policy is uninspected.** Phase 8, criterion 7. The
 service has no OpenBao identity by construction, but "by construction" is an argument, not an
 observation.
+
+**Two writers still create the same tenant SMTP Job.** `configure_tenant_realms_smtp`, reached
+from `E-02-tenant-reconcile`, builds a Job named `keycloak-tenant-smtp-<tenant>` — and deletes any
+existing one first. The operator's `TenantReconciler` builds a Job of exactly the same name from
+`ensureTenantSMTPJob`. This is the §6 anti-pattern in its per-tenant form: a script and a
+reconciler writing one object, with the script's delete-then-apply racing whatever the reconciler
+is mid-way through. It is also the clearest remaining instance of the Phase 4b gap — the shell
+half predates the reconciler and was never removed when the reconciler landed. The LiteLLM half of
+`E-02` has no such duplicate and stays.
+
+**A step's `check()` may not read OpenBao, and one nearly did.** `C-01-wildcard-cert` was extended
+to ask whether the zone credential had actually been supplied, which is the accurate question and
+the wrong verb: `--status` runs without collecting credentials, so the probe would answer "cannot
+tell" and be rendered as *not applicable* on a cluster that simply has not been given its token
+yet. `apply()` asks instead, because it holds the token and can name what is missing. The
+`lint-step-contracts` rule that catches this only inspects the step file, so an indirect call
+through `scripts/lib/` passes it — the rule is narrower than the principle.
 
 **`make lint-portability` passes.** Every call site is migrated to the compat helpers, so the
 count is zero and the job is green rather than expected-red — the Phase 13 work §7 describes is
