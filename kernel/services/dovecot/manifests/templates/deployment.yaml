@@ -56,7 +56,6 @@ spec:
       data:
         doveadm_password: "{{ "{{" }} .doveadm_password }}"
         oidc_client_secret: "{{ "{{" }} .oidc_client_secret }}"
-        master_password: "{{ "{{" }} .master_password }}"
   data:
     - secretKey: doveadm_password
       remoteRef:
@@ -66,44 +65,6 @@ spec:
       remoteRef:
         key: gentian-os/kernel/mail/dovecot
         property: oidc_client_secret
-    - secretKey: master_password
-      remoteRef:
-        key: gentian-os/kernel/mail/dovecot
-        property: master_password
----
-# The master users file, rendered from OpenBao rather than written by the
-# operator: it has exactly one line and no per-tenant content, so there is
-# nothing for a reconciler to keep in step.
-#
-# {PLAIN} because Dovecot compares against the same derived value the seeder
-# wrote; a hash here would need the seeder to produce it, and the value never
-# leaves the cluster.
-apiVersion: external-secrets.io/v1
-kind: ExternalSecret
-metadata:
-  name: dovecot-master-auth
-  namespace: {{ .Values.servicesNamespace }}
-  annotations:
-    argocd.argoproj.io/sync-wave: "-1"
-spec:
-  refreshInterval: 1h
-  secretStoreRef:
-    kind: ClusterSecretStore
-    name: openbao
-  target:
-    name: dovecot-master-auth
-    creationPolicy: Owner
-    deletionPolicy: Retain
-    template:
-      engineVersion: v2
-      data:
-        users: |
-          {{ .Values.masterUser }}:{PLAIN}{{ "{{" }} .master_password }}
-  data:
-    - secretKey: master_password
-      remoteRef:
-        key: gentian-os/kernel/mail/dovecot
-        property: master_password
 ---
 # The running configuration. Self-contained on purpose: dovecot is started with
 # `-c` pointing at this file and it does not `!include conf.d/*.conf`, so what
@@ -178,39 +139,26 @@ data:
       args = uid=1000 gid=1000 home=/var/mail/%d/%n allow_all_users=yes
     }
 
-    # The master passdb. A service authenticating as "<user>*<master-user>" with
-    # the master password opens that user's mailbox without ever holding their
-    # password — which is the only way a webmail client can reach IMAP here,
-    # because identities live in Keycloak and the OIDC login never yields one.
+    # Per-app passwords, one passwd-file per client type.
     #
-    # Placed FIRST so a master login is recognised before the oauth2 passdbs see
-    # a username they cannot introspect.
+    # Identities live in Keycloak and the OIDC login never yields a password, so
+    # a mail client that cannot speak XOAUTH2 has nothing to present. The answer
+    # is a credential minted per (user, app) — the pattern Google, Apple and
+    # Fastmail all use — rather than one credential that opens every mailbox.
     #
-    # This is one credential that opens every mailbox. Two things bound it, and
-    # both are worth stating because neither is obvious:
+    # Why one FILE per app rather than one passdb with many credentials per user:
+    # a passwd-file holds a single line per user, so multiple credentials for one
+    # user would normally mean a SQL or LDAP passdb. Splitting by app sidesteps
+    # that entirely — each file has one line per user, and the files chain.
     #
-    #   The Service is ClusterIP and the kernel Gateway has no listener on 143,
-    #   so IMAP is not reachable from outside the cluster at all.
+    # result_failure = continue, so a user with a Thunderbird password but no
+    # webmail password is not rejected by the first file that lacks them. The
+    # empty passwd-file at the end is still the final deny.
     #
-    #   masterAllowedNetwork narrows it further to the network the webmail
-    #   client runs on. Left empty it is in-cluster-wide, which is the same
-    #   boundary as the line above rather than a weaker one — set it on any
-    #   cluster where tenant workloads share the pod network with the client.
-    {{- if .Values.masterAllowedNetwork }}
-    remote {{ .Values.masterAllowedNetwork }} {
-    {{- end }}
-    passdb {
-      driver = passwd-file
-      args = /etc/dovecot/master/users
-      master = yes
-      # return-ok, not continue: continue would re-run the passdbs below and the
-      # deliberately empty passwd-file would fail the login. The master passdb is
-      # authoritative once it matches.
-      result_success = return-ok
-    }
-    {{- if .Values.masterAllowedNetwork }}
-    }
-    {{- end }}
+    # include_try and a glob, exactly like the realm blocks below: the operator
+    # writes one <app>.conf per client type, so adding a client type needs no
+    # change to this configuration.
+    !include_try /etc/dovecot/apppw/*.conf
 
     # One oauth2 passdb per Keycloak realm, written by the operator's mail
     # reconciler into the dovecot-realm-auth Secret — the kernel realm for the
@@ -336,13 +284,13 @@ spec:
             secretName: dovecot-realm-auth
             optional: true
             defaultMode: 0400
-        # The master users file, built from the master password in
-        # dovecot-sensitive-values. optional so a cluster that has not seeded it
-        # yet still starts and serves LMTP — inbound delivery does not depend on
-        # this, only webmail retrieval does.
-        - name: master-auth
+        # One passwd-file plus one .conf per client type, written by the
+        # operator. optional so a cluster with no mail clients yet still starts
+        # and serves LMTP — inbound delivery does not depend on this, only
+        # retrieval does.
+        - name: app-passwords
           secret:
-            secretName: dovecot-master-auth
+            secretName: dovecot-app-passwords
             optional: true
             defaultMode: 0400
       containers:
@@ -364,8 +312,8 @@ spec:
             - name: realm-auth
               mountPath: /etc/dovecot/realms
               readOnly: true
-            - name: master-auth
-              mountPath: /etc/dovecot/master
+            - name: app-passwords
+              mountPath: /etc/dovecot/apppw
               readOnly: true
             - name: mail
               mountPath: /var/mail

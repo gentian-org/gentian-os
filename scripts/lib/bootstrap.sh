@@ -558,17 +558,11 @@ create_crossplane_secrets() {
     # The Cluster XR creates a SecretV2 MR for this path and will seed OpenBao
     # on first apply. The doveadm_password shares its derivation namespace with
     # the minio secret for cross-service derivation consistency.
-    # master_password authenticates a service that opens mailboxes on behalf of
-    # users, which is how a webmail client reaches IMAP when identities live in
-    # Keycloak and no component ever holds a user's password. It is one
-    # credential that can open every mailbox, so the passdb that accepts it is
-    # restricted to the service's own network — see the dovecot chart.
     _kv_secret "gentian-os-kernel-mail-dovecot" \
         "$(jq -nc \
             --arg doveadm "$(_derive dovecot doveadm_password)" \
             --arg oidc "$(_derive dovecot oidcClientSecret)" \
-            --arg master "$(_derive dovecot master_password)" \
-            '{doveadm_password:$doveadm,oidc_client_secret:$oidc,master_password:$master}')"
+            '{doveadm_password:$doveadm,oidc_client_secret:$oidc}')"
 
     # ── oidc/openbao (the Keycloak client secret OpenBao authenticates with) ──
     # Derived rather than operator-supplied: it is shared between two machines,
