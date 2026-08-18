@@ -471,13 +471,11 @@ validate_config() {
         echo "  [OK]       MAIL_SERVICE_MODE=${MAIL_SERVICE_MODE}  (install-time; invitation mail uses in-cluster Postfix when kernel)"
     fi
     if [[ "${MAIL_SERVICE_MODE}" == "external" ]]; then
-        _req_from EXTERNAL_SMTP_HOST "External SMTP host (e.g. smtp.gmail.com)" "${cluster_settings_file}"
-        _opt_from EXTERNAL_SMTP_PORT "External SMTP port (default 587)" "${cluster_settings_file}"
-        _req_from SMTP_RELAY_USERNAME "SMTP username (e.g. Gmail address)" "the environment"
-        _req_from SMTP_RELAY_PASSWORD "SMTP password (e.g. Gmail App Password)" "the environment"
+        _opt_from EXTERNAL_SMTP_HOST "relay address — mail.host on the Cluster claim" "claims/cluster.yaml"
+        _opt_from EXTERNAL_SMTP_PORT "relay port, default 587 — mail.port on the claim" "claims/cluster.yaml"
+        echo "  [OK]       SMTP relay credentials  (runtime: supplied to the credential manager after install)"
     else
-        echo "  [OK]       SMTP_RELAY_USERNAME  (not required for MAIL_SERVICE_MODE=${MAIL_SERVICE_MODE})"
-        echo "  [OK]       SMTP_RELAY_PASSWORD  (not required for MAIL_SERVICE_MODE=${MAIL_SERVICE_MODE})"
+        echo "  [OK]       SMTP relay  (not used for MAIL_SERVICE_MODE=${MAIL_SERVICE_MODE})"
     fi
 
     NETWORK_MODE="${NETWORK_MODE:-tunnel}"
@@ -991,9 +989,20 @@ prompt_mail_mode() {
     fi
 
     # Only external mode has a relay to name.
+    #
+    # The address is asked for and the credentials are not, which is worth
+    # saying out loud: the address is configuration and belongs on the claim in
+    # Git, while the username and password are a credential and belong in
+    # OpenBao. Asking for all three together would put a password in a file the
+    # operator is about to commit.
     if [[ "${MAIL_SERVICE_MODE}" == "external" && -z "${EXTERNAL_SMTP_HOST:-}" ]]; then
         if [[ "${GENTIAN_NONINTERACTIVE:-0}" != "1" ]]; then
-            read -rp "  mail.host (SMTP relay, blank to set later): " EXTERNAL_SMTP_HOST
+            echo ""
+            info "  The relay's ADDRESS only — its hostname, e.g. smtp.gmail.com."
+            info "  The username and password are supplied after the install, through"
+            info "  the credential manager. They are not asked for here and are not"
+            info "  written to Git."
+            read -rp "  mail.host [blank to set later]: " EXTERNAL_SMTP_HOST
         fi
         [[ -n "${EXTERNAL_SMTP_HOST:-}" ]] && export EXTERNAL_SMTP_HOST
     fi
@@ -1343,21 +1352,30 @@ check_prereqs() {
             success "MASTER_PASSWORD set"
         fi
 
+        # The relay credential is NOT a prerequisite. credentials.yaml declares
+        # smtp-relay as phase: runtime and optional, which means the credential
+        # manager supplies it once the cluster is up — so requiring it here made
+        # the installer a second, stricter opinion about the same credential, and
+        # the catalogue is the one that decides (§4).
+        #
+        # It aborted every external-mail install, which is the default. The
+        # values used to arrive from install.secrets.env; nothing has loaded that
+        # file since it was removed, so the check could no longer be satisfied by
+        # the means it was written for.
+        #
+        # A cluster with no relay credential comes up and cannot send mail. That
+        # is a reported gap, not a failed install: `make check-credentials` names
+        # it, and the claim that needs it says so itself.
         if [[ "${MAIL_SERVICE_MODE}" == "external" ]]; then
-            for var in SMTP_RELAY_USERNAME SMTP_RELAY_PASSWORD; do
-                if [[ -z "${!var:-}" ]]; then
-                    error "$var is required when MAIL_SERVICE_MODE=external"
-                    missing=$((missing + 1))
-                else
-                    success "$var set"
-                fi
-            done
-            if [[ -z "${EXTERNAL_SMTP_HOST:-}" ]]; then
-                error "EXTERNAL_SMTP_HOST is required when MAIL_SERVICE_MODE=external"
-                missing=$((missing + 1))
+            if [[ -n "${SMTP_RELAY_USERNAME:-}" && -n "${SMTP_RELAY_PASSWORD:-}" ]]; then
+                success "SMTP relay credentials present; they will be seeded with the rest"
+            else
+                info "SMTP relay credentials not supplied — mail will not send until they are."
+                info "  They are a runtime credential: supply them after the install with"
+                info "  the credential manager. 'make check-credentials' lists what is open."
             fi
         else
-            info "MAIL_SERVICE_MODE=${MAIL_SERVICE_MODE}: SMTP relay credentials not required (Keycloak uses in-cluster Postfix)"
+            info "MAIL_SERVICE_MODE=${MAIL_SERVICE_MODE}: relay credentials not used (in-cluster Postfix)"
         fi
     fi
 
