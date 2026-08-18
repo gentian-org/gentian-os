@@ -62,5 +62,17 @@ smtpIngress:
   # Pin the address when the MX record already names one, so a rebuild does not
   # hand out a different IP and silently break inbound mail.
   loadBalancerIP: ""
-  # Provider-specific hints, e.g. an Octavia flavor or a floating-IP pool.
-  annotations: {}
+  annotations:
+    # Without a health monitor Octavia treats every node as a valid member and
+    # round-robins across all of them — but externalTrafficPolicy: Local means
+    # only the node running Postfix can serve, so most connections are dropped
+    # and port 25 looks firewalled rather than unbalanced.
+    #
+    # With it, Octavia probes healthCheckNodePort and pools only the node that
+    # actually has the Pod. The kernel gateway Service carries the same
+    # annotation, which is why it works and this did not.
+    loadbalancer.openstack.org/enable-health-monitor: "true"
+    # Keep the floating IP across a Service rebuild. An MX record names an
+    # address, and a new one silently breaks inbound mail — senders retry for
+    # days, then bounce.
+    loadbalancer.openstack.org/keep-floatingip: "true"
