@@ -13,9 +13,8 @@
 # ArgoCD access to it cannot itself arrive through ArgoCD. Everything that comes
 # after this point is declarative precisely because this one object is not.
 #
-# It is written inline rather than as a .tmpl + envsubst so the YAML an operator
-# is asked to trust is visible in the step they are reading, and so Phase 10c
-# has one fewer template to delete rather than one more.
+# It is written inline rather than rendered from a chart so the YAML an operator
+# is asked to trust is visible in the step they are reading.
 #
 # The value lives in OpenBao already — the installer's credential prompt wrote
 # it. This names the path and nothing else.

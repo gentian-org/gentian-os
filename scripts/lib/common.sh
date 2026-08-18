@@ -1354,7 +1354,7 @@ check_prereqs() {
 # actually resolves "unset" into a concrete name: kernel components are Helm
 # charts fed from Git, and a chart cannot read the operator's shell. So resolve
 # it here, once, and export it — bootstrap Applications pass the result down as
-# a Helm parameter (see kernel/bootstrap/*-application.yaml.tmpl).
+# a Helm parameter (see kernel/bootstrap/chart/templates/gentian-{os,portal}.yaml).
 #
 # Resolution order:
 #   1. STORAGE_CLASS from cluster-settings.env / environment (explicit wins)
@@ -1586,11 +1586,10 @@ gentian_suze_claim_name()      { gentian_claim_name suze       dev-suze;       }
 # resolve_gentian_os_branch — the git ref every in-cluster Application tracks
 # back to this repo.
 #
-# Exports GENTIAN_OS_BRANCH so both renderers can reach it: envsubst in
-# apply_bootstrap_application, and the sed passes that fill %GENTIAN_OS_BRANCH%.
-# Set GENTIAN_OS_BRANCH in install.env to pin a cluster to a branch or release
-# tag; otherwise it follows the checkout the installer is running from, which is
-# what a dev cluster wants.
+# Exports GENTIAN_OS_BRANCH for apply_bootstrap_application, which passes it to
+# the bootstrap chart as gentianOsBranch. Set GENTIAN_OS_BRANCH in install.env to
+# pin a cluster to a branch or release tag; otherwise it follows the checkout the
+# installer is running from, which is what a dev cluster wants.
 #
 # Detached HEAD returns the literal "HEAD" from rev-parse, which is not a ref
 # ArgoCD can track — every Application would sit Unknown pointing at a revision
@@ -1611,27 +1610,22 @@ resolve_gentian_os_branch() {
 }
 
 # =============================================================================
-# apply_bootstrap_application — kubectl apply a bootstrap Application, rendering
-# it first when it ships as a .yaml.tmpl.
+# apply_bootstrap_application — render one bootstrap Application from
+# kernel/bootstrap/chart and kubectl apply it.
 #
 # Bootstrap Applications are applied by install.sh from the local checkout
 # rather than read from Git by ArgoCD, which is exactly why per-cluster values
-# (STORAGE_CLASS) can be substituted into them at all.
-#
-# envsubst is called with an explicit variable allowlist. That is not a style
-# choice: these manifests contain ArgoCD's multi-source "$values" reference, and
-# an unrestricted envsubst would silently expand it to the empty string and
-# break every valueFiles entry.
+# (STORAGE_CLASS) reach them at all: they are the objects that install the agent
+# that will read everything else from Git.
 # =============================================================================
 apply_bootstrap_application() {
     local name="$1"
     local chart="${SCRIPT_DIR}/kernel/bootstrap/chart"
 
-    # One chart, one template per Application. This rendered a .tmpl with an
-    # allowlisted envsubst — allowlisted because these manifests also carry Argo
-    # CD's $values expressions, and a substitute-everything run blanked them.
-    # Helm cannot make that mistake: $values is not its syntax, so there is no
-    # list to keep in step with the manifests.
+    # One chart, one template per Application. Helm is what makes the Argo CD
+    # multi-source "$values" references in these manifests safe to carry: $values
+    # is not Helm syntax, so it survives rendering untouched with no allowlist of
+    # substitutable names to keep in step with the manifests.
     if [[ -f "${chart}/templates/${name}.yaml" ]]; then
         if [[ -z "${STORAGE_CLASS:-}" ]]; then
             error "STORAGE_CLASS is empty while rendering ${name}."

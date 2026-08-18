@@ -300,7 +300,7 @@ bootstrap_openbao_for_crossplane() {
     export VAULT_TOKEN="${BAO_TOKEN}"
 
     # ── 1. KV v2 mount — use KV_MOUNT from install.env (default: secret) ─────
-    # Must match spec.openbao.kvMount in dev-cluster.yaml.tmpl and the
+    # Must match spec.openbao.kvMount in the cluster claim and the
     # cluster-default Composition, which also uses this env var.
     local _kv_mount="${KV_MOUNT:-secret}"
     if bao secrets list -format=json 2>/dev/null | jq -e --arg m "${_kv_mount}/" '.[($m)]' >/dev/null 2>&1; then
@@ -705,15 +705,13 @@ bootstrap_root_appset() {
     export GENTIAN_DEPLOYMENTS_REPO="${GENTIAN_DEPLOYMENTS_REPO:-}"
     export GENTIAN_DEPLOYMENTS_BRANCH="${GENTIAN_DEPLOYMENTS_BRANCH:-main}"
     export GENTIAN_DEPLOYMENTS_CLUSTER_ID="${GENTIAN_DEPLOYMENTS_CLUSTER_ID:-default-cluster}"
-    # The outbound relay reaches the Postfix chart through here. Exported even when
-    # empty: envsubst substitutes an unset variable with nothing either way, but an
-    # explicit default documents that empty is a valid, meaningful value — kernel
-    # mode, delivering directly — rather than a variable someone forgot to set.
-    # A bare envsubst rendered this: no allowlist, so every $NAME in the file was
-    # a substitution target whether or not it was meant as one, and an unset
-    # variable became empty with exit 0. That is how deploymentsCluster once
-    # rendered clusters//kernel/claims and nothing synced. The chart marks the
-    # cluster id required, so an empty one refuses to render.
+    # The outbound relay reaches the Postfix chart through here. Set even when
+    # empty, because empty is a meaningful value — kernel mode, delivering
+    # directly — rather than a variable someone forgot to set.
+    #
+    # The chart marks the cluster id required, so an empty one refuses to render
+    # rather than producing Applications that point at clusters//kernel/claims and
+    # never sync.
     helm template gentian-bootstrap "${SCRIPT_DIR}/kernel/bootstrap/chart" \
         -s templates/root-applicationset.yaml \
         --set-string "deploymentsRepo=${GENTIAN_DEPLOYMENTS_REPO}" \
@@ -1048,13 +1046,12 @@ install_llm_serving() {
 # shared with every other cluster.
 #
 # The gentian-os/gentian-portal Applications and the ImageUpdater CR are
-# NOT scaffolded here — they're rendered directly from
-# kernel/bootstrap/{gentian-os,gentian-portal}-application.yaml.tmpl by
+# NOT scaffolded here — they're rendered from kernel/bootstrap/chart by
 # install_gentian_os_operator()/install_portal_login() (catalogue.sh /
 # portal-login-bootstrap.sh) and applied straight to the cluster, never
-# committed to gentian-deployments. Their content never varies except by
-# %CLUSTER%/%STAGE%, so there's nothing cluster-specific worth persisting
-# as a file — see docs/deployment.md §3.1.
+# committed to gentian-deployments. Their content varies only by the cluster
+# and stage the chart is rendered with, so there's nothing cluster-specific
+# worth persisting as a file — see docs/deployment.md §3.1.
 # =============================================================================
 # The cluster's settings, written into the claim explicitly.
 #

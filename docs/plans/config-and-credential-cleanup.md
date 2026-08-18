@@ -27,7 +27,7 @@ authorities, and different failure modes.
 | **Total shell surface** | **15,329 lines** |
 | Numbered install steps in `main_cp` | ~40 (Step 0 → Step 16) |
 | Distinct environment variables referenced | 42 |
-| `envsubst`-rendered YAML templates | 16 files, 15 call sites |
+| `envsubst`-rendered YAML templates | none — 4 Helm charts (`kernel/bootstrap`, `kernel/manifests/cert-manager`, `kernel/manifests/gateway`, `kernel/services/llm`) |
 | Required external CLIs | 11 — `kubectl helm jq yq openssl curl bao crossplane python3 argocd git` |
 
 Two facts dominate everything below.
@@ -296,7 +296,10 @@ it needs no stage conditional at all: it is a field with a different default per
 - **No non-secret configuration lives in shell syntax.** `.env` is not a configuration format for
   a reconciled system; it is the absence of one.
 - **No rendered artefact is applied by a script.** If a script renders it, the reconciler cannot
-  detect drift in it. The 16 `.tmpl` files and 15 `envsubst` call sites are all in scope.
+  detect drift in it. Met for `envsubst`: the installer renders every manifest through `helm
+  template`, which is the same renderer Argo CD runs, so what a script applies and what the
+  reconciler converges to come from one source. The remaining bootstrap Applications are still
+  applied by a script, by necessity — they install the reconciler.
 - **No configuration file on the installing machine survives the install**, other than surface 1.
 
 Every value in an `.env` file resolves to exactly one of: a surface-2 layer, or an OpenBao path.
@@ -786,11 +789,13 @@ Concretely, work leaves the shell in three directions:
 |---|---|---|
 | Anything a reconciler can converge | ArgoCD, Crossplane | A step |
 | Anything needing an SDK, a signing algorithm, or a real parser | The on-cluster credential manager (§10), or the operator | A step |
-| Anything rendering YAML from variables | A claim field, or a Helm chart | `envsubst` |
+| Anything rendering YAML from variables | A claim field, or a Helm chart | `envsubst`, `sed` |
 
-The 16 `.tmpl` files and 15 `envsubst` call sites are the clearest violation: each is a rendered
-artefact applied by a script, which §2 prohibits outright because the reconciler cannot detect
-drift in it. Most should become fields on the `XCluster` claim consumed by a chart.
+The installer renders through `helm template` only, from four charts: `kernel/bootstrap`,
+`kernel/manifests/cert-manager`, `kernel/manifests/gateway` and `kernel/services/llm`. The values
+that vary per cluster are claim fields the charts consume. The one `.tmpl` left in the repo is
+`repo-seeds/gentian-app-template/profile/appprofile.yaml.tmpl`, a scaffold a human copies —
+nothing renders it, so nothing applies a rendered artefact.
 
 The test for whether a step is too large is not its line count but whether an operator can read
 it and predict what it will do to their cluster.
@@ -905,7 +910,7 @@ sequenceDiagram
 | `load_creds_cache`, `INSTALL_SECRETS_CACHE` | **Delete.** See §1 and §2, surface 3 |
 | `_reset_suze_ghost_helm_releases` | **Keep, but treat as a symptom.** Heal hooks for partial installs are evidence of the debugging cost named in §13 |
 | `uninstall.sh`, `update.sh` | **Delete.** Replaced by `destroy()` per step and by convergent re-run (§7) |
-| 16 `.tmpl` files, 15 `envsubst` call sites | **Delete.** Each is a script-rendered artefact the reconciler cannot see; values move to claim fields consumed by charts (§2) |
+| 16 `.tmpl` files, 15 `envsubst` call sites | **Done.** Replaced by four Helm charts; the values that varied are claim fields the charts consume (§2) |
 
 ### Auto-unseal
 
@@ -927,7 +932,10 @@ The target is expressed as four properties, not a line count. Line counts follow
 >    `install.sh`, `steps/`, and `scripts/lib/` returns nothing.
 > 2. **The installer reads exactly one non-secret file from local disk** — `install.env`, the
 >    repository pointer (§2, surface 1).
-> 3. **The installer renders no YAML.** No `envsubst`, no `.tmpl`, no here-doc manifests.
+> 3. **The installer renders no YAML itself.** No `envsubst`, no `.tmpl`. Met — with one
+>    deliberate exception: the deployments-repository claim in `B-08`, written as a here-doc
+>    because a private repository cannot describe its own access, so the object granting Argo CD
+>    access to it cannot arrive through Argo CD.
 > 4. **There is one driver, not three.** No `uninstall.sh`, no `update.sh`.
 
 Properties 2–4 are mechanically checkable and belong in CI.
@@ -1123,8 +1131,9 @@ Sequential phases. Each phase is independently useful and independently revertib
 
 Built and exercised on a cluster, built but unexercised, and not built are three different things,
 and the distinction is the point of this table. The forward pass has run on a real cluster for
-phases A–D; `destroy()` has run nowhere and phase E has not been reached, so "exercised" below
-never means more than that.
+phases A–E, and `destroy()` has run for all of them, under `--uninstall`, `--purge` and
+`--purge --cluster-infra`. That is one cluster, on one architecture, with a public domain and no
+mirror, so "exercised" below never means more than that.
 
 | Phase | State | What is left |
 |---|---|---|
@@ -1137,7 +1146,7 @@ never means more than that.
 | 7 | **Built, unexercised** | Nothing has authenticated through it. No policy allow/deny tests |
 | 8 | Built | The service's own ServiceAccount policy is uninspected |
 | 9 | Built | No shared API contract tests; validation errors are not attributed per field |
-| 10 | **10a/10b done, 10c part** | `cluster-settings.env`, the ten `.tmpl` Applications and 15 `envsubst` sites |
+| 10 | **10a/10b done, 10c mostly** | `envsubst`, the `.tmpl` files and `cluster-settings.env` are gone; the credential manager is built but unexercised (row 7) |
 | 11 | Done | BSD `sed_inplace` has not been observed running |
 | 12 | 12a–12d built, **12e not** | Provider RBAC is still `cluster-admin`, deliberately |
 | 13 | Portability done | arm64, internal domain and mirror remain structural claims |
@@ -1804,9 +1813,9 @@ That change is deliberately not made while a cluster run is in progress: it
 rewrites the path the run exercises, and existing clusters carry a
 `cluster-settings.env` that would need a migration.
 
-The rest of the original 10c: delete
-`cluster-settings.env` and its template, `install.secrets.env` and its template, the 16 `.tmpl`
-files, and the 15 `envsubst` call sites. Delete `CI_BOT_PAT`, `GITHUB_ACTIONS_OS_REPO`,
+The rest of the original 10c — `cluster-settings.env` and its template, `install.secrets.env` and
+its template, the 16 `.tmpl` files and the 15 `envsubst` call sites — is done. What remains:
+delete `CI_BOT_PAT`, `GITHUB_ACTIONS_OS_REPO`,
 `GITHUB_ACTIONS_UI_REPO`, `configure_github_actions_secrets`, and
 `scripts/configure-github-actions-secrets.sh` per §2, *What is not a configuration surface*.
 Reduce `install.env.template` to the nine pointer variables in §2. Sweep the orphaned value
@@ -2145,7 +2154,7 @@ scope and should be folded into it rather than fixed twice.
 |---|---|---|
 | **Step knowledge is encoded three times** — `install.sh` applies it, `update.sh` re-applies it as `op_*`, `uninstall.sh` reverses it as 18 `_delete_*` helpers, and `uninstall.sh` does not source `scripts/lib/load.sh` so it duplicates the primitives too. Nothing enforces that the three agree, and a step added to one is silently absent from the others. | §1 baseline | **Phase 0b.** This is the finding the driver-and-steps structure exists to fix. |
 | **Repository credentials are applied imperatively.** `scripts/bootstrap/create-deployments-git-credentials.sh` runs `kubectl create secret generic` for the operator's `.git-credentials`, and `kernel/argocd/repos/*.yaml` are hand-written ArgoCD repository Secrets. Both are the §6 anti-pattern — a Secret with no `ExternalSecret` pointing at it — and neither can carry a private credential. | `scripts/bootstrap/create-deployments-git-credentials.sh`, `kernel/argocd/repos/` | **Phase 5.** Both become `Repository` claims. |
-| **`manager` binary tracked in Git** — a 45.6 MB compiled artefact committed in `02235d7` (2026-06-07). `.gitignore` covers `bin/` and `*.test` but not this path. | `git ls-files manager` | `git rm --cached manager`, add `/manager` to `.gitignore`. History rewrite optional. |
+| **`manager` binary in Git history** — a 45.6 MB compiled artefact committed in `02235d7` (2026-06-07). Untracked now, and `/manager` is in `.gitignore`, which closes the hole: `make build` writes `bin/manager` but the Dockerfile builds `-o manager` at the workspace root, so running that build outside Docker drops the artefact beside the Makefile. The blob is still in history — one commit — so a clone still pays 45 MB against an 8.7 MB tree. | `git rev-list --objects --all \| grep ' manager$'` | Rewriting history would remove it, at the cost of invalidating every existing clone and fork. That is a call for whoever owns the remote, not a cleanup task. |
 | ~~**Kernel mail install path applies directories that no longer exist.**~~ **Fixed.** `deploy_kernel_mail_services` and its call site are deleted; Postfix and Dovecot arrive through the `09-infra-helm` ApplicationSet, which was already doing the work. |  |  |
 | **(original finding, for reference)** `deploy_kernel_mail_services()` runs `kubectl apply -f kernel/services/{postfix,dovecot}/manifests/${env}/`, but those services were converted to env-parameterised Helm charts (`manifests/Chart.yaml` + `templates/` + `values.yaml`) with no per-stage subdirectory. It also waits on `externalsecret/dovecot-sensitive-values`, which the dovecot chart does not template. Any `MAIL_SERVICE_MODE=kernel` install fails here. | `scripts/lib/common.sh:2032`, `:2041` | **Phase 4b.** Postfix and Dovecot already arrive via the `09-infra-helm` ApplicationSet; delete `deploy_kernel_mail_services` rather than repair it. |
 | **`make clean` destroys hand-maintained fixtures.** `rm -rf config/crd/*.yaml` also deletes the envtest stubs (`gentianos.io_apps.yaml`, `gentianos.io_xtenants.yaml`) and six vendored third-party CRDs, none of which `make manifests` regenerates. `make clean && make manifests` silently breaks the envtest suite. | `Makefile:92` | Narrow the glob to `config/crd/gentianos.io_{appcatalogues,appgrants,apppackages,appprofiles,customizations,integrationbindings,oidcpackcatalogs,platformsecuritypolicies,tenants}.yaml`, or move the hand-maintained files to `config/crd/fixtures/`. |
@@ -2248,7 +2257,7 @@ They are gathered here because they are the whole point of the run.
 | A tenant can be provisioned | E-01/E-02, and the product's purpose | **Verified.** A tenant is admitted, reaches Ready, serves its apps through the portal, and is removed again cleanly. Its admin signs in at the derived address, and Postfix accepts mail for the tenant's own domain. The admission webhook refuses one naming an AppProfile the cluster does not have, and that rollback leaves `definitions/` intact. The remaining gap is Dovecot, which has nowhere to store what Postfix accepts (§15.4) |
 | The unsatisfied → satisfied transition unblocks composition without intervention | Phase 6, criterion 4 | **Verified.** Every provider-vault resource sat `SYNCED=False` on a missing `openbao-crossplane-token`; when the credential arrived they reconciled and the XCluster reached Ready with nothing re-run |
 | OIDC login yields a policy set from Keycloak groups; a named write appears in the audit device | Phase 7, criteria 1–2 | **Login verified, audit device not.** A tenant admin signs in at the shared portal with the derived address and reaches the desktop and Admin Console. Whether a named write reaches the audit device is still unobserved |
-| The bootstrap token is genuinely invalid afterwards | Phase 7, criterion 3 | **Still unverified.** Phase E not reached |
+| The bootstrap token is genuinely invalid afterwards | Phase 7, criterion 3 | **Still unverified.** Phase E is reached now, so the check is available: `bao token lookup` with the root token from the init file must be refused. Nobody has run it |
 | An arm64 install; an internal-domain install with `self-signed`; a mirrored install making no upstream request | Phase 12, criteria 4 and 6 | **Still unverified.** Three separate installs |
 | `sed_inplace` under BSD | Phase 11, criterion 2 | **Still unverified.** The macOS CI job runs it but nobody has watched it |
 | `--export-recovery-kit` produces a kit | Invariant 2, and the precondition for `--purge` | **Export verified, restore unverified.** A kit is written before a purge, 960 bytes, mode 0600. It took the openssl fallback because `age` was absent — encrypted but not authenticated, as that path warns. Nothing has yet rebuilt a cluster from one, which is the half that matters |
@@ -2536,7 +2545,7 @@ cluster to compare against.
 
 | Move | Why it is right | What it is waiting on |
 |---|---|---|
-| The ten `.tmpl` bootstrap Applications and 15 `envsubst` sites → Cluster XR | Every one is a rendered artefact applied by a script, which §2 prohibits because the reconciler cannot detect drift in it | Nothing but confidence; it is the largest single reduction left |
+| The ten bootstrap Applications in `kernel/bootstrap/chart` → Cluster XR | They are rendered by `helm template` now rather than `envsubst`, which closes the renderer half of §2, but a script still applies them and the reconciler still cannot detect drift in what a script applied | Bootstrap ordering. These Applications install the reconciler, so any that a Composition could own must be shown not to be needed before Crossplane is running |
 | Wildcard `Certificate` and `gentian-kernel-services` ConfigMap → Cluster XR | Small, and natural neighbours of resources already composed | Same |
 | ClusterIssuers → Cluster XR | Issuers have a lifecycle, so they belong to a reconciler. Step 05 owns them today only because it is more capable — it dispatches on all four `issuerMode` values and waits for the cert-manager webhook | Bootstrap ordering: **nothing between step 05 and step 16 may need an issuer.** Confirm that on a real run before moving them |
 

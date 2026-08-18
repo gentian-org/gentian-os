@@ -16,7 +16,7 @@ _vllm_instance_k8s_name() {
     printf '%s' "${id//_/-}"
 }
 
-# Renders kernel/services/llm/manifests/${env}/vllm-gpu.yaml.tmpl once per
+# Renders kernel/services/llm/chart once per
 # entry in VLLM_INSTANCES (cluster instance data — never gentian-os
 # defaults) and applies each. One gentian-os cluster can run several named
 # vLLM instances at once (e.g. a small always-on model plus a larger

@@ -124,7 +124,7 @@ install_catalogue_sync() {
 #     subsequent install steps can use them without waiting for ArgoCD.
 #   ArgoCD Application handoff:
 #     The gentian-os ArgoCD Application (rendered from
-#     kernel/bootstrap/gentian-os-application.yaml.tmpl) is applied.
+#     kernel/bootstrap/chart/templates/gentian-os.yaml) is applied.
 #     ArgoCD takes ownership of the resources via ServerSideApply and from
 #     this point drives all future chart upgrades.  Critically, Source 4 of
 #     the Application deploys the ImageUpdater CR into the cluster, which
@@ -289,7 +289,7 @@ _gentian_os_collect_operator_value_files() {
     deploy_dir="${GENTIAN_DEPLOYMENTS_PATH:-${HOME}/.gentian/gentian-deployments}"
     _files=()
     # Mirrors the layered valueFiles ArgoCD uses once it takes over this
-    # Application (kernel/bootstrap/gentian-os-application.yaml.tmpl):
+    # Application (kernel/bootstrap/chart/templates/gentian-os.yaml):
     # profiles/_base.yaml -> profiles/<stage>.yaml -> clusters/<cluster>/kernel/values.yaml
     if [[ -f "${deploy_dir}/profiles/_base.yaml" ]]; then
         _files+=(-f "${deploy_dir}/profiles/_base.yaml")
