@@ -1079,6 +1079,14 @@ spec:
 
 ${refresh_shell}
               if [ "\${LLM_SUPPORT}" = "true" ]; then
+                # Best-effort, deliberately. Everything in here serves an optional LLM
+                # dashboard, while what follows the block configures realm SMTP — which
+                # password resets and invitations depend on. Under set -e a 4xx from any
+                # of these calls ends the Job, so an unreachable dashboard would take
+                # mail delivery down with it. Containment has to be set +e: busybox
+                # suppresses errexit inside a subshell used as a condition, so ( ... ) ||
+                # warn does not actually catch anything.
+                set +e
                 # Only kernel-realm users can ever reach this client (tenant users
                 # live in separate per-tenant realms), so a flat hardcoded
                 # litellm_role=proxy_admin claim is safe for now — LLM admin
@@ -1168,7 +1176,14 @@ ${refresh_shell}
                       printf '\033[1;33m[WARN]\033[0m    The LLM dashboard will not see litellm_role; nothing else is affected.\n' >&2
                       ;;
                   esac
+                else
+                  # The client create or lookup above failed. Without this the whole LLM
+                  # section just stops here without saying so, and the mapper warning that
+                  # would have explained it never runs either.
+                  printf '\033[1;33m[WARN]\033[0m  litellm-dashboard client could not be created or found.\n' >&2
+                  printf '\033[1;33m[WARN]\033[0m    LLM dashboard SSO is not configured; the rest of the bootstrap continues.\n' >&2
                 fi
+                set -e
               fi
 
 ${refresh_shell}
