@@ -18,4 +18,3 @@ storageClass: ""
 # filesystem and every message is lost on restart — including the restart that
 # a config change or a node drain causes.
 mailStorageSize: 5Gi
-
