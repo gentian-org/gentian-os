@@ -32,7 +32,7 @@ spec:
         # The key name the external-dns chart reads.
         # index, not a dotted field: the remote property is api-token and a hyphen in
         # a Go template parses as subtraction, so {{ "{{" }} .api-token }} fails to render.
-        cloudflare_api_token: "{{ "{{" }} index . "api-token" }}"
+        cloudflare_api_token: '{{ "{{" }} index . "api-token" }}'
   data:
     - secretKey: api-token
       remoteRef:
