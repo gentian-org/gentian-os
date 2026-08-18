@@ -246,7 +246,7 @@ spec:
                   {{- end }}
                 boundClaimsType: string
                 boundClaims:
-                  groups: {{ $oidc.clusterAdminGroup | default "/platform-admins" | quote }}
+                  groups: {{ $oidc.clusterAdminGroup | default "/gentian:platform:superadmin" | quote }}
                 allowedRedirectUris:
                   - {{ printf "%s/ui/vault/auth/oidc/oidc/callback" ($oidc.externalUrl | default "") | quote }}
                   - http://localhost:8250/oidc/callback
@@ -401,7 +401,7 @@ spec:
                  mapper the token carries no groups and every login matches no
                  role — which fails as "permission denied" rather than as
                  "misconfigured", and is the hardest form of this to diagnose.
-                 fullPath emits /platform-admins, matching what the roles bind. */}}
+                 fullPath emits the leading slash the roles bind on. */}}
             ---
             apiVersion: openidgroup.keycloak.crossplane.io/v1alpha1
             kind: GroupMembershipProtocolMapper
@@ -455,35 +455,15 @@ spec:
               providerConfigRef:
                 name: keycloak
 
-            {{- /* The cluster admin group, declared here so the name the
-                 cluster-admin role binds is not a reference to something an
-                 operator has to remember to create by hand.
+            {{- /* The cluster admin group is NOT created here.
 
-                 Only this one. Tenant admin groups are not declared: the kernel
-                 realm imports each tenant's own admins group when a user is
-                 brokered, so they arrive named per tenant and the tenant-admin
-                 role matches them by glob. Creating a group from that glob would
-                 make a Keycloak group literally called
-                 gentian:tenant:*:admins. */}}
-            {{- range $g := list ($oidc.clusterAdminGroup | default "/platform-admins") }}
-            {{- $gName := trimPrefix "/" $g }}
-            ---
-            apiVersion: group.keycloak.crossplane.io/v1alpha1
-            kind: Group
-            metadata:
-              annotations:
-                gotemplating.fn.crossplane.io/composition-resource-name: keycloak-group-{{ $gName }}
-              name: {{ $name }}-keycloak-group-{{ $gName }}
-            spec:
-              # Orphan: a group holds memberships this composition did not create,
-              # and deleting the claim should not silently remove people's access.
-              deletionPolicy: Orphan
-              forProvider:
-                realmId: {{ $realm | quote }}
-                name: {{ $gName | quote }}
-              providerConfigRef:
-                name: keycloak
-            {{- end }}
+                 D-05-portal-login creates it and puts administrator@<domain>
+                 in it, which is the part that matters — a group with no members
+                 grants nobody anything. Creating it here as well would be a
+                 second writer on an object whose whole purpose is its
+                 membership, and the earlier default named a group
+                 (/platform-admins) that nothing ever joined, so cluster admins
+                 authenticated and matched no role. */}}
               providerConfigRef:
                 name: openbao
             {{- end }}
