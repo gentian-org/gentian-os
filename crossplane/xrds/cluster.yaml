@@ -458,6 +458,27 @@ spec:
                         Azure's subscription and resource group, the nameserver
                         for a self-hosted zone. Required keys are declared per
                         provider in kernel/platforms.yaml.
+                    externalDns:
+                      type: boolean
+                      default: false
+                      description: >
+                        Whether external-dns writes this cluster's records.
+
+                        Off by default, and deliberately, because it is the
+                        second writer. On a tunnel cluster the operator's own
+                        edge-DNS adapter already creates the tenant CNAMEs and
+                        the tunnel ingress rules, and two controllers reconciling
+                        one record set is how a hostname comes to flip between
+                        two answers depending on which ran last.
+
+                        Turn it on for a cluster where the operator is NOT
+                        managing DNS — a static-ip cluster, or any zone host
+                        other than Cloudflare, where the operator's adapter is
+                        nil and nothing else writes records at all.
+
+                        Independent of certificates.dnsProvider: that decides
+                        who can solve a DNS-01 challenge, which is needed for a
+                        wildcard whether or not anything writes records.
                     caBundleSecretRef:
                       type: object
                       description: >

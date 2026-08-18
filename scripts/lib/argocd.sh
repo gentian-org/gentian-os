@@ -463,9 +463,19 @@ bootstrap_argocd_apps() {
         # present in the repository and absent from every cluster, and the gap
         # read as "DNS is managed by hand here" rather than as a missing step.
         #
-        # It renders to nothing when the cluster has no DNS provider, so naming
-        # it unconditionally is safe.
-        apps+=(external-dns)
+        # Opt-in, though, because it is the SECOND writer. On a tunnel cluster
+        # the operator's edge-DNS adapter already creates the tenant CNAMEs and
+        # the tunnel ingress rules; adding external-dns to that is two
+        # controllers reconciling one record set. Switching that on as a side
+        # effect of a re-run somebody started for another reason is not a
+        # decision an installer gets to make — so the claim makes it.
+        if [[ "${EXTERNAL_DNS_ENABLED:-false}" == "true" ]]; then
+            apps+=(external-dns)
+        else
+            info "certificates.externalDns is not set; external-dns is not installed."
+            info "  DNS records are whatever already writes them here — by hand,"
+            info "  or the operator's own adapter."
+        fi
     fi
 
     for app in "${apps[@]}"; do

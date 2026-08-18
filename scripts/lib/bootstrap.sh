@@ -1479,6 +1479,10 @@ _claim_cluster_fields() {
             printf '    # dnsParams:                route53 needs region and\n'
             printf '    #                           hostedZoneID; clouddns a project\n'
         fi
+        printf '    # externalDns: true         let external-dns write this zone.\n'
+        printf '    #                           Leave off where something else already\n'
+        printf '    #                           does — on a tunnel cluster the operator\n'
+        printf '    #                           writes the tenant records itself.\n'
     else
         printf '    # dnsProvider:              only read when issuerMode is acme-dns01\n'
     fi

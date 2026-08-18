@@ -889,6 +889,7 @@ load_deployments_cluster_settings() {
         claim_setting     EDGE_ADDRESS_REF addressRef     "${claim_file}"
         claim_setting     DNS_PROVIDER    certificates.dnsProvider "${claim_file}"
         claim_map_setting DNS_PARAMS      certificates.dnsParams   "${claim_file}"
+        claim_setting     EXTERNAL_DNS_ENABLED certificates.externalDns "${claim_file}"
 
         # lbProvider was PLATFORM's name while the edge load balancer was the
         # only thing it selected. Kept readable so a claim written before the
