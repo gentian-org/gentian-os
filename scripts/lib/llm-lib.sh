@@ -220,11 +220,11 @@ spec:
                   key: litellm_master_key
 EOF
 
-    if kubectl wait "job/${job_name}" -n "${ns}" --for=condition=complete --timeout=120s; then
+    if _wait_for_job "${job_name}" "${ns}" 120s; then
         kubectl logs -n "${ns}" "job/${job_name}" --tail=20 2>/dev/null || true
         success "LiteLLM teams synced for: ${tenant_csv}"
     else
-        warn "LiteLLM team sync Job failed or timed out."
+        warn "LiteLLM team sync did not complete."
         kubectl logs -n "${ns}" "job/${job_name}" --tail=20 2>/dev/null || true
         return 1
     fi
@@ -242,6 +242,42 @@ EOF
 # LiteLLM entry pointed at a vllm-*-inference api_base that ISN'T one of
 # the current VLLM_INSTANCES gets removed entirely (the instance itself
 # was already removed with the gentian-llm release).
+# =============================================================================
+# _wait_for_job — complete, failed, or still running; a timeout is none of them.
+#
+# `kubectl wait --timeout` returns non-zero when the deadline passes, which is
+# not the same as the Job failing: a pod that is slow to schedule or pull an
+# image finishes a minute later and succeeds. Treating the timeout as a failure
+# reported "sync failed" over a Job that had done its work, and the operator was
+# told to re-run something that had already run.
+#
+# So the deadline is a prompt to look, not a verdict. Returns 0 when the Job
+# succeeded — whether it did so before or after the wait gave up.
+# =============================================================================
+_wait_for_job() {
+    local job="$1" ns="$2" timeout="${3:-120s}"
+    kubectl wait "job/${job}" -n "${ns}" --for=condition=complete --timeout="${timeout}" >/dev/null 2>&1 && return 0
+
+    # Deadline passed. Ask the Job what actually happened.
+    if ! kubectl get "job/${job}" -n "${ns}" >/dev/null 2>&1; then
+        error "  ${job} does not exist in ${ns}."
+        return 1
+    fi
+    local succeeded failed
+    succeeded="$(kubectl get "job/${job}" -n "${ns}" -o jsonpath='{.status.succeeded}' 2>/dev/null || echo 0)"
+    failed="$(kubectl get "job/${job}" -n "${ns}" -o jsonpath='{.status.failed}' 2>/dev/null || echo 0)"
+    if [[ "${succeeded:-0}" -ge 1 ]]; then
+        info "  ${job} completed after the ${timeout} wait expired."
+        return 0
+    fi
+    if [[ "${failed:-0}" -ge 1 ]]; then
+        error "  ${job} failed (${failed} failed pod(s))."
+        return 1
+    fi
+    warn "  ${job} is still running after ${timeout}; not waiting further."
+    return 1
+}
+
 ensure_litellm_vllm_model() {
     local ns="platform-kernel"
     local job_name="litellm-vllm-model-sync"
@@ -384,11 +420,11 @@ spec:
                   key: litellm_master_key
 EOF
 
-    if kubectl wait "job/${job_name}" -n "${ns}" --for=condition=complete --timeout=120s; then
+    if _wait_for_job "${job_name}" "${ns}" 120s; then
         kubectl logs -n "${ns}" "job/${job_name}" --tail=30 2>/dev/null || true
         success "LiteLLM model registrations synced."
     else
-        warn "LiteLLM model sync Job failed or timed out."
+        warn "LiteLLM model sync did not complete."
         kubectl logs -n "${ns}" "job/${job_name}" --tail=30 2>/dev/null || true
         return 1
     fi

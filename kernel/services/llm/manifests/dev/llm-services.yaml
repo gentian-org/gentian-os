@@ -3,6 +3,12 @@ kind: Deployment
 metadata:
   name: litellm-proxy
   namespace: platform-kernel
+  labels:
+    # D-04's check() selects on this. Without it the Deployment exists, runs,
+    # and reports missing — the step's check disagreeing with its own provides:.
+    app.kubernetes.io/name: litellm
+    app.kubernetes.io/component: llm-gateway
+    gentianos.io/component: kernel-llm
 spec:
   replicas: 2
   selector:
@@ -113,6 +119,10 @@ kind: Deployment
 metadata:
   name: redis-llm
   namespace: platform-kernel
+  labels:
+    app.kubernetes.io/name: redis-llm
+    app.kubernetes.io/component: llm-cache
+    gentianos.io/component: kernel-llm
 spec:
   replicas: 1
   selector:
