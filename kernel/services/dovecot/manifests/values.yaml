@@ -18,3 +18,13 @@ storageClass: ""
 # filesystem and every message is lost on restart — including the restart that
 # a config change or a node drain causes.
 mailStorageSize: 5Gi
+
+# The master user a webmail client authenticates as to open a mailbox on behalf
+# of its signed-in user. It is not a mail account and has no mailbox of its own.
+masterUser: gentian-webmail
+
+# Restrict the master passdb to this network (Dovecot `remote` block syntax,
+# e.g. 10.64.0.0/16). Empty means any in-cluster client, which is already the
+# only reachable case while the Service is ClusterIP and no gateway listener
+# exists on 143. Set it where tenant workloads share the pod network.
+masterAllowedNetwork: ""

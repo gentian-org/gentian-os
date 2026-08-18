@@ -56,6 +56,7 @@ spec:
       data:
         doveadm_password: "{{ "{{" }} .doveadm_password }}"
         oidc_client_secret: "{{ "{{" }} .oidc_client_secret }}"
+        master_password: "{{ "{{" }} .master_password }}"
   data:
     - secretKey: doveadm_password
       remoteRef:
@@ -65,6 +66,44 @@ spec:
       remoteRef:
         key: gentian-os/kernel/mail/dovecot
         property: oidc_client_secret
+    - secretKey: master_password
+      remoteRef:
+        key: gentian-os/kernel/mail/dovecot
+        property: master_password
+---
+# The master users file, rendered from OpenBao rather than written by the
+# operator: it has exactly one line and no per-tenant content, so there is
+# nothing for a reconciler to keep in step.
+#
+# {PLAIN} because Dovecot compares against the same derived value the seeder
+# wrote; a hash here would need the seeder to produce it, and the value never
+# leaves the cluster.
+apiVersion: external-secrets.io/v1
+kind: ExternalSecret
+metadata:
+  name: dovecot-master-auth
+  namespace: {{ .Values.servicesNamespace }}
+  annotations:
+    argocd.argoproj.io/sync-wave: "-1"
+spec:
+  refreshInterval: 1h
+  secretStoreRef:
+    kind: ClusterSecretStore
+    name: openbao
+  target:
+    name: dovecot-master-auth
+    creationPolicy: Owner
+    deletionPolicy: Retain
+    template:
+      engineVersion: v2
+      data:
+        users: |
+          {{ .Values.masterUser }}:{PLAIN}{{ "{{" }} .master_password }}
+  data:
+    - secretKey: master_password
+      remoteRef:
+        key: gentian-os/kernel/mail/dovecot
+        property: master_password
 ---
 # The running configuration. Self-contained on purpose: dovecot is started with
 # `-c` pointing at this file and it does not `!include conf.d/*.conf`, so what
@@ -138,6 +177,40 @@ data:
       driver = static
       args = uid=1000 gid=1000 home=/var/mail/%d/%n allow_all_users=yes
     }
+
+    # The master passdb. A service authenticating as "<user>*<master-user>" with
+    # the master password opens that user's mailbox without ever holding their
+    # password — which is the only way a webmail client can reach IMAP here,
+    # because identities live in Keycloak and the OIDC login never yields one.
+    #
+    # Placed FIRST so a master login is recognised before the oauth2 passdbs see
+    # a username they cannot introspect.
+    #
+    # This is one credential that opens every mailbox. Two things bound it, and
+    # both are worth stating because neither is obvious:
+    #
+    #   The Service is ClusterIP and the kernel Gateway has no listener on 143,
+    #   so IMAP is not reachable from outside the cluster at all.
+    #
+    #   masterAllowedNetwork narrows it further to the network the webmail
+    #   client runs on. Left empty it is in-cluster-wide, which is the same
+    #   boundary as the line above rather than a weaker one — set it on any
+    #   cluster where tenant workloads share the pod network with the client.
+    {{- if .Values.masterAllowedNetwork }}
+    remote {{ .Values.masterAllowedNetwork }} {
+    {{- end }}
+    passdb {
+      driver = passwd-file
+      args = /etc/dovecot/master/users
+      master = yes
+      # return-ok, not continue: continue would re-run the passdbs below and the
+      # deliberately empty passwd-file would fail the login. The master passdb is
+      # authoritative once it matches.
+      result_success = return-ok
+    }
+    {{- if .Values.masterAllowedNetwork }}
+    }
+    {{- end }}
 
     # One oauth2 passdb per Keycloak realm, written by the operator's mail
     # reconciler into the dovecot-realm-auth Secret — the kernel realm for the
@@ -263,6 +336,15 @@ spec:
             secretName: dovecot-realm-auth
             optional: true
             defaultMode: 0400
+        # The master users file, built from the master password in
+        # dovecot-sensitive-values. optional so a cluster that has not seeded it
+        # yet still starts and serves LMTP — inbound delivery does not depend on
+        # this, only webmail retrieval does.
+        - name: master-auth
+          secret:
+            secretName: dovecot-master-auth
+            optional: true
+            defaultMode: 0400
       containers:
         - name: dovecot
           image: dovecot/dovecot:2.3.21
@@ -281,6 +363,9 @@ spec:
             # writes this path into the generated passdb args.
             - name: realm-auth
               mountPath: /etc/dovecot/realms
+              readOnly: true
+            - name: master-auth
+              mountPath: /etc/dovecot/master
               readOnly: true
             - name: mail
               mountPath: /var/mail
