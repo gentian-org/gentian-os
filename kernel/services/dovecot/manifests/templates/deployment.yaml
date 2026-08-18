@@ -1,11 +1,15 @@
 # Raw Deployment — there is no public Dovecot Helm chart worth depending on.
 # Namespace {{ .Values.servicesNamespace }} → Service dovecot-{{ .Values.env }}.{{ .Values.servicesNamespace }}.svc.cluster.local
 #
-# This Pod is not yet configured: it runs the upstream image with no dovecot.conf,
-# no mail storage and none of the objects below mounted. LMTP on 24 is declared as
-# a port but the upstream default config does not listen on it, so Postfix's
-# virtual_transport currently has nowhere to deliver. Making it real is the next
-# change; this one only puts it in the namespace the operator already addresses.
+# Delivery works end to end: Postfix hands a message for a registered tenant
+# domain to LMTP on 24, and it is written to the maildir on the PersistentVolume
+# below as /var/mail/<domain>/<local-part>.
+#
+# Retrieval does not. The Service is ClusterIP and the kernel Gateway listens on
+# 80 and 443 only, so nothing outside the cluster can reach IMAP on 143 — the
+# per-realm oauth2 passdb the operator writes is configured but has never
+# authenticated a client. Exposing it needs a decision this chart does not
+# record: a TCP listener on the gateway, and whether IMAP is offered at all.
 ---
 apiVersion: v1
 kind: ConfigMap

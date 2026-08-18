@@ -2616,12 +2616,18 @@ the real number look worse than it was, in code that only names what it forbids.
 **`docs/commands.md` and `docs/design/mail.md` have not been checked** against the new paradigm.
 `GETTING-STARTED.md` points at both for post-install operations.
 
-**Dovecot is a placeholder.** `kernel/services/dovecot/manifests` is a stock image with no mail
-configuration, no userdb and no persistent storage, so a tenant admin has no mailbox to deliver
-into. Postfix now accepts mail for a tenant domain and hands it over LMTP (§15.2c), which makes
-this the only remaining gap between a provisioned tenant and a reachable one. Closing it needs
-decisions this plan does not record: storage, the passdb/userdb behind `mail-dovecot-domains`, and
-how IMAP authenticates against Keycloak.
+**Dovecot delivers; it does not yet serve.** The chart carries a self-contained `dovecot.conf`,
+a static userdb, a per-realm oauth2 passdb written by the operator, and a PersistentVolume for
+mail. Delivery is verified live: a message to `admin-corp@corp.gtn.host` was accepted by Postfix,
+handed to LMTP, and written to `/var/mail/corp.gtn.host/admin-corp/new/` — `status=sent (250 2.0.0
+… Saved)`.
+
+What is missing is retrieval. `dovecot-prod` is a ClusterIP Service and the kernel Gateway listens
+on 80 and 443 only, so no client outside the cluster reaches IMAP on 143, and the oauth2 passdb —
+configured against the tenant realm's introspection endpoint with its own `gentian-dovecot` client
+— has never authenticated anyone. Two decisions are still unrecorded: whether IMAP is exposed
+through a gateway TCP listener or not offered at all, and whether the empty `users` passwd-file
+deny-all fallback stays the only non-OIDC path.
 
 **`--cluster-infra` is exercised.** `--purge --cluster-infra` removed `cnpg-system`,
 `stakater-system`, their CRDs and their webhook configurations on a live cluster, leaving only the
