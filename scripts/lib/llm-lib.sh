@@ -23,6 +23,49 @@ _vllm_instance_k8s_name() {
 # on-demand one) — each gets its own PVC/Deployment/Service, and whatever
 # was previously deployed but is no longer in VLLM_INSTANCES gets pruned
 # (Deployment+Service only; PVCs are kept — see the warn below for why).
+# =============================================================================
+# _check_time_slicing_ownership — the chart manages a cluster-wide ConfigMap.
+#
+# kernel/services/llm/chart templates time-slicing-config in
+# gpu-operator-resources, which is where the NVIDIA GPU operator reads GPU
+# sharing from. On a cluster that already had one, Helm refuses to adopt an
+# object it did not create, and the release fails with a wall of ownership
+# metadata that never mentions GPUs.
+#
+# Two things are worth saying before that happens: which command fixes it, and
+# that adopting a cluster-wide object into this release means `helm uninstall`
+# later removes GPU sharing for every workload on the node, not only ours.
+# =============================================================================
+_check_time_slicing_ownership() {
+    local cm="time-slicing-config" ns="gpu-operator-resources"
+    kubectl get configmap "${cm}" -n "${ns}" >/dev/null 2>&1 || return 0
+
+    local owner
+    owner="$(kubectl get configmap "${cm}" -n "${ns}" \
+        -o jsonpath='{.metadata.annotations.meta\.helm\.sh/release-name}' 2>/dev/null || true)"
+    [[ "${owner}" == "gentian-llm" ]] && return 0
+
+    local replicas
+    replicas="$(kubectl get configmap "${cm}" -n "${ns}" -o jsonpath='{.data.any}' 2>/dev/null \
+        | grep -oE 'replicas: [0-9]+' | head -1 || true)"
+
+    error "${ns}/${cm} already exists and this release cannot adopt it."
+    error "  It configures GPU time-slicing for the whole node${replicas:+ (${replicas})}."
+    [[ -n "${owner}" ]] && error "  It belongs to the Helm release '${owner}'."
+    error ""
+    error "  Set llm.gpuTimeSliceReplicas on the claim to match what it already"
+    error "  says, then hand it to this release:"
+    error "    kubectl annotate configmap ${cm} -n ${ns} \\"
+    error "      meta.helm.sh/release-name=gentian-llm \\"
+    error "      meta.helm.sh/release-namespace=platform-kernel --overwrite"
+    error "    kubectl label configmap ${cm} -n ${ns} \\"
+    error "      app.kubernetes.io/managed-by=Helm --overwrite"
+    error ""
+    error "  Adopting it means a later 'helm uninstall gentian-llm' removes GPU"
+    error "  sharing for every workload on this node, not only this platform's."
+    return 1
+}
+
 render_and_apply_vllm_gpu_manifest() {
     # The instance list comes from the claim, and the claim's shape is the
     # chart's shape — same field names, same defaults. There is no translation
@@ -72,6 +115,8 @@ yaml.safe_dump({"instances": items}, sys.stdout, default_flow_style=False, sort_
     else
         info "Serving ${count} vLLM instance(s) from the claim."
     fi
+
+    _check_time_slicing_ownership || { rm -f "${values}"; return 1; }
 
     gentian_run helm upgrade --install gentian-llm "${SCRIPT_DIR}/kernel/services/llm/chart" \
         --namespace platform-kernel -f "${values}"
