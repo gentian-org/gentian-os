@@ -1133,11 +1133,13 @@ _claim_cluster_fields() {
     if [[ "${LLM_SUPPORT:-false}" == "true" ]]; then
         printf '  llm:\n'
         printf '    enabled: true\n'
+        printf '    gpuAcceleration: %s\n' "${GPU_ACCELERATION:-false}"
         [[ -n "${GPU_TIME_SLICE_REPLICAS:-}" ]] && printf '    gpuTimeSliceReplicas: %s\n' "${GPU_TIME_SLICE_REPLICAS}"
         [[ -n "${VLLM_INSTANCES:-}" ]] && printf '    vllmInstances: %s\n' "${VLLM_INSTANCES}"
     else
         printf '  # llm:\n'
-        printf '  #   enabled: false            set true on a cluster that serves models\n'
+        printf '  #   enabled: false          set true on a cluster that serves models\n'
+        printf '  #   gpuAcceleration: false  set true when the cluster has GPUs\n'
     fi
     return 0
 }

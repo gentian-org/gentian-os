@@ -848,7 +848,14 @@ load_deployments_cluster_settings() {
         claim_setting EXTERNAL_SMTP_PORT     mail.port     "${claim_file}"
         claim_setting EXTERNAL_SMTP_SSL      mail.ssl      "${claim_file}"
         claim_setting EXTERNAL_SMTP_STARTTLS mail.starttls "${claim_file}"
-        # LLM sizing. Hardware-dependent, and the XRD has said so all along.
+        # LLM serving. Hardware-dependent, and the XRD has said so all along.
+        #
+        # enabled and gpuAcceleration are the switches; without them the sizing
+        # fields below came from the claim while the decision to use them did
+        # not, so llm.enabled: true on the claim changed nothing and no step
+        # said why.
+        claim_setting LLM_SUPPORT             llm.enabled              "${claim_file}"
+        claim_setting GPU_ACCELERATION        llm.gpuAcceleration      "${claim_file}"
         claim_setting GPU_TIME_SLICE_REPLICAS llm.gpuTimeSliceReplicas "${claim_file}"
         claim_setting VLLM_INSTANCES          llm.vllmInstances        "${claim_file}"
         # The edge load balancer. lbProvider is detected from the nodes when

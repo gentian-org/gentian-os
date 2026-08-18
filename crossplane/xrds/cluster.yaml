@@ -179,6 +179,14 @@ spec:
                     enabled:
                       type: boolean
                       default: false
+                    gpuAcceleration:
+                      type: boolean
+                      description: >
+                        Whether this cluster has GPUs to serve models on. With
+                        it false the vLLM instance list renders empty, which is
+                        what a CPU-only cluster wants; the sizing fields below
+                        are read only when it is true.
+                      default: false
                     gpuTimeSliceReplicas:
                       type: integer
                       description: >
