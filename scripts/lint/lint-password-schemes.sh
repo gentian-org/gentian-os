@@ -28,7 +28,7 @@
 set -uo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/../.." || exit 1
 
-RED=$'\033[0;31m'; GREEN=$'\033[0;32m'; YELLOW=$'\033[1;33m'; DIM=$'\033[2m'; NC=$'\033[0m'
+RED=$'\033[0;31m'; GREEN=$'\033[0;32m'; DIM=$'\033[2m'; NC=$'\033[0m'
 
 # Schemes that store the password, or something trivially reversible to it.
 # CRYPT/DES-CRYPT truncate to 8 characters; SHA1/MD5 are unsalted and fall to a
