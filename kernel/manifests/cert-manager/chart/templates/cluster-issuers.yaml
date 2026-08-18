@@ -1,55 +1,11 @@
-# Kernel-level cert-manager ClusterIssuers.
+# Kernel-level cert-manager ClusterIssuers — Let's Encrypt production.
 #
-# Applied unconditionally by install.sh (step 3b) right after cert-manager
-# is up. Both issuers use Let's Encrypt production; choose with the
-# `cert-manager.io/cluster-issuer` annotation on Certificates.
+# Applied by A-06-cluster-issuers as soon as cert-manager is up. Choose between
+# them with the cert-manager.io/cluster-issuer annotation on a Certificate.
 #
-# Templated on:
-#   {{ .Values.letsencryptEmail }}                 — ACME account email (default admin@{{ .Values.kernelDomain }})
-#   {{ .Values.gatewayNamespace }}   — namespace of kernel-public-gateway (default gentian-dev)
-#   {{ .Values.gatewayName }}        — Gateway API parent for HTTP-01 challenges
+# The HTTP-01 issuer is emitted always; the DNS-01 one only when the cluster
+# names a DNS provider, because DNS-01 is the only path to a wildcard and a
+# provider is the only way to solve it. Both bodies live in _issuers.tpl.
 #
-# For dev / rate-limit relief use cluster-issuers-staging.yaml (ACME_ENV=staging).
-# See docs/design/multi-tenancy.md §3.
----
-apiVersion: cert-manager.io/v1
-kind: ClusterIssuer
-metadata:
-  name: letsencrypt-http01
-  labels:
-    app.kubernetes.io/managed-by: gentian-install
-    app.kubernetes.io/part-of: gentian-os
-spec:
-  acme:
-    server: https://acme-v02.api.letsencrypt.org/directory
-    email: {{ .Values.letsencryptEmail }}
-    privateKeySecretRef:
-      name: letsencrypt-http01-account-key
-    solvers:
-      - http01:
-          gatewayHTTPRoute:
-            parentRefs:
-              - group: gateway.networking.k8s.io
-                kind: Gateway
-                name: {{ .Values.gatewayName }}
-                namespace: {{ .Values.gatewayNamespace }}
----
-apiVersion: cert-manager.io/v1
-kind: ClusterIssuer
-metadata:
-  name: letsencrypt-dns01-cloudflare
-  labels:
-    app.kubernetes.io/managed-by: gentian-install
-    app.kubernetes.io/part-of: gentian-os
-spec:
-  acme:
-    server: https://acme-v02.api.letsencrypt.org/directory
-    email: {{ .Values.letsencryptEmail }}
-    privateKeySecretRef:
-      name: letsencrypt-dns01-cloudflare-account-key
-    solvers:
-      - dns01:
-          cloudflare:
-            apiTokenSecretRef:
-              name: cloudflare-api-token
-              key: api-token
+# For dev and reinstall loops use cluster-issuers-staging.yaml (ACME_ENV=staging).
+{{ include "gentian.clusterIssuers" (dict "root" $ "acmeServer" "https://acme-v02.api.letsencrypt.org/directory" "prefix" "letsencrypt") }}

@@ -1,53 +1,44 @@
-# external-dns values (upstream kubernetes-sigs chart).
+# external-dns values.
 #
 # The safety settings here are the point of the file; read them before widening
 # anything. external-dns is a controller with write access to a production DNS
 # zone, and a misconfigured one removes records it did not create.
-provider:
-  name: cloudflare
-
-# The Cloudflare token cert-manager already uses for DNS-01, from the same
-# OpenBao path. One credential with one writer of record, rather than a second
-# to rotate separately and forget.
-env:
-  - name: CF_API_TOKEN
-    valueFrom:
-      secretKeyRef:
-        name: cloudflare-api-token
-        key: cloudflare_api_token
-
-# Never delete. external-dns judges a record unused from cluster state alone, so
-# anything managed outside the cluster — the apex, a verification TXT, an MX
-# added by hand — looks orphaned to it.
+# provider, domainFilters and the credential are NOT here.
 #
-# Move to sync only once the TXT registry below shows it owns exactly what you
-# expect, and understand that sync WILL delete what it believes it owns.
+# They are per-cluster and per-DNS-provider, and this file is read straight from
+# git by Argo CD — so a value written here would be the same for every cluster
+# that syncs it. That is how domainFilters came to name one cluster's zone in a
+# file every cluster reads. They are injected by the Application instead, from
+# kernel/platforms.yaml and the cluster's own claim; what stays here is what is
+# true for every cluster regardless of who hosts its zone.
+
+# Never delete. external-dns decides a record is "unused" from cluster state
+# alone, so anything managed outside the cluster — the apex, an MX added by
+# hand, a verification TXT — looks orphaned to it.
+#
+# upsert-only creates and updates but never removes. Move to sync only once the
+# TXT registry below shows it owns exactly what you expect, and understand that
+# sync WILL delete records it believes it owns.
 policy: upsert-only
 
-# Ownership recorded in TXT records, so it only ever touches names it registered
-# itself. Without a registry it assumes ownership of everything matching the
-# domain filter, which is how unrelated records get removed.
+# Ownership is recorded in TXT records, so external-dns only ever touches names
+# it registered itself. Without a registry it assumes ownership of everything
+# matching the domain filter, which is how unrelated records get removed.
 registry: txt
 txtOwnerId: gentian
 txtPrefix: _extdns.
 
-# Scope. Without this it manages every zone the token can reach.
-domainFilters:
-  - gtn.host
-
-# gateway-httproute: tenant hostnames already live on the HTTPRoutes the
-#   operator writes, so an app's record follows from installing it.
-# crd: DNSEndpoint objects for records with no HTTP object behind them —
-#   MX, SPF, DKIM, DMARC.
 sources:
   - gateway-httproute
   - crd
 
-# The DNSEndpoint CRD the crd source consumes. Without it that source starts and
-# logs a watch error rather than failing, so the mail records would silently
-# never appear.
-crd:
-  create: true
-
+policyOptions: {}
 interval: 1m
 logLevel: info
+
+serviceAccount:
+  create: true
+  name: external-dns
+
+rbac:
+  create: true

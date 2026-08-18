@@ -1,3 +1,38 @@
+{{- /*
+external-dns — DNS records follow the cluster, rather than being kept by hand.
+
+Two sources, for two kinds of record:
+
+  gateway-httproute — every tenant hostname already lives on an HTTPRoute the
+  operator writes, so an app's DNS record appears as a side effect of installing
+  it. Nothing new to declare.
+
+  crd — DNSEndpoint objects for records with no HTTP object behind them: MX,
+  SPF, DKIM, DMARC. The operator emits these per tenant.
+
+This also removes a whole class of outage. A wildcard only covers names that
+have no records of their own, so the moment a tenant gained an MX record it
+stopped inheriting *.<kernel-domain> and its web addresses stopped resolving.
+Explicit records for every name means nothing depends on wildcard coverage.
+
+Everything provider-specific comes from kernel/platforms.yaml — the same entry
+that gives cert-manager its DNS-01 solver, so the two cannot end up pointed at
+different zones or reading different Secrets.
+*/ -}}
+{{- $provider := .Values.dnsProvider | default "none" -}}
+{{- $profile := dict -}}
+{{- if ne $provider "none" -}}
+  {{- if not .Values.dnsProviders -}}
+    {{- fail "dnsProviders table is empty: render this chart with -f kernel/platforms.yaml" -}}
+  {{- end -}}
+  {{- $profile = index .Values.dnsProviders $provider | default dict -}}
+  {{- if not $profile -}}
+    {{- fail (printf "unknown dnsProvider %q — add an entry to kernel/platforms.yaml" $provider) -}}
+  {{- end -}}
+{{- end -}}
+{{- $extdns := index $profile "externalDNS" | default dict -}}
+{{- $cred := index $profile "credential" | default dict -}}
+{{- if index $extdns "enabled" | default false }}
 # The namespace and credential, ahead of the Application.
 #
 # Both are applied by the installer rather than left to Argo: the ExternalSecret
@@ -8,58 +43,51 @@ apiVersion: v1
 kind: Namespace
 metadata:
   name: external-dns
+{{- if $cred }}
 ---
-# The same Cloudflare token cert-manager uses for DNS-01, from the same OpenBao
-# path. One credential with one writer of record, rather than a second token to
-# rotate separately and forget.
+# The same credential cert-manager uses for DNS-01, from the same OpenBao path.
+# One credential with one writer of record, rather than a second token to rotate
+# separately and forget.
 apiVersion: external-secrets.io/v1
 kind: ExternalSecret
 metadata:
-  name: cloudflare-api-token
+  name: {{ $cred.secretName }}
   namespace: external-dns
+  labels:
+    gentianos.io/dns-provider: {{ $provider }}
 spec:
   refreshInterval: 1h
   secretStoreRef:
     kind: ClusterSecretStore
     name: openbao
   target:
-    name: cloudflare-api-token
+    name: {{ $cred.secretName }}
     creationPolicy: Owner
     deletionPolicy: Retain
     template:
       engineVersion: v2
       data:
-        # The key name the external-dns chart reads.
-        # index, not a dotted field: the remote property is api-token and a hyphen in
-        # a Go template parses as subtraction, so {{ "{{" }} .api-token }} fails to render.
-        cloudflare_api_token: '{{ "{{" }} index . "api-token" }}'
+        {{- /*
+        The key names the external-dns chart reads, which are not the key names
+        the provider's own API uses — hence the mapping in platforms.yaml rather
+        than a straight copy.
+
+        index, not a dotted field: a remote property with a hyphen or a dot in
+        it parses as an expression in a Go template, so `.api-token` fails to
+        render.
+        */}}
+        {{- range $chartKey, $field := (index $extdns "secretKeys" | default dict) }}
+        {{ $chartKey }}: '{{ "{{" }} index . {{ $field | quote }} }}'
+        {{- end }}
   data:
-    - secretKey: api-token
+    {{- range $field := ($cred.fields | default list) }}
+    - secretKey: {{ $field.key }}
       remoteRef:
-        key: gentian-os/kernel/dns/cloudflare
-        property: api-token
+        key: {{ $cred.vaultPath }}
+        property: {{ $field.key }}
+    {{- end }}
+{{- end }}
 ---
-# external-dns — DNS records follow the cluster, rather than being kept by hand.
-#
-# Chart: https://kubernetes-sigs.github.io/external-dns/ (the upstream chart)
-#
-# NOT the Bitnami chart: Bitnami withdrew their free Docker Hub images in 2025,
-# so that chart syncs cleanly and then fails with ErrImagePull on an image that
-# no longer exists.
-#
-# Two sources, for two kinds of record:
-#
-#   gateway-httproute — every tenant hostname already lives on an HTTPRoute the
-#   operator writes, so an app's DNS record appears as a side effect of
-#   installing it. Nothing new to declare.
-#
-#   crd — DNSEndpoint objects for records with no HTTP object behind them: MX,
-#   SPF, DKIM, DMARC. The operator emits these per tenant.
-#
-# This also removes a whole class of outage. A wildcard only covers names that
-# have no records of their own, so the moment a tenant gained an MX record it
-# stopped inheriting *.<kernel-domain> and its web addresses stopped resolving.
-# Explicit records for every name means nothing depends on wildcard coverage.
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
@@ -69,12 +97,31 @@ metadata:
 spec:
   project: gentian
   sources:
-  - repoURL: https://kubernetes-sigs.github.io/external-dns/
+  - repoURL: registry-1.docker.io/bitnamicharts
     chart: external-dns
-    targetRevision: "1.15.2"
+    targetRevision: "8.3.5"
     helm:
       valueFiles:
       - $values/kernel/values/external-dns.yaml
+      # Inline, and therefore last: the file above is read by every cluster from
+      # git and holds only what is true for all of them. Which provider, which
+      # zone and which Secret are this cluster's, so they are set here.
+      values: |
+        provider: {{ $extdns.provider }}
+        domainFilters:
+          - {{ required "kernelDomain is required for external-dns domainFilters" .Values.kernelDomain }}
+        {{- if $cred }}
+        # The chart nests each provider's settings under its own key.
+        {{ $extdns.provider }}:
+          secretName: {{ $cred.secretName }}
+          {{- if eq $provider "cloudflare" }}
+          # Proxied would send mail and non-HTTP traffic through Cloudflare's
+          # HTTP edge, which does not carry SMTP — an orange-clouded MX target
+          # breaks mail delivery silently. Records are created DNS-only; turn
+          # the proxy on per record where it is wanted.
+          proxied: false
+          {{- end }}
+        {{- end }}
   - repoURL: {{ .Values.gentianOsRepo | default "https://github.com/gentian-org/gentian-os" }}
     targetRevision: {{ .Values.gentianOsBranch }}
     ref: values
@@ -88,3 +135,10 @@ spec:
     syncOptions:
     - CreateNamespace=true
     - ServerSideApply=true
+{{- else }}
+{{- /*
+No DNS provider, or one whose records are not managed from the cluster. Emitting
+an external-dns with no provider would start a controller that logs an
+authentication failure every interval and never writes a record.
+*/ -}}
+{{- end }}

@@ -2,7 +2,7 @@
 # step: C-01-wildcard-cert
 # phase: platform
 # requires: B-08-cluster-xr
-# provides: wildcard TLS certificate for *.${KERNEL_DOMAIN} (optional)
+# provides: wildcard TLS certificate for *.${KERNEL_DOMAIN} (optional, DNS-01 only)
 # mutates: Certificate in cert-manager, wildcard-tls Secrets in kernel namespaces
 
 check() {
@@ -23,9 +23,20 @@ check() {
         return 0
     fi
 
-    # Absent — and with no DNS-01 token there is nothing to issue it with, so
+    # Absent — and with no DNS provider there is nothing to issue it with, so
     # this is not applicable rather than incomplete.
-    [[ -n "${CF_API_TOKEN:-}" ]] || return "${CHECK_UNDEFINED}"
+    #
+    # Asked of the cluster's configuration, not of one provider's variable.
+    # Gating on CF_API_TOKEN meant a cluster on Route 53 reported its wildcard
+    # step undefined forever, and a cluster that had moved off Cloudflare kept
+    # reporting it applicable because the old variable was still exported.
+    [[ "$(gentian_dns_provider)" != "none" ]] || return "${CHECK_UNDEFINED}"
+
+    # Whether the credential has actually been supplied is deliberately NOT
+    # asked here. It lives in OpenBao, and a check() that reads OpenBao needs a
+    # token the driver does not hold on the --status path — so it would answer
+    # "cannot tell" and be read as "not applicable". apply() asks, because it
+    # has the token, and says which credential is missing.
     return "${CHECK_MISSING}"
 }
 

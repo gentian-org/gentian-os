@@ -151,21 +151,58 @@ spec:
                     in their values. The installer discovers it and writes it
                     here, so it is declared rather than detected at runtime — a
                     Composition cannot read a Node.
+                platform:
+                  type: string
+                  enum:
+                    - self-hosted
+                    - openstack
+                    - infomaniak
+                    - hetzner
+                    - aws
+                    - gcp
+                    - azure
+                    - none
+                    - ""
+                  description: >
+                    Where this cluster runs. Selects an entry in
+                    kernel/platforms.yaml, which is what a provider's edge
+                    LoadBalancer needs to be reachable — AWS's target type and
+                    scheme, Hetzner's location, OpenStack's health monitor.
+                    Detected from the nodes' spec.providerID when absent, so
+                    this is an override rather than a required field; "" emits
+                    no preset at all.
+                platformParams:
+                  type: object
+                  x-kubernetes-preserve-unknown-fields: true
+                  description: >
+                    What a platform's annotations need beyond an address:
+                    Hetzner's location, Azure's public-IP resource group. Which
+                    keys are required is declared per platform in
+                    kernel/platforms.yaml under requiredParams, and a missing
+                    one refuses to render rather than emitting a Service that
+                    stays Pending with no event explaining why.
+                addressRef:
+                  type: string
+                  description: >
+                    A pre-allocated edge address named the way its provider
+                    names it, for the providers that will not take one by IP:
+                    AWS Elastic IP allocation ids and Azure public IP names.
+                    Everywhere else the address is nodeIp.
                 lbProvider:
                   type: string
                   enum: [openstack, metallb, aws, gcp, ""]
                   description: >
-                    Cloud whose LoadBalancer annotations the edge Service needs.
-                    Detected from the nodes' spec.providerID when absent, so this
-                    is an override rather than a required field — set it to ""
-                    to emit no provider annotations at all.
+                    platform under its former name, from when the edge load
+                    balancer was the only thing it selected. Still read, so a
+                    claim written before the rename installs unchanged; new
+                    claims set platform.
                 lbAnnotations:
                   type: string
                   description: >
                     Extra annotations for the edge LoadBalancer Service, as
                     comma-separated key=value pairs. The escape hatch for a
-                    provider lbProvider has no preset for, applied on top of
-                    whatever that preset contributes.
+                    platform the table has no entry for, applied on top of
+                    whatever that entry contributes.
                 storageClass:
                   type: string
                   description: >
@@ -387,6 +424,40 @@ spec:
                         - private-ca
                         - self-signed
                       default: acme-dns01
+                    dnsProvider:
+                      type: string
+                      description: >
+                        Who hosts the zone, when issuerMode is acme-dns01.
+
+                        Separate from issuerMode because they answer different
+                        questions — how control is proved, and by whom — and
+                        folding them together is what made acme-dns01 mean
+                        Cloudflare. Each value is an entry in
+                        kernel/platforms.yaml carrying the cert-manager solver,
+                        the external-dns provider and the one credential both
+                        read.
+
+                        Independent of `platform`: a Hetzner cluster on a
+                        Cloudflare zone is ordinary.
+                      enum:
+                        - cloudflare
+                        - route53
+                        - clouddns
+                        - azuredns
+                        - rfc2136
+                        - hetzner
+                        - infomaniak
+                        - none
+                      default: cloudflare
+                    dnsParams:
+                      type: object
+                      x-kubernetes-preserve-unknown-fields: true
+                      description: >
+                        What a provider's solver needs beyond its credential:
+                        Route 53's region and hosted zone, Cloud DNS's project,
+                        Azure's subscription and resource group, the nameserver
+                        for a self-hosted zone. Required keys are declared per
+                        provider in kernel/platforms.yaml.
                     caBundleSecretRef:
                       type: object
                       description: >

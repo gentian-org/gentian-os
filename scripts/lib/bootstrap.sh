@@ -1199,6 +1199,31 @@ _claim_cluster_fields() {
     local nm="${NETWORK_MODE:-tunnel}"
     local mm="${MAIL_SERVICE_MODE:-external}"
     local im="${CERT_ISSUER_MODE:-acme-dns01}"
+    local pf="${PLATFORM:-}"
+    local dp="${DNS_PROVIDER:-cloudflare}"
+
+    printf '\n'
+    printf '  # Where this cluster runs. Selects the edge load-balancer settings\n'
+    printf '  # its provider needs; see kernel/platforms.yaml for the full list.\n'
+    printf '  #   self-hosted  bare metal or a VM you own, addressed by MetalLB\n'
+    printf '  #   openstack / infomaniak / hetzner / aws / gcp / azure\n'
+    printf '  #   none         no load-balancer integration at all\n'
+    printf '  # Left unset it is detected from the nodes providerID.\n'
+    if [[ -n "${pf}" ]]; then
+        printf '  platform: %s\n' "${pf}"
+    else
+        printf '  # platform:                    detected from the nodes\n'
+    fi
+    if [[ -n "${PLATFORM_PARAMS:-}" ]]; then
+        printf '  platformParams:\n'
+        printf '%s\n' "${PLATFORM_PARAMS}" | tr ',' '\n' | while IFS= read -r _p; do
+            [[ -n "${_p}" && "${_p}" == *=* ]] || continue
+            printf '    %s: "%s"\n' "${_p%%=*}" "${_p#*=}"
+        done
+    else
+        printf '  # platformParams:              hetzner needs location; azure a\n'
+        printf '  #                              publicIpResourceGroup\n'
+    fi
 
     printf '\n'
     printf '  # How traffic reaches this cluster.\n'
@@ -1210,15 +1235,39 @@ _claim_cluster_fields() {
     else
         printf '  # nodeIp:                      not used while networkMode is tunnel\n'
     fi
+    if [[ -n "${EDGE_ADDRESS_REF:-}" ]]; then
+        printf '  addressRef: %s\n' "${EDGE_ADDRESS_REF}"
+    else
+        printf '  # addressRef:                  AWS eipalloc ids or an Azure public\n'
+        printf '  #                              IP name; neither takes an address\n'
+    fi
 
     printf '\n'
-    printf '  # Who issues TLS certificates.\n'
-    printf '  #   acme-dns01   Lets Encrypt over DNS-01; needs the Cloudflare API token\n'
+    printf '  # Who issues TLS certificates, and who hosts the zone. Two questions:\n'
+    printf '  # how control is proved, and by whom.\n'
+    printf '  #   acme-dns01   Lets Encrypt over DNS-01; the only path to a wildcard\n'
     printf '  #   acme-http01  Lets Encrypt over HTTP-01; needs port 80 reachable\n'
     printf '  #   private-ca   your own CA, supplied as certificates.caBundleSecretRef\n'
     printf '  #   self-signed  no public DNS and no ACME reachability; browsers warn\n'
     printf '  certificates:\n'
     printf '    issuerMode: %s\n' "${im}"
+    if [[ "${im}" == "acme-dns01" ]]; then
+        printf '    # cloudflare, route53, clouddns, azuredns, rfc2136, hetzner,\n'
+        printf '    # infomaniak — independent of platform above.\n'
+        printf '    dnsProvider: %s\n' "${dp}"
+        if [[ -n "${DNS_PARAMS:-}" ]]; then
+            printf '    dnsParams:\n'
+            printf '%s\n' "${DNS_PARAMS}" | tr ',' '\n' | while IFS= read -r _p; do
+                [[ -n "${_p}" && "${_p}" == *=* ]] || continue
+                printf '      %s: "%s"\n' "${_p%%=*}" "${_p#*=}"
+            done
+        else
+            printf '    # dnsParams:                route53 needs region and\n'
+            printf '    #                           hostedZoneID; clouddns a project\n'
+        fi
+    else
+        printf '    # dnsProvider:              only read when issuerMode is acme-dns01\n'
+    fi
     if [[ "${im}" == "private-ca" ]]; then
         printf '    caBundleSecretRef:\n'
         printf '      name: %s\n' "${CA_BUNDLE_SECRET_NAME:-gentian-root-ca-tls}"

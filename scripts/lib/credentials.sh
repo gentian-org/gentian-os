@@ -40,28 +40,90 @@ _cat_yq() {
     return 1
 }
 
+# =============================================================================
+# The DNS provider's credential, read from kernel/platforms.yaml
+#
+# credentials.yaml does not list it. Every DNS provider already declares its
+# OpenBao path and fields there, next to the cert-manager solver that reads
+# them, and restating that here would be one fact in two files — the drift that
+# put a Secret name in an issuer and a different one in an ExternalSecret.
+#
+# Only the ACTIVE provider is exposed to the prompt loop. The catalogue
+# describes the platform, so it carries all of them (see
+# scripts/gen/gen-credential-requirements.py); an installer that asked for all
+# of them would ask an operator on Route 53 for a Cloudflare token.
+# =============================================================================
+GENTIAN_PLATFORMS_FILE="${GENTIAN_PLATFORMS_FILE:-${SCRIPT_DIR}/kernel/platforms.yaml}"
+
+_dns_requirement_name() {
+    local provider="${DNS_PROVIDER:-cloudflare}"
+    [[ "${provider}" == "none" ]] && return 1
+    yq_get ".dnsProviders.${provider}.credential.vaultPath" "${GENTIAN_PLATFORMS_FILE}" \
+        >/dev/null 2>&1 || return 1
+    echo "acme-dns-${provider}"
+}
+
+# _dns_req <name> — the platforms.yaml path for a requirement this file owns,
+# or nothing when the name belongs to credentials.yaml.
+_dns_req_path() {
+    local want; want="$(_dns_requirement_name || true)"
+    [[ -n "${want}" && "$1" == "${want}" ]] || return 1
+    echo ".dnsProviders.${want#acme-dns-}.credential"
+}
+
 # catalogue_names [phase] — requirement names, optionally filtered by phase.
 catalogue_names() {
-    local phase="${1:-}"
+    local phase="${1:-}" dns_name dns_phase
     if [[ -n "${phase}" ]]; then
         _cat_yq ".requirements[] | select(.phase == \"${phase}\") | .name"
     else
         _cat_yq '.requirements[].name'
     fi
+    dns_name="$(_dns_requirement_name || true)"
+    if [[ -n "${dns_name}" ]]; then
+        dns_phase="$(catalogue_get "${dns_name}" phase)"
+        [[ -z "${phase}" || "${phase}" == "${dns_phase}" ]] && echo "${dns_name}"
+    fi
+    return 0
 }
 
 # catalogue_get <name> <field> — one scalar from a requirement.
 catalogue_get() {
+    local base
+    if base="$(_dns_req_path "$1")"; then
+        case "$2" in
+            # Constant for every DNS credential: a cluster uses at most one, and
+            # a cluster on HTTP-01 or a private CA uses none.
+            scope)    echo cluster ;;
+            optional) echo true ;;
+            phase)    yq_get "${base}.phase" "${GENTIAN_PLATFORMS_FILE}" 2>/dev/null || echo runtime ;;
+            validate.type)
+                      yq_get "${base}.validate" "${GENTIAN_PLATFORMS_FILE}" 2>/dev/null || echo noop ;;
+            *)        yq_get "${base}.$2" "${GENTIAN_PLATFORMS_FILE}" 2>/dev/null || true ;;
+        esac
+        return 0
+    fi
     _cat_yq ".requirements[] | select(.name == \"$1\") | .$2"
 }
 
 # catalogue_field_keys <name> — the field keys of a requirement, in order.
 catalogue_field_keys() {
+    local base
+    if base="$(_dns_req_path "$1")"; then
+        yq_get "${base}.fields[].key" "${GENTIAN_PLATFORMS_FILE}" 2>/dev/null || true
+        return 0
+    fi
     _cat_yq ".requirements[] | select(.name == \"$1\") | .fields[].key"
 }
 
 # catalogue_field_attr <name> <key> <attr>
 catalogue_field_attr() {
+    local base
+    if base="$(_dns_req_path "$1")"; then
+        yq_get "${base}.fields[] | select(.key == \"$2\") | .$3" \
+            "${GENTIAN_PLATFORMS_FILE}" 2>/dev/null || true
+        return 0
+    fi
     _cat_yq ".requirements[] | select(.name == \"$1\") | .fields[] | select(.key == \"$2\") | .$3"
 }
 
@@ -83,7 +145,12 @@ _env_var_for() {
         deployments-repository/password)   echo GENTIAN_DEPLOYMENTS_GIT_TOKEN ;;
         infra-chart-registry/username)     echo REGISTRY_USER ;;
         infra-chart-registry/password)     echo REGISTRY_PASSWORD ;;
+        # The DNS credential, whichever provider hosts the zone. CF_API_TOKEN is
+        # kept for Cloudflare because it is exported by hand, written in runbooks
+        # and cached on disk from earlier installs; the rest get one generated
+        # name each rather than a table entry per provider.
         acme-dns-cloudflare/api-token)     echo CF_API_TOKEN ;;
+        acme-dns-*/*)                      echo "GENTIAN_DNS_$(printf '%s' "$2" | tr 'a-z.-' 'A-Z__')" ;;
         smtp-relay/relay_username)         echo SMTP_RELAY_USERNAME ;;
         smtp-relay/relay_password)         echo SMTP_RELAY_PASSWORD ;;
         smtp-relay/host)                   echo EXTERNAL_SMTP_HOST ;;
@@ -185,6 +252,14 @@ _requirement_applies() {
             # Infra charts come from a public URL unless the cluster says
             # otherwise, and a public registry has no credential to give.
             [[ "${INFRA_CHART_PRIVATE:-false}" == "true" ]]
+            ;;
+        acme-dns-*)
+            # Only the provider this cluster named, and only when it is going to
+            # solve a DNS-01 challenge at all. On HTTP-01, a private CA or a
+            # self-signed anchor there is no challenge to solve, so asking for a
+            # zone credential is asking for something the cluster cannot use.
+            [[ "$1" == "acme-dns-${DNS_PROVIDER:-cloudflare}" ]] || return 1
+            [[ "${CERT_ISSUER_MODE:-acme-dns01}" == "acme-dns01" ]]
             ;;
         *)
             return 0

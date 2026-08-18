@@ -51,7 +51,7 @@ data:
   KERNEL_DOMAIN: {{ . | quote }}
   {{- end }}
   TENANCY_MODE: {{ $.Values.tenancyMode | default "multi" | quote }}
-  {{- $issuer := $.Values.tenantDNS01ClusterIssuer | default "letsencrypt-dns01-cloudflare" }}
+  {{- $issuer := include "gentian.tenantDNS01ClusterIssuer" $ }}
   ACME_STAGING: {{ if contains "staging" $issuer }}"true"{{ else }}"false"{{ end }}
   KEYCLOAK_INTERNAL_URL: {{ $keycloakInternal | quote }}
   {{- with $smtpHost }}

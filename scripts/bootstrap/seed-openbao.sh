@@ -357,19 +357,30 @@ else
 fi
 
 # --- Cloudflare API token (DNS-01 ACME for kernel wildcard) ---
-# Optional: only required when KERNEL_DOMAIN is served via Cloudflare and the
-# kernel wildcard Certificate is enabled (see docs/design/multi-tenancy.md §3).
-# Sourced from CF_API_TOKEN env var to keep the positional-arg contract stable.
-if [ -n "${CF_API_TOKEN:-}" ]; then
+# The zone credential, under the path its provider owns in kernel/platforms.yaml.
+#
+# Only required when the cluster solves DNS-01 — a wildcard certificate is the
+# only thing that needs it. Cloudflare carries two extra fields no other
+# provider has: the zone id and tunnel CNAME the operator's optional edge-DNS
+# adapter reads. They are written alongside the token rather than at a path of
+# their own, because they are the same account's configuration.
+DNS_PROVIDER="${DNS_PROVIDER:-cloudflare}"
+if [ "${DNS_PROVIDER}" = "cloudflare" ] && [ -n "${CF_API_TOKEN:-}" ]; then
     kv_put "dns/cloudflare" "$(jq -n \
         --arg api_token "${CF_API_TOKEN}" \
         --arg zone_id "${CF_ZONE_ID:-}" \
         --arg tunnel_cname "${CF_TUNNEL_CNAME:-}" \
         '{"api-token": $api_token, "zone-id": $zone_id, "tunnel-cname": $tunnel_cname}')"
+elif [ "${DNS_PROVIDER}" != "cloudflare" ] && [ "${DNS_PROVIDER}" != "none" ] && [ -n "${GENTIAN_DNS_FIELDS_JSON:-}" ]; then
+    # Every other provider: the installer collected its fields by name from the
+    # catalogue and handed them over as one JSON object, so this stays a single
+    # write regardless of how many fields the provider has.
+    kv_put "dns/${DNS_PROVIDER}" "${GENTIAN_DNS_FIELDS_JSON}"
 else
     echo ""
-    echo "  Skipping Cloudflare API token (CF_API_TOKEN not set)."
-    echo "  To add it later: bao kv put gentian-os/kernel/dns/cloudflare api-token=<token>"
+    echo "  Skipping the DNS-01 credential for provider ${DNS_PROVIDER}."
+    echo "  To add it later, supply it to the credential manager, or:"
+    echo "    bao kv put gentian-os/kernel/dns/${DNS_PROVIDER} <field>=<value>"
 fi
 
 # --- LLM serving (LiteLLM / vLLM credentials) ---

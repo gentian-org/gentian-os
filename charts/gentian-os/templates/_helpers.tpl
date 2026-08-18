@@ -59,3 +59,24 @@ Create the name of the service account to use.
 {{- default "default" .Values.serviceAccount.name }}
 {{- end }}
 {{- end }}
+
+{{- /*
+The ClusterIssuer per-tenant wildcards are issued by.
+
+Defaults to the cluster's own DNS-01 issuer rather than to Cloudflare's. The
+literal "letsencrypt-dns01-cloudflare" was the default in two templates and in
+the operator's Go, so a cluster on any other provider had to override it in
+three places or issue tenant certificates against an issuer that does not exist
+— which surfaces as tenant hostnames served with the wrong certificate, not as
+a missing object.
+
+An explicit tenantDNS01ClusterIssuer still wins: a tenant zone is not always the
+kernel zone, and a cluster whose tenants live somewhere else needs to say so.
+*/ -}}
+{{- define "gentian.tenantDNS01ClusterIssuer" -}}
+{{- if .Values.tenantDNS01ClusterIssuer -}}
+{{- .Values.tenantDNS01ClusterIssuer -}}
+{{- else -}}
+{{- printf "letsencrypt-dns01-%s" (.Values.dnsProvider | default "cloudflare") -}}
+{{- end -}}
+{{- end -}}

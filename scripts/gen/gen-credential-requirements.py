@@ -26,6 +26,7 @@ except ImportError:  # pragma: no cover
 
 ROOT = Path(__file__).resolve().parents[2]   # scripts/gen/ -> repo root
 SOURCE = ROOT / "credentials.yaml"
+PLATFORMS = ROOT / "kernel" / "platforms.yaml"
 TARGET = ROOT / "kernel" / "credentials" / "credential-requirements.yaml"
 
 HEADER = """# GENERATED FILE — DO NOT EDIT.
@@ -85,6 +86,46 @@ def build_probe(req):
             ],
         },
     }
+
+
+def dns_requirements(platforms):
+    """The DNS providers' credentials, from the table that also defines their solvers.
+
+    They are not written out in credentials.yaml because they are already
+    written down: kernel/platforms.yaml gives each provider the Secret its
+    cert-manager solver reads, the OpenBao path behind it and the fields it
+    carries. Restating that here would be the same fact in two files, and the
+    one that drifts is always the one nothing renders.
+
+    Every provider is emitted, not only the one this cluster selected. The
+    catalogue describes the platform; which entry applies to a given cluster is
+    the installer's question, and it answers it from the same table.
+    """
+    reqs = []
+    for name, profile in sorted((platforms.get("dnsProviders") or {}).items()):
+        cred = profile.get("credential")
+        if not cred:
+            continue          # "none", and any provider whose access is not a secret
+        req = {
+            "name": f"acme-dns-{name}",
+            "displayName": cred.get("displayName", f"{profile.get('displayName', name)} Credentials"),
+            # Bootstrap only where the provider has a probe the installer can
+            # actually run; see the note on cloudflare in kernel/platforms.yaml.
+            "phase": cred.get("phase", "runtime"),
+            "scope": "cluster",
+            # Every one of them is optional: a cluster uses at most one, and a
+            # cluster on HTTP-01 or a private CA uses none.
+            "optional": True,
+            "vaultPath": cred["vaultPath"],
+            "fields": cred["fields"],
+            "consumedBy": [{"kind": "XCluster", "name": "cluster"}],
+        }
+        if cred.get("description"):
+            req["description"] = cred["description"]
+        if cred.get("validate"):
+            req["validate"] = {"type": cred["validate"]}
+        reqs.append(req)
+    return reqs
 
 
 def build_documents(catalogue):
@@ -202,6 +243,14 @@ def main():
     check = "--check" in sys.argv
 
     catalogue = yaml.safe_load(SOURCE.read_text())
+
+    # The DNS providers' credentials are merged in from kernel/platforms.yaml
+    # rather than restated in credentials.yaml — see dns_requirements. Merged
+    # before validation, so they are held to the same rules as everything else.
+    catalogue.setdefault("requirements", []).extend(
+        dns_requirements(yaml.safe_load(PLATFORMS.read_text()))
+    )
+
     errors = validate(catalogue)
     if errors:
         for e in errors:
@@ -215,7 +264,8 @@ def main():
             sys.exit(f"{TARGET} does not exist. Run `make gen-all`.")
         if TARGET.read_text() != rendered:
             sys.exit(
-                f"{TARGET} is out of date with credentials.yaml.\n"
+                f"{TARGET} is out of date with credentials.yaml "
+                f"or kernel/platforms.yaml.\n"
                 f"Run `make gen-all` and commit the result."
             )
         print(f"credential catalogue carriers agree ({len(catalogue['requirements'])} requirements)")

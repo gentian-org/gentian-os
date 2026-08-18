@@ -768,6 +768,24 @@ claim_setting() {
     export "${var?}"
 }
 
+# claim_map_setting VAR field claim_file — a map-valued claim field, flattened.
+#
+# claim_setting reads scalars. platformParams and certificates.dnsParams are
+# maps whose keys differ per provider — Hetzner's location, Route 53's hosted
+# zone — so there is nothing to enumerate here and nothing that should be.
+#
+# Flattened to the k=v,k=v shape LB_ANNOTATIONS already uses, because both end
+# up as --set-string arguments and a second encoding would need a second parser.
+claim_map_setting() {
+    local var="$1" field="$2" claim_file="$3" value
+    [[ -n "${!var:-}" ]] && return 0
+    value="$(yq_get ".spec.${field} | to_entries | map(.key + \"=\" + (.value | tostring)) | join(\",\")" \
+        "${claim_file}" 2>/dev/null || true)"
+    [[ -z "${value}" || "${value}" == "null" ]] && return 0
+    printf -v "${var}" '%s' "${value}"
+    export "${var?}"
+}
+
 load_deployments_cluster_settings() {
     # Whether the operator named a path, recorded before the default fills it
     # in. A configured path that does not exist is a mistake to report, not an
@@ -826,7 +844,8 @@ load_deployments_cluster_settings() {
     # direction.
     local v
     for v in TENANCY_MODE NETWORK_MODE NODE_IP ROUTING_MODE SECRET_MODE \
-             STORAGE_CLASS MAIL_SERVICE_MODE LB_PROVIDER LB_ANNOTATIONS; do
+             STORAGE_CLASS MAIL_SERVICE_MODE LB_PROVIDER LB_ANNOTATIONS \
+             PLATFORM PLATFORM_PARAMS EDGE_ADDRESS_REF DNS_PROVIDER DNS_PARAMS; do
         [[ -n "${!v:-}" ]] || continue
         [[ -r "${INSTALL_CONFIG_FILE:-}" ]] || continue
         grep -qE "^[[:space:]]*(export[[:space:]]+)?${v}=" "${INSTALL_CONFIG_FILE}" || continue
@@ -857,10 +876,31 @@ load_deployments_cluster_settings() {
         claim_setting LLM_SUPPORT             llm.enabled              "${claim_file}"
         claim_setting GPU_ACCELERATION        llm.gpuAcceleration      "${claim_file}"
         claim_setting GPU_TIME_SLICE_REPLICAS llm.gpuTimeSliceReplicas "${claim_file}"
-        # The edge load balancer. lbProvider is detected from the nodes when
-        # neither the claim nor the environment says, so this is an override.
+        # Where this cluster runs, and who hosts its zone. Two dimensions, kept
+        # apart on purpose: a Hetzner cluster on a Cloudflare zone is ordinary,
+        # and one field could not describe it. Both name an entry in
+        # kernel/platforms.yaml, which is where a new provider is added.
+        #
+        # PLATFORM is detected from the nodes' providerID when neither the claim
+        # nor the environment says, so the claim is an override rather than a
+        # requirement.
+        claim_setting     PLATFORM        platform        "${claim_file}"
+        claim_map_setting PLATFORM_PARAMS platformParams  "${claim_file}"
+        claim_setting     EDGE_ADDRESS_REF addressRef     "${claim_file}"
+        claim_setting     DNS_PROVIDER    certificates.dnsProvider "${claim_file}"
+        claim_map_setting DNS_PARAMS      certificates.dnsParams   "${claim_file}"
+
+        # lbProvider was PLATFORM's name while the edge load balancer was the
+        # only thing it selected. Kept readable so a claim written before the
+        # rename still installs; the claim is the thing to update.
         claim_setting LB_PROVIDER    lbProvider    "${claim_file}"
         claim_setting LB_ANNOTATIONS lbAnnotations "${claim_file}"
+        if [[ -n "${LB_PROVIDER:-}" && -z "${PLATFORM:-}" ]]; then
+            PLATFORM="${LB_PROVIDER}"
+            export PLATFORM
+            warn "claims/cluster.yaml sets lbProvider; it is now spec.platform."
+            warn "  Reading it as platform=${PLATFORM}. Rename the field when convenient."
+        fi
     fi
 }
 
@@ -1781,16 +1821,27 @@ apply_bootstrap_application() {
         # was announced as a successful apply.
         local rendered; rendered="$(mktemp)"
         if ! helm template gentian-bootstrap "${chart}" -s "templates/${name}.yaml" \
+                -f "${SCRIPT_DIR}/kernel/platforms.yaml" \
                 --set-string "gentianOsBranch=${GENTIAN_OS_BRANCH}" \
                 --set-string "storageClass=${STORAGE_CLASS}" \
                 --set-string "stage=${GENTIAN_DEPLOYMENTS_STAGE}" \
+                --set-string "kernelDomain=${KERNEL_DOMAIN:-}" \
+                --set-string "dnsProvider=${DNS_PROVIDER:-cloudflare}" \
                 --set-string "cluster=${GENTIAN_DEPLOYMENTS_CLUSTER_ID}" >"${rendered}"; then
             rm -f "${rendered}"
             error "Rendering ${name} failed; nothing was applied."
             exit 1
         fi
+        # An empty render is a decision for some templates and a failure for the
+        # rest. external-dns emits nothing when the cluster has no DNS provider,
+        # which is the correct shape — a controller with no provider would
+        # authenticate-fail every interval and never write a record.
         if [[ ! -s "${rendered}" ]]; then
             rm -f "${rendered}"
+            if [[ "${name}" == "external-dns" ]]; then
+                info "No DNS provider for this cluster; external-dns not installed."
+                return 0
+            fi
             error "Rendering ${name} produced nothing; nothing was applied."
             exit 1
         fi

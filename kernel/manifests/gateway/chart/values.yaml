@@ -2,15 +2,35 @@ namespace: envoy-gateway-system
 
 # The address DNS points at. Empty leaves the cloud controller to allocate one,
 # which is what NETWORK_MODE=tunnel wants.
+#
+# Whether it is honoured, and how, is the platform's business — see
+# kernel/platforms.yaml. On GCP it must already be reserved as a regional
+# external static address; on AWS and Azure it is not used at all, because
+# neither resolves an edge address by IP (see addressRef).
 nodeIp: ""
 
-# Cloud whose LoadBalancer annotations the Service needs. The installer detects
-# this from the nodes' spec.providerID and passes it in; "" emits no preset.
-lbProvider: ""
+# A pre-allocated address named the way its provider names it, for the
+# providers that do not accept one by IP: AWS Elastic IP allocation ids
+# (eipalloc-…, comma separated, one per subnet) and Azure public IP names.
+addressRef: ""
 
-# Free-form additions, applied on top of whatever the preset contributes, so a
-# provider without a preset works without changing this chart.
+# Where this cluster runs. A key in the `platforms` table, detected from the
+# nodes' spec.providerID when the operator did not say; "" emits no preset.
+platform: ""
+
+# Everything a platform's annotations need that is not an address: Hetzner's
+# location, Azure's public-IP resource group. Keys are named per platform in
+# kernel/platforms.yaml under requiredParams.
+platformParams: {}
+
+# Free-form additions, applied on top of whatever the platform contributes, so a
+# provider with no entry in the table works without changing anything.
 extraAnnotations: {}
+
+# Merged in from kernel/platforms.yaml, which is the single definition. Empty
+# here so a render that forgets the file fails with a message naming it rather
+# than emitting a Service with no annotations at all.
+platforms: {}
 
 envoy:
   # Two, spread across hosts. externalTrafficPolicy is Local, so a node serves

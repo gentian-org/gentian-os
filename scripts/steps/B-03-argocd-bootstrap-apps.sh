@@ -2,7 +2,7 @@
 # step: B-03-argocd-bootstrap-apps
 # phase: secrets
 # requires: B-02-openbao-transit-init
-# provides: openbao, reloader, cnpg and globals Applications
+# provides: openbao, reloader, cnpg, globals and external-dns Applications
 # mutates: ArgoCD Applications in argocd
 
 # OpenBao is deployed BY ArgoCD rather than by this installer, which is what
@@ -22,7 +22,7 @@ apply() {
 
 destroy() {
     local app
-    for app in openbao reloader cnpg cnpg-cluster globals; do
+    for app in openbao reloader cnpg cnpg-cluster globals external-dns; do
         kubectl delete application "$app" -n argocd \
             --ignore-not-found=true 2>/dev/null || true
     done

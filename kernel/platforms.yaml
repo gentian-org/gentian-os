@@ -1,0 +1,391 @@
+# =============================================================================
+# kernel/platforms.yaml — where this cluster runs, and who hosts its DNS
+# =============================================================================
+#
+# One table, several consumers. It is passed as an extra values file to every
+# chart that needs to know about the platform:
+#
+#   kernel/manifests/gateway/chart          the edge LoadBalancer Service
+#   kernel/manifests/cert-manager/chart     the DNS-01 solver and its credential
+#   kernel/bootstrap/chart                  external-dns
+#
+# Each of those charts declares `platforms: {}` and `dnsProviders: {}` as empty
+# defaults, so rendering one without this file fails with a message naming the
+# file rather than silently emitting a Service with no annotations.
+#
+# TWO DIMENSIONS, DELIBERATELY SEPARATE
+#
+# `platform` is who runs the machines and answers for a LoadBalancer Service.
+# `dnsProvider` is who hosts the zone. They are independent: a Hetzner cluster
+# on a Cloudflare zone is an ordinary arrangement, and a table that folded DNS
+# into the platform would have to give that combination a wrong answer.
+#
+# ADDING A PROVIDER
+#
+# Add an entry. Nothing in a template branches on a provider name — annotations
+# are rendered from the map below, and the DNS-01 solver block is passed through
+# to cert-manager verbatim. That is the whole extension point.
+#
+# Annotation values are Go templates rendered against the consuming chart's
+# values, and an annotation that renders empty is dropped. That is what lets one
+# entry cover both "pin this address" and "let the cloud allocate one" without a
+# second field saying which.
+# =============================================================================
+
+platforms:
+
+  # ── Self-hosted ────────────────────────────────────────────────────────────
+  # Bare metal, a homelab, a VM someone owns. No cloud controller, so the
+  # address is claimed by MetalLB rather than allocated.
+  self-hosted:
+    displayName: Self-hosted (MetalLB)
+    supportsLoadBalancerIP: true
+    lbAnnotations:
+      metallb.universe.tf/loadBalancerIPs: '{{ .Values.nodeIp }}'
+
+  # A cluster with no load balancer implementation at all: k3s ServiceLB, a
+  # single node behind a tunnel, or an edge fronted by something outside the
+  # cluster. Nothing is annotated and nothing is pinned.
+  none:
+    displayName: No load-balancer integration
+    supportsLoadBalancerIP: false
+    lbAnnotations: {}
+
+  # ── OpenStack, and the providers built on it ───────────────────────────────
+  openstack:
+    displayName: OpenStack (Octavia)
+    supportsLoadBalancerIP: true
+    lbAnnotations:
+      # The address survives Service deletion, so a reinstall can adopt it again
+      # rather than stranding it.
+      loadbalancer.openstack.org/keep-floatingip: "true"
+      # Envoy's Service is externalTrafficPolicy: Local, and Octavia adds every
+      # node as a pool member without probing them — so without a monitor the
+      # balancer keeps handing connections to nodes that drop them, and it
+      # presents as intermittent TLS resets across every hostname the cluster
+      # serves. Upstream calls this out: cloud-provider-openstack#2866.
+      loadbalancer.openstack.org/enable-health-monitor: "true"
+
+  # Infomaniak Public Cloud is OpenStack, so it inherits the Octavia behaviour
+  # above rather than describing it twice. Kept as its own name because that is
+  # the name an operator knows their cluster by.
+  infomaniak:
+    displayName: Infomaniak Public Cloud (OpenStack/Octavia)
+    supportsLoadBalancerIP: true
+    lbAnnotations:
+      loadbalancer.openstack.org/keep-floatingip: "true"
+      loadbalancer.openstack.org/enable-health-monitor: "true"
+
+  # ── Hetzner ────────────────────────────────────────────────────────────────
+  # hcloud-cloud-controller-manager. The load balancer has to be placed, so
+  # location (or network-zone) is required: without it the Service stays
+  # Pending with no event explaining why.
+  hetzner:
+    displayName: Hetzner Cloud (hcloud CCM)
+    supportsLoadBalancerIP: false
+    requiredParams:
+      - location
+    lbAnnotations:
+      load-balancer.hetzner.cloud/location: '{{ .Values.platformParams.location }}'
+      load-balancer.hetzner.cloud/use-private-ip: '{{ .Values.platformParams.usePrivateIp | default "" }}'
+      # An already-allocated Hetzner IP, by address. Empty means hcloud
+      # allocates one with the load balancer.
+      load-balancer.hetzner.cloud/ipv4: '{{ .Values.nodeIp }}'
+
+  # ── AWS ────────────────────────────────────────────────────────────────────
+  # An NLB through the AWS Load Balancer Controller.
+  aws:
+    displayName: AWS (NLB via aws-load-balancer-controller)
+    # NLBs ignore loadBalancerIP entirely, so emitting it would be a lie. The
+    # address arrives as an Elastic IP allocation instead — set addressRef to
+    # the eipalloc-… ids, one per subnet, comma separated.
+    supportsLoadBalancerIP: false
+    lbAnnotations:
+      service.beta.kubernetes.io/aws-load-balancer-type: external
+      service.beta.kubernetes.io/aws-load-balancer-nlb-target-type: instance
+      service.beta.kubernetes.io/aws-load-balancer-scheme: internet-facing
+      service.beta.kubernetes.io/aws-load-balancer-eip-allocations: '{{ .Values.addressRef }}'
+
+  # ── Google Cloud ───────────────────────────────────────────────────────────
+  # GKE honours loadBalancerIP, but ONLY for an address already reserved as a
+  # regional external static IP in the cluster's own region. An arbitrary
+  # address leaves the Service Pending, which is why nodeIp on GCP is a value
+  # somebody reserves first rather than one they pick.
+  gcp:
+    displayName: Google Cloud (GKE L4 external)
+    supportsLoadBalancerIP: true
+    lbAnnotations: {}
+
+  # ── Azure ──────────────────────────────────────────────────────────────────
+  # AKS resolves a pre-created static address by NAME, not by address, and the
+  # public IP commonly lives in the node resource group rather than the
+  # cluster's — hence two params rather than an IP.
+  azure:
+    displayName: Azure (AKS standard load balancer)
+    supportsLoadBalancerIP: false
+    lbAnnotations:
+      service.beta.kubernetes.io/azure-pip-name: '{{ .Values.addressRef }}'
+      service.beta.kubernetes.io/azure-load-balancer-resource-group: '{{ .Values.platformParams.publicIpResourceGroup | default "" }}'
+
+# =============================================================================
+# DNS providers
+# =============================================================================
+#
+# Each entry carries three things, because three components need the same
+# answer and must not disagree about it:
+#
+#   solver       passed to cert-manager verbatim as the dns01 solver block, so
+#                a provider is an entry here rather than a template branch
+#   externalDNS  the provider name external-dns knows, plus how its credential
+#                reaches the container
+#   credential   one Secret, one OpenBao path, shared by both — a second copy
+#                of a DNS token is a second thing to rotate and forget
+#
+# The ClusterIssuer is named letsencrypt[-staging]-dns01-<provider>.
+# =============================================================================
+
+dnsProviders:
+
+  # No DNS-01. HTTP-01, a private CA or a self-signed anchor; records are
+  # managed by hand or by something outside this cluster. Selecting this with
+  # issuerMode acme-dns01 is refused at validation rather than at issuance.
+  none:
+    displayName: No DNS provider
+    solver: {}
+    externalDNS:
+      enabled: false
+
+  cloudflare:
+    displayName: Cloudflare
+    credential:
+      secretName: cloudflare-api-token
+      vaultPath: gentian-os/kernel/dns/cloudflare
+      displayName: Cloudflare DNS API Token
+      # Bootstrap because it has a probe. validators.sh holds bootstrap
+      # validators to curl and openssl, so a provider whose API needs request
+      # signing — Route 53's SigV4, Cloud DNS's OAuth2, Azure's AAD — cannot
+      # have one and is phase: runtime instead. That is not a lesser status:
+      # it means the credential manager collects it after install, and C-01
+      # issues the wildcard on the next pass.
+      phase: bootstrap
+      description: >
+        Token with DNS edit rights on the kernel domain's zone, used for DNS-01
+        ACME challenges.
+      # A zone lookup for the kernel domain: one authenticated GET, so it stays
+      # inside the curl-only ceiling, and it asks the question that matters —
+      # can this token reach the zone DNS-01 has to write to. The token-verify
+      # endpoint answers a different one: it rejects account-owned tokens
+      # outright and passes tokens with no access to this domain.
+      validate: cloudflare-dns
+      fields:
+        - key: api-token
+          format: token
+          secret: true
+    solver:
+      cloudflare:
+        apiTokenSecretRef:
+          name: cloudflare-api-token
+          key: api-token
+    externalDNS:
+      enabled: true
+      provider: cloudflare
+      # The key names the external-dns chart reads, mapped from the fields above.
+      secretKeys:
+        cloudflare_api_token: api-token
+
+  route53:
+    displayName: AWS Route 53
+    requiredParams:
+      - region
+      - hostedZoneID
+    credential:
+      secretName: route53-credentials
+      vaultPath: gentian-os/kernel/dns/route53
+      displayName: AWS Route 53 Credentials
+      description: >
+        An access key pair with change permission on the kernel domain's hosted
+        zone. Leave unset on a cluster using IRSA, where the solver's pod
+        identity carries the permission instead.
+      fields:
+        - key: access-key-id
+          format: string
+          secret: false
+        - key: secret-access-key
+          format: token
+          secret: true
+    solver:
+      route53:
+        region: '{{ .Values.dnsParams.region }}'
+        hostedZoneID: '{{ .Values.dnsParams.hostedZoneID }}'
+        accessKeyIDSecretRef:
+          name: route53-credentials
+          key: access-key-id
+        secretAccessKeySecretRef:
+          name: route53-credentials
+          key: secret-access-key
+    externalDNS:
+      enabled: true
+      provider: aws
+      secretKeys:
+        aws_access_key_id: access-key-id
+        aws_secret_access_key: secret-access-key
+
+  clouddns:
+    displayName: Google Cloud DNS
+    requiredParams:
+      - project
+    credential:
+      secretName: clouddns-credentials
+      vaultPath: gentian-os/kernel/dns/clouddns
+      displayName: Google Cloud DNS Service Account
+      description: >
+        A service account key with roles/dns.admin on the project holding the
+        zone. Leave unset on a cluster using Workload Identity.
+      fields:
+        - key: service-account.json
+          format: token
+          secret: true
+    solver:
+      cloudDNS:
+        project: '{{ .Values.dnsParams.project }}'
+        serviceAccountSecretRef:
+          name: clouddns-credentials
+          key: service-account.json
+    externalDNS:
+      enabled: true
+      provider: google
+      secretKeys:
+        credentials.json: service-account.json
+
+  azuredns:
+    displayName: Azure DNS
+    requiredParams:
+      - subscriptionID
+      - tenantID
+      - resourceGroupName
+      - clientID
+    credential:
+      secretName: azuredns-credentials
+      vaultPath: gentian-os/kernel/dns/azuredns
+      displayName: Azure DNS Client Secret
+      description: >
+        The client secret of an app registration with DNS Zone Contributor on
+        the zone's resource group. Leave unset when using a managed identity.
+      fields:
+        - key: client-secret
+          format: token
+          secret: true
+    solver:
+      azureDNS:
+        subscriptionID: '{{ .Values.dnsParams.subscriptionID }}'
+        tenantID: '{{ .Values.dnsParams.tenantID }}'
+        resourceGroupName: '{{ .Values.dnsParams.resourceGroupName }}'
+        hostedZoneName: '{{ .Values.dnsParams.hostedZoneName | default .Values.kernelDomain }}'
+        environment: '{{ .Values.dnsParams.environment | default "AzurePublicCloud" }}'
+        clientID: '{{ .Values.dnsParams.clientID }}'
+        clientSecretSecretRef:
+          name: azuredns-credentials
+          key: client-secret
+    externalDNS:
+      enabled: true
+      provider: azure
+      secretKeys:
+        azure.json: client-secret
+
+  # A zone this cluster's operator runs themselves — BIND, Knot, PowerDNS —
+  # updated over dynamic DNS. The self-hosted answer to DNS-01, and the only
+  # one that needs no account anywhere.
+  rfc2136:
+    displayName: Self-hosted zone (RFC2136 dynamic update)
+    requiredParams:
+      - nameserver
+      - tsigKeyName
+    credential:
+      secretName: rfc2136-credentials
+      vaultPath: gentian-os/kernel/dns/rfc2136
+      displayName: RFC2136 TSIG Secret
+      description: >
+        The TSIG key material the nameserver accepts dynamic updates under.
+      fields:
+        - key: tsig-secret
+          format: token
+          secret: true
+    solver:
+      rfc2136:
+        nameserver: '{{ .Values.dnsParams.nameserver }}'
+        tsigKeyName: '{{ .Values.dnsParams.tsigKeyName }}'
+        tsigAlgorithm: '{{ .Values.dnsParams.tsigAlgorithm | default "HMACSHA512" }}'
+        tsigSecretSecretRef:
+          name: rfc2136-credentials
+          key: tsig-secret
+    externalDNS:
+      enabled: true
+      provider: rfc2136
+      secretKeys:
+        rfc2136_tsig_secret: tsig-secret
+
+  # ── Providers reached through a webhook ────────────────────────────────────
+  # Neither Hetzner DNS nor Infomaniak has a solver built into cert-manager, and
+  # external-dns reaches both through its webhook provider. The shape is the
+  # same for any such provider, so they are entries here rather than a category:
+  # install the webhook, name it in dnsParams, and the solver below passes
+  # through unchanged.
+  #
+  # groupName and solverName belong to the webhook that is installed, so they
+  # are params rather than constants — a table that guessed them would be wrong
+  # for every webhook but one.
+  hetzner:
+    displayName: Hetzner DNS (cert-manager webhook)
+    requiredParams:
+      - webhookGroupName
+      - webhookSolverName
+    credential:
+      secretName: hetzner-dns-credentials
+      vaultPath: gentian-os/kernel/dns/hetzner
+      displayName: Hetzner DNS API Token
+      description: >
+        A Hetzner DNS API token with write access to the kernel domain's zone.
+      fields:
+        - key: api-token
+          format: token
+          secret: true
+    solver:
+      webhook:
+        groupName: '{{ .Values.dnsParams.webhookGroupName }}'
+        solverName: '{{ .Values.dnsParams.webhookSolverName }}'
+        config:
+          secretName: hetzner-dns-credentials
+          secretKey: api-token
+    externalDNS:
+      enabled: true
+      provider: webhook
+      secretKeys:
+        api-token: api-token
+
+  infomaniak:
+    displayName: Infomaniak DNS (cert-manager webhook)
+    requiredParams:
+      - webhookGroupName
+      - webhookSolverName
+    credential:
+      secretName: infomaniak-dns-credentials
+      vaultPath: gentian-os/kernel/dns/infomaniak
+      displayName: Infomaniak API Token
+      description: >
+        An Infomaniak API token scoped to the domain product holding the zone.
+      fields:
+        - key: api-token
+          format: token
+          secret: true
+    solver:
+      webhook:
+        groupName: '{{ .Values.dnsParams.webhookGroupName }}'
+        solverName: '{{ .Values.dnsParams.webhookSolverName }}'
+        config:
+          secretName: infomaniak-dns-credentials
+          secretKey: api-token
+    externalDNS:
+      enabled: true
+      provider: webhook
+      secretKeys:
+        api-token: api-token

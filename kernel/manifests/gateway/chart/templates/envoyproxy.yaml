@@ -1,35 +1,42 @@
 {{- /*
-Provider annotations live here, not in shell.
+Provider variation is data, not branches.
 
-They were built by _edge_lb_annotations as an indented YAML fragment appended to
-a .tmpl by envsubst — a string whose correctness depended on the function
-getting the indentation right for a context it could not see. A template owns
-its own shape.
+The annotations were once built by _edge_lb_annotations as an indented YAML
+fragment appended to a .tmpl by envsubst — a string whose correctness depended on
+the function getting the indentation right for a context it could not see. Then
+they were an if/else chain here, which owned its own shape but grew a limb per
+provider and made "add a cloud" a code change in a file about Envoy.
+
+Now they are a lookup in kernel/platforms.yaml. Each value is itself a template,
+rendered against these values, and an annotation that renders empty is dropped —
+which is what lets one entry express both "pin this address" and "let the cloud
+allocate one" without a second field saying which.
 */ -}}
-{{- $ann := dict -}}
-{{- if eq .Values.lbProvider "openstack" -}}
-  {{- /*
-  keep-floatingip: the address survives Service deletion, so a reinstall can
-  adopt it again rather than stranding it.
-
-  enable-health-monitor: Envoy's Service is externalTrafficPolicy: Local, and
-  Octavia adds every node as a pool member without probing them — so without a
-  monitor the balancer keeps handing connections to nodes that drop them, and it
-  presents as intermittent TLS resets across every hostname the cluster serves.
-  Upstream calls this out: cloud-provider-openstack#2866.
-  */ -}}
-  {{- $_ := set $ann "loadbalancer.openstack.org/keep-floatingip" "true" -}}
-  {{- $_ := set $ann "loadbalancer.openstack.org/enable-health-monitor" "true" -}}
-{{- else if eq .Values.lbProvider "metallb" -}}
-  {{- if .Values.nodeIp -}}
-    {{- $_ := set $ann "metallb.universe.tf/loadBalancerIPs" .Values.nodeIp -}}
+{{- $platform := .Values.platform | default "" -}}
+{{- $profile := dict -}}
+{{- if $platform -}}
+  {{- if not .Values.platforms -}}
+    {{- fail "platforms table is empty: render this chart with -f kernel/platforms.yaml" -}}
   {{- end -}}
-{{- else if eq .Values.lbProvider "aws" -}}
-  {{- $_ := set $ann "service.beta.kubernetes.io/aws-load-balancer-type" "external" -}}
-  {{- $_ := set $ann "service.beta.kubernetes.io/aws-load-balancer-nlb-target-type" "instance" -}}
-  {{- $_ := set $ann "service.beta.kubernetes.io/aws-load-balancer-scheme" "internet-facing" -}}
+  {{- $profile = index .Values.platforms $platform | default dict -}}
+  {{- if not $profile -}}
+    {{- fail (printf "unknown platform %q — add an entry to kernel/platforms.yaml, or use extraAnnotations" $platform) -}}
+  {{- end -}}
+  {{- range $p := (index $profile "requiredParams" | default list) -}}
+    {{- if not (index $.Values.platformParams $p) -}}
+      {{- fail (printf "platform %q requires platformParams.%s (see kernel/platforms.yaml)" $platform $p) -}}
+    {{- end -}}
+  {{- end -}}
+{{- end -}}
+{{- $ann := dict -}}
+{{- range $key, $value := (index $profile "lbAnnotations" | default dict) -}}
+  {{- $rendered := tpl (toString $value) $ | trim -}}
+  {{- if $rendered -}}
+    {{- $_ := set $ann $key $rendered -}}
+  {{- end -}}
 {{- end -}}
 {{- $ann = merge $ann .Values.extraAnnotations -}}
+{{- $pinIP := and .Values.nodeIp (index $profile "supportsLoadBalancerIP" | default false) -}}
 apiVersion: gateway.envoyproxy.io/v1alpha1
 kind: EnvoyProxy
 metadata:
@@ -57,9 +64,10 @@ spec:
                   app.kubernetes.io/name: envoy
       envoyService:
         type: LoadBalancer
-        {{- if and .Values.nodeIp (ne .Values.lbProvider "aws") }}
-        # AWS NLBs ignore loadBalancerIP entirely, so emitting it there would be
-        # a lie; the address comes from an EIP allocation annotation instead.
+        {{- if $pinIP }}
+        # Only where the platform accepts an address by IP. AWS NLBs and Azure
+        # standard load balancers do not, so they carry the address in an
+        # annotation instead and this field would be a lie.
         loadBalancerIP: {{ .Values.nodeIp | quote }}
         {{- end }}
         {{- with $ann }}

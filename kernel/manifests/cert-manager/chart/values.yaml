@@ -7,7 +7,27 @@ kernelDomain: ""
 gatewayNamespace: platform-kernel
 gatewayName: kernel-public-gateway
 
+# Who hosts the zone. A key in the `dnsProviders` table; its `solver` block is
+# passed to cert-manager verbatim, so adding a provider is an entry there rather
+# than a branch here.
+#
+# "none" emits no DNS-01 issuer at all, which is the correct shape for a cluster
+# on HTTP-01, a private CA or a self-signed anchor — an issuer that can never
+# solve a challenge is worse than no issuer, because it reports NotReady forever
+# and every Certificate pointed at it waits on it.
+dnsProvider: cloudflare
+
+# Everything a provider's solver needs beyond its credential: Route 53's region
+# and hosted zone, Cloud DNS's project, Azure's subscription and resource group,
+# the nameserver for a self-hosted zone. Keys are named per provider in
+# kernel/platforms.yaml under requiredParams.
+dnsParams: {}
+
 # The issuer the wildcard Certificate asks for. Derived by
-# gentian_dns01_cluster_issuer_name, which knows whether this cluster uses
-# Cloudflare DNS-01 or a self-signed chain.
+# gentian_dns01_cluster_issuer_name, which knows the provider and whether this
+# cluster is on the Let's Encrypt staging endpoint.
 dns01ClusterIssuer: ""
+
+# Merged in from kernel/platforms.yaml, which is the single definition. Empty
+# here so a render that forgets the file fails with a message naming it.
+dnsProviders: {}

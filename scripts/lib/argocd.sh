@@ -457,6 +457,15 @@ bootstrap_argocd_apps() {
     local apps=(openbao globals)
     if [[ "$INSTALL_CLUSTER_INFRA" == "1" ]]; then
         apps+=(reloader cnpg cnpg-cluster)
+        # external-dns was written and then never applied: nothing named it in
+        # this list, and the bootstrap chart only renders the templates it is
+        # asked for. So the controller that makes tenant hostnames resolve was
+        # present in the repository and absent from every cluster, and the gap
+        # read as "DNS is managed by hand here" rather than as a missing step.
+        #
+        # It renders to nothing when the cluster has no DNS provider, so naming
+        # it unconditionally is safe.
+        apps+=(external-dns)
     fi
 
     for app in "${apps[@]}"; do

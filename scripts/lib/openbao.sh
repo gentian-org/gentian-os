@@ -354,6 +354,27 @@ init_openbao() {
 
 # =============================================================================
 # 10b. Seed kernel secrets
+# _dns_credential_fields_json — the active DNS provider's fields as one object.
+#
+# Field names come from the catalogue, which reads them from
+# kernel/platforms.yaml, and values from the environment variables the prompt
+# loop wrote. Empty when the provider is Cloudflare (which has its own
+# variables, kept for compatibility), "none", or when nothing was collected.
+_dns_credential_fields_json() {
+    local provider="${DNS_PROVIDER:-cloudflare}" key var value args=()
+    [[ "${provider}" == "cloudflare" || "${provider}" == "none" ]] && return 0
+    while IFS= read -r key; do
+        [[ -n "${key}" ]] || continue
+        var="$(_env_var_for "acme-dns-${provider}" "${key}")"
+        [[ -n "${var}" ]] || continue
+        value="${!var:-}"
+        [[ -n "${value}" ]] || continue
+        args+=(--arg "${key}" "${value}")
+    done < <(catalogue_field_keys "acme-dns-${provider}")
+    [[ ${#args[@]} -gt 0 ]] || return 0
+    jq -n "${args[@]}" '$ARGS.named'
+}
+
 # =============================================================================
 seed_secrets() {
     banner "Seeding kernel secrets"
@@ -425,9 +446,18 @@ seed_secrets() {
         fi
     fi
 
+    # A provider other than Cloudflare hands its fields over as one JSON object,
+    # built from the catalogue rather than from a variable per provider — the
+    # installer already knows which fields the provider declares, and a second
+    # list here would be the place they stop matching.
+    local dns_fields_json=""
+    dns_fields_json="$(_dns_credential_fields_json)"
+
     # CF_API_TOKEN is forwarded via env var (not positional) so the
     # seed-openbao.sh contract stays backward-compatible. Seed-openbao
-    # writes it to secret/gentian-os/kernel/dns/cloudflare when present.
+    # writes it to secret/gentian-os/kernel/dns/<provider> when present.
+    DNS_PROVIDER="${DNS_PROVIDER:-cloudflare}" \
+    GENTIAN_DNS_FIELDS_JSON="${dns_fields_json}" \
     CF_API_TOKEN="${CF_API_TOKEN:-}" \
     CF_ZONE_ID="${zone_id}" \
     CF_TUNNEL_CNAME="${tunnel_cname}" \

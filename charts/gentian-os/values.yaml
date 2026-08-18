@@ -21,10 +21,18 @@ tenancyMode: multi
 # Plumbed as ROUTING_MODE.
 routingMode: gateway
 
+# dnsProvider is who hosts the kernel domain's zone — an entry in
+# kernel/platforms.yaml. It names the cluster's DNS-01 ClusterIssuer, which is
+# what per-tenant wildcards default to.
+dnsProvider: cloudflare
+
 # tenantDNS01ClusterIssuer is the cert-manager ClusterIssuer used for per-tenant
 # wildcard certificates (*.<effectiveDomain>). Must use a DNS-01 solver that can
 # write records in the zone containing effectiveDomain (platform zone for default
 # tenants, customer zone for vanity domains). Plumbed as TENANT_DNS01_CLUSTER_ISSUER.
+#
+# Empty means the cluster's own issuer, derived from dnsProvider above. Set it
+# only when tenant zones are hosted somewhere the kernel zone is not.
 tenantDNS01ClusterIssuer: ""
 
 # backupRecipients are age public keys (age1...) that tenant export bundles are
