@@ -93,20 +93,40 @@ Leave the rest at their defaults.
 ./install.sh --prepare-deployment
 ```
 
-It asks for the kernel domain, then writes
-`clusters/<cluster-id>/kernel` into your deployments checkout: three claims,
-`values.yaml` and `cluster-settings.env`. It commits nothing, pushes nothing,
-and does not contact the cluster.
+It asks for the kernel domain, then writes `clusters/<cluster-id>/kernel` into
+your deployments checkout: `claims/cluster.yaml`, `claims/infra-data.yaml`,
+`claims/suze.yaml` and `values.yaml`. It commits nothing, pushes nothing, and
+does not contact the cluster.
 
 ## 4. Edit what it generated
 
 These files are what the cluster becomes. Read them.
 
-- `claims/cluster.yaml` — the kernel domain, and the cluster's modes.
-- `cluster-settings.env` — the exposure and mail model. Set `NETWORK_MODE` to
-  `static-ip` if DNS points straight at a node, and set `NODE_IP` with it.
-  Leave it `tunnel` if a reverse proxy or tunnel fronts the cluster.
+- `claims/cluster.yaml` — everything that describes this cluster.
+- `claims/infra-data.yaml` — the shared Postgres, MariaDB, Redis and MinIO.
+- `claims/suze.yaml` — Keycloak and OpenFGA.
 - `values.yaml` — this cluster's Helm overlay.
+
+The scaffold writes only `kernelDomain`, because everything else has a default
+that is right for most clusters. Set a field when your cluster differs; the
+schema rejects a name it does not know, so a typo fails at `kubectl apply`
+rather than being silently ignored.
+
+The ones worth a decision:
+
+| Field | Default | Set it when |
+|---|---|---|
+| `networkMode` | `tunnel` | DNS points straight at a node — then use `static-ip` **and set `nodeIp`** |
+| `nodeIp` | — | Required by `static-ip`. Apps can also reference it as `${NODE_IP}` |
+| `certificates.issuerMode` | `acme-dns01` | The domain is not publicly resolvable — see §8 |
+| `mail.serviceMode` | `external` | You want in-cluster Postfix/Dovecot instead of a relay (`kernel`, needs `static-ip`) |
+| `mail.host` | — | `external` mode: the relay's address. Its credentials are a credential, not a field |
+| `storageClass` | cluster default | The cluster has more than one StorageClass |
+| `tenancyMode` | `multi` | One tenant occupies the whole cluster (`single`) |
+| `secretMode` | `derived` | You want independent random secrets rather than ones reproducible from the master password |
+| `llm.enabled` | `false` | This cluster serves models |
+
+`routingMode` is `gateway` and that is the only supported value.
 
 ## 5. Commit and push them
 
@@ -142,12 +162,29 @@ stops before touching the cluster if any fail.
 | `infra-chart-registry` | no | Only for a private chart registry |
 | `acme-dns-cloudflare` | no | Needed by `issuerMode: acme-dns01`, the default — see below |
 
-**Nothing is written to this machine.** Your answers stay in the installer's
-memory for the run and reach OpenBao once it exists, at `B-09-seed-secrets`. A
-later run recovers them from OpenBao instead of asking again. Use
-`install.secrets.env` only for an unattended run — and note that the installer
-loads it whenever it exists, so a copy left from another cluster answers the
-prompts for you, with that cluster's values.
+Each one reaches OpenBao once it exists, at `B-09-seed-secrets`, and a later run
+recovers it from there instead of asking again.
+
+Between being typed and reaching OpenBao there is a window where an install can
+fail with nothing to recover from, so validated answers are cached at
+`~/.gentian/bootstrap-credentials.env` (0600, in a 0700 directory) and
+`B-09-seed-secrets` deletes the cache once OpenBao holds them. Set
+`GENTIAN_NO_CREDENTIAL_CACHE=1` to opt out and retype on every resumed run.
+
+**There is no secrets file.** For an unattended run, export the credentials
+instead:
+
+| Credential | Environment variable |
+|---|---|
+| `deployments-repository` | `GENTIAN_DEPLOYMENTS_GIT_USERNAME`, `GENTIAN_DEPLOYMENTS_GIT_TOKEN` |
+| `master-password` | `MASTER_PASSWORD` |
+| `infra-chart-registry` | `REGISTRY_USER`, `REGISTRY_PASSWORD` |
+| `acme-dns-cloudflare` | `CF_API_TOKEN` |
+
+The installer reads the environment, then the cache, then OpenBao, and prompts
+for whatever is still missing. A plaintext file of secrets beside the installer
+was a fourth source that nothing rotated and nothing audited, so it was removed
+rather than kept working.
 
 **Everything else is supplied after the cluster is up, not now.** The SMTP relay
 and the ArgoCD webhook secret are `phase: runtime`: they belong to the
