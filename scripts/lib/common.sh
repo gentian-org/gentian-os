@@ -1758,12 +1758,42 @@ apply_bootstrap_application() {
             error "GENTIAN_DEPLOYMENTS_STAGE is empty while rendering ${name}."
             exit 1
         fi
+        # --show-only filters the OUTPUT; Helm still evaluates every template in
+        # the chart. So the `required` on root-applicationset.yaml's cluster id
+        # fires here too, even though this call renders a different file — and
+        # the whole render fails, leaving kubectl with nothing on stdin.
+        if [[ -z "${GENTIAN_DEPLOYMENTS_CLUSTER_ID:-}" ]]; then
+            error "GENTIAN_DEPLOYMENTS_CLUSTER_ID is empty while rendering ${name}."
+            error "  Set it in install.env; every chart template is evaluated on"
+            error "  each render, and one of them requires it."
+            exit 1
+        fi
         resolve_gentian_os_branch
-        helm template gentian-bootstrap "${chart}" -s "templates/${name}.yaml" \
-            --set-string "gentianOsBranch=${GENTIAN_OS_BRANCH}" \
-            --set-string "storageClass=${STORAGE_CLASS}" \
-            --set-string "stage=${GENTIAN_DEPLOYMENTS_STAGE}" \
-            | kubectl apply -f -
+
+        # Rendered to a file rather than piped: a pipeline reports the exit
+        # status of kubectl, so a failed render reached it as empty input and
+        # was announced as a successful apply.
+        local rendered; rendered="$(mktemp)"
+        if ! helm template gentian-bootstrap "${chart}" -s "templates/${name}.yaml" \
+                --set-string "gentianOsBranch=${GENTIAN_OS_BRANCH}" \
+                --set-string "storageClass=${STORAGE_CLASS}" \
+                --set-string "stage=${GENTIAN_DEPLOYMENTS_STAGE}" \
+                --set-string "cluster=${GENTIAN_DEPLOYMENTS_CLUSTER_ID}" >"${rendered}"; then
+            rm -f "${rendered}"
+            error "Rendering ${name} failed; nothing was applied."
+            exit 1
+        fi
+        if [[ ! -s "${rendered}" ]]; then
+            rm -f "${rendered}"
+            error "Rendering ${name} produced nothing; nothing was applied."
+            exit 1
+        fi
+        kubectl apply -f "${rendered}" || {
+            rm -f "${rendered}"
+            error "Applying ${name} failed."
+            exit 1
+        }
+        rm -f "${rendered}"
     else
         kubectl apply -f "${SCRIPT_DIR}/kernel/bootstrap/${name}-application.yaml"
     fi

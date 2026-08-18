@@ -95,10 +95,14 @@ install_catalogue_sync() {
     rendered="$(mktemp)"
     # The generator's own {{ .metadata.name }} and {{ .path.path }} are wrapped
     # in raw strings by the chart, so Helm hands them to Argo untouched.
+    # cluster is set even though this template does not read it: --show-only
+    # filters the output, and Helm still evaluates every template in the chart —
+    # including the one that requires a cluster id.
     helm template gentian-bootstrap "${SCRIPT_DIR}/kernel/bootstrap/chart" \
         -s templates/catalogue-applicationset.yaml \
         --set-string "appsRepo=${GENTIAN_APPS_REPO}" \
-        --set-string "appsBranch=${GENTIAN_APPS_BRANCH}" >"$rendered"
+        --set-string "appsBranch=${GENTIAN_APPS_BRANCH}" \
+        --set-string "cluster=${GENTIAN_DEPLOYMENTS_CLUSTER_ID}" >"$rendered"
 
     info "Applying gentian-catalogue ApplicationSet:"
     info "  repo:   ${GENTIAN_APPS_REPO}"
