@@ -258,6 +258,12 @@ func main() {
 			Client:       mgr.GetClient(),
 			TenancyMode:  os.Getenv("TENANCY_MODE"),
 			KernelDomain: os.Getenv("KERNEL_DOMAIN"),
+			// Default on. A cluster that has not proven its administrator can
+			// write credentials is one where the recovery from a broken write
+			// path is still cheap, and admitting tenants is what makes it
+			// expensive — so the safe default is the one that keeps the exit open.
+			GateOnHandover:    os.Getenv("HANDOVER_GATE_TENANTS") != "false",
+			HandoverNamespace: envOrDefault("HANDOVER_NAMESPACE", envOrDefault("OPERATOR_NAMESPACE", "gentian-system")),
 		}).SetupWithManager(mgr)
 
 		(&webhook.AppProfileValidator{
@@ -389,4 +395,15 @@ func buildCloudflareDNSClient() *controller.CloudflareDNSClient {
 	tunnelToken := os.Getenv("CLOUDFLARE_TUNNEL_API_TOKEN")
 	setupLog.Info("Cloudflare DNS management enabled", "zone_id", zoneID, "tunnel_cname", tunnelCNAME, "tunnel_api_token", tunnelToken != "")
 	return controller.NewCloudflareDNSClient(token, zoneID, tunnelCNAME, tunnelToken)
+}
+
+// envOrDefault reads an environment variable, falling back when it is unset or
+// empty. Empty and unset are treated alike deliberately: a Helm value rendered
+// to "" is how an unset chart value reaches a container, and treating that as a
+// deliberate empty string means a default that silently stops applying.
+func envOrDefault(key, def string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
+	}
+	return def
 }

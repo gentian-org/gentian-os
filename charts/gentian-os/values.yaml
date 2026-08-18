@@ -21,6 +21,21 @@ tenancyMode: multi
 # Plumbed as ROUTING_MODE.
 routingMode: gateway
 
+# handover controls the gate that keeps a cluster's recovery cheap until its
+# administrator has been seen to write a credential through the login path.
+#
+# The proof is recorded by the credential manager on the first successful
+# cluster-admin token exchange — a normal portal sign-in produces it. Until
+# then, creating a Tenant is refused with an explanation, because the recovery
+# from a broken write path is re-initialising OpenBao: an inconvenience on an
+# empty cluster and a data-loss event on one carrying tenants.
+#
+# gateTenants: false turns the gate off for a cluster that accepts that risk.
+# A single tenant can be admitted without turning it off by annotating it
+# gentianos.io/handover-override with a reason.
+handover:
+  gateTenants: true
+
 # dnsProvider is who hosts the kernel domain's zone — an entry in
 # kernel/platforms.yaml. It names the cluster's DNS-01 ClusterIssuer, which is
 # what per-tenant wildcards default to.

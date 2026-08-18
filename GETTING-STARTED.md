@@ -43,6 +43,11 @@ From phase C onward much of the work is ArgoCD and Crossplane converging on
 their own, so the installer finishing is not the same as the cluster being
 ready — step 11 covers how to tell the difference.
 
+Nor is it the same as the cluster being *yours*: phase E ends by revoking the
+credential the installer used, and it will not do that until an administrator
+has signed in. Step 13 is that handover, and the cluster holds tenants back
+until it is done.
+
 ---
 
 ## What you need before you start
@@ -296,7 +301,57 @@ validation result, and nothing more.
 
 Lost credentials are rotated, not recovered.
 
----
+## 13. Hand the cluster over
+
+The install is not finished when it says "bootstrap complete". Two things are
+still true: the installer holds a credential that can write every secret in the
+cluster, and nothing has yet shown that anyone *else* can.
+
+Both end here.
+
+**Sign in to the portal as the administrator.** The installer printed the
+account in its closing summary:
+
+```text
+  Gentian portal (cluster admin):
+    URL      : https://portal.<your-kernel-domain>/login
+    User     : administrator@<your-kernel-domain>
+    Password : <derived from your master password>
+```
+
+The password is derived, so `./install.sh --verify-only` prints it again if you
+have lost the output.
+
+That sign-in is the test. Logging in exchanges your Keycloak token for a
+short-lived OpenBao token, which is the path every future credential write uses,
+and it is the one thing the installer cannot try for you: it needs a human at a
+browser. The cluster records the first successful sign-in.
+
+Then revoke the installer's credential:
+
+```bash
+./install.sh --only E-03
+```
+
+It refuses until you have signed in, and says so. That refusal is the point —
+revoking the only working way in before knowing another one works would leave a
+cluster nobody can supply a credential to, and the recovery is re-initialising
+OpenBao from scratch.
+
+To see where a cluster stands:
+
+```bash
+kubectl get configmap gentian-handover -n gentian-system -o yaml
+```
+
+`writePathProven: "true"` means someone has signed in.
+`bootstrapCredentialRevoked: "true"` means handover is complete.
+
+Until it is, **creating tenants is held back.** Not because tenants need this
+path — they do not — but because re-initialising OpenBao regenerates every
+derived credential, which is an inconvenience on an empty cluster and a data
+loss on one carrying tenants. The gate keeps the cheap recovery available until
+you no longer need it.
 
 ## Advanced install options
 

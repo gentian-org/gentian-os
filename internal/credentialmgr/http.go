@@ -28,7 +28,10 @@ import (
 
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
+
+	"github.com/gentian-org/gentian-os/internal/handover"
 )
 
 var externalSecretGVK = schema.GroupVersionKind{
@@ -52,6 +55,18 @@ type Server struct {
 	ClusterAdminPolicy string
 	// TenantClaimKey is the auth.metadata key the role maps the tenant into.
 	TenantClaimKey string
+
+	// Client and HandoverNamespace are how a successful exchange becomes a
+	// fact the rest of the cluster can read. See internal/handover: this
+	// service performs the only OIDC token exchange that happens anywhere, so
+	// it is the only thing in a position to observe that the human write path
+	// works. Nil Client disables recording rather than failing requests.
+	Client            client.Client
+	HandoverNamespace string
+
+	// now is injected so the recorder can be tested without waiting for a
+	// clock. Nil means time.Now.
+	now func() time.Time
 }
 
 // Validator checks a credential against its target before it is stored. The
@@ -127,6 +142,10 @@ func NewRunnableFromEnv(mgr manager.Manager, validator Validator) (*Server, erro
 		Validator:          validator,
 		ClusterAdminPolicy: envOr("CREDENTIAL_CLUSTER_ADMIN_POLICY", "cluster-admin"),
 		TenantClaimKey:     envOr("CREDENTIAL_TENANT_CLAIM", "tenant"),
+		Client:             mgr.GetClient(),
+		// The operator's own namespace by default: the record belongs beside
+		// the thing that gates on it, not beside the credentials.
+		HandoverNamespace: envOr("HANDOVER_NAMESPACE", envOr("OPERATOR_NAMESPACE", "gentian-system")),
 	}, nil
 }
 
@@ -218,7 +237,39 @@ func (s *Server) identify(ctx context.Context, r *http.Request) (caller, error) 
 			break
 		}
 	}
+
+	// The exchange above is the only proof that exists that a human can write
+	// to OpenBao at all — every other check in the installer establishes that
+	// the parts are present, not that they open. Recorded here, at the one
+	// point every handler passes through, so no future endpoint can be added
+	// that authenticates without proving.
+	s.recordHandover(ctx, c)
 	return c, nil
+}
+
+// recordHandover notes a successful cluster-admin exchange, best effort.
+//
+// Never fails the request. A caller who has just authenticated should not be
+// refused because a ConfigMap write lost a conflict — and the next request
+// records it anyway. The inverse would be worse than the gap it closes: the
+// service would deny writes when the cluster is healthy and the recorder is not.
+func (s *Server) recordHandover(ctx context.Context, c caller) {
+	if s.Client == nil || s.HandoverNamespace == "" {
+		return
+	}
+	// Cluster admin only. A tenant admin's exchange proves their own role
+	// opens, which is worth having but is not the credential the bootstrap
+	// token is being traded for.
+	if !c.view.ClusterAdmin {
+		return
+	}
+	now := time.Now
+	if s.now != nil {
+		now = s.now
+	}
+	if err := handover.RecordWritePathProven(ctx, s.Client, s.HandoverNamespace, c.name, now()); err != nil {
+		ctrl.Log.WithName("credentialmgr").Error(err, "recording the handover proof")
+	}
 }
 
 // viewerFor turns OpenBao's verdict into a visibility decision.

@@ -81,6 +81,14 @@ spec:
               value: {{ .Values.tenancyMode | default "multi" | quote }}
             - name: ROUTING_MODE
               value: {{ .Values.routingMode | default "gateway" | quote }}
+            {{- /*
+            hasKey, not `default true`: Helm's default treats false as empty, so
+            `gateTenants: false | default true` renders true and the switch
+            silently does nothing. A boolean that cannot be turned off is worse
+            than no switch, because the operator believes it is off.
+            */}}
+            - name: HANDOVER_GATE_TENANTS
+              value: {{ if hasKey (.Values.handover | default dict) "gateTenants" }}{{ .Values.handover.gateTenants | quote }}{{ else }}"true"{{ end }}
             - name: TENANT_DNS01_CLUSTER_ISSUER
               value: {{ include "gentian.tenantDNS01ClusterIssuer" . | quote }}
             - name: KERNEL_REALM

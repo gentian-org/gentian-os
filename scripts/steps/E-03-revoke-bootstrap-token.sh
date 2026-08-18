@@ -14,23 +14,56 @@
 # for this as a scripted step rather than a runbook note precisely because a
 # runbook note is a step that does not happen.
 #
-# Refuses to run when there is no WORKING OIDC write path, because revoking the
+# Refuses to run until somebody has ACTUALLY LOGGED IN, because revoking the
 # only way in leaves a cluster nobody can supply a credential to. That is the
 # one case where NOT revoking is correct, and it is reported rather than
 # silently skipped.
 #
-# This used to check that spec.oidc.discoveryUrl was set — that a URL had been
+# Two earlier versions of this guard were both wrong in the same direction.
+#
+# The first checked that spec.oidc.discoveryUrl was set — that a URL had been
 # DECLARED, not that anything answered at it. Declaring it is also what makes
 # the OIDC roles render at all, so the intended sequence (set the URL, let the
 # identity objects reconcile, revoke) passed the guard at the first step rather
-# than the last. A cluster whose Keycloak client did not exist would revoke its
-# only write path and need OpenBao re-initialising to recover.
+# than the last.
 #
-# So the guard now reads the cluster the way every other check() does, and
-# checks the parts a human login actually needs. It cannot perform an
-# interactive login, so it verifies the chain rather than the outcome — each
-# link is a thing that is absent by default and present only when something
-# created it.
+# The second read the cluster the way every other check() does and verified the
+# whole chain: discovery URL set, Keycloak client Ready, client Secret present,
+# auth backend configured, role exists. Every link absent by default and present
+# only when something created it — and every one of them true while no token
+# opens anything. The role binds a group claim, and if Keycloak emits
+# "superadmin" where the role expects "/gentian:platform:superadmin", the parts
+# are all there and the login is refused. Revoking on that evidence is changing
+# the locks and posting the old key through the letterbox without trying the new
+# one; the recovery is re-initialising OpenBao.
+#
+# A shell script cannot perform an interactive login, so it cannot produce the
+# proof. But it does not have to: the credential manager performs exactly this
+# exchange on every request it serves, and records the first cluster-admin
+# success in the gentian-handover ConfigMap. That record IS the proof, made by
+# the component that was going to do it anyway, and this step reads it.
+#
+# The chain checks are kept — not as the guard, but as the diagnosis. When the
+# proof is absent they say which link to fix, which "nobody has logged in yet"
+# on its own does not.
+
+# _handover_proven — has anyone actually authenticated and been given the
+# cluster-admin policy?
+#
+# Written by the credential manager on the first successful exchange. Read from
+# Kubernetes, not from OpenBao, so --status can answer it with no token — which
+# is the whole reason it is a ConfigMap and not a fact only OpenBao knows.
+_handover_proven() {
+    local ns="${GENTIAN_SYSTEM_NAMESPACE:-gentian-system}"
+    [[ "$(kubectl get configmap gentian-handover -n "${ns}" \
+        -o jsonpath='{.data.writePathProven}' 2>/dev/null || true)" == "true" ]]
+}
+
+_handover_proof_detail() {
+    local ns="${GENTIAN_SYSTEM_NAMESPACE:-gentian-system}"
+    kubectl get configmap gentian-handover -n "${ns}" \
+        -o jsonpath='{.data.provenBy} at {.data.provenAt}' 2>/dev/null || true
+}
 
 # _oidc_write_path_ready — every link between a human and an OpenBao token.
 #
@@ -92,26 +125,41 @@ check() {
     # apply() refuses without it — correctly, since the bootstrap token is
     # otherwise the only write path. Reporting missing then is a step that
     # applies on every run and declines every time, which reads as an unfinished
-    # install rather than a cluster that has not configured OIDC yet.
-    _oidc_write_path_ready || return "${CHECK_UNDEFINED}"
+    # install rather than a cluster whose administrator has not signed in yet.
+    _handover_proven || return "${CHECK_UNDEFINED}"
 
     ! bao token lookup >/dev/null 2>&1
 }
 
 apply() {
-    if ! _oidc_write_path_ready; then
-        warn "The OIDC write path is not usable yet:"
-        while IFS= read -r _reason; do
-            [[ -n "${_reason}" ]] && warn "    - ${_reason}"
-        done <<< "${_OIDC_MISSING:-}"
+    if ! _handover_proven; then
+        warn "Nobody has signed in to this cluster as an administrator yet."
         warn "  Refusing to revoke the bootstrap token: it is currently the ONLY"
-        warn "  way to write a credential, and revoking it would leave this"
-        warn "  cluster unable to accept one — recovering means re-initialising"
-        warn "  OpenBao."
-        warn "  Fix the above, then re-run:"
+        warn "  way to write a credential, and revoking it before the sign-in"
+        warn "  path is known to work would leave this cluster unable to accept"
+        warn "  one — recovering means re-initialising OpenBao."
+        warn ""
+        warn "  Sign in to the portal as the cluster administrator. The first"
+        warn "  successful sign-in records the proof, and then:"
         warn "    ./install.sh --only E-03"
+        warn ""
+        # The chain is the diagnosis, not the guard. "Nobody has logged in" is
+        # true whether the operator simply has not got to it or the login is
+        # broken, and only the second needs fixing before they try.
+        if ! _oidc_write_path_ready; then
+            warn "  A sign-in would not succeed yet — these are missing:"
+            while IFS= read -r _reason; do
+                [[ -n "${_reason}" ]] && warn "    - ${_reason}"
+            done <<< "${_OIDC_MISSING:-}"
+        else
+            warn "  Every part of the sign-in path is in place; it has just not"
+            warn "  been used. That is the one thing this installer cannot do"
+            warn "  for you — the exchange needs a human at a browser."
+        fi
         return 0
     fi
+
+    info "Administrator sign-in confirmed ($(_handover_proof_detail))."
 
     if [[ -z "${BAO_TOKEN:-}" ]]; then
         info "No bootstrap token in this shell; nothing to revoke."
@@ -137,6 +185,15 @@ apply() {
             --type=json -p '[{"op":"remove","path":"/data/root_token"}]' 2>/dev/null ||
             info "openbao-init carries no root_token key; nothing to strip."
     fi
+
+    # Recorded beside the proof, in the same object, because the two questions
+    # an operator asks about a cluster are "can my admin write" and "is the
+    # installer's key gone" — and a cluster that answers yes to the first and no
+    # to the second is unfinished rather than broken.
+    local ns="${GENTIAN_SYSTEM_NAMESPACE:-gentian-system}"
+    gentian_run kubectl patch configmap gentian-handover -n "${ns}" --type=merge \
+        -p "{\"data\":{\"bootstrapCredentialRevoked\":\"true\",\"revokedAt\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"}}" \
+        2>/dev/null || warn "Could not record the revocation in ${ns}/gentian-handover."
 }
 
 # No destroy(): a revoked token cannot be un-revoked, and teardown removes

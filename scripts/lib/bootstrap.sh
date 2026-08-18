@@ -1100,9 +1100,51 @@ print_summary_cp() {
     echo ""
     echo -e "${GREEN}  OpenBao tokens saved to: ${OPENBAO_INIT_FILE}${NC}"
     echo ""
+    print_handover_summary
     echo -e "${GREEN}  Gentian OS infra bootstrap complete.${NC}"
     echo ""
 }
+
+# =============================================================================
+# print_handover_summary — say that the install is not finished.
+#
+# The last line of a successful run used to be "bootstrap complete", and an
+# operator reasonably stopped reading there. But the cluster still holds a
+# bootstrap credential that can write every secret it has, and nothing has yet
+# demonstrated that anyone else can — so the remaining work is the part with the
+# irreversible step in it, announced at the point where attention still exists.
+# =============================================================================
+print_handover_summary() {
+    local ns="${GENTIAN_SYSTEM_NAMESPACE:-gentian-system}"
+    local proven revoked
+    proven="$(kubectl get configmap gentian-handover -n "${ns}" \
+        -o jsonpath='{.data.writePathProven}' 2>/dev/null || true)"
+    revoked="$(kubectl get configmap gentian-handover -n "${ns}" \
+        -o jsonpath='{.data.bootstrapCredentialRevoked}' 2>/dev/null || true)"
+
+    if [[ "${revoked}" == "true" ]]; then
+        echo -e "${GREEN}  Handover complete — the bootstrap credential is revoked.${NC}"
+        echo ""
+        return 0
+    fi
+
+    echo -e "${YELLOW}  HANDOVER IS NOT FINISHED${NC}"
+    if [[ "${proven}" == "true" ]]; then
+        echo -e "${YELLOW}    An administrator has signed in, so the write path works.${NC}"
+        echo -e "${YELLOW}    Revoke the installer's credential to finish:${NC}"
+        echo -e "${YELLOW}      ./install.sh --only E-03${NC}"
+    else
+        echo -e "${YELLOW}    Nobody has signed in yet, so this cluster cannot yet show${NC}"
+        echo -e "${YELLOW}    that its administrator can write credentials. Until it can:${NC}"
+        echo -e "${YELLOW}      - the installer's bootstrap credential stays live${NC}"
+        echo -e "${YELLOW}      - creating tenants is held back${NC}"
+        echo ""
+        echo -e "${YELLOW}    Sign in to the portal as the administrator, then:${NC}"
+        echo -e "${YELLOW}      ./install.sh --only E-03${NC}"
+    fi
+    echo ""
+}
+
 
 # =============================================================================
 # Stage 1: LLM serving (vLLM / LocalAI serving backend + LiteLLM proxy)
