@@ -138,32 +138,60 @@ validate_git_https() {
 # the zone. It also passes for a valid token with no access to this domain,
 # which is the failure that actually matters.
 validate_cloudflare_dns() {
-    local zone="$1" token="${2:-}" url body code count
-    url="https://api.cloudflare.com/client/v4/zones?name=${zone}"
+    local name="$1" token="${2:-}" candidate url body code count matched=""
 
-    body="$(curl -s -w $'\n%{http_code}' --max-time "${GENTIAN_VALIDATE_TIMEOUT}" \
-        -H "Authorization: Bearer ${token}" "${url}" 2>/dev/null)" || body=$'\n000'
-    code="${body##*$'\n'}"
-    body="${body%$'\n'*}"
+    # The kernel domain is a HOSTNAME; Cloudflare zones are registrable domains.
+    # desk.gentian.org is not a zone — gentian.org is, and the DNS-01 challenge
+    # record _acme-challenge.desk.gentian.org is created inside it. Asking for a
+    # zone named after the host therefore returns an empty list for a token with
+    # exactly the right access, which reads as "no access to this domain".
+    #
+    # So walk up the labels to the closest enclosing zone, which is what
+    # cert-manager's solver does with the same token. Stops before the public
+    # suffix: a two-label candidate is the last one worth asking about.
+    candidate="${name}"
+    while [[ "${candidate}" == *.*.* || "${candidate}" == *.* ]]; do
+        url="https://api.cloudflare.com/client/v4/zones?name=${candidate}"
+        body="$(curl -s -w $'\n%{http_code}' --max-time "${GENTIAN_VALIDATE_TIMEOUT}" \
+            -H "Authorization: Bearer ${token}" "${url}" 2>/dev/null)" || body=$'\n000'
+        code="${body##*$'\n'}"
+        body="${body%$'\n'*}"
 
-    case "${code}" in
-        200) ;;
-        401|403) _v_fail "${url}" "token rejected (HTTP ${code})" \
+        case "${code}" in
+            200) ;;
+            401|403)
+                # Terminal: a rejected token is rejected for every zone, so
+                # walking further would just resend it.
+                _v_fail "${url}" "token rejected (HTTP ${code})" \
                     "$(jq -r '.errors[0].message // empty' <<<"${body}" 2>/dev/null)"
+                return 1 ;;
+            000) _v_fail "${url}" "unreachable" \
+                     "no HTTP response within ${GENTIAN_VALIDATE_TIMEOUT}s"
                  return 1 ;;
-        000) _v_fail "${url}" "unreachable" \
-                 "no HTTP response within ${GENTIAN_VALIDATE_TIMEOUT}s"
-             return 1 ;;
-        *)   _v_fail "${url}" "unexpected response (HTTP ${code})"
-             return 1 ;;
-    esac
+            *)   _v_fail "${url}" "unexpected response (HTTP ${code})"
+                 return 1 ;;
+        esac
 
-    count="$(jq -r '.result | length' <<<"${body}" 2>/dev/null || echo 0)"
-    if [[ "${count}" == "0" ]]; then
-        _v_fail "${url}" "the token cannot see zone ${zone}" \
-            "it authenticated, but has no access to this domain — check the token's Zone Resources"
+        count="$(jq -r '.result | length' <<<"${body}" 2>/dev/null || echo 0)"
+        if [[ "${count}" != "0" ]]; then
+            matched="${candidate}"
+            break
+        fi
+
+        # Two labels left and still nothing: the next strip is a public suffix.
+        [[ "${candidate}" == *.*.* ]] || break
+        candidate="${candidate#*.}"
+    done
+
+    if [[ -z "${matched}" ]]; then
+        _v_fail "https://api.cloudflare.com/client/v4/zones?name=${name}" \
+            "no Cloudflare zone found for ${name}" \
+            "the token authenticated, but none of ${name} up to the registrable domain is a zone it can see — check the token's Zone Resources, or set CF_ZONE_NAME to the zone by hand"
         return 1
     fi
+
+    [[ "${matched}" != "${name}" ]] &&
+        info "  Cloudflare zone for ${name}: ${matched}"
     return 0
 }
 
