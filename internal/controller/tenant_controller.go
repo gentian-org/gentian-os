@@ -131,6 +131,10 @@ var xTenantGVK = schema.GroupVersionKind{
 	Kind:    "XTenant",
 }
 
+// DNSEndpoint carries a tenant's mail records — MX, SPF, DKIM, DMARC — for
+// external-dns to reconcile into the zone. The web records need no rule here:
+// external-dns reads those from the HTTPRoutes directly.
+// +kubebuilder:rbac:groups=externaldns.k8s.io,resources=dnsendpoints,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=gentianos.io,resources=tenants,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=gentianos.io,resources=tenants/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=gentianos.io,resources=tenants/finalizers,verbs=update

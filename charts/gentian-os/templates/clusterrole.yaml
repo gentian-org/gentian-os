@@ -136,6 +136,18 @@ rules:
     - patch
     - delete
   - apiGroups:
+    - externaldns.k8s.io
+    resources:
+    - dnsendpoints
+    verbs:
+    - get
+    - list
+    - watch
+    - create
+    - update
+    - patch
+    - delete
+  - apiGroups:
     - gateway.envoyproxy.io
     resources:
     - backendtrafficpolicies
@@ -287,18 +299,3 @@ rules:
     - update
     - patch
     - delete
-    # DNSEndpoint objects carry the tenant's mail records — MX, SPF, DKIM,
-    # DMARC — for external-dns to reconcile into the zone. The web records need
-    # nothing here: external-dns reads those from the HTTPRoutes directly.
-    - apiGroups:
-      - externaldns.k8s.io
-      resources:
-      - dnsendpoints
-      verbs:
-      - get
-      - list
-      - watch
-      - create
-      - update
-      - patch
-      - delete
