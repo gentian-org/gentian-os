@@ -181,8 +181,16 @@ recovers it from there instead of asking again.
 Between being typed and reaching OpenBao there is a window where an install can
 fail with nothing to recover from, so validated answers are cached at
 `~/.gentian/bootstrap-credentials.env` (0600, in a 0700 directory) and
-`B-09-seed-secrets` deletes the cache once OpenBao holds them. Set
-`GENTIAN_NO_CREDENTIAL_CACHE=1` to opt out and retype on every resumed run.
+`B-09-seed-secrets` deletes the cache once OpenBao holds them. To opt out and
+retype on every resumed run:
+
+```bash
+GENTIAN_NO_CREDENTIAL_CACHE=1 ./install.sh
+```
+
+Put it in `install.env` instead to make it permanent for this machine — that
+file is read before any credential is collected, so anything set there applies
+to the whole run.
 
 **There is no secrets file.** For an unattended run, export the credentials
 instead:
@@ -264,9 +272,14 @@ It is encrypted with `age` where available and `openssl` otherwise; there is no
 unencrypted path. Store it wherever your break-glass material already lives —
 anyone who can decrypt it holds every derived credential in the cluster.
 
-To export unattended, set `GENTIAN_KIT_RECIPIENT` to an age public key (`age -p`
-prompts on the terminal and so cannot run from a job); read such a kit back with
-`GENTIAN_KIT_IDENTITY` pointing at the private key.
+To export unattended, pass an age public key — `age -p` prompts on the terminal
+and so cannot run from a job — and read such a kit back with the matching
+private key:
+
+```bash
+GENTIAN_KIT_RECIPIENT=age1... ./install.sh --export-recovery-kit kit.age
+GENTIAN_KIT_IDENTITY=~/.age/key.txt ./install.sh --recover kit.age
+```
 
 The kit does **not** back up your data, and it does not restore OpenBao — a
 fresh instance issues its own unseal material. It is only the part that nothing
