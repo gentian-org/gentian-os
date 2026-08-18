@@ -23,10 +23,12 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -125,6 +127,11 @@ func NewRunnableFromEnv(mgr manager.Manager, validator Validator) (*Server, erro
 	if validator == nil {
 		return nil, fmt.Errorf("a validator is required: storing an unvalidated credential is what this service exists to prevent")
 	}
+	// The endpoint validator needs to know where this cluster's relay is before
+	// it can check a relay credential against it.
+	if ev, ok := validator.(*EndpointValidator); ok && ev.Relay == nil {
+		ev.Relay = clusterRelayResolver(mgr)
+	}
 	return &Server{
 		Addr: addr,
 		Catalogue: &Catalogue{
@@ -151,6 +158,41 @@ func NewRunnableFromEnv(mgr manager.Manager, validator Validator) (*Server, erro
 		// the thing that gates on it, not beside the credentials.
 		HandoverNamespace: envOr("HANDOVER_NAMESPACE", envOr("OPERATOR_NAMESPACE", "gentian-system")),
 	}, nil
+}
+
+// clusterRelayResolver reads the upstream relay endpoint off the Cluster claim.
+//
+// The claim is the single place this is written: the Postfix chart's relayHost
+// comes from the same field, so a validator reading anywhere else could pass
+// against a server the cluster does not actually send through.
+//
+// Unstructured, to avoid importing the Crossplane API surface for two strings.
+func clusterRelayResolver(mgr manager.Manager) RelayResolver {
+	return func(ctx context.Context) (string, string, error) {
+		list := &unstructured.UnstructuredList{}
+		list.SetGroupVersionKind(schema.GroupVersionKind{
+			Group: "gentianos.io", Version: "v1alpha1", Kind: "ClusterList",
+		})
+		if err := mgr.GetClient().List(ctx, list); err != nil {
+			return "", "", fmt.Errorf("reading the Cluster claim: %w", err)
+		}
+		if len(list.Items) == 0 {
+			return "", "", fmt.Errorf("this cluster has no Cluster claim to read the relay from")
+		}
+		spec, _, _ := unstructured.NestedMap(list.Items[0].Object, "spec", "mail")
+		host, _ := spec["host"].(string)
+		// port is an integer on the claim and a string everywhere it is used.
+		var port string
+		switch p := spec["port"].(type) {
+		case int64:
+			port = strconv.FormatInt(p, 10)
+		case float64:
+			port = strconv.FormatInt(int64(p), 10)
+		case string:
+			port = p
+		}
+		return host, port, nil
+	}
 }
 
 // loadBaoCA reads the CA that signs OpenBao's serving certificate.

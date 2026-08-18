@@ -256,39 +256,6 @@ validate_oidc_discovery() {
     esac
 }
 
-# =============================================================================
-# smtp — STARTTLS then AUTH LOGIN, via openssl s_client
-# =============================================================================
-validate_smtp() {
-    local host="$1" port="$2" user="$3" pass="$4" out b64_user b64_pass endpoint
-    endpoint="${host}:${port}"
-
-    b64_user=$(printf '%s' "${user}" | openssl base64 -A)
-    b64_pass=$(printf '%s' "${pass}" | openssl base64 -A)
-
-    # -crlf because SMTP requires CRLF line endings; without it the server sees
-    # one malformed command and the failure looks like a rejected password.
-    out=$(printf 'EHLO gentian-installer\r\nAUTH LOGIN\r\n%s\r\n%s\r\nQUIT\r\n' \
-            "${b64_user}" "${b64_pass}" |
-          openssl s_client -quiet -crlf -starttls smtp \
-            -connect "${endpoint}" 2>&1) || true
-
-    if [[ -z "${out}" ]]; then
-        _v_fail "${endpoint}" "unreachable" "no response from the relay"
-        return 1
-    fi
-    # 235 is "authentication succeeded".
-    if echo "${out}" | grep -q '235'; then
-        return 0
-    fi
-    if echo "${out}" | grep -qE '^(535|534|530)'; then
-        _v_fail "${endpoint}" "credentials rejected" \
-            "$(echo "${out}" | grep -m1 -E '^(535|534|530)')"
-        return 1
-    fi
-    _v_fail "${endpoint}" "authentication did not complete" \
-        "no 235 in the relay's response; it may require a different auth mechanism"
-}
 
 # =============================================================================
 # Dispatch
@@ -307,7 +274,6 @@ run_validator() {
         git-https)      validate_git_https "$@" ;;
         oidc-discovery) validate_oidc_discovery "$@" ;;
         cloudflare-dns) validate_cloudflare_dns "$@" ;;
-        smtp)           validate_smtp "$@" ;;
         *)
             error "Unknown validator type '${type}'."
             error "  Bootstrap validators are curl/openssl only; anything else is phase: runtime."

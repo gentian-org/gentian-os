@@ -304,14 +304,11 @@ _validate_requirement() {
             # The zone is the kernel domain: that is the one DNS-01 solves in.
             run_validator cloudflare-dns "${CF_ZONE_NAME:-${KERNEL_DOMAIN:-}}" "${CF_API_TOKEN}"
             ;;
-        smtp)
-            [[ -n "${SMTP_RELAY_PASSWORD:-}" ]] || return 0
-            run_validator smtp "${EXTERNAL_SMTP_HOST:-}" "${EXTERNAL_SMTP_PORT:-587}" \
-                "${SMTP_RELAY_USERNAME:-}" "${SMTP_RELAY_PASSWORD}"
-            ;;
         *)
             error "Requirement '${name}' declares validator '${vtype}', which the installer does not implement."
-            error "  Bootstrap validators are curl/openssl only — reclassify it as phase: runtime."
+            error "  Bootstrap validators are curl/openssl only. A validator that needs more"
+            error "  belongs to phase: runtime, where the credential manager checks it in Go —"
+            error "  which is where 'smtp' went, and why nothing here implements it."
             return 1
             ;;
     esac
