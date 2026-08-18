@@ -33,3 +33,6 @@ __pycache__/
 # controller-gen version differences in key order or grouping cannot show up as
 # repo diffs.
 config/rbac/
+
+# Backup files
+*.age
