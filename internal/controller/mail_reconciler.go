@@ -79,6 +79,7 @@ const (
 	// bounced or refused outright, so they are always written together.
 	postfixVirtualMailboxMapsConfigMap = "postfix-kernel-virtual-mailbox-maps"
 	postfixVirtualMailboxDomainsKey    = "virtual_mailbox_domains"
+	postfixSenderAccessKey             = "sender_access"
 	postfixVirtualMailboxMapsKey       = "virtual_mailbox_maps"
 
 	// mailSharedPostfixPort is the cluster-internal submission port for shared Postfix.
@@ -403,9 +404,17 @@ func (r *TenantReconciler) syncPostfixVirtualMailboxMaps(ctx context.Context) er
 		fmt.Fprintf(&mapsFile, "@%s %s/\n", d, d)
 	}
 	desiredDomains, desiredMaps := domainsFile.String(), mapsFile.String()
+	// The same "<domain> OK" lines drive check_sender_access, which decides who
+	// may SEND. Without it, ALLOWED_SENDER_DOMAINS carries the kernel domain
+	// alone, so a tenant user could receive mail but every message they sent was
+	// refused with "Sender address rejected: Access denied" — outbound silently
+	// limited to the kernel domain while inbound tracked every tenant.
+	//
+	// One derivation for both directions: a domain that may receive may send.
 	desired := map[string]string{
 		postfixVirtualMailboxDomainsKey: desiredDomains,
 		postfixVirtualMailboxMapsKey:    desiredMaps,
+		postfixSenderAccessKey:          desiredDomains,
 	}
 
 	maps := &corev1.ConfigMap{}
@@ -426,7 +435,8 @@ func (r *TenantReconciler) syncPostfixVirtualMailboxMaps(ctx context.Context) er
 		return err
 	}
 	if maps.Data[postfixVirtualMailboxDomainsKey] == desiredDomains &&
-		maps.Data[postfixVirtualMailboxMapsKey] == desiredMaps {
+		maps.Data[postfixVirtualMailboxMapsKey] == desiredMaps &&
+		maps.Data[postfixSenderAccessKey] == desiredDomains {
 		return nil
 	}
 	if maps.Data == nil {
@@ -434,6 +444,7 @@ func (r *TenantReconciler) syncPostfixVirtualMailboxMaps(ctx context.Context) er
 	}
 	maps.Data[postfixVirtualMailboxDomainsKey] = desiredDomains
 	maps.Data[postfixVirtualMailboxMapsKey] = desiredMaps
+	maps.Data[postfixSenderAccessKey] = desiredDomains
 	return r.Update(ctx, maps)
 }
 

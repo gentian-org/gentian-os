@@ -84,6 +84,20 @@ data:
         # the next lookup sees the new domain.
         virtual_mailbox_domains: "texthash:/etc/postfix/kernel-maps/virtual_mailbox_domains"
         virtual_mailbox_maps: "texthash:/etc/postfix/kernel-maps/virtual_mailbox_maps"
+        # Who may SEND, from the same operator-maintained file that decides who
+        # may receive.
+        #
+        # The image builds /etc/postfix/allowed_senders from
+        # ALLOWED_SENDER_DOMAINS once, at start, and that variable carries the
+        # kernel domain only — so a tenant user could receive mail but every
+        # message they sent was refused with
+        #   554 5.7.1 <user@tenant>: Sender address rejected: Access denied
+        # and adding a tenant would have needed a Postfix restart to fix.
+        #
+        # texthash: for the same reason as the two maps above — read at lookup
+        # time, so a new tenant can send as soon as the operator rewrites the
+        # ConfigMap, with no restart and no postmap.
+        smtpd_recipient_restrictions: "reject_non_fqdn_recipient, reject_unknown_recipient_domain, check_sender_access texthash:/etc/postfix/kernel-maps/sender_access, reject"
     # postfix-kernel-virtual-mailbox-maps is written by the operator from the
     # tenant domain registry, and is therefore NOT part of this chart — a chart
     # copy would be reverted onto the operator's content by Argo CD self-heal on
