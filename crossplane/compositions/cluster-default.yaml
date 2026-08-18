@@ -345,6 +345,81 @@ spec:
               providerConfigRef:
                 name: openbao
 
+            {{- /* ── The JWT-typed roles the credential manager exchanges against ─
+                 The two roles above are role_type oidc: they serve the browser
+                 flow into OpenBao's own UI, and the JWT plugin refuses a direct
+                 token exchange against them ("role with oidc role_type is not
+                 allowed"). The credential manager does exactly that exchange —
+                 it presents the caller's portal token — so it needs roles of
+                 role_type jwt, or it authenticates nobody at all.
+
+                 Added beside the oidc roles rather than replacing them, because
+                 oidc.externalUrl is configured and the browser flow is a real
+                 path. Bound claims and policies are deliberately identical to
+                 their oidc counterparts: these are the same two identities
+                 reached by a different mechanism, and a difference here would be
+                 a privilege discrepancy nobody would notice until it mattered.
+
+                 No allowedRedirectUris — a jwt role has no callback.
+              */}}
+            ---
+            apiVersion: jwt.vault.upbound.io/v1alpha1
+            kind: AuthBackendRole
+            metadata:
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: vault-auth-jwt-role-cluster-admin
+              name: {{ $name }}-auth-jwt-cluster-admin
+            spec:
+              forProvider:
+                backend: oidc
+                roleName: cluster-admin-jwt
+                roleType: jwt
+                userClaim: preferred_username
+                boundAudiences:
+                  - {{ $oidc.clientId | default "openbao" | quote }}
+                  {{- range (default (list "gentian-portal") $oidc.additionalAudiences) }}
+                  - {{ . | quote }}
+                  {{- end }}
+                boundClaimsType: string
+                boundClaims:
+                  groups: {{ $oidc.clusterAdminGroup | default "/gentian:platform:superadmin" | quote }}
+                tokenPolicies:
+                  - cluster-admin
+                tokenTtl: 1800
+                tokenMaxTtl: 3600
+              providerConfigRef:
+                name: openbao
+
+            ---
+            apiVersion: jwt.vault.upbound.io/v1alpha1
+            kind: AuthBackendRole
+            metadata:
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: vault-auth-jwt-role-tenant-admin
+              name: {{ $name }}-auth-jwt-tenant-admin
+            spec:
+              forProvider:
+                backend: oidc
+                roleName: tenant-admin-jwt
+                roleType: jwt
+                userClaim: preferred_username
+                boundAudiences:
+                  - {{ $oidc.clientId | default "openbao" | quote }}
+                  {{- range (default (list "gentian-portal") $oidc.additionalAudiences) }}
+                  - {{ . | quote }}
+                  {{- end }}
+                boundClaimsType: glob
+                boundClaims:
+                  groups: {{ $oidc.tenantAdminGroup | default "/gentian:tenant:*:admins" | quote }}
+                claimMappings:
+                  {{ $oidc.tenantClaim | default "tenant" }}: tenant
+                tokenPolicies:
+                  - tenant-admin
+                tokenTtl: 1800
+                tokenMaxTtl: 3600
+              providerConfigRef:
+                name: openbao
+
             {{- /* ── The Keycloak side of the OIDC handshake ────────────────────
                  Everything above configures OpenBao to TRUST Keycloak. None of
                  it works until Keycloak has a client to be trusted as — and

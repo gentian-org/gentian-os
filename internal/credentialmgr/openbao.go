@@ -61,22 +61,30 @@ import (
 type OpenBao struct {
 	Addr    string
 	KVMount string
-	// OIDCRole is the JWT auth backend role the caller's token is exchanged
-	// against. The role, not this service, decides which policies the resulting
-	// token carries.
-	OIDCRole string
+	// AuthMount is the path the JWT/OIDC auth backend is enabled at. It is not
+	// "jwt": the backend is enabled with -path=oidc, so the login endpoint is
+	// auth/oidc/login. Hardcoding the plugin's default name here meant every
+	// exchange hit a mount that does not exist.
+	AuthMount string
+	// OIDCRoles are the auth backend roles a caller's token is offered to, in
+	// order, until one accepts it. The roles, not this service, decide who a
+	// caller is: each binds a different group claim, and the policies on
+	// whichever token comes back are what the viewer is derived from. A single
+	// role would mean only that role's group could ever use this service.
+	OIDCRoles []string
 
 	HTTP *http.Client
 }
 
 // NewOpenBao builds a client with a bounded HTTP timeout, so a hung OpenBao
 // surfaces as a failed request rather than a wedged handler.
-func NewOpenBao(addr, kvMount, oidcRole string) *OpenBao {
+func NewOpenBao(addr, kvMount, authMount string, oidcRoles []string) *OpenBao {
 	return &OpenBao{
-		Addr:     strings.TrimSuffix(addr, "/"),
-		KVMount:  kvMount,
-		OIDCRole: oidcRole,
-		HTTP:     &http.Client{Timeout: 15 * time.Second},
+		Addr:      strings.TrimSuffix(addr, "/"),
+		KVMount:   kvMount,
+		AuthMount: authMount,
+		OIDCRoles: oidcRoles,
+		HTTP:      &http.Client{Timeout: 15 * time.Second},
 	}
 }
 
@@ -108,27 +116,52 @@ func (b *OpenBao) ExchangeToken(ctx context.Context, oidcToken string) (Identity
 	if oidcToken == "" {
 		return Identity{}, fmt.Errorf("no OIDC token presented")
 	}
+	roles := b.OIDCRoles
+	if len(roles) == 0 {
+		return Identity{}, fmt.Errorf("no auth backend roles configured")
+	}
+	// Offered to each role in turn. A role whose bound claims do not match
+	// refuses the token, which is a 400 rather than a fact about the caller —
+	// so a refusal only rules out that role, not the request.
+	var lastStatus int
+	for _, role := range roles {
+		id, status, err := b.exchangeWithRole(ctx, oidcToken, role)
+		if err != nil {
+			return Identity{}, err
+		}
+		if status == http.StatusOK {
+			return id, nil
+		}
+		lastStatus = status
+	}
+	// Deliberately not echoing OpenBao's body: it can name policies and paths
+	// the caller has no business learning about from a failed login.
+	return Identity{}, fmt.Errorf("token exchange rejected by every configured role (last HTTP %d)", lastStatus)
+}
+
+// exchangeWithRole performs one login attempt. A non-200 is returned as a
+// status rather than an error, because the caller has another role to try; a
+// transport failure is an error, because it says nothing about the token.
+func (b *OpenBao) exchangeWithRole(ctx context.Context, oidcToken, role string) (Identity, int, error) {
 	body, _ := json.Marshal(map[string]string{
-		"role": b.OIDCRole,
+		"role": role,
 		"jwt":  oidcToken,
 	})
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
-		b.Addr+"/v1/auth/jwt/login", bytes.NewReader(body))
+		fmt.Sprintf("%s/v1/auth/%s/login", b.Addr, b.AuthMount), bytes.NewReader(body))
 	if err != nil {
-		return Identity{}, err
+		return Identity{}, 0, err
 	}
 	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := b.HTTP.Do(req)
 	if err != nil {
-		return Identity{}, fmt.Errorf("openbao unreachable: %w", err)
+		return Identity{}, 0, fmt.Errorf("openbao unreachable: %w", err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
-		// Deliberately not echoing OpenBao's body: it can name policies and
-		// paths the caller has no business learning about from a failed login.
-		return Identity{}, fmt.Errorf("token exchange rejected (HTTP %d)", resp.StatusCode)
+		return Identity{}, resp.StatusCode, nil
 	}
 	var out struct {
 		Auth struct {
@@ -139,10 +172,10 @@ func (b *OpenBao) ExchangeToken(ctx context.Context, oidcToken string) (Identity
 		} `json:"auth"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
-		return Identity{}, fmt.Errorf("malformed token exchange response: %w", err)
+		return Identity{}, 0, fmt.Errorf("malformed token exchange response: %w", err)
 	}
 	if out.Auth.ClientToken == "" {
-		return Identity{}, fmt.Errorf("token exchange returned no token")
+		return Identity{}, 0, fmt.Errorf("token exchange returned no token")
 	}
 	policies := out.Auth.TokenPolicies
 	if len(policies) == 0 {
@@ -153,7 +186,7 @@ func (b *OpenBao) ExchangeToken(ctx context.Context, oidcToken string) (Identity
 		Token:    out.Auth.ClientToken,
 		Policies: policies,
 		Metadata: out.Auth.Metadata,
-	}, nil
+	}, http.StatusOK, nil
 }
 
 // PathMetadata is what the API is allowed to say about a stored credential.

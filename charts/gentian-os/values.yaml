@@ -287,15 +287,26 @@ metrics:
 # ESO's satisfaction status, plus a write path that writes AS THE CALLER —
 # it holds no OpenBao token of its own and exchanges the user's OIDC token.
 #
-# Off by default. It is the only component that can write credentials, and
-# bao.oidcRole below decides which OpenBao role the exchange targets: the
-# service's default is cluster-admin, so a tenant-scoped deployment must set it
-# deliberately rather than inherit it.
+# Off by default. It is the only component that can write credentials.
 credentialManager:
   enabled: false
   port: 9444
-  # OpenBao role the caller's OIDC token is exchanged for.
-  oidcRole: cluster-admin
+  # Where the JWT/OIDC auth backend is enabled. Not "jwt": the installer enables
+  # it with -path=oidc, so the login endpoint is auth/oidc/login.
+  authMount: oidc
+  # Roles the caller's token is offered to, in order, until one accepts it.
+  #
+  # They must be role_type jwt. The identically-purposed oidc roles serve the
+  # browser flow into OpenBao's UI, and the plugin refuses a direct token
+  # exchange against those — a refusal this service cannot tell apart from "you
+  # are not authorised".
+  #
+  # Both are listed because the roles bind different group claims and OpenBao,
+  # not this service, decides which one a caller matches. Listing only the
+  # cluster role would leave every tenant admin unable to authenticate.
+  oidcRoles:
+    - cluster-admin-jwt
+    - tenant-admin-jwt
   # Namespace holding the ESO satisfaction probes it reads.
   probeNamespace: gentian-system
   # The OpenBao policy whose presence on an exchanged token means the caller may

@@ -177,8 +177,10 @@ spec:
               value: ":{{ .Values.credentialManager.port }}"
             - name: CREDENTIAL_PROBE_NAMESPACE
               value: {{ .Values.credentialManager.probeNamespace | quote }}
-            - name: BAO_OIDC_ROLE
-              value: {{ .Values.credentialManager.oidcRole | quote }}
+            - name: BAO_AUTH_MOUNT
+              value: {{ .Values.credentialManager.authMount | quote }}
+            - name: BAO_OIDC_ROLES
+              value: {{ join "," .Values.credentialManager.oidcRoles | quote }}
             - name: CREDENTIAL_CLUSTER_ADMIN_POLICY
               value: {{ .Values.credentialManager.clusterAdminPolicy | quote }}
             - name: CREDENTIAL_TENANT_CLAIM

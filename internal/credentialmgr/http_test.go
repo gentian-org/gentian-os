@@ -120,7 +120,7 @@ func newServerAs(t *testing.T, policies []string, meta map[string]string, objs .
 	// asked for a value. It never should.
 	bao := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
-		case strings.HasSuffix(r.URL.Path, "/auth/jwt/login"):
+		case strings.HasSuffix(r.URL.Path, "/auth/oidc/login"):
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"auth": map[string]any{
 					"client_token":   "exchanged-token",
@@ -150,7 +150,7 @@ func newServerAs(t *testing.T, policies []string, meta map[string]string, objs .
 
 	s := &Server{
 		Catalogue:          &Catalogue{Client: c, ProbeNamespace: "gentian-system"},
-		Bao:                NewOpenBao(bao.URL, "secret", "cluster-admin"),
+		Bao:                NewOpenBao(bao.URL, "secret", "oidc", []string{"cluster-admin-jwt"}),
 		Validator:          stubValidator{},
 		ClusterAdminPolicy: "cluster-admin",
 		TenantClaimKey:     "tenant",
@@ -260,7 +260,7 @@ func TestWriteRequiresCallerToken(t *testing.T) {
 // TestOpenBaoWriteRefusesEmptyToken guards the same property one layer down, so
 // a future handler that forgets the check still cannot write anonymously.
 func TestOpenBaoWriteRefusesEmptyToken(t *testing.T) {
-	b := NewOpenBao("http://openbao.invalid", "secret", "cluster-admin")
+	b := NewOpenBao("http://openbao.invalid", "secret", "oidc", []string{"cluster-admin-jwt"})
 	err := b.Write(context.Background(), "", "gentian/x", map[string]string{"a": "b"}, "alice")
 	if err == nil {
 		t.Fatal("Write accepted an empty caller token")
@@ -464,5 +464,87 @@ func TestServerHasNoTokenField(t *testing.T) {
 		if fieldExists(OpenBao{}, forbidden) {
 			t.Fatalf("OpenBao gained a %q field — every write must take the caller's token", forbidden)
 		}
+	}
+}
+
+// TestExchangeUsesConfiguredMount pins the login path. The auth backend is
+// enabled at -path=oidc, so the endpoint is auth/oidc/login; the client used to
+// hardcode the plugin's default name and every exchange reached a mount that
+// does not exist. The fake here encoded the same wrong path, which is why the
+// suite stayed green while the UI could not authenticate at all.
+func TestExchangeUsesConfiguredMount(t *testing.T) {
+	var got []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got = append(got, r.URL.Path)
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"auth": map[string]any{"client_token": "t", "token_policies": []string{"cluster-admin"}},
+		})
+	}))
+	t.Cleanup(srv.Close)
+
+	b := NewOpenBao(srv.URL, "secret", "oidc", []string{"cluster-admin-jwt"})
+	if _, err := b.ExchangeToken(context.Background(), "a.b.c"); err != nil {
+		t.Fatalf("exchange failed: %v", err)
+	}
+	if len(got) != 1 || got[0] != "/v1/auth/oidc/login" {
+		t.Fatalf("want a login at /v1/auth/oidc/login, got %v", got)
+	}
+}
+
+// TestExchangeFallsThroughToNextRole covers the tenant admin. Each role binds a
+// different group claim, so the role that does not match refuses the token —
+// which rules out that role, not the caller. With a single role configured, a
+// tenant admin could never authenticate.
+func TestExchangeFallsThroughToNextRole(t *testing.T) {
+	var tried []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Role string `json:"role"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		tried = append(tried, body.Role)
+		if body.Role != "tenant-admin-jwt" {
+			// What OpenBao returns when bound claims do not match.
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"auth": map[string]any{
+				"client_token":   "tenant-token",
+				"token_policies": []string{"tenant-admin"},
+				"metadata":       map[string]string{"tenant": "acme"},
+			},
+		})
+	}))
+	t.Cleanup(srv.Close)
+
+	b := NewOpenBao(srv.URL, "secret", "oidc", []string{"cluster-admin-jwt", "tenant-admin-jwt"})
+	id, err := b.ExchangeToken(context.Background(), "a.b.c")
+	if err != nil {
+		t.Fatalf("exchange failed: %v", err)
+	}
+	if id.Metadata["tenant"] != "acme" {
+		t.Fatalf("want the tenant from the accepting role, got %q", id.Metadata["tenant"])
+	}
+	if len(tried) != 2 || tried[0] != "cluster-admin-jwt" || tried[1] != "tenant-admin-jwt" {
+		t.Fatalf("roles should be tried in order, got %v", tried)
+	}
+}
+
+// TestExchangeRejectedByEveryRole is the case the UI reports. It must stay an
+// error, and must not name the policies or paths OpenBao mentioned.
+func TestExchangeRejectedByEveryRole(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "policy \"cluster-admin\" denied on gentian/kernel/*", http.StatusBadRequest)
+	}))
+	t.Cleanup(srv.Close)
+
+	b := NewOpenBao(srv.URL, "secret", "oidc", []string{"cluster-admin-jwt", "tenant-admin-jwt"})
+	_, err := b.ExchangeToken(context.Background(), "a.b.c")
+	if err == nil {
+		t.Fatal("exchange should fail when every role refuses")
+	}
+	if strings.Contains(err.Error(), "gentian/kernel") || strings.Contains(err.Error(), "policy") {
+		t.Fatalf("error leaked OpenBao's body: %v", err)
 	}
 }

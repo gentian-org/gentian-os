@@ -117,12 +117,29 @@ func NewRunnableFromEnv(mgr manager.Manager, validator Validator) (*Server, erro
 		Bao: NewOpenBao(
 			baoAddr,
 			envOr("BAO_KV_MOUNT", "secret"),
-			envOr("BAO_OIDC_ROLE", "cluster-admin"),
+			// The backend is enabled at -path=oidc, so this is the mount, not
+			// the plugin's default "jwt" name.
+			envOr("BAO_AUTH_MOUNT", "oidc"),
+			// JWT-typed roles, not the oidc-typed ones behind the browser flow:
+			// a role with role_type oidc refuses a direct token exchange.
+			splitList(envOr("BAO_OIDC_ROLES", "cluster-admin-jwt,tenant-admin-jwt")),
 		),
 		Validator:          validator,
 		ClusterAdminPolicy: envOr("CREDENTIAL_CLUSTER_ADMIN_POLICY", "cluster-admin"),
 		TenantClaimKey:     envOr("CREDENTIAL_TENANT_CLAIM", "tenant"),
 	}, nil
+}
+
+// splitList parses a comma-separated env value, dropping blanks so a trailing
+// comma or an accidental double one does not become a role named "".
+func splitList(v string) []string {
+	var out []string
+	for _, part := range strings.Split(v, ",") {
+		if p := strings.TrimSpace(part); p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
 }
 
 func envOr(key, def string) string {
