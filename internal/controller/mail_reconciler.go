@@ -235,6 +235,14 @@ func (r *TenantReconciler) ensureMailSelfhosted(ctx context.Context, tenant *gen
 		log.FromContext(ctx).Error(err, "sync mail app passwords", "tenant", tenant.Name)
 	}
 
+	// 3c. The tenant's mail DNS — MX, SPF, DKIM, DMARC — for external-dns to
+	// reconcile into the zone. Logged rather than returned: a cluster without
+	// external-dns keeps these records manual, which is a missing convenience
+	// rather than a broken tenant.
+	if err := r.syncTenantMailDNS(ctx, tenant); err != nil {
+		log.FromContext(ctx).Error(err, "publish mail DNS records", "tenant", tenant.Name)
+	}
+
 	// 4. Register the tenant domain in the shared Dovecot domains ConfigMap.
 	if err := r.ensureDovecotDomainConfig(ctx, tenant); err != nil {
 		return false, fmt.Errorf("register Dovecot domain config: %w", err)

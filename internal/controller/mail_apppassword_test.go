@@ -56,3 +56,21 @@ func contains(h, n string) bool {
 	}
 	return false
 }
+
+func TestTenantMailDNSRecords(t *testing.T) {
+	r := &TenantReconciler{KernelDomain: "gtn.host"}
+	_ = r
+	recs := []map[string]interface{}{
+		dnsEndpointRecord("corp.gtn.host", "MX", "10 mail.gtn.host"),
+		dnsEndpointRecord("mail._domainkey.corp.gtn.host", "TXT", "v=DKIM1; p=abc"),
+	}
+	if recs[0]["recordType"] != "MX" {
+		t.Fatal("wrong record type")
+	}
+	if got := recs[0]["targets"].([]interface{})[0]; got != "10 mail.gtn.host" {
+		t.Fatalf("MX must carry priority and host, got %v", got)
+	}
+	if recs[0]["recordTTL"].(int64) != 300 {
+		t.Fatal("TTL must be explicit; a zero TTL is rejected by some providers")
+	}
+}
