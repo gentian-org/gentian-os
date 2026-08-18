@@ -1,0 +1,328 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.17.3
+  name: tenantrestores.gentianos.io
+spec:
+  group: gentianos.io
+  names:
+    kind: TenantRestore
+    listKind: TenantRestoreList
+    plural: tenantrestores
+    shortNames:
+    - trst
+    singular: tenantrestore
+  scope: Namespaced
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .status.phase
+      name: Phase
+      type: string
+    - jsonPath: .status.bundle.prefix
+      name: Bundle
+      type: string
+    - jsonPath: .status.quiesced
+      name: Paused
+      priority: 1
+      type: string
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: TenantRestore restores a tenant's data from a bundle.
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: |-
+              TenantRestoreSpec puts a bundle back into a live tenant.
+
+              This is the most destructive resource the platform has. It replaces database
+              contents, bucket contents and volume contents with what a bundle recorded,
+              and anything written since that bundle was taken is gone. Everything about
+              the shape below is arranged around making that hard to do by accident.
+            properties:
+              apps:
+                description: |-
+                  Apps limits the restore to these profiles. Empty restores every app the
+                  bundle contains that is also installed.
+                items:
+                  type: string
+                type: array
+              bundle:
+                description: |-
+                  Bundle locates a bundle directly, for restoring one this cluster did not
+                  produce — a migration, or a rebuild where the original export is gone.
+                properties:
+                  bucket:
+                    description: |-
+                      Bucket holds the tenant's bundles. It is provisioned per tenant and is
+                      deliberately not one of the app buckets, so exports never capture
+                      previous exports.
+                    type: string
+                  prefix:
+                    description: |-
+                      Prefix is the directory-like key prefix this bundle occupies. The bundle
+                      is a prefix rather than a single object so a capture can stream, a
+                      restore can be partial, and no tenant-sized scratch space is needed.
+                    type: string
+                type: object
+              confirmTenant:
+                description: |-
+                  ConfirmTenant must equal the tenant being restored into.
+
+                  A typed confirmation rather than a boolean: `force: true` is something a
+                  person sets once and copies forever, while a name has to be looked up and
+                  matches only the tenant actually in front of them. It is the difference
+                  between confirming and acknowledging.
+                minLength: 1
+                type: string
+              decryption:
+                description: Decryption supplies the key material for the bundle.
+                properties:
+                  identitySecretRef:
+                    description: |-
+                      IdentitySecretRef holds an age identity (AGE-SECRET-KEY-1…) for a
+                      recipient-encrypted bundle.
+
+                      The platform deliberately does not keep this: the identity matching the
+                      cluster's backup recipients is escrowed off-cluster with the recovery
+                      kit, so a restore is where an operator demonstrates they still have it.
+                      Storing it permanently in the cluster would defeat the escrow.
+                    properties:
+                      key:
+                        description: Key defaults to "passphrase".
+                        type: string
+                      name:
+                        minLength: 1
+                        type: string
+                    required:
+                    - name
+                    type: object
+                  passphraseSecretRef:
+                    description: |-
+                      PassphraseSecretRef holds the passphrase for a passphrase-encrypted
+                      bundle, in this tenant's namespace.
+                    properties:
+                      key:
+                        description: Key defaults to "passphrase".
+                        type: string
+                      name:
+                        minLength: 1
+                        type: string
+                    required:
+                    - name
+                    type: object
+                type: object
+              exportRef:
+                description: |-
+                  ExportRef names a TenantExport in this namespace to restore from. It is
+                  the ordinary path: the export already knows its bucket, prefix and how it
+                  was encrypted.
+                type: string
+              skipVersionCheck:
+                description: |-
+                  SkipVersionCheck permits restoring a bundle produced by newer app
+                  versions than are installed.
+
+                  Off by default because the failure is silent: an older app reading data
+                  written by a newer schema usually starts, serves, and corrupts. Set it
+                  only when you know the specific migration is reversible.
+                type: boolean
+            required:
+            - confirmTenant
+            type: object
+          status:
+            description: TenantRestoreStatus reports progress and what was decided
+              during preflight.
+            properties:
+              apps:
+                description: Apps reports per-app progress.
+                items:
+                  description: AppExportStatus reports the capture of one app.
+                  properties:
+                    attempts:
+                      description: |-
+                        Attempts counts capture Jobs run for this app. Bounded, because the
+                        shared Job waiter deletes a failed Job so it gets recreated — right for
+                        provisioning, an infinite loop for an export.
+                      format: int32
+                      type: integer
+                    chartVersion:
+                      description: |-
+                        ChartVersion records the chart the app was running when captured.
+                        Restoring a bundle into an older app than produced it corrupts silently,
+                        so the restore path refuses it — which it can only do if this is here.
+                      type: string
+                    message:
+                      description: Message explains a non-terminal or failed state.
+                      type: string
+                    name:
+                      description: Name is the installed profile name.
+                      type: string
+                    phase:
+                      description: Phase is this app's own phase, using the same vocabulary
+                        as the export.
+                      enum:
+                      - Pending
+                      - Running
+                      - Ready
+                      - Failed
+                      type: string
+                    quiesceEnd:
+                      format: date-time
+                      type: string
+                    quiesceStart:
+                      description: |-
+                        QuiesceStart and QuiesceEnd bound the window this app was paused for.
+                        Published rather than merely logged: it is the honest measure of what an
+                        export costs a tenant, and the evidence that the pause is per app.
+                      format: date-time
+                      type: string
+                    stores:
+                      description: |-
+                        Stores lists the kinds captured for this app (postgres, mariadb, s3,
+                        volumes), derived from the profile's kernelRequirements.
+                      items:
+                        type: string
+                      type: array
+                  type: object
+                type: array
+              bundle:
+                description: Bundle is the bundle actually used, resolved from exportRef
+                  or spec.
+                properties:
+                  bucket:
+                    description: |-
+                      Bucket holds the tenant's bundles. It is provisioned per tenant and is
+                      deliberately not one of the app buckets, so exports never capture
+                      previous exports.
+                    type: string
+                  prefix:
+                    description: |-
+                      Prefix is the directory-like key prefix this bundle occupies. The bundle
+                      is a prefix rather than a single object so a capture can stream, a
+                      restore can be partial, and no tenant-sized scratch space is needed.
+                    type: string
+                type: object
+              completedAt:
+                format: date-time
+                type: string
+              conditions:
+                description: Conditions carry Accepted (admitted, and preflight passed)
+                  and Complete.
+                items:
+                  description: Condition contains details for one aspect of the current
+                    state of this API Resource.
+                  properties:
+                    lastTransitionTime:
+                      description: |-
+                        lastTransitionTime is the last time the condition transitioned from one status to another.
+                        This should be when the underlying condition changed.  If that is not known, then using the time when the API field changed is acceptable.
+                      format: date-time
+                      type: string
+                    message:
+                      description: |-
+                        message is a human readable message indicating details about the transition.
+                        This may be an empty string.
+                      maxLength: 32768
+                      type: string
+                    observedGeneration:
+                      description: |-
+                        observedGeneration represents the .metadata.generation that the condition was set based upon.
+                        For instance, if .metadata.generation is currently 12, but the .status.conditions[x].observedGeneration is 9, the condition is out of date
+                        with respect to the current state of the instance.
+                      format: int64
+                      minimum: 0
+                      type: integer
+                    reason:
+                      description: |-
+                        reason contains a programmatic identifier indicating the reason for the condition's last transition.
+                        Producers of specific condition types may define expected values and meanings for this field,
+                        and whether the values are considered a guaranteed API.
+                        The value should be a CamelCase string.
+                        This field may not be empty.
+                      maxLength: 1024
+                      minLength: 1
+                      pattern: ^[A-Za-z]([A-Za-z0-9_,:]*[A-Za-z0-9_])?$
+                      type: string
+                    status:
+                      description: status of the condition, one of True, False, Unknown.
+                      enum:
+                      - "True"
+                      - "False"
+                      - Unknown
+                      type: string
+                    type:
+                      description: type of condition in CamelCase or in foo.example.com/CamelCase.
+                      maxLength: 316
+                      pattern: ^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])$
+                      type: string
+                  required:
+                  - lastTransitionTime
+                  - message
+                  - reason
+                  - status
+                  - type
+                  type: object
+                type: array
+                x-kubernetes-list-map-keys:
+                - type
+                x-kubernetes-list-type: map
+              observedGeneration:
+                format: int64
+                type: integer
+              passwordResetRequired:
+                description: |-
+                  PasswordResetRequired flags that members came back without credentials.
+
+                  Keycloak's partial-export carries no password hashes, so a restored realm
+                  has accounts nobody can sign in to until they are sent through a reset.
+                  Surfaced here because the alternative is an operator discovering it from
+                  users who cannot log in.
+                type: boolean
+              phase:
+                description: 'Phase reuses the export vocabulary: Pending, Running,
+                  Ready, Failed.'
+                enum:
+                - Pending
+                - Running
+                - Ready
+                - Failed
+                type: string
+              quiesced:
+                description: |-
+                  Quiesced names apps paused right now, and exists for the same reason as
+                  the export's: it is the only record that survives a controller restart,
+                  and an app left paused is an outage.
+                items:
+                  type: string
+                type: array
+              startedAt:
+                format: date-time
+                type: string
+            type: object
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}

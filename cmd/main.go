@@ -95,8 +95,18 @@ func main() {
 	}
 	setupLog.Info("edge routing mode", "routing_mode", routingMode)
 
+	// Exec lets a profile's maintenance-mode and restore hooks run inside the
+	// app's own pod. Optional: without it those fall back to scaling the app,
+	// which still pauses writes, so a failure here must not stop the operator.
+	podExecer, execErr := controller.NewPodExecer(mgr.GetConfig())
+	if execErr != nil {
+		setupLog.Error(execErr, "pod exec unavailable; backup hooks will fall back to scaling")
+		podExecer = nil
+	}
+
 	tenantReconciler := &controller.TenantReconciler{
 		Client:                   mgr.GetClient(),
+		Exec:                     podExecer,
 		Scheme:                   mgr.GetScheme(),
 		Seeder:                   buildSeeder(),
 		KernelDomain:             os.Getenv("KERNEL_DOMAIN"),
@@ -215,12 +225,31 @@ func main() {
 		os.Exit(1)
 	}
 
-	if err := (&controller.TenantExportReconciler{
+	tenantExportReconciler := &controller.TenantExportReconciler{
 		Client:     mgr.GetClient(),
 		Scheme:     mgr.GetScheme(),
 		Reconciler: tenantReconciler,
-	}).SetupWithManager(mgr); err != nil {
+	}
+	if err := tenantExportReconciler.SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "TenantExport")
+		os.Exit(1)
+	}
+
+	if err := (&controller.TenantRestoreReconciler{
+		Client:     mgr.GetClient(),
+		Scheme:     mgr.GetScheme(),
+		Reconciler: tenantExportReconciler,
+		Tenant:     tenantReconciler,
+	}).SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "unable to create controller", "controller", "TenantRestore")
+		os.Exit(1)
+	}
+
+	if err := (&controller.TenantExportScheduleReconciler{
+		Client: mgr.GetClient(),
+		Scheme: mgr.GetScheme(),
+	}).SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "unable to create controller", "controller", "TenantExportSchedule")
 		os.Exit(1)
 	}
 

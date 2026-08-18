@@ -1,6 +1,6 @@
 # Backup and Recovery
 
-**Status:** Phases 1–4 are implemented (recovery kit, `spec.backup` contract, `TenantExport`, Admin Console); Phases 5–7 are not
+**Status:** Phases 1–5 implemented, Phase 6 partly (scheduling and retention; cluster-level PITR/Velero not started); Phase 7 is the drills, and is now runnable
 **Scope:** cluster recovery, credential escrow, self-service tenant export/restore (Admin Console)
 **Applies to:** `install.sh`, OpenBao, CNPG, MinIO, Keycloak, tenant namespaces, `gentian-ui`
 
@@ -726,9 +726,35 @@ can change on its own.
   cluster.
 - Polling stops when the export reaches a terminal phase.
 
-### Phase 5 — `TenantRestore` (in place)
+### Phase 5 — `TenantRestore` (in place) — **implemented**
 
 **Goal** — put a bundle back into a live tenant.
+
+Shipped as `api/v1alpha1/tenantrestore_types.go`, `internal/backup/restore_jobs.go`
+and `internal/controller/tenantrestore_controller.go`, with the drill procedure
+in `docs/commands.md` §12 and §14.
+
+Three decisions worth carrying forward:
+
+- **`confirmTenant` is a name, not a boolean.** `force: true` is something a
+  person sets once and copies forever; a name has to be looked up and matches
+  only the tenant in front of them.
+- **Exec is now wired**, so `quiesce.mode: command` runs the profile's real
+  maintenance hooks instead of falling back to scaling, and `restore.post` /
+  `restore.verify` run at all. It still falls back when there is no ready pod
+  or no execer — the data guarantee is identical either way, and refusing to
+  back up an app because its pod is unhealthy would be the wrong trade.
+- **The identity is asked for at restore time.** A recipient bundle needs the
+  age identity that lives off-cluster with the recovery kit, so a restore is
+  where an operator demonstrates they still have it. Keeping a copy on the
+  cluster would defeat the escrow.
+
+Restores replace rather than merge — `pg_restore --clean`, `DROP DATABASE`,
+`mc mirror --remove` — because anything the bundle does not contain has no
+business surviving a restore that claims to return the app to that point.
+Volumes are the exception: `excludePaths` mean the archive is not always a
+complete picture, so wiping the target would turn a documented omission into
+data loss.
 
 **Files** — `api/v1alpha1/tenantrestore_types.go`,
 `internal/controller/tenantrestore_controller.go`, the same `internal/backup/`
@@ -769,9 +795,28 @@ package in reverse, console wiring as in Phase 4, a `tenants restore` verb in
 - Export and restore cannot overlap, and neither runs concurrently with an
   install or purge of the same app.
 
-### Phase 6 — Continuous protection
+### Phase 6 — Continuous protection — **scheduling done, cluster-level not started**
 
 **Goal** — protection that does not depend on someone clicking Export.
+
+`TenantExportSchedule` ships: a cron expression in UTC, `suspend`, `keepLast`
+retention, and `status.lastSuccessfulTime` — the field to alert on, because a
+schedule that fires nightly and never succeeds looks healthy by every other
+measure. A new schedule does not fire immediately (that would pause a tenant's
+apps as a side effect of writing YAML), a window missed by more than an hour is
+skipped rather than caught up, and retention never deletes a running export,
+whose paused apps would be stranded.
+
+One bug worth recording: `robfig/cron` evaluates an expression in the *location
+of the timestamp it is given*, so a `lastScheduleTime` read back in a local zone
+shifted every firing by that zone's UTC offset. The schedule field promises UTC;
+it now converts explicitly on both sides. A test caught it, not review.
+
+**Still not started, and genuinely separate infrastructure:** CNPG
+`ScheduledBackup` with WAL archiving, MinIO versioning and replication, Velero,
+and object-lock on the backup bucket. Those protect against losing the *cluster*
+rather than losing a tenant's data, and none of them can be configured
+meaningfully without the cluster in front of you.
 
 **Detail**
 

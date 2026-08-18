@@ -51,6 +51,12 @@ rules:
     - create
     - delete
   - apiGroups:
+    - ''
+    resources:
+    - pods/exec
+    verbs:
+    - create
+  - apiGroups:
     - apps
     resources:
     - deployments
@@ -179,6 +185,8 @@ rules:
     - platformsecuritypolicies
     - repositories
     - tenantexports
+    - tenantexportschedules
+    - tenantrestores
     - tenants
     - xtenants
     verbs:
@@ -198,6 +206,8 @@ rules:
     - integrationbindings/status
     - platformsecuritypolicies/status
     - tenantexports/status
+    - tenantexportschedules/status
+    - tenantrestores/status
     - tenants/status
     verbs:
     - get
@@ -210,6 +220,7 @@ rules:
     - integrationbindings/finalizers
     - platformsecuritypolicies/finalizers
     - tenantexports/finalizers
+    - tenantrestores/finalizers
     - tenants/finalizers
     verbs:
     - update

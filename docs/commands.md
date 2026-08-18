@@ -533,3 +533,131 @@ age -d manifest.json.age > manifest.json
 
 `manifest.json` lists what was captured per app, the chart versions at capture
 time, and the pause window each app saw.
+
+## 12. Tenant Restore
+
+A restore **replaces** live data with what a bundle recorded. Anything written
+since is gone. It is deliberately awkward to trigger by accident.
+
+```bash
+kubectl apply -f - <<'EOF'
+apiVersion: gentianos.io/v1alpha1
+kind: TenantRestore
+metadata:
+  name: restore-2026-08-18
+  namespace: tenant-demo
+spec:
+  exportRef: nightly-2026-08-18     # or bundle: {bucket, prefix}
+  confirmTenant: demo               # must equal the tenant, or it refuses
+  decryption:
+    identitySecretRef:              # platform-key bundle
+      name: backup-identity
+    # passphraseSecretRef:          # passphrase bundle
+    #   name: my-passphrase
+EOF
+```
+
+The identity is not on the cluster — that is the point of the escrow — so a
+restore is where you prove you still have it:
+
+```bash
+kubectl create secret generic backup-identity -n tenant-demo \
+  --from-file=identity=/path/to/age-identity.txt
+```
+
+Delete that Secret once the restore is done.
+
+### What it does, in order
+
+1. **Preflight** — confirmation matches, no export or restore already running,
+   bundle exists and is `Ready`, decryption key present. Nothing is touched
+   until all of these pass.
+2. **Per app** — pause, load database, load bucket, unpack volumes, run the
+   profile's `restore.post` hooks, run `restore.verify`, resume. One app at a
+   time.
+3. **Tenant-wide, last** — Keycloak realm and the portal shell database. Last
+   deliberately: restoring identity earlier would let members sign in to
+   half-restored data.
+
+### After a restore, members cannot sign in
+
+Keycloak's export carries no password hashes, so accounts come back without
+credentials. `status.passwordResetRequired` says so. Send members through a
+reset from **Admin Console → Members**.
+
+## 13. Scheduled Backups
+
+```bash
+kubectl apply -f - <<'EOF'
+apiVersion: gentianos.io/v1alpha1
+kind: TenantExportSchedule
+metadata:
+  name: nightly
+  namespace: tenant-demo
+spec:
+  schedule: "0 3 * * *"    # UTC, always
+  keepLast: 7              # older finished exports are deleted; 0 keeps all
+EOF
+
+kubectl get tenantexportschedules -n tenant-demo
+```
+
+Encryption defaults to the cluster's recipients, which is the only mode that
+works unattended — a passphrase has nobody to type it at 03:00.
+
+`status.lastSuccessfulTime` is the field to watch. A schedule that fires nightly
+but never succeeds looks healthy by every other measure, and that is precisely
+the failure a backup regime cannot afford.
+
+Two behaviours worth knowing:
+
+- A new schedule does **not** fire immediately. Creating a backup the moment
+  someone writes YAML would pause a tenant's apps as a side effect.
+- A window missed by more than an hour is skipped rather than caught up. Waking
+  from a long outage should not take six identical backups, each pausing the
+  tenant's apps again.
+
+## 14. Restore Drill
+
+Run this on a scratch tenant before you need it. An untested backup is a
+hypothesis.
+
+```bash
+# 1. Take a bundle
+kubectl apply -f - <<'EOF'
+apiVersion: gentianos.io/v1alpha1
+kind: TenantExport
+metadata: {name: drill-before, namespace: tenant-demo}
+spec: {}
+EOF
+kubectl wait --for=jsonpath='{.status.phase}'=Ready \
+  tenantexport/drill-before -n tenant-demo --timeout=30m
+
+# 2. Change something you can recognise — a file, a user, a project.
+
+# 3. Put it back
+kubectl apply -f - <<'EOF'
+apiVersion: gentianos.io/v1alpha1
+kind: TenantRestore
+metadata: {name: drill-restore, namespace: tenant-demo}
+spec:
+  exportRef: drill-before
+  confirmTenant: demo
+  decryption:
+    identitySecretRef: {name: backup-identity}
+EOF
+kubectl wait --for=jsonpath='{.status.phase}'=Ready \
+  tenantrestore/drill-restore -n tenant-demo --timeout=60m
+
+# 4. Check the change is gone, other tenants are untouched, and time it.
+kubectl get tenantrestore drill-restore -n tenant-demo \
+  -o jsonpath='{.status.startedAt} -> {.status.completedAt}{"\n"}'
+```
+
+The measured time is the RTO. Publish it rather than assuming one.
+
+**If a drill wedges:** an app stuck in `.status.quiesced` is offline. The
+operator resumes anything it finds paused on the next reconcile, including
+after a restart, so deleting the stuck `TenantExport`/`TenantRestore` is the
+recovery — the workload's `gentianos.io/pre-export-replicas` annotation records
+what it should be scaled back to.

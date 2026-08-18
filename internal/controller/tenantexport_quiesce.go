@@ -41,23 +41,58 @@ const replicaMemoAnnotation = "gentianos.io/pre-export-replicas"
 
 // quiesceApp pauses an app's writes and reports the mode actually used.
 //
-// Profiles may ask for `command` mode, which pauses writes without taking the
-// app offline. Executing a command inside a running pod needs a client this
-// reconciler does not have, so that request currently falls back to scaling
-// down: the data guarantee is identical — no writes during the capture — and
-// only the courtesy of a maintenance page is lost. The mode actually used is
-// returned so it reaches the manifest, rather than the bundle claiming a pause
-// that did not happen the way the profile described.
+// command mode runs the profile's own maintenance hooks, which pauses writes
+// without taking the app offline — users see a maintenance page instead of a
+// connection error. It needs a ready pod and a configured execer; when either
+// is missing this falls back to scaling down and says so, because the data
+// guarantee is identical either way and refusing to back an app up because its
+// pod is unhealthy would be the wrong trade.
+//
+// The mode returned is the one used, not the one requested, so the manifest
+// records what actually happened.
 func (r *TenantReconciler) quiesceApp(ctx context.Context, tenantName, appName string, spec *gentianov1alpha1.BackupSpec) (gentianov1alpha1.BackupQuiesceMode, error) {
 	requested := spec.QuiesceMode()
 	if requested == gentianov1alpha1.BackupQuiesceNone {
 		return requested, nil
 	}
 
+	if requested == gentianov1alpha1.BackupQuiesceCommand {
+		pre, _ := spec.QuiesceCommands()
+		if len(pre) > 0 && r.Exec != nil {
+			if _, err := r.execAppCommand(ctx, tenantName, appName, spec, pre); err == nil {
+				return gentianov1alpha1.BackupQuiesceCommand, nil
+			}
+			// Fall through: an app whose maintenance hook cannot run still has
+			// to be captured consistently, and scaling down achieves that.
+		}
+	}
+
 	if err := r.scaleAppWorkloads(ctx, tenantName, appName, 0); err != nil {
 		return requested, err
 	}
 	return gentianov1alpha1.BackupQuiesceScaleDown, nil
+}
+
+// unquiesceApp reverses quiesceApp for the mode that was actually used.
+func (r *TenantReconciler) unquiesceApp(
+	ctx context.Context,
+	tenantName, appName string,
+	spec *gentianov1alpha1.BackupSpec,
+	used gentianov1alpha1.BackupQuiesceMode,
+) error {
+	if used == gentianov1alpha1.BackupQuiesceCommand {
+		_, post := spec.QuiesceCommands()
+		if len(post) > 0 && r.Exec != nil {
+			if _, err := r.execAppCommand(ctx, tenantName, appName, spec, post); err != nil {
+				// Leaving an app in maintenance mode is an outage, so a failed
+				// resume hook is not the end of the attempt: scaling the app is
+				// still tried below, which restarts it out of maintenance.
+				return r.scaleAppWorkloads(ctx, tenantName, appName, -1)
+			}
+			return nil
+		}
+	}
+	return r.scaleAppWorkloads(ctx, tenantName, appName, -1)
 }
 
 // resumeApp puts an app back. It is safe to call when the app was never paused,
