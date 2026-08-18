@@ -41,7 +41,11 @@ spec:
 ---
 # external-dns — DNS records follow the cluster, rather than being kept by hand.
 #
-# Chart: oci://registry-1.docker.io/bitnamicharts/external-dns
+# Chart: https://kubernetes-sigs.github.io/external-dns/ (the upstream chart)
+#
+# NOT the Bitnami chart: Bitnami withdrew their free Docker Hub images in 2025,
+# so that chart syncs cleanly and then fails with ErrImagePull on an image that
+# no longer exists.
 #
 # Two sources, for two kinds of record:
 #
@@ -65,9 +69,9 @@ metadata:
 spec:
   project: gentian
   sources:
-  - repoURL: registry-1.docker.io/bitnamicharts
+  - repoURL: https://kubernetes-sigs.github.io/external-dns/
     chart: external-dns
-    targetRevision: "8.3.5"
+    targetRevision: "1.15.2"
     helm:
       valueFiles:
       - $values/kernel/values/external-dns.yaml

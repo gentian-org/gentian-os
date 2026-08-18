@@ -32,7 +32,9 @@ spec:
   - 'https://openbao.github.io/openbao-helm'                                                            # OpenBao Helm chart repo
   - 'ghcr.io/stakater/charts'                                                                           # Stakater OCI charts registry (Reloader)
   - 'ghcr.io/cloudnative-pg/charts'                                                                     # CloudNativePG OCI charts registry
-  - 'https://kyverno.github.io/kyverno/*'                                                               # Kyverno admission controller
+  - 'https://kyverno.github.io/kyverno/*'
+  # external-dns, upstream chart. Bitnami's was withdrawn in 2025.
+  - 'https://kubernetes-sigs.github.io/external-dns/'                                                               # Kyverno admission controller
 
   # Destination clusters and namespaces
   destinations:
@@ -43,6 +45,10 @@ spec:
   - namespace: 'openbao'                     # OpenBao secret backend
     server: https://kubernetes.default.svc
   - namespace: 'stakater-system'             # Stakater Reloader (cluster-wide controller)
+    server: https://kubernetes.default.svc
+  # external-dns deploys here. Without this destination the Application is
+  # rejected as InvalidSpecError rather than merely failing to sync.
+  - namespace: 'external-dns'               # external-dns (cluster-wide DNS controller)
     server: https://kubernetes.default.svc
   - namespace: 'gentian-system'              # Gentian OS orchestrator (CRD controllers)
     server: https://kubernetes.default.svc
