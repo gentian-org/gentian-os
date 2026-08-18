@@ -4,17 +4,17 @@
 # Keycloak bootstrap + gentian-portal-secrets are created by install.sh Step 14
 # (portal-login-bootstrap.sh) before this Application is applied.
 #
-# Image updates: argocd-image-updater watches GHCR :%PORTAL_IMAGE_TAG% digests
+# Image updates: argocd-image-updater watches GHCR :{{ .Values.portalImageTag }} digests
 # and patches api/web image tags on this Application (write-back: argocd).
 #
 # Placeholders filled by portal-login-bootstrap.sh:
-#   %GENTIAN_OS_BRANCH%   — gentian-os branch for Helm values ref
-#   %GENTIAN_UI_BRANCH%   — gentian-ui branch for chart source
-#   %PORTAL_IMAGE_TAG%    — floating image tag (e.g. develop)
-#   %DEPLOYMENTS_REPO%    — gentian-deployments repo URL
-#   %DEPLOYMENTS_BRANCH%  — gentian-deployments branch
-#   %CLUSTER%             — cluster identifier in deployments repo
-#   %STAGE%               — stage name (dev / staging / prod)
+#   {{ .Values.gentianOsBranch }}   — gentian-os branch for Helm values ref
+#   {{ .Values.uiBranch }}   — gentian-ui branch for chart source
+#   {{ .Values.portalImageTag }}    — floating image tag (e.g. develop)
+#   {{ .Values.deploymentsRepo }}    — gentian-deployments repo URL
+#   {{ .Values.deploymentsBranch }}  — gentian-deployments branch
+#   {{ .Values.cluster }}             — cluster identifier in deployments repo
+#   {{ .Values.stage }}               — stage name (dev / staging / prod)
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
@@ -24,7 +24,7 @@ metadata:
     argocd.argoproj.io/sync-wave: "1"
     # KNOWN DEFECT — same shape as the one fixed in
     # gentian-os-application.yaml.tmpl: pinning image-list to the moving
-    # %PORTAL_IMAGE_TAG% (develop) makes the candidate set a single entry whose
+    # {{ .Values.portalImageTag }} (develop) makes the candidate set a single entry whose
     # name never changes, so newest-build re-picks it every cycle and
     # api.image.tag / web.image.tag never move. New portal builds do not reach
     # the cluster; the controller reports images_updated=0 while looking healthy.
@@ -35,10 +35,10 @@ metadata:
     # allow-tags regexp added before that would match nothing and change no
     # behaviour. Once those pipelines publish branch-prefixed sha tags, drop the
     # tag from image-list and add, per alias:
-    #   argocd-image-updater.argoproj.io/<alias>.allow-tags: regexp:^%PORTAL_IMAGE_TAG%-[0-9a-f]{7,}$
+    #   argocd-image-updater.argoproj.io/<alias>.allow-tags: regexp:^{{ .Values.portalImageTag }}-[0-9a-f]{7,}$
     argocd-image-updater.argoproj.io/image-list: >-
-      api=ghcr.io/gentian-org/gentian-portal-api:%PORTAL_IMAGE_TAG%,
-      web=ghcr.io/gentian-org/gentian-portal-web:%PORTAL_IMAGE_TAG%
+      api=ghcr.io/gentian-org/gentian-portal-api:{{ .Values.portalImageTag }},
+      web=ghcr.io/gentian-org/gentian-portal-web:{{ .Values.portalImageTag }}
     argocd-image-updater.argoproj.io/api.update-strategy: newest-build
     argocd-image-updater.argoproj.io/web.update-strategy: newest-build
     argocd-image-updater.argoproj.io/api.helm.image-name: api.image.repository
@@ -90,13 +90,13 @@ spec:
     - .spec.template.spec.containers[].env[].valueFrom.fieldRef.apiVersion
   sources:
   - repoURL: https://github.com/gentian-org/gentian-os
-    targetRevision: %GENTIAN_OS_BRANCH%
+    targetRevision: {{ .Values.gentianOsBranch }}
     ref: values
-  - repoURL: %DEPLOYMENTS_REPO%
-    targetRevision: %DEPLOYMENTS_BRANCH%
+  - repoURL: {{ .Values.deploymentsRepo }}
+    targetRevision: {{ .Values.deploymentsBranch }}
     ref: deploy
   - repoURL: https://github.com/gentian-org/gentian-ui
-    targetRevision: %GENTIAN_UI_BRANCH%
+    targetRevision: {{ .Values.uiBranch }}
     path: chart
     helm:
       releaseName: gentian-portal
@@ -104,7 +104,7 @@ spec:
       - $values/kernel/services/gentian-portal-web/values/_base.yaml
       # kernelDomain + api.env.BACKEND_CORS_ORIGINS — cluster-specific
       # (see docs/deployment.md §1).
-      - $deploy/clusters/%CLUSTER%/kernel/values.yaml
+      - $deploy/clusters/{{ .Values.cluster }}/kernel/values.yaml
   destination:
     server: https://kubernetes.default.svc
     namespace: platform-kernel

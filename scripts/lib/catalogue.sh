@@ -351,21 +351,23 @@ handoff_gentian_os_to_argocd() {
     resolve_gentian_os_branch
     local stage="${GENTIAN_DEPLOYMENTS_STAGE:-${ENV:-dev}}"
     local cluster="${GENTIAN_DEPLOYMENTS_CLUSTER_ID:-default-cluster}"
-    local tmpl="${SCRIPT_DIR}/kernel/bootstrap/gentian-os-application.yaml.tmpl"
-    local rendered
-    rendered="$(mktemp)"
     # Provenance defaults to the public origin, so an install that says nothing
     # behaves as before; a mirrored install sets these in install.env (§2).
     local os_repo="${GENTIAN_OS_REPO:-https://github.com/gentian-org/gentian-os}"
     local os_image="${GENTIAN_OS_IMAGE_REPOSITORY:-ghcr.io/gentian-org/gentian-os}"
-    sed -e "s|%GENTIAN_OS_BRANCH%|${GENTIAN_OS_BRANCH}|g" \
-        -e "s|%GENTIAN_OS_REPO%|${os_repo}|g" \
-        -e "s|%GENTIAN_OS_IMAGE_REPOSITORY%|${os_image}|g" \
-        -e "s|%DEPLOYMENTS_REPO%|${GENTIAN_DEPLOYMENTS_REPO}|g" \
-        -e "s|%DEPLOYMENTS_BRANCH%|${GENTIAN_DEPLOYMENTS_BRANCH}|g" \
-        -e "s|%CLUSTER%|${cluster}|g" \
-        -e "s|%STAGE%|${stage}|g" \
-        "$tmpl" >"$rendered"
+    local rendered
+    rendered="$(mktemp)"
+    # The ApplicationSet in this manifest carries Argo's own {{ .path.path }},
+    # which the chart wraps in a raw string so Helm hands it through untouched.
+    helm template gentian-bootstrap "${SCRIPT_DIR}/kernel/bootstrap/chart" \
+        -s templates/gentian-os.yaml \
+        --set-string "gentianOsBranch=${GENTIAN_OS_BRANCH}" \
+        --set-string "osRepo=${os_repo}" \
+        --set-string "osImageRepository=${os_image}" \
+        --set-string "deploymentsRepo=${GENTIAN_DEPLOYMENTS_REPO}" \
+        --set-string "deploymentsBranch=${GENTIAN_DEPLOYMENTS_BRANCH}" \
+        --set-string "cluster=${cluster}" \
+        --set-string "stage=${stage}" >"$rendered"
 
     info "Registering gentian-os Application + gentian-tenants ApplicationSet..."
     info "  operator branch:    ${GENTIAN_OS_BRANCH}"

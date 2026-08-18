@@ -7,3 +7,14 @@
 gentianOsBranch: develop
 storageClass: ""
 stage: dev
+
+# The operator and portal Applications carry more provenance than the six above:
+# where the code comes from, where the deployments live, and which cluster and
+# stage this is.
+osRepo: https://github.com/gentian-org/gentian-os
+osImageRepository: ghcr.io/gentian-org/gentian-os
+deploymentsRepo: ""
+deploymentsBranch: main
+uiBranch: develop
+portalImageTag: develop
+cluster: ""

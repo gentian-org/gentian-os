@@ -1390,7 +1390,7 @@ apply_gentian_portal_argocd_application() {
     resolve_gentian_os_branch
     gentian_ui_branch="${GENTIAN_UI_BRANCH:-develop}"
     portal_tag="${PORTAL_IMAGE_TAG:-develop}"
-    tmpl="${SCRIPT_DIR}/kernel/bootstrap/gentian-portal-application.yaml.tmpl"
+    tmpl="${SCRIPT_DIR}/kernel/bootstrap/chart/templates/gentian-portal.yaml"
     rendered="$(mktemp)"
 
     if [[ ! -f "${tmpl}" ]]; then
@@ -1398,14 +1398,15 @@ apply_gentian_portal_argocd_application() {
         return 1
     fi
 
-    sed -e "s|%GENTIAN_OS_BRANCH%|${GENTIAN_OS_BRANCH}|g" \
-        -e "s|%GENTIAN_UI_BRANCH%|${gentian_ui_branch}|g" \
-        -e "s|%PORTAL_IMAGE_TAG%|${portal_tag}|g" \
-        -e "s|%DEPLOYMENTS_REPO%|${GENTIAN_DEPLOYMENTS_REPO}|g" \
-        -e "s|%DEPLOYMENTS_BRANCH%|${GENTIAN_DEPLOYMENTS_BRANCH}|g" \
-        -e "s|%CLUSTER%|${cluster}|g" \
-        -e "s|%STAGE%|${stage}|g" \
-        "${tmpl}" >"${rendered}"
+    helm template gentian-bootstrap "${SCRIPT_DIR}/kernel/bootstrap/chart" \
+        -s templates/gentian-portal.yaml \
+        --set-string "gentianOsBranch=${GENTIAN_OS_BRANCH}" \
+        --set-string "uiBranch=${gentian_ui_branch}" \
+        --set-string "portalImageTag=${portal_tag}" \
+        --set-string "deploymentsRepo=${GENTIAN_DEPLOYMENTS_REPO}" \
+        --set-string "deploymentsBranch=${GENTIAN_DEPLOYMENTS_BRANCH}" \
+        --set-string "cluster=${cluster}" \
+        --set-string "stage=${stage}" >"${rendered}"
     info "Registering gentian-portal ArgoCD Application (os=${GENTIAN_OS_BRANCH}, ui=${gentian_ui_branch}, tag=${portal_tag}, cluster=${cluster}, stage=${stage})..."
     kubectl apply -f "${rendered}"
     rm -f "${rendered}"

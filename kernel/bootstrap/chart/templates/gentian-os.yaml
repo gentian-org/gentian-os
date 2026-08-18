@@ -11,8 +11,8 @@
 # Sources:
 #   Source 1: gentian-os Helm chart — operator Deployment, CRDs, RBAC, etc.
 #             Values layer per docs/deployment.md §1: chart defaults ->
-#             profiles/_base.yaml -> profiles/%STAGE%.yaml ->
-#             clusters/%CLUSTER%/kernel/values.yaml (kernelDomain etc.).
+#             profiles/_base.yaml -> profiles/{{ .Values.stage }}.yaml ->
+#             clusters/{{ .Values.cluster }}/kernel/values.yaml (kernelDomain etc.).
 #   Source 2: gentian-deployments ref only — provides the $deploy variable
 #             for Source 1's layered valueFiles; renders no manifests.
 # The ImageUpdater CR is inlined below (its content never varies by cluster
@@ -20,21 +20,21 @@
 #
 # Placeholders filled in by handoff_gentian_os_to_argocd() / install_gentian_os_operator()
 # in scripts/lib/catalogue.sh:
-#   %GENTIAN_OS_BRANCH%   — branch/tag of this repo (e.g. develop, main, v1.2.3)
-#   %DEPLOYMENTS_REPO%    — gentian-deployments repo URL
-#   %DEPLOYMENTS_BRANCH%  — gentian-deployments branch
-#   %CLUSTER%             — cluster identifier in deployments repo (e.g. pck-kulxwmm)
-#   %STAGE%               — stage name (dev / staging / prod)
+#   {{ .Values.gentianOsBranch }}   — branch/tag of this repo (e.g. develop, main, v1.2.3)
+#   {{ .Values.deploymentsRepo }}    — gentian-deployments repo URL
+#   {{ .Values.deploymentsBranch }}  — gentian-deployments branch
+#   {{ .Values.cluster }}             — cluster identifier in deployments repo (e.g. pck-kulxwmm)
+#   {{ .Values.stage }}               — stage name (dev / staging / prod)
 #
 # Apply:
 #   Rendered and applied automatically by install.sh Step 13.
 #   For day-2 re-apply (e.g. to fix a missing Application):
 #     source install.env && source install.secrets.env
-#     sed -e "s|%GENTIAN_OS_BRANCH%|develop|g" \
-#         -e "s|%DEPLOYMENTS_REPO%|${GENTIAN_DEPLOYMENTS_REPO}|g" \
-#         -e "s|%DEPLOYMENTS_BRANCH%|${GENTIAN_DEPLOYMENTS_BRANCH}|g" \
-#         -e "s|%CLUSTER%|pck-kulxwmm|g" \
-#         -e "s|%STAGE%|dev|g" \
+#     sed -e "s|{{ .Values.gentianOsBranch }}|develop|g" \
+#         -e "s|{{ .Values.deploymentsRepo }}|${GENTIAN_DEPLOYMENTS_REPO}|g" \
+#         -e "s|{{ .Values.deploymentsBranch }}|${GENTIAN_DEPLOYMENTS_BRANCH}|g" \
+#         -e "s|{{ .Values.cluster }}|pck-kulxwmm|g" \
+#         -e "s|{{ .Values.stage }}|dev|g" \
 #         kernel/bootstrap/gentian-os-application.yaml.tmpl | kubectl apply -f -
 apiVersion: argoproj.io/v1alpha1
 kind: Application
@@ -43,12 +43,12 @@ metadata:
   namespace: argocd
   annotations:
     argocd.argoproj.io/sync-wave: "0"
-    # Image updater: follow new builds published for %GENTIAN_OS_BRANCH% and
+    # Image updater: follow new builds published for {{ .Values.gentianOsBranch }} and
     # update image.tag in the Application's Helm parameters so ArgoCD triggers
     # a Helm upgrade (rolling restart) whenever a new image lands in GHCR.
     #
     # The image-list deliberately carries NO tag. Pinning it to the moving
-    # `%GENTIAN_OS_BRANCH%` tag made the candidate set exactly one entry whose
+    # `{{ .Values.gentianOsBranch }}` tag made the candidate set exactly one entry whose
     # name never changes, so newest-build re-selected it every cycle, image.tag
     # never changed, and no new build ever reached the cluster — the controller
     # reported images_considered=N images_updated=0 forever while looking
@@ -60,11 +60,11 @@ metadata:
     # publishes (develop-abc1234, see the docker job in .github/workflows/ci.yaml).
     # The bare short-sha tag is published from every branch and must NOT be
     # tracked: a main build would be a valid candidate for a develop cluster.
-    # When %GENTIAN_OS_BRANCH% is a release tag rather than a branch, no
+    # When {{ .Values.gentianOsBranch }} is a release tag rather than a branch, no
     # candidate matches and the pinned image is left alone — which is what a
     # pinned release should do.
     argocd-image-updater.argoproj.io/image-list: gentianos=${GENTIAN_OS_IMAGE_REPOSITORY}
-    argocd-image-updater.argoproj.io/gentianos.allow-tags: regexp:^%GENTIAN_OS_BRANCH%-[0-9a-f]{7,}$
+    argocd-image-updater.argoproj.io/gentianos.allow-tags: regexp:^{{ .Values.gentianOsBranch }}-[0-9a-f]{7,}$
     argocd-image-updater.argoproj.io/gentianos.update-strategy: newest-build
     argocd-image-updater.argoproj.io/gentianos.helm.image-name: image.repository
     argocd-image-updater.argoproj.io/gentianos.helm.image-tag: image.tag
@@ -150,12 +150,12 @@ spec:
   # Values are layered per docs/deployment.md §1 (chart defaults are
   # already applied by Helm itself, so only Layers 2-3 need listing here):
   #   - $deploy/profiles/_base.yaml       (shared across every stage)
-  #   - $deploy/profiles/%STAGE%.yaml     (stage-tier policy)
-  #   - $deploy/clusters/%CLUSTER%/kernel/values.yaml  (cluster deltas, incl. kernelDomain)
+  #   - $deploy/profiles/{{ .Values.stage }}.yaml     (stage-tier policy)
+  #   - $deploy/clusters/{{ .Values.cluster }}/kernel/values.yaml  (cluster deltas, incl. kernelDomain)
   # image.tag is further overridden in-cluster by
   # argocd-image-updater via the Application's Helm parameters.
-  - repoURL: %GENTIAN_OS_REPO%
-    targetRevision: %GENTIAN_OS_BRANCH%
+  - repoURL: {{ .Values.osRepo }}
+    targetRevision: {{ .Values.gentianOsBranch }}
     path: charts/gentian-os
     helm:
       # image.repository is passed rather than left to the chart default, so a
@@ -164,14 +164,14 @@ spec:
       # operator from the vendor's registry — Git redirected, images not.
       parameters:
       - name: image.repository
-        value: %GENTIAN_OS_IMAGE_REPOSITORY%
+        value: {{ .Values.osImageRepository }}
       valueFiles:
       - $deploy/profiles/_base.yaml
-      - $deploy/profiles/%STAGE%.yaml
-      - $deploy/clusters/%CLUSTER%/kernel/values.yaml
+      - $deploy/profiles/{{ .Values.stage }}.yaml
+      - $deploy/clusters/{{ .Values.cluster }}/kernel/values.yaml
   # Source 2: deployments ref only (provides $deploy variable, no manifests)
-  - repoURL: %DEPLOYMENTS_REPO%
-    targetRevision: %DEPLOYMENTS_BRANCH%
+  - repoURL: {{ .Values.deploymentsRepo }}
+    targetRevision: {{ .Values.deploymentsBranch }}
     ref: deploy
   destination:
     server: https://kubernetes.default.svc
@@ -190,7 +190,7 @@ spec:
 # never blocks operator image rollouts. This generator scans all activated
 # tenants on this cluster:
 #
-#   clusters/%CLUSTER%/tenants/<tenant>
+#   clusters/{{ .Values.cluster }}/tenants/<tenant>
 #
 # No further stage nesting here — a cluster has exactly one stage for its
 # whole lifetime (docs/deployment.md §1), so re-encoding it under a cluster's
@@ -210,21 +210,21 @@ spec:
   goTemplateOptions: ["missingkey=error"]
   generators:
   - git:
-      repoURL: %DEPLOYMENTS_REPO%
-      revision: %DEPLOYMENTS_BRANCH%
+      repoURL: {{ .Values.deploymentsRepo }}
+      revision: {{ .Values.deploymentsBranch }}
       directories:
-      - path: clusters/%CLUSTER%/tenants/*
+      - path: clusters/{{ .Values.cluster }}/tenants/*
   template:
     metadata:
-      name: '{{ .path.path | replace "/" "-" }}'
+      name: '{{ `{{ .path.path | replace "/" "-" }}` }}'
       finalizers:
       - resources-finalizer.argocd.argoproj.io
     spec:
       project: gentian
       source:
-        repoURL: %DEPLOYMENTS_REPO%
-        targetRevision: %DEPLOYMENTS_BRANCH%
-        path: '{{ .path.path }}'
+        repoURL: {{ .Values.deploymentsRepo }}
+        targetRevision: {{ .Values.deploymentsBranch }}
+        path: '{{ `{{ .path.path }}` }}'
       destination:
         server: https://kubernetes.default.svc
         namespace: gentian-system
