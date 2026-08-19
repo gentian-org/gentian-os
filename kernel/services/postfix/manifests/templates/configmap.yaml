@@ -97,7 +97,19 @@ data:
         # texthash: for the same reason as the two maps above — read at lookup
         # time, so a new tenant can send as soon as the operator rewrites the
         # ConfigMap, with no restart and no postmap.
-        smtpd_recipient_restrictions: "reject_non_fqdn_recipient, reject_unknown_recipient_domain, check_sender_access texthash:/etc/postfix/kernel-maps/sender_access, reject"
+        # Order matters, and getting it wrong breaks a whole direction of mail.
+        #
+        # check_recipient_access comes FIRST and permits anything addressed to a
+        # domain this cluster hosts, whoever sent it. Without that, the sender rule
+        # below also governs INBOUND mail: a stranger writing to a tenant is not in
+        # sender_access, falls through to reject, and Gmail bounces with
+        #   554 5.7.1 <user@tenant>: Recipient address rejected: Access denied
+        # which reads as a recipient problem and is nothing of the sort.
+        #
+        # check_sender_access then applies only to what is left — mail for domains
+        # we do NOT host, i.e. relaying — so it still stops this being an open relay
+        # while letting the world deliver to our tenants.
+        smtpd_recipient_restrictions: "reject_non_fqdn_recipient, reject_unknown_recipient_domain, check_recipient_access texthash:/etc/postfix/kernel-maps/virtual_mailbox_domains, check_sender_access texthash:/etc/postfix/kernel-maps/sender_access, reject"
     # postfix-kernel-virtual-mailbox-maps is written by the operator from the
     # tenant domain registry, and is therefore NOT part of this chart — a chart
     # copy would be reverted onto the operator's content by Argo CD self-heal on
