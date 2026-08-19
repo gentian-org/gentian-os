@@ -455,7 +455,9 @@ SMTP_RELAY_PASSWORD=<app-password>
 
 ## 11. Tenant Backup (Export)
 
-Tenant admins take backups from the **Admin Console → Backup** tab. An export
+Tenant admins take backups from the **Admin Console → Backup** tab; the guide
+written for them is [tenant-backup-guide.md](tenant-backup-guide.md), and §1 of
+it is the key-setup procedure they will forward to you. An export
 captures the workspace's databases, buckets, volumes and Keycloak realm into one
 encrypted bundle, pausing each app in turn so its data is internally consistent.
 
