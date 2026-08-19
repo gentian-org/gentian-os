@@ -87,8 +87,18 @@ for file in scripts/steps/*.sh; do
     # happened to mean that day.
     # Command position only. `-n argocd` is a namespace and `provider-helm` is a
     # resource name; neither runs anything.
+    #
+    # Unless the check can say "cannot tell". The fault above is not the call
+    # itself, it is a verdict derived from an unreachable tool — a check that
+    # resolves the address and token itself and returns CHECK_UNDEFINED when it
+    # cannot has already ruled that out. Some state has no Kubernetes object to
+    # ask: whether auth/oidc/config points at the right realm exists only inside
+    # OpenBao, so "ask Kubernetes instead" has no answer and the alternative is
+    # not checking at all.
     if [[ -n "${check}" ]] && grep -qE '(^|[|;&(]|&&|\|\|)[[:space:]]*(bao|argocd|helm)[[:space:]]' <<<"${check}"; then
-        _err "${id}: check() calls a tool the driver does not configure (bao/argocd/helm). Ask Kubernetes instead."
+        if ! grep -q 'CHECK_UNDEFINED' <<<"${check}"; then
+            _err "${id}: check() calls a tool the driver does not configure (bao/argocd/helm) without a CHECK_UNDEFINED path. Ask Kubernetes instead, or return CHECK_UNDEFINED when the tool is unreachable."
+        fi
     fi
 
     # ── Heuristic rules ──────────────────────────────────────────────────────
