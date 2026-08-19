@@ -262,9 +262,31 @@ init_openbao() {
             stored_key=$(jq -r '(.recovery_keys_base64 // .recovery_keys_b64 // .keys_base64 // [])[0] // empty' "${OPENBAO_INIT_FILE}" 2>/dev/null)
             stored_token=$(jq -r '.root_token // empty' "${OPENBAO_INIT_FILE}" 2>/dev/null)
             info "Stored init credentials (${OPENBAO_INIT_FILE}):"
-            [[ -n "$stored_key"   ]] && info "  Recovery/Unseal Key : ${stored_key}"
-            [[ -n "$stored_token" ]] && info "  Root Token          : ${stored_token}"
-            [[ -n "$stored_token" ]] && export BAO_TOKEN="$stored_token"
+            [[ -n "$stored_key" ]] && info "  Recovery/Unseal Key : ${stored_key}"
+            if [[ -n "$stored_token" ]]; then
+                # E-03 revokes this token at handover, but this file outlives
+                # that. Exporting it unasked made every later OpenBao write die
+                # on a bare 403 — so ask OpenBao first, and when it is dead say
+                # which kind of dead: revoked on purpose, or orphaned by a
+                # re-initialisation.
+                if curl -k -sf -H "X-Vault-Token: ${stored_token}" \
+                        "${BAO_HTTP}/v1/auth/token/lookup-self" >/dev/null; then
+                    info "  Root Token          : ${stored_token}"
+                    export BAO_TOKEN="$stored_token"
+                elif [[ "$(kubectl get configmap gentian-handover \
+                        -n "${GENTIAN_SYSTEM_NAMESPACE:-gentian-system}" \
+                        -o jsonpath='{.data.bootstrapCredentialRevoked}' 2>/dev/null)" == "true" ]]; then
+                    info "  Root Token          : revoked at handover (E-03)."
+                    info "  Day-2 writes go through OIDC; steps that need an OpenBao"
+                    info "  token will report undefined and skip."
+                else
+                    warn "  The stored root token no longer authenticates, and no"
+                    warn "  revocation is recorded — OpenBao was likely re-initialised"
+                    warn "  since this file was written. Mint a new root token with"
+                    warn "  'bao operator generate-root' and the recovery key above,"
+                    warn "  then export it as BAO_TOKEN and re-run."
+                fi
+            fi
         fi
         return
     fi

@@ -85,8 +85,18 @@ check() {
     # Configured means the discovery URL matches the claim, not merely that some
     # config exists — a mount pointed at the wrong realm authenticates nobody and
     # would otherwise read as satisfied.
-    local have
-    have="$(bao read -field=oidc_discovery_url auth/oidc/config 2>/dev/null || true)"
+    #
+    # A refused read says nothing about the mount. A token OpenBao rejects — the
+    # revoked bootstrap token from a completed install is the common one — got
+    # its 403 swallowed here, the empty answer read as a mismatch, and apply()
+    # was sent into the same 403 to fail loudly. Permission denied is a gap in
+    # this shell, same as no token at all: cannot tell.
+    local have rc=0
+    have="$(bao read -field=oidc_discovery_url auth/oidc/config 2>&1)" || rc=$?
+    if [[ ${rc} -ne 0 ]]; then
+        grep -qi 'permission denied' <<<"${have}" && return "${CHECK_UNDEFINED}"
+        return "${CHECK_MISSING}"
+    fi
     [[ "${have}" == "${OIDC_DISCOVERY_URL}" ]]
 }
 

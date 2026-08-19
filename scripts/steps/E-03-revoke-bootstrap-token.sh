@@ -227,6 +227,21 @@ apply() {
             info "openbao-init carries no root_token key; nothing to strip."
     fi
 
+    # The init file on this machine holds the same dead token and outlives the
+    # Secret — left there, every re-run re-displayed it as a live credential and
+    # exported it into the shell. Same treatment: strip the token, keep the
+    # recovery material.
+    local init_file="${OPENBAO_INIT_FILE:-/tmp/openbao-init.json}"
+    if [[ -f "${init_file}" ]] && jq -e '.root_token' "${init_file}" >/dev/null 2>&1; then
+        if [[ "${GENTIAN_DRY_RUN:-0}" != "1" ]]; then
+            local stripped
+            stripped="$(jq 'del(.root_token)' "${init_file}")" &&
+                printf '%s\n' "${stripped}" > "${init_file}" ||
+                warn "Could not strip the dead root token from ${init_file}."
+        fi
+        info "Removed the revoked root token from ${init_file}."
+    fi
+
     # Recorded beside the proof, in the same object, because the two questions
     # an operator asks about a cluster are "can my admin write" and "is the
     # installer's key gone" — and a cluster that answers yes to the first and no
