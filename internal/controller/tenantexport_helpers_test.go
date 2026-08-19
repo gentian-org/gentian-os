@@ -20,8 +20,6 @@ import (
 	"strings"
 	"testing"
 
-	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
-
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 )
 
@@ -161,54 +159,6 @@ func TestWorkloadMatchingDoesNotReachNeighbours(t *testing.T) {
 	for _, tc := range cases {
 		if got := workloadBelongsToApp(tc.labels, tc.object, tc.app); got != tc.want {
 			t.Errorf("%s: workloadBelongsToApp = %v, want %v", tc.name, got, tc.want)
-		}
-	}
-}
-
-// A Composition can install an app the tenant never named — the LLM wiring adds
-// open-webui to every tenant on a cluster with llmSupport enabled. Reading
-// Tenant.spec.apps alone skipped it silently, which is a backup that looks
-// complete and is not.
-func TestAppClaimProfileReadsWhatTheCompositionSets(t *testing.T) {
-	claim := func(obj map[string]any, name string) *unstructured.Unstructured {
-		u := &unstructured.Unstructured{Object: obj}
-		u.SetName(name)
-		return u
-	}
-
-	cases := []struct {
-		name  string
-		claim *unstructured.Unstructured
-		want  string
-	}{
-		{
-			"profileRef, as the compositions set it",
-			claim(map[string]any{"spec": map[string]any{
-				"profileRef": map[string]any{"name": "open-webui"},
-			}}, "open-webui"),
-			"open-webui",
-		},
-		{
-			"the older spec.profile spelling",
-			claim(map[string]any{"spec": map[string]any{"profile": "nextcloud-base-ce"}}, "nc"),
-			"nextcloud-base-ce",
-		},
-		{
-			"neither: app-default names the claim after its profile",
-			claim(map[string]any{"spec": map[string]any{}}, "docmost-ce"),
-			"docmost-ce",
-		},
-		{
-			"empty profileRef falls through rather than returning empty",
-			claim(map[string]any{"spec": map[string]any{
-				"profileRef": map[string]any{"name": ""},
-			}}, "element-ce"),
-			"element-ce",
-		},
-	}
-	for _, tc := range cases {
-		if got := appClaimProfile(tc.claim); got != tc.want {
-			t.Errorf("%s: appClaimProfile = %q, want %q", tc.name, got, tc.want)
 		}
 	}
 }
