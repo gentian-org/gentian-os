@@ -29,7 +29,9 @@
   both modes, and keeping it in the path is what keeps the relay credential in
   one place rather than copied to every app that sends.
 */ -}}
-{{- if and (hasSuffix "-dovecot.yaml" $path) (ne $.Values.mailServiceMode "kernel") }}
+{{- if and (hasSuffix "-llm.yaml" $path) (ne (toString $.Values.llmEnabled) "true") }}
+{{- /* skipped: this cluster does not serve LLMs */ -}}
+{{- else if and (hasSuffix "-dovecot.yaml" $path) (ne $.Values.mailServiceMode "kernel") }}
 {{- /* skipped: mail.serviceMode is {{ $.Values.mailServiceMode }} */ -}}
 {{- else }}
 ---
@@ -44,6 +46,7 @@
      | replace "deployments.repo.placeholder" $.Values.deploymentsRepo
      | replace "deployments.revision.placeholder" $.Values.deploymentsRevision
      | replace "deployments.cluster.placeholder" $.Values.deploymentsCluster
-     | replace "mail.service.mode.placeholder" $.Values.mailServiceMode }}
+     | replace "mail.service.mode.placeholder" $.Values.mailServiceMode
+     | replace "llm.mock.backend.placeholder" (ternary "false" "true" (eq (toString $.Values.llmGpuAcceleration) "true")) }}
 {{- end }}
 {{- end }}

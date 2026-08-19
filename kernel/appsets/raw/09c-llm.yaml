@@ -1,0 +1,71 @@
+# LiteLLM and its backing stores.
+#
+# Its own file because it is CONDITIONAL: kernel/appsets/templates/appsets.yaml
+# skips this one unless the cluster's claim enables LLM serving.
+#
+# It used to be three kubectl applies in D-04-llm-serving, straight from the
+# installer's working tree — so the LLM stack was outside drift detection
+# entirely. Nothing reconciled it, nothing noticed if it was edited on the
+# cluster, and what ran reflected whichever checkout last ran install.sh rather
+# than any commit. dev/ and prod/ were byte-identical copies of the same three
+# files, kept in step by hand.
+#
+# NOT covered here: the vLLM GPU release. Its input is spec.llm.instances on the
+# Cluster claim, and Argo CD cannot project a claim into Helm values — that one
+# belongs in the Cluster Composition, which reads claims by design. Until then
+# it stays in D-04.
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: gentian-infra-llm
+  namespace: argocd
+spec:
+  syncPolicy:
+    preserveResourcesOnDeletion: true
+  goTemplate: true
+  goTemplateOptions: ["missingkey=error"]
+  generators:
+  - matrix:
+      generators:
+      - list:
+          elements:
+          - env: dev
+      - list:
+          elements:
+          - app: llm
+  template:
+    metadata:
+      name: '{{.app}}-{{.env}}'
+      annotations:
+        argocd.argoproj.io/sync-wave: "9"
+    spec:
+      project: gentian
+      source:
+        repoURL: https://github.com/gentian-org/gentian-os
+        targetRevision: develop
+        path: kernel/services/{{.app}}/manifests
+        helm:
+          parameters:
+            - name: env
+              value: '{{.env}}'
+            # The mock backend serves a cluster with no GPUs. Rewritten from
+            # spec.llm.gpuAcceleration, so turning GPUs on removes it on the
+            # next sync instead of leaving it running.
+            - name: mockBackend
+              value: 'llm.mock.backend.placeholder'
+      destination:
+        server: https://kubernetes.default.svc
+        namespace: platform-kernel
+      syncPolicy:
+        automated:
+          prune: true
+          selfHeal: true
+        syncOptions:
+        - CreateNamespace=false
+        - ServerSideApply=true
+        retry:
+          backoff:
+            duration: 15s
+            factor: 2
+            maxDuration: 2m
+          limit: 10

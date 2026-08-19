@@ -33,6 +33,12 @@ externalSmtpPort: "587"
 # outbound because port 25 is blocked outbound while still receiving on it.
 mailServiceMode: external
 
+# Whether the LLM ApplicationSet is generated, and whether the mock inference
+# backend goes with it. From the Cluster claim's llm.enabled and
+# llm.gpuAcceleration.
+llmEnabled: "false"
+llmGpuAcceleration: "false"
+
 # Where gentian-os itself comes from. The children hardcoded this URL, so a
 # mirrored or forked install could pin the ref but not the origin (§9, platform
 # provenance). Passed by root-applicationset.yaml.tmpl from GENTIAN_OS_REPO.

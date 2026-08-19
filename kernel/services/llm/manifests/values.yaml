@@ -1,0 +1,12 @@
+# The stage this release belongs to. Nothing in the templates varies by it
+# today — dev/ and prod/ were byte-identical copies — but it is accepted so the
+# chart matches every other kernel service and a stage-specific value has
+# somewhere to go without restructuring.
+env: dev
+
+# The mock inference backend, for a cluster with no GPU.
+#
+# Deployed when GPU acceleration is off, so LiteLLM has something to answer
+# with. With GPUs the real vLLM instances come from the cluster's own claim —
+# see the note in the ApplicationSet.
+mockBackend: true

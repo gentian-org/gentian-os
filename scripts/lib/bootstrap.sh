@@ -847,6 +847,8 @@ bootstrap_root_appset() {
         --set-string "smtpHost=${EXTERNAL_SMTP_HOST:-}" \
         --set-string "smtpPort=${EXTERNAL_SMTP_PORT:-587}" \
         --set-string "mailServiceMode=${MAIL_SERVICE_MODE:-external}" \
+        --set-string "llmEnabled=${LLM_SUPPORT:-false}" \
+        --set-string "llmGpuAcceleration=${GPU_ACCELERATION:-false}" \
         --set-string "mailEgressHost=${MAIL_EGRESS_HOST:-}" \
         | kubectl apply -f -
     success "gentian-appsets Application applied."
@@ -1304,14 +1306,19 @@ install_llm_serving() {
     source "${SCRIPT_DIR}/scripts/lib/portal-login-bootstrap.sh"
     ensure_litellm_sso_secret >/dev/null
 
-    local manifests_dir="${SCRIPT_DIR}/kernel/services/llm/manifests/${env}"
-    kubectl apply -f "${manifests_dir}/llm-services.yaml" -f "${manifests_dir}/externalsecret.yaml"
+    # LiteLLM, its stores and the mock backend are NOT applied here.
+    #
+    # They were: three kubectl applies from this checkout, so the LLM stack was
+    # outside drift detection — nothing reconciled it, nothing noticed an edit
+    # on the cluster, and what ran reflected whichever working tree last ran the
+    # installer. They now arrive through the gentian-infra-llm ApplicationSet,
+    # generated only when the claim enables LLM serving.
+    info "LiteLLM and its stores are synced by the gentian-infra-llm ApplicationSet."
     GPU_ACCELERATION="${GPU_ACCELERATION:-false}"
     if [[ "${GPU_ACCELERATION}" == "true" ]]; then
         info "Deploying GPU vLLM inference backend(s)..."
     else
-        info "Deploying mock inference backend (GPU_ACCELERATION=false) — set VLLM_INSTANCES to serve a real model."
-        kubectl apply -f "${manifests_dir}/vllm-mock.yaml"
+        info "Mock inference backend (GPU_ACCELERATION=false) — set llm.instances on the claim to serve a real model."
     fi
 
     # One release either way. It carries GPU time-slicing, which applies whether

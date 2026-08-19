@@ -60,6 +60,11 @@ spec:
       # Dovecot at all — there are no local mailboxes for it to serve.
       - name: mailServiceMode
         value: "{{ .Values.mailServiceMode }}"
+      # LLM serving, and whether the mock backend stands in for GPUs.
+      - name: llmEnabled
+        value: "{{ .Values.llmEnabled }}"
+      - name: llmGpuAcceleration
+        value: "{{ .Values.llmGpuAcceleration }}"
       - name: mailEgressHost
         value: "{{ .Values.mailEgressHost }}"
       # Every child ApplicationSet points back at this repo. Without this the

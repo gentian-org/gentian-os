@@ -1,3 +1,13 @@
+{{- /*
+The mock inference backend, so LiteLLM has something to answer with on a
+cluster without GPUs.
+
+Guarded rather than applied conditionally by a script: the installer used to
+kubectl-apply this file only when GPU_ACCELERATION was false, which meant
+turning GPUs ON left the mock running until somebody noticed. A value the
+release carries is removed by the next sync.
+*/ -}}
+{{- if .Values.mockBackend }}
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -105,3 +115,4 @@ spec:
     targetPort: 8000
   selector:
     app: vllm-inference
+{{- end }}
