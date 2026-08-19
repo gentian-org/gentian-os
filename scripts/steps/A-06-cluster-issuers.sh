@@ -55,7 +55,21 @@ check() {
             kubectl get clusterissuer gentian-ca >/dev/null 2>&1
             ;;
         acme-dns01|acme-http01)
-            [[ -n "$(kubectl get clusterissuer -o name 2>/dev/null | grep letsencrypt || true)" ]]
+            # The issuers this cluster's ACME endpoint NAMES, not any
+            # letsencrypt-*. "Some issuer exists" stayed satisfied on a cluster
+            # installed against production after the intent moved to staging —
+            # the staging issuers were never applied, every tenant wildcard
+            # Certificate pointed at a ClusterIssuer that did not exist, and the
+            # symptom surfaced three layers away as a Gateway listener with no
+            # certificate and a 404 on the tenant's hosts. The name is the
+            # contract between this step and everything that requests
+            # certificates; check the name.
+            local http01_name="letsencrypt-http01"
+            [[ "${ACME_ENV:-production}" == "staging" ]] && http01_name="letsencrypt-staging-http01"
+            kubectl get clusterissuer "${http01_name}" >/dev/null 2>&1 || return 1
+            if [[ "$(gentian_dns_provider)" != "none" ]]; then
+                kubectl get clusterissuer "$(gentian_dns01_cluster_issuer_name)" >/dev/null 2>&1 || return 1
+            fi
             ;;
         private-ca)
             kubectl get clusterissuer gentian-ca >/dev/null 2>&1
