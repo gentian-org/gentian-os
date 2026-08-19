@@ -2028,16 +2028,36 @@ The operator image cross-compiles (`FROM --platform=$BUILDPLATFORM`, `GOARCH=${T
 CI builds both platforms with Buildx set up explicitly — without it the default builder ignores
 `platforms:` and silently produces an amd64-only image, the same failure mode as the digest pin.
 
-**12c — Trust anchor (interface). Implemented; one half outstanding.**
+**12c — Trust anchor. Interface implemented; distribution now implemented, unexercised.**
 `XCluster.spec.certificates.issuerMode` is an enum over `acme-dns01`, `acme-http01`, `private-ca`
 and `self-signed`, and `A-06-cluster-issuers` reads it and dispatches. This is the dimension that
 decides whether an install on an internal domain is possible at all.
 
-The CA-bundle distribution contract — which consumers must receive the anchor and by what carrier
-— is **not defined and not implemented**. `caBundleSecretRef` is declared on the XRD and read by
-nothing outside it, so `self-signed` and `private-ca` install and then leave every client that
-validates a kernel hostname from outside the cluster unable to. That is Phase 13's row, and it is
-the half that makes the mode usable rather than merely selectable.
+The CA-bundle distribution contract is now defined. **The platform delivers the anchor to
+everything it schedules; everything outside the cluster is the operator's to distribute.** It
+cannot be otherwise — a cluster can mount a secret into its own pods and can do nothing at all
+about a laptop's browser.
+
+Inside that boundary, `certificates.trustAnchorSecret` in `gentian-cluster-config` carries the
+answer, derived from `issuerMode` rather than asked for a second time. It is empty exactly when a
+public CA signed, and consumers read one key instead of testing modes:
+
+- **Tenant apps** — `app-default` already mounted a CA and set `SSL_CERT_FILE`, `REQUESTS_CA_BUNDLE`
+  and `DENO_CERT`, but only for ACME staging and only from a hardcoded secret name. Generalising
+  its gate was the whole change; the carrier was proven already.
+- **The operator** — mounts the same secret and sets `SSL_CERT_FILE`, outside every feature guard.
+  It calls Keycloak and OpenBao over kernel hostnames whatever else is enabled, and it fails at
+  login, which reads as an identity problem rather than a trust one.
+
+`caBundleSecretRef` is no longer read by nothing. It is not a credential: a CA certificate is the
+thing you hand to strangers, so it stays a claim field and never enters the credential machinery.
+The private key in `private-ca` mode is a different object and a genuine secret — `A-06` requires
+the operator to place it in `cert-manager` before that mode can issue anything.
+
+Two things remain. Nothing has installed in either mode, so this is implemented and unexercised.
+And one assumption is unverified: the mount reads `ca.crt` from the anchor secret, which is what
+the ACME-staging secret carries — whether cert-manager writes `ca.crt` into `gentian-root-ca-tls`
+under a SelfSigned root is exactly the field-name check §15.1 prescribes, and nobody has run it.
 
 `issuerMode` answers *how control is proved*. It does not answer *by whom* — see 12f.
 
@@ -2205,7 +2225,7 @@ the sections are the record, not this list.
 | Q11 | Repository deletion semantics | Deleting a `Repository` claim removes its emitted artefacts (Phase 5), but not the value in OpenBao. Whether an orphaned path is garbage, an audit record, or a rotation hazard needs a decision — and it is now sharper rather than resolved, because a tenant admin can trigger the deletion themselves (§10) and OpenBao retains a path nobody lists. |
 | Q12 | `writable: true` scope | The operator's `.git-credentials` grants push access to `gentian-deployments` for GitOps app lifecycle. Whether that warrants a distinct credential from the read path — different token, different rotation, narrower scope — rather than reusing one. |
 | Q13 | Mixed-architecture clusters | §9 treats architecture as a cluster-level property. A cluster with both amd64 and arm64 nodes needs per-workload node affinity or multi-arch images everywhere, and which of those the platform guarantees is undecided. |
-| Q14 | Trust-anchor distribution | `self-signed` and `private-ca` modes require the CA bundle to reach every workload that makes TLS calls to a kernel service, plus the operator's own HTTP clients. Whether that is a `ClusterExternalSecret`, a chart value, or a node-level trust store is unresolved. `internal/kernel/stagingca/` is the existing precedent and should be reviewed before choosing. |
+| Q14 | ~~Trust-anchor distribution~~ | **Answered — see 12c.** The platform delivers the anchor to everything it schedules and nothing else. The carrier is the one `stagingca` already proved: a mounted secret plus `SSL_CERT_FILE`, generalised from ACME staging to any untrusted anchor. Not a node-level trust store — it reaches more runtimes but mutates the host and is unavailable on managed nodes. |
 | Q15 | Air-gapped provenance completeness | 12a covers the gentian-os repository and image registry, but the install also pulls Crossplane providers, cert-manager, ArgoCD, and Bitnami-derived charts. Whether a mirrored install must redirect all of those — and how — is a larger question than 12a resolves. |
 
 ---
