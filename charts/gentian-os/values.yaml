@@ -17,6 +17,12 @@ kernelDomain: ""
 # Plumbed as TENANCY_MODE.
 tenancyMode: multi
 
+# mailServiceMode is the cluster's mail stack — kernel or external — from the
+# Cluster claim. external means Dovecot is not deployed, so the operator does
+# not provision it: no per-realm Keycloak client, no XOAUTH2 realm auth, no
+# domain registration. Plumbed as MAIL_SERVICE_MODE.
+mailServiceMode: external
+
 # routingMode selects the edge routing stack (Gateway API + Envoy Gateway).
 # Plumbed as ROUTING_MODE.
 routingMode: gateway

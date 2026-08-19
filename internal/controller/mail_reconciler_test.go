@@ -27,6 +27,7 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
+	"github.com/gentian-org/gentian-os/internal/controller"
 )
 
 // TestMail_Disabled verifies that a Tenant with mail.mode=disabled immediately
@@ -590,4 +591,38 @@ func findCondition(tenant *gentianov1alpha1.Tenant, condType string) *metav1.Con
 		}
 	}
 	return nil
+}
+
+// The Dovecot gate.
+//
+// A cluster in external mail mode runs no Dovecot — the ApplicationSet does not
+// deploy one, because the mailboxes are at the provider. The operator went on
+// configuring it regardless: a Keycloak client per realm, a Job per reconcile,
+// realm auth and a domains ConfigMap, all addressed to a service that does not
+// exist. Nothing failed, which is why it ran for a day unnoticed.
+//
+// Tested on the predicate rather than through a reconcile, because the envtest
+// harness runs one reconciler for the whole suite in kernel mode; the point
+// here is what the predicate answers, and that empty is external.
+func TestDovecotDeployed(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		mode string
+		want bool
+	}{
+		{"kernel", true},
+		{"external", false},
+		// Unset is external: configuring an absent Dovecot is silent waste,
+		// while skipping a present one fails IMAP visibly and is fixed by
+		// setting the value. Of the two, prefer the loud one.
+		{"", false},
+		// Anything unrecognised is not kernel. A typo must not provision.
+		{"Kernel", false},
+		{"selfhosted", false},
+	} {
+		r := &controller.TenantReconciler{MailServiceMode: tc.mode}
+		if got := r.DovecotDeployedForTest(); got != tc.want {
+			t.Errorf("MailServiceMode=%q → %v, want %v", tc.mode, got, tc.want)
+		}
+	}
 }

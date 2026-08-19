@@ -79,6 +79,14 @@ spec:
               value: {{ .Values.kernelDomain | quote }}
             - name: TENANCY_MODE
               value: {{ .Values.tenancyMode | default "multi" | quote }}
+            {{- /*
+            The cluster's mail stack, from the Cluster claim's mail.serviceMode.
+            Gates Dovecot provisioning: with external there is no Dovecot to
+            configure, and the operator was creating a Keycloak client per realm
+            and a Job per reconcile for one that does not exist.
+            */}}
+            - name: MAIL_SERVICE_MODE
+              value: {{ .Values.mailServiceMode | default "external" | quote }}
             - name: ROUTING_MODE
               value: {{ .Values.routingMode | default "gateway" | quote }}
             {{- /*

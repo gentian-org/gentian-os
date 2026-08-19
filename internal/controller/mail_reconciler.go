@@ -111,6 +111,22 @@ func mailSharedPostfixHost() string {
 	return fmt.Sprintf("postfix-%s.%s.svc.cluster.local", stage, servicesNamespace)
 }
 
+// dovecotDeployed reports whether this cluster runs the IMAP server that the
+// Dovecot steps below configure.
+//
+// The operator configured it unconditionally: a Keycloak client per realm, a
+// Job per reconcile, a realm-auth Secret and a domains ConfigMap — all for an
+// IMAP server that, with mail.serviceMode external, is not deployed at all.
+// Nothing failed, which is why it went unnoticed; it simply provisioned into
+// a void and left Keycloak clients behind for a service that never existed.
+//
+// Empty means external, the safer default: configuring an absent Dovecot is
+// silent waste, while skipping a present one breaks IMAP authentication
+// visibly and is fixed by setting the value.
+func (r *TenantReconciler) dovecotDeployed() bool {
+	return r.MailServiceMode == "kernel"
+}
+
 // ensureMail provisions the mail stack for the tenant according to spec.mail.mode.
 // It dispatches to one of four mode-specific handlers and sets the MailReady condition.
 func (r *TenantReconciler) ensureMail(ctx context.Context, tenant *gentianov1alpha1.Tenant) (ctrl.Result, error) {
@@ -243,22 +259,32 @@ func (r *TenantReconciler) ensureMailSelfhosted(ctx context.Context, tenant *gen
 		log.FromContext(ctx).Error(err, "publish mail DNS records", "tenant", tenant.Name)
 	}
 
-	// 4. Register the tenant domain in the shared Dovecot domains ConfigMap.
-	if err := r.ensureDovecotDomainConfig(ctx, tenant); err != nil {
-		return false, fmt.Errorf("register Dovecot domain config: %w", err)
-	}
+	// 4-6. Dovecot, only where Dovecot exists.
+	//
+	// Steps 4 to 6 register the tenant's domain, create gentian-dovecot in its
+	// realm and add that realm to Dovecot's XOAUTH2 configuration. All three
+	// configure an IMAP server, and a cluster in external mail mode does not
+	// run one — its mailboxes are at the provider. Running them anyway left a
+	// Keycloak client per realm and a Job per reconcile behind, addressed to
+	// nothing.
+	if r.dovecotDeployed() {
+		// 4. Register the tenant domain in the shared Dovecot domains ConfigMap.
+		if err := r.ensureDovecotDomainConfig(ctx, tenant); err != nil {
+			return false, fmt.Errorf("register Dovecot domain config: %w", err)
+		}
 
-	// 5. Ensure gentian-dovecot exists in the tenant realm for IMAP XOAUTH2 introspection.
-	if ready, err := r.ensureDovecotTenantOIDCClientJob(ctx, tenant); err != nil {
-		return false, fmt.Errorf("ensure Dovecot tenant OIDC client: %w", err)
-	} else if !ready {
-		return false, nil
-	}
+		// 5. Ensure gentian-dovecot exists in the tenant realm for IMAP XOAUTH2 introspection.
+		if ready, err := r.ensureDovecotTenantOIDCClientJob(ctx, tenant); err != nil {
+			return false, fmt.Errorf("ensure Dovecot tenant OIDC client: %w", err)
+		} else if !ready {
+			return false, nil
+		}
 
-	// 6. Add this tenant's realm to Dovecot's XOAUTH2 configuration. Additive, so a
-	//    second tenant does not displace the first — see ensureDovecotRealmAuth.
-	if err := r.ensureDovecotRealmAuth(ctx, keycloakRealmName(tenant)); err != nil {
-		return false, fmt.Errorf("configure Dovecot realm auth: %w", err)
+		// 6. Add this tenant's realm to Dovecot's XOAUTH2 configuration. Additive, so a
+		//    second tenant does not displace the first — see ensureDovecotRealmAuth.
+		if err := r.ensureDovecotRealmAuth(ctx, keycloakRealmName(tenant)); err != nil {
+			return false, fmt.Errorf("configure Dovecot realm auth: %w", err)
+		}
 	}
 
 	// 7. Restart Dovecot if the realm set changed. A no-op when it did not, so this
@@ -647,6 +673,14 @@ func (r *TenantReconciler) ensureKernelMail(ctx context.Context) error {
 	// 1. Accept mail for the kernel domain.
 	if err := r.ensureRegistryDomain(ctx, kernelMailRegistryKey, r.KernelDomain); err != nil {
 		return fmt.Errorf("register kernel mail domain: %w", err)
+	}
+
+	// 2-3. Dovecot, only where Dovecot exists — as in ensureMail.
+	//
+	// Step 1 above stays unconditional: accepting mail for the kernel domain is
+	// Postfix's registry, and Postfix runs in both modes.
+	if !r.dovecotDeployed() {
+		return nil
 	}
 
 	// 2. The introspection client in the kernel realm. Returns false while its Job

@@ -211,6 +211,14 @@ type TenantReconciler struct {
 	// TenancyMode controls default app URL shape: multi → {sub}.{tenant}.{kernel};
 	// single → {sub}.{kernel}. Sourced from TENANCY_MODE (default multi).
 	TenancyMode string
+	// MailServiceMode is the CLUSTER's mail stack — kernel or external — from
+	// the Cluster claim's mail.serviceMode. Sourced from MAIL_SERVICE_MODE.
+	//
+	// Distinct from Tenant.spec.mail.mode, which says what one tenant wants;
+	// this says what the cluster actually runs. It gates Dovecot provisioning:
+	// with external there is no Dovecot, because the mailboxes are at the
+	// provider and the ApplicationSet does not deploy one.
+	MailServiceMode string
 	// TenantDNS01ClusterIssuer is the cert-manager ClusterIssuer used to issue
 	// per-tenant wildcard certificates (*.<effectiveDomain>). Defaults to
 	// letsencrypt-dns01-cloudflare when unset. Sourced from TENANT_DNS01_CLUSTER_ISSUER.

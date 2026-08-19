@@ -111,6 +111,7 @@ func main() {
 		Seeder:                   buildSeeder(),
 		KernelDomain:             os.Getenv("KERNEL_DOMAIN"),
 		TenancyMode:              os.Getenv("TENANCY_MODE"),
+		MailServiceMode:          os.Getenv("MAIL_SERVICE_MODE"),
 		TenantDNS01ClusterIssuer: os.Getenv("TENANT_DNS01_CLUSTER_ISSUER"),
 		KernelRealm:              kernelRealmOrDefault(os.Getenv("KERNEL_REALM")),
 		CloudflareDNS:            buildCloudflareDNSClient(),

@@ -289,6 +289,10 @@ func TestMain(m *testing.M) {
 		TenantDNS01ClusterIssuer: "letsencrypt-dns01-cloudflare",
 		KernelRealm:              "kernel",
 		RoutingMode:              controller.RoutingModeGateway,
+		// The mail tests assert the shared Postfix AND Dovecot artefacts, which
+		// is what kernel mode provisions. With this unset the suite would run as
+		// external, where Dovecot is deliberately not configured at all.
+		MailServiceMode: "kernel",
 	}).SetupWithManager(mgr); err != nil {
 		panic(err)
 	}
