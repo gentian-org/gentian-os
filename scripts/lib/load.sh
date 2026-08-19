@@ -2,8 +2,8 @@
 # =============================================================================
 # scripts/lib/load.sh — Gentian install library loader
 # =============================================================================
-# Source this file from install.sh, update.sh, and uninstall.sh to load all
-# install helper functions without running any of their main flows.
+# Source this file from install.sh (or any tool needing the install helpers)
+# to load them all without running any of their main flows.
 #
 #   SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 #   # shellcheck source=scripts/lib/load.sh
@@ -24,7 +24,7 @@ set -Eeuo pipefail
 
 __GENTIAN_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 __GENTIAN_SCRIPTS_DIR="$(cd "${__GENTIAN_LIB_DIR}/.." && pwd)"
-# Repo root when callers (install.sh, update.sh, uninstall.sh) set SCRIPT_DIR first.
+# Repo root when the caller (install.sh) set SCRIPT_DIR first.
 SCRIPT_DIR="${SCRIPT_DIR:-$(cd "${__GENTIAN_SCRIPTS_DIR}/.." && pwd)}"
 
 # Component pins first: common.sh reads them at load time, and versions.sh has

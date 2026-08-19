@@ -158,7 +158,8 @@ gentian_cluster_issuers_manifest() {
     fi
 }
 
-# Apply (or refresh) kernel ClusterIssuers. Safe to re-run (update.sh --acme-issuers).
+# Apply (or refresh) kernel ClusterIssuers. Safe to re-run
+# (./install.sh --step A-06-cluster-issuers).
 apply_gentian_cluster_issuers() {
     if [[ -z "${KERNEL_DOMAIN:-}" ]]; then
         warn "KERNEL_DOMAIN unset: skipping ClusterIssuers."
@@ -224,7 +225,7 @@ apply_gentian_cluster_issuers() {
 #
 # Call this only once cloudflare-api-token is known to exist (right after
 # install_kernel_wildcard creates it, or any time as a day-2 fix via
-# update.sh --acme-issuers) — calling it before the Secret exists just
+# ./install.sh --step A-06-cluster-issuers) — calling it before the Secret exists just
 # re-confirms NotReady and wastes the wait.
 force_reconcile_dns01_cluster_issuer() {
     local issuer

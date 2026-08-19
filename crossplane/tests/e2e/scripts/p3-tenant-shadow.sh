@@ -67,7 +67,7 @@ kubectl wait xrd xtenants.gentianos.io --for=condition=Established --timeout=2m 
   || fail "XTenant XRD not Established"
 
 kubectl get composition tenant-default >/dev/null 2>&1 \
-  || fail "Composition tenant-default missing — run install.sh or update.sh --crossplane"
+  || fail "Composition tenant-default missing — run ./install.sh --step A-02-crossplane-providers"
 
 kubectl get deployment -A -l app.kubernetes.io/name=gentian-os --no-headers 2>/dev/null | grep -q . \
   || fail "gentian-os operator Deployment not found — run install.sh Step 13"

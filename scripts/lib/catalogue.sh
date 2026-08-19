@@ -393,6 +393,25 @@ handoff_gentian_os_to_argocd() {
     # chart now resolves the token through secretKeyRef, so the Application only
     # needs to say which Secret to read.
     local -a app_params=('{"name":"authzBridge.enabled","value":"true"}')
+
+    # The trust anchor, when a public CA did not sign this cluster's
+    # certificates. Read from the claim rather than asked for again: issuerMode
+    # already decides whether an anchor exists, and a second setting would be
+    # free to disagree with the mode that produced it. Non-sensitive — a CA
+    # certificate is the thing you hand to strangers — so pinning the NAME here
+    # is safe in a way the OpenFGA token above is not.
+    local _issuer_mode _anchor_secret
+    _issuer_mode="$(kubectl get clusters.gentianos.io \
+        -o jsonpath='{.items[0].spec.certificates.issuerMode}' 2>/dev/null || true)"
+    case "${_issuer_mode}" in
+        self-signed|private-ca)
+            _anchor_secret="$(kubectl get clusters.gentianos.io \
+                -o jsonpath='{.items[0].spec.certificates.caBundleSecretRef.name}' 2>/dev/null || true)"
+            _anchor_secret="${_anchor_secret:-gentian-root-ca-tls}"
+            app_params+=("{\"name\":\"trustAnchorSecret\",\"value\":\"${_anchor_secret}\"}")
+            info "  trust anchor:       ${_anchor_secret} (issuerMode=${_issuer_mode})"
+            ;;
+    esac
     if ((openfga_token_in_bao)); then
         app_params+=('{"name":"authzBridge.openfgaTokenSecretRef.name","value":"gentian-os-openfga-token"}')
     elif [[ -n "${openfga_token}" ]]; then

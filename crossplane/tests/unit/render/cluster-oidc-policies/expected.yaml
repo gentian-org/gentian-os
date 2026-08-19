@@ -117,6 +117,7 @@ spec:
     manifest:
       apiVersion: v1
       data:
+        certificates.trustAnchorSecret: ""
         llm.enabled: "false"
         mail.smtpHost: ""
         node.ip: ""

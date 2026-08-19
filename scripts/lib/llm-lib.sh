@@ -1,28 +1,16 @@
 #!/bin/bash
 # LiteLLM Teams reconciliation — one Team per Gentian Tenant CR.
 # Sourced from scripts/lib/load.sh; called from install_llm_serving
-# (install.sh Step 13c) and op_llm_serving (update.sh --llm).
+# (./install.sh --step D-04-llm-serving) and E-02-litellm-reconcile.
 
-# A vLLM instance ID doubles as a bash indirect-expansion variable-name
-# component (VLLM_<ID>_MODEL_ID etc.) and, lowercased with underscores
-# turned into hyphens, a Kubernetes resource-name component
-# (vllm-<id>-inference) — so it must be a valid bash identifier.
-_vllm_instance_is_valid() {
-    [[ "$1" =~ ^[a-zA-Z_][a-zA-Z0-9_]*$ ]]
-}
-
-_vllm_instance_k8s_name() {
-    local id="${1,,}"
-    printf '%s' "${id//_/-}"
-}
-
-# Renders kernel/services/llm/chart once per
-# entry in VLLM_INSTANCES (cluster instance data — never gentian-os
-# defaults) and applies each. One gentian-os cluster can run several named
-# vLLM instances at once (e.g. a small always-on model plus a larger
-# on-demand one) — each gets its own PVC/Deployment/Service, and whatever
-# was previously deployed but is no longer in VLLM_INSTANCES gets pruned
-# (Deployment+Service only; PVCs are kept — see the warn below for why).
+# Renders kernel/services/llm/chart once per entry in the claim's
+# llm.instances (clusters/<id>/kernel/claims/cluster.yaml — cluster
+# instance data, never gentian-os defaults) and applies each. One
+# gentian-os cluster can run several named vLLM instances at once (e.g. a
+# small always-on model plus a larger on-demand one) — each gets its own
+# PVC/Deployment/Service, and whatever was previously deployed but is no
+# longer on the claim gets pruned (Deployment+Service only; PVCs are
+# kept — see the warn below for why).
 # =============================================================================
 # _time_slicing_is_foreign — is GPU sharing already somebody else's?
 #
@@ -159,18 +147,19 @@ yaml.safe_dump({"instances": items}, sys.stdout, default_flow_style=False, sort_
 # Tenant appears, and retries when LiteLLM is not up yet.
 
 
-# Registers/updates every VLLM_INSTANCES entry as a LiteLLM model (one
-# shared LiteLLM proxy in front of however many vLLM instances exist — see
-# llm-services.yaml), so editing VLLM_INSTANCES + `./update.sh --llm` is
-# enough on its own — no Admin Console / manual `/model/new` step. Each
+# Registers/updates every claim llm.instances entry as a LiteLLM model
+# (one shared LiteLLM proxy in front of however many vLLM instances exist
+# — see llm-services.yaml), so editing the claim + `./install.sh --step
+# D-04-llm-serving` is enough on its own — no Admin Console / manual
+# `/model/new` step. Each
 # instance is keyed on its own api_base (vllm-<id>-inference.platform-
 # kernel.svc.cluster.local — one Service per instance, never shared): any
 # existing LiteLLM entry pointed at that api_base gets deleted and
 # recreated under the current model's name if the served model changed,
 # so a swap never leaves a stale entry claiming to be the old model. Any
 # LiteLLM entry pointed at a vllm-*-inference api_base that ISN'T one of
-# the current VLLM_INSTANCES gets removed entirely (the instance itself
-# was already removed with the gentian-llm release).
+# the claim's current llm.instances gets removed entirely (the instance
+# itself was already removed with the gentian-llm release).
 # =============================================================================
 # _wait_for_job — complete, failed, or still running; a timeout is none of them.
 #
@@ -259,7 +248,7 @@ json.dump(out, sys.stdout)
     # in the desired set, so this still needs to run to clean up
     # registrations for instances that were removed entirely (or
     # GPU_ACCELERATION flipped back to false — see the mock branch in
-    # install.sh/update.sh, which calls this unconditionally).
+    # install_llm_serving, which calls this unconditionally).
     if [[ "${desired_json}" == "[]" ]]; then
         info "No vLLM instances configured — checking for stale LiteLLM registrations to remove."
     else
@@ -311,7 +300,7 @@ spec:
                 [ -z "\${stale}" ] && continue
                 sid=\$(printf '%s' "\${stale}" | jq -r '.id')
                 sname=\$(printf '%s' "\${stale}" | jq -r '.model_name')
-                echo "Removing stale LiteLLM model '\${sname}' (id=\${sid}) — vLLM instance no longer in VLLM_INSTANCES"
+                echo "Removing stale LiteLLM model '\${sname}' (id=\${sid}) — vLLM instance no longer on the claim's llm.instances"
                 curl -sf -X POST -H "\${AUTH}" -H "Content-Type: application/json" \\
                   "\${BASE}/model/delete" -d "{\"id\":\"\${sid}\"}" >/dev/null
               done

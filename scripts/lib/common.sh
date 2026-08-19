@@ -244,12 +244,12 @@ wait_for_running_pod() {
 }
 
 # cri_cleanup() and kubelite_restart() are defined in scripts/lib/lib-runtime.sh
-# (sourced near the top of this file) so they can be reused by uninstall.sh.
+# (sourced near the top of this file) so step destroy() paths can reuse them.
 
 # ─── Paths ────────────────────────────────────────────────────────────────────
-# SCRIPT_DIR is already set by the outer install.sh/update.sh/uninstall.sh to
-# the repo root before this file is sourced. Do not overwrite it. The ":-"
-# default only applies when SCRIPT_DIR is unset or empty.
+# SCRIPT_DIR is already set by the outer install.sh to the repo root before
+# this file is sourced. Do not overwrite it. The ":-" default only applies
+# when SCRIPT_DIR is unset or empty.
 SCRIPT_DIR="${SCRIPT_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 
 # ─── Runtime defaults ─────────────────────────────────────────────────────────
@@ -845,7 +845,8 @@ load_deployments_cluster_settings() {
     local v
     for v in TENANCY_MODE NETWORK_MODE NODE_IP ROUTING_MODE SECRET_MODE \
              STORAGE_CLASS MAIL_SERVICE_MODE LB_PROVIDER LB_ANNOTATIONS \
-             PLATFORM PLATFORM_PARAMS EDGE_ADDRESS_REF DNS_PROVIDER DNS_PARAMS; do
+             PLATFORM PLATFORM_PARAMS EDGE_ADDRESS_REF DNS_PROVIDER DNS_PARAMS \
+             LLM_SUPPORT GPU_ACCELERATION GPU_TIME_SLICE_REPLICAS; do
         [[ -n "${!v:-}" ]] || continue
         [[ -r "${INSTALL_CONFIG_FILE:-}" ]] || continue
         grep -qE "^[[:space:]]*(export[[:space:]]+)?${v}=" "${INSTALL_CONFIG_FILE}" || continue
@@ -1339,11 +1340,11 @@ cleanup_orphaned_kyverno_webhooks() {
 # about the object's own status signals "needs another look" or triggers
 # another attempt on its own.
 #
-# update.sh's --reconcile-releases only covers Release CRs backed by a
-# committed kernel/services/*/manifests/${env}/release.yaml — most Release
-# CRs in this cluster are Crossplane-composition-generated (owned by
+# Globbing committed kernel/services/*/manifests/${env}/release.yaml files
+# (as the deleted update.sh --reconcile-releases did) misses most Release
+# CRs in this cluster: they are Crossplane-composition-generated (owned by
 # XApp/XInfraData/XSuze, e.g. Keycloak, OpenFGA, infra-{mariadb,minio,
-# postgresql,redis}), which that file-globbing approach can't see at all.
+# postgresql,redis}), which a file-globbing approach can't see at all.
 # This checks live Release objects directly instead, regardless of how
 # they were created, and force-reconciles (annotate + let Crossplane retry)
 # any genuinely in Helm's "failed" state. Safe to call unconditionally —

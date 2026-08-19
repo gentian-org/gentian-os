@@ -27,15 +27,10 @@
 #   {{ .Values.stage }}               — stage name (dev / staging / prod)
 #
 # Apply:
-#   Rendered and applied automatically by install.sh Step 13.
-#   For day-2 re-apply (e.g. to fix a missing Application):
-#     source install.env && source install.secrets.env
-#     sed -e "s|{{ .Values.gentianOsBranch }}|develop|g" \
-#         -e "s|{{ .Values.deploymentsRepo }}|${GENTIAN_DEPLOYMENTS_REPO}|g" \
-#         -e "s|{{ .Values.deploymentsBranch }}|${GENTIAN_DEPLOYMENTS_BRANCH}|g" \
-#         -e "s|{{ .Values.cluster }}|pck-kulxwmm|g" \
-#         -e "s|{{ .Values.stage }}|dev|g" \
-#         kernel/bootstrap/gentian-os-application.yaml.tmpl | kubectl apply -f -
+#   Rendered and applied automatically by ./install.sh --step D-01-operator.
+#   Re-run that step for a day-2 re-apply (e.g. to fix a missing Application);
+#   it is convergent and reads the cluster's claim + values from
+#   gentian-deployments.
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:

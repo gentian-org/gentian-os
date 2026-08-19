@@ -695,14 +695,27 @@ spec:
             ) }}
             {{- end }}
 
+            {{- /* Any anchor a public CA did not sign has to be handed to the
+                   workloads that validate kernel hostnames, or every in-cluster
+                   TLS call to id.<kernel-domain> fails. ACME staging was the
+                   first such anchor and for a while the only one this gate knew
+                   about, so self-signed and private-ca clusters mounted nothing
+                   and their apps could not reach the issuer they were told to
+                   trust. certificates.trustAnchorSecret carries the answer for
+                   all three: it names the secret, and is empty exactly when a
+                   public CA signed and there is nothing to distribute. */}}
             {{- $acmeStaging := eq (dig "ACME_STAGING" "false" $ksCMData) "true" }}
-            {{- if $acmeStaging }}
+            {{- $anchorSecret := dig "certificates.trustAnchorSecret" "" $ccData }}
+            {{- if and (not $anchorSecret) $acmeStaging }}
+            {{- $anchorSecret = "gentian-staging-ca-tls" }}
+            {{- end }}
+            {{- if $anchorSecret }}
             {{- $krStaging := default dict $pSpec.kernelRequirements }}
             {{- $identityStaging := default dict $krStaging.identity }}
             {{- $oidcStaging := default dict $identityStaging.oidc }}
             {{- $stagingVol := dict
                 "name" "gentian-staging-ca"
-                "secret" (dict "secretName" "gentian-staging-ca-tls")
+                "secret" (dict "secretName" $anchorSecret)
             }}
             {{- $stagingMounts := list
                 (dict "name" "gentian-staging-ca" "mountPath" "/opt/gentian-staging-ca" "readOnly" true)

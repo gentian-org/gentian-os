@@ -71,7 +71,7 @@ The kernel's static/GitOps side, ordered by bootstrap stage:
 
 | Path | Purpose |
 |---|---|
-| `bootstrap/*.yaml.tmpl` | Argo CD `Application`/`ApplicationSet` templates the installer renders with `KERNEL_DOMAIN`, branch, stage. `root-applicationset.yaml.tmpl` is the app-of-apps root. |
+| `bootstrap/chart/` | Helm chart of the Argo CD bootstrap objects — the operator and portal `Application`s, the catalogue and root `ApplicationSet`s — rendered by the install steps with cluster, stage and branch values. `root-applicationset.yaml` is the app-of-apps root. |
 | `appsets/` | A Helm chart whose only job is to pass `raw/*.yaml` through verbatim while substituting stage, git ref, and domain. `raw/NN-*.yaml` are the numbered child ApplicationSets (external-secrets, crossplane platform, admission, infra-data, infra-helm, suze, openbao-config, keycloak-provider). |
 | `argocd/` | Argo CD `AppProject` and private-registry repo credentials applied directly by `scripts/lib/argocd.sh`. |
 | `services/<name>/manifests/` | Per-kernel-service Helm chart (ConfigMap of non-secret values + `ExternalSecret` + provider-helm `Release`). Takes `env` as a parameter, which is why there is no per-stage directory tree. |

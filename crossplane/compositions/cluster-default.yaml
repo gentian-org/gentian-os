@@ -764,6 +764,12 @@ spec:
                       app.kubernetes.io/managed-by: crossplane
                       gentianos.io/config-type: cluster-config
                   data:
+                    # The trust anchor's secret name, empty when the cluster's certificates
+                    # are publicly trusted. Consumers mount it and point their TLS clients
+                    # at it; empty means there is nothing to distribute because a public CA
+                    # already signed. Derived from issuerMode rather than asked for again —
+                    # a second field could disagree with the mode that produced the anchor.
+                    certificates.trustAnchorSecret: {{ if has (dig "certificates" "issuerMode" "acme-dns01" $spec) (list "self-signed" "private-ca") }}{{ dig "certificates" "caBundleSecretRef" "name" "gentian-root-ca-tls" $spec | quote }}{{ else }}""{{ end }}
                     mail.smtpHost: {{ default "" (dig "mail" "host" "" $spec) | quote }}
                     node.ip: {{ default "" (dig "nodeIp" "" $spec) | quote }}
                     llm.enabled: {{ default false (dig "llm" "enabled" false $spec) | quote }}

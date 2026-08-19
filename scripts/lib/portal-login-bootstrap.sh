@@ -371,7 +371,7 @@ _apply_keycloak_smtp_secret() {
     return 0
 }
 
-# Configure Keycloak kernel realm SMTP (standalone Job; used by update.sh --mail).
+# Configure Keycloak kernel realm SMTP (standalone Job; used by ./install.sh --step D-03-mail).
 configure_keycloak_realm_smtp() {
     local ns="platform-kernel"
     local job_name="keycloak-smtp-configure"
@@ -605,7 +605,8 @@ run_keycloak_portal_bootstrap_job() {
         )
     else
         warn "SMTP credentials incomplete — Keycloak invite/reset emails will not send" \
-             "until ./update.sh --mail (set EXTERNAL_SMTP_* or MAIL_SERVICE_MODE=kernel)."
+             "until ./install.sh --step D-03-mail (set the claim's mail block:" \
+             "serviceMode kernel, or host/port for an external relay)."
         bootstrap_secret_args+=(
             --from-literal=smtp_configure=false
             --from-literal=mail_service_mode="${MAIL_SERVICE_MODE:-external}"

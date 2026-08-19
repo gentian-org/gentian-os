@@ -312,6 +312,18 @@ metrics:
 # it holds no OpenBao token of its own and exchanges the user's OIDC token.
 #
 # Off by default. It is the only component that can write credentials.
+# The cluster's trust anchor, when a public CA did not sign its certificates.
+#
+# Set to the Secret holding the anchor (cert-manager's gentian-root-ca-tls under
+# self-signed and private-ca), empty when certificates are publicly trusted. The
+# operator talks to Keycloak and OpenBao over kernel hostnames, so without this
+# it fails exactly as a tenant app does — and it fails at login, which makes it
+# look like an identity problem rather than a trust one.
+#
+# The value follows certificates.issuerMode in the cluster claim; the installer
+# passes it, so it is not a second place to keep in sync by hand.
+trustAnchorSecret: ""
+
 credentialManager:
   enabled: false
   port: 9444

@@ -69,6 +69,16 @@ spec:
             - configMapRef:
                 name: {{ include "gentian-os.fullname" . }}-config
           env:
+            {{- with .Values.trustAnchorSecret }}
+            # Outside every feature guard on purpose: the operator talks to
+            # Keycloak and OpenBao over kernel hostnames whatever else is
+            # enabled, so tying its trust store to another flag would make TLS
+            # succeed or fail depending on an unrelated setting. Go's
+            # crypto/x509 reads SSL_CERT_FILE when it builds the system pool, so
+            # no custom transport is needed.
+            - name: SSL_CERT_FILE
+              value: /opt/gentian-trust-anchor/ca.crt
+            {{- end }}
             - name: BAO_ADDR
               value: {{ .Values.openbao.address | quote }}
             - name: BAO_ROLE
@@ -346,6 +356,11 @@ spec:
             {{- end }}
           {{- if or $webhookEnabled $lifecycleDeploymentsEnabled $lifecycleGitCredsSecret }}
           volumeMounts:
+            {{- with .Values.trustAnchorSecret }}
+            - name: kernel-trust-anchor
+              mountPath: /opt/gentian-trust-anchor
+              readOnly: true
+            {{- end }}
             {{- if $webhookEnabled }}
             - name: webhook-certs
               mountPath: /tmp/k8s-webhook-server/serving-certs
@@ -376,6 +391,11 @@ spec:
       {{- end }}
       {{- if or $webhookEnabled $lifecycleDeploymentsEnabled $lifecycleGitCredsSecret }}
       volumes:
+        {{- with .Values.trustAnchorSecret }}
+        - name: kernel-trust-anchor
+          secret:
+            secretName: {{ . }}
+        {{- end }}
         {{- if $webhookEnabled }}
         - name: webhook-certs
           secret:
