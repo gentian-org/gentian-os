@@ -1175,10 +1175,10 @@ mirror, so "exercised" below never means more than that.
 | 4 | 4a exercised, **4b half** | Mail, LLM, portal and tenant reconcile still name applications. Blocked on the reconciler audit (§15.2) |
 | 5 | Exercised | `kernel/argocd/repos/*.yaml` and the infra chart registry are not yet claims |
 | 6 | **Exercised** | Both criteria this row was waiting on are verified in §15.1 — ESO's live verdict, and the unsatisfied→satisfied transition unblocking composition with nothing re-run. The row had not been updated to say so |
-| 7 | **Built, partly exercised** | Login works and the policies are asserted by `make test-policy`. The *live* OIDC write path has now been attempted and was broken three independent ways — wrong mount, wrong role type, missing audience (§15.4). All three are fixed; none has yet carried a successful exchange, and the audit device is unobserved |
-| 8 | Built, running, never successful | The service runs, is reachable from the portal, and has never completed a token exchange. Its own ServiceAccount policy is still uninspected, and it logs nothing about a refused exchange — every diagnosis so far has come from reading the code |
+| 7 | **Exercised** | The live OIDC write path works. It was broken three independent ways — wrong mount, wrong role type, missing audience (§15.4) — and a token exchange has now completed against the fixed path, which is the criterion this row waited on longest. The audit device is still unobserved |
+| 8 | **Exercised** | The service exchanges a caller's token and serves the catalogue. Two things remain: its own ServiceAccount policy is uninspected, and it logs nothing about a *refused* exchange — the three defects above were each diagnosed by reading code, because a refusal produces no log line at all |
 | 9 | Built | No shared API contract tests; validation errors are not attributed per field |
-| 10 | **10a/10b done, 10c mostly** | `cluster-settings.env` is gone and no `envsubst` call site remains — but one orphaned `${GENTIAN_OS_IMAGE_REPOSITORY}` survived inside a Helm template, where nothing expands it, and silently disabled image updates (§15.4). The credential manager is built but has never authenticated (row 7) |
+| 10 | **10a/10b done, 10c done** | `cluster-settings.env` is gone, no `envsubst` call site remains, and the credential manager — the third surface — now authenticates and serves (row 8). One orphaned `${GENTIAN_OS_IMAGE_REPOSITORY}` survived the `envsubst` removal inside a Helm template, where nothing expands it, and silently disabled image updates until it was found (§15.4) |
 | 11 | Done | BSD `sed_inplace` has not been observed running |
 | 12 | 12a–12d and 12f built, **12e not** | Provider RBAC is still `cluster-admin`, deliberately. 12f is built against renders only — no cluster has been installed on a platform other than OpenStack, or a zone other than Cloudflare |
 | 13 | Portability done | arm64, internal domain and mirror remain structural claims. The CA-bundle distribution contract (12c) is undefined, so `self-signed` and `private-ca` install without giving any client the anchor |
@@ -2363,7 +2363,7 @@ They are gathered here because they are the whole point of the run.
 | ESO's actual verdict on the satisfaction probes | Phase 6, criterion 1 | **Verified.** `make check-credentials` reads four required credentials Ready and two `optional unset` — `infra-chart-registry` because the cluster pulls charts publicly, `argocd-github-webhook` because it is `phase: runtime`. Satisfaction is observable as a Kubernetes condition with nothing polling OpenBao, which is what §4 claims |
 | A tenant can be provisioned | E-01/E-02, and the product's purpose | **Verified.** A tenant is admitted, reaches Ready, serves its apps through the portal, and is removed again cleanly. Its admin signs in at the derived address, and Postfix accepts mail for the tenant's own domain. The admission webhook refuses one naming an AppProfile the cluster does not have, and that rollback leaves `definitions/` intact. The remaining gap is Dovecot, which has nowhere to store what Postfix accepts (§15.4) |
 | The unsatisfied → satisfied transition unblocks composition without intervention | Phase 6, criterion 4 | **Verified.** Every provider-vault resource sat `SYNCED=False` on a missing `openbao-crossplane-token`; when the credential arrived they reconciled and the XCluster reached Ready with nothing re-run |
-| OIDC login yields a policy set from Keycloak groups; a named write appears in the audit device | Phase 7, criteria 1–2 | **Login verified, exchange not, audit device not.** A tenant admin signs in at the shared portal and reaches the desktop and Admin Console. The *token exchange* — the half that yields a policy set — has never succeeded: see §15.4, three separate causes, all fixed and none yet confirmed on a cluster. Group membership was correct throughout and was never the reason |
+| OIDC login yields a policy set from Keycloak groups; a named write appears in the audit device | Phase 7, criteria 1–2 | **Login and exchange verified; audit device not.** A tenant admin signs in at the shared portal and reaches the desktop and Admin Console, and a cluster admin's token now exchanges for a policy set — reported by the operator after the three fixes in §15.4 landed, not observed in this session. Group membership was correct throughout and was never the reason for any of the three failures. Whether a named write reaches the audit device is still unobserved |
 | The policies permit and deny what they claim | Phase 7, criterion 5 | **Verified.** `make test-policy` asserts 17 capabilities against a throwaway OpenBao and 5 checks against the OpenFGA model, and is mutation-tested. Until this ran, the cluster-admin and tenant-admin policies were outside every test: the render fixture omitted `spec.oidc`, so `{{- if $oidc.discoveryUrl }}` was false and neither policy was emitted |
 | The bootstrap token is genuinely invalid afterwards | Phase 7, criterion 3 | **Verified.** The check has been run: the root token from the init file is refused. That closes the last of Phase 7's criteria that a cluster run could settle — criterion 3 was the reason E-03 could not be trusted to have done anything |
 | An arm64 install; an internal-domain install with `self-signed`; a mirrored install making no upstream request | Phase 12, criteria 4 and 6 | **Still unverified.** Three separate installs |
@@ -2708,9 +2708,11 @@ The two layers are complementary. `cluster-oidc-policies` asserts the policy *te
 this asserts what the text *means*. Neither subsumes the other — a golden file is regenerated by
 `make test-unit-render-update`, so text alone would let a weakened policy through.
 
-**The OIDC write path was broken three ways, and one error message hid all of them.** The
-Credentials tab reported *OpenBao refused the token — check that you are in the cluster-admin
-group*. Group membership was correct every time. The causes, in the order they were removed:
+**The OIDC write path was broken three ways, and one error message hid all of them.** It works
+now: with all three removed, a cluster admin's token exchanges for a policy set and the Credentials
+tab serves the catalogue. Along the way the tab reported *OpenBao refused the token — check that
+you are in the cluster-admin group*, and group membership was correct every time. The causes, in
+the order they were removed:
 
 - The service logged in at `auth/jwt/login`. The backend is enabled with `-path=oidc`, so the
   endpoint is `auth/oidc/login`; nothing was mounted at `jwt` at all. The mount is configuration
@@ -2732,9 +2734,12 @@ policies on the returned token, not from a role name.
 Two lessons outlast the bugs. **The tests agreed with the bug**: the fake OpenBao in
 `http_test.go` matched `/auth/jwt/login`, so the suite stayed green while the UI could not
 authenticate at all — a stub that encodes the same wrong assumption as the code tests nothing.
-And **the message named the one thing that was correct**. A refusal should report which check
-failed — audience, claims, or role — and the service should log the exchange at all; it currently
-logs nothing about a refusal, which is why every round of this was diagnosed by reading code.
+And **the message named the one thing that was correct**. Three defects, three rounds, and each
+round began by re-checking a group membership that was never wrong. A refusal should report which
+check failed — audience, claims, or role — and the service should log the exchange at all; it
+still logs nothing about a refusal, which is why every round was diagnosed by reading code rather
+than by reading the cluster. That reporting gap outlived the bugs and is the thing most likely to
+cost the next person the same three rounds.
 
 **`argocd-image-updater` had never updated the operator image on any cluster.** The `image-list`
 annotation reached the cluster as the literal string `gentianos=${GENTIAN_OS_IMAGE_REPOSITORY}` —
