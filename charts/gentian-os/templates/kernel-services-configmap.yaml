@@ -27,7 +27,7 @@
        gentian-<stage> default here silently overrides the correct location and
        every tenant app is handed an SMTP host that does not resolve. */ -}}
 {{- $smtpHost := $ks.smtpHost | default (printf "postfix-%s.%s.svc.cluster.local" $stage .Values.servicesNamespace) -}}
-{{- if or .Values.kernelDomain .Values.tenancyMode $ks.s3Endpoint $ks.mysqlHost $ks.redisHost $ks.smtpHost $ks.turnHost $ks.turnCredentials $keycloakInternal }}
+{{- if or .Values.kernelDomain .Values.tenancyMode $ks.s3Endpoint $ks.mysqlHost $ks.redisHost $ks.smtpHost $keycloakInternal }}
 {{- /*
   Pod env configMapKeyRef only resolves same-namespace — a plain Kubernetes
   restriction, not something a namespace field on the ref can work around.
@@ -65,24 +65,6 @@ data:
   {{- end }}
   {{- with $redisHost }}
   REDIS_HOST: {{ . | quote }}
-  {{- end }}
-  {{- with $ks.turnHost }}
-  TURN_HOST: {{ . | quote }}
-  {{- end }}
-  {{- with $ks.turnPort }}
-  TURN_PORT: {{ . | quote }}
-  {{- end }}
-  {{- with $ks.turnTLSHost }}
-  TURN_TLS_HOST: {{ . | quote }}
-  {{- end }}
-  {{- with $ks.turnTLSPort }}
-  TURN_TLS_PORT: {{ . | quote }}
-  {{- end }}
-  {{- with $ks.turnTransport }}
-  TURN_TRANSPORT: {{ . | quote }}
-  {{- end }}
-  {{- with $ks.turnCredentials }}
-  TURN_CREDENTIALS: {{ . | quote }}
   {{- end }}
   {{- /* Cluster-supplied passthrough entries. Kept last and rendered verbatim so
          a cluster can publish a value an app profile needs without gentian-os

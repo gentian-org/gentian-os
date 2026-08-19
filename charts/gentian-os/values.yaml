@@ -137,11 +137,12 @@ servicesNamespace: "platform-kernel"
 # kernelServices exposes cluster-wide infrastructure endpoints to Crossplane
 # compositions. Published as a `gentian-kernel-services` ConfigMap in gentian-system
 # and fetched by app-default.yaml via function-extra-resources.
-# Template variables substituted in AppProfile extraValues:
-#   ${S3_ENDPOINT}  — MinIO/S3 object-storage endpoint URL
-#   ${MYSQL_HOST}   — MariaDB/MySQL hostname (no port)
-#   ${REDIS_HOST}   — Redis primary hostname (no port)
-#   ${TURN_*}       — Shared TURN server settings for apps doing WebRTC
+# No endpoint is substituted into AppProfile extraValues any more. ${S3_ENDPOINT},
+# ${MYSQL_HOST}, ${REDIS_HOST}, ${SMTP_HOST} and ${TURN_*} were, and each handed
+# an app a hostname with nothing to authenticate with — an app declares
+# kernelRequirements and maps its own chart keys instead (P9 in
+# docs/app-customization.md). The values below are still read by the operator
+# and by compositions; they are simply no longer expanded into app values.
 #   KEYCLOAK_INTERNAL_URL — In-cluster Keycloak base (no path), for apps whose
 #                           server-side OIDC calls (token/userinfo/JWKS) must not
 #                           leave the cluster while the browser keeps https://id.*
@@ -153,12 +154,6 @@ kernelServices:
   keycloakInternalURL: ""
   # In-cluster Postfix submission host for shared mail mode (operator MAIL_SMTP_HOST).
   smtpHost: ""
-  turnHost: ""
-  turnPort: "3478"
-  turnTLSHost: ""
-  turnTLSPort: "5349"
-  turnTransport: "udp"
-  turnCredentials: ""
   # extra publishes additional cluster-supplied key/value pairs into the
   # ConfigMap verbatim, so a cluster can hand a value to an app profile without
   # gentian-os growing a field named after that app. Keys are used as-is: a

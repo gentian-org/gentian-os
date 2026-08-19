@@ -524,13 +524,16 @@ spec:
             {{- /*   ${TENANT_DOMAIN}    — effective tenant domain                 */}}
             {{- /*   ${TENANT_NAMESPACE} — tenant k8s namespace                    */}}
             {{- /*   ${TENANT_ID}        — tenant name (e.g. gtn-demo)             */}}
-            {{- /*   ${TURN_*}           — shared TURN server (from kernel CM)     */}}
             {{- /*
-                 Endpoints are NOT substituted. S3_ENDPOINT, MYSQL_HOST,
-                 REDIS_HOST and SMTP_HOST were, and each handed an app a
-                 hostname with no credential — see P9 in
-                 docs/app-customization.md. TURN remains because it has no
-                 valueMapping category yet; it is the last one.
+                 Identity only. No endpoint is substituted here, and none
+                 should be: S3_ENDPOINT, MYSQL_HOST, REDIS_HOST, SMTP_HOST and
+                 TURN_* each handed an app a hostname with no credential —
+                 TURN_CREDENTIALS handed it an actual shared secret, into a
+                 ConfigMap. See P9 in docs/app-customization.md.
+
+                 A tenant's id, namespace and domain are facts about the app's
+                 own context. They name nothing to connect to and carry nothing
+                 to authenticate with, which is what makes them safe to expand.
             */}}
             {{- $extraVals := dict }}
             {{- /* Load kernel service endpoints from the fetched ConfigMap */}}
@@ -538,12 +541,6 @@ spec:
             {{- $ksCM  := default dict (index $ksRes 0) }}
             {{- $ksCMData := dig "data" dict $ksCM }}
             {{- $kernelDomain := dig "KERNEL_DOMAIN" "" $ksCMData }}
-            {{- $turnHost     := dig "TURN_HOST"        "" $ksCMData }}
-            {{- $turnPort     := dig "TURN_PORT"        "3478" $ksCMData }}
-            {{- $turnTLSHost  := dig "TURN_TLS_HOST"    "" $ksCMData }}
-            {{- $turnTLSPort  := dig "TURN_TLS_PORT"    "5349" $ksCMData }}
-            {{- $turnTransport := dig "TURN_TRANSPORT"  "udp" $ksCMData }}
-            {{- $turnCreds    := dig "TURN_CREDENTIALS" "" $ksCMData }}
             {{- if $pSpec.extraValues }}
             {{- $raw := $pSpec.extraValues | toJson }}
             {{- $raw = $raw | replace "${TENANT_DOMAIN}"    $domain }}
@@ -570,12 +567,6 @@ spec:
             domain are facts about the app's own context, not endpoints, and
             carry nothing to authenticate with.
             */}}
-            {{- $raw = $raw | replace "${TURN_HOST}"        $turnHost }}
-            {{- $raw = $raw | replace "${TURN_PORT}"        $turnPort }}
-            {{- $raw = $raw | replace "${TURN_TLS_HOST}"    $turnTLSHost }}
-            {{- $raw = $raw | replace "${TURN_TLS_PORT}"   $turnTLSPort }}
-            {{- $raw = $raw | replace "${TURN_TRANSPORT}" $turnTransport }}
-            {{- $raw = $raw | replace "${TURN_CREDENTIALS}" $turnCreds }}
             {{- if $nodeIP      }}{{ $raw = $raw | replace "${NODE_IP}"       $nodeIP      }}{{ end }}
             {{- $extraVals = $raw | fromJson }}
             {{- end }}
@@ -1377,12 +1368,6 @@ spec:
             {{- /* No endpoint substitutions here either — see the note above the
             app's own extraValues block. A sidecar reaches its dependencies the
             same way its app does. */}}
-            {{- $scRaw = $scRaw | replace "${TURN_HOST}"        $turnHost }}
-            {{- $scRaw = $scRaw | replace "${TURN_PORT}"        $turnPort }}
-            {{- $scRaw = $scRaw | replace "${TURN_TLS_HOST}"    $turnTLSHost }}
-            {{- $scRaw = $scRaw | replace "${TURN_TLS_PORT}"   $turnTLSPort }}
-            {{- $scRaw = $scRaw | replace "${TURN_TRANSPORT}" $turnTransport }}
-            {{- $scRaw = $scRaw | replace "${TURN_CREDENTIALS}" $turnCreds }}
             {{- if $nodeIP      }}{{ $scRaw = $scRaw | replace "${NODE_IP}"       $nodeIP      }}{{ end }}
             {{- $scExtraVals = $scRaw | fromJson }}
             {{- end }}
