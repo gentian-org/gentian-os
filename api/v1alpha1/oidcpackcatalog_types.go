@@ -72,7 +72,7 @@ type OIDCMapperTemplate struct {
 // what lets a service pack omit them; these keep an APP pack from omitting them
 // by accident, which previously the Required markers guaranteed.
 // The presence checks are deliberately cheap — CEL costs are estimated against
-// worst-case string lengths, and comparing these three to '' as well pushed the
+// worst-case string lengths, and comparing these three to ” as well pushed the
 // rule over the API server's budget. MinLength on each field rejects an empty
 // string when the key IS present, so presence is all this needs to test.
 // +kubebuilder:validation:XValidation:rule="(has(self.serviceClient) && self.serviceClient) || (has(self.scopeName) && has(self.clientRole) && has(self.entitlementGroup))",message="scopeName, clientRole and entitlementGroup are required unless serviceClient is true"

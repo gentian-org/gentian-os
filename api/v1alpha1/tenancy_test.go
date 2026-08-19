@@ -16,7 +16,10 @@ limitations under the License.
 
 package v1alpha1
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestNormalizeTenancyMode(t *testing.T) {
 	t.Parallel()
@@ -64,6 +67,42 @@ func TestAdminEmailOrDefault(t *testing.T) {
 	if got := tenant.AdminEmailOrDefault("gtn.host", TenancyModeMulti); got != "admin@corp.gtn.host" {
 		t.Fatalf("multi: got %q", got)
 	}
+
+	// A shared mail domain moves the tenant name into the local part, because
+	// on a shared domain plain admin@ is not this tenant's to claim — the next
+	// tenant provisioned would want the same mailbox.
+	shared := &Tenant{}
+	shared.Name = "corp"
+	shared.Spec.Mail = &TenantMail{Domain: "gtn.host"}
+	if got := shared.AdminEmailOrDefault("gtn.host", TenancyModeMulti); got != "admin-corp@gtn.host" {
+		t.Fatalf("shared mail domain: got %q", got)
+	}
+	other := &Tenant{}
+	other.Name = "acme"
+	other.Spec.Mail = &TenantMail{Domain: "gtn.host"}
+	if a, b := shared.AdminEmailOrDefault("gtn.host", TenancyModeMulti),
+		other.AdminEmailOrDefault("gtn.host", TenancyModeMulti); a == b {
+		t.Fatalf("two tenants on one mail domain must not share an address: both %q", a)
+	}
+
+	// mail.domain equal to the tenant's own domain is not "shared", so the name
+	// is not added twice.
+	own := &Tenant{}
+	own.Name = "corp"
+	own.Spec.Mail = &TenantMail{Domain: "corp.gtn.host"}
+	if got := own.AdminEmailOrDefault("gtn.host", TenancyModeMulti); got != "admin@corp.gtn.host" {
+		t.Fatalf("own mail domain: got %q", got)
+	}
+
+	// The address must be one the mail stack accepts: same domain the operator
+	// writes into virtual_mailbox_domains.
+	for _, tn := range []*Tenant{shared, own} {
+		addr := tn.AdminEmailOrDefault("gtn.host", TenancyModeMulti)
+		md := tn.MailDomainOrDefault("gtn.host", TenancyModeMulti)
+		if !strings.HasSuffix(addr, "@"+md) {
+			t.Fatalf("address %q is not in the mail domain %q", addr, md)
+		}
+	}
 	if got := tenant.AdminEmailOrDefault("gtn.host", TenancyModeSingle); got != "admin@gtn.host" {
 		t.Fatalf("single: got %q", got)
 	}
@@ -82,7 +121,7 @@ func TestAdminEmailOrDefault(t *testing.T) {
 	// No domain anywhere: .invalid can never resolve, which beats inventing one.
 	bare := &Tenant{}
 	bare.Name = "corp"
-	if got := bare.AdminEmailOrDefault("", TenancyModeMulti); got != "admin@corp.invalid" {
+	if got := bare.AdminEmailOrDefault("", TenancyModeMulti); got != "admin-corp@corp.invalid" {
 		t.Fatalf("no domain: got %q", got)
 	}
 }

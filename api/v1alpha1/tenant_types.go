@@ -354,17 +354,51 @@ type TenantList struct {
 // tenant name so it stays unique across realms (admin-corp); inside the
 // tenant's own domain that reads as admin-corp@corp.example, naming the tenant
 // twice. The mailbox belongs to the domain, so the domain says whose it is.
+// MailDomainOrDefault is the domain this tenant's mail is addressed in.
+//
+// spec.mail.domain when set, otherwise the tenant's ingress domain. The two are
+// usually the same and are allowed to differ: a cluster can put every tenant's
+// mail on one domain while each still serves its apps on its own subdomain.
+//
+// On the API type rather than in the mail controller because the admin address
+// is derived from it too, and those two were deriving it separately — see
+// AdminEmailOrDefault.
+func (t *Tenant) MailDomainOrDefault(kernelDomain, tenancyMode string) string {
+	if t.Spec.Mail != nil && t.Spec.Mail.Domain != "" {
+		return t.Spec.Mail.Domain
+	}
+	return t.EffectiveDomain(kernelDomain, tenancyMode)
+}
+
+// AdminEmailOrDefault is the tenant administrator's address.
+//
+// Derived from the MAIL domain, not the ingress domain. Those are the same
+// unless spec.mail.domain says otherwise, and when it does, an address in the
+// ingress domain is one no mailbox exists for: Postfix accepts mail only for
+// the domains in virtual_mailbox_domains, which the operator writes from the
+// mail domain. That mismatch is why tenant definitions carried hand-written
+// addresses — the derived one could not receive.
+//
+// The local part is `admin` when the tenant has the domain to itself, and
+// `admin-<tenant>` when the mail domain is shared with other tenants. Sharing
+// is what makes the tenant name necessary: two tenants on one mail domain would
+// otherwise both be admin@ that domain, and the second to provision would
+// collide with the first. Inside the tenant's own domain the same name would
+// appear twice — admin-corp@corp.example — which is why it is not added there.
 func (t *Tenant) AdminEmailOrDefault(kernelDomain, tenancyMode string) string {
 	if t.Spec.AdminEmail != "" {
 		return t.Spec.AdminEmail
 	}
-	domain := t.EffectiveDomain(kernelDomain, tenancyMode)
+	domain := t.MailDomainOrDefault(kernelDomain, tenancyMode)
 	if domain == "" {
 		// No domain configured at all: .invalid is reserved by RFC 2606 and can
 		// never resolve, which is the honest representation of "unknown".
-		domain = t.Name + ".invalid"
+		return "admin-" + t.Name + "@" + t.Name + ".invalid"
 	}
-	return "admin@" + domain
+	if domain == t.EffectiveDomain(kernelDomain, tenancyMode) {
+		return "admin@" + domain
+	}
+	return "admin-" + t.Name + "@" + domain
 }
 
 // EffectiveDomain returns the domain to use for ingress and mail routing
