@@ -109,7 +109,7 @@ These files are what the cluster becomes. Read them.
 
 - `claims/cluster.yaml` — everything that describes this cluster.
 - `claims/infra-data.yaml` — the shared Postgres, MariaDB, Redis and MinIO.
-- `claims/suze.yaml` — Keycloak and OpenFGA.
+- `claims/suze.yaml` — Cluster security (incl. Keycloak and OpenFGA).
 - `values.yaml` — this cluster's Helm overlay.
 
 `--prepare-deployment` asks for the four settings that decide whether the
@@ -185,10 +185,7 @@ recovers it from there instead of asking again — so a resumed install does not
 re-ask. Nothing is written to this machine except a short-lived cache that step
 `B-10-seed-secrets` deletes.
 
-**Everything else is supplied after the cluster is up, not now.** The SMTP relay
-and the ArgoCD webhook secret are `phase: runtime`: they belong to the
-credential manager on the cluster, and step 12 is where they get set. Only the
-four above block a bootstrap.
+**Everything else is supplied after the cluster is up, not now** and step 12 is where they get set. 
 
 **The Cloudflare token is only optional if this cluster's issuer does not need
 it.** Under the default `acme-dns01`, DNS-01 issues every kernel certificate,
@@ -301,6 +298,38 @@ never returns a stored value — existence, who set it and when, and the last
 validation result, and nothing more.
 
 Lost credentials are rotated, not recovered.
+
+### The SMTP relay, and what waits on it
+
+`smtp-relay` is the one most clusters notice, because the things it blocks fail
+late and elsewhere. Without it Keycloak realms have no `smtpServer`, so the
+portal refuses member invitations with
+
+```text
+503: Invitation email is unavailable: tenant realm SMTP is not configured
+```
+
+and tenants provision perfectly well right up until somebody tries to invite
+their first user.
+
+Supply it here, once, and it reaches both senders on its own: External Secrets
+copies it from OpenBao into Postfix's configuration and into
+`keycloak-smtp-credentials`, and the operator configures each tenant realm on
+its next reconcile. Nothing needs re-running — that is what `phase: runtime`
+means. Existing tenants are picked up too; a realm is configured whenever the
+credential is there, not only at creation.
+
+To check it landed:
+
+```bash
+kubectl get secret keycloak-smtp-credentials -n platform-kernel \
+  -o jsonpath='{.data.smtp_configure}' | base64 -d    # true once usable
+```
+
+`false` means the Secret rendered but the credential is still missing — the
+cluster's own mail settings are there, the relay's username and password are
+not. On `mail.serviceMode: kernel` this Secret is written by the installer
+instead, because that mode's submission password is derived rather than stored.
 
 ## 13. Hand the cluster over
 

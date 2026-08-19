@@ -44,6 +44,19 @@ spec:
           parameters:
             - name: env
               value: '{{.env}}'
+            # Realm SMTP for keycloak-idp, rewritten from these literals by
+            # kernel/appsets/templates/appsets.yaml — the same mechanism and the
+            # same claim fields Postfix is given in 09-infra-helm.yaml, because
+            # both send through the one relay the cluster declares. openfga is
+            # rendered from this template too and simply does not read them.
+            - name: kernelDomain
+              value: 'kernel.domain.placeholder'
+            - name: relayHost
+              value: 'external.smtp.host.placeholder'
+            - name: relayPort
+              value: 'external.smtp.port.placeholder'
+            - name: mailServiceMode
+              value: 'mail.service.mode.placeholder'
           # Only stages that genuinely differ carry a values file; the rest
           # inherit the chart defaults.
           valueFiles:

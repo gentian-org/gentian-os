@@ -346,9 +346,33 @@ EOREFRESH
 }
 
 # Apply keycloak-smtp-credentials Secret used by bootstrap / SMTP-only Jobs.
+#
+# Only where nothing else owns it. On external-mail clusters the Secret is built
+# by an ExternalSecret (kernel/services/keycloak-idp), which sources the relay
+# credential from OpenBao — so the credential reaches Keycloak whenever it is
+# supplied, including long after this script could have run. Writing it here as
+# well would be two writers on one object, each reverting the other on its own
+# schedule: ESO owns the Secret and restores it on every refresh, and this
+# function would win only until then.
+#
+# Deferring is not a downgrade. The reason to write it from here was that
+# nothing else could, and that is exactly what the ExternalSecret changed.
+# kernel mode keeps this path: its submission password is derived, not stored,
+# so there is no OpenBao path for ESO to extract.
 _apply_keycloak_smtp_secret() {
     local ns="${1:-platform-kernel}"
     local mail_mode="${MAIL_SERVICE_MODE:-external}"
+
+    if kubectl get externalsecret keycloak-smtp-credentials -n "${ns}" >/dev/null 2>&1; then
+        info "keycloak-smtp-credentials is owned by an ExternalSecret; leaving it alone."
+        info "  The relay credential reaches Keycloak from OpenBao. If realm SMTP is"
+        info "  unconfigured, supply smtp-relay — Admin Console → Credentials."
+        # Ready only if ESO has actually resolved the credential, so the caller
+        # does not run a configure Job that would exit on its own gate.
+        [[ "$(kubectl get secret keycloak-smtp-credentials -n "${ns}" \
+            -o jsonpath='{.data.smtp_configure}' 2>/dev/null | base64 -d 2>/dev/null)" == "true" ]]
+        return $?
+    fi
 
     if ! _keycloak_smtp_settings; then
         kubectl delete secret keycloak-smtp-credentials -n "${ns}" --ignore-not-found=true \

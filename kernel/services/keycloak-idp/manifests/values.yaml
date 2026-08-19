@@ -4,3 +4,14 @@ env: dev
 # storageClass empty = use the cluster's default StorageClass. Set per
 # stage in values-<env>.yaml only where a stage genuinely differs.
 storageClass: ""
+
+# Realm SMTP. Supplied by the ApplicationSet from the Cluster claim, the same
+# way Postfix receives them — see externalsecret-smtp.yaml for what is built
+# from them and why the credential itself is not here.
+mailServiceMode: external
+relayHost: ""
+relayPort: "587"
+kernelDomain: ""
+# The realm the cluster's own users live in. Tenants have their own realms and
+# are configured by the operator, not from here.
+kernelRealm: kernel

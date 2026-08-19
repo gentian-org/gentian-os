@@ -221,10 +221,32 @@ func makeTenantSMTPJob(tenantName, realmName string) *batchv1.Job {
 	}
 }
 
+// clusterKeycloakSMTPCredentialsAvailable reports whether this cluster has SMTP
+// settings a realm can actually send with.
+//
+// Existence of the Secret is not that question. It is now built by an
+// ExternalSecret that renders the cluster's non-secret mail settings whether or
+// not the relay credential has been supplied — so the Secret exists from the
+// moment the kernel syncs, and gating on presence alone would send every tenant
+// into a configure Job that exits 1 on its own SMTP_CONFIGURE check.
+//
+// smtp_configure is the field that carries the answer: the ExternalSecret sets
+// it to true only when both halves of the credential are there. The Job tests
+// the same field, so the gate and the work agree on what "configured" means.
+// The decision is a pure function of the Secret's contents so it can be tested
+// without a client: every test in this package shares one envtest manager, and
+// standing up even a fake client alongside it perturbs the scheduling the
+// Job-polling tests depend on.
+func smtpCredentialsUsable(data map[string][]byte) bool {
+	return string(data["smtp_configure"]) == "true"
+}
+
 func (r *TenantReconciler) clusterKeycloakSMTPCredentialsAvailable(ctx context.Context) bool {
 	secret := &corev1.Secret{}
-	err := r.Get(ctx, types.NamespacedName{Name: keycloakSMTPCredentialsSecret, Namespace: kernelNamespace}, secret)
-	return err == nil
+	if err := r.Get(ctx, types.NamespacedName{Name: keycloakSMTPCredentialsSecret, Namespace: kernelNamespace}, secret); err != nil {
+		return false
+	}
+	return smtpCredentialsUsable(secret.Data)
 }
 
 func (r *TenantReconciler) ensureTenantSMTPJob(ctx context.Context, tenant *gentianov1alpha1.Tenant) (bool, error) {
@@ -232,6 +254,21 @@ func (r *TenantReconciler) ensureTenantSMTPJob(ctx context.Context, tenant *gent
 		return true, nil
 	}
 	if !r.clusterKeycloakSMTPCredentialsAvailable(ctx) {
+		// Said, but at debug level, because this runs on every pass of a
+		// provisioning tenant's two-second requeue — an Info line here is one
+		// per tenant every two seconds for as long as provisioning takes, and
+		// in envtest (where Jobs never complete, so the loop never ends) it was
+		// enough log volume to push unrelated tests past their timeouts.
+		//
+		// The durable signal is the Secret's own smtp_configure field, which is
+		// false exactly when this returns early, and which GETTING-STARTED
+		// names as the thing to check when the portal answers an invitation
+		// with "503: tenant realm SMTP is not configured".
+		log.FromContext(ctx).V(1).Info(
+			"realm SMTP left unconfigured: the cluster has no usable SMTP credential",
+			"tenant", tenant.Name,
+			"secret", fmt.Sprintf("%s/%s", kernelNamespace, keycloakSMTPCredentialsSecret),
+			"remedy", "supply the smtp-relay credential (Admin Console -> Credentials)")
 		return true, nil
 	}
 	realmDone, err := r.waitForProvisioningJob(ctx, tenant.Name, realmJobName(tenant.Name))
