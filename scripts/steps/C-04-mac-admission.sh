@@ -30,18 +30,23 @@ apply() {
 }
 
 destroy() {
-    # Reverse-pass ordering makes most of this a fight Argo CD wins.
+    # Nothing to reverse: apply() waits, it does not create.
     #
-    # drive_reverse walks the same list backwards, so C-04 is torn down BEFORE
-    # C-02-root-appset and long before A-09-argocd: Argo is still running, still
-    # syncing 05-admission.yaml, and selfHeal puts back every ClusterPolicy this
-    # deletes. The helm uninstall branch is deader still — Argo renders the
-    # chart and applies the manifests, so there is no Helm release to find.
+    # This used to call _delete_kyverno_scaffold, which deleted objects Argo CD
+    # owns while Argo CD was still running — drive_reverse walks the list
+    # backwards, so C-04 is torn down two steps before C-02 removes the root
+    # appset. Kyverno actually goes with that removal: the Application carries
+    # resources-finalizer.argocd.argoproj.io, so deleting gentian-appsets
+    # cascades through the children and takes the chart with it.
     #
-    # It is left in place because it is also the sweep that clears Kyverno's
-    # cluster-scoped webhook configurations, which fail closed and would block
-    # the next install if they outlived the cluster. That part still earns its
-    # keep once Argo is gone. Making the rest honest means either ordering this
-    # after the appset teardown or narrowing it to the webhook sweep.
-    _delete_kyverno_scaffold || true
+    # The scaffold sweep still exists, for the case where Argo CD was already
+    # broken and that cascade never happens. It runs at the tail of
+    # A-09-argocd's destroy instead — the first point in the reverse pass where
+    # Argo is gone and cannot put back what the sweep removes, and still before
+    # A-03 deletes namespaces that a fail-closed webhook would block.
+    #
+    # No position in the step list can do better. The same order drives both
+    # directions, and this step must apply AFTER C-02 because that is when
+    # Kyverno appears — which forces it to destroy BEFORE C-02.
+    return 0
 }

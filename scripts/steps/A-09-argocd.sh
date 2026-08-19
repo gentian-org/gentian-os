@@ -69,4 +69,18 @@ destroy() {
         argocd-application-controller argocd-applicationset-controller argocd-server \
         --ignore-not-found=true --wait=false 2>/dev/null || true
     _delete_crds_matching 'argoproj\.io$' 'Argo CD CRDs'
+
+    # Kyverno last, and here rather than in C-04-mac-admission where it used to
+    # live. C-04 owns nothing — Kyverno arrives through the root appset — and
+    # deleting it there ran while Argo CD was still reconciling. A normal
+    # uninstall does not need this at all: C-02 removing gentian-appsets
+    # cascades through the finalizer and takes the chart with it. This is the
+    # path for a cluster whose Argo CD was already broken, where that cascade
+    # never ran.
+    #
+    # It has to be after the block above (Argo gone, so nothing restores what it
+    # removes) and before A-03 deletes the kernel namespaces: Kyverno's webhook
+    # configurations fail closed, and one left pointing at a service that no
+    # longer exists blocks the deletes A-03 is about to issue.
+    _delete_kyverno_scaffold || true
 }

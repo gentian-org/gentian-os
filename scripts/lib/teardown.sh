@@ -421,6 +421,15 @@ _delete_envoy_gateway_scaffold() {
     _delete_crds_matching 'gateway\.networking\.k8s\.io$' 'Gateway API CRDs'
 }
 
+# Called from A-09-argocd's destroy(), after Argo CD is gone.
+#
+# Not from C-04-mac-admission, which is where it lived: that step waits on
+# Kyverno, it does not own it, and running there deleted Argo-owned objects
+# while Argo was still reconciling them. A normal uninstall never needs this —
+# C-02 removing gentian-appsets cascades through the Application finalizer and
+# takes the chart with it. This is the fallback for a cluster whose Argo CD was
+# already broken, and the only thing that removes the kyverno namespace and CRDs
+# in that case.
 _delete_kyverno_scaffold() {
     local policy
 
@@ -436,13 +445,11 @@ _delete_kyverno_scaffold() {
     done
     success "Gentian Kyverno ClusterPolicies removed."
 
-    if helm status kyverno -n kyverno >/dev/null 2>&1; then
-        info "Uninstalling Kyverno Helm release..."
-        helm uninstall kyverno -n kyverno --wait --timeout=3m 2>/dev/null || true
-        success "Kyverno Helm release uninstalled."
-    else
-        info "Kyverno Helm release not found; skipping helm uninstall."
-    fi
+    # No helm uninstall. There has never been a release to uninstall: Kyverno is
+    # an Argo CD Application, and Argo renders the chart and applies the
+    # manifests rather than calling Helm. `helm status kyverno` missed every
+    # time, and the branch logged "not found" as if that were a state worth
+    # reporting.
 
     _delete_namespace "kyverno"
     _delete_crds_matching 'kyverno\.io$' 'Kyverno CRDs'
@@ -450,11 +457,12 @@ _delete_kyverno_scaffold() {
     # so the pattern above never matched them.
     _delete_crds_matching 'wgpolicyk8s\.io$' 'Policy report CRDs'
 
-    # Belt-and-suspenders: helm uninstall normally removes Kyverno's webhook
-    # configs as chart-managed resources, but not if the Helm release was
-    # already broken/missing above (helm uninstall never ran). These are
-    # cluster-scoped and fail closed, so leaving them behind blocks the next
-    # install — explicitly sweep them regardless of how the helm step went.
+    # The part that matters most. Argo CD's cascade removes these webhook
+    # configurations as chart resources on a healthy uninstall; when it did not
+    # run, they outlive everything else here. They are cluster-scoped and fail
+    # closed, so one left pointing at a service that no longer exists rejects
+    # the creates the next install issues — and blocks the namespace deletes
+    # A-03 is about to make.
     kubectl get mutatingwebhookconfiguration,validatingwebhookconfiguration -o name 2>/dev/null \
         | grep 'kyverno-' \
         | xargs_r kubectl delete --ignore-not-found=true --wait=false 2>/dev/null || true
