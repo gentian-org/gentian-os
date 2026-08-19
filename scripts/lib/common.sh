@@ -1348,6 +1348,25 @@ cleanup_orphaned_kyverno_webhooks() {
 # any genuinely in Helm's "failed" state. Safe to call unconditionally —
 # a no-op when everything is deployed/healthy.
 # =============================================================================
+# A Helm release that Helm itself marks `failed` does not recover by being
+# poked, and this used to poke it and report success.
+#
+# It annotated each Release MR and printed "Requested re-reconcile for: …",
+# which reads as an action that worked. It is not: Crossplane re-reads the
+# object, provider-helm reports Synced=True ReconcileSuccess because the desired
+# state has not changed since the last attempt, and no `helm upgrade` runs. The
+# release stays at its last DEPLOYED revision — which is the one with whatever
+# broke it — while every later revision sits `failed`.
+#
+# postfix-dev spent fourteen hours that way. The values that fixed it were
+# corrected in Git, synced into the cluster, and never applied: five upgrades
+# timed out waiting for a pod that could not start because it was still running
+# the old spec. Every install run reported "Requested re-reconcile" and moved on.
+#
+# So this now reports the state honestly and names the one thing that clears it.
+# Deleting the MR is left to a human by default: Crossplane uninstalls the Helm
+# release on the way out, so it is a brief outage for that service, and a
+# pre-flight check is not the place to decide that unprompted.
 force_reconcile_failed_helm_releases() {
     local failed
     failed=$(kubectl get release.helm.crossplane.io \
@@ -1355,16 +1374,37 @@ force_reconcile_failed_helm_releases() {
         2>/dev/null || true)
     [[ -z "${failed}" ]] && return 0
 
-    warn "Crossplane Release CR(s) stuck in Helm 'failed' state (provider-helm does not retry on its own):"
+    warn "Crossplane Release(s) in Helm 'failed' state:"
     warn "  $(printf '%s' "${failed}" | tr '\n' ' ')"
-    warn "  Forcing a re-reconcile on each..."
+    warn ""
+    warn "  provider-helm does not retry these, and reports Synced because the"
+    warn "  desired state has not changed since the attempt that failed. The"
+    warn "  release therefore stays at its last DEPLOYED revision — so a fix"
+    warn "  committed to Git and synced into the cluster is never applied."
+
+    if [[ "${GENTIAN_RESET_FAILED_RELEASES:-0}" != "1" ]]; then
+        warn ""
+        warn "  To clear one, delete its Release; Argo CD recreates it and"
+        warn "  provider-helm installs fresh from the current values:"
+        while IFS= read -r name; do
+            [[ -z "${name}" ]] && continue
+            warn "    kubectl delete release.helm.crossplane.io/${name}"
+        done <<< "${failed}"
+        warn ""
+        warn "  StatefulSet PVCs are retained, so persistent data survives — but"
+        warn "  the service is down while it reinstalls. Re-run with"
+        warn "  GENTIAN_RESET_FAILED_RELEASES=1 to have the installer do it."
+        return 0
+    fi
+
+    warn "  GENTIAN_RESET_FAILED_RELEASES=1 — deleting so they reinstall..."
     while IFS= read -r name; do
         [[ -z "${name}" ]] && continue
-        kubectl annotate release.helm.crossplane.io "${name}" \
-            "gentian.io/force-reconcile=$(date +%s)" --overwrite >/dev/null 2>&1 || true
+        gentian_run kubectl delete release.helm.crossplane.io/"${name}" \
+            --wait=true --timeout=180s || true
     done <<< "${failed}"
-    success "Requested re-reconcile for: $(printf '%s' "${failed}" | tr '\n' ' ')"
-    info "  Monitor with: kubectl get release.helm.crossplane.io"
+    success "Deleted: $(printf '%s' "${failed}" | tr '\n' ' ') — Argo CD will recreate them."
+    info "  Watch with: kubectl get release.helm.crossplane.io"
 }
 
 # =============================================================================
