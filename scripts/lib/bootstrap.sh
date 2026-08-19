@@ -1140,11 +1140,8 @@ print_handover_summary() {
         echo -e "${YELLOW}      - the installer's bootstrap credential stays live${NC}"
         echo -e "${YELLOW}      - creating tenants is held back${NC}"
         echo ""
-        echo -e "${YELLOW}    Signing in alone does not do it — the exchange happens when${NC}"
-        echo -e "${YELLOW}    the portal lists credentials:${NC}"
         echo -e "${YELLOW}      1. sign in at https://portal.${KERNEL_DOMAIN:-<kernel-domain>}/login${NC}"
-        echo -e "${YELLOW}      2. Admin Console → Credentials${NC}"
-        echo -e "${YELLOW}      3. ./install.sh --only E-03${NC}"
+        echo -e "${YELLOW}      2. ./install.sh --only E-03${NC}"
     fi
     echo ""
 }
