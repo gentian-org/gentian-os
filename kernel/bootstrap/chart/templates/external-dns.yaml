@@ -104,7 +104,16 @@ spec:
   # reports Synced.
   - repoURL: https://kubernetes-sigs.github.io/external-dns/
     chart: external-dns
-    targetRevision: "1.15.2"
+    # 1.21.1 (external-dns v0.21.0) at the earliest for MX.
+    #
+    # Cloudflare's API takes an MX record's priority as its own field, and the
+    # provider did not split it out before v0.18: it sent "10 mail.gtn.host" as
+    # the content and the API answered "priority is a required field". That one
+    # rejection failed the whole zone batch and exited the process, so a single
+    # unpublishable MX cost every other record too — the DKIM, SPF and DMARC
+    # records here included — and external-dns sat in CrashLoopBackOff while the
+    # zone silently kept whatever it had.
+    targetRevision: "1.21.1"
     helm:
       valueFiles:
       - $values/kernel/values/external-dns.yaml
@@ -136,11 +145,15 @@ spec:
         cloudflare:
           proxied: false
         {{- end }}
-        # The DNSEndpoint CRD the crd source consumes. Without it that source logs a
-        # watch error rather than failing, so records with no HTTP object behind them
-        # (MX, SPF, DKIM, DMARC) silently never appear.
-        crd:
-          create: true
+        # No crd: key here — this chart has none. The DNSEndpoint CRD the crd
+        # source consumes ships in the chart's own crds/ directory, which Argo CD
+        # applies because it renders with CRDs included. This file used to set
+        # crd.create, which the chart's schema allows through as an unknown key:
+        # it read as deliberate configuration while doing nothing at all.
+        #
+        # It matters because without that CRD the crd source logs a watch error
+        # rather than failing, so records with no HTTP object behind them — MX,
+        # SPF, DKIM, DMARC — silently never appear.
   - repoURL: {{ .Values.gentianOsRepo | default "https://github.com/gentian-org/gentian-os" }}
     targetRevision: {{ .Values.gentianOsBranch }}
     ref: values
