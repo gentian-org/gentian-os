@@ -230,6 +230,76 @@ started, which needs a `postfix reload`.
 
 ---
 
+## 9a. What a Kubernetes cluster needs to host mail
+
+Six requirements. Five are ordinary infrastructure; the sixth is the one that
+decides whether self-hosting is viable at all, and it is a property of the
+network rather than of anything in this repo.
+
+**1. Inbound on port 25.** A LoadBalancer Service, not an HTTP gateway — SMTP is
+not HTTP and cannot be proxied by one. `externalTrafficPolicy: Local`, because a
+sender's IP is evidence and the default policy SNATs it away. The provider must
+attach a health monitor against `healthCheckNodePort`; without one it round-robins
+across nodes that have no mail Pod and most connections are dropped.
+
+**2. An outbound address whose PTR you control.** This is the hard one. Pod
+egress usually leaves through the router's shared SNAT address, which is not the
+load balancer address mail arrives on, and which you cannot set reverse DNS for.
+Receivers check forward-confirmed reverse DNS — the PTR of the sending address
+names a host, and that host resolves back to the same address — so mail must
+leave through an address you own. Where it cannot, relay through a smarthost
+instead; the alternative is mail that passes SPF and DMARC and still lands in
+spam.
+
+**3. A HELO name that is a FQDN and agrees with the PTR.** Postfix defaults to
+its own hostname, which in Kubernetes is a Service name that resolves nowhere.
+
+**4. Persistent storage, twice over.** Mailboxes obviously. Less obviously the
+DKIM keys: an image that generates them at start writes them to the container
+filesystem, so every restart produces a new key and silently invalidates the
+DNS record published for the old one.
+
+**5. Identities that can authenticate.** IMAP and SMTP predate OIDC. Either the
+client speaks XOAUTH2 — Dovecot does, most webmail does not — or each user needs
+a credential per client application, minted and stored somewhere the tenant can
+reach and no other tenant can.
+
+**6. The special-use mailboxes.** Drafts, Sent, Trash, Junk, Archive. A client
+with nowhere to file a sent message refuses to send at all, and reports it as a
+send failure rather than a missing folder.
+
+### Provider constraints worth checking first
+
+Whether outbound port 25 is open at all — many providers block it permanently,
+which rules out direct delivery before any of the above matters.
+
+Whether reverse DNS is self-service. On Infomaniak Public Cloud a floating IP
+you own is self-service through Designate:
+
+```bash
+openstack ptr record set <region>:<floating-ip-id> mail.example.com.
+```
+
+while addresses on the shared public network are "predefined by the platform"
+and need a support request — and a shared SNAT address is not one you own, so it
+will not be granted. See
+[docs.infomaniak.cloud/dns_service/reverse_dns](https://docs.infomaniak.cloud/dns_service/reverse_dns/).
+
+Whether load-balancer, port and instance quotas leave room. Octavia reports
+exhaustion as `ConflictException: 409` from the amphora provider, naming none of
+the three.
+
+### When to relay instead
+
+Relay outbound through a smarthost when the sending address is shared, its
+reputation is not yours, or reverse DNS is not available. `relayHost` and
+`relayPort` on the Postfix chart exist for this, with credentials at
+`gentian-os/kernel/mail/postfix`. Inbound, storage and IMAP are unaffected —
+only the last hop changes — and the platform's own DKIM signing still applies,
+so the work is not wasted.
+
+---
+
 ## 10. DNS for real mail
 
 None of this is needed for mail between users of one cluster, which is why it
