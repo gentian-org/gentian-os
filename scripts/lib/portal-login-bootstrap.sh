@@ -1556,6 +1556,40 @@ print_portal_login_summary() {
     local password
     password=$(_platform_admin_derive_password 2>/dev/null || echo "")
     [[ -n "${password}" ]] || password="(set MASTER_PASSWORD in install.env)"
+
+    # Derived, not observed — so say so only when the inputs are the cluster's.
+    #
+    # This banner prints whatever this shell derives, and an HMAC always
+    # produces a plausible-looking hash, so a run whose MASTER_PASSWORD or
+    # DERIVATION_SALT differ from the cluster's printed a 64-character password
+    # that had never been valid, under the heading of the credential the
+    # operator is meant to sign in with. The one guard here tested for an empty
+    # string, which the derivation cannot return.
+    #
+    # The cluster holds both inputs in the Secret it derives from, so the claim
+    # is checkable: re-derive with what the cluster has and compare. A mismatch
+    # is reported rather than corrected, because which side is right depends on
+    # what the operator meant — and printing the cluster's password here would
+    # hand out a credential to a shell that could not derive it.
+    local cluster_salt cluster_master cluster_password=""
+    cluster_salt="$(gentian_cluster_derivation_salt 2>/dev/null || true)"
+    cluster_master="$(kubectl get secret gentian-os-master-password \
+        -n "${CROSSPLANE_NAMESPACE:-crossplane-system}" \
+        -o jsonpath='{.data.password}' 2>/dev/null | base64 -d 2>/dev/null || true)"
+    if [[ -n "${cluster_master}" && "${SECRET_MODE:-derived}" != "random" ]]; then
+        cluster_password="$(echo -n "portal-bootstrap:administrator_password" |
+            openssl dgst -sha256 -hmac "${cluster_master}${cluster_salt}" | awk '{print $2}')"
+    fi
+    if [[ -n "${cluster_password}" && "${cluster_password}" != "${password}" ]]; then
+        echo ""
+        warn "The derivation inputs in this shell are NOT the ones this cluster"
+        warn "  was built with, so the password below is not the one that works."
+        warn "  MASTER_PASSWORD and DERIVATION_SALT are both stored in"
+        warn "  ${CROSSPLANE_NAMESPACE:-crossplane-system}/gentian-os-master-password."
+        warn "  Recover them, then re-run — see GETTING-STARTED.md,"
+        warn "  'The portal password does not work'."
+        password="(this shell cannot derive it — see the warning above)"
+    fi
     echo ""
     echo -e "${GREEN}  Gentian portal (cluster admin):${NC}"
     echo -e "${GREEN}    URL      : https://portal.${kernel_domain}/login${NC}"

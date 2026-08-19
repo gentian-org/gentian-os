@@ -1758,6 +1758,32 @@ gentian_mail_namespace() {
 }
 
 # =============================================================================
+# gentian_cluster_derivation_salt — the salt this cluster's secrets were
+# derived with, asked of the cluster.
+#
+# Every kernel credential is HMAC(MASTER_PASSWORD+DERIVATION_SALT, …), so the
+# salt is not a preference an installer run may choose: once a cluster exists,
+# it has exactly one, and a run that derives with any other computes passwords
+# nothing on the cluster accepts.
+#
+# Read from the Secret create_crossplane_secrets writes, which is where the
+# Cluster claim's masterPasswordSecretRef points. Deliberately not OpenBao:
+# reading OpenBao needs a root token, and E-03 revokes the installer's at
+# handover — which is precisely when a re-run most needs this answer.
+#
+# Prints nothing and returns 1 when the cluster has no salt yet (a first
+# install), which is the one case where generating one is correct.
+# =============================================================================
+gentian_cluster_derivation_salt() {
+    local salt
+    salt="$(kubectl get secret gentian-os-master-password \
+        -n "${CROSSPLANE_NAMESPACE:-crossplane-system}" \
+        -o jsonpath='{.data.salt}' 2>/dev/null | base64 -d 2>/dev/null || true)"
+    [[ -n "${salt}" ]] || return 1
+    printf '%s' "${salt}"
+}
+
+# =============================================================================
 # gentian_kernel_namespaces — the namespaces the installer owns, in one place.
 #
 # A-03 checks this list and create_namespaces creates it. They used to be two

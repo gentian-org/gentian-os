@@ -232,9 +232,10 @@ Do this now, while everything is still in the shell that installed it.
 
 Most of this cluster is reconstructible: configuration comes from Git, and the
 derived credentials are a function of the master password and the derivation
-salt. The salt, though, is generated during the install and lives only in
-OpenBao. Lose OpenBao's storage and the master password on its own reproduces
-nothing.
+salt. The salt is generated during the install; the cluster keeps it, with the
+master password, in the Secret `crossplane-system/gentian-os-master-password`,
+and OpenBao holds a copy. Lose both and the master password on its own
+reproduces nothing.
 
 The kit is that gap closed — the salt, the master password, the unseal material
 and this cluster's identity, in one encrypted file. Restoring it into a fresh
@@ -356,6 +357,49 @@ path — they do not — but because re-initialising OpenBao regenerates every
 derived credential, which is an inconvenience on an empty cluster and a data
 loss on one carrying tenants. The gate keeps the cheap recovery available until
 you no longer need it.
+
+### After handover, re-runs need the salt handed to them
+
+Handover revokes the installer's OpenBao token, and that token is how a re-run
+used to recover `DERIVATION_SALT`. Afterwards the installer reads the salt from
+`crossplane-system/gentian-os-master-password` instead, which needs no OpenBao
+credential — so a plain re-run derives the same credentials it always did.
+
+What it must never do is derive with a *different* salt. Every kernel
+credential is `HMAC(master+salt, …)`, so a second salt renames all of them at
+once: the cluster keeps working on the old values while the installer computes
+new ones and prints them as if they were current. If the install summary warns
+that this shell's inputs are not the cluster's, that is what it has detected —
+supply the right ones rather than running anything further.
+
+### The portal password does not work
+
+The password in the install summary is *derived*, not read back from Keycloak.
+If `administrator@<kernel domain>` is refused, ask the cluster what its inputs
+are and derive from those:
+
+```bash
+kubectl get secret gentian-os-master-password -n crossplane-system \
+  -o jsonpath='{.data.password}' | base64 -d > /tmp/mp
+kubectl get secret gentian-os-master-password -n crossplane-system \
+  -o jsonpath='{.data.salt}' | base64 -d > /tmp/salt
+printf 'portal-bootstrap:administrator_password' |
+  openssl dgst -sha256 -hmac "$(cat /tmp/mp)$(cat /tmp/salt)" | awk '{print $2}'
+shred -u /tmp/mp /tmp/salt
+```
+
+That is the password Keycloak was given, as long as nothing has re-run the
+portal bootstrap with different inputs since. On a cluster whose
+`secretMode` is `random` this does not apply — the password is stored, not
+derived, at `identity/portal-admin` in OpenBao.
+
+To make the cluster take a new password instead, re-run the portal step with
+the inputs exported, which rewrites the credential in Keycloak:
+
+```bash
+export MASTER_PASSWORD=... DERIVATION_SALT=...
+./install.sh --force --only D-05
+```
 
 ## 14. Create your first tenant
 

@@ -543,13 +543,32 @@ collect_bootstrap_credentials() {
         return 1
     fi
 
-    # DERIVATION_SALT is generated rather than supplied on a first install; on a
-    # re-run try_load_creds_from_openbao has already recovered it.
+    # DERIVATION_SALT is generated rather than supplied on a first install.
+    #
+    # Generating is only ever correct when this cluster has no salt yet: every
+    # kernel credential is HMAC(master+salt, …), so a second salt silently
+    # renames every derived secret the cluster is already using. That is not
+    # hypothetical — the recovery path used to be try_load_creds_from_openbao,
+    # which needs a root token, and E-03 revokes the only one the installer
+    # knows at handover. Every re-run after handover therefore found no salt,
+    # minted a fresh one, and derived an administrator password that had never
+    # been valid, while Keycloak still held the one derived from the original.
+    #
+    # gentian_cluster_derivation_salt asks the cluster instead. The Secret it
+    # reads is the one create_crossplane_secrets writes the salt to, it needs no
+    # OpenBao credential, and it outlives handover — so "does this cluster
+    # already have a salt" is answered by the cluster, not by whether this shell
+    # happens to hold a token.
+    if [[ -z "${DERIVATION_SALT:-}" ]]; then
+        DERIVATION_SALT="$(gentian_cluster_derivation_salt || true)"
+        [[ -n "${DERIVATION_SALT}" ]] && info "Recovered this cluster's derivation salt."
+    fi
     if [[ -z "${DERIVATION_SALT:-}" ]]; then
         DERIVATION_SALT="$(openssl rand -hex 16)"
         export DERIVATION_SALT
         info "Generated a new derivation salt."
     fi
+    export DERIVATION_SALT
 
     # After the salt, so a resumed run derives the same values it started with.
     _save_credential_cache
