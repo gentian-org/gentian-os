@@ -138,6 +138,41 @@ data:
     first_valid_uid = 1000
     first_valid_gid = 1000
 
+    # The special-use mailboxes every mail client expects to exist.
+    #
+    # Without these a maildir has only INBOX, and a client that needs somewhere
+    # to file a sent message has nowhere to put it. Nextcloud Mail does not fall
+    # back: SentMailboxHandler sets STATUS_NO_SENT_MAILBOX and returns before the
+    # SMTP step, so the send fails with "Could not send message" while SMTP
+    # itself is perfectly healthy — the failure names the wrong component, and
+    # nothing is logged because it is a status rather than an exception.
+    #
+    # auto = subscribe creates each on first access and subscribes the client to
+    # it, so a new mailbox is usable without anyone provisioning folders.
+    namespace inbox {
+      inbox = yes
+      mailbox Drafts {
+        special_use = \Drafts
+        auto = subscribe
+      }
+      mailbox Sent {
+        special_use = \Sent
+        auto = subscribe
+      }
+      mailbox Trash {
+        special_use = \Trash
+        auto = subscribe
+      }
+      mailbox Junk {
+        special_use = \Junk
+        auto = subscribe
+      }
+      mailbox Archive {
+        special_use = \Archive
+        auto = subscribe
+      }
+    }
+
     # Accept any local part inside a domain Postfix already accepted.
     #
     # Postfix owns the domain allow-list — virtual_mailbox_domains, maintained by
