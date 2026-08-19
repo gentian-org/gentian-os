@@ -45,11 +45,14 @@ import (
 const (
 	conditionAppsReady = "AppsReady"
 
-	litellmProxyBaseURL    = "http://litellm-proxy.platform-kernel.svc.cluster.local:4000"
 	litellmMasterKeySecret = "llm-sensitive-values"
 	litellmMasterKeyNS     = "platform-kernel"
 	litellmMasterKeySecKey = "litellm_master_key" //nolint:gosec // Secret key name, not a credential.
 )
+
+// litellmProxyBaseURL is a var rather than a const only so tests can point it at
+// an httptest server. Nothing at run time reassigns it.
+var litellmProxyBaseURL = "http://litellm-proxy.platform-kernel.svc.cluster.local:4000"
 
 // appClaimGVK is the GVK for namespace-scoped App claims reconciled by Crossplane.
 var appClaimGVK = schema.GroupVersionKind{

@@ -382,10 +382,11 @@ are a different feature (`enable_jwt_auth`, for authenticating
 see the licensing caveat in
 [llm-integration-research.md](../research/llm-integration-research.md).
 
-**Teams:** one free/OSS LiteLLM Team is created per `Tenant` CR by
-`ensure_litellm_teams()` (`scripts/lib/llm-lib.sh`), run as part of
-`install_llm_serving` and `install.sh --only 29`. Re-run
-`./install.sh --only 29` after adding a tenant to sync its Team.
+**Teams:** one free/OSS LiteLLM Team is created per `Tenant` CR by the
+`TenantReconciler` (`internal/controller/litellm_team.go`), during the
+shared-kernel stage of the tenant's reconcile. Nothing has to be re-run after
+adding a tenant, and a cluster without LiteLLM simply has no team to create —
+the step is non-fatal and retries on the next reconcile.
 
 **Re-enabling tenant-level access:** the app-catalogue `litellm` tile
 (reverse-proxied through `gentian-portal-api` at

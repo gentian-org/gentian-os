@@ -263,7 +263,7 @@ else can rebuild.
 Every step reads `satisfied`, except steps that have nothing persistent to check
 and steps that do not apply to this cluster — those read `undefined`.
 `A-04-prewarm`, `C-03-provider-helm` and `D-02-gateway-wait` are always
-`undefined`. `B-04-openbao-init`, `B-10-seed-secrets` and `E-02-tenant-reconcile`
+`undefined`. `B-04-openbao-init`, `B-10-seed-secrets` and `E-02-litellm-reconcile`
 re-run on every pass, because they hold per-run tokens or reconcile continuously.
 
 ```bash

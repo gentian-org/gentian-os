@@ -1502,11 +1502,17 @@ install_portal_login() {
     ensure_keycloak_admin_secret_url || return 1
     ensure_portal_gateway_readiness
 
-    local kc_manifest="${SCRIPT_DIR}/kernel/services/keycloak-config/manifests/dev/gentian-portal-client.yaml"
-    if [[ -f "${kc_manifest}" ]]; then
-        info "Applying Crossplane gentian-portal Client MR (optional drift-safe path)..."
-        kubectl apply -f "${kc_manifest}" 2>/dev/null || warn "Could not apply ${kc_manifest} (provider-keycloak may not be ready)."
-    fi
+    # The gentian-portal Client MR is not applied here.
+    #
+    # It used to be, from manifests/dev/gentian-portal-client.yaml — a path that
+    # stopped existing when be4947bc templated these services on stage. The
+    # apply was guarded by [[ -f ]], so it has silently done nothing since:
+    # a step that reads as delivering something and delivers nothing.
+    #
+    # The gentian-keycloak-provider ApplicationSet syncs
+    # kernel/services/keycloak-config/manifests, so Argo CD owns the MR — which
+    # is what the comment here used to call the "optional drift-safe path", and
+    # is now the only path.
 
     run_keycloak_portal_bootstrap_job
     configure_argocd_oidc

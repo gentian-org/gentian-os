@@ -2317,31 +2317,6 @@ _wait_prewarm_pod() {
     kubectl delete pod -n kube-system "${pod}" --grace-period=1 --wait=false >/dev/null 2>&1 || true
 }
 
-# _apply_kernel_manifest_dir applies kernel service manifests from manifest_dir.
-# Services using kustomize (configMapGenerator) must be applied with -k;
-# kubectl apply -f dir/ fails on kustomization.yaml with "no matches for kind Kustomization".
-# mode=all: ConfigMaps, ExternalSecrets, Ingresses, and Release CRs.
-# mode=release: only release.yaml (after all other manifests are current).
-_apply_kernel_manifest_dir() {
-    local manifest_dir="$1"
-    local mode="${2:-all}"
-
-    if [[ -f "${manifest_dir}/kustomization.yaml" ]]; then
-        kubectl apply -k "${manifest_dir}" >/dev/null
-        return 0
-    fi
-
-    if [[ "${mode}" == "release" && -f "${manifest_dir}/release.yaml" ]]; then
-        kubectl apply -f "${manifest_dir}/release.yaml" >/dev/null
-        return 0
-    fi
-
-    while IFS= read -r -d '' f; do
-        kubectl apply -f "${f}" >/dev/null
-    done < <(find "${manifest_dir}" -maxdepth 1 -name '*.yaml' \
-        ! -name 'kustomization.yaml' -print0 | sort -z)
-}
-
 # =============================================================================
 # Verify Keycloak iframe policy (portal-embedded OIDC)
 # =============================================================================

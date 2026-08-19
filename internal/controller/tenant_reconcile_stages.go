@@ -330,6 +330,9 @@ func (r *TenantReconciler) reconcileTenantStageSharedKernel(ctx context.Context,
 		logger.Error(err, "ensure Keycloak browser security headers (non-blocking, will retry)")
 		return ctrl.Result{RequeueAfter: tenantShellRequeueAfter}, nil
 	}
+	// LiteLLM team for this tenant, if the cluster serves LLMs at all.
+	// Deliberately not a blocker: see ensureTenantLiteLLMTeam.
+	r.ensureTenantLiteLLMTeam(ctx, tenant)
 	return ctrl.Result{}, nil
 }
 
