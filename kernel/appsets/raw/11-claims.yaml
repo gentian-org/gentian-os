@@ -44,10 +44,29 @@ spec:
         path: clusters/deployments.cluster.placeholder/kernel/claims
         directory:
           recurse: false
-          # cluster.yaml is applied by step 16 at bootstrap and must not be
-          # fought over here: two writers on the claim that owns the
-          # ClusterSecretStore is how a cluster loses its secret store.
-          exclude: 'cluster.yaml'
+          # cluster.yaml is included, and the double-writer concern that once
+          # excluded it is answered rather than ignored.
+          #
+          # Step 16 applies this same file from git at bootstrap, because the
+          # claim composes the AppProject, namespaces and ClusterSecretStore that
+          # Argo CD itself needs — the first apply cannot come from Argo. After
+          # that the two agree by construction: the installer applies what git
+          # says, and scaffolding writes installer-discovered values (nodeIp)
+          # into git rather than onto the cluster, so there is one source and two
+          # readers, not two writers.
+          #
+          # Excluding it meant the most important claim in the tree had no
+          # reconciler and no drift detection. On ifk-w4h the installer applied
+          # it on 17 Aug at 12:54; git changed nine hours later to static-ip with
+          # a nodeIp and kernel mail; nothing followed, and the cluster ran for
+          # two days believing it was a tunnel cluster with no mail — while this
+          # Application reported Synced, truthfully, about the two claims it did
+          # manage.
+          #
+          # prune stays false below. Removing this file, or mistyping the path,
+          # would otherwise delete the XCluster and cascade through everything it
+          # composes — the same reason the bootstrap Applications carry empty
+          # finalizers. selfHeal reconciles drift; nothing here deletes.
       destination:
         server: https://kubernetes.default.svc
         namespace: crossplane-system
