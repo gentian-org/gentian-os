@@ -548,3 +548,58 @@ func TestExchangeRejectedByEveryRole(t *testing.T) {
 		t.Fatalf("error leaked OpenBao's body: %v", err)
 	}
 }
+
+// TestRefusalNamesTheFailedCheck is the fix for three debugging rounds. Each
+// began by re-checking a group membership that was correct, because the message
+// named group membership and nothing else. A refusal must say which check
+// failed and must still not repeat OpenBao's body, which can name policies and
+// paths.
+func TestRefusalNamesTheFailedCheck(t *testing.T) {
+	cases := []struct {
+		name, openbaoSays, want string
+	}{
+		{"audience", `{"errors":["error validating token: invalid audience (aud) claim"]}`, "audience"},
+		{"claims", `{"errors":["error validating claims: claim \"groups\" does not match any associated bound claim values"]}`, "claims"},
+		{"role type", `{"errors":["role with oidc role_type is not allowed"]}`, "direct token exchange"},
+		{"missing role", `{"errors":["role \"cluster-admin-jwt\" could not be found"]}`, "does not exist"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.WriteHeader(http.StatusBadRequest)
+				_, _ = w.Write([]byte(tc.openbaoSays))
+			}))
+			t.Cleanup(srv.Close)
+
+			b := NewOpenBao(srv.URL, "secret", "oidc", []string{"cluster-admin-jwt"}, nil, false)
+			_, err := b.ExchangeToken(context.Background(), "a.b.c")
+			if err == nil {
+				t.Fatal("a refused exchange must be an error")
+			}
+			if !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("error should name the failed check %q, got: %v", tc.want, err)
+			}
+			// The category is safe to show; OpenBao's own words are not.
+			if strings.Contains(err.Error(), "bound claim values") || strings.Contains(err.Error(), "errors") {
+				t.Fatalf("error echoed OpenBao's body: %v", err)
+			}
+		})
+	}
+}
+
+// TestRefusalOnAMountThatDoesNotExist covers the first of the three: a 404 is
+// not a permissions answer at all, and saying so would have ended that round in
+// one look.
+func TestRefusalOnAMountThatDoesNotExist(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+		_, _ = w.Write([]byte(`{"errors":[]}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	b := NewOpenBao(srv.URL, "secret", "jwt", []string{"cluster-admin-jwt"}, nil, false)
+	_, err := b.ExchangeToken(context.Background(), "a.b.c")
+	if err == nil || !strings.Contains(err.Error(), "not mounted") {
+		t.Fatalf("a 404 should say the backend is not mounted where expected, got: %v", err)
+	}
+}

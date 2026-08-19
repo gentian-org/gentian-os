@@ -156,6 +156,39 @@ type Identity struct {
 // what the caller may write. OpenBao's policy engine does, based on the claims
 // in the presented token, and the resulting token is what performs the write —
 // so the audit device records the human.
+
+// refusalReason turns OpenBao's rejection into the name of the check that
+// failed.
+//
+// This exists because the absence of it cost three separate debugging rounds.
+// The service reported "OpenBao refused the token" and the console added "check
+// that you are in the cluster-admin group" — while the actual causes were, in
+// order, a login against a mount that does not exist, a role whose type forbids
+// direct token exchange, and a token with no audience the role accepts. Group
+// membership was correct every time, and it was the one thing the message named.
+//
+// The returned string is safe to show a caller: it names a category, never a
+// policy, path or role. The detail goes to the log instead.
+func refusalReason(status int, body string) string {
+	b := strings.ToLower(body)
+	switch {
+	case strings.Contains(b, "audience"):
+		return "the token's audience is not one this cluster's roles accept"
+	case strings.Contains(b, "bound claim"), strings.Contains(b, "claim"):
+		return "the token's claims do not match any role — typically the group claim"
+	case strings.Contains(b, "role_type"), strings.Contains(b, "not allowed"):
+		return "the auth backend role does not permit a direct token exchange"
+	case strings.Contains(b, "could not be found"), strings.Contains(b, "unknown role"):
+		return "the auth backend role does not exist on this cluster"
+	case status == http.StatusNotFound:
+		return "the auth backend is not mounted where this service expects it"
+	case strings.Contains(b, "signature"), strings.Contains(b, "expired"), strings.Contains(b, "validating token"):
+		return "the token did not validate — signature, issuer or expiry"
+	default:
+		return "OpenBao refused it and the reason is in the credential manager's log"
+	}
+}
+
 func (b *OpenBao) ExchangeToken(ctx context.Context, oidcToken string) (Identity, error) {
 	if oidcToken == "" {
 		return Identity{}, fmt.Errorf("no OIDC token presented")
@@ -167,9 +200,11 @@ func (b *OpenBao) ExchangeToken(ctx context.Context, oidcToken string) (Identity
 	// Offered to each role in turn. A role whose bound claims do not match
 	// refuses the token, which is a 400 rather than a fact about the caller —
 	// so a refusal only rules out that role, not the request.
+	log := ctrl.LoggerFrom(ctx)
 	var lastStatus int
+	var lastReason string
 	for _, role := range roles {
-		id, status, err := b.exchangeWithRole(ctx, oidcToken, role)
+		id, status, body, err := b.exchangeWithRole(ctx, oidcToken, role)
 		if err != nil {
 			return Identity{}, err
 		}
@@ -177,16 +212,25 @@ func (b *OpenBao) ExchangeToken(ctx context.Context, oidcToken string) (Identity
 			return id, nil
 		}
 		lastStatus = status
+		lastReason = refusalReason(status, body)
+		// The log gets OpenBao's own words. Without this every refusal was a
+		// dead end: the response cannot carry them, so nothing anywhere did,
+		// and each cause had to be found by reading code instead.
+		log.Info("OpenBao refused a token exchange",
+			"role", role, "mount", b.AuthMount, "status", status,
+			"reason", lastReason, "openbao", truncate(body, 300))
 	}
-	// Deliberately not echoing OpenBao's body: it can name policies and paths
-	// the caller has no business learning about from a failed login.
-	return Identity{}, fmt.Errorf("token exchange rejected by every configured role (last HTTP %d)", lastStatus)
+	// The category, not OpenBao's body: that can name policies and paths the
+	// caller has no business learning from a failed login. Naming the failed
+	// check is not the same as naming what it protects.
+	return Identity{}, fmt.Errorf("token exchange rejected by every configured role: %s (last HTTP %d)",
+		lastReason, lastStatus)
 }
 
 // exchangeWithRole performs one login attempt. A non-200 is returned as a
 // status rather than an error, because the caller has another role to try; a
 // transport failure is an error, because it says nothing about the token.
-func (b *OpenBao) exchangeWithRole(ctx context.Context, oidcToken, role string) (Identity, int, error) {
+func (b *OpenBao) exchangeWithRole(ctx context.Context, oidcToken, role string) (Identity, int, string, error) {
 	body, _ := json.Marshal(map[string]string{
 		"role": role,
 		"jwt":  oidcToken,
@@ -194,18 +238,24 @@ func (b *OpenBao) exchangeWithRole(ctx context.Context, oidcToken, role string) 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
 		fmt.Sprintf("%s/v1/auth/%s/login", b.Addr, b.AuthMount), bytes.NewReader(body))
 	if err != nil {
-		return Identity{}, 0, err
+		return Identity{}, 0, "", err
 	}
 	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := b.HTTP.Do(req)
 	if err != nil {
-		return Identity{}, 0, fmt.Errorf("%w: %w", ErrUpstream, err)
+		// ErrUpstream, not a bare error: http.go distinguishes "could not reach
+		// OpenBao" from "OpenBao said no", and the two must not read alike to a
+		// caller — one is an outage, the other is an answer.
+		return Identity{}, 0, "", fmt.Errorf("%w: %w", ErrUpstream, err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
-		return Identity{}, resp.StatusCode, nil
+		// Read it here or lose it: the caller cannot, once the body is closed,
+		// and this is the only place OpenBao ever says why.
+		raw, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		return Identity{}, resp.StatusCode, string(raw), nil
 	}
 	var out struct {
 		Auth struct {
@@ -216,10 +266,10 @@ func (b *OpenBao) exchangeWithRole(ctx context.Context, oidcToken, role string) 
 		} `json:"auth"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
-		return Identity{}, 0, fmt.Errorf("malformed token exchange response: %w", err)
+		return Identity{}, 0, "", fmt.Errorf("malformed token exchange response: %w", err)
 	}
 	if out.Auth.ClientToken == "" {
-		return Identity{}, 0, fmt.Errorf("token exchange returned no token")
+		return Identity{}, 0, "", fmt.Errorf("token exchange returned no token")
 	}
 	policies := out.Auth.TokenPolicies
 	if len(policies) == 0 {
@@ -230,7 +280,17 @@ func (b *OpenBao) exchangeWithRole(ctx context.Context, oidcToken, role string) 
 		Token:    out.Auth.ClientToken,
 		Policies: policies,
 		Metadata: out.Auth.Metadata,
-	}, http.StatusOK, nil
+	}, http.StatusOK, "", nil
+}
+
+// truncate bounds what reaches the log. OpenBao's errors are short; a
+// pathological body should not become a megabyte of log line.
+func truncate(s string, n int) string {
+	s = strings.TrimSpace(s)
+	if len(s) <= n {
+		return s
+	}
+	return s[:n] + "…"
 }
 
 // PathMetadata is what the API is allowed to say about a stored credential.

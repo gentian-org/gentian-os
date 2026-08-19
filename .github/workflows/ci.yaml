@@ -105,6 +105,13 @@ jobs:
       - name: step contracts
         run: make validate-steps
 
+      # A shell placeholder in a Helm template is expanded by nothing and looks
+      # like ordinary text. One disabled image updates on every cluster for
+      # months while the controller reported no errors, so this runs in CI
+      # rather than only in `make lint-shell` — which CI does not run.
+      - name: template placeholders
+        run: make lint-template-placeholders
+
       - name: credential catalogue parity
         run: python3 -m pip install --quiet pyyaml && make gen-credentials && git diff --exit-code kernel/credentials/
 
