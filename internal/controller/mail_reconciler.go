@@ -228,7 +228,21 @@ func (r *TenantReconciler) ensureMailSelfhosted(ctx context.Context, tenant *gen
 	if pubKey != "" {
 		tenant.Status.Mail.DKIMPublicKey = pubKey
 	}
-	tenant.Status.Mail.SPFRecord = "v=spf1 mx ~all"
+	// SPF names the address mail LEAVES from. "mx" names the MX host, which is
+	// the inbound load balancer and never sends anything — so on any cluster
+	// whose inbound and outbound addresses differ, that record fails by
+	// construction while looking plausible.
+	//
+	// a:<egressHost> rather than an ip4: literal, so the record follows the
+	// egress A record instead of having to be edited in two places whenever the
+	// address changes; the one that gets forgotten fails closed and silently.
+	if egress := envOrDefault("MAIL_EGRESS_HOST", ""); egress != "" {
+		tenant.Status.Mail.SPFRecord = "v=spf1 a:" + egress + " -all"
+	} else {
+		// No dedicated egress: the cluster sends from a shared address or relays
+		// through a smarthost, and mx is the best guess available here.
+		tenant.Status.Mail.SPFRecord = "v=spf1 mx ~all"
+	}
 	tenant.Status.Mail.DMARCRecord = fmt.Sprintf("v=DMARC1; p=none; rua=mailto:dmarc@%s", domain)
 
 	// 2. Register the tenant domain in the shared Postfix virtual-domains ConfigMap.

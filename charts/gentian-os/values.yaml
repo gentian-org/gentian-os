@@ -405,3 +405,8 @@ commerce:
 # this — as the LLM_SUPPORT env var — only while that ConfigMap does not
 # exist yet or predates the llm.enabled key.
 llmSupport: false
+
+# The hostname outbound mail leaves from, from spec.mail.egressHost on the
+# Cluster claim. Used for the SPF record the mail reconciler publishes. Empty
+# means a shared egress address or a smarthost relay.
+mailEgressHost: ""

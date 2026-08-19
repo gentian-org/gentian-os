@@ -87,6 +87,13 @@ spec:
               value: "true"
             - name: KERNEL_DOMAIN
               value: {{ .Values.kernelDomain | quote }}
+            {{- with .Values.mailEgressHost }}
+            # The hostname outbound mail leaves from. The mail reconciler uses it
+            # for the SPF record it publishes, which must name the sending
+            # address rather than the MX.
+            - name: MAIL_EGRESS_HOST
+              value: {{ . | quote }}
+            {{- end }}
             - name: TENANCY_MODE
               value: {{ .Values.tenancyMode | default "multi" | quote }}
             {{- /*
