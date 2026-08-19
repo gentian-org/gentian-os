@@ -42,3 +42,19 @@ serviceAccount:
 
 rbac:
   create: true
+
+# Which record types external-dns is allowed to manage.
+#
+# The default is A, AAAA and CNAME — so TXT and MX endpoints are silently
+# ignored, and a DNSEndpoint carrying SPF, DKIM, DMARC or an MX reconciles to
+# "All records are already up to date" while publishing none of them. Nothing
+# errors, which is what makes it hard to spot.
+#
+# Mail records are precisely the ones with no HTTP object behind them, so a mail
+# platform that cannot manage TXT and MX can manage nothing that matters.
+managedRecordTypes:
+  - A
+  - AAAA
+  - CNAME
+  - TXT
+  - MX
