@@ -1174,7 +1174,7 @@ mirror, so "exercised" below never means more than that.
 | 3 | Built | `oci-registry` and `smtp` have no test; none of the validators is automated |
 | 4 | 4a exercised, **4b half** | Mail, LLM, portal and tenant reconcile still name applications. Blocked on the reconciler audit (§15.2) |
 | 5 | Exercised | `kernel/argocd/repos/*.yaml` and the infra chart registry are not yet claims |
-| 6 | Built | ESO's live verdict and the unsatisfied→satisfied transition are unverified |
+| 6 | **Exercised** | Both criteria this row was waiting on are verified in §15.1 — ESO's live verdict, and the unsatisfied→satisfied transition unblocking composition with nothing re-run. The row had not been updated to say so |
 | 7 | **Built, partly exercised** | Login works and the policies are asserted by `make test-policy`. The *live* OIDC write path has now been attempted and was broken three independent ways — wrong mount, wrong role type, missing audience (§15.4). All three are fixed; none has yet carried a successful exchange, and the audit device is unobserved |
 | 8 | Built, running, never successful | The service runs, is reachable from the portal, and has never completed a token exchange. Its own ServiceAccount policy is still uninspected, and it logs nothing about a refused exchange — every diagnosis so far has come from reading the code |
 | 9 | Built | No shared API contract tests; validation errors are not attributed per field |
