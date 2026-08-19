@@ -77,6 +77,9 @@ data:
         # in place Postfix answered EVERY recipient with
         #   554 5.7.1 <user@domain>: Recipient address rejected: Access denied
         # and no invite or password-reset mail could leave the cluster.
+        # The kernel domain alone. This is the fallback, not the whole answer:
+        # extraEnv below overrides it with the operator's full domain list once
+        # that exists, and an explicit env entry wins over this envFrom value.
         ALLOWED_SENDER_DOMAINS: "{{ .Values.kernelDomain | default "example.domain" }}"
         # Sign outbound mail with DKIM.
         #
@@ -191,6 +194,29 @@ data:
     #
     # Keys the operator does not supply are left untouched: those are the image's
     # own, and replacing one is what invalidates an already-published record.
+    # Every domain this cluster signs for, from the operator.
+    #
+    # OpenDKIM builds a KeyTable entry only for domains named here, so a tenant
+    # missing from this list sends unsigned however correct its key and its
+    # published DNS record are. The value above carries the kernel domain only,
+    # which is why tenant mail left unsigned while everything looked configured.
+    #
+    # optional, and deliberately so. A missing key leaves this entry unset and the
+    # envFrom value above still applies, so a cluster whose operator has not
+    # written the list yet keeps signing for the kernel domain rather than starting
+    # with no sender domains at all — which Postfix refuses to do, taking all mail
+    # with it. Verified rather than assumed: an env entry whose optional source is
+    # absent does not suppress the envFrom value.
+    #
+    # Read once at start, unlike the texthash maps beside it, so a new tenant signs
+    # only after Postfix restarts.
+    extraEnv:
+      - name: ALLOWED_SENDER_DOMAINS
+        valueFrom:
+          configMapKeyRef:
+            name: postfix-kernel-virtual-mailbox-maps
+            key: allowed_sender_domains
+            optional: true
     extraInitContainers:
       - name: seed-dkim-keys
         image: busybox:1.36
