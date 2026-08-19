@@ -510,6 +510,21 @@ spec:
                         - external
                         - kernel
                       default: external
+                    egressHost:
+                      type: string
+                      description: >
+                        The hostname outbound mail leaves from, when this cluster sends from
+                        an address it owns rather than the shared egress.
+
+                        Postfix greets remote servers with this name and is pinned to the node
+                        carrying that floating IP, because they are one decision: an address
+                        that can move is an address whose PTR and SPF record stop matching.
+
+                        It must resolve to the sending address, and that address must resolve
+                        back to this name. It is not the MX name — mail arrives on the load
+                        balancer and leaves via the node.
+
+                        Empty means the shared egress address or a smarthost relay.
                     host:
                       type: string
                       description: Relay hostname. Required when serviceMode is external.

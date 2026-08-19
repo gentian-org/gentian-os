@@ -42,3 +42,6 @@ smtpPort: "587"
 # AND relay outbound — the common arrangement when port 25 is blocked
 # outbound but reachable inbound. Inferring would take Dovecot away from it.
 mailServiceMode: external
+# The hostname outbound mail leaves from, from spec.mail.egressHost on the
+# Cluster claim. Empty means the shared egress address or a smarthost relay.
+mailEgressHost: ""

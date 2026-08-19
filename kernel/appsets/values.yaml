@@ -43,3 +43,7 @@ gentianOsRepo: https://github.com/gentian-org/gentian-os
 deploymentsRepo: ""
 deploymentsRevision: main
 deploymentsCluster: ""
+
+# The hostname outbound mail leaves from, from spec.mail.egressHost on the
+# Cluster claim. Empty means the shared egress address or a smarthost relay.
+mailEgressHost: ""

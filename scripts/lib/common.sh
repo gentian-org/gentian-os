@@ -863,6 +863,7 @@ load_deployments_cluster_settings() {
         claim_setting MAIL_SERVICE_MODE mail.serviceMode "${claim_file}"
         # The external relay, when mail.serviceMode is external. Same object,
         # same claim; EXTERNAL_SMTP_* were only ever the shell's names for them.
+        claim_setting MAIL_EGRESS_HOST       mail.egressHost "${claim_file}"
         claim_setting EXTERNAL_SMTP_HOST     mail.host     "${claim_file}"
         claim_setting EXTERNAL_SMTP_PORT     mail.port     "${claim_file}"
         claim_setting EXTERNAL_SMTP_SSL      mail.ssl      "${claim_file}"

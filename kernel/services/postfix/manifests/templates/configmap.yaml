@@ -45,12 +45,18 @@ data:
     # Empty leaves scheduling free, which is correct for a cluster relaying
     # through a smarthost: there the last hop is the relay's address and the
     # node's does not matter.
-    # Values are quoted explicitly: a nodeSelector value must be a string, and a
-    # selector written as `mail-egress: true` in values renders as a boolean that
-    # the API server rejects.
+    # Pinned to the node holding the egress floating IP whenever an egress host
+    # is declared. One value drives both, because they are one decision: a
+    # cluster that sends from an address it owns must keep sending from it, and
+    # a reschedule to a node without that floating IP reverts to the shared SNAT
+    # address — breaking the PTR and the SPF record together, with no signal
+    # beyond mail starting to land in spam.
+    #
+    # Unset means relaying through a smarthost or accepting the shared address;
+    # in both cases the node does not matter and scheduling stays free.
     nodeSelector:
-    {{- range $k, $v := .Values.egressNodeSelector }}
-      {{ $k }}: {{ $v | quote }}
+    {{- if .Values.egressHost }}
+      {{ .Values.egressNodeLabel }}: "true"
     {{- end }}
     persistence:
       enabled: false
@@ -102,7 +108,7 @@ data:
         # the load balancer. Receivers check forward-confirmed reverse DNS — the PTR
         # of the sending IP names a host, and that host resolves back to the same IP
         # — so this name, its A record and the PTR must all agree.
-        myhostname: {{ .Values.smtpHelo | default (printf "mail.%s" .Values.kernelDomain) }}
+        myhostname: {{ .Values.egressHost | default (printf "mail.%s" .Values.kernelDomain) }}
         # Inbound tenant mail: hand every message for a registered tenant domain
         # to Dovecot over LMTP, which files it into /var/mail/<domain>/<user>.
         virtual_transport: "lmtp:[dovecot-{{ .Values.env }}.{{ .Values.servicesNamespace }}.svc.cluster.local]:24"

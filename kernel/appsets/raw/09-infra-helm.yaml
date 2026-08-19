@@ -80,6 +80,8 @@ spec:
             # delivers locally, or is purely a relay.
             - name: mailServiceMode
               value: 'mail.service.mode.placeholder'
+            - name: egressHost
+              value: 'mail.egress.host.placeholder'
           # Only stages that genuinely differ carry a values file; the rest
           # inherit the chart defaults.
           valueFiles:

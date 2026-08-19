@@ -77,29 +77,24 @@ smtpIngress:
     # days, then bounce.
     loadbalancer.openstack.org/keep-floatingip: "true"
 
-# The HELO name Postfix announces to remote servers.
+# The hostname mail LEAVES from, when this cluster sends from an address it owns.
 #
-# Defaults to mail.<kernelDomain>. It must be a FQDN whose A record points at
-# the address mail actually LEAVES from, and that address needs a matching PTR —
-# receivers check that the two agree (forward-confirmed reverse DNS).
+# Supplied per cluster from the Cluster claim (spec.mail.egressHost). Setting it
+# does two things at once, because they are one decision: Postfix greets remote
+# servers with this name, and it is pinned to the node carrying that floating IP
+# so the sending address cannot move.
 #
-# Outbound and inbound addresses are often different: mail arrives on the port 25
-# load balancer and leaves via the node egress IP. Where they differ, point this
-# at a name for the egress address rather than at the MX.
-smtpHelo: ""
-
-# Pin Postfix to the node holding the egress floating IP, e.g.
-#   egressNodeSelector:
-#     gentianos.io/mail-egress: "true"
+# It must resolve to the sending address, and that address's PTR must resolve
+# back to this name — receivers check both directions. It is NOT the MX name:
+# mail arrives on the load balancer and leaves via the node.
 #
-# Label the node that has the floating IP attached, then set this. Without it
-# the sending address is whichever node the scheduler picked, and a reschedule
-# changes it silently — breaking the PTR and the SPF record together.
-#
-# Leave empty when relaying through a smarthost: the last hop is then the
-# relay's address and the node's does not matter.
-egressNodeSelector: {}
+# Empty means the shared egress address, or a smarthost relay. Then myhostname
+# falls back to mail.<kernelDomain> and scheduling stays free.
+egressHost: ""
 
 # kernel or external, from the Cluster claim. external makes this a relay: no
 # DKIM signing, because the smarthost signs. Passed by the ApplicationSet.
 mailServiceMode: external
+# The node label the pin uses. A platform convention rather than a per-cluster
+# value — label the node holding the floating IP with it set to "true".
+egressNodeLabel: gentianos.io/mail-egress

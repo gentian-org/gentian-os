@@ -60,6 +60,8 @@ spec:
       # Dovecot at all — there are no local mailboxes for it to serve.
       - name: mailServiceMode
         value: "{{ .Values.mailServiceMode }}"
+      - name: mailEgressHost
+        value: "{{ .Values.mailEgressHost }}"
       # Every child ApplicationSet points back at this repo. Without this the
       # children would keep the literal branch baked into raw/*.yaml while the
       # parent tracked another one, so a cluster pinned to a release tag would
