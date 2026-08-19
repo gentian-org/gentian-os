@@ -256,8 +256,9 @@ its own hostname, which in Kubernetes is a Service name that resolves nowhere.
 
 **4. Persistent storage, twice over.** Mailboxes obviously. Less obviously the
 DKIM keys: an image that generates them at start writes them to the container
-filesystem, so every restart produces a new key and silently invalidates the
-DNS record published for the old one.
+filesystem, so without a volume every restart produces a new key and silently
+invalidates the DNS record published for the old one. Here they have their own
+volume, separate from the queue.
 
 **5. Identities that can authenticate.** IMAP and SMTP predate OIDC. Either the
 client speaks XOAUTH2 — Dovecot does, most webmail does not — or each user needs
@@ -316,40 +317,57 @@ LoadBalancer first, then publish the records below.
 | **MX** | `<tenant-domain>` | `10 mail.<kernel-domain>.` | Tells other servers where to deliver. Needs an A record for the target and port 25 reachable on it. |
 | **A** | `mail.<kernel-domain>` | the mail LoadBalancer IP | The MX target must resolve to an address, never to a CNAME. |
 | **SPF** (TXT) | `<tenant-domain>` | `v=spf1 ip4:<outbound-ip> -all` | Declares which addresses may send as this domain. Without it most providers mark the mail as spam. |
-| **DKIM** (TXT) | `<selector>._domainkey.<tenant-domain>` | the public key from the Postfix container | Signs outbound mail so recipients can verify it was not altered. |
+| **DKIM** (TXT) | `<selector>._domainkey.<tenant-domain>` | the public half of the operator-held key | Signs outbound mail so recipients can verify it was not altered. Published from the same value that signs, so the two cannot drift. |
 | **DMARC** (TXT) | `_dmarc.<tenant-domain>` | `v=DMARC1; p=quarantine; rua=mailto:postmaster@<domain>` | Tells recipients what to do when SPF or DKIM fail, and where to report. |
 | **PTR** | the outbound IP | `mail.<kernel-domain>` | Reverse DNS. Set at the cloud provider, not in DNS hosting. Many providers refuse mail from an IP with no PTR. |
 
-**Tenant DKIM is generated but not yet used.** The operator already creates an
-RSA-2048 key per tenant — a `dkim-<tenant>` Secret in the kernel namespace,
-created once and never rotated automatically — and publishes the public half on
-`Tenant.status.mail.dkimPublicKey` for the operator to put in DNS:
+**Every signing key belongs to the operator.** It creates an RSA-2048 key per
+tenant as a `dkim-<tenant>` Secret in the kernel namespace, and one for the
+kernel domain as `dkim-kernel`, each generated once and never rotated
+automatically — a rotated key stops matching the record already published for it.
+The public halves reach DNS from the same values that sign, so the two cannot
+disagree:
 
 ```bash
 kubectl get tenant <name> -o jsonpath='{.status.mail.dkimPublicKey}'
 ```
 
-What is missing is the last mile. OpenDKIM decides which key signs which domain
-from two files, `/etc/opendkim/KeyTable` and `/etc/opendkim/SigningTable`, and
-nothing writes tenant entries into them — so the key exists, the DNS record can
-be published, and the mail still goes out unsigned. Closing this means the
-operator maintaining those two tables and the key files the way it already
-maintains the Postfix maps, and reloading OpenDKIM when a tenant is added.
+The private halves are collected into one `postfix-dkim-tenants` Secret keyed by
+domain (`<domain>.private`). Postfix mounts it, and an init container copies
+those keys into `/etc/opendkim/keys` — a persistent volume — before the image
+starts. The image generates a key only when none is present, so it adopts the
+operator's and builds its `KeyTable` and `SigningTable` around them. The operator
+owns the keys, the image owns the tables, and neither needs to know about the
+other. Where the two disagree the operator's copy wins, because it is the half
+already published.
 
-Until then a tenant domain sends with SPF only, which the large providers weight
-far less than DKIM.
+Two things make this work that are easy to undo by accident:
 
-**Kernel DKIM keys are generated per domain** by the Postfix image, from the domains in
-`ALLOWED_SENDER_DOMAINS`, into `/etc/opendkim/keys/<domain>.txt`. Read the
-public key to publish it:
+- **The key directory must be persistent.** The image writes keys to the
+  container filesystem, so without a volume every restart generates new ones and
+  silently invalidates the published records. The chart's own persistence covers
+  the mail queue, not the keys — they have their own volume.
+- **A domain signs only if it is in `ALLOWED_SENDER_DOMAINS`.** OpenDKIM builds a
+  `KeyTable` entry from that variable alone, so a domain missing from it sends
+  unsigned however correct its key and DNS record are. The operator writes the
+  full list to the `allowed_sender_domains` key of the
+  `postfix-kernel-virtual-mailbox-maps` ConfigMap, and Postfix reads it from
+  there.
+
+Unlike the `texthash:` maps beside it, that variable is read once at start.
+A new tenant therefore receives mail immediately but signs only after Postfix
+restarts.
+
+To read the key a domain is actually signing with, which is the value its DNS
+record must carry:
 
 ```bash
 kubectl exec -n platform-kernel postfix-<stage>-0 -- cat /etc/opendkim/keys/<domain>.txt
 ```
 
-Note the consequence: a tenant domain that is not in `ALLOWED_SENDER_DOMAINS`
-gets no DKIM key, so its outbound mail is unsigned even once the map permits it
-to send.
+A published record that does not match this is worse than no record at all: an
+absent record is neutral, while a wrong one is a `dkim=fail` the recipient acts
+on.
 
 ### Cloudflare specifics
 
