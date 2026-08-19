@@ -536,163 +536,21 @@ EOF
     success "Keycloak realm ${kernel_realm} SMTP configured (${MAIL_SERVICE_MODE:-external})."
 }
 
-# Copy cluster SMTP settings into every tenant Keycloak realm (update.sh --mail).
-configure_tenant_realms_smtp() {
-    local ns="platform-kernel"
-    local smtp_shell realm tenants
-
-    if ! _apply_keycloak_smtp_secret "${ns}"; then
-        return 1
-    fi
-
-    tenants=$(kubectl get tenants.gentianos.io -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}' 2>/dev/null || true)
-    if [[ -z "${tenants}" ]]; then
-        info "No tenants found — skipping tenant realm SMTP configuration."
-        return 0
-    fi
-
-    smtp_shell=$(_keycloak_smtp_configure_shell)
-
-    while IFS= read -r tenant; do
-        [[ -z "${tenant}" ]] && continue
-        realm=$(kubectl get tenant "${tenant}" -o jsonpath='{.spec.isolation.keycloakRealm}' 2>/dev/null || true)
-        realm="${realm:-${tenant}}"
-        local job_name="keycloak-tenant-smtp-${tenant}"
-
-        info "Configuring Keycloak realm SMTP for tenant ${tenant} (realm=${realm})..."
-        kubectl delete job "${job_name}" -n "${ns}" --ignore-not-found=true 2>/dev/null || true
-
-        kubectl apply -f - <<EOF
-apiVersion: batch/v1
-kind: Job
-metadata:
-  name: ${job_name}
-  namespace: ${ns}
-  labels:
-    app.kubernetes.io/name: keycloak-tenant-smtp
-    gentianos.io/tenant: ${tenant}
-spec:
-  ttlSecondsAfterFinished: 3600
-  backoffLimit: 2
-  template:
-    spec:
-      restartPolicy: Never
-      containers:
-        - name: tenant-smtp
-          image: alpine:3.20
-          command:
-            - /bin/sh
-            - -ec
-            - |
-              apk add --no-cache --quiet curl jq >/dev/null
-              set -eu
-              resolve_keycloak_base() {
-                local base code
-                for base in "\${KEYCLOAK_URL}" "\${KEYCLOAK_URL%/}/auth" "\${KEYCLOAK_URL%/auth}"; do
-                  code=\$(curl -s -o /dev/null -w '%{http_code}' "\${base}/realms/master/.well-known/openid-configuration")
-                  if [ "\${code}" = "200" ]; then
-                    echo "\${base}"
-                    return 0
-                  fi
-                done
-                return 1
-              }
-              KEYCLOAK_BASE=\$(resolve_keycloak_base) || {
-                printf '\033[0;31m[ERROR]\033[0m %s\n' "could not resolve Keycloak OIDC base from KEYCLOAK_URL=\${KEYCLOAK_URL}" >&2
-                exit 1
-              }
-              TOKEN=\$(curl -sf -X POST "\${KEYCLOAK_BASE}/realms/master/protocol/openid-connect/token" \\
-                -H "Content-Type: application/x-www-form-urlencoded" \\
-                --data-urlencode "client_id=admin-cli" \\
-                --data-urlencode "username=\${KEYCLOAK_ADMIN_USERNAME}" \\
-                --data-urlencode "password=\${KEYCLOAK_ADMIN_PASSWORD}" \\
-                --data-urlencode "grant_type=password" | jq -r .access_token)
-              AUTH="Authorization: Bearer \${TOKEN}"
-              REALM="\${TENANT_REALM}"
-              SMTP_CONFIGURE="\${SMTP_CONFIGURE}"
-              MAIL_SERVICE_MODE="\${MAIL_SERVICE_MODE}"
-              SMTP_HOST="\${SMTP_HOST}"
-              SMTP_PORT="\${SMTP_PORT}"
-              SMTP_USER="\${SMTP_USER}"
-              SMTP_PASSWORD="\${SMTP_PASSWORD}"
-              SMTP_SSL="\${SMTP_SSL}"
-              SMTP_STARTTLS="\${SMTP_STARTTLS}"
-              SMTP_FROM="\${SMTP_FROM}"
-${smtp_shell}
-          env:
-            - name: TENANT_REALM
-              value: "${realm}"
-            - name: KEYCLOAK_URL
-              valueFrom:
-                secretKeyRef:
-                  name: keycloak-admin
-                  key: url
-            - name: KEYCLOAK_ADMIN_USERNAME
-              valueFrom:
-                secretKeyRef:
-                  name: keycloak-admin
-                  key: username
-            - name: KEYCLOAK_ADMIN_PASSWORD
-              valueFrom:
-                secretKeyRef:
-                  name: keycloak-admin
-                  key: password
-            - name: MAIL_SERVICE_MODE
-              valueFrom:
-                secretKeyRef:
-                  name: keycloak-smtp-credentials
-                  key: mail_service_mode
-            - name: SMTP_CONFIGURE
-              valueFrom:
-                secretKeyRef:
-                  name: keycloak-smtp-credentials
-                  key: smtp_configure
-            - name: SMTP_HOST
-              valueFrom:
-                secretKeyRef:
-                  name: keycloak-smtp-credentials
-                  key: smtp_host
-            - name: SMTP_PORT
-              valueFrom:
-                secretKeyRef:
-                  name: keycloak-smtp-credentials
-                  key: smtp_port
-            - name: SMTP_USER
-              valueFrom:
-                secretKeyRef:
-                  name: keycloak-smtp-credentials
-                  key: smtp_user
-            - name: SMTP_PASSWORD
-              valueFrom:
-                secretKeyRef:
-                  name: keycloak-smtp-credentials
-                  key: smtp_password
-            - name: SMTP_SSL
-              valueFrom:
-                secretKeyRef:
-                  name: keycloak-smtp-credentials
-                  key: smtp_ssl
-            - name: SMTP_STARTTLS
-              valueFrom:
-                secretKeyRef:
-                  name: keycloak-smtp-credentials
-                  key: smtp_starttls
-            - name: SMTP_FROM
-              valueFrom:
-                secretKeyRef:
-                  name: keycloak-smtp-credentials
-                  key: smtp_from
-EOF
-
-        if ! kubectl wait "job/${job_name}" -n "${ns}" --for=condition=complete --timeout=120s; then
-            warn "Tenant realm SMTP configure Job failed for ${tenant}."
-            kubectl logs -n "${ns}" "job/${job_name}" --tail=20 2>/dev/null || true
-            continue
-        fi
-        kubectl logs -n "${ns}" "job/${job_name}" --tail=3 2>/dev/null || true
-        success "Keycloak realm ${realm} SMTP configured for tenant ${tenant}."
-    done <<< "${tenants}"
-}
+# Tenant realm SMTP is the operator's. The shell function that used to live
+# here wrote the same Job — keycloak-tenant-smtp-<tenant> — as the
+# TenantReconciler, deleting whatever was there first, and it stamped no
+# version label. The operator reads that label to decide whether a Job is
+# outdated, so it saw "" != the current version, deleted the shell's Job and
+# recreated its own; the next E-02 run deleted that one. Two writers, one
+# object, each undoing the other on its own schedule.
+#
+# The reconciler is also the one that can do the whole job: it orders the SMTP
+# Job after the realm Job, gates on the cluster SMTP credentials existing, and
+# migrates realms already configured when the script changes. A step that runs
+# only when an operator invokes it cannot do the last of those.
+#
+# The kernel realm is a different case and stays here: configure_keycloak_realm_smtp
+# above configures the kernel realm, which has no Tenant CR to reconcile from.
 
 # Keycloak Admin API calls run in-cluster (Job). The keycloak-admin Secret URL is
 # an in-cluster Service DNS name and is not reachable from the install host.

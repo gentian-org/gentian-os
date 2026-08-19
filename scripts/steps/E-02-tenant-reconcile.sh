@@ -2,14 +2,17 @@
 # step: E-02-tenant-reconcile
 # phase: handover
 # requires: E-01-tenants
-# provides: per-tenant LiteLLM Teams and Keycloak realm SMTP, reconciled
-# mutates: LiteLLM Team objects, per-tenant Keycloak realm SMTP settings
+# provides: per-tenant LiteLLM Teams, reconciled
+# mutates: LiteLLM Team objects
 
 # Every other step converges *cluster* state: "does this cluster have X". This
-# one converges *per-tenant* state — one LiteLLM Team per Tenant CR, SMTP on
-# each tenant's Keycloak realm. Adding a tenant creates work here that no
-# cluster-level check() would notice, which is why it is its own step rather
-# than a tail on D-03-mail or D-04-llm-serving.
+# one converges *per-tenant* state — one LiteLLM Team per Tenant CR. Adding a
+# tenant creates work here that no cluster-level check() would notice, which is
+# why it is its own step rather than a tail on D-04-llm-serving.
+#
+# Tenant realm SMTP used to be reconciled here too, and is not any more: the
+# TenantReconciler writes that Job, and both writing it meant each deleted the
+# other's. See the note where the shell function was.
 #
 # On a fresh install there are no tenants yet and every call is a no-op, so its
 # position after 33 costs nothing. It matters on re-runs, which is exactly when
@@ -31,8 +34,6 @@ apply() {
 
     # Non-fatal throughout: a tenant whose realm is mid-provision must not abort
     # the run, and the next invocation picks it up.
-    configure_tenant_realms_smtp || warn "Tenant realm SMTP reconciliation incomplete."
-
     if [[ "${LLM_SUPPORT:-false}" != "true" ]]; then
         info "LLM_SUPPORT is not true; skipping LiteLLM tenant reconciliation."
         return 0

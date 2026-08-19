@@ -2761,14 +2761,24 @@ ConfigMaps. It does not exist yet.
 service has no OpenBao identity by construction, but "by construction" is an argument, not an
 observation.
 
-**Two writers still create the same tenant SMTP Job.** `configure_tenant_realms_smtp`, reached
-from `E-02-tenant-reconcile`, builds a Job named `keycloak-tenant-smtp-<tenant>` — and deletes any
-existing one first. The operator's `TenantReconciler` builds a Job of exactly the same name from
-`ensureTenantSMTPJob`. This is the §6 anti-pattern in its per-tenant form: a script and a
-reconciler writing one object, with the script's delete-then-apply racing whatever the reconciler
-is mid-way through. It is also the clearest remaining instance of the Phase 4b gap — the shell
-half predates the reconciler and was never removed when the reconciler landed. The LiteLLM half of
-`E-02` has no such duplicate and stays.
+**The two writers of the tenant SMTP Job are now one.** ~~`configure_tenant_realms_smtp`~~ is
+deleted; the operator's `ensureTenantSMTPJob` survives. The LiteLLM half of `E-02` has no
+duplicate and stays.
+
+The reconciler wins on capability, not seniority. It orders the SMTP Job after the realm Job,
+gates on the cluster SMTP credentials existing, and — through `replaceOutdatedTenantSMTPJob` and
+the `gentianos.io/keycloak-tenant-smtp` version label — migrates realms that were configured by an
+older script. A step that runs only when an operator invokes it cannot do the last of those, and
+the mail work of the past weeks is all on the reconciler side: DKIM tables, per-user app
+passwords, DNS endpoints, the admin address derived from the mail domain.
+
+The damage was worse than the race this section originally described. The shell's Job carried no
+version label, so the operator read `"" != "3"`, deleted it and recreated its own — and the next
+`E-02` deleted *that* and recreated the unlabelled one. Not two writers occasionally colliding:
+two writers each undoing the other on its own schedule, indefinitely.
+
+The kernel realm keeps its shell path. `configure_keycloak_realm_smtp` in `D-05` configures the
+kernel realm, which has no Tenant CR for a reconciler to work from.
 
 **A step's `check()` may not read OpenBao, and one nearly did.** `C-01-wildcard-cert` was extended
 to ask whether the zone credential had actually been supplied, which is the accurate question and
@@ -2789,18 +2799,23 @@ the real number look worse than it was, in code that only names what it forbids.
 **`docs/commands.md` and `docs/design/mail.md` have not been checked** against the new paradigm.
 `GETTING-STARTED.md` points at both for post-install operations.
 
-**Dovecot delivers; it does not yet serve.** The chart carries a self-contained `dovecot.conf`,
-a static userdb, a per-realm oauth2 passdb written by the operator, and a PersistentVolume for
-mail. Delivery is verified live: a message to `admin-corp@corp.gtn.host` was accepted by Postfix,
-handed to LMTP, and written to `/var/mail/corp.gtn.host/admin-corp/new/` — `status=sent (250 2.0.0
-… Saved)`.
+**Dovecot delivers; it does not yet serve — and now only where it runs at all.** Delivery is
+verified live: a message to `admin-corp@corp.gtn.host` was accepted by Postfix, handed to LMTP,
+and written to `/var/mail/corp.gtn.host/admin-corp/new/` — `status=sent (250 2.0.0 … Saved)`.
 
-What is missing is retrieval. `dovecot-prod` is a ClusterIP Service and the kernel Gateway listens
-on 80 and 443 only, so no client outside the cluster reaches IMAP on 143, and the oauth2 passdb —
+The question has since been scoped rather than answered. `mail.serviceMode` decides whether
+Dovecot is deployed: in `external` mode the mailboxes are at the provider, so Dovecot and its
+volume are not created and Postfix is a relay. So retrieval is a *kernel-mode* question only, and
+a cluster that relays outbound has nothing here to answer. That also splits the two clusters this
+plan is written against — one goes to an external relay and will have no Dovecot; the other is
+being finished as a full kernel-mode stack, and is where the remaining work lands.
+
+What is still missing there is retrieval. The Dovecot Service is ClusterIP on 143/993 and the
+kernel Gateway listens on 80 and 443, so no outside client reaches IMAP, and the oauth2 passdb —
 configured against the tenant realm's introspection endpoint with its own `gentian-dovecot` client
-— has never authenticated anyone. Two decisions are still unrecorded: whether IMAP is exposed
-through a gateway TCP listener or not offered at all, and whether the empty `users` passwd-file
-deny-all fallback stays the only non-OIDC path.
+— has never authenticated anyone. Two decisions remain unrecorded, both now explicitly kernel-mode
+only: whether IMAP is exposed through a gateway TCP listener or not offered at all, and whether
+the empty `users` passwd-file deny-all fallback stays the only non-OIDC path.
 
 **`--cluster-infra` is exercised.** `--purge --cluster-infra` removed `cnpg-system`,
 `stakater-system`, their CRDs and their webhook configurations on a live cluster, leaving only the
