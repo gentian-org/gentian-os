@@ -123,3 +123,48 @@ func (r *TenantReconciler) syncTenantMailDNS(ctx context.Context, tenant *gentia
 	obj.SetResourceVersion(existing.GetResourceVersion())
 	return r.Update(ctx, obj)
 }
+
+// syncKernelMailDNS publishes the DKIM record for the kernel domain itself.
+//
+// Separate from the per-tenant endpoint because the kernel domain has no Tenant
+// to hang off, and narrower: only the DKIM record. The kernel domain's MX, SPF
+// and web records come from elsewhere, and republishing them here would let two
+// owners write the same names.
+func (r *TenantReconciler) syncKernelMailDNS(ctx context.Context, dkimPublicKey string) error {
+	if r.KernelDomain == "" || dkimPublicKey == "" {
+		return nil
+	}
+	ns := defaultServicesNamespace()
+
+	records := []interface{}{
+		dnsEndpointRecord(
+			postfixDKIMSelector+"._domainkey."+r.KernelDomain, "TXT",
+			fmt.Sprintf("v=DKIM1; h=sha256; k=rsa; s=email; p=%s", dkimPublicKey)),
+	}
+
+	obj := &unstructured.Unstructured{}
+	obj.SetGroupVersionKind(dnsEndpointGVK)
+	obj.SetName("mail-kernel")
+	obj.SetNamespace(ns)
+	obj.SetLabels(map[string]string{managedByLabel: managedByValue})
+	if err := unstructured.SetNestedSlice(obj.Object, records, "spec", "endpoints"); err != nil {
+		return err
+	}
+
+	existing := &unstructured.Unstructured{}
+	existing.SetGroupVersionKind(dnsEndpointGVK)
+	err := r.Get(ctx, types.NamespacedName{Name: obj.GetName(), Namespace: ns}, existing)
+	if err != nil {
+		// No external-dns on this cluster: the record stays manual rather than
+		// failing the reconcile.
+		if runtimeMeta.IsNoMatchError(err) {
+			return nil
+		}
+		if client.IgnoreNotFound(err) != nil {
+			return err
+		}
+		return r.Create(ctx, obj)
+	}
+	obj.SetResourceVersion(existing.GetResourceVersion())
+	return r.Update(ctx, obj)
+}

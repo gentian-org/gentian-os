@@ -80,13 +80,19 @@ const (
 	postfixVirtualMailboxMapsConfigMap = "postfix-kernel-virtual-mailbox-maps"
 	postfixVirtualMailboxDomainsKey    = "virtual_mailbox_domains"
 	postfixSenderAccessKey             = "sender_access"
-	postfixVirtualMailboxMapsKey       = "virtual_mailbox_maps"
+	// The domain list OpenDKIM signs for, space-separated, for the image's
+	// ALLOWED_SENDER_DOMAINS. Unlike the maps beside it this is read once at
+	// start, not per lookup, so a new tenant signs only after Postfix restarts.
+	postfixAllowedSenderDomainsKey = "allowed_sender_domains"
+	postfixVirtualMailboxMapsKey   = "virtual_mailbox_maps"
 
 	// OpenDKIM decides which key signs which domain from these two tables. The
 	// operator generates a key per tenant already; without the tables OpenDKIM
 	// never learns of it, so tenant mail leaves unsigned while its DNS record
 	// sits published and unused.
-	postfixDKIMSecret       = "postfix-dkim-tenants"
+	postfixDKIMSecret = "postfix-dkim-tenants"
+	// The kernel domain's own DKIM key, held on the same terms as a tenant's.
+	kernelDKIMSecret        = "dkim-kernel"
 	postfixDKIMKeyTableKey  = "KeyTable"
 	postfixDKIMSignTableKey = "SigningTable"
 	// The selector the Postfix image uses for its own key. Tenants reuse it so
@@ -467,6 +473,7 @@ func (r *TenantReconciler) syncPostfixVirtualMailboxMaps(ctx context.Context) er
 	// that inherited the kernel domain from a defaults component, for instance —
 	// which emitted the same texthash line twice.
 	var domainsFile, mapsFile strings.Builder
+	domainList := make([]string, 0, len(names))
 	emitted := make(map[string]bool, len(names))
 	for _, name := range names {
 		d := registry.Data[name]
@@ -474,6 +481,7 @@ func (r *TenantReconciler) syncPostfixVirtualMailboxMaps(ctx context.Context) er
 			continue
 		}
 		emitted[d] = true
+		domainList = append(domainList, d)
 		// "OK" is only a non-empty lookup result; Postfix reads the presence of
 		// the key, not the value.
 		fmt.Fprintf(&domainsFile, "%s OK\n", d)
@@ -482,6 +490,18 @@ func (r *TenantReconciler) syncPostfixVirtualMailboxMaps(ctx context.Context) er
 		fmt.Fprintf(&mapsFile, "@%s %s/\n", d, d)
 	}
 	desiredDomains, desiredMaps := domainsFile.String(), mapsFile.String()
+
+	// The same domains, space-separated, for the image's ALLOWED_SENDER_DOMAINS.
+	//
+	// That variable is what makes OpenDKIM build a KeyTable entry for a domain,
+	// so a domain missing here leaves mail unsigned however correct its key and
+	// DNS record are. The kernel domain is prepended when the registry has not
+	// listed it, because Postfix refuses to start with an empty list and an
+	// empty registry would otherwise produce one.
+	if r.KernelDomain != "" && !emitted[r.KernelDomain] {
+		domainList = append([]string{r.KernelDomain}, domainList...)
+	}
+	desiredAllowed := strings.Join(domainList, " ")
 	// The same "<domain> OK" lines drive check_sender_access, which decides who
 	// may SEND. Without it, ALLOWED_SENDER_DOMAINS carries the kernel domain
 	// alone, so a tenant user could receive mail but every message they sent was
@@ -493,6 +513,7 @@ func (r *TenantReconciler) syncPostfixVirtualMailboxMaps(ctx context.Context) er
 		postfixVirtualMailboxDomainsKey: desiredDomains,
 		postfixVirtualMailboxMapsKey:    desiredMaps,
 		postfixSenderAccessKey:          desiredDomains,
+		postfixAllowedSenderDomainsKey:  desiredAllowed,
 	}
 
 	maps := &corev1.ConfigMap{}
@@ -514,7 +535,8 @@ func (r *TenantReconciler) syncPostfixVirtualMailboxMaps(ctx context.Context) er
 	}
 	if maps.Data[postfixVirtualMailboxDomainsKey] == desiredDomains &&
 		maps.Data[postfixVirtualMailboxMapsKey] == desiredMaps &&
-		maps.Data[postfixSenderAccessKey] == desiredDomains {
+		maps.Data[postfixSenderAccessKey] == desiredDomains &&
+		maps.Data[postfixAllowedSenderDomainsKey] == desiredAllowed {
 		return nil
 	}
 	if maps.Data == nil {
@@ -523,6 +545,7 @@ func (r *TenantReconciler) syncPostfixVirtualMailboxMaps(ctx context.Context) er
 	maps.Data[postfixVirtualMailboxDomainsKey] = desiredDomains
 	maps.Data[postfixVirtualMailboxMapsKey] = desiredMaps
 	maps.Data[postfixSenderAccessKey] = desiredDomains
+	maps.Data[postfixAllowedSenderDomainsKey] = desiredAllowed
 	return r.Update(ctx, maps)
 }
 
@@ -558,12 +581,34 @@ func (r *TenantReconciler) syncPostfixDKIMTables(ctx context.Context) error {
 	var keyTable, signTable strings.Builder
 	data := map[string][]byte{}
 
-	// The kernel domain first, referencing the image-generated key.
+	// The kernel domain first, on the same terms as a tenant: a key this
+	// operator owns, seeded into Postfix and published from the same value.
+	//
+	// It used to be left to the image, which regenerates its key on every
+	// restart unless the key directory is persistent. The record published for
+	// a previous key stayed in DNS, so kernel-domain mail was signed with a key
+	// no verifier could match — a dkim=fail that reads as a broken setup rather
+	// than as the absent record it effectively was.
+	//
+	// Failure here is logged, not returned: unsigned mail is deliverable, and a
+	// tenant reconcile must not fail over the kernel domain's signing key.
 	if r.KernelDomain != "" {
-		fmt.Fprintf(&keyTable, "%s._domainkey.%s %s:%s:/etc/opendkim/keys/%s.private\n",
-			postfixDKIMSelector, r.KernelDomain, r.KernelDomain, postfixDKIMSelector, r.KernelDomain)
-		fmt.Fprintf(&signTable, "*@%s %s._domainkey.%s\n",
-			r.KernelDomain, postfixDKIMSelector, r.KernelDomain)
+		pub, priv, err := r.ensureDKIMKeyPair(ctx, kernelDKIMSecret, map[string]string{
+			managedByLabel: managedByValue,
+		})
+		switch {
+		case err != nil:
+			log.FromContext(ctx).Error(err, "ensure kernel DKIM key; kernel-domain mail will send unsigned")
+		default:
+			data[r.KernelDomain+".private"] = priv
+			fmt.Fprintf(&keyTable, "%s._domainkey.%s %s:%s:/etc/opendkim/keys/%s.private\n",
+				postfixDKIMSelector, r.KernelDomain, r.KernelDomain, postfixDKIMSelector, r.KernelDomain)
+			fmt.Fprintf(&signTable, "*@%s %s._domainkey.%s\n",
+				r.KernelDomain, postfixDKIMSelector, r.KernelDomain)
+			if dnsErr := r.syncKernelMailDNS(ctx, pub); dnsErr != nil {
+				log.FromContext(ctx).Error(dnsErr, "publish kernel DKIM record")
+			}
+		}
 	}
 
 	emitted := map[string]bool{r.KernelDomain: true}
@@ -1154,62 +1199,75 @@ func (r *TenantReconciler) removeFromMailConfigMap(ctx context.Context, cmName, 
 // Returns the base64-encoded PKIX DER public key suitable for publishing in a DKIM TXT
 // record, or "" when the secret was just created (will be derived on the next pass).
 func (r *TenantReconciler) ensureDKIMSecret(ctx context.Context, tenant *gentianov1alpha1.Tenant) (string, error) {
-	secretName := dkimSecretName(tenant.Name)
+	pub, _, err := r.ensureDKIMKeyPair(ctx, dkimSecretName(tenant.Name), map[string]string{
+		tenantLabel:    tenant.Name,
+		managedByLabel: managedByValue,
+	})
+	return pub, err
+}
+
+// ensureDKIMKeyPair creates or reads a DKIM key Secret by name, returning the
+// base64 PKIX public key for the DNS record and the PEM private key for Postfix.
+//
+// Named rather than tenant-scoped because the kernel domain needs a key on the
+// same terms as a tenant: generated once, never rotated, and published from the
+// same value that signs. Leaving the kernel domain's key to the image instead
+// meant the image generated a new one whenever it restarted, so the record
+// published for the old key stayed in DNS and every kernel-domain signature
+// failed verification — a state strictly worse than not signing at all.
+func (r *TenantReconciler) ensureDKIMKeyPair(ctx context.Context, secretName string, labels map[string]string) (string, []byte, error) {
 	existing := &corev1.Secret{}
 	err := r.Get(ctx, types.NamespacedName{Name: secretName, Namespace: kernelNamespace}, existing)
 	if err == nil {
 		// Secret already exists — derive the public key from the stored private key.
 		privPEM, ok := existing.Data["tls.key"]
 		if !ok {
-			return "", fmt.Errorf("DKIM secret %s/%s is missing key tls.key", kernelNamespace, secretName)
+			return "", nil, fmt.Errorf("DKIM secret %s/%s is missing key tls.key", kernelNamespace, secretName)
 		}
 		block, _ := pem.Decode(privPEM)
 		if block == nil {
-			return "", fmt.Errorf("DKIM secret %s/%s: tls.key is not valid PEM", kernelNamespace, secretName)
+			return "", nil, fmt.Errorf("DKIM secret %s/%s: tls.key is not valid PEM", kernelNamespace, secretName)
 		}
 		priv, parseErr := x509.ParsePKCS1PrivateKey(block.Bytes)
 		if parseErr != nil {
-			return "", fmt.Errorf("parse DKIM private key in %s/%s: %w", kernelNamespace, secretName, parseErr)
+			return "", nil, fmt.Errorf("parse DKIM private key in %s/%s: %w", kernelNamespace, secretName, parseErr)
 		}
 		pubDER, marshalErr := x509.MarshalPKIXPublicKey(&priv.PublicKey)
 		if marshalErr != nil {
-			return "", fmt.Errorf("marshal DKIM public key for %s/%s: %w", kernelNamespace, secretName, marshalErr)
+			return "", nil, fmt.Errorf("marshal DKIM public key for %s/%s: %w", kernelNamespace, secretName, marshalErr)
 		}
-		return base64.StdEncoding.EncodeToString(pubDER), nil
+		return base64.StdEncoding.EncodeToString(pubDER), privPEM, nil
 	}
 	if !errors.IsNotFound(err) {
-		return "", err
+		return "", nil, err
 	}
 
 	// Generate a fresh RSA-2048 key pair.
 	priv, err := rsa.GenerateKey(rand.Reader, dkimKeySize)
 	if err != nil {
-		return "", fmt.Errorf("generate DKIM RSA key for tenant %s: %w", tenant.Name, err)
+		return "", nil, fmt.Errorf("generate DKIM RSA key for %s: %w", secretName, err)
 	}
 	privDER := x509.MarshalPKCS1PrivateKey(priv)
 	privPEM := pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: privDER})
 	pubDER, err := x509.MarshalPKIXPublicKey(&priv.PublicKey)
 	if err != nil {
-		return "", fmt.Errorf("marshal DKIM public key for tenant %s: %w", tenant.Name, err)
+		return "", nil, fmt.Errorf("marshal DKIM public key for %s: %w", secretName, err)
 	}
 
 	secret := &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      secretName,
 			Namespace: kernelNamespace,
-			Labels: map[string]string{
-				tenantLabel:    tenant.Name,
-				managedByLabel: managedByValue,
-			},
+			Labels:    labels,
 		},
 		Data: map[string][]byte{
 			"tls.key": privPEM,
 		},
 	}
 	if err := r.Create(ctx, secret); err != nil {
-		return "", fmt.Errorf("create DKIM secret %s/%s: %w", kernelNamespace, secretName, err)
+		return "", nil, fmt.Errorf("create DKIM secret %s/%s: %w", kernelNamespace, secretName, err)
 	}
-	return base64.StdEncoding.EncodeToString(pubDER), nil
+	return base64.StdEncoding.EncodeToString(pubDER), privPEM, nil
 }
 
 // --- Name helpers ------------------------------------------------------------
