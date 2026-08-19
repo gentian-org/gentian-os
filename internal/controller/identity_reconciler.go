@@ -210,6 +210,14 @@ func (r *TenantReconciler) ensureIdentity(ctx context.Context, tenant *gentianov
 			return r.requeueForPendingJob(ctx, tenant.Name, tenantPortalPublicClientJobName(tenant.Name)), nil
 		}
 
+		// The tenant's own OpenBao auth mount. Reconciled before SMTP because it
+		// is cheap, in-process, and its absence is what makes the Credentials
+		// view unusable for every tenant administrator — a failure that reads as
+		// a permissions problem and is not one.
+		if err := r.ensureTenantOpenBaoAuth(ctx, tenant); err != nil {
+			return ctrl.Result{}, fmt.Errorf("ensure tenant OpenBao auth: %w", err)
+		}
+
 		smtpDone, err := r.ensureTenantSMTPJob(ctx, tenant)
 		if err != nil {
 			return ctrl.Result{}, fmt.Errorf("ensure tenant SMTP Job: %w", err)

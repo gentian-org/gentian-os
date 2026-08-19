@@ -281,30 +281,37 @@ func (r *TenantReconciler) ensureTenantSMTPJob(ctx context.Context, tenant *gent
 	return r.waitForProvisioningJob(ctx, tenant.Name, tenantSMTPJobName(tenant.Name))
 }
 
-// replaceOutdatedTenantSMTPJob deletes a completed SMTP Job that was created by
-// an older version of the configure script, so the current one runs.
-//
-// tenantSMTPVersion was stamped onto the Job as a label but nothing ever read
-// it: waitForProvisioningJob only recreates a Job that FAILED or is absent, and
-// a Job's spec is immutable once created. So a script change — such as no
-// longer asking Keycloak to authenticate against the kernel Postfix — reached
-// new tenants only, while every existing realm kept whatever the first run
-// wrote. The label now decides, which is what it was there for.
+// replaceOutdatedTenantSMTPJob is replaceOutdatedJob for this Job's label. See
+// that function for why a version label is load-bearing.
 func (r *TenantReconciler) replaceOutdatedTenantSMTPJob(ctx context.Context, tenantName string) error {
+	return r.replaceOutdatedJob(ctx, tenantSMTPJobName(tenantName), tenantName,
+		"gentianos.io/keycloak-tenant-smtp", tenantSMTPVersion)
+}
+
+// replaceOutdatedJob deletes a completed provisioning Job whose script has since
+// changed, so the current one runs.
+//
+// A Job's spec is immutable once created, and waitForProvisioningJob only
+// recreates a Job that FAILED or is absent. So without this a script change
+// reaches new tenants only, while every existing realm keeps whatever the first
+// run wrote — and the version label that was supposed to prevent that is stamped
+// and never read. That happened once already with the SMTP Job; this is the same
+// mechanism, named so the next Job can use it instead of growing a third copy.
+func (r *TenantReconciler) replaceOutdatedJob(ctx context.Context, jobName, tenantName, labelKey, want string) error {
 	job := &batchv1.Job{}
-	err := r.Get(ctx, types.NamespacedName{Name: tenantSMTPJobName(tenantName), Namespace: kernelNamespace}, job)
+	err := r.Get(ctx, types.NamespacedName{Name: jobName, Namespace: kernelNamespace}, job)
 	if err != nil {
 		// Absent is the normal path; waitForProvisioningJob creates it.
 		return client.IgnoreNotFound(err)
 	}
-	if job.Labels["gentianos.io/keycloak-tenant-smtp"] == tenantSMTPVersion {
+	if job.Labels[labelKey] == want {
 		return nil
 	}
 	prop := metav1.DeletePropagationBackground
 	if err := r.Delete(ctx, job, &client.DeleteOptions{PropagationPolicy: &prop}); err != nil {
 		return client.IgnoreNotFound(err)
 	}
-	log.FromContext(ctx).Info("replaced outdated tenant SMTP job",
-		"tenant", tenantName, "had", job.Labels["gentianos.io/keycloak-tenant-smtp"], "want", tenantSMTPVersion)
+	log.FromContext(ctx).Info("replaced outdated provisioning job",
+		"job", jobName, "tenant", tenantName, "had", job.Labels[labelKey], "want", want)
 	return nil
 }

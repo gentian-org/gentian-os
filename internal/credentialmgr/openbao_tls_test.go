@@ -57,7 +57,7 @@ func serverCAPEM(t *testing.T, srv *httptest.Server) []byte {
 // reported as unreachable rather than as a rejected caller.
 func TestExchange_SelfSignedWithoutCA_IsUpstreamNotAuthz(t *testing.T) {
 	srv := newSelfSignedOpenBao(t)
-	b := NewOpenBao(srv.URL, "secret", "oidc", []string{"cluster-admin-jwt"}, nil, false)
+	b := NewOpenBao(srv.URL, "secret", "oidc", "kernel", []string{"cluster-admin-jwt"}, nil, false)
 
 	_, err := b.ExchangeToken(context.Background(), "a.jwt.token")
 	if err == nil {
@@ -72,7 +72,7 @@ func TestExchange_SelfSignedWithoutCA_IsUpstreamNotAuthz(t *testing.T) {
 // exchange succeeds.
 func TestExchange_SelfSignedWithCA_Succeeds(t *testing.T) {
 	srv := newSelfSignedOpenBao(t)
-	b := NewOpenBao(srv.URL, "secret", "oidc", []string{"cluster-admin-jwt"}, serverCAPEM(t, srv), false)
+	b := NewOpenBao(srv.URL, "secret", "oidc", "kernel", []string{"cluster-admin-jwt"}, serverCAPEM(t, srv), false)
 
 	id, err := b.ExchangeToken(context.Background(), "a.jwt.token")
 	if err != nil {
@@ -89,7 +89,7 @@ func TestExchange_SelfSignedWithCA_Succeeds(t *testing.T) {
 // The escape hatch, for a cluster whose CA cannot be reached at all.
 func TestExchange_SkipVerify_Succeeds(t *testing.T) {
 	srv := newSelfSignedOpenBao(t)
-	b := NewOpenBao(srv.URL, "secret", "oidc", []string{"cluster-admin-jwt"}, nil, true)
+	b := NewOpenBao(srv.URL, "secret", "oidc", "kernel", []string{"cluster-admin-jwt"}, nil, true)
 
 	if _, err := b.ExchangeToken(context.Background(), "a.jwt.token"); err != nil {
 		t.Fatalf("expected skip-verify to connect, got: %v", err)
@@ -100,7 +100,7 @@ func TestExchange_SkipVerify_Succeeds(t *testing.T) {
 // system roots fails closed; falling back to InsecureSkipVerify would not.
 func TestExchange_InvalidCAPEM_StillVerifies(t *testing.T) {
 	srv := newSelfSignedOpenBao(t)
-	b := NewOpenBao(srv.URL, "secret", "oidc", []string{"cluster-admin-jwt"}, []byte("not a certificate"), false)
+	b := NewOpenBao(srv.URL, "secret", "oidc", "kernel", []string{"cluster-admin-jwt"}, []byte("not a certificate"), false)
 
 	_, err := b.ExchangeToken(context.Background(), "a.jwt.token")
 	if !errors.Is(err, ErrUpstream) {
@@ -115,7 +115,7 @@ func TestExchange_RoleRefusal_IsNotUpstream(t *testing.T) {
 		w.WriteHeader(http.StatusBadRequest)
 	}))
 	defer srv.Close()
-	b := NewOpenBao(srv.URL, "secret", "oidc", []string{"cluster-admin-jwt"}, serverCAPEM(t, srv), false)
+	b := NewOpenBao(srv.URL, "secret", "oidc", "kernel", []string{"cluster-admin-jwt"}, serverCAPEM(t, srv), false)
 
 	_, err := b.ExchangeToken(context.Background(), "a.jwt.token")
 	if err == nil {
@@ -135,7 +135,7 @@ func TestWrite_RejectionCarriesOpenBaosAnswer(t *testing.T) {
 		_, _ = w.Write([]byte(`{"errors":["1 error occurred:\n\t* permission denied\n\n"]}`))
 	}))
 	defer srv.Close()
-	b := NewOpenBao(srv.URL, "secret", "oidc", []string{"r"}, serverCAPEM(t, srv), false)
+	b := NewOpenBao(srv.URL, "secret", "oidc", "kernel", []string{"r"}, serverCAPEM(t, srv), false)
 
 	err := b.Write(context.Background(), "s.tok", "gentian-os/kernel/mail/postfix", map[string]string{"k": "v"}, "admin")
 	if err == nil {
@@ -153,7 +153,7 @@ func TestWrite_RejectionCarriesOpenBaosAnswer(t *testing.T) {
 
 // And an unreachable OpenBao on the write path must not read as a policy problem.
 func TestWrite_UnreachableIsUpstream(t *testing.T) {
-	b := NewOpenBao("https://127.0.0.1:1", "secret", "oidc", []string{"r"}, nil, false)
+	b := NewOpenBao("https://127.0.0.1:1", "secret", "oidc", "kernel", []string{"r"}, nil, false)
 	err := b.Write(context.Background(), "s.tok", "gentian-os/kernel/mail/postfix", map[string]string{"k": "v"}, "admin")
 	if !errors.Is(err, ErrUpstream) {
 		t.Fatalf("expected an upstream failure; got: %v", err)
@@ -175,7 +175,7 @@ func TestWrite_SendsNoCheckAndSet(t *testing.T) {
 		_, _ = w.Write([]byte(`{"data":{"version":2}}`))
 	}))
 	defer srv.Close()
-	b := NewOpenBao(srv.URL, "secret", "oidc", []string{"r"}, serverCAPEM(t, srv), false)
+	b := NewOpenBao(srv.URL, "secret", "oidc", "kernel", []string{"r"}, serverCAPEM(t, srv), false)
 
 	if err := b.Write(context.Background(), "s.tok",
 		"gentian-os/kernel/mail/postfix", map[string]string{"relay_username": "u"}, ""); err != nil {

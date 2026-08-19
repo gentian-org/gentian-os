@@ -410,37 +410,14 @@ spec:
               providerConfigRef:
                 name: openbao
 
-            ---
-            apiVersion: jwt.vault.upbound.io/v1alpha1
-            kind: AuthBackendRole
-            metadata:
-              annotations:
-                gotemplating.fn.crossplane.io/composition-resource-name: vault-auth-jwt-role-tenant-admin
-              name: {{ $name }}-auth-jwt-tenant-admin
-            spec:
-              forProvider:
-                backend: oidc
-                roleName: tenant-admin-jwt
-                roleType: jwt
-                userClaim: preferred_username
-                boundAudiences:
-                  - {{ $oidc.clientId | default "openbao" | quote }}
-                  {{- range (default (list "gentian-portal") $oidc.additionalAudiences) }}
-                  - {{ . | quote }}
-                  {{- end }}
-                boundClaimsType: glob
-                boundClaims:
-                  groups: {{ $oidc.tenantAdminGroup | default "/gentian:tenant:*:admins" | quote }}
-                claimMappings:
-                  {{ $oidc.tenantClaim | default "tenant" }}: tenant
-                  # The caller's name, for the same reason as the cluster roles.
-                  preferred_username: username
-                tokenPolicies:
-                  - tenant-admin
-                tokenTtl: 1800
-                tokenMaxTtl: 3600
-              providerConfigRef:
-                name: openbao
+            {{- /* The tenant-admin JWT role that used to sit here is gone.
+                 A tenant member authenticates in their own realm, so their token
+                 is signed by that realm and is never presented to this mount —
+                 the role could not be reached by the people it was written for,
+                 and its presence read as coverage that did not exist. Each
+                 tenant realm now has its own mount and role, reconciled by the
+                 TenantReconciler; see internal/controller/openbao_tenant_auth.go.
+              */}}
 
             {{- /* ── The Keycloak side of the OIDC handshake ────────────────────
                  Everything above configures OpenBao to TRUST Keycloak. None of

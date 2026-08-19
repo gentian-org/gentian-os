@@ -340,9 +340,15 @@ credentialManager:
   # Both are listed because the roles bind different group claims and OpenBao,
   # not this service, decides which one a caller matches. Listing only the
   # cluster role would leave every tenant admin unable to authenticate.
+  # Tried in order against whichever mount the token's issuer selects — which is
+  # why both names appear even though neither mount has both roles.
+  # cluster-admin-jwt exists only on the kernel mount, tenant-admin only on a
+  # tenant realm's mount, so the inapplicable one is refused as an unknown role.
+  # That costs one round trip and saves this service from having to know the
+  # cluster's realm layout.
   oidcRoles:
     - cluster-admin-jwt
-    - tenant-admin-jwt
+    - tenant-admin
   # Namespace holding the ESO satisfaction probes it reads.
   probeNamespace: gentian-system
   # Where the CA that signs OpenBao's serving certificate lives. Read through

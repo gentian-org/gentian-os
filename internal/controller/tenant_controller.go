@@ -540,6 +540,17 @@ func (r *TenantReconciler) reconcileDelete(ctx context.Context, tenant *gentiano
 		return ctrl.Result{}, err
 	}
 
+	// The tenant's OpenBao auth mount goes whatever the DeletionPolicy says.
+	// Retain protects the tenant's *data*; a mount is not data. Left behind it
+	// trusts a realm that no longer exists, and realm names are reusable — so a
+	// later tenant of the same name would inherit these roles.
+	if err := r.removeTenantOpenBaoAuth(ctx, tenant); err != nil {
+		// Not fatal: OpenBao being unreachable must not strand the finalizer and
+		// with it the whole Tenant. Reported so the residue is known.
+		log.FromContext(ctx).Error(err, "could not remove the tenant's OpenBao auth mount",
+			"tenant", tenant.Name)
+	}
+
 	// Clean up IntegrationBinding CRs (always deleted regardless of DeletionPolicy).
 	if err := r.deleteIntegrationBindings(ctx, tenant); err != nil {
 		return ctrl.Result{}, err

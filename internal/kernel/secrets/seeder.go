@@ -55,6 +55,14 @@ func NewSeeder(w Writer, d *Deriver) *Seeder {
 	return &Seeder{w: w, d: d}
 }
 
+// KV returns the KV client backing this Seeder, or nil when the Writer is
+// something else (a fake, in tests). Per-tenant auth mounts reuse this
+// session rather than opening a second one and holding a second identity.
+func (s *Seeder) KV() *KVClient {
+	kv, _ := s.w.(*KVClient)
+	return kv
+}
+
 // gen returns n hex characters: HKDF-derived from (salt, info) when a master
 // is configured, otherwise crypto/rand.
 func (s *Seeder) gen(salt, info string, n int) string {

@@ -7,7 +7,7 @@ status:
   conditions:
   - lastTransitionTime: "2024-01-01T00:00:00Z"
     message: 'Unready resources: argocd-appproject-tenants, eso-cluster-secret-store,
-      gentian-cluster-config, and 26 more'
+      gentian-cluster-config, and 25 more'
     reason: Creating
     status: "False"
     type: Ready
@@ -410,43 +410,6 @@ spec:
     tokenMaxTtl: 3600
     tokenPolicies:
     - cluster-admin
-    tokenTtl: 1800
-    userClaim: preferred_username
-  providerConfigRef:
-    name: openbao
----
-apiVersion: jwt.vault.upbound.io/v1alpha1
-kind: AuthBackendRole
-metadata:
-  annotations:
-    crossplane.io/composition-resource-name: vault-auth-jwt-role-tenant-admin
-  labels:
-    crossplane.io/composite: dev-cluster
-  name: dev-cluster-auth-jwt-tenant-admin
-  ownerReferences:
-  - apiVersion: gentianos.io/v1alpha1
-    blockOwnerDeletion: true
-    controller: true
-    kind: XCluster
-    name: dev-cluster
-    uid: ""
-spec:
-  forProvider:
-    backend: oidc
-    boundAudiences:
-    - openbao
-    - gentian-portal
-    boundClaims:
-      groups: /gentian:tenant:*:admins
-    boundClaimsType: glob
-    claimMappings:
-      preferred_username: username
-      tenant: tenant
-    roleName: tenant-admin-jwt
-    roleType: jwt
-    tokenMaxTtl: 3600
-    tokenPolicies:
-    - tenant-admin
     tokenTtl: 1800
     userClaim: preferred_username
   providerConfigRef:

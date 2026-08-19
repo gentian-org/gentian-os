@@ -30,7 +30,7 @@ import (
 )
 
 const portalPublicClientID = "gentian-portal"
-const portalPublicClientVersion = "1"
+const portalPublicClientVersion = "2" // 2: openbao audience mapper
 
 func tenantPortalPublicClientJobName(tenantName string) string {
 	return fmt.Sprintf("keycloak-portal-public-%s", tenantName)
@@ -115,6 +115,42 @@ if [ -n "${GROUPS_SCOPE_ID}" ] && [ "${GROUPS_SCOPE_ID}" != "null" ]; then
     -H "${AUTH_HEADER}" >/dev/null 2>&1 || true
   echo "groups scope attached to ${CLIENT_ID} in realm ${REALM}"
 fi
+
+# The audience OpenBao's role binds. A Keycloak ACCESS token does not carry the
+# requesting client in aud — azp names the client, and aud holds only what an
+# audience mapper puts there — so without this the tenant's auth mount refuses
+# every exchange on the audience, no matter who the caller is.
+AUD_BODY='{
+  "name": "openbao-audience",
+  "protocol": "openid-connect",
+  "protocolMapper": "oidc-audience-mapper",
+  "config": {
+    "included.client.audience": "openbao",
+    "id.token.claim": "false",
+    "access.token.claim": "true"
+  }
+}'
+AUD_ID=$(curl -sf -H "${AUTH_HEADER}" \
+  "${KEYCLOAK_URL}/admin/realms/${REALM}/clients/${CLIENT_KC_ID}/protocol-mappers/models" \
+  | jq -r '.[] | select(.name=="openbao-audience") | .id' | head -1)
+if [ -n "${AUD_ID}" ] && [ "${AUD_ID}" != "null" ]; then
+  # Keycloak resolves the target from the body's id, not the path alone.
+  AUD_HTTP=$(printf '%%s' "${AUD_BODY}" | jq --arg id "${AUD_ID}" '. + {id: $id}' \
+    | curl -s -o /tmp/aud.err -w '%%{http_code}' -X PUT -H "${AUTH_HEADER}" -H "Content-Type: application/json" \
+      "${KEYCLOAK_URL}/admin/realms/${REALM}/clients/${CLIENT_KC_ID}/protocol-mappers/models/${AUD_ID}" -d @-)
+else
+  AUD_HTTP=$(curl -s -o /tmp/aud.err -w '%%{http_code}' -X POST -H "${AUTH_HEADER}" -H "Content-Type: application/json" \
+    "${KEYCLOAK_URL}/admin/realms/${REALM}/clients/${CLIENT_KC_ID}/protocol-mappers/models" -d "${AUD_BODY}")
+fi
+case "${AUD_HTTP}" in
+  2*) echo "openbao audience mapper set on ${CLIENT_ID} in realm ${REALM}" ;;
+  *)
+    echo "ERROR: openbao audience mapper failed in realm ${REALM} (HTTP ${AUD_HTTP})" >&2
+    [ -s /tmp/aud.err ] && head -c 300 /tmp/aud.err >&2 && echo >&2
+    echo "  Tenant admins cannot use the Credentials view until this succeeds." >&2
+    exit 1
+    ;;
+esac
 `, realmExpr, portalPublicClientID,
 		keycloak.ShellWaitForRealm(realmExpr),
 		keycloak.ShellRequireID("CLIENT_KC_ID", "${EXISTING}", "clientId", portalPublicClientID),
@@ -153,6 +189,13 @@ func (r *TenantReconciler) ensurePortalPublicClientJob(ctx context.Context, tena
 	}
 	realmDone, err := r.waitForProvisioningJob(ctx, tenant.Name, realmJobName(tenant.Name))
 	if err != nil || !realmDone {
+		return false, err
+	}
+	// The script gained the openbao audience mapper, and a completed Job is
+	// never re-run — so without this every realm provisioned before that change
+	// would keep a client whose tokens the tenant's auth mount refuses.
+	if err := r.replaceOutdatedJob(ctx, tenantPortalPublicClientJobName(tenant.Name), tenant.Name,
+		"gentianos.io/keycloak-portal-public-client", portalPublicClientVersion); err != nil {
 		return false, err
 	}
 	return r.waitForProvisioningJob(ctx, tenant.Name, tenantPortalPublicClientJobName(tenant.Name))

@@ -144,9 +144,19 @@ func NewRunnableFromEnv(mgr manager.Manager, validator Validator) (*Server, erro
 			// The backend is enabled at -path=oidc, so this is the mount, not
 			// the plugin's default "jwt" name.
 			envOr("BAO_AUTH_MOUNT", "oidc"),
+			// The realm that mount trusts. A token from any other realm is
+			// routed to that realm's own mount, because one JWT mount verifies
+			// against exactly one issuer's keys.
+			envOr("KERNEL_REALM", "kernel"),
 			// JWT-typed roles, not the oidc-typed ones behind the browser flow:
 			// a role with role_type oidc refuses a direct token exchange.
-			splitList(envOr("BAO_OIDC_ROLES", "cluster-admin-jwt,tenant-admin-jwt")),
+			//
+			// Both names are tried against whichever mount the token's issuer
+			// selects. cluster-admin-jwt exists only on the kernel mount and
+			// tenant-admin only on a tenant's, so the one that does not apply is
+			// refused as an unknown role — which costs a round trip and keeps
+			// this service from having to know the cluster's realm layout.
+			splitList(envOr("BAO_OIDC_ROLES", "cluster-admin-jwt,tenant-admin")),
 			loadBaoCA(mgr),
 			os.Getenv("BAO_TLS_SKIP_VERIFY") == "true",
 		),

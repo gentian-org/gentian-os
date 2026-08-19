@@ -24,3 +24,22 @@ spec:
       path "secret/metadata/gentian-os/*" { capabilities = ["list","read","delete"] }
       path "auth/token/create"            { capabilities = ["update"] }
       path "auth/token/lookup-self"       { capabilities = ["read"] }
+
+      # Per-tenant JWT auth mounts. A tenant member authenticates in their own
+      # Keycloak realm — that is where their apps' OIDC clients live — so their
+      # portal token is signed by that realm and the kernel realm's mount cannot
+      # verify it. One mount per realm is what makes the exchange possible.
+      #
+      # Deliberately NOT one mount trusting many keys, which would be fewer
+      # objects and a privilege escalation: a tenant administrator holds
+      # realm-admin in their own realm, so they can mint a token carrying any
+      # groups claim, the cluster admin group included. Isolation belongs at the
+      # mount boundary, because claim values are precisely what they control.
+      #
+      # Scoped to the oidc- prefix with a single-segment wildcard: the operator
+      # creates the mounts it needs and cannot touch auth/kubernetes, the
+      # kernel's own auth/oidc, or any other backend. OpenBao requires sudo for
+      # sys/auth whatever the path.
+      path "sys/auth/oidc-+"              { capabilities = ["create","read","update","delete","sudo"] }
+      path "auth/oidc-+/config"           { capabilities = ["create","read","update"] }
+      path "auth/oidc-+/role/*"           { capabilities = ["create","read","update","delete","list"] }

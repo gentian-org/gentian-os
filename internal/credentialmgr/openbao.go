@@ -50,6 +50,7 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -67,11 +68,15 @@ import (
 type OpenBao struct {
 	Addr    string
 	KVMount string
-	// AuthMount is the path the JWT/OIDC auth backend is enabled at. It is not
-	// "jwt": the backend is enabled with -path=oidc, so the login endpoint is
-	// auth/oidc/login. Hardcoding the plugin's default name here meant every
-	// exchange hit a mount that does not exist.
+	// AuthMount is the path the JWT/OIDC auth backend is enabled at for the
+	// KERNEL realm. It is not "jwt": the backend is enabled with -path=oidc, so
+	// the login endpoint is auth/oidc/login. Hardcoding the plugin's default
+	// name here meant every exchange hit a mount that does not exist.
 	AuthMount string
+
+	// KernelRealm names the realm AuthMount trusts. A token from any other
+	// realm is routed to that realm's own mount instead — see mountForToken.
+	KernelRealm string
 	// OIDCRoles are the auth backend roles a caller's token is offered to, in
 	// order, until one accepts it. The roles, not this service, decide who a
 	// caller is: each binds a different group claim, and the policies on
@@ -105,7 +110,7 @@ var ErrUpstream = errors.New("openbao unreachable")
 //
 // An empty caCert keeps the system roots, which is right for a cluster that
 // gave OpenBao a publicly trusted certificate.
-func NewOpenBao(addr, kvMount, authMount string, oidcRoles []string, caCert []byte, skipVerify bool) *OpenBao {
+func NewOpenBao(addr, kvMount, authMount, kernelRealm string, oidcRoles []string, caCert []byte, skipVerify bool) *OpenBao {
 	tlsConf := &tls.Config{MinVersion: tls.VersionTLS12}
 	if skipVerify {
 		// An escape hatch, not a mode. Named so it appears in the Deployment
@@ -121,10 +126,11 @@ func NewOpenBao(addr, kvMount, authMount string, oidcRoles []string, caCert []by
 		}
 	}
 	return &OpenBao{
-		Addr:      strings.TrimSuffix(addr, "/"),
-		KVMount:   kvMount,
-		AuthMount: authMount,
-		OIDCRoles: oidcRoles,
+		Addr:        strings.TrimSuffix(addr, "/"),
+		KVMount:     kvMount,
+		AuthMount:   authMount,
+		KernelRealm: kernelRealm,
+		OIDCRoles:   oidcRoles,
 		HTTP: &http.Client{
 			Timeout:   15 * time.Second,
 			Transport: &http.Transport{TLSClientConfig: tlsConf},
@@ -189,6 +195,60 @@ func refusalReason(status int, body string) string {
 	}
 }
 
+// mountForToken picks the auth mount from the token's issuer.
+//
+// One JWT mount trusts one issuer. Tenant members authenticate in their own
+// Keycloak realm — that is where their apps' OIDC clients live, so that is where
+// the SSO session must exist — which means their token is signed by that realm
+// and the kernel realm's mount cannot verify it. Each tenant realm therefore has
+// its own mount, and this decides which one a token goes to.
+//
+// The issuer is read WITHOUT verifying the signature, and that is safe because
+// it is used only to route. OpenBao then verifies against the chosen mount's
+// JWKS, so a forged issuer merely picks a mount that refuses the token; it can
+// never make one mount accept another realm's key. Nothing here is an
+// authorisation decision.
+func (b *OpenBao) mountForToken(oidcToken string) string {
+	realm := realmFromUnverifiedToken(oidcToken)
+	if realm == "" || realm == b.KernelRealm {
+		return b.AuthMount
+	}
+	return "oidc-" + realm
+}
+
+// realmFromUnverifiedToken reads the realm out of a JWT's iss claim without
+// checking the signature. Returns "" when the token is not a JWT, the claim is
+// absent, or the issuer is not a Keycloak realm URL — every one of which falls
+// back to the kernel mount rather than inventing a mount name from attacker
+// input.
+func realmFromUnverifiedToken(token string) string {
+	parts := strings.Split(token, ".")
+	if len(parts) != 3 {
+		return ""
+	}
+	raw, err := base64.RawURLEncoding.DecodeString(parts[1])
+	if err != nil {
+		return ""
+	}
+	var claims struct {
+		Iss string `json:"iss"`
+	}
+	if err := json.Unmarshal(raw, &claims); err != nil {
+		return ""
+	}
+	i := strings.LastIndex(claims.Iss, "/realms/")
+	if i < 0 {
+		return ""
+	}
+	realm := strings.Trim(claims.Iss[i+len("/realms/"):], "/")
+	// A mount path is one segment. Anything else is not a realm name, and
+	// concatenating it would address a different mount entirely.
+	if realm == "" || strings.ContainsAny(realm, "/?#%") {
+		return ""
+	}
+	return realm
+}
+
 func (b *OpenBao) ExchangeToken(ctx context.Context, oidcToken string) (Identity, error) {
 	if oidcToken == "" {
 		return Identity{}, fmt.Errorf("no OIDC token presented")
@@ -201,10 +261,11 @@ func (b *OpenBao) ExchangeToken(ctx context.Context, oidcToken string) (Identity
 	// refuses the token, which is a 400 rather than a fact about the caller —
 	// so a refusal only rules out that role, not the request.
 	log := ctrl.LoggerFrom(ctx)
+	mount := b.mountForToken(oidcToken)
 	var lastStatus int
 	var lastReason string
 	for _, role := range roles {
-		id, status, body, err := b.exchangeWithRole(ctx, oidcToken, role)
+		id, status, body, err := b.exchangeWithRole(ctx, oidcToken, role, mount)
 		if err != nil {
 			return Identity{}, err
 		}
@@ -217,7 +278,7 @@ func (b *OpenBao) ExchangeToken(ctx context.Context, oidcToken string) (Identity
 		// dead end: the response cannot carry them, so nothing anywhere did,
 		// and each cause had to be found by reading code instead.
 		log.Info("OpenBao refused a token exchange",
-			"role", role, "mount", b.AuthMount, "status", status,
+			"role", role, "mount", mount, "status", status,
 			"reason", lastReason, "openbao", truncate(body, 300))
 	}
 	// The category, not OpenBao's body: that can name policies and paths the
@@ -230,13 +291,13 @@ func (b *OpenBao) ExchangeToken(ctx context.Context, oidcToken string) (Identity
 // exchangeWithRole performs one login attempt. A non-200 is returned as a
 // status rather than an error, because the caller has another role to try; a
 // transport failure is an error, because it says nothing about the token.
-func (b *OpenBao) exchangeWithRole(ctx context.Context, oidcToken, role string) (Identity, int, string, error) {
+func (b *OpenBao) exchangeWithRole(ctx context.Context, oidcToken, role, mount string) (Identity, int, string, error) {
 	body, _ := json.Marshal(map[string]string{
 		"role": role,
 		"jwt":  oidcToken,
 	})
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
-		fmt.Sprintf("%s/v1/auth/%s/login", b.Addr, b.AuthMount), bytes.NewReader(body))
+		fmt.Sprintf("%s/v1/auth/%s/login", b.Addr, mount), bytes.NewReader(body))
 	if err != nil {
 		return Identity{}, 0, "", err
 	}

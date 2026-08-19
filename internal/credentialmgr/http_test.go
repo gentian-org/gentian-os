@@ -18,6 +18,7 @@ package credentialmgr
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -150,7 +151,7 @@ func newServerAs(t *testing.T, policies []string, meta map[string]string, objs .
 
 	s := &Server{
 		Catalogue:          &Catalogue{Client: c, ProbeNamespace: "gentian-system"},
-		Bao:                NewOpenBao(bao.URL, "secret", "oidc", []string{"cluster-admin-jwt"}, nil, false),
+		Bao:                NewOpenBao(bao.URL, "secret", "oidc", "kernel", []string{"cluster-admin-jwt"}, nil, false),
 		Validator:          stubValidator{},
 		ClusterAdminPolicy: "cluster-admin",
 		TenantClaimKey:     "tenant",
@@ -260,7 +261,7 @@ func TestWriteRequiresCallerToken(t *testing.T) {
 // TestOpenBaoWriteRefusesEmptyToken guards the same property one layer down, so
 // a future handler that forgets the check still cannot write anonymously.
 func TestOpenBaoWriteRefusesEmptyToken(t *testing.T) {
-	b := NewOpenBao("http://openbao.invalid", "secret", "oidc", []string{"cluster-admin-jwt"}, nil, false)
+	b := NewOpenBao("http://openbao.invalid", "secret", "oidc", "kernel", []string{"cluster-admin-jwt"}, nil, false)
 	err := b.Write(context.Background(), "", "gentian/x", map[string]string{"a": "b"}, "alice")
 	if err == nil {
 		t.Fatal("Write accepted an empty caller token")
@@ -482,7 +483,7 @@ func TestExchangeUsesConfiguredMount(t *testing.T) {
 	}))
 	t.Cleanup(srv.Close)
 
-	b := NewOpenBao(srv.URL, "secret", "oidc", []string{"cluster-admin-jwt"}, nil, false)
+	b := NewOpenBao(srv.URL, "secret", "oidc", "kernel", []string{"cluster-admin-jwt"}, nil, false)
 	if _, err := b.ExchangeToken(context.Background(), "a.b.c"); err != nil {
 		t.Fatalf("exchange failed: %v", err)
 	}
@@ -518,7 +519,7 @@ func TestExchangeFallsThroughToNextRole(t *testing.T) {
 	}))
 	t.Cleanup(srv.Close)
 
-	b := NewOpenBao(srv.URL, "secret", "oidc", []string{"cluster-admin-jwt", "tenant-admin-jwt"}, nil, false)
+	b := NewOpenBao(srv.URL, "secret", "oidc", "kernel", []string{"cluster-admin-jwt", "tenant-admin-jwt"}, nil, false)
 	id, err := b.ExchangeToken(context.Background(), "a.b.c")
 	if err != nil {
 		t.Fatalf("exchange failed: %v", err)
@@ -539,7 +540,7 @@ func TestExchangeRejectedByEveryRole(t *testing.T) {
 	}))
 	t.Cleanup(srv.Close)
 
-	b := NewOpenBao(srv.URL, "secret", "oidc", []string{"cluster-admin-jwt", "tenant-admin-jwt"}, nil, false)
+	b := NewOpenBao(srv.URL, "secret", "oidc", "kernel", []string{"cluster-admin-jwt", "tenant-admin-jwt"}, nil, false)
 	_, err := b.ExchangeToken(context.Background(), "a.b.c")
 	if err == nil {
 		t.Fatal("exchange should fail when every role refuses")
@@ -571,7 +572,7 @@ func TestRefusalNamesTheFailedCheck(t *testing.T) {
 			}))
 			t.Cleanup(srv.Close)
 
-			b := NewOpenBao(srv.URL, "secret", "oidc", []string{"cluster-admin-jwt"}, nil, false)
+			b := NewOpenBao(srv.URL, "secret", "oidc", "kernel", []string{"cluster-admin-jwt"}, nil, false)
 			_, err := b.ExchangeToken(context.Background(), "a.b.c")
 			if err == nil {
 				t.Fatal("a refused exchange must be an error")
@@ -597,9 +598,54 @@ func TestRefusalOnAMountThatDoesNotExist(t *testing.T) {
 	}))
 	t.Cleanup(srv.Close)
 
-	b := NewOpenBao(srv.URL, "secret", "jwt", []string{"cluster-admin-jwt"}, nil, false)
+	b := NewOpenBao(srv.URL, "secret", "jwt", "kernel", []string{"cluster-admin-jwt"}, nil, false)
 	_, err := b.ExchangeToken(context.Background(), "a.b.c")
 	if err == nil || !strings.Contains(err.Error(), "not mounted") {
 		t.Fatalf("a 404 should say the backend is not mounted where expected, got: %v", err)
+	}
+}
+
+// jwtWithIssuer builds an unsigned token carrying iss. Unsigned on purpose:
+// routing must not depend on the signature, and OpenBao verifies afterwards.
+func jwtWithIssuer(t *testing.T, iss string) string {
+	t.Helper()
+	payload := base64.RawURLEncoding.EncodeToString([]byte(`{"iss":"` + iss + `"}`))
+	return "eyJhbGciOiJSUzI1NiJ9." + payload + ".sig"
+}
+
+// TestExchangeRoutesByIssuer is the fix for tenant administrators. A tenant
+// member authenticates in their own realm, so their token is signed by that
+// realm — the kernel mount cannot verify it, and the refusal lands on the
+// signature before any claim is read. Each realm gets its own mount.
+func TestExchangeRoutesByIssuer(t *testing.T) {
+	cases := []struct {
+		name, iss, wantMount string
+	}{
+		{"kernel realm uses the configured mount", "https://id.example.test/auth/realms/kernel", "/v1/auth/oidc/login"},
+		{"tenant realm uses its own mount", "https://id.example.test/auth/realms/corp", "/v1/auth/oidc-corp/login"},
+		{"no issuer falls back to the kernel mount", "", "/v1/auth/oidc/login"},
+		{"a non-realm issuer falls back", "https://accounts.google.com", "/v1/auth/oidc/login"},
+		// A crafted issuer must not be able to name an arbitrary mount path.
+		{"a path-traversing realm falls back", "https://id.example.test/auth/realms/../../sys/auth", "/v1/auth/oidc/login"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var got string
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				got = r.URL.Path
+				w.WriteHeader(http.StatusBadRequest)
+			}))
+			t.Cleanup(srv.Close)
+
+			token := "not.a.jwt"
+			if tc.iss != "" {
+				token = jwtWithIssuer(t, tc.iss)
+			}
+			b := NewOpenBao(srv.URL, "secret", "oidc", "kernel", []string{"tenant-admin"}, nil, false)
+			_, _ = b.ExchangeToken(context.Background(), token)
+			if got != tc.wantMount {
+				t.Fatalf("want login at %s, got %s", tc.wantMount, got)
+			}
+		})
 	}
 }
