@@ -402,6 +402,8 @@ spec:
     boundClaims:
       groups: /gentian:platform:superadmin
     boundClaimsType: string
+    claimMappings:
+      preferred_username: username
     roleName: cluster-admin-jwt
     roleType: jwt
     tokenMaxTtl: 3600
@@ -437,6 +439,7 @@ spec:
       groups: /gentian:tenant:*:admins
     boundClaimsType: glob
     claimMappings:
+      preferred_username: username
       tenant: tenant
     roleName: tenant-admin-jwt
     roleType: jwt
@@ -507,6 +510,8 @@ spec:
     boundClaims:
       groups: /gentian:platform:superadmin
     boundClaimsType: string
+    claimMappings:
+      preferred_username: username
     roleName: cluster-admin
     roleType: oidc
     tokenMaxTtl: 3600
@@ -545,6 +550,7 @@ spec:
       groups: /gentian:tenant:*:admins
     boundClaimsType: glob
     claimMappings:
+      preferred_username: username
       tenant: tenant
     roleName: tenant-admin
     roleType: oidc

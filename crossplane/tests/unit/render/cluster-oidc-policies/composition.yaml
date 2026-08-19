@@ -272,6 +272,15 @@ spec:
                 roleName: cluster-admin
                 roleType: oidc
                 userClaim: preferred_username
+                # claimMappings puts the caller's NAME into the token's alias
+                # metadata. user_claim already decides the alias itself, but the
+                # credential manager reads auth.metadata — so without this it saw
+                # an empty name, wrote credentials with no set_by, and recorded
+                # the handover proof against nobody. An audit trail that cannot
+                # say who is most of the reason writes go through a human
+                # identity at all.
+                claimMappings:
+                  preferred_username: username
                 boundAudiences:
                   - {{ $oidc.clientId | default "openbao" | quote }}
                   {{- range (default (list "gentian-portal") $oidc.additionalAudiences) }}
@@ -335,6 +344,8 @@ spec:
                   groups: {{ $oidc.tenantAdminGroup | default "/gentian:tenant:*:admins" | quote }}
                 claimMappings:
                   {{ $oidc.tenantClaim | default "tenant" }}: tenant
+                  # The caller's name, for the same reason as the cluster roles.
+                  preferred_username: username
                 allowedRedirectUris:
                   - {{ printf "%s/ui/vault/auth/oidc/oidc/callback" ($oidc.externalUrl | default "") | quote }}
                   - http://localhost:8250/oidc/callback
@@ -375,6 +386,15 @@ spec:
                 roleName: cluster-admin-jwt
                 roleType: jwt
                 userClaim: preferred_username
+                # claimMappings puts the caller's NAME into the token's alias
+                # metadata. user_claim already decides the alias itself, but the
+                # credential manager reads auth.metadata — so without this it saw
+                # an empty name, wrote credentials with no set_by, and recorded
+                # the handover proof against nobody. An audit trail that cannot
+                # say who is most of the reason writes go through a human
+                # identity at all.
+                claimMappings:
+                  preferred_username: username
                 boundAudiences:
                   - {{ $oidc.clientId | default "openbao" | quote }}
                   {{- range (default (list "gentian-portal") $oidc.additionalAudiences) }}
@@ -413,6 +433,8 @@ spec:
                   groups: {{ $oidc.tenantAdminGroup | default "/gentian:tenant:*:admins" | quote }}
                 claimMappings:
                   {{ $oidc.tenantClaim | default "tenant" }}: tenant
+                  # The caller's name, for the same reason as the cluster roles.
+                  preferred_username: username
                 tokenPolicies:
                   - tenant-admin
                 tokenTtl: 1800
