@@ -65,6 +65,22 @@ _handover_proof_detail() {
         -o jsonpath='{.data.provenBy} at {.data.provenAt}' 2>/dev/null || true
 }
 
+# _bao_reachable — point this shell at OpenBao, or say we cannot ask.
+#
+# Steps cannot assume BAO_ADDR is set. With none, the bao CLI falls back to
+# https://127.0.0.1:8200, which nothing is listening on — and every command
+# fails with connection refused. Resolved the way B-07 does: the ClusterIP if it
+# answers, a port-forward otherwise.
+_bao_reachable() {
+    [[ -n "${BAO_TOKEN:-}" ]] || return 1
+    if BAO_ADDR="$(gentian_service_addr openbao openbao 8200 https)"; then
+        export BAO_ADDR
+        export VAULT_SKIP_VERIFY=true BAO_SKIP_VERIFY=true
+        return 0
+    fi
+    return 1
+}
+
 # _oidc_write_path_ready — every link between a human and an OpenBao token.
 #
 # Prints what is missing, because "refused to revoke" is only actionable if it
@@ -128,6 +144,20 @@ check() {
     # install rather than a cluster whose administrator has not signed in yet.
     _handover_proven || return "${CHECK_UNDEFINED}"
 
+    # Reachability BEFORE the question, and its own verdict when absent.
+    #
+    # This step reports satisfied when the token no longer authenticates, and
+    # it asked by negating `bao token lookup` — so a shell that could not reach
+    # OpenBao at all got connection refused, the negation turned that into
+    # true, and the step reported the bootstrap token revoked when it was still
+    # live. The driver then skipped the one action that closes the install, and
+    # the run ended in "Bootstrap complete".
+    #
+    # Nothing about a failed connection says anything about a token. That is
+    # CHECK_UNDEFINED, and it is the distinction this whole step exists to
+    # insist on: observe the fact, never infer it from a proxy.
+    _bao_reachable || return "${CHECK_UNDEFINED}"
+
     ! bao token lookup >/dev/null 2>&1
 }
 
@@ -162,6 +192,13 @@ apply() {
     fi
 
     info "Administrator sign-in confirmed ($(_handover_proof_detail))."
+
+    if ! _bao_reachable; then
+        error "Cannot reach OpenBao on :8200, and no BAO_TOKEN in this shell."
+        error "  Neither the ClusterIP nor a kubectl port-forward responded, so"
+        error "  the token cannot be revoked from here. Nothing was changed."
+        return 1
+    fi
 
     if [[ -z "${BAO_TOKEN:-}" ]]; then
         info "No bootstrap token in this shell; nothing to revoke."
