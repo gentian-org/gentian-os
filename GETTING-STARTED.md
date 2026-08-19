@@ -45,7 +45,7 @@ ready — step 11 covers how to tell the difference.
 
 Nor is it the same as the cluster being *yours*: phase E ends by revoking the
 credential the installer used, and it will not do that until an administrator
-has signed in. Step 13 is that handover, and the cluster holds tenants back
+has signed in. Step 12 is that handover, and the cluster holds tenants back
 until it is done.
 
 ---
@@ -185,7 +185,7 @@ recovers it from there instead of asking again — so a resumed install does not
 re-ask. Nothing is written to this machine except a short-lived cache that step
 `B-10-seed-secrets` deletes.
 
-**Everything else is supplied after the cluster is up, not now** and step 12 is where they get set. 
+**Everything else is supplied after the cluster is up, not now** — you set them when you first sign in, in step 12.
 
 **The Cloudflare token is only optional if this cluster's issuer does not need
 it.** Under the default `acme-dns01`, DNS-01 issues every kernel certificate,
@@ -280,58 +280,7 @@ kubectl get managed
 kubectl get application,applicationset -n argocd
 ```
 
-## 12. Supply the runtime credentials
-
-The four from step 6 got the cluster up. The rest are supplied now, through the
-credential manager the cluster runs — the SMTP relay, the ArgoCD webhook secret,
-and anything a claim you add later declares.
-
-`make check-credentials` lists what is outstanding. A claim waiting on one says
-so itself, and resumes on its own when the value arrives; nothing has to be
-re-run.
-
-The manager serves `/v1/credentials` from the operator. It validates a value
-against its own endpoint before storing it, so a bad token is a rejection rather
-than a stalled provisioning run an hour later. It writes with **your** Keycloak
-identity, not a service token, so the audit device records who set what. It
-never returns a stored value — existence, who set it and when, and the last
-validation result, and nothing more.
-
-Lost credentials are rotated, not recovered.
-
-### The SMTP relay, and what waits on it
-
-`smtp-relay` is the one most clusters notice, because the things it blocks fail
-late and elsewhere. Without it Keycloak realms have no `smtpServer`, so the
-portal refuses member invitations with
-
-```text
-503: Invitation email is unavailable: tenant realm SMTP is not configured
-```
-
-and tenants provision perfectly well right up until somebody tries to invite
-their first user.
-
-Supply it here, once, and it reaches both senders on its own: External Secrets
-copies it from OpenBao into Postfix's configuration and into
-`keycloak-smtp-credentials`, and the operator configures each tenant realm on
-its next reconcile. Nothing needs re-running — that is what `phase: runtime`
-means. Existing tenants are picked up too; a realm is configured whenever the
-credential is there, not only at creation.
-
-To check it landed:
-
-```bash
-kubectl get secret keycloak-smtp-credentials -n platform-kernel \
-  -o jsonpath='{.data.smtp_configure}' | base64 -d    # true once usable
-```
-
-`false` means the Secret rendered but the credential is still missing — the
-cluster's own mail settings are there, the relay's username and password are
-not. On `mail.serviceMode: kernel` this Secret is written by the installer
-instead, because that mode's submission password is derived rather than stored.
-
-## 13. Hand the cluster over
+## 12. Hand the cluster over
 
 The install is not finished when it says "bootstrap complete". Two things are
 still true: the installer holds a credential that can write every secret in the
@@ -361,6 +310,13 @@ browser.
 If the record below does not appear, open the Admin Console and select the
 Credentials tab, which performs the same exchange.
 
+**On this first sign-in, open that tab and supply the runtime credentials.** It
+lists what the cluster still wants — the SMTP relay, any app repository you add
+and its pull secret, and anything a later claim declares. Values are validated
+before they are stored, and whatever was waiting on one picks it up on its own.
+Do the SMTP relay first: without it no realm can send, so tenants provision
+cleanly and then refuse to invite anybody.
+
 Then revoke the installer's credential:
 
 ```bash
@@ -381,56 +337,15 @@ kubectl get configmap gentian-handover -n gentian-system -o yaml
 `writePathProven: "true"` means the exchange has succeeded at least once.
 `bootstrapCredentialRevoked: "true"` means handover is complete.
 
-Until it is, **creating tenants is held back.** Not because tenants need this
-path — they do not — but because re-initialising OpenBao regenerates every
-derived credential, which is an inconvenience on an empty cluster and a data
-loss on one carrying tenants. The gate keeps the cheap recovery available until
-you no longer need it.
+Until it is, **creating tenants is held back.** 
 
-### After handover, re-runs need the salt handed to them
+## 13. Create your first tenant
 
-Handover revokes the installer's OpenBao token, and that token is how a re-run
-used to recover `DERIVATION_SALT`. Afterwards the installer reads the salt from
-`crossplane-system/gentian-os-master-password` instead, which needs no OpenBao
-credential — so a plain re-run derives the same credentials it always did.
-
-What it must never do is derive with a *different* salt. Every kernel
-credential is `HMAC(master+salt, …)`, so a second salt renames all of them at
-once: the cluster keeps working on the old values while the installer computes
-new ones and prints them as if they were current. If the install summary warns
-that this shell's inputs are not the cluster's, that is what it has detected —
-supply the right ones rather than running anything further.
-
-### The portal password does not work
-
-The password in the install summary is *derived*, not read back from Keycloak.
-If `administrator@<kernel domain>` is refused, ask the cluster what its inputs
-are and derive from those:
+Scaffold the definition:
 
 ```bash
-kubectl get secret gentian-os-master-password -n crossplane-system \
-  -o jsonpath='{.data.password}' | base64 -d > /tmp/mp
-kubectl get secret gentian-os-master-password -n crossplane-system \
-  -o jsonpath='{.data.salt}' | base64 -d > /tmp/salt
-printf 'portal-bootstrap:administrator_password' |
-  openssl dgst -sha256 -hmac "$(cat /tmp/mp)$(cat /tmp/salt)" | awk '{print $2}'
-shred -u /tmp/mp /tmp/salt
+./install.sh --prepare-tenant acme
 ```
-
-That is the password Keycloak was given, as long as nothing has re-run the
-portal bootstrap with different inputs since. On a cluster whose
-`secretMode` is `random` this does not apply — the password is stored, not
-derived, at `identity/portal-admin` in OpenBao.
-
-To make the cluster take a new password instead, re-run the portal step with
-the inputs exported, which rewrites the credential in Keycloak:
-
-```bash
-export MASTER_PASSWORD=... DERIVATION_SALT=...
-./install.sh --force --only D-05
-```
-
-## 14. Create your first tenant
 
 A tenant is authored, then deployed. Two directories, and the difference
 matters:
@@ -440,21 +355,18 @@ matters:
 - `tenants/<name>/` — what Argo CD syncs. Written by the deploy command, and
   written again by the operator every time an app is installed from the store.
 
-Scaffold the definition:
 
-```bash
-./install.sh --prepare-tenant acme
-```
-
-It asks for a display name and an administrator email, then writes
+It asks for a display name, then writes
 `clusters/<cluster-id>/definitions/tenants/acme/tenant.yaml`. Nothing is deployed,
 committed or applied.
 
-Choose the tenant's apps in that file:
+To install apps for the tenant, log in as tenant admin and open the app store or:
 
 ```bash
 kubectl gentian apps list          # what this cluster offers
 ```
+
+and then add the apps of interest to the tenant profile.
 
 ```yaml
   apps:
@@ -557,7 +469,7 @@ what is already done, so convergence and update are the same operation.
 
 ## Next steps
 
-- **Add more tenants** — repeat step 14. Day-to-day operations are in
+- **Add more tenants** — repeat step 13. Day-to-day operations are in
   [docs/commands.md](docs/commands.md).
 - **Configure mail** — [docs/design/mail.md](docs/design/mail.md). Mail between
   users of this cluster works once the kernel mail stack is deployed; mail to and
@@ -570,5 +482,36 @@ what is already done, so convergence and update are the same operation.
   [docs/deployment.md](docs/deployment.md) explains the layering.
 - **Understand the architecture** — [docs/architecture.md](docs/architecture.md)
   and [docs/design/kernel.md](docs/design/kernel.md).
-- **Back up the data** — the recovery kit in step 9 covers credentials, not
+- **Back up the data** — the recovery kit in step 10 covers credentials, not
   databases or object storage.
+
+## Troubleshooting
+
+### The portal password does not work
+
+The password in the install summary is *derived*, not read back from Keycloak.
+If `administrator@<kernel domain>` is refused, ask the cluster what its inputs
+are and derive from those:
+
+```bash
+kubectl get secret gentian-os-master-password -n crossplane-system \
+  -o jsonpath='{.data.password}' | base64 -d > /tmp/mp
+kubectl get secret gentian-os-master-password -n crossplane-system \
+  -o jsonpath='{.data.salt}' | base64 -d > /tmp/salt
+printf 'portal-bootstrap:administrator_password' |
+  openssl dgst -sha256 -hmac "$(cat /tmp/mp)$(cat /tmp/salt)" | awk '{print $2}'
+shred -u /tmp/mp /tmp/salt
+```
+
+That is the password Keycloak was given, as long as nothing has re-run the
+portal bootstrap with different inputs since. On a cluster whose
+`secretMode` is `random` this does not apply — the password is stored, not
+derived, at `identity/portal-admin` in OpenBao.
+
+To make the cluster take a new password instead, re-run the portal step with
+the inputs exported, which rewrites the credential in Keycloak:
+
+```bash
+export MASTER_PASSWORD=... DERIVATION_SALT=...
+./install.sh --force --only D-05
+```
