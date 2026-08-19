@@ -31,7 +31,12 @@ jobs:
       - name: Install setup-envtest
         run: go install sigs.k8s.io/controller-runtime/tools/setup-envtest@latest
         env:
-          GOTOOLCHAIN: auto
+          # A toolchain that exists. setup-envtest declares go 1.26.0, and auto
+          # resolves that to the newest 1.26.x it believes in — currently
+          # go1.26.7, which is not published as a toolchain module and answers
+          # 404. The step then fails before any test runs, so every commit shows
+          # a red Go job whatever it changed, including shell-only ones.
+          GOTOOLCHAIN: go1.26.0
 
       - name: Download envtest binaries
         run: |
