@@ -28,6 +28,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -637,18 +638,54 @@ func (r *TenantExportReconciler) persist(ctx context.Context, export *gentianov1
 	return r.Status().Update(ctx, export)
 }
 
-// exportAppSet resolves which apps to capture, honouring spec.apps when set.
+// exportAppSet resolves which apps to capture.
+//
+// The App claims in the tenant namespace are the authority, not
+// Tenant.spec.apps. They are not the same list: a Composition may install an
+// app the tenant never asked for by name — the LLM wiring adds open-webui to
+// every tenant on a cluster with llmSupport enabled — and such an app has a
+// database and volumes like any other. Reading spec.apps alone silently
+// skipped it, producing a backup that looked complete and was not, which is
+// the one failure this whole subsystem exists to prevent.
+//
+// spec.apps is still unioned in, so an app whose claim has not appeared yet is
+// captured rather than quietly dropped.
 func (r *TenantExportReconciler) exportAppSet(
-	_ context.Context,
+	ctx context.Context,
 	tenant *gentianov1alpha1.Tenant,
 	export *gentianov1alpha1.TenantExport,
 ) ([]string, error) {
-	installed := make([]string, 0, len(tenant.Spec.Apps))
-	for _, app := range tenant.Spec.Apps {
-		if app.Profile != "" {
-			installed = append(installed, app.Profile)
+	seen := map[string]struct{}{}
+	var installed []string
+	add := func(name string) {
+		if name == "" {
+			return
+		}
+		if _, ok := seen[name]; ok {
+			return
+		}
+		seen[name] = struct{}{}
+		installed = append(installed, name)
+	}
+
+	claims := &unstructured.UnstructuredList{}
+	claims.SetGroupVersionKind(appClaimGVK.GroupVersion().WithKind("AppList"))
+	if err := r.List(ctx, claims, client.InNamespace(backup.TenantNamespace(tenant.Name))); err != nil {
+		// Not fatal on its own: spec.apps still gives a usable set, and an
+		// export that captures the declared apps beats one that refuses.
+		log.FromContext(ctx).Error(err, "listing App claims; falling back to spec.apps",
+			"tenant", tenant.Name)
+	} else {
+		for i := range claims.Items {
+			add(appClaimProfile(&claims.Items[i]))
 		}
 	}
+
+	for _, app := range tenant.Spec.Apps {
+		add(app.Profile)
+	}
+	sort.Strings(installed)
+
 	if len(export.Spec.Apps) == 0 {
 		return installed, nil
 	}
@@ -664,6 +701,21 @@ func (r *TenantExportReconciler) exportAppSet(
 		}
 	}
 	return selected, nil
+}
+
+// appClaimProfile returns the profile an App claim installs.
+//
+// spec.profileRef.name is what the Compositions set; spec.profile is the older
+// spelling, and the claim's own name is the last resort, since app-default
+// names each claim after its profile.
+func appClaimProfile(claim *unstructured.Unstructured) string {
+	if name, ok, _ := unstructured.NestedString(claim.Object, "spec", "profileRef", "name"); ok && name != "" {
+		return name
+	}
+	if name, ok, _ := unstructured.NestedString(claim.Object, "spec", "profile"); ok && name != "" {
+		return name
+	}
+	return claim.GetName()
 }
 
 func (r *TenantExportReconciler) SetupWithManager(mgr ctrl.Manager) error {
