@@ -1175,10 +1175,10 @@ mirror, so "exercised" below never means more than that.
 | 4 | 4a exercised, **4b half** | Mail, LLM, portal and tenant reconcile still name applications. Blocked on the reconciler audit (§15.2) |
 | 5 | Exercised | `kernel/argocd/repos/*.yaml` and the infra chart registry are not yet claims |
 | 6 | Built | ESO's live verdict and the unsatisfied→satisfied transition are unverified |
-| 7 | **Built, partly exercised** | Login works and the policies are asserted by `make test-policy`. Nothing has authenticated through the *live* OIDC path, and the audit device is unobserved |
-| 8 | Built | The service's own ServiceAccount policy is uninspected |
+| 7 | **Built, partly exercised** | Login works and the policies are asserted by `make test-policy`. The *live* OIDC write path has now been attempted and was broken three independent ways — wrong mount, wrong role type, missing audience (§15.4). All three are fixed; none has yet carried a successful exchange, and the audit device is unobserved |
+| 8 | Built, running, never successful | The service runs, is reachable from the portal, and has never completed a token exchange. Its own ServiceAccount policy is still uninspected, and it logs nothing about a refused exchange — every diagnosis so far has come from reading the code |
 | 9 | Built | No shared API contract tests; validation errors are not attributed per field |
-| 10 | **10a/10b done, 10c mostly** | `envsubst`, the `.tmpl` files and `cluster-settings.env` are gone; the credential manager is built but unexercised (row 7) |
+| 10 | **10a/10b done, 10c mostly** | `cluster-settings.env` is gone and no `envsubst` call site remains — but one orphaned `${GENTIAN_OS_IMAGE_REPOSITORY}` survived inside a Helm template, where nothing expands it, and silently disabled image updates (§15.4). The credential manager is built but has never authenticated (row 7) |
 | 11 | Done | BSD `sed_inplace` has not been observed running |
 | 12 | 12a–12d and 12f built, **12e not** | Provider RBAC is still `cluster-admin`, deliberately. 12f is built against renders only — no cluster has been installed on a platform other than OpenStack, or a zone other than Cloudflare |
 | 13 | Portability done | arm64, internal domain and mirror remain structural claims. The CA-bundle distribution contract (12c) is undefined, so `self-signed` and `private-ca` install without giving any client the anchor |
@@ -2262,6 +2262,7 @@ scope and should be folded into it rather than fixed twice.
 | **`manager` binary in Git history** — a 45.6 MB compiled artefact committed in `02235d7` (2026-06-07). Untracked now, and `/manager` is in `.gitignore`, which closes the hole: `make build` writes `bin/manager` but the Dockerfile builds `-o manager` at the workspace root, so running that build outside Docker drops the artefact beside the Makefile. The blob is still in history — one commit — so a clone still pays 45 MB against an 8.7 MB tree. | `git rev-list --objects --all \| grep ' manager$'` | Rewriting history would remove it, at the cost of invalidating every existing clone and fork. That is a call for whoever owns the remote, not a cleanup task. |
 | ~~**Kernel mail install path applies directories that no longer exist.**~~ **Fixed.** `deploy_kernel_mail_services` and its call site are deleted; Postfix and Dovecot arrive through the `09-infra-helm` ApplicationSet, which was already doing the work. |  |  |
 | **(original finding, for reference)** `deploy_kernel_mail_services()` runs `kubectl apply -f kernel/services/{postfix,dovecot}/manifests/${env}/`, but those services were converted to env-parameterised Helm charts (`manifests/Chart.yaml` + `templates/` + `values.yaml`) with no per-stage subdirectory. It also waits on `externalsecret/dovecot-sensitive-values`, which the dovecot chart does not template. Any `MAIL_SERVICE_MODE=kernel` install fails here. | `scripts/lib/common.sh:2032`, `:2041` | **Phase 4b.** Postfix and Dovecot already arrive via the `09-infra-helm` ApplicationSet; delete `deploy_kernel_mail_services` rather than repair it. |
+| **The repository contradicts itself about its own licence.** `LICENSE` at the root is AGPL-3.0. `hack/boilerplate.header.txt` — the header `goheader` enforces in CI — is Apache-2.0, and every Go file carries the Apache text. Both sides are internally consistent and they disagree, so a new Go file has even odds of failing the build: three did in three days (`mail_apppassword.go`, `mail_apppassword_test.go`, `mail_dnsendpoint.go`), each written with the SPDX AGPL header that matches `LICENSE`. Patching each file green treats the symptom. | `LICENSE`, `hack/boilerplate.header.txt`, `.golangci.yml` | Decide which licence applies, then make the other side follow — either relicense the headers or replace the template. Not a cleanup task: it is a licensing decision for whoever owns the project. |
 | **`make clean` destroys hand-maintained fixtures.** `rm -rf config/crd/*.yaml` also deletes the envtest stubs (`gentianos.io_apps.yaml`, `gentianos.io_xtenants.yaml`) and six vendored third-party CRDs, none of which `make manifests` regenerates. `make clean && make manifests` silently breaks the envtest suite. | `Makefile:92` | Narrow the glob to `config/crd/gentianos.io_{appcatalogues,appgrants,apppackages,appprofiles,customizations,integrationbindings,oidcpackcatalogs,platformsecuritypolicies,tenants}.yaml`, or move the hand-maintained files to `config/crd/fixtures/`. |
 
 ### 14.2 Dead code and empty scaffolding
@@ -2305,7 +2306,7 @@ installer writes containing secret material, not just the cache.
 |---|---|
 | `architecture.md` §8 "Repository Structure" claims `crossplane/functions/` holds composition functions (it is empty) and omits `internal/`, `api/`, `charts/`, `scripts/`, `authz/`, `config/`. | Replace the tree with a pointer to `docs/folder-structure.md`. |
 | `charts/infra/{mariadb,postgresql}/README.md.gotmpl.tpl` are Bitnami readme-generator leftovers sitting beside the real `.gotmpl`. | Delete; note in the chart's `UPSTREAM.md`. |
-| `GETTING-STARTED.md` is 34 KB and documents the current `install.sh` / `uninstall.sh` / `update.sh` split. Phases 0a and 0b invalidate most of it. | Rewrite as part of Phase 0b, not after it. Much of its length exists to explain sequencing that the driver's own output will make self-evident. |
+| ~~`GETTING-STARTED.md` is 34 KB and documents the `install.sh` / `uninstall.sh` / `update.sh` split.~~ **Done.** Rewritten to 19 KB against the driver: no mention of the deleted scripts remains, and the flags that used to interrupt the narrative live in an *Advanced install options* appendix. The prediction held — most of the removed length was sequencing the driver's own output now explains. |
 
 ---
 
@@ -2362,7 +2363,7 @@ They are gathered here because they are the whole point of the run.
 | ESO's actual verdict on the satisfaction probes | Phase 6, criterion 1 | **Verified.** `make check-credentials` reads four required credentials Ready and two `optional unset` — `infra-chart-registry` because the cluster pulls charts publicly, `argocd-github-webhook` because it is `phase: runtime`. Satisfaction is observable as a Kubernetes condition with nothing polling OpenBao, which is what §4 claims |
 | A tenant can be provisioned | E-01/E-02, and the product's purpose | **Verified.** A tenant is admitted, reaches Ready, serves its apps through the portal, and is removed again cleanly. Its admin signs in at the derived address, and Postfix accepts mail for the tenant's own domain. The admission webhook refuses one naming an AppProfile the cluster does not have, and that rollback leaves `definitions/` intact. The remaining gap is Dovecot, which has nowhere to store what Postfix accepts (§15.4) |
 | The unsatisfied → satisfied transition unblocks composition without intervention | Phase 6, criterion 4 | **Verified.** Every provider-vault resource sat `SYNCED=False` on a missing `openbao-crossplane-token`; when the credential arrived they reconciled and the XCluster reached Ready with nothing re-run |
-| OIDC login yields a policy set from Keycloak groups; a named write appears in the audit device | Phase 7, criteria 1–2 | **Login verified, audit device not.** A tenant admin signs in at the shared portal with the derived address and reaches the desktop and Admin Console. Whether a named write reaches the audit device is still unobserved |
+| OIDC login yields a policy set from Keycloak groups; a named write appears in the audit device | Phase 7, criteria 1–2 | **Login verified, exchange not, audit device not.** A tenant admin signs in at the shared portal and reaches the desktop and Admin Console. The *token exchange* — the half that yields a policy set — has never succeeded: see §15.4, three separate causes, all fixed and none yet confirmed on a cluster. Group membership was correct throughout and was never the reason |
 | The policies permit and deny what they claim | Phase 7, criterion 5 | **Verified.** `make test-policy` asserts 17 capabilities against a throwaway OpenBao and 5 checks against the OpenFGA model, and is mutation-tested. Until this ran, the cluster-admin and tenant-admin policies were outside every test: the render fixture omitted `spec.oidc`, so `{{- if $oidc.discoveryUrl }}` was false and neither policy was emitted |
 | The bootstrap token is genuinely invalid afterwards | Phase 7, criterion 3 | **Still unverified.** Phase E is reached now, so the check is available: `bao token lookup` with the root token from the init file must be refused. Nobody has run it |
 | An arm64 install; an internal-domain install with `self-signed`; a mirrored install making no upstream request | Phase 12, criteria 4 and 6 | **Still unverified.** Three separate installs |
@@ -2706,6 +2707,55 @@ caught.
 The two layers are complementary. `cluster-oidc-policies` asserts the policy *text* renders;
 this asserts what the text *means*. Neither subsumes the other — a golden file is regenerated by
 `make test-unit-render-update`, so text alone would let a weakened policy through.
+
+**The OIDC write path was broken three ways, and one error message hid all of them.** The
+Credentials tab reported *OpenBao refused the token — check that you are in the cluster-admin
+group*. Group membership was correct every time. The causes, in the order they were removed:
+
+- The service logged in at `auth/jwt/login`. The backend is enabled with `-path=oidc`, so the
+  endpoint is `auth/oidc/login`; nothing was mounted at `jwt` at all. The mount is configuration
+  now rather than the plugin's default name.
+- Both roles were `role_type: oidc`, which serves the browser flow into OpenBao's UI. The JWT
+  plugin refuses a direct token exchange against such a role, and a direct exchange is exactly what
+  this service does. Two `jwt`-typed roles were added beside them — not instead of them, because
+  `oidc.externalUrl` is configured and the browser flow is real.
+- Nothing created an audience mapper. OpenBao's roles bind `bound_audiences` to `openbao`, and a
+  Keycloak *access* token does not carry the requesting client in `aud` — `azp` names the client,
+  and `aud` holds only what a mapper puts there. `grep audience` across the Composition and the
+  bootstrap job returned nothing.
+
+A fourth defect sat underneath: the service exchanged against one fixed role, so no tenant admin
+could ever have authenticated even with the other three fixed. It now offers the token to each role
+in turn and lets OpenBao decide, which is what the viewer already assumed — it is derived from the
+policies on the returned token, not from a role name.
+
+Two lessons outlast the bugs. **The tests agreed with the bug**: the fake OpenBao in
+`http_test.go` matched `/auth/jwt/login`, so the suite stayed green while the UI could not
+authenticate at all — a stub that encodes the same wrong assumption as the code tests nothing.
+And **the message named the one thing that was correct**. A refusal should report which check
+failed — audience, claims, or role — and the service should log the exchange at all; it currently
+logs nothing about a refusal, which is why every round of this was diagnosed by reading code.
+
+**`argocd-image-updater` had never updated the operator image on any cluster.** The `image-list`
+annotation reached the cluster as the literal string `gentianos=${GENTIAN_OS_IMAGE_REPOSITORY}` —
+shell syntax in a Helm template, which nothing expands, in a file where every other line already
+used `{{ .Values… }}` and where `osImageRepository` was defined, passed by the installer, and used
+correctly a hundred lines below.
+
+The controller looked for a repository literally named `${GENTIAN_OS_IMAGE_REPOSITORY}`, found
+none, and skipped it — reporting `images_considered=2 images_skipped=1 images_updated=0 errors=0`
+every two minutes with a condition of *No errors*. Nothing said a tracked image was unresolvable.
+The cluster ran whatever `:develop` happened to be cached when a chart change last restarted the
+pod, while CI published build after build; several fixes were tested against a binary that did not
+contain them. `gentian-portal`, whose `image-list` carries literal repositories, was updated
+correctly by the same controller in the same cycles — which is what made the difference visible.
+
+This is a §10c residue, and the reason that row now says *no `envsubst` call site remains* rather
+than *`envsubst` is gone*: removing the caller does not remove the placeholders it used to expand,
+and a placeholder in a Helm template is indistinguishable from ordinary text. The generalisable
+fix is the one `lint-cluster-config-keys.py` already applies to a different agreement — a lint that
+fails on `${UPPER_CASE}` inside `charts/**` and `kernel/**` templates, excluding shell bodies in
+ConfigMaps. It does not exist yet.
 
 **The credential manager's ServiceAccount policy is uninspected.** Phase 8, criterion 7. The
 service has no OpenBao identity by construction, but "by construction" is an argument, not an
