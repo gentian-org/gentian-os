@@ -154,6 +154,17 @@ data:
           secretName: postfix-dkim-tenants
           defaultMode: 0400
     extraVolumeMounts:
+      # Postfix warns about this mount on every start:
+      #
+      #   warning: group or other writable:
+      #     /etc/postfix/./kernel-maps/virtual_mailbox_domains
+      #
+      # Expected, and not worth restructuring for. The files are 0644 and the
+      # payload directory 0755; it is the volume ROOT that is 0777, because
+      # that is how kubelet creates a ConfigMap mount and defaultMode does not
+      # reach it. postfix-script walks the path, sees a world-writable parent,
+      # and says so. The maps still load — `postmap -q <domain>
+      # texthash:/etc/postfix/kernel-maps/virtual_mailbox_domains` answers OK.
       - name: kernel-maps
         mountPath: /etc/postfix/kernel-maps
         readOnly: true
