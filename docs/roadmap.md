@@ -209,6 +209,19 @@ For the current baseline design of the system, refer to [architecture.md](archit
 
 ---
 
+### 1.22 Make the Cluster Claim's Egress Host Do Something (**)
+* **Target Domain**: Kernel Mail Deliverability
+* **Context**: `spec.mail.egressHost` is declared on the Cluster XRD, and its description says Postfix greets remote servers with that name and is pinned to the node carrying the floating IP. No Composition reads it, so neither happens — the field is inert, and the description promises behaviour nothing implements. The value reaches Postfix only as a Helm parameter the installer sets on the appsets Application, which means it cannot be changed without re-running the installer, and reaches the operator by a second, unrelated path: the `mailEgressHost` key in the cluster's deployments values file. Two sources for one fact, and the claim — the thing an administrator would naturally edit — is the one that does nothing. Concretely on ifk-w4h: Postfix greets as `mail.gtn.host` while the sending address reverses to `out.gtn.host`, and nothing pins the Pod to the node holding that address, so a reschedule moves mail to a different egress IP and invalidates both SPF and the PTR at once.
+* **Proposed Solution**: Have the Cluster composition carry `mail.egressHost` through to the Postfix release the same way the other kernel service settings travel, so the claim is the single source and the installer parameter can go. Until then the two places must be set together, which is exactly the drift this is about.
+* **Backlog Items**:
+  - `[ ]` Consume `spec.mail.egressHost` in the Cluster composition rather than declaring it and stopping there.
+  - `[ ]` Set Postfix `myhostname` from it, so the HELO name matches the PTR of the address it sends from.
+  - `[ ]` Pin Postfix to the node carrying the floating IP, so a reschedule cannot silently change the sending address.
+  - `[ ]` Collapse `mailEgressHost` in the deployments values onto the same source, so SPF and HELO cannot disagree.
+  - `[ ]` Fail the install when `mail.egressHost` names an address the cluster does not actually send from, rather than publishing an SPF record that authorises the wrong host.
+
+---
+
 ## 2. Platform, Infrastructure & Lifecycle
 
 ### 2.1 Keycloak Provider & Crossplane Consolidation (*)
