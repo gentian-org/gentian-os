@@ -123,14 +123,14 @@ Usage:
       kernel provisioning Jobs) so reinstall starts from a clean slate.
 
     kubectl gentian tenants list
-      List tenant definitions for clusters/<cluster> (definitions/ and tenants/).
+      List tenant definitions for clusters/<cluster> (definitions/tenants/ and tenants/).
       ACTIVE=yes when deployed under tenants/<name>/ (GitOps sync path).
-      ACTIVE=no when defined only under definitions/<name>/.
+      ACTIVE=no when defined only under definitions/tenants/<name>/.
       LIVE=yes when the Tenant CR exists on the cluster.
 
     kubectl gentian tenants deploy <instance>
       Deploy a tenant by applying clusters/<cluster>/tenants/<instance>/.
-      If not yet deployed, copies the definition from definitions/<instance>/.
+      If not yet deployed, copies the definition from definitions/tenants/<instance>/.
 
     kubectl gentian tenants undeploy <instance> [--purge|-f]
       Undeploy a tenant instance by removing clusters/<cluster>/tenants/<instance>/
@@ -684,13 +684,42 @@ tenant_tenants_root() {
   echo "${DEPLOYMENTS_PATH}/clusters/${DEPLOYMENTS_CLUSTER}/tenants"
 }
 
+# definitions/ holds two unrelated things, so each has its own subdirectory.
+#
+# Tenant definitions used to sit directly under definitions/, beside the shared
+# components/ directory — which meant every listing had to know that one entry
+# in a directory of tenants was not a tenant, and skip it by name. Anything else
+# added there later would have been read as a tenant with a missing tenant.yaml.
 tenant_definitions_root() {
+  echo "${DEPLOYMENTS_PATH}/clusters/${DEPLOYMENTS_CLUSTER}/definitions/tenants"
+}
+
+tenant_components_root() {
+  echo "${DEPLOYMENTS_PATH}/clusters/${DEPLOYMENTS_CLUSTER}/definitions/components"
+}
+
+# The pre-move location, read only so a checkout that has not been migrated
+# still works. Everything WRITES to the new one.
+tenant_legacy_definitions_root() {
   echo "${DEPLOYMENTS_PATH}/clusters/${DEPLOYMENTS_CLUSTER}/definitions"
 }
 
 tenant_definition_dir() {
   local instance="${1}"
-  echo "$(tenant_definitions_root)/${instance}"
+  local current legacy
+  current="$(tenant_definitions_root)/${instance}"
+  [[ -f "${current}/tenant.yaml" ]] && { echo "${current}"; return 0; }
+
+  legacy="$(tenant_legacy_definitions_root)/${instance}"
+  if [[ -f "${legacy}/tenant.yaml" ]]; then
+    echo "NOTE: tenant '${instance}' is defined at the old path definitions/${instance}/." >&2
+    echo "      Move it to definitions/tenants/${instance}/ — that is where new ones are written." >&2
+    echo "${legacy}"
+    return 0
+  fi
+  # Neither exists: name the new one, so the error a caller prints points at
+  # the path they should create rather than the one being retired.
+  echo "${current}"
 }
 
 write_tenant_stage_kustomization() {
@@ -720,7 +749,7 @@ EOF
 # what every tenant gets, and a stale value silently misroutes tenant mail.
 ensure_tenant_defaults_component() {
   local comp_dir kernel_domain claim
-  comp_dir="$(tenant_definitions_root)/components/tenant-defaults"
+  comp_dir="$(tenant_components_root)/tenant-defaults"
 
   [[ -f "${comp_dir}/kustomization.yaml" ]] && return 0
 
@@ -786,7 +815,7 @@ scaffold_tenant_from_definition() {
 
   if [[ ! -d "${definition_dir}" ]]; then
     echo "ERROR: tenant '${instance}' is not defined at ${definition_dir}." >&2
-    echo "Expected: clusters/${DEPLOYMENTS_CLUSTER}/definitions/${instance}/tenant.yaml" >&2
+    echo "Expected: clusters/${DEPLOYMENTS_CLUSTER}/definitions/tenants/${instance}/tenant.yaml" >&2
     echo "Or an active deploy path: clusters/${DEPLOYMENTS_CLUSTER}/tenants/${instance}/" >&2
     exit 1
   fi
@@ -807,7 +836,7 @@ scaffold_tenant_from_definition() {
     git add "clusters/${DEPLOYMENTS_CLUSTER}/tenants/${instance}"
   )
   git_commit_push "feat(${instance}): deploy tenant definition for ${env_name}"
-  echo "Activated tenant '${instance}' from definitions/${instance}/."
+  echo "Activated tenant '${instance}' from definitions/tenants/${instance}/."
 }
 
 ensure_tenant_instance_dir() {
@@ -1529,7 +1558,7 @@ rollback_deploy() {
     return 1
   fi
 
-  echo "Rollback completed: tenant '${tenant_name}' removed from cluster and deactivated in Git (definition preserved under definitions/)." >&2
+  echo "Rollback completed: tenant '${tenant_name}' removed from cluster and deactivated in Git (definition preserved under definitions/tenants/)." >&2
   return 1
 }
 
@@ -1744,10 +1773,13 @@ tenant_collect_instance_names() {
   # associative arrays, and this one was only ever used as a set of names.
   local instances=()
 
-  for tenant_dir in "${tenants_root}"/* "${definitions_root}"/*; do
+  # definitions/* as well as definitions/tenants/*: a checkout that has not
+  # been migrated still lists its tenants. The tenant.yaml test is what keeps
+  # components/ out of the result now, rather than a name it had to know.
+  for tenant_dir in "${tenants_root}"/* "${definitions_root}"/* \
+                    "$(tenant_legacy_definitions_root)"/*; do
     [[ -d "${tenant_dir}" ]] || continue
     instance="$(basename "${tenant_dir}")"
-    [[ "${instance}" == "components" ]] && continue
     [[ -f "${tenant_dir}/tenant.yaml" ]] || continue
     instances+=("${instance}")
   done
@@ -1784,7 +1816,7 @@ cmd_tenant_list() {
       active="yes"
     else
       active="no"
-      tenant_file="${definitions_root}/${instance_name}/tenant.yaml"
+      tenant_file="$(tenant_definition_dir "${instance_name}")/tenant.yaml"
     fi
 
     tenant_name="$(tenant_instance_name_from_patch "${tenant_file}")"
@@ -1802,7 +1834,7 @@ cmd_tenant_list() {
   done < <(tenant_collect_instance_names)
 
   if [[ "${found}" -eq 0 ]]; then
-    echo "No tenant definitions found under clusters/${DEPLOYMENTS_CLUSTER}/definitions/* or tenants/*."
+    echo "No tenant definitions found under clusters/${DEPLOYMENTS_CLUSTER}/definitions/tenants/* or tenants/*."
   fi
 }
 

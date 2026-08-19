@@ -1159,7 +1159,8 @@ print_handover_summary() {
 #
 # A cluster has two directories per tenant and they are not the same thing:
 #
-#   definitions/<name>/tenant.yaml   authored. What the tenant is meant to be.
+#   definitions/tenants/<name>/tenant.yaml
+#                                    authored. What the tenant is meant to be.
 #   tenants/<name>/                  deployed. What Argo CD syncs, and what the
 #                                    operator writes into as apps are installed
 #                                    from the store.
@@ -1182,7 +1183,7 @@ scaffold_tenant_deployment() {
     local name="${GENTIAN_TENANT_NAME:?GENTIAN_TENANT_NAME must be set}"
     local domain="${KERNEL_DOMAIN:?KERNEL_DOMAIN must be resolved before scaffolding a tenant}"
     local cluster_dir="${GENTIAN_DEPLOYMENTS_PATH}/clusters/${cluster}"
-    local definition_dir="${cluster_dir}/definitions/${name}"
+    local definition_dir="${cluster_dir}/definitions/tenants/${name}"
 
     if [[ ! -d "${cluster_dir}/kernel" ]]; then
         error "Cluster ${cluster} has no kernel/ directory in ${GENTIAN_DEPLOYMENTS_PATH}."
@@ -1194,7 +1195,7 @@ scaffold_tenant_deployment() {
     banner "Scaffolding tenant ${name} for cluster ${cluster}"
 
     if [[ -f "${definition_dir}/tenant.yaml" ]]; then
-        warn "clusters/${cluster}/definitions/${name}/tenant.yaml already exists; leaving it alone."
+        warn "clusters/${cluster}/definitions/tenants/${name}/tenant.yaml already exists; leaving it alone."
         _print_tenant_next_steps "${name}" "${cluster}"
         return 0
     fi
@@ -1245,13 +1246,13 @@ scaffold_tenant_deployment() {
         printf '  #   - nextcloud-calendar-ce\n'
     } >"${definition_dir}/tenant.yaml"
 
-    success "Wrote clusters/${cluster}/definitions/${name}/tenant.yaml"
+    success "Wrote clusters/${cluster}/definitions/tenants/${name}/tenant.yaml"
     _print_tenant_next_steps "${name}" "${cluster}"
 }
 
 _print_tenant_next_steps() {
     local name="$1" cluster="$2"
-    local def="clusters/${cluster}/definitions/${name}/tenant.yaml"
+    local def="clusters/${cluster}/definitions/tenants/${name}/tenant.yaml"
     echo ""
     info "This is the definition only. Nothing is deployed and nothing is committed."
     info "  1. Choose its apps:"

@@ -366,7 +366,7 @@ you no longer need it.
 A tenant is authored, then deployed. Two directories, and the difference
 matters:
 
-- `definitions/<name>/tenant.yaml` — what the tenant is *meant to be*. Yours to
+- `definitions/tenants/<name>/tenant.yaml` — what the tenant is *meant to be*. Yours
   edit.
 - `tenants/<name>/` — what Argo CD syncs. Written by the deploy command, and
   written again by the operator every time an app is installed from the store.
@@ -378,7 +378,7 @@ Scaffold the definition:
 ```
 
 It asks for a display name and an administrator email, then writes
-`clusters/<cluster-id>/definitions/acme/tenant.yaml`. Nothing is deployed,
+`clusters/<cluster-id>/definitions/tenants/acme/tenant.yaml`. Nothing is deployed,
 committed or applied.
 
 Choose the tenant's apps in that file:

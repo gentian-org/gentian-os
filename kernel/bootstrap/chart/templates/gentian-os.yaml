@@ -202,7 +202,7 @@ spec:
 # No further stage nesting here — a cluster has exactly one stage for its
 # whole lifetime (docs/deployment.md §1), so re-encoding it under a cluster's
 # own tenants/ tree would be redundant. Stage only matters when *choosing*
-# a tenant definition to activate (definitions/<tenant>/), not once it's
+# a tenant definition to activate (definitions/tenants/<tenant>/), not once it's
 # live on a cluster that's already pinned to one stage.
 # Each tenant directory must contain a kustomization.yaml and tenant.yaml.
 apiVersion: argoproj.io/v1alpha1

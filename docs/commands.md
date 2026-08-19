@@ -55,7 +55,7 @@ kubectl get tenants
 > `Ready` before concluding anything is broken.
 
 Each cluster maintains tenant **definitions** under
-`clusters/<cluster>/definitions/<tenant>/`. Fresh installs leave
+`clusters/<cluster>/definitions/tenants/<tenant>/`. Fresh installs leave
 `clusters/<cluster>/tenants/` empty until a definition is deployed. There's
 no `<stage>` segment in either path — a cluster has exactly one stage for
 its whole lifetime, so `clusters/<cluster>/...` already scopes everything
@@ -64,7 +64,7 @@ under it to that one stage (see
 
 | Path | State |
 |------|--------|
-| `definitions/<tenant>/` | Defined only (`ACTIVE=no` in list) |
+| `definitions/tenants/<tenant>/` | Defined only (`ACTIVE=no` in list) |
 | `tenants/<tenant>/` | Deployed to GitOps (`ACTIVE=yes`) |
 
 List all tenant definitions and deployment status:

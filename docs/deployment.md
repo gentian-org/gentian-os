@@ -94,7 +94,7 @@ gentian-deployments/
             application.yaml        # optional add-on — hand-added, not every cluster runs one
       definitions/
         components/tenant-defaults/  # cluster-wide defaults applied to every tenant at activation
-        <tenant>/tenant.yaml         # tenant catalogue (inactive) — stage-agnostic, see below
+        tenants/<tenant>/tenant.yaml # tenant catalogue (inactive) — stage-agnostic, see below
       tenants/<tenant>/              # activated tenants (ArgoCD sync target)
 ```
 
@@ -118,7 +118,7 @@ paragraph), so re-encoding the stage a second time underneath it, whether
 as a filename suffix (`values-dev.yaml`) or a directory level
 (`tenants/<tenant>/dev/`), is always redundant: there is no cluster whose
 own tree could ever contain a second stage to disambiguate against. This is
-why `definitions/<tenant>/tenant.yaml` and `tenants/<tenant>/tenant.yaml`
+why `definitions/tenants/<tenant>/tenant.yaml` and `tenants/<tenant>/tenant.yaml`
 are flat, not nested under a `<stage>/` directory — an earlier revision of
 this design nested them, reasoning that "a tenant *can* have different
 definitions per stage," but that's not actually true once a cluster is
@@ -270,7 +270,7 @@ those two is intentionally *not* committed anywhere in
 | **Kernel instance data** — genuinely unique per cluster | Crossplane Claims (`kernelDomain`), the cluster's `values.yaml` overlay | `clusters/<cluster>/kernel/{claims/*.yaml,values.yaml}` | Yes — `scaffold_cluster_deployment()` generates these (§3A) |
 | **Kernel bootstrap Applications** — near-identical across every cluster | `gentian-os` Application, `gentian-tenants` ApplicationSet, `gentian-portal` Application, `ImageUpdater` CR | Nowhere in `gentian-deployments` — they live as templates in `gentian-os`'s own `kernel/bootstrap/chart`, rendered by `helm template` and `kubectl apply`'d directly by `install.sh` (§3B) | No — not per-cluster data at all, just the same template rendered with different placeholders |
 | **Optional cluster add-ons** — most clusters run none | A private or org-specific app deployed beside the platform, not part of the gentian-os offering | `clusters/<cluster>/kernel/addons/<add-on>/application.yaml`, hand-added | No — not every cluster wants one, so nothing generates it for you |
-| **Tenant apps** — the actual SaaS catalogue | Nextcloud, OpenProject, LiteLLM, ... | `clusters/<cluster>/definitions/<tenant>/tenant.yaml` → `Tenant.spec.apps` (AppProfile) | N/A — never a hand-maintained ArgoCD `Application` at all |
+| **Tenant apps** — the actual SaaS catalogue | Nextcloud, OpenProject, LiteLLM, ... | `clusters/<cluster>/definitions/tenants/<tenant>/tenant.yaml` → `Tenant.spec.apps` (AppProfile) | N/A — never a hand-maintained ArgoCD `Application` at all |
 
 Add-ons follow a rule of their own: the *manifests* they deploy don't have to
 live in `gentian-deployments` at all — they can live in the add-on's own repo
@@ -478,7 +478,7 @@ flowchart TD
 ### 5.3 Tenant workflow
 
 1. Edit tenant definition:
-   `clusters/<cluster>/definitions/<tenant>/tenant.yaml`
+   `clusters/<cluster>/definitions/tenants/<tenant>/tenant.yaml`
 2. Activate on cluster: `kubectl gentian tenants deploy <tenant>`
 3. Commit the generated copy under `clusters/<cluster>/tenants/<tenant>/`
 4. ArgoCD `gentian-tenants` ApplicationSet syncs the Tenant CR
@@ -610,10 +610,10 @@ Stage isn't a dimension *within* a tenant definition here — it's which
 cluster's tree the definition lives in (§1). So promoting a tenant across
 stages means promoting it across clusters:
 
-1. Test on dev: `clusters/<dev-cluster>/definitions/<tenant>/tenant.yaml`.
+1. Test on dev: `clusters/<dev-cluster>/definitions/tenants/<tenant>/tenant.yaml`.
 2. Open a PR copying/adapting that YAML to
-   `clusters/<staging-cluster>/definitions/<tenant>/tenant.yaml`, then to
-   `clusters/<prod-cluster>/definitions/<tenant>/tenant.yaml`.
+   `clusters/<staging-cluster>/definitions/tenants/<tenant>/tenant.yaml`, then to
+   `clusters/<prod-cluster>/definitions/tenants/<tenant>/tenant.yaml`.
 3. Deploy on each cluster: `kubectl gentian tenants deploy <tenant>`.
 
 **Apps (gentian-apps):**
