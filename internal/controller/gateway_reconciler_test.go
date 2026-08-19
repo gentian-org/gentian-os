@@ -448,7 +448,7 @@ func TestBuildAppBackendTrafficPolicyObject(t *testing.T) {
 
 func TestKernelHTTPRouteSpecs(t *testing.T) {
 	t.Parallel()
-	specs := kernelHTTPRouteSpecs("platform.example.test", []string{"demo.platform.example.test"}, nil, []string{"demo"})
+	specs := kernelHTTPRouteSpecs("platform.example.test", []string{"demo.platform.example.test"}, nil, []string{"demo"}, false)
 	// One route per kernel host, plus one per tenant host serving the portal.
 	// Asserted by name rather than by count, so adding a route does not fail a
 	// test that has nothing to do with it.
@@ -492,22 +492,21 @@ func TestKernelHTTPRouteSpecs(t *testing.T) {
 }
 
 func TestKernelHTTPRouteSpecsLLMDisabledByDefault(t *testing.T) {
-	specs := kernelHTTPRouteSpecs("platform.example.test", []string{"demo.platform.example.test"}, nil, []string{"demo"})
+	specs := kernelHTTPRouteSpecs("platform.example.test", []string{"demo.platform.example.test"}, nil, []string{"demo"}, false)
 	for _, spec := range specs {
 		if spec.name == kernelRouteLiteLLM {
-			t.Fatalf("kernel-llm route present without LLM_SUPPORT=true")
+			t.Fatalf("kernel-llm route present with llm disabled")
 		}
 	}
 }
 
 func TestKernelHTTPRouteSpecsLLMEnabled(t *testing.T) {
-	t.Setenv("LLM_SUPPORT", "true")
-	specs := kernelHTTPRouteSpecs("platform.example.test", nil, nil, nil)
+	specs := kernelHTTPRouteSpecs("platform.example.test", nil, nil, nil, true)
 	// 6, not 5: the :80 -> :443 redirect route (kernel-http-redirect) is emitted
 	// alongside the apex and argocd routes. The LLM route is still appended last,
 	// which is what the specs[len-1] lookup below relies on.
 	if len(specs) != 6 {
-		t.Fatalf("spec count = %d, want 6 with LLM_SUPPORT=true", len(specs))
+		t.Fatalf("spec count = %d, want 6 with llm enabled", len(specs))
 	}
 	var haveRedirect bool
 	for _, s := range specs {
@@ -577,12 +576,12 @@ func TestKernelApexRedirectRule(t *testing.T) {
 //
 // The invariant is therefore: every kernel route names exactly one listener.
 func TestKernelHTTPRouteSpecsAllBindToAListener(t *testing.T) {
-	t.Setenv("LLM_SUPPORT", "true")
 	specs := kernelHTTPRouteSpecs(
 		"platform.example.test",
 		[]string{"demo.platform.example.test"},
 		nil,
 		[]string{"demo"},
+		true,
 	)
 	if len(specs) == 0 {
 		t.Fatal("no kernel route specs produced")
@@ -599,7 +598,7 @@ func TestKernelHTTPRouteSpecsAllBindToAListener(t *testing.T) {
 // the catch-all redirect must stay on :80. If it ever attached to a :443
 // listener it would redirect https traffic back to itself, forever.
 func TestKernelHTTPRedirectBindsOnlyToPort80(t *testing.T) {
-	specs := kernelHTTPRouteSpecs("platform.example.test", nil, nil, nil)
+	specs := kernelHTTPRouteSpecs("platform.example.test", nil, nil, nil, false)
 	var found bool
 	for _, s := range specs {
 		if s.name != kernelRouteHTTPRedirect {

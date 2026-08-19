@@ -400,5 +400,8 @@ commerce:
   apiToken: ""
   meteringInterval: ""
 
-# LLM serving support configuration
+# LLM serving support. Fallback only: the operator decides from the claim's
+# llm.enabled (read via the gentian-cluster-config ConfigMap) and consults
+# this — as the LLM_SUPPORT env var — only while that ConfigMap does not
+# exist yet or predates the llm.enabled key.
 llmSupport: false

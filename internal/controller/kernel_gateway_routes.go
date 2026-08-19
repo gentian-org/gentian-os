@@ -19,7 +19,6 @@ package controller
 import (
 	"context"
 	"fmt"
-	"os"
 
 	"k8s.io/apimachinery/pkg/api/equality"
 	"k8s.io/apimachinery/pkg/api/errors"
@@ -99,7 +98,8 @@ func (r *GatewayPlatformReconciler) reconcileKernelHTTPRoutes(ctx context.Contex
 		return fmt.Errorf("ensure Gentian portal ReferenceGrant: %w", err)
 	}
 
-	specs := kernelHTTPRouteSpecs(r.KernelDomain, effectiveDomains, oidcSubs, tenantNames)
+	specs := kernelHTTPRouteSpecs(r.KernelDomain, effectiveDomains, oidcSubs, tenantNames,
+		clusterLLMEnabled(ctx, r.Client))
 	expected := make(map[string]struct{}, len(specs))
 	for _, spec := range specs {
 		expected[spec.name] = struct{}{}
@@ -142,6 +142,7 @@ func kernelHTTPRouteSpecs(
 	tenantEffectiveDomains []string,
 	tenantOIDCSubdomains map[string][]string,
 	tenantNames []string,
+	llmEnabled bool,
 ) []kernelHTTPRouteSpec {
 	idHost := fmt.Sprintf("id.%s", kernelDomain)
 	portalHost := kernelPortalHost(kernelDomain)
@@ -228,10 +229,10 @@ func kernelHTTPRouteSpecs(
 			},
 		},
 	)
-	// LiteLLM admin console — platform-level only (LLM_SUPPORT=true). Tenants
-	// do not get their own route; app-catalogue "litellm" tiles stay unused
-	// until per-tenant access is designed (see docs/design/llms.md).
-	if os.Getenv("LLM_SUPPORT") == "true" {
+	// LiteLLM admin console — platform-level only (the claim's llm.enabled).
+	// Tenants do not get their own route; app-catalogue "litellm" tiles stay
+	// unused until per-tenant access is designed (see docs/design/llms.md).
+	if llmEnabled {
 		specs = append(specs, kernelHTTPRouteSpec{
 			name:        kernelRouteLiteLLM,
 			host:        fmt.Sprintf("llm.%s", kernelDomain),

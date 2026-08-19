@@ -25,7 +25,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"os"
 	"time"
 
 	batchv1 "k8s.io/api/batch/v1"
@@ -184,7 +183,7 @@ func (r *TenantReconciler) waitForAppClaimReady(ctx context.Context, tenant *gen
 // with LiteLLM itself (idempotent — see ensureLiteLLMVirtualKey) so it is actually usable
 // rather than a string the proxy has never heard of.
 func (r *TenantReconciler) injectLLMCredentials(ctx context.Context, tenant *gentianov1alpha1.Tenant, appName string, profile *gentianov1alpha1.AppProfile) error {
-	if os.Getenv("LLM_SUPPORT") != "true" {
+	if !clusterLLMEnabled(ctx, r.Client) {
 		return nil
 	}
 
