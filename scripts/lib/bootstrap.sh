@@ -1256,6 +1256,15 @@ scaffold_tenant_deployment() {
         printf '  # default, opt-out — delete this entry for a tenant that should not\n'
         printf '  # see it.\n'
         printf '  - profile: gentian-subscriptions-me\n'
+        # The claim decides, read from the same file the tenant composition and
+        # B-07 read it from. The composition used to inject this app itself,
+        # which hid it from the tenant operator — see tenant-default.yaml.
+        if [[ "$(yq_get '.spec.llm.enabled' "${cluster_dir}/kernel/claims/cluster.yaml" 2>/dev/null || true)" == "true" ]]; then
+            printf '  # AI Chat, listed because this cluster serves LLM\n'
+            printf '  # (spec.llm.enabled on the Cluster claim). Delete the entry for a\n'
+            printf '  # tenant that should not see it.\n'
+            printf '  - profile: open-webui\n'
+        fi
         printf '  # Everything else this tenant needs goes beside them, for example:\n'
         printf '  # - profile: nextcloud-base-ce\n'
         printf '  #   addons:\n'

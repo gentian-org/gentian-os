@@ -90,7 +90,6 @@ spec:
             {{- $lrDefaultMem := dig "tenant.limitRange.default.memory" "512Mi" $ccData }}
             {{- $lrRequestCPU := dig "tenant.limitRange.defaultRequest.cpu" "100m" $ccData }}
             {{- $lrRequestMem := dig "tenant.limitRange.defaultRequest.memory" "128Mi" $ccData }}
-            {{- $llmEnabled := eq "true" (dig "llm.enabled" "false" $ccData) }}
 
             ---
             apiVersion: kubernetes.crossplane.io/v1alpha2
@@ -281,27 +280,13 @@ spec:
               {{- end }}
             {{- end }}
 
-            {{- if $llmEnabled }}
-            ---
-            apiVersion: gentianos.io/v1alpha1
-            kind: App
-            metadata:
-              name: open-webui
-              namespace: {{ $ns }}
-              annotations:
-                gotemplating.fn.crossplane.io/composition-resource-name: app-open-webui
-              labels:
-                gentianos.io/tenant: {{ $tenant }}
-                gentianos.io/app: open-webui
-                gentianos.io/managed-by: crossplane
-                app.kubernetes.io/managed-by: gentian-os
-            spec:
-              compositionUpdatePolicy: Automatic
-              profileRef:
-                name: open-webui
-              tenantNamespace: {{ $ns }}
-              domain: {{ $domain }}
-            {{- end }}
+            {{- /* No implicit apps. open-webui used to be injected here whenever the
+                 cluster served LLM — but an app the composition invents is an app
+                 the tenant operator cannot see: it seeds OIDC credentials (and
+                 builds identity Jobs and groups) from tenant.spec.apps alone, so
+                 the injected app's ExternalSecrets waited forever on an OpenBao
+                 path nothing would ever write. Tenant scaffolding lists open-webui
+                 in spec.apps when the claim serves LLM; one list, every reader. */}}
 
     - step: automatically-detect-ready-composed-resources
       functionRef:
