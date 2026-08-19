@@ -235,9 +235,10 @@ apply() {
     if [[ -f "${init_file}" ]] && jq -e '.root_token' "${init_file}" >/dev/null 2>&1; then
         if [[ "${GENTIAN_DRY_RUN:-0}" != "1" ]]; then
             local stripped
-            stripped="$(jq 'del(.root_token)' "${init_file}")" &&
-                printf '%s\n' "${stripped}" > "${init_file}" ||
+            if ! stripped="$(jq 'del(.root_token)' "${init_file}")" ||
+                ! printf '%s\n' "${stripped}" > "${init_file}"; then
                 warn "Could not strip the dead root token from ${init_file}."
+            fi
         fi
         info "Removed the revoked root token from ${init_file}."
     fi
