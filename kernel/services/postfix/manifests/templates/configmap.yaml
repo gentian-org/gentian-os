@@ -32,6 +32,26 @@ data:
     image:
       repository: boky/postfix
       pullPolicy: IfNotPresent
+    # Pin Postfix to the node that carries the egress floating IP.
+    #
+    # Outbound mail leaves by whatever address its node egresses from. With no
+    # floating IP that is the router's shared SNAT address, whose reverse DNS
+    # nobody owns; with one attached to a node, that node sends as the floating
+    # IP and its PTR can be set. Either way the sending address follows the
+    # scheduler unless it is pinned — and a reschedule that silently changes the
+    # sending address breaks SPF and PTR at once, with no signal beyond mail
+    # starting to land in spam.
+    #
+    # Empty leaves scheduling free, which is correct for a cluster relaying
+    # through a smarthost: there the last hop is the relay's address and the
+    # node's does not matter.
+    # Values are quoted explicitly: a nodeSelector value must be a string, and a
+    # selector written as `mail-egress: true` in values renders as a boolean that
+    # the API server rejects.
+    nodeSelector:
+    {{- range $k, $v := .Values.egressNodeSelector }}
+      {{ $k }}: {{ $v | quote }}
+    {{- end }}
     persistence:
       enabled: false
     service:

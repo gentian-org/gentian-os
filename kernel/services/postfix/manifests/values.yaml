@@ -87,3 +87,15 @@ smtpIngress:
 # load balancer and leaves via the node egress IP. Where they differ, point this
 # at a name for the egress address rather than at the MX.
 smtpHelo: ""
+
+# Pin Postfix to the node holding the egress floating IP, e.g.
+#   egressNodeSelector:
+#     gentianos.io/mail-egress: "true"
+#
+# Label the node that has the floating IP attached, then set this. Without it
+# the sending address is whichever node the scheduler picked, and a reschedule
+# changes it silently — breaking the PTR and the SPF record together.
+#
+# Leave empty when relaying through a smarthost: the last hop is then the
+# relay's address and the node's does not matter.
+egressNodeSelector: {}
