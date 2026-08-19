@@ -192,6 +192,13 @@ dnsProviders:
       # The key names the external-dns chart reads, mapped from the fields above.
       secretKeys:
         cloudflare_api_token: api-token
+      # The environment variable external-dns itself reads, mapped to the Secret
+      # key above. Named explicitly rather than derived: uppercasing the key gives
+      # AWS_ACCESS_KEY_ID correctly and CLOUDFLARE_API_TOKEN wrongly, since
+      # external-dns reads CF_API_TOKEN, and a credential under the wrong variable
+      # name looks exactly like a missing credential.
+      env:
+        CF_API_TOKEN: cloudflare_api_token
 
   route53:
     displayName: AWS Route 53
