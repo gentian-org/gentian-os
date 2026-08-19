@@ -173,7 +173,6 @@ func TestAppCatalogue_InstalledCountUpdatesOnTenantChange(t *testing.T) {
 		Spec: gentianov1alpha1.TenantSpec{
 			DisplayName: "Catalogue Install Tenant",
 			Domain:      "cat-install.example.com",
-			AdminEmail:  "admin@cat-install.example.com",
 			Apps:        []gentianov1alpha1.TenantApp{{Profile: "cat-installable"}},
 		},
 	}
@@ -258,7 +257,6 @@ func TestTenantValidator_MaxAppsExceeded(t *testing.T) {
 		Spec: gentianov1alpha1.TenantSpec{
 			DisplayName: "Validator Max Test",
 			Domain:      "tval.example.com",
-			AdminEmail:  "admin@tval.example.com",
 			Quotas:      &gentianov1alpha1.TenantQuotas{MaxApps: maxApps},
 			Apps: []gentianov1alpha1.TenantApp{
 				{Profile: "tval-a"},
@@ -294,7 +292,6 @@ func TestTenantValidator_MissingAppProfile(t *testing.T) {
 		Spec: gentianov1alpha1.TenantSpec{
 			DisplayName: "Missing Profile Tenant",
 			Domain:      "missing.example.com",
-			AdminEmail:  "admin@missing.example.com",
 			Apps:        []gentianov1alpha1.TenantApp{{Profile: missing}},
 		},
 	}
@@ -324,7 +321,6 @@ func TestAppCatalogue_MultipleTenantsInstalledCount(t *testing.T) {
 			Spec: gentianov1alpha1.TenantSpec{
 				DisplayName: fmt.Sprintf("Multi Tenant %d", i),
 				Domain:      fmt.Sprintf("multi%d.example.com", i),
-				AdminEmail:  fmt.Sprintf("admin@multi%d.example.com", i),
 				Quotas: &gentianov1alpha1.TenantQuotas{
 					MaxApps: 5,
 					Storage: &quota,

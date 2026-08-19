@@ -501,7 +501,6 @@ func TestTenantReconciler_CreatesNamespace(t *testing.T) {
 		Spec: gentianov1alpha1.TenantSpec{
 			DisplayName: "GTN Demo",
 			Domain:      "acme.example.com",
-			AdminEmail:  "admin@acme.example.com",
 		},
 	}
 	if err := testClient.Create(context.Background(), tenant); err != nil {
@@ -529,7 +528,6 @@ func TestTenantReconciler_SetsStatusReady(t *testing.T) {
 		Spec: gentianov1alpha1.TenantSpec{
 			DisplayName: "Beta Co",
 			Domain:      "beta.example.com",
-			AdminEmail:  "admin@beta.example.com",
 		},
 	}
 	if err := testClient.Create(context.Background(), tenant); err != nil {
@@ -573,7 +571,6 @@ func TestTenantReconciler_AppliesResourceQuota(t *testing.T) {
 		Spec: gentianov1alpha1.TenantSpec{
 			DisplayName: "Gamma Inc",
 			Domain:      "gamma.example.com",
-			AdminEmail:  "admin@gamma.example.com",
 			Quotas: &gentianov1alpha1.TenantQuotas{
 				Storage: &storage,
 				CPU:     &cpu,
@@ -606,7 +603,6 @@ func TestTenantReconciler_AppliesLimitRange(t *testing.T) {
 		Spec: gentianov1alpha1.TenantSpec{
 			DisplayName: "Delta Ltd",
 			Domain:      "delta.example.com",
-			AdminEmail:  "admin@delta.example.com",
 		},
 	}
 	if err := testClient.Create(context.Background(), tenant); err != nil {
@@ -638,7 +634,6 @@ func TestTenantReconciler_AppliesNetworkPolicy(t *testing.T) {
 		Spec: gentianov1alpha1.TenantSpec{
 			DisplayName: "Epsilon GmbH",
 			Domain:      "epsilon.example.com",
-			AdminEmail:  "admin@epsilon.example.com",
 		},
 	}
 	if err := testClient.Create(context.Background(), tenant); err != nil {
@@ -672,7 +667,6 @@ func TestTenantReconciler_ProfilesMissingBlocksProvisioning(t *testing.T) {
 		Spec: gentianov1alpha1.TenantSpec{
 			DisplayName: "Missing Profile Co",
 			Domain:      "missing-profile.example.com",
-			AdminEmail:  "admin@missing-profile.example.com",
 			Apps: []gentianov1alpha1.TenantApp{
 				{Profile: "does-not-exist"},
 			},
@@ -724,7 +718,6 @@ func TestTenantReconciler_CustomNamespace(t *testing.T) {
 		Spec: gentianov1alpha1.TenantSpec{
 			DisplayName: "Zeta Corp",
 			Domain:      "zeta.example.com",
-			AdminEmail:  "admin@zeta.example.com",
 			Isolation:   &gentianov1alpha1.TenantIsolation{Namespace: "zeta-custom"},
 		},
 	}
@@ -750,7 +743,6 @@ func TestTenantReconciler_DeleteRetainKeepsNamespace(t *testing.T) {
 		Spec: gentianov1alpha1.TenantSpec{
 			DisplayName:    "Retainer LLC",
 			Domain:         "retainer.example.com",
-			AdminEmail:     "admin@retainer.example.com",
 			DeletionPolicy: gentianov1alpha1.DeletionPolicyRetain,
 		},
 	}
@@ -789,7 +781,6 @@ func TestTenantReconciler_DeleteDeleteRemovesNamespace(t *testing.T) {
 		Spec: gentianov1alpha1.TenantSpec{
 			DisplayName:    "Destroyer Co",
 			Domain:         "destroyer.example.com",
-			AdminEmail:     "admin@destroyer.example.com",
 			DeletionPolicy: gentianov1alpha1.DeletionPolicyDelete,
 		},
 	}
@@ -841,7 +832,6 @@ func TestTenantReconciler_DataPlaneRedisAndPostgresJobs(t *testing.T) {
 		Spec: gentianov1alpha1.TenantSpec{
 			DisplayName: "Combo DP Co",
 			Domain:      "combodp.example.com",
-			AdminEmail:  "admin@combodp.example.com",
 			Apps: []gentianov1alpha1.TenantApp{
 				{Profile: "combo-pg"},
 				{Profile: "combo-redis"},

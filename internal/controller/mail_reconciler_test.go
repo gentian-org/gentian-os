@@ -38,7 +38,6 @@ func TestMail_Disabled(t *testing.T) {
 		Spec: gentianov1alpha1.TenantSpec{
 			DisplayName: "Mail Disabled Co",
 			Domain:      "maildisabled.example.com",
-			AdminEmail:  "admin@maildisabled.example.com",
 			Mail:        &gentianov1alpha1.TenantMail{Mode: gentianov1alpha1.MailModeDisabled},
 		},
 	}
@@ -85,7 +84,6 @@ func TestMail_Selfhosted_ProvisionsTenantInSharedInfra(t *testing.T) {
 		Spec: gentianov1alpha1.TenantSpec{
 			DisplayName: "Mail Selfhosted Co",
 			Domain:      "mailself.example.com",
-			AdminEmail:  "admin@mailself.example.com",
 			Mail:        &gentianov1alpha1.TenantMail{Mode: gentianov1alpha1.MailModeSelfhosted},
 		},
 	}
@@ -185,7 +183,6 @@ func TestMail_Selfhosted_DoesNotCreatePerTenantApplicationCRs(t *testing.T) {
 		Spec: gentianov1alpha1.TenantSpec{
 			DisplayName: "Mail No Apps Co",
 			Domain:      "mailnoapps.example.com",
-			AdminEmail:  "admin@mailnoapps.example.com",
 			Mail:        &gentianov1alpha1.TenantMail{Mode: gentianov1alpha1.MailModeSelfhosted},
 		},
 	}
@@ -224,7 +221,6 @@ func TestMail_DefaultMode_IsSelfhosted(t *testing.T) {
 		Spec: gentianov1alpha1.TenantSpec{
 			DisplayName: "Mail Default Co",
 			Domain:      "maildefault.example.com",
-			AdminEmail:  "admin@maildefault.example.com",
 		},
 	}
 	if err := testClient.Create(context.Background(), tenant); err != nil {
@@ -276,7 +272,6 @@ func TestMail_TransportOnly_RegistersPostfixOnly(t *testing.T) {
 		Spec: gentianov1alpha1.TenantSpec{
 			DisplayName: "Mail Relay Co",
 			Domain:      "mailrelay.example.com",
-			AdminEmail:  "admin@mailrelay.example.com",
 			Mail:        &gentianov1alpha1.TenantMail{Mode: gentianov1alpha1.MailModeTransportOnly},
 		},
 	}
@@ -326,7 +321,6 @@ func TestMail_External_MissingConfig(t *testing.T) {
 		Spec: gentianov1alpha1.TenantSpec{
 			DisplayName: "Mail External No Config",
 			Domain:      "mailextnotconf.example.com",
-			AdminEmail:  "admin@mailextnotconf.example.com",
 			Mail: &gentianov1alpha1.TenantMail{
 				Mode: gentianov1alpha1.MailModeExternal,
 				// SmtpCredentialsSecret intentionally not set.
@@ -377,7 +371,6 @@ func TestMail_External_CopiesCredentialsSecret(t *testing.T) {
 		Spec: gentianov1alpha1.TenantSpec{
 			DisplayName: "Mail External Co",
 			Domain:      "mailexternal.example.com",
-			AdminEmail:  "admin@mailexternal.example.com",
 			Mail: &gentianov1alpha1.TenantMail{
 				Mode:                  gentianov1alpha1.MailModeExternal,
 				SmtpCredentialsSecret: "tenant-smtp-creds",
@@ -429,7 +422,6 @@ func TestMail_PostfixInboundMapsFollowTenant(t *testing.T) {
 		Spec: gentianov1alpha1.TenantSpec{
 			DisplayName: "Mail Maps Co",
 			Domain:      "mailmaps.example.com",
-			AdminEmail:  "admin@mailmaps.example.com",
 		},
 	}
 	if err := testClient.Create(context.Background(), tenant); err != nil {
@@ -584,9 +576,8 @@ func TestTenant_PublishesResolvedAdminEmail(t *testing.T) {
 	if got, want := updated.Status.AdminEmail, "admin@adminemail.example.com"; got != want {
 		t.Errorf("status.adminEmail = %q, want %q", got, want)
 	}
-	if updated.Spec.AdminEmail != "" {
-		t.Errorf("spec.adminEmail should stay empty when derived, got %q", updated.Spec.AdminEmail)
-	}
+	// spec.adminEmail no longer exists: the address is derived, so status is
+	// the only place it appears and there is nothing to leave empty.
 }
 
 // --- helpers ----------------------------------------------------------------

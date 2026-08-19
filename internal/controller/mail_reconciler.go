@@ -1166,15 +1166,14 @@ func (r *TenantReconciler) ensureDKIMSecret(ctx context.Context, tenant *gentian
 
 // --- Name helpers ------------------------------------------------------------
 
-// mailDomain is Tenant.MailDomainOrDefault, kept as a name this file already
-// reads well with.
-//
-// The rule moved onto the API type because the administrator's address is
-// derived from the same domain, and the two were deriving it independently:
-// this honoured spec.mail.domain and the address did not, so a cluster that set
-// one produced an admin address in a domain Postfix does not accept mail for.
+// mailDomain returns the effective mail domain for a tenant: spec.mail.domain
+// if set, otherwise the tenant's effective ingress domain (vanity or
+// <tenant>.<kernel_domain> fallback). See architecture §2.5.
 func mailDomain(tenant *gentianov1alpha1.Tenant, kernelDomain, tenancyMode string) string {
-	return tenant.MailDomainOrDefault(kernelDomain, tenancyMode)
+	if tenant.Spec.Mail != nil && tenant.Spec.Mail.Domain != "" {
+		return tenant.Spec.Mail.Domain
+	}
+	return tenant.EffectiveDomain(kernelDomain, tenancyMode)
 }
 
 func dkimSecretName(tenantName string) string {

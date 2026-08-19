@@ -67,61 +67,58 @@ func TestAdminEmailOrDefault(t *testing.T) {
 	if got := tenant.AdminEmailOrDefault("gtn.host", TenancyModeMulti); got != "admin@corp.gtn.host" {
 		t.Fatalf("multi: got %q", got)
 	}
-
-	// A shared mail domain moves the tenant name into the local part, because
-	// on a shared domain plain admin@ is not this tenant's to claim — the next
-	// tenant provisioned would want the same mailbox.
-	shared := &Tenant{}
-	shared.Name = "corp"
-	shared.Spec.Mail = &TenantMail{Domain: "gtn.host"}
-	if got := shared.AdminEmailOrDefault("gtn.host", TenancyModeMulti); got != "admin-corp@gtn.host" {
-		t.Fatalf("shared mail domain: got %q", got)
-	}
-	other := &Tenant{}
-	other.Name = "acme"
-	other.Spec.Mail = &TenantMail{Domain: "gtn.host"}
-	if a, b := shared.AdminEmailOrDefault("gtn.host", TenancyModeMulti),
-		other.AdminEmailOrDefault("gtn.host", TenancyModeMulti); a == b {
-		t.Fatalf("two tenants on one mail domain must not share an address: both %q", a)
-	}
-
-	// mail.domain equal to the tenant's own domain is not "shared", so the name
-	// is not added twice.
-	own := &Tenant{}
-	own.Name = "corp"
-	own.Spec.Mail = &TenantMail{Domain: "corp.gtn.host"}
-	if got := own.AdminEmailOrDefault("gtn.host", TenancyModeMulti); got != "admin@corp.gtn.host" {
-		t.Fatalf("own mail domain: got %q", got)
-	}
-
-	// The address must be one the mail stack accepts: same domain the operator
-	// writes into virtual_mailbox_domains.
-	for _, tn := range []*Tenant{shared, own} {
-		addr := tn.AdminEmailOrDefault("gtn.host", TenancyModeMulti)
-		md := tn.MailDomainOrDefault("gtn.host", TenancyModeMulti)
-		if !strings.HasSuffix(addr, "@"+md) {
-			t.Fatalf("address %q is not in the mail domain %q", addr, md)
-		}
-	}
 	if got := tenant.AdminEmailOrDefault("gtn.host", TenancyModeSingle); got != "admin@gtn.host" {
 		t.Fatalf("single: got %q", got)
 	}
 
-	tenant.Spec.Domain = "acme.com"
-	if got := tenant.AdminEmailOrDefault("gtn.host", TenancyModeMulti); got != "admin@acme.com" {
+	vanity := &Tenant{}
+	vanity.Name = "corp"
+	vanity.Spec.Domain = "acme.com"
+	if got := vanity.AdminEmailOrDefault("gtn.host", TenancyModeMulti); got != "admin@acme.com" {
 		t.Fatalf("vanity domain: got %q", got)
-	}
-
-	// An explicit address is a decision and is never overridden.
-	tenant.Spec.AdminEmail = "ops@example.org"
-	if got := tenant.AdminEmailOrDefault("gtn.host", TenancyModeMulti); got != "ops@example.org" {
-		t.Fatalf("explicit: got %q", got)
 	}
 
 	// No domain anywhere: .invalid can never resolve, which beats inventing one.
 	bare := &Tenant{}
 	bare.Name = "corp"
-	if got := bare.AdminEmailOrDefault("", TenancyModeMulti); got != "admin-corp@corp.invalid" {
+	if got := bare.AdminEmailOrDefault("", TenancyModeMulti); got != "admin@corp.invalid" {
 		t.Fatalf("no domain: got %q", got)
+	}
+}
+
+// The login and the address are one string. They were two — admin-<tenant> and
+// admin@<domain> — derived in different places, and they disagreed.
+func TestTenantAdminUsernameIsTheAddress(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name, domain, kernel, mode string
+	}{
+		{"corp", "", "gtn.host", TenancyModeMulti},
+		{"corp", "", "gtn.host", TenancyModeSingle},
+		{"corp", "acme.com", "gtn.host", TenancyModeMulti},
+		{"corp", "", "", TenancyModeMulti},
+	} {
+		tn := &Tenant{}
+		tn.Name = tc.name
+		tn.Spec.Domain = tc.domain
+		got := tn.TenantAdminUsername(tc.kernel, tc.mode)
+		want := tn.AdminEmailOrDefault(tc.kernel, tc.mode)
+		if got != want {
+			t.Errorf("username %q != address %q (domain=%q mode=%s)", got, want, tc.domain, tc.mode)
+		}
+		if !strings.HasPrefix(got, TenantAdminLocalPart+"@") {
+			t.Errorf("local part must be %q, got %q", TenantAdminLocalPart, got)
+		}
+	}
+}
+
+// Two tenants never collide, because the domain distinguishes them.
+func TestTenantAdminAddressesAreDistinct(t *testing.T) {
+	t.Parallel()
+	a, b := &Tenant{}, &Tenant{}
+	a.Name, b.Name = "corp", "acme"
+	if x, y := a.AdminEmailOrDefault("gtn.host", TenancyModeMulti),
+		b.AdminEmailOrDefault("gtn.host", TenancyModeMulti); x == y {
+		t.Fatalf("two tenants share an address: both %q", x)
 	}
 }

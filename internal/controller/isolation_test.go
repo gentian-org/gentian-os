@@ -47,7 +47,6 @@ func TestIsolation_CrossTenantDenied(t *testing.T) {
 		Spec: gentianov1alpha1.TenantSpec{
 			DisplayName: "Isolation A",
 			Domain:      "iso-a.example.com",
-			AdminEmail:  "admin@iso-a.example.com",
 		},
 	}
 	tenantB := &gentianov1alpha1.Tenant{
@@ -55,7 +54,6 @@ func TestIsolation_CrossTenantDenied(t *testing.T) {
 		Spec: gentianov1alpha1.TenantSpec{
 			DisplayName: "Isolation B",
 			Domain:      "iso-b.example.com",
-			AdminEmail:  "admin@iso-b.example.com",
 		},
 	}
 
@@ -92,7 +90,6 @@ func TestIsolation_NetworkPolicyIngressRules(t *testing.T) {
 		Spec: gentianov1alpha1.TenantSpec{
 			DisplayName: "Ingress Check",
 			Domain:      "iso-ingress.example.com",
-			AdminEmail:  "admin@iso-ingress.example.com",
 		},
 	}
 
@@ -137,7 +134,6 @@ func TestIsolation_NetworkPolicyEgressRules(t *testing.T) {
 		Spec: gentianov1alpha1.TenantSpec{
 			DisplayName: "Egress Check",
 			Domain:      "iso-egress.example.com",
-			AdminEmail:  "admin@iso-egress.example.com",
 		},
 	}
 
@@ -183,7 +179,6 @@ func TestIsolation_ResourceQuotaAllFields(t *testing.T) {
 		Spec: gentianov1alpha1.TenantSpec{
 			DisplayName: "Quota Check",
 			Domain:      "iso-quota.example.com",
-			AdminEmail:  "admin@iso-quota.example.com",
 			Quotas: &gentianov1alpha1.TenantQuotas{
 				Storage: &storage,
 				CPU:     &cpu,
@@ -223,7 +218,6 @@ func TestIsolation_LimitRangeDefaults(t *testing.T) {
 		Spec: gentianov1alpha1.TenantSpec{
 			DisplayName: "Limits Check",
 			Domain:      "iso-limits.example.com",
-			AdminEmail:  "admin@iso-limits.example.com",
 		},
 	}
 
@@ -284,7 +278,6 @@ func TestDeletion_EndToEnd_WithApps(t *testing.T) {
 		Spec: gentianov1alpha1.TenantSpec{
 			DisplayName:    "Deletion E2E",
 			Domain:         "del-full.example.com",
-			AdminEmail:     "admin@del-full.example.com",
 			DeletionPolicy: gentianov1alpha1.DeletionPolicyDelete,
 			Apps: []gentianov1alpha1.TenantApp{
 				{Profile: "del-pgapp"},
@@ -391,7 +384,6 @@ func TestDeletion_Retain_KeepsDataRevokesAccess(t *testing.T) {
 		Spec: gentianov1alpha1.TenantSpec{
 			DisplayName:    "Retain E2E",
 			Domain:         "ret-full.example.com",
-			AdminEmail:     "admin@ret-full.example.com",
 			DeletionPolicy: gentianov1alpha1.DeletionPolicyRetain,
 			Mail:           &gentianov1alpha1.TenantMail{Mode: gentianov1alpha1.MailModeSelfhosted},
 			Apps:           []gentianov1alpha1.TenantApp{{Profile: "ret-app"}},

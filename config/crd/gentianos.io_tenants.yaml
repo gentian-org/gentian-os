@@ -27,8 +27,8 @@ spec:
     - jsonPath: .status.readyApps
       name: READY
       type: integer
-    - jsonPath: .spec.adminEmail
-      name: MAIL
+    - jsonPath: .status.adminEmail
+      name: ADMIN
       type: string
     - jsonPath: .metadata.creationTimestamp
       name: AGE
@@ -64,20 +64,6 @@ spec:
           spec:
             description: TenantSpec defines the desired state of a Tenant.
             properties:
-              adminEmail:
-                description: |-
-                  AdminEmail is the contact address for platform notifications.
-
-                  Derived when empty, as `admin@<effectiveDomain>` — so a tenant in multi
-                  mode gets admin@<tenant>.<KERNEL_DOMAIN>, and one in single mode
-                  admin@<KERNEL_DOMAIN>. Required, it had to be written by hand for every
-                  tenant, and a definition copied between clusters carried the other
-                  cluster's domain into an address nothing would ever deliver to.
-
-                  Set it only to override that: a contact address outside the tenant's own
-                  domain, which is a decision rather than a default.
-                pattern: ^([^@\s]+@[^@\s]+\.[^@\s]+)?$
-                type: string
               apps:
                 description: Apps lists the applications to install for this tenant.
                 items:
@@ -353,14 +339,12 @@ spec:
             properties:
               adminEmail:
                 description: |-
-                  AdminEmail is the resolved contact address for this tenant — spec.adminEmail
-                  when set, otherwise admin@<effective domain>.
+                  AdminEmail is the resolved contact address for this tenant, and the
+                  administrator's login: admin@<effectiveDomain>.
 
-                  Published because the resolved value is what an operator signs in with, and
-                  spec.adminEmail is empty in the normal case where it is derived. A consumer
-                  reading only the spec sees nothing and has to re-derive it, which is how
-                  `gtnctl tenants deploy` came to print admin-<tenant>@gentian.org: a domain
-                  belonging to no cluster, for an account that does not exist.
+                  Reported here because it is derived — there is no spec field to read it
+                  back from — so a consumer that needs the address reads status, and a
+                  tenant whose domain changes shows the new one here once reconciled.
                 type: string
               appCount:
                 description: AppCount is the total number of apps requested in spec.

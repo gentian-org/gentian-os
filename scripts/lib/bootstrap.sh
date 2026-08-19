@@ -1208,7 +1208,13 @@ scaffold_tenant_deployment() {
         printf '  name: %s\n' "${name}"
         printf 'spec:\n'
         printf '  displayName: %s\n' "${GENTIAN_TENANT_DISPLAY_NAME:-${name}}"
-        printf '  adminEmail: %s\n' "${GENTIAN_TENANT_ADMIN_EMAIL:-admin-${name}@${domain}}"
+        printf '\n'
+        printf '  # No adminEmail here. The administrator address is derived:\n'
+        printf '  #   admin@%s.%s\n' "${name}" "${domain}"
+        printf '  # and it is the Keycloak username too — one identifier, not\n'
+        printf '  # two that can disagree. Setting it would point the account at\n'
+        printf '  # an address the tenant does not control; this account is\n'
+        printf '  # recovered by the cluster administrator, not by mail.\n'
         printf '\n'
         printf '  # Where this tenant is served. Left unset it is %s.%s,\n' "${name}" "${domain}"
         printf '  # which is what a multi-tenant cluster wants. Set it to serve the\n'

@@ -131,7 +131,6 @@ func TestDB_NoPostgresApps(t *testing.T) {
 		Spec: gentianov1alpha1.TenantSpec{
 			DisplayName: "No DB Co",
 			Domain:      "nodb.example.com",
-			AdminEmail:  "admin@nodb.example.com",
 		},
 	}
 	if err := testClient.Create(context.Background(), tenant); err != nil {
@@ -176,7 +175,6 @@ func TestDB_CrossplaneAppProvisionedByOperator(t *testing.T) {
 		Spec: gentianov1alpha1.TenantSpec{
 			DisplayName: "Crossplane DB Co",
 			Domain:      "cpgdb.example.com",
-			AdminEmail:  "admin@cpgdb.example.com",
 			Apps:        []gentianov1alpha1.TenantApp{{Profile: "element"}},
 		},
 	}
@@ -208,7 +206,6 @@ func TestDB_CreatesDatabaseCR(t *testing.T) {
 		Spec: gentianov1alpha1.TenantSpec{
 			DisplayName: "DB Create Co",
 			Domain:      "dbcreate.example.com",
-			AdminEmail:  "admin@dbcreate.example.com",
 			Apps:        []gentianov1alpha1.TenantApp{{Profile: "pg-app1"}},
 		},
 	}
@@ -268,7 +265,6 @@ func TestDB_CreatesDatabaseCRAfterRoleJobCompletes(t *testing.T) {
 		Spec: gentianov1alpha1.TenantSpec{
 			DisplayName: "Role Job Co",
 			Domain:      "rolejob.example.com",
-			AdminEmail:  "admin@rolejob.example.com",
 			Apps:        []gentianov1alpha1.TenantApp{{Profile: "pg-app2"}},
 		},
 	}
@@ -329,7 +325,6 @@ func TestDB_SetsReadyWhenAllDone(t *testing.T) {
 		Spec: gentianov1alpha1.TenantSpec{
 			DisplayName: "DB Ready Co",
 			Domain:      "dbready.example.com",
-			AdminEmail:  "admin@dbready.example.com",
 			Apps:        []gentianov1alpha1.TenantApp{{Profile: "pg-app3"}},
 		},
 	}
@@ -396,7 +391,6 @@ func TestDB_DeleteDeletePolicy_DeletesDatabaseCR(t *testing.T) {
 		Spec: gentianov1alpha1.TenantSpec{
 			DisplayName:    "DB Delete Co",
 			Domain:         "dbdelete.example.com",
-			AdminEmail:     "admin@dbdelete.example.com",
 			DeletionPolicy: gentianov1alpha1.DeletionPolicyDelete,
 			Apps:           []gentianov1alpha1.TenantApp{{Profile: "pg-app4"}},
 		},
@@ -453,7 +447,6 @@ func TestDB_DeleteDeletePolicy_DeletesOrphanedDatabaseCR(t *testing.T) {
 		Spec: gentianov1alpha1.TenantSpec{
 			DisplayName:    "DB Orphan Co",
 			Domain:         "dborphan.example.com",
-			AdminEmail:     "admin@dborphan.example.com",
 			DeletionPolicy: gentianov1alpha1.DeletionPolicyDelete,
 			Apps:           []gentianov1alpha1.TenantApp{{Profile: "pg-app5"}},
 		},

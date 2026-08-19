@@ -59,7 +59,6 @@ func TestMariaDB_NoMariaDBApps(t *testing.T) {
 		Spec: gentianov1alpha1.TenantSpec{
 			DisplayName: "No Maria Co",
 			Domain:      "nomaria.example.com",
-			AdminEmail:  "admin@nomaria.example.com",
 		},
 	}
 	if err := testClient.Create(context.Background(), tenant); err != nil {
@@ -106,7 +105,6 @@ func TestMariaDB_CreatesSetupJob(t *testing.T) {
 		Spec: gentianov1alpha1.TenantSpec{
 			DisplayName: "Maria Create Co",
 			Domain:      "mariacreate.example.com",
-			AdminEmail:  "admin@mariacreate.example.com",
 			Apps:        []gentianov1alpha1.TenantApp{{Profile: "maria-app1"}},
 		},
 	}
@@ -178,7 +176,6 @@ func TestMariaDB_SetsReadyWhenJobsDone(t *testing.T) {
 		Spec: gentianov1alpha1.TenantSpec{
 			DisplayName: "Maria Ready Co",
 			Domain:      "mariaready.example.com",
-			AdminEmail:  "admin@mariaready.example.com",
 			Apps:        []gentianov1alpha1.TenantApp{{Profile: "maria-app2"}},
 		},
 	}
@@ -235,7 +232,6 @@ func TestMariaDB_DeleteDeletePolicy_CreatesDeleteJob(t *testing.T) {
 		Spec: gentianov1alpha1.TenantSpec{
 			DisplayName:    "Maria Delete Co",
 			Domain:         "mariadelete.example.com",
-			AdminEmail:     "admin@mariadelete.example.com",
 			DeletionPolicy: gentianov1alpha1.DeletionPolicyDelete,
 			Apps:           []gentianov1alpha1.TenantApp{{Profile: "maria-app3"}},
 		},

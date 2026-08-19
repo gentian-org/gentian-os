@@ -158,7 +158,6 @@ func TestTenant_DeepCopy(t *testing.T) {
 		Spec: v1alpha1.TenantSpec{
 			DisplayName:    "GTN Demo",
 			Domain:         "gtn-demo.example.com",
-			AdminEmail:     "admin@gtn-demo.example.com",
 			DeletionPolicy: v1alpha1.DeletionPolicyRetain,
 			Isolation: &v1alpha1.TenantIsolation{
 				Mode:           v1alpha1.IsolationModeNamespace,
@@ -225,7 +224,6 @@ func TestTenant_DeletionPolicyValues(t *testing.T) {
 				Spec: v1alpha1.TenantSpec{
 					DisplayName:    "T",
 					Domain:         "t.example.com",
-					AdminEmail:     "a@t.example.com",
 					DeletionPolicy: tc.policy,
 				},
 			}

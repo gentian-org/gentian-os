@@ -66,7 +66,6 @@ func TestApps_NoApps(t *testing.T) {
 		Spec: gentianov1alpha1.TenantSpec{
 			DisplayName: "No Apps Co",
 			Domain:      "noapps.example.com",
-			AdminEmail:  "admin@noapps.example.com",
 		},
 	}
 	if err := testClient.Create(context.Background(), tenant); err != nil {
@@ -114,7 +113,6 @@ func TestApps_CreatesAppClaim(t *testing.T) {
 		Spec: gentianov1alpha1.TenantSpec{
 			DisplayName: "Single App Co",
 			Domain:      "single-app.example.com",
-			AdminEmail:  "admin@single-app.example.com",
 			Apps:        []gentianov1alpha1.TenantApp{{Profile: "my-app"}},
 		},
 	}
@@ -188,7 +186,6 @@ func TestApps_MultipleApps(t *testing.T) {
 		Spec: gentianov1alpha1.TenantSpec{
 			DisplayName: "Multi App Co",
 			Domain:      "multi-app.example.com",
-			AdminEmail:  "admin@multi-app.example.com",
 			Apps:        tenantApps,
 		},
 	}
@@ -223,7 +220,6 @@ func TestApps_DeleteRemovesAppClaims(t *testing.T) {
 		Spec: gentianov1alpha1.TenantSpec{
 			DisplayName:    "Del Tenant",
 			Domain:         "del.example.com",
-			AdminEmail:     "admin@del.example.com",
 			DeletionPolicy: gentianov1alpha1.DeletionPolicyDelete,
 			Apps:           []gentianov1alpha1.TenantApp{{Profile: "del-app"}},
 		},
@@ -278,7 +274,6 @@ func TestApps_RemoveAppCleansUpClaim(t *testing.T) {
 		Spec: gentianov1alpha1.TenantSpec{
 			DisplayName: "Remove App Tenant",
 			Domain:      "rmapp.example.com",
-			AdminEmail:  "admin@rmapp.example.com",
 			Apps: []gentianov1alpha1.TenantApp{
 				{Profile: "rm-keep-app"},
 				{Profile: "rm-remove-app"},
@@ -353,7 +348,6 @@ func TestApps_OrphanCleanupSkipsCRsWithoutAppLabel(t *testing.T) {
 		Spec: gentianov1alpha1.TenantSpec{
 			DisplayName: "Skip NoApp Tenant",
 			Domain:      "skipnoapp.example.com",
-			AdminEmail:  "admin@skipnoapp.example.com",
 			Apps:        []gentianov1alpha1.TenantApp{{Profile: "only-app"}},
 		},
 	}
@@ -436,7 +430,6 @@ func TestApps_CleanupOrphanedAppWorkload(t *testing.T) {
 		Spec: gentianov1alpha1.TenantSpec{
 			DisplayName: "Orphan App Workload",
 			Domain:      "orphanwl.example.com",
-			AdminEmail:  "admin@orphanwl.example.com",
 			Apps:        []gentianov1alpha1.TenantApp{{Profile: "orphan-wl-app"}},
 		},
 	}
@@ -543,7 +536,6 @@ func TestApps_CleanupOrphanedAppWorkloadOwnerlessJobPod(t *testing.T) {
 		Spec: gentianov1alpha1.TenantSpec{
 			DisplayName: "Orphan App Workload 2",
 			Domain:      "orphanwl2.example.com",
-			AdminEmail:  "admin@orphanwl2.example.com",
 			Apps:        []gentianov1alpha1.TenantApp{{Profile: "orphan-wl-app2"}},
 		},
 	}

@@ -40,20 +40,6 @@ type TenantSpec struct {
 	// +kubebuilder:validation:Pattern=`^([a-z0-9]([a-z0-9\-\.]*[a-z0-9])?)?$`
 	Domain string `json:"domain,omitempty"`
 
-	// AdminEmail is the contact address for platform notifications.
-	//
-	// Derived when empty, as `admin@<effectiveDomain>` — so a tenant in multi
-	// mode gets admin@<tenant>.<KERNEL_DOMAIN>, and one in single mode
-	// admin@<KERNEL_DOMAIN>. Required, it had to be written by hand for every
-	// tenant, and a definition copied between clusters carried the other
-	// cluster's domain into an address nothing would ever deliver to.
-	//
-	// Set it only to override that: a contact address outside the tenant's own
-	// domain, which is a decision rather than a default.
-	// +optional
-	// +kubebuilder:validation:Pattern=`^([^@\s]+@[^@\s]+\.[^@\s]+)?$`
-	AdminEmail string `json:"adminEmail,omitempty"`
-
 	// Isolation describes the workload isolation boundaries for this tenant.
 	// +optional
 	Isolation *TenantIsolation `json:"isolation,omitempty"`
@@ -274,14 +260,12 @@ type TenantStatus struct {
 	// +optional
 	Namespace string `json:"namespace,omitempty"`
 
-	// AdminEmail is the resolved contact address for this tenant — spec.adminEmail
-	// when set, otherwise admin@<effective domain>.
+	// AdminEmail is the resolved contact address for this tenant, and the
+	// administrator's login: admin@<effectiveDomain>.
 	//
-	// Published because the resolved value is what an operator signs in with, and
-	// spec.adminEmail is empty in the normal case where it is derived. A consumer
-	// reading only the spec sees nothing and has to re-derive it, which is how
-	// `gtnctl tenants deploy` came to print admin-<tenant>@gentian.org: a domain
-	// belonging to no cluster, for an account that does not exist.
+	// Reported here because it is derived — there is no spec field to read it
+	// back from — so a consumer that needs the address reads status, and a
+	// tenant whose domain changes shows the new one here once reconciled.
 	// +optional
 	AdminEmail string `json:"adminEmail,omitempty"`
 	// ObservedGeneration is the last processed generation of the spec.
@@ -325,7 +309,7 @@ type TenantMailStatus struct {
 // +kubebuilder:printcolumn:name="STATUS",type=string,JSONPath=`.status.phase`
 // +kubebuilder:printcolumn:name="APPS",type=integer,JSONPath=`.status.appCount`
 // +kubebuilder:printcolumn:name="READY",type=integer,JSONPath=`.status.readyApps`
-// +kubebuilder:printcolumn:name="MAIL",type=string,JSONPath=`.spec.adminEmail`
+// +kubebuilder:printcolumn:name="ADMIN",type=string,JSONPath=`.status.adminEmail`
 // +kubebuilder:printcolumn:name="AGE",type=date,JSONPath=`.metadata.creationTimestamp`
 type Tenant struct {
 	metav1.TypeMeta   `json:",inline"`
@@ -354,51 +338,47 @@ type TenantList struct {
 // tenant name so it stays unique across realms (admin-corp); inside the
 // tenant's own domain that reads as admin-corp@corp.example, naming the tenant
 // twice. The mailbox belongs to the domain, so the domain says whose it is.
-// MailDomainOrDefault is the domain this tenant's mail is addressed in.
-//
-// spec.mail.domain when set, otherwise the tenant's ingress domain. The two are
-// usually the same and are allowed to differ: a cluster can put every tenant's
-// mail on one domain while each still serves its apps on its own subdomain.
-//
-// On the API type rather than in the mail controller because the admin address
-// is derived from it too, and those two were deriving it separately — see
-// AdminEmailOrDefault.
-func (t *Tenant) MailDomainOrDefault(kernelDomain, tenancyMode string) string {
-	if t.Spec.Mail != nil && t.Spec.Mail.Domain != "" {
-		return t.Spec.Mail.Domain
-	}
-	return t.EffectiveDomain(kernelDomain, tenancyMode)
-}
+// TenantAdminLocalPart is the local part of every tenant administrator's
+// address, and of the Keycloak username, which are the same string.
+const TenantAdminLocalPart = "admin"
 
-// AdminEmailOrDefault is the tenant administrator's address.
+// AdminEmailOrDefault is the tenant administrator's address — and its login.
 //
-// Derived from the MAIL domain, not the ingress domain. Those are the same
-// unless spec.mail.domain says otherwise, and when it does, an address in the
-// ingress domain is one no mailbox exists for: Postfix accepts mail only for
-// the domains in virtual_mailbox_domains, which the operator writes from the
-// mail domain. That mismatch is why tenant definitions carried hand-written
-// addresses — the derived one could not receive.
+// admin@<tenant-domain>: admin@corp.gtn.host in multi mode, admin@<kernelDomain>
+// in single, spec.domain when a tenant has a vanity one. The tenant's own
+// domain is what makes `admin` unambiguous, so no tenant name appears in the
+// local part; it would name the tenant twice.
 //
-// The local part is `admin` when the tenant has the domain to itself, and
-// `admin-<tenant>` when the mail domain is shared with other tenants. Sharing
-// is what makes the tenant name necessary: two tenants on one mail domain would
-// otherwise both be admin@ that domain, and the second to provision would
-// collide with the first. Inside the tenant's own domain the same name would
-// appear twice — admin-corp@corp.example — which is why it is not added there.
+// Derived, never configured. spec.adminEmail is gone: an address an operator
+// could type is an address pointing outside the tenant, and this account is
+// recovered by the cluster administrator rather than by mail to a third party.
+// Every tenant definition that carried one carried a hand-written value that
+// had to be kept in step with the domain, and none of them were.
+//
+// The address IS the username — see TenantAdminUsername — so there is one
+// identifier here, not two that can disagree.
 func (t *Tenant) AdminEmailOrDefault(kernelDomain, tenancyMode string) string {
-	if t.Spec.AdminEmail != "" {
-		return t.Spec.AdminEmail
-	}
-	domain := t.MailDomainOrDefault(kernelDomain, tenancyMode)
+	domain := t.EffectiveDomain(kernelDomain, tenancyMode)
 	if domain == "" {
 		// No domain configured at all: .invalid is reserved by RFC 2606 and can
 		// never resolve, which is the honest representation of "unknown".
-		return "admin-" + t.Name + "@" + t.Name + ".invalid"
+		domain = t.Name + ".invalid"
 	}
-	if domain == t.EffectiveDomain(kernelDomain, tenancyMode) {
-		return "admin@" + domain
-	}
-	return "admin-" + t.Name + "@" + domain
+	return TenantAdminLocalPart + "@" + domain
+}
+
+// TenantAdminUsername is the Keycloak login for that account.
+//
+// The same string as the address, deliberately. It was admin-<tenant>, which
+// made the login and the contact address two identifiers for one account that
+// had to be derived in two places and could disagree — and did: the login
+// carried the tenant name while the address did not.
+//
+// One string also states the recovery model. A login that is an address the
+// tenant's own mail stack delivers to is an account whose password reset goes
+// to the tenant, not to whoever typed a contact address into a definition once.
+func (t *Tenant) TenantAdminUsername(kernelDomain, tenancyMode string) string {
+	return t.AdminEmailOrDefault(kernelDomain, tenancyMode)
 }
 
 // EffectiveDomain returns the domain to use for ingress and mail routing

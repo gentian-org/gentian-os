@@ -361,7 +361,17 @@ For the current baseline design of the system, refer to [architecture.md](archit
   - `[ ]` Split Keycloak administrative groups into operational roles (e.g., system-operator vs tenant-admin).
   - `[ ]` Deny cross-tenant administrative actions unless a break-glass role is explicitly active.
 
-### 3.4 Shell Browser Egress Proxy (**)
+### 3.4 Tenant Administrator Invitations (**)
+* **Target Domain**: Identity & Tenant Onboarding
+* **Context**: Provisioning a tenant creates one account — `admin@<tenant>.<kernel-domain>` — whose password is derived from the cluster master. It is the only way into a new tenant, so it becomes the account the tenant's real administrators log in with day to day: a shared credential, attached to no person, that appears in the audit trail as itself no matter who acted. It also cannot be recovered by the tenant, since recovery runs through the cluster administrator by design.
+* **Proposed Solution**: Make the provisioned account a bootstrap credential rather than a working one. A cluster administrator invites named people into the tenant's realm; each accepts, sets their own credentials, and holds tenant-admin through group membership. The provisioned account is then reduced to break-glass, and its use is an event rather than a routine.
+* **Backlog Items**:
+  - `[ ]` Add an invitation flow to the Admin Console: address in, Keycloak invitation out, membership granted on acceptance.
+  - `[ ]` Grant tenant-admin through realm group membership so it survives the bootstrap account being disabled.
+  - `[ ]` Report in the portal when a tenant still has no named administrator, so the state is visible rather than assumed.
+  - `[ ]` Decide what happens to the bootstrap account once a named admin exists — disabled, or retained as break-glass with its use audited.
+
+### 3.5 Shell Browser Egress Proxy (**)
 * **Target Domain**: UI/UX & Shell
 * **Context**: Embedded iframe applications make direct cross-origin API calls from the browser, exposing tokens to the user's browser context.
 * **Proposed Solution**: Build a reverse proxy within the shell BFF that maps paths (e.g., `/api/apps/{name}/...`) and handles bearer tokens server-side.

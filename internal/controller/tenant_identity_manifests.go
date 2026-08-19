@@ -238,10 +238,11 @@ func (r *TenantReconciler) buildIdentityProvisioningJobs(ctx context.Context, te
 }
 
 func (r *TenantReconciler) seedTenantAdminCreds(ctx context.Context, tenant *gentianov1alpha1.Tenant) (secrets.TenantAdminCreds, error) {
+	username := tenant.TenantAdminUsername(r.KernelDomain, r.TenancyMode)
 	if r.Seeder != nil {
-		return r.Seeder.SeedTenantAdmin(ctx, tenant.Name)
+		return r.Seeder.SeedTenantAdmin(ctx, tenant.Name, username)
 	}
-	return secrets.TenantAdminCreds{Username: "admin-" + tenant.Name, Password: "placeholder"}, nil
+	return secrets.TenantAdminCreds{Username: username, Password: "placeholder"}, nil
 }
 
 // seedOIDCSecrets writes issuer/client-id/client-secret to OpenBao for apps whose

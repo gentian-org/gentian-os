@@ -1073,8 +1073,8 @@ func (r *TenantReconciler) buildXTenant(ctx context.Context, tenant *gentianov1a
 
 	spec := map[string]interface{}{
 		"displayName": tenant.Spec.DisplayName,
-		// Derived when unset: the XTenant XRD requires this field, so an empty
-		// spec.adminEmail would be rejected at composition rather than defaulted.
+		// Always derived — the Tenant CRD has no adminEmail field to read. The
+		// XTenant XRD still requires one, and this is where it comes from.
 		"adminEmail":   r.tenantAdminEmail(tenant),
 		"kernelDomain": r.KernelDomain,
 	}

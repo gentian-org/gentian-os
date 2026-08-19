@@ -1112,14 +1112,12 @@ prompt_tenant_identity() {
     GENTIAN_TENANT_DISPLAY_NAME="${GENTIAN_TENANT_DISPLAY_NAME:-${GENTIAN_TENANT_NAME}}"
     export GENTIAN_TENANT_DISPLAY_NAME
 
-    local default_email="admin-${GENTIAN_TENANT_NAME}@${KERNEL_DOMAIN}"
-    if [[ -z "${GENTIAN_TENANT_ADMIN_EMAIL:-}" && "${GENTIAN_NONINTERACTIVE:-0}" != "1" ]]; then
-        local e
-        read -rp "  Tenant administrator email (default: ${default_email}): " e
-        GENTIAN_TENANT_ADMIN_EMAIL="${e:-${default_email}}"
-    fi
-    GENTIAN_TENANT_ADMIN_EMAIL="${GENTIAN_TENANT_ADMIN_EMAIL:-${default_email}}"
-    export GENTIAN_TENANT_ADMIN_EMAIL
+    # No administrator address is asked for.
+    #
+    # It is derived — admin@<tenant>.<kernelDomain> — and it is the Keycloak
+    # username as well, so there is nothing here for an operator to choose.
+    # Asking would invite a contact address at some third party, which is an
+    # account the tenant cannot receive password resets for.
 }
 
 prompt_network_mode() {

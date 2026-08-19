@@ -14,7 +14,6 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-
 package secrets
 
 import (
@@ -352,12 +351,20 @@ type TenantAdminCreds struct {
 
 // SeedTenantAdmin derives the tenant admin password from the master and
 // persists it write-once under gentian-os/tenants/<tenant>/admin.
-// Username defaults to "admin-<tenant>". Operators can override it by writing
-// a different value to OpenBao before first reconcile.
-func (s *Seeder) SeedTenantAdmin(ctx context.Context, tenant string) (TenantAdminCreds, error) {
+//
+// The username is passed in rather than derived here. It is the tenant's admin
+// ADDRESS — Tenant.TenantAdminUsername — and this package cannot compute it: it
+// needs the cluster's domain and tenancy mode, which are the caller's. Deriving
+// a second form of the same identifier here is what left the login as
+// admin-<tenant> while the address had no tenant name in it at all.
+//
+// Write-once, so an existing tenant keeps the username it was provisioned with.
+// Operators can override it by writing a different value to OpenBao before the
+// first reconcile.
+func (s *Seeder) SeedTenantAdmin(ctx context.Context, tenant, username string) (TenantAdminCreds, error) {
 	salt := TenantAdminPath(tenant)
 	want := map[string]string{
-		"username": "admin-" + tenant,
+		"username": username,
 		"password": s.genTenantAdminPassword(salt),
 	}
 	got, err := s.seedAndRead(ctx, salt, want)

@@ -165,7 +165,6 @@ func TestIdentity_NoOIDCApps(t *testing.T) {
 		Spec: gentianov1alpha1.TenantSpec{
 			DisplayName: "No OIDC Co",
 			Domain:      "noidc.example.com",
-			AdminEmail:  "admin@noidc.example.com",
 		},
 	}
 	if err := testClient.Create(context.Background(), tenant); err != nil {
@@ -230,7 +229,6 @@ func TestIdentity_CreatesRealmJob(t *testing.T) {
 		Spec: gentianov1alpha1.TenantSpec{
 			DisplayName: "Realm Test Co",
 			Domain:      "realmtest.example.com",
-			AdminEmail:  "admin@realmtest.example.com",
 			Apps:        []gentianov1alpha1.TenantApp{{Profile: "oidc-app1"}},
 		},
 	}
@@ -275,7 +273,6 @@ func TestIdentity_CreatesClientJobAfterRealmComplete(t *testing.T) {
 		Spec: gentianov1alpha1.TenantSpec{
 			DisplayName: "Client Test Co",
 			Domain:      "clienttest.example.com",
-			AdminEmail:  "admin@clienttest.example.com",
 			Apps:        []gentianov1alpha1.TenantApp{{Profile: "oidc-app2"}},
 		},
 	}
@@ -346,7 +343,6 @@ func TestIdentity_SetsReadyWhenAllJobsDone(t *testing.T) {
 		Spec: gentianov1alpha1.TenantSpec{
 			DisplayName: "All Ready Co",
 			Domain:      "allready.example.com",
-			AdminEmail:  "admin@allready.example.com",
 			Apps:        []gentianov1alpha1.TenantApp{{Profile: "oidc-app3"}},
 		},
 	}
@@ -440,7 +436,6 @@ func TestIdentity_CreatesAdminJobAfterRealm(t *testing.T) {
 		Spec: gentianov1alpha1.TenantSpec{
 			DisplayName: "Admin Test Co",
 			Domain:      "admintest.example.com",
-			AdminEmail:  "admin@admintest.example.com",
 			Apps:        []gentianov1alpha1.TenantApp{{Profile: "oidc-app-admin"}},
 		},
 	}
@@ -522,7 +517,6 @@ func TestIdentity_DeleteDeletePolicy_CreatesCleanupJob(t *testing.T) {
 		Spec: gentianov1alpha1.TenantSpec{
 			DisplayName:    "Identity Delete Co",
 			Domain:         "identdelete.example.com",
-			AdminEmail:     "admin@identdelete.example.com",
 			DeletionPolicy: gentianov1alpha1.DeletionPolicyDelete,
 			Apps:           []gentianov1alpha1.TenantApp{{Profile: "oidc-app4"}},
 		},
@@ -567,7 +561,6 @@ func TestIdentity_RetainPolicy_DisablesRealm(t *testing.T) {
 		Spec: gentianov1alpha1.TenantSpec{
 			DisplayName:    "Identity Retain Co",
 			Domain:         "identretain.example.com",
-			AdminEmail:     "admin@identretain.example.com",
 			DeletionPolicy: gentianov1alpha1.DeletionPolicyRetain,
 			Apps:           []gentianov1alpha1.TenantApp{{Profile: "oidc-app5"}},
 		},
