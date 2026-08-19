@@ -744,18 +744,26 @@ EOF
 # and the deploy rolls back — after already pushing the activation commit. Create
 # it on demand so a first tenant deploy works on a freshly bootstrapped cluster.
 #
-# mail.domain is derived from the cluster's own kernelDomain rather than copied
-# from another cluster: no tenant.yaml overrides it, so whatever lands here is
-# what every tenant gets, and a stale value silently misroutes tenant mail.
+# mail.domain is NOT written here, and that is the point.
+#
+# It used to be the cluster's kernelDomain, which gave every tenant the same
+# mail domain. Postfix then accepted mail for gtn.host and refused
+# corp.gtn.host, while the platform derives the administrator's address as
+# admin@corp.gtn.host — an address its own mail stack would not receive. The
+# registry held one entry per tenant, all naming the same domain.
+#
+# Absent, the operator derives it from the tenant: mailDomain() falls back to
+# EffectiveDomain, so corp.gtn.host under TENANCY_MODE=multi — the same domain
+# the address is derived in. Set spec.mail.domain per tenant only where a
+# tenant genuinely owns a different one.
 ensure_tenant_defaults_component() {
-  local comp_dir kernel_domain claim
+  local comp_dir
   comp_dir="$(tenant_components_root)/tenant-defaults"
 
   [[ -f "${comp_dir}/kustomization.yaml" ]] && return 0
 
-  claim="${DEPLOYMENTS_PATH}/clusters/${DEPLOYMENTS_CLUSTER}/kernel/claims/cluster.yaml"
-  kernel_domain="$(awk '/kernelDomain:/ {print $2; exit}' "${claim}" 2>/dev/null || true)"
-
+  # The cluster's domain is deliberately not read: nothing in this component
+  # names a domain any more, because each tenant's is derived from its own name.
   mkdir -p "${comp_dir}"
   cat > "${comp_dir}/kustomization.yaml" <<'KEOF'
 apiVersion: kustomize.config.k8s.io/v1alpha1
@@ -781,15 +789,13 @@ spec:
   isolation:
     mode: namespace
 DEOF
-    if [[ -n "${kernel_domain}" ]]; then
-      cat <<DEOF
+    cat <<'DEOF'
   mail:
-    domain: ${kernel_domain}
+    # No domain: each tenant's is its own. See the note above.
     mode: selfhosted
     quotaPerUser: 5Gi
     rateLimit: 100/h
 DEOF
-    fi
     cat <<'DEOF'
   quotas:
     cpu: 32
@@ -800,7 +806,6 @@ DEOF
   } > "${comp_dir}/defaults.yaml"
 
   echo "Created shared tenant defaults component at ${comp_dir}"
-  [[ -z "${kernel_domain}" ]] && echo "  NOTE: kernelDomain not readable from ${claim}; mail defaults omitted — set spec.mail per tenant." >&2
   return 0
 }
 
