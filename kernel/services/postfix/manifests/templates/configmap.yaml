@@ -170,7 +170,68 @@ data:
     # Mounted as a directory, without subPath: a subPath mount is copied once at
     # Pod start and never tracks later ConfigMap updates, so every new tenant
     # would need a Postfix restart to receive mail.
+    # Seed the operator's per-tenant DKIM keys before the image looks.
+    #
+    # Two things generate DKIM keys and only one may win. The operator creates a
+    # key per tenant and publishes its public half on tenant status, which is
+    # what reaches DNS; the image generates a key per domain in
+    # ALLOWED_SENDER_DOMAINS. If both ran, Postfix would sign with the image's
+    # key while DNS advertised the operator's, and every signature would fail
+    # verification against a record that looks correct — worse than not signing.
+    #
+    # The image skips generation when a key is already present, so copying the
+    # operator's keys in first makes it adopt them and build KeyTable entries
+    # pointing at them. Operator owns the keys, image owns the tables, and
+    # neither has to know about the other.
+    #
+    # The operator's copy wins when the two differ, because the operator is what
+    # publishes the DNS record — so its key is by definition the one verifiers
+    # check against. Leaving a stale image-generated key here would keep Postfix
+    # signing with a key DNS no longer advertises.
+    #
+    # Keys the operator does not supply are left untouched: those are the image's
+    # own, and replacing one is what invalidates an already-published record.
+    extraInitContainers:
+      - name: seed-dkim-keys
+        image: busybox:1.36
+        command:
+          - sh
+          - -c
+          - |
+            set -eu
+            [ -d /tenant-keys ] || exit 0
+            for k in /tenant-keys/*.private; do
+              [ -e "$k" ] || continue
+              name=$(basename "$k")
+              if cmp -s "$k" "/keys/$name"; then
+                echo "unchanged $name"
+              else
+                cp "$k" "/keys/$name"
+                chmod 600 "/keys/$name"
+                echo "seeded $name"
+              fi
+            done
+        volumeMounts:
+          - name: dkim-keys
+            mountPath: /keys
+          - name: dkim-tenants
+            mountPath: /tenant-keys
+            readOnly: true
     extraVolumes:
+      # The DKIM signing keys.
+      #
+      # The image generates a key per domain at start and writes it under
+      # /etc/opendkim/keys, which is the container filesystem — so every restart
+      # produced a NEW key and silently invalidated the DNS record published for
+      # the old one. Signatures then fail verification against a record that looks
+      # correct, which is worse than not signing at all.
+      #
+      # The image skips generation when a key is already present ("Will not
+      # overwrite"), so persisting the directory is enough to make a published
+      # record stay valid. The chart's own persistence covers only the mail queue.
+      - name: dkim-keys
+        persistentVolumeClaim:
+          claimName: postfix-{{ .Values.env }}-dkim-keys
       - name: kernel-maps
         configMap:
           name: postfix-kernel-virtual-mailbox-maps
@@ -186,6 +247,8 @@ data:
           secretName: postfix-dkim-tenants
           defaultMode: 0400
     extraVolumeMounts:
+      - name: dkim-keys
+        mountPath: /etc/opendkim/keys
       # Postfix warns about this mount on every start:
       #
       #   warning: group or other writable:

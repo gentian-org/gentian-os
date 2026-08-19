@@ -98,3 +98,7 @@ mailServiceMode: external
 # The node label the pin uses. A platform convention rather than a per-cluster
 # value — label the node holding the floating IP with it set to "true".
 egressNodeLabel: gentianos.io/mail-egress
+
+# Storage for the DKIM keys. A handful of 2048-bit keys; the size is almost
+# irrelevant, the persistence is not.
+dkimKeyStorageSize: 128Mi
