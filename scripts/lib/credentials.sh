@@ -559,13 +559,26 @@ collect_bootstrap_credentials() {
     # OpenBao credential, and it outlives handover — so "does this cluster
     # already have a salt" is answered by the cluster, not by whether this shell
     # happens to hold a token.
-    if [[ -z "${DERIVATION_SALT:-}" ]]; then
-        DERIVATION_SALT="$(gentian_cluster_derivation_salt || true)"
-        [[ -n "${DERIVATION_SALT}" ]] && info "Recovered this cluster's derivation salt."
+    #
+    # The cluster's salt wins over one already in this shell, rather than only
+    # filling a gap. A stale salt is exactly as wrong as no salt and harder to
+    # notice: the credential cache is written at the end of every run, so one
+    # run that minted a salt persists it to ~/.gentian, and every later run
+    # loads that file, finds the variable set, and never asks the cluster. The
+    # cluster is the only party that knows which salt its secrets were built
+    # with, and disagreeing with it cannot produce a working credential.
+    local cluster_salt
+    cluster_salt="$(gentian_cluster_derivation_salt || true)"
+    if [[ -n "${cluster_salt}" ]]; then
+        if [[ -n "${DERIVATION_SALT:-}" && "${DERIVATION_SALT}" != "${cluster_salt}" ]]; then
+            warn "The derivation salt in this shell is not this cluster's; using the cluster's."
+            warn "  Anything derived from the other one — including the portal password a"
+            warn "  previous run may have printed — was never valid here."
+        fi
+        DERIVATION_SALT="${cluster_salt}"
     fi
     if [[ -z "${DERIVATION_SALT:-}" ]]; then
         DERIVATION_SALT="$(openssl rand -hex 16)"
-        export DERIVATION_SALT
         info "Generated a new derivation salt."
     fi
     export DERIVATION_SALT
