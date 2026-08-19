@@ -184,16 +184,28 @@ For the current baseline design of the system, refer to [architecture.md](archit
   - `[ ]` Retire the per-app password minting once token auth works for the webmail client.
   - `[ ]` Keep app passwords only for clients that genuinely cannot do OAuth (phones, Thunderbird), as Google and Fastmail do.
 
-### 1.20 Wire Per-Tenant DKIM Keys into OpenDKIM (**)
+### 1.20 DKIM Key Rotation and Delivery Verification (**)
 * **Target Domain**: Kernel Mail Security
-* **Context**: The operator already generates an RSA-2048 DKIM key per tenant (`dkim-<tenant>` Secret in the kernel namespace, created once, never auto-rotated) and publishes the public half on `Tenant.status.mail.dkimPublicKey` for DNS. But OpenDKIM selects a signing key from `/etc/opendkim/KeyTable` and `/etc/opendkim/SigningTable`, and nothing writes tenant entries into either — the image builds them once at start from `ALLOWED_SENDER_DOMAINS`, which carries the kernel domain alone. So a tenant's key exists, its DNS record can be published, and its mail still leaves unsigned. Unsigned mail from a young IP is the classic spam profile; SPF alone is weighted far less by the large providers, so this is the difference between tenant mail arriving and tenant mail being filtered.
-* **Proposed Solution**: Have the operator maintain the two tables and the key files the same way it already maintains the Postfix address maps — a Secret mounted into Postfix, rewritten from the tenant registry, with the private keys sourced from the existing `dkim-<tenant>` Secrets. OpenDKIM re-reads `refile:` tables less eagerly than Postfix re-reads `texthash:`, so adding a tenant needs a reload; Reloader is already deployed and can watch the Secret. Note the key must never be regenerated once published, since the DNS record would silently stop matching.
+* **Context**: Signing works. The operator owns an RSA-2048 key per tenant and one for the kernel domain, seeds them into Postfix ahead of the image, and publishes each public half from the same value that signs; `opendkim-testkey` reports `key OK` for every domain. What is missing is what happens afterwards. Keys are created once and never rotated, which is safe — a rotated key silently stops matching its published record — but leaves no answer to a compromised key. And `ALLOWED_SENDER_DOMAINS` is read once at Postfix start, so a new tenant receives mail immediately but signs only after a restart, which nothing currently triggers.
+* **Proposed Solution**: A rotation that publishes the new public key under a second selector, waits for propagation, then switches signing to it — the standard two-selector rollover, which never leaves a signature without a matching record. For the restart gap, either have the operator roll the Postfix StatefulSet when the domain list changes, or move signing to a milter that re-reads its tables.
 * **Backlog Items**:
-  - `[ ]` Emit KeyTable and SigningTable entries per tenant domain from the mail reconciler.
-  - `[ ]` Mount the tenant DKIM private keys into the Postfix Pod and reload OpenDKIM on change.
-  - `[ ]` Surface the full DNS record — selector, `v=DKIM1` prefix and key — on tenant status rather than the bare key, so it can be pasted into a zone.
+  - `[x]` Emit KeyTable and SigningTable entries per tenant domain. *(The image builds both from the operator-supplied domain list; the operator owns the keys, the image owns the tables.)*
+  - `[x]` Mount the tenant DKIM private keys into the Postfix Pod. *(Seeded from `postfix-dkim-tenants` into a persistent volume by an init container, ahead of the image's own generation.)*
+  - `[ ]` Restart or reload Postfix when the tenant domain list changes, so a new tenant signs without waiting for an unrelated restart.
+  - `[ ]` Surface the full DNS record — selector, `v=DKIM1` prefix and key — on tenant status rather than the bare key.
   - `[ ]` Verify with a message to a major provider that the received headers report `dkim=pass` and `dmarc=pass`.
-  - `[ ]` Decide a rotation story: keys are created once and never rotated, which is safe but leaves no answer to a compromised key.
+  - `[ ]` Decide a rotation story, using a second selector so signing and publishing never disagree.
+
+---
+
+### 1.21 external-dns Rewrites the MX Record Every Cycle (*)
+* **Target Domain**: Kernel DNS
+* **Context**: external-dns deletes and recreates the tenant MX record on every reconcile, once a minute, forever. The record it writes is correct — `10 mail.gtn.host` with the TTL asked for — and so is the DNSEndpoint behind it, so nothing is visibly wrong in the zone. The reconcile simply never converges: the value it writes does not compare equal to the value it reads back, which for MX means the priority is not surviving the round trip. Two costs: a sub-second window each minute where the name has no MX, during which a sending server falls back to the tenant's A record and reaches the portal rather than Postfix; and a steady stream of Cloudflare API writes that counts against the account's rate limit for as long as the cluster runs.
+* **Proposed Solution**: Confirm the round trip by reading the record back through the Cloudflare API and comparing it against the endpoint external-dns computes, then take it upstream if the provider drops the priority on read. Until then the churn is tolerable — the zone holds the right answer between rewrites.
+* **Backlog Items**:
+  - `[ ]` Capture what external-dns reads back for the MX at debug log level and compare it to the desired endpoint.
+  - `[ ]` Report upstream, or pin a version where the comparison converges.
+  - `[ ]` Alert on sustained record churn, so a non-converging reconcile is noticed without reading logs.
 
 ---
 
