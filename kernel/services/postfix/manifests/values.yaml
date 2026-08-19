@@ -76,3 +76,14 @@ smtpIngress:
     # address, and a new one silently breaks inbound mail — senders retry for
     # days, then bounce.
     loadbalancer.openstack.org/keep-floatingip: "true"
+
+# The HELO name Postfix announces to remote servers.
+#
+# Defaults to mail.<kernelDomain>. It must be a FQDN whose A record points at
+# the address mail actually LEAVES from, and that address needs a matching PTR —
+# receivers check that the two agree (forward-confirmed reverse DNS).
+#
+# Outbound and inbound addresses are often different: mail arrives on the port 25
+# load balancer and leaves via the node egress IP. Where they differ, point this
+# at a name for the egress address rather than at the MX.
+smtpHelo: ""

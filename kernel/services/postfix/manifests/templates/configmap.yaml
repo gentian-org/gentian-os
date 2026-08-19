@@ -65,7 +65,18 @@ data:
         # placeholder there yields a key nobody can verify.
         DKIM_AUTOGENERATE: "1"
       postfix:
-        myhostname: postfix-{{ .Values.env }}
+        # The name Postfix greets a remote server with, and it must be a FQDN that
+        # resolves back to the sending address. It defaulted to the Service name —
+        # Gmail recorded "Received: from postfix-prod ([37.x.x.x])" — which is not a
+        # FQDN, resolves to nothing, and is one of the strongest spam signals a new
+        # sender can emit, alongside a missing PTR.
+        #
+        # smtpHelo must name the OUTBOUND address, which is not necessarily the
+        # inbound MX address: mail leaves via the node egress IP while it arrives on
+        # the load balancer. Receivers check forward-confirmed reverse DNS — the PTR
+        # of the sending IP names a host, and that host resolves back to the same IP
+        # — so this name, its A record and the PTR must all agree.
+        myhostname: {{ .Values.smtpHelo | default (printf "mail.%s" .Values.kernelDomain) }}
         # Inbound tenant mail: hand every message for a registered tenant domain
         # to Dovecot over LMTP, which files it into /var/mail/<domain>/<user>.
         virtual_transport: "lmtp:[dovecot-{{ .Values.env }}.{{ .Values.servicesNamespace }}.svc.cluster.local]:24"
