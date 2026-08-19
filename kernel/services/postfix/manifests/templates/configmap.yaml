@@ -217,7 +217,10 @@ data:
             name: postfix-kernel-virtual-mailbox-maps
             key: allowed_sender_domains
             optional: true
-    extraInitContainers:
+    # A string, not a list: the chart passes this value through tpl, which takes
+    # a template to render and fails type-checking on a list — "wrong type for
+    # value" from the release, with the previous StatefulSet left running.
+    extraInitContainers: |
       - name: seed-dkim-keys
         image: busybox:1.36
         command:
