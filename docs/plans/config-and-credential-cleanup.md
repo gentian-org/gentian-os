@@ -1180,8 +1180,8 @@ mirror, so "exercised" below never means more than that.
 | 9 | Built | No shared API contract tests; validation errors are not attributed per field |
 | 10 | **10a/10b done, 10c done** | `cluster-settings.env` is gone, no `envsubst` call site remains, and the credential manager — the third surface — now authenticates and serves (row 8). One orphaned `${GENTIAN_OS_IMAGE_REPOSITORY}` survived the `envsubst` removal inside a Helm template, where nothing expands it, and silently disabled image updates until it was found (§15.4) |
 | 11 | Done | BSD `sed_inplace` has not been observed running |
-| 12 | 12a–12d and 12f built, **12e not** | Provider RBAC is still `cluster-admin`, deliberately. 12f is built against renders only — no cluster has been installed on a platform other than OpenStack, or a zone other than Cloudflare |
-| 13 | Portability done | arm64, internal domain and mirror remain structural claims. The CA-bundle distribution contract (12c) is undefined, so `self-signed` and `private-ca` install without giving any client the anchor |
+| 12 | 12a–12d and 12f built, **12e not** | Provider RBAC is still `cluster-admin`, deliberately — the last privilege reduction, and now the largest piece of *work* rather than verification left here. 12c's outstanding half is closed. 12f is built against renders only — no cluster has been installed on a platform other than OpenStack, or a zone other than Cloudflare |
+| 13 | Portability done | arm64, internal domain and mirror remain structural claims — three separate installs, and the largest verification debt left in this plan. The 12c trust anchor is now delivered to everything the cluster schedules, so `self-signed` and `private-ca` are complete by construction and unexercised in fact |
 
 Two things this table is careful not to say. *Built* is not *works*: Phase 7 read as implemented
 for some time while one side of its federation did not exist. And a phase marked exercised was
@@ -2177,7 +2177,7 @@ cannot cover it; those became `awk`, which parses identically on both.
 | Item | Interface from | Prior art |
 |---|---|---|
 | ~~Migrate bash-4, `sed -i` and `xargs -r` call sites~~ **done** | Phase 11 `compat.sh` + lint | — |
-| Self-signed and private-CA issuers, CA secret, bundle distribution | 12c `issuerMode` | Self-signed CA support, with tests |
+| ~~Self-signed and private-CA issuers, CA secret, bundle distribution~~ **done, unexercised** | 12c `issuerMode` | `A-06` dispatches all four modes; distribution reuses the carrier `app-default` already had for ACME staging. What is left is an install in either mode, which is the row below |
 | Edge and zone-host entries for a target that has none | 12f `kernel/platforms.yaml` | Eight platforms and eight zone hosts shipped; a ninth is an entry, not a change |
 | A curl-only probe for Hetzner and Infomaniak DNS, promoting them to `phase: bootstrap` | 12f + Phase 3 | Both are bearer-token REST APIs, so both are inside the ceiling |
 | Thread provenance through appsets and operator chart values | 12a contract | `GENTIAN_OS_REPO`, image repository, appset `repoURL` |
@@ -2820,6 +2820,16 @@ done. The rule that replaces "the number must only go down" is simply that it st
 The lint no longer scans itself. Its `report` lines carry each forbidden construct as a literal, so
 it counted one violation per rule in the file that defines them — five phantom entries that made
 the real number look worse than it was, in code that only names what it forbids.
+
+**The trust anchor is still called the staging CA.** The volume is `gentian-staging-ca`, mounted
+at `/opt/gentian-staging-ca`, and the secret `app-default` falls back to is `gentian-staging-ca-tls`
+— now carrying a private CA or a self-signed root on clusters that have never used ACME staging.
+The names describe the first case the mechanism served rather than what it does, which is the
+misnaming this document objects to elsewhere.
+
+It was left alone deliberately: 65 references across 11 files, on a path that works, and folding a
+rename into the functional change would have made both hard to review and hard to revert. It is
+mechanical and should be done on its own.
 
 **`docs/commands.md` and `docs/design/mail.md` have not been checked** against the new paradigm.
 `GETTING-STARTED.md` points at both for post-install operations.
