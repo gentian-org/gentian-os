@@ -1168,29 +1168,10 @@ spec:
                     properties:
                       imap:
                         description: IMAP requests inbound mail (IMAP) credentials.
-                        properties:
-                          port:
-                            default: 993
-                            description: Port is the IMAP port.
-                            format: int32
-                            type: integer
                         type: object
                       smtp:
                         description: SMTP requests outbound mail (SMTP submission)
                           credentials.
-                        properties:
-                          auth:
-                            description: Auth is the SMTP authentication mechanism.
-                            enum:
-                            - plain
-                            - login
-                            - cram-md5
-                            type: string
-                          port:
-                            default: 587
-                            description: Port is the SMTP submission port.
-                            format: int32
-                            type: integer
                         type: object
                     type: object
                   mcp:
@@ -2016,29 +1997,10 @@ spec:
                           properties:
                             imap:
                               description: IMAP requests inbound mail (IMAP) credentials.
-                              properties:
-                                port:
-                                  default: 993
-                                  description: Port is the IMAP port.
-                                  format: int32
-                                  type: integer
                               type: object
                             smtp:
                               description: SMTP requests outbound mail (SMTP submission)
                                 credentials.
-                              properties:
-                                auth:
-                                  description: Auth is the SMTP authentication mechanism.
-                                  enum:
-                                  - plain
-                                  - login
-                                  - cram-md5
-                                  type: string
-                                port:
-                                  default: 587
-                                  description: Port is the SMTP submission port.
-                                  format: int32
-                                  type: integer
                               type: object
                           type: object
                         mcp:

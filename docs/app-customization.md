@@ -51,6 +51,45 @@ Research that informed the design is in §10; open questions in §11.
 | P6 | **Configuration layers, it does not fork.** Drop-in precedence is fixed and documented (image → chart → profile → tenant), like `/usr` → `/run` → `/etc`. | systemd drop-in precedence |
 | P7 | **Extension APIs are versioned contracts.** An app that offers L3 owes plugin authors a stability policy, a deprecation window, and a "proposed API" lane for the unstable parts. | VS Code proposed API; Eclipse API freeze |
 | P8 | **Customization inherits the trust model.** A customization can never raise its target's `trustTier` or bypass Kyverno, MAC waivers, licensing, or tenant isolation. | existing catalogue tiers, MAC waivers |
+| P9 | **An app declares needs, never endpoints.** A profile says *that* it sends mail, uses a database, needs object storage — never where those are or what credentials reach them. Hosts, ports, users and passwords arrive through `valueMapping`, as references the app does not resolve. | this section |
+
+---
+
+### 1.1 Declaring a need — P9 in practice
+
+Two fields, and neither names the cluster:
+
+```yaml
+spec:
+  kernelRequirements:
+    mail:
+      smtp: {}                      # the need. It carries nothing.
+  valueMapping:
+    smtp:
+      hostKey: mail.smtp.host       # what THIS chart calls these values
+      portKey: mail.smtp.port
+      userKey: mail.smtp.name
+      passwordKey: mail.smtp.password
+```
+
+The requirement is empty on purpose. It once carried `auth` and `port`, which
+asked the wrong party: the mechanism a server accepts and the port it listens on
+belong to the platform, and an app asserting `587, plain` asserts something it
+cannot verify and would be wrong about the moment the cluster changed.
+
+`valueMapping` is not cluster knowledge either — it is the app describing its
+own chart. Nextcloud calls it `nextcloud.mail.smtp.host`, OpenProject
+`environment.OPENPROJECT_SMTP__ADDRESS`. Only the packager knows that, and it is
+the whole of what they must supply. The values then reach the chart as
+`secretKeyRef` entries into a Secret the app never names, so a cluster can move
+from in-cluster Postfix to a relay and no profile changes.
+
+The same shape covers `database`, `cache`, `s3`, `identity` and `imap`.
+
+**Never substitute an endpoint into `extraValues`.** `${SMTP_HOST}` and friends
+hand the app a literal hostname and no credential — an app wired that way can
+only attempt unauthenticated submission, and it hard-codes an assumption about
+where the service lives. They remain only for profiles not yet migrated.
 
 ---
 

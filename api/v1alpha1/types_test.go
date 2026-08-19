@@ -55,7 +55,9 @@ func TestAppProfile_DeepCopy(t *testing.T) {
 				},
 				Cache: &v1alpha1.CacheRequirement{Engine: v1alpha1.CacheEngineMemcached},
 				Mail: &v1alpha1.MailRequirement{
-					SMTP: &v1alpha1.SMTPRequirement{Auth: "cram-md5", Port: 587},
+					// Carries nothing: an app declares that it sends mail, and
+					// the platform decides the host, port and mechanism.
+					SMTP: &v1alpha1.SMTPRequirement{},
 				},
 				MCP: &v1alpha1.MCPRequirement{Enabled: true, Endpoint: "/mcp", Auth: "oidc"},
 			},

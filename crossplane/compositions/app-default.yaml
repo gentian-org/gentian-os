@@ -543,12 +543,25 @@ spec:
             {{- $turnTLSPort  := dig "TURN_TLS_PORT"    "5349" $ksCMData }}
             {{- $turnTransport := dig "TURN_TRANSPORT"  "udp" $ksCMData }}
             {{- $turnCreds    := dig "TURN_CREDENTIALS" "" $ksCMData }}
-            {{- $smtpHost     := "" }}
-            {{- $ccSmtpHost := dig "mail.smtpHost" "" $ccData }}
-            {{- if $ccSmtpHost }}{{- $smtpHost = $ccSmtpHost }}{{- end }}
-            {{- if not $smtpHost }}
-            {{- $smtpHost = dig "SMTP_HOST" "" $ksCMData }}
-            {{- end }}
+            {{- /*
+            ${SMTP_HOST} is DEPRECATED and resolves to the cluster's submission
+            endpoint, never to the upstream relay.
+
+            It used to prefer cluster-config's mail.smtpHost, which is
+            spec.mail.host — the smarthost Postfix relays THROUGH, e.g.
+            smtp.gmail.com. So an app substituting this placeholder was pointed
+            straight at the provider, while the credential it needs to
+            authenticate there is deliberately never distributed to apps. It
+            could not have worked, and an app using the proper contract went via
+            Postfix at the same time: two apps on one cluster, two mail paths,
+            decided by which mechanism the profile happened to use.
+
+            An app should not receive a hostname at all. Declare
+            kernelRequirements.mail.smtp and map valueMapping.smtp.hostKey; the
+            value then arrives as a secretKeyRef the app never has to name. This
+            substitution remains only until the shipped profiles have migrated.
+            */}}
+            {{- $smtpHost := dig "SMTP_HOST" "" $ksCMData }}
             {{- if $pSpec.extraValues }}
             {{- $raw := $pSpec.extraValues | toJson }}
             {{- $raw = $raw | replace "${TENANT_DOMAIN}"    $domain }}

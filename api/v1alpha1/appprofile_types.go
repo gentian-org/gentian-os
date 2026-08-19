@@ -730,26 +730,24 @@ type MailRequirement struct {
 	IMAP *IMAPRequirement `json:"imap,omitempty"`
 }
 
-// SMTPRequirement describes SMTP submission needs.
-type SMTPRequirement struct {
-	// Auth is the SMTP authentication mechanism.
-	// +optional
-	// +kubebuilder:validation:Enum=plain;login;cram-md5
-	Auth string `json:"auth,omitempty"`
+// SMTPRequirement declares that an app sends mail. It carries nothing.
+//
+// It had auth and port, and neither was ever read — not by the operator, not by
+// any Composition. They also asked the wrong party: the mechanism a server
+// accepts and the port it listens on are the platform's to know, and an app
+// asserting "587, plain" is asserting something it cannot verify and would be
+// wrong about the moment the cluster changed. The values an app receives are
+// mapped through valueMapping.smtp, which is where the app describes its own
+// chart rather than the cluster's mail server.
+//
+// Empty on purpose, and a struct rather than a bool so a future field that is
+// genuinely the app's to state — a required TLS level, say — has somewhere to
+// go without changing every profile.
+type SMTPRequirement struct{}
 
-	// Port is the SMTP submission port.
-	// +optional
-	// +kubebuilder:default=587
-	Port int32 `json:"port,omitempty"`
-}
-
-// IMAPRequirement describes IMAP access needs.
-type IMAPRequirement struct {
-	// Port is the IMAP port.
-	// +optional
-	// +kubebuilder:default=993
-	Port int32 `json:"port,omitempty"`
-}
+// IMAPRequirement declares that an app reads mail. It carries nothing, for the
+// same reason as SMTPRequirement.
+type IMAPRequirement struct{}
 
 // MCPRequirement describes a Model Context Protocol server endpoint.
 type MCPRequirement struct {
