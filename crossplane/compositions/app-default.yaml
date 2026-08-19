@@ -524,44 +524,26 @@ spec:
             {{- /*   ${TENANT_DOMAIN}    — effective tenant domain                 */}}
             {{- /*   ${TENANT_NAMESPACE} — tenant k8s namespace                    */}}
             {{- /*   ${TENANT_ID}        — tenant name (e.g. gtn-demo)             */}}
-            {{- /*   ${S3_ENDPOINT}      — MinIO/S3 endpoint URL (from kernel CM)  */}}
-            {{- /*   ${MYSQL_HOST}       — MariaDB/MySQL hostname (from kernel CM) */}}
-            {{- /*   ${SMTP_HOST}        — shared Postfix submission endpoint     */}}
             {{- /*   ${TURN_*}           — shared TURN server (from kernel CM)     */}}
+            {{- /*
+                 Endpoints are NOT substituted. S3_ENDPOINT, MYSQL_HOST,
+                 REDIS_HOST and SMTP_HOST were, and each handed an app a
+                 hostname with no credential — see P9 in
+                 docs/app-customization.md. TURN remains because it has no
+                 valueMapping category yet; it is the last one.
+            */}}
             {{- $extraVals := dict }}
             {{- /* Load kernel service endpoints from the fetched ConfigMap */}}
             {{- $ksRes := dig "kernelServices" list $extraRes }}
             {{- $ksCM  := default dict (index $ksRes 0) }}
             {{- $ksCMData := dig "data" dict $ksCM }}
             {{- $kernelDomain := dig "KERNEL_DOMAIN" "" $ksCMData }}
-            {{- $s3Endpoint := dig "S3_ENDPOINT"  "" $ksCMData }}
-            {{- $mysqlHost  := dig "MYSQL_HOST"   "" $ksCMData }}
-            {{- $redisHost  := dig "REDIS_HOST"   "" $ksCMData }}
             {{- $turnHost     := dig "TURN_HOST"        "" $ksCMData }}
             {{- $turnPort     := dig "TURN_PORT"        "3478" $ksCMData }}
             {{- $turnTLSHost  := dig "TURN_TLS_HOST"    "" $ksCMData }}
             {{- $turnTLSPort  := dig "TURN_TLS_PORT"    "5349" $ksCMData }}
             {{- $turnTransport := dig "TURN_TRANSPORT"  "udp" $ksCMData }}
             {{- $turnCreds    := dig "TURN_CREDENTIALS" "" $ksCMData }}
-            {{- /*
-            ${SMTP_HOST} is DEPRECATED and resolves to the cluster's submission
-            endpoint, never to the upstream relay.
-
-            It used to prefer cluster-config's mail.smtpHost, which is
-            spec.mail.host — the smarthost Postfix relays THROUGH, e.g.
-            smtp.gmail.com. So an app substituting this placeholder was pointed
-            straight at the provider, while the credential it needs to
-            authenticate there is deliberately never distributed to apps. It
-            could not have worked, and an app using the proper contract went via
-            Postfix at the same time: two apps on one cluster, two mail paths,
-            decided by which mechanism the profile happened to use.
-
-            An app should not receive a hostname at all. Declare
-            kernelRequirements.mail.smtp and map valueMapping.smtp.hostKey; the
-            value then arrives as a secretKeyRef the app never has to name. This
-            substitution remains only until the shipped profiles have migrated.
-            */}}
-            {{- $smtpHost := dig "SMTP_HOST" "" $ksCMData }}
             {{- if $pSpec.extraValues }}
             {{- $raw := $pSpec.extraValues | toJson }}
             {{- $raw = $raw | replace "${TENANT_DOMAIN}"    $domain }}
@@ -569,10 +551,25 @@ spec:
             {{- $raw = $raw | replace "${TENANT_ID}"        $tenant }}
             {{- $raw = $raw | replace "${APP_ID}"           $app }}
             {{- if $kernelDomain }}{{ $raw = $raw | replace "${KERNEL_DOMAIN}" $kernelDomain }}{{ end }}
-            {{- if $s3Endpoint  }}{{ $raw = $raw | replace "${S3_ENDPOINT}"   $s3Endpoint  }}{{ end }}
-            {{- if $mysqlHost   }}{{ $raw = $raw | replace "${MYSQL_HOST}"    $mysqlHost   }}{{ end }}
-            {{- if $redisHost   }}{{ $raw = $raw | replace "${REDIS_HOST}"    $redisHost   }}{{ end }}
-            {{- $raw = $raw | replace "${SMTP_HOST}"    $smtpHost }}
+            {{- /*
+            No endpoint substitutions. ${S3_ENDPOINT}, ${MYSQL_HOST},
+            ${REDIS_HOST} and ${SMTP_HOST} used to be replaced here.
+
+            Each handed an app a literal hostname and no credential, so a
+            profile using one hard-coded an assumption about where a service
+            lives while the values it actually needs arrived separately through
+            valueMapping — two mechanisms wiring one dependency, and only one of
+            them able to carry a password. ${SMTP_HOST} additionally resolved to
+            the upstream relay, which no app can authenticate to.
+
+            An app declares kernelRequirements.<category> and maps its own chart
+            keys under valueMapping; the values then reach it as secretKeyRef
+            entries it never resolves. See docs/app-customization.md P9.
+
+            The identity placeholders below stay: a tenant's id, namespace and
+            domain are facts about the app's own context, not endpoints, and
+            carry nothing to authenticate with.
+            */}}
             {{- $raw = $raw | replace "${TURN_HOST}"        $turnHost }}
             {{- $raw = $raw | replace "${TURN_PORT}"        $turnPort }}
             {{- $raw = $raw | replace "${TURN_TLS_HOST}"    $turnTLSHost }}
@@ -1377,10 +1374,9 @@ spec:
             {{- $scRaw = $scRaw | replace "${APP_ID}"           $app }}
             {{- $scRaw = $scRaw | replace "${SIDECAR_ID}"       $sc.name }}
             {{- if $kernelDomain }}{{ $scRaw = $scRaw | replace "${KERNEL_DOMAIN}" $kernelDomain }}{{ end }}
-            {{- if $s3Endpoint  }}{{ $scRaw = $scRaw | replace "${S3_ENDPOINT}"   $s3Endpoint  }}{{ end }}
-            {{- if $mysqlHost   }}{{ $scRaw = $scRaw | replace "${MYSQL_HOST}"    $mysqlHost   }}{{ end }}
-            {{- if $redisHost   }}{{ $scRaw = $scRaw | replace "${REDIS_HOST}"    $redisHost   }}{{ end }}
-            {{- $scRaw = $scRaw | replace "${SMTP_HOST}"    $smtpHost }}
+            {{- /* No endpoint substitutions here either — see the note above the
+            app's own extraValues block. A sidecar reaches its dependencies the
+            same way its app does. */}}
             {{- $scRaw = $scRaw | replace "${TURN_HOST}"        $turnHost }}
             {{- $scRaw = $scRaw | replace "${TURN_PORT}"        $turnPort }}
             {{- $scRaw = $scRaw | replace "${TURN_TLS_HOST}"    $turnTLSHost }}
