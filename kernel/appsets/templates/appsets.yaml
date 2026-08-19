@@ -16,6 +16,22 @@
   the per-cluster claim location, which lives in the other repository.
 */ -}}
 {{- range $path, $_ := .Files.Glob "raw/*.yaml" }}
+{{- /*
+  Dovecot only where there are mailboxes to serve.
+  
+  It holds and serves them; with mail.serviceMode external they are at the
+  provider, so it ran with a 5Gi volume and nothing in it. Skipped by filename
+  because raw/*.yaml is copied verbatim — the files carry ApplicationSet
+  templating that Argo evaluates later, so a Helm conditional cannot live
+  inside one.
+  
+  Postfix is not conditional. It is the submission endpoint apps address in
+  both modes, and keeping it in the path is what keeps the relay credential in
+  one place rather than copied to every app that sends.
+*/ -}}
+{{- if and (hasSuffix "-dovecot.yaml" $path) (ne $.Values.mailServiceMode "kernel") }}
+{{- /* skipped: mail.serviceMode is {{ $.Values.mailServiceMode }} */ -}}
+{{- else }}
 ---
 {{ $.Files.Get $path
      | replace "env: dev" (printf "env: %s" $.Values.stage)
@@ -26,5 +42,7 @@
      | replace "https://github.com/gentian-org/gentian-os" $.Values.gentianOsRepo
      | replace "deployments.repo.placeholder" $.Values.deploymentsRepo
      | replace "deployments.revision.placeholder" $.Values.deploymentsRevision
-     | replace "deployments.cluster.placeholder" $.Values.deploymentsCluster }}
+     | replace "deployments.cluster.placeholder" $.Values.deploymentsCluster
+     | replace "mail.service.mode.placeholder" $.Values.mailServiceMode }}
+{{- end }}
 {{- end }}

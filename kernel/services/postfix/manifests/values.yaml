@@ -99,3 +99,7 @@ smtpHelo: ""
 # Leave empty when relaying through a smarthost: the last hop is then the
 # relay's address and the node's does not matter.
 egressNodeSelector: {}
+
+# kernel or external, from the Cluster claim. external makes this a relay: no
+# DKIM signing, because the smarthost signs. Passed by the ApplicationSet.
+mailServiceMode: external

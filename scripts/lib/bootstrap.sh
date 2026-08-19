@@ -846,6 +846,7 @@ bootstrap_root_appset() {
         --set-string "kernelDomain=${KERNEL_DOMAIN:-}" \
         --set-string "smtpHost=${EXTERNAL_SMTP_HOST:-}" \
         --set-string "smtpPort=${EXTERNAL_SMTP_PORT:-587}" \
+        --set-string "mailServiceMode=${MAIL_SERVICE_MODE:-external}" \
         | kubectl apply -f -
     success "gentian-appsets Application applied."
 

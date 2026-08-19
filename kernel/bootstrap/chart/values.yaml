@@ -35,3 +35,10 @@ dnsProviders: {}
 kernelDomain: ""
 smtpHost: ""
 smtpPort: "587"
+
+# Which mail stack this cluster runs, from the Cluster claim's
+# mail.serviceMode. Not inferred from smtpHost: a relay host says only that
+# outbound goes through a smarthost, and a cluster can host its own mailboxes
+# AND relay outbound — the common arrangement when port 25 is blocked
+# outbound but reachable inbound. Inferring would take Dovecot away from it.
+mailServiceMode: external

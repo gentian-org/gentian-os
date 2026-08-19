@@ -17,7 +17,9 @@
 # operator already addresses it. The tenant NetworkPolicy baseline also already
 # permits egress to platform-kernel and never did to gentian-<env>.
 #
-# Wire-up with MAIL_SERVICE_MODE=kernel.
+# Postfix only. Dovecot is in 09b-dovecot.yaml, which the appsets chart skips
+# unless mail.serviceMode is kernel: it serves mailboxes, and in external mode
+# the mailboxes are at the provider.
 apiVersion: argoproj.io/v1alpha1
 kind: ApplicationSet
 metadata:
@@ -39,7 +41,6 @@ spec:
       - list:
           elements:
           - app: postfix
-          - app: dovecot
   template:
     metadata:
       name: '{{.app}}-{{.env}}'
@@ -75,6 +76,10 @@ spec:
               value: 'external.smtp.host.placeholder'
             - name: relayPort
               value: 'external.smtp.port.placeholder'
+            # kernel or external. Decides whether Postfix signs with DKIM and
+            # delivers locally, or is purely a relay.
+            - name: mailServiceMode
+              value: 'mail.service.mode.placeholder'
           # Only stages that genuinely differ carry a values file; the rest
           # inherit the chart defaults.
           valueFiles:

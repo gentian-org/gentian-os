@@ -24,6 +24,15 @@ kernelDomain: ""
 externalSmtpHost: ""
 externalSmtpPort: "587"
 
+# kernel  — Postfix delivers locally and Dovecot serves the mailboxes.
+# external — Postfix relays to a smarthost; mailboxes live at the provider, so
+#            Dovecot is not deployed and neither is its volume.
+#
+# A separate value from externalSmtpHost on purpose. "Has a relay" and "hosts
+# its own mailboxes" are independent: a kernel-mode cluster commonly relays
+# outbound because port 25 is blocked outbound while still receiving on it.
+mailServiceMode: external
+
 # Where gentian-os itself comes from. The children hardcoded this URL, so a
 # mirrored or forked install could pin the ref but not the origin (§9, platform
 # provenance). Passed by root-applicationset.yaml.tmpl from GENTIAN_OS_REPO.

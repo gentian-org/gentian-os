@@ -56,6 +56,10 @@ spec:
         value: "{{ .Values.smtpHost }}"
       - name: externalSmtpPort
         value: "{{ .Values.smtpPort }}"
+      # Which mail stack to deploy. external runs Postfix as a relay and no
+      # Dovecot at all — there are no local mailboxes for it to serve.
+      - name: mailServiceMode
+        value: "{{ .Values.mailServiceMode }}"
       # Every child ApplicationSet points back at this repo. Without this the
       # children would keep the literal branch baked into raw/*.yaml while the
       # parent tracked another one, so a cluster pinned to a release tag would
