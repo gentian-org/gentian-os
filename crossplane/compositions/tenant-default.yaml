@@ -418,6 +418,49 @@ spec:
               providerConfigRef:
                 name: keycloak
 
+            {{- /* ── The tenant claim ──────────────────────────────────────────
+                 A tenant realm has no notion of which tenant it serves, and everything
+                 downstream is keyed by that: the JWT role on this tenant's OpenBao mount
+                 maps this claim into token metadata, the credential manager reads it to
+                 decide scope, and the tenant policy templates its paths from it.
+
+                 Without it a tenant administrator authenticates successfully and carries
+                 no tenant at all — which is not a refusal but something worse. Their
+                 first repository was created CLUSTER-owned, at a kernel path, because an
+                 empty tenant read as "no tenant scope" rather than as an error.
+
+                 The tenant NAME, not the realm. They are the same by default, but
+                 isolation.keycloakRealm may differ and every path is keyed by name.
+              */}}
+            ---
+            apiVersion: client.keycloak.crossplane.io/v1alpha1
+            kind: ProtocolMapper
+            metadata:
+              name: {{ $tenant }}-portal-tenant-claim
+              annotations:
+                crossplane.io/external-name: tenant
+                gotemplating.fn.crossplane.io/composition-resource-name: keycloak-portal-tenant-claim
+            spec:
+              deletionPolicy: Orphan
+              forProvider:
+                realmId: {{ $tenant }}
+                clientIdRef:
+                  name: {{ $tenant }}-portal-public-client
+                name: tenant
+                protocol: openid-connect
+                protocolMapper: oidc-hardcoded-claim-mapper
+                config:
+                  claim.name: tenant
+                  claim.value: {{ $tenant | quote }}
+                  jsonType.label: String
+                  id.token.claim: "false"
+                  access.token.claim: "true"
+                  introspection.token.claim: "true"
+                  userinfo.token.claim: "false"
+              providerConfigRef:
+                name: keycloak
+
+
             {{- range $app := dig "apps" list $spec }}
             ---
             apiVersion: gentianos.io/v1alpha1

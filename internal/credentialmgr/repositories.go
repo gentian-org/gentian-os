@@ -193,6 +193,23 @@ func (s *Server) handleSetRepository(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// A caller with neither cluster authority nor a tenant has no scope to
+	// create anything in. Without this the owner below stays "" and the
+	// repository is created CLUSTER-owned — so a viewer whose tenant did not
+	// reach the token adds a catalogue for the whole cluster, which is more
+	// than the caller has anywhere else. It happened: a tenant admin's token
+	// carried no tenant metadata and their repository landed at a kernel path.
+	//
+	// Placed here rather than in canWriteRepository because that answers "may
+	// this caller write THIS repository" and the create path has no existing
+	// object to ask about.
+	if !c.view.ClusterAdmin && c.view.Tenant == "" {
+		writeErr(w, http.StatusForbidden,
+			fmt.Errorf("your token carries no tenant and no cluster authority, so there is "+
+				"no scope to create a repository in"))
+		return
+	}
+
 	owner := c.view.Tenant
 	if found {
 		existingTenant, _, _ := unstructured.NestedString(existing.Object, "spec", "tenant")

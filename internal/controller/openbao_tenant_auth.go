@@ -33,6 +33,11 @@ import (
 // credential manager finds it by mount rather than by role.
 const tenantAuthRoleName = "tenant-admin"
 
+// tenantClaimName is the claim the tenant realm stamps and the role maps into
+// metadata. It matches CREDENTIAL_TENANT_CLAIM, which the credential manager
+// reads the metadata under — one name, so the two cannot disagree.
+const tenantClaimName = "tenant"
+
 // ensureTenantOpenBaoAuth gives a tenant's realm its own JWT auth mount in
 // OpenBao, so a tenant administrator's portal token can be exchanged at all.
 //
@@ -85,6 +90,15 @@ func (r *TenantReconciler) ensureTenantOpenBaoAuth(ctx context.Context, tenant *
 		// values, which is why copying one into the other silently matches
 		// nothing. This value must follow the mapper in THIS realm.
 		BoundGroup: keycloak.TenantAdminsGroup(tenant.Name),
+		// The tenant, carried from a verified claim into token metadata. The
+		// credential manager reads it to decide scope, and without it a tenant
+		// admin's writes land at cluster paths — which is what happened.
+		//
+		// The claim is stamped on the tenant realm's portal client with the
+		// tenant NAME, not the realm: the two are the same by default but a
+		// claim may set isolation.keycloakRealm to something else, and every
+		// path downstream is keyed by the tenant.
+		ClaimMappings: map[string]string{tenantClaimName: tenantClaimName},
 		// The policy the tenant Composition already emits, scoped to this
 		// tenant's paths. Nothing here grants a path; it names one that exists.
 		TokenPolicies: []string{"tenant-" + tenant.Name},

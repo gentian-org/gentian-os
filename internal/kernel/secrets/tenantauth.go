@@ -69,6 +69,15 @@ type RoleConfig struct {
 	TokenPolicies  []string
 	TokenTTL       int
 	TokenMaxTTL    int
+
+	// ClaimMappings copies verified claims into the token's alias metadata.
+	//
+	// This is how the tenant reaches anything downstream. The mount proves which
+	// realm signed the token, but nothing reads a mount name: the credential
+	// manager takes the tenant from metadata, and the policies template their
+	// paths from it. Without a mapping the metadata is empty, the caller has no
+	// tenant, and everything they create is scoped to the cluster instead.
+	ClaimMappings map[string]string
 }
 
 func (t *TenantAuth) do(ctx context.Context, method, apiPath string, body any) (int, []byte, error) {
@@ -165,6 +174,7 @@ func (t *TenantAuth) EnsureRole(ctx context.Context, realm string, cfg RoleConfi
 			cfg.GroupsClaim: cfg.BoundGroup,
 		},
 		"bound_claims_type": "string",
+		"claim_mappings":    cfg.ClaimMappings,
 		"token_policies":    cfg.TokenPolicies,
 		"token_ttl":         cfg.TokenTTL,
 		"token_max_ttl":     cfg.TokenMaxTTL,
