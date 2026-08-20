@@ -98,7 +98,18 @@ data:
         # whose TXT record nobody published verifies for no one. Generating it
         # anyway cost an hour of crash-looping when the tables it writes were
         # mounted read-only, for a signature that was never going to be checked.
-        DKIM_AUTOGENERATE: {{ if eq (.Values.mailServiceMode | default "external") "kernel" }}"1"{{ else }}"0"{{ end }}
+        #
+        # Omitted entirely outside kernel mode, rather than set to "0". The image asks
+        # [[ -n "${DKIM_AUTOGENERATE}" ]] — whether the variable is NON-EMPTY, not
+        # whether it says yes — so "0" enabled it exactly as "1" does. The switch read
+        # as off while signing ran, and the only reason that was harmless here is that
+        # this cluster wants it on.
+        #
+        # An unset variable is the only value that reads as absent to a -n test, so the
+        # key has to disappear rather than say no.
+        {{- if eq (.Values.mailServiceMode | default "external") "kernel" }}
+        DKIM_AUTOGENERATE: "1"
+        {{- end }}
       postfix:
         # The name Postfix greets a remote server with, and it must be a FQDN that
         # resolves back to the sending address. It defaulted to the Service name —
