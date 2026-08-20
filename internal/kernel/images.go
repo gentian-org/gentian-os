@@ -21,7 +21,13 @@ import "os"
 // Provisioner images for operator-managed data-plane Jobs. Override via env vars
 // on the gentian-os Deployment (see charts/gentian-os/templates/deployment.yaml).
 const (
-	DefaultPostgresProvisionerImage = "postgres:16-alpine"
+	// The postgres client major must be >= the CNPG server major: psql
+	// tolerates skew in either direction, but pg_dump refuses a server newer
+	// than itself — provisioning kept working against a 17 server while every
+	// backup died instantly on "server version mismatch". The server version
+	// is not pinned in this repo (the CNPG operator's default applies, 17.x
+	// today), so bump this alongside CNPG operator upgrades.
+	DefaultPostgresProvisionerImage = "postgres:17-alpine"
 	DefaultMariaDBProvisionerImage  = "mariadb:11"
 	DefaultRedisProvisionerImage    = "redis:7-alpine"
 	DefaultMemcachedImage           = "memcached:1.6.38-alpine"

@@ -259,7 +259,7 @@ func makeRoleJob(tenant *gentianov1alpha1.Tenant, nsName, dbName, appName, roleP
 	}
 }
 
-// psqlContainer returns a Container that runs a psql script via the postgres:16-alpine image.
+// psqlContainer returns a Container that runs a psql script via the postgres provisioner image.
 // Credentials are injected from the postgres-admin Secret in the kernel namespace.
 func psqlContainer(name, script, tenantNamespace string) corev1.Container {
 	return corev1.Container{
