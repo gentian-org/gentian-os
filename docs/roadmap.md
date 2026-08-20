@@ -49,10 +49,10 @@ For the current baseline design of the system, refer to [architecture.md](archit
 
 ### 1.5 Gateway Routing & Listener Security (*)
 * **Target Domain**: Platform Security & Gateways
-* **Context**: Gateway API listeners currently accept routing configurations from any namespace (`From: All`) and utilize broad `ReferenceGrants`, creating a risk of route hijacking.
+* **Context**: Listeners are no longer unconditionally open: `withAllowedRoutes` in `gateway_platform_reconciler.go` sets `NamespacesFromSame` and widens to `NamespacesFromAll` only when `allowCrossNamespaceRoutes` is set. That is a switch, not a selector — when it is on, every namespace may attach again, and the `ReferenceGrants` are still broad. The hijacking risk is narrowed to the clusters that need cross-namespace routes, not removed.
 * **Proposed Solution**: Secure the ingress edge by scoping listener `allowedRoutes` to specific namespace label selectors. Narrow down target namespaces in `ReferenceGrants` to prevent wildcard access.
 * **Backlog Items**:
-  - `[ ]` Update `gateway_platform_reconciler.go` to enforce route namespace selectors on gateway listeners.
+  - `[ ]` Replace the cross-namespace boolean with a label selector, so widening does not mean opening to all.
   - `[ ]` Replace wildcard namespaces in `ReferenceGrants` templates with specific named targets.
   - `[ ]` Verify that tenant routing configs cannot hijack administrative paths.
 
@@ -83,11 +83,11 @@ For the current baseline design of the system, refer to [architecture.md](archit
 
 ### 1.9 Secure Dependency & Supply Chain Verification (**)
 * **Target Domain**: Platform Security & Build Pipeline
-* **Context**: Third-party binaries, Helm charts, and remote manifests are retrieved during installation without validating cryptographic digests or pinned versions.
-* **Proposed Solution**: Establish a secure supply chain by pinning all dependencies to exact versions and SHA-256 digests. Move remote manifests to a verified local repository or mirror.
+* **Context**: Pinning is done. `versions.yaml` holds every external component the installer pulls, once, versioned with the platform rather than per cluster, and `validate_pins` fails when a step pins a component the file does not carry or the file carries one no step claims. Images are pinned by digest, and `make lint-image-digests` asks the registry whether each digest is a manifest list — a single-arch digest pins the supply chain and breaks the cluster on the next arm64 node, and the two are indistinguishable by inspection. What is not done is the mirror: every chart still comes from its upstream repository at install time, so an upstream that disappears or is tampered with is still a live dependency.
+* **Proposed Solution**: Mirror the third-party charts the installer depends on, so the pins point at something we control.
 * **Backlog Items**:
-  - `[ ]` Audit and replace all remote mutable git/branch references with specific tags and commits in `install.sh` and `scripts/steps/`.
-  - `[ ]` Pin all Helm chart dependencies to specific versions and SHA digests in ArgoCD files.
+  - `[x]` Audit and replace all remote mutable git/branch references with specific tags and commits. *(`versions.yaml` plus `validate_pins`.)*
+  - `[x]` Pin chart and image dependencies to specific versions and digests. *(`make lint-image-digests` additionally rejects single-architecture digests.)*
   - `[ ]` Implement local mirror targets for all third-party charts.
 
 ### 1.10 In-Cluster Secret Disclosure Prevention (*)
@@ -119,12 +119,13 @@ For the current baseline design of the system, refer to [architecture.md](archit
 
 ### 1.13 App Catalogue Validating Webhook (**)
 * **Target Domain**: Platform Security & Software Supply
-* **Context**: Developers can deploy unverified app profiles, bypass registry constraints, or inject unauthorized sidecars into compositions.
-* **Proposed Solution**: Implement an Admission Webhook for `AppProfile` resources that validates the image registry, verifies the `compositionRef`, and gates sidecar configuration.
+* **Context**: The webhook exists — `internal/webhook/appprofile_validator.go`, `failurePolicy: fail`, on create and update — but it validates one thing: that every entry in `spec.categories` is in an allowed set. Registry, digest, `compositionRef` and sidecars pass unexamined. The admission point is built and wired; what it asks is close to nothing, which is worth stating plainly, because "an AppProfile webhook exists" reads as a control that is not there.
+* **Proposed Solution**: Extend the existing validator rather than build a second one.
 * **Backlog Items**:
-  - `[ ]` Implement an Admission Webhook targeting `AppProfile` CRD requests.
+  - `[x]` Implement an Admission Webhook targeting `AppProfile` CRD requests. *(Categories only — see Context.)*
   - `[ ]` Add validation checks for allowed registries and image digests.
   - `[ ]` Reject profiles specifying unauthorized sidecars or privileged configurations.
+  - `[ ]` Verify `compositionRef` resolves to a Composition that exists.
 
 ### 1.14 Agent Identities & Token Delegation (RFC 8693) (***)
 * **Target Domain**: Identity & Authorization
@@ -226,17 +227,6 @@ For the current baseline design of the system, refer to [architecture.md](archit
 
 ---
 
-### 1.24 gentian-cluster-config Keeps Keys the Composition No Longer Writes (*)
-* **Target Domain**: Platform Configuration
-* **Context**: The ConfigMap is applied by provider-kubernetes, which patches rather than replaces, so a key the composition stops writing stays in the object indefinitely. On ifk-w4h 16 of its 26 keys are leftovers of that kind — `cnpg.*`, `network.*`, `secretMode`, `storageClass`, `tenant.initJob.*` — none read by anything today. The cost is not the storage. A stale key is indistinguishable from a live one by inspection, and reads as authoritative: `mail.serviceMode` sat there saying `kernel`, which is the correct answer, while nothing maintained it and the composition did not write it at all. That is exactly how it was mistaken for evidence that the mechanism was already working.
-* **Proposed Solution**: Make the ConfigMap's contents a function of the composition and nothing else — replace rather than patch, or prune keys absent from the render — so its contents can be trusted as current. Failing that, the lint should compare the live object against the producer's key set and report leftovers, so they are at least named.
-* **Backlog Items**:
-  - `[ ]` Prune keys the composition no longer writes, or replace the object outright.
-  - `[ ]` Report live keys the producer does not write, so a leftover cannot be read as current.
-  - `[ ]` Decide whether the 16 present leftovers are dead or were readers that quietly regressed to a default.
-
----
-
 ### 1.23 A Condition Stays True While Its Reconcile Has Been Failing for Hours (**)
 * **Target Domain**: Operator Observability
 * **Context**: Tenant reconciliation runs its steps in order and returns on the first failure, so every condition after the failing one keeps whatever it last said. With the OpenBao auth step failing, `IdentityReady` went False and `MailReady` went on reporting `True` with a timestamp from the previous day — while the mail step had not run at all, and the DNS records, app passwords and signing tables it maintains were quietly unmaintained. There is no aggregate condition either, so nothing summarises "this tenant last reconciled successfully at T". The practical effect is that a reader checking whether mail is healthy is told yes by a value nothing has re-evaluated since it broke. Both bugs found on 2026-08-20 hid behind this: the symptom that surfaced was a DNS record not updating, several steps away from either cause.
@@ -246,6 +236,17 @@ For the current baseline design of the system, refer to [architecture.md](archit
   - `[ ]` Add an aggregate condition naming the last successful full reconcile and the step that stopped the current one.
   - `[ ]` Alert on a tenant whose reconcile has been failing longer than one requeue interval, rather than waiting for a downstream symptom.
 
+
+---
+
+### 1.24 gentian-cluster-config Keeps Keys the Composition No Longer Writes (*)
+* **Target Domain**: Platform Configuration
+* **Context**: The ConfigMap is applied by provider-kubernetes, which patches rather than replaces, so a key the composition stops writing stays in the object indefinitely. On ifk-w4h 16 of its 26 keys are leftovers of that kind — `cnpg.*`, `network.*`, `secretMode`, `storageClass`, `tenant.initJob.*` — none read by anything today. The cost is not the storage. A stale key is indistinguishable from a live one by inspection, and reads as authoritative: `mail.serviceMode` sat there saying `kernel`, which is the correct answer, while nothing maintained it and the composition did not write it at all. That is exactly how it was mistaken for evidence that the mechanism was already working.
+* **Proposed Solution**: Make the ConfigMap's contents a function of the composition and nothing else — replace rather than patch, or prune keys absent from the render — so its contents can be trusted as current. Failing that, the lint should compare the live object against the producer's key set and report leftovers, so they are at least named.
+* **Backlog Items**:
+  - `[ ]` Prune keys the composition no longer writes, or replace the object outright.
+  - `[ ]` Report live keys the producer does not write, so a leftover cannot be read as current.
+  - `[ ]` Decide whether the 16 present leftovers are dead or were readers that quietly regressed to a default.
 
 ---
 
@@ -280,7 +281,10 @@ For the current baseline design of the system, refer to [architecture.md](archit
 * **Target Domain**: Platform Infrastructure
 * **Context**: The operator handles part of the `IntegrationBinding` logic (like network policies) programmatically, creating a hybrid lifecycle.
 * **Proposed Solution**: Transition integration binding entirely to Crossplane Compositions. Gate deployment on the readiness of both consumer and provider, write connection credentials directly, and remove programmatic operator reconciliation loops.
+* **Prerequisite, not listed when this was written**: "write connection credentials directly" assumes a mechanism that does not exist. `IntegrationBindingReconciler` writes the endpoint and credential into OpenBao at `secrets.ContractPath(...)` precisely because a Composition cannot mint a credential and store it. The same gap keeps `reconcileTenantApps` seeding app secrets (`seedAppPrerequisites`) — one missing capability blocking two items, so building it once settles both. The egress half is not blocked by it: `tenant_network_policy.go` derives its rules from `collectDesiredIntegrationBindings`, which is pure derivation and moves cleanly.
 * **Backlog Items**:
+  - `[ ]` Provide a declarative way to write a credential into OpenBao — a Managed Resource or a Composition pattern — since this item and app-secret seeding both wait on it.
+  - `[ ]` Establish what creates the `IntegrationBinding` CRs today. `ensureIntegrationBindings` only waits for them and garbage-collects stale ones, and nothing in `crossplane/compositions/` names the kind.
   - `[ ]` Refactor `IntegrationBinding` logic to resolve exclusively within Crossplane compositions.
   - `[ ]` Remove the programmatically generated integration binding reconciliation code from the Go controller.
 
@@ -312,12 +316,12 @@ For the current baseline design of the system, refer to [architecture.md](archit
 
 ### 2.6 Office & Mail Composition Refactoring (**)
 * **Target Domain**: Platform Infrastructure
-* **Context**: Posfix/Dovecot and Collabora integrations are deployed and managed by the operator via hardcoded installation scripts.
-* **Proposed Solution**: Package the Mail and Office workloads into standard Crossplane Compositions and Helm Charts, removing the installation burden from the operator.
+* **Context**: ~~Postfix/Dovecot and Collabora are deployed and managed by the operator via hardcoded installation scripts.~~ **No longer true.** Postfix arrives through the `gentian-infra-helm` ApplicationSet and Dovecot through `kernel/appsets/raw/09b-dovecot.yaml`, generated only when `mail.serviceMode` is `kernel`; both are Helm charts synced by Argo CD. Collabora is a catalogue app, and the operator's only remaining knowledge of it is a routing default in `gateway_route_helpers.go`. `mail_reconciler.go` runs no `helm` and no `kubectl apply`: it registers tenants in a stack it does not deploy.
+* **What is actually left**: per-tenant mail state — domains, app passwords, DKIM keys, realm SMTP — which the operator still owns. That is provisioning rather than installation, and it is not obviously misplaced: it is per-tenant, and it mints credentials, which is the same gap that blocks §2.2.
 * **Backlog Items**:
-  - `[ ]` Create Crossplane compositions for Dovecot/Postfix.
-  - `[ ]` Package Collabora/Office settings into standard Helm deployment templates.
-  - `[ ]` Remove hardcoded mail/office functions from the Go operator.
+  - `[x]` ~~Create Crossplane compositions for Dovecot/Postfix.~~ *(Solved differently: Argo CD ApplicationSets over Helm charts. A Composition buys nothing here — there is no claim to project into values, which is the one thing a Composition does that an ApplicationSet cannot.)*
+  - `[x]` ~~Package Collabora/Office settings into standard Helm deployment templates.~~ *(Collabora is a catalogue app with its own profile in `gentian-apps`.)*
+  - `[ ]` Decide whether per-tenant mail provisioning stays in the operator. If it moves, it moves for the same reason and by the same mechanism as §2.2.
 
 ### 2.7 Per-App HTTP-01 Certificate Issuance (**)
 * **Target Domain**: Ingress & Networking
@@ -392,12 +396,12 @@ For the current baseline design of the system, refer to [architecture.md](archit
 
 ### 2.15 Remove LiteLLM Specifics from the Kernel (**)
 * **Target Domain**: Platform Infrastructure
-* **Context**: `internal/controller/app_reconciler.go` and `kernel_gateway_routes.go` hardcode one application: its Service name (`litellm-proxy`), base URL, master-key Secret, and direct calls to its `/key/generate` and `/key/info` HTTP API. This is the same class of boundary violation as the per-app privileged-role provisioner removed in §6h of the app-profile-guide — an application the kernel recognises by name is an application the kernel must be modified to support. LiteLLM is genuinely dual-natured, which is why this was never obviously wrong: it runs as a kernel singleton from `kernel/services/llm/`, and *also* ships a `litellm-me` catalogue profile. The kernel may know its own services; it must not know catalogue entries.
+* **Context**: `internal/controller/app_reconciler.go`, `kernel_gateway_routes.go` and now `litellm_team.go` hardcode one application: its Service name (`litellm-proxy`), base URL, master-key Secret, and direct calls to its `/key/generate`, `/key/info`, `/team/list` and `/team/new` HTTP APIs. The team endpoints moved *into* the operator deliberately, from a shell loop that converged per-tenant state only when someone re-ran the installer — a real improvement to correctness that also deepened exactly the coupling this item is about. Both things are true, and the fix for the second is this item, not a reversal of the first. This is the same class of boundary violation as the per-app privileged-role provisioner removed in §6h of the app-profile-guide — an application the kernel recognises by name is an application the kernel must be modified to support. LiteLLM is genuinely dual-natured, which is why this was never obviously wrong: it runs as a kernel singleton from `kernel/services/llm/`, and *also* ships a `litellm-me` catalogue profile. The kernel may know its own services; it must not know catalogue entries.
 * **Proposed Solution**: Decide which LiteLLM is — kernel service or catalogue app — and make the code say so. If it is a kernel service, express it the way the other kernel services are (discovered configuration rather than compiled-in constants, in the same shape as SMTP/S3/Keycloak endpoints) so a cluster can run a different LLM gateway or none. If it is a catalogue app, the virtual-key provisioning belongs in its profile via the generic `spec.provisioning.syncJob` mechanism, and the kernel keeps only the generic credential plumbing.
 * **Backlog Items**:
   - `[ ]` Classify LiteLLM as kernel service or catalogue app and record the decision in `architecture.md`.
   - `[ ]` Replace the `litellmProxy*`/`litellmMasterKey*` constants with values resolved from kernel service configuration — through the `valueMapping` contract an app uses to declare a need, not through endpoint substitution: `${S3_ENDPOINT}` and friends were removed for exactly the reason this item exists.
-  - `[ ]` Move virtual-key issuance (`/key/generate`, `/key/info`) out of the operator — to the app's own profile if it is a catalogue app, or behind a named kernel-service interface if it is not.
+  - `[ ]` Move virtual-key issuance (`/key/generate`, `/key/info`) and team sync (`/team/list`, `/team/new`) out of the operator — to the app's own profile if it is a catalogue app, or behind a named kernel-service interface if it is not.
   - `[ ]` Drop the app-catalogue `litellm` special-case in `kernel_gateway_routes.go`.
   - `[ ]` Add a CI check that fails when a catalogue app name appears in gentian-os source, so this class of drift is caught rather than reviewed for.
 
@@ -415,11 +419,12 @@ For the current baseline design of the system, refer to [architecture.md](archit
 
 ### 3.2 Fine-Grained OpenFGA launch Authorization (*)
 * **Target Domain**: UI/UX & Access Control
-* **Context**: Shell portal tiles are currently shown to users regardless of whether they have permission to access the application.
-* **Proposed Solution**: Gate portal tile rendering by querying OpenFGA `can_launch` relations before rendering the main shell interface.
+* **Context**: The relation is modelled and enforced, but not per tile. `can_launch` exists on the `shell_app` type in `internal/authz/data/model-v0.json`, resolving through tenant membership and tenant admin, and `gentian-ui/backend/app/core/authz.py` checks it — against the single object `shell_app:gentian-ui`, as an all-or-nothing gate on reaching the shell at all, and short-circuited for platform admins, tenant admins and the bootstrap admin. So the store answers "may this user open the portal", not "may this user see this tile". Every tile a tenant has installed is still rendered to every member.
+* **Proposed Solution**: Write one `shell_app` object per installed app and query per tile, rather than once for the shell.
 * **Backlog Items**:
-  - `[ ]` Implement `can_launch` relation rules inside the OpenFGA authorization store.
-  - `[ ]` Refactor the portal UI frontend to filter tiles based on OpenFGA responses.
+  - `[x]` Implement `can_launch` relation rules inside the OpenFGA authorization store. *(Modelled on `shell_app`, with tenant member and admin inheritance.)*
+  - `[ ]` Write a `shell_app` object per installed app, so the relation has per-app subjects to answer about.
+  - `[ ]` Refactor the portal UI to filter tiles on the per-app answer.
 
 ### 3.3 Constrained Platform Admin Mode (**)
 * **Target Domain**: UI/UX & Platform Access
