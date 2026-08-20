@@ -36,10 +36,20 @@ spec:
       # groups claim, the cluster admin group included. Isolation belongs at the
       # mount boundary, because claim values are precisely what they control.
       #
-      # Scoped to the oidc- prefix with a single-segment wildcard: the operator
-      # creates the mounts it needs and cannot touch auth/kubernetes, the
-      # kernel's own auth/oidc, or any other backend. OpenBao requires sudo for
-      # sys/auth whatever the path.
-      path "sys/auth/oidc-+"              { capabilities = ["create","read","update","delete","sudo"] }
-      path "auth/oidc-+/config"           { capabilities = ["create","read","update"] }
-      path "auth/oidc-+/role/*"           { capabilities = ["create","read","update","delete","list"] }
+      # Scoped to the oidc- prefix: the operator creates the mounts it needs and
+      # cannot touch auth/kubernetes, the kernel's own auth/oidc, or any other
+      # backend. OpenBao requires sudo for sys/auth whatever the path.
+      #
+      # Glob, not the + segment wildcard. OpenBao's + matches one WHOLE path
+      # segment, so "oidc-+" — a literal prefix with + glued to it — matches
+      # nothing at all: sys/auth/oidc-corp evaluated to deny, and every tenant
+      # reconcile failed at "configure auth mount oidc-<tenant>: HTTP 403".
+      # The policy read as though it granted exactly the right paths.
+      #
+      # * matches the remainder of the path and only works at the end, so the
+      # config and role sub-paths cannot be granted separately. They are the same
+      # actor managing the same mount, so one entry covers both; the boundary that
+      # matters is the oidc- prefix, and that still holds — auth/kubernetes and
+      # every other mount stay denied.
+      path "sys/auth/oidc-*"              { capabilities = ["create","read","update","delete","sudo"] }
+      path "auth/oidc-*"                  { capabilities = ["create","read","update","delete","list"] }

@@ -240,6 +240,50 @@ expect "${ESO_TOKEN}" "allowed reading a tenant's repository credentials" \
 expect "${ESO_TOKEN}" "DENIED paths outside gentian-os" \
     "secret/data/somewhere/else" "deny"
 
+# ── operator-write ───────────────────────────────────────────────────────────
+# Not from the golden render: this one is a kernel service manifest rather than
+# something the composition emits. It is here because it failed in the direction
+# the tests above do not look for — it DENIED what it meant to allow.
+#
+# The policy read as though it granted the tenant OIDC mounts. It used
+# "sys/auth/oidc-+", and OpenBao's + matches one whole path segment, so a literal
+# prefix with + glued to it matches nothing: every tenant reconcile stopped at
+# "configure auth mount oidc-<tenant>: HTTP 403" while the policy looked right.
+#
+# So these assert the allow side as well as the deny side. A policy that grants
+# nothing is as broken as one that grants everything; it just fails somewhere
+# less alarming.
+OPERATOR_POLICY_FILE="kernel/services/openbao-config/manifests/templates/policy-operator-write.yaml"
+if [[ -f "${OPERATOR_POLICY_FILE}" ]]; then
+    yq eval 'select(.spec.forProvider.name == "operator-write") | .spec.forProvider.policy' \
+        "${OPERATOR_POLICY_FILE}" > "${WORKDIR}/operator-write.hcl" 2>/dev/null
+    if [[ -s "${WORKDIR}/operator-write.hcl" ]]; then
+        bao policy write operator-write "${WORKDIR}/operator-write.hcl" >/dev/null 2>&1
+        OPERATOR_TOKEN="$(bao token create -policy=operator-write -field=token 2>/dev/null)"
+
+        echo ""
+        echo "  operator-write ${DIM}(the operator's own identity)${NC}"
+        expect "${OPERATOR_TOKEN}" "allowed creating a tenant OIDC mount" \
+            "sys/auth/oidc-acme" "create,read,update,delete,sudo"
+        expect "${OPERATOR_TOKEN}" "allowed configuring that mount" \
+            "auth/oidc-acme/config" "create,read,update,delete,list"
+        expect "${OPERATOR_TOKEN}" "allowed managing its roles" \
+            "auth/oidc-acme/role/tenant" "create,read,update,delete,list"
+        expect "${OPERATOR_TOKEN}" "DENIED the Kubernetes auth mount it authenticates with" \
+            "auth/kubernetes/config" "deny"
+        expect "${OPERATOR_TOKEN}" "DENIED enabling a non-OIDC auth backend" \
+            "sys/auth/kubernetes" "deny"
+        expect "${OPERATOR_TOKEN}" "DENIED the kernel's own OIDC mount" \
+            "auth/oidc/config" "deny"
+        expect "${OPERATOR_TOKEN}" "allowed its own secret tree" \
+            "secret/data/gentian-os/kernel/dns/cloudflare" "create,read,update,delete"
+    else
+        echo "    ${YELLOW}SKIP${NC} — could not read operator-write from ${OPERATOR_POLICY_FILE}"
+    fi
+else
+    echo "    ${YELLOW}SKIP${NC} — ${OPERATOR_POLICY_FILE} not found"
+fi
+
 echo ""
 if [[ ${fail} -gt 0 ]]; then
     echo "${RED}${fail} assertion(s) failed, ${pass} passed.${NC}"
