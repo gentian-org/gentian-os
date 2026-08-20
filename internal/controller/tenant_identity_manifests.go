@@ -226,8 +226,9 @@ func (r *TenantReconciler) buildIdentityProvisioningJobs(ctx context.Context, te
 		externalURL := kernelExternalURL(r.KernelDomain)
 		jobs = append(jobs, *makeBrokerIdentityProviderJob(tenant.Name, realmName, r.KernelRealm, externalURL))
 		jobs = append(jobs, *makeKernelTenantBrokerJob(tenant.Name, realmName, r.KernelRealm, externalURL))
-		portalOrigin := fmt.Sprintf("https://%s", kernelPortalHost(r.KernelDomain))
-		jobs = append(jobs, *makePortalBFFClientJob(tenant.Name, realmName, portalOrigin))
+		// No portal BFF client Job. The client, its confidential secret taken
+		// from gentian-portal-bff, and its seven default scopes are all
+		// Composition resources now.
 		// No portal public client Job. The client and its openbao-audience
 		// protocol mapper are both Composition resources now, adopted by their
 		// natural keys, so a Job writing the same fields would be a second owner

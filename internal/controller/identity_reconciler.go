@@ -190,15 +190,8 @@ func (r *TenantReconciler) ensureIdentity(ctx context.Context, tenant *gentianov
 			return r.requeueForPendingJob(ctx, tenant.Name, tenantKernelBrokerJobName(tenant.Name)), nil
 		}
 
-		portalBFFDone, err := r.ensurePortalBFFClientJob(ctx, tenant)
-		if err != nil {
-			return ctrl.Result{}, fmt.Errorf("ensure portal BFF client Job: %w", err)
-		}
-		if !portalBFFDone {
-			r.setCondition(tenant, conditionIdentityReady, metav1.ConditionFalse,
-				"ProvisioningPortalBFF", "Waiting for portal BFF client Job to complete")
-			return r.requeueForPendingJob(ctx, tenant.Name, tenantPortalBFFClientJobName(tenant.Name)), nil
-		}
+		// The portal BFF client is a Composition resource now; its readiness is
+		// reported through CrossplaneReady rather than watched here.
 
 		// The portal public client is not waited on here any more. It is a
 		// Composition resource, so its readiness belongs to CrossplaneReady

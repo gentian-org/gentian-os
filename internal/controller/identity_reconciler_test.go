@@ -109,7 +109,6 @@ func markKernelPortalIdentityJobsComplete(t *testing.T, tenantName string) {
 	// Composition resources now, so no Job appears for this helper to wait on.
 	for _, suffix := range []string{
 		"kernel-tenant-broker",
-		"portal-bff",
 	} {
 		jobName := "keycloak-" + suffix + "-" + tenantName
 		waitFor(t, jobAppearTimeout, func() bool {
