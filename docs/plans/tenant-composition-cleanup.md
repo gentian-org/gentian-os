@@ -263,10 +263,31 @@ On an existing tenant that window is empty, because the client already exists. O
 is real. The gate was load-bearing and its purpose was not stated anywhere — the Job wait was
 incidentally providing ordering.
 
-**What the removal needs first:** the operator should wait on the Composition-managed client the way
-it waited on the Job — reading the `Client` MR's Ready condition instead of the Job's completion —
-so ordering survives the migration. Hacking the three tests green would have hidden the loss rather
-than fixed it.
+**What the removal needs first, now established by trying it.** The operator should wait on the
+Composition-managed client the way it waited on the Job — reading the `Client` MR's Ready condition
+instead of the Job's completion. That much was written and works; what it needs is somewhere to be
+tested.
+
+envtest has no `provider-keycloak` CRD, so the wait has no object to read, and neither answer to
+"what does a missing CRD mean" is usable there:
+
+- **Treat it as ready** and steps 6 and 7 run anyway — which is exactly the ordering gap the wait
+  exists to close, and four readiness tests fail with `DatabaseReady=nil` because the reconcile
+  errors before reaching them.
+- **Treat it as not ready** and mail waits forever — five tests time out at 180 seconds each.
+
+Waiting is the right semantic for a real cluster: without `provider-keycloak` the Composition cannot
+create this client at all, so carrying on would point Dovecot at a client that will never exist, and
+a visible `MailReady: waiting` beats a mail stack that looks provisioned and authenticates nobody.
+
+So the missing piece is a test fixture, not a design decision: a stub `clients.openidclient` CRD
+registered with envtest, and something that marks the MR Ready — the same shape as the stub
+`config/crd/gentianos.io_xtenants.yaml` that Phase 3 added so the reconciler could create XTenant
+composites without a live Crossplane. Until that exists the Job stays, because the alternatives are
+an ordering gap or a suite that hangs.
+
+**Current state is consistent:** the client is adopted and serving IMAP, and the Job still runs and
+agrees with it. Nothing is half-owned.
 
 ### Next: finish 3, then 4. Gentian groups
 
