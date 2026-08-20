@@ -748,7 +748,17 @@ EOF
 # There is one place a default may live, and this reads it.
 xrd_default() {
     local field="$1"
-    yq_get ".spec.versions[0].schema.openAPIV3Schema.properties.spec.properties.${field}.default" \
+    # A nested field needs a properties. between every segment, because that is
+    # how OpenAPI nests: mail.serviceMode lives at
+    # properties.mail.properties.serviceMode, not properties.mail.serviceMode.
+    #
+    # Without the translation every dotted field answered empty — all eight of
+    # them, mail.*, llm.* and certificates.* — so the XRD default was silently
+    # unreachable for exactly the settings that have one, and the ${VAR:-literal}
+    # in shell became the real default. That is the second default set this
+    # function exists to prevent, reappearing where the lint cannot see it.
+    local path="${field//./.properties.}"
+    yq_get ".spec.versions[0].schema.openAPIV3Schema.properties.spec.properties.${path}.default" \
         "${SCRIPT_DIR}/crossplane/xrds/cluster.yaml" 2>/dev/null || true
 }
 
