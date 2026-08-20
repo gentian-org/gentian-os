@@ -6,8 +6,8 @@ metadata:
 status:
   conditions:
   - lastTransitionTime: "2024-01-01T00:00:00Z"
-    message: 'Unready resources: app-catalogue-test-app, keycloak-portal-openbao-audience,
-      and keycloak-portal-public-client'
+    message: 'Unready resources: app-catalogue-test-app, keycloak-portal-bff-client,
+      keycloak-portal-bff-default-scopes, and 2 more'
     reason: Creating
     status: "False"
     type: Ready
@@ -108,6 +108,83 @@ spec:
             restartPolicy: Never
   providerConfigRef:
     name: kubernetes
+---
+apiVersion: openidclient.keycloak.crossplane.io/v1alpha1
+kind: Client
+metadata:
+  annotations:
+    crossplane.io/composition-resource-name: keycloak-portal-bff-client
+    crossplane.io/external-name: gentian-portal-bff
+  labels:
+    crossplane.io/composite: render-fixture
+  name: render-fixture-portal-bff-client
+  ownerReferences:
+  - apiVersion: gentianos.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XTenant
+    name: render-fixture
+    uid: ""
+spec:
+  deletionPolicy: Orphan
+  forProvider:
+    accessType: CONFIDENTIAL
+    clientId: gentian-portal-bff
+    clientSecretSecretRef:
+      key: client_secret
+      name: gentian-portal-bff
+      namespace: platform-kernel
+    directAccessGrantsEnabled: true
+    enabled: true
+    fullScopeAllowed: true
+    implicitFlowEnabled: false
+    name: Gentian Portal BFF
+    realmId: render-fixture
+    serviceAccountsEnabled: false
+    standardFlowEnabled: false
+    validPostLogoutRedirectUris:
+    - https://portal.platform.example.test/*
+    - https://portal.platform.example.test/login
+    validRedirectUris:
+    - https://portal.platform.example.test/*
+    - https://portal.platform.example.test/login
+    - https://portal.platform.example.test/login/*
+    webOrigins:
+    - https://portal.platform.example.test
+  providerConfigRef:
+    name: keycloak
+---
+apiVersion: openidclient.keycloak.crossplane.io/v1alpha1
+kind: ClientDefaultScopes
+metadata:
+  annotations:
+    crossplane.io/composition-resource-name: keycloak-portal-bff-default-scopes
+  labels:
+    crossplane.io/composite: render-fixture
+  name: render-fixture-portal-bff-default-scopes
+  ownerReferences:
+  - apiVersion: gentianos.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XTenant
+    name: render-fixture
+    uid: ""
+spec:
+  deletionPolicy: Orphan
+  forProvider:
+    clientIdRef:
+      name: render-fixture-portal-bff-client
+    defaultScopes:
+    - acr
+    - basic
+    - email
+    - groups
+    - profile
+    - roles
+    - web-origins
+    realmId: render-fixture
+  providerConfigRef:
+    name: keycloak
 ---
 apiVersion: client.keycloak.crossplane.io/v1alpha1
 kind: ProtocolMapper
