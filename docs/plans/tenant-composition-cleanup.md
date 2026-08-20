@@ -235,10 +235,44 @@ will not reveal it. It was verified functionally, by signing in, and while the J
 it was re-pushing the correct value on every run. That safety net is what removing the Job gives up,
 which is why the round-trip came first.
 
-### Next: 3. Dovecot OIDC client
+### 3. Dovecot OIDC client — **adopted; Job deliberately retained**
 
-Same shape. Inventory first: `keycloak-dovecot-oidc-*` for every object it touches, and note it is
-the client Dovecot's XOAUTH2 introspection depends on, so IMAP is the functional test.
+The client is declared, adopted and verified: same Keycloak id, nine fields compared with zero
+differences, and IMAP confirmed working — mail fetched, messages visible.
+
+The inventory was worth doing in the other direction this time. The Job routes through
+`buildOIDCPackScript`, the shared builder that can create flows, client scopes, scope mappers, client
+roles and default-scope attachments. Dovecot's pack is a `serviceClient`, which routes to a builder
+that provisions **only a confidential client** — the catalogue validation enforces it. One object,
+not six.
+
+Two values came off the live client rather than the script: `fullScopeAllowed` is **false**, which
+the script's `pack.FullScopeAllowed` would have had me guess the other way, and the secret comes from
+`dovecot-admin`. Dovecot authenticates to the *introspection* endpoint with it, so an omitted
+`clientSecretSecretRef` would have Keycloak mint a new one and IMAP would stop validating tokens
+without Dovecot ever failing to start.
+
+**The Job stays, and the tests are why.** Removing it made three unrelated tests fail —
+`TestDB_SetsReadyWhenAllDone`, `TestCache_SetsReadyWhenRedisJobsDone`, `TestMariaDB_SetsReadyWhenJobsDone`
+— with `DatabaseReady=nil`, meaning the reconcile never got that far. The step being removed did more
+than wait for a Job: while it waited, it also held back steps 6 and 7, which write Dovecot's realm
+auth config and reload it. That config carries the client secret and introspection URL, so writing it
+before the client exists points Dovecot at a client that is not there yet.
+
+On an existing tenant that window is empty, because the client already exists. On a **new** tenant it
+is real. The gate was load-bearing and its purpose was not stated anywhere — the Job wait was
+incidentally providing ordering.
+
+**What the removal needs first:** the operator should wait on the Composition-managed client the way
+it waited on the Job — reading the `Client` MR's Ready condition instead of the Job's completion —
+so ordering survives the migration. Hacking the three tests green would have hidden the loss rather
+than fixed it.
+
+### Next: finish 3, then 4. Gentian groups
+
+Finish by replacing the Job wait with an MR readiness wait, then retire the Job. After that,
+`keycloak-gentian-groups-*`, which fans out over installed app profiles and so needs the composition
+to read AppProfiles rather than a fixed list.
 
 ## 7. Honest answer to the question
 
