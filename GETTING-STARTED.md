@@ -310,12 +310,9 @@ browser.
 If the record below does not appear, open the Admin Console and select the
 Credentials tab, which performs the same exchange.
 
-**On this first sign-in, open that tab and supply the runtime credentials.** It
-lists what the cluster still wants — the SMTP relay, any app repository you add
-and its pull secret, and anything a later claim declares. Values are validated
-before they are stored, and whatever was waiting on one picks it up on its own.
-Do the SMTP relay first: without it no realm can send, so tenants provision
-cleanly and then refuse to invite anybody.
+**On this first sign-in, open the Credentials tab and supply the runtime credentials.** It
+lists what the cluster still wants e.g. SMTP relay, an additional app repository, its pull secret, and anything a later claim declares. Values are validated before they are stored, and whatever was waiting on one picks it up on its own.
+If your mail mode is external, do the SMTP relay first: without it, no realm can send, so you cannot invite anybody.
 
 Then revoke the installer's credential:
 
@@ -350,7 +347,7 @@ Scaffold the definition:
 A tenant is authored, then deployed. Two directories, and the difference
 matters:
 
-- `definitions/tenants/<name>/tenant.yaml` — what the tenant is *meant to be*. Yours
+- `definitions/tenants/<name>/tenant.yaml` — what the tenant is *meant to be*. Yours to
   edit.
 - `tenants/<name>/` — what Argo CD syncs. Written by the deploy command, and
   written again by the operator every time an app is installed from the store.
@@ -366,7 +363,7 @@ To install apps for the tenant, log in as tenant admin and open the app store or
 kubectl gentian apps list          # what this cluster offers
 ```
 
-and then add the apps of interest to the tenant profile.
+and then if you want, add the apps of interest to the tenant profile but it is recommended to **add apps with the tenant admin through the app store.**
 
 ```yaml
   apps:
