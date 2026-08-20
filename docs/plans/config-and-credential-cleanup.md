@@ -2152,6 +2152,57 @@ printed. Zone host is never detected — nothing on the cluster knows it.
 `external` defaulting to `inCluster`. Establish the rule in code review terms: installer-side
 probes read `external`, anything written into the cluster reads `inCluster`.
 
+**12e — Cluster permission model. Tracked in `docs/roadmap.md` §1.16.**
+
+`provider-kubernetes` and `provider-helm` are bound to `cluster-admin`. The reduction, what
+constrains it, and the order to do it in live in the roadmap, which outlives this document. Nothing
+about it is restated here: two descriptions of one piece of work is how the two drifted apart.
+
+**12f — Edge integration and zone host. Implemented.** The two dimensions added to §9 after the
+first external install, both carried by `kernel/platforms.yaml`.
+
+`XCluster.spec.platform` selects the edge preset (`self-hosted`, `openstack`, `infomaniak`,
+`hetzner`, `aws`, `gcp`, `azure`, `none`), with `platformParams` for what a provider needs beyond
+an address and `addressRef` for the providers that will not take one by IP.
+`XCluster.spec.certificates.dnsProvider` selects the zone host (`cloudflare`, `route53`,
+`clouddns`, `azuredns`, `rfc2136`, `hetzner`, `infomaniak`, `none`), with `dnsParams`.
+
+Three mechanisms keep it from growing a limb per provider, and they are the reason this is an
+interface rather than a list. Edge annotations are templates rendered against the chart's values
+and dropped when they render empty, so one entry expresses both *pin this address* and *let the
+cloud allocate one* without a second field saying which. The DNS-01 solver block is passed to
+cert-manager verbatim, so six providers cost no template code. And one entry feeds three
+consumers — solver, external-dns, credential — so they cannot disagree about a zone.
+
+The credential catalogue is generated from the same entry rather than restating it: `credentials.yaml`
+lists no DNS credential at all. Only Cloudflare is `phase: bootstrap`, because §11 Phase 3 holds
+bootstrap validators to curl and openssl and Route 53, Cloud DNS and Azure DNS all require request
+signing. The rest are `phase: runtime` — collected by the credential manager after install, with
+`C-01` issuing the wildcard on the next pass.
+
+Detection is retained for `platform` only, under the narrowed rule in §9: `spec.providerID` fills
+a value the operator did not declare, an explicit value always wins, and what was detected is
+printed. Zone host is never detected — nothing on the cluster knows it.
+
+**Four defects this surfaced**, each of which had been present long enough to look like design:
+
+- AWS `static-ip` dropped the edge address entirely. `loadBalancerIP` was suppressed for NLBs,
+  correctly, and the EIP allocation annotation the comment promised in its place was emitted by
+  nothing.
+- The platform profile was applied only when an address was set, so a cluster letting its cloud
+  allocate one got no preset at all — and Hetzner, whose location annotation is mandatory, would
+  have sat `Pending` with no event naming the cause.
+- `external-dns` was written and never applied. No bootstrap step named it, and the chart renders
+  only the templates it is asked for, so the controller that makes tenant hostnames resolve was in
+  the repository and absent from every cluster. This is the §14.2 failure mode — scaffolding that
+  reads as a decision — in a file that was never listed as scaffolding.
+- `kernel/values/external-dns.yaml` pinned `domainFilters` to one cluster's zone in a file every
+  cluster reads from Git.
+
+**12d — Network topology (interface).** Add `XRepository.spec.endpoints` (§5) to the XRD, with
+`external` defaulting to `inCluster`. Establish the rule in code review terms: installer-side
+probes read `external`, anything written into the cluster reads `inCluster`.
+
 **12e — Cluster permission model. Premise corrected; work re-scoped.**
 
 This sub-phase assumed provider RBAC was missing and the providers were running on their
