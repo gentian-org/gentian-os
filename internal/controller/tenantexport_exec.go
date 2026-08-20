@@ -104,18 +104,28 @@ func (e *PodExecer) Exec(ctx context.Context, namespace, pod, container string, 
 // runningPodForApp finds a pod of an installed app to exec into.
 //
 // It requires a Running pod: a hook run against a terminating or pending pod
-// either fails or, worse, succeeds against the wrong instance.
-func (r *TenantReconciler) runningPodForApp(ctx context.Context, tenantName, appName string) (*corev1.Pod, error) {
+// either fails or, worse, succeeds against the wrong instance. When the hook
+// names a container, only pods that have that container qualify — the name
+// match on workloads is loose enough to also catch an app's sidecar releases,
+// and the first live post-restore hook was exec'd into the MCP sidecar's pod
+// because the real pod was briefly not Ready. A Running-but-not-Ready pod
+// with the right container is a better target than any other pod: after a
+// restore the app is often unready precisely because the hook has not run.
+func (r *TenantReconciler) runningPodForApp(ctx context.Context, tenantName, appName, container string) (*corev1.Pod, error) {
 	pods := &corev1.PodList{}
 	if err := r.List(ctx, pods, client.InNamespace(backup.TenantNamespace(tenantName))); err != nil {
 		return nil, err
 	}
+	var fallback *corev1.Pod
 	for i := range pods.Items {
 		pod := &pods.Items[i]
 		if pod.Status.Phase != corev1.PodRunning || pod.DeletionTimestamp != nil {
 			continue
 		}
 		if !workloadBelongsToApp(pod.Labels, pod.Name, appName) {
+			continue
+		}
+		if container != "" && !podHasContainer(pod, container) {
 			continue
 		}
 		ready := false
@@ -127,8 +137,23 @@ func (r *TenantReconciler) runningPodForApp(ctx context.Context, tenantName, app
 		if ready {
 			return pod, nil
 		}
+		if fallback == nil {
+			fallback = pod
+		}
 	}
-	return nil, fmt.Errorf("no ready pod for app %q in tenant %q", appName, tenantName)
+	if fallback != nil {
+		return fallback, nil
+	}
+	return nil, fmt.Errorf("no running pod for app %q in tenant %q", appName, tenantName)
+}
+
+func podHasContainer(pod *corev1.Pod, name string) bool {
+	for _, c := range pod.Spec.Containers {
+		if c.Name == name {
+			return true
+		}
+	}
+	return false
 }
 
 // execAppCommand runs one of a profile's hooks in the app's own pod.
@@ -141,11 +166,11 @@ func (r *TenantReconciler) execAppCommand(
 	if r.Exec == nil {
 		return "", fmt.Errorf("exec is not configured on this operator")
 	}
-	pod, err := r.runningPodForApp(ctx, tenantName, appName)
+	container := spec.QuiesceContainer()
+	pod, err := r.runningPodForApp(ctx, tenantName, appName, container)
 	if err != nil {
 		return "", err
 	}
-	container := spec.QuiesceContainer()
 	if container == "" && len(pod.Spec.Containers) > 0 {
 		container = pod.Spec.Containers[0].Name
 	}

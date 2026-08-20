@@ -564,3 +564,49 @@ func TestCommandModeResumeRunsTheResumeHook(t *testing.T) {
 		t.Fatalf("resume hook never ran; calls: %v — the app stays in maintenance mode", execer.calls)
 	}
 }
+
+// The hook must land in the pod that actually has its target container. The
+// loose name match also catches an app's sidecar releases, and the first live
+// post-restore hook ran in the MCP sidecar's pod — the real pod was briefly
+// not Ready, and unreadiness is the normal state right after a restore, since
+// the hook is often the thing that makes the app ready again.
+func TestHookPodSelectionPrefersTheTargetContainer(t *testing.T) {
+	s := quiesceScheme(t)
+
+	sidecar := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "nextcloud-base-ce-mcp-release-abc",
+			Namespace: "tenant-demo",
+			Labels:    map[string]string{"gentianos.io/app": "nextcloud-base-ce"},
+		},
+		Spec: corev1.PodSpec{Containers: []corev1.Container{{Name: "mcp"}}},
+		Status: corev1.PodStatus{
+			Phase:      corev1.PodRunning,
+			Conditions: []corev1.PodCondition{{Type: corev1.PodReady, Status: corev1.ConditionTrue}},
+		},
+	}
+	// The real pod: right container, NOT Ready — the post-restore state.
+	main := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "nextcloud-xyz",
+			Namespace: "tenant-demo",
+			Labels:    map[string]string{"gentianos.io/app": "nextcloud-base-ce"},
+		},
+		Spec: corev1.PodSpec{Containers: []corev1.Container{{Name: "nextcloud"}}},
+		Status: corev1.PodStatus{
+			Phase:      corev1.PodRunning,
+			Conditions: []corev1.PodCondition{{Type: corev1.PodReady, Status: corev1.ConditionFalse}},
+		},
+	}
+
+	c := fake.NewClientBuilder().WithScheme(s).WithObjects(sidecar, main).Build()
+	r := &TenantReconciler{Client: c, Scheme: s}
+
+	pod, err := r.runningPodForApp(context.Background(), "demo", "nextcloud-base-ce", "nextcloud")
+	if err != nil {
+		t.Fatalf("runningPodForApp: %v", err)
+	}
+	if pod.Name != "nextcloud-xyz" {
+		t.Fatalf("picked %q — a pod without the hook's container", pod.Name)
+	}
+}

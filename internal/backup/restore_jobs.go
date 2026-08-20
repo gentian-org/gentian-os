@@ -146,9 +146,13 @@ func PostgresRestoreJob(p JobParams, d Decryption, database string) *batchv1.Job
 #
 # --single-transaction makes the whole load atomic: a failure half way leaves
 # the database as it was, not half-replaced.
-pg_restore --clean --if-exists --no-owner --no-acl --single-transaction \
+# --role: the connection is the admin's, but the objects must belong to the
+# app. Restoring without it left every table owned by the postgres superuser,
+# and the app's first query after the restore was "permission denied for
+# table oc_appconfig" — data perfectly restored, unreadable by its owner.
+pg_restore --role=%s --clean --if-exists --no-owner --no-acl --single-transaction \
   --dbname=%s %s/dump.pgc
-echo "restored %s"`, shellSingleQuote(database), workDir, database)},
+echo "restored %s"`, shellSingleQuote(PostgresRole(p.Tenant, p.App)), shellSingleQuote(database), workDir, database)},
 		Env:          postgresAdminEnv(),
 		VolumeMounts: []corev1.VolumeMount{{Name: "work", MountPath: workDir}},
 	}
