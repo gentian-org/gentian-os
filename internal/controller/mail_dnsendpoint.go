@@ -78,8 +78,23 @@ func (r *TenantReconciler) syncTenantMailDNS(ctx context.Context, tenant *gentia
 	// CNAME is invalid and silently ignored by many senders.
 	mailHost := "mail." + r.KernelDomain
 
+	// Preference 0, not 10, because external-dns cannot converge on anything else.
+	//
+	// Its Cloudflare provider loses the preference when it reads a record back:
+	// a record Cloudflare serves as "10 mail.gtn.host" returns as
+	// "0 mail.gtn.host". The desired value then never equals the observed one, so
+	// every reconcile deletes and recreates the record — once a minute, forever.
+	// Cloudflare applies those as two operations, leaving a brief window with no
+	// MX at all, during which a sending server falls back to the tenant's A
+	// record and reaches the portal instead of Postfix.
+	//
+	// 0 is what the provider reports regardless, so publishing it is what makes
+	// the two agree. It costs nothing here: preference only orders one MX against
+	// another, and each tenant domain has exactly one. A second MX would need
+	// this revisited — and the upstream read fixed — because the ordering between
+	// them would then be real.
 	records := []interface{}{
-		dnsEndpointRecord(domain, "MX", "10 "+mailHost),
+		dnsEndpointRecord(domain, "MX", "0 "+mailHost),
 	}
 	if v := tenant.Status.Mail.SPFRecord; v != "" {
 		records = append(records, dnsEndpointRecord(domain, "TXT", v))
