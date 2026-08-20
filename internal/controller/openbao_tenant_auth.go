@@ -25,13 +25,8 @@ import (
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 	"github.com/gentian-org/gentian-os/internal/kernel/secrets"
+	"github.com/gentian-org/gentian-os/internal/keycloak"
 )
-
-// tenantAdminGroupPath is the group a tenant's administrators hold in their own
-// realm, and the claim value the JWT role binds. The leading slash is Keycloak's
-// full group path, which is what the groups mapper emits — the bare name matches
-// nothing and fails as a permissions problem.
-const tenantAdminGroupPath = "/admins"
 
 // tenantAuthRoleName is the JWT role on a tenant's own auth mount. It does not
 // need the tenant in its name: the mount already scopes it to one realm, and the
@@ -81,7 +76,15 @@ func (r *TenantReconciler) ensureTenantOpenBaoAuth(ctx context.Context, tenant *
 		// refusal that names the audience rather than the group.
 		BoundAudiences: []string{"openbao"},
 		GroupsClaim:    "groups",
-		BoundGroup:     tenantAdminGroupPath,
+		// The group identity_reconciler actually puts a tenant administrator in,
+		// from the same helper that names it — so the two cannot drift apart.
+		//
+		// No leading slash: the tenant realm's groups mapper is created with
+		// full.path=false, so the claim carries the bare group name. The kernel
+		// realm's is created with full.path=true and its roles bind /-prefixed
+		// values, which is why copying one into the other silently matches
+		// nothing. This value must follow the mapper in THIS realm.
+		BoundGroup: keycloak.TenantAdminsGroup(tenant.Name),
 		// The policy the tenant Composition already emits, scoped to this
 		// tenant's paths. Nothing here grants a path; it names one that exists.
 		TokenPolicies: []string{"tenant-" + tenant.Name},
