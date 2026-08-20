@@ -112,11 +112,17 @@ func (t *TenantAuth) do(ctx context.Context, method, apiPath string, body any) (
 func (t *TenantAuth) EnsureMount(ctx context.Context, realm, discoveryURL string) error {
 	mount := MountPath(realm)
 
+	// Anything but 200 is treated as absent, rather than 404 specifically.
+	// OpenBao answers a read of a mount that does not exist with 400 and "No auth
+	// engine at <path>/", not 404, so keying on 404 meant the mount was never
+	// created — and the config write below then failed with 404 "route entry not
+	// found", which reads as the config path being wrong rather than as the mount
+	// being missing.
 	status, _, err := t.do(ctx, http.MethodGet, "/v1/sys/auth/"+mount, nil)
 	if err != nil {
 		return err
 	}
-	if status == http.StatusNotFound {
+	if status != http.StatusOK {
 		st, body, err := t.do(ctx, http.MethodPost, "/v1/sys/auth/"+mount, map[string]any{
 			"type":        "jwt",
 			"description": "Portal tokens from the " + realm + " realm",
@@ -124,7 +130,11 @@ func (t *TenantAuth) EnsureMount(ctx context.Context, realm, discoveryURL string
 		if err != nil {
 			return err
 		}
-		if st < 200 || st > 299 {
+		// "path is already in use" means the read was wrong about it being
+		// absent — a permission gap on the read, or a mount created between the
+		// two calls. Either way the mount exists, which is what was wanted.
+		alreadyExists := st == http.StatusBadRequest && bytes.Contains(body, []byte("already in use"))
+		if (st < 200 || st > 299) && !alreadyExists {
 			return fmt.Errorf("enable auth mount %s: HTTP %d: %s", mount, st, truncateBody(body))
 		}
 	}
