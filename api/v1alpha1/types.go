@@ -81,7 +81,7 @@ const (
 // DeploymentMethod determines how the orchestrator delivers the app.
 //
 // There used to be a third value, "argocd", from when the operator created a
-// per-app Argo CD Application itself. That path is gone — ensureAppDeployment
+// per-app Argo CD Application itself. That path is gone — reconcileTenantApps
 // creates no Applications — and no profile in the catalogue declared it. What
 // kept it alive was one branch treating any non-crossplane value as "the
 // operator owns the OIDC client", and a dozen test fixtures using it as an

@@ -2697,6 +2697,17 @@ cmd_install() {
 # The API is a ClusterIP Service, so reaching it from a workstation needs a
 # port-forward. One is established per invocation and torn down on exit.
 GENTIAN_OPERATOR_NAMESPACE="${GENTIAN_OPERATOR_NAMESPACE:-gentian-system}"
+
+# Set by _lifecycle_connect, read by _lifecycle_call.
+#
+# Both live in the PARENT shell on purpose. _lifecycle_call is always invoked
+# through command substitution, and a port-forward started inside one dies with
+# the subshell — the first version set its cleanup trap in there too, so the
+# forward was killed the instant the function returned and every call failed
+# with "Failed to connect after 0 ms". scripts/lib/portforward.sh documents this
+# exact hazard at length; connecting in the parent avoids it rather than working
+# around it.
+_LIFECYCLE_BASE=""
 _LIFECYCLE_PF_PID=""
 
 _lifecycle_cleanup() {
@@ -2707,11 +2718,15 @@ _lifecycle_cleanup() {
   fi
 }
 
-# _lifecycle_base — echo a base URL for the lifecycle API, port-forwarding when
-# the Service is not directly reachable.
-_lifecycle_base() {
+# _lifecycle_connect — make the lifecycle API reachable, in THIS shell.
+#
+# Call it directly, never through $( ). It sets _LIFECYCLE_BASE and, when it
+# started one, owns the port-forward until the script exits.
+_lifecycle_connect() {
+  [[ -n "${_LIFECYCLE_BASE}" ]] && return 0
+
   if [[ -n "${GENTIAN_LIFECYCLE_URL:-}" ]]; then
-    echo "${GENTIAN_LIFECYCLE_URL%/}"
+    _LIFECYCLE_BASE="${GENTIAN_LIFECYCLE_URL%/}"
     return 0
   fi
 
@@ -2750,7 +2765,20 @@ _lifecycle_base() {
     exit 1
   fi
   rm -f "${out}"
-  echo "http://127.0.0.1:${local_port}"
+
+  # "Forwarding from" is printed once the local listener is bound, which is not
+  # the same as the tunnel being able to carry a request. Waiting for /healthz
+  # to answer turns a race into a wait.
+  for i in $(seq 1 50); do
+    if curl -sS -o /dev/null --max-time 2 "http://127.0.0.1:${local_port}/healthz" 2>/dev/null; then
+      _LIFECYCLE_BASE="http://127.0.0.1:${local_port}"
+      return 0
+    fi
+    kill -0 "${_LIFECYCLE_PF_PID}" 2>/dev/null || break
+    sleep 0.2
+  done
+  echo "ERROR: the lifecycle API did not answer through the port-forward." >&2
+  exit 1
 }
 
 # _actor_name — who the change is attributed to in git and in the billing record.
@@ -2767,30 +2795,52 @@ _actor_name() {
 
 # _lifecycle_call <method> <path> [json-body] — call the API and echo the body.
 #
+# _lifecycle_connect must have run in the parent shell first.
+#
 # On refusal the server's own `detail` is printed verbatim, because it is the
 # only place the reason lives: "limits.cpu: using 34, plan allows 32" is the
 # whole answer, and replacing it with a generic failure would send the operator
-# to the logs for something the response already said.
+# to the logs for something the response already said. That is also why this
+# uses curl rather than `kubectl --raw`, which reaches the same Service through
+# the API server but renders every refusal as a bare status name.
 _lifecycle_call() {
   local method="$1" path="$2" body="${3:-}"
-  local base status out
-  base="$(_lifecycle_base)"
+  local status out
   out="$(mktemp "${TMPDIR:-/tmp}/gentian-lifecycle.XXXXXX")"
 
   if [[ -n "${body}" ]]; then
     status="$(curl -sS -o "${out}" -w '%{http_code}' -X "${method}" \
       -H 'Content-Type: application/json' \
       -H "X-Gentian-Actor: $(_actor_name)" \
-      -d "${body}" "${base}${path}" || echo 000)"
+      --max-time 180 \
+      -d "${body}" "${_LIFECYCLE_BASE}${path}" 2>/dev/null)" || true
   else
     status="$(curl -sS -o "${out}" -w '%{http_code}' -X "${method}" \
       -H "X-Gentian-Actor: $(_actor_name)" \
-      "${base}${path}" || echo 000)"
+      --max-time 60 \
+      "${_LIFECYCLE_BASE}${path}" 2>/dev/null)" || true
   fi
+  # curl already writes its own 000 into %{http_code} on a transport failure.
+  # Appending a second one is what produced the "HTTP 000000" the first version
+  # reported, which read like a status code and was not one.
+  [[ -z "${status}" ]] && status="000"
 
   if [[ "${status}" != "200" ]]; then
     echo "ERROR: the lifecycle API refused the request (HTTP ${status})." >&2
-    python3 - "${out}" >&2 <<'PY' || true
+    _lifecycle_print_detail "${out}" >&2
+    rm -f "${out}"
+    exit 1
+  fi
+  cat "${out}"
+  rm -f "${out}"
+}
+
+# _lifecycle_print_detail <file> — print the server's `detail`, if it sent one.
+#
+# Split out of _lifecycle_call so the JSON heredoc is not nested inside another
+# one, which is how the first version of this file failed to parse.
+_lifecycle_print_detail() {
+  python3 - "$1" <<'PYDETAIL' || true
 import json, sys
 try:
     with open(sys.argv[1]) as fh:
@@ -2799,12 +2849,7 @@ try:
         print("  " + detail)
 except Exception:
     pass
-PY
-    rm -f "${out}"
-    exit 1
-  fi
-  cat "${out}"
-  rm -f "${out}"
+PYDETAIL
 }
 
 cmd_resources_plans() {
@@ -2818,6 +2863,7 @@ cmd_resources_plans() {
   fi
 
   local payload
+  _lifecycle_connect
   payload="$(_lifecycle_call GET "/v1/tenants/${tenant}/resources/plans")"
   python3 - "${payload}" <<'PY'
 import json, sys
@@ -2827,16 +2873,23 @@ if not plans:
     print("No resource plans are defined on this cluster.")
     raise SystemExit(0)
 
-print(f"{'':2} {'PLAN':<18} {'CPU':>6} {'MEMORY':>8} {'STORAGE':>8} {'APPS':>5}  SKU")
+# Reserved capacity leads, because that is what a plan sells: it is the
+# figure that maps onto purchased nodes. The burst ceiling is shown beside
+# it so nobody reads the reserved column as the whole story, but it is not
+# the number being bought.
+print(f"{'':2} {'PLAN':<12} {'CPU':>5} {'MEMORY':>8} {'BURST':>12} {'STORAGE':>8} {'APPS':>5}  SKU")
 for plan in plans:
     q = plan.get("quotas") or {}
     mark = "*" if plan.get("current") else ("x" if not plan.get("selectable") else " ")
-    print(f"{mark:2} {plan['name']:<18} {q.get('cpu', '-'):>6} {q.get('memory', '-'):>8} "
+    burst = f"{q.get('cpu', '-')}/{q.get('memory', '-')}"
+    print(f"{mark:2} {plan['name']:<12} {q.get('requestsCpu', '-'):>5} "
+          f"{q.get('requestsMemory', '-'):>8} {burst:>12} "
           f"{q.get('storage', '-'):>8} {q.get('maxApps', '-'):>5}  {plan.get('productSku', '')}")
     if plan.get("blocked"):
         print(f"   {plan['blocked']}")
 print()
 print("* current plan   x not selectable")
+print("CPU/MEMORY are reserved capacity — what the plan sells. BURST is the limits ceiling.")
 PY
 }
 
@@ -2848,6 +2901,7 @@ cmd_resources_show() {
   fi
 
   local payload
+  _lifecycle_connect
   payload="$(_lifecycle_call GET "/v1/tenants/${tenant}/resources")"
   python3 - "${payload}" <<'PY'
 import json, sys
@@ -2874,11 +2928,31 @@ else:
         print(f"{row['resource']:<22} {row.get('used', '-'):>12} {row.get('hard', '-'):>12}  {pct:>6}")
 
 print()
+
+
+def readable(key, value):
+    """Bytes as MiB/GiB; everything else as the cluster states it."""
+    if "memory" not in key and "storage" not in key:
+        return value
+    import re
+    m = re.fullmatch(r"(\d+(?:\.\d+)?)([A-Za-z]*)", value)
+    if not m:
+        return value
+    n = float(m.group(1))
+    n *= {"Ki": 1024, "Mi": 1024 ** 2, "Gi": 1024 ** 3, "Ti": 1024 ** 4,
+          "k": 1e3, "M": 1e6, "G": 1e9, "T": 1e12, "": 1}.get(m.group(2), 1)
+    for unit in ("B", "KiB", "MiB", "GiB", "TiB"):
+        if n < 1024 or unit == "TiB":
+            return f"{n:.1f} {unit}".replace(".0 ", " ")
+        n /= 1024
+    return value
+
+
 actual = s.get("actual")
 if actual:
     print(f"Live consumption ({s.get('actualSource')}):")
     for key in sorted(actual):
-        print(f"  {key:<20} {actual[key]}")
+        print(f"  {key:<20} {readable(key, actual[key])}")
 else:
     print(f"Live consumption: {s.get('actualSource') or 'unavailable'}")
 PY
@@ -2897,6 +2971,7 @@ import json, sys
 print(json.dumps({"plan": sys.argv[1], "force": sys.argv[2] == "true"}))
 PY
 )"
+  _lifecycle_connect
   payload="$(_lifecycle_call PUT "/v1/tenants/${tenant}/resources" "${body}")"
   python3 - "${payload}" <<'PY'
 import json, sys
@@ -2925,6 +3000,7 @@ cmd_resources_report() {
     if [[ -n "${query}" ]]; then query="${query}&to=${to}"; else query="?to=${to}"; fi
   fi
 
+  _lifecycle_connect
   payload="$(_lifecycle_call GET "/v1/tenants/${tenant}/resources/report${query}")"
   python3 - "${payload}" <<'PY'
 import json, sys

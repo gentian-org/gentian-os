@@ -134,8 +134,13 @@ func (m *MetricsAPISource) NamespaceUsage(ctx context.Context, namespace string)
 	// the actual series lines up with the committed one on the same axis
 	// without the reader having to know that one came from a quota and the
 	// other from a metrics endpoint.
+	//
+	// CPU is re-scaled to milli before it leaves here. Summing kubelet readings
+	// keeps their nanocore scale, so String() renders ten millicores as
+	// "10269026n" — a valid quantity that every parser accepts and no human
+	// reads. Milli is the unit the rest of Kubernetes states CPU in.
 	return corev1.ResourceList{
-		corev1.ResourceLimitsCPU:    *cpu,
+		corev1.ResourceLimitsCPU:    *resource.NewMilliQuantity(cpu.MilliValue(), resource.DecimalSI),
 		corev1.ResourceLimitsMemory: *mem,
 	}, nil
 }

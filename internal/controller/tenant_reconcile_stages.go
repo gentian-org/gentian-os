@@ -268,7 +268,7 @@ func (r *TenantReconciler) reconcileTenantStageAppsAndEdge(ctx context.Context, 
 		return ctrl.Result{}, fmt.Errorf("ensure tenant drop-ins: %w", err)
 	}
 
-	appsResult, err := r.ensureAppDeployment(ctx, tenant)
+	appsResult, err := r.reconcileTenantApps(ctx, tenant)
 	if err != nil {
 		r.setCondition(tenant, conditionAppsReady, metav1.ConditionFalse, "EnsureFailed", err.Error())
 		r.updateBlockedStatus(ctx, tenant)
