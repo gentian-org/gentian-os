@@ -152,6 +152,18 @@ spec:
                         Restoring a bundle into an older app than produced it corrupts silently,
                         so the restore path refuses it — which it can only do if this is here.
                       type: string
+                    completedUnits:
+                      description: |-
+                        CompletedUnits records each capture Job that finished, by Job name.
+
+                        This is the durable completion record; the Job object is not one. A
+                        finished Job can be TTL-collected or swept by the kernel Job GC while a
+                        sibling unit is still running, and inferring completion from the Job's
+                        existence made the controller re-run a dump it had already uploaded.
+                      items:
+                        type: string
+                      type: array
+                      x-kubernetes-list-type: atomic
                     message:
                       description: Message explains a non-terminal or failed state.
                       type: string

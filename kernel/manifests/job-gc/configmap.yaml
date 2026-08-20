@@ -55,6 +55,11 @@ data:
       return 1
     }
 
+    # tenant-export Jobs (backup captures and restores) are excluded below:
+    # they carry their own TTL, and their controllers read a Job's Complete /
+    # Failed condition as state. Sweeping one mid-export made the controller
+    # re-run a dump it had already uploaded, and sweeping a failed one before
+    # the controller counted the attempt would unbound its retry limit.
     for ns in $(kubectl get ns -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}' | grep -E '^(tenant-|platform-kernel$)' || true); do
       while IFS= read -r name; do
         [ -z "${name}" ] && continue
@@ -67,7 +72,7 @@ data:
         kubectl delete job "${name}" -n "${ns}" --ignore-not-found --wait=false
         kubectl delete pods -n "${ns}" -l "job-name=${name}" --ignore-not-found --wait=false
       done < <(kubectl get jobs -n "${ns}" \
-        -l 'app.kubernetes.io/managed-by=gentian-os' \
+        -l 'app.kubernetes.io/managed-by=gentian-os,gentianos.io/component notin (tenant-export)' \
         -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}' \
         2>/dev/null || true)
     done

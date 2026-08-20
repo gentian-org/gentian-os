@@ -272,6 +272,16 @@ type AppExportStatus struct {
 	// +optional
 	Attempts int32 `json:"attempts,omitempty"`
 
+	// CompletedUnits records each capture Job that finished, by Job name.
+	//
+	// This is the durable completion record; the Job object is not one. A
+	// finished Job can be TTL-collected or swept by the kernel Job GC while a
+	// sibling unit is still running, and inferring completion from the Job's
+	// existence made the controller re-run a dump it had already uploaded.
+	// +optional
+	// +listType=atomic
+	CompletedUnits []string `json:"completedUnits,omitempty"`
+
 	// Message explains a non-terminal or failed state.
 	// +optional
 	Message string `json:"message,omitempty"`

@@ -19,6 +19,7 @@ package controller
 import (
 	"context"
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -378,6 +379,15 @@ func (r *TenantExportReconciler) ensureCaptureJob(
 	export *gentianov1alpha1.TenantExport,
 	unit captureUnit,
 ) (bool, error) {
+	entry := appStatus(export, unit.Job.Labels[meta.AppLabel])
+	// The status record decides, not the Job's existence: a finished Job can
+	// be TTL-collected or swept by the kernel Job GC while a sibling unit is
+	// still running, and recreating it here re-ran a dump that had already
+	// been uploaded.
+	if slices.Contains(entry.CompletedUnits, unit.JobName) {
+		return true, nil
+	}
+
 	existing := &batchv1.Job{}
 	err := r.Get(ctx, types.NamespacedName{Name: unit.JobName, Namespace: kernelNamespace}, existing)
 	switch {
@@ -391,12 +401,12 @@ func (r *TenantExportReconciler) ensureCaptureJob(
 	}
 
 	if jobIsComplete(existing) {
+		entry.CompletedUnits = append(entry.CompletedUnits, unit.JobName)
 		return true, nil
 	}
 	if jobIsFailed(existing) {
 		// Count the failure against the app, then delete so the next pass can
 		// retry — bounded by exportMaxAttempts, unlike the provisioning waiter.
-		entry := appStatus(export, unit.Job.Labels[meta.AppLabel])
 		entry.Attempts++
 		if err := r.Delete(ctx, existing, client.PropagationPolicy(metav1.DeletePropagationBackground)); err != nil &&
 			!apierrors.IsNotFound(err) {

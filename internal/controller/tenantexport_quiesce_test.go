@@ -34,6 +34,7 @@ import (
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 	"github.com/gentian-org/gentian-os/internal/backup"
+	"github.com/gentian-org/gentian-os/internal/meta"
 )
 
 func quiesceScheme(t *testing.T) *runtime.Scheme {
@@ -358,5 +359,50 @@ func TestDeletingAnExportResumesAppsCleansBundleThenReleases(t *testing.T) {
 	}
 	if err := c.Get(ctx, req.NamespacedName, &gentianov1alpha1.TenantExport{}); !apierrors.IsNotFound(err) {
 		t.Fatalf("export still present after cleanup completed: %v", err)
+	}
+}
+
+// The status is the record that a unit finished — the Job is not. The kernel
+// Job GC and the Job's own TTL can both remove a completed Job while a
+// sibling unit still runs, and recreating it re-ran a dump that had already
+// been uploaded.
+func TestCompletedUnitIsNotRerunAfterItsJobDisappears(t *testing.T) {
+	s := runtime.NewScheme()
+	if err := clientgoscheme.AddToScheme(s); err != nil {
+		t.Fatalf("add client-go scheme: %v", err)
+	}
+	if err := gentianov1alpha1.AddToScheme(s); err != nil {
+		t.Fatalf("add gentian scheme: %v", err)
+	}
+
+	const jobName = "tx-export-x-app-store-me-pg"
+	export := &gentianov1alpha1.TenantExport{
+		ObjectMeta: metav1.ObjectMeta{Name: "export-x", Namespace: "tenant-demo"},
+		Status: gentianov1alpha1.TenantExportStatus{
+			Apps: []gentianov1alpha1.AppExportStatus{{
+				Name:           "app-store-me",
+				CompletedUnits: []string{jobName},
+			}},
+		},
+	}
+	c := fake.NewClientBuilder().WithScheme(s).WithObjects(export).
+		WithStatusSubresource(export).Build()
+	r := &TenantExportReconciler{Client: c, Scheme: s,
+		Reconciler: &TenantReconciler{Client: c, Scheme: s}}
+
+	unit := captureUnit{JobName: jobName, Job: &batchv1.Job{ObjectMeta: metav1.ObjectMeta{
+		Name:      jobName,
+		Namespace: kernelNamespace,
+		Labels:    map[string]string{meta.AppLabel: "app-store-me"},
+	}}}
+	done, err := r.ensureCaptureJob(context.Background(), export, unit)
+	if err != nil {
+		t.Fatalf("ensureCaptureJob: %v", err)
+	}
+	if !done {
+		t.Fatal("recorded-complete unit reported not done")
+	}
+	if err := c.Get(context.Background(), types.NamespacedName{Name: jobName, Namespace: kernelNamespace}, &batchv1.Job{}); !apierrors.IsNotFound(err) {
+		t.Fatalf("the Job was recreated for an already-completed unit: %v", err)
 	}
 }
