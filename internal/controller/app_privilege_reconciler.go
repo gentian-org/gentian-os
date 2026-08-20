@@ -72,7 +72,7 @@ func (r *TenantReconciler) ensureAppPrivileges(ctx context.Context, tenant *gent
 		return ctrl.Result{}, fmt.Errorf("apply app privilege reconcile request: %w", err)
 	}
 
-	kcURL, kcUser, kcPass, err := r.loadKeycloakAdmin(ctx)
+	kcURL, kcUser, kcPass, err := loadKeycloakAdmin(ctx, r.Client)
 	if err != nil {
 		return ctrl.Result{}, fmt.Errorf("load keycloak admin: %w", err)
 	}
@@ -221,23 +221,6 @@ func profilePrivilegedRole(profile *gentianov1alpha1.AppProfile) *gentianov1alph
 		return nil
 	}
 	return profile.Spec.Provisioning.PrivilegedRole
-}
-
-func (r *TenantReconciler) loadKeycloakAdmin(ctx context.Context) (url, user, pass string, err error) {
-	secret := &corev1.Secret{}
-	if err := r.Get(ctx, types.NamespacedName{Name: keycloakAdminSecret, Namespace: kernelNamespace}, secret); err != nil {
-		return "", "", "", err
-	}
-	url = string(secret.Data["url"])
-	user = string(secret.Data["username"])
-	if user == "" {
-		user = "admin"
-	}
-	pass = string(secret.Data["password"])
-	if url == "" || pass == "" {
-		return "", "", "", fmt.Errorf("keycloak-admin secret missing url or password")
-	}
-	return url, user, pass, nil
 }
 
 // syncAppPrivilegedRole applies app-admins membership to one app by running

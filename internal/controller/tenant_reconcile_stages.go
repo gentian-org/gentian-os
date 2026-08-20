@@ -27,6 +27,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
+	"github.com/gentian-org/gentian-os/internal/tenancy"
 )
 
 // tenantBlockedRequeueAfter is how long to wait before retrying a Tenant whose
@@ -157,7 +158,7 @@ func (r *TenantReconciler) reconcileTenantStagePreflight(ctx context.Context, st
 		return ctrl.Result{}, nil
 	}
 
-	if err := r.validateTenancyConstraints(ctx, tenant); err != nil {
+	if err := tenancy.EnforceSingle(ctx, r.Client, r.TenancyMode, tenant); err != nil {
 		r.setCondition(tenant, conditionAppsReady, metav1.ConditionFalse, "TenancyConstraint", err.Error())
 		tenant.Status.Phase = gentianov1alpha1.TenantPhaseDegraded
 		state.blocked = true

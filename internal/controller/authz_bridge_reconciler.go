@@ -61,7 +61,7 @@ func (r *AuthzBridgeReconciler) Reconcile(ctx context.Context, req reconcile.Req
 		return reconcile.Result{}, nil
 	}
 
-	kcURL, kcUser, kcPass, err := r.loadKeycloakAdmin(ctx)
+	kcURL, kcUser, kcPass, err := loadKeycloakAdmin(ctx, r.Client)
 	if err != nil {
 		logger.Error(err, "load keycloak-admin secret")
 		return reconcile.Result{RequeueAfter: authzRequeueInterval}, nil
@@ -148,9 +148,16 @@ func (r *AuthzBridgeReconciler) kernelRealm() string {
 	return "kernel"
 }
 
-func (r *AuthzBridgeReconciler) loadKeycloakAdmin(ctx context.Context) (url, user, pass string, err error) {
+// loadKeycloakAdmin reads the kernel's Keycloak admin credentials.
+//
+// One function, two receivers previously: AuthzBridgeReconciler and
+// TenantReconciler carried byte-identical copies, and a third caller
+// (keycloak_browser_security.go) used whichever it happened to be a method on.
+// The Secret, its keys and the "admin" default are one fact about the cluster,
+// not a property of any reconciler, so it takes a reader instead.
+func loadKeycloakAdmin(ctx context.Context, c client.Reader) (url, user, pass string, err error) {
 	secret := &corev1.Secret{}
-	if err := r.Get(ctx, types.NamespacedName{Name: keycloakAdminSecret, Namespace: kernelNamespace}, secret); err != nil {
+	if err := c.Get(ctx, types.NamespacedName{Name: keycloakAdminSecret, Namespace: kernelNamespace}, secret); err != nil {
 		return "", "", "", err
 	}
 	url = string(secret.Data["url"])

@@ -75,7 +75,7 @@ GENTIAN_PHASE="${GENTIAN_PHASE:-}"
 # Discovery
 # =============================================================================
 
-# step_id_of <file> — "scripts/steps/30-cert-manager.sh" → "30-cert-manager"
+# step_id_of <file> — "scripts/steps/A-05-cert-manager.sh" → "A-05-cert-manager"
 step_id_of() {
     local base
     base="$(basename "$1")"

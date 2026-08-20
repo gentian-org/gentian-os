@@ -6,7 +6,7 @@
 # How many virtual slices to carve each physical GPU into is specific to
 # this cluster's hardware, not a gentian-os default — rendered from
 # GPU_TIME_SLICE_REPLICAS in cluster-settings.env (see render_and_apply_
-# gpu_sharing_manifest, scripts/llm-lib.sh).
+# gpu_sharing_manifest, scripts/lib/llm-lib.sh).
 apiVersion: v1
 kind: ConfigMap
 metadata:

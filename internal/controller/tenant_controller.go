@@ -397,34 +397,6 @@ func (r *TenantReconciler) tenantAdminEmail(tenant *gentianov1alpha1.Tenant) str
 	return tenant.AdminEmailOrDefault(r.KernelDomain, r.TenancyMode)
 }
 
-// validateTenancyConstraints enforces single-tenancy cluster rules.
-func (r *TenantReconciler) validateTenancyConstraints(ctx context.Context, tenant *gentianov1alpha1.Tenant) error {
-	if gentianov1alpha1.NormalizeTenancyMode(r.TenancyMode) != gentianov1alpha1.TenancyModeSingle {
-		return nil
-	}
-	if tenant.Name != gentianov1alpha1.SingleTenantName {
-		return fmt.Errorf(
-			"cluster TENANCY_MODE=single allows only Tenant %q (got %q)",
-			gentianov1alpha1.SingleTenantName, tenant.Name,
-		)
-	}
-	var others gentianov1alpha1.TenantList
-	if err := r.List(ctx, &others); err != nil {
-		return err
-	}
-	for i := range others.Items {
-		other := &others.Items[i]
-		if other.Name == tenant.Name || !other.DeletionTimestamp.IsZero() {
-			continue
-		}
-		return fmt.Errorf(
-			"cluster TENANCY_MODE=single allows only one Tenant CR (found %q and %q)",
-			tenant.Name, other.Name,
-		)
-	}
-	return nil
-}
-
 // Reconcile is the main reconciliation loop for Tenant resources.
 func (r *TenantReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	start := time.Now()

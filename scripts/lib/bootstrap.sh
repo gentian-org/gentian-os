@@ -406,8 +406,9 @@ POLICY
 # =============================================================================
 # _derive <context> <purpose> — the derived-credential function, at file scope.
 #
-# Same derivation as seed-openbao.sh and
-# crossplane/functions/derive-secrets/derive.py.
+# Same derivation as scripts/bootstrap/seed-openbao.sh. There was a third
+# implementation, crossplane/functions/derive-secrets/derive.py, deleted as dead
+# code in 3920c1ba — derivation happens in shell only.
 #
 # File scope because it has callers outside the step that first needed it.
 # Nested inside create_crossplane_secrets it existed only while B-06 ran, and
@@ -1019,13 +1020,13 @@ verify_infra_chart_index() {
 # =============================================================================
 # Kyverno admission controller (Stage 0 MAC)
 #
-# Deployed by Argo CD via kernel/appsets/05-admission.yaml (sync wave 5–6).
+# Deployed by Argo CD via kernel/appsets/raw/05-admission.yaml (sync wave 5–6).
 # This step waits for the controller so later workloads are admitted under policy.
 # =============================================================================
 install_mac_admission() {
     banner "Kyverno admission controller (Stage 0 MAC)"
 
-    info "Kyverno is synced by gentian-appsets (kernel/appsets/05-admission.yaml)."
+    info "Kyverno is synced by gentian-appsets (kernel/appsets/raw/05-admission.yaml)."
     info "Waiting for kyverno-admission-controller (up to 5m)..."
 
     local deadline=$((SECONDS + 300))

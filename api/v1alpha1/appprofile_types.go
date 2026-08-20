@@ -380,7 +380,8 @@ type TileSpec struct {
 	Logo string `json:"logo,omitempty"`
 
 	// Image is a profile-relative SVG path used in git only (e.g. assets/tile.svg).
-	// Run scripts/sync-profile-tile.py to inline into tile.logo before commit.
+	// Run gentian-apps' scripts/sync-profile-tile.py to inline into tile.logo
+	// before commit — profiles live in that repository, and so does the script.
 	// +optional
 	Image string `json:"image,omitempty"`
 }

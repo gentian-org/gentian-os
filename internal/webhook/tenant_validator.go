@@ -32,6 +32,7 @@ import (
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 	"github.com/gentian-org/gentian-os/internal/handover"
+	"github.com/gentian-org/gentian-os/internal/tenancy"
 )
 
 // TenantValidator validates Tenant create/update requests.
@@ -174,38 +175,10 @@ func (v *TenantValidator) Validate(ctx context.Context, tenant *gentianov1alpha1
 		}
 	}
 
-	if err := v.validateTenancy(ctx, tenant); err != nil {
+	if err := tenancy.EnforceSingle(ctx, v.Client, v.TenancyMode, tenant); err != nil {
 		return err
 	}
 
-	return nil
-}
-
-func (v *TenantValidator) validateTenancy(ctx context.Context, tenant *gentianov1alpha1.Tenant) error {
-	mode := gentianov1alpha1.NormalizeTenancyMode(v.TenancyMode)
-	if mode != gentianov1alpha1.TenancyModeSingle {
-		return nil
-	}
-	if tenant.Name != gentianov1alpha1.SingleTenantName {
-		return fmt.Errorf(
-			"cluster TENANCY_MODE=single allows only Tenant %q (got %q)",
-			gentianov1alpha1.SingleTenantName, tenant.Name,
-		)
-	}
-	var others gentianov1alpha1.TenantList
-	if err := v.Client.List(ctx, &others); err != nil {
-		return fmt.Errorf("list tenants: %w", err)
-	}
-	for i := range others.Items {
-		other := &others.Items[i]
-		if other.Name == tenant.Name || !other.DeletionTimestamp.IsZero() {
-			continue
-		}
-		return fmt.Errorf(
-			"cluster TENANCY_MODE=single allows only one Tenant CR (found %q and %q)",
-			tenant.Name, other.Name,
-		)
-	}
 	return nil
 }
 

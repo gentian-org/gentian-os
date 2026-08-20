@@ -10,7 +10,7 @@ server:
   dataStorage:
     enabled: true
     # storageClass comes from the Helm parameter in
-    # kernel/bootstrap/openbao-application.yaml.tmpl (STORAGE_CLASS, resolved by
+    # kernel/bootstrap/chart/templates/openbao.yaml (STORAGE_CLASS, resolved by
     # install.sh) — see the longer note in transit-values.yaml.
     size: 10Gi
     accessMode: ReadWriteOnce

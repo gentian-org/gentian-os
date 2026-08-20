@@ -294,7 +294,7 @@ func (r *TenantReconciler) injectLLMCredentials(ctx context.Context, tenant *gen
 }
 
 // getLiteLLMMasterKey reads the admin key LiteLLM itself was seeded with
-// (scripts/seed-openbao.sh → ExternalSecret llm-sensitive-values in
+// (scripts/bootstrap/seed-openbao.sh → ExternalSecret llm-sensitive-values in
 // platform-kernel), needed to call its key-management API as an admin.
 func (r *TenantReconciler) getLiteLLMMasterKey(ctx context.Context) (string, error) {
 	secret := &corev1.Secret{}

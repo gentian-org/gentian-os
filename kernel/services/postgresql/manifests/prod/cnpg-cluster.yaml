@@ -5,7 +5,7 @@
 # Database.postgresql.cnpg.io/v1 CRs (database_reconciler.go, cnpgClusterName="postgres").
 #
 # Deployed to: platform-kernel namespace
-# Managed by:  kernel/bootstrap/cnpg-cluster-application.yaml
+# Managed by:  kernel/bootstrap/chart/templates/cnpg-cluster.yaml
 #
 # Connections (read-write):  postgres-rw.platform-kernel.svc.cluster.local:5432
 # Admin credentials:         postgres-admin Secret (see postgres-admin-externalsecret.yaml)

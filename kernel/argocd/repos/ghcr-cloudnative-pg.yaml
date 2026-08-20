@@ -1,7 +1,7 @@
 ---
 # ArgoCD Repository registration for ghcr.io/cloudnative-pg/charts OCI Helm charts.
 # This is a PUBLIC registry — no credentials required.
-# Required for: kernel/bootstrap/cnpg-application.yaml.tmpl
+# Required for: kernel/bootstrap/chart/templates/cnpg.yaml
 #
 # Note: ArgoCD can pull public OCI charts without a registered secret.
 # This file is kept for documentation consistency with other ghcr registrations.

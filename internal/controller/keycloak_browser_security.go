@@ -52,7 +52,7 @@ func (r *TenantReconciler) ensureRealmBrowserSecurityHeaders(ctx context.Context
 	if realm == "" {
 		return nil
 	}
-	kcURL, kcUser, kcPass, err := r.loadKeycloakAdmin(ctx)
+	kcURL, kcUser, kcPass, err := loadKeycloakAdmin(ctx, r.Client)
 	if err != nil {
 		return fmt.Errorf("load keycloak-admin for browser security headers: %w", err)
 	}
