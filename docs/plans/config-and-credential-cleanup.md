@@ -1176,7 +1176,7 @@ mirror, so "exercised" below never means more than that.
 | 5 | Exercised | `kernel/argocd/repos/*.yaml` and the infra chart registry are not yet claims |
 | 6 | **Exercised** | Both criteria this row was waiting on are verified in §15.1 — ESO's live verdict, and the unsatisfied→satisfied transition unblocking composition with nothing re-run. The row had not been updated to say so |
 | 7 | **Exercised** | The live OIDC write path works. It was broken three independent ways — wrong mount, wrong role type, missing audience (§15.4) — and a token exchange has now completed against the fixed path, which is the criterion this row waited on longest. The audit device is still unobserved |
-| 8 | **Exercised** | The service exchanges a caller's token and serves the catalogue. Two things remain: its own ServiceAccount policy is uninspected, and it logs nothing about a *refused* exchange — the three defects above were each diagnosed by reading code, because a refusal produces no log line at all |
+| 8 | **Exercised** | The service exchanges a caller's token and serves the catalogue. A refusal now names the failed check — audience, claims, role type, missing role, unmounted backend — and logs OpenBao's own words; the first real use of that log found the tenant fault below in one line, after three rounds of reading code had been needed for the previous ones. Its own ServiceAccount policy is still uninspected |
 | 9 | Built | No shared API contract tests; validation errors are not attributed per field |
 | 10 | **10a/10b done, 10c done** | `cluster-settings.env` is gone, no `envsubst` call site remains, and the credential manager — the third surface — now authenticates and serves (row 8). One orphaned `${GENTIAN_OS_IMAGE_REPOSITORY}` survived the `envsubst` removal inside a Helm template, where nothing expands it, and silently disabled image updates until it was found (§15.4) |
 | 11 | Done | BSD `sed_inplace` has not been observed running |
@@ -2703,10 +2703,25 @@ creates `gentian-deployments-git-credentials` imperatively; the `XRepository` co
 picking a winner and updating that value. **If the operator cannot push, check which Secret it is
 actually mounting.**
 
-**Nothing sets the tenant attribute a claim mapping reads.** The kernel realm stamps it onto every
-user brokered from a tenant realm, and users provisioned only in a tenant realm never pass through
-that IdP. Such a tenant admin authenticates and sees an empty catalogue — the safe direction, and
-still the last gap before the tenant path works end to end.
+**~~Nothing sets the tenant attribute a claim mapping reads.~~ That was the wrong diagnosis.** The
+attribute mapper is fine; the token never reached it. A tenant member authenticates in their *own*
+realm — deliberately, because that is where their apps' OIDC clients live and where the SSO session
+has to exist for app launches to reuse it — so their portal token is signed by that realm. The
+kernel realm's JWT mount trusts exactly one issuer, and verification failed at the **signature**,
+before any claim was looked at. Every role on that mount was unreachable by every tenant
+administrator, including one added specifically to serve them.
+
+Found in a single log line once a refusal reported OpenBao's own words, having survived a written
+diagnosis that named a claim mapping instead.
+
+Each tenant realm now has its own JWT auth mount, reconciled by the `TenantReconciler`, with the
+per-tenant policy the tenant Composition already emitted. Deliberately not one mount trusting many
+keys: a tenant administrator holds `realm-management/realm-admin` in their own realm, so they can
+mint a token carrying any groups claim — the cluster's admin group included — and a multi-key mount
+would verify it. Isolation belongs at the mount boundary, because claim values are exactly what
+they control.
+
+Built and iterated on a cluster; the tenant write path is not yet confirmed end to end.
 
 **Policy tests exist and run.** Phase 7, criterion 5. `make test-policy` covers both layers.
 
