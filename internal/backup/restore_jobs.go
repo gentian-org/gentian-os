@@ -139,6 +139,47 @@ func PostgresRestoreJob(p JobParams, d Decryption, database string) *batchv1.Job
 		Image:   kernel.PostgresProvisionerImage(),
 		Command: []string{"/bin/sh", "-c"},
 		Args: []string{fmt.Sprintf(`set -eu
+ROLE=%[1]s
+DB=%[2]s
+
+# Ownership first. A restore that failed part way leaves objects owned by the
+# admin that ran it, and the next attempt — running as the app, correctly —
+# cannot drop what it does not own. The database then wedges at exactly the
+# moment someone is trying to recover it, and only hand-written psql gets it
+# back. Normalising here makes a retry self-healing instead. Extension-owned
+# objects are left alone: they belong to the extension, not the app.
+psql -v ON_ERROR_STOP=1 -v app_role="${ROLE}" -d "${DB}" <<'PSQL'
+DO $$
+DECLARE r record;
+BEGIN
+  FOR r IN SELECT nspname FROM pg_namespace
+            WHERE nspname NOT LIKE 'pg\_%%'
+              AND nspname NOT IN ('information_schema', 'public')
+  LOOP
+    EXECUTE format('ALTER SCHEMA %%I OWNER TO %%I', r.nspname, :'app_role');
+  END LOOP;
+
+  FOR r IN SELECT c.relname, n.nspname, c.relkind
+             FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+            WHERE n.nspname NOT LIKE 'pg\_%%'
+              AND n.nspname <> 'information_schema'
+              AND c.relkind IN ('r', 'p', 'S', 'v', 'm')
+              AND NOT EXISTS (SELECT 1 FROM pg_depend d
+                               WHERE d.objid = c.oid AND d.deptype = 'e')
+  LOOP
+    EXECUTE format('ALTER %%s %%I.%%I OWNER TO %%I',
+                   CASE r.relkind
+                     WHEN 'S' THEN 'SEQUENCE'
+                     WHEN 'v' THEN 'VIEW'
+                     WHEN 'm' THEN 'MATERIALIZED VIEW'
+                     ELSE 'TABLE'
+                   END,
+                   r.nspname, r.relname, :'app_role');
+  END LOOP;
+END $$;
+PSQL
+echo "ownership normalised to ${ROLE}"
+
 # --clean --if-exists drops each object before recreating it, so a restore over
 # a live database replaces its contents rather than merging into them. Merging
 # is the silent-corruption case: rows the bundle does not contain would survive
@@ -150,9 +191,9 @@ func PostgresRestoreJob(p JobParams, d Decryption, database string) *batchv1.Job
 # app. Restoring without it left every table owned by the postgres superuser,
 # and the app's first query after the restore was "permission denied for
 # table oc_appconfig" — data perfectly restored, unreadable by its owner.
-pg_restore --role=%s --clean --if-exists --no-owner --no-acl --single-transaction \
-  --dbname=%s %s/dump.pgc
-echo "restored %s"`, shellSingleQuote(PostgresRole(p.Tenant, p.App)), shellSingleQuote(database), workDir, database)},
+pg_restore --role="${ROLE}" --clean --if-exists --no-owner --no-acl --single-transaction \
+  --dbname="${DB}" %[3]s/dump.pgc
+echo "restored %[4]s"`, shellSingleQuote(PostgresRole(p.Tenant, p.App)), shellSingleQuote(database), workDir, database)},
 		Env:          postgresAdminEnv(),
 		VolumeMounts: []corev1.VolumeMount{{Name: "work", MountPath: workDir}},
 	}

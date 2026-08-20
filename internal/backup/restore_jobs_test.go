@@ -214,3 +214,32 @@ func TestRestoreDoesNotConfuseMinioClientWithMidnightCommander(t *testing.T) {
 		}
 	}
 }
+
+// A failed restore leaves objects owned by the admin that ran it, and the next
+// attempt — running as the app, correctly — cannot drop what it does not own.
+// The database wedges precisely when someone is recovering it, and only
+// hand-written psql gets it back. So the restore normalises ownership first.
+func TestPostgresRestoreNormalisesOwnershipBeforeLoading(t *testing.T) {
+	job := PostgresRestoreJob(params(), recipientDecryption(), "demo_nextcloud_base_ce")
+	script := job.Spec.Template.Spec.Containers[0].Args[0]
+
+	// Go's fmt leaves %!verb(...) markers behind when a format string escapes
+	// its own percent signs wrongly — and SQL is full of them.
+	if strings.Contains(script, "%!") {
+		t.Fatalf("format verb mishandled in rendered script:\n%s", script)
+	}
+	for _, want := range []string{
+		"ALTER SCHEMA",
+		"OWNER TO",
+		"pg_restore --role=",
+		"deptype = 'e'", // extension-owned objects stay with their extension
+	} {
+		if !strings.Contains(script, want) {
+			t.Errorf("script missing %q:\n%s", want, script)
+		}
+	}
+	// Ownership must be settled before the load, or the load is what fails.
+	if strings.Index(script, "ALTER SCHEMA") > strings.Index(script, "pg_restore") {
+		t.Error("ownership is normalised after the restore, which is too late")
+	}
+}
