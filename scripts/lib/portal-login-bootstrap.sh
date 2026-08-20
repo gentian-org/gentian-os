@@ -1615,6 +1615,60 @@ print_portal_login_summary() {
         warn "  'The portal password does not work'."
         password="(this shell cannot derive it — see the warning above)"
     fi
+    # Derived correctly is still not the same as "this is the password".
+    #
+    # The check above proves this shell agrees with the cluster's Secret. It says
+    # nothing about Keycloak, which holds whatever the last D-05 run wrote — so a
+    # cluster whose master password changed after that run prints a value that
+    # agrees with every stored input and is refused at the login page. That is
+    # the shape the operator hit: no warning, a plausible password, no way to
+    # tell it apart from a working one without typing it.
+    #
+    # So ask Keycloak. The password grant on gentian-portal-bff is the only
+    # endpoint that answers "is this the password", and its two failure modes are
+    # distinguishable: invalid_grant is the password, invalid_client is the BFF
+    # secret — which is derived from the same master, so it fails together and
+    # must not be reported as a password problem.
+    local verify_realm="${KERNEL_REALM:-kernel}"
+    local verify_base="https://id.${kernel_domain}/auth/realms/${verify_realm}"
+    if [[ "${password}" != "("* ]]; then
+        local bff_secret grant
+        bff_secret="$(_portal_bff_derive_secret 2>/dev/null || true)"
+        if [[ -n "${bff_secret}" ]]; then
+            grant="$(curl -sS --max-time 15 \
+                -d "client_id=gentian-portal-bff" \
+                -d "client_secret=${bff_secret}" \
+                -d "username=administrator@${kernel_domain}" \
+                -d "password=${password}" \
+                -d "grant_type=password" \
+                "${verify_base}/protocol/openid-connect/token" 2>/dev/null || true)"
+            case "${grant}" in
+                *access_token*)
+                    : ;;   # It works. Nothing to say that the banner does not.
+                *invalid_grant*)
+                    echo ""
+                    warn "Keycloak does not accept this password."
+                    warn "  Every stored input agrees, so the derivation is right and the value"
+                    warn "  Keycloak holds is older — it was set by the last D-05 run, with a"
+                    warn "  master password that has since changed."
+                    warn "  Re-assert it:  ./install.sh --only D-05 --force"
+                    ;;
+                *invalid_client*)
+                    echo ""
+                    warn "The portal BFF client secret is not the one Keycloak holds, so the"
+                    warn "  password below could not be checked. Both are derived from"
+                    warn "  MASTER_PASSWORD, so they went stale together."
+                    warn "  Re-assert both:  ./install.sh --only D-05 --force"
+                    ;;
+                *)
+                    # Unreachable, mid-rollout, or an answer this does not know.
+                    # Not a verdict on the password, so it must not read as one.
+                    echo ""
+                    info "  (could not reach Keycloak to check the password below)"
+                    ;;
+            esac
+        fi
+    fi
     echo ""
     echo -e "${GREEN}  Gentian portal (cluster admin):${NC}"
     echo -e "${GREEN}    URL      : https://portal.${kernel_domain}/login${NC}"
