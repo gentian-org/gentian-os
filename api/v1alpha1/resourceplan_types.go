@@ -135,6 +135,19 @@ type ResourcePlanList struct {
 }
 
 const (
+	// MaxResourceTierAnnotation caps the plans a tenant may be moved onto.
+	//
+	// On the Tenant rather than passed by the caller, because a ceiling a
+	// request supplies is a ceiling a request can omit. The API resolves it
+	// from cluster state on every call, so a client that knows nothing about
+	// entitlements cannot buy an upgrade by leaving a field out.
+	//
+	// Set by the cluster operator, or by whatever commerce integration a
+	// deployment runs — the platform reads it and does not care which. Absent
+	// means uncapped, matching how an unreachable commerce backend leaves the
+	// App Store's catalogue usable rather than blocking it.
+	MaxResourceTierAnnotation = "gentianos.io/max-resource-tier"
+
 	// ResourcePlanAnnotation records the plan a tenant was last set to.
 	//
 	// The quotas are the truth — they are what the cluster enforces — but they

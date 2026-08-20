@@ -25,6 +25,8 @@ import (
 	"context"
 	"fmt"
 	"sort"
+	"strconv"
+	"strings"
 
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
@@ -148,13 +150,39 @@ func (c *Catalogue) Resolve(tenant *gentianov1alpha1.Tenant) Resolution {
 	return res
 }
 
+// MaxTier reads a tenant's entitlement ceiling, or nil when it has none.
+//
+// Resolved from the Tenant rather than accepted from the caller: a ceiling
+// supplied in a request is a ceiling a request can omit, and the console is not
+// the only thing that can reach the resources API.
+//
+// An unparseable annotation is treated as absent rather than as zero. Zero is
+// the base tier and would silently pin a tenant to the smallest plan on the
+// cluster, which is a worse answer to a typo than no ceiling at all — and the
+// cluster operator who typed it will see the tenant able to upgrade, which is
+// the visible failure of the two.
+func MaxTier(tenant *gentianov1alpha1.Tenant) *int32 {
+	if tenant == nil {
+		return nil
+	}
+	raw, ok := tenant.Annotations[gentianov1alpha1.MaxResourceTierAnnotation]
+	if !ok || strings.TrimSpace(raw) == "" {
+		return nil
+	}
+	parsed, err := strconv.ParseInt(strings.TrimSpace(raw), 10, 32)
+	if err != nil {
+		return nil
+	}
+	out := int32(parsed)
+	return &out
+}
+
 // Selectable filters the catalogue to the plans a caller may move a tenant to.
 //
-// entitledTiers, when non-nil, is the ceiling the commerce backend allows for
-// this tenant: plans above the highest entitled tier are withheld. A nil
-// ceiling means commerce is not configured, and every plan is on offer — the
-// same shape the App Store uses, where an unreachable commerce backend leaves
-// proprietary apps on Buy rather than blocking the catalogue.
+// maxTier, when non-nil, is the tenant's entitlement ceiling: plans above it
+// are withheld. A nil ceiling means none is set, and every plan is on offer —
+// the same shape the App Store uses, where an unreachable commerce backend
+// leaves proprietary apps on Buy rather than blocking the catalogue.
 func (c *Catalogue) Selectable(selfService bool, maxTier *int32) []gentianov1alpha1.ResourcePlan {
 	if c == nil {
 		return nil

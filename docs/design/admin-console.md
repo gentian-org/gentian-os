@@ -3,7 +3,7 @@
 **Status:** Draft v0.1  
 **Scope:** User and group administration, tenant-scoped notifications, member onboarding, and the identity/provisioning contracts for the Suze (`keycloak-native`) path.
 
-**Companion docs:** [architecture.md](../architecture.md), [iam.md](iam.md), [security.md](security.md), [multi-tenancy.md](multi-tenancy.md), [tenant-identity-composition.md](tenant-identity-composition.md), [app-catalogue.md](app-catalogue.md).
+**Companion docs:** [architecture.md](../architecture.md), [iam.md](iam.md), [security.md](security.md), [multi-tenancy.md](multi-tenancy.md), [tenant-identity-composition.md](tenant-identity-composition.md), [app-catalogue.md](app-catalogue.md), [resource-plans.md](resource-plans.md).
 
 ---
 
@@ -43,6 +43,7 @@ in [iam.md](iam.md) and [multi-tenancy.md §8](multi-tenancy.md#81-admin--user-s
 | **Sessions** | Active login inventory and revocation | P5 — list sessions, sign-out everywhere |
 | **Audit** | Sign-in and admin-action history | P6 — read-only event log, export |
 | **Notifications** | Scoped broadcasts | P7 — `admin-notifications` contract (**done**) |
+| **Resources** | Resource plans, ceilings, usage history | P10 — see [§4.8](#48-resources-p10) and [resource-plans.md](resource-plans.md) (**done**) |
 | **App Store** | Catalogue installs | **Stage 2** — see [§9](#9-stage-2--authorization-and-governance) |
 
 Implementation: Gentian BFF + React UI (`gentian-ui`, `ui_kits/console` aesthetic)
@@ -168,6 +169,7 @@ One web app embedded in the Gentian shell (builtin desktop apps). Menu items sho
 | Sessions | All tenants (initially) | Own tenant members only |
 | Audit | Platform + all tenants | Own tenant only |
 | Notifications | Platform-wide publish | Tenant-scoped publish |
+| Resources | All tenants; may force a downgrade | Own tenant; held to its entitlement |
 | Tenants | Yes | Hidden |
 | App Store | Stage 2 | Stage 2 |
 
@@ -269,6 +271,44 @@ All admin **mutations** through the BFF include actor, tenant, target, and
 correlation id. Platform operators use the same module with broader scope during
 bootstrap; `platformAdminMode: constrained` limits routine cross-tenant visibility
 (§7).
+
+### 4.8 Resources (P10)
+
+Maps to the OS question *"how much of this machine may this account use, and how
+much is it using?"* — with the part a desktop OS has no answer for: **what that
+came to over a month**.
+
+Full design in [resource-plans.md](resource-plans.md); what matters to the
+console is the shape.
+
+| Capability | Tenant admin | Platform admin |
+|---|---|---|
+| **Current ceiling** | Own tenant: enforced limits paired with committed use, and live consumption where a metrics source exists | Any tenant, plus an all-tenants headroom table |
+| **Plan catalogue** | Plans they may select, each blocked one carrying its reason | The whole catalogue, including plans withheld from self-service |
+| **Change plan** | Self-service, held to the tenant's entitlement ceiling | Any plan; may **force** a shrink below current use |
+| **Usage history** | Own tenant, per resource, over 7d–12m | Any tenant |
+| **Billed intervals** | The stretches the window resolves to, with the SKU in effect over each | Same |
+
+Three properties make this different from an editable quota field:
+
+**The API takes a plan name, never a quantity.** A ceiling that can be any number
+can be any number that was never sold, so every ceiling reachable through the
+console is one the platform has priced — which is what makes a month resolve to
+SKUs rather than to numbers somebody downstream has to interpret.
+
+**The write is a commit, not a patch.** Selecting a plan edits
+`gentian-deployments` through the same app lifecycle API an App Store install
+uses, so the console and the GitOps repository cannot disagree about a tenant's
+ceiling. `kubectl gentian resources` calls the same endpoints.
+
+**A downgrade below current use is refused.** Kubernetes does not evict pods to
+fit a shrunken quota — it refuses the *next* create — so shrinking a tenant too
+far fails silently, hours later, at the next restart. The console names the
+resource and both numbers instead.
+
+Plan changes are audited (§4.7), **including refusals**: a refused downgrade is
+a decision someone made, and the attempt is the interesting half when a tenant
+later asks why nothing changed.
 
 ---
 
@@ -399,6 +439,7 @@ Aligned with [roadmap.md § Gentian Admin Console](../roadmap.md#gentian-admin-c
 | **P7** | `admin-notifications` gateway + publish UI | **Done** (`gentian-ui`) — see [§8.7](#87-p7-status) |
 | **P8** | Provisioning controller + CloudEvents/SCIM bus; per-member sync status | Planned |
 | **P9** | OpenFGA `can_launch` for admin modules (shell tile shipped in P1) | Planned |
+| **P10** | **Resources** — plan catalogue, ceilings, usage history, billed intervals (§4.8) | **Done** — see [§8.8](#88-p10-status) |
 | **Later** | `platformAdminMode: constrained`; WebAuthn in Security policies | Planned |
 
 **Explicitly not in P0–P7:** tenant app install (GitOps / `kubectl gentian apps`), app-side provisioner execution, Stage 2 authorization surfaces (§9).
@@ -532,6 +573,33 @@ Last reviewed against `gentian-ui` (`develop`).
 
 **P7 caveats:** v1 stores notifications and serves the portal inbox only — no Postfix or Element fan-out yet. Platform-wide publishes require platform administrator privileges. Dismissals are per-user and stored in `admin_notification_dismissals`.
 
+### 8.8 P10 status
+
+Last reviewed against `gentian-os` and `gentian-ui` (`develop`).
+
+| Item | Status | Location |
+|---|---|---|
+| **`ResourcePlan` CRD** | **Done** | `gentian-os/api/v1alpha1/resourceplan_types.go`; default catalogue in the operator chart under `usage.plans.catalogue` |
+| **Plan resolution + downgrade guard** | **Done** | `gentian-os/internal/resourceplan/` |
+| **Usage sampler + history store** | **Done** | `gentian-os/internal/usage/` — samples into each tenant's `{tenant}_shell` database |
+| **Resources API** | **Done** | `GET/PUT /v1/tenants/{t}/resources`, `…/plans`, `…/usage`, `…/report` on the app lifecycle API |
+| **GitOps write path** | **Done** | Per-tenant `resource-plan.yaml` patch, listed after the `tenant-defaults` component so it is the last word on the ceiling |
+| **Entitlement ceiling** | **Done** | `gentianos.io/max-resource-tier` on the Tenant, resolved server-side |
+| **CLI** | **Done** | `kubectl gentian resources plans\|show\|set\|report` |
+| **Console Resources tab** | **Done** | `gentian-ui/frontend/src/admin/ResourcesSection.tsx`, `UsageChart.tsx` |
+| **BFF routes + audit** | **Done** | `GET/PUT /api/v1/admin/resources…`; `resources.plan_changed` and `resources.plan_change_refused` |
+| **metrics-server** | **Optional** | `scripts/steps/A-11-metrics-server.sh`; `usage.metricsServer.enabled` |
+
+**P10 caveats:** the billing series is the enforced ceiling and what is committed
+under it, both from the API server — live consumption is advisory and needs
+metrics-server, which is optional and, having no history of its own, is a
+swappable source behind `usage.ActualSource` rather than the record itself.
+History begins when sampling is switched on; there is no backfill, because
+nothing observed the past. A cluster-wide roll-up opens one database connection
+per tenant, which is the price of keeping each tenant's consumption in its own
+database. The portal needs `appLifecycle.url` set, or the tab reports itself
+unconfigured.
+
 ---
 
 ## 9. Stage 2 — authorization and governance
@@ -643,4 +711,5 @@ These stay outside the Admin Console — cluster admin, GitOps, or dedicated too
 | Tenant provisioning Jobs | [tenant-identity-composition.md](tenant-identity-composition.md) |
 | App contracts | [app-catalogue.md](app-catalogue.md) |
 | UI shell | `gentian-ui/legacy/design-system/ui_kits/console/` |
+| Resource plans and usage | [resource-plans.md](resource-plans.md) |
 | Stage 2 authorization | [security.md](security.md) |

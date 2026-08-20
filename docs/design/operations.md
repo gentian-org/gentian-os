@@ -113,6 +113,24 @@ Prometheus metrics exposed by Crossplane and the kernel:
 | `gentian_os_credentials_age_seconds` | Custom | Age of oldest credential per tenant |
 | `gentian_os_integration_bindings_status` | Custom | Binding health by contract |
 
+### 6.1 Usage sampling
+
+The operator runs a leader-elected worker that records each tenant's enforced
+ceiling and what is committed under it into that tenant's own `{tenant}_shell`
+database, every `usage.sampler.interval` (15 minutes by default). It is what the
+Admin Console's Resources tab and `kubectl gentian resources report` read — see
+[resource-plans.md](resource-plans.md).
+
+```bash
+# Is it running, and is any tenant being skipped?
+kubectl logs -n gentian-system deployment/gentian-os | grep usage-sampler
+```
+
+A tenant without a `portal-shell-<tenant>` Secret in `platform-kernel` is skipped
+and logged; the others are unaffected. One tenant's database being unreachable
+never stops the pass, because a single broken tenant must not become a
+cluster-wide gap in the billing record.
+
 ## 7. Image Updates via ArgoCD Image Updater
 
 ### 7.1 Philosophy

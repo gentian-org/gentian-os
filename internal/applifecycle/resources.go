@@ -88,9 +88,6 @@ type SetPlanRequest struct {
 	// not relax any check, because the downgrade guard protects the tenant's
 	// own workloads and a cluster operator has no more business breaking them.
 	SelfService bool
-	// MaxTier caps the plans the caller may select, as resolved from the
-	// commerce backend. Nil means uncapped.
-	MaxTier *int32
 	// Force skips the downgrade guard. Reserved for a cluster operator who has
 	// decided the tenant will be shrunk regardless — the pods that cannot be
 	// recreated afterwards are then a known cost rather than a surprise.
@@ -161,19 +158,16 @@ func (s *Service) ResourceState(ctx context.Context, tenantName string) (*Resour
 
 	if s.actualSource == nil {
 		result.ActualSource = "unavailable: no metrics source is configured for this cluster"
+	} else if actual, err := s.actualSource.NamespaceUsage(ctx, tenant.NamespaceName()); err != nil {
+		// Named rather than swallowed. A chart with a missing series and no
+		// explanation reads as "this tenant used nothing", which is the
+		// opposite of what an unreachable metrics API means.
+		result.ActualSource = fmt.Sprintf("unavailable: %s did not answer", s.actualSource.Name())
 	} else {
-		actual, err := s.actualSource.NamespaceUsage(ctx, tenant.NamespaceName())
-		if err != nil {
-			// Named rather than swallowed. A chart with a missing series and no
-			// explanation reads as "this tenant used nothing", which is the
-			// opposite of what an unreachable metrics API means.
-			result.ActualSource = fmt.Sprintf("unavailable: %s did not answer", s.actualSource.Name())
-		} else {
-			result.ActualSource = s.actualSource.Name()
-			result.Actual = map[string]string{}
-			for name, q := range actual {
-				result.Actual[string(name)] = q.String()
-			}
+		result.ActualSource = s.actualSource.Name()
+		result.Actual = map[string]string{}
+		for name, q := range actual {
+			result.Actual[string(name)] = q.String()
 		}
 	}
 	return result, nil
@@ -184,7 +178,6 @@ func (s *Service) Plans(
 	ctx context.Context,
 	tenantName string,
 	selfService bool,
-	maxTier *int32,
 ) ([]PlanSummary, error) {
 	tenant, err := s.getTenant(ctx, tenantName)
 	if err != nil {
@@ -199,6 +192,7 @@ func (s *Service) Plans(
 	if resolution.Plan != nil {
 		currentName = resolution.Plan.Name
 	}
+	maxTier := resourceplan.MaxTier(tenant)
 
 	quota, err := s.tenantQuota(ctx, tenant)
 	if err != nil {
@@ -267,7 +261,7 @@ func (s *Service) SetPlan(ctx context.Context, req SetPlanRequest) (*SetPlanResu
 	if req.SelfService && plan.Spec.SelfServiceDisabled {
 		return nil, fmt.Errorf("%w: %s is arranged with the platform operator", ErrPlanNotSelectable, plan.Name)
 	}
-	if req.MaxTier != nil && plan.Spec.Tier > *req.MaxTier {
+	if maxTier := resourceplan.MaxTier(tenant); maxTier != nil && plan.Spec.Tier > *maxTier {
 		return nil, fmt.Errorf("%w: %s is above the tenant's entitlement", ErrPlanNotSelectable, plan.Name)
 	}
 

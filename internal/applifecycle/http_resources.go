@@ -56,16 +56,15 @@ func (h *HTTPServer) handleResourceState(w http.ResponseWriter, r *http.Request)
 }
 
 func (h *HTTPServer) handleResourcePlans(w http.ResponseWriter, r *http.Request) {
-	maxTier, err := optionalInt32(r.URL.Query().Get("maxTier"))
-	if err != nil {
-		writeErr(w, http.StatusBadRequest, fmt.Errorf("invalid maxTier: %w", err))
-		return
-	}
+	// No maxTier parameter: the entitlement ceiling is read from the Tenant, so
+	// a caller cannot raise it by leaving a field out. selfService remains a
+	// caller assertion because only the caller's own front end knows whether a
+	// tenant administrator or a platform operator is asking, and it can only
+	// ever withhold plans.
 	plans, err := h.Service.Plans(
 		r.Context(),
 		r.PathValue("tenant"),
 		boolParam(r, "selfService"),
-		maxTier,
 	)
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, err)
@@ -90,7 +89,6 @@ func (h *HTTPServer) handleSetResourcePlan(w http.ResponseWriter, r *http.Reques
 	var body struct {
 		Plan        string `json:"plan"`
 		SelfService bool   `json:"selfService"`
-		MaxTier     *int32 `json:"maxTier"`
 		Force       bool   `json:"force"`
 	}
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 16<<10)).Decode(&body); err != nil {
@@ -107,7 +105,6 @@ func (h *HTTPServer) handleSetResourcePlan(w http.ResponseWriter, r *http.Reques
 		Plan:        body.Plan,
 		Actor:       actor,
 		SelfService: body.SelfService,
-		MaxTier:     body.MaxTier,
 		Force:       body.Force,
 	})
 	if err != nil {
@@ -229,18 +226,6 @@ func usageStep(r *http.Request, window time.Duration) (time.Duration, error) {
 		return 0, errors.New("stepSeconds must be a positive integer")
 	}
 	return time.Duration(secs) * time.Second, nil
-}
-
-func optionalInt32(v string) (*int32, error) {
-	if v == "" {
-		return nil, nil
-	}
-	parsed, err := strconv.ParseInt(v, 10, 32)
-	if err != nil {
-		return nil, err
-	}
-	out := int32(parsed)
-	return &out, nil
 }
 
 func boolParam(r *http.Request, name string) bool {

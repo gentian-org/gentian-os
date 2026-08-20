@@ -274,6 +274,84 @@ A cluster's stage (`dev`, `staging`, `prod`) is fixed at bootstrap via
 `--env`/`--stage` flag; they always target the one cluster selected by
 `GENTIAN_DEPLOYMENTS_CLUSTER_ID`.
 
+## 6a. Resource Plans and Usage
+
+A tenant's resource ceiling is chosen from a priced catalogue of `ResourcePlan`
+objects, never typed as a quantity — see
+[design/resource-plans.md](design/resource-plans.md). The commands below and the
+Admin Console's **Resources** tab call the same API, so the rules (the downgrade
+guard, the entitlement ceiling, the git write) are enforced once.
+
+List the catalogue, or what one tenant may pick:
+
+```bash
+kubectl gentian resources plans
+kubectl gentian resources plans --tenant corp
+```
+
+With a tenant, each plan is marked `*` (current) or `x` (not selectable), and a
+blocked plan carries the reason — an entitlement it exceeds, or the resource it
+does not have room for.
+
+Show a tenant's ceiling and what is committed under it:
+
+```bash
+kubectl gentian resources show corp
+```
+
+Move a tenant to a plan:
+
+```bash
+kubectl gentian resources set corp --plan base-plus-8
+```
+
+This commits `clusters/<cluster>/tenants/corp/resource-plan.yaml` and pushes;
+ArgoCD applies it on the next sync and the operator reconciles the
+`tenant-quota` ResourceQuota. It is refused when the plan is smaller than what
+the tenant is using:
+
+```
+ERROR: the lifecycle API refused the request (HTTP 409).
+  plan small is smaller than what the tenant is using (limits.cpu: using 34, plan allows 32)
+```
+
+Kubernetes does not evict pods to fit a shrunken quota — it refuses the *next*
+create — so shrinking a tenant too far would otherwise appear to work and fail
+hours later at the next restart. `--force` overrides the guard; it is for a
+cluster operator who has accepted that cost.
+
+What a window resolves to for invoicing:
+
+```bash
+kubectl gentian resources report corp \
+  --from 2026-01-01T00:00:00Z --to 2026-02-01T00:00:00Z
+```
+
+```
+PLAN                  DAYS  FROM                 TO                   SKU
+base-plus-8          17.05  2026-01-01T00:00:00  2026-01-18T01:12:00  sku-8
+base-plus-16         13.95  2026-01-18T01:12:00  2026-02-01T00:00:00  sku-16
+```
+
+Cap what a tenant may choose for itself (absent means uncapped):
+
+```bash
+kubectl annotate tenant corp gentianos.io/max-resource-tier=20 --overwrite
+```
+
+The plugin reaches the operator's lifecycle API through a port-forward it
+establishes and tears down per invocation. Set `GENTIAN_OPERATOR_NAMESPACE` if
+the operator does not run in `gentian-system`, or `GENTIAN_LIFECYCLE_URL` to
+reach the API directly.
+
+Live consumption (as opposed to what is committed) needs metrics-server, which
+is optional:
+
+```bash
+bash scripts/steps/A-11-metrics-server.sh   # via the installer driver
+helm upgrade gentian-os ... --set usage.metricsServer.enabled=true
+```
+
 ## 7. Retrieve Admin Credentials
 
 Portal and identity credentials can be read from Kubernetes Secrets or the

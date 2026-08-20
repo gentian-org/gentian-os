@@ -235,3 +235,35 @@ func TestDescribeOmitsTheRatioWhenThereIsNoCeiling(t *testing.T) {
 		t.Fatalf("expected no ratio without a hard limit, got %v", rows)
 	}
 }
+
+// The ceiling must come from cluster state, not from the request: a caller that
+// supplies its own can raise it by omitting the field.
+func TestMaxTierReadsTheTenantAnnotation(t *testing.T) {
+	tenant := tenantWith(nil, "")
+	tenant.Annotations = map[string]string{
+		gentianov1alpha1.MaxResourceTierAnnotation: "20",
+	}
+	got := MaxTier(tenant)
+	if got == nil || *got != 20 {
+		t.Fatalf("expected a ceiling of 20, got %v", got)
+	}
+}
+
+func TestMaxTierIsAbsentWithoutTheAnnotation(t *testing.T) {
+	if got := MaxTier(tenantWith(nil, "")); got != nil {
+		t.Fatalf("expected no ceiling, got %v", *got)
+	}
+}
+
+// A typo must not silently pin the tenant to the smallest plan on the cluster.
+// Treating it as absent fails visibly — the tenant can still upgrade, and the
+// operator who mistyped it finds out.
+func TestMaxTierTreatsAnUnparseableAnnotationAsAbsent(t *testing.T) {
+	tenant := tenantWith(nil, "")
+	tenant.Annotations = map[string]string{
+		gentianov1alpha1.MaxResourceTierAnnotation: "twenty",
+	}
+	if got := MaxTier(tenant); got != nil {
+		t.Fatalf("expected no ceiling from a bad value, got %v", *got)
+	}
+}
