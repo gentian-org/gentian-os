@@ -36,6 +36,12 @@ metadata:
   namespace: crossplane-system
 spec:
   type: git
+  # Not the default. role decides how the API guards a change to this
+  # repository: deployments is the source of truth, so repointing it asks for a
+  # retype, while apps is an additive catalogue and does not. Omitting it left
+  # the cluster's own source of truth protected as though it were an optional
+  # app source — the safer-looking value being the weaker guard.
+  role: deployments
   endpoints:
     inCluster: ${GENTIAN_DEPLOYMENTS_REPO}
   branch: ${GENTIAN_DEPLOYMENTS_BRANCH:-main}

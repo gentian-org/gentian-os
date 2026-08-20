@@ -1,0 +1,25 @@
+# A Repository with no role must be refused.
+#
+# role decides how the API guards a change: deployments is the source of truth
+# and repointing it asks for a retype, apps is an additive catalogue and does
+# not. It used to default to apps, so an omission silently chose the weaker
+# guard — which is how the cluster's own deployments repository came to be
+# labelled as an optional app source.
+#
+# The render fixtures did not catch it: `crossplane render` does not enforce
+# required, admission does. This case is the one that does.
+apiVersion: gentianos.io/v1alpha1
+kind: Repository
+metadata:
+  name: schema-invalid-repository
+  namespace: crossplane-system
+spec:
+  type: git
+  endpoints:
+    inCluster: https://github.com/example/repo
+  credential:
+    vaultPath: gentian-os/kernel/repositories/example
+    displayName: "Example"
+    phase: bootstrap
+    validate:
+      type: git-https

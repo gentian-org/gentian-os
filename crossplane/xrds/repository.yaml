@@ -24,6 +24,7 @@ spec:
               type: object
               required:
                 - type
+                - role
                 - endpoints
                 - credential
               properties:
@@ -73,7 +74,13 @@ spec:
                     those apps. deployments is a source of truth: repointing it
                     changes what everything reconciles from, which is why the
                     API makes that a confirmed operation rather than an edit.
-                  default: apps
+
+                    Required, and deliberately without a default. The two values
+                    are not equally safe — apps is the weaker guard — so a
+                    default would mean an omission silently chooses the weaker
+                    one. That is what happened to the cluster's own deployments
+                    repository, which sat labelled apps and was protected as an
+                    optional app source.
                 tenant:
                   type: string
                   description: >

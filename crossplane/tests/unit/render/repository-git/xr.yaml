@@ -6,6 +6,7 @@ metadata:
   name: deployments
 spec:
   type: git
+  role: deployments
   endpoints:
     inCluster: https://git.internal.example/gentian-deployments
     external: https://10.0.0.5:8443/gentian-deployments

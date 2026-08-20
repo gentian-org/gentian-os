@@ -5,6 +5,7 @@ metadata:
   name: infra-charts
 spec:
   type: oci
+  role: apps
   endpoints:
     inCluster: https://registry.example.net
   credential:
