@@ -237,6 +237,65 @@ spec:
                   {{- $obj | toYaml | nindent 18 }}
             {{- end }}
 
+            {{- /*
+            The portal's public OIDC client, declared rather than provisioned by a
+            Job.
+
+            external-name is the clientId, not Keycloak's internal UUID, which is
+            what lets one template serve both cases: on a tenant whose client
+            already exists the provider adopts it, and on a new tenant it creates
+            it under that name. Verified by adopting the live gentian-portal
+            client read-only — Ready, 45 fields observed — and confirming the
+            client survived the probe's removal.
+
+            The field values reproduce what the Job wrote. That matters more than
+            it looks: an adopted resource is reconciled toward this spec, so a
+            field omitted here is not left alone, it is reset. The redirect and
+            origin lists below were read back from the live client rather than
+            reconstructed from the Job's script.
+            */}}
+            ---
+            apiVersion: openidclient.keycloak.crossplane.io/v1alpha1
+            kind: Client
+            metadata:
+              name: {{ $tenant }}-portal-public-client
+              annotations:
+                crossplane.io/external-name: gentian-portal
+                gotemplating.fn.crossplane.io/composition-resource-name: keycloak-portal-public-client
+            spec:
+              deletionPolicy: Orphan
+              forProvider:
+                clientId: gentian-portal
+                name: Gentian Portal
+                realmId: {{ $tenant }}
+                accessType: PUBLIC
+                enabled: true
+                standardFlowEnabled: true
+                implicitFlowEnabled: false
+                directAccessGrantsEnabled: false
+                serviceAccountsEnabled: false
+                fullScopeAllowed: true
+                rootUrl: https://portal.{{ $kd }}
+                baseUrl: /
+                adminUrl: https://portal.{{ $kd }}
+                validRedirectUris:
+                  - https://{{ $domain }}/
+                  - https://{{ $domain }}/*
+                  - https://portal.{{ $kd }}/*
+                  - https://portal.{{ $kd }}/login
+                  - https://portal.{{ $kd }}/login/*
+                webOrigins:
+                  - "+"
+                  - https://{{ $domain }}
+                  - https://portal.{{ $kd }}
+                validPostLogoutRedirectUris:
+                  - https://{{ $domain }}/
+                  - https://{{ $domain }}/*
+                  - https://portal.{{ $kd }}/*
+                  - https://portal.{{ $kd }}/login
+              providerConfigRef:
+                name: keycloak
+
             {{- range $app := dig "apps" list $spec }}
             ---
             apiVersion: gentianos.io/v1alpha1

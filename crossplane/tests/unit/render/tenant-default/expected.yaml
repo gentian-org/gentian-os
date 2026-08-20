@@ -6,7 +6,7 @@ metadata:
 status:
   conditions:
   - lastTransitionTime: "2024-01-01T00:00:00Z"
-    message: 'Unready resources: app-catalogue-test-app'
+    message: 'Unready resources: app-catalogue-test-app, keycloak-portal-public-client'
     reason: Creating
     status: "False"
     type: Ready
@@ -107,6 +107,56 @@ spec:
             restartPolicy: Never
   providerConfigRef:
     name: kubernetes
+---
+apiVersion: openidclient.keycloak.crossplane.io/v1alpha1
+kind: Client
+metadata:
+  annotations:
+    crossplane.io/composition-resource-name: keycloak-portal-public-client
+    crossplane.io/external-name: gentian-portal
+  labels:
+    crossplane.io/composite: render-fixture
+  name: render-fixture-portal-public-client
+  ownerReferences:
+  - apiVersion: gentianos.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XTenant
+    name: render-fixture
+    uid: ""
+spec:
+  deletionPolicy: Orphan
+  forProvider:
+    accessType: PUBLIC
+    adminUrl: https://portal.platform.example.test
+    baseUrl: /
+    clientId: gentian-portal
+    directAccessGrantsEnabled: false
+    enabled: true
+    fullScopeAllowed: true
+    implicitFlowEnabled: false
+    name: Gentian Portal
+    realmId: render-fixture
+    rootUrl: https://portal.platform.example.test
+    serviceAccountsEnabled: false
+    standardFlowEnabled: true
+    validPostLogoutRedirectUris:
+    - https://render-fixture.platform.example.test/
+    - https://render-fixture.platform.example.test/*
+    - https://portal.platform.example.test/*
+    - https://portal.platform.example.test/login
+    validRedirectUris:
+    - https://render-fixture.platform.example.test/
+    - https://render-fixture.platform.example.test/*
+    - https://portal.platform.example.test/*
+    - https://portal.platform.example.test/login
+    - https://portal.platform.example.test/login/*
+    webOrigins:
+    - +
+    - https://render-fixture.platform.example.test
+    - https://portal.platform.example.test
+  providerConfigRef:
+    name: keycloak
 ---
 apiVersion: kubernetes.crossplane.io/v1alpha2
 kind: Object
