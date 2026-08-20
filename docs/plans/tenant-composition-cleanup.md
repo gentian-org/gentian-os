@@ -157,7 +157,7 @@ events instead of polling, which is roadmap 3.1.
 
 Recorded per step, because the procedure changed after the first one.
 
-### Portal public OIDC client — client adopted, Job still needed
+### 1. Portal public OIDC client — **done**
 
 **Done.** `crossplane/compositions/tenant-default.yaml` declares the `gentian-portal`
 `openidclient.keycloak.crossplane.io/Client`. It adopted the live client and changed nothing:
@@ -187,9 +187,28 @@ So the rule for the remaining Jobs is: **inventory everything a Job owns before 
 just the object it is named after. A Job is retired when every object it touches has a manifest,
 not when the first one does.
 
-**Still to do here:** declare the `openbao-audience` `ProtocolMapper` — the kind supports
-`clientIdRef`, so it can reference the adopted Client rather than needing the UUID by hand — then
-remove the Job and its wait.
+**Completed.** The `openbao-audience` `ProtocolMapper` is declared too, referencing the adopted
+Client by `clientIdRef` rather than a per-tenant UUID. It adopted the existing mapper — same Keycloak
+id, all five config keys unchanged — and only then were the Job, its wait, `keycloak_portal_client.go`
+and the test helper's `portal-public` entry removed.
+
+The mapper repeated the lesson in a new shape: its live config carried **five** keys where the Job
+set three, because Keycloak adds `introspection.token.claim` and `userinfo.token.claim` on create.
+The config map is replaced wholesale on reconcile, so declaring only the three that express the
+intent would have stripped the two that Dovecot's XOAUTH2 and OpenBao read. **The intent and the
+object are not the same thing; read the object.**
+
+**One loss, recorded rather than dropped.** `keycloak_portal_client_test.go` asserted that a tenant's
+own origin is registered as both a redirect and a post-logout redirect URI — without it a tenant
+cannot log out back to itself. Its subject is deleted, and the render harness is golden-diff with no
+per-case assertion hook, so that property is now only *visible* in the golden rather than asserted.
+This repo treats a regenerable golden as insufficient elsewhere for exactly that reason. Restoring it
+as a real assertion is outstanding.
+
+### Next: 2. Portal BFF client
+
+Same shape, and the inventory rule applies first: `keycloak-portal-bff-*` must be read for everything
+it owns — mappers, scopes, service-account roles — before any of it is declared.
 
 ## 7. Honest answer to the question
 
