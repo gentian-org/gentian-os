@@ -1083,6 +1083,16 @@ spec:
             {{- $pijImage := dig "image" "" $pij }}
             {{- if $pijImage }}
             {{- $pijScript := dig "script" "" $pij }}
+            {{- /* Same token vocabulary as extraValues and addonActivation.script.
+                   A post-install script is exactly as app-specific as those, and
+                   without this pass a ${TENANT_DOMAIN} written in a profile reaches
+                   the container as literal text — the failure addonActivation.script
+                   already records above, where the token arrived unsubstituted and
+                   `set -u` killed the pod on every start. */}}
+            {{- $pijScript = $pijScript | replace "${TENANT_DOMAIN}"    $domain }}
+            {{- $pijScript = $pijScript | replace "${TENANT_NAMESPACE}" $ns }}
+            {{- $pijScript = $pijScript | replace "${TENANT_ID}"        $tenant }}
+            {{- $pijScript = $pijScript | replace "${APP_ID}"           $app }}
             {{- $pijEnvFrom := dig "envFrom" list $pij }}
             {{- $pijSA := dig "serviceAccountName" "" $pij }}
             {{- $pijPVC := dig "readOnlyPVC" dict $pij }}

@@ -30,6 +30,10 @@ spec:
       #!/bin/sh
       set -eu
       echo "bootstrapping ${APP}"
+      # APP and NAMESPACE above are the container's own shell variables and
+      # must survive untouched. The tenant-domain token on the next line is the
+      # platform's, and must be substituted before this reaches the ConfigMap.
+      echo "tenant domain is ${TENANT_DOMAIN}"
       curl -sf "http://demo-app.${NAMESPACE}.svc.cluster.local/health"
     envFrom:
       - llm-credentials-demo-app

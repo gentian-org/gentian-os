@@ -185,6 +185,10 @@ spec:
           #!/bin/sh
           set -eu
           echo "bootstrapping ${APP}"
+          # APP and NAMESPACE above are the container's own shell variables and
+          # must survive untouched. The tenant-domain token on the next line is the
+          # platform's, and must be substituted before this reaches the ConfigMap.
+          echo "tenant domain is demo.platform.example.test"
           curl -sf "http://demo-app.${NAMESPACE}.svc.cluster.local/health"
       kind: ConfigMap
       metadata:
