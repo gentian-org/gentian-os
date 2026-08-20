@@ -200,15 +200,9 @@ func (r *TenantReconciler) ensureIdentity(ctx context.Context, tenant *gentianov
 			return r.requeueForPendingJob(ctx, tenant.Name, tenantPortalBFFClientJobName(tenant.Name)), nil
 		}
 
-		portalClientDone, err := r.ensurePortalPublicClientJob(ctx, tenant)
-		if err != nil {
-			return ctrl.Result{}, fmt.Errorf("ensure portal public client Job: %w", err)
-		}
-		if !portalClientDone {
-			r.setCondition(tenant, conditionIdentityReady, metav1.ConditionFalse,
-				"ProvisioningPortalPublicClient", "Waiting for portal public OIDC client Job to complete")
-			return r.requeueForPendingJob(ctx, tenant.Name, tenantPortalPublicClientJobName(tenant.Name)), nil
-		}
+		// The portal public client is not waited on here any more. It is a
+		// Composition resource, so its readiness belongs to CrossplaneReady
+		// rather than to a Job this loop watches.
 
 		// The tenant's own OpenBao auth mount. Reconciled before SMTP because it
 		// is cheap, in-process, and its absence is what makes the Credentials

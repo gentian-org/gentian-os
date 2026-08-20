@@ -105,10 +105,11 @@ func markJobComplete(t *testing.T, jobName, namespace string) {
 // when KernelRealm is set (TestMain uses "kernel").
 func markKernelPortalIdentityJobsComplete(t *testing.T, tenantName string) {
 	t.Helper()
+	// No portal-public: that client and its openbao-audience mapper are
+	// Composition resources now, so no Job appears for this helper to wait on.
 	for _, suffix := range []string{
 		"kernel-tenant-broker",
 		"portal-bff",
-		"portal-public",
 	} {
 		jobName := "keycloak-" + suffix + "-" + tenantName
 		waitFor(t, jobAppearTimeout, func() bool {

@@ -228,7 +228,10 @@ func (r *TenantReconciler) buildIdentityProvisioningJobs(ctx context.Context, te
 		jobs = append(jobs, *makeKernelTenantBrokerJob(tenant.Name, realmName, r.KernelRealm, externalURL))
 		portalOrigin := fmt.Sprintf("https://%s", kernelPortalHost(r.KernelDomain))
 		jobs = append(jobs, *makePortalBFFClientJob(tenant.Name, realmName, portalOrigin))
-		jobs = append(jobs, *makePortalPublicClientJob(tenant.Name, realmName, portalOrigin))
+		// No portal public client Job. The client and its openbao-audience
+		// protocol mapper are both Composition resources now, adopted by their
+		// natural keys, so a Job writing the same fields would be a second owner
+		// racing the first.
 		if r.clusterKeycloakSMTPCredentialsAvailable(ctx) {
 			jobs = append(jobs, *makeTenantSMTPJob(tenant.Name, realmName))
 		}
