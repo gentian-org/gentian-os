@@ -2172,11 +2172,36 @@ render (12 rule groups for helm, 9 for kubernetes).
 It is **not** done here, and deliberately. Swapping `cluster-admin` for a scoped role is only safe
 with a cluster to validate against: any resource kind the enumeration misses surfaces as a
 `forbidden` error at provision time, and the chart-derived list has to be re-checked whenever a
-pinned chart version moves. That belongs in the fresh-cluster run, not in a change nobody can
-exercise.
+pinned chart version moves.
+
+**Two findings from measuring it on a live cluster, both of which narrow this sub-phase.**
+
+*provider-helm cannot be reduced while it installs charts that ship RBAC.* It has created 42
+ClusterRoles and 27 ClusterRoleBindings on this cluster, and several grant cluster-wide `secrets`
+read — cert-manager's controllers among them. Kubernetes forbids creating a role granting
+permissions the creator does not hold, so provider-helm must itself hold everything every chart
+grants, or hold `escalate` on `clusterroles`. `escalate` is a blank cheque: it permits minting any
+role at all, so it is not a reduction, it is `cluster-admin` spelled less honestly. The prior art
+this section cites derives 12 rule groups for helm from chart templates; those rules would have
+broken cert-manager, CNPG and the GPU operator, or forced `escalate`. The ceiling here is a
+property of installing third-party charts, not of the enumeration.
+
+*provider-kubernetes can be, and its set is small.* It manages 17 distinct kinds, none of them RBAC
+— Namespaces, ConfigMaps, Secrets, Jobs, ExternalSecrets, HTTPRoutes, AppProjects, Certificates,
+CNPG Databases and a few more.
+
+*But no single source enumerates them.* Two were measured independently: what the cluster actually
+manages (`Object` MRs) and what the render fixtures produce. Each misses what the other has — the
+live cluster has never exercised `ClusterExternalSecret` or `ImageConfig`, and five kinds including
+`Certificate`, `HTTPRoute` and `Database` appear in no fixture. A regex over the Composition
+templates finds fewer still, because the interesting ones are behind conditionals. So the
+enumeration has to be a union of measured sources with a check that fails when a Composition grows
+a kind the role does not cover — which is the third acceptance criterion, restated in terms of what
+can actually be measured.
 
 **Acceptance for the reduction, when it happens**
-- No provider is bound to `cluster-admin`.
+- `provider-kubernetes` is not bound to `cluster-admin`. `provider-helm` is, and the file says why
+  in terms of escalation prevention rather than of enumeration effort.
 - Removing a scoped role produces a named, diagnosable failure rather than a Release that fails as
   if the workload were broken.
 - The rule list names the chart versions it was derived from, and a chart version bump re-checks
