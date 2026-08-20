@@ -296,6 +296,49 @@ spec:
               providerConfigRef:
                 name: keycloak
 
+            {{- /*
+            The audience OpenBao's role binds on.
+
+            A Keycloak access token does not carry the requesting client in aud —
+            azp names the client, and aud holds only what an audience mapper puts
+            there — so without this the tenant's auth mount refuses every exchange
+            on the audience whoever the caller is.
+
+            All five config keys are set, not the three that define the intent.
+            Keycloak adds introspection.token.claim and userinfo.token.claim on
+            create, and this map is replaced wholesale on reconcile: omitting them
+            would strip them from a mapper that already has them, and introspection
+            is what Dovecot's XOAUTH2 and OpenBao read.
+
+            clientIdRef rather than the client's UUID, so this follows the Client
+            above instead of pinning an id that differs per tenant.
+            */}}
+            ---
+            apiVersion: client.keycloak.crossplane.io/v1alpha1
+            kind: ProtocolMapper
+            metadata:
+              name: {{ $tenant }}-portal-openbao-audience
+              annotations:
+                crossplane.io/external-name: openbao-audience
+                gotemplating.fn.crossplane.io/composition-resource-name: keycloak-portal-openbao-audience
+            spec:
+              deletionPolicy: Orphan
+              forProvider:
+                realmId: {{ $tenant }}
+                clientIdRef:
+                  name: {{ $tenant }}-portal-public-client
+                name: openbao-audience
+                protocol: openid-connect
+                protocolMapper: oidc-audience-mapper
+                config:
+                  included.client.audience: openbao
+                  id.token.claim: "false"
+                  access.token.claim: "true"
+                  introspection.token.claim: "true"
+                  userinfo.token.claim: "false"
+              providerConfigRef:
+                name: keycloak
+
             {{- range $app := dig "apps" list $spec }}
             ---
             apiVersion: gentianos.io/v1alpha1

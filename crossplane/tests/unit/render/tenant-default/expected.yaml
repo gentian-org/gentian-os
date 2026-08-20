@@ -6,7 +6,8 @@ metadata:
 status:
   conditions:
   - lastTransitionTime: "2024-01-01T00:00:00Z"
-    message: 'Unready resources: app-catalogue-test-app, keycloak-portal-public-client'
+    message: 'Unready resources: app-catalogue-test-app, keycloak-portal-openbao-audience,
+      and keycloak-portal-public-client'
     reason: Creating
     status: "False"
     type: Ready
@@ -107,6 +108,40 @@ spec:
             restartPolicy: Never
   providerConfigRef:
     name: kubernetes
+---
+apiVersion: client.keycloak.crossplane.io/v1alpha1
+kind: ProtocolMapper
+metadata:
+  annotations:
+    crossplane.io/composition-resource-name: keycloak-portal-openbao-audience
+    crossplane.io/external-name: openbao-audience
+  labels:
+    crossplane.io/composite: render-fixture
+  name: render-fixture-portal-openbao-audience
+  ownerReferences:
+  - apiVersion: gentianos.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XTenant
+    name: render-fixture
+    uid: ""
+spec:
+  deletionPolicy: Orphan
+  forProvider:
+    clientIdRef:
+      name: render-fixture-portal-public-client
+    config:
+      access.token.claim: "true"
+      id.token.claim: "false"
+      included.client.audience: openbao
+      introspection.token.claim: "true"
+      userinfo.token.claim: "false"
+    name: openbao-audience
+    protocol: openid-connect
+    protocolMapper: oidc-audience-mapper
+    realmId: render-fixture
+  providerConfigRef:
+    name: keycloak
 ---
 apiVersion: openidclient.keycloak.crossplane.io/v1alpha1
 kind: Client
