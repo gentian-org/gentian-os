@@ -467,6 +467,54 @@ spec:
                 name: keycloak
 
 
+            {{- /*
+            Dovecot's OIDC client, on clusters that run Dovecot.
+
+            Gated on mail.serviceMode the same way the operator gates Dovecot
+            provisioning: on a cluster relaying through a smarthost there is no
+            IMAP server, and a client nothing authenticates as would sit in every
+            tenant realm suggesting otherwise.
+
+            It exists only to call the realm's token introspection endpoint and
+            validate XOAUTH2 tokens other clients issued. Nothing is redirected to
+            it and nobody is entitled to it, so there are no redirect URIs, no web
+            origins, no client scope and no roles — and fullScopeAllowed is false,
+            read off the live client rather than assumed.
+
+            Confidential, and the secret is not Keycloak's to choose: Dovecot
+            authenticates to introspection with the value in dovecot-admin. An
+            omitted clientSecretSecretRef would have Keycloak generate a new one
+            and IMAP would stop validating tokens.
+            */}}
+            {{- if eq (dig "mail.serviceMode" "" $ccData) "kernel" }}
+            ---
+            apiVersion: openidclient.keycloak.crossplane.io/v1alpha1
+            kind: Client
+            metadata:
+              name: {{ $tenant }}-dovecot-oidc-client
+              annotations:
+                crossplane.io/external-name: gentian-dovecot
+                gotemplating.fn.crossplane.io/composition-resource-name: keycloak-dovecot-oidc-client
+            spec:
+              deletionPolicy: Orphan
+              forProvider:
+                clientId: gentian-dovecot
+                realmId: {{ $tenant }}
+                accessType: CONFIDENTIAL
+                enabled: true
+                standardFlowEnabled: false
+                implicitFlowEnabled: false
+                directAccessGrantsEnabled: false
+                serviceAccountsEnabled: false
+                fullScopeAllowed: false
+                clientSecretSecretRef:
+                  name: dovecot-admin
+                  namespace: platform-kernel
+                  key: oidc_client_secret
+              providerConfigRef:
+                name: keycloak
+            {{- end }}
+
             {{- range $app := dig "apps" list $spec }}
             ---
             apiVersion: gentianos.io/v1alpha1

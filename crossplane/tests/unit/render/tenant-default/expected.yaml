@@ -6,8 +6,8 @@ metadata:
 status:
   conditions:
   - lastTransitionTime: "2024-01-01T00:00:00Z"
-    message: 'Unready resources: app-catalogue-test-app, keycloak-portal-bff-client,
-      keycloak-portal-bff-default-scopes, and 4 more'
+    message: 'Unready resources: app-catalogue-test-app, keycloak-dovecot-oidc-client,
+      keycloak-portal-bff-client, and 5 more'
     reason: Creating
     status: "False"
     type: Ready
@@ -108,6 +108,41 @@ spec:
             restartPolicy: Never
   providerConfigRef:
     name: kubernetes
+---
+apiVersion: openidclient.keycloak.crossplane.io/v1alpha1
+kind: Client
+metadata:
+  annotations:
+    crossplane.io/composition-resource-name: keycloak-dovecot-oidc-client
+    crossplane.io/external-name: gentian-dovecot
+  labels:
+    crossplane.io/composite: render-fixture
+  name: render-fixture-dovecot-oidc-client
+  ownerReferences:
+  - apiVersion: gentianos.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XTenant
+    name: render-fixture
+    uid: ""
+spec:
+  deletionPolicy: Orphan
+  forProvider:
+    accessType: CONFIDENTIAL
+    clientId: gentian-dovecot
+    clientSecretSecretRef:
+      key: oidc_client_secret
+      name: dovecot-admin
+      namespace: platform-kernel
+    directAccessGrantsEnabled: false
+    enabled: true
+    fullScopeAllowed: false
+    implicitFlowEnabled: false
+    realmId: render-fixture
+    serviceAccountsEnabled: false
+    standardFlowEnabled: false
+  providerConfigRef:
+    name: keycloak
 ---
 apiVersion: openidclient.keycloak.crossplane.io/v1alpha1
 kind: Client
