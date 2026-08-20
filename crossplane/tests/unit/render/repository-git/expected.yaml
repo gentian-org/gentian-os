@@ -2,35 +2,127 @@
 apiVersion: gentianos.io/v1alpha1
 kind: XRepository
 metadata:
-  name: deployments
+  name: deployments-m288c
 status:
   artefacts:
-  - credreq-deployments
-  - credprobe-deployments
+  - credreq-deployments-m288c
+  - credprobe-deployments-m288c
+  - argocd-repo-deployments-m288c
+  - appproject-source-deployments-m288c
   conditions:
   - lastTransitionTime: "2024-01-01T00:00:00Z"
-    message: 'Unready resources: credprobe-deployments, credreq-deployments'
+    message: 'Unready resources: appproject-source-deployments-m288c, argocd-repo-deployments-m288c,
+      credprobe-deployments-m288c, and 2 more'
     reason: Creating
     status: "False"
     type: Ready
-  credentialMessage: 'requirement deployments is unsatisfied: no value at gentian/repositories/deployments.
-    Supply it through the credential manager, or with the installer for phase: bootstrap.'
-  credentialSatisfied: false
+  credentialMessage: credential present at gentian/repositories/deployments
+  credentialSatisfied: true
 ---
 apiVersion: kubernetes.crossplane.io/v1alpha2
 kind: Object
 metadata:
   annotations:
-    crossplane.io/composition-resource-name: credprobe-deployments
-  generateName: deployments-
+    crossplane.io/composition-resource-name: appproject-source-deployments-m288c
+  generateName: deployments-m288c-
   labels:
-    crossplane.io/composite: deployments
+    crossplane.io/claim-name: deployments
+    crossplane.io/claim-namespace: crossplane-system
+    crossplane.io/composite: deployments-m288c
   ownerReferences:
   - apiVersion: gentianos.io/v1alpha1
     blockOwnerDeletion: true
     controller: true
     kind: XRepository
-    name: deployments
+    name: deployments-m288c
+    uid: ""
+spec:
+  forProvider:
+    manifest:
+      apiVersion: argoproj.io/v1alpha1
+      kind: AppProject
+      metadata:
+        name: gentianos-tenants
+        namespace: argocd
+      spec:
+        sourceRepos:
+        - https://git.internal.example/gentian-deployments
+  managementPolicies:
+  - Observe
+  - Create
+  - Update
+  providerConfigRef:
+    name: kubernetes
+---
+apiVersion: kubernetes.crossplane.io/v1alpha2
+kind: Object
+metadata:
+  annotations:
+    crossplane.io/composition-resource-name: argocd-repo-deployments-m288c
+  generateName: deployments-m288c-
+  labels:
+    crossplane.io/claim-name: deployments
+    crossplane.io/claim-namespace: crossplane-system
+    crossplane.io/composite: deployments-m288c
+  ownerReferences:
+  - apiVersion: gentianos.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XRepository
+    name: deployments-m288c
+    uid: ""
+spec:
+  forProvider:
+    manifest:
+      apiVersion: external-secrets.io/v1
+      kind: ExternalSecret
+      metadata:
+        name: repo-deployments-m288c
+        namespace: argocd
+      spec:
+        data:
+        - remoteRef:
+            key: gentian/repositories/deployments
+            property: username
+          secretKey: username
+        - remoteRef:
+            key: gentian/repositories/deployments
+            property: password
+          secretKey: password
+        refreshInterval: 1h
+        secretStoreRef:
+          kind: ClusterSecretStore
+          name: openbao
+        target:
+          name: repo-deployments-m288c
+          template:
+            data:
+              password: '{{ .password }}'
+              type: git
+              url: https://git.internal.example/gentian-deployments
+              username: '{{ .username }}'
+            metadata:
+              labels:
+                argocd.argoproj.io/secret-type: repository
+  providerConfigRef:
+    name: kubernetes
+---
+apiVersion: kubernetes.crossplane.io/v1alpha2
+kind: Object
+metadata:
+  annotations:
+    crossplane.io/composition-resource-name: credprobe-deployments-m288c
+  generateName: deployments-m288c-
+  labels:
+    crossplane.io/claim-name: deployments
+    crossplane.io/claim-namespace: crossplane-system
+    crossplane.io/composite: deployments-m288c
+  ownerReferences:
+  - apiVersion: gentianos.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XRepository
+    name: deployments-m288c
     uid: ""
 spec:
   forProvider:
@@ -39,8 +131,8 @@ spec:
       kind: ExternalSecret
       metadata:
         labels:
-          gentianos.io/credential-requirement: deployments
-        name: credreq-repository-deployments
+          gentianos.io/credential-requirement: deployments-m288c
+        name: credreq-repository-deployments-m288c
         namespace: gentian-system
       spec:
         data:
@@ -65,23 +157,25 @@ apiVersion: gentianos.io/v1alpha1
 kind: CredentialRequirement
 metadata:
   annotations:
-    crossplane.io/composition-resource-name: credreq-deployments
+    crossplane.io/composition-resource-name: credreq-deployments-m288c
   labels:
-    crossplane.io/composite: deployments
+    crossplane.io/claim-name: deployments
+    crossplane.io/claim-namespace: crossplane-system
+    crossplane.io/composite: deployments-m288c
     gentianos.io/credential-phase: bootstrap
     gentianos.io/credential-scope: cluster
-  name: repository-deployments
+  name: repository-deployments-m288c
   ownerReferences:
   - apiVersion: gentianos.io/v1alpha1
     blockOwnerDeletion: true
     controller: true
     kind: XRepository
-    name: deployments
+    name: deployments-m288c
     uid: ""
 spec:
   consumedBy:
   - kind: XRepository
-    name: deployments
+    name: deployments-m288c
   description: ""
   displayName: Deployments Repository Access
   fields:
@@ -97,3 +191,51 @@ spec:
   validate:
     type: git-https
   vaultPath: gentian/repositories/deployments
+---
+apiVersion: kubernetes.crossplane.io/v1alpha2
+kind: Object
+metadata:
+  annotations:
+    crossplane.io/composition-resource-name: git-credentials-deployments-m288c
+  generateName: deployments-m288c-
+  labels:
+    crossplane.io/claim-name: deployments
+    crossplane.io/claim-namespace: crossplane-system
+    crossplane.io/composite: deployments-m288c
+  ownerReferences:
+  - apiVersion: gentianos.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XRepository
+    name: deployments-m288c
+    uid: ""
+spec:
+  forProvider:
+    manifest:
+      apiVersion: external-secrets.io/v1
+      kind: ExternalSecret
+      metadata:
+        name: deployments-git-credentials
+        namespace: gentian-system
+      spec:
+        data:
+        - remoteRef:
+            key: gentian/repositories/deployments
+            property: username
+          secretKey: username
+        - remoteRef:
+            key: gentian/repositories/deployments
+            property: password
+          secretKey: password
+        refreshInterval: 1h
+        secretStoreRef:
+          kind: ClusterSecretStore
+          name: openbao
+        target:
+          name: deployments-git-credentials
+          template:
+            data:
+              .git-credentials: |
+                https://{{ .username }}:{{ .password }}@git.internal.example/gentian-deployments
+  providerConfigRef:
+    name: kubernetes

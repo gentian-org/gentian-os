@@ -60,6 +60,13 @@ spec:
           template: |
             {{- $spec := .observed.composite.resource.spec }}
             {{- $name := .observed.composite.resource.metadata.name }}
+            {{- /* The claim's name, which unlike $name carries no generated suffix.
+                 Used only for the Secret a consumer references by name: a chart value
+                 cannot be written against "deployments-m288c", and that suffix changes
+                 if the claim is recreated. Everything else stays keyed to the
+                 composite, so composed resources remain unambiguous when two claims
+                 share a name in different namespaces. */}}
+            {{- $claimName := dig "labels" "crossplane.io/claim-name" $name .observed.composite.resource.metadata }}
             {{- $cred := $spec.credential }}
             {{- /* A repository owned by a tenant produces a tenant-scoped
                  credential. Scope on its own only says "a tenant may see this";
@@ -363,7 +370,7 @@ spec:
                   apiVersion: external-secrets.io/v1
                   kind: ExternalSecret
                   metadata:
-                    name: {{ $name }}-git-credentials
+                    name: {{ $claimName }}-git-credentials
                     namespace: gentian-system
                   spec:
                     refreshInterval: 1h
@@ -371,7 +378,7 @@ spec:
                       name: openbao
                       kind: ClusterSecretStore
                     target:
-                      name: {{ $name }}-git-credentials
+                      name: {{ $claimName }}-git-credentials
                       template:
                         data:
                           .git-credentials: |

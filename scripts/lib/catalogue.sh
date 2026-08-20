@@ -130,25 +130,17 @@ _deployments_git_host() {
     fi
 }
 
-create_deployments_git_credentials() {
-    local ns="${1:-gentian-system}"
-    if [[ -z "${GENTIAN_DEPLOYMENTS_GIT_TOKEN:-}" ]]; then
-        warn "GENTIAN_DEPLOYMENTS_GIT_TOKEN not set — skipping deployments git credentials Secret."
-        warn "  In-cluster App Store install/uninstall will fail at git push until configured."
-        return 0
-    fi
-
-    banner "Deployments git credentials (operator app lifecycle)"
-    local host username
-    host="$(_deployments_git_host)"
-    username="${GENTIAN_DEPLOYMENTS_GIT_USERNAME:-x-access-token}"
-    bash "${SCRIPT_DIR}/scripts/bootstrap/create-deployments-git-credentials.sh" \
-        "${ns}" \
-        "${GENTIAN_DEPLOYMENTS_GIT_TOKEN}" \
-        "${username}" \
-        "${host}"
-    success "Deployments git credentials Secret ready in ${ns}."
-}
+# The operator's .git-credentials used to be created here with `kubectl create
+# secret`, alongside the one the XRepository Composition emits through ESO —
+# two writers of one credential, and the values file decided which the operator
+# mounted. The composed one is the credential: it is backed by an
+# ExternalSecret, so rotating the value in OpenBao reaches the pod, which the
+# imperative Secret could never do.
+#
+# It survived this long because the Composition named it from the composite
+# (deployments-m288c-git-credentials), and a chart value cannot be written
+# against a generated suffix. The Composition now names it from the claim, so
+# `deployments-git-credentials` is stable and referenceable.
 
 # Adopt cluster-scoped chart resources left from a prior ArgoCD or manual install so
 # helm upgrade --install gentian-os can proceed (missing meta.helm.sh/release-*).
@@ -421,8 +413,6 @@ install_gentian_os_operator() {
     if ! kubectl get namespace "$ns" >/dev/null 2>&1; then
         kubectl create namespace "$ns"
     fi
-
-    create_deployments_git_credentials "$ns"
 
     # The OpenFGA token is not written here. B-06 derives it and writes
     # gentian-os/kernel/authz/openfga with the field `preshared_key`, which is

@@ -3,7 +3,14 @@
 apiVersion: gentianos.io/v1alpha1
 kind: XRepository
 metadata:
-  name: deployments
+  # A generated suffix, as a real composite has. The git-credentials Secret must
+  # still come out as deployments-git-credentials: a chart value has to name it,
+  # and nothing can write "deployments-m288c" ahead of time. Every other composed
+  # name here carries the suffix, which is the point of testing both at once.
+  name: deployments-m288c
+  labels:
+    crossplane.io/claim-name: deployments
+    crossplane.io/claim-namespace: crossplane-system
 spec:
   type: git
   role: deployments
