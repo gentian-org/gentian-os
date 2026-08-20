@@ -34,7 +34,7 @@ sources:
 
 policyOptions: {}
 interval: 1m
-logLevel: debug
+logLevel: info
 
 serviceAccount:
   create: true
