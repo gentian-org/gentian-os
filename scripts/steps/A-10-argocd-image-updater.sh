@@ -9,6 +9,27 @@
 # Its own namespace, not argocd — the chart is installed with
 # --namespace argocd-image-updater --create-namespace and only *watches* argocd.
 
+# Why this is a Helm install and not an Argo CD Application, and why it sits
+# here rather than after the root appset:
+#
+# It is the CD control plane, alongside A-09-argocd. Argo CD cannot deliver the
+# thing that bootstraps Argo CD, and its updater companion is bootstrapped the
+# same way for the same reason — a broken sync must not be able to remove the
+# machinery that ships the fix.
+#
+# The related and stronger constraint is one step removed, on the Applications
+# this controller writes into. gentian-os and gentian-portal both carry
+# write-back-method: argocd, so the updater patches image.tag onto the live
+# Application object. An Application owned by an ApplicationSet with selfHeal
+# would have that patch reverted on the next reconcile and every rollout would
+# undo itself — which is why those two are rendered from
+# kernel/bootstrap/chart/templates and applied directly, never committed to
+# gentian-deployments. See docs/architecture.md §11.1 and deployment.md §3.1.
+#
+# Nothing later in the sequence requires this step, and that is expected: it is a
+# companion, not a dependency. The position is still right — the phase is a label
+# rather than an ordering key (69ec9979), and this belongs with Argo CD.
+
 check() {
     kubectl get deployment argocd-image-updater-controller \
         -n argocd-image-updater >/dev/null 2>&1

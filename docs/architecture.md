@@ -612,9 +612,9 @@ The update chain is:
    GitHub Actions `docker` job, which builds and pushes a new image to
    `ghcr.io/gentian-org/gentian-os:<branch>` (and a short-SHA tag).
 2. `argocd-image-updater` polls GHCR every two minutes. The
-   **`ImageUpdater` CR** deployed as Source 4 of the `gentian-os`
-   Application tells it which Application to watch and which image to
-   track (`newest-build` strategy).
+   **`ImageUpdater` CR** and the `argocd-image-updater.argoproj.io/*`
+   annotations on the `gentian-os` Application tell it which Application
+   to watch and which image to track (`newest-build` strategy).
 3. When a new digest is detected, the updater patches the `image.tag`
    Helm parameter directly on the ArgoCD Application (`write-back-method:
    argocd`).
@@ -622,11 +622,26 @@ The update chain is:
    a rolling restart of the operator Deployment — no manual
    `kubectl rollout restart` needed.
 
-The `ImageUpdater` CR lives in
-`<gentian-deployments>/<env>/kernel/image-updater.yaml`. It is deployed
-into the cluster by ArgoCD as part of the `gentian-os` Application sync,
-**not** by a separate step in `install.sh`. This means it only exists
-once ArgoCD has synced the Application.
+The `ImageUpdater` CR is inlined in
+`kernel/bootstrap/chart/templates/gentian-os.yaml` and applied with the
+Application it refers to, by `install.sh` — it is not committed to
+`gentian-deployments` and Argo CD does not sync it. It used to live at
+`<gentian-deployments>/<env>/kernel/image-updater.yaml`; that copy was
+removed (gentian-deployments `d8a8398`) because its content never varies
+by cluster or stage, so a per-cluster copy was duplication that could
+drift. See [deployment.md](deployment.md) §3.1.
+
+**Why this Application is not itself managed by Argo CD.** The updater
+writes with `write-back-method: argocd`: it patches the `image.tag` Helm
+parameter onto the live `gentian-os` Application object. An Application
+owned by an ApplicationSet with `selfHeal` would have that patch reverted
+on the next reconcile, and every rollout would silently undo itself. So
+the bootstrap Applications the updater writes into — `gentian-os` and
+`gentian-portal` — are rendered from templates in this repository and
+applied directly. The `argocd-image-updater` *controller* is separate: it
+is installed by Helm at `A-10-argocd-image-updater`, immediately after
+Argo CD's own install at `A-09-argocd`, because both are the CD control
+plane and neither can be delivered by the thing it bootstraps.
 
 Environment policies:
 
