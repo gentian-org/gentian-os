@@ -159,10 +159,9 @@ func (s *Service) ResourceState(ctx context.Context, tenantName string) (*Resour
 		result.Quota = resourceplan.Describe(quota)
 	}
 
-	switch {
-	case s.actualSource == nil:
+	if s.actualSource == nil {
 		result.ActualSource = "unavailable: no metrics source is configured for this cluster"
-	default:
+	} else {
 		actual, err := s.actualSource.NamespaceUsage(ctx, tenant.NamespaceName())
 		if err != nil {
 			// Named rather than swallowed. A chart with a missing series and no

@@ -131,7 +131,6 @@ func buildIntervals(
 			// so the interval is left without one rather than given the wrong
 			// one, and a biller sees a gap instead of a mispriced stretch.
 			intervals = append(intervals, interval(event.FromPlan, "", cursor, at, true))
-			known = true
 		}
 		current, currentSku, known = event.ToPlan, event.ProductSku, true
 		cursor = at
