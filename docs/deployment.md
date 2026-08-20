@@ -217,7 +217,7 @@ from `kernel/bootstrap/chart`, the chart that ships in `gentian-os` itself:
 
 - `kernel/bootstrap/chart/templates/gentian-os.yaml` — rendered and
   applied by `handoff_gentian_os_to_argocd()` (`scripts/lib/catalogue.sh`,
-  called from `install_gentian_os_operator()`, install.sh Step 13). Produces
+  called from `install_gentian_os_operator()`, step `D-01-operator`). Produces
   three objects: the `gentian-os` Application (operator Helm chart, values
   layered per §1 — `$deploy/profiles/_base.yaml` →
   `$deploy/profiles/<stage>.yaml` → `$deploy/clusters/<cluster>/kernel/values.yaml`),
@@ -228,7 +228,7 @@ from `kernel/bootstrap/chart`, the chart that ships in `gentian-os` itself:
 - `kernel/bootstrap/chart/templates/gentian-portal.yaml` — rendered and
   applied by `apply_gentian_portal_argocd_application()`
   (`scripts/lib/portal-login-bootstrap.sh`, called from
-  `install_portal_login()`, install.sh Step 14). Produces the
+  `install_portal_login()`, step `D-05-portal-login`). Produces the
   `gentian-portal` Application, values layered the same way.
 
 Both are templates in `kernel/bootstrap/chart`, rendered by `helm template`
@@ -624,9 +624,10 @@ control.
 
 ### 6.4 Staging configuration
 
-Before using staging, confirm `gentian-deployments/profiles/staging.yaml`
-has the tier policy you want (ACME issuer, log level, RC image tracking),
-and that the staging cluster's own `clusters/<cluster>/kernel/`:
+`gentian-deployments/profiles/` currently holds `_base.yaml`, `dev.yaml` and
+`prod.yaml` — there is no `staging.yaml`. A staging tier means writing one
+first, with the tier policy you want (ACME issuer, log level, RC image
+tracking), and giving the staging cluster's own `clusters/<cluster>/kernel/`:
 
 - `claims/cluster.yaml` — `kernelDomain` (e.g. `staging.example.com`)
 - `values.yaml` — `image.tag` initial value (Image Updater overrides

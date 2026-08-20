@@ -86,10 +86,15 @@ from in-cluster Postfix to a relay and no profile changes.
 
 The same shape covers `database`, `cache`, `s3`, `identity` and `imap`.
 
-**Never substitute an endpoint into `extraValues`.** `${SMTP_HOST}` and friends
-hand the app a literal hostname and no credential — an app wired that way can
-only attempt unauthenticated submission, and it hard-codes an assumption about
-where the service lives. They remain only for profiles not yet migrated.
+**Never substitute an endpoint into `extraValues`.** `${SMTP_HOST}`,
+`${S3_ENDPOINT}`, `${MYSQL_HOST}` and `${REDIS_HOST}` handed the app a literal
+hostname and no credential — an app wired that way can only attempt
+unauthenticated access, and it hard-codes an assumption about where the service
+lives. They no longer exist: the compositions stopped substituting them and no
+profile uses them, so a placeholder written today reaches the cluster verbatim.
+The identity placeholders (`${TENANT_ID}`, `${TENANT_DOMAIN}`,
+`${TENANT_NAMESPACE}`, `${KERNEL_DOMAIN}`, `${NODE_IP}`) remain — those describe
+who the tenant is, not where a service lives.
 
 ---
 

@@ -25,7 +25,7 @@ Gentian OS uses **Gateway API + Envoy Gateway** as the only edge stack. Set
 
 See [design/gateway.md](design/gateway.md) for Gateway API topology (`gentian-envoy` GatewayClass, kernel and tenant Gateways).
 
-Fresh installs run `install.sh` Step 2c, which installs Envoy Gateway into
+Fresh installs run `install.sh --step A-07-envoy-gateway`, which installs Envoy Gateway into
 `envoy-gateway-system` and verifies Gateway API CRDs.
 
 Validate after install:

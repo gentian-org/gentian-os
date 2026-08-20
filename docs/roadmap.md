@@ -393,7 +393,7 @@ For the current baseline design of the system, refer to [architecture.md](archit
 * **Proposed Solution**: Decide which LiteLLM is — kernel service or catalogue app — and make the code say so. If it is a kernel service, express it the way the other kernel services are (discovered configuration rather than compiled-in constants, in the same shape as SMTP/S3/Keycloak endpoints) so a cluster can run a different LLM gateway or none. If it is a catalogue app, the virtual-key provisioning belongs in its profile via the generic `spec.provisioning.syncJob` mechanism, and the kernel keeps only the generic credential plumbing.
 * **Backlog Items**:
   - `[ ]` Classify LiteLLM as kernel service or catalogue app and record the decision in `architecture.md`.
-  - `[ ]` Replace the `litellmProxy*`/`litellmMasterKey*` constants with values resolved from kernel service configuration (as `${S3_ENDPOINT}` and friends already are).
+  - `[ ]` Replace the `litellmProxy*`/`litellmMasterKey*` constants with values resolved from kernel service configuration — through the `valueMapping` contract an app uses to declare a need, not through endpoint substitution: `${S3_ENDPOINT}` and friends were removed for exactly the reason this item exists.
   - `[ ]` Move virtual-key issuance (`/key/generate`, `/key/info`) out of the operator — to the app's own profile if it is a catalogue app, or behind a named kernel-service interface if it is not.
   - `[ ]` Drop the app-catalogue `litellm` special-case in `kernel_gateway_routes.go`.
   - `[ ]` Add a CI check that fails when a catalogue app name appears in gentian-os source, so this class of drift is caught rather than reviewed for.

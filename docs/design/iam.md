@@ -65,7 +65,7 @@ Provisioning is via the [Gentian Admin Console](admin-console.md).
 | Principal | Login email | Password source |
 |---|---|---|
 | Platform admin | `administrator@<KERNEL_DOMAIN>` | `MASTER_PASSWORD` → OpenBao / kernel bootstrap Job (Suze) |
-| Tenant admin | `Tenant.spec.adminEmail` (username `admin-<tenant>`) | OpenBao `gentian-os/tenants/<tenant>/admin` |
+| Tenant admin | `admin@<tenant-domain>` — derived, and both the username and the address | OpenBao `gentian-os/tenants/<tenant>/admin` |
 
 Retrieved after `kubectl gentian tenants deploy <instance>` (see [commands.md](../commands.md)).
 
@@ -114,7 +114,7 @@ When a `Tenant` CR enters the identity phase, the operator emits a
 **sequenced batch of Crossplane Jobs** in `platform-kernel`. Each Job
 runs a Keycloak Admin API shell script (curl + jq) built by
 `internal/controller/keycloak_*.go` and shared helpers in
-`keycloak_shell_helpers.go`. Gentian group naming lives in
+`internal/keycloak/shell_helpers.go`. Gentian group naming lives in
 `internal/keycloak/groups.go`.
 
 ```mermaid

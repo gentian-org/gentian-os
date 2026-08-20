@@ -119,7 +119,7 @@ the address attached so Keycloak can pre-fill it.
 |---|---|
 | **Primary login (`username` / `email`)** | Email address — global uniqueness across the cluster (`user@demo.platform.example.com`) |
 | **`inviteEmail`** | Optional secondary address for **invite**, **password reset**, and **account recovery** only |
-| **Tenant admin bootstrap** | Username `admin-<tenant>`; login email from `Tenant.spec.adminEmail`; password from OpenBao `gentian-os/tenants/<tenant>/admin` |
+| **Tenant admin bootstrap** | Username and address are the same string, `admin@<tenant-domain>`, derived not configured; password from OpenBao `gentian-os/tenants/<tenant>/admin` |
 | **Platform admin bootstrap** | `administrator@<KERNEL_DOMAIN>`; password derived from install `MASTER_PASSWORD` |
 
 ### 3.3 Group taxonomy

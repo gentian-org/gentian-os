@@ -667,8 +667,8 @@ The Gentian portal shell uses the same Image Updater pattern as the operator:
    Deployments — typically within 30–60 seconds of the CI push.
 
 Keycloak clients and `gentian-portal-secrets` are still created by
-`install.sh` Step 14 (`portal-login-bootstrap.sh`); Argo CD owns only the
-Helm release.
+`install.sh --step D-05-portal-login` (`scripts/lib/portal-login-bootstrap.sh`);
+Argo CD owns only the Helm release.
 
 For cluster-to-environment mapping, promotion workflows (with and without a
 staging tier), and `gentian-deployments` layout, see
@@ -676,7 +676,7 @@ staging tier), and `gentian-deployments` layout, see
 
 ### 11.2 Install-time bootstrap
 
-`install.sh Step 13` uses a **two-step** approach to avoid a
+`install.sh --step D-01-operator` uses a **two-step** approach to avoid a
 chicken-and-egg problem (ArgoCD can't sync the chart if the CRDs aren't
 established yet):
 
@@ -684,9 +684,9 @@ established yet):
   immediately via `helm upgrade --install`. Subsequent install steps that
   depend on CRDs or the webhook proceed without waiting for ArgoCD.
 - **ArgoCD handoff**: The `gentian-os` Application is rendered from
-  `kernel/bootstrap/gentian-os-application.yaml.tmpl` (using the active
-  `GENTIAN_DEPLOYMENTS_REPO`/`BRANCH`/`ENV` variables) and applied with
-  `kubectl apply`. ArgoCD adopts the already-running resources via
+  `kernel/bootstrap/chart/templates/gentian-os.yaml` (a Helm chart now, not the
+  `.tmpl` + `envsubst` this used to be — the values carry the deployments repo,
+  branch, cluster and stage) and applied with `kubectl apply`. ArgoCD adopts the already-running resources via
   `ServerSideApply` and deploys the `ImageUpdater` CR on the first sync. From
   this point, all future upgrades — including image rollouts — are git-driven
   and fully automatic.

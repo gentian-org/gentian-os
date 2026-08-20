@@ -244,7 +244,6 @@ metadata:
 spec:
   displayName: "Demo"
   domain: acme.com              # optional; falls back to <name>.<KERNEL_DOMAIN>
-  adminEmail: admin-demo@gentian.org
 
   isolation:
     mode: namespace
