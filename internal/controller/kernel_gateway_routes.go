@@ -91,11 +91,10 @@ func (r *GatewayPlatformReconciler) reconcileKernelHTTPRoutes(ctx context.Contex
 	if err != nil {
 		return fmt.Errorf("collect OIDC ingress subdomains: %w", err)
 	}
-	if err := r.ensureArgoCDReferenceGrant(ctx); err != nil {
-		return fmt.Errorf("ensure ArgoCD ReferenceGrant: %w", err)
-	}
-	if err := r.ensureGentianPortalReferenceGrant(ctx); err != nil {
-		return fmt.Errorf("ensure Gentian portal ReferenceGrant: %w", err)
+	for _, ns := range []string{argocdNamespace, kernelNamespace} {
+		if err := r.ensureRouteReferenceGrant(ctx, ns); err != nil {
+			return fmt.Errorf("ensure ReferenceGrant in %s: %w", ns, err)
+		}
 	}
 
 	specs := kernelHTTPRouteSpecs(r.KernelDomain, effectiveDomains, oidcSubs, tenantNames,
@@ -254,7 +253,11 @@ func kernelGentianPortalHTTPRouteRules() []gatewayv1.HTTPRouteRule {
 	}
 }
 
-func kernelBackendRulePrefixNS(serviceName, namespace string, port int32, prefix string, filters ...gatewayv1.HTTPRouteFilter) gatewayv1.HTTPRouteRule {
+// kernelBackendRuleNS routes one match to one Service, optionally cross-namespace.
+//
+// The prefix and exact variants below were full copies of this, differing in
+// which path matcher they called.
+func kernelBackendRuleNS(serviceName, namespace string, port int32, match gatewayv1.HTTPRouteMatch, filters ...gatewayv1.HTTPRouteFilter) gatewayv1.HTTPRouteRule {
 	p := gatewayv1.PortNumber(port)
 	ref := gatewayv1.BackendObjectReference{
 		Name: gatewayv1.ObjectName(serviceName),
@@ -265,7 +268,7 @@ func kernelBackendRulePrefixNS(serviceName, namespace string, port int32, prefix
 		ref.Namespace = &ns
 	}
 	rule := gatewayv1.HTTPRouteRule{
-		Matches: []gatewayv1.HTTPRouteMatch{pathPrefixMatch(prefix)},
+		Matches: []gatewayv1.HTTPRouteMatch{match},
 		BackendRefs: []gatewayv1.HTTPBackendRef{
 			{BackendRef: gatewayv1.BackendRef{BackendObjectReference: ref}},
 		},
@@ -276,26 +279,12 @@ func kernelBackendRulePrefixNS(serviceName, namespace string, port int32, prefix
 	return rule
 }
 
+func kernelBackendRulePrefixNS(serviceName, namespace string, port int32, prefix string, filters ...gatewayv1.HTTPRouteFilter) gatewayv1.HTTPRouteRule {
+	return kernelBackendRuleNS(serviceName, namespace, port, pathPrefixMatch(prefix), filters...)
+}
+
 func kernelBackendRuleExactNS(serviceName, namespace string, port int32, path string, filters ...gatewayv1.HTTPRouteFilter) gatewayv1.HTTPRouteRule {
-	p := gatewayv1.PortNumber(port)
-	ref := gatewayv1.BackendObjectReference{
-		Name: gatewayv1.ObjectName(serviceName),
-		Port: &p,
-	}
-	if namespace != "" {
-		ns := gatewayv1.Namespace(namespace)
-		ref.Namespace = &ns
-	}
-	rule := gatewayv1.HTTPRouteRule{
-		Matches: []gatewayv1.HTTPRouteMatch{pathExactMatch(path)},
-		BackendRefs: []gatewayv1.HTTPBackendRef{
-			{BackendRef: gatewayv1.BackendRef{BackendObjectReference: ref}},
-		},
-	}
-	if len(filters) > 0 {
-		rule.Filters = filters
-	}
-	return rule
+	return kernelBackendRuleNS(serviceName, namespace, port, pathExactMatch(path), filters...)
 }
 
 func kernelBackendRuleCrossNamespace(serviceName, namespace string, port int32) gatewayv1.HTTPRouteRule {
@@ -317,7 +306,15 @@ func kernelBackendRuleCrossNamespace(serviceName, namespace string, port int32) 
 	}
 }
 
-func (r *GatewayPlatformReconciler) ensureArgoCDReferenceGrant(ctx context.Context) error {
+// ensureRouteReferenceGrant lets the kernel gateway's HTTPRoutes, which live in
+// the services namespace, reference Services in ns.
+//
+// This was two functions — one for argocd, one for platform-kernel — identical
+// for forty lines apart from the namespace they targeted. Which is exactly the
+// shape that goes wrong quietly: a change to the grant made in one and not the
+// other leaves half the kernel's routes unable to resolve their backend, and the
+// symptom is a 500 from the gateway rather than anything naming a ReferenceGrant.
+func (r *GatewayPlatformReconciler) ensureRouteReferenceGrant(ctx context.Context, ns string) error {
 	spec := map[string]interface{}{
 		"from": []interface{}{
 			map[string]interface{}{
@@ -336,7 +333,7 @@ func (r *GatewayPlatformReconciler) ensureArgoCDReferenceGrant(ctx context.Conte
 	desired := &unstructured.Unstructured{}
 	desired.SetGroupVersionKind(referenceGrantGVK)
 	desired.SetName("allow-kernel-gateway-routes")
-	desired.SetNamespace(argocdNamespace)
+	desired.SetNamespace(ns)
 	desired.SetLabels(map[string]string{
 		managedByLabel: managedByValue,
 	})
@@ -346,53 +343,7 @@ func (r *GatewayPlatformReconciler) ensureArgoCDReferenceGrant(ctx context.Conte
 
 	existing := &unstructured.Unstructured{}
 	existing.SetGroupVersionKind(referenceGrantGVK)
-	err := r.Get(ctx, client.ObjectKey{Name: desired.GetName(), Namespace: argocdNamespace}, existing)
-	if errors.IsNotFound(err) {
-		return r.Create(ctx, desired)
-	}
-	if err != nil {
-		return err
-	}
-	if !equality.Semantic.DeepEqual(existing.Object["spec"], desired.Object["spec"]) {
-		patch := client.MergeFrom(existing.DeepCopy())
-		if err := unstructured.SetNestedField(existing.Object, spec, "spec"); err != nil {
-			return err
-		}
-		return r.Patch(ctx, existing, patch)
-	}
-	return nil
-}
-
-func (r *GatewayPlatformReconciler) ensureGentianPortalReferenceGrant(ctx context.Context) error {
-	spec := map[string]interface{}{
-		"from": []interface{}{
-			map[string]interface{}{
-				"group":     gatewayv1.GroupName,
-				"kind":      "HTTPRoute",
-				"namespace": servicesNamespace,
-			},
-		},
-		"to": []interface{}{
-			map[string]interface{}{
-				"group": "",
-				"kind":  "Service",
-			},
-		},
-	}
-	desired := &unstructured.Unstructured{}
-	desired.SetGroupVersionKind(referenceGrantGVK)
-	desired.SetName("allow-kernel-gateway-routes")
-	desired.SetNamespace(kernelNamespace)
-	desired.SetLabels(map[string]string{
-		managedByLabel: managedByValue,
-	})
-	if err := unstructured.SetNestedField(desired.Object, spec, "spec"); err != nil {
-		return err
-	}
-
-	existing := &unstructured.Unstructured{}
-	existing.SetGroupVersionKind(referenceGrantGVK)
-	err := r.Get(ctx, client.ObjectKey{Name: desired.GetName(), Namespace: kernelNamespace}, existing)
+	err := r.Get(ctx, client.ObjectKey{Name: desired.GetName(), Namespace: ns}, existing)
 	if errors.IsNotFound(err) {
 		return r.Create(ctx, desired)
 	}
@@ -465,16 +416,6 @@ func kernelApexRedirectRule(kernelDomain string) gatewayv1.HTTPRouteRule {
 					StatusCode: &status,
 				},
 			},
-		},
-	}
-}
-
-func pathExactMatch(path string) gatewayv1.HTTPRouteMatch {
-	t := gatewayv1.PathMatchExact
-	return gatewayv1.HTTPRouteMatch{
-		Path: &gatewayv1.HTTPPathMatch{
-			Type:  &t,
-			Value: &path,
 		},
 	}
 }

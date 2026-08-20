@@ -263,7 +263,7 @@ func TestFailedCaptureResumesAppAndStampsQuiesceEnd(t *testing.T) {
 		t.Fatalf("failApp: %v", err)
 	}
 
-	entry := appStatus(export, "app-store-me")
+	entry := appStatus(&export.Status.Apps, "app-store-me")
 	if entry.Phase != gentianov1alpha1.TenantExportPhaseFailed {
 		t.Fatalf("app phase = %q, want Failed", entry.Phase)
 	}

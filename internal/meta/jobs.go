@@ -49,3 +49,20 @@ func InitJobResources() corev1.ResourceRequirements {
 		},
 	}
 }
+
+// SecretEnv builds an EnvVar sourced from one key of one Secret.
+//
+// It lived twice, byte-identical, in internal/backup and internal/applifecycle —
+// the two packages that build Jobs needing a credential. Both already import
+// this package for InitJobResources, so it costs nothing to share.
+func SecretEnv(name, secret, key string) corev1.EnvVar {
+	return corev1.EnvVar{
+		Name: name,
+		ValueFrom: &corev1.EnvVarSource{
+			SecretKeyRef: &corev1.SecretKeySelector{
+				LocalObjectReference: corev1.LocalObjectReference{Name: secret},
+				Key:                  key,
+			},
+		},
+	}
+}

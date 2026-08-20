@@ -300,38 +300,26 @@ func kernelDeleteJob(ns, name, tenant, app, image, container, script string, env
 
 func mysqlAdminEnv() []corev1.EnvVar {
 	return []corev1.EnvVar{
-		secretEnv("MYSQL_HOST", "mariadb-admin", "host"),
-		secretEnv("MYSQL_TCP_PORT", "mariadb-admin", "port"),
-		secretEnv("MYSQL_PWD", "mariadb-admin", "password"),
-		secretEnv("MYSQL_ADMIN_USER", "mariadb-admin", "username"),
+		meta.SecretEnv("MYSQL_HOST", "mariadb-admin", "host"),
+		meta.SecretEnv("MYSQL_TCP_PORT", "mariadb-admin", "port"),
+		meta.SecretEnv("MYSQL_PWD", "mariadb-admin", "password"),
+		meta.SecretEnv("MYSQL_ADMIN_USER", "mariadb-admin", "username"),
 	}
 }
 
 func minioAdminEnv() []corev1.EnvVar {
 	return []corev1.EnvVar{
-		secretEnv("MINIO_ENDPOINT", "minio-admin", "endpoint"),
-		secretEnv("MINIO_ACCESS_KEY", "minio-admin", "accessKey"),
-		secretEnv("MINIO_SECRET_KEY", "minio-admin", "secretKey"),
+		meta.SecretEnv("MINIO_ENDPOINT", "minio-admin", "endpoint"),
+		meta.SecretEnv("MINIO_ACCESS_KEY", "minio-admin", "accessKey"),
+		meta.SecretEnv("MINIO_SECRET_KEY", "minio-admin", "secretKey"),
 	}
 }
 
 func redisAdminEnv() []corev1.EnvVar {
 	return []corev1.EnvVar{
-		secretEnv("REDIS_HOST", "redis-admin", "host"),
-		secretEnv("REDIS_PORT", "redis-admin", "port"),
-		secretEnv("REDIS_PASSWORD", "redis-admin", "password"),
-	}
-}
-
-func secretEnv(name, secret, key string) corev1.EnvVar {
-	return corev1.EnvVar{
-		Name: name,
-		ValueFrom: &corev1.EnvVarSource{
-			SecretKeyRef: &corev1.SecretKeySelector{
-				LocalObjectReference: corev1.LocalObjectReference{Name: secret},
-				Key:                  key,
-			},
-		},
+		meta.SecretEnv("REDIS_HOST", "redis-admin", "host"),
+		meta.SecretEnv("REDIS_PORT", "redis-admin", "port"),
+		meta.SecretEnv("REDIS_PASSWORD", "redis-admin", "password"),
 	}
 }
 

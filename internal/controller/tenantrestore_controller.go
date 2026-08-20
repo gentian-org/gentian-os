@@ -133,7 +133,7 @@ func (r *TenantRestoreReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 		}
 	}
 
-	current := nextPendingRestoreApp(restore, apps)
+	current := nextPendingApp(restore.Status.Apps, apps)
 	if err := r.resumeStale(ctx, restore, tenantName, current); err != nil {
 		return ctrl.Result{}, err
 	}
@@ -175,7 +175,7 @@ func (r *TenantRestoreReconciler) restoreApp(
 		return ctrl.Result{}, err
 	}
 	spec := profileBackupSpec(profile)
-	entry := restoreAppStatus(restore, appName)
+	entry := appStatus(&restore.Status.Apps, appName)
 
 	if entry.QuiesceStart == nil {
 		mode, qErr := r.Tenant.quiesceApp(ctx, tenant.Name, appName, spec)
@@ -186,7 +186,7 @@ func (r *TenantRestoreReconciler) restoreApp(
 		entry.QuiesceMode = string(mode)
 		entry.Phase = gentianov1alpha1.TenantExportPhaseRunning
 		entry.Message = fmt.Sprintf("paused (%s)", mode)
-		markRestoreQuiesced(restore, appName)
+		markQuiesced(&restore.Status.Quiesced, appName)
 		logger.Info("paused app for restore", "app", appName, "mode", mode)
 		if err := r.persist(ctx, restore); err != nil {
 			return ctrl.Result{}, err
@@ -241,7 +241,7 @@ func (r *TenantRestoreReconciler) restoreApp(
 	entry.QuiesceEnd = ptrNow()
 	entry.Phase = gentianov1alpha1.TenantExportPhaseReady
 	entry.Message = ""
-	unmarkRestoreQuiesced(restore, appName)
+	unmarkQuiesced(&restore.Status.Quiesced, appName)
 	logger.Info("restored app", "app", appName)
 	if err := r.persist(ctx, restore); err != nil {
 		return ctrl.Result{}, err
@@ -408,7 +408,7 @@ func (r *TenantRestoreReconciler) ensureRestoreJob(
 		return true, nil
 	}
 	if jobIsFailed(existing) {
-		entry := restoreAppStatus(restore, existing.Labels[meta.AppLabel])
+		entry := appStatus(&restore.Status.Apps, existing.Labels[meta.AppLabel])
 		entry.Attempts++
 		if err := r.Delete(ctx, existing,
 			client.PropagationPolicy(metav1.DeletePropagationBackground)); err != nil && !apierrors.IsNotFound(err) {
@@ -545,11 +545,11 @@ func (r *TenantRestoreReconciler) failApp(
 	spec *gentianov1alpha1.BackupSpec,
 	message string,
 ) (ctrl.Result, error) {
-	entry := restoreAppStatus(restore, appName)
+	entry := appStatus(&restore.Status.Apps, appName)
 	if err := r.Tenant.unquiesceApp(ctx, tenant.Name, appName, spec, quiesceModeFromMessage(entry.Message)); err != nil {
 		return ctrl.Result{}, fmt.Errorf("resume %s after failure: %w", appName, err)
 	}
-	unmarkRestoreQuiesced(restore, appName)
+	unmarkQuiesced(&restore.Status.Quiesced, appName)
 	entry.Phase = gentianov1alpha1.TenantExportPhaseFailed
 	entry.Message = message
 	return r.fail(ctx, restore, "RestoreFailed", fmt.Sprintf("%s: %s", appName, message))
@@ -595,12 +595,12 @@ func (r *TenantRestoreReconciler) resumeAll(
 		return nil
 	}
 	for _, appName := range append([]string(nil), restore.Status.Quiesced...) {
-		entry := restoreAppStatus(restore, appName)
+		entry := appStatus(&restore.Status.Apps, appName)
 		if err := resumeQuiescedApp(ctx, r.Client, r.Tenant,
 			tenantName, appName, entry.QuiesceMode, entry.Message); err != nil {
 			return fmt.Errorf("resume %s: %w", appName, err)
 		}
-		unmarkRestoreQuiesced(restore, appName)
+		unmarkQuiesced(&restore.Status.Quiesced, appName)
 	}
 	return r.persist(ctx, restore)
 }
@@ -615,12 +615,12 @@ func (r *TenantRestoreReconciler) resumeStale(
 		if appName == current {
 			continue
 		}
-		entry := restoreAppStatus(restore, appName)
+		entry := appStatus(&restore.Status.Apps, appName)
 		if err := resumeQuiescedApp(ctx, r.Client, r.Tenant,
 			tenantName, appName, entry.QuiesceMode, entry.Message); err != nil {
 			return fmt.Errorf("resume stale %s: %w", appName, err)
 		}
-		unmarkRestoreQuiesced(restore, appName)
+		unmarkQuiesced(&restore.Status.Quiesced, appName)
 		changed = true
 	}
 	if changed {

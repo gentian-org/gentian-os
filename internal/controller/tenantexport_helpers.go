@@ -66,27 +66,37 @@ func exportJobName(exportName, appName, unit string) string {
 
 // appStatus returns this app's status entry, creating it on first use so the
 // caller can mutate it in place.
-func appStatus(export *gentianov1alpha1.TenantExport, appName string) *gentianov1alpha1.AppExportStatus {
-	for i := range export.Status.Apps {
-		if export.Status.Apps[i].Name == appName {
-			return &export.Status.Apps[i]
+// The four helpers below take the slices rather than the CR.
+//
+// TenantExport and TenantRestore carry the same two status fields — Apps and
+// Quiesced — and each had its own copy of every one of these, differing only in
+// the receiver type: appStatus/restoreAppStatus, nextPendingApp/
+// nextPendingRestoreApp, markQuiesced/markRestoreQuiesced, and unmark likewise.
+// Eight functions for four behaviours, on the two paths where getting it wrong
+// means a backup that silently skips an app or a restore that leaves one
+// quiesced. Taking the slice makes them one set that both callers share.
+
+// appStatus returns the entry for appName, appending a Pending one if absent.
+func appStatus(apps *[]gentianov1alpha1.AppExportStatus, appName string) *gentianov1alpha1.AppExportStatus {
+	for i := range *apps {
+		if (*apps)[i].Name == appName {
+			return &(*apps)[i]
 		}
 	}
-	export.Status.Apps = append(export.Status.Apps, gentianov1alpha1.AppExportStatus{
+	*apps = append(*apps, gentianov1alpha1.AppExportStatus{
 		Name:  appName,
 		Phase: gentianov1alpha1.TenantExportPhasePending,
 	})
-	return &export.Status.Apps[len(export.Status.Apps)-1]
+	return &(*apps)[len(*apps)-1]
 }
 
-// nextPendingApp returns the first app still to capture, or "" when all are done.
+// nextPendingApp returns the first app still to process, or "" when all are done.
 // Sequential by design: see the reconciler's type comment.
-func nextPendingApp(export *gentianov1alpha1.TenantExport, apps []string) string {
-	for _, name := range apps {
+func nextPendingApp(apps []gentianov1alpha1.AppExportStatus, want []string) string {
+	for _, name := range want {
 		done := false
-		for i := range export.Status.Apps {
-			if export.Status.Apps[i].Name == name &&
-				export.Status.Apps[i].Phase == gentianov1alpha1.TenantExportPhaseReady {
+		for i := range apps {
+			if apps[i].Name == name && apps[i].Phase == gentianov1alpha1.TenantExportPhaseReady {
 				done = true
 				break
 			}
@@ -98,23 +108,23 @@ func nextPendingApp(export *gentianov1alpha1.TenantExport, apps []string) string
 	return ""
 }
 
-func markQuiesced(export *gentianov1alpha1.TenantExport, appName string) {
-	for _, existing := range export.Status.Quiesced {
+func markQuiesced(quiesced *[]string, appName string) {
+	for _, existing := range *quiesced {
 		if existing == appName {
 			return
 		}
 	}
-	export.Status.Quiesced = append(export.Status.Quiesced, appName)
+	*quiesced = append(*quiesced, appName)
 }
 
-func unmarkQuiesced(export *gentianov1alpha1.TenantExport, appName string) {
-	out := export.Status.Quiesced[:0]
-	for _, existing := range export.Status.Quiesced {
+func unmarkQuiesced(quiesced *[]string, appName string) {
+	out := (*quiesced)[:0]
+	for _, existing := range *quiesced {
 		if existing != appName {
 			out = append(out, existing)
 		}
 	}
-	export.Status.Quiesced = out
+	*quiesced = out
 }
 
 func setExportCondition(

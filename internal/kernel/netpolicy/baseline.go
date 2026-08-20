@@ -105,24 +105,25 @@ func BaselineNetworkPolicy(tenantName, nsName string, cfg Config, kubeAPIEndpts 
 	}
 }
 
-func namespaceIngress(ns string) networkingv1.NetworkPolicyIngressRule {
-	return networkingv1.NetworkPolicyIngressRule{
-		From: []networkingv1.NetworkPolicyPeer{
-			{NamespaceSelector: &metav1.LabelSelector{
-				MatchLabels: map[string]string{"kubernetes.io/metadata.name": ns},
-			}},
-		},
+// namespacePeer selects a namespace by its immutable metadata.name label.
+//
+// The ingress and egress rules below are separate types with differently named
+// fields, so they cannot be one function — but the peer they both carry can be,
+// and it is the part that would be wrong in only one of them.
+func namespacePeer(ns string) []networkingv1.NetworkPolicyPeer {
+	return []networkingv1.NetworkPolicyPeer{
+		{NamespaceSelector: &metav1.LabelSelector{
+			MatchLabels: map[string]string{"kubernetes.io/metadata.name": ns},
+		}},
 	}
 }
 
+func namespaceIngress(ns string) networkingv1.NetworkPolicyIngressRule {
+	return networkingv1.NetworkPolicyIngressRule{From: namespacePeer(ns)}
+}
+
 func namespaceEgress(ns string) networkingv1.NetworkPolicyEgressRule {
-	return networkingv1.NetworkPolicyEgressRule{
-		To: []networkingv1.NetworkPolicyPeer{
-			{NamespaceSelector: &metav1.LabelSelector{
-				MatchLabels: map[string]string{"kubernetes.io/metadata.name": ns},
-			}},
-		},
-	}
+	return networkingv1.NetworkPolicyEgressRule{To: namespacePeer(ns)}
 }
 
 func policyLabels(tenantName, policyType string) map[string]string {

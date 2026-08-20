@@ -965,57 +965,6 @@ install_provider_helm() {
     success "provider-helm Healthy."
 }
 
-# =============================================================================
-# Apply InfraData XR (shared PostgreSQL, MariaDB, Redis, MinIO)
-#
-# Provisions kernel data stores via Crossplane InfraData XR.
-#
-# Prerequisites:
-#   - provider-helm Healthy (C-03)
-#   - gentian-infra-data AppSet synced ESO Secrets + values ConfigMaps (wave 8)
-#   - charts/infra/packages published on GitHub for the target git branch
-#     (run ./scripts/tools/publish-infra-charts.sh and push before install when adding charts)
-# =============================================================================
-detect_infra_chart_repo() {
-    if [[ -n "${INFRA_CHART_REPO:-}" ]]; then
-        echo "${INFRA_CHART_REPO}"
-        return
-    fi
-    local branch
-    branch="$(git -C "${SCRIPT_DIR}" rev-parse --abbrev-ref HEAD 2>/dev/null || echo develop)"
-    if [[ "${branch}" == "HEAD" ]]; then
-        branch=develop
-    fi
-    echo "https://raw.githubusercontent.com/gentian-org/gentian-os/${branch}/charts/infra/packages"
-}
-
-verify_infra_chart_index() {
-    local repo="$1"
-    local index_url="${repo}/index.yaml"
-    info "Verifying infra Helm index: ${index_url}"
-    local index
-    if ! index="$(curl -fsSL "${index_url}" 2>/dev/null)"; then
-        error "Could not fetch ${index_url}"
-        error "  Publish charts with: ./scripts/tools/publish-infra-charts.sh && git push"
-        error "  Or set INFRA_CHART_REPO to a branch that contains redis/minio packages."
-        return 1
-    fi
-    local missing=()
-    for chart in postgresql mariadb redis minio; do
-        if ! grep -q "^  ${chart}:" <<<"${index}"; then
-            missing+=("${chart}")
-        fi
-    done
-    if ((${#missing[@]} > 0)); then
-        error "Infra chart repo is missing: ${missing[*]}"
-        error "  Index: ${index_url}"
-        error "  Redis/MinIO were added on develop — merge/push to develop, or:"
-        error "  INFRA_CHART_REPO=https://raw.githubusercontent.com/gentian-org/gentian-os/develop/charts/infra/packages ./install.sh"
-        return 1
-    fi
-    success "Infra Helm index contains postgresql, mariadb, redis, and minio."
-}
-
 
 # =============================================================================
 # Kyverno admission controller (Stage 0 MAC)
@@ -1048,17 +997,6 @@ install_mac_admission() {
     }
 
     success "Kyverno admission controller is ready."
-}
-
-_reset_suze_ghost_helm_releases() {
-    local xr_name="$1"
-    warn "Suze XR ${xr_name} reports Ready but IdP Services are missing — resetting Helm Release MRs..."
-    while IFS= read -r rel; do
-        [[ -z "${rel}" ]] && continue
-        warn "  Deleting Release ${rel}..."
-        kubectl delete release.helm.crossplane.io/"${rel}" --wait=true --timeout=180s 2>/dev/null || true
-    done < <(kubectl get release.helm.crossplane.io -l "crossplane.io/composite=${xr_name}" \
-        -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}' 2>/dev/null)
 }
 
 

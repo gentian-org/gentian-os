@@ -1234,71 +1234,10 @@ _prompt_node_ip() {
 # Declared in credentials.yaml as acme-dns-cloudflare; collected and validated
 # by collect_bootstrap_credentials. Never written to local disk.
 # =============================================================================
-
-# Derive the apex zone from a hostname (last two labels). Good enough for
-# normal TLDs like example.org; users with compound TLDs (e.g. co.uk) can
-# override by exporting CF_ZONE_NAME before running install.sh.
-_derive_zone_from_domain() {
-    local d="$1"
-    if [[ -n "${CF_ZONE_NAME:-}" ]]; then
-        echo "$CF_ZONE_NAME"
-        return
-    fi
-    echo "$d" | awk -F. '{n=NF; print $(n-1)"."$n}'
-}
-
 # RFC 5737 documentation addresses (TEST-NET-1/2/3).
 _is_testnet_ip() {
     local ip="$1"
     [[ "$ip" =~ ^192\.0\.2\.[0-9]+$ || "$ip" =~ ^198\.51\.100\.[0-9]+$ || "$ip" =~ ^203\.0\.113\.[0-9]+$ ]]
-}
-
-# Verify a Cloudflare API token has Zone:Read on the apex zone of
-# KERNEL_DOMAIN by querying /zones?name=<apex>. Notes:
-#   - The /user/tokens/verify endpoint rejects some valid scoped-token
-#     formats (e.g. cfat_ prefix) with a false-negative, so we hit the
-#     actual zone API instead.
-#   - DNS:Edit is not directly testable read-only; if Zone:Read works on
-#     the right zone, that's the strongest signal we can get without
-#     mutating state.
-# Returns 0 on success, 1 on any failure. Prints diagnostics either way.
-verify_cloudflare_token() {
-    local token="$1"
-    local domain="$2"
-    local zone
-    zone=$(_derive_zone_from_domain "$domain")
-
-    info "Verifying Cloudflare token can read zone ${zone}..."
-    local resp
-    if ! resp=$(curl -sS --max-time 10 \
-            -H "Authorization: Bearer ${token}" \
-            "https://api.cloudflare.com/client/v4/zones?name=${zone}" 2>&1); then
-        warn "Cloudflare API call failed: ${resp}"
-        return 1
-    fi
-
-    local ok count
-    ok=$(echo "$resp" | jq -r '.success // false' 2>/dev/null)
-    # Cloudflare may return result_count as null on some accounts/tokens.
-    # Fall back to the actual array length so we don't produce false negatives.
-    count=$(echo "$resp" | jq -r 'if (.result_count // null) == null then (.result | length) else .result_count end' 2>/dev/null)
-
-    if [[ "$ok" != "true" ]]; then
-        local err
-        err=$(echo "$resp" | jq -r '.errors[]? | "[\(.code)] \(.message)"' 2>/dev/null | head -3)
-        warn "Cloudflare API rejected token: ${err:-unknown error}"
-        return 1
-    fi
-    if [[ "$count" == "0" ]]; then
-        warn "Token authenticated, but has no access to zone ${zone}."
-        warn "  → grant Zone:Read + DNS:Edit on ${zone} (or set CF_ZONE_NAME)."
-        return 1
-    fi
-
-    local zid
-    zid=$(echo "$resp" | jq -r '.result[0].id')
-    success "Cloudflare token verified (zone=${zone}, id=${zid})."
-    return 0
 }
 
 
@@ -2082,77 +2021,6 @@ apply_crossplane_platform_compositions_update() {
     shopt -u nullglob
 }
 
-delete_crossplane_compositions() {
-    if ! kubectl get crd compositions.apiextensions.crossplane.io >/dev/null 2>&1; then
-        info "  Composition CRD absent; skipping Composition deletion."
-        return
-    fi
-    local f
-    shopt -s nullglob
-    for f in "${SCRIPT_DIR}"/crossplane/compositions/*.yaml; do
-        kubectl delete -f "${f}" --ignore-not-found=true 2>/dev/null || true
-        success "  Removed: $(basename "${f}")"
-    done
-    shopt -u nullglob
-}
-
-# Collect Helm Release CR names from kernel/services manifests (Pattern B kernel
-# charts). Tenant app Releases are owned by App XRs and are removed with Tenant CRs.
-_collect_kernel_helm_release_names() {
-    local env="$1"
-    local -n _outvar="$2"
-    _outvar=()
-    local release_file name
-    while IFS= read -r -d '' release_file; do
-        while IFS= read -r name; do
-            [[ -n "${name}" ]] && _outvar+=("${name}")
-        done < <(awk '
-            /^kind: Release/ { in_release=1 }
-            in_release && /^  name:/ { print $2; in_release=0 }
-            /^---/ { in_release=0 }
-        ' "${release_file}")
-    done < <(find "${SCRIPT_DIR}/kernel/services" \
-        -name "release.yaml" \
-        -path "*/${env}/*" \
-        -print0 2>/dev/null | sort -z)
-}
-
-_delete_helm_release_cr() {
-    local release_name="$1"
-    if ! kubectl get release.helm.crossplane.io/"${release_name}" >/dev/null 2>&1; then
-        return 0
-    fi
-    info "Deleting provider-helm Release ${release_name}..."
-    kubectl delete release.helm.crossplane.io/"${release_name}" --timeout=60s 2>/dev/null || true
-    local local_deadline=$((SECONDS + 180))
-    while kubectl get release.helm.crossplane.io/"${release_name}" >/dev/null 2>&1; do
-        if (( SECONDS > local_deadline )); then
-            warn "Release ${release_name} still present after 3m — forcing finalizer removal."
-            kubectl patch release.helm.crossplane.io/"${release_name}" \
-                --type=json -p='[{"op":"remove","path":"/metadata/finalizers"}]' \
-                2>/dev/null || true
-            break
-        fi
-        sleep 5
-    done
-    success "Release ${release_name} removed."
-}
-
-# Delete Pattern B kernel Releases declared in kernel/services (reverse install order).
-delete_kernel_helm_releases() {
-    local env="${1:-dev}"
-    local -a release_names=()
-    _collect_kernel_helm_release_names "${env}" release_names
-    if [[ ${#release_names[@]} -eq 0 ]]; then
-        info "No kernel Helm Release names found under kernel/services/*/${env}/"
-        return
-    fi
-    local i
-    for (( i=${#release_names[@]}-1; i>=0; i-- )); do
-        _delete_helm_release_cr "${release_names[i]}"
-    done
-}
-
 # =============================================================================
 # 1. Create namespaces (idempotent)
 # =============================================================================
@@ -2379,84 +2247,6 @@ _wait_prewarm_pod() {
         kubectl describe pod -n kube-system "${pod}" 2>/dev/null | tail -20 || true
     fi
     kubectl delete pod -n kube-system "${pod}" --grace-period=1 --wait=false >/dev/null 2>&1 || true
-}
-
-# =============================================================================
-# Verify Keycloak iframe policy (portal-embedded OIDC)
-# =============================================================================
-# Waits for the gentian-os KeycloakPlatformReconciler to patch id.<kernel>
-# HTTPRoute (ROUTING_MODE=gateway) and for browser-security Jobs to clear
-# X-Frame-Options on Keycloak realms. Diagnostic/verification utility, not a
-# pipeline step — currently only reachable via the commented-out block at
-# the end of main_cp() (uncomment to enable).
-verify_keycloak_iframe_policy() {
-    banner "Verify — Keycloak iframe policy"
-
-    local kernel_domain="${KERNEL_DOMAIN:-}"
-    if [[ -z "$kernel_domain" ]]; then
-        warn "KERNEL_DOMAIN unset — skipping Keycloak iframe verification."
-        return 0
-    fi
-
-    local services_ns; services_ns="$(gentian_services_namespace)"
-    local kernel_ns="${KERNEL_NAMESPACE:-${services_ns}}"
-    local route_name="${KEYCLOAK_IDP_HTTPROUTE_NAME:-kernel-idp}"
-    local timeout="${KEYCLOAK_FRAME_VERIFY_TIMEOUT:-300}"
-    local interval=10
-    local elapsed=0
-
-    info "Waiting for Keycloak HTTPRoute ${route_name} and operator frame-ancestors patch..."
-
-    while [[ $elapsed -lt $timeout ]]; do
-        local csp=""
-        csp=$(kubectl get httproute "$route_name" -n "$services_ns" \
-            -o jsonpath='{range .spec.rules[0].filters[*]}{.responseHeaderModifier.set[*].value}{"\n"}{end}' \
-            2>/dev/null || true)
-
-        if [[ -n "$csp" ]] \
-            && [[ "$csp" == *"frame-ancestors"* ]] \
-            && [[ "$csp" == *"https://portal.${kernel_domain}"* ]]; then
-            success "Keycloak HTTPRoute allows portal.${kernel_domain} in frame-ancestors."
-            break
-        fi
-
-        printf "  …waiting for Keycloak HTTPRoute CSP (%ds/%ds)\n" "$elapsed" "$timeout"
-        sleep "$interval"
-        elapsed=$((elapsed + interval))
-    done
-
-    if [[ $elapsed -ge $timeout ]]; then
-        warn "Keycloak HTTPRoute frame-ancestors not converged within ${timeout}s."
-        warn "Portal-embedded OIDC (WinBox) may show Firefox iframe errors until the operator reconciles."
-        return 1
-    fi
-
-    local bs_jobs
-    bs_jobs=$(kubectl get jobs -n "$kernel_ns" \
-        -l 'gentianos.io/keycloak-browser-security=1' \
-        --no-headers 2>/dev/null | wc -l || echo 0)
-    if [[ "$bs_jobs" -gt 0 ]]; then
-        info "Waiting for Keycloak browser-security header jobs..."
-        elapsed=0
-        while [[ $elapsed -lt $timeout ]]; do
-            local incomplete
-            incomplete=$(kubectl get jobs -n "$kernel_ns" \
-                -l 'gentianos.io/keycloak-browser-security=1' \
-                --no-headers 2>/dev/null \
-                | awk '$2 !~ /1\/1/ {print}' | wc -l || echo 0)
-            if [[ "$incomplete" -eq 0 ]]; then
-                success "Keycloak browser-security header jobs completed."
-                return 0
-            fi
-            sleep "$interval"
-            elapsed=$((elapsed + interval))
-        done
-        warn "Keycloak browser-security jobs did not all complete within ${timeout}s."
-        return 1
-    fi
-
-    info "No browser-security jobs yet (no Tenant CRs?) — HTTPRoute CSP is ready."
-    return 0
 }
 
 save_install_state() {

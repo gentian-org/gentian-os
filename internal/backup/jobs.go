@@ -486,47 +486,35 @@ func bundleEnv(p JobParams) []corev1.EnvVar {
 
 func minioEnv(secret string) []corev1.EnvVar {
 	return []corev1.EnvVar{
-		secretEnv("MINIO_ENDPOINT", secret, "endpoint"),
-		secretEnv("MINIO_ACCESS_KEY", secret, "accessKey"),
-		secretEnv("MINIO_SECRET_KEY", secret, "secretKey"),
+		meta.SecretEnv("MINIO_ENDPOINT", secret, "endpoint"),
+		meta.SecretEnv("MINIO_ACCESS_KEY", secret, "accessKey"),
+		meta.SecretEnv("MINIO_SECRET_KEY", secret, "secretKey"),
 	}
 }
 
 func postgresAdminEnv() []corev1.EnvVar {
 	return []corev1.EnvVar{
-		secretEnv("PGHOST", PostgresAdminSecret, "host"),
-		secretEnv("PGPORT", PostgresAdminSecret, "port"),
-		secretEnv("PGUSER", PostgresAdminSecret, "username"),
-		secretEnv("PGPASSWORD", PostgresAdminSecret, "password"),
+		meta.SecretEnv("PGHOST", PostgresAdminSecret, "host"),
+		meta.SecretEnv("PGPORT", PostgresAdminSecret, "port"),
+		meta.SecretEnv("PGUSER", PostgresAdminSecret, "username"),
+		meta.SecretEnv("PGPASSWORD", PostgresAdminSecret, "password"),
 	}
 }
 
 func keycloakAdminEnv() []corev1.EnvVar {
 	return []corev1.EnvVar{
-		secretEnv("KEYCLOAK_URL", KeycloakAdminSecret, "url"),
-		secretEnv("KEYCLOAK_ADMIN_USERNAME", KeycloakAdminSecret, "username"),
-		secretEnv("KEYCLOAK_ADMIN_PASSWORD", KeycloakAdminSecret, "password"),
+		meta.SecretEnv("KEYCLOAK_URL", KeycloakAdminSecret, "url"),
+		meta.SecretEnv("KEYCLOAK_ADMIN_USERNAME", KeycloakAdminSecret, "username"),
+		meta.SecretEnv("KEYCLOAK_ADMIN_PASSWORD", KeycloakAdminSecret, "password"),
 	}
 }
 
 func mariadbAdminEnv() []corev1.EnvVar {
 	return []corev1.EnvVar{
-		secretEnv("MYSQL_HOST", MariaDBAdminSecret, "host"),
-		secretEnv("MYSQL_TCP_PORT", MariaDBAdminSecret, "port"),
-		secretEnv("MYSQL_PWD", MariaDBAdminSecret, "password"),
-		secretEnv("MYSQL_ADMIN_USER", MariaDBAdminSecret, "username"),
-	}
-}
-
-func secretEnv(name, secret, key string) corev1.EnvVar {
-	return corev1.EnvVar{
-		Name: name,
-		ValueFrom: &corev1.EnvVarSource{
-			SecretKeyRef: &corev1.SecretKeySelector{
-				LocalObjectReference: corev1.LocalObjectReference{Name: secret},
-				Key:                  key,
-			},
-		},
+		meta.SecretEnv("MYSQL_HOST", MariaDBAdminSecret, "host"),
+		meta.SecretEnv("MYSQL_TCP_PORT", MariaDBAdminSecret, "port"),
+		meta.SecretEnv("MYSQL_PWD", MariaDBAdminSecret, "password"),
+		meta.SecretEnv("MYSQL_ADMIN_USER", MariaDBAdminSecret, "username"),
 	}
 }
 

@@ -493,19 +493,6 @@ _pin_static_ip_edge_address() {
     info "  cloud controller to adopt it."
 }
 
-# =============================================================================
-# apply_kernel_gateway_overlays — gateway-mode Helm value overlays
-# =============================================================================
-apply_kernel_gateway_overlays() {
-    if [[ "${ROUTING_MODE:-gateway}" != "gateway" ]]; then
-        error "ROUTING_MODE=${ROUTING_MODE} is no longer supported; use ROUTING_MODE=gateway."
-        exit 1
-    fi
-    info "Applying kernel gateway value overlays (ROUTING_MODE=gateway)..."
-    success "Kernel gateway overlays ready."
-    print_gateway_tunnel_hints || true
-}
-
 wait_for_gateway_platform() {
     if [[ "${ROUTING_MODE:-gateway}" != "gateway" ]]; then
         return 0

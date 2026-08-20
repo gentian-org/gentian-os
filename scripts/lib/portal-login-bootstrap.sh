@@ -5,24 +5,6 @@
 
 set -euo pipefail
 
-_portal_derive_password() {
-    if [[ "${SECRET_MODE:-derived}" == "random" ]]; then
-        local existing_pw
-        existing_pw=$(bao kv get -mount=secret -field=user_password identity/portal-admin 2>/dev/null || true)
-        if [[ -n "${existing_pw}" ]]; then
-            echo "${existing_pw}"
-        else
-            local new_pw
-            new_pw=$(openssl rand -hex 24)
-            bao kv patch -mount=secret identity/portal-admin user_password="${new_pw}" >/dev/null 2>&1 || \
-            bao kv put -mount=secret identity/portal-admin user_password="${new_pw}" >/dev/null 2>&1
-            echo "${new_pw}"
-        fi
-    else
-        echo -n "portal-bootstrap:user_password" | openssl dgst -sha256 -hmac "${MASTER_PASSWORD}${DERIVATION_SALT:-}" | awk '{print $2}'
-    fi
-}
-
 _platform_admin_derive_password() {
     if [[ "${SECRET_MODE:-derived}" == "random" ]]; then
         local existing_pw

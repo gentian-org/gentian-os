@@ -25,6 +25,7 @@ import (
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 	"github.com/gentian-org/gentian-os/internal/kernel"
 	"github.com/gentian-org/gentian-os/internal/keycloak"
+	"github.com/gentian-org/gentian-os/internal/meta"
 )
 
 // IdentityEnvVar carries an age identity into a restore's decryption step.
@@ -126,7 +127,7 @@ echo "fetched and decrypted %[4]s"`,
 		if d.Mode != gentianov1alpha1.ExportEncryptionPassphrase {
 			name = IdentityEnvVar
 		}
-		container.Env = append(container.Env, secretEnv(name, d.SecretName, d.SecretKey))
+		container.Env = append(container.Env, meta.SecretEnv(name, d.SecretName, d.SecretKey))
 	}
 	return container
 }

@@ -24,55 +24,6 @@ import (
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 )
 
-func restoreAppStatus(restore *gentianov1alpha1.TenantRestore, appName string) *gentianov1alpha1.AppExportStatus {
-	for i := range restore.Status.Apps {
-		if restore.Status.Apps[i].Name == appName {
-			return &restore.Status.Apps[i]
-		}
-	}
-	restore.Status.Apps = append(restore.Status.Apps, gentianov1alpha1.AppExportStatus{
-		Name:  appName,
-		Phase: gentianov1alpha1.TenantExportPhasePending,
-	})
-	return &restore.Status.Apps[len(restore.Status.Apps)-1]
-}
-
-func nextPendingRestoreApp(restore *gentianov1alpha1.TenantRestore, apps []string) string {
-	for _, name := range apps {
-		done := false
-		for i := range restore.Status.Apps {
-			if restore.Status.Apps[i].Name == name &&
-				restore.Status.Apps[i].Phase == gentianov1alpha1.TenantExportPhaseReady {
-				done = true
-				break
-			}
-		}
-		if !done {
-			return name
-		}
-	}
-	return ""
-}
-
-func markRestoreQuiesced(restore *gentianov1alpha1.TenantRestore, appName string) {
-	for _, existing := range restore.Status.Quiesced {
-		if existing == appName {
-			return
-		}
-	}
-	restore.Status.Quiesced = append(restore.Status.Quiesced, appName)
-}
-
-func unmarkRestoreQuiesced(restore *gentianov1alpha1.TenantRestore, appName string) {
-	out := restore.Status.Quiesced[:0]
-	for _, existing := range restore.Status.Quiesced {
-		if existing != appName {
-			out = append(out, existing)
-		}
-	}
-	restore.Status.Quiesced = out
-}
-
 func setRestoreCondition(
 	restore *gentianov1alpha1.TenantRestore,
 	condType string,

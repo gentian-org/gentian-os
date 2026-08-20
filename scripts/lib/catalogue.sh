@@ -116,20 +116,6 @@ release_gentian_os_helm_bootstrap() {
     fi
 }
 
-# =============================================================================
-# Create git credentials Secret for operator app lifecycle (gentian-deployments push)
-# =============================================================================
-_deployments_git_host() {
-    local repo="${GENTIAN_DEPLOYMENTS_REPO:-https://git.example.domain/gentian-deployments}"
-    if [[ "${repo}" =~ ^https?://([^/]+) ]]; then
-        echo "${BASH_REMATCH[1]}"
-    elif [[ "${repo}" =~ ^git@([^:]+): ]]; then
-        echo "${BASH_REMATCH[1]}"
-    else
-        echo "github.com"
-    fi
-}
-
 # The operator's .git-credentials used to be created here with `kubectl create
 # secret`, alongside the one the XRepository Composition emits through ESO —
 # two writers of one credential, and the values file decided which the operator

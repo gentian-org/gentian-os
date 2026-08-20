@@ -85,14 +85,25 @@ func tenantGatewayParentRefs(kernelSectionName string) []gatewayv1.ParentReferen
 	return []gatewayv1.ParentReference{kernelRef}
 }
 
-func pathPrefixMatch(prefix string) gatewayv1.HTTPRouteMatch {
-	t := gatewayv1.PathMatchPathPrefix
+// pathMatch builds an HTTPRouteMatch of the given path-match type.
+//
+// pathExactMatch and pathPrefixMatch were separate copies in separate files,
+// differing in one constant.
+func pathMatch(t gatewayv1.PathMatchType, value string) gatewayv1.HTTPRouteMatch {
 	return gatewayv1.HTTPRouteMatch{
 		Path: &gatewayv1.HTTPPathMatch{
 			Type:  &t,
-			Value: &prefix,
+			Value: &value,
 		},
 	}
+}
+
+func pathPrefixMatch(prefix string) gatewayv1.HTTPRouteMatch {
+	return pathMatch(gatewayv1.PathMatchPathPrefix, prefix)
+}
+
+func pathExactMatch(path string) gatewayv1.HTTPRouteMatch {
+	return pathMatch(gatewayv1.PathMatchExact, path)
 }
 
 // appHTTPRoutesForIntents builds the desired per-app HTTPRoutes for a tenant.

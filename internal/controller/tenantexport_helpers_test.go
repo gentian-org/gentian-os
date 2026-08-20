@@ -63,10 +63,10 @@ func TestExportJobNamesStayUniqueWhenTruncated(t *testing.T) {
 func TestAppStatusIsCreatedOnceAndMutableInPlace(t *testing.T) {
 	export := &gentianov1alpha1.TenantExport{}
 
-	first := appStatus(export, "nextcloud")
+	first := appStatus(&export.Status.Apps, "nextcloud")
 	first.Phase = gentianov1alpha1.TenantExportPhaseRunning
 
-	second := appStatus(export, "nextcloud")
+	second := appStatus(&export.Status.Apps, "nextcloud")
 	if second.Phase != gentianov1alpha1.TenantExportPhaseRunning {
 		t.Error("appStatus returned a fresh entry instead of the existing one")
 	}
@@ -79,24 +79,24 @@ func TestNextPendingAppWalksInOrderAndStops(t *testing.T) {
 	export := &gentianov1alpha1.TenantExport{}
 	apps := []string{"a", "b", "c"}
 
-	if got := nextPendingApp(export, apps); got != "a" {
+	if got := nextPendingApp(export.Status.Apps, apps); got != "a" {
 		t.Errorf("first pending = %q, want a", got)
 	}
 
-	appStatus(export, "a").Phase = gentianov1alpha1.TenantExportPhaseReady
-	if got := nextPendingApp(export, apps); got != "b" {
+	appStatus(&export.Status.Apps, "a").Phase = gentianov1alpha1.TenantExportPhaseReady
+	if got := nextPendingApp(export.Status.Apps, apps); got != "b" {
 		t.Errorf("second pending = %q, want b", got)
 	}
 
-	appStatus(export, "b").Phase = gentianov1alpha1.TenantExportPhaseReady
-	appStatus(export, "c").Phase = gentianov1alpha1.TenantExportPhaseReady
-	if got := nextPendingApp(export, apps); got != "" {
+	appStatus(&export.Status.Apps, "b").Phase = gentianov1alpha1.TenantExportPhaseReady
+	appStatus(&export.Status.Apps, "c").Phase = gentianov1alpha1.TenantExportPhaseReady
+	if got := nextPendingApp(export.Status.Apps, apps); got != "" {
 		t.Errorf("all done should yield \"\", got %q", got)
 	}
 
 	// A failed app is not done: it must not be skipped over silently.
-	appStatus(export, "b").Phase = gentianov1alpha1.TenantExportPhaseFailed
-	if got := nextPendingApp(export, apps); got != "b" {
+	appStatus(&export.Status.Apps, "b").Phase = gentianov1alpha1.TenantExportPhaseFailed
+	if got := nextPendingApp(export.Status.Apps, apps); got != "b" {
 		t.Errorf("failed app should still be pending, got %q", got)
 	}
 }
@@ -104,21 +104,21 @@ func TestNextPendingAppWalksInOrderAndStops(t *testing.T) {
 func TestQuiescedBookkeepingIsIdempotent(t *testing.T) {
 	export := &gentianov1alpha1.TenantExport{}
 
-	markQuiesced(export, "a")
-	markQuiesced(export, "a")
+	markQuiesced(&export.Status.Quiesced, "a")
+	markQuiesced(&export.Status.Quiesced, "a")
 	if len(export.Status.Quiesced) != 1 {
 		t.Errorf("double mark recorded twice: %v", export.Status.Quiesced)
 	}
 
-	markQuiesced(export, "b")
-	unmarkQuiesced(export, "a")
+	markQuiesced(&export.Status.Quiesced, "b")
+	unmarkQuiesced(&export.Status.Quiesced, "a")
 	if len(export.Status.Quiesced) != 1 || export.Status.Quiesced[0] != "b" {
 		t.Errorf("unmark removed the wrong entry: %v", export.Status.Quiesced)
 	}
 
 	// Unmarking something never marked must not panic or corrupt the slice —
 	// it happens on the failure path when a pause never took effect.
-	unmarkQuiesced(export, "never-paused")
+	unmarkQuiesced(&export.Status.Quiesced, "never-paused")
 	if len(export.Status.Quiesced) != 1 {
 		t.Errorf("unexpected mutation: %v", export.Status.Quiesced)
 	}

@@ -9,21 +9,6 @@
 [[ -n "${GENTIAN_TEARDOWN_LOADED:-}" ]] && return 0
 GENTIAN_TEARDOWN_LOADED=1
 
-_mr_count() {
-    # Under strict mode, `kubectl get managed` can return non-zero if the
-    # API alias is unavailable; treat that as "no managed resources".
-    local mr_list
-    if mr_list="$(kubectl get managed --no-headers 2>/dev/null)"; then
-        if [[ -z "${mr_list}" ]]; then
-            echo 0
-        else
-            printf '%s\n' "${mr_list}" | wc -l | tr -d ' '
-        fi
-    else
-        echo 0
-    fi
-}
-
 # ProviderConfigs must be deleted individually — kubectl delete -f fails if
 # a CRD is not registered (e.g. provider-helm was never installed).
 # Add --wait=false so deletion doesn't block if a stale usage reference lingers.

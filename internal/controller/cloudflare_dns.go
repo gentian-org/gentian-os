@@ -416,14 +416,16 @@ func (c *CloudflareDNSClient) listRecords(ctx context.Context, name string) ([]c
 	return result.Result, nil
 }
 
-func (c *CloudflareDNSClient) createRecord(ctx context.Context, rec cfDNSRecord) error {
+// writeRecord is create and update: same body, same headers, same response
+// shape, differing only in method and URL. They were two functions whose bodies
+// matched line for line apart from the word "create"/"update" in one error
+// string, which is how a fix to one of them misses the other.
+func (c *CloudflareDNSClient) writeRecord(ctx context.Context, method, url, verb string, rec cfDNSRecord) error {
 	payload, err := json.Marshal(rec)
 	if err != nil {
 		return err
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
-		fmt.Sprintf("%s/zones/%s/dns_records", cloudflareAPIBase, c.zoneID),
-		bytes.NewReader(payload))
+	req, err := http.NewRequestWithContext(ctx, method, url, bytes.NewReader(payload))
 	if err != nil {
 		return err
 	}
@@ -437,41 +439,22 @@ func (c *CloudflareDNSClient) createRecord(ctx context.Context, rec cfDNSRecord)
 	body, _ := io.ReadAll(resp.Body)
 	var result cfCreateResponse
 	if err := json.Unmarshal(body, &result); err != nil {
-		return fmt.Errorf("parse Cloudflare create response: %w", err)
+		return fmt.Errorf("parse Cloudflare %s response: %w", verb, err)
 	}
 	if !result.Success {
-		return fmt.Errorf("cloudflare create DNS record: %v", result.Errors)
+		return fmt.Errorf("cloudflare %s DNS record: %v", verb, result.Errors)
 	}
 	return nil
 }
 
+func (c *CloudflareDNSClient) createRecord(ctx context.Context, rec cfDNSRecord) error {
+	return c.writeRecord(ctx, http.MethodPost,
+		fmt.Sprintf("%s/zones/%s/dns_records", cloudflareAPIBase, c.zoneID), "create", rec)
+}
+
 func (c *CloudflareDNSClient) updateRecord(ctx context.Context, id string, rec cfDNSRecord) error {
-	payload, err := json.Marshal(rec)
-	if err != nil {
-		return err
-	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPut,
-		fmt.Sprintf("%s/zones/%s/dns_records/%s", cloudflareAPIBase, c.zoneID, id),
-		bytes.NewReader(payload))
-	if err != nil {
-		return err
-	}
-	c.setHeaders(req)
-	req.Header.Set("Content-Type", "application/json")
-	resp, err := c.http.Do(req)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = resp.Body.Close() }()
-	body, _ := io.ReadAll(resp.Body)
-	var result cfCreateResponse
-	if err := json.Unmarshal(body, &result); err != nil {
-		return fmt.Errorf("parse Cloudflare update response: %w", err)
-	}
-	if !result.Success {
-		return fmt.Errorf("cloudflare update DNS record: %v", result.Errors)
-	}
-	return nil
+	return c.writeRecord(ctx, http.MethodPut,
+		fmt.Sprintf("%s/zones/%s/dns_records/%s", cloudflareAPIBase, c.zoneID, id), "update", rec)
 }
 
 func (c *CloudflareDNSClient) setHeaders(req *http.Request) {

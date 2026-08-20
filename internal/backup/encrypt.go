@@ -24,6 +24,7 @@ import (
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 	"github.com/gentian-org/gentian-os/internal/kernel"
+	"github.com/gentian-org/gentian-os/internal/meta"
 )
 
 // EncryptedSuffix is appended to every artefact in a bundle. Bundles are always
@@ -146,7 +147,7 @@ echo "encrypted %s"`, encryptBootstrap(e), encrypt, plain, cipher, localFile)
 	}
 	if e.Mode == gentianov1alpha1.ExportEncryptionPassphrase {
 		container.Env = []corev1.EnvVar{
-			secretEnv(PassphraseEnvVar, e.PassphraseSecret, e.PassphraseKey),
+			meta.SecretEnv(PassphraseEnvVar, e.PassphraseSecret, e.PassphraseKey),
 		}
 	}
 	return container

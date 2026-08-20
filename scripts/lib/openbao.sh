@@ -159,43 +159,6 @@ bootstrap_transit_app() {
 }
 
 # =============================================================================
-# gentian_openbao_put — write a KV v2 secret under gentian-os/kernel/
-#
-#   $1  relative path, e.g. "authz/openfga"
-#   $2  JSON object of key/values, e.g. '{"api-token":"..."}'
-#
-# Returns non-zero (quietly) when OpenBao is unreachable, sealed, or no root
-# token is available, so callers can fall back rather than abort an install.
-# Never echoes the payload: the whole point of routing a credential through
-# OpenBao is that it stops appearing in logs and object specs.
-# =============================================================================
-gentian_openbao_put() {
-    local rel_path="$1" json_data="$2"
-
-    local token=""
-    if [[ -n "${BAO_TOKEN:-}" ]]; then
-        token="$BAO_TOKEN"
-    elif [[ -f "${OPENBAO_INIT_FILE}" ]]; then
-        token=$(jq -r '.root_token // empty' "${OPENBAO_INIT_FILE}" 2>/dev/null || true)
-    fi
-    [[ -n "$token" ]] || return 1
-
-    local bao_addr
-    bao_addr=$(gentian_service_addr openbao openbao 8200 https 2>/dev/null) || return 1
-    [[ -n "${bao_addr}" ]] || return 1
-    curl -k -sf --max-time 3 "${bao_addr}/v1/sys/health" >/dev/null 2>&1 || return 1
-
-    local http_code
-    http_code=$(curl -k -s -o /dev/null -w '%{http_code}' --max-time 10 \
-        -H "X-Vault-Token: ${token}" \
-        -H "Content-Type: application/json" \
-        -X POST \
-        -d "{\"data\": ${json_data}}" \
-        "${bao_addr}/v1/secret/data/gentian-os/kernel/${rel_path}" 2>/dev/null)
-    [[ "${http_code}" -ge 200 && "${http_code}" -lt 300 ]]
-}
-
-# =============================================================================
 # 5b. Init the transit instance
 # =============================================================================
 init_openbao_transit() {

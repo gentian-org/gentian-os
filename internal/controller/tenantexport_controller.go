@@ -180,7 +180,7 @@ func (r *TenantExportReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	// Resume anything paused that is not the app currently being captured. This
 	// is the crash-recovery path: after a restart the controller has no memory
 	// of what it was doing, and status.quiesced is the only record.
-	current := nextPendingApp(export, apps)
+	current := nextPendingApp(export.Status.Apps, apps)
 	if err := r.resumeStale(ctx, export, tenantName, current); err != nil {
 		return ctrl.Result{}, err
 	}
@@ -216,7 +216,7 @@ func (r *TenantExportReconciler) captureApp(
 		return ctrl.Result{}, err
 	}
 	spec := profileBackupSpec(profile)
-	entry := appStatus(export, appName)
+	entry := appStatus(&export.Status.Apps, appName)
 
 	if entry.QuiesceStart == nil {
 		mode, qErr := r.Reconciler.quiesceApp(ctx, tenant.Name, appName, spec)
@@ -227,7 +227,7 @@ func (r *TenantExportReconciler) captureApp(
 		entry.QuiesceMode = string(mode)
 		entry.Phase = gentianov1alpha1.TenantExportPhaseRunning
 		entry.Message = fmt.Sprintf("paused (%s)", mode)
-		markQuiesced(export, appName)
+		markQuiesced(&export.Status.Quiesced, appName)
 		logger.Info("paused app for capture", "app", appName, "mode", mode)
 		if err := r.persist(ctx, export); err != nil {
 			return ctrl.Result{}, err
@@ -283,7 +283,7 @@ func (r *TenantExportReconciler) captureApp(
 	entry.Message = ""
 	entry.ChartVersion = profileChartVersion(profile)
 	entry.Stores = unitKinds(units)
-	unmarkQuiesced(export, appName)
+	unmarkQuiesced(&export.Status.Quiesced, appName)
 	logger.Info("captured app", "app", appName, "stores", entry.Stores)
 	if err := r.persist(ctx, export); err != nil {
 		return ctrl.Result{}, err
@@ -400,7 +400,7 @@ func (r *TenantExportReconciler) ensureCaptureJob(
 	export *gentianov1alpha1.TenantExport,
 	unit captureUnit,
 ) (bool, error) {
-	entry := appStatus(export, unit.Job.Labels[meta.AppLabel])
+	entry := appStatus(&export.Status.Apps, unit.Job.Labels[meta.AppLabel])
 	// The status record decides, not the Job's existence: a finished Job can
 	// be TTL-collected or swept by the kernel Job GC while a sibling unit is
 	// still running, and recreating it here re-ran a dump that had already
@@ -707,12 +707,12 @@ func (r *TenantExportReconciler) failApp(
 	tenant *gentianov1alpha1.Tenant,
 	appName, message string,
 ) (ctrl.Result, error) {
-	entry := appStatus(export, appName)
+	entry := appStatus(&export.Status.Apps, appName)
 	if err := resumeQuiescedApp(ctx, r.Client, r.Reconciler,
 		tenant.Name, appName, entry.QuiesceMode, entry.Message); err != nil {
 		return ctrl.Result{}, fmt.Errorf("resume %s after failure: %w", appName, err)
 	}
-	unmarkQuiesced(export, appName)
+	unmarkQuiesced(&export.Status.Quiesced, appName)
 	// The app is resumed by the time we get here, and the status must say so:
 	// quiesceEnd left unset painted the app as "paused now" in the Admin
 	// Console for as long as the failed export existed, which reads as an
@@ -758,12 +758,12 @@ func (r *TenantExportReconciler) resumeAll(
 		return nil
 	}
 	for _, appName := range append([]string(nil), export.Status.Quiesced...) {
-		entry := appStatus(export, appName)
+		entry := appStatus(&export.Status.Apps, appName)
 		if err := resumeQuiescedApp(ctx, r.Client, r.Reconciler,
 			tenantName, appName, entry.QuiesceMode, entry.Message); err != nil {
 			return fmt.Errorf("resume %s: %w", appName, err)
 		}
-		unmarkQuiesced(export, appName)
+		unmarkQuiesced(&export.Status.Quiesced, appName)
 	}
 	return r.persist(ctx, export)
 }
@@ -779,12 +779,12 @@ func (r *TenantExportReconciler) resumeStale(
 		if appName == current {
 			continue
 		}
-		entry := appStatus(export, appName)
+		entry := appStatus(&export.Status.Apps, appName)
 		if err := resumeQuiescedApp(ctx, r.Client, r.Reconciler,
 			tenantName, appName, entry.QuiesceMode, entry.Message); err != nil {
 			return fmt.Errorf("resume stale %s: %w", appName, err)
 		}
-		unmarkQuiesced(export, appName)
+		unmarkQuiesced(&export.Status.Quiesced, appName)
 		changed = true
 	}
 	if changed {

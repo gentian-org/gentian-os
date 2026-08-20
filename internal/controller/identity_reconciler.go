@@ -876,13 +876,18 @@ func oidcClientID(tenantName, appName string) string {
 
 // --- Job status helpers ------------------------------------------------------
 
-func jobIsComplete(job *batchv1.Job) bool {
+// jobHasCondition reports whether the Job carries condType as True.
+func jobHasCondition(job *batchv1.Job, condType batchv1.JobConditionType) bool {
 	for _, c := range job.Status.Conditions {
-		if c.Type == batchv1.JobComplete && c.Status == corev1.ConditionTrue {
+		if c.Type == condType && c.Status == corev1.ConditionTrue {
 			return true
 		}
 	}
 	return false
+}
+
+func jobIsComplete(job *batchv1.Job) bool {
+	return jobHasCondition(job, batchv1.JobComplete)
 }
 
 func jobCompletionTime(job *batchv1.Job) *metav1.Time {
@@ -907,10 +912,5 @@ func jobCompletedAfter(sync, source *batchv1.Job) bool {
 }
 
 func jobIsFailed(job *batchv1.Job) bool {
-	for _, c := range job.Status.Conditions {
-		if c.Type == batchv1.JobFailed && c.Status == corev1.ConditionTrue {
-			return true
-		}
-	}
-	return false
+	return jobHasCondition(job, batchv1.JobFailed)
 }
