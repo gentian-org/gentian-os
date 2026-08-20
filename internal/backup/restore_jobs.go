@@ -148,39 +148,35 @@ DB=%[2]s
 # moment someone is trying to recover it, and only hand-written psql gets it
 # back. Normalising here makes a retry self-healing instead. Extension-owned
 # objects are left alone: they belong to the extension, not the app.
-# A tagged dollar-quote, never the bare doubled-dollar form: Kubernetes
-# collapses a doubled dollar to a single one in container args (it escapes its
-# own $(VAR) syntax that way), which truncated the opening quote and failed the
-# restore at its first statement. Tagged quotes use single dollars and survive.
+#
+# Generated statements piped through \gexec rather than a PL/pgSQL block:
+# psql substitutes :'var' only outside quoted literals, and a dollar-quoted
+# body is a quoted literal — so the variable arrived at postgres as a literal
+# colon. No procedural block also means no dollar-quoting to be eaten by
+# Kubernetes container-arg expansion. Both failures came from the same
+# instinct to reach for a DO block where a query would do.
 psql -v ON_ERROR_STOP=1 -v app_role="${ROLE}" -d "${DB}" <<'PSQL'
-DO $normalise$
-DECLARE r record;
-BEGIN
-  FOR r IN SELECT nspname FROM pg_namespace
-            WHERE nspname NOT LIKE 'pg\_%%'
-              AND nspname NOT IN ('information_schema', 'public')
-  LOOP
-    EXECUTE format('ALTER SCHEMA %%I OWNER TO %%I', r.nspname, :'app_role');
-  END LOOP;
+SELECT format('ALTER SCHEMA %%I OWNER TO %%I', nspname, :'app_role')
+  FROM pg_namespace
+ WHERE nspname NOT LIKE 'pg\_%%'
+   AND nspname NOT IN ('information_schema', 'public')
+\gexec
 
-  FOR r IN SELECT c.relname, n.nspname, c.relkind
-             FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
-            WHERE n.nspname NOT LIKE 'pg\_%%'
-              AND n.nspname <> 'information_schema'
-              AND c.relkind IN ('r', 'p', 'S', 'v', 'm')
-              AND NOT EXISTS (SELECT 1 FROM pg_depend d
-                               WHERE d.objid = c.oid AND d.deptype = 'e')
-  LOOP
-    EXECUTE format('ALTER %%s %%I.%%I OWNER TO %%I',
-                   CASE r.relkind
-                     WHEN 'S' THEN 'SEQUENCE'
-                     WHEN 'v' THEN 'VIEW'
-                     WHEN 'm' THEN 'MATERIALIZED VIEW'
-                     ELSE 'TABLE'
-                   END,
-                   r.nspname, r.relname, :'app_role');
-  END LOOP;
-END $normalise$;
+SELECT format('ALTER %%s %%I.%%I OWNER TO %%I',
+              CASE c.relkind
+                WHEN 'S' THEN 'SEQUENCE'
+                WHEN 'v' THEN 'VIEW'
+                WHEN 'm' THEN 'MATERIALIZED VIEW'
+                ELSE 'TABLE'
+              END,
+              n.nspname, c.relname, :'app_role')
+  FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+ WHERE n.nspname NOT LIKE 'pg\_%%'
+   AND n.nspname <> 'information_schema'
+   AND c.relkind IN ('r', 'p', 'S', 'v', 'm')
+   AND NOT EXISTS (SELECT 1 FROM pg_depend d
+                    WHERE d.objid = c.oid AND d.deptype = 'e')
+\gexec
 PSQL
 echo "ownership normalised to ${ROLE}"
 

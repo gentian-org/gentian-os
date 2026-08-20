@@ -235,9 +235,17 @@ func TestPostgresRestoreNormalisesOwnershipBeforeLoading(t *testing.T) {
 	if strings.Contains(script, "$$") {
 		t.Errorf("script contains $$, which Kubernetes collapses to $:\n%s", script)
 	}
+	// psql substitutes :'var' only outside quoted literals, and a dollar-quoted
+	// PL/pgSQL body is a quoted literal — the variable reached postgres as a
+	// bare colon. Generated statements through \gexec need no procedural block,
+	// so neither hazard applies.
+	if strings.Contains(script, "DO $") {
+		t.Errorf("procedural block reintroduced; psql cannot interpolate inside it:\n%s", script)
+	}
 	for _, want := range []string{
 		"ALTER SCHEMA",
 		"OWNER TO",
+		`\gexec`,
 		"pg_restore --role=",
 		"deptype = 'e'", // extension-owned objects stay with their extension
 	} {
