@@ -182,9 +182,13 @@ func VolumeArchiveJob(p JobParams, claim string, excludePaths []string) *batchv1
 	for _, pattern := range sortedUnique(excludePaths) {
 		fmt.Fprintf(&excludes, " --exclude=%s", shellSingleQuote(pattern))
 	}
+	// Alpine, not the mc image: this container only tars, and the mc image —
+	// a minimal UBI — ships no tar at all. Every container that runs tar must
+	// use an image that has it; the first live volume capture exited 127 on
+	// its first command.
 	archive := corev1.Container{
 		Name:    "archive",
-		Image:   mcImage,
+		Image:   kernel.KeycloakProvisionerImage(),
 		Command: []string{"/bin/sh", "-c"},
 		Args: []string{fmt.Sprintf(`set -eu
 tar czf %s/volume.tar.gz -C /source%s .
@@ -227,15 +231,24 @@ func S3ArchiveJob(p JobParams, sourceBucket string) *batchv1.Job {
 mc alias set gentian "${MINIO_ENDPOINT}" "${MINIO_ACCESS_KEY}" "${MINIO_SECRET_KEY}"
 mkdir -p %[1]s/bucket
 # An empty bucket is normal (an app may never have written), so mirror into a
-# directory that already exists and let the archive below be empty too.
+# directory that already exists and let the pack step archive it empty too.
 mc mirror --preserve "gentian/%[2]s" %[1]s/bucket
-tar czf %[1]s/bucket.tar.gz -C %[1]s/bucket .
-rm -rf %[1]s/bucket
-echo "archived bucket %[2]s"`, workDir, sourceBucket)},
+echo "fetched bucket %[2]s"`, workDir, sourceBucket)},
 		Env:          bundleEnv(p),
 		VolumeMounts: []corev1.VolumeMount{{Name: "work", MountPath: workDir}},
 	}
-	return uploadJob(p, "bucket.tar.gz", artefact, []corev1.Container{fetch}, nil)
+	// A separate container because the mc image has no tar.
+	pack := corev1.Container{
+		Name:    "pack-bucket",
+		Image:   kernel.KeycloakProvisionerImage(),
+		Command: []string{"/bin/sh", "-c"},
+		Args: []string{fmt.Sprintf(`set -eu
+tar czf %[1]s/bucket.tar.gz -C %[1]s/bucket .
+rm -rf %[1]s/bucket
+echo "archived bucket %[2]s"`, workDir, sourceBucket)},
+		VolumeMounts: []corev1.VolumeMount{{Name: "work", MountPath: workDir}},
+	}
+	return uploadJob(p, "bucket.tar.gz", artefact, []corev1.Container{fetch, pack}, nil)
 }
 
 // RealmExportJob captures a tenant's Keycloak realm: its configuration, and

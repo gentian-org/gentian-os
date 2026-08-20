@@ -17,8 +17,10 @@ limitations under the License.
 package netpolicy
 
 import (
+	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/util/intstr"
 
 	"github.com/gentian-org/gentian-os/internal/meta"
 )
@@ -48,7 +50,29 @@ func ExportJobNetworkPolicy(tenantName, nsName string, cfg Config) *networkingv1
 			Egress: []networkingv1.NetworkPolicyEgressRule{
 				namespaceEgress(cfg.InfraNamespace),
 				namespaceEgress(meta.KernelNamespace),
+				// Internet, because the encrypt step installs age via apk and
+				// a tenant-namespace restore fetches the MinIO client — both
+				// at runtime, from public endpoints. Confined to export pods,
+				// which are operator-authored workloads; a dedicated backup
+				// image with the tools baked in retires this rule, and is the
+				// intended successor.
+				internetEgress(),
 			},
+		},
+	}
+}
+
+func internetEgress() networkingv1.NetworkPolicyEgressRule {
+	protocolTCP := corev1.ProtocolTCP
+	https := intstr.FromInt32(443)
+	http := intstr.FromInt32(80)
+	return networkingv1.NetworkPolicyEgressRule{
+		To: []networkingv1.NetworkPolicyPeer{
+			{IPBlock: &networkingv1.IPBlock{CIDR: "0.0.0.0/0"}},
+		},
+		Ports: []networkingv1.NetworkPolicyPort{
+			{Protocol: &protocolTCP, Port: &https},
+			{Protocol: &protocolTCP, Port: &http},
 		},
 	}
 }

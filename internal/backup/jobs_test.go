@@ -96,12 +96,14 @@ func TestProducerAndEncryptRunAsInitContainersBeforeUpload(t *testing.T) {
 		"realm":    RealmExportJob(params(), "demo"),
 	} {
 		inits := job.Spec.Template.Spec.InitContainers
-		if len(inits) != 2 {
-			t.Errorf("%s: want a producer and an encrypt step, got %d", name, len(inits))
+		// At least one producer, encrypt strictly last: the uploader must only
+		// ever see ciphertext, however many steps produced the plaintext.
+		if len(inits) < 2 {
+			t.Errorf("%s: want producer(s) and an encrypt step, got %d", name, len(inits))
 			continue
 		}
-		if inits[1].Name != "encrypt" {
-			t.Errorf("%s: encrypt is not the final init step: %s", name, inits[1].Name)
+		if inits[len(inits)-1].Name != "encrypt" {
+			t.Errorf("%s: encrypt is not the final init step: %s", name, inits[len(inits)-1].Name)
 		}
 		if len(job.Spec.Template.Spec.Containers) != 1 {
 			t.Errorf("%s: want exactly one main container, got %d",
@@ -167,12 +169,20 @@ func TestS3CaptureStagesSoItCanBeEncrypted(t *testing.T) {
 		t.Error("bucket capture has no scratch volume, so it cannot encrypt before upload")
 	}
 
-	fetch := initContainerScript(job)
-	if !strings.Contains(fetch, "mc mirror --preserve") {
-		t.Errorf("bucket is not fetched with metadata preserved:\n%s", fetch)
+	var all strings.Builder
+	for _, c := range job.Spec.Template.Spec.InitContainers {
+		if c.Name == "encrypt" {
+			break
+		}
+		all.WriteString(c.Args[0])
+		all.WriteString("\n")
 	}
-	if !strings.Contains(fetch, "tar czf") {
-		t.Errorf("bucket is not archived before encryption:\n%s", fetch)
+	producers := all.String()
+	if !strings.Contains(producers, "mc mirror --preserve") {
+		t.Errorf("bucket is not fetched with metadata preserved:\n%s", producers)
+	}
+	if !strings.Contains(producers, "tar czf") {
+		t.Errorf("bucket is not archived before encryption:\n%s", producers)
 	}
 }
 
@@ -504,6 +514,36 @@ func TestAllJobsSatisfyTheTenantSecurityBaseline(t *testing.T) {
 			if sc == nil || sc.SeccompProfile == nil ||
 				sc.SeccompProfile.Type != corev1.SeccompProfileTypeRuntimeDefault {
 				t.Errorf("%s/%s: container seccompProfile not RuntimeDefault", name, c.Name)
+			}
+		}
+	}
+}
+
+// The mc image is a minimal UBI with no tar. Any container that archives or
+// unpacks must run an image that has it — the first live volume capture
+// exited 127 on its first command because this was assumed rather than held.
+func TestNoMcImageContainerInvokesTar(t *testing.T) {
+	p := params()
+	jobs := map[string]*batchv1.Job{
+		"volume":         VolumeArchiveJob(p, "data", nil),
+		"s3":             S3ArchiveJob(p, "demo-bucket"),
+		"s3-restore":     S3RestoreJob(p, recipientDecryption(), "demo-bucket"),
+		"volume-restore": VolumeRestoreJob(p, recipientDecryption(), "data"),
+		"bundle-delete":  BundleDeleteJob(p),
+	}
+	for name, job := range jobs {
+		containers := append(append([]corev1.Container{},
+			job.Spec.Template.Spec.InitContainers...),
+			job.Spec.Template.Spec.Containers...)
+		for _, c := range containers {
+			if c.Image != mcImage {
+				continue
+			}
+			for _, arg := range c.Args {
+				if strings.Contains(arg, "tar ") {
+					t.Errorf("%s/%s runs tar in the mc image, which does not have it:\n%s",
+						name, c.Name, arg)
+				}
 			}
 		}
 	}

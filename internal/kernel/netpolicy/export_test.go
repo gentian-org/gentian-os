@@ -34,12 +34,21 @@ func TestExportJobNetworkPolicyIsScopedToExportPods(t *testing.T) {
 		t.Fatalf("pod selector = %v; must select only export pods", sel)
 	}
 	var namespaces []string
+	internet := false
 	for _, rule := range np.Spec.Egress {
 		for _, to := range rule.To {
 			if to.NamespaceSelector != nil {
 				namespaces = append(namespaces, to.NamespaceSelector.MatchLabels["kubernetes.io/metadata.name"])
 			}
+			if to.IPBlock != nil && to.IPBlock.CIDR == "0.0.0.0/0" {
+				internet = true
+			}
 		}
+	}
+	// Interim: the encrypt step installs age at runtime and a tenant-namespace
+	// restore fetches the MinIO client; a dedicated backup image retires this.
+	if !internet {
+		t.Error("missing internet egress for runtime tool installs")
 	}
 	want := map[string]bool{"gentian-infra-dev": false, meta.KernelNamespace: false}
 	for _, ns := range namespaces {

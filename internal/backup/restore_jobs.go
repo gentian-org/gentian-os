@@ -192,14 +192,23 @@ echo "restored ${DB}"`, shellSingleQuote(database), workDir)},
 // S3RestoreJob puts one app bucket's objects back.
 func S3RestoreJob(p JobParams, d Decryption, bucket string) *batchv1.Job {
 	artefact := "s3/" + bucket + ".tar.gz"
+	// A separate container because the mc image has no tar.
+	unpack := corev1.Container{
+		Name:    "unpack-bucket",
+		Image:   kernel.KeycloakProvisionerImage(),
+		Command: []string{"/bin/sh", "-c"},
+		Args: []string{fmt.Sprintf(`set -eu
+mkdir -p %[1]s/restore
+tar xzf %[1]s/bucket.tar.gz -C %[1]s/restore
+echo "unpacked bucket archive"`, workDir)},
+		VolumeMounts: []corev1.VolumeMount{{Name: "work", MountPath: workDir}},
+	}
 	restore := corev1.Container{
 		Name:    "s3-restore",
 		Image:   mcImage,
 		Command: []string{"/bin/sh", "-c"},
 		Args: []string{fmt.Sprintf(`set -eu
 mc alias set gentian "${MINIO_ENDPOINT}" "${MINIO_ACCESS_KEY}" "${MINIO_SECRET_KEY}"
-mkdir -p %[1]s/restore
-tar xzf %[1]s/bucket.tar.gz -C %[1]s/restore
 mc mb --ignore-existing "gentian/%[2]s"
 # --remove makes the bucket match the archive rather than merging into it: an
 # object deleted before the backup must not reappear, and one created since must
@@ -211,6 +220,7 @@ echo "restored bucket %[2]s"`, workDir, bucket)},
 	}
 	return restoreJob(p, []corev1.Container{
 		fetchAndDecrypt(d, p, artefact, "bucket.tar.gz"),
+		unpack,
 	}, restore, nil)
 }
 
@@ -222,9 +232,11 @@ echo "restored bucket %[2]s"`, workDir, bucket)},
 // would race its own writes.
 func VolumeRestoreJob(p JobParams, d Decryption, claim string) *batchv1.Job {
 	artefact := "volumes/" + claim + ".tar.gz"
+	// Alpine, not the mc image: this container only untars, and the mc image
+	// has no tar.
 	restore := corev1.Container{
 		Name:    "volume-restore",
-		Image:   mcImage,
+		Image:   kernel.KeycloakProvisionerImage(),
 		Command: []string{"/bin/sh", "-c"},
 		Args: []string{fmt.Sprintf(`set -eu
 # Deliberately not deleting the target first: excludePaths mean the archive is
