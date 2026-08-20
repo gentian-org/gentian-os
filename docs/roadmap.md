@@ -193,7 +193,7 @@ For the current baseline design of the system, refer to [architecture.md](archit
   - `[x]` Mount the tenant DKIM private keys into the Postfix Pod. *(Seeded from `postfix-dkim-tenants` into a persistent volume by an init container, ahead of the image's own generation.)*
   - `[ ]` Restart or reload Postfix when the tenant domain list changes, so a new tenant signs without waiting for an unrelated restart.
   - `[ ]` Surface the full DNS record — selector, `v=DKIM1` prefix and key — on tenant status rather than the bare key.
-  - `[ ]` Verify with a message to a major provider that the received headers report `dkim=pass` and `dmarc=pass`.
+  - `[x]` Verify with a message to a major provider that the received headers report `dkim=pass` and `dmarc=pass`. *(Gmail, 2026-08-20: `dkim=pass header.i=@corp.gtn.host header.s=mail`, `spf=pass` for 37.156.43.16, `dmarc=pass (p=QUARANTINE dis=NONE)` — the quarantine policy evaluated and applied no disposition.)*
   - `[ ]` Decide a rotation story, using a second selector so signing and publishing never disagree.
 
 ---
