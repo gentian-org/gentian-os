@@ -338,6 +338,16 @@ Until it is, **creating tenants is held back.**
 
 ## 13. Create your first tenant
 
+The commands below use the `gentian` CLI. Install it once, on whichever machine
+you administer clusters from:
+
+```bash
+make install-plugin      # kubectl-gentian + gtnctl into ~/.local/bin
+```
+
+The installer does not do this for you, and `--uninstall` does not remove it:
+one CLI serves every cluster you manage. Remove it with `make uninstall-plugin`.
+
 Scaffold the definition:
 
 ```bash

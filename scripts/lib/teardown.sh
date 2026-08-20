@@ -506,36 +506,6 @@ _delete_gentianos_api_scaffold() {
     success "Gentian OS API scaffold removed."
 }
 
-# Remove every host path install_app_catalogue wrote.
-#
-# Takes no argument: the list belongs to whoever installs it, so it comes from
-# _host_cli_paths rather than from the step. A caller that had to name the path
-# could only ever name one of the four.
-_remove_host_cli() {
-    local path rc=0
-    while IFS= read -r path; do
-        _remove_one_host_cli "${path}" || rc=1
-    done < <(_host_cli_paths)
-    return "${rc}"
-}
-
-_remove_one_host_cli() {
-    local path="$1"
-    # -L as well as -e: gtnctl is a symlink, and a dangling one still shadows
-    # the real command on PATH while failing -e.
-    if [[ ! -e "${path}" && ! -L "${path}" ]]; then
-        return 0
-    fi
-    if [[ -w "$(dirname "${path}")" ]]; then
-        rm -f "${path}"
-    elif sudo rm -f "${path}"; then
-        :
-    else
-        warn "Failed to remove ${path} — remove manually."
-        return 1
-    fi
-    success "Removed ${path}."
-}
 
 # =============================================================================
 # Purge — the data an uninstall deliberately keeps

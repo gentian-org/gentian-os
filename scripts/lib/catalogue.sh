@@ -9,62 +9,37 @@
 # 16. AppCatalogue CRD + kubectl-gentian plugin
 # =============================================================================
 install_app_catalogue() {
-    banner "AppCatalogue CRD + kubectl-gentian plugin"
+    banner "AppCatalogue CRD"
 
-    kubectl apply -f "${SCRIPT_DIR}/config/crd/gentianos.io_appcatalogues.yaml"
-    success "AppCatalogue CRD applied."
-
-    local plugin_src="${SCRIPT_DIR}/scripts/kubectl-gentian"
-    local plugin_dst="/usr/local/bin/kubectl-gentian"
-    local gtnctl_dst="/usr/local/bin/gtnctl"
-    # Destinations below are enumerated once more in _host_cli_paths, which
-    # D-07's destroy() removes. Adding one here means adding it there.
-
-    # Idempotency: skip if destination is identical to source (no sudo needed).
-    if [[ -f "$plugin_dst" ]] && cmp -s "$plugin_src" "$plugin_dst"; then
-        success "kubectl-gentian already up-to-date at ${plugin_dst}."
-    elif [[ -w /usr/local/bin ]]; then
-        install -m 755 "$plugin_src" "$plugin_dst"
-        success "kubectl-gentian installed to ${plugin_dst}."
-    else
-        info "Installing kubectl-gentian to ${plugin_dst} (sudo required)..."
-        if sudo install -m 755 "$plugin_src" "$plugin_dst"; then
-            success "kubectl-gentian installed to ${plugin_dst}."
-        else
-            warn "Failed to install kubectl-gentian — install manually:"
-            warn "  sudo install -m 755 ${plugin_src} ${plugin_dst}"
-        fi
-    fi
-
-    # The gtnctl symlink only where the plugin it points at exists.
-    if [[ -x "${plugin_dst}" ]]; then
-        if [[ -w /usr/local/bin ]]; then
-            ln -sf kubectl-gentian "${gtnctl_dst}"
-        else
-            sudo ln -sf kubectl-gentian "${gtnctl_dst}" || warn "Failed to link gtnctl -> kubectl-gentian at ${gtnctl_dst}"
-        fi
-    else
-        warn "Skipping ${gtnctl_dst} — kubectl-gentian is not installed there."
-    fi
-
-    # The ~/.local/bin mirror, always, and NOT conditional on the system copy.
+    # The CRD is not applied here.
     #
-    # /usr/local/bin needs root; ~/.local/bin does not, and usually precedes it
-    # on PATH. Returning early when the privileged install failed skipped the
-    # unprivileged one that would have worked — so a non-interactive install,
-    # where sudo cannot prompt, left no gtnctl anywhere and D-07 still reported
-    # satisfied.
+    # It used to be, from config/crd/ in this checkout — a file byte-identical to
+    # charts/gentian-os/crds/gentianos.io_appcatalogues.yaml, which the
+    # gentian-os Argo CD Application delivers with the operator chart at
+    # sync-wave 0. Two writers, one of them whatever tree the installer happened
+    # to run from.
     #
-    # The directory is created rather than required: `make install-plugin` does
-    # the same, and skipping the mirror because the directory does not exist yet
-    # is a distinction without a reason.
-    local user_bin="${HOME}/.local/bin"
-    if install -d "${user_bin}" 2>/dev/null && [[ -w "${user_bin}" ]]; then
-        install -m 755 "$plugin_src" "${user_bin}/kubectl-gentian"
-        ln -sf kubectl-gentian "${user_bin}/gtnctl"
-        success "kubectl-gentian and gtnctl (-> kubectl-gentian) installed to ${user_bin}."
-    else
-        warn "${user_bin} is not writable — run: make -C ${SCRIPT_DIR} install-plugin"
+    # Nothing local populates the catalogue either: AppProfiles arrive from
+    # gentian-apps through the gentian-catalogue ApplicationSet, and the
+    # operator's appstore controller creates the AppCatalogue singleton and
+    # rebuilds its status from them. So this step waits for what Argo brings.
+    local deadline=$((SECONDS + 120))
+    until kubectl get crd appcatalogues.gentianos.io >/dev/null 2>&1; do
+        if (( SECONDS > deadline )); then
+            warn "AppCatalogue CRD not present after 2m — check the gentian-os Application in Argo CD."
+            return 0
+        fi
+        sleep 5
+    done
+    success "AppCatalogue CRD is present (delivered by the operator chart)."
+
+    # The host CLI is NOT installed from here. Installing it meant a cluster
+    # installer asking for root on the machine it was run from, and an uninstall
+    # deleting the binary that drives every other cluster the operator manages.
+    # It is a host operation, so it has a host command.
+    if ! command -v kubectl-gentian >/dev/null 2>&1; then
+        info "The gentian CLI is not on PATH. Install it with:"
+        info "  make -C ${SCRIPT_DIR} install-plugin"
     fi
 }
 
@@ -74,13 +49,6 @@ install_app_catalogue() {
 # Both destinations are real. ~/.local/bin usually precedes /usr/local/bin in
 # PATH, so removing only the system copy leaves `gtnctl` still resolving to a
 # plugin for a cluster that no longer exists.
-_host_cli_paths() {
-    printf '%s\n' \
-        /usr/local/bin/kubectl-gentian \
-        /usr/local/bin/gtnctl \
-        "${HOME}/.local/bin/kubectl-gentian" \
-        "${HOME}/.local/bin/gtnctl"
-}
 
 # =============================================================================
 # 15. Install Argo CD ApplicationSet syncing catalogue bundles from gentian-apps

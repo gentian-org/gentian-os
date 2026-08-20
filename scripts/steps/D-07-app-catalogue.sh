@@ -2,31 +2,34 @@
 # step: D-07-app-catalogue
 # phase: applications
 # requires: D-06-appprofiles
-# provides: AppCatalogue CRD and the kubectl-gentian plugin
-# mutates: AppCatalogue objects, host CLI plugin
+# provides: the AppCatalogue CRD, confirmed present
+# mutates: AppCatalogue objects (on the reverse pass only)
+
+# This step no longer installs anything, on the cluster or on the host.
+#
+# The CRD ships with the operator chart, which the gentian-os Application syncs
+# at wave 0; applying it again from config/crd/ in this checkout made the
+# installer a second writer of an Argo-owned object. And the catalogue is
+# populated by neither: AppProfiles arrive from gentian-apps through the
+# gentian-catalogue ApplicationSet, and the operator's appstore controller
+# builds the AppCatalogue singleton from them.
+#
+# The kubectl-gentian/gtnctl install left with it. A cluster installer should not
+# be asking for root on the machine it runs from, and an uninstall should not
+# delete the binary that drives every other cluster the operator manages. It is
+# `make install-plugin` now, and GETTING-STARTED says so.
 
 check() {
     # The CRD, not an AppCatalogue object.
     #
     # This used to require at least one object to exist, which nothing in this
-    # repository creates — AppCatalogue objects arrive with the app catalogue, not
-    # with the installer, and are not in this step's `provides:`. So the condition
-    # could never be met and the step reported "not satisfied → applying" on every
-    # run forever, which reads as a failure it is not and is absent from the list of
-    # expected non-satisfied steps in GETTING-STARTED.md.
-    kubectl get crd appcatalogues.gentianos.io >/dev/null 2>&1 || return 1
-
-    # The host CLI is best-effort in apply(): it warns rather than failing when
-    # /usr/local/bin needs sudo and sudo is unavailable, so its absence must not
-    # make this step permanently unsatisfied either. When one IS installed it has
-    # to be current, or a stale plugin would survive an upgrade silently.
-    local dst
-    for dst in /usr/local/bin/kubectl-gentian "${HOME}/.local/bin/kubectl-gentian"; do
-        if [[ -f "${dst}" ]]; then
-            cmp -s "${SCRIPT_DIR}/scripts/kubectl-gentian" "${dst}" || return 1
-        fi
-    done
-    return 0
+    # repository creates — the operator's appstore controller does, in-cluster.
+    # So the condition could never be met and the step reported "not satisfied →
+    # applying" on every run forever, which reads as a failure it is not.
+    #
+    # It also used to compare the host binaries against the source tree, which
+    # made a cluster step's verdict depend on the operator's laptop.
+    kubectl get crd appcatalogues.gentianos.io >/dev/null 2>&1
 }
 
 apply() {
@@ -34,6 +37,8 @@ apply() {
 }
 
 destroy() {
+    # The objects, not the CRD: that belongs to the operator chart and goes when
+    # Argo CD removes it. Nothing here touches the host — use
+    # `make uninstall-plugin` for that, on the machine that wants it gone.
     kubectl delete appcatalogue --all -A --ignore-not-found=true 2>/dev/null || true
-    _remove_host_cli || true
 }

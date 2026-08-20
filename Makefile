@@ -22,7 +22,7 @@ CROSSPLANE_IMAGE ?= xpkg.crossplane.io/crossplane/crossplane:$(CROSSPLANE_CLI_VE
 KUBEBUILDER_ASSETS ?= /tmp/envtest-bins/k8s/1.32.0-linux-amd64
 export KUBEBUILDER_ASSETS
 
-.PHONY: all build generate manifests test lint docker-build clean install-plugin validate-steps gen-credentials gen-phase-table lint-phase-table check-credentials lint-cluster-config-keys lint-template-placeholders lint-portability lint-image-digests check-render-fixtures lint-resolvable lint-step-contracts lint-claim-defaults lint-password-schemes test-policy test-policy-openbao test-policy-authz verify-claim-applied
+.PHONY: all build generate manifests test lint docker-build clean install-plugin uninstall-plugin validate-steps gen-credentials gen-phase-table lint-phase-table check-credentials lint-cluster-config-keys lint-template-placeholders lint-portability lint-image-digests check-render-fixtures lint-resolvable lint-step-contracts lint-claim-defaults lint-password-schemes test-policy test-policy-openbao test-policy-authz verify-claim-applied
 
 all: generate build test
 
@@ -36,6 +36,21 @@ install-plugin:
 	install -m 0755 scripts/kubectl-gentian $(HOME)/.local/bin/kubectl-gentian
 	ln -sf kubectl-gentian $(HOME)/.local/bin/gtnctl
 	@echo "Installed kubectl-gentian and gtnctl (-> kubectl-gentian) to $(HOME)/.local/bin"
+	@command -v kubectl-gentian >/dev/null 2>&1 || \
+		echo "NOTE: $(HOME)/.local/bin is not on your PATH — add it to use 'kubectl gentian'."
+
+## Remove the kubectl-gentian plugin and gtnctl symlink from ~/.local/bin
+##
+## The installer no longer removes these on --uninstall: tearing one cluster
+## down should not disarm the CLI that manages the others. Removal is a host
+## operation, so it is a host command.
+uninstall-plugin:
+	rm -f $(HOME)/.local/bin/kubectl-gentian $(HOME)/.local/bin/gtnctl
+	@echo "Removed kubectl-gentian and gtnctl from $(HOME)/.local/bin"
+	@if [ -e /usr/local/bin/kubectl-gentian ] || [ -e /usr/local/bin/gtnctl ]; then \
+		echo "An older install left copies in /usr/local/bin. Remove them with:"; \
+		echo "  sudo rm -f /usr/local/bin/kubectl-gentian /usr/local/bin/gtnctl"; \
+	fi
 
 ## Run unit tests
 # internal/controller uses envtest whose watch goroutines conflict with -race;
