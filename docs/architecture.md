@@ -126,6 +126,36 @@ flowchart TD
 | **Operator** | Seed secrets; drive manifest bridge; patch `XTenant`; wait; shared-kernel side-effects; aggregate `Tenant.status` | Duplicate shell resources or `App` claims (Crossplane creates those) |
 | **Crossplane** | Reconcile `XTenant` + `App` claims into MRs (Jobs, Objects, ESO, `provider-helm` Releases) | Sync Git; interpret `Tenant.spec.apps` without the operator bridge |
 
+**Where the imperative/declarative line falls.** The matrix above says who does what. The rule
+behind it is one question:
+
+> Can the answer be written down before it happens?
+
+If it can, it is a statement about what should exist and **Crossplane owns it** — namespace shell
+and policy via `provider-kubernetes`, realms, clients, users, groups, identity providers and
+authentication flows via `provider-keycloak`, policies via `provider-vault`, charts via
+`provider-helm`. An object already existing is not a reason to keep it imperative: Crossplane adopts
+by `crossplane.io/external-name`, verified against this platform's live Keycloak realm.
+
+If it cannot, **the operator owns it**, and only for four reasons:
+
+1. **Discovery** — enumerating external state and acting per item found. Keycloak's *current* users
+   are in no spec, so a credential minted per user cannot be rendered from one.
+2. **Computation** — producing a value rather than restating one (`rsa.GenerateKey`, `hmac.New`,
+   `argon2.IDKey`). Compositions template; they do not compute.
+3. **Adoption gaps** — where a provider cannot safely take over an object that already exists.
+   `provider-vault`'s jwt `AuthBackend` is the standing example; see
+   `scripts/steps/B-07-openbao-oidc-mount.sh`.
+4. **Change-triggered action** — "restart when this changes" is a moment, not a thing.
+
+Observing Crossplane's work and aggregating it into `Tenant.status` is not a fifth reason; it is the
+operator being a controller. Eighteen `ensure*` steps provision nothing and exist only to wait and
+report.
+
+This is a boundary, not a description of how far a migration got. Where the two disagree — Keycloak
+Jobs that predate `provider-keycloak`, for instance — the boundary is right and the code has not
+caught up. See [plans/tenant-composition-cleanup.md](plans/tenant-composition-cleanup.md).
+
 **Why two tools, not one:** ArgoCD's drift detection, UI, and rollback
 work for *every* Kubernetes resource, not just MRs. Crossplane's
 reconcile loop handles the slow, eventually-consistent external APIs

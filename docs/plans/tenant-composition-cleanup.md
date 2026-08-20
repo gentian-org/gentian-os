@@ -82,12 +82,76 @@ set changes. Declarative systems express desired state, not "when this changes, 
 
 ## 6. What could move but has not
 
-The larger finding. `provider-keycloak` v2.19.0 is **installed and healthy**, with kinds for realms,
-clients, flows and protocol mappers. It is essentially unused: **zero** live managed resources from
-it in any API group, while the operator drives nine Keycloak Jobs for a single tenant.
+The larger finding. `provider-keycloak` v2.19.0 is **installed and healthy**, and covers everything
+the tenant path needs — realms, OIDC and SAML clients, users, groups, identity providers and
+authentication flows — across 32 API groups.
 
-So for identity, and for the fourteen steps that write Kubernetes objects, the obstacle is not
-capability. The providers are present. The work was simply never moved after Phase 3b stopped.
+It is *barely* used rather than unused: three live managed resources, all app-level. The
+`app-default` Composition creates an OIDC client per app, and both are `Ready`/`Synced`
+(`corp-app-store-me-keycloak-client`, `corp-nextcloud-base-ce-keycloak-client`). Meanwhile the
+tenant-level objects — realm, admin user, portal and Dovecot clients, groups, broker identity
+provider, browser flow — are still provisioned by Jobs.
+
+So app-level identity has already made the move, and it works. The obstacle for the rest is not
+capability, and no longer even an unproven path: it is that the work stopped when Phase 3b stopped.
+
+**Adoption is possible, and verified.** The obvious objection is that these objects already exist,
+so Crossplane would have to adopt rather than create them — the trap that keeps the OpenBao mount
+imperative, where `provider-vault` cannot adopt a mount it did not create and a partial create
+strands the path permanently. `provider-keycloak` does not have that problem. A `Realm` with
+`crossplane.io/external-name: corp` and `managementPolicies: ["Observe"]` adopted the live realm on
+first reconcile — `Ready: True`, `Synced: True`, 56 fields read back including
+`displayName: Gentian Corp` — and removing the probe left the realm untouched. Existing clients
+carry a Keycloak UUID as their external name, so the same import works for them given the id.
+
+## 6a. The boundary
+
+One test decides which side a step belongs on:
+
+> **Can the answer be written down before it happens?**
+
+If it can, it is a statement about what should exist, and Crossplane owns it. If it cannot — because
+it must first be asked for, computed, or reacted to — the operator owns it.
+
+**Crossplane owns everything that can be stated in advance.**
+
+| | Provider |
+|---|---|
+| Namespace shell, limits, quota, network policy | `provider-kubernetes` |
+| Realms, clients, users, groups, identity providers, authentication flows | `provider-keycloak` |
+| Policies and roles | `provider-vault` |
+| Charts | `provider-helm` |
+
+An object already existing is not a reason to keep it imperative: adoption by
+`crossplane.io/external-name` works and is verified above.
+
+**The operator owns four things, and only these.**
+
+1. **Discovery** — enumerate external state and act on what is found. Keycloak's *current* users are
+   not in any spec, so the credential minted per user cannot be rendered from one.
+2. **Computation** — produce a value rather than restate one: `rsa.GenerateKey`, `hmac.New`,
+   `argon2.IDKey`. Compositions template; they do not compute.
+3. **Adoption gaps** — where a provider cannot take over an object that already exists without
+   risking it. `provider-vault`'s jwt `AuthBackend` is the case: it creates the mount and its config
+   inseparably, cannot adopt, and a partial create strands the path permanently.
+4. **Change-triggered action** — "restart when this changes" is a moment, not a thing.
+
+**And one job that is not a category but is properly the operator's:** observing what Crossplane
+provisioned and aggregating it into a single answer. `Tenant.status` carries fourteen conditions;
+eighteen `ensure*` steps exist only to wait on Crossplane's own Jobs and report. That is the
+operator being a controller, not the migration being unfinished.
+
+**What the boundary is not.** It is not "Go is imperative, YAML is declarative". A level-triggered,
+idempotent Go loop is declarative in the sense that matters: kill it anywhere, run it again, and it
+converges. The boundary is about whether the answer can be *stated*, not about the language it is
+stated in.
+
+**Three of the four have known exits**, so the list is expected to shrink rather than hold:
+computation can move into something whose job is generating — OpenBao, or the
+`passwords.generators.external-secrets.io` already on the cluster; change-triggered restarts can
+become a Reloader annotation, which this repo already uses for `keycloak-idp`; adoption gaps are
+upstream bugs, not architecture. Discovery is the one that needs a different shape entirely —
+events instead of polling, which is roadmap 3.1.
 
 ## 7. Honest answer to the question
 
@@ -127,7 +191,9 @@ ensure* steps on TenantReconciler        63
   computes key material                   2
   enumerates external state               1   (syncMailAppPasswords)
 
-provider-keycloak                        installed, healthy, 0 live managed resources
+provider-keycloak                        installed, healthy, covers 32 API groups
+  live managed resources                  3  (2 app OIDC clients + 1 default scope)
+  adoption by external-name               verified on the live corp realm (Observe)
 Keycloak Jobs for one tenant (corp)       9
 resources tenant-default composes        ~10
 ```
