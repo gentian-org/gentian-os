@@ -409,6 +409,19 @@ For the current baseline design of the system, refer to [architecture.md](archit
   - `[ ]` Drop the app-catalogue `litellm` special-case in `kernel_gateway_routes.go`.
   - `[ ]` Add a CI check that fails when a catalogue app name appears in gentian-os source, so this class of drift is caught rather than reviewed for.
 
+### 2.16 A Bigger Plan Buys No More Users (**)
+* **Target Domain**: Resource Optimization & Tenant Isolation
+* **Context**: A tenant that grows from five users to five hundred runs byte-identical pods. Nothing in the tenant path autoscales — there is no HPA anywhere outside the vendored Redis chart, none exists on any cluster, every tenant Deployment is `replicas: 1`, and `AppProfile` has no replica or scaling field at all (its only `scale` references pause writes for a backup). What a plan sets is a **namespace** ResourceQuota, and what binds first under load is the **pod's own** limits: Nextcloud runs at `limits: 1 CPU / 1Gi` whether the workspace is on `base` or on `nodes-16`. So the plan gates how many apps may be installed, how much storage is available and the namespace ceiling — not how many people the workspace can serve. Buying more does not make Nextcloud faster or admit more concurrent sessions; what degrades is PHP-FPM worker saturation, database connections and Collabora document sessions, none of which the quota can see. The platform meanwhile already counts users: `MeteringWorker` reports `activeUserCount` per app from Keycloak group membership. User count is billed and capacity is billed, and nothing connects them. Storage is the one dimension that does track users, and a tenant will meet that limit honestly. See [resource-plans.md](design/resource-plans.md).
+* **Proposed Solution**: Make the plan set what an app *gets*, not only what the namespace *permits*. Vertical sizing first: a per-app requests/limits figure that scales with the tenant's plan, so reserved capacity is actually consumed by the thing the tenant is paying for, and it applies uniformly — including to PostgreSQL and everything else that cannot be replicated. Horizontal scaling is worth having but is not a platform-wide switch: Nextcloud tolerates it with shared storage and Redis sessions, Collabora tolerates it, a single-writer database does not, so it belongs per-app behind a capability the profile declares. metrics-server now serves `metrics.k8s.io`, so HPA is available for the first time; the usage sampler already records committed and actual consumption per tenant, which is the evidence a sizing rule should be derived from rather than guessed. §3.6 resolving an app's effective requirements is the prerequisite for all of it — a per-plan multiplier needs a baseline to multiply.
+* **Backlog Items**:
+  - `[ ]` Decide and record whether a plan scales apps vertically, horizontally, or both, and say so in `resource-plans.md` — today it silently does neither, which is the part that misleads.
+  - `[ ]` Add a per-app sizing field to `AppProfile` expressed relative to the plan, rather than absolute values that would have to be restated per tier.
+  - `[ ]` Apply the resolved sizing through the same path that writes a tenant's quotas, so one change of plan moves the ceiling and the workloads together.
+  - `[ ]` Raise the tenant `LimitRange` maximum (`4 CPU / 8Gi` per container) in step with the plan; it currently caps every container regardless of what was bought.
+  - `[ ]` Declare horizontal scalability per app in `AppProfile` and attach an HPA only where the app claims it, so nothing replicates a single-writer database.
+  - `[ ]` Derive the sizing rule from `tenant_resource_samples` rather than from a guess, once the series covers a period with real user growth in it.
+  - `[ ]` Warn in the Resources tab when a plan change alters no workload, so a tenant is never sold headroom that changes nothing for them.
+
 ---
 
 ## 3. User Management & Shell UI
