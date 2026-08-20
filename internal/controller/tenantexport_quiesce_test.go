@@ -406,3 +406,88 @@ func TestCompletedUnitIsNotRerunAfterItsJobDisappears(t *testing.T) {
 		t.Fatalf("the Job was recreated for an already-completed unit: %v", err)
 	}
 }
+
+// A PVC is only mountable from its own namespace. The first live volume
+// capture ran in the kernel namespace and sat Pending forever — holding its
+// app paused — because the claim it named exists only in the tenant
+// namespace. Volume units must therefore run where the claim lives, with the
+// staged credential copy, while every other unit stays in the kernel
+// namespace where the admin secrets are.
+func TestVolumeUnitsRunInTheTenantNamespaceWithStagedCredentials(t *testing.T) {
+	s := runtime.NewScheme()
+	if err := clientgoscheme.AddToScheme(s); err != nil {
+		t.Fatalf("add client-go scheme: %v", err)
+	}
+	if err := gentianov1alpha1.AddToScheme(s); err != nil {
+		t.Fatalf("add gentian scheme: %v", err)
+	}
+
+	tenant := &gentianov1alpha1.Tenant{ObjectMeta: metav1.ObjectMeta{Name: "demo"}}
+	export := &gentianov1alpha1.TenantExport{
+		ObjectMeta: metav1.ObjectMeta{Name: "nightly", Namespace: "tenant-demo"},
+		Status: gentianov1alpha1.TenantExportStatus{
+			Bundle: &gentianov1alpha1.BundleRef{Bucket: "demo-gentian-backup", Prefix: "nightly"},
+		},
+	}
+	pvc := &corev1.PersistentVolumeClaim{ObjectMeta: metav1.ObjectMeta{
+		Name:      "nextcloud-nextcloud",
+		Namespace: "tenant-demo",
+		Labels:    map[string]string{"gentianos.io/app": "nextcloud-base-ce"},
+	}}
+	profile := &gentianov1alpha1.AppProfile{
+		ObjectMeta: metav1.ObjectMeta{Name: "nextcloud-base-ce"},
+		Spec:       gentianov1alpha1.AppProfileSpec{Family: "nextcloud"},
+	}
+
+	c := fake.NewClientBuilder().WithScheme(s).WithObjects(tenant, export, pvc).Build()
+	r := &TenantExportReconciler{Client: c, Scheme: s,
+		Reconciler: &TenantReconciler{Client: c, Scheme: s}}
+
+	enc := backup.Encryption{
+		Mode:             gentianov1alpha1.ExportEncryptionPassphrase,
+		PassphraseSecret: "tx-nightly-passphrase",
+		PassphraseKey:    "passphrase",
+	}
+	units := r.captureUnits(tenant, "nextcloud-base-ce", profile, export, enc)
+
+	var volume *captureUnit
+	for i := range units {
+		u := &units[i]
+		if u.Kind == "volume" {
+			volume = u
+		} else if u.Job.Namespace != kernelNamespace {
+			t.Errorf("%s unit runs in %q, want the kernel namespace", u.Kind, u.Job.Namespace)
+		}
+	}
+	if volume == nil {
+		t.Fatal("no volume unit for a claim the app owns")
+	}
+	if volume.Job.Namespace != "tenant-demo" {
+		t.Fatalf("volume Job namespace = %q, want tenant-demo", volume.Job.Namespace)
+	}
+	staged := volumeUploadSecretName(export.Name)
+	var minioFromStaged, passphraseFromStaged bool
+	containers := append(append([]corev1.Container{},
+		volume.Job.Spec.Template.Spec.InitContainers...),
+		volume.Job.Spec.Template.Spec.Containers...)
+	for _, container := range containers {
+		for _, env := range container.Env {
+			if env.ValueFrom == nil || env.ValueFrom.SecretKeyRef == nil {
+				continue
+			}
+			from := env.ValueFrom.SecretKeyRef.Name
+			if env.Name == "MINIO_ENDPOINT" && from == staged {
+				minioFromStaged = true
+			}
+			if env.Name == backup.PassphraseEnvVar && from == staged {
+				passphraseFromStaged = true
+			}
+		}
+	}
+	if !minioFromStaged {
+		t.Error("volume Job does not read MinIO credentials from the staged copy")
+	}
+	if !passphraseFromStaged {
+		t.Error("volume Job does not read the passphrase from the staged copy")
+	}
+}

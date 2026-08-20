@@ -509,8 +509,11 @@ like this is all a scheduled backup requires.
 kubectl get tenantexport nightly-2026-08-18 -n tenant-demo \
   -o custom-columns=PHASE:.status.phase,BUNDLE:.status.bundle.prefix,PAUSED:.status.quiesced
 
-# The capture Jobs themselves
+# The capture Jobs themselves. Volume archives run in the tenant namespace —
+# a PVC is only mountable from its own namespace — everything else in the
+# kernel namespace beside the admin secrets.
 kubectl get jobs -n platform-kernel -l gentianos.io/tenant-export=nightly-2026-08-18
+kubectl get jobs -n tenant-demo -l gentianos.io/tenant-export=nightly-2026-08-18
 ```
 
 An app listed in `.status.quiesced` is **offline right now**. That is normal

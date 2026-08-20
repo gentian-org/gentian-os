@@ -87,6 +87,22 @@ type JobParams struct {
 	// value that means plaintext; Encryption.Validate rejects that before any
 	// Job is built.
 	Encryption Encryption
+	// UploadCredentialsSecret overrides where the MinIO credentials come from.
+	//
+	// Empty means the kernel's minio-admin Secret, which is right for every
+	// Job that runs in the kernel namespace. Volume Jobs cannot: a PVC is only
+	// mountable from its own namespace, so they run in the tenant namespace —
+	// where minio-admin does not exist and must not. The controller stages a
+	// short-lived copy there and names it here.
+	UploadCredentialsSecret string
+}
+
+// uploadSecretName resolves which Secret carries the MinIO credentials.
+func (p JobParams) uploadSecretName() string {
+	if p.UploadCredentialsSecret != "" {
+		return p.UploadCredentialsSecret
+	}
+	return MinIOAdminSecret
 }
 
 // PostgresDumpJob captures one PostgreSQL database as a custom-format dump.
@@ -380,6 +396,10 @@ func newJob(p JobParams, containers, initContainers []corev1.Container, extraVol
 					Labels: map[string]string{
 						meta.TenantLabel:    p.Tenant,
 						meta.ManagedByLabel: meta.ManagedByValue,
+						// On the pod, not only the Job: the tenant-namespace
+						// NetworkPolicy that lets a capture pod reach MinIO
+						// selects on this.
+						meta.ComponentLabel: "tenant-export",
 						ExportLabel:         p.Export,
 					},
 				},
@@ -417,14 +437,14 @@ func needsWorkDir(groups ...[]corev1.Container) bool {
 // bundleEnv gives a container the credentials to reach MinIO and the name of
 // the bucket it must ensure exists before writing.
 func bundleEnv(p JobParams) []corev1.EnvVar {
-	return append(minioAdminEnv(), corev1.EnvVar{Name: "BUNDLE_BUCKET", Value: p.Bucket})
+	return append(minioEnv(p.uploadSecretName()), corev1.EnvVar{Name: "BUNDLE_BUCKET", Value: p.Bucket})
 }
 
-func minioAdminEnv() []corev1.EnvVar {
+func minioEnv(secret string) []corev1.EnvVar {
 	return []corev1.EnvVar{
-		secretEnv("MINIO_ENDPOINT", MinIOAdminSecret, "endpoint"),
-		secretEnv("MINIO_ACCESS_KEY", MinIOAdminSecret, "accessKey"),
-		secretEnv("MINIO_SECRET_KEY", MinIOAdminSecret, "secretKey"),
+		secretEnv("MINIO_ENDPOINT", secret, "endpoint"),
+		secretEnv("MINIO_ACCESS_KEY", secret, "accessKey"),
+		secretEnv("MINIO_SECRET_KEY", secret, "secretKey"),
 	}
 }
 

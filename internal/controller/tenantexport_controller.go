@@ -234,6 +234,14 @@ func (r *TenantExportReconciler) captureApp(
 	}
 
 	units := r.captureUnits(tenant, appName, profile, export, encryption)
+	for _, unit := range units {
+		if unit.Kind == "volume" {
+			if err := r.ensureVolumeUploadSecret(ctx, export, tenant.Name, encryption); err != nil {
+				return ctrl.Result{}, fmt.Errorf("stage volume credentials: %w", err)
+			}
+			break
+		}
+	}
 	allDone := true
 	var pending []string
 	for _, unit := range units {
@@ -333,8 +341,19 @@ func (r *TenantExportReconciler) captureUnits(
 		})
 	}
 
+	// Volume Jobs run in the tenant namespace: a PVC is only mountable from
+	// its own namespace, and the first live volume capture hung Pending
+	// forever in the kernel namespace, holding its app paused the whole time.
+	// Their credentials come from the staged copy (see ensureVolumeUploadSecret),
+	// which also carries the passphrase for a passphrase-mode export.
+	volParams := params
+	volParams.Namespace = backup.TenantNamespace(tenant.Name)
+	volParams.UploadCredentialsSecret = volumeUploadSecretName(export.Name)
+	if volParams.Encryption.Mode == gentianov1alpha1.ExportEncryptionPassphrase {
+		volParams.Encryption.PassphraseSecret = volumeUploadSecretName(export.Name)
+	}
 	for i, claim := range r.appVolumes(tenant.Name, appName, profile, spec) {
-		p := params
+		p := volParams
 		p.Name = exportJobName(export.Name, appName, fmt.Sprintf("vol%d", i))
 		units = append(units, captureUnit{
 			Kind: "volume", Name: claim, Path: "volumes/" + claim + ".tar.gz",
@@ -389,7 +408,7 @@ func (r *TenantExportReconciler) ensureCaptureJob(
 	}
 
 	existing := &batchv1.Job{}
-	err := r.Get(ctx, types.NamespacedName{Name: unit.JobName, Namespace: kernelNamespace}, existing)
+	err := r.Get(ctx, types.NamespacedName{Name: unit.JobName, Namespace: unit.Job.Namespace}, existing)
 	switch {
 	case apierrors.IsNotFound(err):
 		if err := r.Create(ctx, unit.Job); err != nil && !apierrors.IsAlreadyExists(err) {
@@ -503,6 +522,9 @@ func (r *TenantExportReconciler) complete(
 	if err := r.discardPassphrase(ctx, export); err != nil {
 		return ctrl.Result{}, err
 	}
+	if err := r.discardVolumeUploadSecret(ctx, export); err != nil {
+		return ctrl.Result{}, err
+	}
 	export.Status.Phase = gentianov1alpha1.TenantExportPhaseReady
 	export.Status.CompletedAt = ptrNow()
 	tenantExportTotal.WithLabelValues(tenant.Name, string(gentianov1alpha1.TenantExportPhaseReady)).Inc()
@@ -572,9 +594,10 @@ func (r *TenantExportReconciler) finalize(
 	if err := r.resumeAll(ctx, export, tenantName); err != nil {
 		return ctrl.Result{}, err
 	}
-	// Best effort, as on the failure path: the passphrase Secret is transient
-	// state and must not be able to block deletion.
+	// Best effort, as on the failure path: staged Secrets are transient state
+	// and must not be able to block deletion.
 	_ = r.discardPassphrase(ctx, export)
+	_ = r.discardVolumeUploadSecret(ctx, export)
 
 	// Outstanding capture Jobs upload into the very prefix being deleted;
 	// stop them before the cleanup Job races them.
@@ -598,22 +621,25 @@ func bundleDeleteJobName(exportName string) string {
 	return exportJobName(exportName, "bundle", "rm")
 }
 
-// deleteExportJobs removes every capture Job belonging to this export.
+// deleteExportJobs removes every capture Job belonging to this export — in
+// the kernel namespace, and in the tenant namespace where volume Jobs run.
 func (r *TenantExportReconciler) deleteExportJobs(ctx context.Context, export *gentianov1alpha1.TenantExport) error {
-	jobs := &batchv1.JobList{}
-	if err := r.List(ctx, jobs,
-		client.InNamespace(kernelNamespace),
-		client.MatchingLabels{backup.ExportLabel: export.Name}); err != nil {
-		return fmt.Errorf("list capture jobs for %s: %w", export.Name, err)
-	}
 	keep := bundleDeleteJobName(export.Name)
-	for i := range jobs.Items {
-		if jobs.Items[i].Name == keep {
-			continue
+	for _, ns := range []string{kernelNamespace, export.Namespace} {
+		jobs := &batchv1.JobList{}
+		if err := r.List(ctx, jobs,
+			client.InNamespace(ns),
+			client.MatchingLabels{backup.ExportLabel: export.Name}); err != nil {
+			return fmt.Errorf("list capture jobs for %s in %s: %w", export.Name, ns, err)
 		}
-		if err := r.Delete(ctx, &jobs.Items[i],
-			client.PropagationPolicy(metav1.DeletePropagationBackground)); err != nil && !apierrors.IsNotFound(err) {
-			return fmt.Errorf("delete capture job %s: %w", jobs.Items[i].Name, err)
+		for i := range jobs.Items {
+			if jobs.Items[i].Name == keep {
+				continue
+			}
+			if err := r.Delete(ctx, &jobs.Items[i],
+				client.PropagationPolicy(metav1.DeletePropagationBackground)); err != nil && !apierrors.IsNotFound(err) {
+				return fmt.Errorf("delete capture job %s: %w", jobs.Items[i].Name, err)
+			}
 		}
 	}
 	return nil
@@ -704,9 +730,10 @@ func (r *TenantExportReconciler) fail(
 	export *gentianov1alpha1.TenantExport,
 	reason, message string,
 ) (ctrl.Result, error) {
-	// Best effort: a failure to tidy the passphrase must not mask the failure
-	// being reported, but it is still attempted on the way out.
+	// Best effort: a failure to tidy the staged secrets must not mask the
+	// failure being reported, but they are still attempted on the way out.
 	_ = r.discardPassphrase(ctx, export)
+	_ = r.discardVolumeUploadSecret(ctx, export)
 	export.Status.Phase = gentianov1alpha1.TenantExportPhaseFailed
 	export.Status.CompletedAt = ptrNow()
 	tenantExportTotal.WithLabelValues(

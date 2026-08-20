@@ -150,6 +150,9 @@ func (r *TenantRestoreReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 		return ctrl.Result{RequeueAfter: exportRequeueAfter}, r.persist(ctx, restore)
 	}
 
+	// The staged key material has done its work; keeping it would quietly
+	// defeat the escrow the identity secret is supposed to live in.
+	_ = r.discardStagedRestoreSecrets(ctx, restore)
 	restore.Status.Phase = gentianov1alpha1.TenantExportPhaseReady
 	restore.Status.CompletedAt = ptrNow()
 	restore.Status.PasswordResetRequired = true
@@ -190,6 +193,14 @@ func (r *TenantRestoreReconciler) restoreApp(
 	}
 
 	units := r.restoreUnits(tenant, appName, profile, restore, decryption)
+	for _, unit := range units {
+		if unit.Kind == "volume" {
+			if err := r.ensureRestoreVolumeSecret(ctx, restore); err != nil {
+				return ctrl.Result{}, fmt.Errorf("stage volume credentials: %w", err)
+			}
+			break
+		}
+	}
 	allDone := true
 	var pending []string
 	for _, unit := range units {
@@ -312,12 +323,27 @@ func (r *TenantRestoreReconciler) restoreUnits(
 		})
 	}
 
+	// Volume Jobs run in the tenant namespace — the PVC is only mountable
+	// there. MinIO credentials come from the staged copy; the decryption key
+	// is read from its original Secret, which the spec already requires to be
+	// in the tenant namespace.
+	volParams := params
+	volParams.Namespace = backup.TenantNamespace(tenant.Name)
+	volParams.UploadCredentialsSecret = restoreVolumeSecretName(restore.Name)
+	volD := d
+	if dec := restore.Spec.Decryption; dec != nil {
+		if d.Mode == gentianov1alpha1.ExportEncryptionPassphrase && dec.PassphraseSecretRef != nil {
+			volD.SecretName = dec.PassphraseSecretRef.Name
+		} else if dec.IdentitySecretRef != nil {
+			volD.SecretName = dec.IdentitySecretRef.Name
+		}
+	}
 	for i, claim := range r.Reconciler.appVolumes(tenant.Name, appName, profile, spec) {
-		p := params
+		p := volParams
 		p.Name = exportJobName(restore.Name, appName, fmt.Sprintf("vr%d", i))
 		units = append(units, captureUnit{
 			Kind: "volume", Name: claim, JobName: p.Name,
-			Job: backup.VolumeRestoreJob(p, d, claim),
+			Job: backup.VolumeRestoreJob(p, volD, claim),
 		})
 	}
 	return units
@@ -363,7 +389,7 @@ func (r *TenantRestoreReconciler) ensureRestoreJob(
 	unit captureUnit,
 ) (bool, error) {
 	existing := &batchv1.Job{}
-	err := r.Get(ctx, types.NamespacedName{Name: unit.JobName, Namespace: kernelNamespace}, existing)
+	err := r.Get(ctx, types.NamespacedName{Name: unit.JobName, Namespace: unit.Job.Namespace}, existing)
 	switch {
 	case apierrors.IsNotFound(err):
 		if err := r.Create(ctx, unit.Job); err != nil && !apierrors.IsAlreadyExists(err) {
@@ -525,11 +551,31 @@ func (r *TenantRestoreReconciler) failApp(
 	return r.fail(ctx, restore, "RestoreFailed", fmt.Sprintf("%s: %s", appName, message))
 }
 
+// stagedDecryptionSecretName names the kernel-namespace copy of the
+// operator-supplied key material (see stageDecryptionSecret).
+func stagedDecryptionSecretName(restoreName string) string {
+	return "trs-" + restoreName + "-key"
+}
+
+// discardStagedRestoreSecrets removes both staged copies: the decryption key
+// beside the kernel Jobs, and the volume credentials in the tenant namespace.
+// The kernel copy leaking past the restore was a real gap — the identity is
+// escrowed off-cluster precisely so the cluster does not hold it.
+func (r *TenantRestoreReconciler) discardStagedRestoreSecrets(ctx context.Context, restore *gentianov1alpha1.TenantRestore) error {
+	kernelErr := discardStagedSecret(ctx, r.Client, stagedDecryptionSecretName(restore.Name), kernelNamespace)
+	tenantErr := r.discardRestoreVolumeSecret(ctx, restore)
+	if kernelErr != nil {
+		return kernelErr
+	}
+	return tenantErr
+}
+
 func (r *TenantRestoreReconciler) fail(
 	ctx context.Context,
 	restore *gentianov1alpha1.TenantRestore,
 	reason, message string,
 ) (ctrl.Result, error) {
+	_ = r.discardStagedRestoreSecrets(ctx, restore)
 	restore.Status.Phase = gentianov1alpha1.TenantExportPhaseFailed
 	restore.Status.CompletedAt = ptrNow()
 	setRestoreCondition(restore, conditionExportComplete, metav1.ConditionFalse, reason, message)
@@ -626,7 +672,7 @@ func (r *TenantRestoreReconciler) stageDecryptionSecret(
 		return "", fmt.Errorf("decryption Secret %q has no non-empty key %q", sourceName, key)
 	}
 
-	name := "trs-" + restore.Name + "-key"
+	name := stagedDecryptionSecretName(restore.Name)
 	copied := &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      name,

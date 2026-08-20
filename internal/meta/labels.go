@@ -25,13 +25,14 @@ const (
 	ManagedByValue = "gentian-os"
 
 	// NetPolicyTypeLabel classifies operator-managed NetworkPolicies.
-	NetPolicyTypeLabel   = "gentianos.io/netpolicy-type"
-	NetPolicyBaseline    = "baseline"
-	NetPolicyKernel      = "kernel-access"
-	NetPolicyAppInternal = "app-internal-access"
-	NetPolicyAppEgress   = "app-egress"
-	NetPolicyContract    = "contract-allow"
-	NetPolicyTenantCache = "tenant-cache-access"
+	NetPolicyTypeLabel    = "gentianos.io/netpolicy-type"
+	NetPolicyBaseline     = "baseline"
+	NetPolicyKernel       = "kernel-access"
+	NetPolicyAppInternal  = "app-internal-access"
+	NetPolicyAppEgress    = "app-egress"
+	NetPolicyContract     = "contract-allow"
+	NetPolicyTenantCache  = "tenant-cache-access"
+	NetPolicyTenantExport = "tenant-export"
 
 	// ComponentLabel classifies pods within a tenant app (init jobs, sidecars, etc.).
 	ComponentLabel = "gentianos.io/component"

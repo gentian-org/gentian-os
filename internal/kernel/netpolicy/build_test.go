@@ -31,8 +31,10 @@ func TestBuildDesired_BaselineOnly(t *testing.T) {
 		Config:     netpolicy.DefaultConfig(),
 	}
 	policies := netpolicy.BuildDesired(in)
-	if len(policies) != 1 {
-		t.Fatalf("expected baseline policy only, got %d", len(policies))
+	// Baseline plus the tenant-export policy: export pods exist in every
+	// tenant namespace when a backup runs, whatever apps are installed.
+	if len(policies) != 2 {
+		t.Fatalf("expected baseline + tenant-export policies, got %d", len(policies))
 	}
 	if policies[0].Name != "tenant-isolation" {
 		t.Fatalf("expected tenant-isolation, got %q", policies[0].Name)
@@ -70,8 +72,8 @@ func TestBuildDesired_KernelAndContractPolicies(t *testing.T) {
 		Config:     netpolicy.DefaultConfig(),
 	}
 	policies := netpolicy.BuildDesired(in)
-	if len(policies) != 4 {
-		t.Fatalf("expected baseline + kernel + app-internal + contract policies, got %d", len(policies))
+	if len(policies) != 5 {
+		t.Fatalf("expected baseline + tenant-export + kernel + app-internal + contract policies, got %d", len(policies))
 	}
 	contractNP := policies[len(policies)-1]
 	if got := contractNP.Labels["gentianos.io/granted-capabilities"]; got != "webdav_read" {

@@ -24,6 +24,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
+	"github.com/gentian-org/gentian-os/internal/meta"
 )
 
 func params() JobParams {
@@ -433,5 +434,38 @@ func TestBundleDeleteScopesToThePrefixAndRefusesAnEmptyOne(t *testing.T) {
 	}
 	if !prefixed {
 		t.Error("BUNDLE_PREFIX env not wired from JobParams.Prefix")
+	}
+}
+
+// Volume Jobs run in the tenant namespace, so their credentials cannot come
+// from minio-admin — the controller stages a copy and names it in JobParams.
+// Every MinIO env var must follow that name, or the Job mounts a Secret that
+// does not exist where it runs and sits in CreateContainerConfigError.
+func TestVolumeArchiveUsesStagedCredentialsWhenNamed(t *testing.T) {
+	p := params()
+	p.Namespace = "tenant-demo"
+	p.UploadCredentialsSecret = "tx-nightly-vol-creds"
+	job := VolumeArchiveJob(p, "nextcloud-data", nil)
+
+	if job.Namespace != "tenant-demo" {
+		t.Fatalf("job namespace = %q", job.Namespace)
+	}
+	containers := append(append([]corev1.Container{},
+		job.Spec.Template.Spec.InitContainers...),
+		job.Spec.Template.Spec.Containers...)
+	for _, c := range containers {
+		for _, env := range c.Env {
+			ref := env.ValueFrom
+			if ref == nil || ref.SecretKeyRef == nil {
+				continue
+			}
+			if strings.HasPrefix(env.Name, "MINIO_") && ref.SecretKeyRef.Name != "tx-nightly-vol-creds" {
+				t.Errorf("%s/%s reads %s from %q, not the staged copy",
+					c.Name, env.Name, env.Name, ref.SecretKeyRef.Name)
+			}
+		}
+	}
+	if got := job.Spec.Template.Labels[meta.ComponentLabel]; got != "tenant-export" {
+		t.Errorf("pod component label = %q; the export NetworkPolicy selects on it", got)
 	}
 }
