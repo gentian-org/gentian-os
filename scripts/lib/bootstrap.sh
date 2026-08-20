@@ -672,6 +672,42 @@ for x in doc.get("items", []):
 }
 
 # =============================================================================
+# composed_permission_errors <xr-name> — composed resources the provider may not touch
+#
+# Prints one line per composed resource whose provider was refused by the API
+# server, and nothing at all otherwise. Used to end a wait early: a permission
+# error is not a slow resource, it is a resource that will never arrive.
+#
+# The distinction matters because both look identical from the XR. An XCluster
+# blocked on a missing RBAC rule reports "Unready resources" and stays there for
+# the whole timeout, and the sentence naming the missing verb sits on a composed
+# object nobody thought to read. Fifteen minutes of waiting, then a message that
+# was true in the first thirty seconds.
+# =============================================================================
+composed_permission_errors() {
+    local xr_name="$1"
+    kubectl get managed -l "crossplane.io/composite=${xr_name}" -o json 2>/dev/null |
+        python3 -c '
+import json, sys
+try:
+    doc = json.load(sys.stdin)
+except Exception:
+    sys.exit(0)
+for x in doc.get("items", []):
+    conds = {c["type"]: c for c in (x.get("status", {}).get("conditions") or [])}
+    msg = " ".join(((conds.get("Synced", {}).get("message") or "")
+                    + " " + (conds.get("Ready", {}).get("message") or "")).split())
+    # The API server phrases every RBAC denial this way, whatever the verb:
+    #   ... is forbidden: User "system:serviceaccount:..." cannot get resource ...
+    if "is forbidden" in msg or "cannot list resource" in msg or "cannot get resource" in msg:
+        kind = x.get("kind", "?")
+        name = x.get("metadata", {}).get("name", "?")
+        print(f"    {kind}/{name}")
+        print(f"      {msg[:260]}")
+'
+}
+
+# =============================================================================
 # wait_for_xcluster_ready <xr-name> <timeout> — wait, and say what is blocking
 #
 # A silent wait on a composite is the wrong shape: the XR is not Ready because
@@ -688,7 +724,7 @@ wait_for_xcluster_ready() {
     local secs="${timeout%s}"; secs="${secs%m}"
     case "${timeout}" in *m) secs=$(( secs * 60 )) ;; esac
 
-    local waited=0 interval=15 report_every=60 since_report=0
+    local waited=0 interval=15 report_every=60 since_report=0 perm_seen=0
     while (( waited < secs )); do
         if kubectl get "xcluster.gentianos.io/${xr_name}" \
             -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null | grep -q True; then
@@ -701,6 +737,27 @@ wait_for_xcluster_ready() {
             since_report=0
             info "  still waiting (${waited}s of ${secs}s) — not Ready:"
             report_unready_composed "${xr_name}"
+        fi
+
+        # A permission error does not resolve by waiting. Checked on every poll
+        # and required twice in a row, because RBAC that was applied moments ago
+        # takes a beat to reach the API server's caches and a single reading
+        # would turn that into a false verdict.
+        local perm
+        perm="$(composed_permission_errors "${xr_name}")"
+        if [[ -n "${perm}" ]]; then
+            if (( ${perm_seen:-0} )); then
+                echo ""
+                error "The provider is not permitted to manage these, so waiting cannot help:"
+                echo "${perm}" >&2
+                error "This is RBAC, not a slow resource. The provider's ServiceAccount is"
+                error "  missing a rule for the resource named above."
+                error "  Roles: crossplane/providers/provider-rbac.yaml"
+                return 1
+            fi
+            perm_seen=1
+        else
+            perm_seen=0
         fi
     done
 
