@@ -198,12 +198,40 @@ derivation.
 
 ## 8. External-Mode Tenants
 
-When `mail.mode: external`, the platform skips Postfix/Dovecot
-provisioning entirely and instead expects the customer to provide
-SMTP/IMAP host + credentials in the Tenant spec (referenced via a
-secret). The operator creates Secrets that point at those values; apps
-consume them through the same `existingSecret` references — they never
-know whether the SMTP server is the kernel's or someone else's.
+Two different settings carry the word "external", on two different objects, and
+conflating them is how this section used to read:
+
+| Setting | Scope | Decides |
+|---|---|---|
+| `mail.serviceMode` (`kernel` \| `external`) | The cluster, from its Claim | What the kernel **deploys** |
+| `Tenant.spec.mail.mode` (§2) | One tenant | Where that tenant's mail **goes** |
+
+**What the cluster setting changes.** With `mail.serviceMode: external`, Dovecot
+is not deployed — no ApplicationSet generates it, and the operator does not
+provision the per-realm Keycloak client, the domains ConfigMap or the LMTP
+registration that only a running Dovecot would use. **Postfix stays in both
+modes, deliberately.** It is the submission endpoint every app sends through, so
+keeping it in the path keeps the relay credential in exactly one place: apps get
+the same in-cluster SMTP host either way, and the credential for the upstream
+relay is configured once on Postfix rather than copied into every tenant.
+
+What is lost with Dovecot is *storage*: nothing accepts LMTP, so there is no
+mailbox and no IMAP. Outbound and app notification mail still work.
+
+**What the tenant setting changes.** `Tenant.spec.mail.mode: external` does not
+deploy or skip anything. The tenant supplies its own SMTP credentials as a
+Secret in the kernel namespace, named by `spec.mail.smtpCredentialsSecret`
+(required for this mode — the operator refuses the tenant with `MissingConfig`
+otherwise), and the operator copies it into the tenant namespace. Apps consume
+it through the same `existingSecret` reference they would use in `selfhosted`
+mode, so an app never knows whose SMTP server is on the other end. That is the
+point of the contract in §6: apps declare that they send mail, and nothing else.
+
+The two settings are independent. A `kernel` cluster can host an `external`
+tenant that relays through its own provider, and an `external` cluster still
+serves `selfhosted` tenants — they get operator-managed secrets and working
+submission, but no mailbox until the cluster switches to `kernel` and
+`./install.sh` is re-run, which converges (§2).
 
 ## 9. Operational View
 

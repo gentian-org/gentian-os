@@ -32,13 +32,18 @@ const (
 type MailMode string
 
 const (
-	// MailModeSelfhosted deploys a full Postfix+Dovecot stack per tenant.
+	// MailModeSelfhosted registers the tenant in the SHARED kernel Postfix and
+	// Dovecot — one stack per cluster, tenant-scoped by domain and maildir path.
+	// It does not deploy anything per tenant; whether Dovecot exists at all is
+	// the cluster's mail.serviceMode, not this field. See docs/design/mail.md §8.
 	MailModeSelfhosted MailMode = "selfhosted"
-	// MailModeExternal routes mail to an external provider via SMTP relay.
+	// MailModeExternal relays through the tenant's own provider, whose credentials
+	// it supplies as spec.mail.smtpCredentialsSecret. Required for this mode.
 	MailModeExternal MailMode = "external"
-	// MailModeTransportOnly delivers outbound mail only; no IMAP storage.
+	// MailModeTransportOnly registers the tenant in the shared Postfix relay for
+	// outbound only — no Dovecot registration, so no mailbox and no IMAP.
 	MailModeTransportOnly MailMode = "transport-only"
-	// MailModeDisabled disables all mail functionality for the tenant.
+	// MailModeDisabled provisions no mail for the tenant at all.
 	MailModeDisabled MailMode = "disabled"
 )
 
