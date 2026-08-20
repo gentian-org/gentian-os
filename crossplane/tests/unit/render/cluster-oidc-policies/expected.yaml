@@ -119,6 +119,8 @@ spec:
       data:
         certificates.trustAnchorSecret: ""
         llm.enabled: "false"
+        mail.egressHost: ""
+        mail.serviceMode: ""
         mail.smtpHost: ""
         node.ip: ""
         tenant.limitRange.default.cpu: 500m

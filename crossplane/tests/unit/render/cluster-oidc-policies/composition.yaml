@@ -748,6 +748,20 @@ spec:
                     # a second field could disagree with the mode that produced the anchor.
                     certificates.trustAnchorSecret: {{ if has (dig "certificates" "issuerMode" "acme-dns01" $spec) (list "self-signed" "private-ca") }}{{ dig "certificates" "caBundleSecretRef" "name" "gentian-root-ca-tls" $spec | quote }}{{ else }}""{{ end }}
                     mail.smtpHost: {{ default "" (dig "mail" "host" "" $spec) | quote }}
+                    # The mail stack this cluster runs, and the address it sends from.
+                    #
+                    # No default restated here. The XRD declares them and the API server
+                    # materialises them onto the composite before this renders — a claim naming
+                    # only serviceMode still arrives with port, ssl and starttls filled in — so a
+                    # default written here would be a second one, agreeing until the XRD moves.
+                    # Empty therefore means genuinely unset, not "nobody said".
+                    #
+                    # These exist so the operator can stop reading its own Helm value for them.
+                    # mail.serviceMode said kernel in the claim and external in the operator for
+                    # as long as the two were separate, which left Dovecot deployed but
+                    # unprovisioned and its ApplicationSet unrendered.
+                    mail.serviceMode: {{ dig "mail" "serviceMode" "" $spec | quote }}
+                    mail.egressHost: {{ dig "mail" "egressHost" "" $spec | quote }}
                     node.ip: {{ default "" (dig "nodeIp" "" $spec) | quote }}
                     llm.enabled: {{ default false (dig "llm" "enabled" false $spec) | quote }}
                     tenant.limitRange.default.cpu: {{ default "500m" (dig "tenantDefaults" "limitRange" "defaultCpu" "" $spec) | quote }}

@@ -82,12 +82,20 @@ KEY_LINE = re.compile(r'^\s{20,}([A-Za-z][A-Za-z0-9.]*): ')
 # `dig "data" "objects.json" "[]" $provCM`.
 CC_READ = re.compile(r'dig\s+"([A-Za-z][A-Za-z0-9.]*)"\s+\S+\s+\$(?:ccData|clusterConfigData)\b')
 
-# A Go read. Two forms, both anchored on the file naming the ConfigMap so this
-# does not collect keys from unrelated maps:
-#   clusterConfigLLMKey = "llm.enabled"     — the declared-constant form
-#   cm.Data["mail.serviceMode"]             — read inline
+# A Go read, recognised only in its declared-constant form:
+#
+#   clusterConfigLLMKey = "llm.enabled"
+#
+# Deliberately not a bare .Data["..."] match. Every Secret and ConfigMap in the
+# operator is read that way, so the looser pattern accused mail_reconciler.go of
+# reading 'tls.key' from this ConfigMap when it reads it from a DKIM Secret —
+# a lint that cries wolf about a key nobody touches is worse than one with a
+# narrower window.
+#
+# The constant is the convention already in use, and requiring it is what makes
+# the read visible from here at all: a key that reaches cm.Data[] by any other
+# route is invisible to this check and should be given a constant.
 GO_KEY_CONST = re.compile(r'clusterConfig\w*Key\s*=\s*"([A-Za-z][A-Za-z0-9.]*)"')
-GO_KEY_INLINE = re.compile(r'\.Data\[\s*"([A-Za-z][A-Za-z0-9.]*)"\s*\]')
 
 
 def producer_keys() -> set[str]:
@@ -140,9 +148,7 @@ def go_consumer_keys() -> dict[str, set[str]]:
         text = path.read_text()
         if CONFIGMAP_NAME not in text and "clusterConfigName" not in text:
             continue
-        found = set(GO_KEY_CONST.findall(text)) | {
-            k for k in GO_KEY_INLINE.findall(text) if "." in k
-        }
+        found = set(GO_KEY_CONST.findall(text))
         if found:
             out[str(path.relative_to(ROOT))] = found
     return out

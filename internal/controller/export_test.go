@@ -16,7 +16,11 @@ limitations under the License.
 
 package controller
 
+import "context"
+
 // DovecotDeployedForTest exposes the Dovecot gate to the external test package.
 // The predicate decides whether an entire provisioning path runs, and it fails
 // silently when wrong, so it is worth asserting directly.
-func (r *TenantReconciler) DovecotDeployedForTest() bool { return r.dovecotDeployed() }
+func (r *TenantReconciler) DovecotDeployedForTest(ctx context.Context) bool {
+	return r.dovecotDeployed(ctx)
+}

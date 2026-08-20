@@ -621,7 +621,7 @@ func TestDovecotDeployed(t *testing.T) {
 		{"selfhosted", false},
 	} {
 		r := &controller.TenantReconciler{MailServiceMode: tc.mode}
-		if got := r.DovecotDeployedForTest(); got != tc.want {
+		if got := r.DovecotDeployedForTest(context.Background()); got != tc.want {
 			t.Errorf("MailServiceMode=%q → %v, want %v", tc.mode, got, tc.want)
 		}
 	}

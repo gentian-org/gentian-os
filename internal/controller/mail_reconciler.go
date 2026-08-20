@@ -129,8 +129,14 @@ func mailSharedPostfixHost() string {
 // Empty means external, the safer default: configuring an absent Dovecot is
 // silent waste, while skipping a present one breaks IMAP authentication
 // visibly and is fixed by setting the value.
-func (r *TenantReconciler) dovecotDeployed() bool {
-	return r.MailServiceMode == "kernel"
+//
+// Read from the claim through gentian-cluster-config rather than from the
+// MailServiceMode field, which is a Helm value and was answering external on a
+// cluster whose claim said kernel — so Dovecot ran, unprovisioned, and the
+// ApplicationSet that would have managed it was never rendered. The field
+// remains as the fallback for a cluster whose ConfigMap cannot answer yet.
+func (r *TenantReconciler) dovecotDeployed(ctx context.Context) bool {
+	return clusterMailServiceMode(ctx, r.Client, r.MailServiceMode) == "kernel"
 }
 
 // ensureMail provisions the mail stack for the tenant according to spec.mail.mode.
@@ -242,7 +248,7 @@ func (r *TenantReconciler) ensureMailSelfhosted(ctx context.Context, tenant *gen
 	// a:<egressHost> rather than an ip4: literal, so the record follows the
 	// egress A record instead of having to be edited in two places whenever the
 	// address changes; the one that gets forgotten fails closed and silently.
-	if egress := envOrDefault("MAIL_EGRESS_HOST", ""); egress != "" {
+	if egress := clusterMailEgressHost(ctx, r.Client, envOrDefault("MAIL_EGRESS_HOST", "")); egress != "" {
 		tenant.Status.Mail.SPFRecord = "v=spf1 a:" + egress + " -all"
 	} else {
 		// No dedicated egress: the cluster sends from a shared address or relays
@@ -287,7 +293,7 @@ func (r *TenantReconciler) ensureMailSelfhosted(ctx context.Context, tenant *gen
 	// run one — its mailboxes are at the provider. Running them anyway left a
 	// Keycloak client per realm and a Job per reconcile behind, addressed to
 	// nothing.
-	if r.dovecotDeployed() {
+	if r.dovecotDeployed(ctx) {
 		// 4. Register the tenant domain in the shared Dovecot domains ConfigMap.
 		if err := r.ensureDovecotDomainConfig(ctx, tenant); err != nil {
 			return false, fmt.Errorf("register Dovecot domain config: %w", err)
@@ -738,7 +744,7 @@ func (r *TenantReconciler) ensureKernelMail(ctx context.Context) error {
 	//
 	// Step 1 above stays unconditional: accepting mail for the kernel domain is
 	// Postfix's registry, and Postfix runs in both modes.
-	if !r.dovecotDeployed() {
+	if !r.dovecotDeployed(ctx) {
 		return nil
 	}
 
