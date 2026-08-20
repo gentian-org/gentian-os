@@ -300,21 +300,6 @@ spec:
                         defaultRequestMemory:
                           type: string
                           default: 128Mi
-                    initJob:
-                      type: object
-                      properties:
-                        limitsCpu:
-                          type: string
-                          default: 500m
-                        limitsMemory:
-                          type: string
-                          default: 512Mi
-                        requestsCpu:
-                          type: string
-                          default: 100m
-                        requestsMemory:
-                          type: string
-                          default: 128Mi
 
                 # ── OIDC write path ──────────────────────────────────────
                 oidc:
