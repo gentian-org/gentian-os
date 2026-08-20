@@ -25,6 +25,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 
 	batchv1 "k8s.io/api/batch/v1"
@@ -116,6 +117,19 @@ func (r *TenantReconciler) ensureAppDeployment(ctx context.Context, tenant *gent
 	if !allReady {
 		r.setCondition(tenant, conditionAppsReady, metav1.ConditionFalse, "Provisioning", "Waiting for App claims to become Ready")
 		return ctrl.Result{RequeueAfter: 15 * time.Second}, nil
+	}
+
+	// Every claim is Ready, which is a statement about Helm, not about the
+	// app. Ask the workloads before repeating it — see app_workload_health.go
+	// for what a Ready claim is worth on its own.
+	stuck, err := r.reconcileAppWorkloadHealth(ctx, tenantNamespaceName(tenant))
+	if err != nil {
+		return ctrl.Result{}, fmt.Errorf("check app workload health: %w", err)
+	}
+	if len(stuck) > 0 {
+		r.setCondition(tenant, conditionAppsReady, metav1.ConditionFalse, "WorkloadCannotStart",
+			fmt.Sprintf("Installed, but cannot create pods: %s", strings.Join(stuck, "; ")))
+		return ctrl.Result{RequeueAfter: 60 * time.Second}, nil
 	}
 
 	r.setCondition(tenant, conditionAppsReady, metav1.ConditionTrue, "Provisioned", "All App claims are Ready")
