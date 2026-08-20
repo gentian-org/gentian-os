@@ -22,7 +22,7 @@ CROSSPLANE_IMAGE ?= xpkg.crossplane.io/crossplane/crossplane:$(CROSSPLANE_CLI_VE
 KUBEBUILDER_ASSETS ?= /tmp/envtest-bins/k8s/1.32.0-linux-amd64
 export KUBEBUILDER_ASSETS
 
-.PHONY: all build generate manifests test lint docker-build clean install-plugin validate-steps gen-credentials check-credentials lint-cluster-config-keys lint-template-placeholders lint-portability lint-image-digests check-render-fixtures lint-resolvable lint-step-contracts lint-claim-defaults lint-password-schemes test-policy test-policy-openbao test-policy-authz
+.PHONY: all build generate manifests test lint docker-build clean install-plugin validate-steps gen-credentials check-credentials lint-cluster-config-keys lint-template-placeholders lint-portability lint-image-digests check-render-fixtures lint-resolvable lint-step-contracts lint-claim-defaults lint-password-schemes test-policy test-policy-openbao test-policy-authz verify-claim-applied
 
 all: generate build test
 
@@ -303,6 +303,17 @@ test-policy-openbao:
 
 test-policy-authz:
 	@bash scripts/tools/verify-authz-model.sh
+
+## verify-claim-applied: the live cluster carries what its Cluster claim says.
+##
+## Not part of `test`, because it needs a cluster rather than a checkout. The
+## settings that reach ApplicationSets do so as Helm parameters the installer
+## writes once and never re-applies, so git and the claim can agree while the
+## cluster runs on something else — which is how mail.serviceMode came to say
+## kernel in the claim and external on the cluster, leaving Dovecot running
+## with no owner. Read-only: it reports, it does not reconcile.
+verify-claim-applied:
+	@bash scripts/tools/verify-claim-applied.sh
 
 # ---------------------------------------------------------------------------
 # E2E tests (live dev cluster required)
