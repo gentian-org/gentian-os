@@ -33,6 +33,7 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
@@ -64,6 +65,11 @@ const (
 	exportScratchLimit = "20Gi"
 
 	exportRequeueAfter = 5 * time.Second
+
+	// exportFinalizer holds a TenantExport until its bundle is gone from the
+	// object store. Without it "delete the backup" deletes the kubectl view of
+	// the backup and leaves the data — the part deletion is actually about.
+	exportFinalizer = "gentianos.io/tenantexport-bundle"
 )
 
 // TenantExportReconciler captures a tenant's data into a bundle.
@@ -98,6 +104,16 @@ func (r *TenantExportReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	if tenantName == "" {
 		return r.fail(ctx, export, "NotATenantNamespace",
 			fmt.Sprintf("namespace %q is not a tenant namespace", export.Namespace))
+	}
+
+	if !export.DeletionTimestamp.IsZero() {
+		return r.finalize(ctx, export, tenantName)
+	}
+	if !controllerutil.ContainsFinalizer(export, exportFinalizer) {
+		controllerutil.AddFinalizer(export, exportFinalizer)
+		if err := r.Update(ctx, export); err != nil {
+			return ctrl.Result{}, err
+		}
 	}
 
 	// Resuming anything left paused comes before every other decision,
@@ -525,6 +541,128 @@ func (r *TenantExportReconciler) buildManifest(
 // failApp resumes the app and fails the whole export. A partial bundle is left
 // in place: it is evidence, and deleting it would remove the only record of
 // what went wrong.
+// finalize is the deletion path: it aborts a running export and removes the
+// bundle from the object store before the CR is allowed to disappear.
+//
+// Resume comes first, unconditionally. Deleting the CR is the only abort a
+// tenant admin has, and this reconcile loop is the only thing that knows an
+// app is paused — without this, deleting a running export would freeze its
+// current app at zero replicas with nothing left to notice.
+func (r *TenantExportReconciler) finalize(
+	ctx context.Context,
+	export *gentianov1alpha1.TenantExport,
+	tenantName string,
+) (ctrl.Result, error) {
+	if !controllerutil.ContainsFinalizer(export, exportFinalizer) {
+		// An export from before the finalizer existed; nothing holds it.
+		return ctrl.Result{}, nil
+	}
+	logger := log.FromContext(ctx).WithName("tenantexport")
+
+	if err := r.resumeAll(ctx, export, tenantName); err != nil {
+		return ctrl.Result{}, err
+	}
+	// Best effort, as on the failure path: the passphrase Secret is transient
+	// state and must not be able to block deletion.
+	_ = r.discardPassphrase(ctx, export)
+
+	// Outstanding capture Jobs upload into the very prefix being deleted;
+	// stop them before the cleanup Job races them.
+	if err := r.deleteExportJobs(ctx, export); err != nil {
+		return ctrl.Result{}, err
+	}
+
+	done, err := r.ensureBundleDeleted(ctx, export, tenantName, logger)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+	if !done {
+		return ctrl.Result{RequeueAfter: exportRequeueAfter}, nil
+	}
+	controllerutil.RemoveFinalizer(export, exportFinalizer)
+	return ctrl.Result{}, r.Update(ctx, export)
+}
+
+// bundleDeleteJobName names the cleanup Job; deleteExportJobs spares it.
+func bundleDeleteJobName(exportName string) string {
+	return exportJobName(exportName, "bundle", "rm")
+}
+
+// deleteExportJobs removes every capture Job belonging to this export.
+func (r *TenantExportReconciler) deleteExportJobs(ctx context.Context, export *gentianov1alpha1.TenantExport) error {
+	jobs := &batchv1.JobList{}
+	if err := r.List(ctx, jobs,
+		client.InNamespace(kernelNamespace),
+		client.MatchingLabels{backup.ExportLabel: export.Name}); err != nil {
+		return fmt.Errorf("list capture jobs for %s: %w", export.Name, err)
+	}
+	keep := bundleDeleteJobName(export.Name)
+	for i := range jobs.Items {
+		if jobs.Items[i].Name == keep {
+			continue
+		}
+		if err := r.Delete(ctx, &jobs.Items[i],
+			client.PropagationPolicy(metav1.DeletePropagationBackground)); err != nil && !apierrors.IsNotFound(err) {
+			return fmt.Errorf("delete capture job %s: %w", jobs.Items[i].Name, err)
+		}
+	}
+	return nil
+}
+
+// ensureBundleDeleted runs the bundle-cleanup Job and reports when the
+// bundle is gone. A cleanup Job that exhausts its retries releases the CR
+// anyway: an undeletable object is the worse failure, and the log names the
+// bucket and prefix the leftover objects can be removed from by hand.
+func (r *TenantExportReconciler) ensureBundleDeleted(
+	ctx context.Context,
+	export *gentianov1alpha1.TenantExport,
+	tenantName string,
+	logger logr.Logger,
+) (bool, error) {
+	bundle := export.Status.Bundle
+	if bundle == nil || bundle.Bucket == "" || bundle.Prefix == "" {
+		// Nothing was ever written; there is nothing to clean.
+		return true, nil
+	}
+
+	name := bundleDeleteJobName(export.Name)
+	existing := &batchv1.Job{}
+	err := r.Get(ctx, types.NamespacedName{Name: name, Namespace: kernelNamespace}, existing)
+	switch {
+	case apierrors.IsNotFound(err):
+		job := backup.BundleDeleteJob(backup.JobParams{
+			Namespace:    kernelNamespace,
+			Name:         name,
+			Tenant:       tenantName,
+			App:          "bundle",
+			Export:       export.Name,
+			Bucket:       bundle.Bucket,
+			Prefix:       bundle.Prefix,
+			BackoffLimit: exportCaptureBackoffLimit,
+		})
+		if err := r.Create(ctx, job); err != nil && !apierrors.IsAlreadyExists(err) {
+			return false, fmt.Errorf("create bundle cleanup Job %s: %w", name, err)
+		}
+		return false, nil
+	case err != nil:
+		return false, err
+	}
+
+	switch {
+	case jobIsComplete(existing):
+	case jobIsFailed(existing):
+		logger.Error(nil, "bundle cleanup failed; releasing the export anyway - remove the objects by hand",
+			"export", export.Name, "bucket", bundle.Bucket, "prefix", bundle.Prefix, "job", name)
+	default:
+		return false, nil
+	}
+	if err := r.Delete(ctx, existing,
+		client.PropagationPolicy(metav1.DeletePropagationBackground)); err != nil && !apierrors.IsNotFound(err) {
+		return false, err
+	}
+	return true, nil
+}
+
 func (r *TenantExportReconciler) failApp(
 	ctx context.Context,
 	export *gentianov1alpha1.TenantExport,

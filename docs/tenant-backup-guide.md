@@ -143,6 +143,9 @@ Worth checking on the entry:
 
 If a backup shows **Failed**, the reason is on the entry. The most common one on
 a first attempt is that no backup key is configured — see [§1](#1-before-your-first-backup).
+A failed backup is safe to delete from the Backup tab; whatever partial data it
+wrote is removed with it. Deleting a **Ready** backup removes its stored bundle
+permanently — there is no undo, so treat it like shredding the only copy.
 
 > **An untested backup is a hypothesis.** Before you rely on this, ask your
 > cluster administrator to run a restore drill on a scratch workspace. It is the

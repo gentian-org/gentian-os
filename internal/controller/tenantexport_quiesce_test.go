@@ -21,14 +21,19 @@ import (
 	"testing"
 
 	appsv1 "k8s.io/api/apps/v1"
+	batchv1 "k8s.io/api/batch/v1"
+	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
+	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
+	"github.com/gentian-org/gentian-os/internal/backup"
 )
 
 func quiesceScheme(t *testing.T) *runtime.Scheme {
@@ -269,5 +274,89 @@ func TestFailedCaptureResumesAppAndStampsQuiesceEnd(t *testing.T) {
 	}
 	if got := *getDeployment(t, c, "app-store-me").Spec.Replicas; got != 2 {
 		t.Fatalf("replicas = %d, want the memoed 2", got)
+	}
+}
+
+// Deleting an export is the only abort a tenant admin has, and it must leave
+// nothing behind: paused apps resumed, capture Jobs gone, the bundle removed
+// from the object store — and only then the CR itself.
+func TestDeletingAnExportResumesAppsCleansBundleThenReleases(t *testing.T) {
+	s := runtime.NewScheme()
+	if err := clientgoscheme.AddToScheme(s); err != nil {
+		t.Fatalf("add client-go scheme: %v", err)
+	}
+	if err := gentianov1alpha1.AddToScheme(s); err != nil {
+		t.Fatalf("add gentian scheme: %v", err)
+	}
+
+	export := &gentianov1alpha1.TenantExport{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:       "export-x",
+			Namespace:  "tenant-demo",
+			Finalizers: []string{exportFinalizer},
+		},
+		Status: gentianov1alpha1.TenantExportStatus{
+			Phase:    gentianov1alpha1.TenantExportPhaseRunning,
+			Quiesced: []string{"app-store-me"},
+			Bundle: &gentianov1alpha1.BundleRef{
+				Bucket: "demo-gentian-backup",
+				Prefix: "export-x",
+			},
+		},
+	}
+	paused := deployment("app-store-me", "app-store-me", 0)
+	paused.Annotations = map[string]string{replicaMemoAnnotation: "1"}
+	captureJob := &batchv1.Job{ObjectMeta: metav1.ObjectMeta{
+		Name:      "tx-export-x-app-store-me-pg",
+		Namespace: kernelNamespace,
+		Labels:    map[string]string{backup.ExportLabel: "export-x"},
+	}}
+
+	c := fake.NewClientBuilder().WithScheme(s).
+		WithObjects(export, paused, captureJob).
+		WithStatusSubresource(export).Build()
+	r := &TenantExportReconciler{Client: c, Scheme: s,
+		Reconciler: &TenantReconciler{Client: c, Scheme: s}}
+	ctx := context.Background()
+	req := ctrl.Request{NamespacedName: types.NamespacedName{Name: "export-x", Namespace: "tenant-demo"}}
+
+	if err := c.Delete(ctx, export); err != nil {
+		t.Fatalf("delete export: %v", err)
+	}
+
+	// First pass: resume the app, kill the capture Job, start the cleanup Job.
+	if _, err := r.Reconcile(ctx, req); err != nil {
+		t.Fatalf("reconcile 1: %v", err)
+	}
+	if got := *getDeployment(t, c, "app-store-me").Spec.Replicas; got != 1 {
+		t.Fatalf("replicas = %d, want resumed 1", got)
+	}
+	if err := c.Get(ctx, types.NamespacedName{Name: captureJob.Name, Namespace: kernelNamespace}, &batchv1.Job{}); err == nil {
+		t.Fatal("capture Job survived deletion; it would upload into the prefix being removed")
+	}
+	cleanup := &batchv1.Job{}
+	cleanupName := bundleDeleteJobName("export-x")
+	if err := c.Get(ctx, types.NamespacedName{Name: cleanupName, Namespace: kernelNamespace}, cleanup); err != nil {
+		t.Fatalf("cleanup Job not created: %v", err)
+	}
+
+	// The CR must survive until the bundle is actually gone.
+	if err := c.Get(ctx, req.NamespacedName, &gentianov1alpha1.TenantExport{}); err != nil {
+		t.Fatalf("export released before the bundle was removed: %v", err)
+	}
+
+	cleanup.Status.Conditions = []batchv1.JobCondition{{
+		Type: batchv1.JobComplete, Status: corev1.ConditionTrue,
+	}}
+	if err := c.Status().Update(ctx, cleanup); err != nil {
+		t.Fatalf("mark cleanup complete: %v", err)
+	}
+
+	// Second pass: cleanup done, finalizer removed, CR gone.
+	if _, err := r.Reconcile(ctx, req); err != nil {
+		t.Fatalf("reconcile 2: %v", err)
+	}
+	if err := c.Get(ctx, req.NamespacedName, &gentianov1alpha1.TenantExport{}); !apierrors.IsNotFound(err) {
+		t.Fatalf("export still present after cleanup completed: %v", err)
 	}
 }

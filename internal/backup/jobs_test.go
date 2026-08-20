@@ -386,6 +386,7 @@ func TestNoScriptWrapsAQuotedValueInDoubleQuotes(t *testing.T) {
 		"maria-restore": MariaDBRestoreJob(p, recipientDecryption(), "demo_app"),
 		"s3-restore":    S3RestoreJob(p, recipientDecryption(), "demo-bucket"),
 		"realm-import":  RealmImportJob(p, recipientDecryption(), "demo"),
+		"bundle-delete": BundleDeleteJob(p),
 	}
 	for name, job := range jobs {
 		containers := append(append([]corev1.Container{},
@@ -399,5 +400,38 @@ func TestNoScriptWrapsAQuotedValueInDoubleQuotes(t *testing.T) {
 				}
 			}
 		}
+	}
+}
+
+// Deleting a bundle must only ever be able to delete THAT bundle. The two
+// properties that make rm --recursive safe to automate: the prefix is part of
+// the target (never the bare bucket), and an empty prefix refuses instead of
+// widening the glob to everything the tenant has.
+func TestBundleDeleteScopesToThePrefixAndRefusesAnEmptyOne(t *testing.T) {
+	job := BundleDeleteJob(params())
+	script := job.Spec.Template.Spec.Containers[0].Args[0]
+
+	if !strings.Contains(script, `[ -n "${BUNDLE_PREFIX}" ]`) {
+		t.Error("no empty-prefix guard: an export with no prefix would rm the whole bucket")
+	}
+	if !strings.Contains(script, `"gentian/${BUNDLE_BUCKET}/${BUNDLE_PREFIX}/"`) {
+		t.Error("rm target is not scoped to the bundle prefix")
+	}
+	if strings.Contains(script, `rm --recursive --force "gentian/${BUNDLE_BUCKET}"`) {
+		t.Error("script can address the bare bucket")
+	}
+	// A bundle that was never written (capture failed before first upload)
+	// must delete cleanly, or failed exports become undeletable.
+	if !strings.Contains(script, "nothing to delete") {
+		t.Error("missing absent-bundle tolerance")
+	}
+	var prefixed bool
+	for _, env := range job.Spec.Template.Spec.Containers[0].Env {
+		if env.Name == "BUNDLE_PREFIX" && env.Value == params().Prefix {
+			prefixed = true
+		}
+	}
+	if !prefixed {
+		t.Error("BUNDLE_PREFIX env not wired from JobParams.Prefix")
 	}
 }

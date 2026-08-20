@@ -313,6 +313,35 @@ echo "uploaded %[3]s"`, local, target, artefact)},
 	return newJob(p, []corev1.Container{upload}, producers, extraVolumes)
 }
 
+// BundleDeleteJob removes a bundle's objects from the backup bucket.
+//
+// It deletes the export's prefix, never the bucket: the bucket holds every
+// bundle the tenant has, and deleting one backup must not be able to take the
+// rest with it. An empty prefix is refused for the same reason — rm
+// --recursive on the bare bucket is exactly the command the guard exists to
+// make unwritable.
+func BundleDeleteJob(p JobParams) *batchv1.Job {
+	del := corev1.Container{
+		Name:    "bundle-delete",
+		Image:   mcImage,
+		Command: []string{"/bin/sh", "-c"},
+		Args: []string{`set -eu
+[ -n "${BUNDLE_PREFIX}" ] || { echo "refusing to delete: empty bundle prefix" >&2; exit 1; }
+mc alias set gentian "${MINIO_ENDPOINT}" "${MINIO_ACCESS_KEY}" "${MINIO_SECRET_KEY}"
+# Nothing there is success, not failure: the bundle may never have been
+# written (a capture that failed before its first upload), the bucket may not
+# exist yet, or a previous attempt already removed the objects.
+if ! mc stat "gentian/${BUNDLE_BUCKET}/${BUNDLE_PREFIX}/" >/dev/null 2>&1; then
+  echo "no objects under ${BUNDLE_BUCKET}/${BUNDLE_PREFIX} - nothing to delete"
+  exit 0
+fi
+mc rm --recursive --force "gentian/${BUNDLE_BUCKET}/${BUNDLE_PREFIX}/"
+echo "deleted bundle ${BUNDLE_BUCKET}/${BUNDLE_PREFIX}"`},
+		Env: append(bundleEnv(p), corev1.EnvVar{Name: "BUNDLE_PREFIX", Value: p.Prefix}),
+	}
+	return newJob(p, []corev1.Container{del}, nil, nil)
+}
+
 func newJob(p JobParams, containers, initContainers []corev1.Container, extraVolumes []corev1.Volume) *batchv1.Job {
 	ttl := meta.ProvisioningJobTTLSeconds
 	backoff := p.BackoffLimit

@@ -518,6 +518,21 @@ mid-export and worth investigating if it persists: the operator resumes an app
 as soon as its capture finishes, and resumes anything it finds paused on every
 reconcile, including after a restart.
 
+### Deleting one
+
+Tenant admins delete backups from the Backup tab; this is the same operation:
+
+```bash
+kubectl delete tenantexport nightly-2026-08-18 -n tenant-demo
+```
+
+A finalizer holds the resource until a cleanup Job has removed the bundle's
+objects from the bucket — a deleted backup is gone from storage, not merely
+from this list. Deleting a **Running** export is the abort mechanism: paused
+apps are resumed and outstanding capture Jobs are stopped first. If the
+cleanup Job itself fails, the export is released anyway and the operator log
+names the bucket and prefix left behind.
+
 ### Reading a bundle
 
 The bundle is a prefix in the tenant's backup bucket. Every artefact is
