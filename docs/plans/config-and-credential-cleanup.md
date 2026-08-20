@@ -1190,7 +1190,7 @@ So: to change a phase's state, edit that phase's section. `make gen-phase-table`
 | 2 | Built | A clean-room review by someone other than the author |
 | 3 | Built | `oci-registry` and `smtp` have no test; none of the validators is automated |
 | 4 | 4a exercised, 4b half | Mail, LLM, portal and tenant reconcile still name applications. Blocked on the reconciler audit (§15.2) |
-| 5 | Exercised | `kernel/argocd/repos/*.yaml` and the infra chart registry are not yet claims |
+| 5 | Exercised | `kernel/argocd/repos/*.yaml` and the infra chart registry are not yet claims — which is no longer only tidiness: a tenant admin's Repositories view lists what *is* a claim, so the cluster's app catalogue is invisible there. The catalogue arrives through the `gentian-catalogue` ApplicationSet instead, and nothing a tenant can see says so |
 | 6 | Exercised | Both criteria this row was waiting on are verified in §15.1 — ESO's live verdict, and the unsatisfied→satisfied transition unblocking composition with nothing re-run. The row had not been updated to say so |
 | 7 | Exercised | The live OIDC write path works. It was broken three independent ways — wrong mount, wrong role type, missing audience (§15.4) — and a token exchange has now completed against the fixed path, which is the criterion this row waited on longest. The audit device is still unobserved |
 | 8 | Exercised | The service exchanges a caller's token and serves the catalogue. A refusal now names the failed check — audience, claims, role type, missing role, unmounted backend — and logs OpenBao's own words; the first real use of that log found the tenant fault below in one line, after three rounds of reading code had been needed for the previous ones. Its own ServiceAccount policy is still uninspected |
@@ -1554,7 +1554,7 @@ come back empty.
 
 ### Phase 5 — `XRepository`
 
-**State — Exercised.** `kernel/argocd/repos/*.yaml` and the infra chart registry are not yet claims
+**State — Exercised.** `kernel/argocd/repos/*.yaml` and the infra chart registry are not yet claims — which is no longer only tidiness: a tenant admin's Repositories view lists what *is* a claim, so the cluster's app catalogue is invisible there. The catalogue arrives through the `gentian-catalogue` ApplicationSet instead, and nothing a tenant can see says so
 
 **Status: implemented.** `crossplane/xrds/repository.yaml` and
 `crossplane/compositions/repository-default.yaml`, applied by `A-02-crossplane-providers`, with
@@ -2844,6 +2844,26 @@ and a placeholder in a Helm template is indistinguishable from ordinary text. Th
 fix is the one `lint-cluster-config-keys.py` already applies to a different agreement — a lint that
 fails on `${UPPER_CASE}` inside `charts/**` and `kernel/**` templates, excluding shell bodies in
 ConfigMaps. It does not exist yet.
+
+**A default that is also the weaker guard.** `Repository.spec.role` decided how the API protects a
+change — `deployments` asks for a retype unconditionally, `apps` only when the URL also moves — and
+it defaulted to `apps`. `B-09` never set it, so the cluster's own source of truth sat labelled as an
+optional app catalogue and was guarded as one. Not a wrong badge: the confirmation branches on that
+field.
+
+The value is now required with no default, so an omission is an admission error rather than a quiet
+downgrade. The general form is worth carrying: **when two values are not equally safe, the safer one
+has to be the one you cannot get by saying nothing.**
+
+Both render fixtures omitted `role` and passed, because `crossplane render` does not enforce
+`required` — admission does. A schema case now covers it. That is the second time a fixture has
+agreed with a defect (the first was a fake OpenBao matching the wrong mount), and the shape is the
+same: a test exercising the path the code takes rather than the one a cluster takes.
+
+**The tenant path reads.** A tenant administrator's exchange, scoping and Repositories view work on
+a real cluster — signature, audience and the groups claim all pass, against that tenant's own mount.
+The write half is unconfirmed: the console listed repositories and offered no way to add one, since
+`saveRepository` had never been called with an input. That is fixed and undeployed.
 
 **The credential manager's ServiceAccount policy is uninspected.** Phase 8, criterion 7. The
 service has no OpenBao identity by construction, but "by construction" is an argument, not an
