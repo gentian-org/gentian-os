@@ -211,17 +211,29 @@ For the current baseline design of the system, refer to [architecture.md](archit
 
 ---
 
-### 1.22 Kernel Settings Reach the Cluster Through the Installer, Not the Claim (**)
+### 1.22 Settings That Still Reach the Cluster Without Passing Through the Claim (**)
 * **Target Domain**: Platform Configuration
-* **Context**: `spec.mail.egressHost` is declared on the Cluster XRD and no Composition reads it. The value reaches Postfix only as a Helm parameter the installer sets on the `gentian-appsets` Application, and reaches the operator through a different key — `mailEgressHost` — in the cluster's deployments values file. Two sources for one fact, and the claim, which is what an administrator would edit, is not either of them. The failure mode is drift that git cannot show: this cluster's claim had said `egressHost: out.gtn.host` all along while the live Application carried no such parameter, because it was applied before the parameter existed. Postfix therefore greeted as `mail.gtn.host` while its address reversed to `out.gtn.host`, and nothing pinned it to the node holding the floating IP — a reschedule would have moved mail to another address and invalidated SPF and the PTR together. Both are corrected on this cluster; the mechanism that let them diverge is not. The same mechanism hides a live example: the claim says `mail.serviceMode: kernel` while the cluster runs `external`, so the operator skips Dovecot provisioning entirely.
-* **Proposed Solution**: Have the Cluster composition carry these settings through, so the claim is the single source and the installer parameters can go. Failing that, make the drift visible — a check that compares the claim against what the live Applications actually carry, so "git says X" and "the cluster does X" cannot quietly differ.
+* **Context**: The claim is the source, read as a file before the cluster exists and as `gentian-cluster-config` afterwards. The mail settings now travel that way: the Cluster composition writes `mail.serviceMode` and `mail.egressHost` without restating a default — the XRD declares them and the API server materialises them onto the composite — and the operator reads both, demonstrated by making the two sources disagree deliberately. With the Helm value saying `external` and the ConfigMap saying `kernel`, the operator recreated a Job it creates only in kernel mode. Both cluster-level copies are deleted. What remains is structural rather than accidental: ApplicationSets are rendered by Argo CD before that ConfigMap exists, so their settings arrive as Helm parameters the installer writes onto the Application once and nothing re-applies. `make verify-claim-applied` reports when those disagree with the claim, which is the best available answer while the copy has to exist.
+* **Proposed Solution**: For the remaining parameters, either give the ApplicationSets a source that can be read after the composition has run, or accept the copy and keep the check that makes its drift visible. The second is honest and cheap; the first removes the class.
 * **Backlog Items**:
-  - `[x]` Set Postfix `myhostname` from the egress host, so the HELO name matches the PTR of the address it sends from. *(Now greets as `out.gtn.host`.)*
-  - `[x]` Pin Postfix to the node carrying the floating IP, so a reschedule cannot silently change the sending address.
-  - `[ ]` Consume `spec.mail.egressHost` in the Cluster composition rather than declaring it and stopping there.
-  - `[ ]` Collapse the deployments-values `mailEgressHost` onto the same source, so SPF and HELO cannot disagree.
-  - `[ ]` Reconcile `mail.serviceMode`: the claim says kernel, the cluster runs external, and the operator provisions no Dovecot as a result.
-  - `[ ]` Report a claim setting that the live cluster does not actually carry, rather than leaving it to be discovered by a mail fault.
+  - `[x]` Consume the mail settings in the Cluster composition rather than declaring them and stopping there.
+  - `[x]` Collapse the deployments-values copies onto that source, so SPF and the mail mode cannot disagree.
+  - `[x]` Set Postfix `myhostname` from the egress host, so HELO matches the PTR of the address it sends from.
+  - `[x]` Pin Postfix to the node carrying the floating IP.
+  - `[x]` Report a claim setting the live cluster does not carry. *(`make verify-claim-applied`.)*
+  - `[ ]` Do the same for the settings still passed only as installer-written Helm parameters — `tenancyMode`, `networkMode`, `platform` and the rest of the twenty.
+  - `[ ]` Re-apply, or make Argo CD own, the Applications the installer writes once, so a parameter added after install is not missing forever.
+
+---
+
+### 1.24 gentian-cluster-config Keeps Keys the Composition No Longer Writes (*)
+* **Target Domain**: Platform Configuration
+* **Context**: The ConfigMap is applied by provider-kubernetes, which patches rather than replaces, so a key the composition stops writing stays in the object indefinitely. On ifk-w4h 16 of its 26 keys are leftovers of that kind — `cnpg.*`, `network.*`, `secretMode`, `storageClass`, `tenant.initJob.*` — none read by anything today. The cost is not the storage. A stale key is indistinguishable from a live one by inspection, and reads as authoritative: `mail.serviceMode` sat there saying `kernel`, which is the correct answer, while nothing maintained it and the composition did not write it at all. That is exactly how it was mistaken for evidence that the mechanism was already working.
+* **Proposed Solution**: Make the ConfigMap's contents a function of the composition and nothing else — replace rather than patch, or prune keys absent from the render — so its contents can be trusted as current. Failing that, the lint should compare the live object against the producer's key set and report leftovers, so they are at least named.
+* **Backlog Items**:
+  - `[ ]` Prune keys the composition no longer writes, or replace the object outright.
+  - `[ ]` Report live keys the producer does not write, so a leftover cannot be read as current.
+  - `[ ]` Decide whether the 16 present leftovers are dead or were readers that quietly regressed to a default.
 
 ---
 
