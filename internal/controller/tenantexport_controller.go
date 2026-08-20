@@ -536,6 +536,16 @@ func (r *TenantExportReconciler) failApp(
 	}
 	unmarkQuiesced(export, appName)
 	entry := appStatus(export, appName)
+	// The app is resumed by the time we get here, and the status must say so:
+	// quiesceEnd left unset painted the app as "paused now" in the Admin
+	// Console for as long as the failed export existed, which reads as an
+	// outage when there is none.
+	if entry.QuiesceStart != nil && entry.QuiesceEnd == nil {
+		entry.QuiesceEnd = ptrNow()
+		tenantExportQuiesceDuration.
+			WithLabelValues(tenant.Name, appName).
+			Observe(entry.QuiesceEnd.Sub(entry.QuiesceStart.Time).Seconds())
+	}
 	entry.Phase = gentianov1alpha1.TenantExportPhaseFailed
 	entry.Message = message
 	return r.fail(ctx, export, "CaptureFailed", fmt.Sprintf("%s: %s", appName, message))

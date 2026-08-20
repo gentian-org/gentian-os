@@ -217,3 +217,57 @@ func TestQuiesceNoneLeavesTheAppRunning(t *testing.T) {
 		t.Errorf("mode none scaled the app to %d", got)
 	}
 }
+
+// A failed capture resumes the app, and the status must say so. Leaving
+// quiesceEnd unset on the Failed entry rendered as "paused now" in the Admin
+// Console for as long as the failed export existed — an outage display for an
+// app that is running again.
+func TestFailedCaptureResumesAppAndStampsQuiesceEnd(t *testing.T) {
+	s := runtime.NewScheme()
+	if err := clientgoscheme.AddToScheme(s); err != nil {
+		t.Fatalf("add client-go scheme: %v", err)
+	}
+	if err := gentianov1alpha1.AddToScheme(s); err != nil {
+		t.Fatalf("add gentian scheme: %v", err)
+	}
+
+	start := metav1.Now()
+	export := &gentianov1alpha1.TenantExport{
+		ObjectMeta: metav1.ObjectMeta{Name: "export-x", Namespace: "tenant-demo"},
+		Status: gentianov1alpha1.TenantExportStatus{
+			Quiesced: []string{"app-store-me"},
+			Apps: []gentianov1alpha1.AppExportStatus{{
+				Name:         "app-store-me",
+				Phase:        gentianov1alpha1.TenantExportPhaseRunning,
+				QuiesceStart: &start,
+			}},
+		},
+	}
+	tenant := &gentianov1alpha1.Tenant{ObjectMeta: metav1.ObjectMeta{Name: "demo"}}
+	paused := deployment("app-store-me", "app-store-me", 0)
+	paused.Annotations = map[string]string{replicaMemoAnnotation: "2"}
+
+	c := fake.NewClientBuilder().WithScheme(s).
+		WithObjects(export, tenant, paused).
+		WithStatusSubresource(export).Build()
+	r := &TenantExportReconciler{Client: c, Scheme: s,
+		Reconciler: &TenantReconciler{Client: c, Scheme: s}}
+
+	if _, err := r.failApp(context.Background(), export, tenant, "app-store-me", "boom"); err != nil {
+		t.Fatalf("failApp: %v", err)
+	}
+
+	entry := appStatus(export, "app-store-me")
+	if entry.Phase != gentianov1alpha1.TenantExportPhaseFailed {
+		t.Fatalf("app phase = %q, want Failed", entry.Phase)
+	}
+	if entry.QuiesceEnd == nil {
+		t.Fatal("quiesceEnd not set: a resumed app would still display as paused")
+	}
+	if len(export.Status.Quiesced) != 0 {
+		t.Fatalf("status.quiesced = %v, want empty", export.Status.Quiesced)
+	}
+	if got := *getDeployment(t, c, "app-store-me").Spec.Replicas; got != 2 {
+		t.Fatalf("replicas = %d, want the memoed 2", got)
+	}
+}
