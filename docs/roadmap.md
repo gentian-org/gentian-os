@@ -198,27 +198,30 @@ For the current baseline design of the system, refer to [architecture.md](archit
 
 ---
 
-### 1.21 external-dns Rewrites the MX Record Every Cycle (*)
+### 1.21 external-dns Loses the MX Preference on Read (*)
 * **Target Domain**: Kernel DNS
-* **Context**: external-dns deletes and recreates the tenant MX record on every reconcile, once a minute, forever. The record it writes is correct — `10 mail.gtn.host` with the TTL asked for — and so is the DNSEndpoint behind it, so nothing is visibly wrong in the zone. The reconcile simply never converges: the value it writes does not compare equal to the value it reads back, which for MX means the priority is not surviving the round trip. Two costs: a sub-second window each minute where the name has no MX, during which a sending server falls back to the tenant's A record and reaches the portal rather than Postfix; and a steady stream of Cloudflare API writes that counts against the account's rate limit for as long as the cluster runs.
-* **Proposed Solution**: Confirm the round trip by reading the record back through the Cloudflare API and comparing it against the endpoint external-dns computes, then take it upstream if the provider drops the priority on read. Until then the churn is tolerable — the zone holds the right answer between rewrites.
+* **Context**: external-dns's Cloudflare provider does not preserve an MX record's preference when it reads the record back. Debug logging shows it holding a record Cloudflare serves as `10 mail.gtn.host` as `0 mail.gtn.host`, so a published preference of 10 never compares equal to what is observed and every reconcile plans a change. Cloudflare applies that as a delete followed by a create, so the name had no MX for a moment every minute — and a sender resolving in that window falls back to the tenant's A record, which is the portal, not Postfix. Every other record external-dns manages here converged and stayed put, which is what isolated it to MX. Worked around by publishing preference 0, which is what the provider reports whatever we write, so the two now agree. That is sound only while each domain has exactly one MX, which is the case: preference orders one MX against another and there is nothing to order.
+* **Proposed Solution**: Fix the read upstream so the preference survives, then publish a meaningful preference again. Until then the workaround holds, and the constraint it depends on — one MX per domain — should be checked rather than assumed if a backup MX is ever added.
 * **Backlog Items**:
-  - `[ ]` Capture what external-dns reads back for the MX at debug log level and compare it to the desired endpoint.
-  - `[ ]` Report upstream, or pin a version where the comparison converges.
+  - `[x]` Capture what external-dns reads back for the MX and compare it to the desired endpoint. *(Debug logging: `gtn.host 1 IN MX  0 mail.gtn.host` against a zone serving `10`.)*
+  - `[x]` Stop the churn. *(Publish preference 0, matching what the provider reads back.)*
+  - `[ ]` Report the lost preference upstream against the Cloudflare provider.
   - `[ ]` Alert on sustained record churn, so a non-converging reconcile is noticed without reading logs.
+  - `[ ]` Guard the one-MX-per-domain assumption if a backup MX is ever introduced.
 
 ---
 
-### 1.22 Make the Cluster Claim's Egress Host Do Something (**)
-* **Target Domain**: Kernel Mail Deliverability
-* **Context**: `spec.mail.egressHost` is declared on the Cluster XRD, and its description says Postfix greets remote servers with that name and is pinned to the node carrying the floating IP. No Composition reads it, so neither happens — the field is inert, and the description promises behaviour nothing implements. The value reaches Postfix only as a Helm parameter the installer sets on the appsets Application, which means it cannot be changed without re-running the installer, and reaches the operator by a second, unrelated path: the `mailEgressHost` key in the cluster's deployments values file. Two sources for one fact, and the claim — the thing an administrator would naturally edit — is the one that does nothing. Concretely on ifk-w4h: Postfix greets as `mail.gtn.host` while the sending address reverses to `out.gtn.host`, and nothing pins the Pod to the node holding that address, so a reschedule moves mail to a different egress IP and invalidates both SPF and the PTR at once.
-* **Proposed Solution**: Have the Cluster composition carry `mail.egressHost` through to the Postfix release the same way the other kernel service settings travel, so the claim is the single source and the installer parameter can go. Until then the two places must be set together, which is exactly the drift this is about.
+### 1.22 Kernel Settings Reach the Cluster Through the Installer, Not the Claim (**)
+* **Target Domain**: Platform Configuration
+* **Context**: `spec.mail.egressHost` is declared on the Cluster XRD and no Composition reads it. The value reaches Postfix only as a Helm parameter the installer sets on the `gentian-appsets` Application, and reaches the operator through a different key — `mailEgressHost` — in the cluster's deployments values file. Two sources for one fact, and the claim, which is what an administrator would edit, is not either of them. The failure mode is drift that git cannot show: this cluster's claim had said `egressHost: out.gtn.host` all along while the live Application carried no such parameter, because it was applied before the parameter existed. Postfix therefore greeted as `mail.gtn.host` while its address reversed to `out.gtn.host`, and nothing pinned it to the node holding the floating IP — a reschedule would have moved mail to another address and invalidated SPF and the PTR together. Both are corrected on this cluster; the mechanism that let them diverge is not. The same mechanism hides a live example: the claim says `mail.serviceMode: kernel` while the cluster runs `external`, so the operator skips Dovecot provisioning entirely.
+* **Proposed Solution**: Have the Cluster composition carry these settings through, so the claim is the single source and the installer parameters can go. Failing that, make the drift visible — a check that compares the claim against what the live Applications actually carry, so "git says X" and "the cluster does X" cannot quietly differ.
 * **Backlog Items**:
+  - `[x]` Set Postfix `myhostname` from the egress host, so the HELO name matches the PTR of the address it sends from. *(Now greets as `out.gtn.host`.)*
+  - `[x]` Pin Postfix to the node carrying the floating IP, so a reschedule cannot silently change the sending address.
   - `[ ]` Consume `spec.mail.egressHost` in the Cluster composition rather than declaring it and stopping there.
-  - `[ ]` Set Postfix `myhostname` from it, so the HELO name matches the PTR of the address it sends from.
-  - `[ ]` Pin Postfix to the node carrying the floating IP, so a reschedule cannot silently change the sending address.
-  - `[ ]` Collapse `mailEgressHost` in the deployments values onto the same source, so SPF and HELO cannot disagree.
-  - `[ ]` Fail the install when `mail.egressHost` names an address the cluster does not actually send from, rather than publishing an SPF record that authorises the wrong host.
+  - `[ ]` Collapse the deployments-values `mailEgressHost` onto the same source, so SPF and HELO cannot disagree.
+  - `[ ]` Reconcile `mail.serviceMode`: the claim says kernel, the cluster runs external, and the operator provisions no Dovecot as a result.
+  - `[ ]` Report a claim setting that the live cluster does not actually carry, rather than leaving it to be discovered by a mail fault.
 
 ---
 
