@@ -46,6 +46,8 @@ import (
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 	"github.com/gentian-org/gentian-os/internal/controller"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 )
 
 // testClient is the shared client used by all tests in this package.
@@ -310,6 +312,21 @@ func TestMain(m *testing.M) {
 	startXTenantShellSimulator(ctx, testClient)
 	startTenantProvisioningJobSimulator(ctx, testClient)
 	go func() { _ = mgr.Start(ctx) }()
+
+	// Stand in for Crossplane and provider-keycloak, which do not run here.
+	//
+	// The mail path waits for the tenant's Dovecot OIDC client to be Ready before
+	// it writes Dovecot's realm auth config, because that config carries the
+	// client secret and introspection URL and is useless pointed at a client that
+	// does not exist. On a real cluster the Composition creates the client and the
+	// provider marks it Ready; under envtest nothing does either, so the wait
+	// never ends and every tenant stops at mail.
+	//
+	// It has to do both halves, because neither runs here: create the client the
+	// Composition would create for each XTenant, and mark it Ready the way the
+	// provider would. Marking alone was not enough — with no Crossplane there is
+	// nothing to mark, so the wait never ended.
+	go fakeKeycloakClientProvider(ctx, mgr.GetClient())
 
 	// platform-kernel namespace is required by the identity reconciler for Keycloak Jobs.
 	if err := testClient.Create(context.Background(), &corev1.Namespace{
@@ -867,4 +884,69 @@ func containsPolicyType(types []networkingv1.PolicyType, t networkingv1.PolicyTy
 		}
 	}
 	return false
+}
+
+// fakeKeycloakClientProvider stands in for Crossplane and provider-keycloak.
+//
+// For every XTenant it ensures the Dovecot OIDC client the tenant Composition
+// declares exists, and marks it Ready as the provider would. Polling rather than
+// watching: the manager cache is already running by then, and a poll is easier to
+// reason about in a test binary than another informer racing setup.
+//
+// The name matches the Composition's, because that is what the operator looks
+// for. If the Composition renames it, this must move with it — a fake that
+// answers to the wrong name would make the wait pass here and hang on a cluster.
+func fakeKeycloakClientProvider(ctx context.Context, c client.Client) {
+	xtenantGVK := schema.GroupVersionKind{Group: "gentianos.io", Version: "v1alpha1", Kind: "XTenantList"}
+	clientGVK := schema.GroupVersionKind{Group: "openidclient.keycloak.crossplane.io", Version: "v1alpha1", Kind: "Client"}
+
+	ticker := time.NewTicker(200 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			xts := &unstructured.UnstructuredList{}
+			xts.SetGroupVersionKind(xtenantGVK)
+			if err := c.List(ctx, xts); err != nil {
+				continue
+			}
+			for i := range xts.Items {
+				name := xts.Items[i].GetName() + "-dovecot-oidc-client"
+				obj := &unstructured.Unstructured{}
+				obj.SetGroupVersionKind(clientGVK)
+				err := c.Get(ctx, types.NamespacedName{Name: name}, obj)
+				if err != nil {
+					created := &unstructured.Unstructured{}
+					created.SetGroupVersionKind(clientGVK)
+					created.SetName(name)
+					_ = unstructured.SetNestedMap(created.Object, map[string]interface{}{
+						"clientId": "gentian-dovecot",
+						"realmId":  xts.Items[i].GetName(),
+					}, "spec", "forProvider")
+					if err := c.Create(ctx, created); err != nil {
+						continue
+					}
+					obj = created
+				}
+				conds, _, _ := unstructured.NestedSlice(obj.Object, "status", "conditions")
+				for _, cond := range conds {
+					if m, ok := cond.(map[string]interface{}); ok && m["type"] == "Ready" && m["status"] == "True" {
+						goto next
+					}
+				}
+				_ = unstructured.SetNestedSlice(obj.Object, []interface{}{
+					map[string]interface{}{
+						"type":               "Ready",
+						"status":             "True",
+						"reason":             "Available",
+						"lastTransitionTime": time.Now().UTC().Format(time.RFC3339),
+					},
+				}, "status", "conditions")
+				_ = c.Status().Update(ctx, obj)
+			next:
+			}
+		}
+	}
 }
