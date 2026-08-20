@@ -100,15 +100,18 @@ func main() {
 	// Exec lets a profile's maintenance-mode and restore hooks run inside the
 	// app's own pod. Optional: without it those fall back to scaling the app,
 	// which still pauses writes, so a failure here must not stop the operator.
-	podExecer, execErr := controller.NewPodExecer(mgr.GetConfig())
-	if execErr != nil {
+	// The nil stays a plain interface nil: assigning a typed-nil *PodExecer
+	// would make every `Exec == nil` guard pass while calls panic.
+	var appExecer controller.AppExecer
+	if podExecer, execErr := controller.NewPodExecer(mgr.GetConfig()); execErr != nil {
 		setupLog.Error(execErr, "pod exec unavailable; backup hooks will fall back to scaling")
-		podExecer = nil
+	} else {
+		appExecer = podExecer
 	}
 
 	tenantReconciler := &controller.TenantReconciler{
 		Client:                   mgr.GetClient(),
-		Exec:                     podExecer,
+		Exec:                     appExecer,
 		Scheme:                   mgr.GetScheme(),
 		Seeder:                   buildSeeder(),
 		KernelDomain:             os.Getenv("KERNEL_DOMAIN"),

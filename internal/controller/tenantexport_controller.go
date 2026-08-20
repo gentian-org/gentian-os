@@ -224,6 +224,7 @@ func (r *TenantExportReconciler) captureApp(
 			return r.failApp(ctx, export, tenant, appName, fmt.Sprintf("pause failed: %v", qErr))
 		}
 		entry.QuiesceStart = ptrNow()
+		entry.QuiesceMode = string(mode)
 		entry.Phase = gentianov1alpha1.TenantExportPhaseRunning
 		entry.Message = fmt.Sprintf("paused (%s)", mode)
 		markQuiesced(export, appName)
@@ -268,7 +269,8 @@ func (r *TenantExportReconciler) captureApp(
 		return r.requeueExport(ctx, export, tenant)
 	}
 
-	if err := r.Reconciler.resumeApp(ctx, tenant.Name, appName); err != nil {
+	if err := resumeQuiescedApp(ctx, r.Client, r.Reconciler,
+		tenant.Name, appName, entry.QuiesceMode, entry.Message); err != nil {
 		return ctrl.Result{}, fmt.Errorf("resume %s: %w", appName, err)
 	}
 	entry.QuiesceEnd = ptrNow()
@@ -705,11 +707,12 @@ func (r *TenantExportReconciler) failApp(
 	tenant *gentianov1alpha1.Tenant,
 	appName, message string,
 ) (ctrl.Result, error) {
-	if err := r.Reconciler.resumeApp(ctx, tenant.Name, appName); err != nil {
+	entry := appStatus(export, appName)
+	if err := resumeQuiescedApp(ctx, r.Client, r.Reconciler,
+		tenant.Name, appName, entry.QuiesceMode, entry.Message); err != nil {
 		return ctrl.Result{}, fmt.Errorf("resume %s after failure: %w", appName, err)
 	}
 	unmarkQuiesced(export, appName)
-	entry := appStatus(export, appName)
 	// The app is resumed by the time we get here, and the status must say so:
 	// quiesceEnd left unset painted the app as "paused now" in the Admin
 	// Console for as long as the failed export existed, which reads as an
@@ -755,7 +758,9 @@ func (r *TenantExportReconciler) resumeAll(
 		return nil
 	}
 	for _, appName := range append([]string(nil), export.Status.Quiesced...) {
-		if err := r.Reconciler.resumeApp(ctx, tenantName, appName); err != nil {
+		entry := appStatus(export, appName)
+		if err := resumeQuiescedApp(ctx, r.Client, r.Reconciler,
+			tenantName, appName, entry.QuiesceMode, entry.Message); err != nil {
 			return fmt.Errorf("resume %s: %w", appName, err)
 		}
 		unmarkQuiesced(export, appName)
@@ -774,7 +779,9 @@ func (r *TenantExportReconciler) resumeStale(
 		if appName == current {
 			continue
 		}
-		if err := r.Reconciler.resumeApp(ctx, tenantName, appName); err != nil {
+		entry := appStatus(export, appName)
+		if err := resumeQuiescedApp(ctx, r.Client, r.Reconciler,
+			tenantName, appName, entry.QuiesceMode, entry.Message); err != nil {
 			return fmt.Errorf("resume stale %s: %w", appName, err)
 		}
 		unmarkQuiesced(export, appName)

@@ -183,6 +183,7 @@ func (r *TenantRestoreReconciler) restoreApp(
 			return r.failApp(ctx, restore, tenant, appName, spec, fmt.Sprintf("pause failed: %v", qErr))
 		}
 		entry.QuiesceStart = ptrNow()
+		entry.QuiesceMode = string(mode)
 		entry.Phase = gentianov1alpha1.TenantExportPhaseRunning
 		entry.Message = fmt.Sprintf("paused (%s)", mode)
 		markRestoreQuiesced(restore, appName)
@@ -230,7 +231,10 @@ func (r *TenantRestoreReconciler) restoreApp(
 		return r.failApp(ctx, restore, tenant, appName, spec, err.Error())
 	}
 
-	used := quiesceModeFromMessage(entry.Message)
+	used := gentianov1alpha1.BackupQuiesceMode(entry.QuiesceMode)
+	if used == "" {
+		used = quiesceModeFromMessage(entry.Message)
+	}
 	if err := r.Tenant.unquiesceApp(ctx, tenant.Name, appName, spec, used); err != nil {
 		return ctrl.Result{}, fmt.Errorf("resume %s: %w", appName, err)
 	}
@@ -591,7 +595,9 @@ func (r *TenantRestoreReconciler) resumeAll(
 		return nil
 	}
 	for _, appName := range append([]string(nil), restore.Status.Quiesced...) {
-		if err := r.Tenant.resumeApp(ctx, tenantName, appName); err != nil {
+		entry := restoreAppStatus(restore, appName)
+		if err := resumeQuiescedApp(ctx, r.Client, r.Tenant,
+			tenantName, appName, entry.QuiesceMode, entry.Message); err != nil {
 			return fmt.Errorf("resume %s: %w", appName, err)
 		}
 		unmarkRestoreQuiesced(restore, appName)
@@ -609,7 +615,9 @@ func (r *TenantRestoreReconciler) resumeStale(
 		if appName == current {
 			continue
 		}
-		if err := r.Tenant.resumeApp(ctx, tenantName, appName); err != nil {
+		entry := restoreAppStatus(restore, appName)
+		if err := resumeQuiescedApp(ctx, r.Client, r.Tenant,
+			tenantName, appName, entry.QuiesceMode, entry.Message); err != nil {
 			return fmt.Errorf("resume stale %s: %w", appName, err)
 		}
 		unmarkRestoreQuiesced(restore, appName)

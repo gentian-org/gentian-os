@@ -33,6 +33,13 @@ import (
 	"github.com/gentian-org/gentian-os/internal/backup"
 )
 
+// AppExecer runs a command inside an app's pod. An interface so tests can
+// record which hooks a resume actually ran — the difference between "resumed"
+// and "still serving its maintenance page" is exactly one of these calls.
+type AppExecer interface {
+	Exec(ctx context.Context, namespace, pod, container string, argv []string) (string, error)
+}
+
 // PodExecer runs a command inside a running container.
 //
 // This is what lets a profile's maintenance-mode hooks and its restore hooks

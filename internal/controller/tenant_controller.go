@@ -189,9 +189,9 @@ var xTenantGVK = schema.GroupVersionKind{
 
 // TenantReconciler reconciles Tenant objects.
 type TenantReconciler struct {
-	// Exec runs commands inside app pods, so a profile's maintenance-mode and
+	// Exec runs commands inside app pods (see AppExecer), so a profile's maintenance-mode and
 	// restore hooks can run. Optional: without it those fall back to scaling.
-	Exec *PodExecer
+	Exec AppExecer
 	client.Client
 	// APIReader is an optional uncached client for kernel Secret lookups. The
 	// default cached Client can lag behind direct API writes (e.g. envtest).

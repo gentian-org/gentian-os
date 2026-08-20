@@ -203,6 +203,15 @@ spec:
                     quiesceEnd:
                       format: date-time
                       type: string
+                    quiesceMode:
+                      description: |-
+                        QuiesceMode records how this app was actually paused — command
+                        (maintenance hook) or scale-down. Resume must match it: an app paused
+                        by its maintenance hook has to be taken out of maintenance, not merely
+                        scaled, or it comes back serving its maintenance page forever. A
+                        dedicated field because the status message it used to be parsed from
+                        is overwritten while the capture runs.
+                      type: string
                     quiesceStart:
                       description: |-
                         QuiesceStart and QuiesceEnd bound the window this app was paused for.

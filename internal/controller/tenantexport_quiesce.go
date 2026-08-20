@@ -22,6 +22,7 @@ import (
 	"strconv"
 
 	appsv1 "k8s.io/api/apps/v1"
+	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
@@ -93,6 +94,36 @@ func (r *TenantReconciler) unquiesceApp(
 		}
 	}
 	return r.scaleAppWorkloads(ctx, tenantName, appName, -1)
+}
+
+// resumeQuiescedApp reverses a pause the way it was actually made.
+//
+// The recorded mode decides: an app paused by its maintenance hook must have
+// its resume hook run — merely scaling it leaves the maintenance flag set and
+// the app serving its maintenance page forever, with the export status
+// claiming it resumed. That is not hypothetical: the first live command-mode
+// capture did exactly this to Nextcloud. The profile is re-resolved here
+// because resume can happen many reconciles after the pause, including after
+// an operator restart; when the tenant or profile is gone the scale fallback
+// still runs, which is the right floor.
+func resumeQuiescedApp(
+	ctx context.Context,
+	c client.Client,
+	tr *TenantReconciler,
+	tenantName, appName, recordedMode, message string,
+) error {
+	mode := gentianov1alpha1.BackupQuiesceMode(recordedMode)
+	if mode == "" {
+		mode = quiesceModeFromMessage(message)
+	}
+	var spec *gentianov1alpha1.BackupSpec
+	tenant := &gentianov1alpha1.Tenant{}
+	if err := c.Get(ctx, types.NamespacedName{Name: tenantName}, tenant); err == nil {
+		if profile, perr := resolveProfile(ctx, c, tenant, appName); perr == nil {
+			spec = profileBackupSpec(profile)
+		}
+	}
+	return tr.unquiesceApp(ctx, tenantName, appName, spec, mode)
 }
 
 // resumeApp puts an app back. It is safe to call when the app was never paused,

@@ -491,3 +491,76 @@ func TestVolumeUnitsRunInTheTenantNamespaceWithStagedCredentials(t *testing.T) {
 		t.Error("volume Job does not read the passphrase from the staged copy")
 	}
 }
+
+type fakeExecer struct {
+	calls [][]string
+}
+
+func (f *fakeExecer) Exec(_ context.Context, _, _, _ string, argv []string) (string, error) {
+	f.calls = append(f.calls, argv)
+	return "", nil
+}
+
+// An app paused by its maintenance hook must be resumed by its resume hook.
+// The export used to scale-restore only — a no-op for command mode — and the
+// first live command-mode capture left Nextcloud serving its maintenance page
+// forever while the export status said resumed.
+func TestCommandModeResumeRunsTheResumeHook(t *testing.T) {
+	s := runtime.NewScheme()
+	if err := clientgoscheme.AddToScheme(s); err != nil {
+		t.Fatalf("add client-go scheme: %v", err)
+	}
+	if err := gentianov1alpha1.AddToScheme(s); err != nil {
+		t.Fatalf("add gentian scheme: %v", err)
+	}
+
+	tenant := &gentianov1alpha1.Tenant{
+		ObjectMeta: metav1.ObjectMeta{Name: "demo"},
+		Spec: gentianov1alpha1.TenantSpec{
+			Apps: []gentianov1alpha1.TenantApp{{Profile: "nextcloud-base-ce"}},
+		},
+	}
+	profile := &gentianov1alpha1.AppProfile{
+		ObjectMeta: metav1.ObjectMeta{Name: "nextcloud-base-ce"},
+		Spec: gentianov1alpha1.AppProfileSpec{
+			Backup: &gentianov1alpha1.BackupSpec{
+				Quiesce: &gentianov1alpha1.BackupQuiesce{
+					Mode: gentianov1alpha1.BackupQuiesceCommand,
+					Pre:  []string{"php", "occ", "maintenance:mode", "--on"},
+					Post: []string{"php", "occ", "maintenance:mode", "--off"},
+				},
+			},
+		},
+	}
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "nextcloud-abc",
+			Namespace: "tenant-demo",
+			Labels:    map[string]string{"gentianos.io/app": "nextcloud-base-ce"},
+		},
+		Spec: corev1.PodSpec{Containers: []corev1.Container{{Name: "nextcloud"}}},
+		Status: corev1.PodStatus{
+			Phase:      corev1.PodRunning,
+			Conditions: []corev1.PodCondition{{Type: corev1.PodReady, Status: corev1.ConditionTrue}},
+		},
+	}
+
+	c := fake.NewClientBuilder().WithScheme(s).WithObjects(tenant, profile, pod).Build()
+	execer := &fakeExecer{}
+	tr := &TenantReconciler{Client: c, Scheme: s, Exec: execer}
+
+	if err := resumeQuiescedApp(context.Background(), c, tr,
+		"demo", "nextcloud-base-ce", string(gentianov1alpha1.BackupQuiesceCommand), ""); err != nil {
+		t.Fatalf("resumeQuiescedApp: %v", err)
+	}
+
+	found := false
+	for _, argv := range execer.calls {
+		if len(argv) == 4 && argv[3] == "--off" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("resume hook never ran; calls: %v — the app stays in maintenance mode", execer.calls)
+	}
+}

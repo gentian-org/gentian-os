@@ -272,6 +272,15 @@ type AppExportStatus struct {
 	// +optional
 	Attempts int32 `json:"attempts,omitempty"`
 
+	// QuiesceMode records how this app was actually paused — command
+	// (maintenance hook) or scale-down. Resume must match it: an app paused
+	// by its maintenance hook has to be taken out of maintenance, not merely
+	// scaled, or it comes back serving its maintenance page forever. A
+	// dedicated field because the status message it used to be parsed from
+	// is overwritten while the capture runs.
+	// +optional
+	QuiesceMode string `json:"quiesceMode,omitempty"`
+
 	// CompletedUnits records each capture Job that finished, by Job name.
 	//
 	// This is the durable completion record; the Job object is not one. A
