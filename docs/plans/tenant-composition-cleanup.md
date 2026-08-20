@@ -153,6 +153,44 @@ become a Reloader annotation, which this repo already uses for `keycloak-idp`; a
 upstream bugs, not architecture. Discovery is the one that needs a different shape entirely —
 events instead of polling, which is roadmap 3.1.
 
+## 6b. Migration log
+
+Recorded per step, because the procedure changed after the first one.
+
+### Portal public OIDC client — client adopted, Job still needed
+
+**Done.** `crossplane/compositions/tenant-default.yaml` declares the `gentian-portal`
+`openidclient.keycloak.crossplane.io/Client`. It adopted the live client and changed nothing:
+sixteen fields compared against a pre-migration capture, zero differences.
+
+**What the step proved, for reuse:**
+
+- `crossplane.io/external-name` may be the **clientId**. The provider resolves it, then rewrites the
+  annotation to Keycloak's internal UUID. That rewrite is stable — checked over two minutes, the
+  composition re-rendering `gentian-portal` does not reset it — so one template serves both a tenant
+  whose client exists and a tenant whose does not, with no per-tenant import step.
+- **Read the spec off the live object, not off the Job's script.** An adopted resource is reconciled
+  *toward* the manifest, so a field omitted is reset, not left alone. The values here came from a
+  read-only probe's `status.atProvider`.
+- **`deletionPolicy: Orphan`** for anything that predates its manifest. Removing a manifest should
+  not remove the login client.
+
+**What it changed about the procedure.** The Job is still in place, and had to be put back after
+being removed: `keycloak-portal-public-*` does not only create the client. It also maintains an
+`openbao-audience` protocol mapper, without which — in the script's own words — *"the tenant's auth
+mount refuses every exchange on the audience, no matter who the caller is"*. Deleting the Job after
+migrating only the client would have left that mapper unowned on this cluster and absent on the next
+tenant, and the failure would have surfaced as OpenBao refusing token exchange rather than as
+anything to do with this change.
+
+So the rule for the remaining Jobs is: **inventory everything a Job owns before retiring it**, not
+just the object it is named after. A Job is retired when every object it touches has a manifest,
+not when the first one does.
+
+**Still to do here:** declare the `openbao-audience` `ProtocolMapper` — the kind supports
+`clientIdRef`, so it can reference the adopted Client rather than needing the UUID by hand — then
+remove the Job and its wait.
+
 ## 7. Honest answer to the question
 
 There is no reason not to migrate **most** of it, and a clear reason not to migrate **all** of it.
