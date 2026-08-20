@@ -2860,10 +2860,21 @@ Both render fixtures omitted `role` and passed, because `crossplane render` does
 agreed with a defect (the first was a fake OpenBao matching the wrong mount), and the shape is the
 same: a test exercising the path the code takes rather than the one a cluster takes.
 
-**The tenant path reads.** A tenant administrator's exchange, scoping and Repositories view work on
-a real cluster — signature, audience and the groups claim all pass, against that tenant's own mount.
-The write half is unconfirmed: the console listed repositories and offered no way to add one, since
-`saveRepository` had never been called with an input. That is fixed and undeployed.
+**The tenant path works.** A tenant administrator authenticates against their own realm's mount,
+is scoped to their tenant, adds a repository, and gets back a credential requirement at
+`gentian-os/tenants/<tenant>/repositories/<name>` with `scope: tenant` — inside the paths their
+policy covers. That is the product's purpose reached end to end for a tenant, and it took four
+defects to get there, three of which failed *silently* rather than loudly:
+
+- The role bound a group nothing assigns (`/admins`), so no token could match.
+- The tenant never reached the token: a tenant realm has no notion of which tenant it serves, and
+  the role mapped no claims into metadata.
+- An empty tenant then read as *no tenant scope* rather than as an error, so the first repository
+  was created CLUSTER-owned at a kernel path — a missing claim widening what the caller could do.
+- The console had never called `saveRepository` with an input, so adding one was unreachable.
+
+Only the first would have announced itself. The pattern across the other three is the one this
+document keeps finding: **the absent value was also the more permissive one.**
 
 **The credential manager's ServiceAccount policy is uninspected.** Phase 8, criterion 7. The
 service has no OpenBao identity by construction, but "by construction" is an argument, not an
