@@ -41,6 +41,12 @@ spec:
   selfServiceDisabled: true
   {{- end }}
   quotas:
+    {{- with $plan.quotas.requestsCpu }}
+    requestsCpu: {{ . | quote }}
+    {{- end }}
+    {{- with $plan.quotas.requestsMemory }}
+    requestsMemory: {{ . | quote }}
+    {{- end }}
     {{- with $plan.quotas.cpu }}
     cpu: {{ . | quote }}
     {{- end }}

@@ -267,3 +267,50 @@ func TestMaxTierTreatsAnUnparseableAnnotationAsAbsent(t *testing.T) {
 		t.Fatalf("expected no ceiling from a bad value, got %v", *got)
 	}
 }
+
+// The reserved pair is what a plan is sold on, so two plans differing only
+// there are different plans — matching on the limits pair alone would price a
+// four-node tenant as a one-node one.
+func TestMatchDistinguishesPlansByReservedCapacity(t *testing.T) {
+	c := &Catalogue{Plans: []gentianov1alpha1.ResourcePlan{
+		plan("one-node", 0, "8", "8Gi", func(p *gentianov1alpha1.ResourcePlan) {
+			p.Spec.Quotas.RequestsCPU = qty("2")
+			p.Spec.Quotas.RequestsMemory = qty("4Gi")
+		}),
+		plan("two-node", 10, "8", "8Gi", func(p *gentianov1alpha1.ResourcePlan) {
+			p.Spec.Quotas.RequestsCPU = qty("4")
+			p.Spec.Quotas.RequestsMemory = qty("8Gi")
+		}),
+	}}
+
+	got := c.Match(&gentianov1alpha1.TenantQuotas{
+		CPU: qty("8"), Memory: qty("8Gi"),
+		RequestsCPU: qty("4"), RequestsMemory: qty("8Gi"),
+	})
+	if got == nil || got.Name != "two-node" {
+		t.Fatalf("expected two-node, got %v", got)
+	}
+}
+
+// A downgrade is refused on reserved capacity too. Checking only the burst
+// ceiling would let a tenant be sold onto a plan reserving less than the
+// scheduler has already set aside for its running pods.
+func TestCheckFitRefusesADowngradeOfReservedCapacity(t *testing.T) {
+	p := plan("small", 0, "64", "64Gi")
+	p.Spec.Quotas.RequestsCPU = qty("2")
+
+	used := corev1.ResourceList{
+		corev1.ResourceRequestsCPU: resource.MustParse("3"),
+	}
+	err := CheckFit(&p, used, 0)
+	if err == nil {
+		t.Fatal("expected a plan reserving less than is already reserved to be refused")
+	}
+	var downgrade *DowngradeError
+	if !errors.As(err, &downgrade) {
+		t.Fatalf("expected a DowngradeError, got %T", err)
+	}
+	if downgrade.Shortfalls[0].Resource != string(corev1.ResourceRequestsCPU) {
+		t.Fatalf("expected requests.cpu, got %s", downgrade.Shortfalls[0].Resource)
+	}
+}

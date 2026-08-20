@@ -287,8 +287,16 @@ spec:
                     anyOf:
                     - type: integer
                     - type: string
-                    description: CPU is the total CPU request limit across all tenant
-                      pods.
+                    description: |-
+                      CPU caps the sum of container CPU **limits** in the namespace.
+
+                      A limit is a burst ceiling, not a reservation: it is what a container may
+                      spike to, and the scheduler does not set anything aside for it. Chart
+                      defaults are generous with limits — one tenant running Nextcloud, an
+                      office suite and the App Store sums to roughly six cores of limits while
+                      reserving one — so this number does not correspond to hardware and must
+                      not be the one a plan is sold on. It exists to bound the blast radius of
+                      a runaway container. Sell RequestsCPU.
                     pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
                     x-kubernetes-int-or-string: true
                   maxApps:
@@ -307,8 +315,35 @@ spec:
                     anyOf:
                     - type: integer
                     - type: string
-                    description: Memory is the total memory request limit across all
-                      tenant pods.
+                    description: |-
+                      Memory caps the sum of container memory **limits** in the namespace.
+                      The burst ceiling, for the same reason as CPU. Sell RequestsMemory.
+                    pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                    x-kubernetes-int-or-string: true
+                  requestsCpu:
+                    anyOf:
+                    - type: integer
+                    - type: string
+                    description: |-
+                      RequestsCPU caps the sum of container CPU **requests** in the namespace.
+
+                      Requests are what the scheduler actually reserves, so this is the number
+                      that maps one-to-one onto purchased capacity: two cores of requests is
+                      two cores of a node that nothing else can schedule into. It is therefore
+                      the quantity a ResourcePlan is priced on.
+
+                      Safe to impose on a namespace that already has pods: the tenant
+                      LimitRange sets defaultRequest (100m / 128Mi), so a container that
+                      declares no request still has one and the quota cannot reject it.
+                    pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                    x-kubernetes-int-or-string: true
+                  requestsMemory:
+                    anyOf:
+                    - type: integer
+                    - type: string
+                    description: |-
+                      RequestsMemory caps the sum of container memory **requests** in the
+                      namespace — reserved capacity, priced, as RequestsCPU is.
                     pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
                     x-kubernetes-int-or-string: true
                   storage:

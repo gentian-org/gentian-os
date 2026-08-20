@@ -14,7 +14,6 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-
 package security
 
 import (
@@ -64,8 +63,8 @@ func SyncPlatformSecurityConfigMap(
 			Name:      gentianov1alpha1.PlatformSecurityConfigMapName,
 			Namespace: operatorNamespace,
 			Labels: map[string]string{
-				meta.ManagedByLabel:              meta.ManagedByValue,
-				"gentianos.io/config-type":       gentianov1alpha1.PlatformSecurityConfigTypeLabel,
+				meta.ManagedByLabel:        meta.ManagedByValue,
+				"gentianos.io/config-type": gentianov1alpha1.PlatformSecurityConfigTypeLabel,
 			},
 		},
 	}

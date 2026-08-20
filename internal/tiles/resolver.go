@@ -36,7 +36,7 @@ const (
 )
 
 type catalogue struct {
-	Version int `json:"version"`
+	Version int                      `json:"version"`
 	Tiles   map[string]catalogueTile `json:"tiles"`
 }
 

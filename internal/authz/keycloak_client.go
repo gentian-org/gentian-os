@@ -14,7 +14,6 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-
 package authz
 
 import (
@@ -87,9 +86,9 @@ type KeycloakUser struct {
 
 // KeycloakAdminClient calls the Keycloak Admin REST API.
 type KeycloakAdminClient struct {
-	baseURL   string
-	username  string
-	password  string
+	baseURL    string
+	username   string
+	password   string
 	httpClient *http.Client
 
 	mu          sync.Mutex
@@ -439,4 +438,3 @@ func (c *KeycloakAdminClient) AddUserToGroup(ctx context.Context, realm, userID,
 	_, err = c.doAdminExpect(ctx, token, http.MethodPut, path, nil, http.StatusNoContent, http.StatusOK)
 	return err
 }
-

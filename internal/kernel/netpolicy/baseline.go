@@ -127,8 +127,8 @@ func namespaceEgress(ns string) networkingv1.NetworkPolicyEgressRule {
 
 func policyLabels(tenantName, policyType string) map[string]string {
 	return map[string]string{
-		meta.TenantLabel:       tenantName,
-		meta.ManagedByLabel:      meta.ManagedByValue,
-		meta.NetPolicyTypeLabel:  policyType,
+		meta.TenantLabel:        tenantName,
+		meta.ManagedByLabel:     meta.ManagedByValue,
+		meta.NetPolicyTypeLabel: policyType,
 	}
 }

@@ -14,7 +14,6 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-
 // Package oidc resolves OIDC client packs from cluster-scoped OIDCPackCatalog CRs.
 // App-specific mapper templates live in the catalogue repositories, not as
 // hardcoded constants in the operator.

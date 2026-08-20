@@ -302,7 +302,7 @@ kubectl gentian resources show corp
 Move a tenant to a plan:
 
 ```bash
-kubectl gentian resources set corp --plan base-plus-8
+kubectl gentian resources set corp --plan nodes-2
 ```
 
 This commits `clusters/<cluster>/tenants/corp/resource-plan.yaml` and pushes;
@@ -329,8 +329,8 @@ kubectl gentian resources report corp \
 
 ```
 PLAN                  DAYS  FROM                 TO                   SKU
-base-plus-8          17.05  2026-01-01T00:00:00  2026-01-18T01:12:00  sku-8
-base-plus-16         13.95  2026-01-18T01:12:00  2026-02-01T00:00:00  sku-16
+base                 17.05  2026-01-01T00:00:00  2026-01-18T01:12:00  sku-1node
+nodes-2              13.95  2026-01-18T01:12:00  2026-02-01T00:00:00  sku-2node
 ```
 
 Cap what a tenant may choose for itself (absent means uncapped):

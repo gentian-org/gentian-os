@@ -23,9 +23,9 @@ import (
 
 // PlanInterval is one continuous stretch during which a tenant was on one plan.
 //
-// This is the unit a bill is made of. "The tenant used base-plus-8 for the
-// first seventeen days and base-plus-16 for the rest" is a statement about
-// intervals, and a platform that stores only a current plan cannot make it.
+// This is the unit a bill is made of. "The tenant was on one node for the first
+// seventeen days and two for the rest" is a statement about intervals, and a
+// platform that stores only a current plan cannot make it.
 type PlanInterval struct {
 	Plan       string    `json:"plan"`
 	ProductSku string    `json:"productSku,omitempty"`

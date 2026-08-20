@@ -166,7 +166,7 @@ Examples:
   kubectl gentian apps uninstall demo-app --tenant gtn-demo
   kubectl gentian apps uninstall demo-app --tenant gtn-demo --purge   # wipe DB, S3, secrets
   kubectl gentian resources plans --tenant gtn-demo
-  kubectl gentian resources set gtn-demo --plan base-plus-8
+  kubectl gentian resources set gtn-demo --plan nodes-2
   kubectl gentian apps uninstall element --tenant demo --purge   # or -f: full Matrix data wipe
   kubectl gentian tenants list
   kubectl gentian tenants deploy demo

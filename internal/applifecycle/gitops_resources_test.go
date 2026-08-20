@@ -50,6 +50,8 @@ func TestRenderPatchNullsQuotaKeysThePlanDoesNotSet(t *testing.T) {
 	for _, want := range []string{
 		`cpu: "40"`,
 		`memory: "48Gi"`,
+		"requestsCpu: null",
+		"requestsMemory: null",
 		"storage: null",
 		"maxApps: null",
 		"maxPods: null",
@@ -153,5 +155,28 @@ components:
 	out, _ := ensurePatchListed(in, resourcePlanPatchFile)
 	if !strings.Contains(out, "# The shared defaults every tenant") {
 		t.Fatalf("expected comments to survive:\n%s", out)
+	}
+}
+
+// A plan sells reserved capacity and caps burst separately, so the patch has to
+// carry both. Emitting only the limits pair would leave the tenant-defaults
+// requests value in force — the tenant would reserve whatever the cluster
+// default says while being billed for the plan's node count.
+func TestRenderPatchCarriesRequestsAndLimits(t *testing.T) {
+	out := renderResourcePlanPatch("corp", testPlan(gentianov1alpha1.TenantQuotas{
+		RequestsCPU:    mustQty("2"),
+		RequestsMemory: mustQty("4Gi"),
+		CPU:            mustQty("8"),
+		Memory:         mustQty("8Gi"),
+	}))
+	for _, want := range []string{
+		`requestsCpu: "2"`,
+		`requestsMemory: "4Gi"`,
+		`cpu: "8"`,
+		`memory: "8Gi"`,
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("expected the patch to contain %q:\n%s", want, out)
+		}
 	}
 }

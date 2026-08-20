@@ -136,6 +136,12 @@ func ResourceListFromQuotas(q *gentianov1alpha1.TenantQuotas) corev1.ResourceLis
 	if q.Memory != nil {
 		rl[corev1.ResourceLimitsMemory] = *q.Memory
 	}
+	if q.RequestsCPU != nil {
+		rl[corev1.ResourceRequestsCPU] = *q.RequestsCPU
+	}
+	if q.RequestsMemory != nil {
+		rl[corev1.ResourceRequestsMemory] = *q.RequestsMemory
+	}
 	if q.MaxPods > 0 {
 		rl[corev1.ResourcePods] = resource.MustParse(fmt.Sprintf("%d", q.MaxPods))
 	}

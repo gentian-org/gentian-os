@@ -405,6 +405,12 @@ func quotaMap(q *gentianov1alpha1.TenantQuotas) map[string]string {
 	if q == nil {
 		return out
 	}
+	if q.RequestsCPU != nil {
+		out["requestsCpu"] = q.RequestsCPU.String()
+	}
+	if q.RequestsMemory != nil {
+		out["requestsMemory"] = q.RequestsMemory.String()
+	}
 	if q.CPU != nil {
 		out["cpu"] = q.CPU.String()
 	}

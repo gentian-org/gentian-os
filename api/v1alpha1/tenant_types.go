@@ -124,13 +124,40 @@ type TenantQuotas struct {
 	// +optional
 	Storage *resource.Quantity `json:"storage,omitempty"`
 
-	// CPU is the total CPU request limit across all tenant pods.
+	// CPU caps the sum of container CPU **limits** in the namespace.
+	//
+	// A limit is a burst ceiling, not a reservation: it is what a container may
+	// spike to, and the scheduler does not set anything aside for it. Chart
+	// defaults are generous with limits — one tenant running Nextcloud, an
+	// office suite and the App Store sums to roughly six cores of limits while
+	// reserving one — so this number does not correspond to hardware and must
+	// not be the one a plan is sold on. It exists to bound the blast radius of
+	// a runaway container. Sell RequestsCPU.
 	// +optional
 	CPU *resource.Quantity `json:"cpu,omitempty"`
 
-	// Memory is the total memory request limit across all tenant pods.
+	// Memory caps the sum of container memory **limits** in the namespace.
+	// The burst ceiling, for the same reason as CPU. Sell RequestsMemory.
 	// +optional
 	Memory *resource.Quantity `json:"memory,omitempty"`
+
+	// RequestsCPU caps the sum of container CPU **requests** in the namespace.
+	//
+	// Requests are what the scheduler actually reserves, so this is the number
+	// that maps one-to-one onto purchased capacity: two cores of requests is
+	// two cores of a node that nothing else can schedule into. It is therefore
+	// the quantity a ResourcePlan is priced on.
+	//
+	// Safe to impose on a namespace that already has pods: the tenant
+	// LimitRange sets defaultRequest (100m / 128Mi), so a container that
+	// declares no request still has one and the quota cannot reject it.
+	// +optional
+	RequestsCPU *resource.Quantity `json:"requestsCpu,omitempty"`
+
+	// RequestsMemory caps the sum of container memory **requests** in the
+	// namespace — reserved capacity, priced, as RequestsCPU is.
+	// +optional
+	RequestsMemory *resource.Quantity `json:"requestsMemory,omitempty"`
 
 	// MaxPods caps the number of pods in the tenant namespace (init Jobs + app workloads).
 	// +optional

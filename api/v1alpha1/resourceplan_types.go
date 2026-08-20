@@ -45,8 +45,8 @@ import (
 // +kubebuilder:subresource:status
 // +kubebuilder:resource:scope=Cluster,shortName=rplan;rplans
 // +kubebuilder:printcolumn:name="Display",type=string,JSONPath=`.spec.displayName`
-// +kubebuilder:printcolumn:name="CPU",type=string,JSONPath=`.spec.quotas.cpu`
-// +kubebuilder:printcolumn:name="Memory",type=string,JSONPath=`.spec.quotas.memory`
+// +kubebuilder:printcolumn:name="CPU",type=string,JSONPath=`.spec.quotas.requestsCpu`
+// +kubebuilder:printcolumn:name="Memory",type=string,JSONPath=`.spec.quotas.requestsMemory`
 // +kubebuilder:printcolumn:name="Storage",type=string,JSONPath=`.spec.quotas.storage`
 // +kubebuilder:printcolumn:name="SKU",type=string,JSONPath=`.spec.productSku`
 // +kubebuilder:printcolumn:name="Age",type=date,JSONPath=`.metadata.creationTimestamp`
@@ -170,6 +170,8 @@ func QuotasEqual(a, b *TenantQuotas) bool {
 	return quantityEqual(a.Storage, b.Storage) &&
 		quantityEqual(a.CPU, b.CPU) &&
 		quantityEqual(a.Memory, b.Memory) &&
+		quantityEqual(a.RequestsCPU, b.RequestsCPU) &&
+		quantityEqual(a.RequestsMemory, b.RequestsMemory) &&
 		a.MaxApps == b.MaxApps &&
 		a.MaxPods == b.MaxPods
 }

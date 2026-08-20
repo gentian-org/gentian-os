@@ -57,9 +57,9 @@ func TestBuildDesired_KernelAndContractPolicies(t *testing.T) {
 	binding.Name = "demo--consumer--file-store"
 	binding.Namespace = "tenant-demo"
 	binding.Spec = gentianov1alpha1.IntegrationBindingSpec{
-		Contract: "file-store",
-		Consumer: gentianov1alpha1.AppEndpoint{App: "consumer-app", Namespace: "tenant-demo"},
-		Provider: gentianov1alpha1.AppEndpoint{App: "provider-app", Namespace: "tenant-demo"},
+		Contract:     "file-store",
+		Consumer:     gentianov1alpha1.AppEndpoint{App: "consumer-app", Namespace: "tenant-demo"},
+		Provider:     gentianov1alpha1.AppEndpoint{App: "provider-app", Namespace: "tenant-demo"},
 		Capabilities: []string{"webdav:read"},
 	}
 

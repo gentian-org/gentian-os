@@ -409,60 +409,80 @@ usage:
   # unpriced choice.
   plans:
     enabled: true
+    # One node unit is 2 vCPU / 4 GB / 50 GB, and every plan is a whole number
+    # of them, so a plan is a quantity the platform can actually go and buy.
+    #
+    # requestsCpu / requestsMemory are what is sold: requests are what the
+    # scheduler reserves, so two cores of requests is two cores of a node that
+    # nothing else can schedule into. cpu / memory are the *limits* ceiling and
+    # are not sold — they bound a runaway container, nothing more.
+    #
+    # The limits multiples (4x CPU, 2x memory) are measured, not guessed. A
+    # tenant running Nextcloud with Collabora, the App Store and Open WebUI
+    # reserves 1.0 core and 2.5Gi while its container limits sum to 5.95 cores
+    # and 5.5Gi — chart defaults are generous with limits. A tighter ceiling
+    # would refuse pods on a plan whose reserved capacity is barely touched.
+    # That app set fits `base` with room, which is what a one-node plan should
+    # mean.
     catalogue:
-      # Identical to the quotas the tenant-defaults component applies, so
-      # existing tenants resolve onto a plan rather than reporting a custom
-      # ceiling the day this ships. Re-pricing this entry re-prices them.
       base:
-        displayName: Base
-        description: The standard workspace ceiling.
+        displayName: Base · 1 node
+        description: One node — enough for a workspace with Nextcloud and the App Store.
         tier: 0
         default: true
-        productSku: gentian-resources-base
+        productSku: gentian-resources-nodes-1
         quotas:
+          requestsCpu: "2"
+          requestsMemory: 4Gi
+          cpu: "8"
+          memory: 8Gi
+          storage: 50Gi
+          maxApps: 5
+      nodes-2:
+        displayName: 2 nodes
+        description: Twice the reserved capacity, for a workspace running several apps.
+        tier: 10
+        productSku: gentian-resources-nodes-2
+        quotas:
+          requestsCpu: "4"
+          requestsMemory: 8Gi
+          cpu: "16"
+          memory: 16Gi
+          storage: 100Gi
+          maxApps: 10
+      nodes-4:
+        displayName: 4 nodes
+        tier: 20
+        productSku: gentian-resources-nodes-4
+        quotas:
+          requestsCpu: "8"
+          requestsMemory: 16Gi
           cpu: "32"
           memory: 32Gi
-          storage: 100Gi
-          maxApps: 20
-      base-plus-4:
-        displayName: Base + 4
-        description: Four more cores, with memory and storage scaled to match.
-        tier: 10
-        productSku: gentian-resources-base-plus-4
-        quotas:
-          cpu: "36"
-          memory: 40Gi
           storage: 200Gi
-          maxApps: 25
-      base-plus-8:
-        displayName: Base + 8
-        description: Eight more cores, with memory and storage scaled to match.
-        tier: 20
-        productSku: gentian-resources-base-plus-8
-        quotas:
-          cpu: "40"
-          memory: 48Gi
-          storage: 300Gi
-          maxApps: 30
-      base-plus-16:
-        displayName: Base + 16
-        description: Sixteen more cores, with memory and storage scaled to match.
+          maxApps: 20
+      nodes-8:
+        displayName: 8 nodes
         tier: 30
-        productSku: gentian-resources-base-plus-16
+        productSku: gentian-resources-nodes-8
         quotas:
-          cpu: "48"
-          memory: 64Gi
-          storage: 500Gi
-          maxApps: 40
-      base-plus-32:
-        displayName: Base + 32
-        description: Thirty-two more cores, with memory and storage scaled to match.
-        tier: 40
-        productSku: gentian-resources-base-plus-32
-        quotas:
+          requestsCpu: "16"
+          requestsMemory: 32Gi
           cpu: "64"
-          memory: 96Gi
-          storage: 1Ti
+          memory: 64Gi
+          storage: 400Gi
+          maxApps: 40
+      nodes-16:
+        displayName: 16 nodes
+        description: The largest catalogue plan. Beyond this, arrange a ceiling with the platform operator.
+        tier: 40
+        productSku: gentian-resources-nodes-16
+        quotas:
+          requestsCpu: "32"
+          requestsMemory: 64Gi
+          cpu: "128"
+          memory: 128Gi
+          storage: 800Gi
           maxApps: 60
 
 appLifecycle:

@@ -34,7 +34,7 @@ sold. So the write path accepts a **plan name and nothing else**, and every
 ceiling reachable through the API or the console is one of a known, priced set.
 
 That single constraint is what makes the usage report invoiceable. A month
-resolves to *"base+8 from the 1st to the 17th, base+16 from the 18th"* — plans
+resolves to *"one node from the 1st to the 17th, two from the 18th"* — plans
 and SKUs, not quantities somebody downstream has to interpret and price.
 
 Free-form quantities remain available to whoever edits the deployments
@@ -51,23 +51,87 @@ named one, without becoming an artifact of its own.
 apiVersion: gentianos.io/v1alpha1
 kind: ResourcePlan
 metadata:
-  name: base-plus-8
+  name: nodes-2
 spec:
-  displayName: Base + 8
-  tier: 20                       # ordering; quantities cannot imply "bigger"
-  productSku: gentian-resources-base-plus-8
+  displayName: 2 nodes
+  tier: 10                       # ordering; quantities cannot imply "bigger"
+  productSku: gentian-resources-nodes-2
   quotas:
-    cpu: "40"
-    memory: 48Gi
-    storage: 300Gi
-    maxApps: 30
+    requestsCpu: "4"             # sold — reserved capacity, two node units
+    requestsMemory: 8Gi
+    cpu: "16"                    # burst ceiling — not sold, see §2.2
+    memory: 16Gi
+    storage: 100Gi
+    maxApps: 10
 ```
 
 The default catalogue ships in the operator chart under `usage.plans.catalogue`;
-a cluster selling something else replaces it wholesale in its own values. `base`
-is deliberately identical to the quotas the `tenant-defaults` component already
-applies, so tenants already running resolve onto a plan the day this ships
-instead of all reporting as custom.
+a cluster selling something else replaces it wholesale in its own values.
+
+### 2.2 What a plan sells: reserved capacity, not burst
+
+A plan is a whole number of **node units** — 2 vCPU / 4 GB / 50 GB — so a plan
+is a quantity the platform can go and buy.
+
+That only works because the sold figure is **requests**. Requests are what the
+scheduler reserves: two cores of requests is two cores of a node that nothing
+else can schedule into, which is exactly what a node purchase provides. Limits
+are a burst ceiling — what a container may spike to, with nothing set aside for
+it — and they oversubscribe by design.
+
+The gap is not small. Measured on a workspace running Nextcloud with Collabora,
+the App Store and Open WebUI:
+
+| | CPU | Memory |
+|---|---|---|
+| Reserved (`requests`) | 1.00 | 2.5 Gi |
+| Burst ceiling (`limits`) | 5.95 | 5.5 Gi |
+| Actually consumed | 0.014 | 2.0 Gi |
+
+Sell the middle row and a one-node plan could not hold a single Nextcloud; sell
+the top row and a node unit means what it says. So `ResourcePlan` carries both
+pairs, and only the reserved pair is priced:
+
+| Quota field | ResourceQuota key | Role |
+|---|---|---|
+| `requestsCpu`, `requestsMemory` | `requests.cpu`, `requests.memory` | **Sold.** Maps one-to-one onto purchased nodes |
+| `cpu`, `memory` | `limits.cpu`, `limits.memory` | Blast radius for a runaway container |
+| `storage` | `requests.storage` | Already request-shaped; PVCs reserve what they ask for |
+
+The catalogue's limits multiples — 4× CPU, 2× memory — come from that table
+rather than from a round number. A tighter ceiling would refuse pods on a plan
+whose *reserved* capacity is barely touched, which is the confusing failure this
+whole design exists to avoid.
+
+Imposing a requests quota on a namespace that already has pods is safe: the
+tenant `LimitRange` sets `defaultRequest` (100m / 128Mi), so a container that
+declares no request still has one and the quota cannot reject it.
+
+### 2.3 The ladder
+
+| Plan | Nodes | Reserved | Burst ceiling | Storage | Apps |
+|---|---|---|---|---|---|
+| `base` | 1 | 2 / 4Gi | 8 / 8Gi | 50Gi | 5 |
+| `nodes-2` | 2 | 4 / 8Gi | 16 / 16Gi | 100Gi | 10 |
+| `nodes-4` | 4 | 8 / 16Gi | 32 / 32Gi | 200Gi | 20 |
+| `nodes-8` | 8 | 16 / 32Gi | 64 / 64Gi | 400Gi | 40 |
+| `nodes-16` | 16 | 32 / 64Gi | 128 / 128Gi | 800Gi | 60 |
+
+Doubling, so a tenant outgrowing a plan is always offered roughly twice what it
+has — rather than steps that are enormous at the bottom and trivial at the top.
+The measured workspace above fits `base` on every dimension, which is what a
+one-node plan should mean.
+
+At `nodes-16` the burst ceiling stops bounding much on a small cluster; that is
+inherent to a multiplicative ceiling and is why the top plan says to arrange
+anything larger with the platform operator.
+
+**Tenants already running will read as `custom`** until a plan is applied,
+because a cluster's existing `tenant-defaults` predates the catalogue and sets
+no reserved capacity at all. That is the honest reading — nothing prices those
+tenants — and applying a plan settles it. A cluster that wants new tenants to
+start on `base` should set its `tenant-defaults` component to `base`'s
+quantities.
 
 ### 2.1 Tier, not quantity
 
@@ -121,7 +185,7 @@ kind: Tenant
 metadata:
   name: corp
   annotations:
-    gentianos.io/resource-plan: base-plus-8
+    gentianos.io/resource-plan: nodes-2
 spec:
   quotas:
     cpu: "40"
@@ -158,8 +222,10 @@ is using, naming the resource and both numbers:
 409  limits.cpu: using 34, plan allows 32
 ```
 
-The check runs against `ResourceQuota.status.used` — the same keys the cluster
-will enforce, via the one shared mapping in
+The check runs against every key the plan sets, reserved and burst alike: a plan
+that reserves less than the scheduler has already set aside for running pods is
+refused for the same reason as one whose ceiling is too low. It reads
+`ResourceQuota.status.used` through the one shared mapping in
 [`tenantshell.ResourceListFromQuotas`](../../internal/kernel/tenantshell/resources.go).
 Two copies of that mapping would let a plan pass a guard written against
 `requests.cpu` and then be enforced against `limits.cpu`.
@@ -256,9 +322,9 @@ lose the actor, which is not recoverable from anywhere else.
 
 ```json
 { "tenant": "corp", "intervals": [
-  { "plan": "base-plus-8",  "productSku": "sku-8",  "from": "2026-01-01T00:00:00Z",
+  { "plan": "base",     "productSku": "sku-1node",  "from": "2026-01-01T00:00:00Z",
     "to": "2026-01-18T09:12:00Z", "seconds": 1473120, "partial": true },
-  { "plan": "base-plus-16", "productSku": "sku-16", "from": "2026-01-18T09:12:00Z",
+  { "plan": "nodes-2",  "productSku": "sku-2node", "from": "2026-01-18T09:12:00Z",
     "to": "2026-02-01T00:00:00Z", "seconds": 1176480, "partial": true }
 ]}
 ```
@@ -289,7 +355,7 @@ reimplements them.
 ```
 GET  /v1/tenants/{tenant}/resources          # plan, ceiling, committed, live
 GET  /v1/tenants/{tenant}/resources/plans    # catalogue, with blocked reasons
-PUT  /v1/tenants/{tenant}/resources          # {"plan": "base-plus-8"}
+PUT  /v1/tenants/{tenant}/resources          # {"plan": "nodes-2"}
 GET  /v1/tenants/{tenant}/resources/usage    # thinned sample series
 GET  /v1/tenants/{tenant}/resources/report   # billable plan intervals
 ```
@@ -368,7 +434,7 @@ Operator chart (`charts/gentian-os/values.yaml`):
 | `usage.sampler.retention` | `9600h` (400d) | Sample retention; plan events are never pruned |
 | `usage.metricsServer.enabled` | `false` | Add the live-consumption series |
 | `usage.plans.enabled` | `true` | Ship the plan catalogue |
-| `usage.plans.catalogue` | five tiers | The priced plans themselves |
+| `usage.plans.catalogue` | five node tiers | The priced plans themselves |
 
 Portal chart (`gentian-ui/chart/values.yaml`):
 
@@ -389,7 +455,7 @@ kubectl gentian resources plans --tenant corp
 kubectl gentian resources show corp
 
 # Move a tenant, refused if it does not fit
-kubectl gentian resources set corp --plan base-plus-8
+kubectl gentian resources set corp --plan nodes-2
 
 # What a month resolves to for invoicing
 kubectl gentian resources report corp --from 2026-01-01T00:00:00Z --to 2026-02-01T00:00:00Z
@@ -402,9 +468,10 @@ kubectl annotate tenant corp gentianos.io/max-resource-tier=20 --overwrite
 through the `portal-shell-<tenant>` Secret in `platform-kernel`. A tenant without
 that Secret is skipped and logged; the others are unaffected.
 
-**Plan shows as `custom`:** the tenant's quotas match no plan. Either the
-catalogue was re-priced under a tenant already on it, or `tenant.yaml` was edited
-by hand. Applying a plan settles it.
+**Plan shows as `custom`:** the tenant's quotas match no plan. Either the tenant
+predates the catalogue and reserves nothing (see [§2.3](#23-the-ladder)), the
+catalogue was re-priced under a tenant already on it, or `tenant.yaml` was
+edited by hand. Applying a plan settles it.
 
 **Plan shows as `drifted`:** the recorded plan and the enforced ceiling
 disagree. The cluster enforces what is there; what is billed is what is

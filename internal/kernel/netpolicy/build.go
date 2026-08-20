@@ -102,7 +102,7 @@ func ManagedPolicyNames(in BuildInput) map[string]struct{} {
 	for _, app := range in.Apps {
 		names[kernelPolicyName(app.Profile)] = struct{}{}
 		names[appInternalPolicyName(app.Profile)] = struct{}{}
-		
+
 		profile := in.Profiles[app.Profile]
 		if profile != nil && profile.Spec.Security != nil && len(profile.Spec.Security.Egress) > 0 {
 			names[appEgressPolicyName(app.Profile)] = struct{}{}

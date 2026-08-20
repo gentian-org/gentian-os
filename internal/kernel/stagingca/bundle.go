@@ -14,7 +14,6 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-
 // Package stagingca builds the gentian-staging-ca-tls trust bundle for ACME
 // staging clusters. Catalogue apps mount this secret so in-cluster OIDC
 // clients trust https://id.<kernel-domain>.
@@ -222,9 +221,9 @@ func EnsureStagingCASecret(ctx context.Context, c client.Client, namespace, cert
 		},
 		Type: corev1.SecretTypeOpaque,
 		Data: map[string][]byte{
-			"ca.crt":         bundle.CACrt,
-			NodeExtraCAKey:   bundle.NodeExtraCA,
-			TrustStoreKey:    trustStore,
+			"ca.crt":       bundle.CACrt,
+			NodeExtraCAKey: bundle.NodeExtraCA,
+			TrustStoreKey:  trustStore,
 		},
 	}
 
