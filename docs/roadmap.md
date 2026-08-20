@@ -447,6 +447,19 @@ For the current baseline design of the system, refer to [architecture.md](archit
 
 ---
 
+### 3.6 Effective Resource Requirements in the Catalogue (**)
+* **Target Domain**: UI/UX & Shell
+* **Context**: The app store shows a "Resource Profile" taken from the AppProfile's `extraValues.resources`. That field is the profile's *override* block, not the app's requirement, so an app content with its chart's defaults declares nothing and the store had nothing to show — Docmost reserves 1 CPU and 1Gi from `charts/docmost/values.yaml` and appeared to reserve nothing. Of seventeen profiles, fourteen declare no override; most legitimately (the nine Nextcloud add-ons install into an existing Nextcloud and start no pods, gentian-subscriptions is an ApiProfile with no workload), but docmost, mathesar, litellm and the app store itself all run pods on chart defaults. A tenant admin deciding what fits sees a blank where a whole core belongs. Mitigated for now by saying "not set by this profile — the chart's own defaults apply" instead of omitting the panel, so a blank is never read as free; the tenant resources panel shows the truth, but only once the app is installed, which is after the decision.
+* **Proposed Solution**: Resolve the *effective* resources at catalogue-build time rather than reading the override block — the chart is already pulled, so its values are available — and serve requests and limits whether or not the profile overrides them. Copying the numbers into each profile is the alternative and the wrong one: it duplicates the chart's own values and drifts the first time a chart is bumped.
+* **Backlog Items**:
+  - `[ ]` Resolve requests and limits from the chart's values when the profile declares no override.
+  - `[ ]` Cover the shapes charts actually use — per-component blocks (`api.resources`, `web.resources`), sub-charts, and sidecars — rather than a single top-level `resources` key.
+  - `[ ]` Show the resolved figures in the same units as the tenant resources panel, so what an app *will* cost and what installed apps *do* cost read as one system.
+  - `[ ]` Warn in the install dialog when an app's requirement exceeds the tenant's remaining headroom, which is the decision this data exists to inform.
+  - `[ ]` Drop the "not set by this profile" fallback once the resolved figures are always available.
+
+---
+
 ## 4. Agentic AI Layer
 
 ### 4.1 MCP Registry & Read-Scope Tooling (***)
