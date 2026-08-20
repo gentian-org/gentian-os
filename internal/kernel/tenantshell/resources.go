@@ -117,11 +117,23 @@ func ResourceQuota(tenantName, nsName string, quotas *gentianov1alpha1.TenantQuo
 // ResourceListFromQuotas maps a tenant's plan quantities onto the ResourceQuota
 // keys that enforce them.
 //
-// Exported because it is the single definition of that mapping, and the
-// downgrade guard in internal/resourceplan has to compare a candidate plan
-// against the same keys the cluster will actually enforce. Two copies of this
-// would let a plan pass a guard written against requests.cpu and then be
-// enforced against limits.cpu.
+// It is NOT what creates the quota. The tenant-default Composition composes the
+// real ResourceQuota through provider-kubernetes, and this mirrors that
+// template — the mapping exists twice, in Go and in Go templating, and the
+// Composition is the one the cluster obeys.
+//
+// Two readers depend on the mirror holding. The downgrade guard in
+// internal/resourceplan compares a candidate plan against these keys, so a
+// mapping that drifts from the Composition would pass a plan against
+// requests.cpu and see it enforced against limits.cpu. And
+// xtenant_shell_simulator_test.go stands in for the Composition, so a test
+// suite built on a stale mirror agrees with itself and with nothing real.
+//
+// That is not hypothetical: requests.cpu and requests.memory were added here
+// and not to the Composition, and a tenant moved onto a plan received its
+// limits and none of its reserved capacity. Change one, change both, and
+// extend the tenant-default render fixture — which now sets quotas precisely
+// so this cannot drift silently again.
 func ResourceListFromQuotas(q *gentianov1alpha1.TenantQuotas) corev1.ResourceList {
 	if q == nil {
 		return nil

@@ -171,6 +171,12 @@ spec:
                       {{- if $quotas.storage }}
                       requests.storage: {{ $quotas.storage | quote }}
                       {{- end }}
+                      {{- if $quotas.requestsCpu }}
+                      requests.cpu: {{ $quotas.requestsCpu | quote }}
+                      {{- end }}
+                      {{- if $quotas.requestsMemory }}
+                      requests.memory: {{ $quotas.requestsMemory | quote }}
+                      {{- end }}
                       {{- if $quotas.cpu }}
                       limits.cpu: {{ $quotas.cpu | quote }}
                       {{- end }}

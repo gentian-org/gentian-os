@@ -11,5 +11,17 @@ spec:
   apps:
     - name: catalogue-test-app
       profile: catalogue-test-app
+  # Set so the ResourceQuota is actually rendered. Without quotas the
+  # Composition skips that Object entirely, and the mapping from plan
+  # quantities to quota keys went untested — which is how requests.cpu and
+  # requests.memory came to exist in the Go mirror and not here, and a tenant
+  # moved onto a plan received its limits and none of its reserved capacity.
+  quotas:
+    requestsCpu: "2"
+    requestsMemory: 4Gi
+    cpu: "8"
+    memory: 8Gi
+    storage: 50Gi
+    maxPods: 100
   compositeDeletePolicy: Background
   resourceRefs: []

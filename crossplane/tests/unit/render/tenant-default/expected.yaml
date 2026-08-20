@@ -7,7 +7,7 @@ status:
   conditions:
   - lastTransitionTime: "2024-01-01T00:00:00Z"
     message: 'Unready resources: app-catalogue-test-app, keycloak-portal-bff-client,
-      keycloak-portal-bff-default-scopes, and 3 more'
+      keycloak-portal-bff-default-scopes, and 4 more'
     reason: Creating
     status: "False"
     type: Ready
@@ -373,6 +373,43 @@ spec:
           gentianos.io/managed-by: crossplane
           gentianos.io/tenant: render-fixture
         name: tenant-render-fixture
+  providerConfigRef:
+    name: kubernetes
+---
+apiVersion: kubernetes.crossplane.io/v1alpha2
+kind: Object
+metadata:
+  annotations:
+    crossplane.io/composition-resource-name: resourcequota
+  labels:
+    crossplane.io/composite: render-fixture
+  name: render-fixture-resourcequota
+  ownerReferences:
+  - apiVersion: gentianos.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XTenant
+    name: render-fixture
+    uid: ""
+spec:
+  forProvider:
+    manifest:
+      apiVersion: v1
+      kind: ResourceQuota
+      metadata:
+        labels:
+          app.kubernetes.io/managed-by: gentian-os
+          gentianos.io/tenant: render-fixture
+        name: tenant-quota
+        namespace: tenant-render-fixture
+      spec:
+        hard:
+          limits.cpu: "8"
+          limits.memory: 8Gi
+          pods: "100"
+          requests.cpu: "2"
+          requests.memory: 4Gi
+          requests.storage: 50Gi
   providerConfigRef:
     name: kubernetes
 ---
