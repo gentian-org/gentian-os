@@ -370,6 +370,101 @@ credentialManager:
   # the safe direction.
   tenantClaim: tenant
 
+# Resource plans and usage history — the Admin Console's Resources tab, the
+# `kubectl gentian resources` CLI, and the invoiceable record behind both.
+#
+# The sampler records each tenant's enforced ceiling and what is committed
+# beneath it into that tenant's own {tenant}_shell database, on a ticker. That
+# series needs no metrics stack: it comes from the ResourceQuota the cluster
+# actually enforces, which is what a plan is priced on.
+usage:
+  sampler:
+    # Off only for a cluster whose tenants have no shell database to write to.
+    # With it off there is no usage history, and the Resources tab shows the
+    # current ceiling with no series behind it.
+    enabled: true
+    # How often every tenant is sampled. Quarter-hourly is fine detail for a
+    # quantity that changes when someone installs an app.
+    interval: "15m"
+    # How long samples are kept. Plan-change events are never pruned — they are
+    # the billing record, and they accrue per plan change rather than per tick.
+    retention: "9600h"
+  # metrics-server, when installed, adds a live-consumption series beside the
+  # committed one, so the console can show a tenant paying for 32 CPU and
+  # burning 3. Purely advisory: nothing billed depends on it, and a cluster
+  # without metrics-server reports the committed figures unchanged.
+  #
+  # Flip to true once scripts/steps/A-11-metrics-server.sh has run.
+  metricsServer:
+    enabled: false
+
+  # The priced catalogue of tenant ceilings. Selecting a plan is the only way
+  # the resources API will change a tenant's quotas — it accepts a plan name and
+  # never a quantity — so every ceiling reachable through the API or the console
+  # is one the platform has priced, and a month of usage resolves to SKUs.
+  #
+  # A cluster selling something else replaces `catalogue` wholesale. Free-form
+  # quantities remain available to whoever edits the deployments repository by
+  # hand, which is the cluster operator, which is the person entitled to make an
+  # unpriced choice.
+  plans:
+    enabled: true
+    catalogue:
+      # Identical to the quotas the tenant-defaults component applies, so
+      # existing tenants resolve onto a plan rather than reporting a custom
+      # ceiling the day this ships. Re-pricing this entry re-prices them.
+      base:
+        displayName: Base
+        description: The standard workspace ceiling.
+        tier: 0
+        default: true
+        productSku: gentian-resources-base
+        quotas:
+          cpu: "32"
+          memory: 32Gi
+          storage: 100Gi
+          maxApps: 20
+      base-plus-4:
+        displayName: Base + 4
+        description: Four more cores, with memory and storage scaled to match.
+        tier: 10
+        productSku: gentian-resources-base-plus-4
+        quotas:
+          cpu: "36"
+          memory: 40Gi
+          storage: 200Gi
+          maxApps: 25
+      base-plus-8:
+        displayName: Base + 8
+        description: Eight more cores, with memory and storage scaled to match.
+        tier: 20
+        productSku: gentian-resources-base-plus-8
+        quotas:
+          cpu: "40"
+          memory: 48Gi
+          storage: 300Gi
+          maxApps: 30
+      base-plus-16:
+        displayName: Base + 16
+        description: Sixteen more cores, with memory and storage scaled to match.
+        tier: 30
+        productSku: gentian-resources-base-plus-16
+        quotas:
+          cpu: "48"
+          memory: 64Gi
+          storage: 500Gi
+          maxApps: 40
+      base-plus-32:
+        displayName: Base + 32
+        description: Thirty-two more cores, with memory and storage scaled to match.
+        tier: 40
+        productSku: gentian-resources-base-plus-32
+        quotas:
+          cpu: "64"
+          memory: 96Gi
+          storage: 1Ti
+          maxApps: 60
+
 appLifecycle:
   port: 8082
   deployments:

@@ -1,0 +1,60 @@
+{{- if .Values.usage.plans.enabled }}
+{{- /*
+The priced catalogue of tenant ceilings.
+
+Shipped with the operator rather than left to each cluster's deployments
+repository, because the plans are what the resources API will accept: an empty
+catalogue means no tenant can change its own ceiling at all, which is a worse
+default than a set the operator can re-price. A cluster that sells something
+different replaces usage.plans.catalogue wholesale in its own values.
+
+The quantities below are increments of CPU with memory and storage scaled to
+match, and `base` is deliberately identical to the quotas the tenant-defaults
+component has been applying — so tenants already running resolve onto a plan
+instead of reporting a custom ceiling on the day this ships.
+
+productSku is what reaches the commerce backend in the usage report. Leaving it
+empty makes the plan unbilled, which is the right setting for a cluster running
+without commerce and for a free tier.
+*/}}
+{{- range $name, $plan := .Values.usage.plans.catalogue }}
+---
+apiVersion: gentianos.io/v1alpha1
+kind: ResourcePlan
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "gentian-os.labels" $ | nindent 4 }}
+spec:
+  displayName: {{ $plan.displayName | quote }}
+  {{- with $plan.description }}
+  description: {{ . | quote }}
+  {{- end }}
+  tier: {{ $plan.tier }}
+  {{- with $plan.productSku }}
+  productSku: {{ . | quote }}
+  {{- end }}
+  {{- if $plan.default }}
+  default: true
+  {{- end }}
+  {{- if $plan.selfServiceDisabled }}
+  selfServiceDisabled: true
+  {{- end }}
+  quotas:
+    {{- with $plan.quotas.cpu }}
+    cpu: {{ . | quote }}
+    {{- end }}
+    {{- with $plan.quotas.memory }}
+    memory: {{ . | quote }}
+    {{- end }}
+    {{- with $plan.quotas.storage }}
+    storage: {{ . | quote }}
+    {{- end }}
+    {{- with $plan.quotas.maxApps }}
+    maxApps: {{ . }}
+    {{- end }}
+    {{- with $plan.quotas.maxPods }}
+    maxPods: {{ . }}
+    {{- end }}
+{{- end }}
+{{- end }}

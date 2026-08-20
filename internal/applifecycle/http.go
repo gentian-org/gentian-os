@@ -46,6 +46,7 @@ func (h *HTTPServer) Start(ctx context.Context) error {
 	mux.HandleFunc("POST /v1/tenants/{tenant}/apps/{profile}", h.handleInstall)
 	mux.HandleFunc("DELETE /v1/tenants/{tenant}/apps/{profile}", h.handleUninstall)
 	mux.HandleFunc("PUT /v1/tenants/{tenant}/apps/{profile}/addons", h.handleSetAddons)
+	h.registerResourceRoutes(mux)
 
 	srv := &http.Server{Addr: h.Addr, Handler: mux, ReadHeaderTimeout: 10 * time.Second}
 	errCh := make(chan error, 1)

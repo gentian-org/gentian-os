@@ -38,3 +38,20 @@ func NormalizeTenancyMode(mode string) string {
 	}
 	return TenancyModeMulti
 }
+
+// NamespaceName is the namespace a tenant's workloads run in.
+//
+// On the type rather than in a controller helper because the usage sampler and
+// the resources API both need it and neither may import the controller package.
+// A second copy would be a second place for the isolation override to be
+// forgotten, and a sampler reading tenant-<name> while the workloads run
+// somewhere else records an empty namespace as an idle one.
+func (t *Tenant) NamespaceName() string {
+	if t == nil {
+		return ""
+	}
+	if t.Spec.Isolation != nil && t.Spec.Isolation.Namespace != "" {
+		return t.Spec.Isolation.Namespace
+	}
+	return "tenant-" + t.Name
+}

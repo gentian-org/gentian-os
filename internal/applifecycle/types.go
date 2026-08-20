@@ -28,6 +28,10 @@ type Options struct {
 	DeploymentsRepo    string
 	DeploymentsCluster string
 	WaitTimeout        time.Duration
+	// MetricsEnabled turns on the live-consumption series read from
+	// metrics.k8s.io. Off in a cluster without metrics-server, where the
+	// resources API still reports the ceiling and what is committed under it.
+	MetricsEnabled bool
 }
 
 // InstallRequest installs an app profile on a tenant.

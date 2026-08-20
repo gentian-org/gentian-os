@@ -43,6 +43,7 @@ func NewRunnableFromEnv(mgr manager.Manager) (*Runnable, error) {
 		DeploymentsPath:    os.Getenv("GENTIAN_DEPLOYMENTS_PATH"),
 		DeploymentsRepo:    os.Getenv("GENTIAN_DEPLOYMENTS_REPO"),
 		DeploymentsCluster: envOrDefault("GENTIAN_DEPLOYMENTS_CLUSTER_ID", "default-cluster"),
+		MetricsEnabled:     os.Getenv("METRICS_SERVER_ENABLED") == "true",
 	})
 	if err != nil {
 		return nil, err

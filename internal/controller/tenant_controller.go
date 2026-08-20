@@ -1010,10 +1010,7 @@ func (r *TenantReconciler) setCondition(tenant *gentianov1alpha1.Tenant, condTyp
 
 // tenantNamespaceName returns the namespace name for the tenant.
 func tenantNamespaceName(tenant *gentianov1alpha1.Tenant) string {
-	if tenant.Spec.Isolation != nil && tenant.Spec.Isolation.Namespace != "" {
-		return tenant.Spec.Isolation.Namespace
-	}
-	return fmt.Sprintf("tenant-%s", tenant.Name)
+	return tenant.NamespaceName()
 }
 
 // ── XTenant helpers ───────────────────────────────────────────────────────────

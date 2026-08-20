@@ -100,7 +100,7 @@ func LimitRange(tenantName, nsName string) *corev1.LimitRange {
 
 // ResourceQuota returns a ResourceQuota when quotas are set; nil otherwise.
 func ResourceQuota(tenantName, nsName string, quotas *gentianov1alpha1.TenantQuotas) *corev1.ResourceQuota {
-	hard := resourceListFromQuotas(quotas)
+	hard := ResourceListFromQuotas(quotas)
 	if len(hard) == 0 {
 		return nil
 	}
@@ -114,7 +114,15 @@ func ResourceQuota(tenantName, nsName string, quotas *gentianov1alpha1.TenantQuo
 	}
 }
 
-func resourceListFromQuotas(q *gentianov1alpha1.TenantQuotas) corev1.ResourceList {
+// ResourceListFromQuotas maps a tenant's plan quantities onto the ResourceQuota
+// keys that enforce them.
+//
+// Exported because it is the single definition of that mapping, and the
+// downgrade guard in internal/resourceplan has to compare a candidate plan
+// against the same keys the cluster will actually enforce. Two copies of this
+// would let a plan pass a guard written against requests.cpu and then be
+// enforced against limits.cpu.
+func ResourceListFromQuotas(q *gentianov1alpha1.TenantQuotas) corev1.ResourceList {
 	if q == nil {
 		return nil
 	}

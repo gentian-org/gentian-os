@@ -40,6 +40,8 @@ import (
 	"github.com/gentian-org/gentian-os/internal/controller"
 	"github.com/gentian-org/gentian-os/internal/credentialmgr"
 	"github.com/gentian-org/gentian-os/internal/kernel/secrets"
+	"github.com/gentian-org/gentian-os/internal/meta"
+	"github.com/gentian-org/gentian-os/internal/usage"
 	"github.com/gentian-org/gentian-os/internal/webhook"
 )
 
@@ -141,6 +143,38 @@ func main() {
 			setupLog.Error(err, "unable to add metering worker to manager")
 			os.Exit(1)
 		}
+	}
+
+	// Usage sampling: the tenant ceiling and what is committed under it,
+	// recorded on a ticker so "current use" has a history behind it and a
+	// month resolves to something invoiceable. Off by a single env var, since
+	// a cluster without the per-tenant shell databases has nowhere to write.
+	if os.Getenv("USAGE_SAMPLER_ENABLED") != "false" {
+		sampler := &usage.Sampler{
+			Client:          mgr.GetClient(),
+			KernelNamespace: envOrDefault("KERNEL_NAMESPACE", meta.KernelNamespace),
+			Interval:        envDuration("USAGE_SAMPLE_INTERVAL", 15*time.Minute),
+			Retention:       envDuration("USAGE_RETENTION", 400*24*time.Hour),
+		}
+		// The live series is optional and its absence is not an error: a
+		// cluster with no metrics-server still records the figures a plan is
+		// chosen and billed on, and only loses the answer to "is this tenant
+		// using what they pay for".
+		if controller.EnvBool("METRICS_SERVER_ENABLED") {
+			src, err := usage.NewMetricsAPISource(mgr.GetConfig())
+			if err != nil {
+				setupLog.Error(err, "unable to build the metrics usage source; sampling committed usage only")
+			} else {
+				sampler.Actual = src
+			}
+		}
+		if err := mgr.Add(sampler); err != nil {
+			setupLog.Error(err, "unable to add the usage sampler to manager")
+			os.Exit(1)
+		}
+		setupLog.Info("usage sampler enabled",
+			"interval", sampler.Interval, "retention", sampler.Retention,
+			"actualSource", sampler.Actual != nil)
 	}
 
 	if err := (&controller.KeycloakPlatformReconciler{
@@ -407,4 +441,24 @@ func envOrDefault(key, def string) string {
 		return v
 	}
 	return def
+}
+
+// envDuration reads a Go duration from the environment, falling back when it is
+// unset or unparseable.
+//
+// A malformed value falls back rather than exiting: the sampler's interval is
+// an operational preference, and refusing to start the whole operator over a
+// mistyped "15min" would turn a cosmetic error into an outage.
+func envDuration(key string, def time.Duration) time.Duration {
+	v := os.Getenv(key)
+	if v == "" {
+		return def
+	}
+	parsed, err := time.ParseDuration(v)
+	if err != nil || parsed <= 0 {
+		setupLog.Info("ignoring unparseable duration; using the default",
+			"key", key, "value", v, "default", def)
+		return def
+	}
+	return parsed
 }

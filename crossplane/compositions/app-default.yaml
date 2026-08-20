@@ -1395,6 +1395,17 @@ spec:
             {{- $scExtraVals = $scRaw | fromJson }}
             {{- end }}
             {{- $scExtraVals = $scExtraVals | toJson | fromJson }}
+            {{- /* The same two labels the app's own pods carry, for the same two
+                   reasons: the tenant's kernel-access NetworkPolicy selects on
+                   gentianos.io/app, and anything attributing resource use to an
+                   app counts by it. A sidecar is part of its app, so leaving it
+                   unlabelled put it outside both — its pods were neither granted
+                   the app's kernel egress nor counted against the app that owns
+                   them. Requires the sidecar chart to honour podLabels, which is
+                   the same requirement the app's own chart already carries. */}}
+            {{- $scPodLabels := default dict (dig "podLabels" dict $scExtraVals) }}
+            {{- $scPodLabels = mergeOverwrite $scPodLabels (dict "gentianos.io/app" $app "gentianos.io/tenant" $tenant) }}
+            {{- $scExtraVals = mergeOverwrite $scExtraVals (dict "podLabels" $scPodLabels) }}
             ---
             apiVersion: helm.crossplane.io/v1beta1
             kind: Release

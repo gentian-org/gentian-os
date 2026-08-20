@@ -138,7 +138,24 @@ Usage:
       which permanently deletes tenant data (Keycloak realm, databases, storage,
       mail secrets, and other orchestrator-owned artifacts).
 
+    kubectl gentian resources plans [--tenant <tenant>]
+      List the priced resource plans, marking the tenant's current one and
+      saying why any plan is not selectable for them.
+
+    kubectl gentian resources show <tenant>
+      Show the tenant's plan, enforced ceiling and what is committed under it.
+
+    kubectl gentian resources set <tenant> --plan <plan> [--force]
+      Move the tenant to a plan by committing to gentian-deployments. Refused
+      when the plan is smaller than what the tenant is currently using, unless
+      --force says to shrink it anyway.
+
+    kubectl gentian resources report <tenant> [--from <RFC3339>] [--to <RFC3339>]
+      Print the plan intervals the window resolves to, with the SKU in effect
+      over each — the record a month is invoiced from.
+
 Environment / ~/.gentian/config:
+  GENTIAN_OPERATOR_NAMESPACE  where gentian-os runs (default: gentian-system)
   GENTIAN_DEPLOYMENTS_PATH   local path to gentian-deployments checkout
   GENTIAN_DEPLOYMENTS_REPO   remote Git URL (used if path does not exist)
   GENTIAN_DEPLOYMENTS_CLUSTER_ID  cluster selector (default: default-cluster)
@@ -148,6 +165,8 @@ Examples:
   kubectl gentian apps install demo-app --tenant gtn-demo
   kubectl gentian apps uninstall demo-app --tenant gtn-demo
   kubectl gentian apps uninstall demo-app --tenant gtn-demo --purge   # wipe DB, S3, secrets
+  kubectl gentian resources plans --tenant gtn-demo
+  kubectl gentian resources set gtn-demo --plan base-plus-8
   kubectl gentian apps uninstall element --tenant demo --purge   # or -f: full Matrix data wipe
   kubectl gentian tenants list
   kubectl gentian tenants deploy demo
@@ -2666,6 +2685,270 @@ cmd_install() {
 }
 
 # ---------------------------------------------------------------------------
+# resources — tenant resource plans and usage
+# ---------------------------------------------------------------------------
+# These call the operator's lifecycle API rather than editing git directly, as
+# `apps install` does. The difference is deliberate: a plan change is refused
+# when the plan is smaller than what the tenant is already using, is checked
+# against the tenant's entitlement, and is recorded as a billing event — and all
+# three live in the operator. Reimplementing them here in bash would put the
+# rules in two places, and the copy that drifted would be the one writing to git.
+#
+# The API is a ClusterIP Service, so reaching it from a workstation needs a
+# port-forward. One is established per invocation and torn down on exit.
+GENTIAN_OPERATOR_NAMESPACE="${GENTIAN_OPERATOR_NAMESPACE:-gentian-system}"
+_LIFECYCLE_PF_PID=""
+
+_lifecycle_cleanup() {
+  if [[ -n "${_LIFECYCLE_PF_PID}" ]]; then
+    kill "${_LIFECYCLE_PF_PID}" 2>/dev/null || true
+    wait "${_LIFECYCLE_PF_PID}" 2>/dev/null || true
+    _LIFECYCLE_PF_PID=""
+  fi
+}
+
+# _lifecycle_base — echo a base URL for the lifecycle API, port-forwarding when
+# the Service is not directly reachable.
+_lifecycle_base() {
+  if [[ -n "${GENTIAN_LIFECYCLE_URL:-}" ]]; then
+    echo "${GENTIAN_LIFECYCLE_URL%/}"
+    return 0
+  fi
+
+  local svc port
+  svc="$(kubectl get svc -n "${GENTIAN_OPERATOR_NAMESPACE}" \
+    -l app.kubernetes.io/name=gentian-os -o name 2>/dev/null |
+    grep -- '-lifecycle$' | head -1)"
+  if [[ -z "${svc}" ]]; then
+    echo "ERROR: no gentian-os lifecycle Service in namespace ${GENTIAN_OPERATOR_NAMESPACE}." >&2
+    echo "  Set GENTIAN_OPERATOR_NAMESPACE, or GENTIAN_LIFECYCLE_URL to reach it directly." >&2
+    exit 1
+  fi
+  port="$(kubectl get "${svc}" -n "${GENTIAN_OPERATOR_NAMESPACE}" \
+    -o jsonpath='{.spec.ports[0].port}' 2>/dev/null || echo 8082)"
+
+  # Port 0 asks the kernel for a free local port. A fixed one collides with a
+  # second terminal doing the same thing, and the collision surfaces as a
+  # connection refused against a forward somebody else owns.
+  local out
+  out="$(mktemp "${TMPDIR:-/tmp}/gentian-lifecycle-pf.XXXXXX")"
+  kubectl port-forward -n "${GENTIAN_OPERATOR_NAMESPACE}" "${svc}" ":${port}" >"${out}" 2>&1 &
+  _LIFECYCLE_PF_PID=$!
+  trap _lifecycle_cleanup EXIT
+
+  local local_port="" i
+  for i in $(seq 1 50); do
+    local_port="$(sed -n 's/^Forwarding from 127\.0\.0\.1:\([0-9]*\).*/\1/p' "${out}" | head -1)"
+    [[ -n "${local_port}" ]] && break
+    kill -0 "${_LIFECYCLE_PF_PID}" 2>/dev/null || break
+    sleep 0.2
+  done
+  if [[ -z "${local_port}" ]]; then
+    echo "ERROR: could not port-forward to the lifecycle API." >&2
+    sed 's/^/  /' "${out}" >&2
+    rm -f "${out}"
+    exit 1
+  fi
+  rm -f "${out}"
+  echo "http://127.0.0.1:${local_port}"
+}
+
+# _actor_name — who the change is attributed to in git and in the billing record.
+#
+# The git identity, because it is what the commit carries anyway: the plan event
+# and the commit then name the same person.
+_actor_name() {
+  local name
+  name="$(git config --get user.email 2>/dev/null || true)"
+  [[ -z "${name}" ]] && name="$(git config --get user.name 2>/dev/null || true)"
+  [[ -z "${name}" ]] && name="${USER:-kubectl-gentian}"
+  echo "${name}"
+}
+
+# _lifecycle_call <method> <path> [json-body] — call the API and echo the body.
+#
+# On refusal the server's own `detail` is printed verbatim, because it is the
+# only place the reason lives: "limits.cpu: using 34, plan allows 32" is the
+# whole answer, and replacing it with a generic failure would send the operator
+# to the logs for something the response already said.
+_lifecycle_call() {
+  local method="$1" path="$2" body="${3:-}"
+  local base status out
+  base="$(_lifecycle_base)"
+  out="$(mktemp "${TMPDIR:-/tmp}/gentian-lifecycle.XXXXXX")"
+
+  if [[ -n "${body}" ]]; then
+    status="$(curl -sS -o "${out}" -w '%{http_code}' -X "${method}" \
+      -H 'Content-Type: application/json' \
+      -H "X-Gentian-Actor: $(_actor_name)" \
+      -d "${body}" "${base}${path}" || echo 000)"
+  else
+    status="$(curl -sS -o "${out}" -w '%{http_code}' -X "${method}" \
+      -H "X-Gentian-Actor: $(_actor_name)" \
+      "${base}${path}" || echo 000)"
+  fi
+
+  if [[ "${status}" != "200" ]]; then
+    echo "ERROR: the lifecycle API refused the request (HTTP ${status})." >&2
+    python3 - "${out}" >&2 <<'PY' || true
+import json, sys
+try:
+    with open(sys.argv[1]) as fh:
+        detail = json.load(fh).get("detail", "")
+    if detail:
+        print("  " + detail)
+except Exception:
+    pass
+PY
+    rm -f "${out}"
+    exit 1
+  fi
+  cat "${out}"
+  rm -f "${out}"
+}
+
+cmd_resources_plans() {
+  local tenant="${1:-}"
+  if [[ -z "${tenant}" ]]; then
+    # Without a tenant there is nothing to mark as current and no consumption to
+    # check a downgrade against, so the catalogue is read straight from the
+    # cluster and no port-forward is needed.
+    kubectl get resourceplans --sort-by=.spec.tier -o custom-columns='NAME:.metadata.name,DISPLAY:.spec.displayName,TIER:.spec.tier,CPU:.spec.quotas.cpu,MEMORY:.spec.quotas.memory,STORAGE:.spec.quotas.storage,APPS:.spec.quotas.maxApps,SKU:.spec.productSku'
+    return
+  fi
+
+  local payload
+  payload="$(_lifecycle_call GET "/v1/tenants/${tenant}/resources/plans")"
+  python3 - "${payload}" <<'PY'
+import json, sys
+
+plans = json.loads(sys.argv[1]).get("plans") or []
+if not plans:
+    print("No resource plans are defined on this cluster.")
+    raise SystemExit(0)
+
+print(f"{'':2} {'PLAN':<18} {'CPU':>6} {'MEMORY':>8} {'STORAGE':>8} {'APPS':>5}  SKU")
+for plan in plans:
+    q = plan.get("quotas") or {}
+    mark = "*" if plan.get("current") else ("x" if not plan.get("selectable") else " ")
+    print(f"{mark:2} {plan['name']:<18} {q.get('cpu', '-'):>6} {q.get('memory', '-'):>8} "
+          f"{q.get('storage', '-'):>8} {q.get('maxApps', '-'):>5}  {plan.get('productSku', '')}")
+    if plan.get("blocked"):
+        print(f"   {plan['blocked']}")
+print()
+print("* current plan   x not selectable")
+PY
+}
+
+cmd_resources_show() {
+  local tenant="${1:-}"
+  if [[ -z "${tenant}" ]]; then
+    echo "ERROR: usage: kubectl gentian resources show <tenant>" >&2
+    exit 1
+  fi
+
+  local payload
+  payload="$(_lifecycle_call GET "/v1/tenants/${tenant}/resources")"
+  python3 - "${payload}" <<'PY'
+import json, sys
+
+s = json.loads(sys.argv[1])
+print(f"Tenant:         {s['tenant']}")
+print(f"Plan:           {s.get('plan') or '(matches no plan)'}")
+if s.get("annotatedPlan") and s.get("annotatedPlan") != s.get("plan"):
+    print(f"Recorded plan:  {s['annotatedPlan']}")
+if s.get("drifted"):
+    print("  ! the enforced ceiling is not the one the recorded plan describes")
+if s.get("custom"):
+    print("  ! this ceiling was set by hand and matches no priced plan")
+print(f"Installed apps: {s.get('installedApps', 0)}")
+print()
+
+if not s.get("hasQuota"):
+    print("No ResourceQuota: this tenant runs without a ceiling.")
+else:
+    print(f"{'RESOURCE':<22} {'USED':>12} {'LIMIT':>12}     %")
+    for row in s.get("quota") or []:
+        ratio = row.get("usedRatio")
+        pct = f"{ratio * 100:.0f}%" if ratio is not None else "-"
+        print(f"{row['resource']:<22} {row.get('used', '-'):>12} {row.get('hard', '-'):>12}  {pct:>6}")
+
+print()
+actual = s.get("actual")
+if actual:
+    print(f"Live consumption ({s.get('actualSource')}):")
+    for key in sorted(actual):
+        print(f"  {key:<20} {actual[key]}")
+else:
+    print(f"Live consumption: {s.get('actualSource') or 'unavailable'}")
+PY
+}
+
+cmd_resources_set() {
+  local tenant="${1:-}" plan="${2:-}" force="${3:-false}"
+  if [[ -z "${tenant}" || -z "${plan}" ]]; then
+    echo "ERROR: usage: kubectl gentian resources set <tenant> --plan <plan> [--force]" >&2
+    exit 1
+  fi
+
+  local body payload
+  body="$(python3 - "${plan}" "${force}" <<'PY'
+import json, sys
+print(json.dumps({"plan": sys.argv[1], "force": sys.argv[2] == "true"}))
+PY
+)"
+  payload="$(_lifecycle_call PUT "/v1/tenants/${tenant}/resources" "${body}")"
+  python3 - "${payload}" <<'PY'
+import json, sys
+
+r = json.loads(sys.argv[1])
+print(f"{r['status']}: tenant {r['tenant']} -> plan {r['plan']}")
+if r.get("previousPlan"):
+    print(f"  previously: {r['previousPlan']}")
+if r.get("file"):
+    print(f"  wrote: {r['file']}")
+if r.get("message"):
+    print(f"  {r['message']}")
+PY
+}
+
+cmd_resources_report() {
+  local tenant="${1:-}" from="${2:-}" to="${3:-}"
+  if [[ -z "${tenant}" ]]; then
+    echo "ERROR: usage: kubectl gentian resources report <tenant> [--from <RFC3339>] [--to <RFC3339>]" >&2
+    exit 1
+  fi
+
+  local query="" payload
+  [[ -n "${from}" ]] && query="?from=${from}"
+  if [[ -n "${to}" ]]; then
+    if [[ -n "${query}" ]]; then query="${query}&to=${to}"; else query="?to=${to}"; fi
+  fi
+
+  payload="$(_lifecycle_call GET "/v1/tenants/${tenant}/resources/report${query}")"
+  python3 - "${payload}" <<'PY'
+import json, sys
+
+r = json.loads(sys.argv[1])
+print(f"Tenant {r['tenant']}: {r['from']} -> {r['to']}")
+print()
+if r.get("incomplete"):
+    print("Nothing is known about the plan in force when this window opened;")
+    print("what follows covers only the changes recorded inside it.")
+    print()
+intervals = r.get("intervals") or []
+if not intervals:
+    print("No plan intervals in this window.")
+    raise SystemExit(0)
+print(f"{'PLAN':<18} {'DAYS':>7}  {'FROM':<20} {'TO':<20} SKU")
+for iv in intervals:
+    days = iv["seconds"] / 86400
+    print(f"{iv['plan']:<18} {days:>7.2f}  {iv['from'][:19]:<20} {iv['to'][:19]:<20} "
+          f"{iv.get('productSku', '')}")
+PY
+}
+
+# ---------------------------------------------------------------------------
 # apps uninstall
 # ---------------------------------------------------------------------------
 cmd_uninstall() {
@@ -2770,6 +3053,88 @@ case "${SUBCOMMAND}" in
         ;;
       *)
         echo "ERROR: unknown apps subcommand: ${APPS_CMD}" >&2
+        usage
+        exit 1
+        ;;
+    esac
+    ;;
+  resource|resources)
+    RESOURCES_CMD="${1:-}"
+    shift || true
+    case "${RESOURCES_CMD}" in
+      plans)
+        RES_TENANT=""
+        while [[ $# -gt 0 ]]; do
+          case "${1}" in
+            --tenant|-t)
+              RES_TENANT="${2:-}"
+              shift 2
+              ;;
+            *)
+              echo "ERROR: unknown flag: ${1}" >&2
+              exit 1
+              ;;
+          esac
+        done
+        cmd_resources_plans "${RES_TENANT}"
+        ;;
+      show)
+        RES_TENANT="${1:-}"
+        shift || true
+        if [[ $# -gt 0 ]]; then
+          echo "ERROR: unknown flag: ${1}" >&2
+          exit 1
+        fi
+        cmd_resources_show "${RES_TENANT}"
+        ;;
+      set)
+        RES_TENANT="${1:-}"
+        shift || true
+        RES_PLAN=""
+        RES_FORCE=false
+        while [[ $# -gt 0 ]]; do
+          case "${1}" in
+            --plan|-p)
+              RES_PLAN="${2:-}"
+              shift 2
+              ;;
+            --force)
+              RES_FORCE=true
+              shift
+              ;;
+            *)
+              echo "ERROR: unknown flag: ${1}" >&2
+              exit 1
+              ;;
+          esac
+        done
+        cmd_resources_set "${RES_TENANT}" "${RES_PLAN}" "${RES_FORCE}"
+        ;;
+      report)
+        RES_TENANT="${1:-}"
+        shift || true
+        RES_FROM=""
+        RES_TO=""
+        while [[ $# -gt 0 ]]; do
+          case "${1}" in
+            --from)
+              RES_FROM="${2:-}"
+              shift 2
+              ;;
+            --to)
+              RES_TO="${2:-}"
+              shift 2
+              ;;
+            *)
+              echo "ERROR: unknown flag: ${1}" >&2
+              exit 1
+              ;;
+          esac
+        done
+        cmd_resources_report "${RES_TENANT}" "${RES_FROM}" "${RES_TO}"
+        ;;
+      *)
+        echo "ERROR: unknown resources subcommand: ${RESOURCES_CMD}" >&2
         usage
         exit 1
         ;;

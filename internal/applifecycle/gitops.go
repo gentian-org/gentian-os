@@ -186,7 +186,12 @@ func (g *GitOps) commit(file, message string) error {
 	if err != nil {
 		rel = file
 	}
-	add := exec.Command("git", "-C", g.path, "add", rel)
+	return g.commitPaths([]string{rel}, message)
+}
+
+// commitPaths stages repository-relative paths and pushes them as one commit.
+func (g *GitOps) commitPaths(rels []string, message string) error {
+	add := exec.Command("git", append([]string{"-C", g.path, "add"}, rels...)...)
 	if out, err := add.CombinedOutput(); err != nil {
 		return fmt.Errorf("git add: %w: %s", err, out)
 	}

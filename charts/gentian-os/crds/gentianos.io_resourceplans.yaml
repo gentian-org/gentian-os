@@ -1,0 +1,196 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.17.3
+  name: resourceplans.gentianos.io
+spec:
+  group: gentianos.io
+  names:
+    kind: ResourcePlan
+    listKind: ResourcePlanList
+    plural: resourceplans
+    shortNames:
+    - rplan
+    - rplans
+    singular: resourceplan
+  scope: Cluster
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .spec.displayName
+      name: Display
+      type: string
+    - jsonPath: .spec.quotas.cpu
+      name: CPU
+      type: string
+    - jsonPath: .spec.quotas.memory
+      name: Memory
+      type: string
+    - jsonPath: .spec.quotas.storage
+      name: Storage
+      type: string
+    - jsonPath: .spec.productSku
+      name: SKU
+      type: string
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: |-
+          ResourcePlan is a named preset of tenant resource limits.
+
+          It is deliberately **not deployable**. Nothing reconciles a ResourcePlan and
+          it owns no namespace, workload or quota of its own: it exists so that a
+          tenant's ceiling is chosen from a catalogue rather than typed. Selecting one
+          writes its quantities into that tenant's `spec.quotas` — see
+          docs/design/resource-plans.md.
+
+          Why a catalogue at all, when Tenant.spec.quotas already accepts any quantity:
+          a quota that can be any number can be any number that was never sold. The
+          plan is the unit the platform prices, meters and invoices, so the write path
+          accepts a plan name and nothing else, and every tenant's ceiling is at all
+          times one of a known, priced set. Free-form quantities remain available to
+          whoever edits the deployments repository by hand, which is the cluster
+          operator, which is the person entitled to make an unpriced choice.
+
+          This mirrors the role AppPackage plays for addons: a curated preset that
+          replaces a combinatorial choice with a named one, without becoming an
+          artifact of its own.
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: ResourcePlanSpec is the desired state of a ResourcePlan.
+            properties:
+              default:
+                description: |-
+                  Default marks the plan a tenant is assumed to be on when its quotas match
+                  no plan in the catalogue and none has been selected. At most one plan
+                  should set it; when several do, the lowest tier wins, because assuming a
+                  tenant is on a bigger plan than they chose is the expensive mistake.
+                type: boolean
+              description:
+                description: Description explains what the plan is for, in one or
+                  two sentences.
+                maxLength: 512
+                type: string
+              displayName:
+                description: DisplayName is the name shown in the Admin Console (e.g.
+                  "Base + 8").
+                maxLength: 128
+                minLength: 1
+                type: string
+              productSku:
+                description: |-
+                  ProductSku identifies this plan to the commerce backend. It appears in
+                  the usage report as the SKU in effect over an interval, which is what
+                  makes a month resolve to something invoiceable.
+
+                  Empty means the plan is not billed — the free tier, or a cluster running
+                  without commerce at all.
+                maxLength: 128
+                type: string
+              quotas:
+                description: |-
+                  Quotas are the limits a tenant on this plan receives. They are written
+                  verbatim into Tenant.spec.quotas, so every field the Tenant CRD accepts
+                  is settable here and nothing else is.
+                properties:
+                  cpu:
+                    anyOf:
+                    - type: integer
+                    - type: string
+                    description: CPU is the total CPU request limit across all tenant
+                      pods.
+                    pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                    x-kubernetes-int-or-string: true
+                  maxApps:
+                    description: MaxApps is the maximum number of apps this tenant
+                      may install.
+                    format: int32
+                    minimum: 1
+                    type: integer
+                  maxPods:
+                    description: MaxPods caps the number of pods in the tenant namespace
+                      (init Jobs + app workloads).
+                    format: int32
+                    minimum: 1
+                    type: integer
+                  memory:
+                    anyOf:
+                    - type: integer
+                    - type: string
+                    description: Memory is the total memory request limit across all
+                      tenant pods.
+                    pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                    x-kubernetes-int-or-string: true
+                  storage:
+                    anyOf:
+                    - type: integer
+                    - type: string
+                    description: Storage is the total storage quota (PVCs + S3 buckets).
+                    pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                    x-kubernetes-int-or-string: true
+                type: object
+              selfServiceDisabled:
+                description: |-
+                  SelfServiceDisabled withholds the plan from tenant administrators. The
+                  plan stays selectable by cluster administrators and by the CLI, so it
+                  serves the case of a negotiated or bespoke ceiling that should not appear
+                  in a tenant's own list of upgrades.
+                type: boolean
+              tier:
+                description: |-
+                  Tier orders plans from smallest to largest. It is the only ordering the
+                  platform uses: quantities can move in different directions between two
+                  plans (more CPU, less storage), so "bigger" cannot be derived from them,
+                  and an entitlement ceiling has to compare something total.
+
+                  Tiers need not be contiguous; leaving gaps allows a plan to be inserted
+                  later without renumbering the ones already sold.
+                format: int32
+                minimum: 0
+                type: integer
+            required:
+            - displayName
+            - quotas
+            - tier
+            type: object
+          status:
+            description: ResourcePlanStatus reports observed plan state.
+            properties:
+              observedAt:
+                description: ObservedAt is when TenantCount was last recomputed.
+                format: date-time
+                type: string
+              tenantCount:
+                description: |-
+                  TenantCount is the number of tenants whose quotas currently match this
+                  plan. Maintained for the console's catalogue view; it is derived, and
+                  nothing reads it to make a decision.
+                format: int32
+                type: integer
+            type: object
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}

@@ -8,6 +8,9 @@ kind: Deployment
 {{- $lifecycleDeployments := .Values.appLifecycle.deployments | default dict }}
 {{- $lifecycleDeploymentsEnabled := $lifecycleDeployments.enabled | default false }}
 {{- $lifecycleGitCredsSecret := $lifecycleDeployments.gitCredentialsSecret | default "" }}
+{{- $usage := .Values.usage | default dict }}
+{{- $usageSampler := $usage.sampler | default dict }}
+{{- $metricsServer := $usage.metricsServer | default dict }}
 metadata:
   name: {{ include "gentian-os.fullname" . }}
   namespace: {{ .Release.Namespace }}
@@ -288,6 +291,14 @@ spec:
               value: {{ $lifecycleDeployments.cluster | default "default-cluster" | quote }}
             - name: GENTIAN_DEPLOYMENTS_STAGE
               value: {{ $lifecycleDeployments.stage | default (.Values.stage | default "dev") | quote }}
+            - name: USAGE_SAMPLER_ENABLED
+              value: {{ $usageSampler.enabled | default false | quote }}
+            - name: USAGE_SAMPLE_INTERVAL
+              value: {{ $usageSampler.interval | default "15m" | quote }}
+            - name: USAGE_RETENTION
+              value: {{ $usageSampler.retention | default "9600h" | quote }}
+            - name: METRICS_SERVER_ENABLED
+              value: {{ $metricsServer.enabled | default false | quote }}
             {{- if $lifecycleGitCredsSecret }}
             - name: HOME
               value: /tmp

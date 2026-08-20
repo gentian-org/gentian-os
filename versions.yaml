@@ -41,6 +41,13 @@ external-secrets:
   chart: "2.4.1"
   repo: https://charts.external-secrets.io
 
+# Optional add-on. The Resources tab and the usage sampler read it for the live
+# consumption series; nothing billed depends on it, so a cluster may skip
+# A-11 entirely and lose only the "paying for 32, using 3" comparison.
+metrics-server:
+  chart: "3.13.0"
+  repo: https://kubernetes-sigs.github.io/metrics-server/
+
 envoy-gateway:
   chart: "v1.2.5"
   repo: oci://docker.io/envoyproxy/gateway-helm

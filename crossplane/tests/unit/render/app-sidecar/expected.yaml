@@ -259,6 +259,9 @@ spec:
     values:
       image:
         tag: 0.1.0
+      podLabels:
+        gentianos.io/app: demo-app
+        gentianos.io/tenant: demo
       upstreamUrl: https://demo.demo.platform.example.test
     wait: false
   providerConfigRef:

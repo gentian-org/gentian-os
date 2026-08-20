@@ -36,6 +36,7 @@ import (
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 	"github.com/gentian-org/gentian-os/internal/authz"
 	"github.com/gentian-org/gentian-os/internal/customization"
+	"github.com/gentian-org/gentian-os/internal/usage"
 )
 
 const platformAppAnnotation = "gentianos.io/platform-app"
@@ -60,6 +61,11 @@ type Service struct {
 	clientset kubernetes.Interface
 	opts      Options
 	git       *GitOps
+	// actualSource reads live consumption for the resources API. Nil when the
+	// cluster has no metrics source, which is a supported configuration: the
+	// ceiling and the committed usage under it come from the API server, and
+	// those are the figures a plan is chosen and billed on.
+	actualSource usage.ActualSource
 	// appLocks serializes lifecycle operations per (tenant, profile) — see lockApp.
 	appLocks sync.Map
 }
@@ -106,12 +112,24 @@ func NewService(c client.Client, cfg *rest.Config, opts Options) (*Service, erro
 	if err != nil {
 		return nil, err
 	}
-	return &Service{
+	svc := &Service{
 		client:    c,
 		clientset: cs,
 		opts:      opts,
 		git:       NewGitOps(opts.DeploymentsPath, opts.DeploymentsRepo, opts.DeploymentsCluster),
-	}, nil
+	}
+	// Constructed rather than probed: metrics.k8s.io may be absent, and
+	// discovering that at start-up would make the operator's readiness depend
+	// on an optional add-on. A source that cannot answer reports so per call,
+	// where the caller can be told which series is missing and why.
+	if opts.MetricsEnabled {
+		src, err := usage.NewMetricsAPISource(cfg)
+		if err != nil {
+			return nil, fmt.Errorf("build metrics source: %w", err)
+		}
+		svc.actualSource = src
+	}
+	return svc, nil
 }
 
 // Install commits the profile to gentian-deployments, reconciles, and waits until Ready.
