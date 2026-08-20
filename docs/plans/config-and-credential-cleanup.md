@@ -1167,23 +1167,41 @@ phases A–E, and `destroy()` has run for all of them, under `--uninstall`, `--p
 `--purge --cluster-infra`. That is one cluster, on one architecture, with a public domain and no
 mirror, so "exercised" below never means more than that.
 
+**The phase sections below are the record. This table is generated from them** by
+`scripts/gen/gen-phase-table.py`, and CI fails when the two disagree.
+
+It reads that way round because the alternative was tried and did not hold. A summary maintained
+beside the thing it summarises drifts toward whatever was true when it was written, silently: in one
+week this table said Phase 6 was unverified while §15.1 recorded both its criteria verified, said
+the CA-bundle contract was undefined in the same commit that defined it, and said a refused token
+exchange produces no log line months after it started producing one. Every one was found by reading,
+because nothing failed when they disagreed. That is the same defect this document catalogues
+everywhere else — one fact in two places, with nothing enforcing agreement — and it deserved the
+same treatment rather than more care.
+
+So: to change a phase's state, edit that phase's section. `make gen-phase-table` rewrites this.
+
+<!-- BEGIN generated phase table -->
 | Phase | State | What is left |
 |---|---|---|
-| 0a, 0b | Exercised | Verification only: `--dry-run` state diff, `check()` read-only diff |
-| 1, 2 | Built | A clean-room review by someone other than the author |
+| 0a | Exercised | Verification only: `--dry-run` state diff, `check()` read-only diff |
+| 0b | Exercised | Verification only: `--dry-run` state diff, `check()` read-only diff |
+| 1 | Built | A clean-room review by someone other than the author |
+| 2 | Built | A clean-room review by someone other than the author |
 | 3 | Built | `oci-registry` and `smtp` have no test; none of the validators is automated |
-| 4 | 4a exercised, **4b half** | Mail, LLM, portal and tenant reconcile still name applications. Blocked on the reconciler audit (§15.2) |
+| 4 | 4a exercised, 4b half | Mail, LLM, portal and tenant reconcile still name applications. Blocked on the reconciler audit (§15.2) |
 | 5 | Exercised | `kernel/argocd/repos/*.yaml` and the infra chart registry are not yet claims |
-| 6 | **Exercised** | Both criteria this row was waiting on are verified in §15.1 — ESO's live verdict, and the unsatisfied→satisfied transition unblocking composition with nothing re-run. The row had not been updated to say so |
-| 7 | **Exercised** | The live OIDC write path works. It was broken three independent ways — wrong mount, wrong role type, missing audience (§15.4) — and a token exchange has now completed against the fixed path, which is the criterion this row waited on longest. The audit device is still unobserved |
-| 8 | **Exercised** | The service exchanges a caller's token and serves the catalogue. A refusal now names the failed check — audience, claims, role type, missing role, unmounted backend — and logs OpenBao's own words; the first real use of that log found the tenant fault below in one line, after three rounds of reading code had been needed for the previous ones. Its own ServiceAccount policy is still uninspected |
+| 6 | Exercised | Both criteria this row was waiting on are verified in §15.1 — ESO's live verdict, and the unsatisfied→satisfied transition unblocking composition with nothing re-run. The row had not been updated to say so |
+| 7 | Exercised | The live OIDC write path works. It was broken three independent ways — wrong mount, wrong role type, missing audience (§15.4) — and a token exchange has now completed against the fixed path, which is the criterion this row waited on longest. The audit device is still unobserved |
+| 8 | Exercised | The service exchanges a caller's token and serves the catalogue. A refusal now names the failed check — audience, claims, role type, missing role, unmounted backend — and logs OpenBao's own words; the first real use of that log found the tenant fault below in one line, after three rounds of reading code had been needed for the previous ones. Its own ServiceAccount policy is still uninspected |
 | 9 | Built | No shared API contract tests; validation errors are not attributed per field |
-| 10 | **10a/10b done, 10c done** | `cluster-settings.env` is gone, no `envsubst` call site remains, and the credential manager — the third surface — now authenticates and serves (row 8). One orphaned `${GENTIAN_OS_IMAGE_REPOSITORY}` survived the `envsubst` removal inside a Helm template, where nothing expands it, and silently disabled image updates until it was found (§15.4) |
+| 10 | 10a/10b done, 10c done | `cluster-settings.env` is gone, no `envsubst` call site remains, and the credential manager — the third surface — now authenticates and serves (row 8). One orphaned `${GENTIAN_OS_IMAGE_REPOSITORY}` survived the `envsubst` removal inside a Helm template, where nothing expands it, and silently disabled image updates until it was found (§15.4) |
 | 11 | Done | BSD `sed_inplace` has not been observed running |
-| 12 | 12a–12d and 12f built, **12e not** | Provider RBAC is still `cluster-admin`, deliberately — the last privilege reduction, and now the largest piece of *work* rather than verification left here. 12c's outstanding half is closed. 12f is built against renders only — no cluster has been installed on a platform other than OpenStack, or a zone other than Cloudflare |
+| 12 | 12a–12d and 12f built, 12e not | Provider RBAC is still `cluster-admin`, deliberately — the last privilege reduction, and now the largest piece of *work* rather than verification left here. 12c's outstanding half is closed. 12f is built against renders only — no cluster has been installed on a platform other than OpenStack, or a zone other than Cloudflare |
 | 13 | Portability done | arm64, internal domain and mirror remain structural claims — three separate installs, and the largest verification debt left in this plan. The 12c trust anchor is now delivered to everything the cluster schedules, so `self-signed` and `private-ca` are complete by construction and unexercised in fact |
+<!-- END generated phase table -->
 
-Two things this table is careful not to say. *Built* is not *works*: Phase 7 read as implemented
+Two things the phases are careful not to say. *Built* is not *works*: Phase 7 read as implemented
 for some time while one side of its federation did not exist. And a phase marked exercised was
 exercised on one cluster, on one architecture, with a public domain and no mirror.
 
@@ -1252,7 +1270,9 @@ reconciles it.
 
 ### Phase 0a — Driver and step files
 
-**Status: implemented.** Acceptance is partly verified — see the table.
+**State — Exercised.** Verification only: `--dry-run` state diff, `check()` read-only diff
+
+**Status: implemented.** Acceptance is partly verified; the state line above says which part.
 
 Mechanical restructure with no behaviour change. Each numbered step in `main_cp` is a file in
 `scripts/steps/` implementing `check()` and `apply()` with the header contract from §7.
@@ -1278,7 +1298,9 @@ incremental. The end state in §7 still stands; it is reached during Phases 4b a
 
 ### Phase 0b — `destroy()` and driver unification
 
-**Status: implemented.** Acceptance is partly verified — see the table.
+**State — Exercised.** Verification only: `--dry-run` state diff, `check()` read-only diff
+
+**Status: implemented.** Acceptance is partly verified; the state line above says which part.
 
 Each step file carries `destroy()`, ported from `uninstall.sh`'s 18 `_delete_*` helpers.
 `uninstall.sh` and `update.sh` are deleted: uninstall is the same list reversed, and update is the
@@ -1325,6 +1347,8 @@ the one step that converges tenant state rather than cluster state.
 ---
 
 ### Phase 1 — Credential inventory
+
+**State — Built.** A clean-room review by someone other than the author
 
 **Status: implemented.** The audited result is `credentials.yaml`; this is its summary.
 
@@ -1383,6 +1407,8 @@ GitHub repositories so image-pin workflows can commit back — CI configuration,
 
 ### Phase 2 — `CredentialRequirement` CRD and dual-carrier catalogue
 
+**State — Built.** A clean-room review by someone other than the author
+
 **Status: implemented.**
 
 `api/v1alpha1/credentialrequirement_types.go` defines the CRD; `credentials.yaml` is the
@@ -1407,6 +1433,8 @@ curl/openssl ceiling. Both are covered by negative tests.
 ---
 
 ### Phase 3 — Validator library
+
+**State — Built.** `oci-registry` and `smtp` have no test; none of the validators is automated
 
 Shell validators keyed to `spec.validate.type`, covering **only** the `phase: bootstrap` set
 (§10). Everything else is validated by the on-cluster credential manager in Phase 8, and the two
@@ -1456,6 +1484,8 @@ some — which is also what makes `optional: true` requirements work.
 ---
 
 ### Phase 4 — Installer refactor
+
+**State — 4a exercised, 4b half.** Mail, LLM, portal and tenant reconcile still name applications. Blocked on the reconciler audit (§15.2)
 
 **Status: 4a implemented. 4b half done** — claims are declarative, application steps are not.
 
@@ -1524,6 +1554,8 @@ come back empty.
 
 ### Phase 5 — `XRepository`
 
+**State — Exercised.** `kernel/argocd/repos/*.yaml` and the infra chart registry are not yet claims
+
 **Status: implemented.** `crossplane/xrds/repository.yaml` and
 `crossplane/compositions/repository-default.yaml`, applied by `A-02-crossplane-providers`, with
 golden-file render tests for both types.
@@ -1562,6 +1594,8 @@ a named condition rather than a stuck sync.
 ---
 
 ### Phase 6 — ESO-based satisfaction, gating, and the three entry points
+
+**State — Exercised.** Both criteria this row was waiting on are verified in §15.1 — ESO's live verdict, and the unsatisfied→satisfied transition unblocking composition with nothing re-run. The row had not been updated to say so
 
 **Status: implemented.**
 
@@ -1611,6 +1645,8 @@ missing requirement rather than as "something is not Ready".
 ---
 
 ### Phase 7 — OIDC write path and root token revocation
+
+**State — Exercised.** The live OIDC write path works. It was broken three independent ways — wrong mount, wrong role type, missing audience (§15.4) — and a token exchange has now completed against the fixed path, which is the criterion this row waited on longest. The audit device is still unobserved
 
 **Status: built end to end, exercised nowhere.**
 
@@ -1682,6 +1718,8 @@ breach.
 
 ### Phase 8 — Credential Manager service
 
+**State — Exercised.** The service exchanges a caller's token and serves the catalogue. A refusal now names the failed check — audience, claims, role type, missing role, unmounted backend — and logs OpenBao's own words; the first real use of that log found the tenant fault below in one line, after three rounds of reading code had been needed for the previous ones. Its own ServiceAccount policy is still uninspected
+
 **Status: implemented** as `internal/credentialmgr`, riding the operator's manager rather than
 being a second Deployment to secure, schedule and upgrade.
 
@@ -1718,6 +1756,8 @@ This phase also closed an RBAC gap: the operator had no permission to read the
 
 ### Phase 9 — gentian-ui surface
 
+**State — Built.** No shared API contract tests; validation errors are not attributed per field
+
 **Status: implemented.** A Credentials tab in the admin console, plus a backend proxy.
 
 The browser does not call the Credential Manager. It serves no CORS headers, and proxying through
@@ -1748,6 +1788,8 @@ a deployment points it at the service.
 ---
 
 ### Phase 10 — Collapse to three configuration surfaces
+
+**State — 10a/10b done, 10c done.** `cluster-settings.env` is gone, no `envsubst` call site remains, and the credential manager — the third surface — now authenticates and serves (row 8). One orphaned `${GENTIAN_OS_IMAGE_REPOSITORY}` survived the `envsubst` removal inside a Helm template, where nothing expands it, and silently disabled image updates until it was found (§15.4)
 
 The work that makes §2 true. **This phase does not flatten the four-layer values chain** — layers
 1–3 are already declarative and reconciled, and collapsing them into a flat claim would force
@@ -1965,6 +2007,8 @@ than being artificially deferred.
 
 ### Phase 11 — Portability primitives and enforcement
 
+**State — Done.** BSD `sed_inplace` has not been observed running
+
 The compatibility layer and the checks that keep it honest. Migrating the call sites is Phase 13.
 
 **Status: implemented.**
@@ -1992,6 +2036,8 @@ enforced only locally.
 ---
 
 ### Phase 12 — Deployment target variability: the declarable surface
+
+**State — 12a–12d and 12f built, 12e not.** Provider RBAC is still `cluster-admin`, deliberately — the last privilege reduction, and now the largest piece of *work* rather than verification left here. 12c's outstanding half is closed. 12f is built against renders only — no cluster has been installed on a platform other than OpenStack, or a zone other than Cloudflare
 
 Make each dimension in §9 *expressible*. Supplying the values and the artefacts behind them is
 Phase 13, except where noted.
@@ -2157,6 +2203,8 @@ why 12e became privilege reduction rather than a field.
 ---
 
 ### Phase 13 — Target implementations
+
+**State — Portability done.** arm64, internal domain and mirror remain structural claims — three separate installs, and the largest verification debt left in this plan. The 12c trust anchor is now delivered to everything the cluster schedules, so `self-signed` and `private-ca` are complete by construction and unexercised in fact
 
 Supply what Phases 11 and 12 made room for. Every item has working prior art from the first
 external install; that branch is the starting payload, rebased onto the interfaces rather than
