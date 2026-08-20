@@ -11,6 +11,7 @@
 #   kubectl gentian apps install <app> --tenant <tenant>
 #   kubectl gentian apps uninstall <app> --tenant <tenant>
 #   kubectl gentian tenants list
+#   kubectl gentian tenants credentials <instance>
 #   kubectl gentian tenants deploy <instance>
 #   kubectl gentian tenants undeploy <instance> [--purge|-f]
 #
@@ -122,6 +123,12 @@ Usage:
       persistent state (Postgres/MariaDB, S3, Redis ACL, OpenBao secrets,
       kernel provisioning Jobs) so reinstall starts from a clean slate.
 
+    kubectl gentian tenants credentials <instance>
+      The tenant admin's username and password, read from OpenBao.
+      'deploy' prints these once; this is how to get them afterwards.
+      The password goes to stdout alone so it can be piped; everything else
+      goes to stderr.
+
     kubectl gentian tenants list
       List tenant definitions for clusters/<cluster> (definitions/tenants/ and tenants/).
       ACTIVE=yes when deployed under tenants/<name>/ (GitOps sync path).
@@ -169,6 +176,7 @@ Examples:
   kubectl gentian resources set gtn-demo --plan nodes-2
   kubectl gentian apps uninstall element --tenant demo --purge   # or -f: full Matrix data wipe
   kubectl gentian tenants list
+  kubectl gentian tenants credentials demo
   kubectl gentian tenants deploy demo
   kubectl gentian tenants undeploy demo
   kubectl gentian tenants undeploy demo --purge   # or -f
@@ -1450,6 +1458,59 @@ try_retrieve_tenant_admin_credentials() {
   fi
 
   return 1
+}
+
+# `tenants credentials <name>` — what OpenBao holds for a tenant's admin.
+#
+# These were printed once, by `tenants deploy`, and never again. An operator who
+# closed that terminal had no supported way back: the values are in OpenBao under
+# a path the operator role can read, and nothing exposed them. Recovering a
+# tenant admin login meant exec-ing into the OpenBao pod by hand.
+#
+# It reads once and reports, rather than reusing the deploy-time wait loop. A
+# tenant that exists has these already; polling for five minutes would only turn
+# "this tenant has no credentials" into a long pause ending in the same answer.
+#
+# The password goes to stdout on its own line so it can be piped. Everything
+# else goes to stderr, so `... credentials demo | tr -d '\n' | wl-copy` gets the
+# password and not a banner.
+cmd_tenant_credentials() {
+  local tenant_name="${1:-}"
+  if [[ -z "${tenant_name}" ]]; then
+    echo "ERROR: tenant name required: kubectl gentian tenants credentials <name>" >&2
+    return 1
+  fi
+
+  if ! kubectl --request-timeout=10s get tenant "${tenant_name}" >/dev/null 2>&1; then
+    echo "ERROR: no tenant '${tenant_name}' in this cluster." >&2
+    echo "  kubectl gentian tenants list" >&2
+    return 1
+  fi
+
+  TENANT_ADMIN_USERNAME=""
+  TENANT_ADMIN_PASSWORD=""
+  if ! try_retrieve_tenant_admin_credentials "${tenant_name}"; then
+    echo "ERROR: could not read the tenant-admin credentials for '${tenant_name}'." >&2
+    echo "  They are written by the tenant's Keycloak admin Job. If it has not run," >&2
+    echo "  there is nothing to read yet:" >&2
+    echo "    kubectl get jobs -n platform-kernel -l gentianos.io/tenant=${tenant_name}" >&2
+    return 1
+  fi
+
+  echo "Tenant admin for '${tenant_name}':" >&2
+  echo "  username : ${TENANT_ADMIN_USERNAME}" >&2
+  # The address the Tenant CR advertises, which is not always the username
+  # OpenBao holds: the seed is write-once, so a tenant provisioned before the
+  # username became an address keeps the older form. Showing both is the only
+  # way to tell which one the login page wants.
+  local advertised
+  advertised="$(kubectl --request-timeout=10s get tenant "${tenant_name}" \
+    -o jsonpath='{.status.adminEmail}' 2>/dev/null || true)"
+  if [[ -n "${advertised}" && "${advertised}" != "${TENANT_ADMIN_USERNAME}" ]]; then
+    echo "  address  : ${advertised}  (the Tenant reports this; OpenBao holds the username above)" >&2
+  fi
+  echo "  password : (stdout)" >&2
+  printf '%s\n' "${TENANT_ADMIN_PASSWORD}"
 }
 
 fetch_tenant_admin_credentials() {
@@ -3243,6 +3304,15 @@ case "${SUBCOMMAND}" in
     # instance from dev" to the deployments repo, which is the audit trail.
     TENANT_ENV="${DEPLOYMENTS_STAGE}"
     case "${TENANT_CMD}" in
+      credentials|creds)
+        TENANT_INSTANCE="${1:-}"
+        shift || true
+        if [[ $# -gt 0 ]]; then
+          echo "ERROR: unknown flag: ${1}" >&2
+          exit 1
+        fi
+        cmd_tenant_credentials "${TENANT_INSTANCE}"
+        ;;
       list)
         while [[ $# -gt 0 ]]; do
           case "${1}" in
