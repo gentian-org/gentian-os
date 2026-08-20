@@ -26,7 +26,7 @@ _mail_kernel_namespace() { gentian_mail_namespace; }
 
 # MAIL_SERVICE_MODE=kernel needs reachable SMTP ingress; Cloudflare tunnel is HTTP-only.
 mail_network_mode_compatible() {
-    local mode="${1:-${MAIL_SERVICE_MODE:-external}}"
+    local mode="${1:-$(gentian_mail_service_mode)}"
     local network="${2:-${NETWORK_MODE:-tunnel}}"
     [[ "${mode}" != "kernel" || "${network}" != "tunnel" ]]
 }
@@ -43,7 +43,8 @@ EOF
 # Stage 1 mail delivery (external SMTP or in-cluster Postfix).
 # =============================================================================
 install_kernel_mail() {
-    local mode="${MAIL_SERVICE_MODE:-external}"
+    local mode
+    mode="$(gentian_mail_service_mode)"
     banner "Mail delivery (MAIL_SERVICE_MODE=${mode})"
 
     case "${mode}" in

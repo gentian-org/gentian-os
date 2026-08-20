@@ -278,7 +278,9 @@ verify_dovecot_installation() {
         return 0
     fi
 
-    local mode="${MAIL_SERVICE_MODE:-external}"
+    local mode
+
+    mode="$(gentian_mail_service_mode)"
     if [[ "${mode}" != "kernel" ]]; then
         info "Skipping Dovecot verification (MAIL_SERVICE_MODE=${mode})."
         return 0

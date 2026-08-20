@@ -26,7 +26,7 @@ check() {
     # derived, so the credential can always be produced and its absence means
     # the step did not finish. In external mode it depends on relay values that
     # may legitimately be unset, so it is not required here.
-    if [[ "${MAIL_SERVICE_MODE:-external}" == "kernel" ]]; then
+    if [[ "$(gentian_mail_service_mode)" == "kernel" ]]; then
         kubectl get secret keycloak-smtp-credentials -n platform-kernel >/dev/null 2>&1 ||
             return "${CHECK_MISSING}"
     fi

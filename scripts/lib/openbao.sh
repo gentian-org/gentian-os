@@ -16,7 +16,7 @@ try_load_creds_from_openbao() {
     # The deployments token counts — it is prompted for on every run that does
     # not have it, so a fast path that ignores it skips the lookup that would
     # have prevented the prompt.
-    MAIL_SERVICE_MODE="${MAIL_SERVICE_MODE:-external}"
+    MAIL_SERVICE_MODE="$(gentian_mail_service_mode)"
     if [[ -n "${MASTER_PASSWORD:-}" && -n "${GENTIAN_DEPLOYMENTS_GIT_TOKEN:-}" ]]; then
         if [[ "${MAIL_SERVICE_MODE}" == "external" \
             && -n "${SMTP_RELAY_USERNAME:-}" \
@@ -483,7 +483,7 @@ seed_secrets() {
     CF_API_TOKEN="${CF_API_TOKEN:-}" \
     CF_ZONE_ID="${zone_id}" \
     CF_TUNNEL_CNAME="${tunnel_cname}" \
-    MAIL_SERVICE_MODE="${MAIL_SERVICE_MODE:-external}" \
+    MAIL_SERVICE_MODE="$(gentian_mail_service_mode)" \
     EXTERNAL_SMTP_HOST="${EXTERNAL_SMTP_HOST:-}" \
     EXTERNAL_SMTP_PORT="${EXTERNAL_SMTP_PORT:-587}" \
     EXTERNAL_SMTP_SSL="${EXTERNAL_SMTP_SSL:-false}" \

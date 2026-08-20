@@ -463,7 +463,7 @@ validate_config() {
 
     _file_header "${cluster_settings_file}" "Cluster checks (cluster-settings.env)"
 
-    MAIL_SERVICE_MODE="${MAIL_SERVICE_MODE:-external}"
+    MAIL_SERVICE_MODE="$(gentian_mail_service_mode)"
     if [[ "${MAIL_SERVICE_MODE}" != "external" && "${MAIL_SERVICE_MODE}" != "kernel" ]]; then
         echo "  [INVALID]  MAIL_SERVICE_MODE=${MAIL_SERVICE_MODE}  — must be 'external' or 'kernel' (set in ${cluster_settings_file})"
         (( errors++ )) || true
@@ -1501,7 +1501,7 @@ check_prereqs() {
     # it as one aborts over values the run was never going to use — and on a
     # teardown that means refusing to remove a cluster because the operator no
     # longer has the password to the thing being removed.
-    MAIL_SERVICE_MODE="${MAIL_SERVICE_MODE:-external}"
+    MAIL_SERVICE_MODE="$(gentian_mail_service_mode)"
     export MAIL_SERVICE_MODE
 
     if [[ "${GENTIAN_DRY_RUN:-0}" == "1" ]]; then
@@ -1765,6 +1765,33 @@ gentian_services_namespace() {
 # =============================================================================
 gentian_mail_namespace() {
     echo "${KERNEL_NAMESPACE:-${SERVICES_NAMESPACE:-platform-kernel}}"
+}
+
+# =============================================================================
+# gentian_mail_service_mode — the cluster's mail stack, resolved once.
+#
+# kernel runs Postfix and Dovecot here with local mailboxes; external relays
+# through a smarthost and has no Dovecot at all. Eighteen sites decided that by
+# writing $(gentian_mail_service_mode), which is a second default beside the
+# one the Cluster XRD declares — they agree only until the XRD moves, and then
+# half the callers are left behind.
+#
+# That is not a hypothetical here. The claim said kernel while the operator,
+# reading its own Helm value, said external: Dovecot ran unprovisioned and the
+# ApplicationSet that would have managed it was never rendered, with git showing
+# the correct answer the whole time.
+#
+# So the fallback is the XRD's, read from the schema. seed-openbao.sh keeps its
+# literal deliberately — it is standalone, sources nothing, and takes everything
+# from the environment, which is the "legitimately local" case rather than a
+# second opinion.
+# =============================================================================
+gentian_mail_service_mode() {
+    if [[ -n "${MAIL_SERVICE_MODE:-}" ]]; then
+        printf '%s' "${MAIL_SERVICE_MODE}"
+        return 0
+    fi
+    xrd_default mail.serviceMode
 }
 
 # =============================================================================

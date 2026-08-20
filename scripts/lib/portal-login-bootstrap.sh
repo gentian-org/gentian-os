@@ -233,7 +233,8 @@ print(json.dumps(s))
 #       KC_SMTP_SSL, KC_SMTP_STARTTLS, KC_SMTP_FROM
 # Returns 0 when settings are complete, 1 when SMTP cannot be configured.
 _keycloak_smtp_settings() {
-    local mode="${MAIL_SERVICE_MODE:-external}"
+    local mode
+    mode="$(gentian_mail_service_mode)"
     local env="${ENV:-dev}"
     local kernel_domain="${KERNEL_DOMAIN:-}"
 
@@ -361,8 +362,8 @@ EOREFRESH
 # so there is no OpenBao path for ESO to extract.
 _apply_keycloak_smtp_secret() {
     local ns="${1:-platform-kernel}"
-    local mail_mode="${MAIL_SERVICE_MODE:-external}"
-
+    local mail_mode
+    mail_mode="$(gentian_mail_service_mode)"
     if kubectl get externalsecret keycloak-smtp-credentials -n "${ns}" >/dev/null 2>&1; then
         info "keycloak-smtp-credentials is owned by an ExternalSecret; leaving it alone."
         info "  The relay credential reaches Keycloak from OpenBao. If realm SMTP is"
@@ -412,7 +413,7 @@ configure_keycloak_realm_smtp() {
         return 1
     fi
 
-    info "Configuring Keycloak realm SMTP (MAIL_SERVICE_MODE=${MAIL_SERVICE_MODE:-external})..."
+    info "Configuring Keycloak realm SMTP (MAIL_SERVICE_MODE=$(gentian_mail_service_mode))..."
 
     kubectl delete job "${job_name}" -n "${ns}" --ignore-not-found=true 2>/dev/null || true
 
@@ -557,7 +558,7 @@ EOF
     fi
 
     kubectl logs -n "${ns}" "job/${job_name}" --tail=5 2>/dev/null || true
-    success "Keycloak realm ${kernel_realm} SMTP configured (${MAIL_SERVICE_MODE:-external})."
+    success "Keycloak realm ${kernel_realm} SMTP configured ($(gentian_mail_service_mode))."
 }
 
 # Tenant realm SMTP is the operator's. The shell function that used to live
@@ -618,7 +619,7 @@ run_keycloak_portal_bootstrap_job() {
     if _keycloak_smtp_settings; then
         bootstrap_secret_args+=(
             --from-literal=smtp_configure=true
-            --from-literal=mail_service_mode="${MAIL_SERVICE_MODE:-external}"
+            --from-literal=mail_service_mode="$(gentian_mail_service_mode)"
             --from-literal=smtp_host="${KC_SMTP_HOST}"
             --from-literal=smtp_port="${KC_SMTP_PORT}"
             --from-literal=smtp_user="${KC_SMTP_USER}"
@@ -633,7 +634,7 @@ run_keycloak_portal_bootstrap_job() {
              "serviceMode kernel, or host/port for an external relay)."
         bootstrap_secret_args+=(
             --from-literal=smtp_configure=false
-            --from-literal=mail_service_mode="${MAIL_SERVICE_MODE:-external}"
+            --from-literal=mail_service_mode="$(gentian_mail_service_mode)"
             --from-literal=smtp_host=""
             --from-literal=smtp_port=""
             --from-literal=smtp_user=""

@@ -11,7 +11,7 @@ check() {
     # install_kernel_mail says as much, deferring realm SMTP to portal
     # bootstrap. Testing it here meant apply() could never satisfy check(), so
     # the step reported missing on a cluster whose mail stack was running.
-    case "${MAIL_SERVICE_MODE:-external}" in
+    case "$(gentian_mail_service_mode)" in
         kernel)
             # Both keys, not just the ConfigMap. Postfix mounts them as two
             # separate texthash: files — virtual_mailbox_domains decides which

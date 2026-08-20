@@ -846,7 +846,7 @@ bootstrap_root_appset() {
         --set-string "kernelDomain=${KERNEL_DOMAIN:-}" \
         --set-string "smtpHost=${EXTERNAL_SMTP_HOST:-}" \
         --set-string "smtpPort=${EXTERNAL_SMTP_PORT:-587}" \
-        --set-string "mailServiceMode=${MAIL_SERVICE_MODE:-external}" \
+        --set-string "mailServiceMode=$(gentian_mail_service_mode)" \
         --set-string "llmEnabled=${LLM_SUPPORT:-false}" \
         --set-string "llmGpuAcceleration=${GPU_ACCELERATION:-false}" \
         --set-string "mailEgressHost=${MAIL_EGRESS_HOST:-}" \
@@ -1392,7 +1392,8 @@ _claim_cluster_fields() {
     # that does. Both questions are answered here, in the file the operator
     # actually edits.
     local nm="${NETWORK_MODE:-tunnel}"
-    local mm="${MAIL_SERVICE_MODE:-external}"
+    local mm
+    mm="$(gentian_mail_service_mode)"
     local im="${CERT_ISSUER_MODE:-acme-dns01}"
     local pf="${PLATFORM:-}"
     local dp="${DNS_PROVIDER:-cloudflare}"
