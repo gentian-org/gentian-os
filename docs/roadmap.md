@@ -225,6 +225,18 @@ For the current baseline design of the system, refer to [architecture.md](archit
 
 ---
 
+### 1.23 A Condition Stays True While Its Reconcile Has Been Failing for Hours (**)
+* **Target Domain**: Operator Observability
+* **Context**: Tenant reconciliation runs its steps in order and returns on the first failure, so every condition after the failing one keeps whatever it last said. With the OpenBao auth step failing, `IdentityReady` went False and `MailReady` went on reporting `True` with a timestamp from the previous day — while the mail step had not run at all, and the DNS records, app passwords and signing tables it maintains were quietly unmaintained. There is no aggregate condition either, so nothing summarises "this tenant last reconciled successfully at T". The practical effect is that a reader checking whether mail is healthy is told yes by a value nothing has re-evaluated since it broke. Both bugs found on 2026-08-20 hid behind this: the symptom that surfaced was a DNS record not updating, several steps away from either cause.
+* **Proposed Solution**: Distinguish "true as of the last successful evaluation" from "not evaluated this pass". Either stamp conditions with the reconcile generation and mark the untouched ones Unknown when a pass returns early, or carry a single Ready/LastReconcileSucceeded condition that goes False the moment any step does — so a stale True cannot read as a current one.
+* **Backlog Items**:
+  - `[ ]` Mark conditions not evaluated in a failed pass as Unknown, rather than leaving the previous value in place.
+  - `[ ]` Add an aggregate condition naming the last successful full reconcile and the step that stopped the current one.
+  - `[ ]` Alert on a tenant whose reconcile has been failing longer than one requeue interval, rather than waiting for a downstream symptom.
+
+
+---
+
 ## 2. Platform, Infrastructure & Lifecycle
 
 ### 2.1 Keycloak Provider & Crossplane Consolidation (*)
