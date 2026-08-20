@@ -32,7 +32,7 @@ func newS3Profile(name string) *gentianov1alpha1.AppProfile {
 		ObjectMeta: metav1.ObjectMeta{Name: name},
 		Spec: gentianov1alpha1.AppProfileSpec{
 			DisplayName:      name,
-			DeploymentMethod: gentianov1alpha1.DeploymentMethodArgoCD,
+			DeploymentMethod: gentianov1alpha1.DeploymentMethodCrossplane,
 			Chart: gentianov1alpha1.ChartRef{
 				Repository: "https://charts.example.com",
 				Name:       name,

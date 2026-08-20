@@ -37,7 +37,7 @@ func newOIDCProfile(name string) *gentianov1alpha1.AppProfile {
 		ObjectMeta: metav1.ObjectMeta{Name: name},
 		Spec: gentianov1alpha1.AppProfileSpec{
 			DisplayName:      name,
-			DeploymentMethod: gentianov1alpha1.DeploymentMethodArgoCD,
+			DeploymentMethod: gentianov1alpha1.DeploymentMethodCrossplane,
 			Chart: gentianov1alpha1.ChartRef{
 				Repository: "https://charts.example.com",
 				Name:       name,
@@ -47,6 +47,13 @@ func newOIDCProfile(name string) *gentianov1alpha1.AppProfile {
 				Identity: &gentianov1alpha1.IdentityRequirement{OIDC: &gentianov1alpha1.OIDCClientSpec{
 					ClientID:     name,
 					RedirectURIs: []string{"https://${TENANT_DOMAIN}/oidc/callback"},
+					// A pack, because that is what makes the OPERATOR own the
+					// Keycloak client. Without one, a crossplane profile's Client
+					// MR comes from the Composition and no client Job is created —
+					// see TestIdentity_CrossplaneOwnsClientWithoutPack. These
+					// fixtures used deploymentMethod: argocd to get the same
+					// effect, a value no real profile ever carried.
+					OIDCPackRef: "catalogue-test-client",
 				}},
 			},
 		},
@@ -325,6 +332,84 @@ func TestIdentity_CreatesClientJobAfterRealmComplete(t *testing.T) {
 	}
 	if clientJob.Labels["gentianos.io/tenant"] != "clienttest" {
 		t.Errorf("expected tenant label clienttest, got %q", clientJob.Labels["gentianos.io/tenant"])
+	}
+}
+
+// TestIdentity_CrossplaneOwnsClientWithoutPack asserts the other half of the
+// ownership split: a catalogue profile with no OIDC pack gets its Keycloak
+// Client from the app Composition (a provider-keycloak Client MR — see
+// crossplane/compositions/app-default.yaml), and the operator creates NO client
+// Job for it.
+//
+// Every other test here uses a profile WITH a pack, which is the configuration
+// the operator still owns. Before this, they all carried deploymentMethod:
+// argocd — a value no catalogue profile has ever set — and that value was the
+// only reason they saw client Jobs at all. The suite therefore proved the
+// operator creates client Jobs for a shape of profile that does not exist,
+// and proved nothing about the shape that does.
+func TestIdentity_CrossplaneOwnsClientWithoutPack(t *testing.T) {
+	t.Parallel()
+	profile := newOIDCProfile("oidc-nopack")
+	profile.Spec.KernelRequirements.Identity.OIDC.OIDCPackRef = ""
+	// The clientID must not match a pack either — ResolvePack falls back to it
+	// when oidcPackRef is empty.
+	profile.Spec.KernelRequirements.Identity.OIDC.ClientID = "oidc-nopack"
+	if err := testClient.Create(context.Background(), profile); err != nil {
+		t.Fatalf("create AppProfile: %v", err)
+	}
+	t.Cleanup(func() { _ = testClient.Delete(context.Background(), profile) })
+
+	tenant := &gentianov1alpha1.Tenant{
+		ObjectMeta: metav1.ObjectMeta{Name: "nopack"},
+		Spec: gentianov1alpha1.TenantSpec{
+			DisplayName: "No Pack Co",
+			Domain:      "nopack.example.com",
+			Apps:        []gentianov1alpha1.TenantApp{{Profile: "oidc-nopack"}},
+		},
+	}
+	if err := testClient.Create(context.Background(), tenant); err != nil {
+		t.Fatalf("create tenant: %v", err)
+	}
+	t.Cleanup(func() { _ = testClient.Delete(context.Background(), tenant) })
+
+	for _, job := range []string{
+		"keycloak-realm-nopack",
+		"keycloak-admin-nopack",
+		"keycloak-oidc-browser-nopack",
+		"keycloak-broker-first-login-nopack",
+	} {
+		waitFor(t, jobAppearTimeout, func() bool {
+			j := &batchv1.Job{}
+			return testClient.Get(context.Background(),
+				types.NamespacedName{Name: job, Namespace: "platform-kernel"}, j) == nil
+		})
+		markJobComplete(t, job, "platform-kernel")
+		if job == "keycloak-realm-nopack" {
+			markGentianGroupsComplete(t, "nopack")
+		}
+	}
+
+	waitFor(t, jobAppearTimeout, func() bool {
+		j := &batchv1.Job{}
+		return testClient.Get(context.Background(),
+			types.NamespacedName{Name: "keycloak-broker-idp-nopack", Namespace: "platform-kernel"}, j) == nil
+	})
+	markJobComplete(t, "keycloak-broker-idp-nopack", "platform-kernel")
+	markKernelPortalIdentityJobsComplete(t, "nopack")
+
+	// Reaching IdentityReady is what makes the negative assertion meaningful: the
+	// reconciler ran the whole identity phase to completion, so a client Job it
+	// intended to create would exist by now.
+	waitForTenantConditionTrue(t, "nopack", "IdentityReady")
+
+	clientJob := &batchv1.Job{}
+	err := testClient.Get(context.Background(),
+		types.NamespacedName{Name: "keycloak-client-nopack-oidc-nopack", Namespace: "platform-kernel"}, clientJob)
+	if err == nil {
+		t.Fatal("operator created a client Job for a profile whose Composition owns the Client MR")
+	}
+	if !k8serrors.IsNotFound(err) {
+		t.Fatalf("unexpected error checking for the client Job: %v", err)
 	}
 }
 

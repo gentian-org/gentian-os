@@ -34,7 +34,7 @@ func newProviderProfile(name, contract string) *gentianov1alpha1.AppProfile {
 		ObjectMeta: metav1.ObjectMeta{Name: name},
 		Spec: gentianov1alpha1.AppProfileSpec{
 			DisplayName:      name,
-			DeploymentMethod: gentianov1alpha1.DeploymentMethodArgoCD,
+			DeploymentMethod: gentianov1alpha1.DeploymentMethodCrossplane,
 			Chart: gentianov1alpha1.ChartRef{
 				Repository: "oci://charts.example.com",
 				Name:       name,
@@ -53,7 +53,7 @@ func newConsumerProfile(name, contract, provider string) *gentianov1alpha1.AppPr
 		ObjectMeta: metav1.ObjectMeta{Name: name},
 		Spec: gentianov1alpha1.AppProfileSpec{
 			DisplayName:      name,
-			DeploymentMethod: gentianov1alpha1.DeploymentMethodArgoCD,
+			DeploymentMethod: gentianov1alpha1.DeploymentMethodCrossplane,
 			Chart: gentianov1alpha1.ChartRef{
 				Repository: "oci://charts.example.com",
 				Name:       name,
@@ -73,7 +73,7 @@ func TestBindings_NoIntegrations(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: "bind-profile-none"},
 		Spec: gentianov1alpha1.AppProfileSpec{
 			DisplayName:      "bind-profile-none",
-			DeploymentMethod: gentianov1alpha1.DeploymentMethodArgoCD,
+			DeploymentMethod: gentianov1alpha1.DeploymentMethodCrossplane,
 			Chart: gentianov1alpha1.ChartRef{
 				Repository: "oci://charts.example.com",
 				Name:       "bind-profile-none",

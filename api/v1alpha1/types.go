@@ -79,13 +79,19 @@ const (
 )
 
 // DeploymentMethod determines how the orchestrator delivers the app.
-// +kubebuilder:validation:Enum=argocd;crossplane;api
+//
+// There used to be a third value, "argocd", from when the operator created a
+// per-app Argo CD Application itself. That path is gone — ensureAppDeployment
+// creates no Applications — and no profile in the catalogue declared it. What
+// kept it alive was one branch treating any non-crossplane value as "the
+// operator owns the OIDC client", and a dozen test fixtures using it as an
+// arbitrary value, which meant the suite exercised a configuration no real
+// profile had.
+//
+// +kubebuilder:validation:Enum=crossplane;api
 type DeploymentMethod string
 
 const (
-	// DeploymentMethodArgoCD uses an ArgoCD Application CR for kernel-layer services
-	// that are managed directly by the cache or identity reconcilers.
-	DeploymentMethodArgoCD DeploymentMethod = "argocd"
 	// DeploymentMethodCrossplane uses a Crossplane App claim. The claim drives an
 	// App Composition that emits an ExternalSecret and a provider-helm Release.
 	DeploymentMethodCrossplane DeploymentMethod = "crossplane"

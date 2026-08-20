@@ -113,7 +113,7 @@ func TestProfileIsAPIAndDeploysWorkload(t *testing.T) {
 		t.Error("ApiProfile should not deploy a workload")
 	}
 
-	for _, m := range []v1alpha1.DeploymentMethod{v1alpha1.DeploymentMethodCrossplane, v1alpha1.DeploymentMethodArgoCD, ""} {
+	for _, m := range []v1alpha1.DeploymentMethod{v1alpha1.DeploymentMethodCrossplane, ""} {
 		p := &v1alpha1.AppProfile{Spec: v1alpha1.AppProfileSpec{DeploymentMethod: m}}
 		if v1alpha1.ProfileIsAPI(p) {
 			t.Errorf("deploymentMethod %q should not be an ApiProfile", m)

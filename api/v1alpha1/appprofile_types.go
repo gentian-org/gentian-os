@@ -128,8 +128,8 @@ type AppProfileSpec struct {
 	// +optional
 	OptionalIntegrations []IntegrationRef `json:"optionalIntegrations,omitempty"`
 
-	// Chart references the upstream Helm chart for this app. Required for
-	// crossplane and argocd deployment methods; omitted for ApiProfiles
+	// Chart references the upstream Helm chart for this app. Required for the
+	// crossplane deployment method; omitted for ApiProfiles
 	// (deploymentMethod: api), which run no workload. Enforced by a spec-level
 	// validation rule.
 	// +optional
@@ -167,9 +167,9 @@ type AppProfileSpec struct {
 	ExtraValues *runtime.RawExtension `json:"extraValues,omitempty"`
 
 	// DeploymentMethod controls how the orchestrator deploys this app.
-	// Defaults to crossplane. Use argocd for kernel-layer services managed
-	// directly by the cache or identity reconcilers. Use api for an ApiProfile
-	// that runs no workload (see spec.apiIntegration).
+	// Defaults to crossplane: a Crossplane App claim drives the Composition that
+	// emits the app's ExternalSecret and provider-helm Release. Use api for an
+	// ApiProfile, which runs no workload at all (see spec.apiIntegration).
 	// +optional
 	// +kubebuilder:default=crossplane
 	DeploymentMethod DeploymentMethod `json:"deploymentMethod,omitempty"`

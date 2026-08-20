@@ -36,7 +36,7 @@ func TestAppProfile_DeepCopy(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: "catalogue-app"},
 		Spec: v1alpha1.AppProfileSpec{
 			DisplayName:      "Catalogue App",
-			DeploymentMethod: v1alpha1.DeploymentMethodArgoCD,
+			DeploymentMethod: v1alpha1.DeploymentMethodCrossplane,
 			Chart: v1alpha1.ChartRef{
 				Repository: "oci://charts.example.com",
 				Name:       "catalogue-app",
@@ -106,14 +106,30 @@ func TestAppProfile_DeepCopy(t *testing.T) {
 	}
 }
 
-func TestAppProfile_DefaultDeploymentMethod(t *testing.T) {
-	ap := &v1alpha1.AppProfile{
-		Spec: v1alpha1.AppProfileSpec{
-			DeploymentMethod: v1alpha1.DeploymentMethodArgoCD,
-		},
+// An unset deploymentMethod must behave as crossplane, not as "no method".
+//
+// The API server defaults the field (+kubebuilder:default=crossplane), so a
+// profile read back from the cluster always carries a value — but a profile
+// constructed in Go, or one from a fixture, does not, and every reader has to
+// treat the empty string as crossplane.
+//
+// This replaces a test that set the field and then asserted the field equalled
+// what it had just been set to, while its failure message claimed the default
+// was argocd. It asserted nothing and documented something untrue.
+func TestAppProfile_UnsetDeploymentMethodDeploysWorkload(t *testing.T) {
+	unset := &v1alpha1.AppProfile{}
+	if v1alpha1.ProfileIsAPI(unset) {
+		t.Error("an unset deploymentMethod must not read as an ApiProfile")
 	}
-	if ap.Spec.DeploymentMethod != v1alpha1.DeploymentMethodArgoCD {
-		t.Errorf("expected default argocd, got %q", ap.Spec.DeploymentMethod)
+	if !v1alpha1.ProfileDeploysWorkload(unset) {
+		t.Error("an unset deploymentMethod must deploy a workload")
+	}
+
+	api := &v1alpha1.AppProfile{
+		Spec: v1alpha1.AppProfileSpec{DeploymentMethod: v1alpha1.DeploymentMethodAPI},
+	}
+	if v1alpha1.ProfileDeploysWorkload(api) {
+		t.Error("an ApiProfile must not deploy a workload")
 	}
 }
 

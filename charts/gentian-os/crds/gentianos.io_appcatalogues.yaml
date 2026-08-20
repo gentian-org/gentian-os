@@ -72,10 +72,10 @@ spec:
                         AppProfile.
                       type: string
                     deploymentMethod:
-                      description: DeploymentMethod is the deployment pattern (argocd
-                        or crossplane).
+                      description: |-
+                        DeploymentMethod is the deployment pattern (crossplane, or api for an
+                        ApiProfile that runs no workload).
                       enum:
-                      - argocd
                       - crossplane
                       - api
                       type: string

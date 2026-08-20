@@ -305,7 +305,11 @@ func crossplaneOwnsOIDCClient(profile *gentianov1alpha1.AppProfile, cfg oidcAppC
 	if cfg.pack != nil {
 		return false
 	}
-	if profile.Spec.DeploymentMethod != "" && profile.Spec.DeploymentMethod != gentianov1alpha1.DeploymentMethodCrossplane {
+	// An ApiProfile has no App claim and therefore no Composition to own a Client
+	// MR. This was written as "anything that is not crossplane", which also
+	// covered deploymentMethod: argocd — a value no profile ever set and that no
+	// longer exists.
+	if profile.Spec.DeploymentMethod == gentianov1alpha1.DeploymentMethodAPI {
 		return false
 	}
 	if cfg.parentProfile != "" {
