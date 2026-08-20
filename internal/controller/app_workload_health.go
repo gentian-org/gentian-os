@@ -68,7 +68,9 @@ func quotaFingerprint(hard corev1.ResourceList) string {
 	h := sha256.New()
 	for _, k := range keys {
 		q := hard[corev1.ResourceName(k)]
-		fmt.Fprintf(h, "%s=%s\n", k, q.String())
+		// Discarded explicitly: a hash.Hash never fails a write, and errcheck
+		// wants the intent stated rather than inferred.
+		_, _ = fmt.Fprintf(h, "%s=%s\n", k, q.String())
 	}
 	return hex.EncodeToString(h.Sum(nil))[:16]
 }
