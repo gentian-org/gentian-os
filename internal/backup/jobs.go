@@ -97,6 +97,27 @@ type JobParams struct {
 	UploadCredentialsSecret string
 }
 
+// hardened gives every container the security context the tenant baseline
+// admission policies require. Idempotent per container; an explicit context a
+// producer already set is preserved and only the required fields are filled.
+func hardened(containers []corev1.Container) []corev1.Container {
+	no := false
+	for i := range containers {
+		sc := containers[i].SecurityContext
+		if sc == nil {
+			sc = &corev1.SecurityContext{}
+		}
+		if sc.AllowPrivilegeEscalation == nil {
+			sc.AllowPrivilegeEscalation = &no
+		}
+		if sc.SeccompProfile == nil {
+			sc.SeccompProfile = &corev1.SeccompProfile{Type: corev1.SeccompProfileTypeRuntimeDefault}
+		}
+		containers[i].SecurityContext = sc
+	}
+	return containers
+}
+
 // uploadSecretName resolves which Secret carries the MinIO credentials.
 func (p JobParams) uploadSecretName() string {
 	if p.UploadCredentialsSecret != "" {
@@ -406,9 +427,19 @@ func newJob(p JobParams, containers, initContainers []corev1.Container, extraVol
 				Spec: corev1.PodSpec{
 					// Never Always: a capture is a one-shot, and a restarting
 					// pod would re-dump into an artefact already uploaded.
-					RestartPolicy:  corev1.RestartPolicyOnFailure,
-					InitContainers: initContainers,
-					Containers:     containers,
+					RestartPolicy: corev1.RestartPolicyOnFailure,
+					// Volume Jobs run in tenant namespaces, where Kyverno
+					// enforces the pod-security baseline that platform-kernel
+					// does not — the first tenant-namespace capture pod was
+					// denied at admission for exactly these two settings.
+					// Root without escalation is deliberate: an archive must
+					// read app files whatever uid owns them, and neither
+					// policy requires non-root.
+					SecurityContext: &corev1.PodSecurityContext{
+						SeccompProfile: &corev1.SeccompProfile{Type: corev1.SeccompProfileTypeRuntimeDefault},
+					},
+					InitContainers: hardened(initContainers),
+					Containers:     hardened(containers),
 					Volumes:        volumes,
 				},
 			},

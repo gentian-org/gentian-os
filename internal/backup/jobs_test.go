@@ -469,3 +469,42 @@ func TestVolumeArchiveUsesStagedCredentialsWhenNamed(t *testing.T) {
 		t.Errorf("pod component label = %q; the export NetworkPolicy selects on it", got)
 	}
 }
+
+// Tenant namespaces enforce the pod-security baseline at admission — the
+// first tenant-namespace capture pod was denied for exactly these fields.
+// Every Job this package builds must satisfy it, wherever it runs.
+func TestAllJobsSatisfyTheTenantSecurityBaseline(t *testing.T) {
+	p := params()
+	jobs := map[string]*batchv1.Job{
+		"postgres-dump": PostgresDumpJob(p, "demo_app"),
+		"mariadb-dump":  MariaDBDumpJob(p, "demo_app"),
+		"volume":        VolumeArchiveJob(p, "data", nil),
+		"s3":            S3ArchiveJob(p, "demo-bucket"),
+		"realm-export":  RealmExportJob(p, "demo"),
+		"pg-restore":    PostgresRestoreJob(p, recipientDecryption(), "demo_app"),
+		"maria-restore": MariaDBRestoreJob(p, recipientDecryption(), "demo_app"),
+		"s3-restore":    S3RestoreJob(p, recipientDecryption(), "demo-bucket"),
+		"realm-import":  RealmImportJob(p, recipientDecryption(), "demo"),
+		"bundle-delete": BundleDeleteJob(p),
+	}
+	for name, job := range jobs {
+		podSC := job.Spec.Template.Spec.SecurityContext
+		if podSC == nil || podSC.SeccompProfile == nil ||
+			podSC.SeccompProfile.Type != corev1.SeccompProfileTypeRuntimeDefault {
+			t.Errorf("%s: pod seccompProfile not RuntimeDefault", name)
+		}
+		containers := append(append([]corev1.Container{},
+			job.Spec.Template.Spec.InitContainers...),
+			job.Spec.Template.Spec.Containers...)
+		for _, c := range containers {
+			sc := c.SecurityContext
+			if sc == nil || sc.AllowPrivilegeEscalation == nil || *sc.AllowPrivilegeEscalation {
+				t.Errorf("%s/%s: allowPrivilegeEscalation not false", name, c.Name)
+			}
+			if sc == nil || sc.SeccompProfile == nil ||
+				sc.SeccompProfile.Type != corev1.SeccompProfileTypeRuntimeDefault {
+				t.Errorf("%s/%s: container seccompProfile not RuntimeDefault", name, c.Name)
+			}
+		}
+	}
+}
