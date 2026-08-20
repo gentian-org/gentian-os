@@ -155,6 +155,12 @@ events instead of polling, which is roadmap 3.1.
 
 ## 6b. Migration log
 
+This is the working record for **roadmap 2.1, Keycloak Provider & Crossplane Consolidation**, which
+already described this work and had been waiting on a precondition that is now met: `provider-keycloak`
+v2.19.0 ships authentication flows and identity providers, and adopts existing objects by external
+name. Progress belongs there; the detail, including what each step verified and what it cost, is here.
+
+
 Recorded per step, because the procedure changed after the first one.
 
 ### 1. Portal public OIDC client — **done**

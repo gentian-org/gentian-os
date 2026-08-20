@@ -267,11 +267,14 @@ For the current baseline design of the system, refer to [architecture.md](archit
 
 ### 2.1 Keycloak Provider & Crossplane Consolidation (*)
 * **Target Domain**: Platform Infrastructure
-* **Context**: Keycloak realms and OIDC clients are currently managed through a mix of Crossplane resources and manifest-bridge bootstrap Jobs. This splits configuration state and makes it harder to manage drift.
-* **Proposed Solution**: Consolidate client and realm management to use drift-safe `provider-keycloak` Managed Resources (MRs) once upstream provider versions support browser-flow tuning and broker integration.
+* **Context**: Keycloak realms and OIDC clients were managed through a mix of Crossplane resources and manifest-bridge bootstrap Jobs, which splits configuration state and makes drift hard to see. **In progress** — the working record, including what each step verified and what it cost, is [plans/tenant-composition-cleanup.md](plans/tenant-composition-cleanup.md).
+* **The stated precondition is met.** This item waited on "upstream provider versions supporting browser-flow tuning and broker integration". `provider-keycloak` v2.19.0 is installed and healthy and ships both: `flows`, `subflows`, `executions`, `executionconfigs` and `bindings` for authentication flows, and `identityproviders` plus `identityprovidermappers` for brokering. Adoption of existing objects also works — a `Client` or `Realm` carrying `crossplane.io/external-name` set to its natural key adopts what is already there rather than creating a duplicate, verified read-only against the live realm and both portal clients — so migrating an existing tenant needs no per-tenant import step.
+* **Proposed Solution**: Move the tenant's Keycloak objects to `provider-keycloak` Managed Resources one Job at a time, adopting rather than recreating, and retire each Job only once its objects are seen to adopt without changing anything.
 * **Backlog Items**:
-  - `[ ]` Replace bootstrap Jobs with native `provider-keycloak` Client/Realm MRs.
-  - `[ ]` Port OIDC client default scopes and custom browser flow configurations into Crossplane templates.
+  - `[~]` Replace bootstrap Jobs with native `provider-keycloak` Client/Realm MRs. *(2 of 9 retired: portal public client with its openbao-audience mapper, and portal BFF client with its client secret and default scopes. Remaining: dovecot OIDC client, gentian groups, kernel tenant broker, broker IdP, browser flow, realm admin, realm.)*
+  - `[x]` Port OIDC client default scopes into Crossplane templates. *(All seven on the BFF client; the Job attached only `groups` because the rest were Keycloak's defaults, and the list is replaced wholesale — declaring the one the Job named would have stripped profile, email and role claims from every portal token.)*
+  - `[ ]` Port the custom browser flow configuration. Note `keycloak-oidc-browser-*` is largely a one-time migration off a legacy flow; what remains ongoing is realm-level (`browserFlow`, `loginTheme`), so it belongs with the realm rather than before it.
+  - `[ ]` Restore the assertion lost with `keycloak_portal_client_test.go` — that a tenant's own origin is a registered redirect *and* post-logout redirect URI. The render harness is golden-diff with no per-case assertion hook, so that property is currently only visible, not asserted.
 
 ### 2.2 Composition-Only IntegrationBinding Egress (***)
 * **Target Domain**: Platform Infrastructure
