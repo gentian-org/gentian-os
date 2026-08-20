@@ -228,6 +228,13 @@ func TestPostgresRestoreNormalisesOwnershipBeforeLoading(t *testing.T) {
 	if strings.Contains(script, "%!") {
 		t.Fatalf("format verb mishandled in rendered script:\n%s", script)
 	}
+	// Kubernetes collapses $$ to a single $ in container args — it is the
+	// escape for its own $(VAR) syntax — so a script that writes $$ does not
+	// arrive as $$. "DO $$" became "DO $" and failed the restore at its first
+	// statement. Tagged dollar-quotes ($tag$) use single $ and survive.
+	if strings.Contains(script, "$$") {
+		t.Errorf("script contains $$, which Kubernetes collapses to $:\n%s", script)
+	}
 	for _, want := range []string{
 		"ALTER SCHEMA",
 		"OWNER TO",

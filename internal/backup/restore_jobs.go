@@ -148,8 +148,12 @@ DB=%[2]s
 # moment someone is trying to recover it, and only hand-written psql gets it
 # back. Normalising here makes a retry self-healing instead. Extension-owned
 # objects are left alone: they belong to the extension, not the app.
+# A tagged dollar-quote, never the bare doubled-dollar form: Kubernetes
+# collapses a doubled dollar to a single one in container args (it escapes its
+# own $(VAR) syntax that way), which truncated the opening quote and failed the
+# restore at its first statement. Tagged quotes use single dollars and survive.
 psql -v ON_ERROR_STOP=1 -v app_role="${ROLE}" -d "${DB}" <<'PSQL'
-DO $$
+DO $normalise$
 DECLARE r record;
 BEGIN
   FOR r IN SELECT nspname FROM pg_namespace
@@ -176,7 +180,7 @@ BEGIN
                    END,
                    r.nspname, r.relname, :'app_role');
   END LOOP;
-END $$;
+END $normalise$;
 PSQL
 echo "ownership normalised to ${ROLE}"
 
