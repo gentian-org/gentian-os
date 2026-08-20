@@ -147,7 +147,7 @@ func PostgresRestoreJob(p JobParams, d Decryption, database string) *batchv1.Job
 # --single-transaction makes the whole load atomic: a failure half way leaves
 # the database as it was, not half-replaced.
 pg_restore --clean --if-exists --no-owner --no-acl --single-transaction \
-  --dbname="%s" %s/dump.pgc
+  --dbname=%s %s/dump.pgc
 echo "restored %s"`, shellSingleQuote(database), workDir, database)},
 		Env:          postgresAdminEnv(),
 		VolumeMounts: []corev1.VolumeMount{{Name: "work", MountPath: workDir}},

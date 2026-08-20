@@ -103,7 +103,7 @@ func PostgresDumpJob(p JobParams, database string) *batchv1.Job {
 		Args: []string{fmt.Sprintf(`set -eu
 # --no-owner / --no-acl: roles are re-derived on restore, so recording the
 # owner would only pin the dump to this cluster's role names.
-pg_dump --format=custom --no-owner --no-acl --dbname="%s" --file=%s/dump.pgc
+pg_dump --format=custom --no-owner --no-acl --dbname=%s --file=%s/dump.pgc
 echo "dumped %s"`, shellSingleQuote(database), workDir, database)},
 		Env:          postgresAdminEnv(),
 		VolumeMounts: []corev1.VolumeMount{{Name: "work", MountPath: workDir}},
@@ -123,7 +123,7 @@ func MariaDBDumpJob(p JobParams, database string) *batchv1.Job {
 # database; the app is already paused, so this only guards in-flight work.
 mariadb-dump --single-transaction --routines --triggers --events \
   --host="${MYSQL_HOST}" --port="${MYSQL_TCP_PORT}" --user="${MYSQL_ADMIN_USER}" \
-  "%s" | gzip -c > %s/dump.sql.gz
+  %s | gzip -c > %s/dump.sql.gz
 echo "dumped %s"`, shellSingleQuote(database), workDir, database)},
 		Env:          mariadbAdminEnv(),
 		VolumeMounts: []corev1.VolumeMount{{Name: "work", MountPath: workDir}},

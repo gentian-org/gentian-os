@@ -367,3 +367,37 @@ func TestShellSingleQuoteNeutralisesQuotes(t *testing.T) {
 		}
 	}
 }
+
+// A shellSingleQuote'd value embedded inside double quotes stops being
+// quoting and becomes data: --dbname="'demo_app'" asks postgres for a
+// database literally named 'demo_app', quotes included. That exact mistake
+// shipped and made every capture fail on its first live run, so every script
+// any job renders is scanned for the two-character sequence «"'» — which is
+// only ever produced by wrapping an already-quoted value in double quotes.
+func TestNoScriptWrapsAQuotedValueInDoubleQuotes(t *testing.T) {
+	p := params()
+	jobs := map[string]*batchv1.Job{
+		"postgres-dump": PostgresDumpJob(p, "demo_app"),
+		"mariadb-dump":  MariaDBDumpJob(p, "demo_app"),
+		"volume":        VolumeArchiveJob(p, "data", []string{"**/cache"}),
+		"s3":            S3ArchiveJob(p, "demo-bucket"),
+		"realm-export":  RealmExportJob(p, "demo"),
+		"pg-restore":    PostgresRestoreJob(p, recipientDecryption(), "demo_app"),
+		"maria-restore": MariaDBRestoreJob(p, recipientDecryption(), "demo_app"),
+		"s3-restore":    S3RestoreJob(p, recipientDecryption(), "demo-bucket"),
+		"realm-import":  RealmImportJob(p, recipientDecryption(), "demo"),
+	}
+	for name, job := range jobs {
+		containers := append(append([]corev1.Container{},
+			job.Spec.Template.Spec.InitContainers...),
+			job.Spec.Template.Spec.Containers...)
+		for _, c := range containers {
+			for _, arg := range c.Args {
+				if strings.Contains(arg, `"'`) {
+					t.Errorf("%s/%s: script wraps a single-quoted value in double quotes:\n%s",
+						name, c.Name, arg)
+				}
+			}
+		}
+	}
+}
