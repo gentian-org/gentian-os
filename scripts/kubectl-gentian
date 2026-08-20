@@ -1503,6 +1503,20 @@ fetch_tenant_admin_credentials() {
   done
 }
 
+# Reads the tenant admin credentials OpenBao holds, using the operator's
+# Kubernetes auth role from inside the OpenBao pod.
+#
+# Every step here swallows its own failure and returns 0, so the caller falls
+# through to "credentials unavailable" with no reason given. That hid a plain
+# mistake for as long as this has existed: the address was http:// against a
+# listener that has only ever been https, so the connection was reset, the
+# login produced nothing, and a tenant's admin credentials were simply never
+# printed. Nothing said so.
+#
+# Addressed by service DNS rather than 127.0.0.1 because the certificate has no
+# IP SAN — verifying against the CA the pod already mounts fails on the address,
+# not the trust. Skipping verification would have worked and taught the next
+# reader that this endpoint cannot be verified.
 fetch_tenant_admin_credentials_via_k8s_auth() {
   local tenant_name="${1}"
 
@@ -1519,7 +1533,7 @@ fetch_tenant_admin_credentials_via_k8s_auth() {
   fi
 
   local login_token
-  login_token="$(kubectl --request-timeout=10s exec -n openbao "${bao_pod}" -- sh -lc "BAO_ADDR=http://127.0.0.1:8200 bao write -field=token auth/kubernetes/login role=gentian-os-operator jwt='${jwt}'" 2>/dev/null || true)"
+  login_token="$(kubectl --request-timeout=10s exec -n openbao "${bao_pod}" -- sh -lc "BAO_ADDR=https://openbao.openbao.svc.cluster.local:8200 BAO_CACERT=/openbao/tls/ca.crt bao write -field=token auth/kubernetes/login role=gentian-os-operator jwt='${jwt}'" 2>/dev/null || true)"
   if [[ -z "${login_token}" ]]; then
     return 0
   fi
@@ -1527,8 +1541,8 @@ fetch_tenant_admin_credentials_via_k8s_auth() {
   local username
   local password
 
-  username="$(kubectl --request-timeout=10s exec -n openbao "${bao_pod}" -- sh -lc "BAO_ADDR=http://127.0.0.1:8200 BAO_TOKEN='${login_token}' bao kv get -mount=secret -field=username gentian-os/tenants/${tenant_name}/admin" 2>/dev/null || true)"
-  password="$(kubectl --request-timeout=10s exec -n openbao "${bao_pod}" -- sh -lc "BAO_ADDR=http://127.0.0.1:8200 BAO_TOKEN='${login_token}' bao kv get -mount=secret -field=password gentian-os/tenants/${tenant_name}/admin" 2>/dev/null || true)"
+  username="$(kubectl --request-timeout=10s exec -n openbao "${bao_pod}" -- sh -lc "BAO_ADDR=https://openbao.openbao.svc.cluster.local:8200 BAO_CACERT=/openbao/tls/ca.crt BAO_TOKEN='${login_token}' bao kv get -mount=secret -field=username gentian-os/tenants/${tenant_name}/admin" 2>/dev/null || true)"
+  password="$(kubectl --request-timeout=10s exec -n openbao "${bao_pod}" -- sh -lc "BAO_ADDR=https://openbao.openbao.svc.cluster.local:8200 BAO_CACERT=/openbao/tls/ca.crt BAO_TOKEN='${login_token}' bao kv get -mount=secret -field=password gentian-os/tenants/${tenant_name}/admin" 2>/dev/null || true)"
 
   if [[ -n "${password}" ]]; then
     if [[ -z "${username}" ]]; then
@@ -2204,7 +2218,7 @@ _openbao_operator_token() {
     return 1
   fi
   login_token="$(kubectl --request-timeout=10s exec -n openbao "${bao_pod}" -- sh -lc \
-    "BAO_ADDR=http://127.0.0.1:8200 bao write -field=token auth/kubernetes/login role=gentian-os-operator jwt='${jwt}'" \
+    "BAO_ADDR=https://openbao.openbao.svc.cluster.local:8200 BAO_CACERT=/openbao/tls/ca.crt bao write -field=token auth/kubernetes/login role=gentian-os-operator jwt='${jwt}'" \
     2>/dev/null || true)"
   if [[ -z "${login_token}" ]]; then
     return 1
@@ -2270,7 +2284,7 @@ purge_app_openbao_path() {
   echo "Purging OpenBao secrets at ${base_path}..."
   kubectl --request-timeout=60s exec -n openbao "${bao_pod}" -- sh -lc "
     set -eu
-    BAO_ADDR=http://127.0.0.1:8200
+    BAO_ADDR=https://openbao.openbao.svc.cluster.local:8200 BAO_CACERT=/openbao/tls/ca.crt
     BAO_TOKEN='${token}'
     BASE='${base_path}'
     purge_kv_tree() {
