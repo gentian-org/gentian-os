@@ -249,6 +249,20 @@ For the current baseline design of the system, refer to [architecture.md](archit
 
 ---
 
+### 1.25 Enforce Mail Rate Limits and Per-User Quotas (**)
+* **Target Domain**: Kernel Mail Security
+* **Context**: Neither exists. `Tenant.spec.mail.rateLimit` and `mail.quotaPerUser` were declared on the Tenant CRD and the XTenant XRD, described in mail.md's security section as enforced, and set to real values on two clusters — while nothing read either field. Postfix runs with `smtpd_client_message_rate_limit = 0`, its default of no limit, and Dovecot loads no quota plugin. The fields have been removed, because a setting that reads as configuration and does nothing is worse than an absent one: an operator reading either the schema or the documentation would conclude outbound abuse was capped. Note also that the mechanism the docs named would not have delivered what they promised — `smtpd_client_message_rate_limit` is per client IP, and every tenant reaches the same submission endpoint, so it cannot separate one tenant from another.
+* **Proposed Solution**: For quotas, Dovecot's quota plugin with a per-user rule and the maildir backend, sized from the tenant's setting, plus `lmtp_rcpt_check_quota` so an over-quota delivery is refused at LMTP rather than accepted and lost. For rate limiting, a per-tenant measure that survives a shared submission endpoint — the authenticated SASL identity rather than the client address — which likely means a policy service rather than a stock `smtpd_*` parameter. Restore the claim fields only once something reads them.
+* **Backlog Items**:
+  - `[ ]` Load the Dovecot quota plugin and set a per-user rule from the tenant's setting.
+  - `[ ]` Refuse over-quota deliveries at LMTP rather than accepting mail there is no room for.
+  - `[ ]` Rate-limit per authenticated identity, not per client address, so tenants sharing the endpoint are actually separated.
+  - `[ ]` Re-add the claim fields when a reader exists, and not before.
+  - `[ ]` Report the quota a tenant is actually subject to on tenant status, so the answer does not have to be inferred from Dovecot's config.
+
+
+---
+
 ## 2. Platform, Infrastructure & Lifecycle
 
 ### 2.1 Keycloak Provider & Crossplane Consolidation (*)

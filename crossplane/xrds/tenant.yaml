@@ -78,12 +78,6 @@ spec:
                     domain:
                       type: string
                       description: Mail domain. Defaults to spec.domain.
-                    quotaPerUser:
-                      type: string
-                      description: Per-user mailbox storage quota (e.g. "5Gi").
-                    rateLimit:
-                      type: string
-                      description: Outbound email rate limit (e.g. "100/h").
                     smtpCredentialsSecret:
                       type: string
                       description: >

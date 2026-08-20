@@ -105,15 +105,6 @@ type TenantMail struct {
 	// +optional
 	Domain string `json:"domain,omitempty"`
 
-	// QuotaPerUser is the per-user mailbox storage quota.
-	// +optional
-	QuotaPerUser *resource.Quantity `json:"quotaPerUser,omitempty"`
-
-	// RateLimit is the outbound email rate limit (e.g., "100/h").
-	// +optional
-	// +kubebuilder:validation:Pattern=`^[0-9]+/(s|m|h|d)$`
-	RateLimit string `json:"rateLimit,omitempty"`
-
 	// SmtpCredentialsSecret is the name of an existing Kubernetes Secret in the
 	// kernel namespace that contains SMTP relay credentials for external mail
 	// delivery. Required when mode=external.

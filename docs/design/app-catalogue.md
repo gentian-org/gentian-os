@@ -255,8 +255,6 @@ spec:
   mail:
     mode: selfhosted            # selfhosted | external | transport-only | disabled
     domain: demo.example.com
-    quotaPerUser: 5Gi
-    rateLimit: 100/h
 
   quotas:
     maxApps: 20

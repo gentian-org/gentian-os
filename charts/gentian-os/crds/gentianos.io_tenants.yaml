@@ -272,18 +272,6 @@ spec:
                     - transport-only
                     - disabled
                     type: string
-                  quotaPerUser:
-                    anyOf:
-                    - type: integer
-                    - type: string
-                    description: QuotaPerUser is the per-user mailbox storage quota.
-                    pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
-                    x-kubernetes-int-or-string: true
-                  rateLimit:
-                    description: RateLimit is the outbound email rate limit (e.g.,
-                      "100/h").
-                    pattern: ^[0-9]+/(s|m|h|d)$
-                    type: string
                   smtpCredentialsSecret:
                     description: |-
                       SmtpCredentialsSecret is the name of an existing Kubernetes Secret in the

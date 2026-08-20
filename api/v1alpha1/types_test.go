@@ -153,7 +153,6 @@ func TestTenant_DeepCopy(t *testing.T) {
 	storage := resource.MustParse("100Gi")
 	cpu := resource.MustParse("8")
 	memory := resource.MustParse("16Gi")
-	quotaPerUser := resource.MustParse("5Gi")
 
 	original := &v1alpha1.Tenant{
 		ObjectMeta: metav1.ObjectMeta{Name: "gtn-demo"},
@@ -170,8 +169,6 @@ func TestTenant_DeepCopy(t *testing.T) {
 			Mail: &v1alpha1.TenantMail{
 				Mode:         v1alpha1.MailModeSelfhosted,
 				Domain:       "gtn-demo.example.com",
-				QuotaPerUser: &quotaPerUser,
-				RateLimit:    "100/h",
 			},
 			Quotas: &v1alpha1.TenantQuotas{
 				MaxApps: 20,

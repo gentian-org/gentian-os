@@ -185,10 +185,13 @@ no app-specific mail logic in the platform.
   other apps in the same tenant.
 - **IMAP authentication** uses per-tenant credentials from OpenBao.
   Cross-tenant IMAP access is structurally impossible.
-- **Rate limits** (`Tenant.spec.mail.rateLimit`) are enforced per
-  tenant at the Postfix `smtpd_client_message_rate_limit` level.
-- **Per-user quotas** (`Tenant.spec.mail.quotaPerUser`) are enforced
-  by Dovecot.
+- **Rate limits and per-user quotas are not enforced.** Postfix runs with
+  `smtpd_client_message_rate_limit = 0`, its default, which is no limit, and
+  Dovecot loads no quota plugin. This section previously described both as
+  enforced, and two clusters carried settings for them: a tenant could ask for
+  100/h and 5Gi and receive neither, with nothing to say so. The fields have
+  been removed rather than left to read as configuration — see the roadmap for
+  making them real.
 
 See [security.md](security.md) for OpenBao path layout and key
 derivation.
