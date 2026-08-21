@@ -3001,7 +3001,31 @@ It was left alone deliberately: 65 references across 11 files, on a path that wo
 rename into the functional change would have made both hard to review and hard to revert. It is
 mechanical and should be done on its own.
 
-**`docs/commands.md` and `docs/design/mail.md` have not been checked** against the new paradigm.
+**~~`docs/commands.md` and `docs/design/mail.md` have not been checked~~ Checked, against a git
+history audit and the current implementation, not just read.** Both had real inaccuracies, not
+just staleness:
+
+- `commands.md` §10 described `cluster-settings.env` (deleted, replaced by the Cluster claim),
+  an `--update` mechanism that does not do what was written (it is `GENTIAN_DIRECTION=forward`,
+  a normal driver pass — there is no special drift-detection code path), and `-n gentian-dev`
+  where the real namespace has been `platform-kernel` for some time.
+- `mail.md` claimed DKIM keys live in OpenBao and are derived from the master password; they are
+  a Kubernetes Secret with a randomly generated key — the document's own §10 already said this
+  correctly, so §5 disagreed with the same file. It also claimed Rspamd does spam filtering and
+  DKIM signing; nothing in the deployed stack is Rspamd, and DKIM is OpenDKIM.
+- The one worth flagging on its own: §7 stated a security property — "per-app SASL identities
+  mean a compromised app can be revoked without affecting other apps" — that the code
+  contradicts. `seedPerAppMailSecrets` copies one credential shared by every app in a tenant.
+  Revoking one app's access means rotating the credential every other app also uses. The
+  document also never described the mechanism that *does* provide per-identity isolation —
+  `mail_apppassword.go`'s per-user, per-client-app IMAP passwords — despite §9a naming the
+  requirement it satisfies.
+- Checking `commands.md`'s `--force` guidance against the driver surfaced a real defect, not a
+  doc issue: `D-03-mail`'s `check()` unconditionally reports `CHECK_UNDEFINED` in `external`
+  mode, and the driver treats that exactly like `CHECK_SATISFIED` — it skips. Switching
+  **kernel → external** without `--force` silently never re-applies. Switching the other
+  direction converges normally, because `kernel` mode's `check()` genuinely reports missing.
+  Recorded here since it wasn't found by reading the doc, but by verifying what the doc claimed.
 `GETTING-STARTED.md` points at both for post-install operations.
 
 **Dovecot delivers; it does not yet serve — and now only where it runs at all.** Delivery is

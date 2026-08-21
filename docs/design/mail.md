@@ -85,17 +85,19 @@ and re-running `./install.sh`, which converges.
 ## 3. Shared Infrastructure with Tenant-Scoped Configuration
 
 When the extension is enabled, **one** Postfix and **one** Dovecot instance handle all
-tenant domains (placeholders under `kernel/services/postfix` and
-`kernel/services/dovecot` — **UNTESTED**, public chart/image only). Tenant isolation is
-enforced at the configuration level:
+tenant domains (`kernel/services/postfix` and `kernel/services/dovecot`), verified
+delivering on a real cluster — see §0a. Tenant isolation is enforced at the
+configuration level:
 
-- **Postfix:** `virtual_mailbox_domains` lists all tenant domains;
-  per-tenant SASL credentials authenticate SMTP submission.
+- **Postfix:** `virtual_mailbox_domains` lists all tenant domains; one shared SASL
+  credential per tenant authenticates SMTP submission for that tenant's apps (§6, §7).
 - **Dovecot:** mailboxes stored at isolated paths
-  (`/var/mail/{domain}/{user}`); IMAP authenticates against per-tenant
-  credentials provisioned by the platform.
-- **Rspamd:** spam filtering for all tenants; DKIM signing uses
-  per-domain keys fetched from OpenBao at runtime.
+  (`/var/mail/{domain}/{user}`); IMAP authenticates against per-user,
+  per-client-app credentials (§7).
+- **DKIM signing** is done by OpenDKIM inside the Postfix image, from
+  operator-generated, per-domain keys mounted as a Secret — see §10. There is no
+  Rspamd or other spam-filtering component in this stack; nothing here does
+  spam scoring today.
 
 This is the same model every other shared kernel component uses:
 
@@ -139,9 +141,9 @@ monitoring, and a dedicated IP for any tenant whose volume justifies one.
 When a Tenant with `mail.mode: selfhosted` is reconciled, the
 **operator** (not a finished Crossplane-only pipeline) performs:
 
-1. **DKIM keypair Secret** in OpenBao at
-   `tenants/{name}/mail/dkim`. Generated deterministically from the
-   master password + tenant name.
+1. **DKIM keypair Secret**, an RSA-2048 key generated with a CSPRNG (not derived from
+   the master password) and stored as a Kubernetes Secret (`dkim-{name}`) in the
+   kernel namespace — see §10, which this used to disagree with.
 2. **Virtual domain ConfigMap entry** patched into Postfix's
    `mail-postfix-virtual-domains` ConfigMap (registers the tenant's
    mail domain).
@@ -156,35 +158,58 @@ When a Tenant with `mail.mode: selfhosted` is reconciled, the
    - DMARC record (`_dmarc.<domain>`)
 
 Reloader picks up the ConfigMap/Secret changes and rolls the
-Postfix/Dovecot/Rspamd pods.
+Postfix/Dovecot pods.
 
-**Future:** emit the same objects from a mail Composition step once
-`MAIL_SERVICE_MODE` and tenant modes are single-sourced in Crossplane.
+**Future:** emit the same objects from a mail Composition step instead of the
+operator's own reconcile loop. `mail.serviceMode` — the cluster-level knob — is
+already single-sourced, read from the Cluster claim via `gentian-cluster-config`
+rather than from Helm values (see §0). What is still operator-driven, in plain
+Go rather than a Composition, is everything in this list: the tenant is
+provisioned by `internal/controller/mail_reconciler.go`, not by Crossplane.
 
 ## 6. Per-App Mail Wiring
 
 For each app in the tenant that declares `mail.smtp` and/or
-`mail.imap` in its `AppProfile`, the operator (and app Composition
-`ExternalSecret` paths) materialise:
+`mail.imap` in its `AppProfile`, the operator materialises:
 
-- SMTP host (`postfix-<stage>.platform-kernel.svc.cluster.local`), port,
-  user (per-app SASL identity), password.
-- IMAP host (`dovecot-<stage>.platform-kernel.svc.cluster.local`), port,
-  per-tenant bind credentials from OpenBao.
+- **SMTP**: host (`postfix-<stage>.platform-kernel.svc.cluster.local`), port, user,
+  password — copied from the tenant's own `smtp-credentials-<tenant>` Secret into
+  each app's OpenBao path. This is **one SASL identity shared by every app in the
+  tenant**, not one per app; see the correction in §7.
+- **IMAP**: host (`dovecot-<stage>.platform-kernel.svc.cluster.local`) and port only.
+  No password travels this path — IMAP auth is per-*user*, per-client-app, and is
+  issued separately; see §7.
 
 The chart consumes these via standard `existingSecret` references —
 no app-specific mail logic in the platform.
 
 ## 7. Security
 
-- **DKIM private keys** are tenant-scoped; the shared Rspamd reads
-  them from OpenBao at runtime, never persists them to disk
-  unencrypted.
-- **SMTP submission requires SASL.** No open relay. Per-app SASL
-  identities mean a compromised app can be revoked without affecting
-  other apps in the same tenant.
-- **IMAP authentication** uses per-tenant credentials from OpenBao.
-  Cross-tenant IMAP access is structurally impossible.
+- **DKIM private keys** live in a Kubernetes Secret in the kernel namespace,
+  mounted into Postfix's own filesystem for OpenDKIM to sign with (§10). Nothing
+  reads them over the network at runtime, and nothing but the operator writes
+  them.
+- **SMTP submission requires SASL.** No open relay. The identity is **one
+  credential per tenant, shared across every app that tenant runs** — not one
+  per app. A compromised app's stored SMTP credential is therefore usable by
+  anything else that app can reach in the same tenant's traffic; it is not
+  independently revocable per app. This was previously documented as a
+  per-app identity with independent revocation, which was never what the code
+  did — `seedPerAppMailSecrets` explicitly copies one tenant-wide credential
+  into every app's OpenBao path *because* they all authenticate to the same
+  submission endpoint as one user. Revoking one app's access to send mail
+  means rotating the tenant's shared credential, which revokes every app.
+- **IMAP authentication does not use a shared or per-tenant credential at
+  all.** Each user gets a credential per client application — the pattern
+  Google and Fastmail use — because Keycloak identities are OIDC and IMAP
+  predates it, so a login yields no password a mail client can present. The
+  password is derived (HMAC, not random) so it never needs its own storage;
+  Dovecot verifies against an Argon2id hash kept in the **kernel** namespace,
+  and the plaintext is handed to the user once and kept only in the
+  **tenant's own** namespace. A tenant therefore holds its own users'
+  credentials and nobody else's — see `internal/controller/mail_apppassword.go`.
+  Cross-tenant IMAP access is structurally impossible because each tenant's
+  mailbox path and hash store are namespace-isolated.
 - **Rate limits and per-user quotas are not enforced.** Postfix runs with
   `smtpd_client_message_rate_limit = 0`, its default, which is no limit, and
   Dovecot loads no quota plugin. This section previously described both as

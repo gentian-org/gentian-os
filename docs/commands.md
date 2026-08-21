@@ -454,46 +454,55 @@ Standard apps (path A — e.g. Odoo) use `app-default` Client MRs only and do
 
 ## 10. Kernel Mail Stack (Dovecot + Postfix)
 
-**Two knobs:** `MAIL_SERVICE_MODE` in
-`gentian-deployments/clusters/<cluster>/kernel/cluster-settings.env` controls whether the
-**installer** deploys Postfix/Dovecot into `gentian-dev` and how Postfix
-relays (`external` vs `kernel`). **`Tenant.spec.mail.mode`** controls what the
-**operator** provisions per organisation. See [design/mail.md](design/mail.md) §0.
+**Two knobs:** `spec.mail.serviceMode` on the
+**Cluster claim** (`gentian-deployments/clusters/<cluster>/kernel/claims/cluster.yaml`)
+controls whether the kernel deploys Postfix/Dovecot into `platform-kernel` and how
+Postfix relays (`external` vs `kernel`). There is no `cluster-settings.env` any more —
+that file was replaced by the claim, which the installer reads directly and which
+`gentian-cluster-config` republishes to every Composition that needs it.
+**`Tenant.spec.mail.mode`** controls what the **operator** provisions per tenant. See
+[design/mail.md](design/mail.md) §0.
 
-On dev, in-cluster SMTP is `postfix-dev.platform-kernel.svc.cluster.local:587`.
+On a `dev`-stage cluster, in-cluster SMTP is
+`postfix-dev.platform-kernel.svc.cluster.local:587`.
 
-**Tunnel clusters:** `MAIL_SERVICE_MODE=kernel` is rejected by `./install.sh --validate` when
-`NETWORK_MODE=tunnel`. Cloudflare tunnel exposes HTTP/HTTPS only — use
-`MAIL_SERVICE_MODE=external` with `EXTERNAL_SMTP_HOST` / `SMTP_RELAY_*` for invitation mail.
+**Tunnel clusters:** `MAIL_SERVICE_MODE=kernel` is rejected when `NETWORK_MODE=tunnel`.
+Cloudflare tunnel exposes HTTP/HTTPS only — use `MAIL_SERVICE_MODE=external` with
+`EXTERNAL_SMTP_HOST` / `SMTP_RELAY_*` for invitation mail.
 
 ### Enable kernel mail delivery
 
 Kernel mail mode deploys Dovecot alongside Postfix and configures Postfix
 to deliver locally via Dovecot LMTP instead of relaying to an external SMTP.
 
-**Step 1** — Update `cluster-settings.env`:
+**Step 1** — Edit the Cluster claim:
 
-```ini
-MAIL_SERVICE_MODE=kernel
+```yaml
+spec:
+  mail:
+    serviceMode: kernel
 ```
 
-**Step 2** — Run `./install.sh --update`. It detects the drift and patches the cluster:
+**Step 2** — Commit, let ArgoCD sync the claim, then re-run the driver so the mail
+step converges on it:
 
 ```bash
-./install.sh --update
+./install.sh --only D-03-mail --force
 ```
 
-`install.sh --update` will detect that the deployed Postfix mode (`external`) does not match
-the desired mode (`kernel`), patch the `postfix-dev-values` ConfigMap in-cluster
-with the correct LMTP transport configuration, re-seed all mail secrets in OpenBao,
-and force-refresh the ESO ExternalSecrets. provider-helm reconciles the Release
-within a few minutes (or run `argocd app sync gentian-infra-helm-dev` immediately).
+`--force` is required going **kernel → external**, and harmless going the other
+way. `D-03-mail`'s `check()` only inspects state when the desired mode is
+`kernel`; for `external` it unconditionally reports "undefined", and the driver
+treats an undefined check exactly like a satisfied one — it skips `apply()`.
+So switching *to* `external` mode without `--force` leaves whatever Postfix
+config was already running in place. There is no separate imperative ConfigMap
+patch or manual OpenBao re-seed step to run either way; `apply()` reads the
+resolved mode and reconciles Postfix/Dovecot from it.
 
 ### Check mail component health
 
-Install and `install.sh --step D-03-mail` (kernel mode) run automated smoke
-checks: Keycloak master-realm OIDC discovery and Dovecot IMAP/LMTP TCP. Re-run
-anytime:
+`D-03-mail` runs automated smoke checks on apply: Keycloak master-realm OIDC
+discovery and Dovecot IMAP/LMTP TCP. Re-run anytime:
 
 ```bash
 make verify-kernel-services
@@ -503,31 +512,38 @@ Set `VERIFY_KERNEL_SERVICES=0` to skip during `./install.sh`. Tune timeouts with
 `KEYCLOAK_VERIFY_TIMEOUT` / `DOVECOT_VERIFY_TIMEOUT` (seconds, default 300).
 
 ```bash
-# Dovecot
+# Dovecot — deployed only when mail.serviceMode=kernel; absent otherwise
 kubectl get release dovecot-dev -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}'
-kubectl logs -n gentian-dev -l app.kubernetes.io/name=dovecot --tail=20
+kubectl logs -n platform-kernel -l app.kubernetes.io/name=dovecot --tail=20
 
-# Postfix
+# Postfix — always deployed, in both modes (design/mail.md §8)
 kubectl get release postfix-dev -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}'
-kubectl logs -n gentian-dev -l app.kubernetes.io/name=postfix --tail=20
+kubectl logs -n platform-kernel -l app.kubernetes.io/name=postfix --tail=20
 
 # ESO secrets synced
-kubectl get externalsecret -n gentian-dev dovecot-sensitive-values postfix-sensitive-values
+kubectl get externalsecret -n platform-kernel dovecot-sensitive-values postfix-sensitive-values
 ```
+
+`dovecot-<stage>` / `postfix-<stage>` above — substitute the cluster's actual stage
+(`dev`/`staging`/`prod`) for `-dev`.
 
 ### Switch back to external relay mode
 
-```ini
-# gentian-deployments/clusters/<cluster>/kernel/cluster-settings.env
-MAIL_SERVICE_MODE=external
-EXTERNAL_SMTP_HOST=smtp.gmail.com
-EXTERNAL_SMTP_PORT=587
-SMTP_RELAY_USERNAME=<gmail-address>
-SMTP_RELAY_PASSWORD=<app-password>
+```yaml
+# gentian-deployments/clusters/<cluster>/kernel/claims/cluster.yaml
+spec:
+  mail:
+    serviceMode: external
+    host: smtp.gmail.com
+    port: 587
+    ssl: false
+    starttls: true
+    # username/password go through the credential manager, not the claim —
+    # see the "smtp-relay" CredentialRequirement (credentials.yaml)
 ```
 
 ```bash
-./install.sh --update
+./install.sh --only D-03-mail --force
 ```
 
 
