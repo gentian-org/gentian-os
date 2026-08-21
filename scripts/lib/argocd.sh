@@ -469,7 +469,7 @@ bootstrap_argocd_apps() {
 
     local apps=(openbao globals)
     if [[ "$INSTALL_CLUSTER_INFRA" == "1" ]]; then
-        apps+=(reloader cnpg cnpg-cluster)
+        apps+=(reloader cnpg kernel-admin)
         # external-dns was written and then never applied: nothing named it in
         # this list, and the bootstrap chart only renders the templates it is
         # asked for. So the controller that makes tenant hostnames resolve was
@@ -492,8 +492,14 @@ bootstrap_argocd_apps() {
     fi
 
     for app in "${apps[@]}"; do
-        apply_bootstrap_application "${app}"
-        success "Applied ${app}-application.yaml"
+        # Not "apply, then announce success": apply_bootstrap_application exits
+        # on a real failure, but announcing before knowing is how a missing
+        # Application read as an applied one.
+        apply_bootstrap_application "${app}" || {
+            error "Applying bootstrap Application ${app} failed."
+            exit 1
+        }
+        success "Applied bootstrap Application ${app}"
     done
 
     wait_for_running_pod openbao "app.kubernetes.io/name=openbao,app.kubernetes.io/instance=openbao" "openbao" 300 || {

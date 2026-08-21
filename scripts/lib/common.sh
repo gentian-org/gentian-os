@@ -1887,66 +1887,75 @@ apply_bootstrap_application() {
     # multi-source "$values" references in these manifests safe to carry: $values
     # is not Helm syntax, so it survives rendering untouched with no allowlist of
     # substitutable names to keep in step with the manifests.
-    if [[ -f "${chart}/templates/${name}.yaml" ]]; then
-        if [[ -z "${STORAGE_CLASS:-}" ]]; then
-            error "STORAGE_CLASS is empty while rendering ${name}."
-            error "  resolve_storage_class() should have set it during pre-flight."
-            exit 1
-        fi
-        if [[ -z "${GENTIAN_DEPLOYMENTS_STAGE:-}" ]]; then
-            error "GENTIAN_DEPLOYMENTS_STAGE is empty while rendering ${name}."
-            exit 1
-        fi
-        # --show-only filters the OUTPUT; Helm still evaluates every template in
-        # the chart. So the `required` on root-applicationset.yaml's cluster id
-        # fires here too, even though this call renders a different file — and
-        # the whole render fails, leaving kubectl with nothing on stdin.
-        if [[ -z "${GENTIAN_DEPLOYMENTS_CLUSTER_ID:-}" ]]; then
-            error "GENTIAN_DEPLOYMENTS_CLUSTER_ID is empty while rendering ${name}."
-            error "  Set it in install.env; every chart template is evaluated on"
-            error "  each render, and one of them requires it."
-            exit 1
-        fi
-        resolve_gentian_os_branch
-
-        # Rendered to a file rather than piped: a pipeline reports the exit
-        # status of kubectl, so a failed render reached it as empty input and
-        # was announced as a successful apply.
-        local rendered; rendered="$(mktemp)"
-        if ! helm template gentian-bootstrap "${chart}" -s "templates/${name}.yaml" \
-                -f "${SCRIPT_DIR}/kernel/platforms.yaml" \
-                --set-string "gentianOsBranch=${GENTIAN_OS_BRANCH}" \
-                --set-string "storageClass=${STORAGE_CLASS}" \
-                --set-string "stage=${GENTIAN_DEPLOYMENTS_STAGE}" \
-                --set-string "kernelDomain=${KERNEL_DOMAIN:-}" \
-                --set-string "dnsProvider=${DNS_PROVIDER:-cloudflare}" \
-                --set-string "cluster=${GENTIAN_DEPLOYMENTS_CLUSTER_ID}" >"${rendered}"; then
-            rm -f "${rendered}"
-            error "Rendering ${name} failed; nothing was applied."
-            exit 1
-        fi
-        # An empty render is a decision for some templates and a failure for the
-        # rest. external-dns emits nothing when the cluster has no DNS provider,
-        # which is the correct shape — a controller with no provider would
-        # authenticate-fail every interval and never write a record.
-        if [[ ! -s "${rendered}" ]]; then
-            rm -f "${rendered}"
-            if [[ "${name}" == "external-dns" ]]; then
-                info "No DNS provider for this cluster; external-dns not installed."
-                return 0
-            fi
-            error "Rendering ${name} produced nothing; nothing was applied."
-            exit 1
-        fi
-        kubectl apply -f "${rendered}" || {
-            rm -f "${rendered}"
-            error "Applying ${name} failed."
-            exit 1
-        }
-        rm -f "${rendered}"
-    else
-        kubectl apply -f "${SCRIPT_DIR}/kernel/bootstrap/${name}-application.yaml"
+    # A name with no template is a caller naming something that does not exist —
+    # a typo, or a template renamed without its callers. This used to fall
+    # through to kernel/bootstrap/${name}-application.yaml, the pre-chart layout,
+    # which has not existed for months: kubectl reported "no such file", the
+    # caller announced "Applied ${name}-application.yaml" regardless, and the
+    # Application was never created. Renaming cnpg-cluster.yaml to
+    # kernel-admin.yaml walked straight into it.
+    if [[ ! -f "${chart}/templates/${name}.yaml" ]]; then
+        error "No bootstrap template ${chart}/templates/${name}.yaml for '${name}'."
+        error "  Every name passed here must match a template in that directory."
+        exit 1
     fi
+
+    if [[ -z "${STORAGE_CLASS:-}" ]]; then
+        error "STORAGE_CLASS is empty while rendering ${name}."
+        error "  resolve_storage_class() should have set it during pre-flight."
+        exit 1
+    fi
+    if [[ -z "${GENTIAN_DEPLOYMENTS_STAGE:-}" ]]; then
+        error "GENTIAN_DEPLOYMENTS_STAGE is empty while rendering ${name}."
+        exit 1
+    fi
+    # --show-only filters the OUTPUT; Helm still evaluates every template in
+    # the chart. So the `required` on root-applicationset.yaml's cluster id
+    # fires here too, even though this call renders a different file — and
+    # the whole render fails, leaving kubectl with nothing on stdin.
+    if [[ -z "${GENTIAN_DEPLOYMENTS_CLUSTER_ID:-}" ]]; then
+        error "GENTIAN_DEPLOYMENTS_CLUSTER_ID is empty while rendering ${name}."
+        error "  Set it in install.env; every chart template is evaluated on"
+        error "  each render, and one of them requires it."
+        exit 1
+    fi
+    resolve_gentian_os_branch
+
+    # Rendered to a file rather than piped: a pipeline reports the exit
+    # status of kubectl, so a failed render reached it as empty input and
+    # was announced as a successful apply.
+    local rendered; rendered="$(mktemp)"
+    if ! helm template gentian-bootstrap "${chart}" -s "templates/${name}.yaml" \
+            -f "${SCRIPT_DIR}/kernel/platforms.yaml" \
+            --set-string "gentianOsBranch=${GENTIAN_OS_BRANCH}" \
+            --set-string "storageClass=${STORAGE_CLASS}" \
+            --set-string "stage=${GENTIAN_DEPLOYMENTS_STAGE}" \
+            --set-string "kernelDomain=${KERNEL_DOMAIN:-}" \
+            --set-string "dnsProvider=${DNS_PROVIDER:-cloudflare}" \
+            --set-string "cluster=${GENTIAN_DEPLOYMENTS_CLUSTER_ID}" >"${rendered}"; then
+        rm -f "${rendered}"
+        error "Rendering ${name} failed; nothing was applied."
+        exit 1
+    fi
+    # An empty render is a decision for some templates and a failure for the
+    # rest. external-dns emits nothing when the cluster has no DNS provider,
+    # which is the correct shape — a controller with no provider would
+    # authenticate-fail every interval and never write a record.
+    if [[ ! -s "${rendered}" ]]; then
+        rm -f "${rendered}"
+        if [[ "${name}" == "external-dns" ]]; then
+            info "No DNS provider for this cluster; external-dns not installed."
+            return 0
+        fi
+        error "Rendering ${name} produced nothing; nothing was applied."
+        exit 1
+    fi
+    kubectl apply -f "${rendered}" || {
+        rm -f "${rendered}"
+        error "Applying ${name} failed."
+        exit 1
+    }
+    rm -f "${rendered}"
 }
 
 # =============================================================================

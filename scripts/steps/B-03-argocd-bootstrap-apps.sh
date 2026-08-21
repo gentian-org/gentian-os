@@ -22,7 +22,10 @@ apply() {
 
 destroy() {
     local app
-    for app in openbao reloader cnpg cnpg-cluster globals external-dns; do
+    # Names must match the Applications bootstrap_argocd_apps creates, which are
+    # named for the chart template that renders them. cnpg-cluster became
+    # kernel-admin when that template was renamed for its contents.
+    for app in openbao reloader cnpg kernel-admin globals external-dns; do
         kubectl delete application "$app" -n argocd \
             --ignore-not-found=true 2>/dev/null || true
     done
