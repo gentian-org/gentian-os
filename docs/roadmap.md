@@ -600,17 +600,24 @@ docs/plans/tenant-composition-cleanup.md §8.
 
 ### 1.28 A Flaky envtest Wait Silently Withholds the Image (*)
 * **Target Domain**: Build and Release
-* **Context**: Two different envtest tests timed out on 2026-08-21 —
-  `TestIdentity_DeleteDeletePolicy_CreatesCleanupJob` and
-  `TestCache_DeleteDeletePolicy_CreatesDeleteJobsAndDeletesApplication` — both at
-  the shared 3-minute `envtestWaitTimeout`, both on a delete path, both passing
-  locally and on re-run. The cost is not the red X. `Docker build and push` is
-  gated on the Go job, so a flake means no image is published for that commit,
-  and the cluster keeps running whatever it ran before. That is invisible unless
-  someone reads the run: the branch looks merged, the Application is Healthy, and
-  `make verify-image-updates` will say the cluster tracks CI correctly because it
-  does — there is simply nothing new to track. Two of today's fixes were verified
-  against a binary that did not contain them for exactly this reason.
+* **Context**: Four different envtest tests timed out on 2026-08-21, in three
+  separate CI runs, each at the shared 3-minute `envtestWaitTimeout`, each
+  passing locally and on re-run:
+  `TestIdentity_DeleteDeletePolicy_CreatesCleanupJob`,
+  `TestCache_DeleteDeletePolicy_CreatesDeleteJobsAndDeletesApplication`,
+  `TestMariaDB_DeleteDeletePolicy_CreatesDeleteJob` and
+  `TestDeletion_EndToEnd_WithApps`. Every one of them waits on a delete path.
+  That is not the signature of a slow runner, which would strike waits at
+  random; it points at the deletion path specifically.
+
+  The cost is not the red X. `Docker build and push` is gated on the Go job, so
+  a flake means no image is published for that commit and the cluster keeps
+  running whatever it ran before. That is invisible unless someone reads the
+  run: the branch looks merged, the Application is Healthy, and
+  `make verify-image-updates` correctly reports the cluster tracks CI, because
+  it does — there is simply nothing new to track. Three commits today were
+  affected, and on two occasions work was verified against a binary that did
+  not contain it.
 * **Proposed Solution**: Find the shared cause before raising the timeout — both
   failures are delete-path waits, which suggests a real ordering rather than a
   slow runner. Then decide whether a test flake should withhold a build at all,
