@@ -607,6 +607,39 @@ spec:
                 name: keycloak
             {{- end }}
 
+            {{- /* ── the first-broker-login flow ──────────────────────────────
+                 What a tenant user meets the first time they arrive through the
+                 kernel IdP. Its three executions match a returning user to the
+                 account already provisioned for them by email; the built-in flow
+                 stops and asks them to confirm the link instead.
+
+                 The IdP above names this flow by alias, so the alias is the
+                 contract — recreating the flow under a new id is fine, losing the
+                 alias is not.
+
+                 The flow only. Its executions are NOT declared yet: Keycloak does
+                 not require an execution to be uniquely named within a flow, so a
+                 create that failed to resolve the existing ones would add a second
+                 set rather than conflict, and a first login would run every step
+                 twice. That wants proving on the adopted flow first.
+              */}}
+            ---
+            apiVersion: authenticationflow.keycloak.crossplane.io/v1alpha1
+            kind: Flow
+            metadata:
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: keycloak-first-broker-login-flow
+              name: {{ $tenant }}-first-broker-login-flow
+            spec:
+              deletionPolicy: Orphan
+              forProvider:
+                realmId: {{ $tenant }}
+                alias: first-broker-login-gentian
+                description: Confirm/verify link kernel IdP to tenant users by email
+                providerId: basic-flow
+              providerConfigRef:
+                name: keycloak
+
             {{- /* ── the realm's "groups" client scope ────────────────────────
                  What puts a user's group membership into their tokens. Every
                  client in the realm gets it, because the groups Job adds it to
