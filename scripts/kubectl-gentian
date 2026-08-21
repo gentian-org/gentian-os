@@ -825,10 +825,15 @@ DEOF
 DEOF
     cat <<'DEOF'
   quotas:
-    cpu: 32
+    # The `base` plan's capacity, so a freshly deployed tenant starts on a
+    # priced plan instead of a ceiling that matches none. maxApps is a policy
+    # limit rather than part of the plan, so it is set here and in no plan.
+    requestsCpu: "2"
+    requestsMemory: 4Gi
+    cpu: "8"
+    memory: 8Gi
+    storage: 50Gi
     maxApps: 20
-    memory: 32Gi
-    storage: 100Gi
 DEOF
   } > "${comp_dir}/defaults.yaml"
 
@@ -2933,7 +2938,7 @@ cmd_resources_plans() {
     # Without a tenant there is nothing to mark as current and no consumption to
     # check a downgrade against, so the catalogue is read straight from the
     # cluster and no port-forward is needed.
-    kubectl get resourceplans --sort-by=.spec.tier -o custom-columns='NAME:.metadata.name,DISPLAY:.spec.displayName,TIER:.spec.tier,CPU:.spec.quotas.cpu,MEMORY:.spec.quotas.memory,STORAGE:.spec.quotas.storage,APPS:.spec.quotas.maxApps,SKU:.spec.productSku'
+    kubectl get resourceplans --sort-by=.spec.tier -o custom-columns='NAME:.metadata.name,DISPLAY:.spec.displayName,TIER:.spec.tier,CPU:.spec.quotas.requestsCpu,MEMORY:.spec.quotas.requestsMemory,STORAGE:.spec.quotas.storage,SKU:.spec.productSku'
     return
   fi
 
@@ -2952,14 +2957,14 @@ if not plans:
 # figure that maps onto purchased nodes. The burst ceiling is shown beside
 # it so nobody reads the reserved column as the whole story, but it is not
 # the number being bought.
-print(f"{'':2} {'PLAN':<12} {'CPU':>5} {'MEMORY':>8} {'BURST':>12} {'STORAGE':>8} {'APPS':>5}  SKU")
+print(f"{'':2} {'PLAN':<12} {'CPU':>5} {'MEMORY':>8} {'BURST':>12} {'STORAGE':>8}  SKU")
 for plan in plans:
     q = plan.get("quotas") or {}
     mark = "*" if plan.get("current") else ("x" if not plan.get("selectable") else " ")
     burst = f"{q.get('cpu', '-')}/{q.get('memory', '-')}"
     print(f"{mark:2} {plan['name']:<12} {q.get('requestsCpu', '-'):>5} "
           f"{q.get('requestsMemory', '-'):>8} {burst:>12} "
-          f"{q.get('storage', '-'):>8} {q.get('maxApps', '-'):>5}  {plan.get('productSku', '')}")
+          f"{q.get('storage', '-'):>8}  {plan.get('productSku', '')}")
     if plan.get("blocked"):
         print(f"   {plan['blocked']}")
 print()

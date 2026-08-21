@@ -93,12 +93,17 @@ func (g *GitOps) SetResourcePlan(
 
 // renderResourcePlanPatch produces the strategic-merge patch for one plan.
 //
-// Every quota key the Tenant CRD defines is emitted, and the ones the plan does
-// not set are emitted as null — which is how a strategic merge *removes* a key.
-// Omitting them instead would leave the tenant-defaults value in place, and the
-// tenant would run on a ceiling that is neither the default nor the plan but a
-// silent mixture of both: the plan's CPU with the default's storage, priced as
-// the plan.
+// Every quota key a plan can set is emitted, and the ones this plan leaves unset
+// are emitted as null — which is how a strategic merge *removes* a key. Omitting
+// them instead would leave the tenant-defaults value in place, and the tenant
+// would run on a ceiling that is neither the default nor the plan but a silent
+// mixture of both: the plan's CPU with the default's storage, priced as the plan.
+//
+// maxApps is absent from both lists, deliberately. A plan is a quantity of
+// capacity — the fields that make one are the fields that become ResourceQuota
+// keys, and maxApps becomes none; the Tenant webhook enforces it against
+// spec.apps instead. Nulling it here would have a plan change quietly delete a
+// cluster's app cap, which is a policy decision no purchase should make.
 func renderResourcePlanPatch(tenant string, plan *gentianov1alpha1.ResourcePlan) string {
 	q := plan.Spec.Quotas
 	var b strings.Builder
@@ -121,7 +126,6 @@ func renderResourcePlanPatch(tenant string, plan *gentianov1alpha1.ResourcePlan)
 	b.WriteString(quantityLine("cpu", q.CPU))
 	b.WriteString(quantityLine("memory", q.Memory))
 	b.WriteString(quantityLine("storage", q.Storage))
-	b.WriteString(countLine("maxApps", q.MaxApps))
 	b.WriteString(countLine("maxPods", q.MaxPods))
 	return b.String()
 }

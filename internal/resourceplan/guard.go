@@ -72,13 +72,12 @@ func (e *DowngradeError) Error() string {
 // the sequence where the person making the decision is still present.
 //
 // used is the tenant-quota ResourceQuota's status.used; it may be nil when the
-// tenant has no quota yet, in which case nothing is over any ceiling and the
-// only check left is the app count.
-func CheckFit(
-	plan *gentianov1alpha1.ResourcePlan,
-	used corev1.ResourceList,
-	installedApps int,
-) error {
+// tenant has no quota yet, in which case nothing is over any ceiling.
+//
+// Only capacity is checked. A plan does not set an app cap — that is the Tenant
+// webhook's policy limit, not a quantity anyone buys — so moving between plans
+// cannot put a tenant over it.
+func CheckFit(plan *gentianov1alpha1.ResourcePlan, used corev1.ResourceList) error {
 	if plan == nil {
 		return nil
 	}
@@ -97,20 +96,6 @@ func CheckFit(
 				Offered:  offer.String(),
 			})
 		}
-	}
-
-	// maxApps is not a ResourceQuota key — it is enforced by the Tenant
-	// admission webhook against spec.apps — so it has to be checked from the
-	// spec rather than from status.used. Without this a tenant could move to a
-	// plan whose app ceiling their installed set already exceeds, and discover
-	// it at the next unrelated edit to their tenant.yaml, which the webhook
-	// would then reject for a reason that has nothing to do with the edit.
-	if plan.Spec.Quotas.MaxApps > 0 && installedApps > int(plan.Spec.Quotas.MaxApps) {
-		shortfalls = append(shortfalls, Shortfall{
-			Resource: "apps",
-			Used:     fmt.Sprintf("%d", installedApps),
-			Offered:  fmt.Sprintf("%d", plan.Spec.Quotas.MaxApps),
-		})
 	}
 
 	if len(shortfalls) == 0 {

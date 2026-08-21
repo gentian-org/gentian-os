@@ -437,7 +437,6 @@ usage:
           cpu: "8"
           memory: 8Gi
           storage: 50Gi
-          maxApps: 5
       nodes-2:
         displayName: 2 nodes
         description: Twice the reserved capacity, for a workspace running several apps.
@@ -449,7 +448,6 @@ usage:
           cpu: "16"
           memory: 16Gi
           storage: 100Gi
-          maxApps: 10
       nodes-4:
         displayName: 4 nodes
         tier: 20
@@ -460,7 +458,6 @@ usage:
           cpu: "32"
           memory: 32Gi
           storage: 200Gi
-          maxApps: 20
       nodes-8:
         displayName: 8 nodes
         tier: 30
@@ -471,7 +468,6 @@ usage:
           cpu: "64"
           memory: 64Gi
           storage: 400Gi
-          maxApps: 40
       nodes-16:
         displayName: 16 nodes
         description: The largest catalogue plan. Beyond this, arrange a ceiling with the platform operator.
@@ -483,7 +479,6 @@ usage:
           cpu: "128"
           memory: 128Gi
           storage: 800Gi
-          maxApps: 60
 
 appLifecycle:
   port: 8082

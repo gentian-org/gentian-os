@@ -62,7 +62,6 @@ spec:
     cpu: "16"                    # burst ceiling — not sold, see §2.2
     memory: 16Gi
     storage: 100Gi
-    maxApps: 10
 ```
 
 The default catalogue ships in the operator chart under `usage.plans.catalogue`;
@@ -98,6 +97,13 @@ pairs, and only the reserved pair is priced:
 | `cpu`, `memory` | `limits.cpu`, `limits.memory` | Blast radius for a runaway container |
 | `storage` | `requests.storage` | Already request-shaped; PVCs reserve what they ask for |
 
+The rule deciding what belongs in a plan is that a plan is a quantity of
+capacity, so its fields are the ones that become ResourceQuota keys. `maxApps`
+becomes none — the Tenant admission webhook enforces it against `spec.apps` —
+so it is a policy limit set per cluster or per tenant, and no plan touches it in
+either direction. Writing it would sell a policy as capacity; nulling it would
+have a plan change quietly delete a cluster's app cap.
+
 The catalogue's limits multiples — 4× CPU, 2× memory — come from that table
 rather than from a round number. A tighter ceiling would refuse pods on a plan
 whose *reserved* capacity is barely touched, which is the confusing failure this
@@ -109,13 +115,13 @@ declares no request still has one and the quota cannot reject it.
 
 ### 2.3 The ladder
 
-| Plan | Nodes | Reserved | Burst ceiling | Storage | Apps |
-|---|---|---|---|---|---|
-| `base` | 1 | 2 / 4Gi | 8 / 8Gi | 50Gi | 5 |
-| `nodes-2` | 2 | 4 / 8Gi | 16 / 16Gi | 100Gi | 10 |
-| `nodes-4` | 4 | 8 / 16Gi | 32 / 32Gi | 200Gi | 20 |
-| `nodes-8` | 8 | 16 / 32Gi | 64 / 64Gi | 400Gi | 40 |
-| `nodes-16` | 16 | 32 / 64Gi | 128 / 128Gi | 800Gi | 60 |
+| Plan | Nodes | Reserved | Burst ceiling | Storage |
+|---|---|---|---|---|
+| `base` | 1 | 2 / 4Gi | 8 / 8Gi | 50Gi |
+| `nodes-2` | 2 | 4 / 8Gi | 16 / 16Gi | 100Gi |
+| `nodes-4` | 4 | 8 / 16Gi | 32 / 32Gi | 200Gi |
+| `nodes-8` | 8 | 16 / 32Gi | 64 / 64Gi | 400Gi |
+| `nodes-16` | 16 | 32 / 64Gi | 128 / 128Gi | 800Gi |
 
 Doubling, so a tenant outgrowing a plan is always offered roughly twice what it
 has — rather than steps that are enormous at the bottom and trivial at the top.
@@ -191,7 +197,6 @@ spec:
     cpu: "40"
     memory: "48Gi"
     storage: "300Gi"
-    maxApps: 30
     maxPods: null          # ← deliberate
 ```
 
@@ -230,10 +235,8 @@ refused for the same reason as one whose ceiling is too low. It reads
 Two copies of that mapping would let a plan pass a guard written against
 `requests.cpu` and then be enforced against `limits.cpu`.
 
-`maxApps` is checked separately, from `spec.apps`, because it is enforced by the
-Tenant admission webhook rather than by the ResourceQuota. Without that, a
-tenant could move to a plan whose app ceiling their installed set already
-exceeds and discover it at the next unrelated edit to their `tenant.yaml`.
+Only capacity is checked. An app cap is not part of a plan, so no move between
+plans can put a tenant over one.
 
 A platform operator may pass `--force` (CLI) or use **Force** (console) to shrink
 a tenant anyway. Tenant administrators cannot: the guard protects their own

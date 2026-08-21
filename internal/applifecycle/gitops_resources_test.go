@@ -53,7 +53,6 @@ func TestRenderPatchNullsQuotaKeysThePlanDoesNotSet(t *testing.T) {
 		"requestsCpu: null",
 		"requestsMemory: null",
 		"storage: null",
-		"maxApps: null",
 		"maxPods: null",
 	} {
 		if !strings.Contains(out, want) {
@@ -83,11 +82,23 @@ func TestRenderPatchCarriesThePlanAnnotation(t *testing.T) {
 // Counts are integers in the CRD, so unlike quantities they must not be quoted.
 func TestRenderPatchLeavesCountsUnquoted(t *testing.T) {
 	out := renderResourcePlanPatch("corp", testPlan(gentianov1alpha1.TenantQuotas{
-		MaxApps: 30,
 		MaxPods: 150,
 	}))
-	if !strings.Contains(out, "maxApps: 30\n") || !strings.Contains(out, "maxPods: 150\n") {
+	if !strings.Contains(out, "maxPods: 150\n") {
 		t.Errorf("counts must be plain integers:\n%s", out)
+	}
+}
+
+// A plan must not touch the app cap in either direction. Writing it would sell
+// a policy limit as capacity; nulling it would have a plan change quietly
+// delete the cluster's cap.
+func TestRenderPatchNeverWritesTheAppCap(t *testing.T) {
+	out := renderResourcePlanPatch("corp", testPlan(gentianov1alpha1.TenantQuotas{
+		RequestsCPU: mustQty("2"),
+		MaxApps:     30,
+	}))
+	if strings.Contains(out, "maxApps") {
+		t.Errorf("the patch must not mention maxApps at all:\n%s", out)
 	}
 }
 

@@ -56,9 +56,6 @@ spec:
     {{- with $plan.quotas.storage }}
     storage: {{ . | quote }}
     {{- end }}
-    {{- with $plan.quotas.maxApps }}
-    maxApps: {{ . }}
-    {{- end }}
     {{- with $plan.quotas.maxPods }}
     maxPods: {{ . }}
     {{- end }}

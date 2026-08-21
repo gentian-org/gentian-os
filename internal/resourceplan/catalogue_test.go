@@ -163,7 +163,7 @@ func TestCheckFitRefusesADowngradeBelowCurrentUse(t *testing.T) {
 		corev1.ResourceLimitsMemory: resource.MustParse("8Gi"),
 	}
 
-	err := CheckFit(&p, used, 0)
+	err := CheckFit(&p, used)
 	if err == nil {
 		t.Fatal("expected the downgrade to be refused")
 	}
@@ -185,24 +185,29 @@ func TestCheckFitAllowsAPlanThatExactlyFits(t *testing.T) {
 		corev1.ResourceLimitsCPU:    resource.MustParse("12"),
 		corev1.ResourceLimitsMemory: resource.MustParse("8Gi"),
 	}
-	if err := CheckFit(&p, used, 0); err != nil {
+	if err := CheckFit(&p, used); err != nil {
 		t.Fatalf("a plan equal to current use must be allowed: %v", err)
 	}
 }
 
-// maxApps is enforced by the Tenant webhook against spec.apps, not by the
-// ResourceQuota, so it has to be checked separately or a tenant discovers it at
-// the next unrelated edit to their tenant.yaml.
-func TestCheckFitCountsInstalledAppsAgainstMaxApps(t *testing.T) {
+// An app cap is the Tenant webhook's policy limit, not capacity anyone buys, so
+// a plan carrying one must not turn a move between plans into a refusal.
+func TestCheckFitIgnoresAnAppCap(t *testing.T) {
 	p := plan("small", 0, "64", "64Gi")
 	p.Spec.Quotas.MaxApps = 3
 
-	if err := CheckFit(&p, nil, 3); err != nil {
-		t.Fatalf("exactly at the app ceiling must be allowed: %v", err)
+	if err := CheckFit(&p, nil); err != nil {
+		t.Fatalf("an app cap must not block a plan change: %v", err)
 	}
-	err := CheckFit(&p, nil, 4)
-	if err == nil {
-		t.Fatal("expected more apps than the plan allows to be refused")
+}
+
+// Two tenants differing only in their app cap are on the same plan. Comparing
+// it would make every tenant whose cluster defaults set a cap match no plan.
+func TestQuotasEqualIgnoresTheAppCap(t *testing.T) {
+	a := gentianov1alpha1.TenantQuotas{CPU: qty("8"), MaxApps: 5}
+	b := gentianov1alpha1.TenantQuotas{CPU: qty("8"), MaxApps: 40}
+	if !gentianov1alpha1.QuotasEqual(&a, &b) {
+		t.Fatal("the app cap must not be part of plan identity")
 	}
 }
 
@@ -302,7 +307,7 @@ func TestCheckFitRefusesADowngradeOfReservedCapacity(t *testing.T) {
 	used := corev1.ResourceList{
 		corev1.ResourceRequestsCPU: resource.MustParse("3"),
 	}
-	err := CheckFit(&p, used, 0)
+	err := CheckFit(&p, used)
 	if err == nil {
 		t.Fatal("expected a plan reserving less than is already reserved to be refused")
 	}

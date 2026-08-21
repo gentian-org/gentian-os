@@ -74,7 +74,9 @@ type ResourceStateResult struct {
 	Actual map[string]string `json:"actual,omitempty"`
 	// ActualSource names where Actual came from, or why it is missing.
 	ActualSource string `json:"actualSource,omitempty"`
-	// InstalledApps counts entries in spec.apps, which maxApps limits.
+	// InstalledApps counts entries in spec.apps. Shown for context, not
+	// checked against the plan: an app cap is the Tenant webhook's policy
+	// limit, not part of the capacity a plan sells.
 	InstalledApps int `json:"installedApps"`
 }
 
@@ -224,7 +226,7 @@ func (s *Service) Plans(
 			summary.Selectable = false
 			summary.Blocked = "this plan is above the tenant's current entitlement"
 		default:
-			if err := resourceplan.CheckFit(plan, used, len(tenant.Spec.Apps)); err != nil {
+			if err := resourceplan.CheckFit(plan, used); err != nil {
 				var downgrade *resourceplan.DowngradeError
 				if errors.As(err, &downgrade) {
 					summary.Selectable = false
@@ -280,7 +282,7 @@ func (s *Service) SetPlan(ctx context.Context, req SetPlanRequest) (*SetPlanResu
 		if quota != nil {
 			used = quota.Status.Used
 		}
-		if err := resourceplan.CheckFit(plan, used, len(tenant.Spec.Apps)); err != nil {
+		if err := resourceplan.CheckFit(plan, used); err != nil {
 			return nil, err
 		}
 	}
@@ -419,9 +421,6 @@ func quotaMap(q *gentianov1alpha1.TenantQuotas) map[string]string {
 	}
 	if q.Storage != nil {
 		out["storage"] = q.Storage.String()
-	}
-	if q.MaxApps > 0 {
-		out["maxApps"] = fmt.Sprintf("%d", q.MaxApps)
 	}
 	if q.MaxPods > 0 {
 		out["maxPods"] = fmt.Sprintf("%d", q.MaxPods)
