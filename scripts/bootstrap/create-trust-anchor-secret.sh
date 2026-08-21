@@ -1,15 +1,15 @@
 #!/usr/bin/env bash
-# Create gentian-staging-ca-tls in the services namespace for ACME staging dev
+# Create gentian-trust-anchor-tls in the services namespace for ACME staging dev
 # clusters. Pods that call https://id.<kernel-domain> need the Let's Encrypt
 # staging intermediate in their trust store (self-signed CA parity).
 #
-# Usage: create-staging-ca-secret.sh [namespace]
+# Usage: create-trust-anchor-secret.sh [namespace]
 # Default namespace: ${SERVICES_NAMESPACE:-gentian-${ENV:-dev}}
 set -euo pipefail
 
 ENV="${ENV:-dev}"
 NAMESPACE="${1:-${SERVICES_NAMESPACE:-gentian-${ENV}}}"
-SECRET_NAME="gentian-staging-ca-tls"
+SECRET_NAME="gentian-trust-anchor-tls"
 CERT_NS="${CERT_MANAGER_NS:-cert-manager}"
 LEAF_SECRET="${KERNEL_TLS_SECRET:-wildcard-kernel-tls}"
 
@@ -63,7 +63,7 @@ docker run --rm -v "$TMPDIR:/work" eclipse-temurin:17-jdk bash -ec '
   n=0
   for cert in /work/cert-*.pem; do
     [[ -s "$cert" ]] || continue
-    keytool -importcert -noprompt -alias "staging-ca-${n}" \
+    keytool -importcert -noprompt -alias "trust-anchor-${n}" \
       -file "$cert" -keystore /work/truststore.jks -storetype JKS -storepass changeit
     n=$((n + 1))
   done

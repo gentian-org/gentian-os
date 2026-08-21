@@ -14,10 +14,10 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-// Package stagingca builds the gentian-staging-ca-tls trust bundle for ACME
+// Package trustanchor builds the gentian-trust-anchor-tls bundle for clusters whose
 // staging clusters. Catalogue apps mount this secret so in-cluster OIDC
 // clients trust https://id.<kernel-domain>.
-package stagingca
+package trustanchor
 
 import (
 	"context"
@@ -38,7 +38,7 @@ import (
 
 const (
 	// SecretName is replicated into each tenant namespace by the operator.
-	SecretName = "gentian-staging-ca-tls"
+	SecretName = "gentian-trust-anchor-tls"
 	// NodeExtraCAKey holds the LE staging CA chain for NODE_EXTRA_CA_CERTS.
 	// Node.js appends this file to the default Mozilla trust store; it must
 	// contain the full staging issuer chain (not the server leaf or a duplicate
@@ -49,10 +49,10 @@ const (
 	DefaultLeafSecret    = "wildcard-kernel-tls"
 
 	mozillaCABundleURL = "https://curl.se/ca/cacert.pem"
-	maxStagingCAChain  = 8
+	maxIssuerChain     = 8
 )
 
-// Bundle holds the PEM material written to gentian-staging-ca-tls.
+// Bundle holds the PEM material written to gentian-trust-anchor-tls.
 type Bundle struct {
 	// CACrt is the Mozilla CA bundle plus the LE staging issuer chain (for
 	// curl --cacert, Java truststore, REQUESTS_CA_BUNDLE).
@@ -62,13 +62,13 @@ type Bundle struct {
 }
 
 // BuildBundle returns trust bundles for ACME staging clusters. CACrt matches
-// scripts/bootstrap/create-staging-ca-secret.sh (system CAs + LE staging chain via AIA).
+// scripts/bootstrap/create-trust-anchor-secret.sh (system CAs + LE staging chain via AIA).
 // NodeExtraCA contains only the staging issuer chain for Node.js clients.
 func BuildBundle(ctx context.Context, leafPEM []byte) (*Bundle, error) {
 	if len(leafPEM) == 0 {
 		return nil, fmt.Errorf("empty leaf certificate")
 	}
-	stagingChain, err := fetchStagingCAChain(leafPEM)
+	stagingChain, err := fetchIssuerChain(leafPEM)
 	if err != nil {
 		return nil, err
 	}
@@ -93,9 +93,9 @@ func loadMozillaCABundle(ctx context.Context) ([]byte, error) {
 	return fetchPEMFromURL(ctx, mozillaCABundleURL)
 }
 
-// fetchStagingCAChain walks AIA from the server leaf and returns PEM blocks for
+// fetchIssuerChain walks AIA from the server leaf and returns PEM blocks for
 // each issuing CA up to the staging root (excludes the server leaf itself).
-func fetchStagingCAChain(leafPEM []byte) ([]byte, error) {
+func fetchIssuerChain(leafPEM []byte) ([]byte, error) {
 	block, _ := pem.Decode(leafPEM)
 	if block == nil || block.Type != "CERTIFICATE" {
 		return nil, fmt.Errorf("no leaf certificate in tls.crt")
@@ -108,7 +108,7 @@ func fetchStagingCAChain(leafPEM []byte) ([]byte, error) {
 	var chain []byte
 	seen := map[string]struct{}{}
 	urls := leaf.IssuingCertificateURL
-	for step := 0; step < maxStagingCAChain && len(urls) > 0; step++ {
+	for step := 0; step < maxIssuerChain && len(urls) > 0; step++ {
 		url := urls[0]
 		if _, ok := seen[url]; ok {
 			break
@@ -175,10 +175,10 @@ func normalizeCertPEM(raw []byte) ([]byte, error) {
 	return pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: cert.Raw}), nil
 }
 
-// EnsureStagingCASecret materializes gentian-staging-ca-tls in namespace when
+// EnsureTrustAnchorSecret materializes gentian-trust-anchor-tls in namespace when
 // the kernel wildcard leaf secret exists. No-op when the leaf is absent
 // (production clusters). Returns true when the target secret exists afterward.
-func EnsureStagingCASecret(ctx context.Context, c client.Client, namespace, certManagerNS, leafSecretName string) (bool, error) {
+func EnsureTrustAnchorSecret(ctx context.Context, c client.Client, namespace, certManagerNS, leafSecretName string) (bool, error) {
 	if namespace == "" {
 		return false, fmt.Errorf("namespace is required")
 	}
@@ -216,7 +216,7 @@ func EnsureStagingCASecret(ctx context.Context, c client.Client, namespace, cert
 			Namespace: namespace,
 			Labels: map[string]string{
 				"app.kubernetes.io/managed-by": "gentian-os",
-				"app.kubernetes.io/component":  "staging-ca-trust",
+				"app.kubernetes.io/component":  "trust-anchor",
 			},
 		},
 		Type: corev1.SecretTypeOpaque,

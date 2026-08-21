@@ -486,7 +486,7 @@ func (s *Service) purgeClusterArtifacts(ctx context.Context, tenant, app string)
 	// including some for profiles renamed out of existence months earlier.
 	//
 	// The selector is app-scoped, so tenant-wide Secrets such as
-	// gentian-staging-ca-tls (labelled managed-by and tenant, but no app) are not
+	// gentian-trust-anchor-tls (labelled managed-by and tenant, but no app) are not
 	// matched. Secrets owned by an ExternalSecret are already removed with it when
 	// Crossplane deletes the App claim.
 	tenantSecrets, err := s.clientset.CoreV1().Secrets(tenantNamespace(tenant)).

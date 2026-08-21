@@ -14,7 +14,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package stagingca
+package trustanchor
 
 import (
 	"context"
@@ -140,27 +140,27 @@ func TestBuildBundleExcludesServerLeaf(t *testing.T) {
 	}
 }
 
-func TestEnsureStagingCASecretNoOpWithoutLeaf(t *testing.T) {
+func TestEnsureTrustAnchorSecretNoOpWithoutLeaf(t *testing.T) {
 	c := fake.NewClientBuilder().Build()
-	ok, err := EnsureStagingCASecret(context.Background(), c, "gentian-dev", "cert-manager", "wildcard-kernel-tls")
+	ok, err := EnsureTrustAnchorSecret(context.Background(), c, "gentian-dev", "cert-manager", "wildcard-kernel-tls")
 	if err != nil {
-		t.Fatalf("EnsureStagingCASecret: %v", err)
+		t.Fatalf("EnsureTrustAnchorSecret: %v", err)
 	}
 	if ok {
 		t.Fatal("expected false when leaf secret is absent")
 	}
 }
 
-func TestEnsureStagingCASecretCreatesTargetSecret(t *testing.T) {
+func TestEnsureTrustAnchorSecretCreatesTargetSecret(t *testing.T) {
 	_, leafPEM := testIssuerChainServer(t)
 	c := fake.NewClientBuilder().WithObjects(&corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{Name: DefaultLeafSecret, Namespace: DefaultCertManagerNS},
 		Data:       map[string][]byte{"tls.crt": leafPEM},
 	}).Build()
 
-	ok, err := EnsureStagingCASecret(context.Background(), c, "gentian-dev", DefaultCertManagerNS, DefaultLeafSecret)
+	ok, err := EnsureTrustAnchorSecret(context.Background(), c, "gentian-dev", DefaultCertManagerNS, DefaultLeafSecret)
 	if err != nil {
-		t.Fatalf("EnsureStagingCASecret: %v", err)
+		t.Fatalf("EnsureTrustAnchorSecret: %v", err)
 	}
 	if !ok {
 		t.Fatal("expected true when secret was created")

@@ -705,36 +705,45 @@ spec:
                    all three: it names the secret, and is empty exactly when a
                    public CA signed and there is nothing to distribute. */}}
             {{- $acmeStaging := eq (dig "ACME_STAGING" "false" $ksCMData) "true" }}
-            {{- $anchorSecret := dig "certificates.trustAnchorSecret" "" $ccData }}
-            {{- if and (not $anchorSecret) $acmeStaging }}
-            {{- $anchorSecret = "gentian-staging-ca-tls" }}
-            {{- end }}
-            {{- if $anchorSecret }}
+            {{- /* certificates.trustAnchorSecret names where the anchor lives at
+                 CLUSTER scope — cert-manager/gentian-root-ca-tls under self-signed
+                 and private-ca. A pod cannot mount that: it is in another
+                 namespace. The operator replicates the anchor into each namespace
+                 under one fixed name, and that is what is mounted here.
+
+                 Mounting the cluster-scope name was a bug that only a self-signed
+                 or private-ca install would have shown: the operator wrote
+                 gentian-trust-anchor-tls into the namespace while this asked for
+                 gentian-root-ca-tls, and a volume naming a Secret that is not
+                 there stops the pod from starting at all. */}}
+            {{- $hasAnchor := or (dig "certificates.trustAnchorSecret" "" $ccData) $acmeStaging }}
+            {{- $anchorSecret := "gentian-trust-anchor-tls" }}
+            {{- if $hasAnchor }}
             {{- $krStaging := default dict $pSpec.kernelRequirements }}
             {{- $identityStaging := default dict $krStaging.identity }}
             {{- $oidcStaging := default dict $identityStaging.oidc }}
             {{- $stagingVol := dict
-                "name" "gentian-staging-ca"
+                "name" "kernel-trust-anchor"
                 "secret" (dict "secretName" $anchorSecret)
             }}
             {{- $stagingMounts := list
-                (dict "name" "gentian-staging-ca" "mountPath" "/opt/gentian-staging-ca" "readOnly" true)
+                (dict "name" "kernel-trust-anchor" "mountPath" "/opt/gentian-trust-anchor" "readOnly" true)
             }}
             {{- $stagingEnv := list
-                (dict "name" "REQUESTS_CA_BUNDLE" "value" "/opt/gentian-staging-ca/ca.crt")
-                (dict "name" "SSL_CERT_FILE" "value" "/opt/gentian-staging-ca/ca.crt")
-                (dict "name" "DENO_CERT" "value" "/opt/gentian-staging-ca/ca.crt")
+                (dict "name" "REQUESTS_CA_BUNDLE" "value" "/opt/gentian-trust-anchor/ca.crt")
+                (dict "name" "SSL_CERT_FILE" "value" "/opt/gentian-trust-anchor/ca.crt")
+                (dict "name" "DENO_CERT" "value" "/opt/gentian-trust-anchor/ca.crt")
             }}
             {{- /* Charts that render env from values.environment need OIDC/truststore keys merged there too. */}}
             {{- /* ignore top-level extraEnvVars — merge staging CA paths there too. */}}
             {{- $stagingEnvironment := dict
-                "REQUESTS_CA_BUNDLE" "/opt/gentian-staging-ca/ca.crt"
-                "SSL_CERT_FILE" "/opt/gentian-staging-ca/ca.crt"
-                "DENO_CERT" "/opt/gentian-staging-ca/ca.crt"
+                "REQUESTS_CA_BUNDLE" "/opt/gentian-trust-anchor/ca.crt"
+                "SSL_CERT_FILE" "/opt/gentian-trust-anchor/ca.crt"
+                "DENO_CERT" "/opt/gentian-trust-anchor/ca.crt"
             }}
             {{- $existingEnvironment := default dict (dig "environment" dict $extraVals) }}
             {{- $stagingJavaOpts := list
-                "-Djavax.net.ssl.trustStore=/opt/gentian-staging-ca/truststore.jks"
+                "-Djavax.net.ssl.trustStore=/opt/gentian-trust-anchor/truststore.jks"
                 "-Djavax.net.ssl.trustStoreType=JKS"
                 "-Djavax.net.ssl.trustStorePassword=changeit"
             }}

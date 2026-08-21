@@ -53,7 +53,7 @@ import (
 	"github.com/gentian-org/gentian-os/internal/controller/provisioner"
 	"github.com/gentian-org/gentian-os/internal/customization"
 	"github.com/gentian-org/gentian-os/internal/kernel/secrets"
-	"github.com/gentian-org/gentian-os/internal/kernel/stagingca"
+	"github.com/gentian-org/gentian-os/internal/kernel/trustanchor"
 	"github.com/gentian-org/gentian-os/internal/meta"
 )
 
@@ -884,13 +884,13 @@ func buildDockerConfigJSON(host, username, password string) ([]byte, error) {
 	return json.Marshal(config)
 }
 
-// ensureStagingCaTrust bootstraps gentian-staging-ca-tls in the services namespace
+// ensureStagingCaTrust bootstraps gentian-trust-anchor-tls in the services namespace
 // and replicates it into the tenant namespace for in-cluster OIDC clients.
 func (r *TenantReconciler) ensureStagingCaTrust(ctx context.Context, tenant *gentianov1alpha1.Tenant, nsName string) error {
-	const secretName = stagingca.SecretName
+	const secretName = trustanchor.SecretName
 
-	if _, err := stagingca.EnsureStagingCASecret(ctx, r.Client, servicesNamespace,
-		stagingca.DefaultCertManagerNS, stagingca.DefaultLeafSecret); err != nil {
+	if _, err := trustanchor.EnsureTrustAnchorSecret(ctx, r.Client, servicesNamespace,
+		trustanchor.DefaultCertManagerNS, trustanchor.DefaultLeafSecret); err != nil {
 		return fmt.Errorf("bootstrap staging CA in %s: %w", servicesNamespace, err)
 	}
 

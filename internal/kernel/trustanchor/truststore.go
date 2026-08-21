@@ -14,7 +14,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-package stagingca
+package trustanchor
 
 import (
 	"bytes"
@@ -85,7 +85,7 @@ func encodeTrustedCertsJKS(certs [][]byte, storePassword string) ([]byte, error)
 		if err := binary.Write(&body, binary.BigEndian, uint32(2)); err != nil { // trusted cert entry
 			return nil, err
 		}
-		alias := fmt.Sprintf("staging-ca-%d", i)
+		alias := fmt.Sprintf("trust-anchor-%d", i)
 		if err := writeUTF(&body, alias); err != nil {
 			return nil, err
 		}

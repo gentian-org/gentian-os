@@ -193,31 +193,31 @@ spec:
     skipCRDs: true
     values:
       environment:
-        DENO_CERT: /opt/gentian-staging-ca/ca.crt
-        REQUESTS_CA_BUNDLE: /opt/gentian-staging-ca/ca.crt
-        SSL_CERT_FILE: /opt/gentian-staging-ca/ca.crt
+        DENO_CERT: /opt/gentian-trust-anchor/ca.crt
+        REQUESTS_CA_BUNDLE: /opt/gentian-trust-anchor/ca.crt
+        SSL_CERT_FILE: /opt/gentian-trust-anchor/ca.crt
       extraEnvVars:
       - name: REQUESTS_CA_BUNDLE
-        value: /opt/gentian-staging-ca/ca.crt
+        value: /opt/gentian-trust-anchor/ca.crt
       - name: SSL_CERT_FILE
-        value: /opt/gentian-staging-ca/ca.crt
+        value: /opt/gentian-trust-anchor/ca.crt
       - name: DENO_CERT
-        value: /opt/gentian-staging-ca/ca.crt
+        value: /opt/gentian-trust-anchor/ca.crt
       extraVolumeMounts:
-      - mountPath: /opt/gentian-staging-ca
-        name: gentian-staging-ca
+      - mountPath: /opt/gentian-trust-anchor
+        name: kernel-trust-anchor
         readOnly: true
       extraVolumes:
-      - name: gentian-staging-ca
+      - name: kernel-trust-anchor
         secret:
-          secretName: gentian-staging-ca-tls
+          secretName: gentian-trust-anchor-tls
       global:
         imagePullSecrets:
         - registry-credentials
       imagePullSecrets:
       - registry-credentials
       javaOpts:
-      - -Djavax.net.ssl.trustStore=/opt/gentian-staging-ca/truststore.jks
+      - -Djavax.net.ssl.trustStore=/opt/gentian-trust-anchor/truststore.jks
       - -Djavax.net.ssl.trustStoreType=JKS
       - -Djavax.net.ssl.trustStorePassword=changeit
       podLabels:
@@ -225,13 +225,13 @@ spec:
         gentianos.io/tenant: demo
       volumeMounts:
         container:
-        - mountPath: /opt/gentian-staging-ca
-          name: gentian-staging-ca
+        - mountPath: /opt/gentian-trust-anchor
+          name: kernel-trust-anchor
           readOnly: true
       volumes:
-      - name: gentian-staging-ca
+      - name: kernel-trust-anchor
         secret:
-          secretName: gentian-staging-ca-tls
+          secretName: gentian-trust-anchor-tls
     wait: false
   providerConfigRef:
     name: kubernetes
