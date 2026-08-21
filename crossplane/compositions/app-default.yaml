@@ -978,23 +978,55 @@ spec:
                 description: {{ default "" $pack.scopeDescription | quote }}
               providerConfigRef:
                 name: keycloak
-            {{- /* No ProtocolMapper resources here, though the pack names them and
-                 the catalogue defines them in full.
+            {{- /* The pack's protocol mappers, on the scope above.
 
-                 A mapper is identified by its UUID, not its name: adopting one
-                 with crossplane.io/external-name set to "email" fails with
-                 "observe failed: external resource does not exist", where the
-                 ClientScope above adopts from its name without trouble. The
-                 UUID cannot be templated, so these cannot be adopted.
+                 These cannot be adopted. A Keycloak protocol mapper is identified
+                 by its UUID, not its name, so crossplane.io/external-name set to
+                 "email" fails with "observe failed: external resource does not
+                 exist" — where the ClientScope above adopts from its name without
+                 trouble. No external-name is set here, so Crossplane creates them
+                 and records the UUID it gets back.
 
-                 Letting Crossplane create them instead would add a second mapper
-                 of the same name to a scope that already carries the Job's, and
-                 two mappers emitting the same claim is not something to try on a
-                 live login path.
-
-                 So the mappers move when the Job stops creating them, not before
-                 — a create-side migration rather than an adoption. Tracked in the
-                 roadmap. */}}
+                 While the OIDC pack Job still makes the same mappers, these
+                 creates are expected to fail: Keycloak rejects a second mapper of
+                 the same name on one scope. That is the safe way round — the
+                 existing mapper keeps working and the resource reports the
+                 conflict, rather than a duplicate quietly emitting a claim twice.
+                 They converge when the Job stops making them and the originals
+                 are removed. */}}
+            {{- range $mapperName := (default list $pack.mappers) }}
+            {{- $tmpl := dig $mapperName dict $oidcMapperTemplates }}
+            {{- if $tmpl.protocolMapper }}
+            {{- /* keycloakName exists because some catalogues name a mapper
+                 differently in Keycloak than in the pack — "full name" against
+                 full_name. The Keycloak name identifies the object; the slug only
+                 has to be a valid RFC 1123 object name. */}}
+            {{- $kcName := default $mapperName $tmpl.keycloakName }}
+            {{- $slug := $mapperName | lower | replace "_" "-" | replace " " "-" | replace "." "-" }}
+            ---
+            apiVersion: client.keycloak.crossplane.io/v1alpha1
+            kind: ProtocolMapper
+            metadata:
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: {{ $app }}-scope-mapper-{{ $slug }}
+              name: {{ $tenant }}-{{ $app }}-scope-mapper-{{ $slug }}
+            spec:
+              deletionPolicy: Orphan
+              forProvider:
+                realmId: {{ $tenant }}
+                name: {{ $kcName | quote }}
+                protocol: openid-connect
+                protocolMapper: {{ $tmpl.protocolMapper | quote }}
+                {{- /* A ref, not an id: the scope's id is Keycloak's and is not
+                     known until the ClientScope above is observed. */}}
+                clientScopeIdRef:
+                  name: {{ $tenant }}-{{ $app }}-keycloak-client-scope
+                config:
+                  {{ toYaml (default dict $tmpl.config) | nindent 18 }}
+              providerConfigRef:
+                name: keycloak
+            {{- end }}
+            {{- end }}
             {{- end }}
             {{- end }}
 
