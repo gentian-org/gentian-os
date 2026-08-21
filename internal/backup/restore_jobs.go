@@ -148,7 +148,9 @@ DB=%[2]s
 # cannot drop what it does not own. The database then wedges at exactly the
 # moment someone is trying to recover it, and only hand-written psql gets it
 # back. Normalising here makes a retry self-healing instead. Extension-owned
-# objects are left alone: they belong to the extension, not the app.
+# objects are left alone: they belong to the extension, not the app, and so are
+# dependent ones — a serial or identity sequence follows the owner of the table
+# it belongs to and postgres refuses to reassign it on its own.
 #
 # Generated statements piped through \gexec rather than a PL/pgSQL block:
 # psql substitutes :'var' only outside quoted literals, and a dollar-quoted
@@ -176,7 +178,8 @@ SELECT format('ALTER %%s %%I.%%I OWNER TO %%I',
    AND n.nspname <> 'information_schema'
    AND c.relkind IN ('r', 'p', 'S', 'v', 'm')
    AND NOT EXISTS (SELECT 1 FROM pg_depend d
-                    WHERE d.objid = c.oid AND d.deptype = 'e')
+                    WHERE d.objid = c.oid
+                      AND d.deptype IN ('a', 'i', 'e'))
 \gexec
 PSQL
 echo "ownership normalised to ${ROLE}"
