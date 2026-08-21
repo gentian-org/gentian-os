@@ -985,14 +985,21 @@ spec:
                  differently in Keycloak than in the pack — "full name" against
                  full_name. The Keycloak name is what identifies the object. */}}
             {{- $kcName := default $mapperName $tmpl.keycloakName }}
+            {{- /* Mapper names are Keycloak's, not Kubernetes': gentian_useruuid
+                 carries an underscore and some catalogues use "full name" with a
+                 space, neither of which is a valid RFC 1123 object name. Only the
+                 object name is sanitised — external-name and forProvider.name stay
+                 exactly what Keycloak calls it, because that is what identifies
+                 the mapper. */}}
+            {{- $slug := $mapperName | lower | replace "_" "-" | replace " " "-" | replace "." "-" }}
             ---
             apiVersion: client.keycloak.crossplane.io/v1alpha1
             kind: ProtocolMapper
             metadata:
               annotations:
                 crossplane.io/external-name: {{ $kcName }}
-                gotemplating.fn.crossplane.io/composition-resource-name: {{ $app }}-scope-mapper-{{ $mapperName }}
-              name: {{ $tenant }}-{{ $app }}-scope-mapper-{{ $mapperName }}
+                gotemplating.fn.crossplane.io/composition-resource-name: {{ $app }}-scope-mapper-{{ $slug }}
+              name: {{ $tenant }}-{{ $app }}-scope-mapper-{{ $slug }}
             spec:
               deletionPolicy: Orphan
               managementPolicies: ["Observe"]
