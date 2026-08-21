@@ -53,7 +53,7 @@ import (
 // testClient is the shared client used by all tests in this package.
 var testClient client.Client
 
-// envtestWaitTimeout is the default poll deadline for controller envtest waits.
+// envtestWaitTimeout is the poll deadline for controller envtest waits.
 //
 // 140 t.Parallel() tests share one manager and one envtest apiserver, so a test
 // that loses the scheduling race against the others exceeds a short deadline
@@ -66,13 +66,39 @@ var testClient client.Client
 // poll reconcile loops rather than burn CPU, so the extra ceiling costs nothing
 // on a healthy run — it is only reached when the answer was never coming, and a
 // genuinely hung reconciler still reports, just later.
-const envtestWaitTimeout = 3 * time.Minute
+//
+// Three minutes is a bound tuned against CI's dedicated runner, not against
+// every machine this suite runs on. Confirmed directly on a loaded local dev
+// box (a live cluster plus its own services already resident, not merely other
+// go test goroutines): captured controller logs showed every Tenant across the
+// whole package — not only the one a failing test was waiting on — go
+// completely silent for ~175 seconds, twice, independently, including after
+// tenantRateLimiter (tenant_controller.go) closed off a separate, real
+// amplifier — a burst of ordinary optimistic-concurrency conflicts able to
+// throttle the shared workqueue for minutes under the default rate limiter.
+// With that fixed, the same magnitude of silence persisted, which is why it
+// reads as the host being starved of CPU or I/O for that whole span, not as
+// anything this package's own logic can retry its way out of.
+//
+// GENTIAN_TEST_WAIT_TIMEOUT raises the ceiling for a run without changing what
+// it means: a regression still fails, just after a longer, still-bounded wait,
+// so "give it more time" cannot turn a real hang into a false pass — only a
+// starved one into a clean one. CI never sets it, so this stays 3 minutes
+// there, which is the value that catches a genuinely hung reconciler fastest.
+var envtestWaitTimeout = func() time.Duration {
+	if v := os.Getenv("GENTIAN_TEST_WAIT_TIMEOUT"); v != "" {
+		if d, err := time.ParseDuration(v); err == nil && d > 0 {
+			return d
+		}
+	}
+	return 3 * time.Minute
+}()
 
 // tenantReadyTimeout is an alias for Phase=Ready waits (same ceiling as job waits).
-const tenantReadyTimeout = envtestWaitTimeout
+var tenantReadyTimeout = envtestWaitTimeout
 
 // jobAppearTimeout is an alias for waits on Job creation or intermediate conditions.
-const jobAppearTimeout = envtestWaitTimeout
+var jobAppearTimeout = envtestWaitTimeout
 
 // dataPlaneManualTestTenants lists tenants whose data-plane Jobs are completed
 // manually in reconciler tests (redis/pg/mariadb/s3 assertions).

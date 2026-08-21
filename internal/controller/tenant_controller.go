@@ -28,6 +28,7 @@ import (
 	"strings"
 	"time"
 
+	"golang.org/x/time/rate"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
@@ -38,6 +39,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/util/workqueue"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -248,6 +250,49 @@ type TenantReconciler struct {
 	CommerceAPIToken string
 }
 
+// tenantRateLimiter replaces controller-runtime's default workqueue rate
+// limiter, which is sized for a single slow-moving workload and not for a
+// fleet of independent Tenants that can all become reconcilable at once.
+//
+// Two components, same shape as the default (client-go's
+// DefaultTypedControllerRateLimiter): a per-item exponential backoff for an
+// item that keeps failing, maxed against a shared token bucket that bounds
+// how fast the queue drains overall. Both are tuned down from the default:
+//
+//   - Per-item ceiling: 30s, not the default 1000s (16+ minutes). AddRateLimited
+//     is reached only on a returned error — every legitimate "not ready yet"
+//     path in this reconciler uses RequeueAfter instead, which bypasses the
+//     rate limiter entirely (see the MaxConcurrentReconciles comment above).
+//     So an item that lands here hit a real, usually-transient error — most
+//     often a resourceVersion conflict from a concurrent writer — and should
+//     get another attempt in seconds, not be capable of being backed off for
+//     a quarter of an hour by a run of bad luck.
+//
+//   - Bucket: 50 qps / burst 200, not the default 10 qps / burst 100. Observed
+//     directly in the envtest suite (149 Tenants reconciling in parallel,
+//     which is this reconciler's normal operating shape, not a corner case):
+//     a routine wave of concurrent Status().Update() calls produced 70+
+//     "the object has been modified" conflicts inside a two-second window —
+//     ordinary optimistic-concurrency contention when many independent
+//     objects are touched together, not a bug in any one of them. Each
+//     conflict is a return error, so each takes an AddRateLimited token. The
+//     default 100-token bucket refilling at only 10/s cannot absorb a burst
+//     that size without rationing the queue for the rest of it; captured
+//     controller logs showed every Tenant — not only the conflicted ones —
+//     go completely silent for the following 175 seconds, well past this
+//     package's 3-minute envtest wait ceiling (see envtestWaitTimeout in
+//     tenant_controller_test.go). A production cluster with a comparable
+//     tenant count hitting a synchronized event — a controller upgrade that
+//     touches every Tenant's status once, say — would face the identical
+//     cliff. Sized generously enough that the same burst drains in a couple
+//     of seconds rather than throttling the whole controller for minutes.
+func tenantRateLimiter() workqueue.TypedRateLimiter[reconcile.Request] {
+	return workqueue.NewTypedMaxOfRateLimiter(
+		workqueue.NewTypedItemExponentialFailureRateLimiter[reconcile.Request](5*time.Millisecond, 30*time.Second),
+		&workqueue.TypedBucketRateLimiter[reconcile.Request]{Limiter: rate.NewLimiter(rate.Limit(50), 200)},
+	)
+}
+
 // SetupWithManager registers the controller with the controller-manager.
 func (r *TenantReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	// The Postfix inbound maps are derived from the tenant registry, so they
@@ -352,7 +397,10 @@ func (r *TenantReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		// reconcile was starved past a three-minute wait. Tenants are
 		// independent — the reconciler holds no state shared between them — so
 		// they can converge alongside each other.
-		WithOptions(controller.Options{MaxConcurrentReconciles: 4}).
+		WithOptions(controller.Options{
+			MaxConcurrentReconciles: 4,
+			RateLimiter:             tenantRateLimiter(),
+		}).
 		Owns(&corev1.Namespace{}).
 		Watches(
 			&batchv1.Job{},

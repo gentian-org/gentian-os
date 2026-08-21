@@ -615,9 +615,47 @@ docs/plans/tenant-composition-cleanup.md §8.
   failures are delete-path waits, which suggests a real ordering rather than a
   slow runner. Then decide whether a test flake should withhold a build at all,
   or whether the image should be published and the failure reported separately.
+* **Investigated 2026-08-21**: Reproduced repeatedly in a worktree, with
+  controller logs captured instead of discarded (`TestMain` normally sends them
+  to `io.Discard`). Two findings, not one:
+  - A real, fixable amplifier. `TenantReconciler` had no custom `RateLimiter`,
+    so it inherited controller-runtime's default — tuned for one slow-moving
+    workload, not for ~150 independent Tenants that can all become
+    reconcilable together. A captured run showed 70+ `"the object has been
+    modified"` conflicts (ordinary optimistic-concurrency contention, not a bug
+    in any one Tenant) land inside a two-second window; each is a returned
+    error, so each takes a token from the default 10 qps / 100-burst shared
+    bucket, and the whole controller then went silent — every Tenant, not only
+    the conflicted ones — for the next ~175 seconds. Fixed: `tenantRateLimiter`
+    in `tenant_controller.go` raises the bucket (50 qps / burst 200) and caps
+    the per-item exponential ceiling at 30s instead of the default 1000s, since
+    every legitimate "not ready yet" path here uses `RequeueAfter` — which
+    bypasses the rate limiter entirely — so anything that reaches
+    `AddRateLimited` is a real, usually-transient error that should get another
+    attempt in seconds. A production cluster with a comparable tenant count
+    hitting a synchronized event (a controller upgrade that touches every
+    Tenant's status once, say) would face the identical cliff, so this is a
+    correctness fix, not test-only tuning.
+  - A residual, unfixable-in-code component. With that amplifier closed, the
+    same magnitude of silence (~174s, independently) still reproduced. That
+    rules out the rate limiter as the sole cause and points at the runner
+    itself being starved of CPU or I/O for that span — confirmed load-dependent
+    locally (load average climbed from ~2.4 to ~5.2 over the course of
+    reproducing it) and consistent with `envtestWaitTimeout`'s own comment: a
+    bound on being starved, not on being wrong. Even an 8-minute local ceiling
+    was not always enough on a sufficiently loaded run, which is the honest
+    shape of a host-contention problem — no fixed number can fully absorb it.
+    `GENTIAN_TEST_WAIT_TIMEOUT` (env var, `tenant_controller_test.go`) lets a
+    developer raise the ceiling for a local run without changing what a
+    timeout means or touching CI's tuned 3-minute default — CI never sets it.
+  - Whether this fix reduces CI's own flake rate (as opposed to this local
+    reproduction) is not yet established — CI's runner is far less loaded than
+    the machine this was reproduced on, so the balance between the two causes
+    may differ there. Watch the next few CI runs of this package.
 * **Backlog Items**:
-  - `[ ]` Establish whether the two delete-path waits share a cause, or are two
-    symptoms of a loaded runner.
+  - `[x]` Establish whether the two delete-path waits share a cause, or are two
+    symptoms of a loaded runner. *(Both: a fixed default-rate-limiter amplifier,
+    plus a residual, load-dependent component no code change fully absorbs.)*
   - `[ ]` Make a flake's cost visible: a commit on develop with no published
     image is the condition to report.
   - `[ ]` Decide whether `Docker build and push` should depend on the Go job.
