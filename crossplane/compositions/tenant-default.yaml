@@ -533,6 +533,17 @@ spec:
                 gotemplating.fn.crossplane.io/composition-resource-name: keycloak-dovecot-oidc-client
             spec:
               deletionPolicy: Orphan
+              # Everything except LateInitialize. This client has a second writer —
+              # the Dovecot OIDC Job still provisions the same clientId in this realm
+              # — and late-init copies fields the provider observes but this template
+              # does not set out of the live object into spec.forProvider, making the
+              # Job's values this resource's declared intent. The portal BFF client is
+              # what that looks like when the two disagree: Synced=False, unable to
+              # reconcile, while reading Ready=True.
+              #
+              # The Job's tenant-realm half is written and verified but blocked on
+              # roadmap 1.29; until it lands, this is what keeps the two apart.
+              managementPolicies: ["Observe", "Create", "Update", "Delete"]
               forProvider:
                 clientId: gentian-dovecot
                 realmId: {{ $tenant }}
