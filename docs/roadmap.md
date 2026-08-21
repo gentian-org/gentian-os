@@ -291,6 +291,234 @@ For the current baseline design of the system, refer to [architecture.md](archit
 
 ---
 
+### 1.26 Restore full management of the portal BFF client
+
+The portal BFF client is adopted `Observe`-only, the one Keycloak client in
+`tenant-default` that is not fully managed.
+
+The live client has `standardFlowEnabled` and `implicitFlowEnabled` both false
+while still carrying `redirectUris` and `webOrigins`. Keycloak stores that
+combination; provider-keycloak refuses to write it:
+
+    valid_redirect_uris cannot be set when standard or implicit flow is not enabled
+
+Because Upjet plans from the observed object, the rejection does not depend on
+what the Composition declares — any write re-validates the live object and
+fails. Dropping the fields from the template and omitting `LateInitialize` from
+`managementPolicies` were both necessary and neither was sufficient.
+
+The fields are inert: with both redirect flows disabled Keycloak can never run a
+redirect flow for this client, and `app/core/auth.py` uses it only as an
+expected token audience for the ROPC grant. Clearing them on the live object is
+therefore a no-op functionally, and it makes the object expressible.
+
+To close: clear `redirectUris` and `webOrigins` on the `corp` realm client
+`gentian-portal-bff`, then restore
+`managementPolicies: ["Observe", "Create", "Update", "Delete"]` in
+`crossplane/compositions/tenant-default.yaml`. The post-logout URIs need no
+action — they are Keycloak's derived default, not stored (`attributes` is
+empty).
+
+### 1.27 Retire the realm script's kernel IdP write
+
+`IdentityProvider kernel` is managed by `tenant-default`, and the broker-idp Job
+no longer writes it. One writer remains: the realm script in
+`identity_reconciler.go`.
+
+It cannot simply be deleted. The broker-idp Job requires the IdP to already
+exist and exits non-zero otherwise, and the Composition needs the tenant realm
+before it can create anything in it — so something has to make the object first
+on a brand new tenant. The realm script no longer restates the
+first-broker-login alias, so the two no longer disagree; what is left is a
+duplicated write, not a conflicting one.
+
+To close: let the Composition create the IdP rather than adopt one, drop the
+block from the realm script, and drop the broker-idp Job's existence check with
+it. The ordering has to be shown to work on a tenant created from nothing, not
+on `corp`, which has had the object since before any of this.
+
+The composed `Client broker-<tenant>` stays `Observe`-only by design — see
+docs/plans/tenant-composition-cleanup.md §8.
+
+### 1.28 Tenant Separation Belongs to the API Server, Not the Console (***)
+* **Target Domain**: Security & Isolation
+* **Context**: Nothing in the Admin Console impersonates the signed-in
+  administrator. Every call reaches the API server as
+  `system:serviceaccount:platform-kernel:gentian-portal-gentian-portal` — each
+  service builds its client with `load_incluster_config()` and no
+  `Impersonate-User` header — and that account must be able to serve every
+  tenant. RBAC therefore authorises *the console*, and cannot tell a tenant
+  admin from a platform one: "demo's admin edits demo's policy" and "demo's
+  admin edits the cluster policy" are the same request at the authorisation
+  layer. What separates them is `resolve_admin_tenant`, `_require_platform_admin`
+  and per-route filters on `spec.tenant` — application code. This is not
+  specific to one resource; it is how every admin operation works today. The
+  consequence worth stating plainly: **a bug in a route handler is a
+  cross-tenant data bug, not a UI bug**, and no Kubernetes control would catch
+  it. Scoping does not change this — a namespaced resource needs the same broad
+  grant, because the console manages every tenant namespace.
+* **Proposed Solution**: Give the API server the identity it is missing. The
+  console derives `Impersonate-User` and `Impersonate-Group` from the OIDC token
+  it has already validated, and the cluster carries per-tenant RBAC for the
+  resources the console touches. Isolation then holds even when a handler
+  forgets its filter, and the Kubernetes audit log names the person rather than
+  the console — which is the same argument as §1.12's audit instrumentation,
+  arriving through a different door.
+* **What this costs, because none of it is free**:
+  - The impersonation grant is itself powerful: a service account that may
+    impersonate any user is a service account that may become a cluster admin.
+    It has to be restricted by `resourceNames` to the tenant-admin groups, and
+    that list has to stay correct as tenants come and go.
+  - Per-tenant Roles and RoleBindings must exist for every tenant, created and
+    removed with the tenant, which is new work in the provisioning path.
+  - Cluster-scoped admin resources do not separate cleanly under RBAC:
+    `resourceNames` restricts `get`, `update`, `patch` and `delete`, but not
+    `create` (the name is in the body) or `list`/`watch` (there is no single
+    name). `BackupPolicy` and `CredentialRequirement` both carry a `scope` field
+    for exactly this reason, and both would need namespacing or a webhook to be
+    enforceable rather than merely filtered.
+  - Some console reads are legitimately cluster-wide — the app catalogue, the
+    tenant list a platform admin sees — so impersonation cannot be applied
+    uniformly, and deciding per call site is the bulk of the work.
+* **Backlog Items**:
+  - `[ ]` Decide which console operations are per-tenant and which are genuinely
+    platform-wide; the split is the design, and the rest follows from it.
+  - `[ ]` Add impersonation to the Kubernetes client layer, restricted to the
+    tenant-admin groups by `resourceNames`.
+  - `[ ]` Create per-tenant Roles and RoleBindings as part of tenant
+    provisioning, so a new tenant is isolated without a manual step.
+  - `[ ]` Namespace the admin resources that a tenant may edit, or gate them
+    with a validating webhook — a cluster-scoped resource a tenant can `create`
+    is not separable by RBAC alone.
+  - `[ ]` Keep the application-layer checks after impersonation lands. Two
+    independent controls is the point; removing one because the other exists
+    returns to a single point of failure with extra steps.
+  - `[ ]` Add a test that a tenant admin's token cannot read another tenant's
+    resources with the route filters deliberately disabled — the assertion that
+    the boundary has actually moved.
+
+### 1.29 Retire the OIDC Pack Job (**)
+* **Target Domain**: Identity
+* **Done so far**: the Job no longer writes anything app-default owns. It had
+  two duplicate writes, not one — the client itself, and the six default client
+  scopes, the second found by reading the generated script rather than by
+  looking for it. Both are gone, verified on corp: the Job's log now steps
+  straight from "client already exists" to the client role, the composed Client
+  stays Synced/Ready and all six scopes remain attached. The client scope is
+  composed too, adopted from the name the pack gives.
+
+  The Job still *creates* the client when absent. That is a bootstrap rather
+  than ownership: something must make it before the client role can hang off it,
+  and this Job is waited on in DataPlane while the App claim that composes the
+  client is created in AppsAndEdge, the stage after. Same division as the realm
+  script and the kernel IdP — create if absent, never restate.
+* **What is left**: the protocol mappers, the client role and the group-to-role
+  mapping. None can be adopted: each is identified by a UUID rather than a name,
+  and a UUID cannot be templated. Setting external-name to "email" fails with
+  "observe failed: external resource does not exist", where the ClientScope
+  beside it adopts from its name without trouble.
+
+  So they move in the same change that stops the Job making them — the live
+  objects have to be deleted and recreated, because creating alongside would put
+  a second mapper of the same name on a scope that already carries one, and two
+  mappers emitting a claim is not something to discover in production.
+* **Proposed Solution**: One change, on a watched tenant: declare the three,
+  delete the Job's objects, let Crossplane create them, then remove the Job and
+  the ensureIdentity wait. Expect a window where a tenant's tokens lack claims
+  or entitlement, so it wants a maintenance slot rather than a quiet afternoon.
+* **Backlog Items**:
+  - `[x]` Stop the Job configuring the client.
+  - `[x]` Stop the Job attaching the default client scopes.
+  - `[x]` Compose the client scope, adopted by name.
+  - `[ ]` Compose the mappers, the client role and the group-to-role mapping,
+    and delete the Job's, in one change.
+  - `[ ]` Remove the Job and the `ensureIdentity` wait that depends on it.
+
+### 1.30 Move the Tenant Realm's SMTP onto the Composed Realm (*)
+* **Target Domain**: Identity
+* **Done**: `tenant-default` composes a managed `Realm`, and it is the tenant
+  realm's only writer. It declares enabled, displayName, registrationAllowed, the
+  eight browser security headers, and the twelve-hour access-token and session
+  lifespans and gentian login theme that `UpdateRealmBrowserSecurityHeaders` used
+  to apply. The realm Job no longer restates any of it — its create stays as a
+  bootstrap — and the browser-security function now runs only against the kernel
+  realm, which no Composition covers.
+
+  The lifespans and theme are named explicitly because they are not the
+  provider's defaults; Keycloak ships five-minute access tokens and a
+  thirty-minute idle timeout. `securityDefenses` is declared blind, because
+  `status.atProvider` reports it as null while the realm plainly carries the
+  headers — verified instead against the Admin API, which showed the realm
+  unchanged across the first managed write and no drift since.
+* **What is left**: `smtpServer`. The tenant SMTP Job reads its host, port and
+  from address out of a Secret, and a Composition cannot read Secrets — the same
+  wall the broker IdP hit before `identity.internalUrl` was published through the
+  claim. The provider does observe smtpServer, and the CRD carries
+  `auth.passwordSecretRef` for the credential, so only the plain values need a
+  route.
+* **Proposed Solution**: Publish the SMTP host, port and from address the way
+  identity.internalUrl was — through the Cluster claim into
+  gentian-cluster-config — then declare `smtpServer` on the Realm and retire the
+  tenant SMTP Job. Relates to 1.22.
+* **Backlog Items**:
+  - `[x]` Compose the realm, adopted by name, and promote it to managed.
+  - `[x]` Declare `securityDefenses` and verify the headers through the Admin API.
+  - `[x]` Remove the realm Job's restatement and the browser-security function's
+    tenant-realm write.
+  - `[ ]` Publish the SMTP host, port and from address through the claim.
+  - `[ ]` Declare `smtpServer` and retire the tenant SMTP Job.
+  - `[ ]` Trim the realm script further: what remains that the Realm cannot
+    express is the user profile attributes and the required-action toggles, which
+    are separate Keycloak APIs.
+
+### 1.31 Bootstrap Validator Library: Missing `smtp` and No Automated Coverage (**)
+* **Target Domain**: Platform Security & Credential Validation
+* **Context**: `scripts/lib/validators.sh` covers the `phase: bootstrap` credential set (§10,
+  `docs/plans/config-and-credential-cleanup.md`), and its own design table names `smtp` as one of
+  the five bootstrap-phase types, probed by `openssl s_client -starttls smtp` then `AUTH LOGIN`.
+  `run_validator`'s dispatch has no `smtp` case at all — an unimplemented type, not an untested one.
+  It is silently unreachable today only because the sole `type: smtp` credential in
+  `credentials.yaml` (`smtp-relay`) is `phase: runtime` and never reaches this dispatch; a future
+  bootstrap-phase smtp credential would hard-fail every install needing it with "Unknown validator
+  type". `internal/credentialmgr/validator.go`'s `smtpProbe` (the on-cluster, `phase: runtime`
+  validator) already implements the real thing and its own comment claims to "mirror the shell
+  validator" — which does not exist to mirror.
+
+  Separately, none of the four implemented validators (`oci-registry`, `git-https`,
+  `oidc-discovery`, `cloudflare-dns`) has an automated test. `oci-registry` and `smtp` have never
+  been exercised at all; `git-https` and `oidc-discovery` were verified by hand against live
+  endpoints once, in both directions, which is not repeatable and does not run in CI. There is no
+  shell-test framework anywhere in this repository to build on — every existing shell-adjacent
+  check in this class (`scripts/tools/verify-openbao-policies.sh`, the Go `fakeRelay` in
+  `internal/credentialmgr/validator_smtp_test.go`) works by standing up a real throwaway service
+  and asserting against it, not by mocking.
+* **Proposed Solution**: Write `validate_smtp` for the shell validator library, and build a
+  fake-server test harness reusable across all four validator types, following the pattern already
+  established by `verify-openbao-policies.sh`.
+
+  `validate_smtp` is the harder half. Driving an interactive STARTTLS-then-`AUTH LOGIN` exchange
+  from bash via `openssl s_client` (coprocess, no Go stdlib to lean on) is materially more fragile
+  than everything else in this file. The Go test suite hit the identical problem testing
+  `smtpProbe` and deliberately stopped short of completing a handshake in its fake relay ("It never
+  actually completes STARTTLS... which lets these tests cover the paths that matter without a
+  certificate authority") — the shell tests should draw the same boundary: unreachable, a
+  connection that does not speak SMTP, and a server offering no STARTTLS (which the validator must
+  refuse to send credentials into, same as the Go version) are all real without needing a
+  TLS-terminating fake relay in bash.
+* **Backlog Items**:
+  - `[ ]` Implement `validate_smtp` in `scripts/lib/validators.sh` and wire it into `run_validator`'s
+    dispatch, matching the design table's probe (`openssl s_client -starttls smtp`, `AUTH LOGIN`)
+    and the Go `smtpProbe`'s safety properties (refuse cleartext AUTH when STARTTLS is not offered,
+    implicit TLS on port 465).
+  - `[ ]` Build a small fake-HTTP-server test harness (a controllable-status-code Python responder,
+    consistent with this repo's existing python3 tooling) and use it to test `validate_oci_registry`,
+    `validate_git_https` and `validate_oidc_discovery` — pass, reject, unreachable, and (where
+    applicable) not-found, both credentialed and credential-less.
+  - `[ ]` Test `validate_smtp` up to the boundary above: unreachable, non-SMTP-speaking, and
+    no-STARTTLS-offered.
+  - `[ ]` Wire the new tests into a `make` target and CI, closing Phase 3 acceptance criterion 1
+    ("none of the validators is automated").
+
 ## 2. Platform, Infrastructure & Lifecycle
 
 ### 2.1 Keycloak Provider & Crossplane Consolidation (*)
@@ -460,6 +688,67 @@ For the current baseline design of the system, refer to [architecture.md](archit
 
 ---
 
+### 2.18 A Flaky envtest Wait Silently Withholds the Image (*)
+* **Target Domain**: Build and Release
+* **Context**: Four different envtest tests timed out on 2026-08-21, in three
+  separate CI runs, each at the shared 3-minute `envtestWaitTimeout`, each
+  passing locally and on re-run:
+  `TestIdentity_DeleteDeletePolicy_CreatesCleanupJob`,
+  `TestCache_DeleteDeletePolicy_CreatesDeleteJobsAndDeletesApplication`,
+  `TestMariaDB_DeleteDeletePolicy_CreatesDeleteJob` and
+  `TestDeletion_EndToEnd_WithApps`. Every one of them waits on a delete path.
+  That is not the signature of a slow runner, which would strike waits at
+  random; it points at the deletion path specifically.
+
+  The cost is not the red X. `Docker build and push` is gated on the Go job, so
+  a flake means no image is published for that commit and the cluster keeps
+  running whatever it ran before. That is invisible unless someone reads the
+  run: the branch looks merged, the Application is Healthy, and
+  `make verify-image-updates` correctly reports the cluster tracks CI, because
+  it does — there is simply nothing new to track. Three commits today were
+  affected, and on two occasions work was verified against a binary that did
+  not contain it.
+* **What was ruled out**: not simply a loaded runner. The package runs in ~60s
+  locally and ~195s in CI; forced to comparable slowness with `GOMAXPROCS=1` it
+  took 225s — slower than CI — and passed, twice, with no wait coming close to
+  its deadline. `markJobCompleteWhenReady`, the goroutine several of these tests
+  rely on to unblock a sequential delete chain, carries its own 60s deadline
+  against a 180s wait and gives up silently; that mismatch is real and worth
+  fixing, but it was instrumented under load and never fired. So the cause is
+  still open, and it is not "CI is slow".
+* **Proposed Solution**: Reproduce it before fixing it. The delete path is
+  strictly sequential — each cleanup Job must complete before the next is
+  created — so a single Job whose completion is missed stalls the chain for the
+  full timeout, and that shape fits every observed failure. Suspect the harness
+  that completes Jobs, not the operator.
+* **Backlog Items**:
+  - `[ ]` Reproduce a delete-chain stall, and find which Job stopped being
+    completed.
+  - `[ ]` Give `markJobCompleteWhenReady` the same deadline as the wait it
+    serves, and make it say so when it expires.
+  - `[x]` Make a flake's cost visible: `make verify-image-updates` now reports
+    when the branch is ahead of the running image, and what each intervening
+    commit's CI concluded.
+  - `[ ]` Decide whether `Docker build and push` should depend on the Go job.
+### 2.19 Extend the RBAC Lint to Verbs (*)
+* **Target Domain**: Build and Release
+* **Context**: `make lint-rbac-coverage` asserts the operator may read every
+  GroupVersionKind it constructs, which is the failure that has happened twice —
+  a missing rule. It does not check verbs, and that gap is not theoretical
+  either: the ClusterRole granted `pods` `get, list, create, delete` and not
+  `watch`, so the manager's cache logged `pods is forbidden ... Failed to watch`
+  on a loop and never synced, while a direct get kept working. The permission
+  looks sufficient right up until something depends on the cache being current.
+  Found by reading the operator's log after the lint itself was green.
+* **Proposed Solution**: Decide which verbs a use implies and check those. A read
+  through the manager's cache needs `list` and `watch`, not just `get` — that
+  single rule would have caught this one. Going further means knowing which call
+  each GVK reaches, which is a larger analysis than the current scan does.
+* **Backlog Items**:
+  - `[ ]` Require `list` and `watch` wherever a type is read through the cache.
+  - `[ ]` Report a granted verb no call site uses, so the ClusterRole shrinks as
+    the operator stops writing what Crossplane now owns.
+
 ## 3. User Management & Shell UI
 
 ### 3.1 SCIM & Provisioning Bus Integration (*)
@@ -550,243 +839,3 @@ For the current baseline design of the system, refer to [architecture.md](archit
   - `[ ]` Implement the AppProfile code generation tool.
   - `[ ]` Integrate the agentic engine with the tenant provisioning API.
 
-### 1.26 Restore full management of the portal BFF client
-
-The portal BFF client is adopted `Observe`-only, the one Keycloak client in
-`tenant-default` that is not fully managed.
-
-The live client has `standardFlowEnabled` and `implicitFlowEnabled` both false
-while still carrying `redirectUris` and `webOrigins`. Keycloak stores that
-combination; provider-keycloak refuses to write it:
-
-    valid_redirect_uris cannot be set when standard or implicit flow is not enabled
-
-Because Upjet plans from the observed object, the rejection does not depend on
-what the Composition declares — any write re-validates the live object and
-fails. Dropping the fields from the template and omitting `LateInitialize` from
-`managementPolicies` were both necessary and neither was sufficient.
-
-The fields are inert: with both redirect flows disabled Keycloak can never run a
-redirect flow for this client, and `app/core/auth.py` uses it only as an
-expected token audience for the ROPC grant. Clearing them on the live object is
-therefore a no-op functionally, and it makes the object expressible.
-
-To close: clear `redirectUris` and `webOrigins` on the `corp` realm client
-`gentian-portal-bff`, then restore
-`managementPolicies: ["Observe", "Create", "Update", "Delete"]` in
-`crossplane/compositions/tenant-default.yaml`. The post-logout URIs need no
-action — they are Keycloak's derived default, not stored (`attributes` is
-empty).
-
-### 1.27 Retire the realm script's kernel IdP write
-
-`IdentityProvider kernel` is managed by `tenant-default`, and the broker-idp Job
-no longer writes it. One writer remains: the realm script in
-`identity_reconciler.go`.
-
-It cannot simply be deleted. The broker-idp Job requires the IdP to already
-exist and exits non-zero otherwise, and the Composition needs the tenant realm
-before it can create anything in it — so something has to make the object first
-on a brand new tenant. The realm script no longer restates the
-first-broker-login alias, so the two no longer disagree; what is left is a
-duplicated write, not a conflicting one.
-
-To close: let the Composition create the IdP rather than adopt one, drop the
-block from the realm script, and drop the broker-idp Job's existence check with
-it. The ordering has to be shown to work on a tenant created from nothing, not
-on `corp`, which has had the object since before any of this.
-
-The composed `Client broker-<tenant>` stays `Observe`-only by design — see
-docs/plans/tenant-composition-cleanup.md §8.
-
-### 1.28 A Flaky envtest Wait Silently Withholds the Image (*)
-* **Target Domain**: Build and Release
-* **Context**: Four different envtest tests timed out on 2026-08-21, in three
-  separate CI runs, each at the shared 3-minute `envtestWaitTimeout`, each
-  passing locally and on re-run:
-  `TestIdentity_DeleteDeletePolicy_CreatesCleanupJob`,
-  `TestCache_DeleteDeletePolicy_CreatesDeleteJobsAndDeletesApplication`,
-  `TestMariaDB_DeleteDeletePolicy_CreatesDeleteJob` and
-  `TestDeletion_EndToEnd_WithApps`. Every one of them waits on a delete path.
-  That is not the signature of a slow runner, which would strike waits at
-  random; it points at the deletion path specifically.
-
-  The cost is not the red X. `Docker build and push` is gated on the Go job, so
-  a flake means no image is published for that commit and the cluster keeps
-  running whatever it ran before. That is invisible unless someone reads the
-  run: the branch looks merged, the Application is Healthy, and
-  `make verify-image-updates` correctly reports the cluster tracks CI, because
-  it does — there is simply nothing new to track. Three commits today were
-  affected, and on two occasions work was verified against a binary that did
-  not contain it.
-* **What was ruled out**: not simply a loaded runner. The package runs in ~60s
-  locally and ~195s in CI; forced to comparable slowness with `GOMAXPROCS=1` it
-  took 225s — slower than CI — and passed, twice, with no wait coming close to
-  its deadline. `markJobCompleteWhenReady`, the goroutine several of these tests
-  rely on to unblock a sequential delete chain, carries its own 60s deadline
-  against a 180s wait and gives up silently; that mismatch is real and worth
-  fixing, but it was instrumented under load and never fired. So the cause is
-  still open, and it is not "CI is slow".
-* **Proposed Solution**: Reproduce it before fixing it. The delete path is
-  strictly sequential — each cleanup Job must complete before the next is
-  created — so a single Job whose completion is missed stalls the chain for the
-  full timeout, and that shape fits every observed failure. Suspect the harness
-  that completes Jobs, not the operator.
-* **Backlog Items**:
-  - `[ ]` Reproduce a delete-chain stall, and find which Job stopped being
-    completed.
-  - `[ ]` Give `markJobCompleteWhenReady` the same deadline as the wait it
-    serves, and make it say so when it expires.
-  - `[x]` Make a flake's cost visible: `make verify-image-updates` now reports
-    when the branch is ahead of the running image, and what each intervening
-    commit's CI concluded.
-  - `[ ]` Decide whether `Docker build and push` should depend on the Go job.
-### 1.29 Extend the RBAC Lint to Verbs (*)
-* **Target Domain**: Build and Release
-* **Context**: `make lint-rbac-coverage` asserts the operator may read every
-  GroupVersionKind it constructs, which is the failure that has happened twice —
-  a missing rule. It does not check verbs, and that gap is not theoretical
-  either: the ClusterRole granted `pods` `get, list, create, delete` and not
-  `watch`, so the manager's cache logged `pods is forbidden ... Failed to watch`
-  on a loop and never synced, while a direct get kept working. The permission
-  looks sufficient right up until something depends on the cache being current.
-  Found by reading the operator's log after the lint itself was green.
-* **Proposed Solution**: Decide which verbs a use implies and check those. A read
-  through the manager's cache needs `list` and `watch`, not just `get` — that
-  single rule would have caught this one. Going further means knowing which call
-  each GVK reaches, which is a larger analysis than the current scan does.
-* **Backlog Items**:
-  - `[ ]` Require `list` and `watch` wherever a type is read through the cache.
-  - `[ ]` Report a granted verb no call site uses, so the ClusterRole shrinks as
-    the operator stops writing what Crossplane now owns.
-
-### 1.30 Tenant Separation Belongs to the API Server, Not the Console (***)
-* **Target Domain**: Security & Isolation
-* **Context**: Nothing in the Admin Console impersonates the signed-in
-  administrator. Every call reaches the API server as
-  `system:serviceaccount:platform-kernel:gentian-portal-gentian-portal` — each
-  service builds its client with `load_incluster_config()` and no
-  `Impersonate-User` header — and that account must be able to serve every
-  tenant. RBAC therefore authorises *the console*, and cannot tell a tenant
-  admin from a platform one: "demo's admin edits demo's policy" and "demo's
-  admin edits the cluster policy" are the same request at the authorisation
-  layer. What separates them is `resolve_admin_tenant`, `_require_platform_admin`
-  and per-route filters on `spec.tenant` — application code. This is not
-  specific to one resource; it is how every admin operation works today. The
-  consequence worth stating plainly: **a bug in a route handler is a
-  cross-tenant data bug, not a UI bug**, and no Kubernetes control would catch
-  it. Scoping does not change this — a namespaced resource needs the same broad
-  grant, because the console manages every tenant namespace.
-* **Proposed Solution**: Give the API server the identity it is missing. The
-  console derives `Impersonate-User` and `Impersonate-Group` from the OIDC token
-  it has already validated, and the cluster carries per-tenant RBAC for the
-  resources the console touches. Isolation then holds even when a handler
-  forgets its filter, and the Kubernetes audit log names the person rather than
-  the console — which is the same argument as §1.12's audit instrumentation,
-  arriving through a different door.
-* **What this costs, because none of it is free**:
-  - The impersonation grant is itself powerful: a service account that may
-    impersonate any user is a service account that may become a cluster admin.
-    It has to be restricted by `resourceNames` to the tenant-admin groups, and
-    that list has to stay correct as tenants come and go.
-  - Per-tenant Roles and RoleBindings must exist for every tenant, created and
-    removed with the tenant, which is new work in the provisioning path.
-  - Cluster-scoped admin resources do not separate cleanly under RBAC:
-    `resourceNames` restricts `get`, `update`, `patch` and `delete`, but not
-    `create` (the name is in the body) or `list`/`watch` (there is no single
-    name). `BackupPolicy` and `CredentialRequirement` both carry a `scope` field
-    for exactly this reason, and both would need namespacing or a webhook to be
-    enforceable rather than merely filtered.
-  - Some console reads are legitimately cluster-wide — the app catalogue, the
-    tenant list a platform admin sees — so impersonation cannot be applied
-    uniformly, and deciding per call site is the bulk of the work.
-* **Backlog Items**:
-  - `[ ]` Decide which console operations are per-tenant and which are genuinely
-    platform-wide; the split is the design, and the rest follows from it.
-  - `[ ]` Add impersonation to the Kubernetes client layer, restricted to the
-    tenant-admin groups by `resourceNames`.
-  - `[ ]` Create per-tenant Roles and RoleBindings as part of tenant
-    provisioning, so a new tenant is isolated without a manual step.
-  - `[ ]` Namespace the admin resources that a tenant may edit, or gate them
-    with a validating webhook — a cluster-scoped resource a tenant can `create`
-    is not separable by RBAC alone.
-  - `[ ]` Keep the application-layer checks after impersonation lands. Two
-    independent controls is the point; removing one because the other exists
-    returns to a single point of failure with extra steps.
-  - `[ ]` Add a test that a tenant admin's token cannot read another tenant's
-    resources with the route filters deliberately disabled — the assertion that
-    the boundary has actually moved.
-
-### 1.31 Retire the OIDC Pack Job (**)
-* **Target Domain**: Identity
-* **Done so far**: the Job no longer writes anything app-default owns. It had
-  two duplicate writes, not one — the client itself, and the six default client
-  scopes, the second found by reading the generated script rather than by
-  looking for it. Both are gone, verified on corp: the Job's log now steps
-  straight from "client already exists" to the client role, the composed Client
-  stays Synced/Ready and all six scopes remain attached. The client scope is
-  composed too, adopted from the name the pack gives.
-
-  The Job still *creates* the client when absent. That is a bootstrap rather
-  than ownership: something must make it before the client role can hang off it,
-  and this Job is waited on in DataPlane while the App claim that composes the
-  client is created in AppsAndEdge, the stage after. Same division as the realm
-  script and the kernel IdP — create if absent, never restate.
-* **What is left**: the protocol mappers, the client role and the group-to-role
-  mapping. None can be adopted: each is identified by a UUID rather than a name,
-  and a UUID cannot be templated. Setting external-name to "email" fails with
-  "observe failed: external resource does not exist", where the ClientScope
-  beside it adopts from its name without trouble.
-
-  So they move in the same change that stops the Job making them — the live
-  objects have to be deleted and recreated, because creating alongside would put
-  a second mapper of the same name on a scope that already carries one, and two
-  mappers emitting a claim is not something to discover in production.
-* **Proposed Solution**: One change, on a watched tenant: declare the three,
-  delete the Job's objects, let Crossplane create them, then remove the Job and
-  the ensureIdentity wait. Expect a window where a tenant's tokens lack claims
-  or entitlement, so it wants a maintenance slot rather than a quiet afternoon.
-* **Backlog Items**:
-  - `[x]` Stop the Job configuring the client.
-  - `[x]` Stop the Job attaching the default client scopes.
-  - `[x]` Compose the client scope, adopted by name.
-  - `[ ]` Compose the mappers, the client role and the group-to-role mapping,
-    and delete the Job's, in one change.
-  - `[ ]` Remove the Job and the `ensureIdentity` wait that depends on it.
-
-### 1.32 Move the Tenant Realm's SMTP onto the Composed Realm (*)
-* **Target Domain**: Identity
-* **Done**: `tenant-default` composes a managed `Realm`, and it is the tenant
-  realm's only writer. It declares enabled, displayName, registrationAllowed, the
-  eight browser security headers, and the twelve-hour access-token and session
-  lifespans and gentian login theme that `UpdateRealmBrowserSecurityHeaders` used
-  to apply. The realm Job no longer restates any of it — its create stays as a
-  bootstrap — and the browser-security function now runs only against the kernel
-  realm, which no Composition covers.
-
-  The lifespans and theme are named explicitly because they are not the
-  provider's defaults; Keycloak ships five-minute access tokens and a
-  thirty-minute idle timeout. `securityDefenses` is declared blind, because
-  `status.atProvider` reports it as null while the realm plainly carries the
-  headers — verified instead against the Admin API, which showed the realm
-  unchanged across the first managed write and no drift since.
-* **What is left**: `smtpServer`. The tenant SMTP Job reads its host, port and
-  from address out of a Secret, and a Composition cannot read Secrets — the same
-  wall the broker IdP hit before `identity.internalUrl` was published through the
-  claim. The provider does observe smtpServer, and the CRD carries
-  `auth.passwordSecretRef` for the credential, so only the plain values need a
-  route.
-* **Proposed Solution**: Publish the SMTP host, port and from address the way
-  identity.internalUrl was — through the Cluster claim into
-  gentian-cluster-config — then declare `smtpServer` on the Realm and retire the
-  tenant SMTP Job. Relates to 1.22.
-* **Backlog Items**:
-  - `[x]` Compose the realm, adopted by name, and promote it to managed.
-  - `[x]` Declare `securityDefenses` and verify the headers through the Admin API.
-  - `[x]` Remove the realm Job's restatement and the browser-security function's
-    tenant-realm write.
-  - `[ ]` Publish the SMTP host, port and from address through the claim.
-  - `[ ]` Declare `smtpServer` and retire the tenant SMTP Job.
-  - `[ ]` Trim the realm script further: what remains that the Realm cannot
-    express is the user profile attributes and the required-action toggles, which
-    are separate Keycloak APIs.
