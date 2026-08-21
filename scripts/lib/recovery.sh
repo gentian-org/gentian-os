@@ -126,7 +126,7 @@ _kit_gather() {
         _kit_from_json "${TRANSIT_INIT_FILE:-/tmp/openbao-transit-init.json}" '.unseal_keys_b64[0]' || true)}"
     if [[ -z "${TRANSIT_UNSEAL_KEY}" ]]; then
         TRANSIT_UNSEAL_KEY="$(kubectl get secret openbao-transit-unseal -n openbao \
-            -o jsonpath='{.data.key}' 2>/dev/null | base64 -d 2>/dev/null || true)"
+            -o jsonpath='{.data.unseal-key}' 2>/dev/null | base64 -d 2>/dev/null || true)"
     fi
 
     OPENBAO_RECOVERY_KEYS="${OPENBAO_RECOVERY_KEYS:-$(
