@@ -83,7 +83,9 @@ TOKEN=$(curl -sf --max-time 30 \
 BROKER_RESP=$(curl -sf --max-time 30 -H "Authorization: Bearer ${TOKEN}" \
   "${KEYCLOAK_URL}/admin/realms/${KERNEL_REALM}/clients?clientId=${BROKER_CLIENT_ID}")
 %s
-%s
+
+# The first-broker-login flow is NOT built here either. tenant-default composes
+# it, and this Job building it too made a third writer of one object.
 
 # Read, not written. The IdP belongs to the Composition, but the mapper below
 # hangs off it, so its absence is worth saying plainly rather than failing on a
@@ -95,7 +97,7 @@ if [ "${IDP_HTTP}" != "200" ]; then
   exit 1
 fi
 %s%s
-`, brokerResolveIDShell, buildEnsureFirstBrokerLoginFlowShell(`"${REALM_NAME}"`),
+`, brokerResolveIDShell,
 		brokerKernelClientUsernameMapperShell, brokerIdPUsernameImporterShell)
 }
 

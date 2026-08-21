@@ -114,13 +114,21 @@ func TestBuildFirstBrokerLoginFlowScript(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	for _, want := range []string{
-		firstBrokerLoginFlowAlias,
+	// The flow is tenant-default's now — it composes the Flow and its three
+	// executions, which adopted the live ones by their Keycloak ids. This script
+	// keeps only the part that is not declarable: purging stale kernel IdP links
+	// left by the old confirm/re-auth flow, which is a walk over existing users.
+	for _, gone := range []string{
 		`idp-detect-existing-broker-user`,
 		`first broker login flow ${FLOW_ALIAS} ready`,
 		`idp-confirm-link`,
 		`idp-email-verification`,
-		`requirement\":\"REQUIRED`,
+	} {
+		if strings.Contains(script, gone) {
+			t.Fatalf("first broker login script still builds the flow: %s", gone)
+		}
+	}
+	for _, want := range []string{
 		`federated-identity/kernel`,
 		`kernel broker link purge finished`,
 	} {

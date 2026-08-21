@@ -52,10 +52,17 @@ func TestBuildBrokerIdentityProviderScriptUsesInternalTokenURL(t *testing.T) {
 	}
 	// It must still create the flow the IdP's alias refers to. The alias is a
 	// reference, so Keycloak rejects an IdP naming a flow that does not exist.
-	for _, want := range []string{
-		firstBrokerLoginFlowAlias,
+	// The flow is tenant-default's now, and this Job building it too made a third
+	// writer of one object.
+	for _, gone := range []string{
 		`idp-detect-existing-broker-user`,
 		`first broker login flow ${FLOW_ALIAS} ready`,
+	} {
+		if strings.Contains(script, gone) {
+			t.Fatalf("broker IdP script still builds the flow: %s", gone)
+		}
+	}
+	for _, want := range []string{
 		`oidc-user-attribute-idp-mapper`,
 		`claim.name":"gentian_username`,
 		`user.attribute":"uid"`,

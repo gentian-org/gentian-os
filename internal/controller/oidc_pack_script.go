@@ -304,10 +304,6 @@ if [ -n "${FLOW_ID}" ]; then
 fi`, realmName)
 }
 
-func buildEnsureFirstBrokerLoginFlowShell(realmExpr string) string {
-	return buildEnsureFirstBrokerLoginFlowShellWithAlias(realmExpr, firstBrokerLoginFlowAlias)
-}
-
 // buildEnsureFirstBrokerLoginFlowShellWithAlias is like buildEnsureFirstBrokerLoginFlowShell
 // but allows a custom flow alias (e.g. kernel portal broker login).
 func buildEnsureFirstBrokerLoginFlowShellWithAlias(realmExpr, flowAlias string) string {
@@ -358,8 +354,12 @@ TOKEN=$(curl -sf \
   -H "Content-Type: application/x-www-form-urlencoded" \
   -d "client_id=admin-cli&username=${KEYCLOAK_ADMIN_USERNAME}&password=${KEYCLOAK_ADMIN_PASSWORD}&grant_type=password" \
   | sed 's/.*"access_token":"\([^"]*\)".*/\1/')
-%s
+AUTH_HEADER="Authorization: Bearer ${TOKEN}"
+REALM=%q
 
+# The flow is NOT built here. tenant-default composes it and its three
+# executions, which adopted the live ones by their Keycloak ids.
+#
 # Drop stale kernel IdP links left from the old confirm/re-auth flow or partial
 # links. Users re-link silently on the next broker login via auto-link.
 PAGE=0
@@ -383,5 +383,5 @@ while true; do
     break
   fi
 done
-echo "kernel broker link purge finished for realm ${REALM}"`, buildEnsureFirstBrokerLoginFlowShell(fmt.Sprintf("%q", realmName)))
+echo "kernel broker link purge finished for realm ${REALM}"`, realmName)
 }
