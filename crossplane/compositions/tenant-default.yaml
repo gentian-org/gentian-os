@@ -56,6 +56,7 @@ spec:
         inline:
           template: |
             {{- $xr     := .observed.composite.resource }}
+            {{- $observed := .observed }}
             {{- $spec   := $xr.spec }}
             {{- $tenant := $xr.metadata.name }}
             {{- $ns     := default (printf "tenant-%s" $tenant) (dig "isolation" "namespace" "" $spec) }}
@@ -602,6 +603,65 @@ spec:
               forProvider:
                 realmId: {{ $tenant }}
                 name: {{ $g | quote }}
+              providerConfigRef:
+                name: keycloak
+            {{- end }}
+
+            {{- /* ── the realm's "groups" client scope ────────────────────────
+                 What puts a user's group membership into their tokens. Every
+                 client in the realm gets it, because the groups Job adds it to
+                 default-default-client-scopes.
+
+                 That PUT stays with the Job. The realm currently defaults nine
+                 scopes, mostly Keycloak's own — acr, basic, email, profile,
+                 role_list, roles, saml_organization, web-origins — and declaring
+                 the list here would mean owning all nine and silently dropping
+                 whichever built-in a future Keycloak adds. The Job only ever adds
+                 "groups", which is additive and cannot subtract.
+              */}}
+            ---
+            apiVersion: openidclient.keycloak.crossplane.io/v1alpha1
+            kind: ClientScope
+            metadata:
+              annotations:
+                crossplane.io/external-name: groups
+                gotemplating.fn.crossplane.io/composition-resource-name: keycloak-groups-scope
+              name: {{ $tenant }}-groups-scope
+            spec:
+              deletionPolicy: Orphan
+              managementPolicies: ["Observe"]
+              forProvider:
+                realmId: {{ $tenant }}
+                name: groups
+              providerConfigRef:
+                name: keycloak
+            {{- /* The membership mapper on it. Takes the scope's observed id
+                 rather than a ref, because the scope above is adopted by name and
+                 Observe-only, so a ref would yield "groups" where the API path
+                 needs a UUID. */}}
+            {{- $groupsScopeID := dig "resources" "keycloak-groups-scope" "resource" "status" "atProvider" "id" "" $observed }}
+            {{- if $groupsScopeID }}
+            ---
+            apiVersion: client.keycloak.crossplane.io/v1alpha1
+            kind: ProtocolMapper
+            metadata:
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: keycloak-groups-scope-mapper
+              name: {{ $tenant }}-groups-scope-mapper
+            spec:
+              deletionPolicy: Orphan
+              forProvider:
+                realmId: {{ $tenant }}
+                name: groups
+                protocol: openid-connect
+                protocolMapper: oidc-group-membership-mapper
+                clientScopeId: {{ $groupsScopeID }}
+                config:
+                  full.path: "false"
+                  id.token.claim: "true"
+                  access.token.claim: "true"
+                  userinfo.token.claim: "true"
+                  claim.name: groups
               providerConfigRef:
                 name: keycloak
             {{- end }}
