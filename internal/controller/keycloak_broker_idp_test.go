@@ -23,12 +23,35 @@ import (
 
 func TestBuildBrokerIdentityProviderScriptUsesInternalTokenURL(t *testing.T) {
 	script := buildBrokerIdentityProviderScript()
-	if strings.Contains(script, `\"firstBrokerLoginFlowAlias\":`+`"`+firstBrokerLoginFlowAlias) {
-		t.Fatal("broker IdP script must not use Go-quoted alias inside shell JSON")
+
+	// The Job must not write the IdP. tenant-default's IdentityProvider owns it,
+	// and a second writer here is what let this script and the realm script
+	// disagree about which first-broker-login flow a tenant realm used.
+	//
+	// Checked per curl invocation rather than by searching the whole script for
+	// "-X PUT": the flow this Job still builds sets its executions' requirement
+	// with PUT, and that is not the object in question. The instance path is
+	// matched with a trailing quote so /mappers below is not caught by it.
+	for _, inv := range strings.Split(script, "curl ")[1:] {
+		if !strings.Contains(inv, `/identity-provider/instances/kernel"`) {
+			continue
+		}
+		for _, verb := range []string{"PUT", "POST", "DELETE"} {
+			if strings.Contains(inv, "-X "+verb) {
+				t.Fatalf("broker IdP script %ss the kernel IdP — the Composition owns it", verb)
+			}
+		}
 	}
-	if !strings.Contains(script, `\"firstBrokerLoginFlowAlias\":\"`+firstBrokerLoginFlowAlias+`\"`) {
-		t.Fatal("broker IdP script must embed firstBrokerLoginFlowAlias with shell-safe JSON escaping")
+	if strings.Contains(script, `IDP_BODY`) {
+		t.Fatal("broker IdP script must not build an IdP payload")
 	}
+	// The secret was only ever read to put back into that payload; the
+	// Composition takes it from the broker Client's connection secret now.
+	if strings.Contains(script, `client-secret`) {
+		t.Fatal("broker IdP script must not read the broker client secret")
+	}
+	// It must still create the flow the IdP's alias refers to. The alias is a
+	// reference, so Keycloak rejects an IdP naming a flow that does not exist.
 	for _, want := range []string{
 		firstBrokerLoginFlowAlias,
 		`idp-detect-existing-broker-user`,

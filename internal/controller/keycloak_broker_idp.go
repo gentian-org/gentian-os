@@ -30,9 +30,10 @@ import (
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 )
 
-// brokerIdentityProviderVersion bumps when the kernel IdP PUT payload changes so
-// completed jobs are recreated on operator upgrade.
-const brokerIdentityProviderVersion = "8"
+// brokerIdentityProviderVersion bumps when the script changes so completed jobs
+// are recreated on operator upgrade. 9 dropped the kernel IdP write, which
+// tenant-default's IdentityProvider now owns.
+const brokerIdentityProviderVersion = "9"
 
 // firstBrokerLoginFlowAlias is a tenant-realm authentication flow that auto-links
 // kernel IdP logins to pre-provisioned users by email (no confirm/re-auth).
@@ -45,16 +46,25 @@ func tenantBrokerIdPJobName(tenantName string) string {
 	return fmt.Sprintf("keycloak-broker-idp-%s", tenantName)
 }
 
-// buildBrokerIdentityProviderScript updates the kernel OIDC Identity Provider in
-// a tenant realm. Server-side endpoints (token, JWKS, userinfo) use KEYCLOAK_URL
-// so Keycloak does not hairpin through the public id.<kernel> URL during broker
-// code exchange; browser-facing issuer and authorizationUrl stay external.
+// buildBrokerIdentityProviderScript prepares the two things the kernel IdP needs
+// and cannot supply for itself: the tenant-realm authentication flow that its
+// firstBrokerLoginFlowAlias names, and the two gentian_username mappers.
+//
+// It no longer writes the IdP. tenant-default's IdentityProvider owns that
+// object, and this Job writing it too is what let this script and the realm
+// script disagree about which first-broker-login flow a tenant realm used —
+// the realm script setting the built-in flow, this one setting the gentian
+// flow, whichever ran last deciding how the next first-time login behaved.
+//
+// The flow is still created here, and must be: the alias is a reference, so
+// Keycloak rejects an IdP naming a flow that does not exist. On a new tenant
+// the Composition simply retries until this Job has made it.
 func buildBrokerIdentityProviderScript() string {
 	return keycloak.ShellJSONIDExtractor() + fmt.Sprintf(`
 set -eu
 
-if [ -z "${REALM_NAME:-}" ] || [ -z "${KERNEL_REALM:-}" ] || [ -z "${KERNEL_EXTERNAL_URL:-}" ]; then
-  echo "broker IdP update skipped (REALM_NAME, KERNEL_REALM, or KERNEL_EXTERNAL_URL unset)"
+if [ -z "${REALM_NAME:-}" ] || [ -z "${KERNEL_REALM:-}" ]; then
+  echo "broker flow and mappers skipped (REALM_NAME or KERNEL_REALM unset)"
   exit 0
 fi
 
@@ -66,36 +76,26 @@ TOKEN=$(curl -sf --max-time 30 \
   -d "client_id=admin-cli&username=${KEYCLOAK_ADMIN_USERNAME}&password=${KEYCLOAK_ADMIN_PASSWORD}&grant_type=password" \
   | sed 's/.*"access_token":"\([^"]*\)".*/\1/')
 
+# The broker client's Keycloak id, for the protocol mapper below. Its SECRET is
+# no longer read: it was only ever needed to put back into the IdP body, and the
+# Composition takes it from the broker Client's connection secret rather than
+# from anything curling for it.
 BROKER_RESP=$(curl -sf --max-time 30 -H "Authorization: Bearer ${TOKEN}" \
   "${KEYCLOAK_URL}/admin/realms/${KERNEL_REALM}/clients?clientId=${BROKER_CLIENT_ID}")
 %s
-BROKER_SECRET=$(curl -sf --max-time 30 -H "Authorization: Bearer ${TOKEN}" \
-  "${KEYCLOAK_URL}/admin/realms/${KERNEL_REALM}/clients/${BROKER_KC_ID}/client-secret" \
-  | sed 's/.*"value":"\([^"]*\)".*/\1/')
-
 %s
 
+# Read, not written. The IdP belongs to the Composition, but the mapper below
+# hangs off it, so its absence is worth saying plainly rather than failing on a
+# POST to a path that does not exist.
 IDP_HTTP=$(curl -s --max-time 30 -o /dev/null -w "%%{http_code}" -H "Authorization: Bearer ${TOKEN}" \
   "${KEYCLOAK_URL}/admin/realms/${REALM_NAME}/identity-provider/instances/kernel")
 if [ "${IDP_HTTP}" != "200" ]; then
-  echo "ERROR: kernel IdP not found in realm ${REALM_NAME} (HTTP ${IDP_HTTP})" >&2
-  exit 1
-fi
-
-IDP_BODY="{\"alias\":\"kernel\",\"displayName\":\"Gentian SSO\",\"providerId\":\"oidc\",\"enabled\":true,\"trustEmail\":true,\"storeToken\":true,\"firstBrokerLoginFlowAlias\":\"%s\",\"config\":{\"issuer\":\"${KERNEL_EXTERNAL_URL}/realms/${KERNEL_REALM}\",\"authorizationUrl\":\"${KERNEL_EXTERNAL_URL}/realms/${KERNEL_REALM}/protocol/openid-connect/auth\",\"tokenUrl\":\"${KEYCLOAK_URL}/realms/${KERNEL_REALM}/protocol/openid-connect/token\",\"jwksUrl\":\"${KEYCLOAK_URL}/realms/${KERNEL_REALM}/protocol/openid-connect/certs\",\"userInfoUrl\":\"${KEYCLOAK_URL}/realms/${KERNEL_REALM}/protocol/openid-connect/userinfo\",\"logoutUrl\":\"${KERNEL_EXTERNAL_URL}/realms/${KERNEL_REALM}/protocol/openid-connect/logout\",\"backchannelSupported\":\"true\",\"clientId\":\"${BROKER_CLIENT_ID}\",\"clientSecret\":\"${BROKER_SECRET}\",\"syncMode\":\"IMPORT\",\"useJwksUrl\":\"true\",\"validateSignature\":\"true\",\"defaultScope\":\"openid profile email\",\"hideOnLoginPage\":\"true\"}}"
-
-HTTP=$(curl -s --max-time 30 -o /dev/null -w "%%{http_code}" -X PUT \
-  "${KEYCLOAK_URL}/admin/realms/${REALM_NAME}/identity-provider/instances/kernel" \
-  -H "Authorization: Bearer ${TOKEN}" -H "Content-Type: application/json" \
-  -d "${IDP_BODY}")
-if [ "${HTTP}" -ge 200 ] 2>/dev/null && [ "${HTTP}" -lt 300 ] 2>/dev/null; then
-  echo "kernel IdP updated in realm ${REALM_NAME} (HTTP ${HTTP})"
-else
-  echo "ERROR: kernel IdP update for realm ${REALM_NAME} failed (HTTP ${HTTP})" >&2
+  echo "ERROR: kernel IdP not found in realm ${REALM_NAME} (HTTP ${IDP_HTTP}) — the Composition has not created it yet" >&2
   exit 1
 fi
 %s%s
-`, brokerResolveIDShell, buildEnsureFirstBrokerLoginFlowShell(`"${REALM_NAME}"`), firstBrokerLoginFlowAlias,
+`, brokerResolveIDShell, buildEnsureFirstBrokerLoginFlowShell(`"${REALM_NAME}"`),
 		brokerKernelClientUsernameMapperShell, brokerIdPUsernameImporterShell)
 }
 
@@ -140,13 +140,15 @@ if [ -z "${BROKER_KC_ID}" ]; then
 fi
 `
 
-func makeBrokerIdentityProviderJob(tenantName, realmName, kernelRealm, kernelExternalURL string) *batchv1.Job {
+// No kernelExternalURL parameter: it was only ever interpolated into the IdP
+// body's browser-facing endpoints, and the Composition builds those from the
+// kernel domain now.
+func makeBrokerIdentityProviderJob(tenantName, realmName, kernelRealm string) *batchv1.Job {
 	ttl := meta.ProvisioningJobTTLSeconds
 	c := keycloakContainer("broker-idp", buildBrokerIdentityProviderScript())
 	c.Env = append(c.Env,
 		corev1.EnvVar{Name: "REALM_NAME", Value: realmName},
 		corev1.EnvVar{Name: "KERNEL_REALM", Value: kernelRealm},
-		corev1.EnvVar{Name: "KERNEL_EXTERNAL_URL", Value: kernelExternalURL},
 	)
 	return &batchv1.Job{
 		ObjectMeta: metav1.ObjectMeta{

@@ -492,8 +492,22 @@ The general rule: adopting an object written by a Job means checking what the
 provider cannot see, not only what it rejects. §7 covers the rejection case; this
 is the quieter one, because nothing fails — the field simply stops being set.
 
-### Still two writers
+### One writer left
 
-Crossplane is authoritative but not alone: the realm script and the broker-idp
-Job still write this object. They no longer disagree about the flow alias, so
-the flapping is gone, but the duplicated writes remain. Tracked in the roadmap.
+The broker-idp Job no longer writes the IdP. What it still does is the part the
+IdP cannot do for itself: create the tenant-realm authentication flow that
+`firstBrokerLoginFlowAlias` names, and the two `gentian_username` mappers. The
+flow has to stay imperative for now because the alias is a reference — Keycloak
+rejects an IdP naming a flow that does not exist — so on a new tenant the
+Composition retries until the Job has made it.
+
+It also stopped reading the broker client secret. That read existed only to put
+the value back into the IdP body; the Composition takes it from the broker
+Client's connection secret instead, which is what made the object declarable in
+the first place.
+
+The realm script still writes the IdP, and cannot yet stop: the broker-idp Job
+requires the object to exist, and on a new tenant something must create it
+before the Composition can adopt it. Since the script now preserves the existing
+flow alias rather than restating the built-in one, the remaining write is
+duplicated rather than conflicting. Tracked in the roadmap.

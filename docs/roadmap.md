@@ -577,21 +577,23 @@ To close: clear `redirectUris` and `webOrigins` on the `corp` realm client
 action — they are Keycloak's derived default, not stored (`attributes` is
 empty).
 
-### 1.27 Retire the Jobs that still write the kernel IdP
+### 1.27 Retire the realm script's kernel IdP write
 
-`IdentityProvider kernel` is managed by `tenant-default`, but it is not yet the
-only writer. The realm script in `identity_reconciler.go` and the broker-idp Job
-both still write the same object, so Crossplane and the Jobs correct each other
-in turn.
+`IdentityProvider kernel` is managed by `tenant-default`, and the broker-idp Job
+no longer writes it. One writer remains: the realm script in
+`identity_reconciler.go`.
 
-The realm script no longer restates the built-in first-broker-login alias — it
-preserves whatever is in place — so the two no longer disagree about the flow.
-What remains is duplicated work, and a window in which the Jobs' values stand
-until Crossplane next reconciles.
+It cannot simply be deleted. The broker-idp Job requires the IdP to already
+exist and exits non-zero otherwise, and the Composition needs the tenant realm
+before it can create anything in it — so something has to make the object first
+on a brand new tenant. The realm script no longer restates the
+first-broker-login alias, so the two no longer disagree; what is left is a
+duplicated write, not a conflicting one.
 
-The realm script's write cannot simply be deleted: the broker-idp Job requires
-the IdP to already exist and exits non-zero otherwise. Retire the broker-idp
-Job's IdP write first, then the realm script's, leaving creation to Crossplane.
+To close: let the Composition create the IdP rather than adopt one, drop the
+block from the realm script, and drop the broker-idp Job's existence check with
+it. The ordering has to be shown to work on a tenant created from nothing, not
+on `corp`, which has had the object since before any of this.
 
-Note that the composed `Client broker-<tenant>` stays `Observe`-only by design —
-see docs/plans/tenant-composition-cleanup.md §8.
+The composed `Client broker-<tenant>` stays `Observe`-only by design — see
+docs/plans/tenant-composition-cleanup.md §8.
