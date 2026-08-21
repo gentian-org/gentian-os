@@ -193,7 +193,21 @@ export_recovery_kit() {
         fi
         return 1
     fi
-    install -m 0600 "${tmp}" "${out}"
+    # Unguarded before, so a destination whose parent directory does not exist
+    # failed with install(1)'s own raw message — "cannot create regular file
+    # ...: No such file or directory" — and, under this file's set -e, aborted
+    # the whole call right there. That is correct in outcome (no kit written,
+    # nothing recorded as exported) but wrong in every other way: it names the
+    # wrong command, gives no next step, and leaves the encrypted temp file
+    # behind uncleaned. install(1) has no -p; the parent has to exist already.
+    if ! install -m 0600 "${tmp}" "${out}"; then
+        rm -f "${tmp}"
+        error "Could not write ${out}."
+        error "  install(1) failed — the most common reason is that the"
+        error "  directory it lives in does not exist yet. Create it first,"
+        error "  or point --export-recovery-kit at a path that already does."
+        return 1
+    fi
     rm -f "${tmp}"
 
     success "Wrote ${out} (${#present[@]} values, mode 0600, $(_kit_cipher))."
