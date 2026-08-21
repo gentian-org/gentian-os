@@ -397,46 +397,38 @@ docs/plans/tenant-composition-cleanup.md §8.
     resources with the route filters deliberately disabled — the assertion that
     the boundary has actually moved.
 
-### 1.29 Retire the OIDC Pack Job (*)
+### 1.29 Retire the OIDC Pack Job's Bootstraps (*)
 * **Target Domain**: Identity
-* **Done**: the Job's five writes are down to two. app-default composes the
+* **Done**: the Job writes nothing the Composition owns. app-default composes the
   client, its default scopes, the client scope, one `ProtocolMapper` per entry in
-  `pack.mappers` resolved through the catalogue's `mapperTemplates`, and the
-  client `Role`. The Job no longer configures the client, attaches the default
-  scopes, POSTs the mappers or creates the role.
-* **They adopted — the earlier conclusion was wrong.** Setting
-  `crossplane.io/external-name` to a mapper's name fails with "observe failed:
-  external resource does not exist", and that was read as "mappers cannot be
-  adopted". They can. Given the *parent's* real id and no external-name at all,
-  the provider resolves the existing object and records its Keycloak id. Verified
-  on corp: three mappers and one role kept their ids, and no duplicate was
-  created. No delete-and-recreate window was needed.
+  `pack.mappers`, the client `Role`, and the entitlement group's grant of that
+  role as a group `Roles` with `exhaustive: false`. tenant-default composes the
+  groups themselves. The Job's log is four lines, all "already exists".
 
-  The trap underneath it: a Crossplane reference resolves to the referenced
-  resource's external-name. `clientIdRef` works because the composed Client is
-  managed, so the provider had normalised its external-name to the Keycloak id.
-  `clientScopeIdRef` did not, because the ClientScope is adopted by name and
-  Observe-only, so the ref handed the provider a name where the API path needs a
-  UUID — a 404 on /client-scopes/<name>/protocol-mappers/models. The mappers take
-  the scope's observed id instead.
-
-  One config key had to be matched first: `buildOIDCPackScript` defaults
-  `multivalued` to false for attribute mappers while the catalogue templates omit
-  it, so adopting stripped it from two mappers. Keycloak reads its absence the
-  same way, but the two writers would each have removed what the other set on
-  every pass. The Composition now defaults it identically.
-* **What is left in the Job**: the client scope create, the client create, and
-  the group-to-role mapping. The first two are bootstraps — the Job runs in the
-  DataPlane stage while the App claim that composes them is created in
-  AppsAndEdge, the stage after. The mapping needs the entitlement group's id, and
-  groups are still made by the gentian-groups Job, so it moves when they do.
+  Every one of them adopted rather than being recreated — verified on corp, ids
+  unchanged throughout: three mappers, one client role, five groups, and the
+  role-mapping still on the group.
+* **The rule that made it possible**: a Keycloak object whose id is a UUID cannot
+  be adopted from `crossplane.io/external-name`, but it does not need to be. Given
+  the *parent's* real id and no external-name at all, the provider resolves the
+  existing object and records its id. Only the parent's id has to be right — and a
+  Crossplane reference yields the parent's external-name, which is the id only
+  when that parent is managed. The ClientScope is adopted by name and
+  Observe-only, so its mappers take its observed id instead of a ref.
+* **What is left**: the Job creates the client scope and the client when absent,
+  and deletes mappers left corrupt by a much older failed run. The creates are
+  bootstraps — the Job runs in the DataPlane stage while the App claim that
+  composes them is created in AppsAndEdge, the stage after. Moving that ordering
+  is what retires the Job; the cleanup has no declarative form and would move to
+  a repair path or go.
 * **Backlog Items**:
   - `[x]` Stop the Job configuring the client and attaching its default scopes.
-  - `[x]` Compose the client scope, adopted by name.
-  - `[x]` Compose the protocol mappers and the client role; stop the Job making
-    them.
-  - `[ ]` Compose the entitlement group, then the group-to-role mapping, and
-    retire the Job with them.
+  - `[x]` Compose the client scope, the mappers, the client role and the
+    group-to-role mapping; stop the Job making any of them.
+  - `[ ]` Create the client and its scope from the Composition, so the Job's
+    bootstraps can go — which means the App claim existing before the identity
+    stage waits on the Job.
+  - `[ ]` Decide where the corrupt-mapper cleanup belongs.
 ### 1.30 Trim the Realm Script to What a Realm Cannot Express (*)
 * **Target Domain**: Identity
 * **Done**: `tenant-default` composes a managed `Realm` and it is the tenant
