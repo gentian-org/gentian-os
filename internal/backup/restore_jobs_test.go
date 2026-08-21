@@ -247,7 +247,10 @@ func TestPostgresRestoreNormalisesOwnershipBeforeLoading(t *testing.T) {
 		"OWNER TO",
 		`\gexec`,
 		"pg_restore --role=",
-		"deptype = 'e'", // extension-owned objects stay with their extension
+		// Extension members, and serial/identity sequences, are owned by
+		// something else that owns them: skipping them is what lets the rest
+		// of the normaliser run to completion.
+		"deptype IN ('a', 'i', 'e')",
 	} {
 		if !strings.Contains(script, want) {
 			t.Errorf("script missing %q:\n%s", want, script)
