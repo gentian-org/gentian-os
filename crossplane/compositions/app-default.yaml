@@ -978,46 +978,23 @@ spec:
                 description: {{ default "" $pack.scopeDescription | quote }}
               providerConfigRef:
                 name: keycloak
-            {{- range $mapperName := (default list $pack.mappers) }}
-            {{- $tmpl := dig $mapperName dict $oidcMapperTemplates }}
-            {{- if $tmpl.protocolMapper }}
-            {{- /* keycloakName exists because some catalogues name a mapper
-                 differently in Keycloak than in the pack — "full name" against
-                 full_name. The Keycloak name is what identifies the object. */}}
-            {{- $kcName := default $mapperName $tmpl.keycloakName }}
-            {{- /* Mapper names are Keycloak's, not Kubernetes': gentian_useruuid
-                 carries an underscore and some catalogues use "full name" with a
-                 space, neither of which is a valid RFC 1123 object name. Only the
-                 object name is sanitised — external-name and forProvider.name stay
-                 exactly what Keycloak calls it, because that is what identifies
-                 the mapper. */}}
-            {{- $slug := $mapperName | lower | replace "_" "-" | replace " " "-" | replace "." "-" }}
-            ---
-            apiVersion: client.keycloak.crossplane.io/v1alpha1
-            kind: ProtocolMapper
-            metadata:
-              annotations:
-                crossplane.io/external-name: {{ $kcName }}
-                gotemplating.fn.crossplane.io/composition-resource-name: {{ $app }}-scope-mapper-{{ $slug }}
-              name: {{ $tenant }}-{{ $app }}-scope-mapper-{{ $slug }}
-            spec:
-              deletionPolicy: Orphan
-              managementPolicies: ["Observe"]
-              forProvider:
-                realmId: {{ $tenant }}
-                name: {{ $kcName | quote }}
-                protocol: openid-connect
-                protocolMapper: {{ $tmpl.protocolMapper | quote }}
-                {{- /* A ref rather than the scope's id: the id is Keycloak's and
-                     is not known until the scope above is observed. */}}
-                clientScopeIdRef:
-                  name: {{ $tenant }}-{{ $app }}-keycloak-client-scope
-                config:
-                  {{ toYaml (default dict $tmpl.config) | nindent 18 }}
-              providerConfigRef:
-                name: keycloak
-            {{- end }}
-            {{- end }}
+            {{- /* No ProtocolMapper resources here, though the pack names them and
+                 the catalogue defines them in full.
+
+                 A mapper is identified by its UUID, not its name: adopting one
+                 with crossplane.io/external-name set to "email" fails with
+                 "observe failed: external resource does not exist", where the
+                 ClientScope above adopts from its name without trouble. The
+                 UUID cannot be templated, so these cannot be adopted.
+
+                 Letting Crossplane create them instead would add a second mapper
+                 of the same name to a scope that already carries the Job's, and
+                 two mappers emitting the same claim is not something to try on a
+                 live login path.
+
+                 So the mappers move when the Job stops creating them, not before
+                 — a create-side migration rather than an adoption. Tracked in the
+                 roadmap. */}}
             {{- end }}
             {{- end }}
 

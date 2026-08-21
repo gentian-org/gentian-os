@@ -7,7 +7,7 @@ status:
   conditions:
   - lastTransitionTime: "2024-01-01T00:00:00Z"
     message: 'Unready resources: demo-app-externalsecret, demo-app-keycloak-client,
-      demo-app-keycloak-client-scope, and 6 more'
+      demo-app-keycloak-client-scope, and 5 more'
     reason: Creating
     status: "False"
     type: Ready
@@ -356,40 +356,3 @@ spec:
   providerConfigRef:
     name: kubernetes
   rollbackLimit: 3
----
-apiVersion: client.keycloak.crossplane.io/v1alpha1
-kind: ProtocolMapper
-metadata:
-  annotations:
-    crossplane.io/composition-resource-name: demo-app-scope-mapper-gentian-useruuid
-    crossplane.io/external-name: gentian_useruuid
-  labels:
-    crossplane.io/composite: render-demo-app-fixture
-  name: demo-demo-app-scope-mapper-gentian-useruuid
-  ownerReferences:
-  - apiVersion: gentianos.io/v1alpha1
-    blockOwnerDeletion: true
-    controller: true
-    kind: XApp
-    name: render-demo-app-fixture
-    uid: ""
-spec:
-  deletionPolicy: Orphan
-  forProvider:
-    clientScopeIdRef:
-      name: demo-demo-app-keycloak-client-scope
-    config:
-      access.token.claim: "true"
-      claim.name: gentian_useruuid
-      id.token.claim: "true"
-      jsonType.label: String
-      user.attribute: entryUUID
-      userinfo.token.claim: "true"
-    name: gentian_useruuid
-    protocol: openid-connect
-    protocolMapper: oidc-usermodel-attribute-mapper
-    realmId: demo
-  managementPolicies:
-  - Observe
-  providerConfigRef:
-    name: keycloak
