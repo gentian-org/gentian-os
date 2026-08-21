@@ -423,3 +423,60 @@ The practical consequences for the remaining migrations:
 - When the live object cannot be made legal without a behaviour change, park it
   `Observe`-only with the reason recorded, rather than leaving a resource that
   retries a doomed update forever.
+
+## 8. The broker group
+
+Converted so far, and what each step established.
+
+### What is declared
+
+| Resource | Policy | Why |
+|---|---|---|
+| `Client broker-<tenant>` (kernel realm) | `Observe` | `writeConnectionSecretToRef` republishes the existing secret without rotating it. That is the whole point: it is what lets the IdP take credentials from a Secret instead of a Job curling the admin API for them. Managing it would put the secret under the provider's control, and a rotation would break brokered login for as long as the IdP still held the old value. |
+| `IdentityProvider kernel` (tenant realm) | `Observe` | Adopted and verified against the live object. Not yet managed — see below. |
+
+Both are gated on `identity.kernelRealm` and `identity.internalUrl` being
+present, and stay unrendered rather than half-configured when they are not.
+
+### What unblocked it
+
+The IdP's endpoints need Keycloak's in-cluster URL, which lived only in the
+`keycloak-admin` Secret. Compositions cannot read Secrets, so the broker could
+not be declared at all. It is now published through the claim as
+`identity.internalUrl`, deliberately distinct from `gentian-kernel-services`'
+`KEYCLOAK_INTERNAL_URL`, which is documented as a base with **no** path. The two
+live values already disagree on exactly that `/auth` suffix, so collapsing them
+would hand one consumer the other's contract.
+
+### Two writers, one field
+
+`identity_reconciler.go`'s realm script and the broker-idp Job both write this
+IdP, and they disagreed about `firstBrokerLoginFlowAlias`: the realm script set
+the built-in `first broker login`, the Job sets the gentian flow. The Job runs
+later, so the gentian flow is what is live — but a realm re-run would silently
+put every tenant's first login back on a flow that stops to ask the user to
+confirm the link, instead of matching them to the account already provisioned
+for them by email.
+
+The realm script now preserves whatever alias is already in place and uses the
+built-in one only to bootstrap an IdP that does not exist yet. It cannot simply
+stop writing the IdP: the broker-idp Job requires it to already exist and exits
+non-zero otherwise.
+
+### What blocks full management
+
+The provider does not observe three keys the live object carries:
+`useJwksUrl`, `defaultScope` and `updateProfileFirstLoginMode`. They are absent
+from `status.atProvider` and from `extraConfig`, but present in the object read
+straight from the Admin API.
+
+That matters because §7's rule cuts both ways. An unobserved field is one the
+provider may not preserve on write, and these three are not cosmetic:
+`useJwksUrl` is what makes signature validation use the JWKS endpoint, and
+`defaultScope` is `openid profile email` — dropping it to the provider's default
+of `openid` costs every brokered login its name and email claims.
+
+So promoting to management means declaring all three explicitly and confirming
+against the Admin API that a write preserved them. It is a change to the live
+login path of every tenant user, on a cluster with no staging equivalent, and it
+is the one step here that cannot be verified before making it.

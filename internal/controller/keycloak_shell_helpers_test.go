@@ -32,8 +32,19 @@ func TestBuildRealmScript_UsesKeycloakJSONIDExtractor(t *testing.T) {
 	if !strings.Contains(script, "SSO Identity Brokering") {
 		t.Fatal("expected kernel SSO brokering block in realm script")
 	}
-	if !strings.Contains(script, `\"firstBrokerLoginFlowAlias\":\"first broker login\"`) {
-		t.Fatal("realm script must use built-in first broker login flow for initial IdP registration")
+	// The built-in flow is the bootstrap value only: it registers the IdP the
+	// first time, before the broker-idp Job has installed the gentian flow. It
+	// must not be restated on the update path, where it would revert a realm
+	// that is already on first-broker-login-gentian back to a flow that stops
+	// to ask the user to confirm the link.
+	if !strings.Contains(script, `FBL_ALIAS="first broker login"`) {
+		t.Fatal("realm script must fall back to the built-in flow when no IdP exists yet")
+	}
+	if !strings.Contains(script, `\"firstBrokerLoginFlowAlias\":\"${FBL_ALIAS}\"`) {
+		t.Fatal("realm script must send the preserved alias, not a hard-coded one")
+	}
+	if strings.Contains(script, `\"firstBrokerLoginFlowAlias\":\"first broker login\"`) {
+		t.Fatal("realm script must not hard-code the built-in flow into the IdP body")
 	}
 	if strings.Contains(script, firstBrokerLoginFlowAlias) {
 		t.Fatal("realm script must register kernel IdP with built-in first broker login flow only")

@@ -541,3 +541,27 @@ To close: clear `redirectUris` and `webOrigins` on the `corp` realm client
 `crossplane/compositions/tenant-default.yaml`. The post-logout URIs need no
 action — they are Keycloak's derived default, not stored (`attributes` is
 empty).
+
+### 1.27 Manage the kernel IdP, not just observe it
+
+`IdentityProvider kernel` and `Client broker-<tenant>` are adopted `Observe`-only
+in `tenant-default`. The client stays that way deliberately — see
+docs/plans/tenant-composition-cleanup.md §8 — but the IdP should be managed, so
+that the object has exactly one writer.
+
+Blocking it: provider-keycloak does not observe `useJwksUrl`, `defaultScope` or
+`updateProfileFirstLoginMode`. All three are absent from `status.atProvider` and
+from `extraConfig`, and all three are set on the live object. An unobserved field
+is one a write may not preserve, and these are not cosmetic — `useJwksUrl` is
+what points signature validation at the JWKS endpoint, and `defaultScope` is
+`openid profile email`, where the provider's default is `openid` alone.
+
+To close: declare all three (the latter two via `extraConfig`), promote to
+`["Observe", "Create", "Update", "Delete"]`, then read the IdP back through the
+Admin API and confirm the three keys survived. Then remove the IdP write from
+the broker-idp Job so there is a single writer. The realm script's write cannot
+be removed outright — the Job requires the IdP to already exist — but it now
+preserves the existing flow alias rather than restating the built-in one.
+
+This touches the live login path of every tenant user on a cluster with no
+staging equivalent, so it wants a deliberate window rather than a drive-by.
