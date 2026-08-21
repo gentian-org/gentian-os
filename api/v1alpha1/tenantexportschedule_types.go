@@ -59,6 +59,29 @@ type TenantExportScheduleSpec struct {
 	// +optional
 	// +kubebuilder:validation:Minimum=0
 	KeepLast int32 `json:"keepLast,omitempty"`
+
+	// Retention spreads what survives across widening intervals — daily,
+	// weekly, monthly, yearly — so history reaches back months without keeping
+	// a bundle a night. Set, it replaces KeepLast entirely, carrying its own
+	// keepLast field; unset, KeepLast alone decides, which is what every
+	// schedule written before this field did.
+	// +optional
+	Retention *BackupRetention `json:"retention,omitempty"`
+}
+
+// EffectiveRetention resolves the two ways a schedule can state retention.
+//
+// KeepLast predates the tiers and remains the whole answer for schedules that
+// only ever said "keep seven". Reading one or the other here means the sweep
+// has a single shape to reason about.
+func (s *TenantExportScheduleSpec) EffectiveRetention() BackupRetention {
+	if s == nil {
+		return BackupRetention{}
+	}
+	if s.Retention != nil {
+		return *s.Retention
+	}
+	return BackupRetention{KeepLast: s.KeepLast}
 }
 
 // TenantExportScheduleStatus reports what the schedule has done.

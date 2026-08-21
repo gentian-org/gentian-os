@@ -246,6 +246,55 @@ func TestRetentionKeepsTheNewestAndSparesRunningExports(t *testing.T) {
 	}
 }
 
+// The tiers reach where keepLast cannot. Thirty nightly exports with
+// keepLast: 2 alone would leave two days of history; adding a monthly tier
+// keeps a bundle from the older month as well, which is the whole reason the
+// tiers exist.
+func TestScheduleRetentionTiersKeepOlderHistory(t *testing.T) {
+	schedule := nightly("nightly")
+	schedule.Spec.Retention = &gentianov1alpha1.BackupRetention{KeepLast: 2, KeepMonthly: 2}
+
+	objs := []client.Object{schedule}
+	// One in July, three in August.
+	for i, at := range []time.Time{
+		time.Date(2026, 7, 20, 3, 0, 0, 0, time.UTC),
+		time.Date(2026, 8, 11, 3, 0, 0, 0, time.UTC),
+		time.Date(2026, 8, 12, 3, 0, 0, 0, time.UTC),
+		time.Date(2026, 8, 13, 3, 0, 0, 0, time.UTC),
+	} {
+		stamp := metav1.Time{Time: at}
+		objs = append(objs, &gentianov1alpha1.TenantExport{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:              "nightly-" + string(rune('a'+i)),
+				Namespace:         "tenant-demo",
+				Labels:            map[string]string{scheduleLabel: "nightly"},
+				CreationTimestamp: stamp,
+			},
+			Status: gentianov1alpha1.TenantExportStatus{
+				Phase:       gentianov1alpha1.TenantExportPhaseReady,
+				CompletedAt: &stamp,
+			},
+		})
+	}
+
+	r := scheduleReconciler(t, time.Date(2026, 8, 14, 3, 0, 30, 0, time.UTC), objs...)
+	reconcileSchedule(t, r, "nightly")
+
+	surviving := map[string]bool{}
+	for _, export := range exportsIn(t, r) {
+		surviving[export.Name] = true
+	}
+	if !surviving["nightly-a"] {
+		t.Error("the July export was deleted; the monthly tier should have kept it")
+	}
+	if !surviving["nightly-d"] || !surviving["nightly-c"] {
+		t.Error("keepLast did not retain the two most recent")
+	}
+	if surviving["nightly-b"] {
+		t.Error("11 August survived; no rule keeps it once c and d cover August")
+	}
+}
+
 func TestRetentionOffKeepsEverything(t *testing.T) {
 	schedule := nightly("nightly")
 	objs := []client.Object{schedule}

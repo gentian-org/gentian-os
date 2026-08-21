@@ -42,6 +42,11 @@ const (
 	// convention: a second would leave "which destination applies" answerable
 	// two ways.
 	clusterBackupPolicy = "default"
+
+	// managedScheduleName is the one TenantExportSchedule this operator owns
+	// per tenant. Named distinctly so a schedule an admin wrote by hand is
+	// never mistaken for one derived from policy, and never deleted by it.
+	managedScheduleName = "policy"
 )
 
 // externalSecretGVK is used unstructured rather than through ESO's Go types,
@@ -111,8 +116,131 @@ func (r *BackupPolicyReconciler) Reconcile(ctx context.Context, req ctrl.Request
 		message = fmt.Sprintf("backups write to %s/%s", eff.Endpoint, eff.Bucket)
 	}
 
+	if err := r.reconcileSchedules(ctx, policy); err != nil {
+		return r.failPolicy(ctx, policy, "ScheduleFailed", err.Error())
+	}
+
 	setPolicyCondition(policy, metav1.ConditionTrue, "Accepted", message)
 	return ctrl.Result{}, r.persistPolicy(ctx, policy)
+}
+
+// reconcileSchedules turns the resolved schedule into TenantExportSchedules.
+//
+// A cluster policy fans out to every tenant, because a default nobody has to
+// restate per tenant is the whole point of having one — a cluster that sets
+// "nightly" and then requires a schedule written by hand for each tenant has
+// only documented an intention.
+func (r *BackupPolicyReconciler) reconcileSchedules(
+	ctx context.Context,
+	policy *gentianov1alpha1.BackupPolicy,
+) error {
+	if policy.Spec.Scope == "tenant" {
+		tenant := &gentianov1alpha1.Tenant{}
+		if err := r.Get(ctx, types.NamespacedName{Name: policy.Spec.Tenant}, tenant); err != nil {
+			return client.IgnoreNotFound(err)
+		}
+		return r.ensureManagedSchedule(ctx, tenant)
+	}
+
+	tenants := &gentianov1alpha1.TenantList{}
+	if err := r.List(ctx, tenants); err != nil {
+		return fmt.Errorf("list tenants for schedule fan-out: %w", err)
+	}
+	for i := range tenants.Items {
+		if tenants.Items[i].DeletionTimestamp != nil {
+			continue
+		}
+		if err := r.ensureManagedSchedule(ctx, &tenants.Items[i]); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// ensureManagedSchedule creates, updates or removes the one schedule this
+// operator owns for a tenant.
+//
+// Owned by name and label, and deliberately not the only schedule a tenant may
+// have: an admin who wrote their own TenantExportSchedule meant it, and a
+// policy that deleted it would be overriding a more specific instruction with
+// a more general one.
+func (r *BackupPolicyReconciler) ensureManagedSchedule(
+	ctx context.Context,
+	tenant *gentianov1alpha1.Tenant,
+) error {
+	eff, err := r.effectiveForTenant(ctx, tenant)
+	if err != nil {
+		return err
+	}
+
+	name := managedScheduleName
+	namespace := backup.TenantNamespace(tenant.Name)
+	existing := &gentianov1alpha1.TenantExportSchedule{}
+	getErr := r.Get(ctx, types.NamespacedName{Name: name, Namespace: namespace}, existing)
+
+	if eff.Schedule == "" {
+		// No schedule in force: remove the one we manage, and leave any the
+		// tenant wrote alone.
+		if getErr == nil {
+			return r.Delete(ctx, existing)
+		}
+		return client.IgnoreNotFound(getErr)
+	}
+
+	retention := eff.Retention
+	desired := &gentianov1alpha1.TenantExportSchedule{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      name,
+			Namespace: namespace,
+			Labels: map[string]string{
+				tenantLabel:    tenant.Name,
+				managedByLabel: managedByValue,
+			},
+		},
+		Spec: gentianov1alpha1.TenantExportScheduleSpec{
+			Schedule:  eff.Schedule,
+			Retention: &retention,
+		},
+	}
+
+	switch {
+	case apierrors.IsNotFound(getErr):
+		if err := r.Create(ctx, desired); err != nil && !apierrors.IsAlreadyExists(err) {
+			return fmt.Errorf("create managed schedule for %s: %w", tenant.Name, err)
+		}
+		return nil
+	case getErr != nil:
+		return getErr
+	}
+	existing.Spec.Schedule = desired.Spec.Schedule
+	existing.Spec.Retention = desired.Spec.Retention
+	existing.Labels = desired.Labels
+	return r.Update(ctx, existing)
+}
+
+// effectiveForTenant resolves the cluster policy against one tenant's own.
+func (r *BackupPolicyReconciler) effectiveForTenant(
+	ctx context.Context,
+	tenant *gentianov1alpha1.Tenant,
+) (backup.Effective, error) {
+	cluster := &gentianov1alpha1.BackupPolicy{}
+	if err := r.Get(ctx, types.NamespacedName{Name: clusterBackupPolicy}, cluster); err != nil {
+		if !apierrors.IsNotFound(err) {
+			return backup.Effective{}, err
+		}
+		cluster = nil
+	}
+	override := &gentianov1alpha1.BackupPolicy{}
+	if err := r.Get(ctx, types.NamespacedName{Name: tenant.Name}, override); err != nil {
+		if !apierrors.IsNotFound(err) {
+			return backup.Effective{}, err
+		}
+		override = nil
+	}
+	if override != nil && (override.Spec.Scope != "tenant" || override.Spec.Tenant != tenant.Name) {
+		override = nil
+	}
+	return backup.ResolveEffective(tenant, cluster, override)
 }
 
 // resolve merges this policy with the cluster default, when it is not itself

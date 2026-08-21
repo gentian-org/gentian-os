@@ -31,6 +31,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
+	"github.com/gentian-org/gentian-os/internal/backup"
 )
 
 const (
@@ -193,28 +194,38 @@ func (r *TenantExportScheduleReconciler) expire(
 	schedule *gentianov1alpha1.TenantExportSchedule,
 	exports []gentianov1alpha1.TenantExport,
 ) error {
-	if schedule.Spec.KeepLast <= 0 {
+	retention := schedule.Spec.EffectiveRetention()
+	if !retention.IsSet() {
 		return nil
 	}
 
-	var finished []gentianov1alpha1.TenantExport
-	for _, export := range exports {
-		if export.IsTerminal() {
-			finished = append(finished, export)
+	// Only finished exports are candidates. A running one has no completion
+	// time to place in a period, and deleting it would abort a capture that a
+	// tenant is waiting on.
+	byName := make(map[string]*gentianov1alpha1.TenantExport, len(exports))
+	var candidates []backup.Candidate
+	for i := range exports {
+		export := &exports[i]
+		if !export.IsTerminal() {
+			continue
 		}
-	}
-	if int32(len(finished)) <= schedule.Spec.KeepLast {
-		return nil
+		byName[export.Name] = export
+		// CompletedAt when it exists, creation otherwise: an export that
+		// failed before finishing still occupies the night it ran.
+		at := export.CreationTimestamp.Time
+		if export.Status.CompletedAt != nil {
+			at = export.Status.CompletedAt.Time
+		}
+		candidates = append(candidates, backup.Candidate{Name: export.Name, FinishedAt: at})
 	}
 
-	sort.Slice(finished, func(i, j int) bool {
-		return finished[i].CreationTimestamp.Before(&finished[j].CreationTimestamp)
-	})
-
-	for i := 0; i < len(finished)-int(schedule.Spec.KeepLast); i++ {
-		victim := finished[i]
-		if err := r.Delete(ctx, &victim); err != nil && !apierrors.IsNotFound(err) {
-			return fmt.Errorf("expire export %s: %w", victim.Name, err)
+	for _, name := range backup.SelectForDeletion(candidates, retention, time.Now().UTC()) {
+		victim := byName[name]
+		if victim == nil {
+			continue
+		}
+		if err := r.Delete(ctx, victim); err != nil && !apierrors.IsNotFound(err) {
+			return fmt.Errorf("expire export %s: %w", name, err)
 		}
 	}
 	return nil

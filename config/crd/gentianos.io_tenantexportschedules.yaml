@@ -126,6 +126,44 @@ spec:
                 format: int32
                 minimum: 0
                 type: integer
+              retention:
+                description: |-
+                  Retention spreads what survives across widening intervals — daily,
+                  weekly, monthly, yearly — so history reaches back months without keeping
+                  a bundle a night. Set, it replaces KeepLast entirely, carrying its own
+                  keepLast field; unset, KeepLast alone decides, which is what every
+                  schedule written before this field did.
+                properties:
+                  keepDaily:
+                    description: |-
+                      KeepDaily, KeepWeekly, KeepMonthly and KeepYearly each retain the most
+                      recent export within that many distinct periods. A bundle kept by any
+                      tier survives; the tiers are a union, not a sequence.
+                    format: int32
+                    minimum: 0
+                    type: integer
+                  keepLast:
+                    description: |-
+                      KeepLast retains this many most recent finished exports regardless of
+                      age. Zero relies entirely on the tiers below; with no tiers either,
+                      nothing is deleted — a decision rather than a default, and the right one
+                      only when something else prunes.
+                    format: int32
+                    minimum: 0
+                    type: integer
+                  keepMonthly:
+                    format: int32
+                    minimum: 0
+                    type: integer
+                  keepWeekly:
+                    format: int32
+                    minimum: 0
+                    type: integer
+                  keepYearly:
+                    format: int32
+                    minimum: 0
+                    type: integer
+                type: object
               schedule:
                 description: |-
                   Schedule is a five-field cron expression, interpreted in UTC.
