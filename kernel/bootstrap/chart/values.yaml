@@ -19,10 +19,6 @@ uiBranch: develop
 portalImageTag: develop
 cluster: ""
 
-# The app catalogue: where profile bundles come from.
-appsRepo: https://github.com/gentian-org/gentian-apps
-appsBranch: main
-
 # Who hosts the zone, for external-dns. An entry in kernel/platforms.yaml,
 # which is also where cert-manager's DNS-01 solver comes from — one answer, two
 # consumers. "none" emits no external-dns Application at all.

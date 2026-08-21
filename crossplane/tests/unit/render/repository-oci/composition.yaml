@@ -203,6 +203,9 @@ spec:
               artefacts:
                 - argocd-repo-{{ $name }}
                 - appproject-source-{{ $name }}
+                {{- if and $isGit (eq $spec.role "apps") }}
+                - catalogue-{{ $name }}
+                {{- end }}
               {{- else if $satisfied }}
               credentialMessage: "credential present at {{ $cred.vaultPath }}"
               artefacts:
@@ -210,6 +213,9 @@ spec:
                 - credprobe-{{ $name }}
                 - argocd-repo-{{ $name }}
                 - appproject-source-{{ $name }}
+                {{- if and $isGit (eq $spec.role "apps") }}
+                - catalogue-{{ $name }}
+                {{- end }}
               {{- else }}
               credentialMessage: >-
                 requirement {{ $name }} is unsatisfied: no value at
@@ -318,6 +324,100 @@ spec:
                       - {{ $url | quote }}
               providerConfigRef:
                 name: kubernetes
+
+            {{- if and $isGit (eq $spec.role "apps") }}
+            ---
+            # role: apps on a git repository composes the app catalogue: an
+            # ApplicationSet syncing profile bundles (AppProfile + optional
+            # composition.yaml, customizations/, assets/) from it. The schema
+            # already promises this is additive — "a private catalogue
+            # alongside the cluster's" — so every such repository gets its own
+            # ApplicationSet rather than one hardcoded source. The cluster's
+            # default catalogue is just the first claim of this shape;
+            # deleting any of them removes the Applications, and so the
+            # AppProfiles, it owns.
+            #
+            # A **files** generator (not directories) because gentian-apps
+            # groups profiles at mixed depth — singletons at
+            # profiles/<family>/<name>/, families with addons at
+            # profiles/<family>/{base,addons,packages}/<name>/. Matching a
+            # marker file rather than a fixed directory depth supports both
+            # without an exclude-list of "known family folders".
+            #
+            # Naming Applications from the AppProfile CR (.metadata.name)
+            # rather than the source path matters: AppProfile is
+            # cluster-scoped, so metadata.name is globally unique by
+            # definition, whereas leaf directory names are not —
+            # profiles/odoo/addons/crm-ce and a future
+            # profiles/foo/addons/crm-ce would both basename to "crm-ce".
+            apiVersion: kubernetes.crossplane.io/v1alpha2
+            kind: Object
+            metadata:
+              annotations:
+                {{ setResourceNameAnnotation (printf "catalogue-%s" $name) }}
+            spec:
+              forProvider:
+                manifest:
+                  apiVersion: argoproj.io/v1alpha1
+                  kind: ApplicationSet
+                  metadata:
+                    name: catalogue-{{ $name }}
+                    namespace: argocd
+                    finalizers:
+                      - resources-finalizer.argocd.argoproj.io
+                  spec:
+                    goTemplate: true
+                    goTemplateOptions: ["missingkey=error"]
+                    generators:
+                      - git:
+                          repoURL: {{ $url | quote }}
+                          revision: {{ $spec.branch | quote }}
+                          files:
+                            - path: profiles/**/profile.yaml
+                    template:
+                      metadata:
+                        name: 'catalogue-{{ `{{ .metadata.name }}` }}'
+                        finalizers:
+                          - resources-finalizer.argocd.argoproj.io
+                      spec:
+                        project: gentian
+                        source:
+                          repoURL: {{ $url | quote }}
+                          targetRevision: {{ $spec.branch | quote }}
+                          path: '{{ `{{ .path.path }}` }}'
+                        destination:
+                          server: https://kubernetes.default.svc
+                          namespace: gentian-system
+                        # Only ever list fields the API server *adds by
+                        # itself*, i.e. fields with a CRD default — never one
+                        # a profile is meant to set.
+                        # spec.kernelRequirements.database.allowDynamicDatabaseCreation
+                        # was in this list once: it has no CRD default, Argo
+                        # stopped seeing a diff and reported Synced, and the
+                        # value never reached the cluster — creating a
+                        # database failed with "permission denied".
+                        ignoreDifferences:
+                          - group: gentianos.io
+                            kind: AppProfile
+                            jsonPointers:
+                              - /metadata/annotations/argocd.argoproj.io~1tracking-id
+                          - group: gentianos.io
+                            kind: AppProfile
+                            jqPathExpressions:
+                              - .spec.ingress.clusterIssuer
+                              - .spec.additionalIngresses[]?.clusterIssuer
+                              - .spec.browserProxy[]?.authMode
+                              - .spec.browserProxy[]?.stripPrefix
+                        syncPolicy:
+                          automated:
+                            prune: true
+                            selfHeal: true
+                          syncOptions:
+                            - CreateNamespace=false
+                            - ServerSideApply=true
+              providerConfigRef:
+                name: kubernetes
+            {{- end }}
 
             {{- if and $isOci $hasCred }}
             ---

@@ -1,0 +1,160 @@
+---
+apiVersion: gentianos.io/v1alpha1
+kind: XRepository
+metadata:
+  name: gentian-apps
+status:
+  artefacts:
+  - argocd-repo-gentian-apps
+  - appproject-source-gentian-apps
+  - catalogue-gentian-apps
+  conditions:
+  - lastTransitionTime: "2024-01-01T00:00:00Z"
+    message: 'Unready resources: appproject-source-gentian-apps, argocd-repo-gentian-apps,
+      and catalogue-gentian-apps'
+    reason: Creating
+    status: "False"
+    type: Ready
+  credentialMessage: no credential required for this repository
+  credentialSatisfied: true
+---
+apiVersion: kubernetes.crossplane.io/v1alpha2
+kind: Object
+metadata:
+  annotations:
+    crossplane.io/composition-resource-name: appproject-source-gentian-apps
+  generateName: gentian-apps-
+  labels:
+    crossplane.io/claim-name: gentian-apps
+    crossplane.io/claim-namespace: crossplane-system
+    crossplane.io/composite: gentian-apps
+  ownerReferences:
+  - apiVersion: gentianos.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XRepository
+    name: gentian-apps
+    uid: ""
+spec:
+  forProvider:
+    manifest:
+      apiVersion: argoproj.io/v1alpha1
+      kind: AppProject
+      metadata:
+        name: gentianos-tenants
+        namespace: argocd
+      spec:
+        sourceRepos:
+        - https://github.com/gentian-org/gentian-apps
+  managementPolicies:
+  - Observe
+  - Create
+  - Update
+  providerConfigRef:
+    name: kubernetes
+---
+apiVersion: kubernetes.crossplane.io/v1alpha2
+kind: Object
+metadata:
+  annotations:
+    crossplane.io/composition-resource-name: argocd-repo-gentian-apps
+  generateName: gentian-apps-
+  labels:
+    crossplane.io/claim-name: gentian-apps
+    crossplane.io/claim-namespace: crossplane-system
+    crossplane.io/composite: gentian-apps
+  ownerReferences:
+  - apiVersion: gentianos.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XRepository
+    name: gentian-apps
+    uid: ""
+spec:
+  forProvider:
+    manifest:
+      apiVersion: v1
+      kind: Secret
+      metadata:
+        labels:
+          argocd.argoproj.io/secret-type: repository
+        name: repo-gentian-apps
+        namespace: argocd
+      stringData:
+        type: git
+        url: https://github.com/gentian-org/gentian-apps
+  providerConfigRef:
+    name: kubernetes
+---
+apiVersion: kubernetes.crossplane.io/v1alpha2
+kind: Object
+metadata:
+  annotations:
+    crossplane.io/composition-resource-name: catalogue-gentian-apps
+  generateName: gentian-apps-
+  labels:
+    crossplane.io/claim-name: gentian-apps
+    crossplane.io/claim-namespace: crossplane-system
+    crossplane.io/composite: gentian-apps
+  ownerReferences:
+  - apiVersion: gentianos.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XRepository
+    name: gentian-apps
+    uid: ""
+spec:
+  forProvider:
+    manifest:
+      apiVersion: argoproj.io/v1alpha1
+      kind: ApplicationSet
+      metadata:
+        finalizers:
+        - resources-finalizer.argocd.argoproj.io
+        name: catalogue-gentian-apps
+        namespace: argocd
+      spec:
+        generators:
+        - git:
+            files:
+            - path: profiles/**/profile.yaml
+            repoURL: https://github.com/gentian-org/gentian-apps
+            revision: main
+        goTemplate: true
+        goTemplateOptions:
+        - missingkey=error
+        template:
+          metadata:
+            finalizers:
+            - resources-finalizer.argocd.argoproj.io
+            name: catalogue-{{ .metadata.name }}
+          spec:
+            destination:
+              namespace: gentian-system
+              server: https://kubernetes.default.svc
+            ignoreDifferences:
+            - group: gentianos.io
+              jsonPointers:
+              - /metadata/annotations/argocd.argoproj.io~1tracking-id
+              kind: AppProfile
+            - group: gentianos.io
+              jqPathExpressions:
+              - .spec.ingress.clusterIssuer
+              - .spec.additionalIngresses[]?.clusterIssuer
+              - .spec.browserProxy[]?.authMode
+              - .spec.browserProxy[]?.stripPrefix
+              kind: AppProfile
+            project: gentian
+            source:
+              path: '{{ .path.path }}'
+              repoURL: https://github.com/gentian-org/gentian-apps
+              targetRevision: main
+            syncPolicy:
+              automated:
+                prune: true
+                selfHeal: true
+              syncOptions:
+              - CreateNamespace=false
+              - ServerSideApply=true
+  providerConfigRef:
+    name: kubernetes

@@ -51,33 +51,44 @@ install_app_catalogue() {
 # plugin for a cluster that no longer exists.
 
 # =============================================================================
-# 15. Install Argo CD ApplicationSet syncing catalogue bundles from gentian-apps
+# 15. Repository claim for the default app catalogue (gentian-apps)
 # =============================================================================
-# Renders the catalogue ApplicationSet from kernel/bootstrap/chart. Once synced, each
-# profiles/<name>/ kustomization becomes an Application (catalogue-<name>) that
-# applies AppProfile, optional composition.yaml, and optional cluster assets.
+# The gentian-apps Repository claim, not a hand-authored ApplicationSet: any
+# role: apps, type: git repository composes its own catalogue-sync
+# ApplicationSet (crossplane/compositions/repository-default.yaml), so the
+# cluster's default catalogue works the same way a tenant's private one does.
+# Once synced, each profiles/<name>/ bundle becomes an Application
+# (catalogue-<name>) that applies AppProfile, optional composition.yaml, and
+# optional cluster assets.
+#
+# Applied here rather than through the gentian-claims ApplicationSet because
+# GENTIAN_APPS_REPO/GENTIAN_APPS_BRANCH are install-time configuration a
+# cluster may override, and every cluster gets the default catalogue without
+# the deployments repository having to commit anything for it — the same
+# reason B-09 applies the deployments Repository claim directly rather than
+# through Git.
 install_catalogue_sync() {
-    banner "Argo CD catalogue sync (gentian-apps profile bundles)"
+    banner "App catalogue (gentian-apps Repository claim)"
 
-    local rendered
-    rendered="$(mktemp)"
-    # The generator's own {{ .metadata.name }} and {{ .path.path }} are wrapped
-    # in raw strings by the chart, so Helm hands them to Argo untouched.
-    # cluster is set even though this template does not read it: --show-only
-    # filters the output, and Helm still evaluates every template in the chart —
-    # including the one that requires a cluster id.
-    helm template gentian-bootstrap "${SCRIPT_DIR}/kernel/bootstrap/chart" \
-        -s templates/catalogue-applicationset.yaml \
-        --set-string "appsRepo=${GENTIAN_APPS_REPO}" \
-        --set-string "appsBranch=${GENTIAN_APPS_BRANCH}" \
-        --set-string "cluster=${GENTIAN_DEPLOYMENTS_CLUSTER_ID}" >"$rendered"
-
-    info "Applying gentian-catalogue ApplicationSet:"
+    info "Applying Repository claim gentian-apps:"
     info "  repo:   ${GENTIAN_APPS_REPO}"
     info "  branch: ${GENTIAN_APPS_BRANCH}"
-    kubectl apply -f "$rendered"
-    rm -f "$rendered"
-    success "Catalogue sync configured. Argo CD will sync profiles/<name>/ bundles."
+    [[ "${GENTIAN_DRY_RUN:-0}" == "1" ]] && return 0
+
+    kubectl apply -f - <<EOF
+apiVersion: gentianos.io/v1alpha1
+kind: Repository
+metadata:
+  name: gentian-apps
+  namespace: crossplane-system
+spec:
+  type: git
+  role: apps
+  endpoints:
+    inCluster: ${GENTIAN_APPS_REPO}
+  branch: ${GENTIAN_APPS_BRANCH}
+EOF
+    success "Repository claim applied. Argo CD will sync profiles/<name>/ bundles."
     info "After sync, list available app profiles with:"
     info "  kubectl gentian apps list"
 }

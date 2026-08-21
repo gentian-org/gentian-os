@@ -85,10 +85,11 @@ For the current baseline design of the system, refer to [architecture.md](archit
 * **Target Domain**: Platform Security & Build Pipeline
 * **Context**: Pinning is done. `versions.yaml` holds every external component the installer pulls, once, versioned with the platform rather than per cluster, and `validate_pins` fails when a step pins a component the file does not carry or the file carries one no step claims. Images are pinned by digest, and `make lint-image-digests` asks the registry whether each digest is a manifest list — a single-arch digest pins the supply chain and breaks the cluster on the next arm64 node, and the two are indistinguishable by inspection. What is not done is the mirror: every chart still comes from its upstream repository at install time, so an upstream that disappears or is tampered with is still a live dependency.
 * **Proposed Solution**: Mirror the third-party charts the installer depends on, so the pins point at something we control.
+* **Half-built already**: `credentials.yaml`'s `infra-chart-registry` entry and `install.env.template`'s `INFRA_CHART_REPO`/`INFRA_CHART_PRIVATE` are the credential, vault path, and `oci-registry` validator for exactly this — prompted for, validated, and seeded into OpenBao at bootstrap. Nothing reads `REGISTRY_USER`/`REGISTRY_PASSWORD` back out: no `helm install`/chart-pull call site in the A-phase or `charts/infra/` redirects through it yet. The mirror target is a real registry to point at; the credential to reach it already exists.
 * **Backlog Items**:
   - `[x]` Audit and replace all remote mutable git/branch references with specific tags and commits. *(`versions.yaml` plus `validate_pins`.)*
   - `[x]` Pin chart and image dependencies to specific versions and digests. *(`make lint-image-digests` additionally rejects single-architecture digests.)*
-  - `[ ]` Implement local mirror targets for all third-party charts.
+  - `[ ]` Implement local mirror targets for all third-party charts. *(Redirect Crossplane, its providers, cert-manager, ArgoCD, and the Bitnami-derived `charts/infra/*` charts through `INFRA_CHART_REPO` when set — the credential side is already built, see above.)*
 
 ### 1.10 In-Cluster Secret Disclosure Prevention (*)
 * **Target Domain**: Platform Security & Secrets Management

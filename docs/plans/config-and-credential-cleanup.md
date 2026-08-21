@@ -1190,7 +1190,7 @@ So: to change a phase's state, edit that phase's section. `make gen-phase-table`
 | 2 | Built | A clean-room review by someone other than the author |
 | 3 | Built | `oci-registry` and `smtp` have no test; none of the validators is automated |
 | 4 | Closed | The reconciler audit (§15.2) found mail, portal, catalogue and LiteLLM Teams already moved to their correct destination in other work. Two named exceptions remain — the vLLM GPU chart install and the LiteLLM model-registration Job — tracked as instances of the general imperative/declarative rule in [architecture.md §3.0](../architecture.md#30-who-does-what-tenant-install), not restated here. |
-| 5 | Exercised | The public chart registries are claims. What remains is the private infrastructure registry, which is a different shape: it is optional, so the claim should exist only when one is configured, and nothing yet decides where that conditional lives. A tenant admin's Repositories view still cannot show the cluster's *app* catalogue, which arrives through the `gentian-catalogue` ApplicationSet rather than as a repository at all |
+| 5 | Exercised | The public chart registries are claims, and so is the app catalogue: `role: apps` on a `type: git` repository now composes its own catalogue-sync ApplicationSet in the Composition, so `gentian-apps` and any tenant's private catalogue work the same way, and a tenant's Repositories view shows both. What remains is the private infrastructure registry, which is a different shape and deliberately not converted — it has no consumer yet (nothing reads its credential to redirect a chart pull), so a claim for it would be an XRD nobody exercises. That gap belongs to the mirrored/air-gapped install work (Q15, Phase 12), not this phase. |
 | 6 | Exercised | Both criteria this row was waiting on are verified in §15.1 — ESO's live verdict, and the unsatisfied→satisfied transition unblocking composition with nothing re-run. The row had not been updated to say so |
 | 7 | Exercised | The live OIDC write path works. It was broken three independent ways — wrong mount, wrong role type, missing audience (§15.4) — and a token exchange has now completed against the fixed path, which is the criterion this row waited on longest. The audit device is still unobserved |
 | 8 | Exercised | The service exchanges a caller's token and serves the catalogue. A refusal now names the failed check — audience, claims, role type, missing role, unmounted backend — and logs OpenBao's own words; the first real use of that log found the tenant fault below in one line, after three rounds of reading code had been needed for the previous ones. Its own ServiceAccount policy is still uninspected |
@@ -1560,7 +1560,7 @@ That leaves the two exceptions named above, which are documented rather than fix
 
 ### Phase 5 — `XRepository`
 
-**State — Exercised.** The public chart registries are claims. What remains is the private infrastructure registry, which is a different shape: it is optional, so the claim should exist only when one is configured, and nothing yet decides where that conditional lives. A tenant admin's Repositories view still cannot show the cluster's *app* catalogue, which arrives through the `gentian-catalogue` ApplicationSet rather than as a repository at all
+**State — Exercised.** The public chart registries are claims, and so is the app catalogue: `role: apps` on a `type: git` repository now composes its own catalogue-sync ApplicationSet in the Composition, so `gentian-apps` and any tenant's private catalogue work the same way, and a tenant's Repositories view shows both. What remains is the private infrastructure registry, which is a different shape and deliberately not converted — it has no consumer yet (nothing reads its credential to redirect a chart pull), so a claim for it would be an XRD nobody exercises. That gap belongs to the mirrored/air-gapped install work (Q15, Phase 12), not this phase.
 
 **Status: implemented.** `crossplane/xrds/repository.yaml` and
 `crossplane/compositions/repository-default.yaml`, applied by `A-02-crossplane-providers`, with
@@ -1589,8 +1589,8 @@ source of truth — which is what the API grades its confirmations by (§10).
 | 6 | A new tenant namespace receives the dockerconfigjson without a Git object | **Unverified** — `ClusterExternalSecret` with a namespace selector is the mechanism |
 | 7 | Rotation propagates to every consumer with no Git commit | **Unverified** |
 | 8 | Two claims sharing one `vaultPath` both work | **Unverified** — the schema permits it; the Phase 2 generator enforces that their field sets agree |
-| 9 | Deleting a claim removes everything it emitted | **Unverified** |
-| 10 | Every repository the cluster draws from is driven by this XR | **Partial** — the deployments repository is a claim (step `16b`), replacing `scripts/bootstrap/create-deployments-git-credentials.sh`. `kernel/argocd/repos/*.yaml` and the infra chart registry are not yet migrated |
+| 9 | Deleting a claim removes everything it emitted | **Unverified on a cluster.** True by construction for the catalogue case now — removing a `role: apps` claim removes the ApplicationSet it composed, which owns the Applications and so the AppProfiles — but nothing has watched this happen live |
+| 10 | Every repository the cluster draws from is driven by this XR | **Partial.** The deployments repository (step `16b`) and both public chart registries in `kernel/argocd/repos/*.yaml` are claims, replacing `scripts/bootstrap/create-deployments-git-credentials.sh` and their old hand-written Secrets. `gentian-apps` is now a claim too (`install_catalogue_sync`, replacing a hand-authored ApplicationSet). The infra chart registry stays outside this XR — see the State line above |
 | 11 | Adding a repository of either type needs one claim and no new Composition | **Passing** by construction |
 
 Criteria 5–9 need a cluster with Crossplane, ESO and ArgoCD running. Criterion 10 is the
@@ -2760,10 +2760,10 @@ deletes that address the wrong namespace reports exactly what a working one repo
 `--ignore-not-found` on a path that enumerates objects is a place where doing nothing looks like
 being done**, and teardown is made almost entirely of those.
 
-D-06 has the same exposure without having been observed to fail: its `check()` tests A-09's
-`gentian-catalogue` ApplicationSet, which a clean reverse pass has not yet removed when D-06 runs,
-but a re-run after a partial teardown has. A check that depends on another step's artefact answers
-correctly exactly once.
+D-06 has the same exposure without having been observed to fail: its `check()` tested A-09's
+`gentian-catalogue` ApplicationSet (since replaced by the `gentian-apps` Repository claim), which a
+clean reverse pass has not yet removed when D-06 runs, but a re-run after a partial teardown has. A
+check that depends on another step's artefact answers correctly exactly once.
 
 **`check()` does not gate `destroy()`, in either direction.** A check answers *is this step's work
 complete*; the reverse pass asks *is anything left*. Those differ for every partially-torn-down

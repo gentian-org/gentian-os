@@ -637,10 +637,12 @@ other catalogue object. Being a cluster object buys three things a file cannot:
   the debt report is computed by the operator, not by a script guessing from YAML.
 
 `AppProfile` and `Composition` are cluster-scoped — there is no per-profile namespace. Profile-scoped
-records therefore land in the **fixed system namespace the `gentian-catalogue` ApplicationSet syncs
-every profile's namespaced objects into** (`gentian-system` on this deployment layout — check the
-ApplicationSet's `template.spec.destination.namespace`, since it is a cluster-wide constant, not
-derived from the profile name). Tenant-scoped records land in `tenant-<name>`.
+records therefore land in the **fixed system namespace the catalogue-sync ApplicationSet syncs every
+profile's namespaced objects into** (`gentian-system` on this deployment layout — check
+`crossplane/compositions/repository-default.yaml`'s `template.spec.destination.namespace`, since it
+is a cluster-wide constant, not derived from the profile name). Every `role: apps`, `type: git`
+`Repository` claim composes its own such ApplicationSet — `gentian-apps` is the default one, not a
+special case. Tenant-scoped records land in `tenant-<name>`.
 
 ```yaml
 apiVersion: gentianos.io/v1alpha1

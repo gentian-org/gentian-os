@@ -1,0 +1,18 @@
+# The default app catalogue: a public git repository, role: apps. This is the
+# case install_catalogue_sync applies for gentian-apps, and the case a tenant's
+# private catalogue follows too — the only difference is a credential and a
+# tenant scope, neither of which changes whether the catalogue-sync
+# ApplicationSet gets composed.
+apiVersion: gentianos.io/v1alpha1
+kind: XRepository
+metadata:
+  name: gentian-apps
+  labels:
+    crossplane.io/claim-name: gentian-apps
+    crossplane.io/claim-namespace: crossplane-system
+spec:
+  type: git
+  role: apps
+  endpoints:
+    inCluster: https://github.com/gentian-org/gentian-apps
+  branch: main

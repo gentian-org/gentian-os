@@ -2003,8 +2003,9 @@ resolve_kernel_domain_from_claim() {
 # Crossplane platform compositions (gentian-os only)
 # =============================================================================
 # Generic app-default and tenant/cluster compositions live in gentian-os.
-# Profile-specific compositions are synced from gentian-apps via Argo CD
-# ApplicationSet gentian-catalogue (see install_catalogue_sync).
+# Profile-specific compositions are synced from gentian-apps via the
+# catalogue-sync ApplicationSet the gentian-apps Repository claim composes
+# (see install_catalogue_sync).
 
 apply_crossplane_app_compositions() {
     local comp_dir="${SCRIPT_DIR}/crossplane/compositions"
