@@ -7,7 +7,7 @@ status:
   conditions:
   - lastTransitionTime: "2024-01-01T00:00:00Z"
     message: 'Unready resources: app-catalogue-test-app, keycloak-broker-client, keycloak-broker-client-id,
-      and 13 more'
+      and 12 more'
     reason: Creating
     status: "False"
     type: Ready
@@ -250,29 +250,6 @@ spec:
   deletionPolicy: Orphan
   forProvider:
     name: gentian:tenant:render-fixture:app-admins
-    realmId: render-fixture
-  providerConfigRef:
-    name: keycloak
----
-apiVersion: group.keycloak.crossplane.io/v1alpha1
-kind: Group
-metadata:
-  annotations:
-    crossplane.io/composition-resource-name: keycloak-group-gentian-tenant-render-fixture-app-catalogue-test-app
-  labels:
-    crossplane.io/composite: render-fixture
-  name: gentian-tenant-render-fixture-app-catalogue-test-app
-  ownerReferences:
-  - apiVersion: gentianos.io/v1alpha1
-    blockOwnerDeletion: true
-    controller: true
-    kind: XTenant
-    name: render-fixture
-    uid: ""
-spec:
-  deletionPolicy: Orphan
-  forProvider:
-    name: gentian:tenant:render-fixture:app:catalogue-test-app
     realmId: render-fixture
   providerConfigRef:
     name: keycloak

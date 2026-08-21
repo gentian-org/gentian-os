@@ -1,6 +1,12 @@
 apiVersion: gentianos.io/v1alpha1
 kind: AppProfile
 metadata:
+  annotations:
+    # Exercises the group-attribute path: nine catalogue profiles carry
+    # this, and the Odoo ones name the modules the app provisions from.
+    # A list stays a list; a bare string becomes a one-element list, the
+    # way collectGentianGroupsJSON normalises it.
+    gentianos.io/keycloak-group-attributes: '{"gentianOdooModules":["account","crm"],"gentianSingle":"one"}'
   name: demo-app
   labels:
     gentianos.io/profile-name: demo-app

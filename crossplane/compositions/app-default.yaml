@@ -1091,6 +1091,43 @@ spec:
                  resource the group's entire role list and strip whatever it did
                  not name. */}}
             {{- $entGroup := printf "gentian:tenant:%s:app:%s" $tenant $app | lower | replace ":" "-" | replace "_" "-" | replace "." "-" }}
+            {{- /* The app's entitlement group.
+
+                 Here rather than in tenant-default because its attributes come
+                 from this profile's gentianos.io/keycloak-group-attributes
+                 annotation, and only this Composition fetches the AppProfile.
+                 Nine of the catalogue's profiles carry one — the Odoo ones name
+                 the modules and roles the app provisions from — so a Group
+                 declared without them would strip what the groups Job sets.
+
+                 Values are coerced to lists: Keycloak group attributes are
+                 map[string][]string, and the annotation writes a bare string for
+                 single values, exactly as collectGentianGroupsJSON normalises. */}}
+            {{- $gAttrsRaw := dig "metadata" "annotations" "gentianos.io/keycloak-group-attributes" "" $profile }}
+            {{- $gAttrs := dict }}
+            {{- if $gAttrsRaw }}
+            {{- range $k, $v := (fromJson $gAttrsRaw) }}
+            {{- $_ := set $gAttrs $k (ternary $v (list (toString $v)) (kindIs "slice" $v)) }}
+            {{- end }}
+            {{- end }}
+            ---
+            apiVersion: group.keycloak.crossplane.io/v1alpha1
+            kind: Group
+            metadata:
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: {{ $app }}-entitlement-group
+              name: {{ $entGroup }}
+            spec:
+              deletionPolicy: Orphan
+              forProvider:
+                realmId: {{ $tenant }}
+                name: {{ printf "gentian:tenant:%s:app:%s" $tenant $app | quote }}
+                {{- if $gAttrs }}
+                attributes:
+                  {{ toYaml $gAttrs | nindent 18 }}
+                {{- end }}
+              providerConfigRef:
+                name: keycloak
             {{- if $pack.clientRole }}
             ---
             apiVersion: group.keycloak.crossplane.io/v1alpha1

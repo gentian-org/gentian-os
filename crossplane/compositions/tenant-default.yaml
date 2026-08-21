@@ -580,10 +580,14 @@ spec:
                  takes an additionalProfiles argument for exactly that — so the Job
                  goes only once that gap is closed.
               */}}
+            {{- /* Only the three that belong to the tenant itself. The per-app
+                 group is app-default's, because its name follows the resolved
+                 profile and its attributes come from that profile's
+                 gentianos.io/keycloak-group-attributes annotation — nine of the
+                 catalogue's profiles carry one, and the Odoo ones drive module
+                 and role provisioning. This Composition cannot see an AppProfile;
+                 app-default already fetches it. */}}
             {{- $groupNames := list (printf "gentian:tenant:%s:members" $tenant) (printf "gentian:tenant:%s:admins" $tenant) (printf "gentian:tenant:%s:app-admins" $tenant) }}
-            {{- range $app := dig "apps" list $spec }}
-            {{- $groupNames = append $groupNames (printf "gentian:tenant:%s:app:%s" $tenant $app.profile) }}
-            {{- end }}
             {{- range $g := $groupNames }}
             {{- $gslug := $g | lower | replace ":" "-" | replace "_" "-" | replace "." "-" }}
             ---
