@@ -719,65 +719,37 @@ docs/plans/tenant-composition-cleanup.md §8.
 
 ### 1.31 Retire the OIDC Pack Job (**)
 * **Target Domain**: Identity
-* **Context**: The pack Job is the last object with two writers: `app-default`
-  composes the app's Keycloak `Client` and the Job configures the same clientId
-  — "client gentian-<app> configured" in its own log. Both read `Synced=True`
-  today because they agree, which is what the kernel IdP looked like until they
-  stopped agreeing and every reconcile spent two minutes on the wrong
-  first-broker-login flow.
-* **Every step of it is declarable**: the client scope is `ClientScope`, its
-  three mappers are `ProtocolMapper`, the client is already `Client`, the client
-  role is `Role`, and the group-to-role mapping is `Roles`. So the Job is retired
-  whole, not split.
+* **Done so far**: the Job no longer writes anything app-default owns. It had
+  two duplicate writes, not one — the client itself, and the six default client
+  scopes, the second found by reading the generated script rather than by
+  looking for it. Both are gone, verified on corp: the Job's log now steps
+  straight from "client already exists" to the client role, the composed Client
+  stays Synced/Ready and all six scopes remain attached. The client scope is
+  composed too, adopted from the name the pack gives.
 
-  This supersedes an earlier plan to split it at the client boundary and move
-  the client-dependent half to a later stage. That plan existed to work around
-  an ordering problem — `ensureIdentity` waits on the Job in **DataPlane** while
-  the App claim that produces the `Client` is created in **AppsAndEdge**, the
-  stage after — and retiring the Job removes the waiter, so the problem does not
-  need solving. Building the split first would have been work to delete.
-* **Do this before the realm.** The realm conversion is larger and independent;
-  it does not move the App claim and so would not have untied this. This is the
-  only remaining active hazard, and closing it also removes a Job.
-* **The data is already there.** app-default reads the OIDCPackCatalog through
-  function-extra-resources (`into: oidcPackCatalog`) to decide default scopes and
-  fullScopeAllowed. Everything else the Job needs is in the same object, so no
-  new source and no new field is required:
+  The Job still *creates* the client when absent. That is a bootstrap rather
+  than ownership: something must make it before the client role can hang off it,
+  and this Job is waited on in DataPlane while the App claim that composes the
+  client is created in AppsAndEdge, the stage after. Same division as the realm
+  script and the kernel IdP — create if absent, never restate.
+* **What is left**: the protocol mappers, the client role and the group-to-role
+  mapping. None can be adopted: each is identified by a UUID rather than a name,
+  and a UUID cannot be templated. Setting external-name to "email" fails with
+  "observe failed: external resource does not exist", where the ClientScope
+  beside it adopts from its name without trouble.
 
-  | Job writes | From | Provider kind |
-  |---|---|---|
-  | client scope | `pack.scopeName`, `pack.scopeDescription` | `ClientScope` |
-  | mappers on it | `pack.mappers[]` → `spec.mapperTemplates[name]`, which carries `protocolMapper`, `config` and `keycloakName` | `ProtocolMapper` |
-  | the client | already declared | `Client` |
-  | client role | `pack.clientRole` | `Role` |
-  | group to role | `pack.entitlementGroup` | `Roles` |
-
-  Verified against the live corp realm: `gentian-nextcloud-base-ce-scope` carries
-  exactly the three mappers its pack names, with the config its templates give.
+  So they move in the same change that stops the Job making them — the live
+  objects have to be deleted and recreated, because creating alongside would put
+  a second mapper of the same name on a scope that already carries one, and two
+  mappers emitting a claim is not something to discover in production.
+* **Proposed Solution**: One change, on a watched tenant: declare the three,
+  delete the Job's objects, let Crossplane create them, then remove the Job and
+  the ensureIdentity wait. Expect a window where a tenant's tokens lack claims
+  or entitlement, so it wants a maintenance slot rather than a quiet afternoon.
 * **Backlog Items**:
-  - `[x]` Render `ClientScope` from scopeName/scopeDescription, adopted by
-    external-name. Done and verified on corp: Synced/Ready, and the observed id
-    matches the one the Job logs.
-  - `[ ]` Render one `ProtocolMapper` per entry in `pack.mappers`, resolved
-    through `mapperTemplates` — honouring `keycloakName`, which exists because
-    some catalogues name a mapper differently in Keycloak than in the pack.
-
-    **Not by adoption.** A mapper is identified by its UUID, not its name:
-    external-name "email" fails with "observe failed: external resource does not
-    exist", where the ClientScope beside it adopts from its name. The UUID cannot
-    be templated. Creating them instead would put a second mapper of the same
-    name on a scope that already carries the Job's, and two mappers emitting one
-    claim is not something to try on a live login path — so the mappers move in
-    the same change that stops the Job creating them, not before.
-
-    The same is true of the client role and the group-to-role mapping below, and
-    is why this Job comes out in one step rather than incrementally: everything
-    it makes except the scope has to change hands at once.
-  - `[ ]` Render `Role` and the group-to-role `Roles`, as refs so Crossplane
-    resolves the ordering rather than a stage doing it.
-  - `[ ]` Remove the Job, and the `ensureIdentity` wait that depends on it.
-  - `[x]` Keep `LateInitialize` out of the composed Client meanwhile, so the two
-    writers cannot silently rewrite each other's intent.
-* **Watch for**: `serviceClient` packs create no scope, role or group at all —
-  gentian-dovecot is one — so the whole block must be gated on it, the way the
-  Job's own validation is.
+  - `[x]` Stop the Job configuring the client.
+  - `[x]` Stop the Job attaching the default client scopes.
+  - `[x]` Compose the client scope, adopted by name.
+  - `[ ]` Compose the mappers, the client role and the group-to-role mapping,
+    and delete the Job's, in one change.
+  - `[ ]` Remove the Job and the `ensureIdentity` wait that depends on it.
