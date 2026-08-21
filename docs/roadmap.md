@@ -754,46 +754,39 @@ docs/plans/tenant-composition-cleanup.md §8.
     and delete the Job's, in one change.
   - `[ ]` Remove the Job and the `ensureIdentity` wait that depends on it.
 
-### 1.32 Manage the Tenant Realm, Not Just Observe It (**)
+### 1.32 Move the Tenant Realm's SMTP onto the Composed Realm (*)
 * **Target Domain**: Identity
-* **Done**: `tenant-default` composes a `Realm`, adopted from the realm name —
-  `corp-realm` is Synced/Ready. A realm is identified by its name, so unlike the
-  OIDC pack's mappers it adopts cleanly.
-* **What managing it would absorb**: the realm script's create, enabled,
-  displayName and `registrationAllowed`; its browser security headers, as
-  `securityDefenses`; and the whole tenant SMTP Job, as `smtpServer` — which the
-  provider observes as a block carrying the live host, port, from and
-  fromDisplayName exactly.
-* **Why it is not a small promotion**: the realm carries 49 fields with live
-  values and several are not the provider's defaults —
-  `accessTokenLifespan` 12h against Keycloak's 5m, `ssoSessionIdleTimeout` 12h
-  against 30m, `loginTheme` gentian, plus `otpPolicy` and `webAuthnPolicy`
-  blocks. Managing it without declaring those resets every tenant's session and
-  token lifetimes, silently, on the root object of its identity.
+* **Done**: `tenant-default` composes a managed `Realm`, and it is the tenant
+  realm's only writer. It declares enabled, displayName, registrationAllowed, the
+  eight browser security headers, and the twelve-hour access-token and session
+  lifespans and gentian login theme that `UpdateRealmBrowserSecurityHeaders` used
+  to apply. The realm Job no longer restates any of it — its create stays as a
+  bootstrap — and the browser-security function now runs only against the kernel
+  realm, which no Composition covers.
 
-  `securityDefenses` is worse: the provider does **not** observe it — it reads
-  null while the realm plainly has the headers — so late-initialisation cannot
-  protect it the way it would the other 49. It has to be declared blind and
-  checked against the Admin API afterwards, the way the kernel IdP's
-  `useJwksUrl` and `defaultScope` were.
-* **Two ways to do it**:
-  1. Declare all 49 explicitly. The spec then says what the realm is, which is
-     the point of the migration, at the cost of a large manifest that has to be
-     right first time.
-  2. Declare only what the Jobs set and let LateInitialize carry the rest. Safe
-     for the observed fields, but the spec stops being authoritative — and it
-     does nothing for `securityDefenses`, which is the one that would break.
-
-  The observed state is captured at /tmp/gentian-corp-realm-observed.json so
-  whichever is chosen starts from fact rather than from the provider's
-  documentation.
+  The lifespans and theme are named explicitly because they are not the
+  provider's defaults; Keycloak ships five-minute access tokens and a
+  thirty-minute idle timeout. `securityDefenses` is declared blind, because
+  `status.atProvider` reports it as null while the realm plainly carries the
+  headers — verified instead against the Admin API, which showed the realm
+  unchanged across the first managed write and no drift since.
+* **What is left**: `smtpServer`. The tenant SMTP Job reads its host, port and
+  from address out of a Secret, and a Composition cannot read Secrets — the same
+  wall the broker IdP hit before `identity.internalUrl` was published through the
+  claim. The provider does observe smtpServer, and the CRD carries
+  `auth.passwordSecretRef` for the credential, so only the plain values need a
+  route.
+* **Proposed Solution**: Publish the SMTP host, port and from address the way
+  identity.internalUrl was — through the Cluster claim into
+  gentian-cluster-config — then declare `smtpServer` on the Realm and retire the
+  tenant SMTP Job. Relates to 1.22.
 * **Backlog Items**:
-  - `[x]` Compose the realm, adopted by name.
-  - `[ ]` Decide between declaring the full field set and leaning on late-init.
-  - `[ ]` Declare `securityDefenses` explicitly and verify the headers survive
-    the first managed write, through the Admin API rather than through
-    status.atProvider, which cannot see them.
-  - `[ ]` Move SMTP onto `smtpServer` and retire the tenant SMTP Job.
-  - `[ ]` Trim the realm script to what the Realm cannot express: the user
-    profile attributes and the required-action toggles, which are separate
-    Keycloak APIs.
+  - `[x]` Compose the realm, adopted by name, and promote it to managed.
+  - `[x]` Declare `securityDefenses` and verify the headers through the Admin API.
+  - `[x]` Remove the realm Job's restatement and the browser-security function's
+    tenant-realm write.
+  - `[ ]` Publish the SMTP host, port and from address through the claim.
+  - `[ ]` Declare `smtpServer` and retire the tenant SMTP Job.
+  - `[ ]` Trim the realm script further: what remains that the Realm cannot
+    express is the user profile attributes and the required-action toggles, which
+    are separate Keycloak APIs.
