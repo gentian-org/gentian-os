@@ -6,8 +6,8 @@ metadata:
 status:
   conditions:
   - lastTransitionTime: "2024-01-01T00:00:00Z"
-    message: 'Unready resources: app-catalogue-test-app, keycloak-broker-client, keycloak-dovecot-oidc-client,
-      and 7 more'
+    message: 'Unready resources: app-catalogue-test-app, keycloak-broker-client, keycloak-broker-client-id,
+      and 8 more'
     reason: Creating
     status: "False"
     type: Ready
@@ -138,6 +138,36 @@ spec:
     name: render-fixture-broker-client
     namespace: platform-kernel
 ---
+apiVersion: kubernetes.crossplane.io/v1alpha2
+kind: Object
+metadata:
+  annotations:
+    crossplane.io/composition-resource-name: keycloak-broker-client-id
+  labels:
+    crossplane.io/composite: render-fixture
+  name: render-fixture-broker-client-id
+  ownerReferences:
+  - apiVersion: gentianos.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XTenant
+    name: render-fixture
+    uid: ""
+spec:
+  forProvider:
+    manifest:
+      apiVersion: v1
+      kind: Secret
+      metadata:
+        labels:
+          app.kubernetes.io/managed-by: crossplane
+        name: render-fixture-broker-client-id
+        namespace: platform-kernel
+      stringData:
+        client_id: broker-render-fixture
+  providerConfigRef:
+    name: kubernetes
+---
 apiVersion: openidclient.keycloak.crossplane.io/v1alpha1
 kind: Client
 metadata:
@@ -192,10 +222,44 @@ metadata:
 spec:
   deletionPolicy: Orphan
   forProvider:
+    addReadTokenRoleOnCreate: false
     alias: kernel
+    authenticateByDefault: false
+    authorizationUrl: https://id.platform.example.test/auth/realms/kernel/protocol/openid-connect/auth
+    backchannelSupported: true
+    clientIdSecretRef:
+      key: client_id
+      name: render-fixture-broker-client-id
+      namespace: platform-kernel
+    clientSecretSecretRef:
+      key: attribute.client_secret
+      name: render-fixture-broker-client
+      namespace: platform-kernel
+    defaultScopes: openid profile email
+    displayName: Gentian SSO
+    enabled: true
+    extraConfig:
+      updateProfileFirstLoginMode: "on"
+      useJwksUrl: "true"
+    firstBrokerLoginFlowAlias: first-broker-login-gentian
+    hideOnLoginPage: true
+    issuer: https://id.platform.example.test/auth/realms/kernel
+    jwksUrl: http://gentian-idp-keycloak-keycloakx-http.platform-kernel.svc.cluster.local:8080/auth/realms/kernel/protocol/openid-connect/certs
+    linkOnly: false
+    logoutUrl: https://id.platform.example.test/auth/realms/kernel/protocol/openid-connect/logout
+    providerId: oidc
     realm: render-fixture
+    storeToken: true
+    syncMode: IMPORT
+    tokenUrl: http://gentian-idp-keycloak-keycloakx-http.platform-kernel.svc.cluster.local:8080/auth/realms/kernel/protocol/openid-connect/token
+    trustEmail: true
+    userInfoUrl: http://gentian-idp-keycloak-keycloakx-http.platform-kernel.svc.cluster.local:8080/auth/realms/kernel/protocol/openid-connect/userinfo
+    validateSignature: true
   managementPolicies:
   - Observe
+  - Create
+  - Update
+  - Delete
   providerConfigRef:
     name: keycloak
 ---

@@ -586,24 +586,52 @@ spec:
                 namespace: platform-kernel
               providerConfigRef:
                 name: keycloak
-            {{- /* ── kernel IdP in the tenant realm, observed ───────────────────
+            {{- /* ── kernel IdP in the tenant realm ──────────────────────────────
                  What tenant login actually runs on: the tenant realm delegates
                  to the kernel realm through this.
 
-                 Observe-only for now. Two Jobs write this same object today —
-                 the realm script in identity_reconciler.go and the broker-idp
-                 Job — and they disagree about firstBrokerLoginFlowAlias: the
-                 realm script sets the built-in "first broker login", the Job
-                 sets first-broker-login-gentian. The Job runs later, so the
-                 gentian flow is what is live, but a realm re-run would silently
-                 put tenant login back on the built-in flow, which prompts to
-                 confirm the link instead of matching the user by email.
+                 Managed, and every field is declared, because two Jobs also write
+                 this object and they disagreed about firstBrokerLoginFlowAlias.
+                 The realm script in identity_reconciler.go sets the built-in
+                 "first broker login"; the broker-idp Job sets the gentian flow.
+                 Both ran on 2026-08-21 — the realm job at 07:02:56, the broker-idp
+                 job at 07:04:37 — leaving roughly two minutes of that reconcile in
+                 which a first-time login was sent to a flow that stops to ask the
+                 user to confirm the link, instead of matching them to the account
+                 already provisioned for them by email.
 
-                 Adding a third writer before removing the other two would just
-                 add churn. This observes first, so the live state can be read
-                 and compared against what the manifest would declare, before
-                 anything writes.
+                 It was adopted Observe-only first and read back against the Admin
+                 API before anything was declared. That is the check the portal BFF
+                 client did not get: a Job writes through the Admin API, which
+                 enforces less than the schema the provider validates against, so
+                 anything a Job created may hold a state the provider cannot
+                 express.
               */}}
+            {{- /* The broker client's id. Not a secret, but clientIdSecretRef is the
+                 only way the provider will take it, so it needs somewhere to live.
+                 The client_secret beside it is the one the observed Client above
+                 republishes. */}}
+            ---
+            apiVersion: kubernetes.crossplane.io/v1alpha2
+            kind: Object
+            metadata:
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: keycloak-broker-client-id
+              name: {{ $tenant }}-broker-client-id
+            spec:
+              forProvider:
+                manifest:
+                  apiVersion: v1
+                  kind: Secret
+                  metadata:
+                    name: {{ $tenant }}-broker-client-id
+                    namespace: platform-kernel
+                    labels:
+                      app.kubernetes.io/managed-by: crossplane
+                  stringData:
+                    client_id: broker-{{ $tenant }}
+              providerConfigRef:
+                name: kubernetes
             ---
             apiVersion: oidc.keycloak.crossplane.io/v1alpha1
             kind: IdentityProvider
@@ -614,10 +642,59 @@ spec:
                 gotemplating.fn.crossplane.io/composition-resource-name: keycloak-kernel-idp
             spec:
               deletionPolicy: Orphan
-              managementPolicies: ["Observe"]
+              # Everything except LateInitialize. Late-init copies the live object's
+              # values back over this spec for every field it does read, which is how
+              # the portal BFF client ended up unable to reconcile at all.
+              managementPolicies: ["Observe", "Create", "Update", "Delete"]
               forProvider:
                 realm: {{ $tenant }}
                 alias: kernel
+                displayName: Gentian SSO
+                providerId: oidc
+                enabled: true
+                trustEmail: true
+                storeToken: true
+                hideOnLoginPage: true
+                linkOnly: false
+                authenticateByDefault: false
+                addReadTokenRoleOnCreate: false
+                syncMode: IMPORT
+                validateSignature: true
+                backchannelSupported: true
+                # openid alone is the provider's default, and it is not enough:
+                # dropping profile and email costs every brokered login the user's
+                # name and address.
+                defaultScopes: openid profile email
+                {{- /* Browser-facing endpoints go to the public URL; the
+                     server-to-server half stays inside the cluster, so Keycloak does
+                     not hairpin out through the ingress and back to reach itself
+                     during the broker code exchange. */}}
+                issuer: https://id.{{ $kd }}/auth/realms/{{ $kernelRealm }}
+                authorizationUrl: https://id.{{ $kd }}/auth/realms/{{ $kernelRealm }}/protocol/openid-connect/auth
+                logoutUrl: https://id.{{ $kd }}/auth/realms/{{ $kernelRealm }}/protocol/openid-connect/logout
+                tokenUrl: {{ $kcInternal }}/realms/{{ $kernelRealm }}/protocol/openid-connect/token
+                jwksUrl: {{ $kcInternal }}/realms/{{ $kernelRealm }}/protocol/openid-connect/certs
+                userInfoUrl: {{ $kcInternal }}/realms/{{ $kernelRealm }}/protocol/openid-connect/userinfo
+                # Matches a returning user to the account already provisioned for
+                # them by email.
+                firstBrokerLoginFlowAlias: first-broker-login-gentian
+                {{- /* Keys the provider has no field for and does not read back. Both
+                     are absent from status.atProvider and from extraConfig, and both
+                     are set on the live object, so they are declared here or they are
+                     lost on the first write: useJwksUrl is what points signature
+                     validation at the JWKS endpoint, and updateProfileFirstLoginMode
+                     is carried forward as it stands rather than left to a default. */}}
+                extraConfig:
+                  useJwksUrl: "true"
+                  updateProfileFirstLoginMode: "on"
+                clientIdSecretRef:
+                  name: {{ $tenant }}-broker-client-id
+                  namespace: platform-kernel
+                  key: client_id
+                clientSecretSecretRef:
+                  name: {{ $tenant }}-broker-client
+                  namespace: platform-kernel
+                  key: attribute.client_secret
               providerConfigRef:
                 name: keycloak
             {{- end }}
