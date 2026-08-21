@@ -573,6 +573,7 @@ spec:
   deletionPolicy: Orphan
   forProvider:
     accessTokenLifespan: 12h0m0s
+    browserFlow: browser
     displayName: Render Fixture
     enabled: true
     loginTheme: gentian

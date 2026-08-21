@@ -135,14 +135,19 @@ func TestBuildFirstBrokerLoginFlowScript(t *testing.T) {
 // so every interactive login — including for apps that live in the tenant realm —
 // rendered the kernel realm's form instead.
 
-func TestBuildOIDCBrowserFlowScriptBindsTheBuiltInFlow(t *testing.T) {
+func TestBuildOIDCBrowserFlowScriptWritesNoRealmState(t *testing.T) {
 	script := buildOIDCBrowserFlowScript("demo")
 
-	if !strings.Contains(script, `"browserFlow":"browser"`) {
-		t.Fatal("expected the realm to be bound to the built-in browser flow")
+	// tenant-default composes a Realm that declares browserFlow and loginTheme.
+	// This Job writing them too made it a second writer of realm state.
+	for _, gone := range []string{`"browserFlow":"browser"`, `"loginTheme":"gentian"`} {
+		if strings.Contains(script, gone) {
+			t.Fatalf("browser flow script still writes realm state: %s", gone)
+		}
 	}
-	// The built-in flow ends in forms, which is the whole point; a custom
-	// Cookie-then-redirect flow must not be recreated.
+	// The custom Cookie-then-redirect flow must never come back: it left the
+	// tenant realm with no credential form, so every interactive login in the
+	// system rendered the kernel realm's.
 	if strings.Contains(script, `"alias":\"browser-kernel-idp`) {
 		t.Fatal("must not create the redirect-only flow again")
 	}
@@ -159,17 +164,13 @@ func TestBuildOIDCBrowserFlowScriptRemovesTheLegacyFlow(t *testing.T) {
 	if !strings.Contains(script, "authentication/flows/${FLOW_ID}") {
 		t.Fatal("expected a DELETE of the legacy flow by id")
 	}
-	// Keycloak refuses to delete a flow the realm still uses, so the rebind has
-	// to come first. Anything else leaves a window with no usable login.
-	if strings.Index(script, `"browserFlow":"browser"`) > strings.Index(script, "X DELETE") {
-		t.Fatal("the realm must be rebound before the legacy flow is deleted")
-	}
-}
-
-func TestBuildOIDCBrowserFlowScriptSetsTheLoginTheme(t *testing.T) {
-	script := buildOIDCBrowserFlowScript("demo")
-	if !strings.Contains(script, `"loginTheme":"gentian"`) {
-		t.Fatal("a realm that renders its own form needs the Gentian theme")
+	// This used to assert the rebind came before the delete, because Keycloak
+	// refuses to delete a flow the realm still uses. The rebind is the composed
+	// Realm's now, so the ordering cannot be asserted from inside this script —
+	// which is why the delete must stay non-fatal: if the realm has not been
+	// rebound yet, the flow is simply removed on a later pass.
+	if !strings.Contains(script, "WARNING: could not delete the legacy") {
+		t.Fatal("the legacy flow delete must tolerate failure, now that the rebind is not ordered with it")
 	}
 }
 

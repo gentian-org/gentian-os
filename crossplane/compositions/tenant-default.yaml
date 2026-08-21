@@ -710,6 +710,19 @@ spec:
                 ssoSessionIdleTimeout: 12h0m0s
                 ssoSessionMaxLifespan: 12h0m0s
                 loginTheme: gentian
+                {{- /* Keycloak's built-in browser flow, named explicitly.
+
+                     A custom "browser-kernel-idp" flow used to be bound here —
+                     Cookie then identity-provider-redirector with
+                     defaultProvider=kernel — which left the tenant realm with no
+                     credential form at all, so every interactive login in the
+                     system rendered the kernel realm's. Tenant members live in
+                     the tenant realm and every per-app OIDC client is registered
+                     there, so the session belongs here and the stock flow already
+                     does it: Cookie first, then forms, with the
+                     identity-provider-redirector inert without a default
+                     provider. */}}
+                browserFlow: browser
                 {{- /* The provider does not observe these: status.atProvider reports
                      securityDefenses as null while the realm plainly carries the
                      headers. So they cannot be confirmed by reading the resource

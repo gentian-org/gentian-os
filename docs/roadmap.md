@@ -858,7 +858,12 @@ docs/plans/tenant-composition-cleanup.md §8.
 * **Backlog Items**:
   - `[x]` Compose the three tenant groups and the per-app group with attributes.
   - `[x]` Compose the group's grant of the app's client role.
-  - `[ ]` Decide whether a group for a profile absent from `spec.apps` should
-    still exist. If not, the Job's `oidcConfigs` pass is dead weight and the
-    leftover groups are pruneable.
+  - `[x]` Decided: a group outlives the app that created it. Members stay in it
+    and a re-install finds it again, so the Job's `oidcConfigs` pass is
+    deliberate rather than dead weight — and the Composition, which sees only
+    `spec.apps`, therefore cannot be the only writer of groups. corp's
+    `gentian:tenant:corp:app:gentian-subscriptions-me` is correct, not residue.
+  - `[ ]` Given that, decide what the Composition is for here: it holds the
+    groups the spec implies, and the Job holds the rest. Two writers that agree
+    by construction, which is a weaker guarantee than one writer.
   - `[ ]` Compose the "groups" client scope and its mapper, then retire the Job.

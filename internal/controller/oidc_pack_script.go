@@ -282,26 +282,14 @@ TOKEN=$(curl -sf \
   | sed 's/.*"access_token":"\([^"]*\)".*/\1/')
 AUTH_HEADER="Authorization: Bearer ${TOKEN}"
 
-# Bind first, unbind second: Keycloak refuses to delete a flow the realm still
-# uses, and a realm pointing at a flow that is about to be deleted would be a
-# window with no usable login at all.
-REALM_JSON=$(curl -sf -H "${AUTH_HEADER}" "${KEYCLOAK_URL}/admin/realms/${REALM}")
-CURRENT=$(printf '%%s' "${REALM_JSON}" | jq -r '.browserFlow')
-if [ "${CURRENT}" = "browser" ]; then
-  echo "realm ${REALM} already uses the built-in browser flow"
-else
-  curl -sf -X PUT -H "${AUTH_HEADER}" -H "Content-Type: application/json" \
-    "${KEYCLOAK_URL}/admin/realms/${REALM}" \
-    -d '{"browserFlow":"browser"}' >/dev/null
-  echo "realm ${REALM} browser flow set to the built-in browser flow (was ${CURRENT})"
-fi
-
-# The tenant realm renders its own login form now, so it needs the Gentian theme.
-curl -sf -X PUT -H "${AUTH_HEADER}" -H "Content-Type: application/json" \
-  "${KEYCLOAK_URL}/admin/realms/${REALM}" \
-  -d '{"loginTheme":"gentian"}' >/dev/null
-echo "realm ${REALM} login theme set to gentian"
-
+# The realm is NOT bound here, and its theme is NOT set here. tenant-default
+# composes a Realm that declares browserFlow and loginTheme, and this Job writing
+# them too made it a second writer of realm state.
+#
+# What is left is a repair: an earlier reconcile may have created a custom
+# browser-kernel-idp flow, and an orphaned flow definition is not something a
+# Composition can express — there is nothing to declare, only something to
+# remove.
 FLOWS=$(curl -sf -H "${AUTH_HEADER}" "${KEYCLOAK_URL}/admin/realms/${REALM}/authentication/flows")
 FLOW_ID=$(printf '%%s' "${FLOWS}" | jq -r --arg a "${LEGACY_FLOW}" '.[] | select(.alias==$a) | .id // empty')
 if [ -n "${FLOW_ID}" ]; then
