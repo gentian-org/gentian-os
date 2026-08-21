@@ -1078,6 +1078,39 @@ spec:
               providerConfigRef:
                 name: keycloak
             {{- end }}
+
+            {{- /* The entitlement group's grant of that client role.
+
+                 Both refs resolve to Keycloak ids because both targets are
+                 managed and their external-names are already ids — the Group is
+                 composed by tenant-default, and a Crossplane reference finds a
+                 managed resource by name wherever it was composed.
+
+                 exhaustive: false, matching the Job, which adds the mapping and
+                 leaves anything else on the group alone. True would make this
+                 resource the group's entire role list and strip whatever it did
+                 not name. */}}
+            {{- $entGroup := printf "gentian:tenant:%s:app:%s" $tenant $app | lower | replace ":" "-" | replace "_" "-" | replace "." "-" }}
+            {{- if $pack.clientRole }}
+            ---
+            apiVersion: group.keycloak.crossplane.io/v1alpha1
+            kind: Roles
+            metadata:
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: {{ $app }}-group-roles
+              name: {{ $tenant }}-{{ $app }}-group-roles
+            spec:
+              deletionPolicy: Orphan
+              forProvider:
+                realmId: {{ $tenant }}
+                exhaustive: false
+                groupIdRef:
+                  name: {{ $entGroup }}
+                roleIdsRefs:
+                  - name: {{ $tenant }}-{{ $app }}-client-role
+              providerConfigRef:
+                name: keycloak
+            {{- end }}
             {{- end }}
             {{- end }}
 

@@ -6,8 +6,8 @@ metadata:
 status:
   conditions:
   - lastTransitionTime: "2024-01-01T00:00:00Z"
-    message: 'Unready resources: demo-app-client-role, demo-app-externalsecret, demo-app-keycloak-client,
-      and 4 more'
+    message: 'Unready resources: demo-app-client-role, demo-app-externalsecret, demo-app-group-roles,
+      and 5 more'
     reason: Creating
     status: "False"
     type: Ready
@@ -76,6 +76,33 @@ spec:
           name: demo-app-sensitive-values
   providerConfigRef:
     name: kubernetes
+---
+apiVersion: group.keycloak.crossplane.io/v1alpha1
+kind: Roles
+metadata:
+  annotations:
+    crossplane.io/composition-resource-name: demo-app-group-roles
+  labels:
+    crossplane.io/composite: render-demo-app-fixture
+  name: demo-demo-app-group-roles
+  ownerReferences:
+  - apiVersion: gentianos.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XApp
+    name: render-demo-app-fixture
+    uid: ""
+spec:
+  deletionPolicy: Orphan
+  forProvider:
+    exhaustive: false
+    groupIdRef:
+      name: gentian-tenant-demo-app-demo-app
+    realmId: demo
+    roleIdsRefs:
+    - name: demo-demo-app-client-role
+  providerConfigRef:
+    name: keycloak
 ---
 apiVersion: openidclient.keycloak.crossplane.io/v1alpha1
 kind: Client
