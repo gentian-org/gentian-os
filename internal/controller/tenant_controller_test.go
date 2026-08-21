@@ -53,7 +53,7 @@ import (
 // testClient is the shared client used by all tests in this package.
 var testClient client.Client
 
-// envtestWaitTimeout is the poll deadline for controller envtest waits.
+// envtestWaitTimeout is the default poll deadline for controller envtest waits.
 //
 // 140 t.Parallel() tests share one manager and one envtest apiserver, so a test
 // that loses the scheduling race against the others exceeds a short deadline
@@ -66,39 +66,13 @@ var testClient client.Client
 // poll reconcile loops rather than burn CPU, so the extra ceiling costs nothing
 // on a healthy run — it is only reached when the answer was never coming, and a
 // genuinely hung reconciler still reports, just later.
-//
-// Three minutes is a bound tuned against CI's dedicated runner, not against
-// every machine this suite runs on. Confirmed directly on a loaded local dev
-// box (a live cluster plus its own services already resident, not merely other
-// go test goroutines): captured controller logs showed every Tenant across the
-// whole package — not only the one a failing test was waiting on — go
-// completely silent for ~175 seconds, twice, independently, including after
-// tenantRateLimiter (tenant_controller.go) closed off a separate, real
-// amplifier — a burst of ordinary optimistic-concurrency conflicts able to
-// throttle the shared workqueue for minutes under the default rate limiter.
-// With that fixed, the same magnitude of silence persisted, which is why it
-// reads as the host being starved of CPU or I/O for that whole span, not as
-// anything this package's own logic can retry its way out of.
-//
-// GENTIAN_TEST_WAIT_TIMEOUT raises the ceiling for a run without changing what
-// it means: a regression still fails, just after a longer, still-bounded wait,
-// so "give it more time" cannot turn a real hang into a false pass — only a
-// starved one into a clean one. CI never sets it, so this stays 3 minutes
-// there, which is the value that catches a genuinely hung reconciler fastest.
-var envtestWaitTimeout = func() time.Duration {
-	if v := os.Getenv("GENTIAN_TEST_WAIT_TIMEOUT"); v != "" {
-		if d, err := time.ParseDuration(v); err == nil && d > 0 {
-			return d
-		}
-	}
-	return 3 * time.Minute
-}()
+const envtestWaitTimeout = 3 * time.Minute
 
 // tenantReadyTimeout is an alias for Phase=Ready waits (same ceiling as job waits).
-var tenantReadyTimeout = envtestWaitTimeout
+const tenantReadyTimeout = envtestWaitTimeout
 
 // jobAppearTimeout is an alias for waits on Job creation or intermediate conditions.
-var jobAppearTimeout = envtestWaitTimeout
+const jobAppearTimeout = envtestWaitTimeout
 
 // dataPlaneManualTestTenants lists tenants whose data-plane Jobs are completed
 // manually in reconciler tests (redis/pg/mariadb/s3 assertions).
@@ -914,16 +888,24 @@ func containsPolicyType(types []networkingv1.PolicyType, t networkingv1.PolicyTy
 
 // fakeKeycloakClientProvider stands in for Crossplane and provider-keycloak.
 //
-// For every XTenant it ensures the Dovecot OIDC client the tenant Composition
+// For every Tenant it ensures the Dovecot OIDC client the tenant Composition
 // declares exists, and marks it Ready as the provider would. Polling rather than
 // watching: the manager cache is already running by then, and a poll is easier to
 // reason about in a test binary than another informer racing setup.
+//
+// Keyed off Tenant, not XTenant. The Composition names the client after the
+// XTenant, and the two names are the same — but nothing creates an XTenant in
+// envtest, because that is Crossplane's job and Crossplane is what this function
+// is pretending to be. Keying off XTenant meant the client appeared only for the
+// handful of tests that made one by hand, so the operator's wait never finished
+// anywhere else and four reconcilers reported a nil Ready condition, none of
+// them having anything to do with mail.
 //
 // The name matches the Composition's, because that is what the operator looks
 // for. If the Composition renames it, this must move with it — a fake that
 // answers to the wrong name would make the wait pass here and hang on a cluster.
 func fakeKeycloakClientProvider(ctx context.Context, c client.Client) {
-	xtenantGVK := schema.GroupVersionKind{Group: "gentianos.io", Version: "v1alpha1", Kind: "XTenantList"}
+	tenantGVK := schema.GroupVersionKind{Group: "gentianos.io", Version: "v1alpha1", Kind: "TenantList"}
 	clientGVK := schema.GroupVersionKind{Group: "openidclient.keycloak.crossplane.io", Version: "v1alpha1", Kind: "Client"}
 
 	ticker := time.NewTicker(200 * time.Millisecond)
@@ -934,7 +916,7 @@ func fakeKeycloakClientProvider(ctx context.Context, c client.Client) {
 			return
 		case <-ticker.C:
 			xts := &unstructured.UnstructuredList{}
-			xts.SetGroupVersionKind(xtenantGVK)
+			xts.SetGroupVersionKind(tenantGVK)
 			if err := c.List(ctx, xts); err != nil {
 				continue
 			}

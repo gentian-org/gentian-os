@@ -511,3 +511,31 @@ requires the object to exist, and on a new tenant something must create it
 before the Composition can adopt it. Since the script now preserves the existing
 flow alias rather than restating the built-in one, the remaining write is
 duplicated rather than conflicting. Tracked in the roadmap.
+
+## 9. The Dovecot client
+
+`gentian-dovecot` in a tenant realm is the Composition's alone. The Job that
+also wrote it now provisions only the kernel realm, which no Composition covers
+— there is no XTenant for the kernel.
+
+The operator still waits at that point, and must: the steps after it configure
+Dovecot to introspect IMAP XOAUTH2 tokens with that client and reload it, so
+they cannot run against a client that does not exist yet. The wait is now on the
+composed `Client`'s Ready condition rather than on a Job's completion. Deleting
+it outright, rather than converting it, broke three readiness tests.
+
+### What it cost to land
+
+Not the change itself, which was small. Replacing a slow Job wait with a fast
+one exposed that `Phase=Ready` was derived from whether any stage had asked to
+be requeued, rather than from the conditions — so a tenant could finalize
+before its data-plane stages had reported and read Ready with five conditions
+absent. Four reconciler tests asserted those conditions after waiting for
+`Phase=Ready` and had been passing only because the mail stage was slow enough
+to delay finalize until the apps resolved.
+
+The lesson generalises past this migration: a test that passes because an
+unrelated stage is slow is not testing what it claims, and removing an
+imperative step is one of the few things that reliably surfaces such a
+dependency. The boundary work keeps finding bugs that predate it, because
+making something declarative means making its timing explicit.

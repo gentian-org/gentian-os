@@ -660,15 +660,3 @@ docs/plans/tenant-composition-cleanup.md §8.
     image is the condition to report.
   - `[ ]` Decide whether `Docker build and push` should depend on the Go job.
 
-### 1.29 Land the Dovecot Job Retirement (*)
-
-The phase is now derived from the conditions rather than from the absence of a
-requeue, which is what blocked this. `tenantFoundationNotReady` requires the
-identity and data-plane conditions to be present and True; apps, mail and
-privileges still settle after Ready, because finalize returns their result and
-says so.
-
-What remains is to apply `/tmp/gentian-dovecot-job-retirement.patch` — the
-tenant-realm half of the Dovecot OIDC client Job, replaced by a wait on the
-composed `Client`. It was written and verified before the phase fix existed and
-is the last duplicate writer on that object.

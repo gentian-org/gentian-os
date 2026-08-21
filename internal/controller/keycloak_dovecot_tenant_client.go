@@ -26,7 +26,10 @@ import (
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
+	apimeta "k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
@@ -47,9 +50,13 @@ const (
 	dovecotAdminSecretName = "dovecot-admin"
 )
 
-func tenantDovecotOIDCClientJobName(tenantName string) string {
-	return fmt.Sprintf("keycloak-dovecot-oidc-%s", tenantName)
-}
+// No tenant-realm job name any more: tenant-default composes that client, and
+// the operator waits for it. The kernel-realm one below stays, because no
+// Composition covers the kernel realm — there is no XTenant for it.
+//
+// Any keycloak-dovecot-oidc-<tenant> Job left on a cluster expires on its own:
+// the Jobs carry TTLSecondsAfterFinished, so a completed one is collected
+// without anything having to go and delete it.
 
 // kernelDovecotOIDCClientJobName is not tenant-scoped: there is one kernel realm
 // and one client in it, however many tenants exist.
@@ -131,24 +138,47 @@ func (r *TenantReconciler) resolveDovecotPack(ctx context.Context) (oidc.Pack, b
 	return pack, true, nil
 }
 
-func (r *TenantReconciler) ensureDovecotTenantOIDCClientJob(ctx context.Context, tenant *gentianov1alpha1.Tenant) (bool, error) {
-	pack, ok, err := r.resolveDovecotPack(ctx)
-	if err != nil {
+// keycloakClientGVK is the provider-keycloak managed resource that tenant-default
+// composes for gentian-dovecot.
+var keycloakClientGVK = schema.GroupVersionKind{
+	Group:   "openidclient.keycloak.crossplane.io",
+	Version: "v1alpha1",
+	Kind:    "Client",
+}
+
+func tenantDovecotOIDCClientName(tenantName string) string {
+	return fmt.Sprintf("%s-dovecot-oidc-client", tenantName)
+}
+
+// dovecotTenantClientReady reports whether the composed gentian-dovecot Client is
+// Ready in the tenant realm.
+//
+// It replaces a Job that created the same client. The object is tenant-default's
+// now — declared with the secret from dovecot-admin, because an omitted
+// clientSecretSecretRef would have Keycloak generate a new one and IMAP would
+// stop validating tokens — so all that is left here is to wait for it.
+//
+// The wait itself has to stay. Steps 6 and 7 add the realm to Dovecot's XOAUTH2
+// configuration and reload it, and introspection against a client that does not
+// exist yet fails; deleting the wait along with the Job broke three readiness
+// tests for exactly that reason.
+func (r *TenantReconciler) dovecotTenantClientReady(ctx context.Context, tenant *gentianov1alpha1.Tenant) (bool, error) {
+	obj := &unstructured.Unstructured{}
+	obj.SetGroupVersionKind(keycloakClientGVK)
+	err := r.Get(ctx, types.NamespacedName{Name: tenantDovecotOIDCClientName(tenant.Name)}, obj)
+	switch {
+	case errors.IsNotFound(err):
+		return false, nil
+	case apimeta.IsNoMatchError(err):
+		// provider-keycloak is not installed yet. A cluster still bootstrapping
+		// should wait for it rather than fail the whole mail reconcile.
+		log.FromContext(ctx).Info("waiting for the provider-keycloak Client CRD before configuring Dovecot",
+			"client", dovecotOIDCClientID)
+		return false, nil
+	case err != nil:
 		return false, err
 	}
-	if !ok {
-		log.FromContext(ctx).Info("waiting for the kernel OIDCPackCatalog before provisioning the Dovecot client",
-			"pack", dovecotOIDCClientID)
-		return false, nil
-	}
-	realmName := keycloakRealmName(tenant)
-	jobName := tenantDovecotOIDCClientJobName(tenant.Name)
-	job := makeDovecotOIDCClientJob(jobName, realmName, pack, map[string]string{
-		tenantLabel:    tenant.Name,
-		managedByLabel: managedByValue,
-		"gentianos.io/keycloak-dovecot-oidc-client": dovecotTenantOIDCClientVersion,
-	})
-	return r.ensureDovecotOIDCClientJob(ctx, tenant.Name, jobName, job)
+	return appClaimIsReady(obj), nil
 }
 
 // ensureKernelDovecotOIDCClientJob provisions the client in the KERNEL realm, so

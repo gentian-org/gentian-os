@@ -299,9 +299,13 @@ func (r *TenantReconciler) ensureMailSelfhosted(ctx context.Context, tenant *gen
 			return false, fmt.Errorf("register Dovecot domain config: %w", err)
 		}
 
-		// 5. Ensure gentian-dovecot exists in the tenant realm for IMAP XOAUTH2 introspection.
-		if ready, err := r.ensureDovecotTenantOIDCClientJob(ctx, tenant); err != nil {
-			return false, fmt.Errorf("ensure Dovecot tenant OIDC client: %w", err)
+		// 5. Wait for gentian-dovecot in the tenant realm, which IMAP XOAUTH2
+		//    introspection authenticates as. tenant-default composes the client;
+		//    this only waits for it, because steps 6 and 7 configure Dovecot to
+		//    introspect with it and would otherwise point at a client that does
+		//    not exist yet.
+		if ready, err := r.dovecotTenantClientReady(ctx, tenant); err != nil {
+			return false, fmt.Errorf("check Dovecot tenant OIDC client: %w", err)
 		} else if !ready {
 			return false, nil
 		}
