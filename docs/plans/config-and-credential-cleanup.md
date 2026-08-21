@@ -1193,7 +1193,7 @@ So: to change a phase's state, edit that phase's section. `make gen-phase-table`
 | 5 | Exercised | The public chart registries are claims, and so is the app catalogue: `role: apps` on a `type: git` repository now composes its own catalogue-sync ApplicationSet in the Composition, so `gentian-apps` and any tenant's private catalogue work the same way, and a tenant's Repositories view shows both. What remains is the private infrastructure registry, which is a different shape and deliberately not converted — it has no consumer yet (nothing reads its credential to redirect a chart pull), so a claim for it would be an XRD nobody exercises. That gap belongs to the mirrored/air-gapped install work (Q15, Phase 12), not this phase. |
 | 6 | Exercised | Both criteria this row was waiting on are verified in §15.1 — ESO's live verdict, and the unsatisfied→satisfied transition unblocking composition with nothing re-run. The row had not been updated to say so |
 | 7 | Exercised | The live OIDC write path works. It was broken three independent ways — wrong mount, wrong role type, missing audience (§15.4) — and a token exchange has now completed against the fixed path, which is the criterion this row waited on longest. The audit device is still unobserved |
-| 8 | Exercised | The service exchanges a caller's token and serves the catalogue. A refusal now names the failed check — audience, claims, role type, missing role, unmounted backend — and logs OpenBao's own words; the first real use of that log found the tenant fault below in one line, after three rounds of reading code had been needed for the previous ones. Its own ServiceAccount policy is still uninspected |
+| 8 | Exercised | The service exchanges a caller's token and serves the catalogue. A refusal now names the failed check — audience, claims, role type, missing role, unmounted backend — and logs OpenBao's own words; the first real use of that log found the tenant fault below in one line, after three rounds of reading code had been needed for the previous ones. Its ServiceAccount's policy is now inspected, and criterion 7 needed a correction, not just an answer, once it was |
 | 9 | Built | No shared API contract tests; validation errors are not attributed per field |
 | 10 | 10a/10b done, 10c done | `cluster-settings.env` is gone, no `envsubst` call site remains, and the credential manager — the third surface — now authenticates and serves (row 8). One orphaned `${GENTIAN_OS_IMAGE_REPOSITORY}` survived the `envsubst` removal inside a Helm template, where nothing expands it, and silently disabled image updates until it was found (§15.4) |
 | 11 | Done | BSD `sed_inplace` has not been observed running |
@@ -1724,7 +1724,7 @@ breach.
 
 ### Phase 8 — Credential Manager service
 
-**State — Exercised.** The service exchanges a caller's token and serves the catalogue. A refusal now names the failed check — audience, claims, role type, missing role, unmounted backend — and logs OpenBao's own words; the first real use of that log found the tenant fault below in one line, after three rounds of reading code had been needed for the previous ones. Its own ServiceAccount policy is still uninspected
+**State — Exercised.** The service exchanges a caller's token and serves the catalogue. A refusal now names the failed check — audience, claims, role type, missing role, unmounted backend — and logs OpenBao's own words; the first real use of that log found the tenant fault below in one line, after three rounds of reading code had been needed for the previous ones. Its ServiceAccount's policy is now inspected, and criterion 7 needed a correction, not just an answer, once it was
 
 **Status: implemented** as `internal/credentialmgr`, riding the operator's manager rather than
 being a second Deployment to secure, schedule and upgrade.
@@ -1746,10 +1746,37 @@ by reviewers remembering them:
 | 4 | Metadata surfaced: existence, setter, timestamp, validation result | **Passing** — from KV custom metadata, `set_by` recorded at write time |
 | 5 | Validation runs before the write; a failing value is not stored | **Passing** — 422 with the endpoint's own reason, verified both ways |
 | 6 | A tenant admin sees only `scope: tenant` requirements | **Passing** — scope defaults to tenant; cluster is opt-in |
-| 7 | The service's ServiceAccount has no broad OpenBao policy | **Unverified** — it has no OpenBao identity at all by construction, but the deployed policy set has not been inspected |
+| 7 | The service's ServiceAccount has no broad OpenBao policy | **Corrected below** |
 
 The write path is untested against a real OpenBao and Keycloak — the token exchange, the audit
 entry, and the policy decision all need both running. Criteria 1–6 hold against a stub.
+
+**Criterion 7, corrected.** The premise was wrong: credentialmgr has no ServiceAccount of its own
+to inspect. It rides the operator's pod, which does — `gentian-os` in `gentian-system`, bound via
+OpenBao's `auth/kubernetes` backend to the `gentian-os-operator` role and the `operator-write`
+policy (`kernel/services/openbao-config/manifests/templates/{role,policy}-operator-write.yaml`).
+That policy is broad within its scope: full CRUD on the entire `secret/gentian-os/*` KV tree —
+every tenant's seeded secrets, not just what credentialmgr touches — plus full control, including
+`sudo`, of any `oidc-*` auth mount. "No broad policy" was never true; the accurate claim is
+narrower.
+
+Two things hold it inside that scope. `scripts/tools/verify-openbao-policies.sh` asserts the
+`operator-write` boundary itself — run live against a throwaway OpenBao, 7 assertions, currently
+passing: allowed on a tenant OIDC mount and its own secret tree, denied on `auth/kubernetes/config`
+(the backend it authenticates through), `sys/auth/kubernetes`, and the kernel's own `auth/oidc/config`.
+And credentialmgr's own code has no path to this identity — grepped for `secrets.Seeder`,
+`secrets.KVClient`, `BAO_TOKEN`, and any `kv.Get`/`kv.Put` call across `internal/credentialmgr/`:
+zero matches. Only `buildSeeder()` in `cmd/main.go` constructs the `KVClient` that logs into
+`auth/kubernetes` and spends this policy, for the operator's own reconcile-time secret seeding —
+a different code path in the same binary.
+
+That second guarantee is about credentialmgr's code, not the pod's blast radius. The SA JWT and
+`BAO_ADDR`/`BAO_ROLE` are ambient to the whole process — nothing scopes them to the seeder alone —
+so a future code path added anywhere in this binary could construct the same `KVClient` and spend
+`operator-write`. Shrinking that would mean giving credentialmgr its own ServiceAccount and pod,
+which is the cost §8's own design note already declined to pay ("riding the operator's manager
+rather than being a second Deployment to secure, schedule and upgrade"). Recorded as accepted
+architecture, not fixed — the criterion is corrected, not passing.
 
 `smtp` validation **refuses** rather than pretending: it is not reachable over HTTP, and the
 installer's `openssl s_client` probe already covers it. A validator that silently passed would be
