@@ -685,3 +685,60 @@ docs/plans/tenant-composition-cleanup.md §8.
   - `[ ]` Require `list` and `watch` wherever a type is read through the cache.
   - `[ ]` Report a granted verb no call site uses, so the ClusterRole shrinks as
     the operator stops writing what Crossplane now owns.
+
+### 1.30 Tenant Separation Belongs to the API Server, Not the Console (***)
+* **Target Domain**: Security & Isolation
+* **Context**: Nothing in the Admin Console impersonates the signed-in
+  administrator. Every call reaches the API server as
+  `system:serviceaccount:platform-kernel:gentian-portal-gentian-portal` — each
+  service builds its client with `load_incluster_config()` and no
+  `Impersonate-User` header — and that account must be able to serve every
+  tenant. RBAC therefore authorises *the console*, and cannot tell a tenant
+  admin from a platform one: "demo's admin edits demo's policy" and "demo's
+  admin edits the cluster policy" are the same request at the authorisation
+  layer. What separates them is `resolve_admin_tenant`, `_require_platform_admin`
+  and per-route filters on `spec.tenant` — application code. This is not
+  specific to one resource; it is how every admin operation works today. The
+  consequence worth stating plainly: **a bug in a route handler is a
+  cross-tenant data bug, not a UI bug**, and no Kubernetes control would catch
+  it. Scoping does not change this — a namespaced resource needs the same broad
+  grant, because the console manages every tenant namespace.
+* **Proposed Solution**: Give the API server the identity it is missing. The
+  console derives `Impersonate-User` and `Impersonate-Group` from the OIDC token
+  it has already validated, and the cluster carries per-tenant RBAC for the
+  resources the console touches. Isolation then holds even when a handler
+  forgets its filter, and the Kubernetes audit log names the person rather than
+  the console — which is the same argument as §1.12's audit instrumentation,
+  arriving through a different door.
+* **What this costs, because none of it is free**:
+  - The impersonation grant is itself powerful: a service account that may
+    impersonate any user is a service account that may become a cluster admin.
+    It has to be restricted by `resourceNames` to the tenant-admin groups, and
+    that list has to stay correct as tenants come and go.
+  - Per-tenant Roles and RoleBindings must exist for every tenant, created and
+    removed with the tenant, which is new work in the provisioning path.
+  - Cluster-scoped admin resources do not separate cleanly under RBAC:
+    `resourceNames` restricts `get`, `update`, `patch` and `delete`, but not
+    `create` (the name is in the body) or `list`/`watch` (there is no single
+    name). `BackupPolicy` and `CredentialRequirement` both carry a `scope` field
+    for exactly this reason, and both would need namespacing or a webhook to be
+    enforceable rather than merely filtered.
+  - Some console reads are legitimately cluster-wide — the app catalogue, the
+    tenant list a platform admin sees — so impersonation cannot be applied
+    uniformly, and deciding per call site is the bulk of the work.
+* **Backlog Items**:
+  - `[ ]` Decide which console operations are per-tenant and which are genuinely
+    platform-wide; the split is the design, and the rest follows from it.
+  - `[ ]` Add impersonation to the Kubernetes client layer, restricted to the
+    tenant-admin groups by `resourceNames`.
+  - `[ ]` Create per-tenant Roles and RoleBindings as part of tenant
+    provisioning, so a new tenant is isolated without a manual step.
+  - `[ ]` Namespace the admin resources that a tenant may edit, or gate them
+    with a validating webhook — a cluster-scoped resource a tenant can `create`
+    is not separable by RBAC alone.
+  - `[ ]` Keep the application-layer checks after impersonation lands. Two
+    independent controls is the point; removing one because the other exists
+    returns to a single point of failure with extra steps.
+  - `[ ]` Add a test that a tenant admin's token cannot read another tenant's
+    resources with the route filters deliberately disabled — the assertion that
+    the boundary has actually moved.
