@@ -830,3 +830,35 @@ docs/plans/tenant-composition-cleanup.md §8.
   - `[ ]` Implement the AppProfile code generation tool.
   - `[ ]` Integrate the agentic engine with the tenant provisioning API.
 
+### 1.32 Retire the gentian-groups Job (*)
+* **Target Domain**: Identity
+* **Done**: the tenant's entitlement groups are composed. tenant-default declares
+  the three that belong to the tenant — members, admins, app-admins — and
+  app-default declares one per app, carrying that profile's
+  `gentianos.io/keycloak-group-attributes`. All five adopted on corp with their
+  Keycloak ids unchanged, and app-default also composes the group's grant of the
+  app's client role.
+
+  The per-app group is app-default's because nine of the catalogue's thirty-one
+  profiles carry those attributes — the Odoo ones name the modules and roles the
+  app provisions from — and only app-default fetches the AppProfile. It sits
+  above the OIDC conditional because an entitlement group is per app, not per
+  OIDC client: app-store-me declares no oidc block, and a group rendered inside
+  that conditional skipped it silently.
+* **What is left**: the Job still creates the same groups, so they have two
+  writers that happen to agree. Two things block removing it:
+
+  1. It also makes groups for OIDC pack profiles that are not on `spec.apps` —
+     `collectGentianGroupsJSON` walks `oidcConfigs` as well as the apps, and corp
+     carries `gentian:tenant:corp:app:gentian-subscriptions-me` for an app no
+     longer in its spec. A Composition sees only what the spec lists.
+  2. It also creates the realm's "groups" client scope, its protocol mapper, and
+     adds that scope to the realm's default-default-client-scopes. That is realm
+     state, not group state, and needs its own resources.
+* **Backlog Items**:
+  - `[x]` Compose the three tenant groups and the per-app group with attributes.
+  - `[x]` Compose the group's grant of the app's client role.
+  - `[ ]` Decide whether a group for a profile absent from `spec.apps` should
+    still exist. If not, the Job's `oidcConfigs` pass is dead weight and the
+    leftover groups are pruneable.
+  - `[ ]` Compose the "groups" client scope and its mapper, then retire the Job.
