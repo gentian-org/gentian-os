@@ -25,6 +25,32 @@ spec:
               required:
                 - kernelDomain
               properties:
+                identity:
+                  type: object
+                  description: >
+                    Where the in-cluster Keycloak answers. Tenant realms broker to
+                    the kernel realm, and the server-to-server half of that exchange
+                    must not leave the cluster.
+                  properties:
+                    internalUrl:
+                      type: string
+                      description: >
+                        Keycloak's in-cluster base URL, including the relative path its
+                        realm endpoints hang off.
+
+                        The broker IdP splits its endpoints deliberately. The browser is
+                        sent to the public id.<kernelDomain> URL, while token, JWKS and
+                        userinfo are fetched over this one, so Keycloak does not hairpin
+                        out through the ingress and back in to reach itself during the
+                        broker code exchange.
+
+                        This is NOT gentian-kernel-services' KEYCLOAK_INTERNAL_URL, which
+                        is documented as a base with no path. Realm endpoints are relative
+                        to /auth, so the two cannot be the same string, and the Compositions
+                        need the /auth form. Keeping them separate keys is deliberate:
+                        collapsing them would silently give one consumer the other's
+                        contract.
+                      default: http://gentian-idp-keycloak-keycloakx-http.platform-kernel.svc.cluster.local:8080/auth
                 kernelDomain:
                   type: string
                   description: >

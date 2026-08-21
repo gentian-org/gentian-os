@@ -66,6 +66,12 @@ spec:
             {{- $ccList   := dig "clusterConfig" list $extraRes }}
             {{- $cc       := ternary (index $ccList 0) dict (gt (len $ccList) 0) }}
             {{- $ccData   := dig "data" dict $cc }}
+            {{- /* The kernel realm and Keycloak's in-cluster URL, published by the
+                 Cluster claim. Both empty means the cluster predates them, and the
+                 broker resources below stay unrendered rather than half-configured
+                 — the same rule oidc.discoveryUrl follows. */}}
+            {{- $kernelRealm := dig "identity.kernelRealm" "" $ccData }}
+            {{- $kcInternal  := dig "identity.internalUrl" "" $ccData }}
             {{- $provList  := dig "provisioningJobs" list $extraRes }}
             {{- $provCM    := ternary (index $provList 0) dict (gt (len $provList) 0) }}
             {{- $jobsJSON  := dig "data" "jobs.json" "[]" $provCM }}
@@ -541,6 +547,43 @@ spec:
                   name: dovecot-admin
                   namespace: platform-kernel
                   key: oidc_client_secret
+              providerConfigRef:
+                name: keycloak
+            {{- end }}
+
+            {{- if and $kernelRealm $kcInternal }}
+            {{- /* ── kernel broker client, observed ────────────────────────────
+                 The tenant realm brokers to the kernel realm, and broker-<tenant>
+                 in the KERNEL realm is the client it authenticates as. The realm
+                 Job creates it, so this does not.
+
+                 Observe-only, and here for one reason: writeConnectionSecretToRef
+                 republishes the client's existing secret into Kubernetes without
+                 rotating it. That is what lets the IdP below take its credentials
+                 from a Secret instead of a Job curling the admin API for them —
+                 the step that kept the broker imperative.
+
+                 Not fully managed on purpose. Managing it would put the secret
+                 under the provider's control, and a rotation would break brokered
+                 login for as long as the IdP still held the old value.
+              */}}
+            ---
+            apiVersion: openidclient.keycloak.crossplane.io/v1alpha1
+            kind: Client
+            metadata:
+              name: {{ $tenant }}-broker-client
+              annotations:
+                crossplane.io/external-name: broker-{{ $tenant }}
+                gotemplating.fn.crossplane.io/composition-resource-name: keycloak-broker-client
+            spec:
+              deletionPolicy: Orphan
+              managementPolicies: ["Observe"]
+              forProvider:
+                clientId: broker-{{ $tenant }}
+                realmId: {{ $kernelRealm }}
+              writeConnectionSecretToRef:
+                name: {{ $tenant }}-broker-client
+                namespace: platform-kernel
               providerConfigRef:
                 name: keycloak
             {{- end }}

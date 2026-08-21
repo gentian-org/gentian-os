@@ -6,6 +6,8 @@ metadata:
   labels:
     gentianos.io/config-type: cluster-config
 data:
+  identity.kernelRealm: "kernel"
+  identity.internalUrl: "http://gentian-idp-keycloak-keycloakx-http.platform-kernel.svc.cluster.local:8080/auth"
   network.infraNamespace: gentian-infra-dev
   network.servicesNamespace: gentian-dev
   network.openbaoNamespace: openbao

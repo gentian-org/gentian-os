@@ -6,8 +6,8 @@ metadata:
 status:
   conditions:
   - lastTransitionTime: "2024-01-01T00:00:00Z"
-    message: 'Unready resources: app-catalogue-test-app, keycloak-dovecot-oidc-client,
-      keycloak-portal-bff-client, and 5 more'
+    message: 'Unready resources: app-catalogue-test-app, keycloak-broker-client, keycloak-dovecot-oidc-client,
+      and 6 more'
     reason: Creating
     status: "False"
     type: Ready
@@ -108,6 +108,35 @@ spec:
             restartPolicy: Never
   providerConfigRef:
     name: kubernetes
+---
+apiVersion: openidclient.keycloak.crossplane.io/v1alpha1
+kind: Client
+metadata:
+  annotations:
+    crossplane.io/composition-resource-name: keycloak-broker-client
+    crossplane.io/external-name: broker-render-fixture
+  labels:
+    crossplane.io/composite: render-fixture
+  name: render-fixture-broker-client
+  ownerReferences:
+  - apiVersion: gentianos.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XTenant
+    name: render-fixture
+    uid: ""
+spec:
+  deletionPolicy: Orphan
+  forProvider:
+    clientId: broker-render-fixture
+    realmId: kernel
+  managementPolicies:
+  - Observe
+  providerConfigRef:
+    name: keycloak
+  writeConnectionSecretToRef:
+    name: render-fixture-broker-client
+    namespace: platform-kernel
 ---
 apiVersion: openidclient.keycloak.crossplane.io/v1alpha1
 kind: Client

@@ -763,6 +763,23 @@ spec:
                     mail.serviceMode: {{ dig "mail" "serviceMode" "" $spec | quote }}
                     mail.egressHost: {{ dig "mail" "egressHost" "" $spec | quote }}
                     node.ip: {{ default "" (dig "nodeIp" "" $spec) | quote }}
+                    # Keycloak's in-cluster base URL, /auth included. The broker IdP
+                    # fetches token, JWKS and userinfo over it so the code exchange stays
+                    # inside the cluster; the browser still goes to the public URL.
+                    #
+                    # No default restated, same reason as mail above: the XRD declares it
+                    # and the API server materialises it onto the composite before this
+                    # renders.
+                    #
+                    # The Compositions cannot read the keycloak-admin Secret, which is
+                    # where this value lived and where the Jobs still read it from. That
+                    # is precisely why the broker IdP could not be declared until now.
+                    identity.internalUrl: {{ dig "identity" "internalUrl" "" $spec | quote }}
+                    # The shared realm tenant realms broker to. Read from the existing
+                    # oidc.realm field rather than a new one — the OpenBao client, the
+                    # admin groups and the broker IdP all mean the same realm, and a
+                    # second field could disagree with the first.
+                    identity.kernelRealm: {{ dig "oidc" "realm" "" $spec | quote }}
                     llm.enabled: {{ default false (dig "llm" "enabled" false $spec) | quote }}
                     tenant.limitRange.default.cpu: {{ default "500m" (dig "tenantDefaults" "limitRange" "defaultCpu" "" $spec) | quote }}
                     tenant.limitRange.default.memory: {{ default "512Mi" (dig "tenantDefaults" "limitRange" "defaultMemory" "" $spec) | quote }}

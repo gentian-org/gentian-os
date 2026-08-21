@@ -118,6 +118,8 @@ spec:
       apiVersion: v1
       data:
         certificates.trustAnchorSecret: ""
+        identity.internalUrl: ""
+        identity.kernelRealm: ""
         llm.enabled: "false"
         mail.egressHost: ""
         mail.serviceMode: ""
