@@ -103,10 +103,19 @@ else
   echo "client ${CLIENT_ID} created"
 fi
 %s
-curl -sf -X PUT -H "${AUTH_HEADER}" -H "Content-Type: application/json" \
-  "${KEYCLOAK_URL}/admin/realms/${REALM}/clients/${CLIENT_UUID}" \
-  -d "{\"clientId\":\"${CLIENT_ID}\",\"redirectUris\":${REDIRECT_URIS},\"webOrigins\":[\"+\"],\"protocol\":\"openid-connect\",\"standardFlowEnabled\":true,\"publicClient\":${PUBLIC_CLIENT},\"fullScopeAllowed\":${FULL_SCOPE_ALLOWED},\"serviceAccountsEnabled\":false,\"directAccessGrantsEnabled\":false%s}"
-echo "client ${CLIENT_ID} configured"
+# The client is NOT configured here. app-default composes it, and this Job
+# writing the same object is what made it the last one with two writers — the
+# shape that let the kernel IdP spend two minutes of every reconcile on the
+# wrong first-broker-login flow before anyone noticed.
+#
+# The create above stays. It is a bootstrap, not ownership: something has to
+# make the client before the client role below can hang off it, and this Job is
+# waited on in the DataPlane stage while the App claim that composes the client
+# is created in AppsAndEdge, the stage after. Whichever gets there first decides
+# the initial state and the Composition converges it from then on.
+#
+# Same division as the realm script and the kernel IdP: create if absent, never
+# restate.
 
 # --- Client role ---
 ROLE_HTTP=$(curl -s -o /dev/null -w "%%{http_code}" -H "${AUTH_HEADER}" \
@@ -132,21 +141,20 @@ curl -sf -X POST -H "${AUTH_HEADER}" -H "Content-Type: application/json" \
   -d "[{\"id\":\"${ROLE_ID}\",\"name\":\"${CLIENT_ROLE}\"}]" >/dev/null || true
 echo "group ${ENTITLEMENT_GROUP} mapped to client role ${CLIENT_ROLE}"
 
-# --- Default client scopes (built-ins + app scope) ---
-for SCOPE in profile email roles web-origins acr ${SCOPE_NAME}; do
-  keycloak_json_id_by_attr "${SCOPE_LIST}" "name" "${SCOPE}"
-  SID="${_kj_id}"
-  if [ -n "${SID}" ]; then
-    curl -sf -X PUT -H "${AUTH_HEADER}" \
-      "${KEYCLOAK_URL}/admin/realms/${REALM}/clients/${CLIENT_UUID}/default-client-scopes/${SID}" >/dev/null 2>&1 || true
-  fi
-done
-SCOPE_LIST=$(curl -sf -H "${AUTH_HEADER}" "${KEYCLOAK_URL}/admin/realms/${REALM}/client-scopes")
+# The default client scopes are NOT attached here. app-default composes a
+# ClientDefaultScopes for exactly the same six — profile, email, roles,
+# web-origins, acr and the pack's own scope — and it reports them all attached.
+# This loop was the second place this Job wrote an object the Composition owns.
+#
+# It also swallowed its own failures, so a scope that never attached looked
+# identical to one that did.
 
 echo "oidc pack ${CLIENT_ID} provisioned in realm ${REALM}"`,
 		realmName, clientID, pack.ScopeName, pack.ScopeDescription, pack.ClientRole, groupName,
 		string(redirectJSON), publicClient, fullScope,
-		scopeLookupBlock, mapperBlocks, secretClause, clientUUIDBlock, secretClause, groupIDBlock)
+		// One secretClause, not two: the second filled the client PUT that this
+		// Job no longer makes.
+		scopeLookupBlock, mapperBlocks, secretClause, clientUUIDBlock, groupIDBlock)
 }
 
 // buildOIDCServiceClientScript provisions only a confidential client.
