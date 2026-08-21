@@ -72,6 +72,7 @@ ann() {
 # nothing runs envsubst over that chart, so the literal reaches the cluster and
 # the updater looks for a repository by that name, finds none, and skips it.
 image_list="$(ann image-list)"
+# shellcheck disable=SC2016  # the literal ${ below is what is being searched for
 if [ -z "${image_list}" ]; then
     echo "  ${RED}FAIL${NC}  image-list annotation is absent — nothing is tracked."
     fail=1

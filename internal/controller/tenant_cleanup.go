@@ -29,6 +29,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
+	"github.com/gentian-org/gentian-os/internal/kernel/secrets"
+	"sigs.k8s.io/controller-runtime/pkg/log"
 )
 
 func tenantKernelLabelSelector(tenantName string) client.MatchingLabels {
@@ -128,6 +130,23 @@ func (r *TenantReconciler) purgeTenantKernelResources(ctx context.Context, tenan
 	}
 
 	selector := tenantKernelLabelSelector(tenant.Name)
+
+	// The tenant's own OpenBao subtree. Only per-app subtrees were purged, so
+	// …/tenants/<t>/admin outlived the tenant — and the admin credential is
+	// seeded write-once, so a tenant recreated under the same name silently
+	// inherited the previous one's login. "Delete it and make it again" did not
+	// do what it looks like it does.
+	//
+	// Reported rather than fatal: OpenBao being unreachable must not strand the
+	// finalizer and with it the Tenant, and the residue is a path, not a
+	// workload. Retain skips this with everything else, which is the policy's
+	// meaning — the data stays.
+	if r.Seeder != nil && r.Seeder.KV() != nil {
+		if err := r.Seeder.KV().DeleteTree(ctx, secrets.TenantPath(tenant.Name)); err != nil {
+			log.FromContext(ctx).Error(err, "could not purge the tenant's OpenBao paths",
+				"tenant", tenant.Name)
+		}
+	}
 
 	if err := r.deleteTenantLabeledDatabaseCRs(ctx, tenant.Name); err != nil {
 		return err

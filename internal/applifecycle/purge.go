@@ -345,8 +345,13 @@ func (s *Service) purgeOpenBaoPath(ctx context.Context, tenant, appKey string) [
 		return []string{fmt.Sprintf("OpenBao purge skipped for %q (pod unavailable)", appKey)}
 	}
 	base := fmt.Sprintf("gentian-os/tenants/%s/apps/%s", tenant, appKey)
+	// https and the pod's own CA. The listener has only ever been https, so the
+	// http address was reset by the peer — and every command in the script below
+	// ends in `|| true`, so the purge reported success while deleting nothing.
+	// Addressed by service DNS because the certificate carries no IP SAN.
 	script := fmt.Sprintf(`set -eu
-BAO_ADDR=http://127.0.0.1:8200
+BAO_ADDR=https://openbao.openbao.svc.cluster.local:8200
+BAO_CACERT=/openbao/tls/ca.crt
 BAO_TOKEN='%s'
 BASE='%s'
 purge_kv_tree() {

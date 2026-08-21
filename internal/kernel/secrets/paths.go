@@ -55,6 +55,13 @@ func KernelPath(category, name string) string {
 // startup and feeds it to the Deriver.
 const MasterPasswordPath = "gentian-os/kernel/internal/master-password"
 
+// TenantPath is everything this platform stores for one tenant. Every other
+// tenant path is built below it, which is what makes purging a tenant a single
+// subtree rather than a list that has to be kept in step with the paths.
+func TenantPath(tenant string) string {
+	return fmt.Sprintf("gentian-os/tenants/%s", tenant)
+}
+
 // TenantAdminPath returns the canonical KV v2 logical path for the
 // tenant-scoped realm admin credentials created by the identity reconciler.
 func TenantAdminPath(tenant string) string {
