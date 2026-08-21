@@ -150,7 +150,12 @@ var xTenantGVK = schema.GroupVersionKind{
 // +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups="",resources=configmaps,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups="",resources=services,verbs=get;list;watch;create;update;patch;delete
-// +kubebuilder:rbac:groups="",resources=pods,verbs=get;list;create;delete
+// watch, because the manager's cache establishes an informer for every type read
+// through it, and an informer needs list AND watch. Without it the cache logs
+// "pods is forbidden ... Failed to watch" on a loop and never syncs, while a
+// direct get still works — so the permission looks sufficient right up until
+// something depends on the cache being current.
+// +kubebuilder:rbac:groups="",resources=pods,verbs=get;list;watch;create;delete
 // +kubebuilder:rbac:groups="",resources=events,verbs=create;patch
 // +kubebuilder:rbac:groups=networking.k8s.io,resources=ingresses,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=external-secrets.io,resources=externalsecrets,verbs=get;list;watch;create;update;patch;delete

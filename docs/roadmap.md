@@ -660,3 +660,21 @@ docs/plans/tenant-composition-cleanup.md §8.
     image is the condition to report.
   - `[ ]` Decide whether `Docker build and push` should depend on the Go job.
 
+### 1.29 Extend the RBAC Lint to Verbs (*)
+* **Target Domain**: Build and Release
+* **Context**: `make lint-rbac-coverage` asserts the operator may read every
+  GroupVersionKind it constructs, which is the failure that has happened twice —
+  a missing rule. It does not check verbs, and that gap is not theoretical
+  either: the ClusterRole granted `pods` `get, list, create, delete` and not
+  `watch`, so the manager's cache logged `pods is forbidden ... Failed to watch`
+  on a loop and never synced, while a direct get kept working. The permission
+  looks sufficient right up until something depends on the cache being current.
+  Found by reading the operator's log after the lint itself was green.
+* **Proposed Solution**: Decide which verbs a use implies and check those. A read
+  through the manager's cache needs `list` and `watch`, not just `get` — that
+  single rule would have caught this one. Going further means knowing which call
+  each GVK reaches, which is a larger analysis than the current scan does.
+* **Backlog Items**:
+  - `[ ]` Require `list` and `watch` wherever a type is read through the cache.
+  - `[ ]` Report a granted verb no call site uses, so the ClusterRole shrinks as
+    the operator stops writing what Crossplane now owns.
