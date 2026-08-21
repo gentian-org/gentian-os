@@ -20,6 +20,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/go-logr/logr"
 	batchv1 "k8s.io/api/batch/v1"
@@ -225,28 +226,72 @@ func (r *TenantRestoreReconciler) restoreApp(
 		return ctrl.Result{RequeueAfter: exportRequeueAfter}, r.persist(ctx, restore)
 	}
 
-	// Hooks run with the data in place and the app still paused, which is the
-	// only window in which "re-read what changed underneath you" is meaningful.
-	if err := r.runRestoreHooks(ctx, tenant.Name, appName, spec, entry); err != nil {
-		return r.failApp(ctx, restore, tenant, appName, spec, err.Error())
-	}
-
 	used := gentianov1alpha1.BackupQuiesceMode(entry.QuiesceMode)
 	if used == "" {
 		used = quiesceModeFromMessage(entry.Message)
 	}
-	if err := r.Tenant.unquiesceApp(ctx, tenant.Name, appName, spec, used); err != nil {
-		return ctrl.Result{}, fmt.Errorf("resume %s: %w", appName, err)
+
+	// A post-restore hook needs a pod to exec into, and a scale-down quiesce
+	// leaves none — so for every app without a working maintenance command the
+	// hooks could not run at all, and the restore failed reporting a missing
+	// pod after having written the data correctly. Those apps are resumed
+	// first and their hooks run once a pod answers.
+	//
+	// Command-mode quiesce keeps its pod throughout, so there the hooks still
+	// run while users are held out, which is where they belong: the window
+	// between "data replaced" and "app serving it" is the only one in which
+	// "re-read what changed underneath you" means anything.
+	if used == gentianov1alpha1.BackupQuiesceScaleDown && restoreHooksNeedPod(spec) {
+		if entry.QuiesceEnd == nil {
+			if err := r.Tenant.unquiesceApp(ctx, tenant.Name, appName, spec, used); err != nil {
+				return ctrl.Result{}, fmt.Errorf("resume %s before hooks: %w", appName, err)
+			}
+			entry.QuiesceEnd = ptrNow()
+			unmarkQuiesced(&restore.Status.Quiesced, appName)
+			entry.Message = "resumed; waiting for a pod to run post-restore hooks"
+			return ctrl.Result{RequeueAfter: exportRequeueAfter}, r.persist(ctx, restore)
+		}
+		if _, err := r.Tenant.runningPodForApp(ctx, tenant.Name, appName, spec.QuiesceContainer()); err != nil {
+			// Bounded by the clock rather than by an attempt count: the count
+			// already carries the capture Jobs' failures, and a pod that has
+			// not appeared in this long is not going to.
+			if time.Since(entry.QuiesceEnd.Time) > restoreHookPodTimeout {
+				return r.failApp(ctx, restore, tenant, appName, spec,
+					fmt.Sprintf("post-restore hooks: %v", err))
+			}
+			return ctrl.Result{RequeueAfter: exportRequeueAfter}, r.persist(ctx, restore)
+		}
 	}
-	entry.QuiesceEnd = ptrNow()
+
+	if err := r.runRestoreHooks(ctx, tenant.Name, appName, spec, entry); err != nil {
+		return r.failApp(ctx, restore, tenant, appName, spec, err.Error())
+	}
+
+	if entry.QuiesceEnd == nil {
+		if err := r.Tenant.unquiesceApp(ctx, tenant.Name, appName, spec, used); err != nil {
+			return ctrl.Result{}, fmt.Errorf("resume %s: %w", appName, err)
+		}
+		entry.QuiesceEnd = ptrNow()
+		unmarkQuiesced(&restore.Status.Quiesced, appName)
+	}
 	entry.Phase = gentianov1alpha1.TenantExportPhaseReady
 	entry.Message = ""
-	unmarkQuiesced(&restore.Status.Quiesced, appName)
 	logger.Info("restored app", "app", appName)
 	if err := r.persist(ctx, restore); err != nil {
 		return ctrl.Result{}, err
 	}
 	return ctrl.Result{Requeue: true}, nil
+}
+
+// restoreHookPodTimeout bounds the wait for an app's pod to come back before
+// its post-restore hooks can run.
+const restoreHookPodTimeout = 5 * time.Minute
+
+// restoreHooksNeedPod reports whether this profile has anything to exec after a
+// restore. Nothing to run means nothing to wait for a pod for.
+func restoreHooksNeedPod(spec *gentianov1alpha1.BackupSpec) bool {
+	post, verify := spec.RestoreCommands()
+	return len(post) > 0 || len(verify) > 0
 }
 
 // runRestoreHooks runs the profile's post-restore commands and its verification.

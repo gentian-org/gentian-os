@@ -610,3 +610,47 @@ func TestHookPodSelectionPrefersTheTargetContainer(t *testing.T) {
 		t.Fatalf("picked %q — a pod without the hook's container", pod.Name)
 	}
 }
+
+// A scale-down quiesce leaves no pod, so a post-restore hook cannot run — the
+// first live restore of an app whose maintenance command was unavailable
+// failed with "no running pod" after writing all its data correctly. The app
+// must be resumed before its hooks, not after.
+func TestScaleDownRestoreResumesBeforeRunningHooks(t *testing.T) {
+	s := runtime.NewScheme()
+	if err := clientgoscheme.AddToScheme(s); err != nil {
+		t.Fatalf("add client-go scheme: %v", err)
+	}
+	if err := gentianov1alpha1.AddToScheme(s); err != nil {
+		t.Fatalf("add gentian scheme: %v", err)
+	}
+
+	spec := &gentianov1alpha1.BackupSpec{
+		Restore: &gentianov1alpha1.BackupRestore{
+			Post: [][]string{{"php", "occ", "maintenance:data-fingerprint"}},
+		},
+	}
+	if !restoreHooksNeedPod(spec) {
+		t.Fatal("a profile with restore.post must be reported as needing a pod")
+	}
+	if restoreHooksNeedPod(&gentianov1alpha1.BackupSpec{}) {
+		t.Error("a profile with no restore hooks must not wait for a pod")
+	}
+
+	// Scaled to zero, as a scale-down quiesce leaves it: no pod exists, so a
+	// hook could not run until the app is scaled back up.
+	scaled := deployment("nextcloud", "nextcloud-base-ce", 0)
+	scaled.Annotations = map[string]string{replicaMemoAnnotation: "1"}
+	c := fake.NewClientBuilder().WithScheme(s).WithObjects(scaled).Build()
+	tr := &TenantReconciler{Client: c, Scheme: s}
+
+	if _, err := tr.runningPodForApp(context.Background(), "demo", "nextcloud-base-ce", "nextcloud"); err == nil {
+		t.Fatal("expected no pod while scaled to zero — the premise of the bug")
+	}
+	if err := tr.unquiesceApp(context.Background(), "demo", "nextcloud-base-ce", spec,
+		gentianov1alpha1.BackupQuiesceScaleDown); err != nil {
+		t.Fatalf("unquiesceApp: %v", err)
+	}
+	if got := *getDeployment(t, c, "nextcloud").Spec.Replicas; got != 1 {
+		t.Fatalf("replicas = %d after resume-before-hooks, want the memoed 1", got)
+	}
+}
