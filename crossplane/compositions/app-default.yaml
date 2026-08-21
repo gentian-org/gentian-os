@@ -108,6 +108,7 @@ spec:
         inline:
           template: |
             {{- $xr     := .observed.composite.resource }}
+            {{- $observed := .observed }}
             {{- $spec   := $xr.spec }}
             {{- $xrName := $xr.metadata.name }}
             {{- /* App claim name (e.g. "demo-app"). Used as the Helm release name
@@ -994,9 +995,13 @@ spec:
                  conflict, rather than a duplicate quietly emitting a claim twice.
                  They converge when the Job stops making them and the originals
                  are removed. */}}
+            {{- /* The observed ClientScope's Keycloak id. Empty until Crossplane
+                 has observed it once, and the mappers simply do not render until
+                 then rather than rendering against a name. */}}
+            {{- $scopeID := dig "resources" (printf "%s-keycloak-client-scope" $app) "resource" "status" "atProvider" "id" "" $observed }}
             {{- range $mapperName := (default list $pack.mappers) }}
             {{- $tmpl := dig $mapperName dict $oidcMapperTemplates }}
-            {{- if $tmpl.protocolMapper }}
+            {{- if and $tmpl.protocolMapper $scopeID }}
             {{- /* keycloakName exists because some catalogues name a mapper
                  differently in Keycloak than in the pack — "full name" against
                  full_name. The Keycloak name identifies the object; the slug only
@@ -1017,10 +1022,16 @@ spec:
                 name: {{ $kcName | quote }}
                 protocol: openid-connect
                 protocolMapper: {{ $tmpl.protocolMapper | quote }}
-                {{- /* A ref, not an id: the scope's id is Keycloak's and is not
-                     known until the ClientScope above is observed. */}}
-                clientScopeIdRef:
-                  name: {{ $tenant }}-{{ $app }}-keycloak-client-scope
+                {{- /* The scope's real id, read off the observed ClientScope.
+
+                     Not clientScopeIdRef: a Crossplane reference resolves to the
+                     referenced resource's external-name, and the ClientScope is
+                     adopted by name, so the ref handed the provider
+                     "gentian-<app>-scope" where Keycloak's API path needs a UUID.
+                     The create failed with a 404 on
+                     /client-scopes/gentian-<app>-scope/protocol-mappers/models
+                     before it ever reached Keycloak's duplicate check. */}}
+                clientScopeId: {{ $scopeID }}
                 config:
                   {{ toYaml (default dict $tmpl.config) | nindent 18 }}
               providerConfigRef:
