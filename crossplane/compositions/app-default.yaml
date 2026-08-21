@@ -143,13 +143,23 @@ spec:
             {{- $ccData     := dig "data" dict $ccCM }}
             {{- $nodeIP        := dig "node.ip"        "" $ccData }}
 
-            {{- /* OIDC pack scopes from the profile's OIDCPackCatalog CR. */}}
+            {{- /* OIDC pack scopes from the profile's OIDCPackCatalog CR.
+
+                 The packs themselves and the catalogue's mapperTemplates are kept
+                 too, not just the two values derived here: the client scope, its
+                 protocol mappers, the client role and the group that grants it are
+                 all described by the same object, and were provisioned by a Job
+                 reading it rather than by this Composition. Everything needed to
+                 declare them is already in scope; nothing new is fetched. */}}
             {{- $oidcPackDefaultScopes := dict }}
             {{- $oidcPackFullScopeAllowed := dict }}
+            {{- $oidcPacks := dict }}
+            {{- $oidcMapperTemplates := dict }}
             {{- $catalogRes := dig "oidcPackCatalog" list $extraRes }}
             {{- if gt (len $catalogRes) 0 }}
             {{- $catSpec := dig "spec" dict (index $catalogRes 0) }}
             {{- $catPacks := default dict $catSpec.packs }}
+            {{- $oidcMapperTemplates = default dict $catSpec.mapperTemplates }}
             {{- range $clientId, $pack := $catPacks }}
             {{- $scopes := default list $pack.defaultScopes }}
             {{- if $pack.scopeName }}
@@ -157,6 +167,7 @@ spec:
             {{- end }}
             {{- $_ := set $oidcPackDefaultScopes $clientId $scopes }}
             {{- $_ := set $oidcPackFullScopeAllowed $clientId (default false $pack.fullScopeAllowed) }}
+            {{- $_ := set $oidcPacks $clientId $pack }}
             {{- end }}
             {{- end }}
 
@@ -932,6 +943,74 @@ spec:
                   {{ toYaml (index $oidcPackDefaultScopes $oidcPackKey) | nindent 18 }}
               providerConfigRef:
                 name: keycloak
+            {{- end }}
+
+            {{- /* ── the client scope the pack describes, and its mappers ───────
+                 Observed, not managed, for now. The OIDC pack Job still creates
+                 both; this is the read-back that proves the provider resolves
+                 them from the names the pack gives, before anything writes.
+
+                 That check is the one the portal BFF client did not get: a Job
+                 writes through the Admin API, which enforces less than the schema
+                 the provider validates against, and the resource sat Synced=False
+                 unable to reconcile while reading Ready=True.
+
+                 serviceClient packs are skipped because they genuinely have none
+                 of this — gentian-dovecot provisions a credential and nothing
+                 else, and the Job's own validation rejects a serviceClient that
+                 carries mappers. */}}
+            {{- $pack := dig $oidcPackKey dict $oidcPacks }}
+            {{- if and $pack.scopeName (not $pack.serviceClient) }}
+            ---
+            apiVersion: openidclient.keycloak.crossplane.io/v1alpha1
+            kind: ClientScope
+            metadata:
+              annotations:
+                crossplane.io/external-name: {{ $pack.scopeName }}
+                gotemplating.fn.crossplane.io/composition-resource-name: {{ $app }}-keycloak-client-scope
+              name: {{ $tenant }}-{{ $app }}-keycloak-client-scope
+            spec:
+              deletionPolicy: Orphan
+              managementPolicies: ["Observe"]
+              forProvider:
+                realmId: {{ $tenant }}
+                name: {{ $pack.scopeName | quote }}
+                description: {{ default "" $pack.scopeDescription | quote }}
+              providerConfigRef:
+                name: keycloak
+            {{- range $mapperName := (default list $pack.mappers) }}
+            {{- $tmpl := dig $mapperName dict $oidcMapperTemplates }}
+            {{- if $tmpl.protocolMapper }}
+            {{- /* keycloakName exists because some catalogues name a mapper
+                 differently in Keycloak than in the pack — "full name" against
+                 full_name. The Keycloak name is what identifies the object. */}}
+            {{- $kcName := default $mapperName $tmpl.keycloakName }}
+            ---
+            apiVersion: client.keycloak.crossplane.io/v1alpha1
+            kind: ProtocolMapper
+            metadata:
+              annotations:
+                crossplane.io/external-name: {{ $kcName }}
+                gotemplating.fn.crossplane.io/composition-resource-name: {{ $app }}-scope-mapper-{{ $mapperName }}
+              name: {{ $tenant }}-{{ $app }}-scope-mapper-{{ $mapperName }}
+            spec:
+              deletionPolicy: Orphan
+              managementPolicies: ["Observe"]
+              forProvider:
+                realmId: {{ $tenant }}
+                name: {{ $kcName | quote }}
+                protocol: openid-connect
+                protocolMapper: {{ $tmpl.protocolMapper | quote }}
+                {{- /* A ref rather than the scope's id: the id is Keycloak's and
+                     is not known until the scope above is observed. */}}
+                clientScopeIdRef:
+                  name: {{ $tenant }}-{{ $app }}-keycloak-client-scope
+                config:
+                  {{ toYaml (default dict $tmpl.config) | nindent 18 }}
+              providerConfigRef:
+                name: keycloak
+            {{- end }}
+            {{- end }}
             {{- end }}
             {{- end }}
 
