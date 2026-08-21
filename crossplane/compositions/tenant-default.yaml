@@ -563,6 +563,38 @@ spec:
             {{- end }}
 
             {{- if and $kernelRealm $kcInternal }}
+            {{- /* ── the tenant realm, observed ──────────────────────────────
+                 The realm every other Keycloak object here lives in. The realm
+                 script creates it and keeps it enabled, sets its display name and
+                 its browser security headers; the tenant SMTP Job sets its mail
+                 server. All of that is realm state, and this resource can hold it.
+
+                 Observed first, and with almost nothing declared, because reading
+                 the object back is how the field mapping gets established rather
+                 than guessed: sixty fields, and the ones that matter here are
+                 nested under securityDefenses and smtpServer. What the provider
+                 reports is what the manifest will then say.
+
+                 A realm is identified by its name, so unlike the pack's mappers
+                 it can be adopted. That is the whole reason this can be taken in
+                 steps at all.
+              */}}
+            ---
+            apiVersion: realm.keycloak.crossplane.io/v1alpha1
+            kind: Realm
+            metadata:
+              name: {{ $tenant }}-realm
+              annotations:
+                crossplane.io/external-name: {{ $tenant }}
+                gotemplating.fn.crossplane.io/composition-resource-name: keycloak-realm
+            spec:
+              deletionPolicy: Orphan
+              managementPolicies: ["Observe"]
+              forProvider:
+                realm: {{ $tenant }}
+              providerConfigRef:
+                name: keycloak
+
             {{- /* ── kernel broker client, observed ────────────────────────────
                  The tenant realm brokers to the kernel realm, and broker-<tenant>
                  in the KERNEL realm is the client it authenticates as. The realm
