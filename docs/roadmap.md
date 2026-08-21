@@ -755,11 +755,24 @@ docs/plans/tenant-composition-cleanup.md §8.
   Verified against the live corp realm: `gentian-nextcloud-base-ce-scope` carries
   exactly the three mappers its pack names, with the config its templates give.
 * **Backlog Items**:
-  - `[ ]` Render `ClientScope` from scopeName/scopeDescription, adopted by
-    external-name so the existing scope is not replaced.
+  - `[x]` Render `ClientScope` from scopeName/scopeDescription, adopted by
+    external-name. Done and verified on corp: Synced/Ready, and the observed id
+    matches the one the Job logs.
   - `[ ]` Render one `ProtocolMapper` per entry in `pack.mappers`, resolved
     through `mapperTemplates` — honouring `keycloakName`, which exists because
     some catalogues name a mapper differently in Keycloak than in the pack.
+
+    **Not by adoption.** A mapper is identified by its UUID, not its name:
+    external-name "email" fails with "observe failed: external resource does not
+    exist", where the ClientScope beside it adopts from its name. The UUID cannot
+    be templated. Creating them instead would put a second mapper of the same
+    name on a scope that already carries the Job's, and two mappers emitting one
+    claim is not something to try on a live login path — so the mappers move in
+    the same change that stops the Job creating them, not before.
+
+    The same is true of the client role and the group-to-role mapping below, and
+    is why this Job comes out in one step rather than incrementally: everything
+    it makes except the scope has to change hands at once.
   - `[ ]` Render `Role` and the group-to-role `Roles`, as refs so Crossplane
     resolves the ordering rather than a stage doing it.
   - `[ ]` Remove the Job, and the `ensureIdentity` wait that depends on it.
