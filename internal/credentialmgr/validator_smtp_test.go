@@ -108,7 +108,7 @@ func creds() map[string]string {
 // answered 422 and smtp-relay could never be stored at all.
 func TestSMTP_NoLongerRefusesOutright(t *testing.T) {
 	v := validatorFor(startFakeRelay(t, true), t)
-	err := v.Validate(context.Background(), "smtp", creds())
+	err := v.Validate(context.Background(), "smtp", "", creds())
 	if err != nil && strings.Contains(err.Error(), "not available") {
 		t.Fatalf("the validator must attempt the check, not decline it: %v", err)
 	}
@@ -118,7 +118,7 @@ func TestSMTP_NoLongerRefusesOutright(t *testing.T) {
 // STARTTLS is refused rather than downgraded.
 func TestSMTP_RefusesWithoutSTARTTLS(t *testing.T) {
 	v := validatorFor(startFakeRelay(t, false), t)
-	err := v.Validate(context.Background(), "smtp", creds())
+	err := v.Validate(context.Background(), "smtp", "", creds())
 	if err == nil {
 		t.Fatal("expected a refusal when the relay offers no STARTTLS")
 	}
@@ -134,7 +134,7 @@ func TestSMTP_MissingFieldsRejected(t *testing.T) {
 		{"relay_username": "u"},
 		{"relay_password": "p"},
 	} {
-		if err := v.Validate(context.Background(), "smtp", f); err == nil {
+		if err := v.Validate(context.Background(), "smtp", "", f); err == nil {
 			t.Errorf("expected %v to be rejected as incomplete", f)
 		}
 	}
@@ -145,7 +145,7 @@ func TestSMTP_MissingFieldsRejected(t *testing.T) {
 func TestSMTP_NoRelayConfigured_SaysSo(t *testing.T) {
 	v := NewEndpointValidator()
 	v.Relay = func(context.Context) (string, string, error) { return "", "", nil }
-	err := v.Validate(context.Background(), "smtp", creds())
+	err := v.Validate(context.Background(), "smtp", "", creds())
 	if err == nil || !strings.Contains(err.Error(), "spec.mail.host") {
 		t.Fatalf("expected the error to name the claim field to set, got: %v", err)
 	}
@@ -154,7 +154,7 @@ func TestSMTP_NoRelayConfigured_SaysSo(t *testing.T) {
 // No resolver at all is a wiring fault, and must not read as a bad password.
 func TestSMTP_NoResolver_IsNotACredentialFailure(t *testing.T) {
 	v := NewEndpointValidator()
-	err := v.Validate(context.Background(), "smtp", creds())
+	err := v.Validate(context.Background(), "smtp", "", creds())
 	if err == nil || !strings.Contains(err.Error(), "relay endpoint is unknown") {
 		t.Fatalf("expected a wiring error, got: %v", err)
 	}
@@ -163,7 +163,7 @@ func TestSMTP_NoResolver_IsNotACredentialFailure(t *testing.T) {
 func TestSMTP_UnreachableRelayNamesTheAddress(t *testing.T) {
 	v := NewEndpointValidator()
 	v.Relay = func(context.Context) (string, string, error) { return "127.0.0.1", "1", nil }
-	err := v.Validate(context.Background(), "smtp", creds())
+	err := v.Validate(context.Background(), "smtp", "", creds())
 	if err == nil || !strings.Contains(err.Error(), "127.0.0.1:1") {
 		t.Fatalf("expected the unreachable address to be named, got: %v", err)
 	}

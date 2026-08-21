@@ -23,6 +23,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -76,8 +77,12 @@ type Server struct {
 // Validator checks a credential against its target before it is stored. The
 // interface is here rather than a concrete type so the API layer cannot be
 // tempted to skip it — a nil Validator is a programming error, not a mode.
+//
+// host is the requirement's declared spec.validate.host, passed separately
+// from fields because it is not one of the submitted credential fields — see
+// EndpointValidator.Validate.
 type Validator interface {
-	Validate(ctx context.Context, kind string, fields map[string]string) error
+	Validate(ctx context.Context, kind, host string, fields map[string]string) error
 }
 
 // Routes returns the mux. Exported so the route-enumeration test can walk every
@@ -508,7 +513,7 @@ func (s *Server) handleSet(w http.ResponseWriter, r *http.Request) {
 	// all: it turns "tenant provisioning stalled because a password was pasted
 	// with a trailing newline" into a rejected form field.
 	if req.Validator != "" && req.Validator != "noop" {
-		if err := s.Validator.Validate(r.Context(), req.Validator, body.Fields); err != nil {
+		if err := s.Validator.Validate(r.Context(), req.Validator, req.ValidateHost, body.Fields); err != nil {
 			writeErr(w, http.StatusUnprocessableEntity,
 				fmt.Errorf("validation failed against the target endpoint: %w", err))
 			return
@@ -547,6 +552,10 @@ func (s *Server) handleSet(w http.ResponseWriter, r *http.Request) {
 }
 
 // checkFields enforces the declared schema before anything is sent anywhere.
+//
+// Every violation is collected rather than returned on the first one found,
+// so a form can flag every offending field from a single submission instead
+// of discovering the second problem only after resubmitting.
 func checkFields(req *Status, got map[string]string) error {
 	if len(got) == 0 {
 		return fmt.Errorf("no fields supplied")
@@ -555,25 +564,33 @@ func checkFields(req *Status, got map[string]string) error {
 	for _, f := range req.Fields {
 		declared[f.Key] = f
 	}
+	var unknown []string
 	for k := range got {
 		if _, ok := declared[k]; !ok {
-			return fmt.Errorf("unknown field %q for requirement %q", k, req.Name)
+			unknown = append(unknown, k)
 		}
+	}
+	sort.Strings(unknown)
+	var errs FieldErrors
+	for _, k := range unknown {
+		errs = append(errs, FieldError{Field: k, Message: fmt.Sprintf("unknown field for requirement %q", req.Name)})
 	}
 	for _, f := range req.Fields {
 		v, present := got[f.Key]
-		if !present {
-			return fmt.Errorf("missing field %q", f.Key)
-		}
-		if strings.TrimSpace(v) != v {
+		switch {
+		case !present:
+			errs = append(errs, FieldError{Field: f.Key, Message: "required"})
+		case strings.TrimSpace(v) != v:
 			// The single most common way a pasted credential breaks.
-			return fmt.Errorf("field %q has leading or trailing whitespace", f.Key)
-		}
-		if f.MinLength > 0 && len(v) < f.MinLength {
-			return fmt.Errorf("field %q must be at least %d characters", f.Key, f.MinLength)
+			errs = append(errs, FieldError{Field: f.Key, Message: "has leading or trailing whitespace"})
+		case f.MinLength > 0 && len(v) < f.MinLength:
+			errs = append(errs, FieldError{Field: f.Key, Message: fmt.Sprintf("must be at least %d characters", f.MinLength)})
 		}
 	}
-	return nil
+	if len(errs) == 0 {
+		return nil
+	}
+	return errs
 }
 
 func writeJSON(w http.ResponseWriter, code int, v any) {
@@ -584,6 +601,16 @@ func writeJSON(w http.ResponseWriter, code int, v any) {
 	}
 }
 
+// writeErr's response carries an "error" string in every case, so an existing
+// caller reading only that field keeps working. "fields" is additive: present
+// only when the failure attributes to specific fields, which errors.As finds
+// through any %w wrapping — handleSet wraps the Validator's FieldErrors in a
+// summary message, and this still unwraps to the same slice.
 func writeErr(w http.ResponseWriter, code int, err error) {
-	writeJSON(w, code, map[string]string{"error": err.Error()})
+	body := map[string]any{"error": err.Error()}
+	var fe FieldErrors
+	if errors.As(err, &fe) {
+		body["fields"] = []FieldError(fe)
+	}
+	writeJSON(w, code, body)
 }

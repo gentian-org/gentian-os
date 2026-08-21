@@ -189,6 +189,7 @@ spec:
   phase: bootstrap
   scope: cluster
   validate:
+    host: https://git.internal.example/gentian-deployments
     type: git-https
   vaultPath: gentian/repositories/deployments
 ---

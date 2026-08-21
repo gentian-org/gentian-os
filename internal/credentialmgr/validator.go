@@ -65,18 +65,26 @@ type RelayResolver func(ctx context.Context) (host, port string, err error)
 //
 // An unknown type is an ERROR, not a pass. Silently accepting a credential the
 // catalogue asked to have checked is the failure this exists to prevent.
-func (v *EndpointValidator) Validate(ctx context.Context, kind string, fields map[string]string) error {
+//
+// host is spec.validate.host — the endpoint to probe, when the requirement
+// declares one. It is not a submitted field: the declared schema for these
+// types is username/password (or token), and asking the operator to also
+// retype the registry or repository address would invite them to enter one
+// that disagrees with what the requirement actually points at. A requirement
+// with a validator that needs a host and none declared cannot be checked, and
+// says so rather than skipping the probe.
+func (v *EndpointValidator) Validate(ctx context.Context, kind, host string, fields map[string]string) error {
 	switch kind {
 	case "", "noop":
 		return nil
 	case "oci-registry":
-		return v.basicAuthProbe(ctx, fields["host"], "/v2/", fields["username"], fields["password"])
+		return v.basicAuthProbe(ctx, host, "/v2/", fields["username"], fields["password"], "username", "password")
 	case "git-https":
-		repo := strings.TrimSuffix(fields["url"], ".git")
+		repo := strings.TrimSuffix(host, ".git")
 		return v.basicAuthProbe(ctx, repo, ".git/info/refs?service=git-upload-pack",
-			fields["username"], fields["token"])
+			fields["username"], fields["token"], "username", "token")
 	case "oidc-discovery":
-		return v.bearerProbe(ctx, fields["url"], fields["api-token"])
+		return v.bearerProbe(ctx, host, fields["api-token"], "api-token")
 	case "smtp":
 		return v.smtpProbe(ctx, fields)
 	default:
@@ -84,7 +92,7 @@ func (v *EndpointValidator) Validate(ctx context.Context, kind string, fields ma
 	}
 }
 
-func (v *EndpointValidator) basicAuthProbe(ctx context.Context, base, suffix, user, pass string) error {
+func (v *EndpointValidator) basicAuthProbe(ctx context.Context, base, suffix, user, pass, userField, passField string) error {
 	if base == "" {
 		return fmt.Errorf("no endpoint to probe: the requirement declares no host or url")
 	}
@@ -98,10 +106,10 @@ func (v *EndpointValidator) basicAuthProbe(ctx context.Context, base, suffix, us
 	if pass != "" {
 		req.SetBasicAuth(user, pass)
 	}
-	return v.classify(url, req)
+	return v.classify(url, req, userField, passField)
 }
 
-func (v *EndpointValidator) bearerProbe(ctx context.Context, url, token string) error {
+func (v *EndpointValidator) bearerProbe(ctx context.Context, url, token, tokenField string) error {
 	if url == "" {
 		return fmt.Errorf("no endpoint to probe: the requirement declares no url")
 	}
@@ -112,12 +120,19 @@ func (v *EndpointValidator) bearerProbe(ctx context.Context, url, token string) 
 	if token != "" {
 		req.Header.Set("Authorization", "Bearer "+token)
 	}
-	return v.classify(url, req)
+	return v.classify(url, req, tokenField)
 }
 
 // classify separates UNREACHABLE from REJECTED, because they need different
 // fixes and an operator shown the wrong one looks in the wrong place.
-func (v *EndpointValidator) classify(url string, req *http.Request) error {
+//
+// rejectedFields names which declared fields a REJECTED verdict is attributed
+// to. Basic auth's 401 does not say which half of a username/password pair
+// was wrong, so every field passed here is marked suspect — honester than
+// guessing one and leaving the other looking cleared when it might not be.
+// UNREACHABLE and 404 are never attributed: they are endpoint problems, not a
+// claim about what the operator typed.
+func (v *EndpointValidator) classify(url string, req *http.Request, rejectedFields ...string) error {
 	resp, err := v.HTTP.Do(req)
 	if err != nil {
 		return fmt.Errorf("%s is unreachable: %w", url, err)
@@ -128,7 +143,12 @@ func (v *EndpointValidator) classify(url string, req *http.Request) error {
 	case resp.StatusCode >= 200 && resp.StatusCode < 300:
 		return nil
 	case resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden:
-		return fmt.Errorf("%s rejected the credential (HTTP %d)", url, resp.StatusCode)
+		msg := fmt.Sprintf("%s rejected the credential (HTTP %d)", url, resp.StatusCode)
+		errs := make(FieldErrors, len(rejectedFields))
+		for i, f := range rejectedFields {
+			errs[i] = FieldError{Field: f, Message: msg}
+		}
+		return errs
 	case resp.StatusCode == http.StatusNotFound:
 		return fmt.Errorf("%s returned 404 — a private resource also 404s when the credential cannot see it", url)
 	default:
@@ -208,7 +228,13 @@ func (v *EndpointValidator) smtpProbe(ctx context.Context, fields map[string]str
 	// 504 rather than treating it as a bad password.
 	if err := client.Auth(smtp.PlainAuth("", user, pass, host)); err != nil {
 		if lerr := client.Auth(loginAuth{user: user, pass: pass, host: host}); lerr != nil {
-			return fmt.Errorf("%s rejected these credentials: %w", addr, err)
+			// AUTH's rejection does not say which half of the pair was wrong,
+			// same as an HTTP basic-auth 401 — both fields are marked suspect.
+			msg := fmt.Sprintf("%s rejected these credentials: %v", addr, err)
+			return FieldErrors{
+				{Field: "relay_username", Message: msg},
+				{Field: "relay_password", Message: msg},
+			}
 		}
 	}
 	return nil

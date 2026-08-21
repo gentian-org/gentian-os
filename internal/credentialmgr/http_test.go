@@ -40,7 +40,7 @@ const theSecretValue = "SENTINEL-secret-value-must-never-be-returned"
 
 type stubValidator struct{ err error }
 
-func (s stubValidator) Validate(context.Context, string, map[string]string) error { return s.err }
+func (s stubValidator) Validate(context.Context, string, string, map[string]string) error { return s.err }
 
 func testScheme(t *testing.T) *runtime.Scheme {
 	t.Helper()
@@ -647,5 +647,106 @@ func TestExchangeRoutesByIssuer(t *testing.T) {
 				t.Fatalf("want login at %s, got %s", tc.wantMount, got)
 			}
 		})
+	}
+}
+
+// multiFieldRequirement declares two fields, so a single bad submission can
+// violate more than one at once.
+func multiFieldRequirement(name string) *gentianv1alpha1.CredentialRequirement {
+	r := requirement(name, "cluster", "gentian/"+name, 8)
+	r.Spec.Fields = []gentianv1alpha1.CredentialField{
+		{Key: "username", Format: "string"},
+		{Key: "password", Format: "password", Secret: true, MinLength: 8},
+	}
+	return r
+}
+
+// TestChecksFieldsCollectsEveryViolation is the point of collecting rather
+// than returning on the first failure: a submission missing one field and
+// mistyping another should not need two round trips to discover both.
+func TestChecksFieldsCollectsEveryViolation(t *testing.T) {
+	s, _ := newServer(t, multiFieldRequirement("two-fields"))
+
+	w := do(t, s, "PUT", "/v1/credentials/two-fields", `{"fields":{"password":"short"}}`)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d: %s", w.Code, w.Body.String())
+	}
+	var body struct {
+		Error  string       `json:"error"`
+		Fields []FieldError `json:"fields"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decoding response: %v", err)
+	}
+	got := map[string]bool{}
+	for _, f := range body.Fields {
+		got[f.Field] = true
+	}
+	if !got["username"] {
+		t.Errorf("expected username (missing) attributed, got %+v", body.Fields)
+	}
+	if !got["password"] {
+		t.Errorf("expected password (too short) attributed, got %+v", body.Fields)
+	}
+	if len(body.Fields) != 2 {
+		t.Errorf("expected exactly 2 field errors from one submission, got %+v", body.Fields)
+	}
+}
+
+// TestValidatorFieldErrorsReachTheResponseBody is the other producer of
+// FieldErrors: an endpoint probe's rejection, not just the schema check.
+// writeErr must unwrap it the same way regardless of which layer raised it.
+func TestValidatorFieldErrorsReachTheResponseBody(t *testing.T) {
+	s, _ := newServer(t, requirementWithValidator("probed", "cluster", "gentian/probed", 0, "oci-registry"))
+	s.Validator = stubValidator{err: FieldErrors{
+		{Field: "password", Message: "rejected"},
+	}}
+
+	w := do(t, s, "PUT", "/v1/credentials/probed", `{"fields":{"password":"wrong-value"}}`)
+
+	if w.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("expected 422, got %d: %s", w.Code, w.Body.String())
+	}
+	var body struct {
+		Fields []FieldError `json:"fields"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decoding response: %v", err)
+	}
+	if len(body.Fields) != 1 || body.Fields[0].Field != "password" {
+		t.Fatalf("expected the validator's field attribution to reach the response, got %+v", body.Fields)
+	}
+}
+
+// TestPlainErrorsCarryNoFieldsKey: an ordinary error (an unreachable
+// endpoint, a malformed body) must not grow a "fields" key nobody populated —
+// existing callers reading only "error" must see the same shape as before.
+func TestPlainErrorsCarryNoFieldsKey(t *testing.T) {
+	s, _ := newServer(t, requirement("plain", "cluster", "gentian/plain", 0))
+	s.Validator = stubValidator{err: fmt.Errorf("endpoint unreachable")}
+
+	w := do(t, s, "PUT", "/v1/credentials/plain", `{"fields":{"password":"anything"}}`)
+
+	if strings.Contains(w.Body.String(), `"fields"`) {
+		t.Fatalf(`a plain error must not carry a "fields" key: %s`, w.Body.String())
+	}
+}
+
+// TestValidateHostReachesTheCatalogue closes the bug this fixed: the
+// requirement's spec.validate.host used to be dropped between the CRD and the
+// Status the API and the Validator both work from, so oci-registry and
+// git-https could never be given the endpoint they need to probe.
+func TestValidateHostReachesTheCatalogue(t *testing.T) {
+	req := requirementWithValidator("hosted", "cluster", "gentian/hosted", 0, "oci-registry")
+	req.Spec.Validate.Host = "https://registry.example.test"
+
+	c := &Catalogue{Client: fake.NewClientBuilder().WithScheme(testScheme(t)).WithRuntimeObjects(req).Build()}
+	items, err := c.List(context.Background(), Viewer{ClusterAdmin: true})
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(items) != 1 || items[0].ValidateHost != "https://registry.example.test" {
+		t.Fatalf("expected ValidateHost to carry the requirement's declared host, got %+v", items)
 	}
 }

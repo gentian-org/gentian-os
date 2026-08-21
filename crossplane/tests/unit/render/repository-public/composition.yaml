@@ -82,6 +82,7 @@ spec:
             {{- $credScope := ternary "tenant" "cluster" (ne $tenant "") }}
             {{- $isOci := eq $spec.type "oci" }}
             {{- $isGit := eq $spec.type "git" }}
+            {{- $vtype := (($cred.validate).type) | default "noop" }}
             {{- /*
                  Everything written into the cluster uses the in-cluster
                  address. The external address exists only for the installer's
@@ -144,7 +145,15 @@ spec:
                   format: password
                   secret: true
               validate:
-                type: {{ (($cred.validate).type) | default "noop" }}
+                type: {{ $vtype }}
+                {{- if ne $vtype "noop" }}
+                # The repository's own address, not asked for a second time:
+                # oci-registry and git-https need an endpoint their declared
+                # fields (username/password) do not carry, and it is exactly
+                # what this claim already has. Without it the probe cannot
+                # run at all — see EndpointValidator.Validate.
+                host: {{ $url | quote }}
+                {{- end }}
               consumedBy:
                 - kind: XRepository
                   name: {{ $name }}

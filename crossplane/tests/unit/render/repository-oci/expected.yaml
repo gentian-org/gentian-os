@@ -182,6 +182,7 @@ spec:
   phase: runtime
   scope: cluster
   validate:
+    host: https://registry.example.net
     type: oci-registry
   vaultPath: gentian/registries/infra-charts
 ---

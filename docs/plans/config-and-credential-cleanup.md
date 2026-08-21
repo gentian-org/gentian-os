@@ -1194,7 +1194,7 @@ So: to change a phase's state, edit that phase's section. `make gen-phase-table`
 | 6 | Exercised | Both criteria this row was waiting on are verified in §15.1 — ESO's live verdict, and the unsatisfied→satisfied transition unblocking composition with nothing re-run. The row had not been updated to say so |
 | 7 | Exercised | The live OIDC write path works. It was broken three independent ways — wrong mount, wrong role type, missing audience (§15.4) — and a token exchange has now completed against the fixed path, which is the criterion this row waited on longest. The audit device is still unobserved |
 | 8 | Exercised | The service exchanges a caller's token and serves the catalogue. A refusal now names the failed check — audience, claims, role type, missing role, unmounted backend — and logs OpenBao's own words; the first real use of that log found the tenant fault below in one line, after three rounds of reading code had been needed for the previous ones. Its ServiceAccount's policy is now inspected, and criterion 7 needed a correction, not just an answer, once it was |
-| 9 | Built | No shared API contract tests; validation errors are not attributed per field |
+| 9 | Built | Validation errors now attribute per field, end to end. What remains is criterion 4 — no shared API contract tests exist yet between this Go API and `gentian-ui` |
 | 10 | 10a/10b done, 10c done | `cluster-settings.env` is gone, no `envsubst` call site remains, and the credential manager — the third surface — now authenticates and serves (row 8). One orphaned `${GENTIAN_OS_IMAGE_REPOSITORY}` survived the `envsubst` removal inside a Helm template, where nothing expands it, and silently disabled image updates until it was found (§15.4) |
 | 11 | Done | BSD `sed_inplace` has not been observed running |
 | 12 | 12a–12d and 12f built, 12e built and unexercised | `provider-kubernetes` is scoped to a generated `ClusterRole` — kind list, generator, and a CI check that fails when a fixture carries a kind the list omits, all in `docs/roadmap.md` §1.16. Verified by a server-side dry run against a real cluster, not yet applied: the installer's `check()` for that step only asks whether the providers exist, so the binding does not flip until `./install.sh --only A-02 --force` runs. `provider-helm` stays `cluster-admin`, deliberately and now stated as such rather than left to look unfinished. 12c's outstanding half is closed. 12f is built against renders only — no cluster has been installed on a platform other than OpenStack, or a zone other than Cloudflare |
@@ -1789,7 +1789,7 @@ This phase also closed an RBAC gap: the operator had no permission to read the
 
 ### Phase 9 — gentian-ui surface
 
-**State — Built.** No shared API contract tests; validation errors are not attributed per field
+**State — Built.** Validation errors now attribute per field, end to end. What remains is criterion 4 — no shared API contract tests exist yet between this Go API and `gentian-ui`
 
 **Status: implemented.** A Credentials tab in the admin console, plus a backend proxy.
 
@@ -1811,8 +1811,27 @@ operator can skip.
 |---|---|---|
 | 1 | No credential value is ever rendered in the DOM | **Passing, structurally** — the API has no field able to carry one, so the console cannot display what it cannot receive. Submitted values are cleared from component state on success rather than surviving into a later render |
 | 2 | Unsatisfied required credentials are visible without navigating into a detail view | **Passing** — the count leads the section, and each row carries ESO's verdict |
-| 3 | Validation failure is presented inline against the offending field | **Partial** — the failure is shown inline on the form; it is not yet attributed to a specific field, because the API returns one message rather than a per-field map |
-| 4 | Behaviour is equivalent to the CLI; both exercised by the same API contract tests | **Not met** — no shared contract tests exist. The Go side has route-level tests; the console has none |
+| 3 | Validation failure is presented inline against the offending field | **Passing.** `writeErr` adds a `fields` array to the response wherever a failure attributes to one; `error` is unchanged, so an existing reader of that key alone still works. `checkFields` collects every violation in one pass instead of stopping at the first, and `EndpointValidator` marks every plausibly-wrong field on a rejection — both halves of a basic-auth pair, since a 401 does not say which one, and the one field for a validator (`oidc-discovery`) that only has one. Unreachable and 404 stay unattributed: those are endpoint problems, not a claim about what was typed |
+| 4 | Behaviour is equivalent to the CLI; both exercised by the same API contract tests | **Not met.** "The CLI" is §10's day-2 shell-against-the-API path, not a maintained binary — there is nothing to build a contract test against on that side. Cross-repo contract tests against `gentian-ui` remain unbuilt |
+
+**Two real defects surfaced closing criterion 3, neither one about field attribution itself.**
+
+`CredentialValidation.Host` — the endpoint an `oci-registry` or `git-https` probe needs, since
+their declared fields are only `username`/`password` — was set by no Composition and read by no Go
+code. `oci-registry` and `git-https` validation could not succeed through this API, regardless of
+whether the credential was right, and nothing caught it: the route tests use a stub `Validator`
+that never runs the real probe. Closed by carrying `Validate.Host` through `Status` into `handleSet`,
+and by having `repository-default.yaml` set it from the claim's own `endpoints.inCluster` — the
+address the requirement already has, not asked for a second time.
+
+`gentian-ui`'s shared `apiFetch` client read only `body.detail` (FastAPI's own error shape) on a
+failed request. The credential manager's backend proxy forwards the Go API's response body
+untouched — `{"error": ..., "fields": [...]}`, no `detail` key — so every validation failure on the
+Credentials form showed nothing but a bare status code; the actual reason was silently dropped on
+every submission. Fixed alongside the field-attribution work it was found while building: `apiFetch`
+now reads `error` when `detail` is absent, and attaches `fields` to a new `ApiError` type that
+`CredentialsSection.tsx` renders against each input. Neither defect was reachable by the intended
+work alone — both were found only by tracing where the values in front of them actually went.
 
 `credentialManager.url` is unset by default, so the section reports the manager as unavailable
 rather than failing obscurely. Disabled beats broken, but it does mean the tab does nothing until

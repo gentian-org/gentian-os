@@ -52,6 +52,10 @@ type Status struct {
 	VaultPath   string  `json:"vaultPath"`
 	Fields      []Field `json:"fields"`
 	Validator   string  `json:"validator,omitempty"`
+	// ValidateHost is the endpoint the validator probes, when the requirement
+	// declares one. Not a credential — an OCI registry or a git remote's own
+	// address — so exposing it alongside VaultPath carries the same weight.
+	ValidateHost string `json:"validateHost,omitempty"`
 
 	// Satisfied comes from ESO's sync status on the probe ExternalSecret, not
 	// from asking OpenBao. Nothing here polls the secret store.
@@ -134,6 +138,7 @@ func (c *Catalogue) List(ctx context.Context, v Viewer) ([]Status, error) {
 		}
 		if r.Spec.Validate != nil {
 			st.Validator = r.Spec.Validate.Type
+			st.ValidateHost = r.Spec.Validate.Host
 		}
 		st.Satisfied, st.Reason = c.probeStatus(ctx, r.Name)
 		out = append(out, st)
