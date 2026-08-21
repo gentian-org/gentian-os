@@ -128,7 +128,10 @@ An object already existing is not a reason to keep it imperative: adoption by
 **The operator owns four things, and only these.**
 
 1. **Discovery** — enumerate external state and act on what is found. Keycloak's *current* users are
-   not in any spec, so the credential minted per user cannot be rendered from one.
+   not in any spec, so the credential minted per user cannot be rendered from one. Narrower than it
+   first reads: this is about state **nobody declared**. Reading a value a managed resource itself
+   produced — a generated client secret, say — is what connection secrets are for, and stays
+   declarative. See the broker group below.
 2. **Computation** — produce a value rather than restate one: `rsa.GenerateKey`, `hmac.New`,
    `argon2.IDKey`. Compositions template; they do not compute.
 3. **Adoption gaps** — where a provider cannot take over an object that already exists without
@@ -289,7 +292,41 @@ an ordering gap or a suite that hangs.
 **Current state is consistent:** the client is adopted and serving IMAP, and the Job still runs and
 agrees with it. Nothing is half-owned.
 
-### Next: finish 3, then 4. Gentian groups
+### 4-6. The broker group — one unit, not three Jobs
+
+`keycloak-broker-idp-*`, `keycloak-kernel-tenant-broker-*` and
+`keycloak-broker-first-login-*` are interdependent, so the one-Job-at-a-time rhythm that worked for
+the three clients does not apply directly.
+
+| Job | Owns |
+|---|---|
+| `broker-idp` | broker client in the **kernel** realm, with its secret and protocol mappers; identity provider `kernel` in the **tenant** realm, with mappers |
+| `kernel-tenant-broker` | broker client in the **tenant** realm with its secret; identity provider `{tenant}` in the **kernel** realm, with mappers |
+| `broker-first-login` | the `first-broker-login-gentian` authentication flow both identity providers point at |
+
+Each of the first two spans **two realms**, and both reference the flow the third creates.
+
+**The dependency is by alias, not by object reference.** The identity providers name
+`firstBrokerLoginFlowAlias` as a string, so they can be declared while the flow remains Job-owned.
+That is what makes this tractable: the identity providers and broker clients can be adopted now, and
+the flow Job left alone, without leaving a dangling reference.
+
+**The secret is declarable, which was not obvious.** The Job reads the broker client's generated
+secret back out of Keycloak (`GET clients/{id}/client-secret`) and feeds it into the identity
+provider's config. Crossplane has a first-class mechanism for exactly that shape:
+`Client.spec.writeConnectionSecretToRef` publishes the secret, and
+`IdentityProvider.spec.forProvider.clientSecretSecretRef` consumes it. No imperative read required.
+
+**That corrects §6a.** "Discovery" was listed as inherently imperative, with Keycloak's user list as
+the example. Reading a value a *managed resource produced* is not discovery in that sense — it is
+what connection secrets are for. The line is narrower than stated: enumerating state **nobody
+declared** is imperative; reading a managed resource's own output is not. The user-enumeration case
+still stands, because those users are created by people, not by a resource anyone declared.
+
+Adoption verified read-only against the live `kernel` identity provider in the corp realm: Ready,
+31 fields observed, including the `first-broker-login-gentian` alias and both endpoint URLs.
+
+### Then: 7. Gentian groups
 
 Finish by replacing the Job wait with an MR readiness wait, then retire the Job. After that,
 `keycloak-gentian-groups-*`, which fans out over installed app profiles and so needs the composition
