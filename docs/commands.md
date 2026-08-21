@@ -701,7 +701,75 @@ Keycloak's export carries no password hashes, so accounts come back without
 credentials. `status.passwordResetRequired` says so. Send members through a
 reset from **Admin Console → Members**.
 
-## 13. Scheduled Backups
+## 13. Backup Policy
+
+Where bundles go, how often, and how long they are kept. One cluster default,
+overridden per tenant.
+
+```bash
+kubectl apply -f - <<'EOF'
+apiVersion: gentianos.io/v1alpha1
+kind: BackupPolicy
+metadata:
+  name: default          # the cluster policy is a singleton by this name
+spec:
+  scope: cluster
+  destination:
+    endpoint: https://sos-ch-gva-2.exo.io
+    bucket: gentian-bundles
+    region: ch-gva-2
+  schedule: "0 3 * * *"  # UTC; omit for no scheduled backups
+  retention:
+    keepLast: 7
+    keepWeekly: 4
+    keepMonthly: 12
+EOF
+
+kubectl get backuppolicies
+```
+
+**Naming an endpoint declares a credential rather than taking one.** The
+operator creates a `CredentialRequirement` — `backup-destination` for the
+cluster, `backup-destination-<tenant>` for a tenant — and the policy reports
+`Accepted=False` with `CredentialUnsatisfied` until the keys are supplied
+through the credential manager. That is deliberate: the gap shows when the
+destination is set, not at 03:00 when the first export fails.
+
+```bash
+kubectl get backuppolicy default \
+  -o jsonpath='{.status.credentialRequirement} satisfied={.status.credentialSatisfied}{"\n"}'
+```
+
+A tenant states its own with `scope: tenant` and a `tenant` field; every field
+is optional and an unset one inherits. `suspendSchedule: true` means *none*, as
+distinct from *not stated* — without it a tenant could not opt out of a
+cluster-wide schedule. Set `allowTenantOverride: false` on the cluster policy to
+refuse tenant policies outright; they are then rejected rather than ignored.
+
+Retention tiers are a union: a bundle any rule keeps survives. `keepLast: 7`
+alone reaches back seven nights; adding `keepMonthly: 12` reaches back a year
+for the cost of twelve more bundles. With nothing set, nothing is deleted.
+
+**A bundle records where it was written.** Changing a destination does not move
+what already exists, so restore and cleanup read each bundle's own endpoint
+rather than the policy's current answer — last month's bundles stay reachable
+after a tenant moves its storage.
+
+### Object Lock
+
+Full bundles suit WORM storage because no object is ever rewritten; each export
+occupies a fresh prefix. Set a default retention on the bucket and every
+uploaded object inherits it:
+
+```bash
+mc retention set --default COMPLIANCE 30d gentian/gentian-bundles
+```
+
+Retention deletes will then fail for locked objects until they expire, which is
+the lock doing its job. Size the policy's tiers against the lock period rather
+than against the bucket.
+
+## 14. Scheduled Backups
 
 ```bash
 kubectl apply -f - <<'EOF'
@@ -733,7 +801,7 @@ Two behaviours worth knowing:
   from a long outage should not take six identical backups, each pausing the
   tenant's apps again.
 
-## 14. Restore Drill
+## 15. Restore Drill
 
 Run this on a scratch tenant before you need it. An untested backup is a
 hypothesis.
