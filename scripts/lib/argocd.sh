@@ -447,12 +447,25 @@ _wait_for_argocd_application_workload() {
 bootstrap_argocd_apps() {
     banner "ArgoCD bootstrap Applications"
 
-    # Register public OCI chart repos used by bootstrap Applications.
+    # Register the public OCI chart repos the bootstrap Applications pull from.
+    #
+    # Repository claims rather than hand-written Secrets: the ArgoCD Secret is
+    # composed from the claim, so one object describes the repository and one
+    # Composition decides what a repository produces.
+    #
+    # These carry no credential, which the XRepository schema allows — a public
+    # registry has nothing to authenticate, and requiring one meant naming a
+    # vault path for a secret that does not exist.
+    #
+    # The claim also whitelists the source in the tenants AppProject, which the
+    # Cluster XR creates later. That composed Object cannot sync until then and
+    # retries until it can; the repository Secret these Applications actually
+    # need is a separate Object and lands immediately.
     if [[ "$INSTALL_CLUSTER_INFRA" == "1" ]]; then
         kubectl apply -f "${SCRIPT_DIR}/kernel/argocd/repos/ghcr-stakater.yaml"
         kubectl apply -f "${SCRIPT_DIR}/kernel/argocd/repos/ghcr-cloudnative-pg.yaml"
     fi
-    success "Applied public ArgoCD repository registrations."
+    success "Applied public chart repository claims."
 
     local apps=(openbao globals)
     if [[ "$INSTALL_CLUSTER_INFRA" == "1" ]]; then

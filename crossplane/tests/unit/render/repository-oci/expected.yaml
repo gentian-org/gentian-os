@@ -93,6 +93,7 @@ spec:
           name: repo-infra-charts
           template:
             data:
+              enableOCI: "true"
               password: '{{ .password }}'
               type: helm
               url: https://registry.example.net

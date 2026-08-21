@@ -248,6 +248,11 @@ spec:
                   stringData:
                     type: {{ if $isOci }}helm{{ else }}git{{ end }}
                     url: {{ $url | quote }}
+                    {{- if $isOci }}
+                    # Without this ArgoCD treats the url as a classic Helm chart
+                    # repository, and the pull fails on a registry that only speaks OCI.
+                    enableOCI: "true"
+                    {{- end }}
                   {{- else }}
                   apiVersion: external-secrets.io/v1
                   kind: ExternalSecret
@@ -268,6 +273,11 @@ spec:
                         data:
                           type: {{ if $isOci }}helm{{ else }}git{{ end }}
                           url: {{ $url | quote }}
+                          {{- if $isOci }}
+                          # Without this ArgoCD treats the url as a classic Helm chart
+                          # repository, and the pull fails on a registry that only speaks OCI.
+                          enableOCI: "true"
+                          {{- end }}
                           username: "{{ `{{ .username }}` }}"
                           password: "{{ `{{ .password }}` }}"
                     data:

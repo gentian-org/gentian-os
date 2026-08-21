@@ -75,6 +75,7 @@ spec:
         name: repo-ghcr-cloudnative-pg
         namespace: argocd
       stringData:
+        enableOCI: "true"
         type: helm
         url: ghcr.io/cloudnative-pg/charts
   providerConfigRef:
