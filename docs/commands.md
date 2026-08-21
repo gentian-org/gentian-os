@@ -487,15 +487,14 @@ spec:
 step converges on it:
 
 ```bash
-./install.sh --only D-03-mail --force
+./install.sh --only D-03-mail
 ```
 
-`--force` is required going **kernel → external**, and harmless going the other
-way. `D-03-mail`'s `check()` only inspects state when the desired mode is
-`kernel`; for `external` it unconditionally reports "undefined", and the driver
-treats an undefined check exactly like a satisfied one — it skips `apply()`.
-So switching *to* `external` mode without `--force` leaves whatever Postfix
-config was already running in place. There is no separate imperative ConfigMap
+`--force` is not required either direction. `D-03-mail`'s `check()` inspects
+state when the desired mode is `kernel` (the Postfix ConfigMap), and always
+reports "runs every pass" when it is `external`, since `apply()`'s external
+branch is pure verification with no cluster mutation to gate on — cheap enough
+to run on every plain install too. There is no separate imperative ConfigMap
 patch or manual OpenBao re-seed step to run either way; `apply()` reads the
 resolved mode and reconciles Postfix/Dovecot from it.
 

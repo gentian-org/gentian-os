@@ -25,10 +25,16 @@ check() {
             [[ "${data}" == *'"virtual_mailbox_maps"'* ]] || return "${CHECK_MISSING}"
             ;;
         *)
-            # An external relay is configured on Postfix only if one is already
-            # deployed; the step otherwise just reports where mail will go, so
-            # there is no artefact whose absence would mean anything.
-            return "${CHECK_UNDEFINED}"
+            # No artefact to probe, but UNDEFINED is the wrong verdict: the
+            # driver treats it exactly like SATISFIED and skips apply()
+            # without --force. That made a kernel→external switch silently
+            # never re-verify — install_kernel_mail's EXTERNAL_SMTP_HOST
+            # warning and network-mode compatibility check only ran on the
+            # install that first set the mode, not on later plain runs.
+            # apply()'s external branch is pure verification with no cluster
+            # mutation, so running it every pass is cheap and honest — the
+            # same reasoning as E-02-litellm-reconcile's check().
+            return "${CHECK_ALWAYS}"
             ;;
     esac
 }
