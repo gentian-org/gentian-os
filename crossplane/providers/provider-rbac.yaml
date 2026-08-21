@@ -17,30 +17,90 @@
 #   cannot get resource "namespaces" in API group "" in the namespace
 #   "gentian-system"
 #
-# The XCluster then sits at Ready=False/Creating until the install times out,
-# reporting "Unready resources" rather than the permission error — the real
-# cause is only visible on the individual composed Objects.
+# The XCluster then sits at Ready=False/Creating until the install times out —
+# or, since composed_permission_errors landed (scripts/lib/bootstrap.sh), the
+# wait ends early and names the missing rule instead of exhausting the timeout.
 #
-# Scope
-# -----
-# cluster-admin is deliberate, and matches upstream provider-kubernetes
-# guidance. These providers manage arbitrary cluster objects on behalf of the
-# Compositions — namespaces, ClusterIssuers, ClusterSecretStores, AppProjects
-# today, and whatever a future Composition composes tomorrow. Enumerating that
-# set would produce a role that silently breaks each time a Composition grows a
-# new resource kind, reproducing exactly the failure above.
+# provider-kubernetes: scoped
+# ----------------------------
+# Bound to gentian-provider-kubernetes below, generated from
+# provider-kubernetes-kinds.yaml — see that file for where the kind list came
+# from and what keeps it current. It composes ordinary kinds (namespaces,
+# config, secrets, jobs, routes, the platform's supporting CRs) and none of
+# them are RBAC, which is what makes scoping it safe: it can never be asked to
+# create a permission broader than its own.
 #
-# If you need to tighten this, replace cluster-admin with an aggregated
-# ClusterRole and add rules per Composition — but treat "a Composition failed to
-# observe" as the expected symptom of a missing rule.
+# provider-helm: cluster-admin, and not a TODO
+# ----------------------------------------------
+# provider-helm installs Helm charts, and some ship their own ClusterRoles —
+# cert-manager's controllers among them, which need cluster-wide `secrets`
+# read to do their job. Kubernetes enforces escalation prevention: nothing can
+# create a role granting a permission it does not itself hold. So scoping
+# provider-helm means either holding the union of everything every installed
+# chart's RBAC grants — which has to be re-derived on every chart version bump
+# — or holding `escalate` on clusterroles, which permits minting any role at
+# all and is cluster-admin under a quieter name. Neither is a reduction.
+#
+# The precondition for scoping this one is that the platform owns the RBAC for
+# the charts it installs (`rbac.create=false`, roles held in-repo and
+# reviewed) rather than letting each chart mint its own — a policy decision
+# about third-party software, not a provider change. See docs/roadmap.md
+# §1.16.
 #
 # The subjects reference the fixed ServiceAccount names pinned by the
 # DeploymentRuntimeConfigs in providers.yaml, NOT the revision-hashed defaults,
 # so these bindings survive provider upgrades.
 apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: gentian-provider-kubernetes
+  labels:
+    app.kubernetes.io/managed-by: gentian-os
+rules:
+  # BEGIN generated rules — from provider-kubernetes-kinds.yaml, do not edit
+  - apiGroups: ['']
+    resources: ['configmaps', 'limitranges', 'namespaces', 'resourcequotas', 'secrets', 'services']
+    verbs: ['get', 'list', 'watch', 'create', 'update', 'patch', 'delete']
+  - apiGroups: ['argoproj.io']
+    resources: ['appprojects']
+    verbs: ['get', 'list', 'watch', 'create', 'update', 'patch', 'delete']
+  - apiGroups: ['batch']
+    resources: ['jobs']
+    verbs: ['get', 'list', 'watch', 'create', 'update', 'patch', 'delete']
+  - apiGroups: ['cert-manager.io']
+    resources: ['certificates']
+    verbs: ['get', 'list', 'watch', 'create', 'update', 'patch', 'delete']
+  - apiGroups: ['external-secrets.io']
+    resources: ['clusterexternalsecrets', 'clustersecretstores', 'externalsecrets']
+    verbs: ['get', 'list', 'watch', 'create', 'update', 'patch', 'delete']
+  - apiGroups: ['gateway.envoyproxy.io']
+    resources: ['backendtrafficpolicies']
+    verbs: ['get', 'list', 'watch', 'create', 'update', 'patch', 'delete']
+  - apiGroups: ['gateway.networking.k8s.io']
+    resources: ['httproutes', 'referencegrants']
+    verbs: ['get', 'list', 'watch', 'create', 'update', 'patch', 'delete']
+  - apiGroups: ['pkg.crossplane.io']
+    resources: ['imageconfigs']
+    verbs: ['get', 'list', 'watch', 'create', 'update', 'patch', 'delete']
+  - apiGroups: ['postgresql.cnpg.io']
+    resources: ['databases']
+    verbs: ['get', 'list', 'watch', 'create', 'update', 'patch', 'delete']
+# END generated rules
+---
+# A new name, not a reused one. roleRef on a ClusterRoleBinding is immutable —
+# the API server refuses to move an existing binding from cluster-admin to
+# this role, confirmed with a server-side dry run against a real cluster
+# before this line was written. A step that re-applied the old name here would
+# fail outright rather than narrow anything.
+#
+# A-02's apply() deletes the old cluster-admin-bound name before applying this
+# file, which is the half that actually matters: creating this binding without
+# removing the old one would leave the wide grant alive alongside the scoped
+# one, narrowing nothing.
+apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
 metadata:
-  name: crossplane-provider-kubernetes-admin
+  name: crossplane-provider-kubernetes-scoped
   labels:
     app.kubernetes.io/managed-by: gentian-os
 subjects:
@@ -49,7 +109,7 @@ subjects:
     namespace: crossplane-system
 roleRef:
   kind: ClusterRole
-  name: cluster-admin
+  name: gentian-provider-kubernetes
   apiGroup: rbac.authorization.k8s.io
 ---
 apiVersion: rbac.authorization.k8s.io/v1

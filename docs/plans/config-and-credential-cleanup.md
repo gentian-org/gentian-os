@@ -1197,7 +1197,7 @@ So: to change a phase's state, edit that phase's section. `make gen-phase-table`
 | 9 | Built | No shared API contract tests; validation errors are not attributed per field |
 | 10 | 10a/10b done, 10c done | `cluster-settings.env` is gone, no `envsubst` call site remains, and the credential manager — the third surface — now authenticates and serves (row 8). One orphaned `${GENTIAN_OS_IMAGE_REPOSITORY}` survived the `envsubst` removal inside a Helm template, where nothing expands it, and silently disabled image updates until it was found (§15.4) |
 | 11 | Done | BSD `sed_inplace` has not been observed running |
-| 12 | 12a–12d and 12f built, 12e not | Provider RBAC is still `cluster-admin`, deliberately — the last privilege reduction, and now the largest piece of *work* rather than verification left here. 12c's outstanding half is closed. 12f is built against renders only — no cluster has been installed on a platform other than OpenStack, or a zone other than Cloudflare |
+| 12 | 12a–12d and 12f built, 12e built and unexercised | `provider-kubernetes` is scoped to a generated `ClusterRole` — kind list, generator, and a CI check that fails when a fixture carries a kind the list omits, all in `docs/roadmap.md` §1.16. Verified by a server-side dry run against a real cluster, not yet applied: the installer's `check()` for that step only asks whether the providers exist, so the binding does not flip until `./install.sh --only A-02 --force` runs. `provider-helm` stays `cluster-admin`, deliberately and now stated as such rather than left to look unfinished. 12c's outstanding half is closed. 12f is built against renders only — no cluster has been installed on a platform other than OpenStack, or a zone other than Cloudflare |
 | 13 | Portability done | arm64, internal domain and mirror remain structural claims — three separate installs, and the largest verification debt left in this plan. The 12c trust anchor is now delivered to everything the cluster schedules, so `self-signed` and `private-ca` are complete by construction and unexercised in fact |
 <!-- END generated phase table -->
 
@@ -2037,7 +2037,7 @@ enforced only locally.
 
 ### Phase 12 — Deployment target variability: the declarable surface
 
-**State — 12a–12d and 12f built, 12e not.** Provider RBAC is still `cluster-admin`, deliberately — the last privilege reduction, and now the largest piece of *work* rather than verification left here. 12c's outstanding half is closed. 12f is built against renders only — no cluster has been installed on a platform other than OpenStack, or a zone other than Cloudflare
+**State — 12a–12d and 12f built, 12e built and unexercised.** `provider-kubernetes` is scoped to a generated `ClusterRole` — kind list, generator, and a CI check that fails when a fixture carries a kind the list omits, all in `docs/roadmap.md` §1.16. Verified by a server-side dry run against a real cluster, not yet applied: the installer's `check()` for that step only asks whether the providers exist, so the binding does not flip until `./install.sh --only A-02 --force` runs. `provider-helm` stays `cluster-admin`, deliberately and now stated as such rather than left to look unfinished. 12c's outstanding half is closed. 12f is built against renders only — no cluster has been installed on a platform other than OpenStack, or a zone other than Cloudflare
 
 Make each dimension in §9 *expressible*. Supplying the values and the artefacts behind them is
 Phase 13, except where noted.

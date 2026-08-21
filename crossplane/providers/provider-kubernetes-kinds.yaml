@@ -1,0 +1,91 @@
+# Kinds provider-kubernetes manages on behalf of Compositions, and the API
+# resources they map to.
+#
+# This is the input to scripts/gen/gen-provider-rbac.py, which renders the
+# ClusterRole in crossplane/providers/provider-rbac.yaml. Edit this file, not
+# the role — the role is generated and a hand-edit is overwritten.
+#
+# WHERE THIS LIST CAME FROM, AND WHY IT IS A UNION
+# -------------------------------------------------
+# Two sources were measured independently and NEITHER is complete on its own:
+#
+#   the cluster   every `Object` managed resource's spec.forProvider.manifest,
+#                 read off a running cluster. Complete for what has been
+#                 exercised, blind to what has not — it has never seen
+#                 ClusterExternalSecret or ImageConfig, because no fixture and
+#                 no live path has produced one yet.
+#
+#   the fixtures  every manifest in crossplane/tests/unit/render/*/expected.yaml.
+#                 Complete for what has a fixture, blind to the rest — five
+#                 kinds (Certificate, HTTPRoute, ReferenceGrant,
+#                 BackendTrafficPolicy, Database) appear in no fixture today.
+#
+# A regex over the Composition templates directly finds fewer than either,
+# because the interesting kinds sit behind conditionals (issuerMode,
+# routingMode, isOci, ...). So a single source would produce a role that works
+# until some path nobody has run reaches the API server and is refused.
+#
+# WHAT KEEPS IT CURRENT
+# ----------------------
+# `make lint-provider-rbac` fails when a render fixture contains a kind this
+# file does not list — that catches a Composition growing a kind at review
+# time. It cannot catch a kind that has neither a fixture nor a live object;
+# for that, re-measure against a cluster that has exercised the path (see the
+# `--live` mode of the generator).
+#
+# A missing kind is no longer silent either way: the install wait reads the
+# API server's own refusal off the composed object and stops, naming RBAC as
+# the cause (composed_permission_errors, scripts/lib/bootstrap.sh) — instead of
+# the XCluster sitting at Ready=False for the full timeout.
+#
+# provider-helm is NOT covered by this file and stays on cluster-admin. It
+# installs charts that ship their own ClusterRoles, and Kubernetes refuses to
+# let anything create a role granting permissions it does not itself hold.
+# Scoping it means either holding the union of everything every installed
+# chart grants, or `escalate` — which permits minting any role at all and is
+# cluster-admin under a quieter name. See provider-rbac.yaml and
+# docs/roadmap.md §1.16.
+verbs:
+  - get
+  - list
+  - watch
+  - create
+  - update
+  - patch
+  - delete
+kinds:
+  - group: ""
+    resources:
+      - configmaps       # ConfigMap
+      - limitranges      # LimitRange
+      - namespaces       # Namespace
+      - resourcequotas   # ResourceQuota
+      - secrets          # Secret
+      - services         # Service
+  - group: argoproj.io
+    resources:
+      - appprojects      # AppProject
+  - group: batch
+    resources:
+      - jobs             # Job
+  - group: cert-manager.io
+    resources:
+      - certificates     # Certificate
+  - group: external-secrets.io
+    resources:
+      - clusterexternalsecrets  # ClusterExternalSecret
+      - clustersecretstores    # ClusterSecretStore
+      - externalsecrets        # ExternalSecret
+  - group: gateway.envoyproxy.io
+    resources:
+      - backendtrafficpolicies  # BackendTrafficPolicy
+  - group: gateway.networking.k8s.io
+    resources:
+      - httproutes       # HTTPRoute
+      - referencegrants  # ReferenceGrant
+  - group: pkg.crossplane.io
+    resources:
+      - imageconfigs     # ImageConfig
+  - group: postgresql.cnpg.io
+    resources:
+      - databases        # Database

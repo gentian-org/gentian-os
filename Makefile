@@ -22,7 +22,7 @@ CROSSPLANE_IMAGE ?= xpkg.crossplane.io/crossplane/crossplane:$(CROSSPLANE_CLI_VE
 KUBEBUILDER_ASSETS ?= /tmp/envtest-bins/k8s/1.32.0-linux-amd64
 export KUBEBUILDER_ASSETS
 
-.PHONY: all build generate manifests test lint docker-build clean install-plugin uninstall-plugin validate-steps gen-credentials gen-phase-table lint-phase-table check-credentials lint-cluster-config-keys lint-template-placeholders lint-portability lint-image-digests check-render-fixtures lint-resolvable lint-bootstrap-apps lint-step-contracts lint-claim-defaults lint-password-schemes test-policy test-policy-openbao test-policy-authz verify-claim-applied verify-image-updates
+.PHONY: all build generate manifests test lint docker-build clean install-plugin uninstall-plugin validate-steps gen-credentials gen-phase-table lint-phase-table check-credentials lint-cluster-config-keys lint-template-placeholders lint-portability lint-image-digests check-render-fixtures lint-resolvable lint-bootstrap-apps lint-step-contracts lint-claim-defaults lint-password-schemes test-policy test-policy-openbao test-policy-authz verify-claim-applied verify-image-updates gen-provider-rbac lint-provider-rbac
 
 all: generate build test
 
@@ -93,13 +93,17 @@ gen-theme:
 gen-credentials:
 	python3 scripts/gen/gen-credential-requirements.py
 
+## Regenerate the provider-kubernetes ClusterRole from provider-kubernetes-kinds.yaml
+gen-provider-rbac:
+	python3 scripts/gen/gen-provider-rbac.py
+
 ## Both generate and manifests in order
-gen-all: generate manifests gen-theme gen-credentials
+gen-all: generate manifests gen-theme gen-credentials gen-provider-rbac
 
 ## Verify generated files are up to date (CI check)
 verify-gen: gen-all
 	python3 scripts/gen/gen-credential-requirements.py --check
-	git diff --exit-code api/ config/crd/ charts/gentian-os/crds/ charts/gentian-os/templates/clusterrole.yaml kernel/services/keycloak-idp/manifests/ kernel/credentials/ || (echo "Generated files are out of date. Run 'make gen-all'." && exit 1)
+	git diff --exit-code api/ config/crd/ charts/gentian-os/crds/ charts/gentian-os/templates/clusterrole.yaml kernel/services/keycloak-idp/manifests/ kernel/credentials/ crossplane/providers/provider-rbac.yaml || (echo "Generated files are out of date. Run 'make gen-all'." && exit 1)
 
 ## Tidy module dependencies
 tidy:
@@ -120,7 +124,7 @@ lint-yaml:
 ## The file list and flags must match CI exactly: -x follows sourced files, and no
 ## -S filter means info/style findings fail the build too. Hand-rolling a narrower
 ## invocation is how an SC2153 reached develop green-looking.
-lint-shell: validate-steps lint-step-contracts lint-resolvable lint-bootstrap-apps lint-credential-fields lint-claim-defaults lint-cluster-config-keys lint-template-placeholders lint-phase-table lint-password-schemes
+lint-shell: validate-steps lint-step-contracts lint-resolvable lint-bootstrap-apps lint-credential-fields lint-claim-defaults lint-cluster-config-keys lint-template-placeholders lint-phase-table lint-provider-rbac lint-password-schemes
 	@git ls-files -z -- '*.sh' | xargs -0 shellcheck -x scripts/kubectl-gentian
 
 ## Round-trip the recovery kit: export one, load it back, prove every value
@@ -177,6 +181,10 @@ gen-phase-table:
 ## Fail when the phase table disagrees with the phase sections
 lint-phase-table:
 	@python3 scripts/gen/gen-phase-table.py --check
+
+## Fail when a render fixture composes a kind provider-kubernetes-kinds.yaml does not cover
+lint-provider-rbac:
+	@python3 scripts/lint/lint-provider-rbac.py
 
 ## Shell placeholders in Helm templates, which nothing expands
 lint-template-placeholders:

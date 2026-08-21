@@ -93,14 +93,22 @@ destroy() {
         kubectl delete provider.pkg.crossplane.io "$p" --ignore-not-found=true --timeout=60s 2>/dev/null || true
     done
 
-    # The bindings that grant each provider cluster-admin. Crossplane's package
-    # manager garbage-collects them only while it is running, and it is gone by
-    # the time A-01 finishes — so they outlive the providers they belong to,
-    # still naming a ServiceAccount any later workload could occupy.
+    # The bindings that grant each provider its RBAC — cluster-admin for
+    # provider-helm and provider-vault, the scoped gentian-provider-kubernetes
+    # role for provider-kubernetes. Crossplane's package manager
+    # garbage-collects them only while it is running, and it is gone by the
+    # time A-01 finishes — so they outlive the providers they belong to, still
+    # naming a ServiceAccount any later workload could occupy.
     kubectl delete clusterrolebinding \
         crossplane-provider-helm-admin \
         crossplane-provider-kubernetes-admin \
+        crossplane-provider-kubernetes-scoped \
         crossplane-provider-vault-admin \
+        --ignore-not-found=true --wait=false 2>/dev/null || true
+
+    # The scoped role itself. Only provider-kubernetes has one of these; helm
+    # and vault bind the built-in cluster-admin, which teardown does not own.
+    kubectl delete clusterrole gentian-provider-kubernetes \
         --ignore-not-found=true --wait=false 2>/dev/null || true
 
     _delete_crossplane_crds || true

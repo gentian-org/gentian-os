@@ -156,6 +156,16 @@ install_crossplane_providers() {
     # Compositions manage. Applied before the Healthy wait so the permissions
     # exist by the time the first Object is reconciled — a ClusterRoleBinding may
     # reference a ServiceAccount that does not exist yet.
+    #
+    # provider-kubernetes' binding used to point at cluster-admin under the name
+    # crossplane-provider-kubernetes-admin. roleRef on a ClusterRoleBinding is
+    # immutable, so moving that name to the scoped role is not an option — the
+    # API server refuses the patch — and provider-rbac.yaml now creates the
+    # scoped grant under a new name instead. Deleting the old one is what
+    # actually narrows anything: applying the new file without this would leave
+    # the cluster-admin grant alive alongside the scoped one, granted twice.
+    kubectl delete clusterrolebinding crossplane-provider-kubernetes-admin \
+        --ignore-not-found=true >/dev/null 2>&1 || true
     info "Applying provider RBAC (InjectedIdentity needs an explicit grant)..."
     _kubectl_retry apply -f "${SCRIPT_DIR}/crossplane/providers/provider-rbac.yaml"
 
