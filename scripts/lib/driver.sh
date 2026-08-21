@@ -699,25 +699,10 @@ validate_pins() {
         claimed+="${c} "
     done
 
-    # A pin may also be claimed by something that is not a step.
-    #
-    # The invariant is "nothing is pinned without a consumer", so a pin goes
-    # stale visibly rather than silently. Steps claim theirs with `# pins:`, but
-    # the OpenFGA CLI is used by scripts/tools/verify-authz-model.sh and the
-    # OpenBao CLI by the CI workflow — consumers with no step header to write in.
-    # Reading those files for a versions.sh call satisfies the same invariant
-    # without carving out an exception list that would then need maintaining.
-    local tool_claims
-    tool_claims=" $(grep -rhoE 'versions\.sh"? [a-z0-9-]+ [a-z0-9-]+' \
-        scripts/tools/ scripts/lint/ .github/workflows/ 2>/dev/null |
-        awk '{print $2}' | sort -u | tr '\n' ' ')"
-
     while IFS= read -r comp; do
         [[ -n "$comp" ]] || continue
-        if [[ "${claimed}" != *" ${comp} "* && "${tool_claims}" != *" ${comp} "* ]]; then
-            error "versions.yaml pins '${comp}', which nothing claims."
-            error "  A step claims a pin with '# pins: ${comp}'; a tool or workflow"
-            error "  claims it by reading it — scripts/lib/versions.sh ${comp} <key>."
+        if [[ "${claimed}" != *" ${comp} "* ]]; then
+            error "versions.yaml pins '${comp}', which no step claims with '# pins:'"
             rc=1
         fi
     done < <(gentian_pin_components)

@@ -6,8 +6,9 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 MODEL_DIR="${ROOT}/authz/model/v0"
 
 # Pinned, not @latest. @latest broke CI the day openfga/cli v0.7.20 raised its
-# Go floor to 1.25.7 while this project's go.mod pins 1.25.0 — a red build
-# caused by an upstream release rather than by any change here.
+# Go floor to 1.25.7 — go.mod was 1.25.0 at the time and is 1.25.7 now
+# (go 1.25.7 happens to be exactly what v0.7.20 requires, so no GOTOOLCHAIN
+# override is needed to build it).
 #
 # Pinned here rather than in versions.yaml, which is the mirror inventory for an
 # air-gapped install: driver.sh's validate_pins requires every entry there to be
@@ -16,11 +17,8 @@ MODEL_DIR="${ROOT}/authz/model/v0"
 FGA_VERSION="v0.7.20"
 
 if ! command -v fga >/dev/null 2>&1; then
-  # GOTOOLCHAIN=auto for this command only: every published fga needs a newer Go
-  # than the project targets, and setup-go sets GOTOOLCHAIN=local, so Go refuses
-  # to fetch one. Scoped to the install, the project's own toolchain is untouched.
   echo "Installing openfga/cli ${FGA_VERSION} via go install..."
-  GOTOOLCHAIN=auto go install "github.com/openfga/cli/cmd/fga@${FGA_VERSION}"
+  go install "github.com/openfga/cli/cmd/fga@${FGA_VERSION}"
   gopath_bin="$(go env GOPATH)/bin"
   export PATH="${PATH}:${gopath_bin}"
 fi
