@@ -1190,7 +1190,7 @@ So: to change a phase's state, edit that phase's section. `make gen-phase-table`
 | 2 | Built | A clean-room review by someone other than the author |
 | 3 | Built | `oci-registry` and `smtp` have no test; none of the validators is automated |
 | 4 | 4a exercised, 4b half | Mail, LLM, portal and tenant reconcile still name applications. Blocked on the reconciler audit (§15.2) |
-| 5 | Exercised | `kernel/argocd/repos/*.yaml` and the infra chart registry are not yet claims — which is no longer only tidiness: a tenant admin's Repositories view lists what *is* a claim, so the cluster's app catalogue is invisible there. The catalogue arrives through the `gentian-catalogue` ApplicationSet instead, and nothing a tenant can see says so |
+| 5 | Exercised | The public chart registries are claims. What remains is the private infrastructure registry, which is a different shape: it is optional, so the claim should exist only when one is configured, and nothing yet decides where that conditional lives. A tenant admin's Repositories view still cannot show the cluster's *app* catalogue, which arrives through the `gentian-catalogue` ApplicationSet rather than as a repository at all |
 | 6 | Exercised | Both criteria this row was waiting on are verified in §15.1 — ESO's live verdict, and the unsatisfied→satisfied transition unblocking composition with nothing re-run. The row had not been updated to say so |
 | 7 | Exercised | The live OIDC write path works. It was broken three independent ways — wrong mount, wrong role type, missing audience (§15.4) — and a token exchange has now completed against the fixed path, which is the criterion this row waited on longest. The audit device is still unobserved |
 | 8 | Exercised | The service exchanges a caller's token and serves the catalogue. A refusal now names the failed check — audience, claims, role type, missing role, unmounted backend — and logs OpenBao's own words; the first real use of that log found the tenant fault below in one line, after three rounds of reading code had been needed for the previous ones. Its own ServiceAccount policy is still uninspected |
@@ -1554,7 +1554,7 @@ come back empty.
 
 ### Phase 5 — `XRepository`
 
-**State — Exercised.** `kernel/argocd/repos/*.yaml` and the infra chart registry are not yet claims — which is no longer only tidiness: a tenant admin's Repositories view lists what *is* a claim, so the cluster's app catalogue is invisible there. The catalogue arrives through the `gentian-catalogue` ApplicationSet instead, and nothing a tenant can see says so
+**State — Exercised.** The public chart registries are claims. What remains is the private infrastructure registry, which is a different shape: it is optional, so the claim should exist only when one is configured, and nothing yet decides where that conditional lives. A tenant admin's Repositories view still cannot show the cluster's *app* catalogue, which arrives through the `gentian-catalogue` ApplicationSet rather than as a repository at all
 
 **Status: implemented.** `crossplane/xrds/repository.yaml` and
 `crossplane/compositions/repository-default.yaml`, applied by `A-02-crossplane-providers`, with
