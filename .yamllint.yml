@@ -4,6 +4,10 @@ extends: default
 # Exclude machine-generated files and files containing Go template syntax
 # (Go template actions {{ }} break yamllint's line-length and syntax checks)
 ignore: |
+  # Agent worktrees and scratch state. Untracked, not repository content, and
+  # they carry copies of files this config already ignores — so leaving them in
+  # made the lint fail on a directory nobody edits and nothing ships.
+  .claude/
   config/crd/
   charts/gentian-os/crds/
   charts/gentian-os/templates/

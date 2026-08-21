@@ -105,18 +105,19 @@ jobs:
       - name: step contracts
         run: make validate-steps
 
-      # A shell placeholder in a Helm template is expanded by nothing and looks
-      # like ordinary text. One disabled image updates on every cluster for
-      # months while the controller reported no errors, so this runs in CI
-      # rather than only in `make lint-shell` — which CI does not run.
-      - name: template placeholders
-        run: make lint-template-placeholders
-
-      # The §11 phase table is generated from the phase sections. It drifted
-      # three times in one week while it was maintained by hand, and each
-      # disagreement was found by reading rather than by anything failing.
-      - name: phase table
-        run: make lint-phase-table
+      # Every lint the repository defines, as one step.
+      #
+      # These existed and gated nothing: eleven checks CI never ran, one of them
+      # failing, in a repository that has repeatedly been bitten by tests
+      # agreeing with the defect they were meant to catch. A check nobody runs
+      # is worse than an absent one, because it reads as coverage.
+      #
+      # lint-shell is the aggregate over the structural checks — step contracts,
+      # resolvable references, credential field agreement, claim defaults,
+      # cluster-config keys, template placeholders, the phase table, password
+      # schemes — plus shellcheck itself.
+      - name: lints
+        run: make lint-shell lint-yaml lint-portability lint-image-digests
 
       - name: credential catalogue parity
         run: python3 -m pip install --quiet pyyaml && make gen-credentials && git diff --exit-code kernel/credentials/

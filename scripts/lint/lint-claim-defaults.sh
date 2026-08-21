@@ -66,7 +66,14 @@ echo ""
 
 # A field's default, straight from the XRD. The variable names differ from the
 # field names, so the mapping is spelled out rather than derived.
-yq_default() {
+#
+# python3, not yq. Two incompatible programs are called yq — mikefarah's Go one,
+# which this used with `yq eval`, and the python wrapper around jq, which rejects
+# that syntax. The rejection went to /dev/null and the function returned nothing,
+# so every field read as "no default in the XRD" and every shell fallback looked
+# like a contradiction. All five reported ones were correct and identical to the
+# XRD. A lint that cries wolf is why this one was never wired into CI.
+xrd_default() {
     local field
     case "$1" in
         TENANCY_MODE)      field=tenancyMode ;;
@@ -75,11 +82,22 @@ yq_default() {
         SECRET_MODE)       field=secretMode ;;
         NODE_IP)           field=nodeIp ;;
         STORAGE_CLASS)     field=storageClass ;;
-        MAIL_SERVICE_MODE) field=mail.properties.serviceMode ;;
+        MAIL_SERVICE_MODE) field=mail.serviceMode ;;
         *) return 0 ;;
     esac
-    yq eval ".spec.versions[0].schema.openAPIV3Schema.properties.spec.properties.${field}.default" \
-        crossplane/xrds/cluster.yaml 2>/dev/null | grep -v '^null$' || true
+    python3 - "${field}" <<'PYEOF'
+import sys, yaml
+field = sys.argv[1]
+doc = yaml.safe_load(open("crossplane/xrds/cluster.yaml"))
+node = doc["spec"]["versions"][0]["schema"]["openAPIV3Schema"]["properties"]["spec"]
+for part in field.split("."):
+    node = (node.get("properties") or {}).get(part)
+    if node is None:
+        sys.exit(0)
+d = node.get("default")
+if d is not None:
+    print(d)
+PYEOF
 }
 
 total=0
@@ -103,7 +121,7 @@ for var in "${CLAIM_BACKED[@]}"; do
     # counted. This is the half that catches a real fault: a literal that RESTATES
     # the schema is duplication, one that CONTRADICTS it is a value resolving two
     # ways depending on which code path got there first.
-    want="$(yq_default "${var}")"
+    want="$(xrd_default "${var}")"
 
     if [[ ${n} -eq 0 ]]; then
         printf '  %s✓%s %-20s %s\n' "${GREEN}" "${NC}" "${var}" "0"
