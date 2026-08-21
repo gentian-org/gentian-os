@@ -151,7 +151,7 @@ wait_for_keycloak_http_service() {
 
 ensure_keycloak_admin_secret_url() {
     local ns="platform-kernel"
-    local url current eso_manifest
+    local url current
 
     if ! url=$(wait_for_keycloak_http_service "${ns}" 120); then
         if declare -F ensure_suze_idp_workloads >/dev/null 2>&1; then
@@ -171,22 +171,41 @@ ensure_keycloak_admin_secret_url() {
         return 0
     fi
     warn "Updating keycloak-admin URL (${current:-missing} -> ${url}) via ExternalSecret"
-    eso_manifest="${SCRIPT_DIR}/kernel/services/postgresql/manifests/dev/externalsecrets.yaml"
-    if [[ -f "${eso_manifest}" ]]; then
-        kubectl apply -f "${eso_manifest}" >/dev/null
-        kubectl annotate externalsecret keycloak-admin -n "${ns}" \
-            "force-sync=$(date +%s)" --overwrite >/dev/null
-        local deadline=$((SECONDS + 30))
-        while (( SECONDS < deadline )); do
-            current=$(kubectl get secret keycloak-admin -n "${ns}" -o jsonpath='{.data.url}' 2>/dev/null | base64 -d || true)
-            if [[ "${current}" == "${url}" ]]; then
-                success "keycloak-admin Secret URL corrected."
-                return 0
-            fi
-            sleep 2
-        done
-    fi
-    error "keycloak-admin URL still ${current:-missing}; expected ${url}"
+
+    # Force a re-sync, and do not apply anything.
+    #
+    # This used to `kubectl apply` kernel/services/postgresql/manifests/dev/
+    # externalsecrets.yaml first. Two things were wrong with that. The path was
+    # the literal "dev" on every cluster, and that file carries the shared-infra
+    # ExternalSecrets whose hosts are stage-qualified — so on a prod cluster it
+    # pointed redis-admin, mariadb-admin and minio-admin at
+    # *-dev.gentian-infra-dev names that do not resolve. That is the same fault
+    # kernel/bootstrap/chart/templates/cnpg-cluster.yaml documents having fixed
+    # in the Application's own path; this caller was missed.
+    #
+    # And it could not achieve what it was reached for. The URL in that manifest
+    # is a literal, so re-applying writes back the value already there. The only
+    # case an apply would help is the live object having drifted from git, which
+    # Argo CD already handles: cnpg-cluster-<stage> syncs that directory with
+    # selfHeal. So the annotate below is the whole remedy.
+    kubectl annotate externalsecret keycloak-admin -n "${ns}" \
+        "force-sync=$(date +%s)" --overwrite >/dev/null
+    local deadline=$((SECONDS + 30))
+    while (( SECONDS < deadline )); do
+        current=$(kubectl get secret keycloak-admin -n "${ns}" -o jsonpath='{.data.url}' 2>/dev/null | base64 -d || true)
+        if [[ "${current}" == "${url}" ]]; then
+            success "keycloak-admin Secret URL corrected."
+            return 0
+        fi
+        sleep 2
+    done
+
+    # A mismatch that survives a re-sync is a mismatch with git, not a transient
+    # one: the ExternalSecret templates the URL as a literal, so the fix is a
+    # commit to that manifest, not another retry here.
+    error "keycloak-admin URL is ${current:-missing}; this cluster's Keycloak serves ${url}"
+    error "  The URL is a literal in kernel/services/postgresql/manifests/<stage>/externalsecrets.yaml."
+    error "  Correct it there and let Argo CD sync, or set GENTIAN_IDP_KEYCLOAK_RELEASE to match."
     return 1
 }
 
