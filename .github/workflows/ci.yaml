@@ -131,6 +131,42 @@ jobs:
       - name: credential catalogue parity
         run: python3 -m pip install --quiet pyyaml && make gen-credentials && git diff --exit-code kernel/credentials/
 
+      # What the authorization rules PERMIT, not what they say.
+      #
+      # The render tests compare generated policy text against a golden file, so
+      # they prove the text came out as expected and can say nothing about what
+      # it grants. A path glob with a typo — gentian-os/kernel* for
+      # gentian-os/kernel/* — renders correctly, matches its golden, and opens a
+      # neighbouring path. The only way to catch that is to load the policy into
+      # a real OpenBao and try the access.
+      #
+      # The sharp rule is cluster-admin being DENIED a tenant's data. That is
+      # what makes this platform multi-tenant rather than multi-namespace, and a
+      # mistake in it is a breach rather than a bug.
+      #
+      # bao is installed rather than letting the script skip, for the reason the
+      # recovery kit installs age: this suite skipped on every machine that had
+      # no bao, which is every machine, and read as coverage. Seven of its
+      # assertions had additionally never run anywhere, behind a yq mismatch
+      # that printed SKIP. The version is the same pin the installer requires of
+      # an install host, read from versions.yaml rather than repeated here.
+      #
+      # The OpenFGA half installs its own fga CLI via go install; this job
+      # already sets up Go.
+      - name: authorization policy tests
+        run: |
+          # The tarball, not the .deb: OpenBao publishes no .deb for this tag.
+          # Asset names capitalise the platform (Linux_x86_64) while the SBOM
+          # files beside them do not, so this is copied from the release rather
+          # than guessed.
+          BAO_VERSION="$(bash scripts/lib/versions.sh openbao cli)"
+          curl -fsSL -o /tmp/bao.tar.gz \
+            "https://github.com/openbao/openbao/releases/download/${BAO_VERSION}/bao_${BAO_VERSION#v}_Linux_x86_64.tar.gz"
+          tar -xzf /tmp/bao.tar.gz -C /tmp bao
+          sudo install -m 0755 /tmp/bao /usr/local/bin/bao
+          bao version
+          make test-policy
+
   # macOS is a supported install host, so the installer has to be exercised on
   # BSD userland and stock bash 3.2 — not just checked for it. This job is
   # SEPARATE from lint on purpose: it is expected to fail on portability until
