@@ -640,34 +640,38 @@ spec:
               providerConfigRef:
                 name: keycloak
 
-            {{- /* One execution, on purpose, and the first thing to prove.
+            {{- /* The flow's three executions, in order.
 
-                 Every adoption so far worked because a duplicate was impossible:
-                 a mapper, a role, a group all collide on name, so a create that
-                 failed to resolve the existing object conflicted instead. Keycloak
-                 does not require an execution to be uniquely named within a flow,
-                 so nothing stops a second one being appended.
+                 They adopt. That was not a given: every other adoption here works
+                 because a duplicate is impossible — a mapper, a role, a group all
+                 collide on name — while Keycloak lets a flow hold two executions
+                 of the same authenticator, and provider-keycloak documents no
+                 import identity for the kind. Proven with one execution first,
+                 which took the existing id and left the flow at three.
 
-                 detect-existing-broker-user is the safe one to find out with: it
-                 looks up whether the arriving user is already linked, so running
-                 it twice decides the same thing twice. If a fourth execution
-                 appears, this is removed and the rest are not attempted. */}}
+                 Together they match a returning user to the account already
+                 provisioned for them by email. The built-in first broker login
+                 stops and asks them to confirm the link instead, which is what
+                 this flow exists to avoid.
+              */}}
+            {{- range $i, $auth := (list "idp-detect-existing-broker-user" "idp-confirm-link" "idp-email-verification") }}
             ---
             apiVersion: authenticationflow.keycloak.crossplane.io/v1alpha1
             kind: Execution
             metadata:
               annotations:
-                gotemplating.fn.crossplane.io/composition-resource-name: keycloak-fbl-exec-detect
-              name: {{ $tenant }}-fbl-exec-detect
+                gotemplating.fn.crossplane.io/composition-resource-name: keycloak-fbl-exec-{{ $auth }}
+              name: {{ $tenant }}-fbl-exec-{{ $auth }}
             spec:
               deletionPolicy: Orphan
               forProvider:
                 realmId: {{ $tenant }}
                 parentFlowAlias: first-broker-login-gentian
-                authenticator: idp-detect-existing-broker-user
+                authenticator: {{ $auth }}
                 requirement: REQUIRED
               providerConfigRef:
                 name: keycloak
+            {{- end }}
 
             {{- /* ── the realm's "groups" client scope ────────────────────────
                  What puts a user's group membership into their tokens. Every
