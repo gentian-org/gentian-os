@@ -343,6 +343,10 @@ before a kit exists would mean that if the login path breaks later, there is
 nothing to fall back to either. Either gap alone means the recovery is
 re-initialising OpenBao from scratch.
 
+Once it succeeds, `/tmp/openbao-init.json` is deleted, not just the token
+inside it — the recovery key it also held is redundant with the kit by then,
+and there is no reason for a second plaintext copy to keep existing on disk.
+
 To see where a cluster stands:
 
 ```bash

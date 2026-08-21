@@ -11,7 +11,7 @@
 #   - Transit engine / key / policy are created only if absent.
 #   - k8s Secret is created only if absent.
 #
-# Requires: kubectl, jq, curl, bao (for policy write)
+# Requires: kubectl, jq, curl
 #
 # Optional env vars:
 #   TRANSIT_INIT_FILE  — where to save init output (default: /tmp/openbao-transit-init.json)
@@ -20,9 +20,10 @@
 
 set -euo pipefail
 
-RED='\033[0;31m'; GREEN='\033[0;32m'; CYAN='\033[0;36m'; NC='\033[0m'
+RED='\033[0;31m'; YELLOW='\033[1;33m'; GREEN='\033[0;32m'; CYAN='\033[0;36m'; NC='\033[0m'
 info()    { echo -e "${CYAN}[INFO]${NC}  $*"; }
 success() { echo -e "${GREEN}[OK]${NC}    $*"; }
+warn()    { echo -e "${YELLOW}[WARN]${NC}  $*"; }
 error()   { echo -e "${RED}[ERROR]${NC} $*" >&2; }
 
 TRANSIT_INIT_FILE="${TRANSIT_INIT_FILE:-/tmp/openbao-transit-init.json}"
@@ -189,21 +190,20 @@ else
   TRANSIT_UNSEAL_KEY=$(echo "$INIT_RESP"  | jq -r '.keys_base64[0]')
   TRANSIT_ROOT_TOKEN=$(echo "$INIT_RESP"  | jq -r '.root_token')
 
+  # Neither value is printed. Both are already in ${TRANSIT_INIT_FILE}, mode
+  # 600 — the same reasoning as the primary's init in scripts/lib/openbao.sh:
+  # a terminal or a CI log is the one place they should never sit in the
+  # clear, and nothing downstream needs the raw text. Unlike the primary,
+  # nothing here asks the operator to save these anywhere durable either —
+  # the root token is revoked by this same script once bootstrap finishes
+  # (below), and the unseal key is written to the openbao-transit-unseal k8s
+  # Secret a few steps from now, which is what the transit pod itself reads
+  # to unseal on every restart. That Secret, not this file, is the durable
+  # copy from here on; the cluster's own recovery kit (--export-recovery-kit)
+  # captures the same key as TRANSIT_UNSEAL_KEY for a break-glass rebuild.
   echo ""
-  echo -e "${RED}╔══════════════════════════════════════════════════════════════╗${NC}"
-  echo -e "${RED}║  ⚠  SAVE TO BITWARDEN › gentian/openbao-transit             ║${NC}"
-  echo -e "${RED}╠══════════════════════════════════════════════════════════════╣${NC}"
-  echo -e "${RED}║  Unseal Key : ${TRANSIT_UNSEAL_KEY}${NC}"
-  echo -e "${RED}║  Root Token : ${TRANSIT_ROOT_TOKEN}${NC}"
-  echo -e "${RED}╚══════════════════════════════════════════════════════════════╝${NC}"
-  echo ""
-  echo "  Init output also saved to: ${TRANSIT_INIT_FILE}"
-  echo ""
-  read -rp "  Have you saved both values to Bitwarden? [yes/no]: " confirmed
-  if [[ "$confirmed" != "yes" ]]; then
-    error "Aborted. Re-run after saving the keys."
-    exit 1
-  fi
+  info "openbao-transit initialised. Unseal key and root token are in"
+  info "  ${TRANSIT_INIT_FILE} (mode 600) — nowhere else, and briefly."
 
   # Unseal
   curl -sf -X PUT "${TRANSIT_ADDR}/v1/sys/unseal" \
@@ -332,6 +332,42 @@ kubectl create secret generic openbao-transit-unseal \
   --from-literal=unseal-key="${TRANSIT_UNSEAL_KEY}" \
   --dry-run=client -o yaml | kubectl apply -f -
 success "k8s Secret openbao-transit-unseal created/updated."
+
+# ─── Revoke the root token; it has nothing left to do ────────────────────────
+# Everything it can do has been done: the engine is enabled, the autounseal
+# key exists, the policy is written, and — the two things anything ELSE ever
+# actually needs — openbao-transit-token (what the primary authenticates
+# with) and openbao-transit-unseal (what this transit pod unseals itself
+# with on every restart) are both durable Kubernetes Secrets as of the lines
+# just above. Nothing reachable from here needs the root token again.
+#
+# If it is ever needed again regardless — to rotate the autounseal key, say —
+# it is not gone, only dormant: 'bao operator generate-root' mints a fresh one
+# from the SAME unseal key that openbao-transit-unseal already holds, the same
+# way the primary's own root token is disposable rather than precious (see
+# E-03-revoke-bootstrap-token.sh). That is what makes revoking the current one
+# safe rather than merely convenient.
+info "Revoking the openbao-transit root token — its bootstrap work is done..."
+if curl -sf -X POST \
+    -H "X-Vault-Token: ${TRANSIT_ROOT_TOKEN}" \
+    "${TRANSIT_ADDR}/v1/auth/token/revoke-self" >/dev/null 2>&1; then
+  success "openbao-transit root token revoked."
+else
+  warn "Could not revoke the openbao-transit root token — revoke it by hand:"
+  warn "  curl -X POST -H \"X-Vault-Token: <token>\" ${TRANSIT_ADDR}/v1/auth/token/revoke-self"
+fi
+
+# The local file held the same token, plus the unseal key — both now
+# redundant with the k8s Secrets just written, so nothing needs it to exist.
+# Deleting it outright rather than stripping one field: purge_local_state
+# (scripts/lib/teardown.sh) already deletes this same file wholesale at
+# uninstall for the identical reason ("init files holding unseal keys for
+# storage that no longer exists"); this is that same judgment, made the
+# moment the file stops being needed rather than only at teardown.
+if [[ -f "${TRANSIT_INIT_FILE}" ]]; then
+  rm -f "${TRANSIT_INIT_FILE}"
+  info "Removed ${TRANSIT_INIT_FILE} — its content is now in the k8s Secrets above."
+fi
 
 echo ""
 echo -e "${GREEN}╔══════════════════════════════════════════════════════════════╗${NC}"

@@ -3,7 +3,7 @@
 # phase: handover
 # requires: E-02-litellm-reconcile
 # provides: an installer whose OpenBao token no longer works
-# mutates: revokes BAO_TOKEN; removes the openbao-init Secret's root token
+# mutates: revokes BAO_TOKEN; deletes the local openbao-init file
 
 # The last step, and the one that closes the bootstrap exception.
 #
@@ -270,29 +270,30 @@ apply() {
     fi
     unset BAO_TOKEN
 
-    # The init Secret still holds the root token and the unseal keys. The root
-    # token is now dead, but the Secret reads as a live credential to anyone who
-    # finds it, so strip it and leave the unseal material alone.
-    if kubectl get secret openbao-init -n openbao >/dev/null 2>&1; then
-        gentian_run kubectl patch secret openbao-init -n openbao \
-            --type=json -p '[{"op":"remove","path":"/data/root_token"}]' 2>/dev/null ||
-            info "openbao-init carries no root_token key; nothing to strip."
-    fi
-
-    # The init file on this machine holds the same dead token and outlives the
-    # Secret — left there, every re-run re-displayed it as a live credential and
-    # exported it into the shell. Same treatment: strip the token, keep the
-    # recovery material.
+    # The local init file held the root token and the recovery/unseal keys —
+    # both now redundant. The token above is dead; the recovery material's
+    # only durable purpose was to reach this moment, because _kit_exported
+    # required a kit before this function could ever run. Whatever is in that
+    # kit is the copy that survives from here; this file has nothing left to
+    # do and reads as a live credential to anyone who finds it, so it is
+    # deleted outright rather than stripped field by field.
+    #
+    # There used to also be a Kubernetes Secret openbao-init this patched —
+    # there is no such Secret. B-04's own check() already says so ("There is
+    # no local Secret for this, and inventing one would put install state
+    # back on disk"), and nothing anywhere in this repository ever creates
+    # one; grepped to be sure. The patch attempt was always a silent no-op.
+    # Removed here along with B-04's stale header and destroy() that made the
+    # same claim.
     local init_file="${OPENBAO_INIT_FILE:-/tmp/openbao-init.json}"
-    if [[ -f "${init_file}" ]] && jq -e '.root_token' "${init_file}" >/dev/null 2>&1; then
-        if [[ "${GENTIAN_DRY_RUN:-0}" != "1" ]]; then
-            local stripped
-            if ! stripped="$(jq 'del(.root_token)' "${init_file}")" ||
-                ! printf '%s\n' "${stripped}" > "${init_file}"; then
-                warn "Could not strip the dead root token from ${init_file}."
-            fi
+    if [[ -f "${init_file}" ]]; then
+        if [[ "${GENTIAN_DRY_RUN:-0}" == "1" ]]; then
+            info "Would remove ${init_file} (dry run)."
+        elif rm -f "${init_file}"; then
+            info "Removed ${init_file} — its content is now only in the recovery kit."
+        else
+            warn "Could not remove ${init_file}."
         fi
-        info "Removed the revoked root token from ${init_file}."
     fi
 
     # Recorded beside the proof, in the same object, because the two questions
