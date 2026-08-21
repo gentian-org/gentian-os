@@ -586,6 +586,40 @@ spec:
                 namespace: platform-kernel
               providerConfigRef:
                 name: keycloak
+            {{- /* ── kernel IdP in the tenant realm, observed ───────────────────
+                 What tenant login actually runs on: the tenant realm delegates
+                 to the kernel realm through this.
+
+                 Observe-only for now. Two Jobs write this same object today —
+                 the realm script in identity_reconciler.go and the broker-idp
+                 Job — and they disagree about firstBrokerLoginFlowAlias: the
+                 realm script sets the built-in "first broker login", the Job
+                 sets first-broker-login-gentian. The Job runs later, so the
+                 gentian flow is what is live, but a realm re-run would silently
+                 put tenant login back on the built-in flow, which prompts to
+                 confirm the link instead of matching the user by email.
+
+                 Adding a third writer before removing the other two would just
+                 add churn. This observes first, so the live state can be read
+                 and compared against what the manifest would declare, before
+                 anything writes.
+              */}}
+            ---
+            apiVersion: oidc.keycloak.crossplane.io/v1alpha1
+            kind: IdentityProvider
+            metadata:
+              name: {{ $tenant }}-kernel-idp
+              annotations:
+                crossplane.io/external-name: kernel
+                gotemplating.fn.crossplane.io/composition-resource-name: keycloak-kernel-idp
+            spec:
+              deletionPolicy: Orphan
+              managementPolicies: ["Observe"]
+              forProvider:
+                realm: {{ $tenant }}
+                alias: kernel
+              providerConfigRef:
+                name: keycloak
             {{- end }}
 
             {{- range $app := dig "apps" list $spec }}
