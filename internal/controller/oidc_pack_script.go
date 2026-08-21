@@ -118,18 +118,19 @@ fi
 # restate.
 
 # --- Client role ---
-ROLE_HTTP=$(curl -s -o /dev/null -w "%%{http_code}" -H "${AUTH_HEADER}" \
-  "${KEYCLOAK_URL}/admin/realms/${REALM}/clients/${CLIENT_UUID}/roles/${CLIENT_ROLE}")
-if [ "${ROLE_HTTP}" = "404" ]; then
-  curl -sf -X POST -H "${AUTH_HEADER}" -H "Content-Type: application/json" \
-    "${KEYCLOAK_URL}/admin/realms/${REALM}/clients/${CLIENT_UUID}/roles" \
-    -d "{\"name\":\"${CLIENT_ROLE}\"}"
-  echo "client role ${CLIENT_ROLE} created"
-else
-  echo "client role ${CLIENT_ROLE} already exists"
-fi
+# Not created here. app-default composes a Role, which adopted the existing one
+# by its Keycloak id rather than making a second — verified on corp, where the
+# role kept its id.
+#
+# Still READ, because the group-to-role mapping below needs the role's id and
+# that mapping has no declarative form yet: it needs the entitlement group's
+# id, and the group is still made by the gentian-groups Job.
 ROLE_JSON=$(curl -sf -H "${AUTH_HEADER}" \
   "${KEYCLOAK_URL}/admin/realms/${REALM}/clients/${CLIENT_UUID}/roles/${CLIENT_ROLE}")
+if [ -z "${ROLE_JSON}" ]; then
+  echo "ERROR: client role ${CLIENT_ROLE} not found; the Composition has not created it yet" >&2
+  exit 1
+fi
 ROLE_ID=$(echo "${ROLE_JSON}" | sed -n 's/.*"id":"\([^"]*\)".*/\1/p' | head -1)
 
 # --- Map entitlement group to client role ---
