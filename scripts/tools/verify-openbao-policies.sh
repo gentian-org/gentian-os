@@ -106,9 +106,35 @@ fi
 echo "  ${DIM}dev server on ${BAO_ADDR}, KV v2 at secret/${NC}"
 
 # ── the policies, as the composition renders them ────────────────────────────
+# policy_body <file> <name> — the policy body for one Policy MR in a YAML file.
+#
+# Tolerant of either yq, because the repository already is: `yq eval`/`eval-all`
+# is mikefarah v4, while python-yq (3.x, a jq wrapper) parses those as a filter
+# named "eval" and prints its usage instead. Both call sites here assumed v4.
+#
+# The golden-render caller read the resulting empty output as "this policy is not
+# in the fixture" and said so — a claim about the composition rather than about
+# the tooling, which sent a reader looking for a fixture that had stopped
+# covering eso-read. It had not: eso-read is in the render, and the only thing
+# missing was mikefarah yq. The operator-write caller reported SKIP for the same
+# reason, so that policy's allow and deny assertions had never once run.
+policy_body() {
+    local file="$1" name="$2" out
+    if out=$(yq eval-all \
+        "select(.kind == \"Policy\" and .spec.forProvider.name == \"${name}\") | .spec.forProvider.policy" \
+        "${file}" 2>/dev/null) && [[ -n "${out}" && "${out}" != "null" ]]; then
+        printf '%s\n' "${out}"; return 0
+    fi
+    if out=$(yq -r \
+        "select(.kind == \"Policy\" and .spec.forProvider.name == \"${name}\") | .spec.forProvider.policy" \
+        "${file}" 2>/dev/null) && [[ -n "${out}" && "${out}" != "null" ]]; then
+        printf '%s\n' "${out}"; return 0
+    fi
+    return 1
+}
+
 policy_from_golden() {
-    yq eval-all "select(.kind == \"Policy\" and .spec.forProvider.name == \"$1\") | .spec.forProvider.policy" \
-        "${GOLDEN}" 2>/dev/null
+    policy_body "${GOLDEN}" "$1"
 }
 
 bao auth enable jwt >/dev/null 2>&1
@@ -255,8 +281,7 @@ expect "${ESO_TOKEN}" "DENIED paths outside gentian-os" \
 # less alarming.
 OPERATOR_POLICY_FILE="kernel/services/openbao-config/manifests/templates/policy-operator-write.yaml"
 if [[ -f "${OPERATOR_POLICY_FILE}" ]]; then
-    yq eval 'select(.spec.forProvider.name == "operator-write") | .spec.forProvider.policy' \
-        "${OPERATOR_POLICY_FILE}" > "${WORKDIR}/operator-write.hcl" 2>/dev/null
+    policy_body "${OPERATOR_POLICY_FILE}" operator-write > "${WORKDIR}/operator-write.hcl" 2>/dev/null || true
     if [[ -s "${WORKDIR}/operator-write.hcl" ]]; then
         bao policy write operator-write "${WORKDIR}/operator-write.hcl" >/dev/null 2>&1
         OPERATOR_TOKEN="$(bao token create -policy=operator-write -field=token 2>/dev/null)"
