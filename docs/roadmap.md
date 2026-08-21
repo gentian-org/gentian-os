@@ -400,12 +400,12 @@ docs/plans/tenant-composition-cleanup.md §8.
 ### 1.29 Retire the OIDC Pack Job (*)
 * **Target Domain**: Identity
 * **Done**: the Job's five writes are down to two. app-default composes the
-  client, its default scopes, the client scope, one ProtocolMapper per entry in
-   resolved through the catalogue's , and the
-  client . The Job no longer configures the client, attaches the default
+  client, its default scopes, the client scope, one `ProtocolMapper` per entry in
+  `pack.mappers` resolved through the catalogue's `mapperTemplates`, and the
+  client `Role`. The Job no longer configures the client, attaches the default
   scopes, POSTs the mappers or creates the role.
 * **They adopted — the earlier conclusion was wrong.** Setting
-  crossplane.io/external-name to a mapper's name fails with "observe failed:
+  `crossplane.io/external-name` to a mapper's name fails with "observe failed:
   external resource does not exist", and that was read as "mappers cannot be
   adopted". They can. Given the *parent's* real id and no external-name at all,
   the provider resolves the existing object and records its Keycloak id. Verified
@@ -413,15 +413,15 @@ docs/plans/tenant-composition-cleanup.md §8.
   created. No delete-and-recreate window was needed.
 
   The trap underneath it: a Crossplane reference resolves to the referenced
-  resource's external-name.  works because the composed Client is
+  resource's external-name. `clientIdRef` works because the composed Client is
   managed, so the provider had normalised its external-name to the Keycloak id.
-   did not, because the ClientScope is adopted by name and
+  `clientScopeIdRef` did not, because the ClientScope is adopted by name and
   Observe-only, so the ref handed the provider a name where the API path needs a
   UUID — a 404 on /client-scopes/<name>/protocol-mappers/models. The mappers take
   the scope's observed id instead.
 
-  One config key had to be matched first: buildOIDCPackScript defaults
-   to false for attribute mappers while the catalogue templates omit
+  One config key had to be matched first: `buildOIDCPackScript` defaults
+  `multivalued` to false for attribute mappers while the catalogue templates omit
   it, so adopting stripped it from two mappers. Keycloak reads its absence the
   same way, but the two writers would each have removed what the other set on
   every pass. The Composition now defaults it identically.
@@ -431,11 +431,11 @@ docs/plans/tenant-composition-cleanup.md §8.
   AppsAndEdge, the stage after. The mapping needs the entitlement group's id, and
   groups are still made by the gentian-groups Job, so it moves when they do.
 * **Backlog Items**:
-  -  Stop the Job configuring the client and attaching its default scopes.
-  -  Compose the client scope, adopted by name.
-  -  Compose the protocol mappers and the client role; stop the Job making
+  - `[x]` Stop the Job configuring the client and attaching its default scopes.
+  - `[x]` Compose the client scope, adopted by name.
+  - `[x]` Compose the protocol mappers and the client role; stop the Job making
     them.
-  -  Compose the entitlement group, then the group-to-role mapping, and
+  - `[ ]` Compose the entitlement group, then the group-to-role mapping, and
     retire the Job with them.
 ### 1.30 Trim the Realm Script to What a Realm Cannot Express (*)
 * **Target Domain**: Identity
