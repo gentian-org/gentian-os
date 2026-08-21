@@ -177,6 +177,11 @@ spec:
     realmId: render-fixture
     serviceAccountsEnabled: false
     standardFlowEnabled: false
+  managementPolicies:
+  - Observe
+  - Create
+  - Update
+  - Delete
   providerConfigRef:
     name: keycloak
 ---

@@ -364,6 +364,8 @@ spec:
                 gotemplating.fn.crossplane.io/composition-resource-name: keycloak-portal-bff-client
             spec:
               deletionPolicy: Orphan
+              # Everything except LateInitialize (the default "*" includes it).
+              managementPolicies: ["Observe", "Create", "Update", "Delete"]
               forProvider:
                 clientId: gentian-portal-bff
                 name: Gentian Portal BFF
@@ -390,6 +392,13 @@ spec:
                 # Observing a state does not mean it can be declared. The fields
                 # are unused here, so dropping them is what makes the manifest
                 # expressible at all.
+                #
+                # Dropping them from this template is necessary but not
+                # sufficient: Upjet late-initialisation copies unset optional
+                # fields back out of the live object into spec.forProvider, so
+                # the provider re-adds the redirect URIs it just refused to
+                # write, and the failure sustains itself. The managementPolicies
+                # above omit LateInitialize to stop that.
                 clientSecretSecretRef:
                   name: gentian-portal-bff
                   namespace: platform-kernel
