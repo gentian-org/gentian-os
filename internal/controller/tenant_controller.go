@@ -189,6 +189,15 @@ var xTenantGVK = schema.GroupVersionKind{
 // +kubebuilder:rbac:groups=helm.crossplane.io,resources=releases,verbs=get;list;watch;delete
 // +kubebuilder:rbac:groups=kubernetes.crossplane.io,resources=objects,verbs=get;list;watch
 
+// Read-only, and read rather than written on purpose: the Keycloak clients the
+// Compositions own are waited on, never provisioned here. The mail reconcile
+// blocks on gentian-dovecot being Ready before configuring Dovecot to introspect
+// with it.
+//
+// envtest does not enforce RBAC, so the whole suite passed while the operator
+// could not read this on a real cluster.
+// +kubebuilder:rbac:groups=openidclient.keycloak.crossplane.io,resources=clients,verbs=get;list;watch
+
 // TenantReconciler reconciles Tenant objects.
 type TenantReconciler struct {
 	// Exec runs commands inside app pods (see AppExecer), so a profile's maintenance-mode and
