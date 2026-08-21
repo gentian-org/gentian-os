@@ -597,3 +597,27 @@ on `corp`, which has had the object since before any of this.
 
 The composed `Client broker-<tenant>` stays `Observe`-only by design — see
 docs/plans/tenant-composition-cleanup.md §8.
+
+### 1.28 A Flaky envtest Wait Silently Withholds the Image (*)
+* **Target Domain**: Build and Release
+* **Context**: Two different envtest tests timed out on 2026-08-21 —
+  `TestIdentity_DeleteDeletePolicy_CreatesCleanupJob` and
+  `TestCache_DeleteDeletePolicy_CreatesDeleteJobsAndDeletesApplication` — both at
+  the shared 3-minute `envtestWaitTimeout`, both on a delete path, both passing
+  locally and on re-run. The cost is not the red X. `Docker build and push` is
+  gated on the Go job, so a flake means no image is published for that commit,
+  and the cluster keeps running whatever it ran before. That is invisible unless
+  someone reads the run: the branch looks merged, the Application is Healthy, and
+  `make verify-image-updates` will say the cluster tracks CI correctly because it
+  does — there is simply nothing new to track. Two of today's fixes were verified
+  against a binary that did not contain them for exactly this reason.
+* **Proposed Solution**: Find the shared cause before raising the timeout — both
+  failures are delete-path waits, which suggests a real ordering rather than a
+  slow runner. Then decide whether a test flake should withhold a build at all,
+  or whether the image should be published and the failure reported separately.
+* **Backlog Items**:
+  - `[ ]` Establish whether the two delete-path waits share a cause, or are two
+    symptoms of a loaded runner.
+  - `[ ]` Make a flake's cost visible: a commit on develop with no published
+    image is the condition to report.
+  - `[ ]` Decide whether `Docker build and push` should depend on the Go job.
