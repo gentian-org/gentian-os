@@ -7,7 +7,7 @@ status:
   conditions:
   - lastTransitionTime: "2024-01-01T00:00:00Z"
     message: 'Unready resources: demo-app-admin-password-kv, demo-app-admin-password-seed-secret,
-      demo-app-externalsecret, and 10 more'
+      demo-app-client-role, and 11 more'
     reason: Creating
     status: "False"
     type: Ready
@@ -71,6 +71,31 @@ spec:
       type: Opaque
   providerConfigRef:
     name: kubernetes
+---
+apiVersion: role.keycloak.crossplane.io/v1alpha1
+kind: Role
+metadata:
+  annotations:
+    crossplane.io/composition-resource-name: demo-app-client-role
+  labels:
+    crossplane.io/composite: render-demo-app-fixture
+  name: demo-demo-app-client-role
+  ownerReferences:
+  - apiVersion: gentianos.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XApp
+    name: render-demo-app-fixture
+    uid: ""
+spec:
+  deletionPolicy: Orphan
+  forProvider:
+    clientIdRef:
+      name: demo-demo-app-keycloak-client
+    name: catalogue-test-client-access-control
+    realmId: demo
+  providerConfigRef:
+    name: keycloak
 ---
 apiVersion: kubernetes.crossplane.io/v1alpha2
 kind: Object

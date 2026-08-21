@@ -1049,6 +1049,35 @@ spec:
                 name: keycloak
             {{- end }}
             {{- end }}
+
+            {{- /* The client role the entitlement group is granted.
+
+                 clientIdRef resolves here where clientScopeIdRef did not: the
+                 composed Client is managed, so the provider normalised its
+                 external-name to the Keycloak id, and the reference yields that
+                 id rather than a name.
+
+                 No external-name, as with the mappers — a role is identified by
+                 its UUID, and the provider resolves the existing one from the
+                 client and name it is given. */}}
+            {{- if $pack.clientRole }}
+            ---
+            apiVersion: role.keycloak.crossplane.io/v1alpha1
+            kind: Role
+            metadata:
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: {{ $app }}-client-role
+              name: {{ $tenant }}-{{ $app }}-client-role
+            spec:
+              deletionPolicy: Orphan
+              forProvider:
+                realmId: {{ $tenant }}
+                clientIdRef:
+                  name: {{ $tenant }}-{{ $app }}-keycloak-client
+                name: {{ $pack.clientRole | quote }}
+              providerConfigRef:
+                name: keycloak
+            {{- end }}
             {{- end }}
             {{- end }}
 
