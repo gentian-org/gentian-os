@@ -226,8 +226,29 @@ For the current baseline design of the system, refer to [architecture.md](archit
   - `[x]` Set Postfix `myhostname` from the egress host, so HELO matches the PTR of the address it sends from.
   - `[x]` Pin Postfix to the node carrying the floating IP.
   - `[x]` Report a claim setting the live cluster does not carry. *(`make verify-claim-applied`.)*
+  - `[x]` Report an operator image the cluster is not tracking. *(`make verify-image-updates`.)*
   - `[ ]` Do the same for the settings still passed only as installer-written Helm parameters — `tenancyMode`, `networkMode`, `platform` and the rest of the twenty.
   - `[ ]` Re-apply, or make Argo CD own, the Applications the installer writes once, so a parameter added after install is not missing forever.
+
+  The cost of that last item is now measured rather than assumed. The
+  `gentian-os` Application carried `image-list: gentianos=${GENTIAN_OS_IMAGE_REPOSITORY}`,
+  a shell placeholder in a Helm template that nothing expands. The template was
+  fixed, and the lint that catches that class passes — but the Application is
+  written once by the installer, so the fix reached new installs and no existing
+  cluster. argocd-image-updater looked for a registry by that literal name,
+  found none, and *skipped* it: `images_considered=2 images_skipped=1
+  images_updated=0 errors=0`, every two minutes, with a condition of *No errors*
+  and the Application Healthy.
+
+  ifk-w4h therefore ran a 17-hour-old operator through a day of merged fixes,
+  including two that were verified against a binary that did not contain them.
+  Nothing in the cluster said so; the only symptom was a retired Job that kept
+  reappearing. One annotation patch fixed it, and the next cycle reported
+  `images_considered=3 images_skipped=0 images_updated=1`.
+
+  The lesson is the general one this item is about: a source-side lint cannot
+  see an object the installer wrote once, and a reconciler that reports success
+  for doing nothing will not tell you either.
 
 ---
 
