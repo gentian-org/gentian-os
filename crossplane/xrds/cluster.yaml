@@ -27,11 +27,30 @@ spec:
               properties:
                 identity:
                   type: object
+                  # The object itself defaults, not just its fields. A nested default
+                  # only materialises when its parent is present, so without this the
+                  # internalUrl default below is unreachable on any cluster whose claim
+                  # does not mention identity — which is every one of them. spec.oidc
+                  # shows the same shape: its realm has defaulted to "kernel" since it
+                  # was written and no composite has ever carried the value.
+                  default: {}
                   description: >
                     Where the in-cluster Keycloak answers. Tenant realms broker to
                     the kernel realm, and the server-to-server half of that exchange
                     must not leave the cluster.
                   properties:
+                    kernelRealm:
+                      type: string
+                      description: >
+                        The shared realm tenant realms broker to, and the realm the
+                        broker client lives in.
+
+                        oidc.realm names the same realm for OpenBao and wins when a
+                        claim sets it. This carries the default because oidc is inert
+                        by design — its discoveryUrl is what creates the auth backend,
+                        so the block stays absent on clusters that do not use it, and a
+                        default parked there would never materialise.
+                      default: kernel
                     internalUrl:
                       type: string
                       description: >

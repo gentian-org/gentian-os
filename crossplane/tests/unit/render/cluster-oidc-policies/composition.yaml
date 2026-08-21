@@ -775,11 +775,12 @@ spec:
                     # where this value lived and where the Jobs still read it from. That
                     # is precisely why the broker IdP could not be declared until now.
                     identity.internalUrl: {{ dig "identity" "internalUrl" "" $spec | quote }}
-                    # The shared realm tenant realms broker to. Read from the existing
-                    # oidc.realm field rather than a new one — the OpenBao client, the
-                    # admin groups and the broker IdP all mean the same realm, and a
-                    # second field could disagree with the first.
-                    identity.kernelRealm: {{ dig "oidc" "realm" "" $spec | quote }}
+                    # The shared realm tenant realms broker to. oidc.realm names the same
+                    # realm for OpenBao and wins when a claim sets it, so the two cannot
+                    # drift apart; identity.kernelRealm only supplies the default, because
+                    # the oidc block is absent on clusters that do not use the auth backend
+                    # and a default parked there never materialises.
+                    identity.kernelRealm: {{ dig "oidc" "realm" (dig "identity" "kernelRealm" "" $spec) $spec | quote }}
                     llm.enabled: {{ default false (dig "llm" "enabled" false $spec) | quote }}
                     tenant.limitRange.default.cpu: {{ default "500m" (dig "tenantDefaults" "limitRange" "defaultCpu" "" $spec) | quote }}
                     tenant.limitRange.default.memory: {{ default "512Mi" (dig "tenantDefaults" "limitRange" "defaultMemory" "" $spec) | quote }}
