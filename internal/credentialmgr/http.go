@@ -170,6 +170,16 @@ func NewRunnableFromEnv(mgr manager.Manager, validator Validator) (*Server, erro
 	}, nil
 }
 
+// The Cluster claim is read below, unstructured. Nothing registers that kind
+// with the scheme, so no typed client names it and no other marker covers it —
+// it needs this one or the read is refused on a real cluster.
+//
+// Detached, like every other marker here: controller-gen collects RBAC markers
+// at package level, and one written into a function's own doc comment is not
+// picked up. That is silent — the build succeeds and the rule is simply absent.
+//
+// +kubebuilder:rbac:groups=gentianos.io,resources=clusters,verbs=get;list;watch
+
 // clusterRelayResolver reads the upstream relay endpoint off the Cluster claim.
 //
 // The claim is the single place this is written: the Postfix chart's relayHost

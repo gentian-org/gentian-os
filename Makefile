@@ -22,7 +22,7 @@ CROSSPLANE_IMAGE ?= xpkg.crossplane.io/crossplane/crossplane:$(CROSSPLANE_CLI_VE
 KUBEBUILDER_ASSETS ?= /tmp/envtest-bins/k8s/1.32.0-linux-amd64
 export KUBEBUILDER_ASSETS
 
-.PHONY: all build generate manifests test lint docker-build clean install-plugin uninstall-plugin validate-steps gen-credentials gen-phase-table lint-phase-table check-credentials lint-cluster-config-keys lint-template-placeholders lint-portability lint-image-digests check-render-fixtures lint-resolvable lint-bootstrap-apps lint-step-contracts lint-claim-defaults lint-password-schemes test-policy test-policy-openbao test-policy-authz verify-claim-applied verify-image-updates gen-provider-rbac lint-provider-rbac
+.PHONY: all build generate manifests test lint docker-build clean install-plugin uninstall-plugin validate-steps gen-credentials gen-phase-table lint-phase-table check-credentials lint-cluster-config-keys lint-rbac-coverage lint-template-placeholders lint-portability lint-image-digests check-render-fixtures lint-resolvable lint-bootstrap-apps lint-step-contracts lint-claim-defaults lint-password-schemes test-policy test-policy-openbao test-policy-authz verify-claim-applied verify-image-updates gen-provider-rbac lint-provider-rbac
 
 all: generate build test
 
@@ -124,7 +124,7 @@ lint-yaml:
 ## The file list and flags must match CI exactly: -x follows sourced files, and no
 ## -S filter means info/style findings fail the build too. Hand-rolling a narrower
 ## invocation is how an SC2153 reached develop green-looking.
-lint-shell: validate-steps lint-step-contracts lint-resolvable lint-bootstrap-apps lint-credential-fields lint-claim-defaults lint-cluster-config-keys lint-template-placeholders lint-phase-table lint-provider-rbac lint-password-schemes
+lint-shell: validate-steps lint-step-contracts lint-resolvable lint-bootstrap-apps lint-credential-fields lint-claim-defaults lint-cluster-config-keys lint-template-placeholders lint-phase-table lint-provider-rbac lint-password-schemes lint-rbac-coverage
 	@git ls-files -z -- '*.sh' | xargs -0 shellcheck -x scripts/kubectl-gentian
 
 ## Round-trip the recovery kit: export one, load it back, prove every value
@@ -173,6 +173,17 @@ lint-claim-defaults:
 ## catch it either, because they supply a partial ConfigMap.
 lint-cluster-config-keys:
 	@python3 scripts/lint/lint-cluster-config-keys.py
+
+## Assert the operator may read every GroupVersionKind it constructs.
+##
+## envtest does not enforce RBAC, so the controller suite passes with a
+## ServiceAccount a real cluster would refuse. That is not hypothetical: the mail
+## reconcile began waiting on a Crossplane-composed Keycloak Client, every test
+## passed, and the deploy could not read it — every tenant reconcile failed until
+## the marker was added. Replacing a Job with a wait on the object Crossplane
+## owns turns a write into a read, and each such step arms the same trap.
+lint-rbac-coverage:
+	@python3 scripts/lint/lint-rbac-coverage.py
 
 ## Regenerate the §11 phase table from the phase sections
 gen-phase-table:

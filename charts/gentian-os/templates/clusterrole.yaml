@@ -254,6 +254,7 @@ rules:
   - apiGroups:
     - gentianos.io
     resources:
+    - clusters
     - oidcpackcatalogs
     - resourceplans
     - xapps
