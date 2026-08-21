@@ -17,15 +17,25 @@ spec:
   scope: Cluster
   versions:
   - additionalPrinterColumns:
-    - jsonPath: .spec.destination.endpoint
+    - jsonPath: .spec.scope
+      name: Scope
+      type: string
+    - jsonPath: .spec.tenant
+      name: Tenant
+      type: string
+    - jsonPath: .status.effectiveEndpoint
       name: Endpoint
       type: string
-    - jsonPath: .spec.destination.bucket
+    - jsonPath: .status.effectiveBucket
       name: Bucket
       type: string
-    - jsonPath: .spec.schedule
+    - jsonPath: .status.effectiveSchedule
       name: Schedule
       type: string
+    - jsonPath: .status.credentialSatisfied
+      name: Credential
+      priority: 1
+      type: boolean
     - jsonPath: .metadata.creationTimestamp
       name: Age
       type: date
@@ -33,10 +43,12 @@ spec:
     schema:
       openAPIV3Schema:
         description: |-
-          BackupPolicy is the cluster-wide default for tenant backups.
+          BackupPolicy is where a tenant's bundles go, how often, and how long they
+          are kept.
 
-          Cluster-scoped and singleton by convention (`default`): a second one would
-          leave "which destination applies" answerable two ways.
+          Cluster-scoped for both scopes, as CredentialRequirement is: the console
+          mediates access by spec.tenant, and the credential itself is governed by the
+          OpenBao policy its scope selects.
         properties:
           apiVersion:
             description: |-
@@ -56,21 +68,29 @@ spec:
           metadata:
             type: object
           spec:
-            description: BackupPolicySpec is the cluster's default backup arrangement.
+            description: |-
+              BackupPolicySpec is one backup arrangement: the cluster's default, or one
+              tenant's override of it.
+
+              One type for both, distinguished by Scope, because they carry the same
+              fields and a tenant's policy is exactly the cluster's with some fields
+              restated. Two types meant two schemas, two status shapes and a merge that
+              could disagree with itself.
             properties:
               allowTenantOverride:
                 default: true
                 description: |-
-                  AllowTenantOverride lets a tenant point its bundles at its own storage.
+                  AllowTenantOverride lets tenants state policies of their own. Read only
+                  from the cluster-scoped policy; meaningless on a tenant's own.
 
-                  On by default. Turning it off is how an operator keeps every tenant's
-                  bundles in one place they control — worth stating, because a tenant
-                  writing to storage the platform cannot read is also a tenant the
-                  platform cannot help restore.
+                  On by default. Turning it off keeps every tenant's bundles in storage
+                  the operator controls — worth stating, because bundles the platform
+                  cannot reach are bundles it cannot help restore.
                 type: boolean
               destination:
-                description: Destination is where bundles are written unless a tenant
-                  overrides it.
+                description: |-
+                  Destination is where bundles are written. Unset inherits: the cluster
+                  default for a tenant policy, the platform's own storage for the cluster.
                 properties:
                   bucket:
                     description: Bucket holds the bundles. Empty keeps the per-tenant
@@ -78,30 +98,10 @@ spec:
                     maxLength: 63
                     pattern: ^$|^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$
                     type: string
-                  credentialsSecretRef:
-                    description: |-
-                      CredentialsSecretRef holds accessKey and secretKey for the endpoint.
-
-                      Required whenever Endpoint is set: the platform's own MinIO credentials
-                      authenticate to the platform's own MinIO and nothing else, and quietly
-                      reusing them against someone else's endpoint would send a tenant's data
-                      to a store it cannot open. Cluster policy reads this from the kernel
-                      namespace; a tenant's policy reads it from that tenant's namespace, so a
-                      tenant can never name a Secret it does not own.
-                    properties:
-                      key:
-                        description: Key defaults to "passphrase".
-                        type: string
-                      name:
-                        minLength: 1
-                        type: string
-                    required:
-                    - name
-                    type: object
                   endpoint:
                     description: |-
-                      Endpoint is the S3 API URL, e.g. https://s3.eu-central-1.amazonaws.com
-                      or https://minio.example.org:9000. Empty means the platform's own.
+                      Endpoint is the S3 API URL, e.g. https://sos-ch-gva-2.exo.io or
+                      https://minio.example.org:9000. Empty means the platform's own storage.
 
                       A scheme is required: "s3.example.org" is ambiguous about TLS, and a
                       backup silently sent in plaintext is worse than one that fails.
@@ -110,32 +110,89 @@ spec:
                     type: string
                   region:
                     description: |-
-                      Region, for providers that require one. Empty suits MinIO and most
-                      S3-compatible stores.
+                      Region, for providers that require one — Exoscale SOS and AWS do, MinIO
+                      does not.
                     maxLength: 64
                     type: string
                 type: object
-              keepLast:
-                description: |-
-                  KeepLast is the default retention for scheduled exports. Zero keeps
-                  everything, which is only right when something else prunes.
-                format: int32
-                minimum: 0
-                type: integer
+              retention:
+                description: Retention decides which bundles survive. Unset inherits.
+                properties:
+                  keepDaily:
+                    description: |-
+                      KeepDaily, KeepWeekly, KeepMonthly and KeepYearly each retain the most
+                      recent export within that many distinct periods. A bundle kept by any
+                      tier survives; the tiers are a union, not a sequence.
+                    format: int32
+                    minimum: 0
+                    type: integer
+                  keepLast:
+                    description: |-
+                      KeepLast retains this many most recent finished exports regardless of
+                      age. Zero relies entirely on the tiers below; with no tiers either,
+                      nothing is deleted — a decision rather than a default, and the right one
+                      only when something else prunes.
+                    format: int32
+                    minimum: 0
+                    type: integer
+                  keepMonthly:
+                    format: int32
+                    minimum: 0
+                    type: integer
+                  keepWeekly:
+                    format: int32
+                    minimum: 0
+                    type: integer
+                  keepYearly:
+                    format: int32
+                    minimum: 0
+                    type: integer
+                type: object
               schedule:
                 description: |-
-                  Schedule is the default cron expression, in UTC, applied to tenants that
-                  do not state their own. Empty means no scheduled backups — a decision
-                  worth making deliberately rather than inheriting.
+                  Schedule is a five-field cron expression, in UTC. Empty inherits; use
+                  SuspendSchedule to mean none.
                 maxLength: 128
                 type: string
+              scope:
+                description: |-
+                  Scope decides whether this is the cluster default or one tenant's
+                  override, and with it who may edit the policy and which OpenBao path its
+                  credential lives at. A tenant admin must not reach cluster paths.
+                enum:
+                - cluster
+                - tenant
+                type: string
+              suspendSchedule:
+                description: |-
+                  SuspendSchedule turns scheduled backups off, distinctly from inheriting.
+                  Without it "no schedule" and "not stated" would be the same value, and a
+                  tenant could not opt out of a cluster-wide schedule.
+                type: boolean
+              tenant:
+                description: |-
+                  Tenant names the tenant a tenant-scoped policy belongs to. Empty for
+                  cluster scope, required for tenant scope; the CEL rule above rejects
+                  either mistake at admission, because a tenant-scoped policy naming no
+                  tenant would apply to all of them or none.
+                maxLength: 63
+                type: string
+            required:
+            - scope
             type: object
+            x-kubernetes-validations:
+            - message: tenant is required when scope is tenant, and must be empty
+                when scope is cluster
+              rule: 'self.scope == ''tenant'' ? (has(self.tenant) && self.tenant !=
+                '''') : (!has(self.tenant) || self.tenant == '''')'
           status:
-            description: BackupPolicyStatus reports what the policy resolved to.
+            description: |-
+              BackupPolicyStatus reports what this policy resolved to and whether it can
+              actually be used.
             properties:
               conditions:
-                description: 'Conditions carries Accepted: whether the destination
-                  is usable.'
+                description: 'Conditions carries Accepted: whether this policy is
+                  permitted and usable.'
                 items:
                   description: Condition contains details for one aspect of the current
                     state of this API Resource.
@@ -194,6 +251,25 @@ spec:
                 x-kubernetes-list-map-keys:
                 - type
                 x-kubernetes-list-type: map
+              credentialRequirement:
+                description: |-
+                  CredentialRequirement names the requirement carrying this destination's
+                  keys, and CredentialSatisfied reports whether it has been filled. A
+                  destination whose credential is unsatisfied is a policy that will fail
+                  at 03:00; surfaced here it is a red field in the console instead.
+                type: string
+              credentialSatisfied:
+                type: boolean
+              effectiveBucket:
+                type: string
+              effectiveEndpoint:
+                description: |-
+                  EffectiveEndpoint, EffectiveBucket and EffectiveSchedule are the values
+                  in force after inheritance, published so an admin reads what applies
+                  rather than recomputing the merge.
+                type: string
+              effectiveSchedule:
+                type: string
               observedGeneration:
                 format: int64
                 type: integer

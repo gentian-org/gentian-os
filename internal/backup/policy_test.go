@@ -34,13 +34,28 @@ func policyTenant() *gentianov1alpha1.Tenant {
 	}
 }
 
-func ptrInt32(v int32) *int32 { return &v }
-func ptrBool(v bool) *bool    { return &v }
+func ptrBool(v bool) *bool { return &v }
+
+func clusterPolicy(spec gentianov1alpha1.BackupPolicySpec) *gentianov1alpha1.BackupPolicy {
+	spec.Scope = "cluster"
+	return &gentianov1alpha1.BackupPolicy{
+		ObjectMeta: metav1.ObjectMeta{Name: "default"},
+		Spec:       spec,
+	}
+}
+
+func tenantPolicy(spec gentianov1alpha1.BackupPolicySpec) *gentianov1alpha1.BackupPolicy {
+	spec.Scope, spec.Tenant = "tenant", "demo"
+	return &gentianov1alpha1.BackupPolicy{
+		ObjectMeta: metav1.ObjectMeta{Name: "demo"},
+		Spec:       spec,
+	}
+}
 
 // No policy at all is the state of every cluster until someone sets one, and
 // it must resolve to the platform's own storage rather than to an error.
 func TestResolveEffectiveWithNoPolicies(t *testing.T) {
-	eff, err := ResolveEffective(policyTenant(), nil, nil, "platform-kernel")
+	eff, err := ResolveEffective(policyTenant(), nil, nil)
 	if err != nil {
 		t.Fatalf("ResolveEffective: %v", err)
 	}
@@ -50,19 +65,17 @@ func TestResolveEffectiveWithNoPolicies(t *testing.T) {
 	if eff.Bucket != "demo-gentian-backup" {
 		t.Errorf("bucket = %q, want the per-tenant default", eff.Bucket)
 	}
-	if eff.Schedule != "" || eff.Overridden {
-		t.Errorf("unset policy produced schedule %q overridden=%v", eff.Schedule, eff.Overridden)
+	if eff.CredentialName != "" {
+		t.Errorf("platform storage asked for credential %q; it needs none", eff.CredentialName)
 	}
 }
 
-// A tenant override with no cluster policy is ordinary on a fresh cluster.
+// A tenant policy with no cluster policy is ordinary on a fresh cluster.
 // Reaching through the absent cluster policy to ask whether overrides are
 // allowed panicked the reconciler on exactly this input.
 func TestResolveEffectiveOverrideWithoutClusterPolicy(t *testing.T) {
-	override := &gentianov1alpha1.TenantBackupPolicy{
-		Spec: gentianov1alpha1.TenantBackupPolicySpec{Schedule: "0 3 * * *"},
-	}
-	eff, err := ResolveEffective(policyTenant(), nil, override, "platform-kernel")
+	eff, err := ResolveEffective(policyTenant(), nil,
+		tenantPolicy(gentianov1alpha1.BackupPolicySpec{Schedule: "0 3 * * *"}))
 	if err != nil {
 		t.Fatalf("ResolveEffective: %v", err)
 	}
@@ -73,73 +86,65 @@ func TestResolveEffectiveOverrideWithoutClusterPolicy(t *testing.T) {
 
 // The cluster sets the default; the tenant inherits what it does not state.
 func TestTenantInheritsClusterDefaults(t *testing.T) {
-	cluster := &gentianov1alpha1.BackupPolicy{
-		Spec: gentianov1alpha1.BackupPolicySpec{
-			Destination: &gentianov1alpha1.BackupDestination{
-				Endpoint:             "https://s3.example.org",
-				Bucket:               "platform-bundles",
-				CredentialsSecretRef: &gentianov1alpha1.SecretKeyRef{Name: "cluster-s3"},
-			},
-			Schedule: "0 3 * * *",
-			KeepLast: 7,
+	cluster := clusterPolicy(gentianov1alpha1.BackupPolicySpec{
+		Destination: &gentianov1alpha1.BackupDestination{
+			Endpoint: "https://sos-ch-gva-2.exo.io",
+			Bucket:   "platform-bundles",
+			Region:   "ch-gva-2",
 		},
-	}
-	// Overrides only the schedule: the destination must still be the cluster's.
-	override := &gentianov1alpha1.TenantBackupPolicy{
-		Spec: gentianov1alpha1.TenantBackupPolicySpec{Schedule: "30 1 * * *"},
-	}
+		Schedule:  "0 3 * * *",
+		Retention: &gentianov1alpha1.BackupRetention{KeepLast: 7},
+	})
+	// States only the schedule: the destination must still be the cluster's.
+	override := tenantPolicy(gentianov1alpha1.BackupPolicySpec{Schedule: "30 1 * * *"})
 
-	eff, err := ResolveEffective(policyTenant(), cluster, override, "platform-kernel")
+	eff, err := ResolveEffective(policyTenant(), cluster, override)
 	if err != nil {
 		t.Fatalf("ResolveEffective: %v", err)
 	}
-	if eff.Endpoint != "https://s3.example.org" || eff.Bucket != "platform-bundles" {
+	if eff.Endpoint != "https://sos-ch-gva-2.exo.io" || eff.Bucket != "platform-bundles" {
 		t.Errorf("destination = %s/%s, want the cluster's", eff.Endpoint, eff.Bucket)
 	}
-	if eff.CredentialsNamespace != "platform-kernel" {
-		t.Errorf("cluster credentials read from %q, want the kernel namespace", eff.CredentialsNamespace)
+	if eff.Region != "ch-gva-2" {
+		t.Errorf("region = %q, want the cluster's", eff.Region)
+	}
+	if eff.CredentialName != "backup-destination" {
+		t.Errorf("credential = %q, want the cluster's requirement", eff.CredentialName)
 	}
 	if eff.Schedule != "30 1 * * *" {
-		t.Errorf("schedule = %q, want the tenant's override", eff.Schedule)
+		t.Errorf("schedule = %q, want the tenant's", eff.Schedule)
 	}
-	if eff.KeepLast != 7 {
-		t.Errorf("keepLast = %d, want the inherited 7", eff.KeepLast)
+	if eff.Retention.KeepLast != 7 {
+		t.Errorf("keepLast = %d, want the inherited 7", eff.Retention.KeepLast)
 	}
 	if eff.Overridden {
-		t.Error("overriding only the schedule must not mark the destination overridden")
+		t.Error("stating only a schedule must not mark the destination overridden")
 	}
 }
 
-// A tenant's credentials come from the tenant's own namespace. Reading them
-// from anywhere else would let a tenant name a Secret it does not own.
-func TestTenantDestinationReadsCredentialsFromItsOwnNamespace(t *testing.T) {
-	cluster := &gentianov1alpha1.BackupPolicy{
-		Spec: gentianov1alpha1.BackupPolicySpec{
-			Destination: &gentianov1alpha1.BackupDestination{
-				Endpoint:             "https://platform.example.org",
-				CredentialsSecretRef: &gentianov1alpha1.SecretKeyRef{Name: "cluster-s3"},
-			},
+// A tenant's credential is derived from its own scope, which is what puts it
+// under the tenant's OpenBao subtree — a tenant admin cannot reach cluster
+// paths, so it cannot read or overwrite the platform's own keys.
+func TestTenantDestinationDerivesItsOwnCredential(t *testing.T) {
+	cluster := clusterPolicy(gentianov1alpha1.BackupPolicySpec{
+		Destination: &gentianov1alpha1.BackupDestination{Endpoint: "https://platform.example.org"},
+	})
+	override := tenantPolicy(gentianov1alpha1.BackupPolicySpec{
+		Destination: &gentianov1alpha1.BackupDestination{
+			Endpoint: "https://tenant.example.org",
+			Bucket:   "my-own-bundles",
 		},
-	}
-	override := &gentianov1alpha1.TenantBackupPolicy{
-		Spec: gentianov1alpha1.TenantBackupPolicySpec{
-			Destination: &gentianov1alpha1.BackupDestination{
-				Endpoint:             "https://tenant.example.org",
-				Bucket:               "my-own-bundles",
-				CredentialsSecretRef: &gentianov1alpha1.SecretKeyRef{Name: "my-s3"},
-			},
-		},
-	}
+	})
 
-	eff, err := ResolveEffective(policyTenant(), cluster, override, "platform-kernel")
+	eff, err := ResolveEffective(policyTenant(), cluster, override)
 	if err != nil {
 		t.Fatalf("ResolveEffective: %v", err)
 	}
-	if eff.CredentialsNamespace != "tenant-demo" {
-		t.Fatalf("tenant credentials read from %q, want tenant-demo", eff.CredentialsNamespace)
+	if eff.CredentialName != "backup-destination-demo" {
+		t.Fatalf("credential = %q, want the tenant's own", eff.CredentialName)
 	}
-	if eff.CredentialsSecret != "my-s3" {
-		t.Errorf("credentials secret = %q, want the tenant's", eff.CredentialsSecret)
+	if got := DestinationVaultPath("tenant", "demo"); got != "gentian-os/tenants/demo/backup/destination" {
+		t.Errorf("tenant vault path = %q, outside the tenant's subtree", got)
 	}
 	// The cluster's endpoint must not survive alongside the tenant's: half of
 	// each addresses no storage that exists.
@@ -151,60 +156,54 @@ func TestTenantDestinationReadsCredentialsFromItsOwnNamespace(t *testing.T) {
 	}
 }
 
-// An endpoint without credentials is refused rather than falling back to the
-// platform's, which authenticate to the platform's MinIO and nothing else.
-func TestEndpointWithoutCredentialsIsRefused(t *testing.T) {
-	cluster := &gentianov1alpha1.BackupPolicy{
-		Spec: gentianov1alpha1.BackupPolicySpec{
-			Destination: &gentianov1alpha1.BackupDestination{Endpoint: "https://s3.example.org"},
-		},
+// Renaming the bucket within the platform's own storage needs no credential:
+// the platform already has keys for its own MinIO.
+func TestBucketOnlyChangeNeedsNoCredential(t *testing.T) {
+	eff, err := ResolveEffective(policyTenant(),
+		clusterPolicy(gentianov1alpha1.BackupPolicySpec{
+			Destination: &gentianov1alpha1.BackupDestination{Bucket: "all-bundles"},
+		}), nil)
+	if err != nil {
+		t.Fatalf("ResolveEffective: %v", err)
 	}
-	if _, err := ResolveEffective(policyTenant(), cluster, nil, "platform-kernel"); err == nil {
-		t.Fatal("an endpoint with no credentials was accepted")
-	} else if !strings.Contains(err.Error(), "credentialsSecretRef") {
-		t.Errorf("error does not name the missing field: %v", err)
+	if eff.Bucket != "all-bundles" {
+		t.Errorf("bucket = %q", eff.Bucket)
+	}
+	if eff.CredentialName != "" || !eff.PlatformStorage() {
+		t.Errorf("a bucket rename asked for credential %q at endpoint %q",
+			eff.CredentialName, eff.Endpoint)
 	}
 }
 
 // A cluster that forbids overrides must refuse them, not ignore them: an admin
 // who sets a destination and sees bundles go elsewhere has been misled.
 func TestForbiddenOverrideIsRefusedNotIgnored(t *testing.T) {
-	cluster := &gentianov1alpha1.BackupPolicy{
-		Spec: gentianov1alpha1.BackupPolicySpec{AllowTenantOverride: ptrBool(false)},
-	}
-	override := &gentianov1alpha1.TenantBackupPolicy{
-		Spec: gentianov1alpha1.TenantBackupPolicySpec{
-			Destination: &gentianov1alpha1.BackupDestination{
-				Endpoint:             "https://elsewhere.example.org",
-				CredentialsSecretRef: &gentianov1alpha1.SecretKeyRef{Name: "mine"},
-			},
-		},
-	}
-	if _, err := ResolveEffective(policyTenant(), cluster, override, "platform-kernel"); err == nil {
+	cluster := clusterPolicy(gentianov1alpha1.BackupPolicySpec{
+		AllowTenantOverride: ptrBool(false),
+	})
+	override := tenantPolicy(gentianov1alpha1.BackupPolicySpec{
+		Destination: &gentianov1alpha1.BackupDestination{Endpoint: "https://elsewhere.example.org"},
+	})
+	_, err := ResolveEffective(policyTenant(), cluster, override)
+	if err == nil {
 		t.Fatal("a forbidden override was silently accepted")
+	}
+	if !strings.Contains(err.Error(), "allowTenantOverride") {
+		t.Errorf("error does not name the setting that refused it: %v", err)
 	}
 }
 
 // Suspending is distinct from inheriting: without it a tenant could not opt
 // out of a cluster-wide schedule, because "" already means "not stated".
 func TestSuspendScheduleOptsOutOfTheClusterDefault(t *testing.T) {
-	cluster := &gentianov1alpha1.BackupPolicy{
-		Spec: gentianov1alpha1.BackupPolicySpec{Schedule: "0 3 * * *", KeepLast: 7},
-	}
-	override := &gentianov1alpha1.TenantBackupPolicy{
-		Spec: gentianov1alpha1.TenantBackupPolicySpec{
-			SuspendSchedule: true,
-			KeepLast:        ptrInt32(0),
-		},
-	}
-	eff, err := ResolveEffective(policyTenant(), cluster, override, "platform-kernel")
+	cluster := clusterPolicy(gentianov1alpha1.BackupPolicySpec{Schedule: "0 3 * * *"})
+	override := tenantPolicy(gentianov1alpha1.BackupPolicySpec{SuspendSchedule: true})
+
+	eff, err := ResolveEffective(policyTenant(), cluster, override)
 	if err != nil {
 		t.Fatalf("ResolveEffective: %v", err)
 	}
 	if eff.Schedule != "" {
 		t.Errorf("schedule = %q, want none after suspending", eff.Schedule)
-	}
-	if eff.KeepLast != 0 {
-		t.Errorf("keepLast = %d, want the explicit 0", eff.KeepLast)
 	}
 }

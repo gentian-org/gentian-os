@@ -17,16 +17,8 @@ limitations under the License.
 package v1alpha1
 
 import (
-	"errors"
-
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
-
-// errMissingDestinationCredentials is returned rather than silently falling
-// back to the platform's own credentials, which authenticate to the platform's
-// own MinIO and would fail — or worse, succeed — against a different endpoint.
-var errMissingDestinationCredentials = errors.New(
-	"a destination endpoint requires credentialsSecretRef: the platform's own credentials do not authenticate elsewhere")
 
 // BackupDestination names object storage to write bundles to.
 //
@@ -34,9 +26,16 @@ var errMissingDestinationCredentials = errors.New(
 // destination is stated when bundles should live somewhere else — which, on a
 // cluster whose MinIO shares a disk with the data it protects, is the only
 // arrangement that survives losing that disk.
+//
+// There is deliberately no credential field. The keys for an endpoint are a
+// CredentialRequirement, which the operator derives from this policy and the
+// credential manager fills: the requirement validates the keys before anything
+// depends on them, rotation is one write at one path, and ESO's sync status is
+// the satisfaction probe. A Secret reference here would have been a second,
+// hand-managed way to hold the same credential with none of that.
 type BackupDestination struct {
-	// Endpoint is the S3 API URL, e.g. https://s3.eu-central-1.amazonaws.com
-	// or https://minio.example.org:9000. Empty means the platform's own.
+	// Endpoint is the S3 API URL, e.g. https://sos-ch-gva-2.exo.io or
+	// https://minio.example.org:9000. Empty means the platform's own storage.
 	//
 	// A scheme is required: "s3.example.org" is ambiguous about TLS, and a
 	// backup silently sent in plaintext is worse than one that fails.
@@ -51,22 +50,11 @@ type BackupDestination struct {
 	// +kubebuilder:validation:Pattern=`^$|^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$`
 	Bucket string `json:"bucket,omitempty"`
 
-	// Region, for providers that require one. Empty suits MinIO and most
-	// S3-compatible stores.
+	// Region, for providers that require one — Exoscale SOS and AWS do, MinIO
+	// does not.
 	// +optional
 	// +kubebuilder:validation:MaxLength=64
 	Region string `json:"region,omitempty"`
-
-	// CredentialsSecretRef holds accessKey and secretKey for the endpoint.
-	//
-	// Required whenever Endpoint is set: the platform's own MinIO credentials
-	// authenticate to the platform's own MinIO and nothing else, and quietly
-	// reusing them against someone else's endpoint would send a tenant's data
-	// to a store it cannot open. Cluster policy reads this from the kernel
-	// namespace; a tenant's policy reads it from that tenant's namespace, so a
-	// tenant can never name a Secret it does not own.
-	// +optional
-	CredentialsSecretRef *SecretKeyRef `json:"credentialsSecretRef,omitempty"`
 }
 
 // IsSet reports whether this destination asks for anything other than the
@@ -75,48 +63,110 @@ func (d *BackupDestination) IsSet() bool {
 	return d != nil && (d.Endpoint != "" || d.Bucket != "")
 }
 
-// Validate reports why a destination cannot be used.
-func (d *BackupDestination) Validate() error {
-	if d == nil || d.Endpoint == "" {
-		return nil
-	}
-	if d.CredentialsSecretRef == nil || d.CredentialsSecretRef.Name == "" {
-		return errMissingDestinationCredentials
-	}
-	return nil
+// NeedsCredential reports whether this destination requires keys of its own.
+// A bucket rename within the platform's own storage does not.
+func (d *BackupDestination) NeedsCredential() bool {
+	return d != nil && d.Endpoint != ""
 }
 
-// BackupPolicySpec is the cluster's default backup arrangement.
-type BackupPolicySpec struct {
-	// Destination is where bundles are written unless a tenant overrides it.
-	// +optional
-	Destination *BackupDestination `json:"destination,omitempty"`
-
-	// Schedule is the default cron expression, in UTC, applied to tenants that
-	// do not state their own. Empty means no scheduled backups — a decision
-	// worth making deliberately rather than inheriting.
-	// +optional
-	// +kubebuilder:validation:MaxLength=128
-	Schedule string `json:"schedule,omitempty"`
-
-	// KeepLast is the default retention for scheduled exports. Zero keeps
-	// everything, which is only right when something else prunes.
+// BackupRetention decides which bundles survive a sweep.
+//
+// KeepLast alone answers "how far back can I go" only in nights. The tiers
+// below answer it in months without storing a bundle a night: keep every
+// recent one, then one a day, one a week, one a month, one a year — density
+// falling with age, which is how far back anyone actually needs to reach.
+type BackupRetention struct {
+	// KeepLast retains this many most recent finished exports regardless of
+	// age. Zero relies entirely on the tiers below; with no tiers either,
+	// nothing is deleted — a decision rather than a default, and the right one
+	// only when something else prunes.
 	// +optional
 	// +kubebuilder:validation:Minimum=0
 	KeepLast int32 `json:"keepLast,omitempty"`
 
-	// AllowTenantOverride lets a tenant point its bundles at its own storage.
+	// KeepDaily, KeepWeekly, KeepMonthly and KeepYearly each retain the most
+	// recent export within that many distinct periods. A bundle kept by any
+	// tier survives; the tiers are a union, not a sequence.
+	// +optional
+	// +kubebuilder:validation:Minimum=0
+	KeepDaily int32 `json:"keepDaily,omitempty"`
+	// +optional
+	// +kubebuilder:validation:Minimum=0
+	KeepWeekly int32 `json:"keepWeekly,omitempty"`
+	// +optional
+	// +kubebuilder:validation:Minimum=0
+	KeepMonthly int32 `json:"keepMonthly,omitempty"`
+	// +optional
+	// +kubebuilder:validation:Minimum=0
+	KeepYearly int32 `json:"keepYearly,omitempty"`
+}
+
+// IsSet reports whether any retention rule was stated.
+func (r *BackupRetention) IsSet() bool {
+	if r == nil {
+		return false
+	}
+	return r.KeepLast > 0 || r.KeepDaily > 0 || r.KeepWeekly > 0 ||
+		r.KeepMonthly > 0 || r.KeepYearly > 0
+}
+
+// BackupPolicySpec is one backup arrangement: the cluster's default, or one
+// tenant's override of it.
+//
+// One type for both, distinguished by Scope, because they carry the same
+// fields and a tenant's policy is exactly the cluster's with some fields
+// restated. Two types meant two schemas, two status shapes and a merge that
+// could disagree with itself.
+//
+// +kubebuilder:validation:XValidation:rule="self.scope == 'tenant' ? (has(self.tenant) && self.tenant != '') : (!has(self.tenant) || self.tenant == '')",message="tenant is required when scope is tenant, and must be empty when scope is cluster"
+type BackupPolicySpec struct {
+	// Scope decides whether this is the cluster default or one tenant's
+	// override, and with it who may edit the policy and which OpenBao path its
+	// credential lives at. A tenant admin must not reach cluster paths.
+	// +kubebuilder:validation:Enum=cluster;tenant
+	Scope string `json:"scope"`
+
+	// Tenant names the tenant a tenant-scoped policy belongs to. Empty for
+	// cluster scope, required for tenant scope; the CEL rule above rejects
+	// either mistake at admission, because a tenant-scoped policy naming no
+	// tenant would apply to all of them or none.
+	// +optional
+	// +kubebuilder:validation:MaxLength=63
+	Tenant string `json:"tenant,omitempty"`
+
+	// Destination is where bundles are written. Unset inherits: the cluster
+	// default for a tenant policy, the platform's own storage for the cluster.
+	// +optional
+	Destination *BackupDestination `json:"destination,omitempty"`
+
+	// Schedule is a five-field cron expression, in UTC. Empty inherits; use
+	// SuspendSchedule to mean none.
+	// +optional
+	// +kubebuilder:validation:MaxLength=128
+	Schedule string `json:"schedule,omitempty"`
+
+	// SuspendSchedule turns scheduled backups off, distinctly from inheriting.
+	// Without it "no schedule" and "not stated" would be the same value, and a
+	// tenant could not opt out of a cluster-wide schedule.
+	// +optional
+	SuspendSchedule bool `json:"suspendSchedule,omitempty"`
+
+	// Retention decides which bundles survive. Unset inherits.
+	// +optional
+	Retention *BackupRetention `json:"retention,omitempty"`
+
+	// AllowTenantOverride lets tenants state policies of their own. Read only
+	// from the cluster-scoped policy; meaningless on a tenant's own.
 	//
-	// On by default. Turning it off is how an operator keeps every tenant's
-	// bundles in one place they control — worth stating, because a tenant
-	// writing to storage the platform cannot read is also a tenant the
-	// platform cannot help restore.
+	// On by default. Turning it off keeps every tenant's bundles in storage
+	// the operator controls — worth stating, because bundles the platform
+	// cannot reach are bundles it cannot help restore.
 	// +optional
 	// +kubebuilder:default=true
 	AllowTenantOverride *bool `json:"allowTenantOverride,omitempty"`
 }
 
-// OverrideAllowed reports whether tenants may override this policy.
+// OverrideAllowed reports whether tenants may state policies of their own.
 func (s *BackupPolicySpec) OverrideAllowed() bool {
 	if s == nil || s.AllowTenantOverride == nil {
 		return true
@@ -124,9 +174,29 @@ func (s *BackupPolicySpec) OverrideAllowed() bool {
 	return *s.AllowTenantOverride
 }
 
-// BackupPolicyStatus reports what the policy resolved to.
+// BackupPolicyStatus reports what this policy resolved to and whether it can
+// actually be used.
 type BackupPolicyStatus struct {
-	// Conditions carries Accepted: whether the destination is usable.
+	// EffectiveEndpoint, EffectiveBucket and EffectiveSchedule are the values
+	// in force after inheritance, published so an admin reads what applies
+	// rather than recomputing the merge.
+	// +optional
+	EffectiveEndpoint string `json:"effectiveEndpoint,omitempty"`
+	// +optional
+	EffectiveBucket string `json:"effectiveBucket,omitempty"`
+	// +optional
+	EffectiveSchedule string `json:"effectiveSchedule,omitempty"`
+
+	// CredentialRequirement names the requirement carrying this destination's
+	// keys, and CredentialSatisfied reports whether it has been filled. A
+	// destination whose credential is unsatisfied is a policy that will fail
+	// at 03:00; surfaced here it is a red field in the console instead.
+	// +optional
+	CredentialRequirement string `json:"credentialRequirement,omitempty"`
+	// +optional
+	CredentialSatisfied bool `json:"credentialSatisfied,omitempty"`
+
+	// Conditions carries Accepted: whether this policy is permitted and usable.
 	// +optional
 	// +listType=map
 	// +listMapKey=type
@@ -136,17 +206,22 @@ type BackupPolicyStatus struct {
 	ObservedGeneration int64 `json:"observedGeneration,omitempty"`
 }
 
-// BackupPolicy is the cluster-wide default for tenant backups.
+// BackupPolicy is where a tenant's bundles go, how often, and how long they
+// are kept.
 //
-// Cluster-scoped and singleton by convention (`default`): a second one would
-// leave "which destination applies" answerable two ways.
+// Cluster-scoped for both scopes, as CredentialRequirement is: the console
+// mediates access by spec.tenant, and the credential itself is governed by the
+// OpenBao policy its scope selects.
 //
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
 // +kubebuilder:resource:scope=Cluster,shortName=bkpol
-// +kubebuilder:printcolumn:name="Endpoint",type=string,JSONPath=`.spec.destination.endpoint`
-// +kubebuilder:printcolumn:name="Bucket",type=string,JSONPath=`.spec.destination.bucket`
-// +kubebuilder:printcolumn:name="Schedule",type=string,JSONPath=`.spec.schedule`
+// +kubebuilder:printcolumn:name="Scope",type=string,JSONPath=`.spec.scope`
+// +kubebuilder:printcolumn:name="Tenant",type=string,JSONPath=`.spec.tenant`
+// +kubebuilder:printcolumn:name="Endpoint",type=string,JSONPath=`.status.effectiveEndpoint`
+// +kubebuilder:printcolumn:name="Bucket",type=string,JSONPath=`.status.effectiveBucket`
+// +kubebuilder:printcolumn:name="Schedule",type=string,JSONPath=`.status.effectiveSchedule`
+// +kubebuilder:printcolumn:name="Credential",type=boolean,JSONPath=`.status.credentialSatisfied`,priority=1
 // +kubebuilder:printcolumn:name="Age",type=date,JSONPath=`.metadata.creationTimestamp`
 type BackupPolicy struct {
 	metav1.TypeMeta   `json:",inline"`
@@ -164,89 +239,6 @@ type BackupPolicyList struct {
 	Items           []BackupPolicy `json:"items"`
 }
 
-// TenantBackupPolicySpec overrides the cluster default for one tenant.
-//
-// Every field is optional and an unset field inherits. That is what makes
-// "change only the schedule" expressible without restating a destination the
-// tenant never chose.
-type TenantBackupPolicySpec struct {
-	// Destination overrides where this tenant's bundles are written.
-	// +optional
-	Destination *BackupDestination `json:"destination,omitempty"`
-
-	// Schedule overrides the cluster's cron expression, in UTC. The empty
-	// string inherits; use SuspendSchedule to mean "none".
-	// +optional
-	// +kubebuilder:validation:MaxLength=128
-	Schedule string `json:"schedule,omitempty"`
-
-	// SuspendSchedule turns scheduled backups off for this tenant, distinctly
-	// from inheriting. Without it, "no schedule" and "not stated" would be the
-	// same value and a tenant could not opt out of a cluster default.
-	// +optional
-	SuspendSchedule bool `json:"suspendSchedule,omitempty"`
-
-	// KeepLast overrides retention. Nil inherits; zero means keep everything.
-	// +optional
-	// +kubebuilder:validation:Minimum=0
-	KeepLast *int32 `json:"keepLast,omitempty"`
-}
-
-// TenantBackupPolicyStatus reports what this tenant's backups resolved to.
-type TenantBackupPolicyStatus struct {
-	// EffectiveEndpoint, EffectiveBucket and EffectiveSchedule are the values
-	// actually in force after inheritance, published so an admin can see what
-	// applies without recomputing the merge.
-	// +optional
-	EffectiveEndpoint string `json:"effectiveEndpoint,omitempty"`
-	// +optional
-	EffectiveBucket string `json:"effectiveBucket,omitempty"`
-	// +optional
-	EffectiveSchedule string `json:"effectiveSchedule,omitempty"`
-
-	// Conditions carries Accepted: whether the override is permitted and its
-	// destination usable.
-	// +optional
-	// +listType=map
-	// +listMapKey=type
-	Conditions []metav1.Condition `json:"conditions,omitempty"`
-
-	// +optional
-	ObservedGeneration int64 `json:"observedGeneration,omitempty"`
-}
-
-// TenantBackupPolicy overrides the cluster backup policy for one tenant.
-//
-// Namespaced and singleton by convention (`default`) in the tenant's own
-// namespace, which is also what keeps a tenant's credential reference inside
-// the namespace it controls.
-//
-// +kubebuilder:object:root=true
-// +kubebuilder:subresource:status
-// +kubebuilder:resource:scope=Namespaced,shortName=tbkpol
-// +kubebuilder:printcolumn:name="Endpoint",type=string,JSONPath=`.status.effectiveEndpoint`
-// +kubebuilder:printcolumn:name="Bucket",type=string,JSONPath=`.status.effectiveBucket`
-// +kubebuilder:printcolumn:name="Schedule",type=string,JSONPath=`.status.effectiveSchedule`
-// +kubebuilder:printcolumn:name="Age",type=date,JSONPath=`.metadata.creationTimestamp`
-type TenantBackupPolicy struct {
-	metav1.TypeMeta   `json:",inline"`
-	metav1.ObjectMeta `json:"metadata,omitempty"`
-
-	Spec   TenantBackupPolicySpec   `json:"spec,omitempty"`
-	Status TenantBackupPolicyStatus `json:"status,omitempty"`
-}
-
-// TenantBackupPolicyList contains a list of TenantBackupPolicy.
-// +kubebuilder:object:root=true
-type TenantBackupPolicyList struct {
-	metav1.TypeMeta `json:",inline"`
-	metav1.ListMeta `json:"metadata,omitempty"`
-	Items           []TenantBackupPolicy `json:"items"`
-}
-
 func init() {
-	SchemeBuilder.Register(
-		&BackupPolicy{}, &BackupPolicyList{},
-		&TenantBackupPolicy{}, &TenantBackupPolicyList{},
-	)
+	SchemeBuilder.Register(&BackupPolicy{}, &BackupPolicyList{})
 }
