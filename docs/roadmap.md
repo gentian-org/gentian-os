@@ -660,31 +660,15 @@ docs/plans/tenant-composition-cleanup.md §8.
     image is the condition to report.
   - `[ ]` Decide whether `Docker build and push` should depend on the Go job.
 
-### 1.29 Phase=Ready Is Computed From Requeues, Not From Conditions (**)
-* **Target Domain**: Tenant Lifecycle
-* **Context**: `reconcileTenantStageFinalize` decides the phase from
-  `state.identityResult/databaseResult/mariadbResult/storageResult/cacheResult`
-  having no `RequeueAfter`, and from `CrossplaneReady`. It does not ask whether
-  the conditions those stages own are true, or whether they were ever set. A
-  tenant reconciled before its AppProfiles resolve runs the data-plane stage with
-  nothing to do, returns no requeue, and finalizes: `Phase=Ready` with
-  `AppsReady=False`, `AppPrivilegesReady=False`, and `IdentityReady`,
-  `DatabaseReady`, `MariaDBReady`, `StorageReady` and `CacheReady` absent
-  entirely. Observed directly, not inferred.
-* **How it stayed hidden**: the mail stage runs last and was slow — it waited on
-  a Keycloak Job — so by the time a tenant reached finalize its apps had
-  resolved and the conditions existed. Four reconciler tests assert exactly those
-  conditions after waiting for `Phase=Ready`, and they passed because of that
-  delay. Replacing the Job with a wait on the composed `Client` made the stage
-  fast and all four failed at once, which is what surfaced this. A test that
-  passes because an unrelated stage is slow is not testing what it claims.
-* **Proposed Solution**: Derive the phase from the conditions — Ready when every
-  condition a tenant's spec implies is True — rather than from the absence of a
-  requeue. A tenant with a False condition must not read Ready.
-* **Backlog Items**:
-  - `[ ]` Compute the phase from the condition set, and say which condition held
-    it back.
-  - `[ ]` Assert the invariant directly: no `Phase=Ready` while any condition is
-    False or missing.
-  - `[ ]` Then land the Dovecot Job retirement (roadmap 1.27's sibling), which is
-    written and verified except for this.
+### 1.29 Land the Dovecot Job Retirement (*)
+
+The phase is now derived from the conditions rather than from the absence of a
+requeue, which is what blocked this. `tenantFoundationNotReady` requires the
+identity and data-plane conditions to be present and True; apps, mail and
+privileges still settle after Ready, because finalize returns their result and
+says so.
+
+What remains is to apply `/tmp/gentian-dovecot-job-retirement.patch` — the
+tenant-realm half of the Dovecot OIDC client Job, replaced by a wait on the
+composed `Client`. It was written and verified before the phase fix existed and
+is the last duplicate writer on that object.

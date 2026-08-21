@@ -356,10 +356,23 @@ func (r *TenantReconciler) reconcileTenantStageFinalize(ctx context.Context, sta
 		state.storageResult.RequeueAfter > 0 ||
 		state.cacheResult.RequeueAfter > 0
 	crossplaneReady := tenantHasConditionTrue(tenant, conditionCrossplaneReady)
+	// The identity and data-plane conditions must be present and True, whatever
+	// the stages asked for. See tenantFoundationNotReady: requeues answer "did a
+	// stage want to run again", which is not the same question as "is this tenant
+	// ready", and the two disagreed for any tenant that finalized before its
+	// AppProfiles resolved.
+	notReady := tenantFoundationNotReady(tenant)
 
-	if provisioning || !crossplaneReady {
+	switch {
+	case provisioning || !crossplaneReady || notReady != "":
+		if notReady != "" && !provisioning && crossplaneReady {
+			// Worth saying which one: this is the case that used to read Ready,
+			// so a phase that stays Provisioning with everything else quiet
+			// would otherwise be the only symptom.
+			logger.Info("tenant not ready", "tenant", tenant.Name, "condition", notReady)
+		}
 		tenant.Status.Phase = gentianov1alpha1.TenantPhaseProvisioning
-	} else {
+	default:
 		tenant.Status.Phase = gentianov1alpha1.TenantPhaseReady
 		provisioningDuration.WithLabelValues(tenant.Name).Observe(time.Since(state.start).Seconds())
 	}
@@ -405,6 +418,15 @@ func (r *TenantReconciler) reconcileTenantStageFinalize(ctx context.Context, sta
 	if state.privilegeResult.RequeueAfter > 0 {
 		logger.Info("tenant ready; app privilege sync scheduled", "tenant", tenant.Name)
 		return state.privilegeResult, nil
+	}
+	if notReady != "" {
+		// A condition is still not True and nothing above asked to be run again.
+		// An empty Result here would leave the tenant Provisioning until some
+		// watched object happened to fire an event — the trap the blocked path
+		// at the top of runTenantReconcileStages exists to avoid, reached by a
+		// different route.
+		logger.Info("tenant waiting on condition", "tenant", tenant.Name, "condition", notReady)
+		return ctrl.Result{RequeueAfter: tenantShellRequeueAfter}, nil
 	}
 	logger.Info("tenant reconciled successfully", "tenant", tenant.Name)
 	return ctrl.Result{}, nil
