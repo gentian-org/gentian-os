@@ -738,10 +738,32 @@ docs/plans/tenant-composition-cleanup.md §8.
 * **Do this before the realm.** The realm conversion is larger and independent;
   it does not move the App claim and so would not have untied this. This is the
   only remaining active hazard, and closing it also removes a Job.
+* **The data is already there.** app-default reads the OIDCPackCatalog through
+  function-extra-resources (`into: oidcPackCatalog`) to decide default scopes and
+  fullScopeAllowed. Everything else the Job needs is in the same object, so no
+  new source and no new field is required:
+
+  | Job writes | From | Provider kind |
+  |---|---|---|
+  | client scope | `pack.scopeName`, `pack.scopeDescription` | `ClientScope` |
+  | mappers on it | `pack.mappers[]` → `spec.mapperTemplates[name]`, which carries `protocolMapper`, `config` and `keycloakName` | `ProtocolMapper` |
+  | the client | already declared | `Client` |
+  | client role | `pack.clientRole` | `Role` |
+  | group to role | `pack.entitlementGroup` | `Roles` |
+
+  Verified against the live corp realm: `gentian-nextcloud-base-ce-scope` carries
+  exactly the three mappers its pack names, with the config its templates give.
 * **Backlog Items**:
-  - `[ ]` Declare the client scope and its three protocol mappers in app-default.
-  - `[ ]` Declare the client role and the group-to-role mapping, as refs so
-    Crossplane resolves the ordering rather than a stage doing it.
+  - `[ ]` Render `ClientScope` from scopeName/scopeDescription, adopted by
+    external-name so the existing scope is not replaced.
+  - `[ ]` Render one `ProtocolMapper` per entry in `pack.mappers`, resolved
+    through `mapperTemplates` — honouring `keycloakName`, which exists because
+    some catalogues name a mapper differently in Keycloak than in the pack.
+  - `[ ]` Render `Role` and the group-to-role `Roles`, as refs so Crossplane
+    resolves the ordering rather than a stage doing it.
   - `[ ]` Remove the Job, and the `ensureIdentity` wait that depends on it.
   - `[x]` Keep `LateInitialize` out of the composed Client meanwhile, so the two
     writers cannot silently rewrite each other's intent.
+* **Watch for**: `serviceClient` packs create no scope, role or group at all —
+  gentian-dovecot is one — so the whole block must be gated on it, the way the
+  Job's own validation is.
