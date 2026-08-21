@@ -443,6 +443,19 @@ For the current baseline design of the system, refer to [architecture.md](archit
   - `[ ]` Derive the sizing rule from `tenant_resource_samples` rather than from a guess, once the series covers a period with real user growth in it.
   - `[ ]` Warn in the Resources tab when a plan change alters no workload, so a tenant is never sold headroom that changes nothing for them.
 
+### 2.17 Deduplicated, Incremental Bundles (**)
+* **Target Domain**: Backup & Disaster Recovery
+* **Context**: Every export writes a full bundle. A tenant with a 483 MiB Nextcloud volume costs that much per night — about 14 GB a month, of which nearly all is byte-identical to the night before. The log-spaced tiers (`BackupPolicy.spec.retention`) reduce how many bundles are *kept*, not how much each one *costs to write*, so the transfer and the storage bill both scale with frequency rather than with change. This is the single largest inefficiency in the backup path and it gets worse as tenants grow, which is the opposite of how a backup regime should age.
+* **The trade being made deliberately today**: a bundle is a plain `age` file beside an unencrypted `bundle-info.json` naming the exact command that opens it, so recovery needs no Gentian tooling and no Gentian process that still exists. A content-addressed repository (restic, kopia) is opaque by construction: recovery needs that tool and its key. That property was chosen once and should be re-chosen consciously, not lost as a side effect of wanting smaller backups.
+* **Proposed Solution**: Adopt restic or kopia rather than building one — deduplicating, encrypting, content-addressed storage with verification is a decade of other people's bug fixes, and a bespoke implementation would be the least-tested component in the recovery path. Treat it as a second bundle *format* selected per policy, so the plain-`age` format stays available for tenants who want an archive they can open with a standard tool, and the deduplicated format is chosen where volume justifies opacity.
+* **Interaction with Object Lock, which is not obvious**: full bundles suit WORM storage because no object is ever rewritten — only whole prefixes expire. `restic prune` and `kopia maintenance` both rewrite and delete pack files, which a compliance-mode lock forbids until expiry, so a deduplicated repository on locked storage must run append-only with maintenance performed elsewhere. Any tenant wanting both needs this settled before either is promised.
+* **Backlog Items**:
+  - `[ ]` Measure real change rates per app from the existing bundles before choosing, so the saving is known rather than assumed — a mostly-static volume may not justify the opacity at all.
+  - `[ ]` Decide restic vs kopia against Object Lock and append-only support specifically, and record the reasoning where the backup design lives.
+  - `[ ]` Express the format as a field on `BackupPolicy` so both can coexist, rather than migrating every tenant to one.
+  - `[ ]` Keep `bundle-info.json` unencrypted and format-aware, so an operator holding only the bucket can still tell what a prefix is and which tool opens it.
+  - `[ ]` Define what a restore drill means for a deduplicated repository — verifying a snapshot restores is not the same as verifying the repository is intact.
+
 ---
 
 ## 3. User Management & Shell UI
