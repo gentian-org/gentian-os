@@ -205,6 +205,51 @@ export_recovery_kit() {
     info "belong to the old one — they unseal a restored Raft snapshot, nothing else."
     warn "Store it where break-glass material lives. It grants every derived credential"
     warn "in the cluster to anyone who can decrypt it."
+
+    _record_kit_export_proof
+}
+
+# _record_kit_export_proof — note in gentian-handover that a kit now exists.
+#
+# E-03 reads this before revoking the bootstrap token: once that token is
+# gone, this kit — or another export after it — is the only way back into a
+# cluster whose normal login path turns out to be broken. Revoking on the
+# strength of "the operator probably ran this command at some point" is the
+# same mistake WritePathProven replaced an inference with an observation for.
+#
+# Best-effort. A kit that wrote to disk but failed to record itself here is
+# still a usable kit — the record is a convenience for the gate, not a
+# property of the file — so this warns rather than fails the export.
+_record_kit_export_proof() {
+    local ns="${GENTIAN_SYSTEM_NAMESPACE:-gentian-system}"
+    local now; now="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+
+    # patch first: unambiguous (RFC 7396 JSON Merge Patch merges .data by key,
+    # never wipes what handover.RecordWritePathProven or E-03 already wrote),
+    # and correct on every re-run after the first. Only fails when the
+    # ConfigMap does not exist yet — expected when export runs before anyone
+    # has signed in, which GETTING-STARTED's own ordering invites.
+    if kubectl patch configmap gentian-handover -n "${ns}" --type=merge \
+        -p "{\"data\":{\"recoveryKitExported\":\"true\",\"recoveryKitExportedAt\":\"${now}\"}}" \
+        >/dev/null 2>&1; then
+        return 0
+    fi
+
+    # Plain create, not apply: fires only when the patch above proved nothing
+    # is there, so there is no existing .data to merge with and no ambiguity
+    # about clobbering it. If something raced this (a sign-in landing in the
+    # same instant) the create fails closed with AlreadyExists and this warns
+    # rather than silently losing the exchange record.
+    if kubectl create configmap gentian-handover -n "${ns}" \
+        --from-literal="recoveryKitExported=true" \
+        --from-literal="recoveryKitExportedAt=${now}" \
+        >/dev/null 2>&1; then
+        return 0
+    fi
+
+    warn "Could not record the export in ${ns}/gentian-handover — E-03 will not"
+    warn "  see this kit until it can. Check kubectl access to that namespace,"
+    warn "  or run this export again once it is available."
 }
 
 # =============================================================================

@@ -219,13 +219,16 @@ init_openbao() {
             [[ "$sealed" == "true" ]] && { error "Auto-unseal failed."; exit 1; }
             success "Transit auto-unseal completed."
         fi
-        # Re-display stored credentials so the operator can verify them on re-runs.
+        # Report the STATE of the stored credentials on re-runs — never their
+        # values. This block used to re-print both on every single install.sh
+        # invocation until E-03 revoked the token, which made "how many times
+        # has this value been in a terminal or a CI log" grow with every
+        # re-run rather than stay at one. Nothing here needs the literal text:
+        # BAO_TOKEN is exported for this shell's own later steps to use, which
+        # needs the value in the environment, not on the screen.
         if [[ -f "${OPENBAO_INIT_FILE}" ]]; then
-            local stored_key stored_token
-            stored_key=$(jq -r '(.recovery_keys_base64 // .recovery_keys_b64 // .keys_base64 // [])[0] // empty' "${OPENBAO_INIT_FILE}" 2>/dev/null)
+            local stored_token
             stored_token=$(jq -r '.root_token // empty' "${OPENBAO_INIT_FILE}" 2>/dev/null)
-            info "Stored init credentials (${OPENBAO_INIT_FILE}):"
-            [[ -n "$stored_key" ]] && info "  Recovery/Unseal Key : ${stored_key}"
             if [[ -n "$stored_token" ]]; then
                 # E-03 revokes this token at handover, but this file outlives
                 # that. Exporting it unasked made every later OpenBao write die
@@ -234,20 +237,27 @@ init_openbao() {
                 # re-initialisation.
                 if curl -k -sf -H "X-Vault-Token: ${stored_token}" \
                         "${BAO_HTTP}/v1/auth/token/lookup-self" >/dev/null; then
-                    info "  Root Token          : ${stored_token}"
+                    info "Bootstrap token: live, in ${OPENBAO_INIT_FILE} (mode 600)."
+                    if [[ "$(kubectl get configmap gentian-handover \
+                            -n "${GENTIAN_SYSTEM_NAMESPACE:-gentian-system}" \
+                            -o jsonpath='{.data.recoveryKitExported}' 2>/dev/null)" != "true" ]]; then
+                        warn "  No recovery kit is on record yet. Run:"
+                        warn "    ./install.sh --export-recovery-kit"
+                    fi
                     export BAO_TOKEN="$stored_token"
                 elif [[ "$(kubectl get configmap gentian-handover \
                         -n "${GENTIAN_SYSTEM_NAMESPACE:-gentian-system}" \
                         -o jsonpath='{.data.bootstrapCredentialRevoked}' 2>/dev/null)" == "true" ]]; then
-                    info "  Root Token          : revoked at handover (E-03)."
+                    info "Bootstrap token: revoked at handover (E-03)."
                     info "  Day-2 writes go through OIDC; steps that need an OpenBao"
                     info "  token will report undefined and skip."
                 else
-                    warn "  The stored root token no longer authenticates, and no"
-                    warn "  revocation is recorded — OpenBao was likely re-initialised"
-                    warn "  since this file was written. Mint a new root token with"
-                    warn "  'bao operator generate-root' and the recovery key above,"
-                    warn "  then export it as BAO_TOKEN and re-run."
+                    warn "Bootstrap token: no longer authenticates, and no revocation"
+                    warn "  is recorded — OpenBao was likely re-initialised since this"
+                    warn "  file was written. If you still hold the recovery key from"
+                    warn "  when this cluster was first initialised, mint a new root"
+                    warn "  token with 'bao operator generate-root', export it as"
+                    warn "  BAO_TOKEN, and re-run. Otherwise recovery is from a kit."
                 fi
             fi
         fi
@@ -277,16 +287,19 @@ init_openbao() {
             exit 1
         fi
 
+        # Neither value is printed. Both are already in ${OPENBAO_INIT_FILE},
+        # mode 600, which is where they have always actually lived — the
+        # banner this replaced was a second, unprotected copy of exactly the
+        # same values, in the one place (a terminal, a CI log) they should
+        # never sit in the clear. The durable copy is a recovery kit, and nothing
+        # downstream of here needs the raw text: E-03 later refuses to revoke
+        # this token until `./install.sh --export-recovery-kit` has run.
         echo ""
-        echo -e "${RED}╔═══════════════════════════════════════════════════════════════╗${NC}"
-        echo -e "${RED}║  ⚠  SAVE THESE VALUES (password manager)                     ║${NC}"
-        echo -e "${RED}╠═══════════════════════════════════════════════════════════════╣${NC}"
-        echo -e "${RED}║  Recovery Key (= unseal key) : ${recovery_key}${NC}"
-        echo -e "${RED}║  Root Token                  : ${root_token}${NC}"
-        echo -e "${RED}╚═══════════════════════════════════════════════════════════════╝${NC}"
+        info "OpenBao initialised. The recovery key and root token are in"
+        info "  ${OPENBAO_INIT_FILE} (mode 600) — nowhere else."
+        warn "Before this cluster can finish handover, run:"
+        warn "    ./install.sh --export-recovery-kit"
         echo ""
-        read -rp "  Saved both values? [yes/no]: " confirmed
-        [[ "$confirmed" == "yes" ]] || { error "Aborted."; exit 1; }
 
         export BAO_TOKEN="$root_token"
 
@@ -323,11 +336,15 @@ init_openbao() {
             exit 1
         fi
 
+        # Same reasoning as the transit-seal branch above: not printed, both
+        # already in the mode-600 init file, and a recovery kit — not this
+        # terminal — is where a durable copy belongs.
         echo ""
-        echo -e "${RED}║  Unseal Key : ${unseal_key}${NC}"
-        echo -e "${RED}║  Root Token : ${root_token}${NC}"
-        read -rp "  Saved both values? [yes/no]: " confirmed
-        [[ "$confirmed" == "yes" ]] || { error "Aborted."; exit 1; }
+        info "OpenBao initialised. The unseal key and root token are in"
+        info "  ${OPENBAO_INIT_FILE} (mode 600) — nowhere else."
+        warn "Before this cluster can finish handover, run:"
+        warn "    ./install.sh --export-recovery-kit"
+        echo ""
 
         curl -k -sf -X PUT "${BAO_HTTP}/v1/sys/unseal" \
             -H "Content-Type: application/json" \

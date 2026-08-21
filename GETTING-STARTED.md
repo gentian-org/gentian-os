@@ -207,25 +207,36 @@ It works through phases A to E, reporting each step before acting. Expect it to
 take a while in B, where OpenBao is deployed and initialised, and in C and D,
 where ArgoCD pulls and syncs the platform's own applications.
 
-## 9. Save the OpenBao keys when they appear
+## 9. One step still prints a key you cannot recover later
 
-Two steps print keys you cannot recover later:
+**`B-02-openbao-transit-init`** prints the transit instance's unseal key and
+root token. **Put them in a password manager before you continue** — they are
+also written to `/tmp/openbao-transit-init.json`, which does not survive a
+reboot.
 
-- **`B-02-openbao-transit-init`** — the transit instance's unseal key.
-- **`B-04-openbao-init`** — the primary's recovery key and root token.
-
-They are also written to `/tmp/openbao-transit-init.json` and
-`/tmp/openbao-init.json`, which do not survive a reboot. **Put them in a
-password manager before you continue.** After this the primary auto-unseals on
-every restart, which is why these are easy to lose.
+**`B-04-openbao-init`** — the primary's own recovery key and root token — does
+not print anything. Both are written straight to `/tmp/openbao-init.json`
+(mode 600) and nowhere else, including no terminal and no log. The next step
+is what makes them durable.
 
 ## 10. Export the recovery kit
 
-Do this now, while everything is still in the shell that installed it.
+**Required, not optional.** Step 12 refuses to revoke the installer's OpenBao
+token — the last thing standing between this cluster and being finished —
+until a kit has been exported. Do it now, while everything is still in the
+shell that installed it:
 
 ```bash
-./install.sh --export-recovery-kit kit.age
+./install.sh --export-recovery-kit /path/where/break-glass/material/lives/kit.age
 ```
+
+Give it a real destination, not a bare filename. Wherever the shell happens to
+be sitting is not a safe answer for a file that grants every derived
+credential in the cluster to anyone who can decrypt it — point it straight at
+wherever your break-glass material already lives (a password manager's synced
+folder, a specific vault, whatever your own practice is). The installer has no
+way to know that place for you, which is why this step is a deliberate command
+rather than something it does on your behalf.
 
 Most of this cluster is reconstructible: configuration comes from Git, and the
 derived credentials are a function of the master password and the derivation
@@ -245,8 +256,10 @@ is a migration rather than a restore.
 ```
 
 It is encrypted with `age` where available and `openssl` otherwise; there is no
-unencrypted path. Store it wherever your break-glass material already lives —
-anyone who can decrypt it holds every derived credential in the cluster.
+unencrypted path. For an unattended export (CI, a scripted install with no
+terminal to prompt) set `GENTIAN_KIT_RECIPIENT` to an age public key first —
+without one, encryption needs a passphrase typed at a prompt, which only
+exists on an interactive run.
 
 The kit does **not** back up your data, and it does not restore OpenBao — a
 fresh instance issues its own unseal material. It is only the part that nothing
@@ -284,9 +297,11 @@ kubectl get application,applicationset -n argocd
 
 The install is not finished when it says "bootstrap complete". Two things are
 still true: the installer holds a credential that can write every secret in the
-cluster, and nothing has yet shown that anyone *else* can.
+cluster, and nothing has yet shown that anyone *else* can — including,
+separately, whether there is a way back in at all if that turns out not to
+work.
 
-Both end here.
+Both end here. Both have to.
 
 **Sign in to the portal as the administrator.** The installer printed the
 account in its closing summary:
@@ -320,10 +335,13 @@ Then revoke the installer's credential:
 ./install.sh --only E-03
 ```
 
-It refuses until you have signed in, and says so. That refusal is the point —
-revoking the only working way in before knowing another one works would leave a
-cluster nobody can supply a credential to, and the recovery is re-initialising
-OpenBao from scratch.
+It refuses until BOTH are true: you have signed in (above), and step 10's
+recovery kit has been exported — and says which is still missing. That refusal
+is the point. Revoking the only working way in before knowing another one
+works would leave a cluster nobody can supply a credential to; revoking it
+before a kit exists would mean that if the login path breaks later, there is
+nothing to fall back to either. Either gap alone means the recovery is
+re-initialising OpenBao from scratch.
 
 To see where a cluster stands:
 
@@ -332,7 +350,9 @@ kubectl get configmap gentian-handover -n gentian-system -o yaml
 ```
 
 `writePathProven: "true"` means the exchange has succeeded at least once.
-`bootstrapCredentialRevoked: "true"` means handover is complete.
+`recoveryKitExported: "true"` means step 10 has been done.
+`bootstrapCredentialRevoked: "true"` means handover is complete — both of the
+above were true when it was revoked.
 
 Until it is, **creating tenants is held back.** 
 

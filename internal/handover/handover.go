@@ -93,6 +93,15 @@ const (
 	// handover from one that did.
 	KeyBootstrapRevoked = "bootstrapCredentialRevoked"
 	KeyRevokedAt        = "revokedAt"
+
+	// KeyRecoveryKitExported is written by --export-recovery-kit once a kit
+	// has actually left this machine. Read by the revoke step, which — like
+	// WritePathProven — refuses to act without it: revoking the bootstrap
+	// token is exactly the moment this cluster's only other way in becomes
+	// whatever is in that kit, so the file has to exist before that happens,
+	// not be taken on faith.
+	KeyRecoveryKitExported   = "recoveryKitExported"
+	KeyRecoveryKitExportedAt = "recoveryKitExportedAt"
 )
 
 // State is what the cluster knows about its own handover.
@@ -106,6 +115,13 @@ type State struct {
 	// and never precedes it.
 	BootstrapRevoked bool
 	RevokedAt        string
+
+	// RecoveryKitExported says a break-glass kit has left this machine.
+	// Written by --export-recovery-kit, never by anything in this package —
+	// the export is a shell command run once, by a human, and this package
+	// only reads what it left behind.
+	RecoveryKitExported   bool
+	RecoveryKitExportedAt string
 }
 
 // Read returns the cluster's handover state.
@@ -124,11 +140,13 @@ func Read(ctx context.Context, c client.Client, namespace string) (State, error)
 		return State{}, fmt.Errorf("read handover record: %w", err)
 	}
 	return State{
-		WritePathProven:  cm.Data[KeyWritePathProven] == "true",
-		ProvenAt:         cm.Data[KeyProvenAt],
-		ProvenBy:         cm.Data[KeyProvenBy],
-		BootstrapRevoked: cm.Data[KeyBootstrapRevoked] == "true",
-		RevokedAt:        cm.Data[KeyRevokedAt],
+		WritePathProven:       cm.Data[KeyWritePathProven] == "true",
+		ProvenAt:              cm.Data[KeyProvenAt],
+		ProvenBy:              cm.Data[KeyProvenBy],
+		BootstrapRevoked:      cm.Data[KeyBootstrapRevoked] == "true",
+		RevokedAt:             cm.Data[KeyRevokedAt],
+		RecoveryKitExported:   cm.Data[KeyRecoveryKitExported] == "true",
+		RecoveryKitExportedAt: cm.Data[KeyRecoveryKitExportedAt],
 	}, nil
 }
 

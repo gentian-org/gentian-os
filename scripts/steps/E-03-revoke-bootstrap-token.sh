@@ -14,10 +14,12 @@
 # for this as a scripted step rather than a runbook note precisely because a
 # runbook note is a step that does not happen.
 #
-# Refuses to run until somebody has ACTUALLY LOGGED IN, because revoking the
-# only way in leaves a cluster nobody can supply a credential to. That is the
-# one case where NOT revoking is correct, and it is reported rather than
-# silently skipped.
+# Refuses to run until somebody has ACTUALLY LOGGED IN, AND a recovery kit
+# has been exported, because revoking with either missing leaves a cluster
+# nobody can supply a credential to — an unproven login is one dead end, a
+# kit that does not exist is the other, and losing either after this token is
+# gone means re-initialising OpenBao. That is the one case where NOT
+# revoking is correct, and it is reported rather than silently skipped.
 #
 # Two earlier versions of this guard were both wrong in the same direction.
 #
@@ -63,6 +65,27 @@ _handover_proof_detail() {
     local ns="${GENTIAN_SYSTEM_NAMESPACE:-gentian-system}"
     kubectl get configmap gentian-handover -n "${ns}" \
         -o jsonpath='{.data.provenBy} at {.data.provenAt}' 2>/dev/null || true
+}
+
+# _kit_exported — has --export-recovery-kit actually written one?
+#
+# The second precondition, alongside _handover_proven. Revoking the bootstrap
+# token is exactly the moment this cluster's only other way in becomes
+# whatever a recovery kit holds — if OIDC turns out to be broken later, the
+# kit is the recovery, not another look at this token. Written by
+# recovery.sh's _record_kit_export_proof; read the same way _handover_proven
+# reads its own fact, from Kubernetes rather than from OpenBao, so --status
+# can answer it with no token.
+_kit_exported() {
+    local ns="${GENTIAN_SYSTEM_NAMESPACE:-gentian-system}"
+    [[ "$(kubectl get configmap gentian-handover -n "${ns}" \
+        -o jsonpath='{.data.recoveryKitExported}' 2>/dev/null || true)" == "true" ]]
+}
+
+_kit_exported_detail() {
+    local ns="${GENTIAN_SYSTEM_NAMESPACE:-gentian-system}"
+    kubectl get configmap gentian-handover -n "${ns}" \
+        -o jsonpath='{.data.recoveryKitExportedAt}' 2>/dev/null || true
 }
 
 # _bao_reachable — point this shell at OpenBao, or say we cannot ask.
@@ -144,6 +167,12 @@ check() {
     # install rather than a cluster whose administrator has not signed in yet.
     _handover_proven || return "${CHECK_UNDEFINED}"
 
+    # Same reasoning, second precondition: apply() also refuses without a
+    # recovery kit on record, so check() has to agree before asking the
+    # question below, for the identical reason — otherwise this reads as an
+    # unfinished install on every run until someone happens to export one.
+    _kit_exported || return "${CHECK_UNDEFINED}"
+
     # Reachability BEFORE the question, and its own verdict when absent.
     #
     # This step reports satisfied when the token no longer authenticates, and
@@ -162,38 +191,61 @@ check() {
 }
 
 apply() {
-    if ! _handover_proven; then
-        warn "No administrator has exchanged a token on this cluster yet."
-        warn "  Refusing to revoke the bootstrap token: it is currently the ONLY"
-        warn "  way to write a credential, and revoking it before the exchange is"
-        warn "  known to work would leave this cluster unable to accept one —"
-        warn "  recovering means re-initialising OpenBao."
+    # Both preconditions collected before either is reported, not checked
+    # sequentially — an operator missing both should see both gaps on the
+    # first run, not fix one, re-run, and only then learn about the second.
+    local proven=1 kit=1
+    _handover_proven && proven=0
+    _kit_exported && kit=0
+
+    if (( proven != 0 || kit != 0 )); then
+        warn "Refusing to revoke the bootstrap token — not ready yet:"
+        (( proven != 0 )) && warn "  - no administrator has exchanged a token on this cluster yet"
+        (( kit != 0 )) && warn "  - no recovery kit has been exported yet"
         warn ""
-        warn "  Sign in to the portal as the cluster administrator; the sign-in"
-        warn "  performs the exchange and records it. Then:"
-        warn "    ./install.sh --only E-03"
+        warn "  It is currently the ONLY way to write a credential, and revoking"
+        warn "  it before both are true would leave this cluster with no way in"
+        warn "  if either turns out not to work — an unproven login, or a kit"
+        warn "  that does not exist to fall back to."
         warn ""
-        warn "  If signing in records nothing, the portal predates the login-time"
-        warn "  exchange — open the Admin Console and select the Credentials tab,"
-        warn "  which performs the same one."
-        warn ""
-        # The chain is the diagnosis, not the guard. "Nobody has logged in" is
-        # true whether the operator simply has not got to it or the login is
-        # broken, and only the second needs fixing before they try.
-        if ! _oidc_write_path_ready; then
-            warn "  A sign-in would not succeed yet — these are missing:"
-            while IFS= read -r _reason; do
-                [[ -n "${_reason}" ]] && warn "    - ${_reason}"
-            done <<< "${_OIDC_MISSING:-}"
-        else
-            warn "  Every part of the path is in place; it has just not been"
-            warn "  exercised. That is the one thing this installer cannot do"
-            warn "  for you — the exchange needs a human at a browser."
+
+        if (( proven != 0 )); then
+            warn "  Sign in to the portal as the cluster administrator; the sign-in"
+            warn "  performs the exchange and records it. Then:"
+            warn "    ./install.sh --only E-03"
+            warn ""
+            warn "  If signing in records nothing, the portal predates the login-time"
+            warn "  exchange — open the Admin Console and select the Credentials tab,"
+            warn "  which performs the same one."
+            warn ""
+            # The chain is the diagnosis, not the guard. "Nobody has logged in" is
+            # true whether the operator simply has not got to it or the login is
+            # broken, and only the second needs fixing before they try.
+            if ! _oidc_write_path_ready; then
+                warn "  A sign-in would not succeed yet — these are missing:"
+                while IFS= read -r _reason; do
+                    [[ -n "${_reason}" ]] && warn "    - ${_reason}"
+                done <<< "${_OIDC_MISSING:-}"
+            else
+                warn "  Every part of the path is in place; it has just not been"
+                warn "  exercised. That is the one thing this installer cannot do"
+                warn "  for you — the exchange needs a human at a browser."
+            fi
+            warn ""
+        fi
+
+        if (( kit != 0 )); then
+            warn "  Export a recovery kit — the only way back into this cluster's"
+            warn "  OpenBao if the login path above turns out to be broken later:"
+            warn "    ./install.sh --export-recovery-kit"
+            warn "  Then:"
+            warn "    ./install.sh --only E-03"
         fi
         return 0
     fi
 
     info "Administrator sign-in confirmed ($(_handover_proof_detail))."
+    info "Recovery kit exported ($(_kit_exported_detail))."
 
     if ! _bao_reachable; then
         error "Cannot reach OpenBao on :8200, and no BAO_TOKEN in this shell."
