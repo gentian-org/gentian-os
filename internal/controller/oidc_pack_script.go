@@ -63,7 +63,6 @@ func buildOIDCPackScript(
 
 	scopeLookupBlock := keycloak.ShellLookupClientScopeID()
 	clientUUIDBlock := keycloak.ShellRequireID("CLIENT_UUID", "${EXISTING}", "clientId", "${CLIENT_ID}")
-	groupIDBlock := keycloak.ShellRequireID("GROUP_ID", "${GROUP_LIST}", "name", "${ENTITLEMENT_GROUP}")
 
 	return keycloak.ShellJSONIDExtractor() + keycloak.ShellScopeIDFromList() + fmt.Sprintf(`set -eu
 REALM=%q
@@ -133,14 +132,12 @@ if [ -z "${ROLE_JSON}" ]; then
 fi
 ROLE_ID=$(echo "${ROLE_JSON}" | sed -n 's/.*"id":"\([^"]*\)".*/\1/p' | head -1)
 
-# --- Map entitlement group to client role ---
-GROUP_LIST=$(curl -sf -H "${AUTH_HEADER}" \
-  "${KEYCLOAK_URL}/admin/realms/${REALM}/groups?search=${ENTITLEMENT_GROUP}")
-%s
-curl -sf -X POST -H "${AUTH_HEADER}" -H "Content-Type: application/json" \
-  "${KEYCLOAK_URL}/admin/realms/${REALM}/groups/${GROUP_ID}/role-mappings/clients/${CLIENT_UUID}" \
-  -d "[{\"id\":\"${ROLE_ID}\",\"name\":\"${CLIENT_ROLE}\"}]" >/dev/null || true
-echo "group ${ENTITLEMENT_GROUP} mapped to client role ${CLIENT_ROLE}"
+# The entitlement group is NOT mapped to the client role here. app-default
+# composes a group Roles for it, with exhaustive false so it grants that one
+# role and leaves anything else on the group alone.
+#
+# This POST swallowed its own failure, so a mapping that never happened looked
+# exactly like one that did — the same silence the default-client-scopes loop had.
 
 # The default client scopes are NOT attached here. app-default composes a
 # ClientDefaultScopes for exactly the same six — profile, email, roles,
@@ -155,7 +152,7 @@ echo "oidc pack ${CLIENT_ID} provisioned in realm ${REALM}"`,
 		string(redirectJSON), publicClient, fullScope,
 		// One secretClause, not two: the second filled the client PUT that this
 		// Job no longer makes.
-		scopeLookupBlock, mapperBlocks, secretClause, clientUUIDBlock, groupIDBlock)
+		scopeLookupBlock, mapperBlocks, secretClause, clientUUIDBlock)
 }
 
 // buildOIDCServiceClientScript provisions only a confidential client.
