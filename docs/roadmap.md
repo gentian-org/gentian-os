@@ -715,3 +715,36 @@ docs/plans/tenant-composition-cleanup.md §8.
   - `[ ]` Add a test that a tenant admin's token cannot read another tenant's
     resources with the route filters deliberately disabled — the assertion that
     the boundary has actually moved.
+
+### 1.31 The OIDC Pack Job Is the Last Duplicate Writer (**)
+* **Target Domain**: Identity
+* **Context**: `app-default` composes the app's Keycloak `Client`, and the OIDC
+  pack Job configures the same clientId — "client gentian-<app> configured" in
+  its own log. Both are `Synced=True` today because the two agree, which is what
+  the kernel IdP looked like until they stopped agreeing and every reconcile
+  spent two minutes on the wrong first-broker-login flow.
+
+  The overlap is exactly one PUT. Of the Job's five steps — client scope, three
+  protocol mappers on it, the client, the client role, and the group-to-role
+  mapping — only the client is also declared. Everything else is the Job's
+  alone, so this is a decomposition rather than a deletion, the same shape as
+  the broker-idp retirement.
+* **Why it is not a small edit**: the ordering runs the wrong way. The pack Job
+  is waited on by `ensureIdentity` in the **DataPlane** stage; the App claim that
+  produces the `Client` is created in **AppsAndEdge**, the stage after. Drop the
+  Job's create and configure and stage 3 waits for an object stage 4 has not made
+  yet — a deadlock, not a race.
+* **Proposed Solution**: Split the Job rather than move a stage. The scope and
+  its mappers do not need the client and can stay where they are; the client
+  role and the group-to-role mapping do, and belong after the composition has
+  made it. Then the client has one writer and the Job never touches it.
+
+  Moving App creation earlier instead would put a tenant's apps ahead of its
+  data plane, which is a larger change to what the stages mean.
+* **Backlog Items**:
+  - `[ ]` Split the pack Job at the client boundary.
+  - `[ ]` Move the client-dependent half to a stage that runs after the App claim.
+  - `[ ]` Remove the client create and configure, leaving `app-default` as the
+    only writer.
+  - `[x]` Keep `LateInitialize` out of the composed Client meanwhile, so the two
+    writers cannot silently rewrite each other's intent.
