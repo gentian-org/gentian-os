@@ -73,9 +73,13 @@ func (r *TenantReconciler) ensureKeycloakBrowserSecurityHeaders(ctx context.Cont
 	if err := r.ensureRealmBrowserSecurityHeaders(ctx, kernelRealm); err != nil {
 		return err
 	}
-	if err := r.ensureRealmBrowserSecurityHeaders(ctx, keycloakRealmName(tenant)); err != nil {
-		return err
-	}
+	// Not the tenant realm. tenant-default composes a Realm that declares the
+	// same browser security headers, and the same twelve-hour session and token
+	// lifespans and login theme this function used to write alongside them.
+	//
+	// The kernel realm above stays, and has to: no XTenant exists for it, so no
+	// Composition covers it. It is bootstrapped once at install and this is the
+	// only thing that maintains it.
 
 	r.deleteLegacyBrowserSecurityJobs(ctx, kernelBrowserSecurityJobName(), tenantBrowserSecurityJobName(tenant.Name))
 	return nil

@@ -557,12 +557,16 @@ if [ "${HTTP}" = "404" ]; then
     -d '{"realm":"%s","enabled":true,"displayName":"%s","registrationAllowed":false,"browserSecurityHeaders":`+authz.BrowserSecurityHeadersJSON()+`}'
   echo "realm %s created"
 else
-  curl -sf \
-    -X PUT "${KEYCLOAK_URL}/admin/realms/%s" \
-    -H "Authorization: Bearer ${TOKEN}" \
-    -H "Content-Type: application/json" \
-    -d '{"realm":"%s","enabled":true,"browserSecurityHeaders":`+authz.BrowserSecurityHeadersJSON()+`}'
-  echo "realm %s already exists, ensured enabled=true and browserSecurityHeaders (was HTTP ${HTTP})"
+  # The realm is NOT restated here. tenant-default composes a Realm that
+  # declares enabled, displayName, registrationAllowed and the browser security
+  # headers, and this Job writing them too made it a second writer of the realm
+  # root — the shape that had the kernel IdP on the wrong login flow for two
+  # minutes of every reconcile.
+  #
+  # The create above stays, as a bootstrap: the Composition needs the realm to
+  # exist before it can adopt it, and everything else in the realm needs the
+  # realm.
+  echo "realm %s already exists (HTTP ${HTTP}); its settings are the Composition's"
 fi
 
 # ── SSO Identity Brokering: register kernel realm as Identity Provider ───────
@@ -629,7 +633,7 @@ if [ -n "${KERNEL_REALM:-}" ] && [ -n "${KERNEL_EXTERNAL_URL:-}" ]; then
     echo "IdP kernel registered in realm ${REALM_NAME}"
   fi
 `+brokerKernelClientUsernameMapperShell+brokerIdPUsernameImporterShell+`
-fi`, realmName, realmName, displayName, realmName, realmName, realmName, realmName)
+fi`, realmName, realmName, displayName, realmName, realmName)
 	script = strings.ReplaceAll(script, realmScriptBrokerIDPlaceholder, brokerResolveID)
 	return keycloak.ShellJSONIDExtractor() + script + keycloak.ShellEnsureInviteEmailUserProfile(realmName) + keycloak.ShellDisableProfilePromptRequiredActions(realmName)
 }
