@@ -234,14 +234,6 @@ echo "service client ${CLIENT_ID} can introspect in realm ${REALM} (HTTP ${PROBE
 		realmName, clientID, body, clientUUIDBlock, body)
 }
 
-type protocolMapperPOST struct {
-	Name            string            `json:"name"`
-	Protocol        string            `json:"protocol"`
-	ProtocolMapper  string            `json:"protocolMapper"`
-	ConsentRequired bool              `json:"consentRequired"`
-	Config          map[string]string `json:"config"`
-}
-
 func buildMapperPOSTBlocks(pack oidc.Pack, templates map[string]oidc.MapperTemplate) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, `
@@ -255,57 +247,14 @@ for _kj_mid in $(printf '%%s' "${MAPPERS}" | jq -r '.[] | select(.name=="oidc-us
   echo "removed corrupt mapper id=${_kj_mid} from scope ${SCOPE_NAME}"
 done
 `)
-	for _, templateKey := range pack.Mappers {
-		tmpl, ok := templates[templateKey]
-		if !ok {
-			continue
-		}
-		mapperName := templateKey
-		if tmpl.KeycloakName != "" {
-			mapperName = tmpl.KeycloakName
-		}
-		cfg := make(map[string]string, len(tmpl.Config)+1)
-		for k, v := range tmpl.Config {
-			cfg[k] = v
-		}
-		if tmpl.ProtocolMapper == "oidc-usermodel-attribute-mapper" {
-			if _, ok := cfg["multivalued"]; !ok {
-				cfg["multivalued"] = "false"
-			}
-		}
-		bodyJSON, err := json.Marshal(protocolMapperPOST{
-			Name:            mapperName,
-			Protocol:        "openid-connect",
-			ProtocolMapper:  tmpl.ProtocolMapper,
-			ConsentRequired: false,
-			Config:          cfg,
-		})
-		if err != nil {
-			continue
-		}
-		fmt.Fprintf(&b, `
-MAPPERS=$(curl -sS -H "${AUTH_HEADER}" \
-  "${KEYCLOAK_URL}/admin/realms/${REALM}/client-scopes/${SCOPE_UUID}/protocol-mappers/models" 2>/dev/null || echo "[]")
-if echo "${MAPPERS}" | grep -Fq "\"name\":\"%s\""; then
-  echo "mapper %s already on scope ${SCOPE_NAME}"
-else
-  cat > "/tmp/mapper-%s.json" <<'EOF'
-%s
-EOF
-  _kj_mbody=$(mktemp)
-  _kj_mh=$(curl -sS -o "${_kj_mbody}" -w "%%{http_code}" -X POST -H "${AUTH_HEADER}" -H "Content-Type: application/json" \
-    "${KEYCLOAK_URL}/admin/realms/${REALM}/client-scopes/${SCOPE_UUID}/protocol-mappers/models" \
-    -d @/tmp/mapper-%s.json)
-  rm -f "/tmp/mapper-%s.json"
-  if [ "${_kj_mh}" != "201" ] && [ "${_kj_mh}" != "409" ]; then
-    echo "ERROR: mapper %s POST failed (HTTP ${_kj_mh}): $(cat "${_kj_mbody}" 2>/dev/null)" >&2
-    rm -f "${_kj_mbody}"
-    exit 1
-  fi
-  rm -f "${_kj_mbody}"
-  echo "mapper %s added to scope ${SCOPE_NAME}"
-fi`, mapperName, mapperName, templateKey, string(bodyJSON), templateKey, templateKey, mapperName, mapperName)
-	}
+	// No mapper POSTs. app-default composes a ProtocolMapper per entry in
+	// pack.Mappers, resolved through the catalogue's mapperTemplates, and those
+	// adopted the live mappers by their Keycloak ids rather than creating new
+	// ones — verified on corp, where all three kept their ids and their config.
+	//
+	// The corrupt-mapper cleanup above stays. It deletes mappers whose *name* is
+	// literally "oidc-usermodel-attribute-mapper", left by a much older failed
+	// run, and nothing declarative covers that.
 	return b.String()
 }
 

@@ -69,20 +69,28 @@ func TestBuildOIDCPackScript(t *testing.T) {
 	if !strings.Contains(script, "_kj_scope_id_from_list") {
 		t.Fatal("expected dedicated client-scope id lookup helper")
 	}
-	if strings.Contains(script, `\"name\":"gentian_useruuid"`) {
-		t.Fatal("mapper POST JSON must quote name field values")
+	// The Job no longer POSTs the scope's protocol mappers. app-default composes
+	// a ProtocolMapper per entry in pack.Mappers, and those adopted the live
+	// mappers by their Keycloak ids rather than creating new ones — verified on
+	// corp, where all three kept their ids and their config.
+	//
+	// The mapper name is what identifies one, so a POST body naming a mapper is
+	// the thing to assert is gone.
+	for _, gone := range []string{
+		`"name":"gentian_useruuid"`,
+		`"name":"full name"`,
+		`"protocolMapper":"oidc-usermodel-attribute-mapper"`,
+		`"consentRequired":false`,
+	} {
+		if strings.Contains(script, gone) {
+			t.Fatalf("oidc pack script still writes a protocol mapper: %s", gone)
+		}
 	}
-	if !strings.Contains(script, `"name":"gentian_useruuid"`) || !strings.Contains(script, `"protocolMapper":"oidc-usermodel-attribute-mapper"`) {
-		t.Fatal("mapper POST body must include gentian_useruuid name and usermodel protocolMapper")
-	}
-	if !strings.Contains(script, `"consentRequired":false`) {
-		t.Fatal("mapper POST body must set consentRequired false")
-	}
-	if !strings.Contains(script, `"multivalued":"false"`) {
-		t.Fatal("usermodel mappers must include multivalued false")
-	}
-	if !strings.Contains(script, `"name":"full name"`) {
-		t.Fatal("full_name template must map to Keycloak mapper name \"full name\"")
+	// The corrupt-mapper cleanup stays: it deletes mappers whose name is
+	// literally the protocolMapper type, left by a much older failed run, and
+	// nothing declarative covers that.
+	if !strings.Contains(script, "removed corrupt mapper") {
+		t.Fatal("the corrupt-mapper cleanup must stay")
 	}
 	if !strings.Contains(script, `keycloak_json_id_by_attr "${EXISTING}" "clientId"`) {
 		t.Fatal("client UUID lookup must quote EXISTING JSON")

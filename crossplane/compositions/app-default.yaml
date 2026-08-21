@@ -1032,8 +1032,19 @@ spec:
                      /client-scopes/gentian-<app>-scope/protocol-mappers/models
                      before it ever reached Keycloak's duplicate check. */}}
                 clientScopeId: {{ $scopeID }}
+                {{- /* multivalued defaults in for attribute mappers, exactly as
+                     buildOIDCPackScript does. The catalogue templates leave it out
+                     and Keycloak treats its absence as false, so this changes
+                     nothing — but without it the Composition and the Job disagree
+                     about one key, and each would strip what the other set on
+                     every pass. Observed doing precisely that: adopting the
+                     mappers removed multivalued from two of them. */}}
+                {{- $cfg := default dict $tmpl.config }}
+                {{- if and (eq $tmpl.protocolMapper "oidc-usermodel-attribute-mapper") (not (hasKey $cfg "multivalued")) }}
+                {{- $cfg = merge (dict "multivalued" "false") $cfg }}
+                {{- end }}
                 config:
-                  {{ toYaml (default dict $tmpl.config) | nindent 18 }}
+                  {{ toYaml $cfg | nindent 18 }}
               providerConfigRef:
                 name: keycloak
             {{- end }}
