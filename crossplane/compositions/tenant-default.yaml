@@ -589,9 +589,47 @@ spec:
                 gotemplating.fn.crossplane.io/composition-resource-name: keycloak-realm
             spec:
               deletionPolicy: Orphan
-              managementPolicies: ["Observe"]
               forProvider:
                 realm: {{ $tenant }}
+                enabled: true
+                displayName: {{ $spec.displayName | quote }}
+                # Nobody self-registers into a tenant realm; membership comes from
+                # the kernel realm through the broker.
+                registrationAllowed: false
+                {{- /* These four were written by UpdateRealmBrowserSecurityHeaders
+                     on every authz-bridge sync, which made it a third writer of
+                     realm state beside the realm Job and the SMTP Job. They are
+                     declared because they are NOT the provider's defaults —
+                     Keycloak ships 5m access tokens and a 30m idle timeout, so a
+                     managed realm that did not name them would quietly cut every
+                     tenant session from twelve hours to thirty minutes. */}}
+                accessTokenLifespan: 12h0m0s
+                ssoSessionIdleTimeout: 12h0m0s
+                ssoSessionMaxLifespan: 12h0m0s
+                loginTheme: gentian
+                {{- /* The provider does not observe these: status.atProvider reports
+                     securityDefenses as null while the realm plainly carries the
+                     headers. So they cannot be confirmed by reading the resource
+                     back, only against the Admin API — the same blind spot as the
+                     kernel IdP's useJwksUrl.
+
+                     Empty strings are deliberate. contentSecurityPolicy and
+                     xFrameOptions are cleared so the portal can frame Keycloak;
+                     Keycloak's own defaults would refuse it. */}}
+                securityDefenses:
+                  - headers:
+                      - contentSecurityPolicy: ""
+                        contentSecurityPolicyReportOnly: ""
+                        strictTransportSecurity: "max-age=31536000; includeSubDomains"
+                        xContentTypeOptions: "nosniff"
+                        xFrameOptions: ""
+                        xRobotsTag: "none"
+                        xXssProtection: "1; mode=block"
+                        referrerPolicy: "no-referrer"
+                {{- /* No smtpServer yet. The tenant SMTP Job reads its host, port
+                     and from address out of a Secret, and a Composition cannot read
+                     Secrets — the same wall the broker IdP hit. It moves once the
+                     host is published the way identity.internalUrl was. */}}
               providerConfigRef:
                 name: keycloak
 

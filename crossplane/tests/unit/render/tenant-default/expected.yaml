@@ -477,9 +477,24 @@ metadata:
 spec:
   deletionPolicy: Orphan
   forProvider:
+    accessTokenLifespan: 12h0m0s
+    displayName: Render Fixture
+    enabled: true
+    loginTheme: gentian
     realm: render-fixture
-  managementPolicies:
-  - Observe
+    registrationAllowed: false
+    securityDefenses:
+    - headers:
+      - contentSecurityPolicy: ""
+        contentSecurityPolicyReportOnly: ""
+        referrerPolicy: no-referrer
+        strictTransportSecurity: max-age=31536000; includeSubDomains
+        xContentTypeOptions: nosniff
+        xFrameOptions: ""
+        xRobotsTag: none
+        xXssProtection: 1; mode=block
+    ssoSessionIdleTimeout: 12h0m0s
+    ssoSessionMaxLifespan: 12h0m0s
   providerConfigRef:
     name: keycloak
 ---
