@@ -88,6 +88,11 @@ spec:
     - https://demo.demo.platform.example.test/oidc/callback
     webOrigins:
     - +
+  managementPolicies:
+  - Observe
+  - Create
+  - Update
+  - Delete
   providerConfigRef:
     name: keycloak
 ---

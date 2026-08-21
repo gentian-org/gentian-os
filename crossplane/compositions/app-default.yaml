@@ -865,6 +865,22 @@ spec:
               name: {{ $tenant }}-{{ $app }}-keycloak-client
             spec:
               deletionPolicy: Delete
+              # Everything except LateInitialize. The default "*" includes it, and
+              # this client has a second writer: the OIDC pack Job still configures
+              # the same clientId ("client <id> configured" in its log).
+              #
+              # Late-init copies fields the provider observes but this template does
+              # not set out of the live object and into spec.forProvider. With a Job
+              # writing the same object, that means the Job's values silently become
+              # this resource's declared intent. The portal BFF client is what that
+              # looks like when it goes wrong: the copied-back fields were ones the
+              # provider then refused to write, and it sat Synced=False, unable to
+              # reconcile, while reading Ready=True.
+              #
+              # Nothing is known to be wrong here — the two writers agree today. This
+              # is so that if they stop agreeing, the Composition still says what it
+              # was written to say.
+              managementPolicies: ["Observe", "Create", "Update", "Delete"]
               forProvider:
                 clientId: {{ $oidcCl.clientId | quote }}
                 name: {{ default $oidcCl.clientId $oidcCl.name | quote }}
