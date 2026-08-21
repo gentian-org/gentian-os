@@ -152,9 +152,20 @@ func (r *TenantExportReconciler) Reconcile(ctx context.Context, req ctrl.Request
 		"this export holds the tenant")
 
 	if export.Status.Bundle == nil {
+		// Resolved once, when the bundle is assigned, and recorded on it. An
+		// export that resolved its destination afresh on every reconcile could
+		// have half its artefacts in one bucket and half in another if the
+		// policy changed while it ran.
+		eff, effErr := r.effectivePolicy(ctx, tenant)
+		if effErr != nil {
+			return r.fail(ctx, export, "PolicyUnusable", effErr.Error())
+		}
 		export.Status.Bundle = &gentianov1alpha1.BundleRef{
-			Bucket: backup.BackupBucket(tenant),
-			Prefix: export.Name,
+			Bucket:           eff.Bucket,
+			Prefix:           export.Name,
+			Endpoint:         eff.Endpoint,
+			Region:           eff.Region,
+			CredentialSecret: eff.CredentialSecret,
 		}
 		export.Status.Phase = gentianov1alpha1.TenantExportPhaseRunning
 		export.Status.StartedAt = ptrNow()
@@ -481,17 +492,54 @@ func (r *TenantExportReconciler) jobParams(
 	export *gentianov1alpha1.TenantExport,
 	encryption backup.Encryption,
 ) backup.JobParams {
-	return backup.JobParams{
+	bundle := export.Status.Bundle
+	p := backup.JobParams{
 		Namespace:    kernelNamespace,
 		Tenant:       tenant.Name,
 		App:          appName,
 		Export:       export.Name,
-		Bucket:       export.Status.Bundle.Bucket,
-		Prefix:       export.Status.Bundle.Prefix,
+		Bucket:       bundle.Bucket,
+		Prefix:       bundle.Prefix,
+		Endpoint:     bundle.Endpoint,
+		Region:       bundle.Region,
 		ScratchLimit: exportScratchLimit,
 		BackoffLimit: exportCaptureBackoffLimit,
 		Encryption:   encryption,
 	}
+	// The bundle's own record, not the policy's current answer: these Jobs
+	// write into a bundle whose address was fixed when it was assigned.
+	if bundle.CredentialSecret != "" {
+		p.UploadCredentialsSecret = bundle.CredentialSecret
+	}
+	return p
+}
+
+// effectivePolicy resolves what this tenant's backups do right now.
+func (r *TenantExportReconciler) effectivePolicy(
+	ctx context.Context,
+	tenant *gentianov1alpha1.Tenant,
+) (backup.Effective, error) {
+	cluster := &gentianov1alpha1.BackupPolicy{}
+	if err := r.Get(ctx, types.NamespacedName{Name: clusterBackupPolicy}, cluster); err != nil {
+		if !apierrors.IsNotFound(err) {
+			return backup.Effective{}, err
+		}
+		cluster = nil
+	}
+	override := &gentianov1alpha1.BackupPolicy{}
+	if err := r.Get(ctx, types.NamespacedName{Name: tenant.Name}, override); err != nil {
+		if !apierrors.IsNotFound(err) {
+			return backup.Effective{}, err
+		}
+		override = nil
+	}
+	// A policy named after the tenant but scoped to the cluster is not this
+	// tenant's override; treating it as one would apply the cluster default
+	// twice and, worse, silently.
+	if override != nil && (override.Spec.Scope != "tenant" || override.Spec.Tenant != tenant.Name) {
+		override = nil
+	}
+	return backup.ResolveEffective(tenant, cluster, override)
 }
 
 // complete writes the manifest and marks the export done. The manifest is
@@ -725,7 +773,10 @@ func (r *TenantExportReconciler) ensureBundleDeleted(
 	err := r.Get(ctx, types.NamespacedName{Name: name, Namespace: kernelNamespace}, existing)
 	switch {
 	case apierrors.IsNotFound(err):
-		job := backup.BundleDeleteJob(backup.JobParams{
+		// Deleting a bundle must address the storage it was written to. A
+		// cleanup that assumed the platform's own would report success having
+		// deleted a prefix that was never there, leaving the real objects.
+		deleteParams := backup.JobParams{
 			Namespace:    kernelNamespace,
 			Name:         name,
 			Tenant:       tenantName,
@@ -733,8 +784,14 @@ func (r *TenantExportReconciler) ensureBundleDeleted(
 			Export:       export.Name,
 			Bucket:       bundle.Bucket,
 			Prefix:       bundle.Prefix,
+			Endpoint:     bundle.Endpoint,
+			Region:       bundle.Region,
 			BackoffLimit: exportCaptureBackoffLimit,
-		})
+		}
+		if bundle.CredentialSecret != "" {
+			deleteParams.UploadCredentialsSecret = bundle.CredentialSecret
+		}
+		job := backup.BundleDeleteJob(deleteParams)
 		if err := r.Create(ctx, job); err != nil && !apierrors.IsAlreadyExists(err) {
 			return false, fmt.Errorf("create bundle cleanup Job %s: %w", name, err)
 		}

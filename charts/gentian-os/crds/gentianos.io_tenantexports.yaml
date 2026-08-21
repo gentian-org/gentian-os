@@ -218,11 +218,29 @@ spec:
                       deliberately not one of the app buckets, so exports never capture
                       previous exports.
                     type: string
+                  credentialSecret:
+                    description: |-
+                      CredentialSecret names the Secret whose keys open this endpoint. Also
+                      recorded, and for the same reason: a bundle written to a destination the
+                      tenant has since changed still needs the credential it was written with.
+                    type: string
+                  endpoint:
+                    description: |-
+                      Endpoint records the storage this bundle was actually written to, empty
+                      for the platform's own. Recorded rather than resolved again at restore
+                      time: changing a BackupPolicy does not move bundles already written, so
+                      a bundle that does not carry its own address becomes unfindable the
+                      moment the policy that produced it changes.
+                    type: string
                   prefix:
                     description: |-
                       Prefix is the directory-like key prefix this bundle occupies. The bundle
                       is a prefix rather than a single object so a capture can stream, a
                       restore can be partial, and no tenant-sized scratch space is needed.
+                    type: string
+                  region:
+                    description: Region accompanies Endpoint for tooling that needs
+                      it.
                     type: string
                 type: object
               completedAt:

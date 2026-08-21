@@ -235,6 +235,24 @@ type BundleRef struct {
 	// restore can be partial, and no tenant-sized scratch space is needed.
 	// +optional
 	Prefix string `json:"prefix,omitempty"`
+
+	// Endpoint records the storage this bundle was actually written to, empty
+	// for the platform's own. Recorded rather than resolved again at restore
+	// time: changing a BackupPolicy does not move bundles already written, so
+	// a bundle that does not carry its own address becomes unfindable the
+	// moment the policy that produced it changes.
+	// +optional
+	Endpoint string `json:"endpoint,omitempty"`
+
+	// Region accompanies Endpoint for tooling that needs it.
+	// +optional
+	Region string `json:"region,omitempty"`
+
+	// CredentialSecret names the Secret whose keys open this endpoint. Also
+	// recorded, and for the same reason: a bundle written to a destination the
+	// tenant has since changed still needs the credential it was written with.
+	// +optional
+	CredentialSecret string `json:"credentialSecret,omitempty"`
 }
 
 // AppExportStatus reports the capture of one app.

@@ -76,6 +76,13 @@ type JobParams struct {
 	// Bucket and Prefix locate the bundle this Job writes into.
 	Bucket string
 	Prefix string
+	// Endpoint is the S3 API URL when bundles go somewhere other than the
+	// platform's own MinIO, whose address travels with its credentials.
+	// Resolved from BackupPolicy; empty means the platform's own storage.
+	Endpoint string
+	// Region is passed to S3 tooling that requires one. Recorded rather than
+	// used by mc, which derives a bucket's location from the endpoint.
+	Region string
 	// ScratchLimit bounds the emptyDir a dump is staged in. Zero leaves it
 	// unbounded, which lets one large tenant fill a node's ephemeral storage.
 	ScratchLimit string
@@ -478,18 +485,43 @@ func needsWorkDir(groups ...[]corev1.Container) bool {
 	return false
 }
 
-// bundleEnv gives a container the credentials to reach MinIO and the name of
-// the bucket it must ensure exists before writing.
+// bundleEnv gives a container the credentials to reach the bundle store and
+// the name of the bucket it must ensure exists before writing.
+//
+// The endpoint comes from a different place depending on where bundles go, and
+// that asymmetry is the point. The platform's own MinIO records its address
+// alongside its keys, so all three read from one Secret. A destination the
+// operator configured has its address in the policy — a fact, not a
+// credential — while only the keys come from the credential manager. Reading
+// the endpoint from the credential Secret in that case would mean an admin
+// could change where every tenant's backups go by editing a secret.
 func bundleEnv(p JobParams) []corev1.EnvVar {
-	return append(minioEnv(p.uploadSecretName()), corev1.EnvVar{Name: "BUNDLE_BUCKET", Value: p.Bucket})
-}
+	env := []corev1.EnvVar{{Name: "BUNDLE_BUCKET", Value: p.Bucket}}
 
-func minioEnv(secret string) []corev1.EnvVar {
-	return []corev1.EnvVar{
-		meta.SecretEnv("MINIO_ENDPOINT", secret, "endpoint"),
-		meta.SecretEnv("MINIO_ACCESS_KEY", secret, "accessKey"),
-		meta.SecretEnv("MINIO_SECRET_KEY", secret, "secretKey"),
+	if p.Endpoint == "" {
+		secret := p.uploadSecretName()
+		env = append(env,
+			meta.SecretEnv("MINIO_ENDPOINT", secret, "endpoint"),
+			meta.SecretEnv("MINIO_ACCESS_KEY", secret, "accessKey"),
+			meta.SecretEnv("MINIO_SECRET_KEY", secret, "secretKey"),
+		)
+		return env
 	}
+
+	secret := p.uploadSecretName()
+	env = append(env,
+		corev1.EnvVar{Name: "MINIO_ENDPOINT", Value: p.Endpoint},
+		meta.SecretEnv("MINIO_ACCESS_KEY", secret, DestinationAccessKeyField),
+		meta.SecretEnv("MINIO_SECRET_KEY", secret, DestinationSecretKeyField),
+	)
+	if p.Region != "" {
+		// mc derives a bucket's location from the endpoint, so this changes
+		// nothing for the capture path. It is set because every other S3 tool
+		// reads it, and a destination that works for mc and fails for the next
+		// thing pointed at it would be a trap.
+		env = append(env, corev1.EnvVar{Name: "AWS_REGION", Value: p.Region})
+	}
+	return env
 }
 
 func postgresAdminEnv() []corev1.EnvVar {

@@ -548,3 +548,68 @@ func TestNoMcImageContainerInvokesTar(t *testing.T) {
 		}
 	}
 }
+
+// Where a bundle goes is a fact from the policy; the keys to get in are a
+// credential. Reading the endpoint from the credential Secret would mean
+// whoever can edit that Secret can redirect every tenant's backups — so a
+// configured destination carries its address as a literal, and only the keys
+// come from the credential manager.
+func TestConfiguredEndpointIsNotReadFromTheCredential(t *testing.T) {
+	p := params()
+	p.Endpoint = "https://sos-ch-gva-2.exo.io"
+	p.Region = "ch-gva-2"
+	p.UploadCredentialsSecret = "backup-destination-cluster"
+
+	job := PostgresDumpJob(p, "demo_app")
+	var endpoint, region *corev1.EnvVar
+	fromSecret := map[string]string{}
+	for _, c := range job.Spec.Template.Spec.Containers {
+		for i := range c.Env {
+			env := &c.Env[i]
+			switch {
+			case env.Name == "MINIO_ENDPOINT":
+				endpoint = env
+			case env.Name == "AWS_REGION":
+				region = env
+			case env.ValueFrom != nil && env.ValueFrom.SecretKeyRef != nil:
+				fromSecret[env.Name] = env.ValueFrom.SecretKeyRef.Name
+			}
+		}
+	}
+
+	if endpoint == nil || endpoint.Value != "https://sos-ch-gva-2.exo.io" {
+		t.Fatalf("endpoint = %v, want the policy's value as a literal", endpoint)
+	}
+	if endpoint.ValueFrom != nil {
+		t.Error("endpoint is read from a Secret; editing it would redirect backups")
+	}
+	if region == nil || region.Value != "ch-gva-2" {
+		t.Errorf("AWS_REGION = %v, want the destination's region", region)
+	}
+	for _, key := range []string{"MINIO_ACCESS_KEY", "MINIO_SECRET_KEY"} {
+		if fromSecret[key] != "backup-destination-cluster" {
+			t.Errorf("%s comes from %q, want the destination credential", key, fromSecret[key])
+		}
+	}
+}
+
+// The platform's own MinIO records its address beside its keys, so all three
+// still come from one Secret and nothing about the default path changes.
+func TestPlatformStorageStillReadsItsEndpointFromTheSecret(t *testing.T) {
+	job := PostgresDumpJob(params(), "demo_app")
+	for _, c := range job.Spec.Template.Spec.Containers {
+		for _, env := range c.Env {
+			if env.Name != "MINIO_ENDPOINT" {
+				continue
+			}
+			if env.ValueFrom == nil || env.ValueFrom.SecretKeyRef == nil {
+				t.Fatal("platform endpoint is no longer read from minio-admin")
+			}
+			if env.ValueFrom.SecretKeyRef.Name != MinIOAdminSecret {
+				t.Errorf("platform endpoint reads from %q", env.ValueFrom.SecretKeyRef.Name)
+			}
+			return
+		}
+	}
+	t.Fatal("no MINIO_ENDPOINT in the upload container")
+}

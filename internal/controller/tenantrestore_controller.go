@@ -469,16 +469,25 @@ func (r *TenantRestoreReconciler) jobParams(
 	restore *gentianov1alpha1.TenantRestore,
 ) backup.JobParams {
 	bundle := restore.Status.Bundle
-	return backup.JobParams{
+	p := backup.JobParams{
 		Namespace:    kernelNamespace,
 		Tenant:       tenant.Name,
 		App:          appName,
 		Export:       restore.Name,
 		Bucket:       bundle.Bucket,
 		Prefix:       bundle.Prefix,
+		// The bundle's own record of where it was written, never the policy's
+		// current answer. A tenant that moved its destination last week must
+		// still be able to restore what it wrote the week before.
+		Endpoint:     bundle.Endpoint,
+		Region:       bundle.Region,
 		ScratchLimit: exportScratchLimit,
 		BackoffLimit: exportCaptureBackoffLimit,
 	}
+	if bundle.CredentialSecret != "" {
+		p.UploadCredentialsSecret = bundle.CredentialSecret
+	}
+	return p
 }
 
 // resolveBundle finds the bundle to restore and how it was encrypted.
