@@ -316,7 +316,7 @@ bootstrap_openbao_for_crossplane() {
     if bao secrets list -format=json 2>/dev/null | jq -e --arg m "${_kv_mount}/" '.[($m)]' >/dev/null 2>&1; then
         success "KV v2 mount at '${_kv_mount}/' already present."
     else
-        bao secrets enable -path="${_kv_mount}" kv-v2
+        _bao_retry secrets enable -path="${_kv_mount}" kv-v2
         success "KV v2 mount at '${_kv_mount}/' enabled."
     fi
 
@@ -326,7 +326,13 @@ bootstrap_openbao_for_crossplane() {
     # The Cluster XR Policy MR will keep this policy in sync going forward.
     # _kv_mount is substituted into the heredoc via a quoted-less delimiter so
     # the shell expands the variable before passing the policy to bao.
-    bao policy write crossplane-write - <<POLICY
+    #
+    # Captured into a variable, not piped straight into _bao_retry, because a
+    # heredoc is consumed once: a retry inside _bao_retry would send bao an
+    # empty body on the second attempt. _BAO_RETRY_STDIN makes it re-feed this
+    # same content fresh on every attempt.
+    local _crossplane_write_policy
+    _crossplane_write_policy=$(cat <<POLICY
 # KV operations
 path "${_kv_mount}/data/gentian-os/*"     { capabilities = ["create","read","update","delete"] }
 path "${_kv_mount}/metadata/gentian-os/*" { capabilities = ["list","read","delete"] }
@@ -345,6 +351,8 @@ path "auth/+/role/*"  { capabilities = ["create","read","update","delete","list"
 path "auth/token/create"      { capabilities = ["update"] }
 path "auth/token/lookup-self" { capabilities = ["read"] }
 POLICY
+    )
+    _BAO_RETRY_STDIN="${_crossplane_write_policy}" _bao_retry policy write crossplane-write -
     success "crossplane-write policy written."
     # The Kubernetes auth backend, its config, the eso-read policy and both auth
     # roles are NOT written here. The Cluster composition declares all of them,
@@ -388,7 +396,7 @@ POLICY
     if [[ "${need_new_token}" == "1" ]]; then
         info "Minting periodic crossplane-provider token (period=8760h)..."
         local cp_token
-        cp_token=$(bao token create \
+        cp_token=$(_bao_retry token create \
             -policy=crossplane-write \
             -period=8760h \
             -orphan \

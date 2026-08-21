@@ -78,6 +78,63 @@ _kubectl_retry() {
     done
 }
 
+# Same idea as _kubectl_retry, for bao. The OpenBao Service resolved by
+# gentian_service_addr answers a one-off reachability probe and then, on this
+# host at least, is not reliably reachable call to call — seen live as a
+# bootstrap that minted two of three tokens/policies fine (bao's own client
+# retried under the timeout and recovered) and then hard-failed on the third
+# with nothing to retry it. Override attempts/delay via BAO_RETRY_ATTEMPTS /
+# BAO_RETRY_DELAY_SECS.
+#
+# Commands that read a body from stdin (bao policy write NAME -) cannot just
+# inherit a heredoc at the call site: bash hands that heredoc to this
+# function's stdin exactly once, so a retry after the first attempt consumes
+# it would send bao an empty body instead of failing loudly. Set
+# _BAO_RETRY_STDIN before calling to have this function re-feed the same
+# content as a fresh here-string on every attempt.
+_bao_retry() {
+    local attempts="${BAO_RETRY_ATTEMPTS:-6}"
+    local delay="${BAO_RETRY_DELAY_SECS:-5}"
+    local n=1 rc=0 err=""
+    local err_file
+    err_file="$(mktemp)"
+    # shellcheck disable=SC2064
+    trap "rm -f '${err_file}'" RETURN
+
+    while (( n <= attempts )); do
+        # Not `if bao ...; then return 0; fi`: when neither branch of an
+        # if/elif with no else executes, bash resets $? to 0 regardless of
+        # what the untaken conditions returned — a real, nonzero bao failure
+        # would read back as success. Capturing rc from the call directly
+        # sidesteps that.
+        if [[ -n "${_BAO_RETRY_STDIN+set}" ]]; then
+            bao "$@" 2>"${err_file}" <<<"${_BAO_RETRY_STDIN}"
+            rc=$?
+        else
+            bao "$@" 2>"${err_file}"
+            rc=$?
+        fi
+        if (( rc == 0 )); then
+            [[ -s "${err_file}" ]] && cat "${err_file}" >&2
+            return 0
+        fi
+        err="$(<"${err_file}")"
+        if [[ -n "$err" ]]; then
+            printf '%s\n' "$err" >&2
+        fi
+        if ! [[ "$err" =~ (connection[[:space:]]refused|connection[[:space:]]reset|TLS[[:space:]]handshake[[:space:]]timeout|timeout[[:space:]]awaiting[[:space:]]response[[:space:]]headers|i/o[[:space:]]timeout|dial[[:space:]]tcp) ]]; then
+            return "$rc"
+        fi
+        if (( n >= attempts )); then
+            return "$rc"
+        fi
+        warn "bao failed (attempt ${n}/${attempts}): transient connection error"
+        warn "  Retrying in ${delay}s..."
+        sleep "$delay"
+        n=$((n + 1))
+    done
+}
+
 # =============================================================================
 # wait_for_running_pod NS LABEL_SELECTOR FRIENDLY_NAME [TIMEOUT_SECS]
 #
