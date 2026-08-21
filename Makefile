@@ -123,6 +123,12 @@ lint-yaml:
 lint-shell: validate-steps lint-step-contracts lint-resolvable lint-credential-fields lint-claim-defaults lint-cluster-config-keys lint-template-placeholders lint-phase-table lint-password-schemes
 	@git ls-files -z -- '*.sh' | xargs -0 shellcheck -x scripts/kubectl-gentian
 
+## Round-trip the recovery kit: export one, load it back, prove every value
+## returns byte-exact. Needs no cluster; skips when age is absent, because the
+## openssl fallback reads its passphrase from a terminal.
+verify-recovery-kit:
+	@bash scripts/tools/verify-recovery-kit.sh
+
 ## Report which declared credentials are satisfied. --source picks where to look:
 ## vault (installer preflight), cluster (day-2), git (CI on a deployments branch).
 check-credentials:

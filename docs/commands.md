@@ -754,6 +754,30 @@ kubectl get tenantrestore drill-restore -n tenant-demo \
 
 The measured time is the RTO. Publish it rather than assuming one.
 
+### The other recovery: the kit
+
+A tenant bundle restores a tenant into a working cluster. It cannot rebuild the
+cluster — the derived credentials every kernel service authenticates with come
+from the master password and the derivation salt, which live in OpenBao, and a
+disaster that loses OpenBao's storage loses them. That is what the recovery kit
+carries, and it is worth proving it round-trips before trusting it:
+
+```bash
+./install.sh --export-recovery-kit          # writes an encrypted kit, mode 0600
+make verify-recovery-kit                    # export, load back, compare byte-exact
+```
+
+`verify-recovery-kit` needs no cluster. It exports a kit from known values and
+reads it back in a clean shell, asserting the salt and every credential return
+unaltered through newlines, quotes and shell metacharacters, and that a
+tampered key name, a file that is not a kit, and a missing identity are each
+refused rather than partially applied. A salt that comes back wrong by one byte
+reproduces a whole cluster of wrong passwords, and the symptom is an admin
+login that fails for no visible reason.
+
+Storing the kit in the cluster it protects defeats it. It belongs wherever the
+organisation keeps break-glass material, beside the backup identity.
+
 **If a drill wedges:** an app stuck in `.status.quiesced` is offline. The
 operator resumes anything it finds paused on the next reconcile, including
 after a restart, so deleting the stuck `TenantExport`/`TenantRestore` is the
