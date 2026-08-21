@@ -1,0 +1,81 @@
+---
+apiVersion: gentianos.io/v1alpha1
+kind: XRepository
+metadata:
+  name: ghcr-cloudnative-pg
+status:
+  artefacts:
+  - argocd-repo-ghcr-cloudnative-pg
+  - appproject-source-ghcr-cloudnative-pg
+  conditions:
+  - lastTransitionTime: "2024-01-01T00:00:00Z"
+    message: 'Unready resources: appproject-source-ghcr-cloudnative-pg, argocd-repo-ghcr-cloudnative-pg'
+    reason: Creating
+    status: "False"
+    type: Ready
+  credentialMessage: no credential required for this repository
+  credentialSatisfied: true
+---
+apiVersion: kubernetes.crossplane.io/v1alpha2
+kind: Object
+metadata:
+  annotations:
+    crossplane.io/composition-resource-name: appproject-source-ghcr-cloudnative-pg
+  generateName: ghcr-cloudnative-pg-
+  labels:
+    crossplane.io/composite: ghcr-cloudnative-pg
+  ownerReferences:
+  - apiVersion: gentianos.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XRepository
+    name: ghcr-cloudnative-pg
+    uid: ""
+spec:
+  forProvider:
+    manifest:
+      apiVersion: argoproj.io/v1alpha1
+      kind: AppProject
+      metadata:
+        name: gentianos-tenants
+        namespace: argocd
+      spec:
+        sourceRepos:
+        - ghcr.io/cloudnative-pg/charts
+  managementPolicies:
+  - Observe
+  - Create
+  - Update
+  providerConfigRef:
+    name: kubernetes
+---
+apiVersion: kubernetes.crossplane.io/v1alpha2
+kind: Object
+metadata:
+  annotations:
+    crossplane.io/composition-resource-name: argocd-repo-ghcr-cloudnative-pg
+  generateName: ghcr-cloudnative-pg-
+  labels:
+    crossplane.io/composite: ghcr-cloudnative-pg
+  ownerReferences:
+  - apiVersion: gentianos.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XRepository
+    name: ghcr-cloudnative-pg
+    uid: ""
+spec:
+  forProvider:
+    manifest:
+      apiVersion: v1
+      kind: Secret
+      metadata:
+        labels:
+          argocd.argoproj.io/secret-type: repository
+        name: repo-ghcr-cloudnative-pg
+        namespace: argocd
+      stringData:
+        type: helm
+        url: ghcr.io/cloudnative-pg/charts
+  providerConfigRef:
+    name: kubernetes

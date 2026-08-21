@@ -67,7 +67,13 @@ spec:
                  composite, so composed resources remain unambiguous when two claims
                  share a name in different namespaces. */}}
             {{- $claimName := dig "labels" "crossplane.io/claim-name" $name .observed.composite.resource.metadata }}
-            {{- $cred := $spec.credential }}
+            {{- $cred := $spec.credential | default dict }}
+            {{- /* A repository need not have a credential: a public chart registry or a
+                 public Git remote has none, and requiring one produced a
+                 CredentialRequirement nobody could satisfy and an ExternalSecret reading
+                 a vault path that was never written. Without one, this emits the
+                 repository and nothing that waits on a secret. */}}
+            {{- $hasCred := ne (len $cred) 0 }}
             {{- /* A repository owned by a tenant produces a tenant-scoped
                  credential. Scope on its own only says "a tenant may see this";
                  the tenant name is what stops one tenant reading another's
@@ -94,7 +100,9 @@ spec:
             */ -}}
             {{- $extra  := index .context "apiextensions.crossplane.io/extra-resources" }}
             {{- $probes := dig "credentialProbe" list $extra }}
-            {{- $satisfied := false }}
+            {{- /* No credential means nothing to wait for, so the artefacts below are
+                 emitted immediately rather than never. */}}
+            {{- $satisfied := not $hasCred }}
             {{- range $probes }}
               {{- range (dig "status" "conditions" list .) }}
                 {{- if and (eq .type "Ready") (eq .status "True") }}
@@ -103,6 +111,7 @@ spec:
               {{- end }}
             {{- end }}
 
+            {{- if $hasCred }}
             ---
             # The catalogue entry for this repository's credential.
             apiVersion: gentianos.io/v1alpha1
@@ -178,6 +187,7 @@ spec:
               providerConfigRef:
                 name: kubernetes
 
+            {{- end }}
             ---
             # Status on the composite itself. Emitting the XR's own GVK is how
             # go-templating writes composite status; the message names the
@@ -188,7 +198,12 @@ spec:
             kind: XRepository
             status:
               credentialSatisfied: {{ $satisfied }}
-              {{- if $satisfied }}
+              {{- if not $hasCred }}
+              credentialMessage: "no credential required for this repository"
+              artefacts:
+                - argocd-repo-{{ $name }}
+                - appproject-source-{{ $name }}
+              {{- else if $satisfied }}
               credentialMessage: "credential present at {{ $cred.vaultPath }}"
               artefacts:
                 - credreq-{{ $name }}
@@ -219,6 +234,21 @@ spec:
             spec:
               forProvider:
                 manifest:
+                  {{- if not $hasCred }}
+                  # No credential: a plain Secret, because there is nothing for ESO to
+                  # resolve. ArgoCD reads type and url from the same keys either way, so
+                  # what a consumer sees does not change with whether the repo is public.
+                  apiVersion: v1
+                  kind: Secret
+                  metadata:
+                    name: repo-{{ $name }}
+                    namespace: argocd
+                    labels:
+                      argocd.argoproj.io/secret-type: repository
+                  stringData:
+                    type: {{ if $isOci }}helm{{ else }}git{{ end }}
+                    url: {{ $url | quote }}
+                  {{- else }}
                   apiVersion: external-secrets.io/v1
                   kind: ExternalSecret
                   metadata:
@@ -249,6 +279,7 @@ spec:
                         remoteRef:
                           key: {{ $cred.vaultPath | quote }}
                           property: password
+                    {{- end }}
               providerConfigRef:
                 name: kubernetes
 
@@ -278,7 +309,7 @@ spec:
               providerConfigRef:
                 name: kubernetes
 
-            {{- if $isOci }}
+            {{- if and $isOci $hasCred }}
             ---
             # dockerconfigjson for kubelet, in every matching namespace present
             # and future. A ClusterExternalSecret rather than one per namespace,
@@ -355,7 +386,7 @@ spec:
                 name: kubernetes
             {{- end }}
 
-            {{- if and $isGit $spec.writable }}
+            {{- if and $isGit $spec.writable $hasCred }}
             ---
             # Push access for the operator's GitOps app lifecycle: installing an
             # app from the store commits to gentian-deployments.

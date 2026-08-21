@@ -26,7 +26,6 @@ spec:
                 - type
                 - role
                 - endpoints
-                - credential
               properties:
                 type:
                   type: string
@@ -109,6 +108,12 @@ spec:
                       type: object
                       additionalProperties:
                         type: string
+                # Optional. A public chart registry or a public Git repository has no
+                # credential, and requiring one meant inventing a vault path for a
+                # secret that does not exist — which then surfaces in the credential
+                # manager as a requirement nobody can ever satisfy. Omit it and the
+                # repository is emitted without an ExternalSecret, a
+                # CredentialRequirement, or anything waiting on one.
                 credential:
                   type: object
                   description: >
