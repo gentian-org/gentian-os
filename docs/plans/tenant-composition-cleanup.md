@@ -324,7 +324,23 @@ declared** is imperative; reading a managed resource's own output is not. The us
 still stands, because those users are created by people, not by a resource anyone declared.
 
 Adoption verified read-only against the live `kernel` identity provider in the corp realm: Ready,
-31 fields observed, including the `first-broker-login-gentian` alias and both endpoint URLs.
+31 fields observed, with both endpoint URLs.
+
+**The probe also found a live defect, which is the strongest argument for declaring these.**
+`firstBrokerLoginFlowAlias` on that identity provider is not stable. Sampled three times a minute
+apart it read `first broker login` — Keycloak's built-in — twice, then `first-broker-login-gentian`.
+The Job completion times explain the shape: `broker-first-login` finished at 05:02:30 and
+`broker-idp` did not run until 05:03:12, so there is a window of roughly a minute in every reconcile
+cycle where the tenant's brokered first login uses Keycloak's default flow rather than the Gentian
+one that auto-links accounts.
+
+Two Jobs own one field between them with no ordering, so which value is live depends on which ran
+last. The exact mechanism is not pinned down — most likely the flow being recreated invalidates the
+reference and Keycloak falls back — but the instability itself is measured, not inferred.
+
+Declaring the identity provider fixes this by construction rather than by fixing a bug: one owner,
+one value, and a reference that Crossplane reconciles back if anything moves it. It is worth doing
+for that reason alone, ahead of the Job removals.
 
 ### Then: 7. Gentian groups
 
