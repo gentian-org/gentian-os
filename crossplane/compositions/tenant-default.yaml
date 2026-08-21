@@ -375,15 +375,21 @@ spec:
                 directAccessGrantsEnabled: true
                 serviceAccountsEnabled: false
                 fullScopeAllowed: true
-                validRedirectUris:
-                  - https://portal.{{ $kd }}/*
-                  - https://portal.{{ $kd }}/login
-                  - https://portal.{{ $kd }}/login/*
-                webOrigins:
-                  - https://portal.{{ $kd }}
-                validPostLogoutRedirectUris:
-                  - https://portal.{{ $kd }}/*
-                  - https://portal.{{ $kd }}/login
+                # No redirect URIs, web origins or post-logout URIs, even though the
+                # live client carries them.
+                #
+                # This client has standardFlowEnabled and implicitFlowEnabled both
+                # false — it authenticates by direct access grant, and is never
+                # redirected to. Keycloak stores redirect URIs on such a client
+                # anyway, so they were read off the live object and declared here,
+                # and the provider then refused every update with
+                #   valid_redirect_uris cannot be set when standard or implicit
+                #   flow is not enabled
+                # leaving the resource Synced=False and this manifest inert.
+                #
+                # Observing a state does not mean it can be declared. The fields
+                # are unused here, so dropping them is what makes the manifest
+                # expressible at all.
                 clientSecretSecretRef:
                   name: gentian-portal-bff
                   namespace: platform-kernel

@@ -177,15 +177,6 @@ spec:
     realmId: render-fixture
     serviceAccountsEnabled: false
     standardFlowEnabled: false
-    validPostLogoutRedirectUris:
-    - https://portal.platform.example.test/*
-    - https://portal.platform.example.test/login
-    validRedirectUris:
-    - https://portal.platform.example.test/*
-    - https://portal.platform.example.test/login
-    - https://portal.platform.example.test/login/*
-    webOrigins:
-    - https://portal.platform.example.test
   providerConfigRef:
     name: keycloak
 ---
