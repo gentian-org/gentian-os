@@ -156,6 +156,22 @@ This is a boundary, not a description of how far a migration got. Where the two 
 Jobs that predate `provider-keycloak`, for instance — the boundary is right and the code has not
 caught up. See [plans/tenant-composition-cleanup.md](plans/tenant-composition-cleanup.md).
 
+**The same rule applies to installer steps.** `scripts/steps/*` is the same question asked at
+bootstrap time instead of tenant-onboarding time: a step that only applies a manifest belongs in an
+ApplicationSet (Git is where the answer lives), a step that calls a running service's admin API is
+the operator's four reasons above, and a step that only guards or validates stays a step. Two named
+exceptions today:
+
+- The vLLM GPU chart install (`render_and_apply_vllm_gpu_manifest` in `scripts/lib/llm-lib.sh`)
+  reads live GPU device-plugin time-slicing state to decide `manageTimeSlicing` — reasons 1 and 2,
+  discovery and computation. The rule says this is operator territory, not a shell step; it stays
+  imperative because nothing yet reads that state and republishes it somewhere an ApplicationSet's
+  values could reference.
+- The LiteLLM model-registration Job (`ensure_litellm_vllm_model`, same file) POSTs to LiteLLM's
+  admin API to sync registered models with a Tenant's `llm.instances` — reason 4, change-triggered,
+  ArgoCD cannot POST. This one has a solved precedent: `litellm_team.go` does exactly this for
+  LiteLLM Teams. This is migration debt, not a boundary question.
+
 **Why two tools, not one:** ArgoCD's drift detection, UI, and rollback
 work for *every* Kubernetes resource, not just MRs. Crossplane's
 reconcile loop handles the slow, eventually-consistent external APIs

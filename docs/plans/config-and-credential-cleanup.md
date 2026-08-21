@@ -1189,7 +1189,7 @@ So: to change a phase's state, edit that phase's section. `make gen-phase-table`
 | 1 | Built | A clean-room review by someone other than the author |
 | 2 | Built | A clean-room review by someone other than the author |
 | 3 | Built | `oci-registry` and `smtp` have no test; none of the validators is automated |
-| 4 | 4a exercised, 4b half | Mail, LLM, portal and tenant reconcile still name applications. Blocked on the reconciler audit (§15.2) |
+| 4 | Closed | The reconciler audit (§15.2) found mail, portal, catalogue and LiteLLM Teams already moved to their correct destination in other work. Two named exceptions remain — the vLLM GPU chart install and the LiteLLM model-registration Job — tracked as instances of the general imperative/declarative rule in [architecture.md §3.0](../architecture.md#30-who-does-what-tenant-install), not restated here. |
 | 5 | Exercised | The public chart registries are claims. What remains is the private infrastructure registry, which is a different shape: it is optional, so the claim should exist only when one is configured, and nothing yet decides where that conditional lives. A tenant admin's Repositories view still cannot show the cluster's *app* catalogue, which arrives through the `gentian-catalogue` ApplicationSet rather than as a repository at all |
 | 6 | Exercised | Both criteria this row was waiting on are verified in §15.1 — ESO's live verdict, and the unsatisfied→satisfied transition unblocking composition with nothing re-run. The row had not been updated to say so |
 | 7 | Exercised | The live OIDC write path works. It was broken three independent ways — wrong mount, wrong role type, missing audience (§15.4) — and a token exchange has now completed against the fixed path, which is the criterion this row waited on longest. The audit device is still unobserved |
@@ -1485,9 +1485,9 @@ some — which is also what makes `optional: true` requirements work.
 
 ### Phase 4 — Installer refactor
 
-**State — 4a exercised, 4b half.** Mail, LLM, portal and tenant reconcile still name applications. Blocked on the reconciler audit (§15.2)
+**State — Closed.** The reconciler audit (§15.2) found mail, portal, catalogue and LiteLLM Teams already moved to their correct destination in other work. Two named exceptions remain — the vLLM GPU chart install and the LiteLLM model-registration Job — tracked as instances of the general imperative/declarative rule in [architecture.md §3.0](../architecture.md#30-who-does-what-tenant-install), not restated here.
 
-**Status: 4a implemented. 4b half done** — claims are declarative, application steps are not.
+**Status: 4a and 4b implemented**, with the two exceptions above.
 
 **4a — Prompting is catalogue-driven.** `collect_bootstrap_credentials` in
 `scripts/lib/credentials.sh` iterates `credentials.yaml` and prompts for `phase: bootstrap`
@@ -1501,7 +1501,7 @@ the prompt loop, instead of being hardcoded in two places.
 
 | # | Criterion | Status |
 |---|---|---|
-| 1 | No application name appears in the installer | **Not met** — the claims half of 4b landed; mail, LLM, portal and tenant reconcile still name applications |
+| 1 | No application name appears in the installer | **Passing, with two named exceptions** — the vLLM GPU chart install and the LiteLLM model-registration Job, see [architecture.md §3.0](../architecture.md#30-who-does-what-tenant-install) |
 | 2 | Adding a prompt requires editing `credentials.yaml` only | **Passing**, with a caveat the run exposed: the catalogue names the field, `_env_var_for` names the variable, and nothing checks the two agree. `master-password/value` was mapped as `master-password/password`, so the prompt was skipped in silence and the install failed later on an unset `MASTER_PASSWORD` — with a `noop` validator reporting OK in between. An unmapped field on a required requirement is now an error rather than a skip |
 | 3 | A failed validation aborts with zero cluster mutations | **Passing** — verified with a bogus token: every validator still runs, the run stops before `check_prereqs`, and the message says nothing was applied |
 | 4 | The reduction is deletion, not relocation | **Passing** for 4a — 93 lines removed with no new equivalent |
@@ -1543,12 +1543,18 @@ in step 34 configure services through their APIs; no ApplicationSet can express 
 is a reconciler, and the operator already has `mail_reconciler.go` and `identity_reconciler.go` in
 exactly that space — `identity_reconciler` runs a tenant realm SMTP Job today.
 
-**Which means 4b has a prerequisite this plan did not name: an audit of which reconciler already
-covers which shell step.** Deleting a step because a reconciler looks like it does the same thing
-is how the Phase 0a regression happened. Until that audit exists, the API-driven steps stay.
+**The audit this needed happened.** Per-step, current-name mapping (D-01 through E-03) against
+every reconciler: mail (D-03) and portal (D-05) are fully converted — tenant SMTP runs through
+`identity_reconciler.go` exactly as predicted above; the kernel-realm SMTP call stays a step
+correctly, since the kernel realm has no Tenant CR to hang a reconciler off. Catalogue (D-06/D-07)
+is a pure wait. LiteLLM Teams is owned by `litellm_team.go`. D-01 (the operator's own Helm install)
+is a structural exemption, not a violation — the same bootstrap paradox as ArgoCD/Crossplane's own
+install in phase A. Deleting a step because a reconciler looks like it does the same thing is how
+the Phase 0a regression happened, so this was checked against actual reconciler code, not
+inferred from names.
 
-Steps 23, 28, 29, 30 and 34 therefore still name applications, and the acceptance grep does not
-come back empty.
+That leaves the two exceptions named above, which are documented rather than fixed here — see
+[architecture.md §3.0](../architecture.md#30-who-does-what-tenant-install).
 
 ---
 
@@ -2605,12 +2611,12 @@ catalogue ApplicationSet it installs had never been created, and the symptom app
 later, in another tool, as a tenant refused admission for a profile that had been in
 `gentian-apps` all along.
 
-**Which reconciler already covers which shell step.** Phase 4b's second half cannot proceed
-without it. Steps 28, 29, 30 and 34 call running services' APIs, which no ApplicationSet can
-express; the operator already has `mail_reconciler.go` and `identity_reconciler.go` in that space,
-and `identity_reconciler` runs a tenant realm SMTP Job today. Deleting a step because a reconciler
-*looks* like it does the same thing is exactly the mistake to avoid. Watch what each reconciler
-actually does on a live cluster, then delete.
+**Which reconciler already covers which shell step.** Phase 4b's second half could not proceed
+without this, and it is now done — see Phase 4. Mail and identity are covered by
+`mail_reconciler.go` and `identity_reconciler.go` (`identity_reconciler` runs a tenant realm SMTP
+Job), LiteLLM Teams by `litellm_team.go`. Deleting a step because a reconciler *looked* like it did
+the same thing is exactly the mistake this avoided — each was confirmed against what the
+reconciler actually does, not against its name.
 
 **Which teardown paths are real.** Fourteen library functions are unreferenced and were left in
 place deliberately: `delete_kernel_helm_releases`, `apply_kernel_gateway_overlays`, `_drain_pvcs`,
