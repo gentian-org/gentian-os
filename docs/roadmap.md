@@ -542,26 +542,21 @@ To close: clear `redirectUris` and `webOrigins` on the `corp` realm client
 action — they are Keycloak's derived default, not stored (`attributes` is
 empty).
 
-### 1.27 Manage the kernel IdP, not just observe it
+### 1.27 Retire the Jobs that still write the kernel IdP
 
-`IdentityProvider kernel` and `Client broker-<tenant>` are adopted `Observe`-only
-in `tenant-default`. The client stays that way deliberately — see
-docs/plans/tenant-composition-cleanup.md §8 — but the IdP should be managed, so
-that the object has exactly one writer.
+`IdentityProvider kernel` is managed by `tenant-default`, but it is not yet the
+only writer. The realm script in `identity_reconciler.go` and the broker-idp Job
+both still write the same object, so Crossplane and the Jobs correct each other
+in turn.
 
-Blocking it: provider-keycloak does not observe `useJwksUrl`, `defaultScope` or
-`updateProfileFirstLoginMode`. All three are absent from `status.atProvider` and
-from `extraConfig`, and all three are set on the live object. An unobserved field
-is one a write may not preserve, and these are not cosmetic — `useJwksUrl` is
-what points signature validation at the JWKS endpoint, and `defaultScope` is
-`openid profile email`, where the provider's default is `openid` alone.
+The realm script no longer restates the built-in first-broker-login alias — it
+preserves whatever is in place — so the two no longer disagree about the flow.
+What remains is duplicated work, and a window in which the Jobs' values stand
+until Crossplane next reconciles.
 
-To close: declare all three (the latter two via `extraConfig`), promote to
-`["Observe", "Create", "Update", "Delete"]`, then read the IdP back through the
-Admin API and confirm the three keys survived. Then remove the IdP write from
-the broker-idp Job so there is a single writer. The realm script's write cannot
-be removed outright — the Job requires the IdP to already exist — but it now
-preserves the existing flow alias rather than restating the built-in one.
+The realm script's write cannot simply be deleted: the broker-idp Job requires
+the IdP to already exist and exits non-zero otherwise. Retire the broker-idp
+Job's IdP write first, then the realm script's, leaving creation to Crossplane.
 
-This touches the live login path of every tenant user on a cluster with no
-staging equivalent, so it wants a deliberate window rather than a drive-by.
+Note that the composed `Client broker-<tenant>` stays `Observe`-only by design —
+see docs/plans/tenant-composition-cleanup.md §8.

@@ -463,20 +463,37 @@ built-in one only to bootstrap an IdP that does not exist yet. It cannot simply
 stop writing the IdP: the broker-idp Job requires it to already exist and exits
 non-zero otherwise.
 
-### What blocks full management
+### The unobserved fields
 
-The provider does not observe three keys the live object carries:
-`useJwksUrl`, `defaultScope` and `updateProfileFirstLoginMode`. They are absent
-from `status.atProvider` and from `extraConfig`, but present in the object read
+provider-keycloak does not read three keys the live object carries: `useJwksUrl`,
+`defaultScope` and `updateProfileFirstLoginMode`. They are absent from
+`status.atProvider` and from `extraConfig`, but present in the object read
 straight from the Admin API.
 
-That matters because §7's rule cuts both ways. An unobserved field is one the
-provider may not preserve on write, and these three are not cosmetic:
-`useJwksUrl` is what makes signature validation use the JWKS endpoint, and
-`defaultScope` is `openid profile email` — dropping it to the provider's default
-of `openid` costs every brokered login its name and email claims.
+An unobserved field is one a write may not preserve, and two of these are
+load-bearing: `useJwksUrl` points signature validation at the JWKS endpoint, and
+`defaultScope` is `openid profile email`, where the provider's default is
+`openid` alone — dropping it costs every brokered login the user's name and
+address. All three are therefore declared explicitly, the latter two through
+`extraConfig`.
 
-So promoting to management means declaring all three explicitly and confirming
-against the Admin API that a write preserved them. It is a change to the live
-login path of every tenant user, on a cluster with no staging equivalent, and it
-is the one step here that cannot be verified before making it.
+Verified by reading the object back through the Admin API after the first
+managed write: all three survived, and a brokered authorization request resolves
+to the kernel realm with `scope=openid+profile+email`, so the scopes are not
+merely stored but in use.
+
+The same write added about sixteen provider schema defaults that had been absent
+— `postBinding*`, `wantAssertions*`, `wantAuthnRequestsSigned`, `githubJsonFormat`
+and similar. All are `false`, which is what Keycloak assumes for an absent key,
+and most are SAML or GitHub fields inert on an OIDC provider. Noise in the
+stored object, not a change in behaviour.
+
+The general rule: adopting an object written by a Job means checking what the
+provider cannot see, not only what it rejects. §7 covers the rejection case; this
+is the quieter one, because nothing fails — the field simply stops being set.
+
+### Still two writers
+
+Crossplane is authoritative but not alone: the realm script and the broker-idp
+Job still write this object. They no longer disagree about the flow alias, so
+the flapping is gone, but the duplicated writes remain. Tracked in the roadmap.
