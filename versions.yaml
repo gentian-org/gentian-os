@@ -60,13 +60,13 @@ argocd:
 openbao:
   cli: "v2.5.0"
 
-# The OpenFGA CLI, used by scripts/tools/verify-authz-model.sh to validate and
-# test the authorization model. Pinned like everything else here: it was
-# installed with @latest, and when v0.7.20 raised its floor to Go 1.25.7 while
-# go.mod pins 1.25.0, CI broke on a change nobody in this repository made.
+# The OpenFGA CLI is NOT pinned here, though it is pinned. It lives in its only
+# caller, scripts/tools/verify-authz-model.sh.
 #
-# Every published version currently needs a newer Go than the project targets,
-# so the install sets GOTOOLCHAIN=auto and lets Go fetch a toolchain to build
-# this one tool. That keeps the project's own Go where go.mod puts it.
-openfga:
-  cli: "v0.7.20"
+# This file is the mirror inventory for an air-gapped install, which is why
+# driver.sh's validate_pins requires every entry to be claimed by a step with
+# `# pins:` — an unclaimed entry is either a component the installer no longer
+# pulls, so a mirror wastes effort on it, or a pin that quietly stopped being
+# read. The installer never pulls `fga`; it is a test tool, and no step can
+# honestly claim it. Adding it here made validate_pins fail, which is the lint
+# doing its job rather than getting in the way.
