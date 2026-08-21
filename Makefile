@@ -22,7 +22,7 @@ CROSSPLANE_IMAGE ?= xpkg.crossplane.io/crossplane/crossplane:$(CROSSPLANE_CLI_VE
 KUBEBUILDER_ASSETS ?= /tmp/envtest-bins/k8s/1.32.0-linux-amd64
 export KUBEBUILDER_ASSETS
 
-.PHONY: all build generate manifests test lint docker-build clean install-plugin uninstall-plugin validate-steps gen-credentials gen-phase-table lint-phase-table check-credentials lint-cluster-config-keys lint-template-placeholders lint-portability lint-image-digests check-render-fixtures lint-resolvable lint-bootstrap-apps lint-step-contracts lint-claim-defaults lint-password-schemes test-policy test-policy-openbao test-policy-authz verify-claim-applied
+.PHONY: all build generate manifests test lint docker-build clean install-plugin uninstall-plugin validate-steps gen-credentials gen-phase-table lint-phase-table check-credentials lint-cluster-config-keys lint-template-placeholders lint-portability lint-image-digests check-render-fixtures lint-resolvable lint-bootstrap-apps lint-step-contracts lint-claim-defaults lint-password-schemes test-policy test-policy-openbao test-policy-authz verify-claim-applied verify-image-updates
 
 all: generate build test
 
@@ -348,6 +348,20 @@ test-policy-authz:
 ## with no owner. Read-only: it reports, it does not reconcile.
 verify-claim-applied:
 	@bash scripts/tools/verify-claim-applied.sh
+
+## verify-image-updates: the cluster runs the images CI publishes.
+##
+## Also not part of `test`, and for the same reason as above: the annotations
+## argocd-image-updater reads are written onto an Application the installer
+## applies once. lint-template-placeholders.py guards the template those
+## annotations come from; this checks what the cluster ended up with, because
+## the two can disagree for as long as nobody looks.
+##
+## The updater reports success when it does nothing — an image it cannot
+## resolve is skipped, not failed, so the cluster reads Healthy with pods
+## Running while every merged fix stays unpublished. Read-only.
+verify-image-updates:
+	@bash scripts/tools/verify-image-updates.sh
 
 # ---------------------------------------------------------------------------
 # E2E tests (live dev cluster required)
