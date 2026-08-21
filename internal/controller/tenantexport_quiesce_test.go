@@ -312,9 +312,13 @@ func TestDeletingAnExportResumesAppsCleansBundleThenReleases(t *testing.T) {
 		Namespace: kernelNamespace,
 		Labels:    map[string]string{backup.ExportLabel: "export-x"},
 	}}
+	// A live namespace and tenant: this is someone deleting one backup, which
+	// is the only case that may remove a bundle.
+	ns := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "tenant-demo"}}
+	liveTenant := &gentianov1alpha1.Tenant{ObjectMeta: metav1.ObjectMeta{Name: "demo"}}
 
 	c := fake.NewClientBuilder().WithScheme(s).
-		WithObjects(export, paused, captureJob).
+		WithObjects(export, paused, captureJob, ns, liveTenant).
 		WithStatusSubresource(export).Build()
 	r := &TenantExportReconciler{Client: c, Scheme: s,
 		Reconciler: &TenantReconciler{Client: c, Scheme: s}}
@@ -652,5 +656,101 @@ func TestScaleDownRestoreResumesBeforeRunningHooks(t *testing.T) {
 	}
 	if got := *getDeployment(t, c, "nextcloud").Spec.Replicas; got != 1 {
 		t.Fatalf("replicas = %d after resume-before-hooks, want the memoed 1", got)
+	}
+}
+
+// A backup must outlive the tenant it protects. These CRs live in the tenant's
+// namespace, so a teardown deletes them — and deleting them used to delete
+// their bundles, which made "purge the tenant, then restore it" destroy the
+// only thing that could have restored it.
+func TestTenantTeardownKeepsTheBundle(t *testing.T) {
+	s := runtime.NewScheme()
+	if err := clientgoscheme.AddToScheme(s); err != nil {
+		t.Fatalf("add client-go scheme: %v", err)
+	}
+	if err := gentianov1alpha1.AddToScheme(s); err != nil {
+		t.Fatalf("add gentian scheme: %v", err)
+	}
+
+	newExport := func(name string) *gentianov1alpha1.TenantExport {
+		return &gentianov1alpha1.TenantExport{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: name, Namespace: "tenant-demo",
+				Finalizers: []string{exportFinalizer},
+			},
+			Status: gentianov1alpha1.TenantExportStatus{
+				Phase: gentianov1alpha1.TenantExportPhaseReady,
+				Bundle: &gentianov1alpha1.BundleRef{
+					Bucket: "demo-gentian-backup", Prefix: name,
+				},
+			},
+		}
+	}
+
+	terminating := metav1.Now()
+	for _, tc := range []struct {
+		name    string
+		objects []client.Object
+	}{
+		{
+			name: "namespace terminating",
+			objects: []client.Object{
+				&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{
+					Name:              "tenant-demo",
+					DeletionTimestamp: &terminating,
+					Finalizers:        []string{"kubernetes"},
+				}},
+				&gentianov1alpha1.Tenant{ObjectMeta: metav1.ObjectMeta{Name: "demo"}},
+			},
+		},
+		{
+			name: "tenant terminating",
+			objects: []client.Object{
+				&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "tenant-demo"}},
+				&gentianov1alpha1.Tenant{ObjectMeta: metav1.ObjectMeta{
+					Name:              "demo",
+					DeletionTimestamp: &terminating,
+					Finalizers:        []string{tenantFinalizer},
+				}},
+			},
+		},
+		{
+			name: "tenant already gone",
+			objects: []client.Object{
+				&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "tenant-demo"}},
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			export := newExport("keep-me")
+			objs := append([]client.Object{export}, tc.objects...)
+			c := fake.NewClientBuilder().WithScheme(s).
+				WithObjects(objs...).WithStatusSubresource(export).Build()
+			r := &TenantExportReconciler{Client: c, Scheme: s,
+				Reconciler: &TenantReconciler{Client: c, Scheme: s}}
+			ctx := context.Background()
+
+			if err := c.Delete(ctx, export); err != nil {
+				t.Fatalf("delete export: %v", err)
+			}
+			if _, err := r.Reconcile(ctx, ctrl.Request{NamespacedName: types.NamespacedName{
+				Name: "keep-me", Namespace: "tenant-demo"}}); err != nil {
+				t.Fatalf("reconcile: %v", err)
+			}
+
+			// No cleanup Job: the bundle's objects stay in the bucket.
+			if err := c.Get(ctx, types.NamespacedName{
+				Name: bundleDeleteJobName("keep-me"), Namespace: kernelNamespace,
+			}, &batchv1.Job{}); !apierrors.IsNotFound(err) {
+				t.Fatalf("a cleanup Job was created during teardown: %v", err)
+			}
+			// And the CR is released rather than wedged behind its finalizer,
+			// which would block the namespace from ever finishing deletion.
+			if err := c.Get(ctx, types.NamespacedName{
+				Name: "keep-me", Namespace: "tenant-demo",
+			}, &gentianov1alpha1.TenantExport{}); !apierrors.IsNotFound(err) {
+				t.Fatalf("export still held by its finalizer during teardown: %v", err)
+			}
+		})
 	}
 }

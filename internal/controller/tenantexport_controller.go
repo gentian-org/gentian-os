@@ -607,6 +607,28 @@ func (r *TenantExportReconciler) finalize(
 		return ctrl.Result{}, err
 	}
 
+	// A backup exists to survive the deletion of what it backs up.
+	//
+	// These CRs live in the tenant's namespace, so tearing a tenant down
+	// deletes them — and deleting them used to delete their bundles, which
+	// made "purge the tenant and restore it" destroy the only thing that could
+	// have restored it. Teardown therefore keeps the bundles and says where
+	// they are; only deleting an export while its tenant still exists means
+	// "delete this backup".
+	//
+	// The cost is deliberate: bundles outlive their tenant and are removed by
+	// hand, which matters for an erasure request. That is the right way round
+	// — retained data can still be deleted afterwards, and a bundle deleted
+	// during teardown is gone at the one moment it was most needed.
+	if torn, why := r.tenantTeardown(ctx, export, tenantName); torn {
+		if b := export.Status.Bundle; b != nil && b.Prefix != "" {
+			logger.Info("keeping bundle: the tenant is being torn down, and a backup must outlive it",
+				"export", export.Name, "bucket", b.Bucket, "prefix", b.Prefix, "reason", why)
+		}
+		controllerutil.RemoveFinalizer(export, exportFinalizer)
+		return ctrl.Result{}, r.Update(ctx, export)
+	}
+
 	done, err := r.ensureBundleDeleted(ctx, export, tenantName, logger)
 	if err != nil {
 		return ctrl.Result{}, err
@@ -616,6 +638,41 @@ func (r *TenantExportReconciler) finalize(
 	}
 	controllerutil.RemoveFinalizer(export, exportFinalizer)
 	return ctrl.Result{}, r.Update(ctx, export)
+}
+
+// tenantTeardown reports whether this export is disappearing because its tenant
+// is, rather than because someone deleted the backup.
+//
+// Either signal is enough on its own: the namespace going away sweeps every
+// export in it, and the Tenant going away is what the namespace is following.
+// A lookup that fails for any other reason is treated as teardown too — the
+// safe direction, since the consequence is a retained bundle rather than a
+// deleted one.
+func (r *TenantExportReconciler) tenantTeardown(
+	ctx context.Context,
+	export *gentianov1alpha1.TenantExport,
+	tenantName string,
+) (bool, string) {
+	ns := &corev1.Namespace{}
+	switch err := r.Get(ctx, types.NamespacedName{Name: export.Namespace}, ns); {
+	case apierrors.IsNotFound(err):
+		return true, "namespace is gone"
+	case err != nil:
+		return true, fmt.Sprintf("namespace could not be read: %v", err)
+	case ns.DeletionTimestamp != nil:
+		return true, "namespace is terminating"
+	}
+
+	tenant := &gentianov1alpha1.Tenant{}
+	switch err := r.Get(ctx, types.NamespacedName{Name: tenantName}, tenant); {
+	case apierrors.IsNotFound(err):
+		return true, "tenant is gone"
+	case err != nil:
+		return true, fmt.Sprintf("tenant could not be read: %v", err)
+	case tenant.DeletionTimestamp != nil:
+		return true, "tenant is terminating"
+	}
+	return false, ""
 }
 
 // bundleDeleteJobName names the cleanup Job; deleteExportJobs spares it.

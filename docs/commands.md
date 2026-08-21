@@ -614,6 +614,24 @@ apps are resumed and outstanding capture Jobs are stopped first. If the
 cleanup Job itself fails, the export is released anyway and the operator log
 names the bucket and prefix left behind.
 
+**Tearing a tenant down does not delete its bundles.** These resources live in
+the tenant's namespace, so an undeploy or a `--purge` removes them — and if
+that removed the bundles too, "purge the tenant, then restore it" would destroy
+the only thing that could restore it. The operator recognises a teardown and
+keeps the objects, logging the bucket and prefix for each.
+
+The consequence is real and points the other way: bundles outlive their tenant
+and nothing removes them afterwards. On an erasure request, or simply to
+reclaim the space, remove them deliberately once you are sure:
+
+```bash
+# What a deleted tenant left behind
+mc ls gentian/demo-gentian-backup/
+
+# Removing it is not reversible and no backup remains afterwards
+mc rm --recursive --force gentian/demo-gentian-backup/
+```
+
 ### Reading a bundle
 
 The bundle is a prefix in the tenant's backup bucket. Every artefact is
