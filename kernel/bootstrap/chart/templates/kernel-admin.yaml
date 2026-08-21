@@ -1,14 +1,15 @@
 ---
-# Deploys the shared CNPG Cluster (postgres) and its ExternalSecrets
-# into the platform-kernel namespace.
+# Deploys the operator's administrative plane into platform-kernel: the
+# ExternalSecrets it administers the shared infra with, and the shared CNPG
+# Cluster it provisions tenant databases in.
 #
 # Depends on:
 #   - cnpg-application.yaml  (CNPG operator must be deployed first — CRDs needed)
 #   - 02-external-secrets.yaml  (ESO must be running for ExternalSecrets to sync)
 #   - globals-application.yaml  (ClusterSecretStore/openbao must exist)
 #
-# The name and path are rendered from GENTIAN_DEPLOYMENTS_STAGE. Both were the
-# literal "dev", so every cluster — whatever its stage — got the dev manifests.
+# The path is rendered from GENTIAN_DEPLOYMENTS_STAGE. It was the literal "dev",
+# so every cluster — whatever its stage — got the dev manifests.
 # Those carry the shared-infra ExternalSecrets, whose hosts are stage-qualified:
 #
 #   redis-dev-master.gentian-infra-dev.svc.cluster.local
@@ -21,14 +22,25 @@
 # resolve", the app's cache user is never created, and an app using Redis for
 # sessions — Nextcloud does — serves static pages but 500s on login.
 #
+# The source is now one chart with env as a parameter, so a stage needs no new
+# directory — the dev and prod copies differed in three hostnames and were
+# otherwise identical. It was called kernel/services/postgresql/, which named
+# one of the six services whose admin credentials it carries and is why they
+# were hard to find.
+#
 # Managed resources:
 #   platform-kernel/Cluster/postgres
-#   platform-kernel/ExternalSecret/cnpg-superuser  → Secret/cnpg-superuser
-#   platform-kernel/ExternalSecret/postgres-admin  → Secret/postgres-admin
+#   platform-kernel/ExternalSecret/{cnpg-superuser,postgres-admin}   → CNPG
+#   platform-kernel/ExternalSecret/keycloak-admin                    → Keycloak
+#   platform-kernel/ExternalSecret/dovecot-admin                     → Dovecot
+#   platform-kernel/ExternalSecret/{mariadb,redis,minio}-admin       → shared infra
+#
+# NOT the credentials those services authenticate themselves with. Those live in
+# each service's own chart and land in gentian-infra-<env>.
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
-  name: cnpg-cluster-{{ .Values.stage }}
+  name: kernel-admin-{{ .Values.stage }}
   namespace: argocd
   annotations:
     argocd.argoproj.io/sync-wave: "14"   # after infra (wave 12–13), before kernel services (wave 30+)
@@ -39,7 +51,11 @@ spec:
   source:
     repoURL: https://github.com/gentian-org/gentian-os
     targetRevision: {{ .Values.gentianOsBranch }}
-    path: kernel/services/postgresql/manifests/{{ .Values.stage }}
+    path: kernel/services/kernel-admin/manifests
+    helm:
+      parameters:
+        - name: env
+          value: '{{ .Values.stage }}'
   destination:
     server: https://kubernetes.default.svc
     namespace: platform-kernel

@@ -1,0 +1,19 @@
+apiVersion: v2
+name: kernel-admin
+description: |
+  The operator's administrative plane in platform-kernel, rendered from a
+  single source for every stage.
+
+  Two kinds of object, kept together because they are ordered against each
+  other: the ExternalSecrets the operator administers the shared infra with
+  (sync-wave 0), and the shared CNPG Cluster it provisions tenant databases in
+  (sync-wave 1, which must not bootstrap before cnpg-superuser exists).
+
+  These are NOT the credentials the infra services authenticate themselves
+  with. Those live in each service's own chart and land in gentian-infra-<env>:
+  redis-credentials, minio-credentials, mariadb-sensitive-values,
+  postgresql-sensitive-values. The ones here land in platform-kernel and are
+  read by the operator's reconcilers — cache_reconciler.go reads redis-admin to
+  create per-tenant ACL users, and so on.
+type: application
+version: 0.1.0

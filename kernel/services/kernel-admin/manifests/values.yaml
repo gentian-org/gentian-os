@@ -1,0 +1,11 @@
+# env is supplied by the Application (helm.parameters) from the cluster's stage.
+# The default only matters for `helm template` run by hand.
+env: dev
+
+# The in-cluster Keycloak HTTP Service, which the operator's admin client dials.
+#
+# A value rather than a literal because the release name is configurable
+# (GENTIAN_IDP_KEYCLOAK_RELEASE). When it does not match, ensure_keycloak_admin_
+# secret_url in the installer detects the mismatch and can only report it — the
+# ExternalSecret has no way to discover the Service for itself.
+keycloakRelease: gentian-idp-keycloak
