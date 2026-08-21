@@ -563,6 +563,45 @@ spec:
             {{- end }}
 
             {{- if and $kernelRealm $kcInternal }}
+            {{- /* ── the tenant's entitlement groups ─────────────────────────
+                 Three fixed, one per app. The names are internal/keycloak/groups.go's
+                 contract — members, admins, app-admins, and app:<profile> — and
+                 they carry no attributes, checked against the live realm.
+
+                 No external-name. A group is identified by its UUID, so it cannot
+                 be adopted from its name; given the realm and the name, the
+                 provider resolves the existing one instead, which is how the pack's
+                 mappers and client role adopted without being recreated. Keycloak
+                 refuses a second top-level group of the same name, so the failure
+                 mode if it does not resolve is a conflict rather than a duplicate.
+
+                 The gentian-groups Job still makes these. It also covers profiles
+                 that are not on spec.apps, which this cannot see — CollectTenantGroupNames
+                 takes an additionalProfiles argument for exactly that — so the Job
+                 goes only once that gap is closed.
+              */}}
+            {{- $groupNames := list (printf "gentian:tenant:%s:members" $tenant) (printf "gentian:tenant:%s:admins" $tenant) (printf "gentian:tenant:%s:app-admins" $tenant) }}
+            {{- range $app := dig "apps" list $spec }}
+            {{- $groupNames = append $groupNames (printf "gentian:tenant:%s:app:%s" $tenant $app.profile) }}
+            {{- end }}
+            {{- range $g := $groupNames }}
+            {{- $gslug := $g | lower | replace ":" "-" | replace "_" "-" | replace "." "-" }}
+            ---
+            apiVersion: group.keycloak.crossplane.io/v1alpha1
+            kind: Group
+            metadata:
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: keycloak-group-{{ $gslug }}
+              name: {{ $gslug }}
+            spec:
+              deletionPolicy: Orphan
+              forProvider:
+                realmId: {{ $tenant }}
+                name: {{ $g | quote }}
+              providerConfigRef:
+                name: keycloak
+            {{- end }}
+
             {{- /* ── the tenant realm, observed ──────────────────────────────
                  The realm every other Keycloak object here lives in. The realm
                  script creates it and keeps it enabled, sets its display name and
