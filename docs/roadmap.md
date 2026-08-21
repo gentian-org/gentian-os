@@ -434,43 +434,39 @@ docs/plans/tenant-composition-cleanup.md §8.
     and delete the Job's, in one change.
   - `[ ]` Remove the Job and the `ensureIdentity` wait that depends on it.
 
-### 1.30 Move the Tenant Realm's SMTP onto the Composed Realm (*)
+### 1.30 Trim the Realm Script to What a Realm Cannot Express (*)
 * **Target Domain**: Identity
-* **Done**: `tenant-default` composes a managed `Realm`, and it is the tenant
-  realm's only writer. It declares enabled, displayName, registrationAllowed, the
-  eight browser security headers, and the twelve-hour access-token and session
-  lifespans and gentian login theme that `UpdateRealmBrowserSecurityHeaders` used
-  to apply. The realm Job no longer restates any of it — its create stays as a
-  bootstrap — and the browser-security function now runs only against the kernel
-  realm, which no Composition covers.
+* **Done**: `tenant-default` composes a managed `Realm` and it is the tenant
+  realm's only writer — enabled, displayName, registrationAllowed, the eight
+  browser security headers, and the twelve-hour access-token and session
+  lifespans and gentian login theme that `UpdateRealmBrowserSecurityHeaders`
+  used to apply. The realm Job restates none of it; the browser-security
+  function runs only against the kernel realm, which no Composition covers.
+* **The SMTP Job stays, and is not a gap.** It looked like one — publish the
+  host, declare `smtpServer`, retire the Job. The host was never the blocker:
+  `gentian-kernel-services` already publishes SMTP_HOST and it matches the realm
+  exactly. The blocker is `auth`. The Job builds the whole block from a day-2
+  credential and omits user and password entirely when auth is off, because
+  Keycloak keeps a stored user and password even when auth is off and will use
+  them again if it is ever flipped back on.
 
-  The lifespans and theme are named explicitly because they are not the
-  provider's defaults; Keycloak ships five-minute access tokens and a
-  thirty-minute idle timeout. `securityDefenses` is declared blind, because
-  `status.atProvider` reports it as null while the realm plainly carries the
-  headers — verified instead against the Admin API, which showed the realm
-  unchanged across the first managed write and no drift since.
-* **What is left**: `smtpServer`. The tenant SMTP Job reads its host, port and
-  from address out of a Secret, and a Composition cannot read Secrets — the same
-  wall the broker IdP hit before `identity.internalUrl` was published through the
-  claim. The provider does observe smtpServer, and the CRD carries
-  `auth.passwordSecretRef` for the credential, so only the plain values need a
-  route.
-* **Proposed Solution**: Publish the SMTP host, port and from address the way
-  identity.internalUrl was — through the Cluster claim into
-  gentian-cluster-config — then declare `smtpServer` on the Realm and retire the
-  tenant SMTP Job. Relates to 1.22.
+  Whether that credential exists is runtime state in a Secret, and a Composition
+  can neither read a Secret nor render a block conditional on one. Under the
+  boundary in docs/plans/tenant-composition-cleanup.md §6a that is discovery,
+  which is the operator's — so the Job is correct rather than unfinished.
+  `ensureTenantSMTPJob` already skips cleanly when no credential is supplied,
+  which is why no such Job runs on ifk-w4h at all.
+* **What is left** is smaller than it looked: the realm script's user profile
+  attributes and its required-action toggles. Both are separate Keycloak APIs
+  with no `Realm` field, so they need their own resource kinds or they stay.
 * **Backlog Items**:
-  - `[x]` Compose the realm, adopted by name, and promote it to managed.
+  - `[x]` Compose the realm, adopt it, promote it to managed.
   - `[x]` Declare `securityDefenses` and verify the headers through the Admin API.
   - `[x]` Remove the realm Job's restatement and the browser-security function's
     tenant-realm write.
-  - `[ ]` Publish the SMTP host, port and from address through the claim.
-  - `[ ]` Declare `smtpServer` and retire the tenant SMTP Job.
-  - `[ ]` Trim the realm script further: what remains that the Realm cannot
-    express is the user profile attributes and the required-action toggles, which
-    are separate Keycloak APIs.
-
+  - `[x]` Establish whether SMTP can be declared. It cannot, and should not.
+  - `[ ]` Decide whether the user profile attributes and required-action toggles
+    have a declarative form worth using, or stay imperative like SMTP.
 ### 1.31 Bootstrap Validator Library: Missing `smtp` and No Automated Coverage (**)
 * **Target Domain**: Platform Security & Credential Validation
 * **Context**: `scripts/lib/validators.sh` covers the `phase: bootstrap` credential set (§10,
