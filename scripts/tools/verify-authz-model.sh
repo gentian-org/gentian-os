@@ -6,8 +6,17 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 MODEL_DIR="${ROOT}/authz/model/v0"
 
 if ! command -v fga >/dev/null 2>&1; then
-  echo "Installing openfga/cli via go install..."
-  go install github.com/openfga/cli/cmd/fga@latest
+  # Pinned, not @latest. @latest broke CI the day openfga/cli v0.7.20 raised its
+  # Go floor to 1.25.7 while this project's go.mod pins 1.25.0 — a red build
+  # caused by an upstream release rather than by any change here, which is the
+  # whole reason versions.yaml exists.
+  #
+  # GOTOOLCHAIN=auto for this command only: every published fga needs a newer Go
+  # than the project targets, and setup-go sets GOTOOLCHAIN=local, so Go refuses
+  # to fetch one. Scoped to the install, the project's own toolchain is untouched.
+  FGA_VERSION="$(bash "$(dirname "${BASH_SOURCE[0]}")/../lib/versions.sh" openfga cli)"
+  echo "Installing openfga/cli ${FGA_VERSION} via go install..."
+  GOTOOLCHAIN=auto go install "github.com/openfga/cli/cmd/fga@${FGA_VERSION}"
   gopath_bin="$(go env GOPATH)/bin"
   export PATH="${PATH}:${gopath_bin}"
 fi
