@@ -193,6 +193,8 @@ rules:
     - appcatalogues
     - appgrants
     - apps
+    - backuppolicies
+    - credentialrequirements
     - integrationbindings
     - platformsecuritypolicies
     - repositories
@@ -214,6 +216,7 @@ rules:
     resources:
     - appcatalogues/status
     - appgrants/status
+    - backuppolicies/status
     - customizations/status
     - integrationbindings/status
     - platformsecuritypolicies/status
@@ -251,7 +254,6 @@ rules:
   - apiGroups:
     - gentianos.io
     resources:
-    - credentialrequirements
     - oidcpackcatalogs
     - resourceplans
     - xapps

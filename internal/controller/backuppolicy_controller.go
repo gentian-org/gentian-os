@@ -1,0 +1,386 @@
+/*
+Copyright 2026 Gentian Organization.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
+package controller
+
+import (
+	"context"
+	"fmt"
+
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/types"
+	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/log"
+
+	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
+	"github.com/gentian-org/gentian-os/internal/backup"
+	"github.com/gentian-org/gentian-os/internal/meta"
+)
+
+const (
+	conditionPolicyAccepted = "Accepted"
+
+	// clusterBackupPolicy is the cluster-scoped policy's name. Singleton by
+	// convention: a second would leave "which destination applies" answerable
+	// two ways.
+	clusterBackupPolicy = "default"
+)
+
+// externalSecretGVK is used unstructured rather than through ESO's Go types,
+// for the reason the credential manager already records: adding external-secrets
+// to go.mod for a handful of fields couples this build to an API version that
+// has already moved once.
+var externalSecretGVK = schema.GroupVersionKind{
+	Group:   "external-secrets.io",
+	Version: "v1",
+	Kind:    "ExternalSecret",
+}
+
+// BackupPolicyReconciler turns a policy into the things it implies: the
+// credential its destination needs, and the resolved values an admin reads.
+//
+// It writes no bundles and runs no Jobs. Everything here exists so that by the
+// time an export runs, the question "where does this go, and can we
+// authenticate to it" has already been answered and published.
+type BackupPolicyReconciler struct {
+	client.Client
+	Scheme *runtime.Scheme
+}
+
+// +kubebuilder:rbac:groups=gentianos.io,resources=backuppolicies,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=gentianos.io,resources=backuppolicies/status,verbs=get;update;patch
+// +kubebuilder:rbac:groups=gentianos.io,resources=credentialrequirements,verbs=get;list;watch;create;update;patch;delete
+
+func (r *BackupPolicyReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
+	logger := log.FromContext(ctx).WithName("backuppolicy")
+
+	policy := &gentianov1alpha1.BackupPolicy{}
+	if err := r.Get(ctx, req.NamespacedName, policy); err != nil {
+		return ctrl.Result{}, client.IgnoreNotFound(err)
+	}
+
+	// The credential comes first: a destination whose keys are missing is a
+	// policy that will fail at 03:00, and the whole point of routing it
+	// through the credential manager is that the failure surfaces now.
+	if err := r.ensureDestinationCredential(ctx, policy); err != nil {
+		return r.failPolicy(ctx, policy, "CredentialUnavailable", err.Error())
+	}
+
+	eff, err := r.resolve(ctx, policy)
+	if err != nil {
+		return r.failPolicy(ctx, policy, "PolicyUnusable", err.Error())
+	}
+
+	policy.Status.EffectiveEndpoint = eff.Endpoint
+	policy.Status.EffectiveBucket = eff.Bucket
+	policy.Status.EffectiveSchedule = eff.Schedule
+	policy.Status.CredentialRequirement = eff.CredentialName
+	policy.Status.CredentialSatisfied = true
+	message := "backups write to the platform's own storage"
+
+	if eff.CredentialName != "" {
+		satisfied, why := r.credentialSatisfied(ctx, eff.CredentialName)
+		policy.Status.CredentialSatisfied = satisfied
+		if !satisfied {
+			// Not an error: the policy is correct and waiting for a human to
+			// supply keys. Reported as a false condition so the console can
+			// show a field to fill rather than a failure to debug.
+			setPolicyCondition(policy, metav1.ConditionFalse, "CredentialUnsatisfied",
+				fmt.Sprintf("supply %s in the credential manager: %s", eff.CredentialName, why))
+			logger.Info("policy awaiting its credential", "policy", policy.Name, "requirement", eff.CredentialName)
+			return ctrl.Result{}, r.persistPolicy(ctx, policy)
+		}
+		message = fmt.Sprintf("backups write to %s/%s", eff.Endpoint, eff.Bucket)
+	}
+
+	setPolicyCondition(policy, metav1.ConditionTrue, "Accepted", message)
+	return ctrl.Result{}, r.persistPolicy(ctx, policy)
+}
+
+// resolve merges this policy with the cluster default, when it is not itself
+// the cluster default.
+func (r *BackupPolicyReconciler) resolve(
+	ctx context.Context,
+	policy *gentianov1alpha1.BackupPolicy,
+) (backup.Effective, error) {
+	if policy.Spec.Scope != "tenant" {
+		return backup.ResolveEffective(&gentianov1alpha1.Tenant{}, policy, nil)
+	}
+
+	tenant := &gentianov1alpha1.Tenant{}
+	if err := r.Get(ctx, types.NamespacedName{Name: policy.Spec.Tenant}, tenant); err != nil {
+		if apierrors.IsNotFound(err) {
+			return backup.Effective{}, fmt.Errorf("tenant %q does not exist", policy.Spec.Tenant)
+		}
+		return backup.Effective{}, err
+	}
+
+	cluster := &gentianov1alpha1.BackupPolicy{}
+	if err := r.Get(ctx, types.NamespacedName{Name: clusterBackupPolicy}, cluster); err != nil {
+		if !apierrors.IsNotFound(err) {
+			return backup.Effective{}, err
+		}
+		cluster = nil // No cluster default is ordinary; the tenant's stands alone.
+	}
+	return backup.ResolveEffective(tenant, cluster, policy)
+}
+
+// ensureDestinationCredential declares what an endpoint needs, and removes the
+// declaration when it no longer does.
+//
+// The requirement is derived from the policy rather than named by it: a policy
+// that could point at any requirement would let a tenant read one belonging to
+// somebody else.
+func (r *BackupPolicyReconciler) ensureDestinationCredential(
+	ctx context.Context,
+	policy *gentianov1alpha1.BackupPolicy,
+) error {
+	name := backup.DestinationCredentialName(policy.Spec.Scope, policy.Spec.Tenant)
+	if !policy.Spec.Destination.NeedsCredential() {
+		// The platform's own storage needs no requirement, and leaving a stale
+		// one behind would report an unsatisfied credential nothing consumes.
+		return r.deleteDestinationCredential(ctx, name)
+	}
+
+	vaultPath := backup.DestinationVaultPath(policy.Spec.Scope, policy.Spec.Tenant)
+	desired := &gentianov1alpha1.CredentialRequirement{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: name,
+			Labels: map[string]string{
+				"gentianos.io/credential-phase": "runtime",
+				"gentianos.io/credential-scope": policy.Spec.Scope,
+				managedByLabel:                  managedByValue,
+			},
+		},
+		Spec: gentianov1alpha1.CredentialRequirementSpec{
+			DisplayName: "Backup Storage Keys",
+			Description: fmt.Sprintf(
+				"Access keys for %s, where backup bundles are written. "+
+					"Issued by the storage provider; the platform never sees them until they are supplied here.",
+				policy.Spec.Destination.Endpoint),
+			Phase:     "runtime",
+			Scope:     policy.Spec.Scope,
+			Tenant:    policy.Spec.Tenant,
+			VaultPath: vaultPath,
+			Fields: []gentianov1alpha1.CredentialField{
+				{Key: backup.DestinationAccessKeyField, Format: "string", Secret: false},
+				{Key: backup.DestinationSecretKeyField, Format: "password", Secret: true},
+			},
+			ConsumedBy: []gentianov1alpha1.CredentialConsumer{
+				{Kind: "BackupPolicy", Name: policy.Name},
+			},
+		},
+	}
+
+	existing := &gentianov1alpha1.CredentialRequirement{}
+	err := r.Get(ctx, types.NamespacedName{Name: name}, existing)
+	switch {
+	case apierrors.IsNotFound(err):
+		if err := r.Create(ctx, desired); err != nil && !apierrors.IsAlreadyExists(err) {
+			return fmt.Errorf("create credential requirement %s: %w", name, err)
+		}
+	case err != nil:
+		return err
+	default:
+		existing.Spec = desired.Spec
+		existing.Labels = desired.Labels
+		if err := r.Update(ctx, existing); err != nil {
+			return fmt.Errorf("update credential requirement %s: %w", name, err)
+		}
+	}
+
+	if err := r.ensureProbe(ctx, name, vaultPath, policy.Spec.Scope); err != nil {
+		return err
+	}
+	return r.ensureConsumingSecret(ctx, policy, vaultPath)
+}
+
+func (r *BackupPolicyReconciler) deleteDestinationCredential(ctx context.Context, name string) error {
+	req := &gentianov1alpha1.CredentialRequirement{ObjectMeta: metav1.ObjectMeta{Name: name}}
+	if err := r.Delete(ctx, req); err != nil && !apierrors.IsNotFound(err) {
+		return err
+	}
+	for _, es := range []struct{ name, namespace string }{
+		{"credreq-" + name, meta.OperatorNamespace},
+		{name, kernelNamespace},
+	} {
+		obj := &unstructured.Unstructured{}
+		obj.SetGroupVersionKind(externalSecretGVK)
+		obj.SetName(es.name)
+		obj.SetNamespace(es.namespace)
+		if err := r.Delete(ctx, obj); err != nil && !apierrors.IsNotFound(err) {
+			return err
+		}
+	}
+	return nil
+}
+
+// ensureProbe creates the satisfaction probe: an ExternalSecret that creates
+// no Secret and exists only so ESO's Ready condition answers "has this been
+// supplied". The credential manager reads exactly this object.
+func (r *BackupPolicyReconciler) ensureProbe(ctx context.Context, name, vaultPath, scope string) error {
+	return r.applyExternalSecret(ctx, "credreq-"+name, meta.OperatorNamespace, vaultPath, "None", map[string]string{
+		"gentianos.io/credential-requirement": name,
+		"gentianos.io/credential-phase":       "runtime",
+		"gentianos.io/credential-scope":       scope,
+	})
+}
+
+// ensureConsumingSecret materialises the keys where capture Jobs run.
+//
+// The kernel namespace, always — including for a tenant's own destination.
+// Capture Jobs run there, the tenant namespace copy is staged from it for the
+// volume Jobs that must run beside their PVC, and a Secret a tenant workload
+// could read would hand it the keys to its own backup storage.
+func (r *BackupPolicyReconciler) ensureConsumingSecret(
+	ctx context.Context,
+	policy *gentianov1alpha1.BackupPolicy,
+	vaultPath string,
+) error {
+	name := backup.DestinationSecretName(policy.Spec.Scope, policy.Spec.Tenant)
+	return r.applyExternalSecret(ctx, name, kernelNamespace, vaultPath, "Owner", map[string]string{
+		managedByLabel:               managedByValue,
+		"gentianos.io/backup-policy": policy.Name,
+	})
+}
+
+func (r *BackupPolicyReconciler) applyExternalSecret(
+	ctx context.Context,
+	name, namespace, vaultPath, creationPolicy string,
+	labels map[string]string,
+) error {
+	data := []any{}
+	for _, key := range []string{backup.DestinationAccessKeyField, backup.DestinationSecretKeyField} {
+		data = append(data, map[string]any{
+			"secretKey": key,
+			"remoteRef": map[string]any{"key": vaultPath, "property": key},
+		})
+	}
+
+	desired := &unstructured.Unstructured{Object: map[string]any{
+		"apiVersion": externalSecretGVK.GroupVersion().String(),
+		"kind":       externalSecretGVK.Kind,
+		"metadata": map[string]any{
+			"name":      name,
+			"namespace": namespace,
+		},
+		"spec": map[string]any{
+			"refreshInterval": "1h",
+			"secretStoreRef":  map[string]any{"name": "openbao", "kind": "ClusterSecretStore"},
+			"target":          map[string]any{"creationPolicy": creationPolicy},
+			"data":            data,
+		},
+	}}
+	desired.SetLabels(labels)
+
+	existing := &unstructured.Unstructured{}
+	existing.SetGroupVersionKind(externalSecretGVK)
+	err := r.Get(ctx, types.NamespacedName{Name: name, Namespace: namespace}, existing)
+	switch {
+	case apierrors.IsNotFound(err):
+		if err := r.Create(ctx, desired); err != nil && !apierrors.IsAlreadyExists(err) {
+			return fmt.Errorf("create ExternalSecret %s/%s: %w", namespace, name, err)
+		}
+		return nil
+	case err != nil:
+		return err
+	}
+	desired.SetResourceVersion(existing.GetResourceVersion())
+	if err := r.Update(ctx, desired); err != nil {
+		return fmt.Errorf("update ExternalSecret %s/%s: %w", namespace, name, err)
+	}
+	return nil
+}
+
+// credentialSatisfied reads ESO's verdict from the probe, the same way the
+// credential manager does.
+func (r *BackupPolicyReconciler) credentialSatisfied(ctx context.Context, name string) (bool, string) {
+	es := &unstructured.Unstructured{}
+	es.SetGroupVersionKind(externalSecretGVK)
+	key := types.NamespacedName{Name: "credreq-" + name, Namespace: meta.OperatorNamespace}
+	if err := r.Get(ctx, key, es); err != nil {
+		return false, "no satisfaction probe found"
+	}
+	conds, found, err := unstructured.NestedSlice(es.Object, "status", "conditions")
+	if err != nil || !found {
+		return false, "probe has not reported yet"
+	}
+	for _, raw := range conds {
+		cond, ok := raw.(map[string]any)
+		if !ok || cond["type"] != "Ready" {
+			continue
+		}
+		if cond["status"] == "True" {
+			return true, ""
+		}
+		if msg, ok := cond["message"].(string); ok && msg != "" {
+			return false, msg
+		}
+		return false, "not ready"
+	}
+	return false, "probe has not reported a Ready condition"
+}
+
+func (r *BackupPolicyReconciler) failPolicy(
+	ctx context.Context,
+	policy *gentianov1alpha1.BackupPolicy,
+	reason, message string,
+) (ctrl.Result, error) {
+	setPolicyCondition(policy, metav1.ConditionFalse, reason, message)
+	return ctrl.Result{}, r.persistPolicy(ctx, policy)
+}
+
+func (r *BackupPolicyReconciler) persistPolicy(ctx context.Context, policy *gentianov1alpha1.BackupPolicy) error {
+	policy.Status.ObservedGeneration = policy.Generation
+	return r.Status().Update(ctx, policy)
+}
+
+func setPolicyCondition(policy *gentianov1alpha1.BackupPolicy, status metav1.ConditionStatus, reason, message string) {
+	cond := metav1.Condition{
+		Type:               conditionPolicyAccepted,
+		Status:             status,
+		Reason:             reason,
+		Message:            message,
+		LastTransitionTime: metav1.Now(),
+		ObservedGeneration: policy.Generation,
+	}
+	for i := range policy.Status.Conditions {
+		if policy.Status.Conditions[i].Type != conditionPolicyAccepted {
+			continue
+		}
+		if policy.Status.Conditions[i].Status == status &&
+			policy.Status.Conditions[i].Reason == reason &&
+			policy.Status.Conditions[i].Message == message {
+			return // Unchanged: keep the original transition time.
+		}
+		policy.Status.Conditions[i] = cond
+		return
+	}
+	policy.Status.Conditions = append(policy.Status.Conditions, cond)
+}
+
+// SetupWithManager registers the reconciler.
+func (r *BackupPolicyReconciler) SetupWithManager(mgr ctrl.Manager) error {
+	return ctrl.NewControllerManagedBy(mgr).
+		For(&gentianov1alpha1.BackupPolicy{}).
+		Named("backuppolicy").
+		Complete(r)
+}
