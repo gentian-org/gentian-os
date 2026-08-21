@@ -7,7 +7,7 @@ status:
   conditions:
   - lastTransitionTime: "2024-01-01T00:00:00Z"
     message: 'Unready resources: app-catalogue-test-app, keycloak-broker-client, keycloak-broker-client-id,
-      and 14 more'
+      and 15 more'
     reason: Creating
     status: "False"
     type: Ready
@@ -205,6 +205,31 @@ spec:
   - Create
   - Update
   - Delete
+  providerConfigRef:
+    name: keycloak
+---
+apiVersion: authenticationflow.keycloak.crossplane.io/v1alpha1
+kind: Execution
+metadata:
+  annotations:
+    crossplane.io/composition-resource-name: keycloak-fbl-exec-detect
+  labels:
+    crossplane.io/composite: render-fixture
+  name: render-fixture-fbl-exec-detect
+  ownerReferences:
+  - apiVersion: gentianos.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XTenant
+    name: render-fixture
+    uid: ""
+spec:
+  deletionPolicy: Orphan
+  forProvider:
+    authenticator: idp-detect-existing-broker-user
+    parentFlowAlias: first-broker-login-gentian
+    realmId: render-fixture
+    requirement: REQUIRED
   providerConfigRef:
     name: keycloak
 ---

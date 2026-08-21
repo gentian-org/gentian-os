@@ -640,6 +640,35 @@ spec:
               providerConfigRef:
                 name: keycloak
 
+            {{- /* One execution, on purpose, and the first thing to prove.
+
+                 Every adoption so far worked because a duplicate was impossible:
+                 a mapper, a role, a group all collide on name, so a create that
+                 failed to resolve the existing object conflicted instead. Keycloak
+                 does not require an execution to be uniquely named within a flow,
+                 so nothing stops a second one being appended.
+
+                 detect-existing-broker-user is the safe one to find out with: it
+                 looks up whether the arriving user is already linked, so running
+                 it twice decides the same thing twice. If a fourth execution
+                 appears, this is removed and the rest are not attempted. */}}
+            ---
+            apiVersion: authenticationflow.keycloak.crossplane.io/v1alpha1
+            kind: Execution
+            metadata:
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: keycloak-fbl-exec-detect
+              name: {{ $tenant }}-fbl-exec-detect
+            spec:
+              deletionPolicy: Orphan
+              forProvider:
+                realmId: {{ $tenant }}
+                parentFlowAlias: first-broker-login-gentian
+                authenticator: idp-detect-existing-broker-user
+                requirement: REQUIRED
+              providerConfigRef:
+                name: keycloak
+
             {{- /* ── the realm's "groups" client scope ────────────────────────
                  What puts a user's group membership into their tokens. Every
                  client in the realm gets it, because the groups Job adds it to
