@@ -157,6 +157,47 @@ if [ -n "${upd_pod}" ]; then
     fi
 fi
 
+# ── 6. Is there an image to track at all? ───────────────────────────────────
+# Everything above answers "does the cluster follow what CI publishes". This
+# answers the other half, which nothing asked: did CI publish it.
+#
+# `Docker build and push` is gated on the Go job, so a flaky test means no image
+# for that commit and the cluster keeps running the one before. Every check above
+# still passes — correctly, because the cluster IS tracking CI; there is simply
+# nothing new to track. The branch looks merged and the Application reads
+# Healthy. On 2026-08-21 three commits were affected and twice work was verified
+# against a binary that did not contain it.
+#
+# Needs gh and a checkout with an origin. Absent either, this section is skipped
+# rather than guessed at.
+if [ -n "${tag}" ] && command -v gh >/dev/null 2>&1 && git rev-parse --git-dir >/dev/null 2>&1; then
+    running_sha="${tag##*-}"
+    branch="$(git rev-parse --abbrev-ref HEAD 2>/dev/null)"
+    if git cat-file -e "${running_sha}^{commit}" 2>/dev/null; then
+        behind="$(git log --format='%h %s' "${running_sha}..origin/${branch}" 2>/dev/null)"
+        if [ -n "${behind}" ]; then
+            count="$(printf '%s\n' "${behind}" | wc -l | tr -d ' ')"
+            echo "  ${YELLOW}warn${NC}  origin/${branch} is ${count} commit(s) ahead of the running image:"
+            printf '%s\n' "${behind}" | while read -r sha subject; do
+                # Whether that commit produced an image is a question about its
+                # CI run, not about the registry, so no read:packages needed.
+                concl="$(gh run list --limit 40 --json headSha,conclusion \
+                    --jq '[.[] | select(.headSha | startswith("'"${sha}"'")) | .conclusion] | .[0] // "running"' 2>/dev/null)"
+                # Empty means gh could not answer, or the run has no conclusion
+                # yet. Either way it is not "published", and saying so beats a
+                # blank column that reads like a pass.
+                [ -n "${concl}" ] || concl="running or no run"
+                mark="${DIM}"
+                [ "${concl}" = "failure" ] && mark="${RED}"
+                echo "        ${mark}${sha} ${concl}${NC}  ${subject:0:52}"
+            done
+            echo "        ${DIM}A commit whose CI failed publishes no image. The cluster then${NC}"
+            echo "        ${DIM}keeps the previous one and every check above still passes.${NC}"
+            warn=1
+        fi
+    fi
+fi
+
 echo "${DIM}────────────────────────────────────────────────────────────${NC}"
 if [ "${fail}" -ne 0 ]; then
     echo "${RED}Image updates are not reaching this cluster.${NC}"
