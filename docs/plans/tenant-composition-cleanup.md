@@ -392,3 +392,34 @@ provider-keycloak                        installed, healthy, covers 32 API group
 Keycloak Jobs for one tenant (corp)       9
 resources tenant-default composes        ~10
 ```
+
+## 7. Adoption edge: observable but not declarable
+
+Adopting a live object assumes its state can be expressed as a spec. The portal
+BFF client is the counter-example, and it is worth stating as a rule.
+
+Keycloak accepts and stores redirect URIs on a client with both redirect flows
+disabled. provider-keycloak, validating the same object, refuses to write that
+combination. The state is therefore readable, real, and in production use, but
+not declarable.
+
+Two layers hide this. Upjet late-initialisation copies unset optional fields out
+of the observed object into `spec.forProvider`, so a template that omits the
+offending fields still ends up with them; omitting `LateInitialize` from
+`managementPolicies` stops that. But the update still fails, because Upjet plans
+from the observed object — so no spec on this side can make the write legal. The
+live object must change first.
+
+The practical consequences for the remaining migrations:
+
+- Adoption is not verified by `Ready=True`. That only says the object exists.
+  `Synced=True` is the condition that says the manifest is actually in force. A
+  resource can sit `Ready=True, Synced=False` indefinitely, looking healthy while
+  the manifest is inert.
+- Check for provider validation rules the live object already violates before
+  adopting, not after. Jobs write through the Admin API, which enforces less than
+  the Terraform schema the provider validates against, so anything a Job created
+  may carry a state the provider will not accept.
+- When the live object cannot be made legal without a behaviour change, park it
+  `Observe`-only with the reason recorded, rather than leaving a resource that
+  retries a doomed update forever.

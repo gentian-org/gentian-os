@@ -364,8 +364,9 @@ spec:
                 gotemplating.fn.crossplane.io/composition-resource-name: keycloak-portal-bff-client
             spec:
               deletionPolicy: Orphan
-              # Everything except LateInitialize (the default "*" includes it).
-              managementPolicies: ["Observe", "Create", "Update", "Delete"]
+              # Observe-only, deliberately, and the one client here that is not
+              # fully managed. See the forProvider comment below.
+              managementPolicies: ["Observe"]
               forProvider:
                 clientId: gentian-portal-bff
                 name: Gentian Portal BFF
@@ -394,11 +395,25 @@ spec:
                 # expressible at all.
                 #
                 # Dropping them from this template is necessary but not
-                # sufficient: Upjet late-initialisation copies unset optional
-                # fields back out of the live object into spec.forProvider, so
-                # the provider re-adds the redirect URIs it just refused to
-                # write, and the failure sustains itself. The managementPolicies
-                # above omit LateInitialize to stop that.
+                # sufficient. Two further layers resurrect the rejected state:
+                #
+                #  1. Upjet late-initialisation copies unset optional fields out
+                #     of the live object back into spec.forProvider, so the
+                #     provider re-adds the redirect URIs it just refused to
+                #     write. Omitting LateInitialize from managementPolicies
+                #     stops that, and the spec then stays clean.
+                #  2. The update still fails, because the plan is built from the
+                #     OBSERVED object, and the live client itself holds the
+                #     illegal combination. Any write re-validates it and is
+                #     rejected. No spec can fix that from this side.
+                #
+                # So the client is Observe-only until the two inert fields are
+                # cleared on the live object (redirectUris and webOrigins; the
+                # post-logout URIs are only Keycloak's derived default and are
+                # not stored). Once cleared, restore
+                #   managementPolicies: ["Observe", "Create", "Update", "Delete"]
+                # and this becomes a fully managed client like the others.
+                # Tracked in the roadmap.
                 clientSecretSecretRef:
                   name: gentian-portal-bff
                   namespace: platform-kernel

@@ -513,3 +513,31 @@ For the current baseline design of the system, refer to [architecture.md](archit
   - `[ ]` Deploy an event listener that executes workflow scripts on NATS message triggers.
   - `[ ]` Implement the AppProfile code generation tool.
   - `[ ]` Integrate the agentic engine with the tenant provisioning API.
+
+### 1.26 Restore full management of the portal BFF client
+
+The portal BFF client is adopted `Observe`-only, the one Keycloak client in
+`tenant-default` that is not fully managed.
+
+The live client has `standardFlowEnabled` and `implicitFlowEnabled` both false
+while still carrying `redirectUris` and `webOrigins`. Keycloak stores that
+combination; provider-keycloak refuses to write it:
+
+    valid_redirect_uris cannot be set when standard or implicit flow is not enabled
+
+Because Upjet plans from the observed object, the rejection does not depend on
+what the Composition declares — any write re-validates the live object and
+fails. Dropping the fields from the template and omitting `LateInitialize` from
+`managementPolicies` were both necessary and neither was sufficient.
+
+The fields are inert: with both redirect flows disabled Keycloak can never run a
+redirect flow for this client, and `app/core/auth.py` uses it only as an
+expected token audience for the ROPC grant. Clearing them on the live object is
+therefore a no-op functionally, and it makes the object expressible.
+
+To close: clear `redirectUris` and `webOrigins` on the `corp` realm client
+`gentian-portal-bff`, then restore
+`managementPolicies: ["Observe", "Create", "Update", "Delete"]` in
+`crossplane/compositions/tenant-default.yaml`. The post-logout URIs need no
+action — they are Keycloak's derived default, not stored (`attributes` is
+empty).
