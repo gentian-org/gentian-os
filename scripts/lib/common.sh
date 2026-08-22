@@ -1703,7 +1703,23 @@ gentian_report_abort() {
     # unwinding, not where the problem is. Stay quiet and let the real error
     # stand.
     case "${cmd}" in
-        exit|exit\ *|return|return\ *) return "${exit_code}" ;;
+        exit|exit\ *|return|return\ *)
+            # Still say which step stopped the run, and what re-running does.
+            #
+            # That is the one thing the step's own message cannot know, and it
+            # used to come from the driver, which printed it after apply()
+            # returned. apply() is called bare now (so that an unchecked
+            # failure inside it actually stops the step rather than being
+            # skipped over), which means errexit ends the run here and the
+            # driver never gets to speak. Two lines, not the banner: the
+            # step's own diagnosis is the useful part and stays on top.
+            if [[ -n "${GENTIAN_CURRENT_STEP:-}" ]]; then
+                echo "" >&2
+                echo -e "\033[0;31m[ERROR]\033[0m Step ${GENTIAN_CURRENT_STEP} stopped the install (exit ${exit_code})." >&2
+                echo "  Nothing after it has run. Fix the cause and re-run — steps that" >&2
+                echo "  already succeeded report satisfied and are skipped." >&2
+            fi
+            return "${exit_code}" ;;
     esac
 
     # Walk the actual call stack rather than guessing one frame. Frame 0 is this
@@ -2052,7 +2068,12 @@ yq_get() {
 # prompt_kernel_domain/scaffold_cluster_deployment handle that case.
 # =============================================================================
 resolve_kernel_domain_from_claim() {
-    local claim_file="${GENTIAN_DEPLOYMENTS_PATH}/clusters/${GENTIAN_DEPLOYMENTS_CLUSTER_ID}/kernel/claims/cluster.yaml"
+    # Both defaulted, because this runs under `set -u` and is documented to be
+    # a no-op when there is no claim to read. Dereferenced bare, an unset
+    # cluster id aborted the whole run with "GENTIAN_DEPLOYMENTS_CLUSTER_ID:
+    # unbound variable" — which is what --validate did outside a configured
+    # checkout, the one place the no-op was most obviously the intent.
+    local claim_file="${GENTIAN_DEPLOYMENTS_PATH:-}/clusters/${GENTIAN_DEPLOYMENTS_CLUSTER_ID:-}/kernel/claims/cluster.yaml"
     [[ -n "${KERNEL_DOMAIN:-}" ]] && return 0
 
     local domain

@@ -365,27 +365,33 @@ run_step_forward() {
     fi
 
     start=$SECONDS
-    # Explicitly, rather than letting `set -e` end the run.
+    # Called bare — NOT as `apply || rc=$?`, `if apply`, or `! apply`.
     #
-    # The ERR trap stays deliberately silent when the failing command is a
-    # `return N`, because a function that returns has usually printed its own
-    # diagnosis. But `warn` then `return 1` prints something that reads as
-    # benign and stops the install anyway: D-05 ended on a WARN and a shell
-    # prompt, which is indistinguishable from a completed run. The driver knows
-    # which step failed, so the driver says so.
-    # rc is captured from apply() directly, not from `if ! apply`. In the latter
-    # $? is the status of the NEGATION, which is 0 whenever apply failed — so the
-    # message read "apply() returned 0" for every failure, and the driver returned
-    # success from a step that had just failed.
-    local rc=0
-    apply || rc=$?
-    if (( rc != 0 )); then
-        elapsed=$((SECONDS - start))
-        error "Step ${id} failed after ${elapsed}s (apply() returned ${rc})."
-        error "  Nothing after it has run. Fix the cause and re-run — steps that"
-        error "  already succeeded report satisfied and are skipped."
-        return "${rc}"
-    fi
+    # Testing a function's exit status by any of those means disables errexit
+    # for the whole of its body, and for every function it calls in turn. Under
+    # the old `apply || rc=$?` an unchecked command that failed anywhere inside
+    # a step — or inside the library functions steps call, which is most of the
+    # real work — did not stop that step. Control fell through to its success
+    # message, and apply() returned the status of whatever happened to run
+    # last, so the driver reported a step that had just failed as satisfied.
+    #
+    # A-11 did exactly this on every run for as long as anyone had looked: helm
+    # printed "cannot be imported into the current release: invalid ownership
+    # metadata" and the step answered "[OK] metrics-server installed" on the
+    # very next line.
+    #
+    # Bare, errexit is live again. A failing command ends the run where it
+    # failed, and gentian_report_abort names that command, this step's file,
+    # and the whole call stack — strictly more than the "apply() returned N"
+    # this used to print. A step that fails deliberately, by printing its own
+    # diagnosis and returning nonzero, still gets the last word: the trap stays
+    # silent for `return N` on purpose and adds only the step-scoped follow-up
+    # that its own message cannot know.
+    #
+    # destroy() keeps the tested form on the reverse pass, and check()'s
+    # verdict keeps it too. Both are deliberate: a teardown must survive absent
+    # objects, and a check that fails is answering the question, not erroring.
+    apply
     elapsed=$((SECONDS - start))
     echo -e "     ${GREEN}✓${NC} ${elapsed}s"
 }
