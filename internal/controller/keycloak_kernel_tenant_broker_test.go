@@ -23,21 +23,32 @@ import (
 
 func TestBuildKernelTenantBrokerScript(t *testing.T) {
 	script := buildKernelTenantBrokerScript()
+
+	// The broker client and the kernel-realm IdP are tenant-default's now, and
+	// both adopted the live objects with no drift. What is left here is the
+	// kernel realm's own first-broker-login flow — one object shared by every
+	// tenant, so it cannot be composed per tenant — and the IdP mappers that
+	// hang off the IdP.
+	for _, gone := range []string{
+		`tokenUrl\":\"${KEYCLOAK_URL}/realms/${TENANT_REALM}/protocol/openid-connect/token`,
+		`hideOnLoginPage\":\"true`,
+		`"${KEYCLOAK_URL}/admin/realms/${TENANT_REALM}/clients"`,
+	} {
+		if strings.Contains(script, gone) {
+			t.Fatalf("kernel tenant broker script still writes what the Composition owns: %s", gone)
+		}
+	}
 	for _, want := range []string{
 		kernelPortalBrokerClientID,
 		kernelPortalFirstBrokerLoginFlowAlias,
 		`_resolve_external_oidc_base`,
+		// Read, not written: the mappers below need the IdP to exist.
 		`"${KEYCLOAK_URL}/admin/realms/${KERNEL_REALM}/identity-provider/instances/${TENANT_REALM}"`,
-		`tokenUrl\":\"${KEYCLOAK_URL}/realms/${TENANT_REALM}/protocol/openid-connect/token`,
 		`oidc-advanced-group-idp-mapper`,
-		`hideOnLoginPage\":\"true`,
 	} {
 		if !strings.Contains(script, want) {
 			t.Fatalf("kernel tenant broker script missing %q", want)
 		}
-	}
-	if strings.Contains(script, `${KERNEL_EXTERNAL_URL}/realms/${TENANT_REALM}/protocol/openid-connect/token`) {
-		t.Fatal("kernel tenant broker script must not use external URL for token exchange")
 	}
 }
 

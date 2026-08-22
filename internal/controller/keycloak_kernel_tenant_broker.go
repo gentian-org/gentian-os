@@ -88,50 +88,21 @@ AUTH_HEADER="Authorization: Bearer ${TOKEN}"
 EXT_BASE=$(_resolve_external_oidc_base "${KERNEL_EXTERNAL_URL}" "${KERNEL_REALM}")
 BROKER_REDIRECT="${EXT_BASE}${BROKER_REDIRECT_SUFFIX}"
 
-# 1. Confidential broker client in the tenant realm (kernel IdP callback).
-BROKER_RESP=$(curl -sf --max-time 30 -H "${AUTH_HEADER}" \
-  "${KEYCLOAK_URL}/admin/realms/${TENANT_REALM}/clients?clientId=${BROKER_CLIENT_ID}")
-if echo "${BROKER_RESP}" | grep -q "\"clientId\":\"${BROKER_CLIENT_ID}\""; then
-  %s
-  curl -sf --max-time 30 -X PUT "${KEYCLOAK_URL}/admin/realms/${TENANT_REALM}/clients/${BROKER_KC_ID}" \
-    -H "${AUTH_HEADER}" -H "Content-Type: application/json" \
-    -d "{\"clientId\":\"${BROKER_CLIENT_ID}\",\"redirectUris\":[\"${BROKER_REDIRECT}\"],\"protocol\":\"openid-connect\",\"standardFlowEnabled\":true,\"publicClient\":false}" >/dev/null
-  echo "broker client ${BROKER_CLIENT_ID} updated in ${TENANT_REALM}"
-else
-  curl -sf --max-time 30 -X POST "${KEYCLOAK_URL}/admin/realms/${TENANT_REALM}/clients" \
-    -H "${AUTH_HEADER}" -H "Content-Type: application/json" \
-    -d "{\"clientId\":\"${BROKER_CLIENT_ID}\",\"redirectUris\":[\"${BROKER_REDIRECT}\"],\"protocol\":\"openid-connect\",\"standardFlowEnabled\":true,\"publicClient\":false}"
-  BROKER_RESP=$(curl -sf --max-time 30 -H "${AUTH_HEADER}" \
-    "${KEYCLOAK_URL}/admin/realms/${TENANT_REALM}/clients?clientId=${BROKER_CLIENT_ID}")
-%s
-  echo "broker client ${BROKER_CLIENT_ID} created in ${TENANT_REALM}"
-fi
-BROKER_SECRET=$(curl -sf --max-time 30 -H "${AUTH_HEADER}" \
-  "${KEYCLOAK_URL}/admin/realms/${TENANT_REALM}/clients/${BROKER_KC_ID}/client-secret" \
-  | sed 's/.*"value":"\([^"]*\)".*/\1/')
+# The tenant-realm broker client is NOT written here. tenant-default composes it,
+# observed, and republishes its secret so the IdP below can take credentials from
+# a Secret rather than from a read like the one this used to do.
 
 # 2. First-broker-login flow in the kernel realm (auto-link by email).
 %s
 
-# 3. Register tenant realm as IdP in the kernel realm.
+# 3. The tenant IdP in the kernel realm is NOT written here either — that is
+# tenant-default's, declared with every field including the ones the provider
+# cannot read back. Its presence is still required for the mapper below, so it is
+# checked rather than created.
 IDP_HTTP=$(curl -s --max-time 30 -o /dev/null -w "%%{http_code}" -H "${AUTH_HEADER}" \
   "${KEYCLOAK_URL}/admin/realms/${KERNEL_REALM}/identity-provider/instances/${TENANT_REALM}")
-IDP_BODY="{\"alias\":\"${TENANT_REALM}\",\"displayName\":\"${TENANT_REALM}\",\"providerId\":\"oidc\",\"enabled\":true,\"trustEmail\":false,\"firstBrokerLoginFlowAlias\":\"%s\",\"config\":{\"issuer\":\"${EXT_BASE}/realms/${TENANT_REALM}\",\"authorizationUrl\":\"${EXT_BASE}/realms/${TENANT_REALM}/protocol/openid-connect/auth\",\"tokenUrl\":\"${KEYCLOAK_URL}/realms/${TENANT_REALM}/protocol/openid-connect/token\",\"jwksUrl\":\"${KEYCLOAK_URL}/realms/${TENANT_REALM}/protocol/openid-connect/certs\",\"userInfoUrl\":\"${KEYCLOAK_URL}/realms/${TENANT_REALM}/protocol/openid-connect/userinfo\",\"clientId\":\"${BROKER_CLIENT_ID}\",\"clientSecret\":\"${BROKER_SECRET}\",\"syncMode\":\"IMPORT\",\"useJwksUrl\":\"true\",\"validateSignature\":\"true\",\"defaultScope\":\"openid profile email groups\",\"hideOnLoginPage\":\"true\"}}"
-if [ "${IDP_HTTP}" = "200" ]; then
-  HTTP=$(curl -s --max-time 30 -o /dev/null -w "%%{http_code}" -X PUT \
-    "${KEYCLOAK_URL}/admin/realms/${KERNEL_REALM}/identity-provider/instances/${TENANT_REALM}" \
-    -H "${AUTH_HEADER}" -H "Content-Type: application/json" \
-    -d "${IDP_BODY}")
-else
-  HTTP=$(curl -s --max-time 30 -o /dev/null -w "%%{http_code}" -X POST \
-    "${KEYCLOAK_URL}/admin/realms/${KERNEL_REALM}/identity-provider/instances" \
-    -H "${AUTH_HEADER}" -H "Content-Type: application/json" \
-    -d "${IDP_BODY}")
-fi
-if [ "${HTTP}" -ge 200 ] 2>/dev/null && [ "${HTTP}" -lt 300 ] 2>/dev/null; then
-  echo "tenant IdP ${TENANT_REALM} registered in kernel realm (HTTP ${HTTP})"
-else
-  echo "ERROR: tenant IdP ${TENANT_REALM} registration failed (HTTP ${HTTP})" >&2
+if [ "${IDP_HTTP}" != "200" ]; then
+  echo "ERROR: tenant IdP ${TENANT_REALM} not in kernel realm (HTTP ${IDP_HTTP}); the Composition has not created it yet" >&2
   exit 1
 fi
 
@@ -176,10 +147,7 @@ else
 fi
 `, kernelPortalBrokerClientID,
 		keycloak.ShellWaitForRealm("${TENANT_REALM}"),
-		brokerResolveIDShell,
-		brokerResolveIDShell,
-		buildEnsureFirstBrokerLoginFlowShellWithAlias("${KERNEL_REALM}", kernelPortalFirstBrokerLoginFlowAlias),
-		kernelPortalFirstBrokerLoginFlowAlias)
+		buildEnsureFirstBrokerLoginFlowShellWithAlias("${KERNEL_REALM}", kernelPortalFirstBrokerLoginFlowAlias))
 }
 
 func makeKernelTenantBrokerJob(tenantName, realmName, kernelRealm, kernelExternalURL string) *batchv1.Job {
