@@ -700,12 +700,85 @@ for x in doc.get("items", []):
         continue
     kind = x.get("kind", "?")
     name = x.get("metadata", {}).get("name", "?")
-    print(f"    {kind}/{name}  Ready={ready} Synced={synced}")
+    pols = x.get("spec", {}).get("managementPolicies") or []
+    if "keycloak.crossplane.io" in x.get("apiVersion", ""):
+        later = "  (later phase — not blocking this step)"
+    elif pols == ["Observe"]:
+        later = "  (observe-only — not blocking this step)"
+    else:
+        later = ""
+    print(f"    {kind}/{name}  Ready={ready} Synced={synced}{later}")
     msg = (conds.get("Synced", {}).get("message")
            or conds.get("Ready", {}).get("message") or "").strip()
     if msg:
         first = " ".join(msg.split())[:220]
         print(f"      {first}")
+'
+}
+
+# =============================================================================
+# xcluster_structural_ready <xr-name> — is everything this STEP owes ready?
+#
+# Not the XR's own Ready condition, which function-auto-ready aggregates over
+# every composed resource without exception. The Cluster composition also
+# renders the Keycloak objects the kernel realm needs — an OIDC Client and its
+# two mappers — and those cannot become Ready here by construction: they need
+# ProviderConfig.keycloak.crossplane.io, which the root ApplicationSet
+# delivers at sync-wave 16, behind Keycloak itself at wave 9. Both are applied
+# by C-02, which runs after this step. So waiting on the XR's own Ready
+# condition is waiting for a later phase to have already happened, and on a
+# genuinely fresh cluster it can only ever time out.
+#
+# The observe-only resources are excluded for a second, independent reason.
+# The composition's jwt AuthBackend is managementPolicies: ["Observe"] — it
+# never creates anything, it reads the oidc mount so the tenant-admin policy
+# can template the mount accessor. provider-vault reads that backend through
+# auth/oidc/config, and on a first install there is nothing there to read:
+# B-07 enables the mount but cannot write its config yet, because the config
+# needs the Keycloak client secret, which ESO materialises from a KV path that
+# THIS step is what creates. Mount, then KV path and ExternalSecret, then
+# config: it does not fit in one pass, and B-07 says so and defers. Waiting
+# here for an observe-only resource to reflect a write a later pass has not
+# made yet is waiting for this run to have already finished.
+#
+# Observe-only is the general form of both cases, and the honest test: a
+# resource this composition does not create is a resource this step cannot
+# make ready, so it cannot be a gate on this step's own work. Selected by
+# managementPolicies rather than by kind or API group, so anything added to
+# the composition later under the same contract is covered without editing
+# this.
+#
+# What B-08 owes the steps after it is its `provides:` line — the KV mount and
+# its seeded paths, the policies, the auth backends and roles it creates, the
+# AppProject and the ClusterSecretStore. All of those are ready in the first
+# pass. Nothing here abandons the rest: the Keycloak objects reconcile when
+# wave 16 lands, the oidc config lands on B-07's next pass, and the driver's
+# end-of-run report names B-07 as outstanding until it does.
+# =============================================================================
+xcluster_structural_ready() {
+    local xr_name="$1"
+    kubectl get managed -l "crossplane.io/composite=${xr_name}" -o json 2>/dev/null |
+        python3 -c '
+import json, sys
+try:
+    doc = json.load(sys.stdin)
+except Exception:
+    sys.exit(1)
+items = doc.get("items", [])
+if not items:
+    sys.exit(1)
+for x in items:
+    # Depends on a phase this step precedes (Keycloak, wave 9/16).
+    if "keycloak.crossplane.io" in x.get("apiVersion", ""):
+        continue
+    # Observe-only: reflects state this composition does not create.
+    if [p for p in (x.get("spec", {}).get("managementPolicies") or []) if p == "Observe"] \
+       and len(x.get("spec", {}).get("managementPolicies") or []) == 1:
+        continue
+    conds = {c["type"]: c for c in (x.get("status", {}).get("conditions") or [])}
+    if conds.get("Ready", {}).get("status") != "True":
+        sys.exit(1)
+sys.exit(0)
 '
 }
 
@@ -764,8 +837,20 @@ wait_for_xcluster_ready() {
 
     local waited=0 interval=15 report_every=60 since_report=0 perm_seen=0
     while (( waited < secs )); do
+        # The XR's own Ready first: when everything including the Keycloak
+        # objects has reconciled — a re-run on an established cluster — that is
+        # the honest answer and the cheapest check.
         if kubectl get "xcluster.gentianos.io/${xr_name}" \
             -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null | grep -q True; then
+            return 0
+        fi
+        # Otherwise: is everything this step actually owes ready? On a fresh
+        # cluster the Keycloak objects cannot be, and never will be until a
+        # later phase this step precedes. See xcluster_structural_ready.
+        if xcluster_structural_ready "${xr_name}"; then
+            success "Cluster XR ${xr_name}: everything this step provides is Ready."
+            info "  Its Keycloak objects reconcile once the root ApplicationSet"
+            info "  brings up Keycloak (wave 9) and its ProviderConfig (wave 16)."
             return 0
         fi
         sleep "${interval}"
