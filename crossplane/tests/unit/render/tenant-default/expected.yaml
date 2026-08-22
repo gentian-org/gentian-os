@@ -7,7 +7,7 @@ status:
   conditions:
   - lastTransitionTime: "2024-01-01T00:00:00Z"
     message: 'Unready resources: app-catalogue-test-app, keycloak-broker-client, keycloak-broker-client-id,
-      and 22 more'
+      and 25 more'
     reason: Creating
     status: "False"
     type: Ready
@@ -463,6 +463,35 @@ spec:
   providerConfigRef:
     name: keycloak
 ---
+apiVersion: identityprovider.keycloak.crossplane.io/v1alpha1
+kind: IdentityProviderMapper
+metadata:
+  annotations:
+    crossplane.io/composition-resource-name: keycloak-kernel-idp-username-mapper
+  labels:
+    crossplane.io/composite: render-fixture
+  name: render-fixture-kernel-idp-username-mapper
+  ownerReferences:
+  - apiVersion: gentianos.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XTenant
+    name: render-fixture
+    uid: ""
+spec:
+  deletionPolicy: Orphan
+  forProvider:
+    extraConfig:
+      claim: gentian_username
+      syncMode: IMPORT
+      user.attribute: uid
+    identityProviderAlias: kernel
+    identityProviderMapper: oidc-user-attribute-idp-mapper
+    name: gentian_username
+    realm: render-fixture
+  providerConfigRef:
+    name: keycloak
+---
 apiVersion: openidclient.keycloak.crossplane.io/v1alpha1
 kind: Client
 metadata:
@@ -577,6 +606,63 @@ spec:
   - Create
   - Update
   - Delete
+  providerConfigRef:
+    name: keycloak
+---
+apiVersion: identityprovider.keycloak.crossplane.io/v1alpha1
+kind: IdentityProviderMapper
+metadata:
+  annotations:
+    crossplane.io/composition-resource-name: keycloak-kernel-portal-idp-groups-mapper
+  labels:
+    crossplane.io/composite: render-fixture
+  name: render-fixture-kernel-portal-idp-groups-mapper
+  ownerReferences:
+  - apiVersion: gentianos.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XTenant
+    name: render-fixture
+    uid: ""
+spec:
+  deletionPolicy: Orphan
+  forProvider:
+    extraConfig:
+      claims: '[{"key":"groups","value":"groups"}]'
+      syncMode: IMPORT
+    identityProviderAlias: render-fixture
+    identityProviderMapper: oidc-advanced-group-idp-mapper
+    name: groups
+    realm: kernel
+  providerConfigRef:
+    name: keycloak
+---
+apiVersion: identityprovider.keycloak.crossplane.io/v1alpha1
+kind: IdentityProviderMapper
+metadata:
+  annotations:
+    crossplane.io/composition-resource-name: keycloak-kernel-portal-idp-tenant-mapper
+  labels:
+    crossplane.io/composite: render-fixture
+  name: render-fixture-kernel-portal-idp-tenant-mapper
+  ownerReferences:
+  - apiVersion: gentianos.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XTenant
+    name: render-fixture
+    uid: ""
+spec:
+  deletionPolicy: Orphan
+  forProvider:
+    extraConfig:
+      attribute: tenant
+      attribute.value: render-fixture
+      syncMode: FORCE
+    identityProviderAlias: render-fixture
+    identityProviderMapper: hardcoded-attribute-idp-mapper
+    name: tenant
+    realm: kernel
   providerConfigRef:
     name: keycloak
 ---

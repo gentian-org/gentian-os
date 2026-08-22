@@ -759,6 +759,123 @@ spec:
                 name: keycloak
             {{- end }}
 
+            {{- /* ── the claims that carry a user across a realm boundary ──────
+                 A brokered login copies a user from one realm into another, and
+                 these four decide what survives the crossing. Without them the
+                 tenant realm's scope mappers see an empty uid, so anything keyed
+                 on the username — Synapse localparts among them — breaks quietly.
+
+                 gentian_username travels twice: the kernel broker client must
+                 EMIT it in the token, and the tenant realm's IdP must IMPORT it
+                 back into the user's uid attribute. One claim, two objects, two
+                 realms.
+              */}}
+            {{- /* The broker client's id, read off the observed Client. A ref would
+                 give its external-name, which is the client's NAME because that
+                 client is adopted by name and Observe-only — and the API path
+                 needs a UUID. */}}
+            {{- $brokerClientID := dig "resources" "keycloak-broker-client" "resource" "status" "atProvider" "id" "" $observed }}
+            {{- if $brokerClientID }}
+            ---
+            apiVersion: client.keycloak.crossplane.io/v1alpha1
+            kind: ProtocolMapper
+            metadata:
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: keycloak-broker-client-username-mapper
+              name: {{ $tenant }}-broker-client-username-mapper
+            spec:
+              deletionPolicy: Orphan
+              forProvider:
+                realmId: {{ $kernelRealm }}
+                name: gentian_username
+                protocol: openid-connect
+                protocolMapper: oidc-usermodel-attribute-mapper
+                clientId: {{ $brokerClientID }}
+                config:
+                  user.attribute: uid
+                  claim.name: gentian_username
+                  jsonType.label: String
+                  multivalued: "false"
+                  id.token.claim: "true"
+                  access.token.claim: "true"
+                  userinfo.token.claim: "true"
+                  introspection.token.claim: "true"
+              providerConfigRef:
+                name: keycloak
+            {{- end }}
+            ---
+            {{- /* The other half: import that claim into the tenant user's uid. */}}
+            apiVersion: identityprovider.keycloak.crossplane.io/v1alpha1
+            kind: IdentityProviderMapper
+            metadata:
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: keycloak-kernel-idp-username-mapper
+              name: {{ $tenant }}-kernel-idp-username-mapper
+            spec:
+              deletionPolicy: Orphan
+              forProvider:
+                realm: {{ $tenant }}
+                identityProviderAlias: kernel
+                name: gentian_username
+                identityProviderMapper: oidc-user-attribute-idp-mapper
+                {{- /* extraConfig, not config: the CRD has no config field and
+                     carries the mapper's settings here instead. */}}
+                extraConfig:
+                  syncMode: IMPORT
+                  claim: gentian_username
+                  user.attribute: uid
+              providerConfigRef:
+                name: keycloak
+            {{- if $kernelRealm }}
+            ---
+            {{- /* On the reverse broker: which tenant a kernel user came from, and
+                 the group claim that carries their entitlements with them.
+
+                 tenant is FORCE, not IMPORT — the value is a fact about where the
+                 user came from, so it is reasserted on every login rather than
+                 recorded once and left to drift if they move. */}}
+            apiVersion: identityprovider.keycloak.crossplane.io/v1alpha1
+            kind: IdentityProviderMapper
+            metadata:
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: keycloak-kernel-portal-idp-tenant-mapper
+              name: {{ $tenant }}-kernel-portal-idp-tenant-mapper
+            spec:
+              deletionPolicy: Orphan
+              forProvider:
+                realm: {{ $kernelRealm }}
+                identityProviderAlias: {{ $tenant }}
+                name: tenant
+                identityProviderMapper: hardcoded-attribute-idp-mapper
+                extraConfig:
+                  syncMode: FORCE
+                  attribute: tenant
+                  attribute.value: {{ $tenant }}
+              providerConfigRef:
+                name: keycloak
+            ---
+            apiVersion: identityprovider.keycloak.crossplane.io/v1alpha1
+            kind: IdentityProviderMapper
+            metadata:
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: keycloak-kernel-portal-idp-groups-mapper
+              name: {{ $tenant }}-kernel-portal-idp-groups-mapper
+            spec:
+              deletionPolicy: Orphan
+              forProvider:
+                realm: {{ $kernelRealm }}
+                identityProviderAlias: {{ $tenant }}
+                name: groups
+                identityProviderMapper: oidc-advanced-group-idp-mapper
+                extraConfig:
+                  syncMode: IMPORT
+                  {{- /* A JSON document inside a config value, quoted as Keycloak
+                       stores it. */}}
+                  claims: '[{"key":"groups","value":"groups"}]'
+              providerConfigRef:
+                name: keycloak
+            {{- end }}
+
             {{- /* ── the first-broker-login flow ──────────────────────────────
                  What a tenant user meets the first time they arrive through the
                  kernel IdP. Its three executions match a returning user to the
