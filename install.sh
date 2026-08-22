@@ -465,9 +465,22 @@ main() {
             drive_forward
             if [[ "${GENTIAN_DRY_RUN}" == "1" ]]; then
                 success "Dry run complete — no cluster changes were made."
-            else
+            elif _forward_run_fully_satisfied; then
                 success "Bootstrap complete."
                 print_summary_cp
+            else
+                # Deliberately not the completion banner and not the summary.
+                # The summary prints portal credentials and a green "infra
+                # bootstrap complete" line, which on an incomplete cluster
+                # reads as a finished install — the exact misreport this
+                # branch exists to prevent.
+                warn "Steps still outstanding — this cluster is not fully installed:"
+                local _missing_id
+                for _missing_id in "${_MISSING_STEP_IDS[@]}"; do
+                    warn "  ${_missing_id}"
+                done
+                echo ""
+                info "Run ./install.sh to continue, or ./install.sh --status for the full picture."
             fi
             ;;
     esac

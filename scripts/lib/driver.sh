@@ -552,6 +552,37 @@ drive_status() {
     return 0
 }
 
+# _forward_run_fully_satisfied — every step's real state, ignoring THIS run's
+# own scoping (--step/--only/--from/--until/--skip/--phase).
+#
+# A scoped run finishing without error only means the step(s) it touched are
+# done — everything else is exactly where it was before. install.sh's own
+# "Bootstrap complete" banner used to fire on that alone, which is how a
+# single `./install.sh --step A-02` once printed portal credentials and a
+# green "Gentian OS infra bootstrap complete" over a Cluster XR that was still
+# Ready=False, four other XRs Ready=unknown, and handover explicitly not
+# finished. This re-checks every step's real check() verdict regardless of
+# what the run was scoped to, rather than trusting "the driver did not exit"
+# as proof of a finished cluster. undefined/always are legitimate
+# non-blocking states (no OIDC configured for this cluster, no persistent
+# state to check) and do not count as outstanding — only a real CHECK_MISSING
+# does. Populates _MISSING_STEP_IDS; returns 0 only if it ends up empty.
+_forward_run_fully_satisfied() {
+    _MISSING_STEP_IDS=()
+    load_status_context
+    discover_steps || return 1
+    local i id file verdict
+    for (( i = 0; i < ${#_STEP_IDS[@]}; i++ )); do
+        id="${_STEP_IDS[$i]}"
+        file="${_STEP_FILES[$i]}"
+        _load_step "$file"
+        verdict=0
+        _step_verdict || verdict=$?
+        [[ "${verdict}" == "${CHECK_MISSING}" ]] && _MISSING_STEP_IDS+=("${id}")
+    done
+    [[ ${#_MISSING_STEP_IDS[@]} -eq 0 ]]
+}
+
 # =============================================================================
 # Contract validation — used by CI and by `--validate`
 # =============================================================================
