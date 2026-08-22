@@ -580,39 +580,22 @@ if [ -n "${KERNEL_REALM:-}" ] && [ -n "${KERNEL_EXTERNAL_URL:-}" ]; then
 `+realmScriptBrokerIDPlaceholder+`
     echo "broker client ${BROKER_CLIENT_ID} created in ${KERNEL_REALM} realm"
   fi
-  BROKER_SECRET=$(curl -sf --max-time 30 -H "Authorization: Bearer ${TOKEN}" \
-    "${KEYCLOAK_URL}/admin/realms/${KERNEL_REALM}/clients/${BROKER_KC_ID}/client-secret" \
-    | sed 's/.*"value":"\([^"]*\)".*/\1/')
-
-  IDP_JSON=$(curl -s --max-time 30 -H "Authorization: Bearer ${TOKEN}" \
-    "${KEYCLOAK_URL}/admin/realms/${REALM_NAME}/identity-provider/instances/kernel")
-  IDP_HTTP=$(curl -s --max-time 30 -o /dev/null -w "%%{http_code}" -H "Authorization: Bearer ${TOKEN}" \
-    "${KEYCLOAK_URL}/admin/realms/${REALM_NAME}/identity-provider/instances/kernel")
-  # Keep whichever first-broker-login flow is already in place.
+  # The IdP is NOT written here. tenant-default composes it, fully managed, and
+  # declares more than this script ever could: the sixteen provider defaults the
+  # live object was missing, useJwksUrl and updateProfileFirstLoginMode through
+  # extraConfig, and the client id and secret taken from the broker Client's
+  # connection Secret rather than read back from the admin API.
   #
-  # This is not the only writer of the IdP: tenant-default composes it, and sets
-  # the gentian first-broker-login flow, which matches a returning user to the
-  # account already provisioned for them by email. The built-in flow stops and
-  # asks them to confirm the link instead. Restating the built-in alias here
-  # would revert that on any realm re-run — silently, and only visible the next
-  # time somebody logged in for the first time.
+  # This was the last object with two writers. They agreed only because the
+  # script had been taught to carry forward whichever first-broker-login alias it
+  # observed instead of restating one — which is a truce, not a resolution, and
+  # the same truce held right up until the two disagreed about that field.
   #
-  # The literal below is the bootstrap value, used only when no IdP exists yet;
-  # the Composition replaces it on its next reconcile.
-  FBL_ALIAS=$(echo "${IDP_JSON}" | sed -n 's/.*"firstBrokerLoginFlowAlias"[^"]*"\([^"]*\)".*/\1/p')
-  [ -n "${FBL_ALIAS}" ] || FBL_ALIAS="first broker login"
-  IDP_BODY="{\"alias\":\"kernel\",\"displayName\":\"Gentian SSO\",\"providerId\":\"oidc\",\"enabled\":true,\"trustEmail\":true,\"storeToken\":true,\"firstBrokerLoginFlowAlias\":\"${FBL_ALIAS}\",\"config\":{\"issuer\":\"${KERNEL_EXTERNAL_URL}/realms/${KERNEL_REALM}\",\"authorizationUrl\":\"${KERNEL_EXTERNAL_URL}/realms/${KERNEL_REALM}/protocol/openid-connect/auth\",\"tokenUrl\":\"${KEYCLOAK_URL}/realms/${KERNEL_REALM}/protocol/openid-connect/token\",\"jwksUrl\":\"${KEYCLOAK_URL}/realms/${KERNEL_REALM}/protocol/openid-connect/certs\",\"userInfoUrl\":\"${KEYCLOAK_URL}/realms/${KERNEL_REALM}/protocol/openid-connect/userinfo\",\"logoutUrl\":\"${KERNEL_EXTERNAL_URL}/realms/${KERNEL_REALM}/protocol/openid-connect/logout\",\"backchannelSupported\":\"true\",\"clientId\":\"${BROKER_CLIENT_ID}\",\"clientSecret\":\"${BROKER_SECRET}\",\"syncMode\":\"IMPORT\",\"useJwksUrl\":\"true\",\"validateSignature\":\"true\",\"defaultScope\":\"openid profile email\",\"hideOnLoginPage\":\"true\"}}"
-  if [ "${IDP_HTTP}" = "200" ]; then
-    curl -sf --max-time 30 -X PUT "${KEYCLOAK_URL}/admin/realms/${REALM_NAME}/identity-provider/instances/kernel" \
-      -H "Authorization: Bearer ${TOKEN}" -H "Content-Type: application/json" \
-      -d "${IDP_BODY}" >/dev/null
-    echo "IdP kernel updated in realm ${REALM_NAME}"
-  else
-    curl -sf --max-time 30 -X POST "${KEYCLOAK_URL}/admin/realms/${REALM_NAME}/identity-provider/instances" \
-      -H "Authorization: Bearer ${TOKEN}" -H "Content-Type: application/json" \
-      -d "${IDP_BODY}"
-    echo "IdP kernel registered in realm ${REALM_NAME}"
-  fi
+  # The broker client above stays, and has to. It is Observe-only in the
+  # Composition by design: writeConnectionSecretToRef republishes its secret
+  # without rotating it, which is what lets the IdP take credentials from a
+  # Secret. Something has to create it first, and on a realm that does not exist
+  # yet that something cannot be the Composition.
 
 # No gentian_username mappers here. This script wrote both — the one that makes
 # the kernel broker client emit the claim, and the one that imports it back into

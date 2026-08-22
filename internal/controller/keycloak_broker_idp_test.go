@@ -47,12 +47,6 @@ func TestRealmScriptLeavesTheBrokerMappersToTheComposition(t *testing.T) {
 		}
 	}
 
-	// It must still preserve the flow alias rather than restate it. The
-	// Composition sets the gentian first-broker-login flow; a literal here would
-	// revert it on every realm re-run.
-	if !strings.Contains(script, `\"firstBrokerLoginFlowAlias\":\"${FBL_ALIAS}\"`) {
-		t.Fatal("realm script must carry forward the observed first-broker-login flow alias")
-	}
 }
 
 // TestRealmScriptLeavesTheUserProfileToTheComposition guards the other object

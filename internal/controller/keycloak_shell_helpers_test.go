@@ -32,22 +32,26 @@ func TestBuildRealmScript_UsesKeycloakJSONIDExtractor(t *testing.T) {
 	if !strings.Contains(script, "SSO Identity Brokering") {
 		t.Fatal("expected kernel SSO brokering block in realm script")
 	}
-	// The built-in flow is the bootstrap value only: it registers the IdP the
-	// first time, before the Composition has installed the gentian flow. It
-	// must not be restated on the update path, where it would revert a realm
-	// that is already on first-broker-login-gentian back to a flow that stops
-	// to ask the user to confirm the link.
-	if !strings.Contains(script, `FBL_ALIAS="first broker login"`) {
-		t.Fatal("realm script must fall back to the built-in flow when no IdP exists yet")
+	// The IdP is not written here at all any more, so there is no alias to
+	// preserve and no bootstrap value to fall back to. The whole
+	// carry-forward-the-observed-alias mechanism existed to keep two writers from
+	// contradicting each other; with one writer there is nothing to carry.
+	for _, gone := range []string{
+		`FBL_ALIAS`,
+		`firstBrokerLoginFlowAlias`,
+		`IDP_BODY`,
+		`identity-provider/instances`,
+		firstBrokerLoginFlowAlias,
+	} {
+		if strings.Contains(script, gone) {
+			t.Fatalf("realm script still writes the kernel IdP: %s", gone)
+		}
 	}
-	if !strings.Contains(script, `\"firstBrokerLoginFlowAlias\":\"${FBL_ALIAS}\"`) {
-		t.Fatal("realm script must send the preserved alias, not a hard-coded one")
-	}
-	if strings.Contains(script, `\"firstBrokerLoginFlowAlias\":\"first broker login\"`) {
-		t.Fatal("realm script must not hard-code the built-in flow into the IdP body")
-	}
-	if strings.Contains(script, firstBrokerLoginFlowAlias) {
-		t.Fatal("realm script must register kernel IdP with built-in first broker login flow only")
+	// The broker client stays: it is Observe-only in the Composition by design,
+	// so something has to create it, and on a realm that does not exist yet that
+	// something cannot be the Composition.
+	if !strings.Contains(script, `${KERNEL_REALM}/clients`) {
+		t.Fatal("realm script must still bootstrap the kernel-realm broker client")
 	}
 	// The user profile is tenant-default's now: it declares all six attributes
 	// whole, where this script appended one patch to add uid and
