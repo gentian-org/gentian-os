@@ -170,15 +170,10 @@ func (r *TenantReconciler) ensureIdentity(ctx context.Context, tenant *gentianov
 	}
 
 	if r.KernelRealm != "" {
-		brokerIdPDone, err := r.ensureBrokerIdentityProviderJob(ctx, tenant)
-		if err != nil {
-			return ctrl.Result{}, fmt.Errorf("ensure broker IdP Job: %w", err)
-		}
-		if !brokerIdPDone {
-			r.setCondition(tenant, conditionIdentityReady, metav1.ConditionFalse,
-				"ProvisioningBrokerIdP", "Waiting for broker IdP Job to complete")
-			return r.requeueForPendingJob(ctx, tenant.Name, tenantBrokerIdPJobName(tenant.Name)), nil
-		}
+		// No broker IdP Job to wait for. Its last two writes — the mappers that
+		// carry gentian_username across the realm boundary — are tenant-default's
+		// now, so the Job is gone and what it left behind is swept.
+		r.deleteRetiredJobs(ctx, tenantBrokerIdPJobName(tenant.Name))
 
 		kernelBrokerDone, err := r.ensureKernelTenantBrokerJob(ctx, tenant)
 		if err != nil {
@@ -609,15 +604,15 @@ if [ -n "${KERNEL_REALM:-}" ] && [ -n "${KERNEL_EXTERNAL_URL:-}" ]; then
     "${KEYCLOAK_URL}/admin/realms/${REALM_NAME}/identity-provider/instances/kernel")
   # Keep whichever first-broker-login flow is already in place.
   #
-  # Two Jobs write this object. The broker-idp Job installs the gentian
-  # first-broker-login flow, which matches a returning user to the account
-  # already provisioned for them by email; the built-in flow stops and asks them
-  # to confirm the link instead. Restating the built-in alias here would revert
-  # that on any realm re-run — silently, and only visible the next time somebody
-  # logged in for the first time.
+  # This is not the only writer of the IdP: tenant-default composes it, and sets
+  # the gentian first-broker-login flow, which matches a returning user to the
+  # account already provisioned for them by email. The built-in flow stops and
+  # asks them to confirm the link instead. Restating the built-in alias here
+  # would revert that on any realm re-run — silently, and only visible the next
+  # time somebody logged in for the first time.
   #
-  # The literal below is the bootstrap value, used only when no IdP exists yet.
-  # The broker-idp Job replaces it moments later in the same reconcile.
+  # The literal below is the bootstrap value, used only when no IdP exists yet;
+  # the Composition replaces it on its next reconcile.
   FBL_ALIAS=$(echo "${IDP_JSON}" | sed -n 's/.*"firstBrokerLoginFlowAlias"[^"]*"\([^"]*\)".*/\1/p')
   [ -n "${FBL_ALIAS}" ] || FBL_ALIAS="first broker login"
   IDP_BODY="{\"alias\":\"kernel\",\"displayName\":\"Gentian SSO\",\"providerId\":\"oidc\",\"enabled\":true,\"trustEmail\":true,\"storeToken\":true,\"firstBrokerLoginFlowAlias\":\"${FBL_ALIAS}\",\"config\":{\"issuer\":\"${KERNEL_EXTERNAL_URL}/realms/${KERNEL_REALM}\",\"authorizationUrl\":\"${KERNEL_EXTERNAL_URL}/realms/${KERNEL_REALM}/protocol/openid-connect/auth\",\"tokenUrl\":\"${KEYCLOAK_URL}/realms/${KERNEL_REALM}/protocol/openid-connect/token\",\"jwksUrl\":\"${KEYCLOAK_URL}/realms/${KERNEL_REALM}/protocol/openid-connect/certs\",\"userInfoUrl\":\"${KEYCLOAK_URL}/realms/${KERNEL_REALM}/protocol/openid-connect/userinfo\",\"logoutUrl\":\"${KERNEL_EXTERNAL_URL}/realms/${KERNEL_REALM}/protocol/openid-connect/logout\",\"backchannelSupported\":\"true\",\"clientId\":\"${BROKER_CLIENT_ID}\",\"clientSecret\":\"${BROKER_SECRET}\",\"syncMode\":\"IMPORT\",\"useJwksUrl\":\"true\",\"validateSignature\":\"true\",\"defaultScope\":\"openid profile email\",\"hideOnLoginPage\":\"true\"}}"
@@ -632,7 +627,11 @@ if [ -n "${KERNEL_REALM:-}" ] && [ -n "${KERNEL_EXTERNAL_URL:-}" ]; then
       -d "${IDP_BODY}"
     echo "IdP kernel registered in realm ${REALM_NAME}"
   fi
-`+brokerKernelClientUsernameMapperShell+brokerIdPUsernameImporterShell+`
+
+# No gentian_username mappers here. This script wrote both — the one that makes
+# the kernel broker client emit the claim, and the one that imports it back into
+# the tenant user's uid — and so did the broker-idp Job, of three writers for two
+# objects. tenant-default composes them.
 fi`, realmName, realmName, displayName, realmName, realmName)
 	script = strings.ReplaceAll(script, realmScriptBrokerIDPlaceholder, brokerResolveID)
 	return keycloak.ShellJSONIDExtractor() + script + keycloak.ShellEnsureInviteEmailUserProfile(realmName) + keycloak.ShellDisableProfilePromptRequiredActions(realmName)

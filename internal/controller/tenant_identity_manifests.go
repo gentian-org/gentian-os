@@ -223,12 +223,14 @@ func (r *TenantReconciler) buildIdentityProvisioningJobs(ctx context.Context, te
 	}
 
 	if r.KernelRealm != "" && r.KernelDomain != "" {
-		externalURL := kernelExternalURL(r.KernelDomain)
-		// This Job no longer writes the kernel IdP — tenant-default's
-		// IdentityProvider owns it. What is left is the authentication flow the
-		// IdP's alias refers to, and the two gentian_username mappers.
-		jobs = append(jobs, *makeBrokerIdentityProviderJob(tenant.Name, realmName, r.KernelRealm))
-		jobs = append(jobs, *makeKernelTenantBrokerJob(tenant.Name, realmName, r.KernelRealm, externalURL))
+		// No broker IdP Job. Every object it wrote — the kernel IdP, the tenant
+		// realm's first-broker-login flow, the two gentian_username mappers — is
+		// a Composition resource now, so the Job had nothing left to do.
+		//
+		// The kernel broker Job is down to one thing: the kernel realm's own
+		// first-broker-login flow. No XTenant covers the kernel realm, so nothing
+		// composes it.
+		jobs = append(jobs, *makeKernelTenantBrokerJob(tenant.Name, realmName, r.KernelRealm))
 		// No portal BFF client Job. The client, its confidential secret taken
 		// from gentian-portal-bff, and its seven default scopes are all
 		// Composition resources now.

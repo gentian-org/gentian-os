@@ -24,31 +24,27 @@ import (
 func TestBuildKernelTenantBrokerScript(t *testing.T) {
 	script := buildKernelTenantBrokerScript()
 
-	// The broker client and the kernel-realm IdP are tenant-default's now, and
-	// both adopted the live objects with no drift. What is left here is the
-	// kernel realm's own first-broker-login flow — one object shared by every
-	// tenant, so it cannot be composed per tenant — and the IdP mappers that
-	// hang off the IdP.
+	// One object is left here: the kernel realm's own first-broker-login flow.
+	// The broker client, the kernel-realm IdP, and the two mappers that hang off
+	// it — which tenant a brokered user came from, and the groups that carry
+	// their entitlements — are all tenant-default's, adopted with no drift.
+	//
+	// The flow cannot follow them. No XTenant covers the kernel realm, so no
+	// Composition reaches it; it is one flow shared by every tenant, and this Job
+	// is per-tenant only because that is where the reconcile loop lives.
 	for _, gone := range []string{
-		`tokenUrl\":\"${KEYCLOAK_URL}/realms/${TENANT_REALM}/protocol/openid-connect/token`,
 		`hideOnLoginPage\":\"true`,
 		`"${KEYCLOAK_URL}/admin/realms/${TENANT_REALM}/clients"`,
+		`oidc-advanced-group-idp-mapper`,
+		`hardcoded-attribute-idp-mapper`,
+		`/identity-provider/instances/`,
 	} {
 		if strings.Contains(script, gone) {
 			t.Fatalf("kernel tenant broker script still writes what the Composition owns: %s", gone)
 		}
 	}
-	for _, want := range []string{
-		kernelPortalBrokerClientID,
-		kernelPortalFirstBrokerLoginFlowAlias,
-		`_resolve_external_oidc_base`,
-		// Read, not written: the mappers below need the IdP to exist.
-		`"${KEYCLOAK_URL}/admin/realms/${KERNEL_REALM}/identity-provider/instances/${TENANT_REALM}"`,
-		`oidc-advanced-group-idp-mapper`,
-	} {
-		if !strings.Contains(script, want) {
-			t.Fatalf("kernel tenant broker script missing %q", want)
-		}
+	if !strings.Contains(script, kernelPortalFirstBrokerLoginFlowAlias) {
+		t.Fatalf("kernel tenant broker script missing %q", kernelPortalFirstBrokerLoginFlowAlias)
 	}
 }
 

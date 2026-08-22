@@ -21,63 +21,36 @@ import (
 	"testing"
 )
 
-func TestBuildBrokerIdentityProviderScriptUsesInternalTokenURL(t *testing.T) {
-	script := buildBrokerIdentityProviderScript()
+// TestRealmScriptLeavesTheBrokerMappersToTheComposition guards the last write
+// the broker Jobs made.
+//
+// Two mappers carry gentian_username across the realm boundary: the kernel
+// broker client emits the claim, and the tenant realm's IdP imports it back into
+// the user's uid. Three scripts used to write those two objects — this one and
+// the broker-idp Job, which is now retired. tenant-default composes them.
+//
+// A returning writer is not loud. The mapper it POSTs is the one already there,
+// so Keycloak accepts it and nothing fails; the drift only shows when the
+// Composition and the script disagree about a field, which is the case that took
+// three sessions to find the last time.
+func TestRealmScriptLeavesTheBrokerMappersToTheComposition(t *testing.T) {
+	script := buildRealmScript("corp", "Corp")
 
-	// The Job must not write the IdP. tenant-default's IdentityProvider owns it,
-	// and a second writer here is what let this script and the realm script
-	// disagree about which first-broker-login flow a tenant realm used.
-	//
-	// Checked per curl invocation rather than by searching the whole script for
-	// "-X PUT": the flow this Job still builds sets its executions' requirement
-	// with PUT, and that is not the object in question. The instance path is
-	// matched with a trailing quote so /mappers below is not caught by it.
-	for _, inv := range strings.Split(script, "curl ")[1:] {
-		if !strings.Contains(inv, `/identity-provider/instances/kernel"`) {
-			continue
-		}
-		for _, verb := range []string{"PUT", "POST", "DELETE"} {
-			if strings.Contains(inv, "-X "+verb) {
-				t.Fatalf("broker IdP script %ss the kernel IdP — the Composition owns it", verb)
-			}
-		}
-	}
-	if strings.Contains(script, `IDP_BODY`) {
-		t.Fatal("broker IdP script must not build an IdP payload")
-	}
-	// The secret was only ever read to put back into that payload; the
-	// Composition takes it from the broker Client's connection secret now.
-	if strings.Contains(script, `client-secret`) {
-		t.Fatal("broker IdP script must not read the broker client secret")
-	}
-	// It must still create the flow the IdP's alias refers to. The alias is a
-	// reference, so Keycloak rejects an IdP naming a flow that does not exist.
-	// The flow is tenant-default's now, and this Job building it too made a third
-	// writer of one object.
 	for _, gone := range []string{
-		`idp-detect-existing-broker-user`,
-		`first broker login flow ${FLOW_ALIAS} ready`,
+		`oidc-user-attribute-idp-mapper`,
+		`oidc-usermodel-attribute-mapper`,
+		`/protocol-mappers/models`,
+		`/identity-provider/instances/kernel/mappers`,
 	} {
 		if strings.Contains(script, gone) {
-			t.Fatalf("broker IdP script still builds the flow: %s", gone)
+			t.Fatalf("realm script still writes a mapper the Composition owns: %s", gone)
 		}
 	}
-	for _, want := range []string{
-		`oidc-user-attribute-idp-mapper`,
-		`claim.name":"gentian_username`,
-		`user.attribute":"uid"`,
-	} {
-		if !strings.Contains(script, want) {
-			t.Fatalf("broker IdP script missing %q", want)
-		}
-	}
-	if strings.Contains(script, `${KERNEL_EXTERNAL_URL}/realms/${KERNEL_REALM}/protocol/openid-connect/token`) {
-		t.Fatal("broker IdP script must not use external URL for token exchange")
-	}
-	if strings.Contains(script, `%%{http_code}`) {
-		t.Fatal("broker IdP script must use %{http_code} in curl -w (raw Go string, not fmt.Sprintf)")
-	}
-	if !strings.Contains(script, `%{http_code}`) {
-		t.Fatal("broker IdP script must read HTTP status via curl -w %{http_code}")
+
+	// It must still preserve the flow alias rather than restate it. The
+	// Composition sets the gentian first-broker-login flow; a literal here would
+	// revert it on every realm re-run.
+	if !strings.Contains(script, `\"firstBrokerLoginFlowAlias\":\"${FBL_ALIAS}\"`) {
+		t.Fatal("realm script must carry forward the observed first-broker-login flow alias")
 	}
 }
