@@ -321,21 +321,21 @@ empty).
 
 ### 1.27 Retire the realm script's kernel IdP write
 
-`IdentityProvider kernel` is managed by `tenant-default`, and the broker-idp Job
-no longer writes it. One writer remains: the realm script in
-`identity_reconciler.go`.
+`IdentityProvider kernel` is managed by `tenant-default`. One writer remains:
+the realm script in `identity_reconciler.go`.
 
-It cannot simply be deleted. The broker-idp Job requires the IdP to already
-exist and exits non-zero otherwise, and the Composition needs the tenant realm
-before it can create anything in it — so something has to make the object first
-on a brand new tenant. The realm script no longer restates the
-first-broker-login alias, so the two no longer disagree; what is left is a
-duplicated write, not a conflicting one.
+The broker-idp Job that also required the IdP to exist is retired, so nothing
+outside the Composition depends on the object being there early any more — the
+mapper that imports `gentian_username` into the tenant user's uid is composed
+alongside the IdP, and Crossplane orders that itself. What is left is a
+duplicated write, not a conflicting one: the realm script carries forward
+whichever first-broker-login alias it observes rather than restating a literal.
 
-To close: let the Composition create the IdP rather than adopt one, drop the
-block from the realm script, and drop the broker-idp Job's existence check with
-it. The ordering has to be shown to work on a tenant created from nothing, not
-on `corp`, which has had the object since before any of this.
+To close: let the Composition create the IdP rather than adopt one, and drop the
+block from the realm script. The Composition needs the tenant realm before it
+can create anything in it, so the ordering has to be shown to work on a tenant
+created from nothing, not on `corp`, which has had the object since before any
+of this.
 
 The composed `Client broker-<tenant>` stays `Observe`-only by design — see
 docs/plans/tenant-composition-cleanup.md §8.

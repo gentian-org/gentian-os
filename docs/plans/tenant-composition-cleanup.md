@@ -557,8 +557,9 @@ verified object by object rather than intended.
 | Entitlement | the tenant's three groups, one group per app with its profile's attributes, the app's client role, and the group's grant of it |
 | First broker login | the flow and its three executions |
 | Profile prompts | VERIFY_PROFILE and UPDATE_PROFILE |
+| Claims that cross a realm boundary | gentian_username emitted by the kernel broker client and imported back into the tenant user's uid, and on the reverse broker the tenant a user came from and the groups that carry their entitlements |
 
-Thirty-two managed resources for one tenant, none of them recreated: every one
+Thirty-seven managed resources for one tenant, none of them recreated: every one
 adopted the object that already existed.
 
 ### The operator keeps
@@ -581,7 +582,10 @@ And three that are about *shape*, not category:
 
 - **Objects one tenant does not own.** The kernel realm's own first-broker-login
   flow is one object shared by every tenant. Composed per tenant it would be N
-  resources managing one thing.
+  resources managing one thing. It is the last thing the kernel broker Job
+  writes, and the broker-idp Job is retired outright — every object it made
+  moved, until the script only read back what the Composition had already
+  built.
 - **State the spec cannot see.** Groups for OIDC pack profiles absent from
   `spec.apps`. A group outlives the app that created it — decided, not
   overlooked — so the Job's wider view is the correct one and the Composition's
@@ -601,6 +605,12 @@ resource does not exist". Leave external-name off entirely, give the *parent's*
 real id, and the provider resolves the existing object and records its id. That
 is how mappers, roles, groups, executions and both broker IdPs adopted without a
 single recreate — after I had concluded, twice, that they could not.
+
+**Three writers of one object is not loud.** The two gentian_username mappers
+were written by the broker-idp Job *and* by the realm script, both guarded with
+"if it already exists, skip". Nothing ever failed. Drift only appears when the
+writers disagree about a field, which is exactly the first-broker-login flow bug
+that took three sessions to find. Removing a redundant writer is not tidying.
 
 **A reference resolves to the referenced resource's external-name.** So
 `clientIdRef` works where that Client is managed and its external-name is
