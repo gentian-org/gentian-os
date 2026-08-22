@@ -867,3 +867,36 @@ docs/plans/tenant-composition-cleanup.md §8.
     groups the spec implies, and the Job holds the rest. Two writers that agree
     by construction, which is a weaker guarantee than one writer.
   - `[ ]` Compose the "groups" client scope and its mapper, then retire the Job.
+
+### 1.33 The Tenant Admin Password Is Readable Twice Over (***)
+* **Target Domain**: Security
+* **Context**: `makeAdminJob` passes the generated password as a literal env
+  value, so it sits in the Job spec for anyone with `get jobs` in
+  platform-kernel:
+
+      TENANT_ADMIN_PASSWORD=Gt!...
+
+  and the script then echoes it:
+
+      echo "INITIAL_TENANT_ADMIN realm=%s username=${TENANT_ADMIN_USERNAME} password=${TENANT_ADMIN_PASSWORD}"
+
+  so it is in the Job's logs too, until the GC removes them.
+
+  The codebase already knows this class. keycloak_dovecot_tenant_client.go says
+  it plainly: "makeOIDCPackJob passes app client secrets literally, which puts
+  them in a Job spec readable by anyone with get on Jobs in the kernel
+  namespace; this path keeps the secretKeyRef the hand-rolled version had." The
+  Dovecot path was fixed. The tenant admin password was not, and it is the more
+  sensitive of the two.
+* **Not obviously a mistake**: the line immediately after prints how to fetch the
+  same value from OpenBao —
+  `INITIAL_TENANT_ADMIN_RETRIEVE bao kv get -mount=secret -field=password
+  gentian-os/tenants/<t>/admin` — which reads as deliberate first-run
+  convenience. If it is, the echo is redundant with a safer alternative sitting
+  next to it.
+* **Proposed Solution**: Pass the password by `secretKeyRef` as the Dovecot path
+  does, and print only the retrieve hint. Both are small; whether the echo goes
+  is a product decision about first-run experience, not a technical one.
+* **Backlog Items**:
+  - `[ ]` Decide whether the plaintext echo is wanted at all.
+  - `[ ]` Pass the password by reference rather than by value.

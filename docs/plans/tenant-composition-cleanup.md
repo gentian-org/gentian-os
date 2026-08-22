@@ -539,3 +539,78 @@ unrelated stage is slow is not testing what it claims, and removing an
 imperative step is one of the few things that reliably surfaces such a
 dependency. The boundary work keeps finding bugs that predate it, because
 making something declarative means making its timing explicit.
+
+## 10. Where the boundary actually sits
+
+§6a gives the test — *can the answer be written down before it happens?* — and
+described where the line ought to fall. This is where it falls now, on ifk-w4h,
+verified object by object rather than intended.
+
+### The Composition owns
+
+| | |
+|---|---|
+| The realm | enabled, displayName, registrationAllowed, the browser flow, the login theme, the twelve-hour token and session lifespans, and the eight browser security headers |
+| Identity brokering | the kernel IdP in the tenant realm, the tenant IdP in the kernel realm, and the broker client each consumes |
+| Clients | portal public, portal BFF, dovecot, the per-app clients, and their default scopes |
+| Scopes and claims | each app's client scope and its protocol mappers, the realm's groups scope and its membership mapper |
+| Entitlement | the tenant's three groups, one group per app with its profile's attributes, the app's client role, and the group's grant of it |
+| First broker login | the flow and its three executions |
+| Profile prompts | VERIFY_PROFILE and UPDATE_PROFILE |
+
+Thirty-two managed resources for one tenant, none of them recreated: every one
+adopted the object that already existed.
+
+### The operator keeps
+
+Four of these are the §6a categories. The rest are not exceptions to the rule so
+much as places where the rule does not reach.
+
+- **Computation.** The tenant admin's password. Compositions template; they do
+  not generate.
+- **Discovery.** Realm SMTP, which exists only if a day-2 credential was
+  supplied — runtime state in a Secret a Composition cannot read, and cannot
+  render a block conditional on. Also the invitation flow's real users, who are
+  not in any spec.
+- **Repair.** Mappers left corrupt by an older failed run, a legacy
+  browser-kernel-idp flow, stale kernel IdP links. There is nothing to declare
+  here, only something to remove.
+- **Change-triggered action.** Restarting Dovecot when the realm set changes.
+
+And three that are about *shape*, not category:
+
+- **Objects one tenant does not own.** The kernel realm's own first-broker-login
+  flow is one object shared by every tenant. Composed per tenant it would be N
+  resources managing one thing.
+- **State the spec cannot see.** Groups for OIDC pack profiles absent from
+  `spec.apps`. A group outlives the app that created it — decided, not
+  overlooked — so the Job's wider view is the correct one and the Composition's
+  narrower one cannot replace it.
+- **Bootstraps.** The realm, the per-app client and its scope are created by
+  Jobs because those Jobs run in the DataPlane stage while the claim that
+  composes them is created in AppsAndEdge, the stage after. Nothing about these
+  objects is imperative; the ordering is.
+
+### What this cost to learn
+
+Two rules came out of it that are not in any provider documentation.
+
+**A UUID-identified object cannot be adopted from its name, and does not need to
+be.** `crossplane.io/external-name: email` fails with "observe failed: external
+resource does not exist". Leave external-name off entirely, give the *parent's*
+real id, and the provider resolves the existing object and records its id. That
+is how mappers, roles, groups, executions and both broker IdPs adopted without a
+single recreate — after I had concluded, twice, that they could not.
+
+**A reference resolves to the referenced resource's external-name.** So
+`clientIdRef` works where that Client is managed and its external-name is
+already a Keycloak id, and `clientScopeIdRef` does not where the scope is
+adopted by name and Observe-only — it hands the provider a name where the API
+path needs a UUID. Read the parent's observed id instead.
+
+### The honest summary
+
+The parts of a tenant that describe *what should exist* are declarative. The
+parts that generate a secret, discover what someone supplied, repair an old
+mistake, or belong to something larger than one tenant are not — and a good
+number of them should stay that way.
