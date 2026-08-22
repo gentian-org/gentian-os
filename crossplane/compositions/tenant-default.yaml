@@ -607,6 +607,124 @@ spec:
                 name: keycloak
             {{- end }}
 
+            {{- /* ── the reverse broker: kernel realm → this tenant ────────────
+                 The mirror of the kernel IdP above. That one lets a tenant user
+                 log in through the kernel realm; this one lets the kernel realm
+                 broker INTO the tenant, which is how portal login reaches a
+                 tenant's own users.
+
+                 Two objects in two realms: the client lives in the tenant realm
+                 and the IdP that consumes it lives in the kernel realm, aliased by
+                 the tenant's name. Both are per tenant, so composing them here is
+                 right — unlike the kernel-realm first-broker-login-kernel-portal
+                 flow they reference, which is ONE object shared by every tenant.
+                 Composing that per tenant would mean a resource per tenant all
+                 managing the same flow, so it stays with the Job.
+              */}}
+            ---
+            apiVersion: openidclient.keycloak.crossplane.io/v1alpha1
+            kind: Client
+            metadata:
+              name: {{ $tenant }}-kernel-portal-broker-client
+              annotations:
+                crossplane.io/external-name: broker-kernel-portal
+                gotemplating.fn.crossplane.io/composition-resource-name: keycloak-kernel-portal-broker-client
+            spec:
+              deletionPolicy: Orphan
+              {{- /* Observed, like the other broker client: this republishes the
+                   existing secret without rotating it, which is what lets the IdP
+                   below take credentials from a Secret. Managing it would put that
+                   secret under the provider's control and a rotation would break
+                   portal login until the IdP caught up. */}}
+              managementPolicies: ["Observe"]
+              forProvider:
+                clientId: broker-kernel-portal
+                realmId: {{ $tenant }}
+              writeConnectionSecretToRef:
+                name: {{ $tenant }}-kernel-portal-broker-client
+                namespace: platform-kernel
+              providerConfigRef:
+                name: keycloak
+            ---
+            apiVersion: kubernetes.crossplane.io/v1alpha2
+            kind: Object
+            metadata:
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: keycloak-kernel-portal-broker-client-id
+              name: {{ $tenant }}-kernel-portal-broker-client-id
+            spec:
+              forProvider:
+                manifest:
+                  apiVersion: v1
+                  kind: Secret
+                  metadata:
+                    name: {{ $tenant }}-kernel-portal-broker-client-id
+                    namespace: platform-kernel
+                    labels:
+                      app.kubernetes.io/managed-by: crossplane
+                  stringData:
+                    client_id: broker-kernel-portal
+              providerConfigRef:
+                name: kubernetes
+            {{- if and $kernelRealm $kcInternal }}
+            ---
+            apiVersion: oidc.keycloak.crossplane.io/v1alpha1
+            kind: IdentityProvider
+            metadata:
+              name: {{ $tenant }}-kernel-portal-idp
+              annotations:
+                crossplane.io/external-name: {{ $tenant }}
+                gotemplating.fn.crossplane.io/composition-resource-name: keycloak-kernel-portal-idp
+            spec:
+              deletionPolicy: Orphan
+              # Everything except LateInitialize, for the reason the portal BFF
+              # client demonstrated.
+              managementPolicies: ["Observe", "Create", "Update", "Delete"]
+              forProvider:
+                {{- /* In the KERNEL realm, aliased by this tenant. */}}
+                realm: {{ $kernelRealm }}
+                alias: {{ $tenant }}
+                displayName: {{ $tenant }}
+                providerId: oidc
+                enabled: true
+                {{- /* trustEmail and storeToken are false here where the kernel IdP
+                     has them true: an address vouched for by a tenant realm is not
+                     grounds to trust it in the kernel. */}}
+                trustEmail: false
+                storeToken: false
+                hideOnLoginPage: true
+                linkOnly: false
+                authenticateByDefault: false
+                addReadTokenRoleOnCreate: false
+                syncMode: IMPORT
+                validateSignature: true
+                defaultScopes: openid profile email groups
+                firstBrokerLoginFlowAlias: first-broker-login-kernel-portal
+                {{- /* Browser-facing endpoints go to the public URL; the
+                     server-to-server half stays inside the cluster. */}}
+                issuer: https://id.{{ $kd }}/auth/realms/{{ $tenant }}
+                authorizationUrl: https://id.{{ $kd }}/auth/realms/{{ $tenant }}/protocol/openid-connect/auth
+                tokenUrl: {{ $kcInternal }}/realms/{{ $tenant }}/protocol/openid-connect/token
+                jwksUrl: {{ $kcInternal }}/realms/{{ $tenant }}/protocol/openid-connect/certs
+                userInfoUrl: {{ $kcInternal }}/realms/{{ $tenant }}/protocol/openid-connect/userinfo
+                {{- /* Keys the provider has no field for and does not read back —
+                     absent from status.atProvider and from extraConfig, yet set on
+                     the live object, so declared here or lost on the first write. */}}
+                extraConfig:
+                  useJwksUrl: "true"
+                  updateProfileFirstLoginMode: "on"
+                clientIdSecretRef:
+                  name: {{ $tenant }}-kernel-portal-broker-client-id
+                  namespace: platform-kernel
+                  key: client_id
+                clientSecretSecretRef:
+                  name: {{ $tenant }}-kernel-portal-broker-client
+                  namespace: platform-kernel
+                  key: attribute.client_secret
+              providerConfigRef:
+                name: keycloak
+            {{- end }}
+
             {{- /* ── the first-broker-login flow ──────────────────────────────
                  What a tenant user meets the first time they arrive through the
                  kernel IdP. Its three executions match a returning user to the
