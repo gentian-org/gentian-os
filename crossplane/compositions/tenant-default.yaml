@@ -725,6 +725,40 @@ spec:
                 name: keycloak
             {{- end }}
 
+            {{- /* ── the profile prompts a tenant user must not meet ───────────
+                 A tenant user arrives through the kernel IdP with their profile
+                 already filled in. Left enabled, these two stop them on a form
+                 asking for details the kernel realm has already vouched for.
+
+                 name and priority are Keycloak's own for these built-ins and are
+                 declared because the resource carries them: omitting a field the
+                 provider writes means writing its zero value.
+              */}}
+            {{- range $ra := (list (dict "alias" "VERIFY_PROFILE" "name" "Verify Profile" "priority" 90) (dict "alias" "UPDATE_PROFILE" "name" "Update Profile" "priority" 40)) }}
+            {{- /* Keycloak's aliases carry underscores, which a Kubernetes object
+                 name may not. Only the object name is slugged; alias stays what
+                 Keycloak calls it, because that is what identifies the action. */}}
+            {{- $raSlug := $ra.alias | lower | replace "_" "-" }}
+            ---
+            apiVersion: realm.keycloak.crossplane.io/v1alpha1
+            kind: RequiredAction
+            metadata:
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: keycloak-required-action-{{ $raSlug }}
+              name: {{ $tenant }}-required-action-{{ $raSlug }}
+            spec:
+              deletionPolicy: Orphan
+              forProvider:
+                realmId: {{ $tenant }}
+                alias: {{ $ra.alias }}
+                name: {{ $ra.name | quote }}
+                enabled: false
+                defaultAction: false
+                priority: {{ $ra.priority }}
+              providerConfigRef:
+                name: keycloak
+            {{- end }}
+
             {{- /* ── the first-broker-login flow ──────────────────────────────
                  What a tenant user meets the first time they arrive through the
                  kernel IdP. Its three executions match a returning user to the

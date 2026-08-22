@@ -7,7 +7,7 @@ status:
   conditions:
   - lastTransitionTime: "2024-01-01T00:00:00Z"
     message: 'Unready resources: app-catalogue-test-app, keycloak-broker-client, keycloak-broker-client-id,
-      and 20 more'
+      and 22 more'
     reason: Creating
     status: "False"
     type: Ready
@@ -808,6 +808,60 @@ spec:
         xXssProtection: 1; mode=block
     ssoSessionIdleTimeout: 12h0m0s
     ssoSessionMaxLifespan: 12h0m0s
+  providerConfigRef:
+    name: keycloak
+---
+apiVersion: realm.keycloak.crossplane.io/v1alpha1
+kind: RequiredAction
+metadata:
+  annotations:
+    crossplane.io/composition-resource-name: keycloak-required-action-update-profile
+  labels:
+    crossplane.io/composite: render-fixture
+  name: render-fixture-required-action-update-profile
+  ownerReferences:
+  - apiVersion: gentianos.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XTenant
+    name: render-fixture
+    uid: ""
+spec:
+  deletionPolicy: Orphan
+  forProvider:
+    alias: UPDATE_PROFILE
+    defaultAction: false
+    enabled: false
+    name: Update Profile
+    priority: 40
+    realmId: render-fixture
+  providerConfigRef:
+    name: keycloak
+---
+apiVersion: realm.keycloak.crossplane.io/v1alpha1
+kind: RequiredAction
+metadata:
+  annotations:
+    crossplane.io/composition-resource-name: keycloak-required-action-verify-profile
+  labels:
+    crossplane.io/composite: render-fixture
+  name: render-fixture-required-action-verify-profile
+  ownerReferences:
+  - apiVersion: gentianos.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XTenant
+    name: render-fixture
+    uid: ""
+spec:
+  deletionPolicy: Orphan
+  forProvider:
+    alias: VERIFY_PROFILE
+    defaultAction: false
+    enabled: false
+    name: Verify Profile
+    priority: 90
+    realmId: render-fixture
   providerConfigRef:
     name: keycloak
 ---
