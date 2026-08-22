@@ -558,9 +558,11 @@ verified object by object rather than intended.
 | First broker login | the flow and its three executions |
 | Profile prompts | VERIFY_PROFILE and UPDATE_PROFILE |
 | Claims that cross a realm boundary | gentian_username emitted by the kernel broker client and imported back into the tenant user's uid, and on the reverse broker the tenant a user came from and the groups that carry their entitlements |
+| What a user record may hold | the realm user profile: all six attributes with their validators and permissions, and the group they display under |
 
-Thirty-seven managed resources for one tenant, none of them recreated: every one
-adopted the object that already existed.
+Thirty-eight managed resources for one tenant, none of them recreated: every one
+adopted the object that already existed. The user profile came back
+byte-identical to its pre-adoption document.
 
 ### The operator keeps
 
@@ -573,9 +575,16 @@ much as places where the rule does not reach.
   supplied — runtime state in a Secret a Composition cannot read, and cannot
   render a block conditional on. Also the invitation flow's real users, who are
   not in any spec.
-- **Repair.** Mappers left corrupt by an older failed run, a legacy
-  browser-kernel-idp flow, stale kernel IdP links. There is nothing to declare
-  here, only something to remove.
+- **Repair.** Mappers left corrupt by an older failed run. There is nothing to
+  declare here, only something to remove.
+
+  Repair has a shelf life, and two Jobs outlived theirs. One hunted for a legacy
+  browser-kernel-idp flow that is no longer in any realm. The other deleted
+  every user's kernel federated-identity link — unconditionally, with no
+  staleness test, on every TTL cycle — long after the flow change that made
+  re-linking necessary. Auto-link by email covered for it, which is why it read
+  as harmless for so long. A repair that cannot say what it is repairing is
+  finished.
 - **Change-triggered action.** Restarting Dovecot when the realm set changes.
 
 And three that are about *shape*, not category:

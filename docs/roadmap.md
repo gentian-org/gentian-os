@@ -451,17 +451,21 @@ docs/plans/tenant-composition-cleanup.md §8.
   which is the operator's — so the Job is correct rather than unfinished.
   `ensureTenantSMTPJob` already skips cleanly when no credential is supplied,
   which is why no such Job runs on ifk-w4h at all.
-* **What is left** is smaller than it looked: the realm script's user profile
-  attributes and its required-action toggles. Both are separate Keycloak APIs
-  with no `Realm` field, so they need their own resource kinds or they stay.
+* **The user profile moved.** It looked like it could not: declaring it means
+  owning all six attributes with their validators and permissions, where the
+  script only added two and relaxed two. But the provider has a `UserProfile`
+  kind whose schema covers every field the live document uses, and the document
+  is six attributes long — so it is declared whole, adopted from the realm name,
+  and came back byte-identical. The required-action toggles had already moved to
+  composed `RequiredAction`s.
 * **Backlog Items**:
   - `[x]` Compose the realm, adopt it, promote it to managed.
   - `[x]` Declare `securityDefenses` and verify the headers through the Admin API.
   - `[x]` Remove the realm Job's restatement and the browser-security function's
     tenant-realm write.
   - `[x]` Establish whether SMTP can be declared. It cannot, and should not.
-  - `[ ]` Decide whether the user profile attributes and required-action toggles
-    have a declarative form worth using, or stay imperative like SMTP.
+  - `[x]` Decide whether the user profile attributes and required-action toggles
+    have a declarative form worth using. Both do; both are composed.
 ### 1.31 Bootstrap Validator Library: Missing `smtp` and No Automated Coverage (**)
 * **Target Domain**: Platform Security & Credential Validation
 * **Context**: `scripts/lib/validators.sh` covers the `phase: bootstrap` credential set (§10,
