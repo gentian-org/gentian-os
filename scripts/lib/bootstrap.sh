@@ -298,6 +298,16 @@ bootstrap_openbao_for_crossplane() {
         exit 1
     fi
     export VAULT_ADDR
+    # bao (unlike a plain curl call) reads its own BAO_ADDR before VAULT_ADDR,
+    # so a stale BAO_ADDR left exported in the operator's shell from an
+    # earlier manual session — e.g. a pre-purge cluster's address — silently
+    # wins here even though VAULT_ADDR just resolved correctly. Found live:
+    # this function is the first one in the install to call bao directly, so
+    # it is the first to hit that, well before seed_secrets() (later in the
+    # run) does its own fresh `export BAO_ADDR=...` and masks the problem for
+    # everything after it. Keeping both in sync removes the shell's freedom
+    # to disagree with what was just resolved.
+    export BAO_ADDR="${VAULT_ADDR}"
     export VAULT_SKIP_VERIFY=true
 
     if [[ -z "${BAO_TOKEN:-}" ]]; then
