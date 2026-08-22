@@ -133,7 +133,15 @@ tune_argocd_runtime() {
 argocd_installed() {
     kubectl get deployment argocd-server -n argocd >/dev/null 2>&1 &&
         kubectl get crd applications.argoproj.io >/dev/null 2>&1 &&
-        kubectl get crd applicationsets.argoproj.io >/dev/null 2>&1
+        kubectl get crd applicationsets.argoproj.io >/dev/null 2>&1 &&
+        # install_argocd applies this AppProject unconditionally on every run,
+        # and destroy() (A-09) strips it alongside Applications/ApplicationSets
+        # as a first-class, separately-tracked object. Without this, deleting
+        # just the AppProject (by hand, or a partial teardown) leaves the
+        # server/CRDs satisfying every other check here, so this function
+        # keeps reporting installed and install_argocd() never runs again to
+        # recreate it — the same shape as the ProviderConfig bug in A-02.
+        kubectl get appproject gentian -n argocd >/dev/null 2>&1
 }
 
 install_argocd() {

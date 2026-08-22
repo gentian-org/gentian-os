@@ -52,7 +52,14 @@ check() {
     local mode; mode="$(_issuer_mode)"
     case "${mode}" in
         self-signed)
-            kubectl get clusterissuer gentian-ca >/dev/null 2>&1
+            # Both objects apply() creates: destroy() removes the Certificate
+            # on its own line, separately from the ClusterIssuer, so a partial
+            # cleanup can strand one without the other. The ClusterIssuer
+            # alone existing does not mean it can still issue anything — it
+            # signs from gentian-root-ca-tls, which only the Certificate keeps
+            # current.
+            kubectl get clusterissuer gentian-ca >/dev/null 2>&1 || return 1
+            kubectl get certificate gentian-root-ca -n cert-manager >/dev/null 2>&1
             ;;
         acme-dns01|acme-http01)
             # The issuers this cluster's ACME endpoint NAMES, not any

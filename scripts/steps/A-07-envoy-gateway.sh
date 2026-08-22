@@ -15,7 +15,15 @@ check() {
     # verdict about Envoy Gateway would be meaningless.
     [[ "${ROUTING_MODE:-gateway}" == "gateway" ]] || return "${CHECK_UNDEFINED}"
     kubectl get deployment -n "$(_envoy_ns)" -l control-plane=envoy-gateway \
-        -o name 2>/dev/null | grep -q .
+        -o name 2>/dev/null | grep -q . || return 1
+
+    # The Gateway API CRDs, not just the controller. apply() explicitly waits
+    # for these to be Established and destroy() explicitly deletes them
+    # (_delete_envoy_gateway_scaffold) — the controller Deployment stays
+    # Running with them gone, it just has nothing left to reconcile, so a
+    # partial/manual CRD cleanup that leaves the Deployment behind would
+    # otherwise report satisfied with no Gateway API surface left at all.
+    kubectl get crd gatewayclasses.gateway.networking.k8s.io >/dev/null 2>&1
 }
 
 apply() {
