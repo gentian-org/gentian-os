@@ -113,18 +113,18 @@ apply() {
         return 1
     fi
 
-    local secret
-    secret="$(kubectl get secret openbao-oidc-client -n "${OIDC_SECRET_NS}" \
-        -o jsonpath='{.data.client-secret}' 2>/dev/null | base64 -d 2>/dev/null || true)"
-    if [[ -z "${secret}" ]]; then
-        error "Secret ${OIDC_SECRET_NS}/openbao-oidc-client has no client-secret yet."
-        error "  It is materialised by ESO from gentian-os/kernel/oidc/openbao."
-        error "  Re-run once that ExternalSecret has synced."
-        return 1
-    fi
-
     # Enable is the only part that is not idempotent, so it is the only part
     # guarded. Configuring is a write that converges.
+    #
+    # Deliberately before the client-secret lookup, not after. The secret comes
+    # from an ExternalSecret that lives in the Cluster XR composition, which
+    # B-08 applies — and B-08 requires this step. Failing here when the secret
+    # is absent therefore deadlocked every genuinely fresh install: B-07 could
+    # not pass until B-08 had run, B-08 could not run until B-07 passed, and a
+    # re-run reproduced it exactly because nothing in between created the
+    # secret. Enabling the mount needs no secret, and the mount is precisely
+    # what this step owes B-08 (see the header: the composed roles and
+    # policies "only need the mount to exist first").
     if bao auth list -format=json 2>/dev/null | jq -e '."oidc/"' >/dev/null 2>&1; then
         info "Auth mount oidc/ already present."
     else
@@ -133,6 +133,22 @@ apply() {
             error "Could not enable the oidc auth mount."
             return 1
         }
+    fi
+
+    local secret
+    secret="$(kubectl get secret openbao-oidc-client -n "${OIDC_SECRET_NS}" \
+        -o jsonpath='{.data.client-secret}' 2>/dev/null | base64 -d 2>/dev/null || true)"
+    if [[ -z "${secret}" ]]; then
+        # Not an error: on a first install the ExternalSecret that materialises
+        # this does not exist yet, and the mount above is all B-08 needs to get
+        # far enough to create it. check() still reports this step unsatisfied
+        # until the config is actually written, so the driver's end-of-run
+        # report names it as outstanding and the next pass completes it.
+        info "Secret ${OIDC_SECRET_NS}/openbao-oidc-client has no client-secret yet."
+        info "  It is materialised by ESO from gentian-os/kernel/oidc/openbao,"
+        info "  which the Cluster XR (B-08) creates. The mount is in place, so"
+        info "  B-08 can proceed; re-run to write auth/oidc/config once it syncs."
+        return 0
     fi
 
     # Check the discovery document before handing the URL to OpenBao. OpenBao's
