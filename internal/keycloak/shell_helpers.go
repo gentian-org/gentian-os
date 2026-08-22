@@ -167,21 +167,20 @@ fi
 // when admin delivery swaps the transient email used for action-token links.
 func ShellDisableProfilePromptRequiredActions(realmExpr string) string {
 	return fmt.Sprintf(`
-for ACTION in VERIFY_PROFILE UPDATE_PROFILE; do
-  RA=$(curl -sf -H "Authorization: Bearer ${TOKEN}" "${KEYCLOAK_URL}/admin/realms/%s/authentication/required-actions/${ACTION}" 2>/dev/null || true)
-  if [ -n "${RA}" ]; then
-    UPDATED=$(echo "${RA}" | jq '.enabled = false')
-    curl -sf -X PUT -H "Authorization: Bearer ${TOKEN}" -H "Content-Type: application/json" \
-      "${KEYCLOAK_URL}/admin/realms/%s/authentication/required-actions/${ACTION}" -d "${UPDATED}" >/dev/null
-    echo "required action ${ACTION} disabled for realm %s"
-  fi
-done
+# VERIFY_PROFILE and UPDATE_PROFILE are NOT disabled here. tenant-default
+# composes a RequiredAction for each, which adopted the live ones — the realm
+# still reports eleven required actions, both of them disabled.
+#
+# The user profile below stays. Declaring it means owning all six of its
+# attributes with their nested validations and permissions, where this only
+# relaxes two fields, and a validation dropped by omission is not something to
+# discover from a user who can no longer save their name.
 PROFILE=$(curl -sf -H "Authorization: Bearer ${TOKEN}" "${KEYCLOAK_URL}/admin/realms/%s/users/profile")
 RELAXED=$(echo "${PROFILE}" | jq '.attributes = [.attributes[] | if .name == "firstName" or .name == "lastName" then del(.required) else . end]')
 curl -sf -X PUT -H "Authorization: Bearer ${TOKEN}" -H "Content-Type: application/json" \
   "${KEYCLOAK_URL}/admin/realms/%s/users/profile" -d "${RELAXED}" >/dev/null
 echo "user profile firstName/lastName optional for realm %s"
-`, realmExpr, realmExpr, realmExpr, realmExpr, realmExpr, realmExpr)
+`, realmExpr, realmExpr, realmExpr)
 }
 
 // ExtractJSONIDByAttr mirrors the shell logic for unit tests (jq when available).

@@ -52,8 +52,16 @@ func TestBuildRealmScript_UsesKeycloakJSONIDExtractor(t *testing.T) {
 	if !strings.Contains(script, "gentian.inviteEmail") {
 		t.Fatal("expected gentian.inviteEmail user profile block in realm script")
 	}
-	if !strings.Contains(script, "VERIFY_PROFILE UPDATE_PROFILE") {
-		t.Fatal("expected profile prompt required actions to be disabled in realm script")
+	// The two profile-prompt required actions are tenant-default's now — it
+	// composes a RequiredAction for each, and both adopted the live ones. The
+	// realm script must not disable them as well.
+	if strings.Contains(script, "VERIFY_PROFILE UPDATE_PROFILE") {
+		t.Fatal("realm script must not disable the profile prompts; the Composition owns them")
+	}
+	// The user profile relaxation stays: declaring the profile means owning all
+	// six attributes with their validations, where this only relaxes two fields.
+	if !strings.Contains(script, `.name == "firstName" or .name == "lastName"`) {
+		t.Fatal("expected the realm script to keep relaxing firstName/lastName")
 	}
 
 	path := t.TempDir() + "/realm.sh"
