@@ -354,7 +354,16 @@ path "sys/policies/acl/*" { capabilities = ["create","read","update","delete","l
 path "sys/policies/acl"   { capabilities = ["read","list"] }
 # Auth method management (Backend/BackendConfig/BackendRole MRs)
 path "sys/auth/*"  { capabilities = ["create","read","update","delete","sudo"] }
-path "sys/auth"    { capabilities = ["read"] }
+# list, not just read — the same pair sys/mounts already gets above.
+#
+# OpenBao filters the sys/auth response by what the token may enumerate, so
+# with read alone this token saw a table containing only token/ even though it
+# could read sys/auth/oidc directly. provider-vault's AuthBackend finds its
+# backend by enumerating that table, so the observe-only oidc AuthBackend in
+# the Cluster composition reported "external resource does not exist" against
+# a mount that demonstrably existed (accessor and all), stayed unSynced
+# forever, and held the whole XCluster at Ready=False until B-08 timed out.
+path "sys/auth"    { capabilities = ["read","list"] }
 path "auth/+/config"  { capabilities = ["create","read","update"] }
 path "auth/+/role/*"  { capabilities = ["create","read","update","delete","list"] }
 # Token operations
