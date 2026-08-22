@@ -252,55 +252,8 @@ func substituteTenantDomainInURIs(tenant *gentianov1alpha1.Tenant, uris []string
 	return out
 }
 
-func (r *TenantReconciler) ensureBrokerFirstLoginFlowJob(ctx context.Context, tenant *gentianov1alpha1.Tenant, realmName string) (bool, error) {
-	jobName := brokerFirstLoginFlowJobName(tenant.Name)
-	job := &batchv1.Job{}
-	err := r.Get(ctx, types.NamespacedName{Name: jobName, Namespace: kernelNamespace}, job)
-	if err == nil && !brokerFirstLoginFlowJobCurrent(job) {
-		prop := metav1.DeletePropagationBackground
-		if delErr := r.Delete(ctx, job, &client.DeleteOptions{PropagationPolicy: &prop}); delErr != nil && !errors.IsNotFound(delErr) {
-			return false, fmt.Errorf("delete stale broker first-login flow job %s: %w", jobName, delErr)
-		}
-	}
-	return r.waitForProvisioningJob(ctx, tenant.Name, jobName)
-}
-
-func brokerFirstLoginFlowJobCurrent(job *batchv1.Job) bool {
-	return job != nil && job.Labels["gentianos.io/keycloak-broker-first-login"] == brokerFirstLoginFlowJobVersion
-}
-
-func makeBrokerFirstLoginFlowJob(tenant *gentianov1alpha1.Tenant, realmName string) *batchv1.Job {
-	ttl := meta.ProvisioningJobTTLSeconds
-	return &batchv1.Job{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      brokerFirstLoginFlowJobName(tenant.Name),
-			Namespace: kernelNamespace,
-			Labels: map[string]string{
-				tenantLabel:    tenant.Name,
-				managedByLabel: managedByValue,
-				"gentianos.io/keycloak-broker-first-login": brokerFirstLoginFlowJobVersion,
-			},
-		},
-		Spec: batchv1.JobSpec{
-			TTLSecondsAfterFinished: &ttl,
-			Template: corev1.PodTemplateSpec{
-				Spec: corev1.PodSpec{
-					RestartPolicy: corev1.RestartPolicyOnFailure,
-					Containers: []corev1.Container{
-						keycloakContainer("provision-broker-first-login-flow", buildFirstBrokerLoginFlowScript(realmName)),
-					},
-				},
-			},
-		},
-	}
-}
-
 func brokerFirstLoginFlowJobName(tenantName string) string {
 	return fmt.Sprintf("keycloak-broker-first-login-%s", tenantName)
-}
-
-func (r *TenantReconciler) ensureOIDCBrowserFlowJob(ctx context.Context, tenant *gentianov1alpha1.Tenant, realmName string) (bool, error) {
-	return r.waitForProvisioningJob(ctx, tenant.Name, oidcBrowserFlowJobName(tenant.Name))
 }
 
 func (r *TenantReconciler) ensureOIDCClientJob(ctx context.Context, tenant *gentianov1alpha1.Tenant, realmName string, cfg oidcAppConfig) (bool, error) {
@@ -340,31 +293,6 @@ func makeOIDCPackJob(tenant *gentianov1alpha1.Tenant, realmName string, cfg oidc
 				Spec: corev1.PodSpec{
 					RestartPolicy: corev1.RestartPolicyOnFailure,
 					Containers:    []corev1.Container{container},
-				},
-			},
-		},
-	}
-}
-
-func makeOIDCBrowserFlowJob(tenant *gentianov1alpha1.Tenant, realmName string) *batchv1.Job {
-	ttl := meta.ProvisioningJobTTLSeconds
-	return &batchv1.Job{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      oidcBrowserFlowJobName(tenant.Name),
-			Namespace: kernelNamespace,
-			Labels: map[string]string{
-				tenantLabel:    tenant.Name,
-				managedByLabel: managedByValue,
-			},
-		},
-		Spec: batchv1.JobSpec{
-			TTLSecondsAfterFinished: &ttl,
-			Template: corev1.PodTemplateSpec{
-				Spec: corev1.PodSpec{
-					RestartPolicy: corev1.RestartPolicyOnFailure,
-					Containers: []corev1.Container{
-						keycloakContainer("provision-oidc-browser-flow", buildOIDCBrowserFlowScript(realmName)),
-					},
 				},
 			},
 		},

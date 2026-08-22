@@ -470,12 +470,12 @@ func (r *TenantRestoreReconciler) jobParams(
 ) backup.JobParams {
 	bundle := restore.Status.Bundle
 	p := backup.JobParams{
-		Namespace:    kernelNamespace,
-		Tenant:       tenant.Name,
-		App:          appName,
-		Export:       restore.Name,
-		Bucket:       bundle.Bucket,
-		Prefix:       bundle.Prefix,
+		Namespace: kernelNamespace,
+		Tenant:    tenant.Name,
+		App:       appName,
+		Export:    restore.Name,
+		Bucket:    bundle.Bucket,
+		Prefix:    bundle.Prefix,
 		// The bundle's own record of where it was written, never the policy's
 		// current answer. A tenant that moved its destination last week must
 		// still be able to restore what it wrote the week before.

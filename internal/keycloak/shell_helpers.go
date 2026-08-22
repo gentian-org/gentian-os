@@ -138,51 +138,6 @@ echo "resolved client scope ${SCOPE_NAME} id=${SCOPE_UUID}"
 `
 }
 
-// ShellEnsureInviteEmailUserProfile registers gentian.inviteEmail and uid on the realm
-// user profile so Admin API can persist recovery addresses for invite/reset delivery.
-func ShellEnsureInviteEmailUserProfile(realmExpr string) string {
-	return fmt.Sprintf(`
-# Ensure gentian.inviteEmail and uid are managed user-profile attributes.
-PROFILE=$(curl -sf -H "Authorization: Bearer ${TOKEN}" "${KEYCLOAK_URL}/admin/realms/%s/users/profile")
-UPDATED="${PROFILE}"
-if ! echo "${PROFILE}" | jq -e '.attributes[] | select(.name=="gentian.inviteEmail")' >/dev/null 2>&1; then
-  UPDATED=$(echo "${UPDATED}" | jq '.attributes += [{"name":"gentian.inviteEmail","displayName":"Recovery email","validations":{"email":{},"length":{"max":255}},"permissions":{"view":["admin"],"edit":["admin"]},"multivalued":false}]')
-  echo "user profile gentian.inviteEmail added to update"
-fi
-if ! echo "${PROFILE}" | jq -e '.attributes[] | select(.name=="uid")' >/dev/null 2>&1; then
-  UPDATED=$(echo "${UPDATED}" | jq '.attributes += [{"name":"uid","displayName":"User ID","validations":{"length":{"max":255}},"permissions":{"view":["admin","user"],"edit":["admin"]},"multivalued":false}]')
-  echo "user profile uid added to update"
-fi
-if [ "${UPDATED}" != "${PROFILE}" ]; then
-  curl -sf -X PUT -H "Authorization: Bearer ${TOKEN}" -H "Content-Type: application/json" \
-    "${KEYCLOAK_URL}/admin/realms/%s/users/profile" -d "${UPDATED}"
-  echo "user profile updated for realm %s"
-else
-  echo "user profile attributes already present for realm %s"
-fi
-`, realmExpr, realmExpr, realmExpr, realmExpr)
-}
-
-// ShellDisableProfilePromptRequiredActions stops post-password profile forms
-// when admin delivery swaps the transient email used for action-token links.
-func ShellDisableProfilePromptRequiredActions(realmExpr string) string {
-	return fmt.Sprintf(`
-# VERIFY_PROFILE and UPDATE_PROFILE are NOT disabled here. tenant-default
-# composes a RequiredAction for each, which adopted the live ones — the realm
-# still reports eleven required actions, both of them disabled.
-#
-# The user profile below stays. Declaring it means owning all six of its
-# attributes with their nested validations and permissions, where this only
-# relaxes two fields, and a validation dropped by omission is not something to
-# discover from a user who can no longer save their name.
-PROFILE=$(curl -sf -H "Authorization: Bearer ${TOKEN}" "${KEYCLOAK_URL}/admin/realms/%s/users/profile")
-RELAXED=$(echo "${PROFILE}" | jq '.attributes = [.attributes[] | if .name == "firstName" or .name == "lastName" then del(.required) else . end]')
-curl -sf -X PUT -H "Authorization: Bearer ${TOKEN}" -H "Content-Type: application/json" \
-  "${KEYCLOAK_URL}/admin/realms/%s/users/profile" -d "${RELAXED}" >/dev/null
-echo "user profile firstName/lastName optional for realm %s"
-`, realmExpr, realmExpr, realmExpr)
-}
-
 // ExtractJSONIDByAttr mirrors the shell logic for unit tests (jq when available).
 func ExtractJSONIDByAttr(raw, attr, value string) string {
 	var walk func(any)

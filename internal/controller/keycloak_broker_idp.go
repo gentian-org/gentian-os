@@ -29,9 +29,6 @@ import (
 // kernel IdP logins to pre-provisioned users by email (no confirm/re-auth).
 const firstBrokerLoginFlowAlias = "first-broker-login-gentian"
 
-// brokerFirstLoginFlowJobVersion bumps when the auto-link flow script changes.
-const brokerFirstLoginFlowJobVersion = "3"
-
 // tenantBrokerIdPJobName names a Job that no longer exists.
 //
 // It once wrote the kernel IdP, the tenant realm's first-broker-login flow, and

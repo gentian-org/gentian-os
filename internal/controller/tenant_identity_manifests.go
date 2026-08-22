@@ -195,11 +195,6 @@ func (r *TenantReconciler) buildIdentityProvisioningJobs(ctx context.Context, te
 	}
 	jobs = append(jobs, *makeAdminJob(tenant, realmName, r.tenantAdminEmail(tenant), adminCreds))
 
-	if len(oidcConfigs) > 0 {
-		jobs = append(jobs, *makeOIDCBrowserFlowJob(tenant, realmName))
-		jobs = append(jobs, *makeBrokerFirstLoginFlowJob(tenant, realmName))
-	}
-
 	for _, cfg := range oidcConfigs {
 		profile, err := r.getOIDCOwnerProfile(ctx, cfg)
 		if err != nil {

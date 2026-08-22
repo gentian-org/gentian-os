@@ -54,3 +54,25 @@ func TestRealmScriptLeavesTheBrokerMappersToTheComposition(t *testing.T) {
 		t.Fatal("realm script must carry forward the observed first-broker-login flow alias")
 	}
 }
+
+// TestRealmScriptLeavesTheUserProfileToTheComposition guards the other object
+// this script wrote twice in one run.
+//
+// One patch appended uid and gentian.inviteEmail; a second stripped `required`
+// off firstName and lastName. Neither could see what the other had done, and
+// both re-read and rewrote the same six-attribute document to change one field.
+// tenant-default declares it whole.
+func TestRealmScriptLeavesTheUserProfileToTheComposition(t *testing.T) {
+	script := buildRealmScript("corp", "Corp")
+
+	for _, gone := range []string{
+		`/users/profile`,
+		`gentian.inviteEmail`,
+		`person-name-prohibited-characters`,
+		`del(.required)`,
+	} {
+		if strings.Contains(script, gone) {
+			t.Fatalf("realm script still writes the user profile: %s", gone)
+		}
+	}
+}

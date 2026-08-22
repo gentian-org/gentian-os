@@ -49,8 +49,11 @@ func TestBuildRealmScript_UsesKeycloakJSONIDExtractor(t *testing.T) {
 	if strings.Contains(script, firstBrokerLoginFlowAlias) {
 		t.Fatal("realm script must register kernel IdP with built-in first broker login flow only")
 	}
-	if !strings.Contains(script, "gentian.inviteEmail") {
-		t.Fatal("expected gentian.inviteEmail user profile block in realm script")
+	// The user profile is tenant-default's now: it declares all six attributes
+	// whole, where this script appended one patch to add uid and
+	// gentian.inviteEmail and a second to strip `required` off the name fields.
+	if strings.Contains(script, "gentian.inviteEmail") {
+		t.Fatal("realm script must not write the user profile; the Composition owns it")
 	}
 	// The two profile-prompt required actions are tenant-default's now — it
 	// composes a RequiredAction for each, and both adopted the live ones. The
@@ -58,10 +61,11 @@ func TestBuildRealmScript_UsesKeycloakJSONIDExtractor(t *testing.T) {
 	if strings.Contains(script, "VERIFY_PROFILE UPDATE_PROFILE") {
 		t.Fatal("realm script must not disable the profile prompts; the Composition owns them")
 	}
-	// The user profile relaxation stays: declaring the profile means owning all
-	// six attributes with their validations, where this only relaxes two fields.
-	if !strings.Contains(script, `.name == "firstName" or .name == "lastName"`) {
-		t.Fatal("expected the realm script to keep relaxing firstName/lastName")
+	// Nor the profile relaxation. It is the composed UserProfile's absence of
+	// requiredForRoles on firstName and lastName — declared, rather than patched
+	// back out of the document on every run.
+	if strings.Contains(script, `.name == "firstName" or .name == "lastName"`) {
+		t.Fatal("realm script must not relax the name fields; the Composition declares them optional")
 	}
 
 	path := t.TempDir() + "/realm.sh"

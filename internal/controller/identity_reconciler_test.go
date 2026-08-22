@@ -299,21 +299,6 @@ func TestIdentity_CreatesClientJobAfterRealmComplete(t *testing.T) {
 	})
 	markJobComplete(t, "keycloak-admin-clienttest", "platform-kernel")
 
-	// OIDC browser-flow Job must complete before client Jobs are created.
-	waitFor(t, jobAppearTimeout, func() bool {
-		j := &batchv1.Job{}
-		return testClient.Get(context.Background(),
-			types.NamespacedName{Name: "keycloak-oidc-browser-clienttest", Namespace: "platform-kernel"}, j) == nil
-	})
-	markJobComplete(t, "keycloak-oidc-browser-clienttest", "platform-kernel")
-
-	waitFor(t, jobAppearTimeout, func() bool {
-		j := &batchv1.Job{}
-		return testClient.Get(context.Background(),
-			types.NamespacedName{Name: "keycloak-broker-first-login-clienttest", Namespace: "platform-kernel"}, j) == nil
-	})
-	markJobComplete(t, "keycloak-broker-first-login-clienttest", "platform-kernel")
-
 	// Client Job should be created after browser flow is complete.
 	clientJob := &batchv1.Job{}
 	waitFor(t, tenantReadyTimeout, func() bool {
@@ -369,8 +354,6 @@ func TestIdentity_CrossplaneOwnsClientWithoutPack(t *testing.T) {
 	for _, job := range []string{
 		"keycloak-realm-nopack",
 		"keycloak-admin-nopack",
-		"keycloak-oidc-browser-nopack",
-		"keycloak-broker-first-login-nopack",
 	} {
 		waitFor(t, jobAppearTimeout, func() bool {
 			j := &batchv1.Job{}
@@ -440,20 +423,6 @@ func TestIdentity_SetsReadyWhenAllJobsDone(t *testing.T) {
 			types.NamespacedName{Name: "keycloak-admin-allready", Namespace: "platform-kernel"}, j) == nil
 	})
 	markJobComplete(t, "keycloak-admin-allready", "platform-kernel")
-
-	waitFor(t, jobAppearTimeout, func() bool {
-		j := &batchv1.Job{}
-		return testClient.Get(context.Background(),
-			types.NamespacedName{Name: "keycloak-oidc-browser-allready", Namespace: "platform-kernel"}, j) == nil
-	})
-	markJobComplete(t, "keycloak-oidc-browser-allready", "platform-kernel")
-
-	waitFor(t, jobAppearTimeout, func() bool {
-		j := &batchv1.Job{}
-		return testClient.Get(context.Background(),
-			types.NamespacedName{Name: "keycloak-broker-first-login-allready", Namespace: "platform-kernel"}, j) == nil
-	})
-	markJobComplete(t, "keycloak-broker-first-login-allready", "platform-kernel")
 
 	// Wait for client Job, then mark it complete.
 	waitFor(t, tenantReadyTimeout, func() bool {
@@ -544,22 +513,9 @@ func TestIdentity_CreatesAdminJobAfterRealm(t *testing.T) {
 	}
 
 	markJobComplete(t, "keycloak-admin-admintest", "platform-kernel")
-	waitForTenantConditionReason(t, "admintest", "IdentityReady", "ProvisioningBrowserFlow")
-
-	waitFor(t, jobAppearTimeout, func() bool {
-		j := &batchv1.Job{}
-		return testClient.Get(context.Background(),
-			types.NamespacedName{Name: "keycloak-oidc-browser-admintest", Namespace: "platform-kernel"}, j) == nil
-	})
-	markJobComplete(t, "keycloak-oidc-browser-admintest", "platform-kernel")
-	waitForTenantConditionReason(t, "admintest", "IdentityReady", "ProvisioningBrokerFirstLogin")
-
-	waitFor(t, jobAppearTimeout, func() bool {
-		j := &batchv1.Job{}
-		return testClient.Get(context.Background(),
-			types.NamespacedName{Name: "keycloak-broker-first-login-admintest", Namespace: "platform-kernel"}, j) == nil
-	})
-	markJobComplete(t, "keycloak-broker-first-login-admintest", "platform-kernel")
+	// Straight from the admin Job to the client Jobs. The browser-flow and
+	// broker-first-login Jobs that used to sit between them are retired, so
+	// neither reason is reported any more.
 	waitForTenantConditionReason(t, "admintest", "IdentityReady", "ProvisioningClients")
 
 	clientJob := &batchv1.Job{}

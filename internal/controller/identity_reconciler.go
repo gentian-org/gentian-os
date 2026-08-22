@@ -107,26 +107,13 @@ func (r *TenantReconciler) ensureIdentity(ctx context.Context, tenant *gentianov
 		return r.requeueForPendingJob(ctx, tenant.Name, adminJobName(tenant.Name)), nil
 	}
 
-	if len(oidcConfigs) > 0 {
-		browserDone, err := r.ensureOIDCBrowserFlowJob(ctx, tenant, realmName)
-		if err != nil {
-			return ctrl.Result{}, fmt.Errorf("ensure OIDC browser flow Job: %w", err)
-		}
-		if !browserDone {
-			r.setCondition(tenant, conditionIdentityReady, metav1.ConditionFalse,
-				"ProvisioningBrowserFlow", "Waiting for OIDC browser flow Job to complete")
-			return r.requeueForPendingJob(ctx, tenant.Name, oidcBrowserFlowJobName(tenant.Name)), nil
-		}
-		firstLoginDone, err := r.ensureBrokerFirstLoginFlowJob(ctx, tenant, realmName)
-		if err != nil {
-			return ctrl.Result{}, fmt.Errorf("ensure broker first-login flow Job: %w", err)
-		}
-		if !firstLoginDone {
-			r.setCondition(tenant, conditionIdentityReady, metav1.ConditionFalse,
-				"ProvisioningBrokerFirstLogin", "Waiting for broker first-login flow Job to complete")
-			return r.requeueForPendingJob(ctx, tenant.Name, brokerFirstLoginFlowJobName(tenant.Name)), nil
-		}
-	}
+	// Two Jobs used to run here and no longer exist; what they leave behind is
+	// swept. Both had already lost the object they were named for — the browser
+	// flow and the first-broker-login flow are the Composition's — and what
+	// remained of each was a repair for a state that no longer occurs.
+	r.deleteRetiredJobs(ctx,
+		oidcBrowserFlowJobName(tenant.Name),
+		brokerFirstLoginFlowJobName(tenant.Name))
 
 	// OIDC packs require Gentian entitlement groups (provisioned above).
 	allDone := true
@@ -277,7 +264,6 @@ func (r *TenantReconciler) deleteIdentity(ctx context.Context, tenant *gentianov
 			// Delete provisioning jobs so they are re-created on the next deploy.
 			provNames := []string{
 				realmJobName(tenant.Name), gentianGroupsJobName(tenant.Name), adminJobName(tenant.Name),
-				oidcBrowserFlowJobName(tenant.Name),
 			}
 			for _, app := range tenant.Spec.Apps {
 				provNames = append(provNames, clientJobName(tenant.Name, app.Profile))
@@ -634,7 +620,10 @@ if [ -n "${KERNEL_REALM:-}" ] && [ -n "${KERNEL_EXTERNAL_URL:-}" ]; then
 # objects. tenant-default composes them.
 fi`, realmName, realmName, displayName, realmName, realmName)
 	script = strings.ReplaceAll(script, realmScriptBrokerIDPlaceholder, brokerResolveID)
-	return keycloak.ShellJSONIDExtractor() + script + keycloak.ShellEnsureInviteEmailUserProfile(realmName) + keycloak.ShellDisableProfilePromptRequiredActions(realmName)
+	// No user-profile writes. tenant-default composes a UserProfile that declares
+	// all six attributes whole, where this appended one patch to add uid and
+	// gentian.inviteEmail and a second to strip `required` off the name fields.
+	return keycloak.ShellJSONIDExtractor() + script
 }
 
 func buildClientScript(realmName, clientID, redirectURI string) string {

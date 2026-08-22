@@ -256,54 +256,6 @@ done
 	return b.String()
 }
 
-// buildOIDCBrowserFlowScript makes the tenant realm authenticate its own users.
-//
-// It used to do the opposite: it built a custom "browser-kernel-idp" flow of
-// Cookie then identity-provider-redirector with defaultProvider=kernel, and bound
-// the realm to it. That left the tenant realm with no credential form at all, so
-// it could only recognise an existing cookie or bounce to the kernel realm — and
-// every interactive login in the system, including for apps that live in the
-// tenant realm, ended up rendering the kernel realm's form.
-//
-// Tenant members live in the tenant realm and every per-app OIDC client is
-// registered there, so that is where the session belongs. Keycloak's stock
-// "browser" flow already does what is wanted — Cookie first, then forms — and its
-// identity-provider-redirector stays inert without a default provider. So rather
-// than build another custom flow, this binds the realm back to the built-in one
-// and removes the redirect flow if an earlier reconcile created it.
-func buildOIDCBrowserFlowScript(realmName string) string {
-	return fmt.Sprintf(`set -eu
-REALM=%q
-LEGACY_FLOW="browser-kernel-idp"
-TOKEN=$(curl -sf \
-  -X POST "${KEYCLOAK_URL}/realms/master/protocol/openid-connect/token" \
-  -H "Content-Type: application/x-www-form-urlencoded" \
-  -d "client_id=admin-cli&username=${KEYCLOAK_ADMIN_USERNAME}&password=${KEYCLOAK_ADMIN_PASSWORD}&grant_type=password" \
-  | sed 's/.*"access_token":"\([^"]*\)".*/\1/')
-AUTH_HEADER="Authorization: Bearer ${TOKEN}"
-
-# The realm is NOT bound here, and its theme is NOT set here. tenant-default
-# composes a Realm that declares browserFlow and loginTheme, and this Job writing
-# them too made it a second writer of realm state.
-#
-# What is left is a repair: an earlier reconcile may have created a custom
-# browser-kernel-idp flow, and an orphaned flow definition is not something a
-# Composition can express — there is nothing to declare, only something to
-# remove.
-FLOWS=$(curl -sf -H "${AUTH_HEADER}" "${KEYCLOAK_URL}/admin/realms/${REALM}/authentication/flows")
-FLOW_ID=$(printf '%%s' "${FLOWS}" | jq -r --arg a "${LEGACY_FLOW}" '.[] | select(.alias==$a) | .id // empty')
-if [ -n "${FLOW_ID}" ]; then
-  if curl -sf -X DELETE -H "${AUTH_HEADER}" \
-      "${KEYCLOAK_URL}/admin/realms/${REALM}/authentication/flows/${FLOW_ID}" >/dev/null 2>&1; then
-    echo "removed the legacy ${LEGACY_FLOW} flow"
-  else
-    # Not fatal: the realm is already on the built-in flow, so an orphaned
-    # definition changes no behaviour. Still worth reporting.
-    echo "WARNING: could not delete the legacy ${LEGACY_FLOW} flow; it is unused but still defined" >&2
-  fi
-fi`, realmName)
-}
-
 // buildEnsureFirstBrokerLoginFlowShellWithAlias is like buildEnsureFirstBrokerLoginFlowShell
 // but allows a custom flow alias (e.g. kernel portal broker login).
 func buildEnsureFirstBrokerLoginFlowShellWithAlias(realmExpr, flowAlias string) string {
@@ -342,46 +294,4 @@ for PROVIDER in idp-detect-existing-broker-user idp-confirm-link idp-email-verif
   fi
 done
 echo "first broker login flow ${FLOW_ALIAS} ready (detect + confirm-link + email-verification)"`, realmExpr, flowAlias)
-}
-
-// buildFirstBrokerLoginFlowScript configures a tenant-realm first-broker-login flow
-// that links kernel IdP identities to existing tenant users by email with confirmation.
-// See Keycloak docs: "Detect existing user first login flow".
-func buildFirstBrokerLoginFlowScript(realmName string) string {
-	return fmt.Sprintf(`set -eu
-TOKEN=$(curl -sf \
-  -X POST "${KEYCLOAK_URL}/realms/master/protocol/openid-connect/token" \
-  -H "Content-Type: application/x-www-form-urlencoded" \
-  -d "client_id=admin-cli&username=${KEYCLOAK_ADMIN_USERNAME}&password=${KEYCLOAK_ADMIN_PASSWORD}&grant_type=password" \
-  | sed 's/.*"access_token":"\([^"]*\)".*/\1/')
-AUTH_HEADER="Authorization: Bearer ${TOKEN}"
-REALM=%q
-
-# The flow is NOT built here. tenant-default composes it and its three
-# executions, which adopted the live ones by their Keycloak ids.
-#
-# Drop stale kernel IdP links left from the old confirm/re-auth flow or partial
-# links. Users re-link silently on the next broker login via auto-link.
-PAGE=0
-while true; do
-  USERS=$(curl -sf -H "${AUTH_HEADER}" \
-    "${KEYCLOAK_URL}/admin/realms/${REALM}/users?first=${PAGE}&max=100" || echo "[]")
-  COUNT=$(printf '%%s' "${USERS}" | jq 'length')
-  if [ "${COUNT}" -eq 0 ]; then
-    break
-  fi
-  printf '%%s' "${USERS}" | jq -r '.[].id' | while read -r UID; do
-    [ -z "${UID}" ] && continue
-    HTTP=$(curl -s -o /dev/null -w "%%{http_code}" -X DELETE -H "${AUTH_HEADER}" \
-      "${KEYCLOAK_URL}/admin/realms/${REALM}/users/${UID}/federated-identity/kernel")
-    if [ "${HTTP}" = "204" ]; then
-      echo "removed stale kernel broker link for user ${UID}"
-    fi
-  done
-  PAGE=$((PAGE + 100))
-  if [ "${COUNT}" -lt 100 ]; then
-    break
-  fi
-done
-echo "kernel broker link purge finished for realm ${REALM}"`, realmName)
 }

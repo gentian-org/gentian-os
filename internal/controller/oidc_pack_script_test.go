@@ -24,7 +24,6 @@ import (
 	"testing"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
-	"github.com/gentian-org/gentian-os/internal/keycloak"
 	"github.com/gentian-org/gentian-os/internal/oidc"
 )
 
@@ -104,81 +103,6 @@ func TestBuildOIDCPackScript(t *testing.T) {
 	}
 	if out, err := exec.Command("sh", "-n", path).CombinedOutput(); err != nil {
 		t.Fatalf("oidc pack script must be valid POSIX sh: %v\n%s", err, out)
-	}
-}
-
-func TestBuildFirstBrokerLoginFlowScript(t *testing.T) {
-	script := buildFirstBrokerLoginFlowScript("demo")
-	if path := os.Getenv("DUMP_FIRST_BROKER_LOGIN_SCRIPT"); path != "" {
-		if err := os.WriteFile(path, []byte(keycloak.ProvisionerBootstrap+script), 0o600); err != nil {
-			t.Fatal(err)
-		}
-	}
-	// The flow is tenant-default's now — it composes the Flow and its three
-	// executions, which adopted the live ones by their Keycloak ids. This script
-	// keeps only the part that is not declarable: purging stale kernel IdP links
-	// left by the old confirm/re-auth flow, which is a walk over existing users.
-	for _, gone := range []string{
-		`idp-detect-existing-broker-user`,
-		`first broker login flow ${FLOW_ALIAS} ready`,
-		`idp-confirm-link`,
-		`idp-email-verification`,
-	} {
-		if strings.Contains(script, gone) {
-			t.Fatalf("first broker login script still builds the flow: %s", gone)
-		}
-	}
-	for _, want := range []string{
-		`federated-identity/kernel`,
-		`kernel broker link purge finished`,
-	} {
-		if !strings.Contains(script, want) {
-			t.Fatalf("first broker login script missing %q", want)
-		}
-	}
-}
-
-// The tenant realm must authenticate its own users. It previously ran a custom
-// flow of Cookie then redirect-to-kernel, which left it with no credential form,
-// so every interactive login — including for apps that live in the tenant realm —
-// rendered the kernel realm's form instead.
-
-func TestBuildOIDCBrowserFlowScriptWritesNoRealmState(t *testing.T) {
-	script := buildOIDCBrowserFlowScript("demo")
-
-	// tenant-default composes a Realm that declares browserFlow and loginTheme.
-	// This Job writing them too made it a second writer of realm state.
-	for _, gone := range []string{`"browserFlow":"browser"`, `"loginTheme":"gentian"`} {
-		if strings.Contains(script, gone) {
-			t.Fatalf("browser flow script still writes realm state: %s", gone)
-		}
-	}
-	// The custom Cookie-then-redirect flow must never come back: it left the
-	// tenant realm with no credential form, so every interactive login in the
-	// system rendered the kernel realm's.
-	if strings.Contains(script, `"alias":\"browser-kernel-idp`) {
-		t.Fatal("must not create the redirect-only flow again")
-	}
-	if strings.Contains(script, "defaultProvider") {
-		t.Fatal("must not configure an IdP redirector default provider")
-	}
-}
-
-func TestBuildOIDCBrowserFlowScriptRemovesTheLegacyFlow(t *testing.T) {
-	script := buildOIDCBrowserFlowScript("demo")
-	if !strings.Contains(script, "LEGACY_FLOW=\"browser-kernel-idp\"") {
-		t.Fatal("expected the legacy flow to be named for removal")
-	}
-	if !strings.Contains(script, "authentication/flows/${FLOW_ID}") {
-		t.Fatal("expected a DELETE of the legacy flow by id")
-	}
-	// This used to assert the rebind came before the delete, because Keycloak
-	// refuses to delete a flow the realm still uses. The rebind is the composed
-	// Realm's now, so the ordering cannot be asserted from inside this script —
-	// which is why the delete must stay non-fatal: if the realm has not been
-	// rebound yet, the flow is simply removed on a later pass.
-	if !strings.Contains(script, "WARNING: could not delete the legacy") {
-		t.Fatal("the legacy flow delete must tolerate failure, now that the rebind is not ordered with it")
 	}
 }
 
