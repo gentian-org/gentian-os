@@ -20,33 +20,9 @@ import (
 	"context"
 	"fmt"
 
-	batchv1 "k8s.io/api/batch/v1"
-	"k8s.io/apimachinery/pkg/api/errors"
-	"sigs.k8s.io/controller-runtime/pkg/log"
-
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 	"github.com/gentian-org/gentian-os/internal/authz"
 )
-
-func kernelBrowserSecurityJobName() string {
-	return "keycloak-browser-security-kernel"
-}
-
-func tenantBrowserSecurityJobName(tenantName string) string {
-	return fmt.Sprintf("keycloak-browser-security-%s", tenantName)
-}
-
-func (r *TenantReconciler) deleteLegacyBrowserSecurityJobs(ctx context.Context, names ...string) {
-	logger := log.FromContext(ctx)
-	for _, name := range names {
-		job := &batchv1.Job{}
-		job.Name = name
-		job.Namespace = kernelNamespace
-		if err := r.Delete(ctx, job); err != nil && !errors.IsNotFound(err) {
-			logger.Error(err, "delete legacy browser security job", "job", name)
-		}
-	}
-}
 
 func (r *TenantReconciler) ensureRealmBrowserSecurityHeaders(ctx context.Context, realm string) error {
 	if realm == "" {
@@ -81,6 +57,6 @@ func (r *TenantReconciler) ensureKeycloakBrowserSecurityHeaders(ctx context.Cont
 	// Composition covers it. It is bootstrapped once at install and this is the
 	// only thing that maintains it.
 
-	r.deleteLegacyBrowserSecurityJobs(ctx, kernelBrowserSecurityJobName(), tenantBrowserSecurityJobName(tenant.Name))
+	r.deleteRetiredJobs(ctx, kernelBrowserSecurityJobName(), tenantBrowserSecurityJobName(tenant.Name))
 	return nil
 }

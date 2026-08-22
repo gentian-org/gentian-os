@@ -315,29 +315,32 @@ therefore a no-op functionally, and it makes the object expressible.
 To close: clear `redirectUris` and `webOrigins` on the `corp` realm client
 `gentian-portal-bff`, then restore
 `managementPolicies: ["Observe", "Create", "Update", "Delete"]` in
-`crossplane/compositions/tenant-default.yaml`. The post-logout URIs need no
-action — they are Keycloak's derived default, not stored (`attributes` is
-empty).
+`crossplane/compositions/tenant-default.yaml`.
 
-### 1.27 Retire the realm script's kernel IdP write
+**The post-logout URIs are stored, contrary to what this item used to say.** The
+live client carries
+`attributes["post.logout.redirect.uris"] = "https://portal.gtn.host/login##https://portal.gtn.host/*"`,
+not an empty `attributes` map, so they are a third field to account for rather
+than a derived default to ignore. Whether they are load-bearing has to be
+settled before anything is cleared: `redirectUris` genuinely cannot be reached
+with both redirect flows disabled, but RP-initiated logout does not need
+`standardFlowEnabled`, so the same reasoning does not carry over to them.
 
-`IdentityProvider kernel` is managed by `tenant-default`. One writer remains:
-the realm script in `identity_reconciler.go`.
+This is the one open question in the item, and it is the reason it should not be
+closed by clearing all three fields and seeing what breaks.
 
-The broker-idp Job that also required the IdP to exist is retired, so nothing
-outside the Composition depends on the object being there early any more — the
-mapper that imports `gentian_username` into the tenant user's uid is composed
-alongside the IdP, and Crossplane orders that itself. What is left is a
-duplicated write, not a conflicting one: the realm script carries forward
-whichever first-broker-login alias it observes rather than restating a literal.
+### 1.27 Retire the realm script's kernel IdP write — done
 
-To close: let the Composition create the IdP rather than adopt one, and drop the
-block from the realm script. The Composition needs the tenant realm before it
-can create anything in it, so the ordering has to be shown to work on a tenant
-created from nothing, not on `corp`, which has had the object since before any
-of this.
+`IdentityProvider kernel` is composed by `tenant-default`, fully managed, and is
+now the only writer of that object. The realm script's IdP block is gone, and
+with it the `FBL_ALIAS` carry-forward that existed only to keep two writers from
+contradicting each other.
 
-The composed `Client broker-<tenant>` stays `Observe`-only by design — see
+The realm script still creates the kernel-realm broker client. That client is
+`Observe`-only in the Composition by design — `writeConnectionSecretToRef`
+republishes its secret without rotating it, which is what lets the IdP take
+credentials from a Secret — so something has to create it, and on a realm that
+does not exist yet that something cannot be the Composition. See
 docs/plans/tenant-composition-cleanup.md §8.
 
 ### 1.28 Tenant Separation Belongs to the API Server, Not the Console (***)
@@ -522,9 +525,9 @@ docs/plans/tenant-composition-cleanup.md §8.
 * **The stated precondition is met.** This item waited on "upstream provider versions supporting browser-flow tuning and broker integration". `provider-keycloak` v2.19.0 is installed and healthy and ships both: `flows`, `subflows`, `executions`, `executionconfigs` and `bindings` for authentication flows, and `identityproviders` plus `identityprovidermappers` for brokering. Adoption of existing objects also works — a `Client` or `Realm` carrying `crossplane.io/external-name` set to its natural key adopts what is already there rather than creating a duplicate, verified read-only against the live realm and both portal clients — so migrating an existing tenant needs no per-tenant import step.
 * **Proposed Solution**: Move the tenant's Keycloak objects to `provider-keycloak` Managed Resources one Job at a time, adopting rather than recreating, and retire each Job only once its objects are seen to adopt without changing anything.
 * **Backlog Items**:
-  - `[~]` Replace bootstrap Jobs with native `provider-keycloak` Client/Realm MRs. *(2 of 9 retired: portal public client with its openbao-audience mapper, and portal BFF client with its client secret and default scopes. Remaining: dovecot OIDC client, gentian groups, kernel tenant broker, broker IdP, browser flow, realm admin, realm.)*
+  - `[~]` Replace bootstrap Jobs with native `provider-keycloak` Client/Realm MRs. *(6 of 9 retired: portal public client with its openbao-audience mapper, portal BFF client with its secret and default scopes, dovecot OIDC client, broker IdP, browser flow, and broker first-login. The kernel tenant broker Job is down to the kernel realm's own first-broker-login flow. Remaining and staying: gentian groups (wider view than `spec.apps`), realm admin (generates a password), realm (bootstrap ordering).)*
   - `[x]` Port OIDC client default scopes into Crossplane templates. *(All seven on the BFF client; the Job attached only `groups` because the rest were Keycloak's defaults, and the list is replaced wholesale — declaring the one the Job named would have stripped profile, email and role claims from every portal token.)*
-  - `[ ]` Port the custom browser flow configuration. Note `keycloak-oidc-browser-*` is largely a one-time migration off a legacy flow; what remains ongoing is realm-level (`browserFlow`, `loginTheme`), so it belongs with the realm rather than before it.
+  - `[x]` Port the custom browser flow configuration. `browserFlow` and `loginTheme` are the composed `Realm`'s. The one-time migration off the legacy `browser-kernel-idp` flow is finished — that flow is in no realm — so `keycloak-oidc-browser-*` is retired rather than ported.
   - `[ ]` Restore the assertion lost with `keycloak_portal_client_test.go` — that a tenant's own origin is a registered redirect *and* post-logout redirect URI. The render harness is golden-diff with no per-case assertion hook, so that property is currently only visible, not asserted.
 
 ### 2.2 Composition-Only IntegrationBinding Egress (***)

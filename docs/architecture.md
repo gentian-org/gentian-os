@@ -226,7 +226,7 @@ via `tenant-default`; app Compositions deploy charts via **`provider-helm`
 |---|---|---|
 | **Kernel / shared realm clients** (portal, static integrations) | **`provider-keycloak`** `Client` / scope MRs | `kernel/services/keycloak-config/` |
 | **Per-tenant realms and OIDC clients** | Crossplane **Object Jobs** via manifest bridge (operator wait-only) | `tenant-{name}-provisioning-jobs` → `tenant-default` |
-| **Kernel IdP broker refresh** | Crossplane Object Job via manifest bridge (`keycloak-broker-idp-{tenant}`) | `jobs.json` → `tenant-default` |
+| **Identity brokering** (kernel IdP, tenant IdP, their mappers) | **`provider-keycloak`** `IdentityProvider` / `IdentityProviderMapper` MRs | `tenant-default` |
 
 The platform ships **`app-default`** in `crossplane/compositions/`. Catalogue
 profiles with custom MR graphs set `spec.compositionRef` to a Composition bundled

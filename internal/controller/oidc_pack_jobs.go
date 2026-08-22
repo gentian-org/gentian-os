@@ -252,10 +252,6 @@ func substituteTenantDomainInURIs(tenant *gentianov1alpha1.Tenant, uris []string
 	return out
 }
 
-func brokerFirstLoginFlowJobName(tenantName string) string {
-	return fmt.Sprintf("keycloak-broker-first-login-%s", tenantName)
-}
-
 func (r *TenantReconciler) ensureOIDCClientJob(ctx context.Context, tenant *gentianov1alpha1.Tenant, realmName string, cfg oidcAppConfig) (bool, error) {
 	if cfg.pack != nil {
 		return r.ensureOIDCPackJob(ctx, tenant, realmName, cfg)
@@ -297,10 +293,6 @@ func makeOIDCPackJob(tenant *gentianov1alpha1.Tenant, realmName string, cfg oidc
 			},
 		},
 	}
-}
-
-func oidcBrowserFlowJobName(tenantName string) string {
-	return fmt.Sprintf("keycloak-oidc-browser-%s", tenantName)
 }
 
 // samlAppConfig holds resolved SAML settings for one tenant app profile.

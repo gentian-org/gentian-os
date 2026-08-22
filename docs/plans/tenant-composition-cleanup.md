@@ -292,19 +292,20 @@ an ordering gap or a suite that hangs.
 **Current state is consistent:** the client is adopted and serving IMAP, and the Job still runs and
 agrees with it. Nothing is half-owned.
 
-### 4-6. The broker group — one unit, not three Jobs
+### 4-6. The broker group — one unit, not three Jobs — done
 
-`keycloak-broker-idp-*`, `keycloak-kernel-tenant-broker-*` and
-`keycloak-broker-first-login-*` are interdependent, so the one-Job-at-a-time rhythm that worked for
-the three clients does not apply directly.
+Two of the three Jobs are retired and the third is down to one object. What made
+this group hard was that the Jobs were interdependent, so the one-Job-at-a-time
+rhythm that worked for the three clients did not apply — this is what each held
+when the work started.
 
-| Job | Owns |
-|---|---|
-| `broker-idp` | broker client in the **kernel** realm, with its secret and protocol mappers; identity provider `kernel` in the **tenant** realm, with mappers |
-| `kernel-tenant-broker` | broker client in the **tenant** realm with its secret; identity provider `{tenant}` in the **kernel** realm, with mappers |
-| `broker-first-login` | the `first-broker-login-gentian` authentication flow both identity providers point at |
+| Job | Owned | Now |
+|---|---|---|
+| `broker-idp` | broker client in the **kernel** realm, with its secret and protocol mappers; identity provider `kernel` in the **tenant** realm, with mappers | retired; every object composed |
+| `kernel-tenant-broker` | broker client in the **tenant** realm with its secret; identity provider `{tenant}` in the **kernel** realm, with mappers | reduced to the kernel realm's own first-broker-login flow |
+| `broker-first-login` | the `first-broker-login-gentian` authentication flow both identity providers point at | retired; the flow is composed |
 
-Each of the first two spans **two realms**, and both reference the flow the third creates.
+Each of the first two spanned **two realms**, and both referenced the flow the third created.
 
 **The dependency is by alias, not by object reference.** The identity providers name
 `firstBrokerLoginFlowAlias` as a string, so they can be declared while the flow remains Job-owned.
@@ -433,7 +434,7 @@ Converted so far, and what each step established.
 | Resource | Policy | Why |
 |---|---|---|
 | `Client broker-<tenant>` (kernel realm) | `Observe` | `writeConnectionSecretToRef` republishes the existing secret without rotating it. That is the whole point: it is what lets the IdP take credentials from a Secret instead of a Job curling the admin API for them. Managing it would put the secret under the provider's control, and a rotation would break brokered login for as long as the IdP still held the old value. |
-| `IdentityProvider kernel` (tenant realm) | `Observe` | Adopted and verified against the live object. Not yet managed — see below. |
+| `IdentityProvider kernel` (tenant realm) | `Observe, Create, Update, Delete` | Adopted, verified against the live object, then promoted to managed once it was the only writer. |
 
 Both are gated on `identity.kernelRealm` and `identity.internalUrl` being
 present, and stay unrendered rather than half-configured when they are not.
@@ -448,20 +449,26 @@ not be declared at all. It is now published through the claim as
 live values already disagree on exactly that `/auth` suffix, so collapsing them
 would hand one consumer the other's contract.
 
-### Two writers, one field
+### Two writers, one field — resolved
 
-`identity_reconciler.go`'s realm script and the broker-idp Job both write this
-IdP, and they disagreed about `firstBrokerLoginFlowAlias`: the realm script set
-the built-in `first broker login`, the Job sets the gentian flow. The Job runs
-later, so the gentian flow is what is live — but a realm re-run would silently
-put every tenant's first login back on a flow that stops to ask the user to
-confirm the link, instead of matching them to the account already provisioned
-for them by email.
+Three scripts wrote this IdP at various points: the realm script, the broker-idp
+Job, and briefly the kernel broker Job. The realm script and the broker-idp Job
+disagreed about `firstBrokerLoginFlowAlias` — the script set the built-in `first
+broker login`, the Job set the gentian flow. The Job ran later, so the gentian
+flow was what was live, but any realm re-run put every tenant's first login back
+on a flow that stops to ask the user to confirm the link instead of matching
+them to the account already provisioned for them by email.
 
-The realm script now preserves whatever alias is already in place and uses the
-built-in one only to bootstrap an IdP that does not exist yet. It cannot simply
-stop writing the IdP: the broker-idp Job requires it to already exist and exits
-non-zero otherwise.
+The first fix was a truce: the realm script preserved whatever alias it observed
+and used the built-in one only to bootstrap an IdP that did not exist yet. That
+held, but it is not a resolution — it is two writers agreeing, which is the
+state the original bug was also in until it wasn't.
+
+Both other writers are now retired, and the realm script's IdP block is gone
+with them. The `FBL_ALIAS` carry-forward went too: with one writer there is no
+alias to carry. What the script still does in the kernel realm is create the
+broker client, because that client is `Observe`-only by design and something has
+to make it before the Composition can republish its secret.
 
 ### The unobserved fields
 
@@ -506,11 +513,11 @@ the value back into the IdP body; the Composition takes it from the broker
 Client's connection secret instead, which is what made the object declarable in
 the first place.
 
-The realm script still writes the IdP, and cannot yet stop: the broker-idp Job
-requires the object to exist, and on a new tenant something must create it
-before the Composition can adopt it. Since the script now preserves the existing
-flow alias rather than restating the built-in one, the remaining write is
-duplicated rather than conflicting. Tracked in the roadmap.
+The realm script no longer writes the IdP either. It could not stop while the
+broker-idp Job required the object to exist; that Job is retired, and the mapper
+that hangs off the IdP is composed alongside it, so Crossplane orders the pair
+itself. What the script still does in the kernel realm is create the broker
+client, which is `Observe`-only in the Composition by design.
 
 ## 9. The Dovecot client
 

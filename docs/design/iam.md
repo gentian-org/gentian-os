@@ -98,9 +98,11 @@ Pack entries map **entitlement groups**
 (`gentian:tenant:<t>:app:<profile>`) to client roles so OIDC tokens
 reflect app access granted in the Admin Console.
 
-Browser flow `browser-kernel-idp` and first-broker-login flow
-`first-broker-login-gentian` support SSO between tenant realm and
-kernel IdP.
+The tenant realm keeps Keycloak's built-in `browser` flow, so it can
+authenticate its own users with a credential form. First-broker-login
+flow `first-broker-login-gentian` matches a user arriving from the
+kernel IdP to the account already provisioned for them by email,
+rather than stopping to ask them to confirm the link.
 
 ### 1.8 Provisioning
 

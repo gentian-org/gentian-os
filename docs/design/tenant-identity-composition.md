@@ -24,7 +24,7 @@ Kernel OIDC clients already use `provider-keycloak` MRs. **Tenant realms** still
 
 | Job family | Examples |
 |------------|----------|
-| Keycloak | `keycloak-realm-{tenant}`, `keycloak-admin-{tenant}`, `keycloak-broker-idp-{tenant}`, OIDC client/pack Jobs |
+| Keycloak | `keycloak-realm-{tenant}`, `keycloak-admin-{tenant}`, OIDC client/pack Jobs |
 | Groups | Tenant realm bootstrap: `gentian:tenant:<t>:*` groups |
 
 Tenant admin user is a **native Keycloak user** in the tenant realm.

@@ -41,7 +41,7 @@ func TestBuildRealmScript_UsesKeycloakJSONIDExtractor(t *testing.T) {
 		`firstBrokerLoginFlowAlias`,
 		`IDP_BODY`,
 		`identity-provider/instances`,
-		firstBrokerLoginFlowAlias,
+		"first-broker-login-gentian",
 	} {
 		if strings.Contains(script, gone) {
 			t.Fatalf("realm script still writes the kernel IdP: %s", gone)
