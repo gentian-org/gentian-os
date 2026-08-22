@@ -12,6 +12,17 @@ check() {
         kubectl get provider.pkg.crossplane.io "$p" >/dev/null 2>&1 || return 1
     done
 
+    # The ProviderConfig objects themselves, not just the provider packages.
+    # destroy() below deletes exactly these three, and a purge that reaches
+    # this step's destroy() but not a later apply() (or an install run before
+    # this fix existed) leaves the packages Healthy with no ProviderConfig for
+    # any of them to use — every managed resource in the Cluster XR then fails
+    # with "referenced ProviderConfig ... not found", and this step reports
+    # satisfied the whole time because nothing here ever looked.
+    kubectl get providerconfig.kubernetes.crossplane.io kubernetes >/dev/null 2>&1 || return 1
+    kubectl get providerconfig.helm.crossplane.io kubernetes >/dev/null 2>&1 || return 1
+    kubectl get providerconfig.vault.upbound.io openbao >/dev/null 2>&1 || return 1
+
     # Every XRD in the repo, not just xclusters. Testing one of six let a
     # cluster missing xsuze and xinfradata — the XRDs that compose Keycloak,
     # OpenFGA and the infra databases — report satisfied, so the step that
