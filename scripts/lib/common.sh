@@ -128,8 +128,15 @@ _bao_retry() {
         if (( n >= attempts )); then
             return "$rc"
         fi
-        warn "bao failed (attempt ${n}/${attempts}): transient connection error"
-        warn "  Retrying in ${delay}s..."
+        # >&2 explicitly: warn() writes to stdout in this codebase, which is
+        # fine for a plain call but corrupts a caller like
+        # cp_token=$(_bao_retry token create ... | jq ...) — these lines would
+        # feed straight into jq as bogus input, jq would error out and close
+        # the pipe, and this loop's next write would die to SIGPIPE after only
+        # one or two of the configured attempts. Reproduced live: exactly that
+        # jq parse error, and the retry count silently short by attempt 6.
+        warn "bao failed (attempt ${n}/${attempts}): transient connection error" >&2
+        warn "  Retrying in ${delay}s..." >&2
         sleep "$delay"
         n=$((n + 1))
     done
