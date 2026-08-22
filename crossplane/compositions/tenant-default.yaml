@@ -759,6 +759,125 @@ spec:
                 name: keycloak
             {{- end }}
 
+            {{- /* ── what a user record is allowed to hold ────────────────────
+                 The realm's user profile: six attributes and the group they
+                 display under. Two of them are Gentian's — uid, which the broker
+                 mappers fill and Synapse reads for its localpart, and
+                 gentian.inviteEmail, the recovery address an admin sets when the
+                 account's own email is still a transient invite address.
+
+                 Declared whole, not patched. The realm script wrote this object
+                 twice per run: once to append the two Gentian attributes, once to
+                 strip `required` off firstName and lastName. Neither patch could
+                 see what the other had done, and both re-read and rewrote the
+                 same six-attribute document to change one field of it.
+
+                 The cost of declaring it is that every validation is now ours to
+                 restate, and one dropped by omission does not fail loudly — it
+                 surfaces as a user who cannot save their name. So each is written
+                 out as Keycloak returns it, including the built-in validators on
+                 attributes Gentian never touches.
+
+                 firstName and lastName carry no requiredForRoles, which is the
+                 declarative spelling of the second patch: admin delivery swaps in
+                 a transient email for action-token links, and a required name
+                 field turns that into a profile form the user did not ask for.
+                 email keeps requiredForRoles [user] — that one is Keycloak's
+                 default and wanted.
+
+                 Validator config values are strings: the provider passes them to
+                 Keycloak as written, and 255 unquoted is a YAML integer.
+              */}}
+            ---
+            apiVersion: realm.keycloak.crossplane.io/v1alpha1
+            kind: UserProfile
+            metadata:
+              annotations:
+                {{- /* The user profile is a singleton keyed by its realm, not a
+                     UUID, so unlike the mappers it adopts from its name. */}}
+                crossplane.io/external-name: {{ $tenant }}
+                gotemplating.fn.crossplane.io/composition-resource-name: keycloak-user-profile
+              name: {{ $tenant }}-user-profile
+            spec:
+              deletionPolicy: Orphan
+              forProvider:
+                realmId: {{ $tenant }}
+                group:
+                  - name: user-metadata
+                    displayHeader: User metadata
+                    displayDescription: Attributes, which refer to user metadata
+                attribute:
+                  - name: username
+                    displayName: ${username}
+                    multiValued: false
+                    permissions:
+                      - view: [admin, user]
+                        edit: [admin, user]
+                    validator:
+                      - name: length
+                        config:
+                          min: "3"
+                          max: "255"
+                      - name: username-prohibited-characters
+                      - name: up-username-not-idn-homograph
+                  - name: email
+                    displayName: ${email}
+                    multiValued: false
+                    requiredForRoles: [user]
+                    permissions:
+                      - view: [admin, user]
+                        edit: [admin, user]
+                    validator:
+                      - name: email
+                      - name: length
+                        config:
+                          max: "255"
+                  - name: firstName
+                    displayName: ${firstName}
+                    multiValued: false
+                    permissions:
+                      - view: [admin, user]
+                        edit: [admin, user]
+                    validator:
+                      - name: length
+                        config:
+                          max: "255"
+                      - name: person-name-prohibited-characters
+                  - name: lastName
+                    displayName: ${lastName}
+                    multiValued: false
+                    permissions:
+                      - view: [admin, user]
+                        edit: [admin, user]
+                    validator:
+                      - name: length
+                        config:
+                          max: "255"
+                      - name: person-name-prohibited-characters
+                  - name: gentian.inviteEmail
+                    displayName: Recovery email
+                    multiValued: false
+                    permissions:
+                      - view: [admin]
+                        edit: [admin]
+                    validator:
+                      - name: email
+                      - name: length
+                        config:
+                          max: "255"
+                  - name: uid
+                    displayName: User ID
+                    multiValued: false
+                    permissions:
+                      - view: [admin, user]
+                        edit: [admin]
+                    validator:
+                      - name: length
+                        config:
+                          max: "255"
+              providerConfigRef:
+                name: keycloak
+
             {{- /* ── the claims that carry a user across a realm boundary ──────
                  A brokered login copies a user from one realm into another, and
                  these four decide what survives the crossing. Without them the

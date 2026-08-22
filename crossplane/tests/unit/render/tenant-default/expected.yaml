@@ -7,7 +7,7 @@ status:
   conditions:
   - lastTransitionTime: "2024-01-01T00:00:00Z"
     message: 'Unready resources: app-catalogue-test-app, keycloak-broker-client, keycloak-broker-client-id,
-      and 25 more'
+      and 26 more'
     reason: Creating
     status: "False"
     type: Ready
@@ -947,6 +947,124 @@ spec:
     enabled: false
     name: Verify Profile
     priority: 90
+    realmId: render-fixture
+  providerConfigRef:
+    name: keycloak
+---
+apiVersion: realm.keycloak.crossplane.io/v1alpha1
+kind: UserProfile
+metadata:
+  annotations:
+    crossplane.io/composition-resource-name: keycloak-user-profile
+    crossplane.io/external-name: render-fixture
+  labels:
+    crossplane.io/composite: render-fixture
+  name: render-fixture-user-profile
+  ownerReferences:
+  - apiVersion: gentianos.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XTenant
+    name: render-fixture
+    uid: ""
+spec:
+  deletionPolicy: Orphan
+  forProvider:
+    attribute:
+    - displayName: ${username}
+      multiValued: false
+      name: username
+      permissions:
+      - edit:
+        - admin
+        - user
+        view:
+        - admin
+        - user
+      validator:
+      - config:
+          max: "255"
+          min: "3"
+        name: length
+      - name: username-prohibited-characters
+      - name: up-username-not-idn-homograph
+    - displayName: ${email}
+      multiValued: false
+      name: email
+      permissions:
+      - edit:
+        - admin
+        - user
+        view:
+        - admin
+        - user
+      requiredForRoles:
+      - user
+      validator:
+      - name: email
+      - config:
+          max: "255"
+        name: length
+    - displayName: ${firstName}
+      multiValued: false
+      name: firstName
+      permissions:
+      - edit:
+        - admin
+        - user
+        view:
+        - admin
+        - user
+      validator:
+      - config:
+          max: "255"
+        name: length
+      - name: person-name-prohibited-characters
+    - displayName: ${lastName}
+      multiValued: false
+      name: lastName
+      permissions:
+      - edit:
+        - admin
+        - user
+        view:
+        - admin
+        - user
+      validator:
+      - config:
+          max: "255"
+        name: length
+      - name: person-name-prohibited-characters
+    - displayName: Recovery email
+      multiValued: false
+      name: gentian.inviteEmail
+      permissions:
+      - edit:
+        - admin
+        view:
+        - admin
+      validator:
+      - name: email
+      - config:
+          max: "255"
+        name: length
+    - displayName: User ID
+      multiValued: false
+      name: uid
+      permissions:
+      - edit:
+        - admin
+        view:
+        - admin
+        - user
+      validator:
+      - config:
+          max: "255"
+        name: length
+    group:
+    - displayDescription: Attributes, which refer to user metadata
+      displayHeader: User metadata
+      name: user-metadata
     realmId: render-fixture
   providerConfigRef:
     name: keycloak
