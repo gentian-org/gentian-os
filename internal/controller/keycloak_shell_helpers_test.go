@@ -33,7 +33,7 @@ func TestBuildRealmScript_UsesKeycloakJSONIDExtractor(t *testing.T) {
 		t.Fatal("expected kernel SSO brokering block in realm script")
 	}
 	// The built-in flow is the bootstrap value only: it registers the IdP the
-	// first time, before the broker-idp Job has installed the gentian flow. It
+	// first time, before the Composition has installed the gentian flow. It
 	// must not be restated on the update path, where it would revert a realm
 	// that is already on first-broker-login-gentian back to a flow that stops
 	// to ask the user to confirm the link.

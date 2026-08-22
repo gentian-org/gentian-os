@@ -196,12 +196,6 @@ func TestIdentity_NoOIDCApps(t *testing.T) {
 	})
 	markJobComplete(t, "keycloak-admin-noidc", "platform-kernel")
 
-	waitFor(t, jobAppearTimeout, func() bool {
-		j := &batchv1.Job{}
-		return testClient.Get(context.Background(),
-			types.NamespacedName{Name: "keycloak-broker-idp-noidc", Namespace: "platform-kernel"}, j) == nil
-	})
-	markJobComplete(t, "keycloak-broker-idp-noidc", "platform-kernel")
 	markKernelPortalIdentityJobsComplete(t, "noidc")
 
 	updated := waitForTenantConditionTrue(t, "noidc", "IdentityReady")
@@ -389,12 +383,6 @@ func TestIdentity_CrossplaneOwnsClientWithoutPack(t *testing.T) {
 		}
 	}
 
-	waitFor(t, jobAppearTimeout, func() bool {
-		j := &batchv1.Job{}
-		return testClient.Get(context.Background(),
-			types.NamespacedName{Name: "keycloak-broker-idp-nopack", Namespace: "platform-kernel"}, j) == nil
-	})
-	markJobComplete(t, "keycloak-broker-idp-nopack", "platform-kernel")
 	markKernelPortalIdentityJobsComplete(t, "nopack")
 
 	// Reaching IdentityReady is what makes the negative assertion meaningful: the
@@ -475,12 +463,6 @@ func TestIdentity_SetsReadyWhenAllJobsDone(t *testing.T) {
 	})
 	markJobComplete(t, "keycloak-client-allready-oidc-app3", "platform-kernel")
 
-	waitFor(t, jobAppearTimeout, func() bool {
-		j := &batchv1.Job{}
-		return testClient.Get(context.Background(),
-			types.NamespacedName{Name: "keycloak-broker-idp-allready", Namespace: "platform-kernel"}, j) == nil
-	})
-	markJobComplete(t, "keycloak-broker-idp-allready", "platform-kernel")
 	markKernelPortalIdentityJobsComplete(t, "allready")
 
 	updated := waitForTenantConditionTrue(t, "allready", "IdentityReady")
