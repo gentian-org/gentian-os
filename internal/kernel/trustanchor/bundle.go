@@ -68,7 +68,7 @@ func BuildBundle(ctx context.Context, leafPEM []byte) (*Bundle, error) {
 	if len(leafPEM) == 0 {
 		return nil, fmt.Errorf("empty leaf certificate")
 	}
-	stagingChain, err := fetchIssuerChain(leafPEM)
+	stagingChain, err := fetchIssuerChain(ctx, leafPEM)
 	if err != nil {
 		return nil, err
 	}
@@ -95,7 +95,12 @@ func loadMozillaCABundle(ctx context.Context) ([]byte, error) {
 
 // fetchIssuerChain walks AIA from the server leaf and returns PEM blocks for
 // each issuing CA up to the staging root (excludes the server leaf itself).
-func fetchIssuerChain(leafPEM []byte) ([]byte, error) {
+//
+// Takes a context because it makes up to maxIssuerChain network round trips to
+// URLs named by the certificate itself. Each fetch bounds itself at 30s, but
+// without the caller's context a cancelled reconcile still waited for the whole
+// walk.
+func fetchIssuerChain(ctx context.Context, leafPEM []byte) ([]byte, error) {
 	block, _ := pem.Decode(leafPEM)
 	if block == nil || block.Type != "CERTIFICATE" {
 		return nil, fmt.Errorf("no leaf certificate in tls.crt")
@@ -115,7 +120,7 @@ func fetchIssuerChain(leafPEM []byte) ([]byte, error) {
 		}
 		seen[url] = struct{}{}
 
-		issuerPEM, err := fetchPEMFromURL(context.Background(), url)
+		issuerPEM, err := fetchPEMFromURL(ctx, url)
 		if err != nil {
 			break
 		}

@@ -119,7 +119,6 @@ func (r *TenantReconciler) ensureNetworkPolicies(ctx context.Context, tenant *ge
 	desiredNames := netpolicy.ManagedPolicyNames(in)
 
 	for _, np := range desired {
-		np := np
 		if err := controllerutil.SetControllerReference(tenant, np, r.Scheme); err != nil {
 			return fmt.Errorf("set owner ref on NetworkPolicy %s: %w", np.Name, err)
 		}

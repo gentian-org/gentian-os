@@ -17,6 +17,7 @@ limitations under the License.
 package applifecycle
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -45,11 +46,12 @@ const resourcePlanPatchFile = "resource-plan.yaml"
 
 // SetResourcePlan writes a tenant's chosen plan into the deployments repository.
 func (g *GitOps) SetResourcePlan(
+	ctx context.Context,
 	tenant string,
 	plan *gentianov1alpha1.ResourcePlan,
 	actor string,
 ) (status, file string, changed bool, err error) {
-	tenantYAML, err := g.tenantFile(tenant)
+	tenantYAML, err := g.tenantFile(ctx, tenant)
 	if err != nil {
 		return "", "", false, err
 	}
@@ -85,7 +87,7 @@ func (g *GitOps) SetResourcePlan(
 	}
 
 	msg := fmt.Sprintf("feat(%s): set resource plan %s (via %s)", tenant, plan.Name, actor)
-	if err := g.commitAll(files, msg); err != nil {
+	if err := g.commitAll(ctx, files, msg); err != nil {
 		return "", patchPath, false, err
 	}
 	return "updated", patchPath, true, nil
@@ -192,7 +194,7 @@ func ensurePatchListed(text, patchFile string) (string, bool) {
 // lists it are only correct together: a repository synced between the two would
 // either apply a patch nothing references or reference a patch that is not
 // there, and Argo would fail the whole tenant on the second.
-func (g *GitOps) commitAll(files []string, message string) error {
+func (g *GitOps) commitAll(ctx context.Context, files []string, message string) error {
 	rels := make([]string, 0, len(files))
 	for _, f := range files {
 		rel, err := filepath.Rel(g.path, f)
@@ -201,5 +203,5 @@ func (g *GitOps) commitAll(files []string, message string) error {
 		}
 		rels = append(rels, rel)
 	}
-	return g.commitPaths(rels, message)
+	return g.commitPaths(ctx, rels, message)
 }

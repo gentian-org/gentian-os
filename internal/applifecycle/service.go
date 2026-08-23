@@ -140,7 +140,7 @@ func (s *Service) Install(ctx context.Context, req InstallRequest) (*Result, err
 		return nil, err
 	}
 
-	status, file, _, err := s.git.Install(req.Tenant, req.Profile, req.Actor)
+	status, file, _, err := s.git.Install(ctx, req.Tenant, req.Profile, req.Actor)
 	if err != nil {
 		return nil, err
 	}
@@ -251,7 +251,7 @@ func (s *Service) Uninstall(ctx context.Context, req UninstallRequest) (*Result,
 		}
 	}
 
-	status, file, changed, err := s.git.Uninstall(req.Tenant, req.Profile, req.Actor)
+	status, file, changed, err := s.git.Uninstall(ctx, req.Tenant, req.Profile, req.Actor)
 	if err != nil {
 		return nil, err
 	}
@@ -496,7 +496,7 @@ func (s *Service) SetAddons(ctx context.Context, req SetAddonsRequest) (*Result,
 			"these addons require a commercial subscription: %s", strings.Join(names, ", "))
 	}
 
-	status, file, changed, err := s.git.SetAddons(req.Tenant, req.Profile, req.Addons, req.Actor)
+	status, file, changed, err := s.git.SetAddons(ctx, req.Tenant, req.Profile, req.Addons, req.Actor)
 	if err != nil {
 		return nil, err
 	}

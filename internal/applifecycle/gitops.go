@@ -17,12 +17,14 @@ limitations under the License.
 package applifecycle
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
+	"time"
 )
 
 // GitOps edits gentian-deployments tenant YAML and pushes commits.
@@ -44,12 +46,29 @@ func (g *GitOps) requirePath() error {
 	return nil
 }
 
-func (g *GitOps) ensureRepo() error {
+// gitTimeout bounds every git invocation below.
+//
+// clone, pull and push all talk to a remote, and git has no default timeout for
+// one that accepts the connection and then goes quiet. These run under an HTTP
+// handler, so without a bound a hung remote holds the handler goroutine and the
+// git process for as long as the process lives — and the caller hanging up does
+// not release either.
+const gitTimeout = 5 * time.Minute
+
+// gitCmd builds a git invocation bounded by both the caller's context and
+// gitTimeout, whichever ends first.
+func (g *GitOps) gitCmd(ctx context.Context, args ...string) (*exec.Cmd, context.CancelFunc) {
+	cctx, cancel := context.WithTimeout(ctx, gitTimeout)
+	return exec.CommandContext(cctx, "git", args...), cancel
+}
+
+func (g *GitOps) ensureRepo(ctx context.Context) error {
 	if err := g.requirePath(); err != nil {
 		return err
 	}
 	if _, err := os.Stat(filepath.Join(g.path, ".git")); err == nil {
-		cmd := exec.Command("git", "-C", g.path, "pull", "--rebase", "--autostash")
+		cmd, cancel := g.gitCmd(ctx, "-C", g.path, "pull", "--rebase", "--autostash")
+		defer cancel()
 		cmd.Stdout = os.Stdout
 		cmd.Stderr = os.Stderr
 		if err := cmd.Run(); err != nil {
@@ -60,14 +79,15 @@ func (g *GitOps) ensureRepo() error {
 	if g.repo == "" {
 		return fmt.Errorf("deployments git repository not configured")
 	}
-	cmd := exec.Command("git", "clone", g.repo, g.path)
+	cmd, cancel := g.gitCmd(ctx, "clone", g.repo, g.path)
+	defer cancel()
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	return cmd.Run()
 }
 
-func (g *GitOps) tenantFile(tenant string) (string, error) {
-	if err := g.ensureRepo(); err != nil {
+func (g *GitOps) tenantFile(ctx context.Context, tenant string) (string, error) {
+	if err := g.ensureRepo(ctx); err != nil {
 		return "", err
 	}
 	cluster := g.cluster
@@ -114,8 +134,8 @@ func (g *GitOps) tenantFile(tenant string) (string, error) {
 }
 
 // Install adds profile to tenant YAML in git. Returns status, tenant file path, and whether git changed.
-func (g *GitOps) Install(tenant, profile, actor string) (status, file string, changed bool, err error) {
-	file, err = g.tenantFile(tenant)
+func (g *GitOps) Install(ctx context.Context, tenant, profile, actor string) (status, file string, changed bool, err error) {
+	file, err = g.tenantFile(ctx, tenant)
 	if err != nil {
 		return "", "", false, err
 	}
@@ -135,15 +155,15 @@ func (g *GitOps) Install(tenant, profile, actor string) (status, file string, ch
 	if err := os.WriteFile(file, []byte(text), 0o644); err != nil {
 		return "", file, false, err
 	}
-	if err := g.commit(file, fmt.Sprintf("feat(%s): install %s (via %s)", tenant, profile, actor)); err != nil {
+	if err := g.commit(ctx, file, fmt.Sprintf("feat(%s): install %s (via %s)", tenant, profile, actor)); err != nil {
 		return "", file, false, err
 	}
 	return "installed", file, true, nil
 }
 
 // Uninstall removes profile from tenant YAML in git.
-func (g *GitOps) Uninstall(tenant, profile, actor string) (status, file string, changed bool, err error) {
-	file, err = g.tenantFile(tenant)
+func (g *GitOps) Uninstall(ctx context.Context, tenant, profile, actor string) (status, file string, changed bool, err error) {
+	file, err = g.tenantFile(ctx, tenant)
 	if err != nil {
 		return "", "", false, err
 	}
@@ -162,7 +182,7 @@ func (g *GitOps) Uninstall(tenant, profile, actor string) (status, file string, 
 	if err := os.WriteFile(file, []byte(newText), 0o644); err != nil {
 		return "", file, false, err
 	}
-	if err := g.commit(file, fmt.Sprintf("feat(%s): uninstall %s (via %s)", tenant, profile, actor)); err != nil {
+	if err := g.commit(ctx, file, fmt.Sprintf("feat(%s): uninstall %s (via %s)", tenant, profile, actor)); err != nil {
 		return "", file, false, err
 	}
 	return "uninstalled", file, true, nil
@@ -181,36 +201,41 @@ func insertAppProfile(text, profile string) (string, bool) {
 	return strings.TrimRight(text, "\n") + "\n  apps:\n  - profile: " + profile + "\n", true
 }
 
-func (g *GitOps) commit(file, message string) error {
+func (g *GitOps) commit(ctx context.Context, file, message string) error {
 	rel, err := filepath.Rel(g.path, file)
 	if err != nil {
 		rel = file
 	}
-	return g.commitPaths([]string{rel}, message)
+	return g.commitPaths(ctx, []string{rel}, message)
 }
 
 // commitPaths stages repository-relative paths and pushes them as one commit.
-func (g *GitOps) commitPaths(rels []string, message string) error {
-	add := exec.Command("git", append([]string{"-C", g.path, "add"}, rels...)...)
+func (g *GitOps) commitPaths(ctx context.Context, rels []string, message string) error {
+	add, addCancel := g.gitCmd(ctx, append([]string{"-C", g.path, "add"}, rels...)...)
+	defer addCancel()
 	if out, err := add.CombinedOutput(); err != nil {
 		return fmt.Errorf("git add: %w: %s", err, out)
 	}
-	diff := exec.Command("git", "-C", g.path, "diff", "--cached", "--quiet")
+	diff, diffCancel := g.gitCmd(ctx, "-C", g.path, "diff", "--cached", "--quiet")
+	defer diffCancel()
 	if err := diff.Run(); err == nil {
 		return nil
 	}
-	commit := exec.Command("git", "-C", g.path, "commit", "-m", message)
+	commit, commitCancel := g.gitCmd(ctx, "-C", g.path, "commit", "-m", message)
+	defer commitCancel()
 	if out, err := commit.CombinedOutput(); err != nil {
 		if strings.Contains(string(out), "nothing to commit") {
 			return nil
 		}
 		return fmt.Errorf("git commit: %w: %s", err, out)
 	}
-	pull := exec.Command("git", "-C", g.path, "pull", "--rebase", "--autostash")
+	pull, pullCancel := g.gitCmd(ctx, "-C", g.path, "pull", "--rebase", "--autostash")
+	defer pullCancel()
 	if out, err := pull.CombinedOutput(); err != nil {
 		return fmt.Errorf("git pull --rebase: %w: %s", err, out)
 	}
-	push := exec.Command("git", "-C", g.path, "push")
+	push, pushCancel := g.gitCmd(ctx, "-C", g.path, "push")
+	defer pushCancel()
 	if out, err := push.CombinedOutput(); err != nil {
 		return fmt.Errorf("git push: %w: %s", err, out)
 	}

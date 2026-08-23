@@ -287,7 +287,7 @@ func (s *Service) SetPlan(ctx context.Context, req SetPlanRequest) (*SetPlanResu
 		}
 	}
 
-	status, file, changed, err := s.git.SetResourcePlan(req.Tenant, plan, req.Actor)
+	status, file, changed, err := s.git.SetResourcePlan(ctx, req.Tenant, plan, req.Actor)
 	if err != nil {
 		return nil, err
 	}

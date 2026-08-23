@@ -620,8 +620,26 @@ validate_steps() {
             error "${id}: no apply() defined"
             rc=1
         fi
+        # A step with nothing persistent to test for says so in its header:
+        #
+        #   # check: none — prewarming leaves no artefact to test for
+        #
+        # All three steps that lack a check() already explained themselves in a
+        # prose comment, and were warned about on every single run anyway. A
+        # warning that fires on a documented, deliberate condition is noise, and
+        # noise is what teaches people to skim warnings. Declaring it moves the
+        # reason somewhere both a reader and this loop can see.
+        declared="$(step_header "$file" check)"
         if ! _has_verb check; then
-            warn "${id}: no check() — cannot be skipped on re-run or dry-run"
+            if [[ -z "${declared}" ]]; then
+                warn "${id}: no check() and no 'check:' header — cannot be skipped on re-run or dry-run"
+            elif [[ "${declared}" != none* ]]; then
+                error "${id}: 'check: ${declared}' but no check() is defined"
+                rc=1
+            fi
+        elif [[ "${declared}" == none* ]]; then
+            error "${id}: declares 'check: none' but defines a check()"
+            rc=1
         fi
     done
 

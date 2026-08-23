@@ -17,6 +17,7 @@ limitations under the License.
 package applifecycle
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"regexp"
@@ -31,8 +32,8 @@ import (
 //
 // An empty list is a real selection meaning "none", not a no-op. The activation
 // script reconciles, so clearing the list disables what was previously enabled.
-func (g *GitOps) SetAddons(tenant, profile string, addons []string, actor string) (status, file string, changed bool, err error) {
-	file, err = g.tenantFile(tenant)
+func (g *GitOps) SetAddons(ctx context.Context, tenant, profile string, addons []string, actor string) (status, file string, changed bool, err error) {
+	file, err = g.tenantFile(ctx, tenant)
 	if err != nil {
 		return "", "", false, err
 	}
@@ -52,7 +53,7 @@ func (g *GitOps) SetAddons(tenant, profile string, addons []string, actor string
 		return "", file, false, err
 	}
 	msg := fmt.Sprintf("feat(%s): set addons for %s (via %s)", tenant, profile, actor)
-	if err := g.commit(file, msg); err != nil {
+	if err := g.commit(ctx, file, msg); err != nil {
 		return "", file, false, err
 	}
 	return "updated", file, true, nil
