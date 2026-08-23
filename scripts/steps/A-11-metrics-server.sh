@@ -22,6 +22,16 @@
 # rather than a restart of the record.
 
 check() {
+    # A metrics-server this installer does not own is not this step's to report
+    # on. apply() deliberately leaves it alone — Helm cannot adopt objects it
+    # did not create — so answering "missing" here would name this step as
+    # outstanding on every run of a cluster where nothing is wrong and nothing
+    # can be done. Undefined is the honest verdict: not applicable here.
+    if ! helm status metrics-server -n kube-system >/dev/null 2>&1 &&
+       kubectl get deployment metrics-server -n kube-system >/dev/null 2>&1; then
+        return "${CHECK_UNDEFINED}"
+    fi
+
     kubectl get apiservice v1beta1.metrics.k8s.io >/dev/null 2>&1 &&
         kubectl get deployment metrics-server -n kube-system >/dev/null 2>&1
 }
