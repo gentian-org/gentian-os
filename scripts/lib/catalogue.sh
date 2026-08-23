@@ -236,23 +236,54 @@ adopt_gentian_os_helm_preflight() {
     # treatment; the RBAC had not, so an install after any Argo sync hit it.
     #
     # Namespaced objects do not need this: they are recreated in a namespace
-    # the chart owns. These two are cluster-scoped and outlive it.
-    local obj
-    for obj in "clusterrole/gentian-os" "clusterrolebinding/gentian-os"; do
-        kubectl get "${obj}" >/dev/null 2>&1 || continue
-        if kubectl get "${obj}" \
-            -o jsonpath='{.metadata.annotations.meta\.helm\.sh/release-name}' 2>/dev/null \
-            | grep -q .; then
-            continue
-        fi
-        kubectl annotate "${obj}" \
-            "meta.helm.sh/release-name=gentian-os" \
-            "meta.helm.sh/release-namespace=${ns}" \
-            --overwrite >/dev/null
-        kubectl label "${obj}" \
-            "app.kubernetes.io/managed-by=Helm" \
-            --overwrite >/dev/null
-        info "Adopted pre-existing ${obj} into Helm release."
+    # the chart owns. Cluster-scoped ones outlive it.
+    #
+    # Every cluster-scoped kind the chart can render, not a list of names.
+    # Fixing these one at a time is a losing game — the RBAC was found first,
+    # then OIDCPackCatalog on the next run, then PlatformSecurityPolicy would
+    # have been after that. The core kinds are fixed; the gentianos.io ones are
+    # discovered, so a cluster-scoped CR added to the chart later is covered
+    # without touching this.
+    #
+    # Selected by app.kubernetes.io/instance=gentian-os, which the chart stamps
+    # on what it renders. That is what keeps this from adopting objects it has
+    # no business claiming: a Tenant is cluster-scoped too, and carries no such
+    # label because nothing in this chart renders it.
+    local kinds=(clusterrole clusterrolebinding validatingwebhookconfiguration)
+    local crd
+    while IFS= read -r crd; do
+        [[ -n "${crd}" ]] && kinds+=("${crd}")
+    done < <(kubectl get crd -o json 2>/dev/null | python3 -c '
+import json, sys
+try:
+    doc = json.load(sys.stdin)
+except Exception:
+    sys.exit(0)
+for c in doc.get("items", []):
+    spec = c.get("spec", {})
+    if spec.get("group") == "gentianos.io" and spec.get("scope") == "Cluster":
+        print(spec["names"]["plural"] + ".gentianos.io")
+' || true)
+
+    local kind obj existing
+    for kind in "${kinds[@]}"; do
+        while IFS= read -r obj; do
+            [[ -n "${obj}" ]] || continue
+            existing="$(kubectl get "${obj}" \
+                -o jsonpath='{.metadata.annotations.meta\.helm\.sh/release-name}' \
+                2>/dev/null || true)"
+            [[ -n "${existing}" ]] && continue
+            kubectl annotate "${obj}" \
+                "meta.helm.sh/release-name=gentian-os" \
+                "meta.helm.sh/release-namespace=${ns}" \
+                --overwrite >/dev/null
+            kubectl label "${obj}" \
+                "app.kubernetes.io/managed-by=Helm" \
+                --overwrite >/dev/null
+            info "Adopted pre-existing ${obj} into Helm release."
+        done < <(kubectl get "${kind}" \
+                     -l app.kubernetes.io/instance=gentian-os \
+                     -o name 2>/dev/null || true)
     done
 
     chart_ns="shared-apps"
