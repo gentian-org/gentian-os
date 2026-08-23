@@ -274,6 +274,11 @@ init_openbao() {
             -H "Content-Type: application/json" \
             -d '{"recovery_shares": 1, "recovery_threshold": 1}')
 
+        # The directory, before the only copy of the recovery key is written
+        # into it. Everything else that writes here runs earlier in a normal
+        # install, so this is belt and braces — but the one write that must
+        # never fail for want of a directory is this one.
+        mkdir -p "$(dirname "${OPENBAO_INIT_FILE}")"
         echo "$init_resp" | jq '.' > "${OPENBAO_INIT_FILE}"
         chmod 600 "${OPENBAO_INIT_FILE}"
 
@@ -322,6 +327,11 @@ init_openbao() {
             exit 1
         }
 
+        # The directory, before the only copy of the recovery key is written
+        # into it. Everything else that writes here runs earlier in a normal
+        # install, so this is belt and braces — but the one write that must
+        # never fail for want of a directory is this one.
+        mkdir -p "$(dirname "${OPENBAO_INIT_FILE}")"
         echo "$init_resp" | jq '.' > "${OPENBAO_INIT_FILE}"
         chmod 600 "${OPENBAO_INIT_FILE}"
 

@@ -101,7 +101,7 @@ _kit_exported_detail() {
 # re-run. Nothing new is trusted: this step deletes that file moments later.
 _bootstrap_token() {
     [[ -n "${BAO_TOKEN:-}" ]] && { echo "${BAO_TOKEN}"; return 0; }
-    local f="${OPENBAO_INIT_FILE:-/tmp/openbao-init.json}"
+    local f="${OPENBAO_INIT_FILE:-${HOME}/.gentian/openbao-init.json}"
     [[ -r "${f}" ]] || return 1
     local t; t="$(jq -r '.root_token // empty' "${f}" 2>/dev/null || true)"
     [[ -n "${t}" ]] || return 1
@@ -310,7 +310,7 @@ apply() {
     # one; grepped to be sure. The patch attempt was always a silent no-op.
     # Removed here along with B-04's stale header and destroy() that made the
     # same claim.
-    local init_file="${OPENBAO_INIT_FILE:-/tmp/openbao-init.json}"
+    local init_file="${OPENBAO_INIT_FILE:-${HOME}/.gentian/openbao-init.json}"
     if [[ -f "${init_file}" ]]; then
         if [[ "${GENTIAN_DRY_RUN:-0}" == "1" ]]; then
             info "Would remove ${init_file} (dry run)."

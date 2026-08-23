@@ -237,13 +237,14 @@ success over a broken step. Fix the cause and run `./install.sh` again.
 
 No secret is printed to your terminal. OpenBao's initialisation material —
 the recovery key and root token for the primary, the unseal key and root token
-for the transit instance — is written to mode-600 files under `/tmp` and
-nowhere else: no terminal, no log.
+for the transit instance — is written to mode-600 files under `~/.gentian`
+and nowhere else: no terminal, no log.
 
-The transit instance's file is deleted by its own step, once the values are
-safe in Kubernetes Secrets. The primary's file, `/tmp/openbao-init.json`,
-stays until handover completes, and **`/tmp` does not survive a reboot**. The
-next step is what makes it durable.
+You do not need to copy anything out of them. The transit instance's file is
+removed by its own step once those values are safe in Kubernetes Secrets, and
+its root token is revoked at the same time. The primary's file,
+`~/.gentian/openbao-init.json`, is removed by handover in step 12. The next
+step is what makes the one value in it that matters durable.
 
 ## 10. Export the recovery kit
 

@@ -1300,7 +1300,7 @@ print_handover_summary() {
     # sign-in, which is the half an operator can discover by trying it: run
     # E-03 without a kit and it says so. The other half is silent until then,
     # and it is the one with no second chance — the recovery key exists in
-    # /tmp/openbao-init.json and nowhere else until a kit is exported.
+    # the init file and nowhere else until a kit is exported.
     kit="$(kubectl get configmap gentian-handover -n "${ns}" \
         -o jsonpath='{.data.recoveryKitExported}' 2>/dev/null || true)"
 
@@ -1327,7 +1327,7 @@ print_handover_summary() {
         if [[ "${kit}" != "true" ]]; then
             echo -e "${YELLOW}    No recovery kit has been exported. The recovery key that${NC}"
             echo -e "${YELLOW}    opens this OpenBao without Keycloak exists in${NC}"
-            echo -e "${YELLOW}    ${OPENBAO_INIT_FILE:-/tmp/openbao-init.json} and nowhere else — and E-03${NC}"
+            echo -e "${YELLOW}    ${OPENBAO_INIT_FILE:-${HOME}/.gentian/openbao-init.json} and nowhere else — and E-03${NC}"
             echo -e "${YELLOW}    deletes that file. Export one before finishing handover.${NC}"
         fi
         echo ""

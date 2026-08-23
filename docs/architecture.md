@@ -671,11 +671,9 @@ The update chain is:
 The `ImageUpdater` CR is inlined in
 `kernel/bootstrap/chart/templates/gentian-os.yaml` and applied with the
 Application it refers to, by `install.sh` — it is not committed to
-`gentian-deployments` and Argo CD does not sync it. It used to live at
-`<gentian-deployments>/<env>/kernel/image-updater.yaml`; that copy was
-removed (gentian-deployments `d8a8398`) because its content never varies
-by cluster or stage, so a per-cluster copy was duplication that could
-drift. See [deployment.md](deployment.md) §3.1.
+`gentian-deployments` and Argo CD does not sync it. Its content never varies
+by cluster or stage, so a per-cluster copy in the deployments repository would
+be duplication that could drift. See [deployment.md](deployment.md) §3.1.
 
 **Why this Application is not itself managed by Argo CD.** The updater
 writes with `write-back-method: argocd`: it patches the `image.tag` Helm

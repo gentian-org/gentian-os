@@ -129,7 +129,7 @@ _kit_gather() {
     # absent — see the recovery-key case just below, which is the reason this
     # matters.
     TRANSIT_UNSEAL_KEY="${TRANSIT_UNSEAL_KEY:-$(
-        _kit_from_json "${TRANSIT_INIT_FILE:-/tmp/openbao-transit-init.json}" \
+        _kit_from_json "${TRANSIT_INIT_FILE:-${HOME}/.gentian/openbao-transit-init.json}" \
             '(.unseal_keys_base64 // .unseal_keys_b64 // [])[0]' || true)}"
     if [[ -z "${TRANSIT_UNSEAL_KEY}" ]]; then
         TRANSIT_UNSEAL_KEY="$(kubectl get secret openbao-transit-unseal -n openbao \
@@ -145,10 +145,10 @@ _kit_gather() {
     # nowhere else, and E-03 deletes the file. A kit without it is a kit that
     # cannot open OpenBao when Keycloak is what broke.
     OPENBAO_RECOVERY_KEYS="${OPENBAO_RECOVERY_KEYS:-$(
-        _kit_from_json "${OPENBAO_INIT_FILE:-/tmp/openbao-init.json}" \
+        _kit_from_json "${OPENBAO_INIT_FILE:-${HOME}/.gentian/openbao-init.json}" \
             '(.recovery_keys_base64 // .recovery_keys_b64 // []) | join(",")' || true)}"
     OPENBAO_ROOT_TOKEN="${OPENBAO_ROOT_TOKEN:-${BAO_TOKEN:-$(
-        _kit_from_json "${OPENBAO_INIT_FILE:-/tmp/openbao-init.json}" '.root_token' || true)}}"
+        _kit_from_json "${OPENBAO_INIT_FILE:-${HOME}/.gentian/openbao-init.json}" '.root_token' || true)}}"
 
     if [[ -z "${KERNEL_DOMAIN:-}" ]]; then
         KERNEL_DOMAIN="$(kubectl get cluster.gentianos.io -n crossplane-system \

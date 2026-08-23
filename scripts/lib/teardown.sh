@@ -547,7 +547,9 @@ purge_local_state() {
     local f
     for f in "${HOME}/.gentian/config" \
              "${GENTIAN_CREDENTIAL_CACHE:-${HOME}/.gentian/bootstrap-credentials.env}" \
-             "${OPENBAO_INIT_FILE:-/tmp/openbao-init.json}" \
+             "${OPENBAO_INIT_FILE:-${HOME}/.gentian/openbao-init.json}" \
+             "${TRANSIT_INIT_FILE:-${HOME}/.gentian/openbao-transit-init.json}" \
+             "/tmp/openbao-init.json" \
              "/tmp/openbao-transit-init.json"; do
         [[ -e "${f}" ]] || continue
         rm -f "${f}" && success "Removed ${f}."

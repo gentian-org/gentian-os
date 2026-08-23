@@ -317,7 +317,21 @@ wait_for_running_pod() {
 SCRIPT_DIR="${SCRIPT_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 
 # ─── Runtime defaults ─────────────────────────────────────────────────────────
-OPENBAO_INIT_FILE="${OPENBAO_INIT_FILE:-/tmp/openbao-init.json}"
+# Under ~/.gentian, not /tmp.
+#
+# This file holds the primary OpenBao's recovery key, and holds it alone: the
+# key is issued once, at init, and exists nowhere else until a recovery kit is
+# exported. In /tmp that meant the only copy of the one credential that opens
+# OpenBao when Keycloak is broken lived somewhere a reboot empties — and the
+# window between installing and exporting a kit is however long the operator
+# takes to get to it. The documentation's answer was to warn them not to
+# reboot, which is not an answer.
+#
+# ~/.gentian already holds the other things an install must not lose between
+# runs (config, the bootstrap credential cache), is mode 700, and is removed by
+# purge_local_state — which reads this variable, so the purge follows the file
+# without needing to know where it went.
+OPENBAO_INIT_FILE="${OPENBAO_INIT_FILE:-${HOME}/.gentian/openbao-init.json}"
 INSTALL_CLUSTER_INFRA="${INSTALL_CLUSTER_INFRA:-1}"
 # Operator-managed env files (config + secrets). These are optional, but when
 # present they are sourced automatically before prompting so installs can be

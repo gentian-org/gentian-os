@@ -14,7 +14,7 @@
 # Requires: kubectl, jq, curl
 #
 # Optional env vars:
-#   TRANSIT_INIT_FILE  — where to save init output (default: /tmp/openbao-transit-init.json)
+#   TRANSIT_INIT_FILE  — where to save init output (default: ~/.gentian/openbao-transit-init.json)
 #   TRANSIT_NAMESPACE  — k8s namespace (default: openbao)
 # =============================================================================
 
@@ -26,7 +26,7 @@ success() { echo -e "${GREEN}[OK]${NC}    $*"; }
 warn()    { echo -e "${YELLOW}[WARN]${NC}  $*"; }
 error()   { echo -e "${RED}[ERROR]${NC} $*" >&2; }
 
-TRANSIT_INIT_FILE="${TRANSIT_INIT_FILE:-/tmp/openbao-transit-init.json}"
+TRANSIT_INIT_FILE="${TRANSIT_INIT_FILE:-${HOME}/.gentian/openbao-transit-init.json}"
 TRANSIT_NS="${TRANSIT_NAMESPACE:-openbao}"
 
 # ─── Resolve transit address ─────────────────────────────────────────────────
