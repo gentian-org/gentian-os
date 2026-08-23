@@ -13,9 +13,27 @@ check() {
     # Ready", and reporting the latter blames the cluster for a local gap.
     [[ -n "$claim" ]] || return "${CHECK_UNDEFINED}"
 
-    kubectl get cluster.gentianos.io "$claim" -n crossplane-system \
-        -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null |
-        grep -q True || return 1
+    # The same question apply() waited on, not a stricter one.
+    #
+    # The claim's own Ready aggregates every composed resource without
+    # exception, and three of them — the Keycloak Client and its two mappers —
+    # cannot reconcile until the root ApplicationSet delivers Keycloak at
+    # sync-wave 9 and its ProviderConfig at 16, both applied by C-02, four
+    # steps after this one. wait_for_xcluster_ready already accounts for that
+    # and returns once everything this step OWES is ready.
+    #
+    # Asking the aggregate here meant check() contradicted apply(): the step
+    # ran, succeeded, and then reported itself unsatisfied for work it does not
+    # do and cannot influence. The driver's end-of-run report then named B-08
+    # as outstanding at the end of a complete install, and the advice it gave —
+    # run install.sh again — changed nothing, because there was nothing here
+    # left to run. It cleared later, on its own, once the Keycloak objects
+    # reconciled, which is the definition of not this step's business.
+    local xr
+    xr="$(kubectl get cluster.gentianos.io "$claim" -n crossplane-system \
+        -o jsonpath='{.spec.resourceRef.name}' 2>/dev/null || true)"
+    [[ -n "$xr" ]] || return "${CHECK_MISSING}"
+    xcluster_structural_ready "$xr" || return "${CHECK_MISSING}"
 
     # Ready is not the same as current: this step is the claim's only applier
     # (the claims ApplicationSet excludes it), so a claim edited in Git and
