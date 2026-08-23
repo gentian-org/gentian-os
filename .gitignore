@@ -34,5 +34,9 @@ __pycache__/
 # repo diffs.
 config/rbac/
 
-# Backup files
+# Recovery kits. Both extensions: --export-recovery-kit writes .age when age is
+# installed and .enc when it falls back to openssl, and its default path is a
+# bare filename — so a kit lands in whatever directory the operator ran the
+# command from, which is usually this one.
 *.age
+*.enc

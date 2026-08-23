@@ -229,12 +229,46 @@ export_recovery_kit() {
     success "Wrote ${out} (${#present[@]} values, mode 0600, $(_kit_cipher))."
     info "  Included: ${present[*]}"
     [[ ${#missing[@]} -gt 0 ]] && warn "  Absent:   ${missing[*]}"
+
+    # Said first, said plainly, and said as an instruction.
+    #
+    # What was here described the kit's confidentiality risk — that it grants
+    # every derived credential to whoever decrypts it — and left the operator
+    # to infer the availability one. They are not the same warning and the
+    # second is the one that ends clusters: a leaked kit is a serious
+    # incident, a lost kit is a cluster that cannot be rebuilt as itself. The
+    # file is also, at this moment, sitting wherever the command was run from,
+    # which for a bare default path is whatever directory the operator
+    # happened to be in.
     echo ""
-    info "This kit reproduces derived credentials on a rebuild. It does NOT restore"
-    info "OpenBao: a fresh instance issues its own unseal material, and the keys here"
-    info "belong to the old one — they unseal a restored Raft snapshot, nothing else."
-    warn "Store it where break-glass material lives. It grants every derived credential"
-    warn "in the cluster to anyone who can decrypt it."
+    warn "╔══════════════════════════════════════════════════════════════════╗"
+    warn "║  MOVE THIS FILE SOMEWHERE SAFE, NOW                              ║"
+    warn "╚══════════════════════════════════════════════════════════════════╝"
+    warn "  ${out}"
+    echo ""
+    warn "  Without it this cluster CANNOT be rebuilt as itself. The derivation"
+    warn "  salt and the OpenBao recovery key exist in this file and in this"
+    warn "  cluster — nowhere else. Lose both and every credential a rebuild"
+    warn "  derives comes out different, and there is no way back into OpenBao"
+    warn "  if its login path ever breaks."
+    echo ""
+    warn "  It is also worth exactly that much to an attacker: it grants every"
+    warn "  derived credential in the cluster to anyone who can decrypt it."
+    warn "  Put it where your break-glass material already lives — a password"
+    warn "  manager, a sealed vault, offline media. Not this directory, not a"
+    warn "  git repository, not a home directory that is only on this machine."
+    echo ""
+    info "  Verify you can read it back before you rely on it:"
+    if [[ "$(_kit_cipher)" == "age" ]]; then
+        info "    age -d ${out} | head -1"
+    else
+        info "    openssl enc -d -aes-256-cbc -pbkdf2 -iter 600000 -in ${out} | head -1"
+    fi
+    echo ""
+    info "  The kit reproduces derived credentials on a rebuild. It does NOT"
+    info "  restore OpenBao: a fresh instance issues its own unseal material, and"
+    info "  the keys here belong to the old one — they unseal a restored Raft"
+    info "  snapshot, nothing else."
 
     _record_kit_export_proof
 }
