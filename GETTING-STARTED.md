@@ -6,6 +6,19 @@ and how to tell it worked.
 Re-running `./install.sh` is always safe. It reads the cluster to decide what is
 already done, so a second run continues rather than restarting.
 
+**The whole install, once you are configured (steps 1–7):**
+
+```bash
+./install.sh                                        # 8.  installs everything
+./install.sh --export-recovery-kit <safe-path>      # 10. the one thing you must keep
+#            sign in at https://portal.<domain>/login   12. proves someone else can write
+./install.sh --only E-03                            # 12. revokes the installer's credential
+```
+
+Four commands, and one of them is a browser. The first installs the cluster;
+the other three are handover, which needs a human and so cannot be automated.
+The installer tells you which of them is outstanding every time it finishes.
+
 For flags, troubleshooting and the non-default installs — internal domains,
 mirrors, uninstalling — see
 [docs/install-reference.md](docs/install-reference.md).
@@ -203,21 +216,34 @@ replacement rather than aborting.
 ./install.sh
 ```
 
-It works through phases A to E, reporting each step before acting. Expect it to
-take a while in B, where OpenBao is deployed and initialised, and in C and D,
-where ArgoCD pulls and syncs the platform's own applications.
+One command, start to finish. It works through phases A to E, reporting each
+step before acting, and re-running it is safe: every step checks whether its
+work is already done and skips if so. Expect it to take a while in B, where
+OpenBao is deployed and initialised, and in C and D, where ArgoCD pulls and
+syncs the platform's own applications.
 
-## 9. One step still prints a key you cannot recover later
+It ends in one of two ways:
 
-**`B-02-openbao-transit-init`** prints the transit instance's unseal key and
-root token. **Put them in a password manager before you continue** — they are
-also written to `/tmp/openbao-transit-init.json`, which does not survive a
-reboot.
+- **`Gentian OS — Almost There: 1 step left`** — everything is installed and
+  handover remains. The summary lists exactly what to do, in order. That is
+  steps 10 and 12 below, and it is the normal ending for a first install.
+- **`Gentian OS — Install Complete`** — handover is done too. Nothing is left.
 
-**`B-04-openbao-init`** — the primary's own recovery key and root token — does
-not print anything. Both are written straight to `/tmp/openbao-init.json`
-(mode 600) and nowhere else, including no terminal and no log. The next step
-is what makes them durable.
+If a step fails, the run stops there and names the command, the step file and
+the call stack. Nothing after a failure runs, so the install never reports
+success over a broken step. Fix the cause and run `./install.sh` again.
+
+## 9. Where the keys are
+
+No secret is printed to your terminal. OpenBao's initialisation material —
+the recovery key and root token for the primary, the unseal key and root token
+for the transit instance — is written to mode-600 files under `/tmp` and
+nowhere else: no terminal, no log.
+
+The transit instance's file is deleted by its own step, once the values are
+safe in Kubernetes Secrets. The primary's file, `/tmp/openbao-init.json`,
+stays until handover completes, and **`/tmp` does not survive a reboot**. The
+next step is what makes it durable.
 
 ## 10. Export the recovery kit
 
@@ -295,11 +321,13 @@ kubectl get application,applicationset -n argocd
 
 ## 12. Hand the cluster over
 
-The install is not finished when it says "bootstrap complete". Two things are
-still true: the installer holds a credential that can write every secret in the
-cluster, and nothing has yet shown that anyone *else* can — including,
-separately, whether there is a way back in at all if that turns out not to
-work.
+This is the step the installer cannot do for you, and the reason a first run
+ends with **`Almost There: 1 step left`** rather than a completion banner.
+
+Two things are still true at that point: the installer holds a credential that
+can write every secret in the cluster, and nothing has yet shown that anyone
+*else* can — including, separately, whether there is a way back in at all if
+that turns out not to work.
 
 Both end here. Both have to.
 
