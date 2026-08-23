@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# step: D-07-app-catalogue
+# step: D-08-app-catalogue
 # phase: applications
-# requires: D-06-appprofiles
+# requires: D-07-appprofiles
 # provides: the AppCatalogue CRD, confirmed present
 # mutates: AppCatalogue objects (on the reverse pass only)
 

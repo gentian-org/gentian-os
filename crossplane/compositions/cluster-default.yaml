@@ -226,8 +226,12 @@ spec:
                 crossplane.io/external-name: oidc
               name: {{ $name }}-auth-oidc
             spec:
-              # Observe only. B-07-openbao-oidc-mount creates and configures this
-              # mount; this resource exists to READ it.
+              # Observe only. B-07-openbao-oidc-mount enables this mount and
+              # D-06-openbao-oidc-config writes its config, four phases later
+              # because that needs Keycloak serving; this resource exists to
+              # READ it. Until D-06 has run, auth/oidc/config is absent and
+              # this stays unSynced — which is why wait_for_xcluster_ready
+              # excludes observe-only resources from what B-08 waits on.
               #
               # It is here at all because the tenant-admin policy below templates
               # its path from the mount accessor, and an accessor can only be

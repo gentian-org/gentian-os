@@ -733,13 +733,13 @@ for x in doc.get("items", []):
 # The composition's jwt AuthBackend is managementPolicies: ["Observe"] — it
 # never creates anything, it reads the oidc mount so the tenant-admin policy
 # can template the mount accessor. provider-vault reads that backend through
-# auth/oidc/config, and on a first install there is nothing there to read:
-# B-07 enables the mount but cannot write its config yet, because the config
-# needs the Keycloak client secret, which ESO materialises from a KV path that
-# THIS step is what creates. Mount, then KV path and ExternalSecret, then
-# config: it does not fit in one pass, and B-07 says so and defers. Waiting
-# here for an observe-only resource to reflect a write a later pass has not
-# made yet is waiting for this run to have already finished.
+# auth/oidc/config, and at this point in the install there is nothing there to
+# read: B-07 enables the mount, but the config is written by
+# D-06-openbao-oidc-config, which is four phases later because it needs both
+# the Keycloak client secret ESO materialises from a KV path THIS step creates
+# and a Keycloak actually serving its discovery document. Waiting here for an
+# observe-only resource to reflect a write that a later phase makes is waiting
+# for this run to have already finished.
 #
 # Observe-only is the general form of both cases, and the honest test: a
 # resource this composition does not create is a resource this step cannot
@@ -752,8 +752,7 @@ for x in doc.get("items", []):
 # its seeded paths, the policies, the auth backends and roles it creates, the
 # AppProject and the ClusterSecretStore. All of those are ready in the first
 # pass. Nothing here abandons the rest: the Keycloak objects reconcile when
-# wave 16 lands, the oidc config lands on B-07's next pass, and the driver's
-# end-of-run report names B-07 as outstanding until it does.
+# wave 16 lands, and D-06 writes the oidc config later in this same run.
 # =============================================================================
 xcluster_structural_ready() {
     local xr_name="$1"
