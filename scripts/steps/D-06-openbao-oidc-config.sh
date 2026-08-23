@@ -81,6 +81,56 @@ _keycloak_deployed() {
     kubectl get svc -n "${ns}" -o name 2>/dev/null | grep -qi keycloak
 }
 
+# _oidc_write_config <client-secret> <ca-pem-file-or-empty>
+#
+# The write itself, so the plain and pinned attempts cannot drift apart. Its
+# stderr is kept: OpenBao's own message is the useful part when both fail, and
+# suppressing the first attempt's would hide the reason the second was needed.
+_oidc_write_config() {
+    local secret="$1" ca_file="$2"
+    local args=(
+        oidc_discovery_url="${OIDC_DISCOVERY_URL}"
+        oidc_client_id="${OIDC_CLIENT_ID}"
+        oidc_client_secret="${secret}"
+        default_role="cluster-admin"
+    )
+    # @file, which the bao CLI reads as "take this value from that path" —
+    # a PEM bundle on a command line is unwieldy and ends up in ps output.
+    [[ -n "${ca_file}" ]] && args+=(oidc_discovery_ca_pem="@${ca_file}")
+    bao write auth/oidc/config "${args[@]}"
+}
+
+# _oidc_gateway_ca_file — the chain the cluster's gateway serves, as a file.
+#
+# Same source and same fallback ArgoCD's own OIDC wiring uses when it registers
+# a CA in argocd-tls-certs-cm: ca.crt if the issuer supplied one, tls.crt
+# otherwise. ACME issuers never supply ca.crt, so on this path it is always
+# tls.crt — the leaf plus its chain, which is what has to be trusted anyway.
+#
+# wildcard-tls in the services namespace first, because that is the copy the
+# kernel services actually present; wildcard-kernel-tls in cert-manager is the
+# original C-01 issues and propagates from. Echoes a temp file path, or nothing
+# when neither secret carries a certificate. The caller removes it.
+_oidc_gateway_ca_file() {
+    local ns tmp ns_secret key value
+    ns="$(gentian_services_namespace 2>/dev/null || echo platform-kernel)"
+    tmp="$(mktemp)"
+    for ns_secret in "${ns}:wildcard-tls" "cert-manager:wildcard-kernel-tls"; do
+        for key in 'ca\.crt' 'tls\.crt'; do
+            value="$(kubectl get secret "${ns_secret#*:}" -n "${ns_secret%%:*}" \
+                -o jsonpath="{.data.${key}}" 2>/dev/null | base64 -d 2>/dev/null || true)"
+            if [[ -n "${value}" ]]; then
+                printf '%s\n' "${value}" > "${tmp}"
+                chmod 600 "${tmp}"
+                echo "${tmp}"
+                return 0
+            fi
+        done
+    done
+    rm -f "${tmp}"
+    return 1
+}
+
 check() {
     _oidc_values
     # No OIDC configured for this cluster: nothing to configure, and nothing to
@@ -177,15 +227,67 @@ apply() {
     fi
 
     info "Configuring auth/oidc/config against ${OIDC_DISCOVERY_URL}..."
-    gentian_run bao write auth/oidc/config \
-        oidc_discovery_url="${OIDC_DISCOVERY_URL}" \
-        oidc_client_id="${OIDC_CLIENT_ID}" \
-        oidc_client_secret="${secret}" \
-        default_role="cluster-admin" || {
-        error "Could not write auth/oidc/config."
+    if [[ "${GENTIAN_DRY_RUN:-0}" == "1" ]]; then
+        info "     + bao write auth/oidc/config oidc_discovery_url=${OIDC_DISCOVERY_URL}" \
+             "oidc_client_id=${OIDC_CLIENT_ID} oidc_client_secret=<redacted> default_role=cluster-admin (dry run)"
+        return 0
+    fi
+
+    # Printed by hand rather than through gentian_run, which echoes the whole
+    # command line — and this one carries the Keycloak client secret. It was
+    # going to terminals and CI logs in full.
+    echo "     + bao write auth/oidc/config oidc_discovery_url=${OIDC_DISCOVERY_URL}" \
+         "oidc_client_id=${OIDC_CLIENT_ID} oidc_client_secret=<redacted> default_role=cluster-admin"
+
+    # Plain first, pinned second.
+    #
+    # OpenBao fetches the discovery document itself, from inside the cluster,
+    # and verifies its TLS. Where the kernel domain resolves to the in-cluster
+    # gateway — split-horizon DNS, which is the normal arrangement — that
+    # gateway serves whatever the cluster's ClusterIssuer produced. Under
+    # ACME_ENV=staging that is a Let's Encrypt STAGING chain ((STAGING) Ersatz
+    # Emmer YR2 → (STAGING) Pretend Pear X1), which no trust store contains, so
+    # the fetch fails with a bare "error checking oidc discovery URL" and the
+    # whole step stops. The installer host does not see this: it resolves the
+    # same name to the public edge, with a publicly trusted certificate, so the
+    # discovery pre-check above passes and only OpenBao fails.
+    #
+    # oidc_discovery_ca_pem pins the fetch to a CA bundle, which fixes that —
+    # but pinning is not free: it REPLACES the system trust for this fetch. On
+    # a cluster whose certificates are publicly trusted, pinning to the
+    # gateway's chain would break a working configuration if the discovery URL
+    # resolves anywhere else. So it is a fallback, not the default: try the
+    # system trust, and reach for the bundle only when that is refused.
+    if _oidc_write_config "${secret}" ""; then
+        success "OIDC auth mount configured (client ${OIDC_CLIENT_ID})."
+        return 0
+    fi
+
+    local ca_file
+    ca_file="$(_oidc_gateway_ca_file)"
+    if [[ -z "${ca_file}" ]]; then
+        error "Could not write auth/oidc/config, and found no gateway CA bundle to retry with."
+        error "  OpenBao fetches ${OIDC_DISCOVERY_URL} itself and verifies its TLS."
+        error "  Looked for wildcard-tls in $(gentian_services_namespace) and"
+        error "  wildcard-kernel-tls in cert-manager; neither had a certificate."
         return 1
-    }
-    success "OIDC auth mount configured (client ${OIDC_CLIENT_ID})."
+    fi
+
+    info "Retrying with the gateway CA bundle — OpenBao does not trust the"
+    info "  certificate the cluster serves for ${OIDC_DISCOVERY_URL%%/auth*}."
+    if _oidc_write_config "${secret}" "${ca_file}"; then
+        rm -f "${ca_file}"
+        success "OIDC auth mount configured (client ${OIDC_CLIENT_ID}, discovery pinned to the gateway CA)."
+        return 0
+    fi
+    rm -f "${ca_file}"
+
+    error "Could not write auth/oidc/config, with or without the gateway CA bundle."
+    error "  OpenBao fetches ${OIDC_DISCOVERY_URL} from inside the cluster and"
+    error "  verifies its TLS; the error above is its own. Check that the name"
+    error "  resolves in-cluster and that what answers serves a chain the"
+    error "  bundle covers."
+    return 1
 }
 
 # No destroy(): the config lives inside the oidc/ mount, and disabling that
