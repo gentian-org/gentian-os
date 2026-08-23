@@ -88,6 +88,26 @@ _kit_exported_detail() {
         -o jsonpath='{.data.recoveryKitExportedAt}' 2>/dev/null || true
 }
 
+# _bootstrap_token — the token this step exists to revoke.
+#
+# B-04 exports BAO_TOKEN, but this step is the one an operator runs on its own:
+# the summary ends every incomplete install with `./install.sh --only E-03`,
+# and a scoped run never reaches B-04. So BAO_TOKEN was unset, check() returned
+# undefined, the step skipped, and the summary printed the same instruction
+# again — telling the operator to run the command they had just run, forever.
+#
+# The token is in the init file, which is exactly where B-04 put it and where
+# bootstrap_openbao_for_crossplane already reads it from on the same kind of
+# re-run. Nothing new is trusted: this step deletes that file moments later.
+_bootstrap_token() {
+    [[ -n "${BAO_TOKEN:-}" ]] && { echo "${BAO_TOKEN}"; return 0; }
+    local f="${OPENBAO_INIT_FILE:-/tmp/openbao-init.json}"
+    [[ -r "${f}" ]] || return 1
+    local t; t="$(jq -r '.root_token // empty' "${f}" 2>/dev/null || true)"
+    [[ -n "${t}" ]] || return 1
+    echo "${t}"
+}
+
 # _bao_reachable — point this shell at OpenBao, or say we cannot ask.
 #
 # Steps cannot assume BAO_ADDR is set. With none, the bao CLI falls back to
@@ -95,7 +115,10 @@ _kit_exported_detail() {
 # fails with connection refused. Resolved the way B-07 does: the ClusterIP if it
 # answers, a port-forward otherwise.
 _bao_reachable() {
-    [[ -n "${BAO_TOKEN:-}" ]] || return 1
+    if [[ -z "${BAO_TOKEN:-}" ]]; then
+        BAO_TOKEN="$(_bootstrap_token)" || return 1
+        export BAO_TOKEN
+    fi
     if BAO_ADDR="$(gentian_service_addr openbao openbao 8200 https)"; then
         export BAO_ADDR
         export VAULT_SKIP_VERIFY=true BAO_SKIP_VERIFY=true
@@ -155,10 +178,12 @@ check() {
     # Satisfied when the bootstrap token no longer authenticates. A token that
     # still works is unfinished business, not a completed step.
     #
-    # No token in this shell is not the same as a revoked one: --status runs
-    # without loading credentials, and reporting "revoked" there would announce
-    # the install's last safety step as done on a cluster that never installed.
-    [[ -n "${BAO_TOKEN:-}" ]] || return "${CHECK_UNDEFINED}"
+    # No token ANYWHERE is not the same as a revoked one: --status runs without
+    # loading credentials, and reporting "revoked" there would announce the
+    # install's last safety step as done on a cluster that never installed.
+    # The init file counts as somewhere — see _bootstrap_token, without which
+    # `--only E-03` could never do anything at all.
+    _bootstrap_token >/dev/null || return "${CHECK_UNDEFINED}"
 
     # Revocation needs somewhere else to write credentials from afterwards, and
     # apply() refuses without it — correctly, since the bootstrap token is

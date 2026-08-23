@@ -1153,6 +1153,22 @@ print_summary_cp() {
     # the moment the operator is waiting for their prompt back.
     info "Collecting cluster status for the summary (a dozen queries; this takes a moment)..."
 
+    # Whether this install is actually finished, decided once and used by every
+    # claim below.
+    #
+    # The banner used to read "Bootstrap Complete" unconditionally, directly
+    # above a section explaining that handover was NOT finished, under a line
+    # claiming phases A–E including handover were done. Three statements on one
+    # screen, two of them false, and the false ones in the largest type.
+    # Revocation is the last step of the install, so until it has happened the
+    # install has not completed and nothing here should say otherwise.
+    _gentian_handover_done=""
+    if [[ "$(kubectl get configmap gentian-handover \
+                -n "${GENTIAN_SYSTEM_NAMESPACE:-gentian-system}" \
+                -o jsonpath='{.data.bootstrapCredentialRevoked}' 2>/dev/null)" == "true" ]]; then
+        _gentian_handover_done=1
+    fi
+
     local claim_name
     claim_name="$(gentian_cluster_claim_name)"
     xr_name=$(kubectl get cluster.gentianos.io "${claim_name}" -n crossplane-system \
@@ -1205,7 +1221,11 @@ print_summary_cp() {
 
     echo ""
     echo -e "${CYAN}╔══════════════════════════════════════════════════════════╗${NC}"
-    echo -e "${CYAN}║     Gentian OS — Bootstrap Complete (new-security)        ║${NC}"
+    if [[ -n "${_gentian_handover_done:-}" ]]; then
+        echo -e "${CYAN}║     Gentian OS — Install Complete                         ║${NC}"
+    else
+        echo -e "${YELLOW}║     Gentian OS — Almost There: 1 step left                ║${NC}"
+    fi
     echo -e "${CYAN}╚══════════════════════════════════════════════════════════╝${NC}"
     echo ""
     echo -e "${GREEN}  Kernel domain  : ${KERNEL_DOMAIN:-not set}${NC}"
@@ -1218,7 +1238,12 @@ print_summary_cp() {
     echo -e "${GREEN}  InfraData MinIO: ${infra_xr}-minio (Ready=${infra_minio_ready})${NC}"
     echo -e "${GREEN}  Suze XR       : Ready=${suze_ready} (OpenFGA=${openfga_ready}, Keycloak=${keycloak_ready})${NC}"
     echo ""
-    echo -e "${GREEN}  Completed      : phases A–E (control-plane, secrets, platform, applications, handover)${NC}"
+    if [[ -n "${_gentian_handover_done:-}" ]]; then
+        echo -e "${GREEN}  Completed      : phases A–E (control-plane, secrets, platform, applications, handover)${NC}"
+    else
+        echo -e "${GREEN}  Completed      : phases A–D (control-plane, secrets, platform, applications)${NC}"
+        echo -e "${YELLOW}  Remaining      : handover — see the end of this summary${NC}"
+    fi
     # Portal credentials (MASTER_PASSWORD-derived; same as keycloak-portal-bootstrap Job).
     if [[ -f "${SCRIPT_DIR}/scripts/lib/portal-login-bootstrap.sh" ]]; then
         # shellcheck source=scripts/lib/portal-login-bootstrap.sh
@@ -1238,11 +1263,20 @@ print_summary_cp() {
     echo -e "${GREEN}    URL  : ${argocd_url}${NC}"
     echo -e "${GREEN}    User : admin${NC}"
     echo -e "${GREEN}    Pass : ${argocd_pw}${NC}"
-    echo ""
-    echo -e "${GREEN}  OpenBao tokens saved to: ${OPENBAO_INIT_FILE}${NC}"
+    # Only while it exists. E-03 deletes it, so naming it afterwards sends the
+    # operator to a path that is gone — and on a finished install the answer to
+    # "where are the OpenBao tokens" is the recovery kit, not a file in /tmp.
+    if [[ -f "${OPENBAO_INIT_FILE}" ]]; then
+        echo ""
+        echo -e "${GREEN}  OpenBao tokens saved to: ${OPENBAO_INIT_FILE}${NC}"
+    fi
     echo ""
     print_handover_summary
-    echo -e "${GREEN}  Gentian OS infra bootstrap complete.${NC}"
+    if [[ -n "${_gentian_handover_done:-}" ]]; then
+        echo -e "${GREEN}  Gentian OS infra bootstrap complete.${NC}"
+    else
+        echo -e "${YELLOW}  The install is not finished until the steps above are done.${NC}"
+    fi
     echo ""
 }
 

@@ -122,15 +122,31 @@ _kit_gather() {
     MASTER_PASSWORD="${MASTER_PASSWORD:-$(_kit_from_openbao value || true)}"
     DERIVATION_SALT="${DERIVATION_SALT:-$(_kit_from_openbao salt || true)}"
 
+    # Both spellings, because the field name is OpenBao's and not ours.
+    # `bao operator init -format=json` writes unseal_keys_base64 /
+    # recovery_keys_base64; the _b64 spellings below are what older builds and
+    # Vault's own docs use. Reading only one meant the value was silently
+    # absent — see the recovery-key case just below, which is the reason this
+    # matters.
     TRANSIT_UNSEAL_KEY="${TRANSIT_UNSEAL_KEY:-$(
-        _kit_from_json "${TRANSIT_INIT_FILE:-/tmp/openbao-transit-init.json}" '.unseal_keys_b64[0]' || true)}"
+        _kit_from_json "${TRANSIT_INIT_FILE:-/tmp/openbao-transit-init.json}" \
+            '(.unseal_keys_base64 // .unseal_keys_b64 // [])[0]' || true)}"
     if [[ -z "${TRANSIT_UNSEAL_KEY}" ]]; then
         TRANSIT_UNSEAL_KEY="$(kubectl get secret openbao-transit-unseal -n openbao \
             -o jsonpath='{.data.unseal-key}' 2>/dev/null | base64 -d 2>/dev/null || true)"
     fi
 
+    # recovery_keys_base64 first — that is what the init file on disk actually
+    # contains. This read asked only for recovery_keys_b64, which is not a
+    # field OpenBao writes, so it evaluated to empty every time and the kit
+    # went out with OPENBAO_RECOVERY_KEYS listed under "Absent" on every
+    # export ever taken. The recovery key is the one credential in the kit
+    # that cannot be re-derived from anything else: it exists in this file and
+    # nowhere else, and E-03 deletes the file. A kit without it is a kit that
+    # cannot open OpenBao when Keycloak is what broke.
     OPENBAO_RECOVERY_KEYS="${OPENBAO_RECOVERY_KEYS:-$(
-        _kit_from_json "${OPENBAO_INIT_FILE:-/tmp/openbao-init.json}" '.recovery_keys_b64 | join(",")' || true)}"
+        _kit_from_json "${OPENBAO_INIT_FILE:-/tmp/openbao-init.json}" \
+            '(.recovery_keys_base64 // .recovery_keys_b64 // []) | join(",")' || true)}"
     OPENBAO_ROOT_TOKEN="${OPENBAO_ROOT_TOKEN:-${BAO_TOKEN:-$(
         _kit_from_json "${OPENBAO_INIT_FILE:-/tmp/openbao-init.json}" '.root_token' || true)}}"
 

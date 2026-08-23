@@ -466,7 +466,10 @@ main() {
             if [[ "${GENTIAN_DRY_RUN}" == "1" ]]; then
                 success "Dry run complete — no cluster changes were made."
             elif _forward_run_fully_satisfied; then
-                success "Bootstrap complete."
+                # No verdict here — print_summary_cp gives it, once, having
+                # checked whether handover actually completed. This line used
+                # to say "Bootstrap complete" before the summary went on to
+                # explain that it was not.
                 print_summary_cp
             else
                 # Deliberately not the completion banner and not the summary.
