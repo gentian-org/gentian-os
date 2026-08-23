@@ -345,7 +345,7 @@ success "k8s Secret openbao-transit-unseal created/updated."
 # it is not gone, only dormant: 'bao operator generate-root' mints a fresh one
 # from the SAME unseal key that openbao-transit-unseal already holds, the same
 # way the primary's own root token is disposable rather than precious (see
-# E-03-revoke-bootstrap-token.sh). That is what makes revoking the current one
+# E-04-revoke-bootstrap-token.sh). That is what makes revoking the current one
 # safe rather than merely convenient.
 info "Revoking the openbao-transit root token — its bootstrap work is done..."
 if curl -sf -X POST \

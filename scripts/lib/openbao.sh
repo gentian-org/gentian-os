@@ -221,7 +221,7 @@ init_openbao() {
         fi
         # Report the STATE of the stored credentials on re-runs — never their
         # values. This block used to re-print both on every single install.sh
-        # invocation until E-03 revoked the token, which made "how many times
+        # invocation until E-04 revoked the token, which made "how many times
         # has this value been in a terminal or a CI log" grow with every
         # re-run rather than stay at one. Nothing here needs the literal text:
         # BAO_TOKEN is exported for this shell's own later steps to use, which
@@ -230,7 +230,7 @@ init_openbao() {
             local stored_token
             stored_token=$(jq -r '.root_token // empty' "${OPENBAO_INIT_FILE}" 2>/dev/null)
             if [[ -n "$stored_token" ]]; then
-                # E-03 revokes this token at handover, but this file outlives
+                # E-04 revokes this token at handover, but this file outlives
                 # that. Exporting it unasked made every later OpenBao write die
                 # on a bare 403 — so ask OpenBao first, and when it is dead say
                 # which kind of dead: revoked on purpose, or orphaned by a
@@ -248,7 +248,7 @@ init_openbao() {
                 elif [[ "$(kubectl get configmap gentian-handover \
                         -n "${GENTIAN_SYSTEM_NAMESPACE:-gentian-system}" \
                         -o jsonpath='{.data.bootstrapCredentialRevoked}' 2>/dev/null)" == "true" ]]; then
-                    info "Bootstrap token: revoked at handover (E-03)."
+                    info "Bootstrap token: revoked at handover (E-04)."
                     info "  Day-2 writes go through OIDC; steps that need an OpenBao"
                     info "  token will report undefined and skip."
                 else
@@ -297,7 +297,7 @@ init_openbao() {
         # banner this replaced was a second, unprotected copy of exactly the
         # same values, in the one place (a terminal, a CI log) they should
         # never sit in the clear. The durable copy is a recovery kit, and nothing
-        # downstream of here needs the raw text: E-03 later refuses to revoke
+        # downstream of here needs the raw text: E-04 later refuses to revoke
         # this token until `./install.sh --export-recovery-kit` has run.
         echo ""
         info "OpenBao initialised. The recovery key and root token are in"

@@ -9,15 +9,12 @@ already done, so a second run continues rather than restarting.
 **The whole install, once you are configured (steps 1–7):**
 
 ```bash
-./install.sh                                        # 8.  installs everything
-./install.sh --export-recovery-kit <safe-path>      # 10. the one thing you must keep
-#            sign in at https://portal.<domain>/login   12. proves someone else can write
-./install.sh --only E-03                            # 12. revokes the installer's credential
+./install.sh     # installs everything, writes the recovery kit, then waits
 ```
 
-Four commands, and one of them is a browser. The first installs the cluster;
-the other three are handover, which needs a human and so cannot be automated.
-The installer tells you which of them is outstanding every time it finishes.
+It waits for two things only you can do: move the kit somewhere safe, and sign
+in at `https://portal.<your-domain>/login`. It sees the sign-in, finishes
+handover itself, and prints `Install Complete`.
 
 For flags, troubleshooting and the non-default installs — internal domains,
 mirrors, uninstalling — see
@@ -54,11 +51,11 @@ why re-running continues rather than restarting. You can run one phase with
 
 From phase C onward much of the work is ArgoCD and Crossplane converging on
 their own, so the installer finishing is not the same as the cluster being
-ready — step 11 covers how to tell the difference.
+ready — step 10 covers how to tell the difference.
 
 Nor is it the same as the cluster being *yours*: phase E ends by revoking the
 credential the installer used, and it will not do that until an administrator
-has signed in. Step 12 is that handover, and the cluster holds tenants back
+has signed in. Step 9 is that handover, and the cluster holds tenants back
 until it is done.
 
 ---
@@ -198,7 +195,7 @@ recovers it from there instead of asking again — so a resumed install does not
 re-ask. Nothing is written to this machine except a short-lived cache that step
 `B-10-seed-secrets` deletes.
 
-**Everything else is supplied after the cluster is up, not now** — you set them when you first sign in, in step 12.
+**Everything else is supplied after the cluster is up, not now** — you set them when you first sign in, in step 9.
 
 **The Cloudflare token is only optional if this cluster's issuer does not need
 it.** Under the default `acme-dns01`, DNS-01 issues every kernel certificate,
@@ -226,73 +223,48 @@ It ends in one of two ways:
 
 - **`Gentian OS — Almost There: 1 step left`** — everything is installed and
   handover remains. The summary lists exactly what to do, in order. That is
-  steps 10 and 12 below, and it is the normal ending for a first install.
+  step 9 below, and it is the normal ending for a first install.
 - **`Gentian OS — Install Complete`** — handover is done too. Nothing is left.
 
 If a step fails, the run stops there and names the command, the step file and
 the call stack. Nothing after a failure runs, so the install never reports
 success over a broken step. Fix the cause and run `./install.sh` again.
 
-## 9. Where the keys are
+Nothing secret is printed, and there is nothing to copy down: OpenBao's
+initialisation material goes to mode-600 files under `~/.gentian`, and the
+installer removes them once their contents are safe elsewhere.
 
-No secret is printed to your terminal. OpenBao's initialisation material —
-the recovery key and root token for the primary, the unseal key and root token
-for the transit instance — is written to mode-600 files under `~/.gentian`
-and nowhere else: no terminal, no log.
+Near the end it writes this cluster's **recovery kit** next to the checkout,
+asking for a passphrase to encrypt it, and prints the filename. That file is
+the one thing you have to look after — step 9.
 
-You do not need to copy anything out of them. The transit instance's file is
-removed by its own step once those values are safe in Kubernetes Secrets, and
-its root token is revoked at the same time. The primary's file,
-`~/.gentian/openbao-init.json`, is removed by handover in step 12. The next
-step is what makes the one value in it that matters durable.
+## 9. Handover
 
-## 10. Export the recovery kit
+The install pauses here and waits for you. Two things finish it:
 
-**Required, not optional.** Step 12 refuses to revoke the installer's OpenBao
-token — the last thing standing between this cluster and being finished —
-until a kit has been exported. Do it now, while everything is still in the
-shell that installed it:
+1. **Move the recovery kit somewhere safe.** Step 8 wrote it next to the
+   checkout and printed the filename. Put it where your break-glass material
+   already lives — a password manager, a sealed vault, offline media. Without
+   it this cluster cannot be rebuilt as itself.
+2. **Sign in to the portal** as the administrator, at the URL in the summary.
 
-```bash
-./install.sh --export-recovery-kit /path/where/break-glass/material/lives/kit.age
-```
+Signing in is what the installer is waiting for: it proves someone other than
+the installer can write credentials. The moment it sees that, it revokes its
+own credential, deletes the temporary secret files, and prints
+**`Install Complete`**.
 
-Give it a real destination, not a bare filename. Wherever the shell happens to
-be sitting is not a safe answer for a file that grants every derived
-credential in the cluster to anyone who can decrypt it — point it straight at
-wherever your break-glass material already lives (a password manager's synced
-folder, a specific vault, whatever your own practice is). The installer has no
-way to know that place for you, which is why this step is a deliberate command
-rather than something it does on your behalf.
+While you are signed in, open the **Credentials** tab and supply what the
+cluster is still missing — SMTP relay, any extra app repository and its pull
+secret. If your mail mode is `external`, do the relay first: without it no
+realm can send, so you cannot invite anyone.
 
-Most of this cluster is reconstructible: configuration comes from Git, and the
-derived credentials are a function of the master password and the derivation
-salt. The salt is generated during the install; the cluster keeps it, with the
-master password, in the Secret `crossplane-system/gentian-os-master-password`,
-and OpenBao holds a copy. Lose both and the master password on its own
-reproduces nothing.
-
-The kit is that gap closed — the salt, the master password, the unseal material
-and this cluster's identity, in one encrypted file. Restoring it into a fresh
-cluster makes every derived credential come back byte-identical. Without it, a
-rebuild gives you a working cluster with entirely different credentials, which
-is a migration rather than a restore.
+Interrupting the wait costs nothing. Sign in whenever you like, then:
 
 ```bash
-./install.sh --recover kit.age    # on the fresh cluster, before anything else
+./install.sh --only E-04
 ```
 
-It is encrypted with `age` where available and `openssl` otherwise; there is no
-unencrypted path. For an unattended export (CI, a scripted install with no
-terminal to prompt) set `GENTIAN_KIT_RECIPIENT` to an age public key first —
-without one, encryption needs a passphrase typed at a prompt, which only
-exists on an interactive run.
-
-The kit does **not** back up your data, and it does not restore OpenBao — a
-fresh instance issues its own unseal material. It is only the part that nothing
-else can rebuild.
-
-## 11. Check it worked
+## 10. Check the status
 
 ```bash
 ./install.sh --status
@@ -320,76 +292,7 @@ kubectl get managed
 kubectl get application,applicationset -n argocd
 ```
 
-## 12. Hand the cluster over
-
-This is the step the installer cannot do for you, and the reason a first run
-ends with **`Almost There: 1 step left`** rather than a completion banner.
-
-Two things are still true at that point: the installer holds a credential that
-can write every secret in the cluster, and nothing has yet shown that anyone
-*else* can — including, separately, whether there is a way back in at all if
-that turns out not to work.
-
-Both end here. Both have to.
-
-**Sign in to the portal as the administrator.** The installer printed the
-account in its closing summary:
-
-```text
-  Gentian portal (cluster admin):
-    URL      : https://portal.<your-kernel-domain>/login
-    User     : administrator@<your-kernel-domain>
-    Password : <derived from your master password>
-```
-
-The password is derived, so `./install.sh --verify-only` prints it again if you
-have lost the output.
-
-Signing in is the test. It trades your Keycloak token for a short-lived OpenBao
-one — the path every future credential write uses, and what the bootstrap token
-is being traded away for. The cluster records the first success, and that is the
-one thing the installer cannot do for you: the exchange needs a human at a
-browser.
-
-If the record below does not appear, open the Admin Console and select the
-Credentials tab, which performs the same exchange.
-
-**On this first sign-in, open the Credentials tab and supply the runtime credentials.** It
-lists what the cluster still wants e.g. SMTP relay, an additional app repository, its pull secret, and anything a later claim declares. Values are validated before they are stored, and whatever was waiting on one picks it up on its own.
-If your mail mode is external, do the SMTP relay first: without it, no realm can send, so you cannot invite anybody.
-
-Then revoke the installer's credential:
-
-```bash
-./install.sh --only E-03
-```
-
-It refuses until BOTH are true: you have signed in (above), and step 10's
-recovery kit has been exported — and says which is still missing. That refusal
-is the point. Revoking the only working way in before knowing another one
-works would leave a cluster nobody can supply a credential to; revoking it
-before a kit exists would mean that if the login path breaks later, there is
-nothing to fall back to either. Either gap alone means the recovery is
-re-initialising OpenBao from scratch.
-
-Once it succeeds, `/tmp/openbao-init.json` is deleted, not just the token
-inside it — the recovery key it also held is redundant with the kit by then,
-and there is no reason for a second plaintext copy to keep existing on disk.
-
-To see where a cluster stands:
-
-```bash
-kubectl get configmap gentian-handover -n gentian-system -o yaml
-```
-
-`writePathProven: "true"` means the exchange has succeeded at least once.
-`recoveryKitExported: "true"` means step 10 has been done.
-`bootstrapCredentialRevoked: "true"` means handover is complete — both of the
-above were true when it was revoked.
-
-Until it is, **creating tenants is held back.** 
-
-## 13. Create your first tenant
+## 11. Create your first tenant
 
 The commands below use the `gentian` CLI. Install it once, on whichever machine
 you administer clusters from:
@@ -529,7 +432,7 @@ what is already done, so convergence and update are the same operation.
 
 ## Next steps
 
-- **Add more tenants** — repeat step 13. Day-to-day operations are in
+- **Add more tenants** — repeat step 11. Day-to-day operations are in
   [docs/commands.md](docs/commands.md).
 - **Configure mail** — [docs/design/mail.md](docs/design/mail.md). Mail between
   users of this cluster works once the kernel mail stack is deployed; mail to and
@@ -542,10 +445,75 @@ what is already done, so convergence and update are the same operation.
   [docs/deployment.md](docs/deployment.md) explains the layering.
 - **Understand the architecture** — [docs/architecture.md](docs/architecture.md)
   and [docs/design/kernel.md](docs/design/kernel.md).
-- **Back up the data** — the recovery kit in step 10 covers credentials, not
+- **Back up the data** — the recovery kit covers credentials, not
   databases or object storage.
 
-## Troubleshooting
+## Notes
+
+Things worth knowing, and what to do when something looks wrong.
+
+### The recovery kit
+
+Most of a cluster is reconstructible: configuration comes from Git, and every
+derived credential is a function of the master password and the derivation
+salt. The salt is generated during the install and lives only in the cluster.
+Lose it and the same master password reproduces nothing.
+
+The kit closes that gap — the salt, the master password, the OpenBao recovery
+key and this cluster's identity, in one encrypted file. Restore it into a
+fresh cluster and every derived credential comes back byte-identical:
+
+```bash
+./install.sh --recover <kit>    # on the fresh cluster, before anything else
+```
+
+Without it a rebuild gives you a working cluster with entirely different
+credentials, which is a migration rather than a restore. The kit does **not**
+back up your data, and it does not restore OpenBao itself — a fresh instance
+issues its own unseal material.
+
+It is encrypted with `age` when that is installed and `openssl` otherwise;
+there is no unencrypted path. Both ask for a passphrase, so an unattended
+install needs `GENTIAN_KIT_RECIPIENT` set to an age public key instead.
+
+To write another one at any time:
+
+```bash
+./install.sh --only E-03
+```
+
+### Why handover is gated
+
+The installer's credential can write every secret in the cluster. Revoking it
+before anyone else has demonstrably written one would leave a cluster nobody
+can supply a credential to; revoking it with no recovery kit would mean that
+if the login path later breaks, there is nothing to fall back on. Either gap
+alone makes the recovery "re-initialise OpenBao from scratch", so the
+revocation waits for both. Until it happens, creating tenants is held back.
+
+Where a cluster stands:
+
+```bash
+kubectl get configmap gentian-handover -n gentian-system -o yaml
+```
+
+- `writePathProven: "true"` — someone has signed in and the exchange worked.
+- `recoveryKitExported: "true"` — a kit has been written.
+- `bootstrapCredentialRevoked: "true"` — handover is complete.
+
+### Signing in records nothing
+
+Open the Admin Console and select the Credentials tab, which performs the same
+token exchange as the login.
+
+### The portal password
+
+It is derived from the master password, so it is not lost with the terminal
+that printed it:
+
+```bash
+./install.sh --verify-only
+```
 
 ### The portal password does not work
 

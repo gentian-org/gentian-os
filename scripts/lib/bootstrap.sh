@@ -1263,7 +1263,7 @@ print_summary_cp() {
     echo -e "${GREEN}    URL  : ${argocd_url}${NC}"
     echo -e "${GREEN}    User : admin${NC}"
     echo -e "${GREEN}    Pass : ${argocd_pw}${NC}"
-    # Only while it exists. E-03 deletes it, so naming it afterwards sends the
+    # Only while it exists. E-04 deletes it, so naming it afterwards sends the
     # operator to a path that is gone — and on a finished install the answer to
     # "where are the OpenBao tokens" is the recovery kit, not a file in /tmp.
     if [[ -f "${OPENBAO_INIT_FILE}" ]]; then
@@ -1296,9 +1296,9 @@ print_handover_summary() {
         -o jsonpath='{.data.writePathProven}' 2>/dev/null || true)"
     revoked="$(kubectl get configmap gentian-handover -n "${ns}" \
         -o jsonpath='{.data.bootstrapCredentialRevoked}' 2>/dev/null || true)"
-    # E-03 gates on BOTH, so this has to name both. It listed only the OIDC
+    # E-04 gates on BOTH, so this has to name both. It listed only the OIDC
     # sign-in, which is the half an operator can discover by trying it: run
-    # E-03 without a kit and it says so. The other half is silent until then,
+    # E-04 without a kit and it says so. The other half is silent until then,
     # and it is the one with no second chance — the recovery key exists in
     # the init file and nowhere else until a kit is exported.
     kit="$(kubectl get configmap gentian-handover -n "${ns}" \
@@ -1310,37 +1310,27 @@ print_handover_summary() {
         return 0
     fi
 
+    # Reached only when the wait in E-04 did not end in a revocation: the
+    # operator interrupted it, it timed out, or the run was unattended. So this
+    # is short by design — the long explanation was printed while it waited.
     echo -e "${YELLOW}  HANDOVER IS NOT FINISHED${NC}"
-    if [[ "${proven}" == "true" && "${kit}" == "true" ]]; then
-        echo -e "${YELLOW}    An administrator has exchanged a token and a recovery kit${NC}"
-        echo -e "${YELLOW}    is on record. Revoke the installer's credential to finish:${NC}"
-        echo -e "${YELLOW}      ./install.sh --only E-03${NC}"
+    echo -e "${YELLOW}    The installer's credential can still write every secret in this${NC}"
+    echo -e "${YELLOW}    cluster, and creating tenants stays held back until it cannot.${NC}"
+    echo ""
+    if [[ "${kit}" != "true" ]]; then
+        # E-03 writes the kit, so this means that step did not run or failed.
+        echo -e "${YELLOW}      1. ./install.sh --only E-03      (write the recovery kit)${NC}"
+        echo -e "${YELLOW}      2. move the kit somewhere safe${NC}"
+        echo -e "${YELLOW}      3. sign in at https://portal.${KERNEL_DOMAIN:-<kernel-domain>}/login${NC}"
+        echo -e "${YELLOW}      4. ./install.sh --only E-04      (revoke and finish)${NC}"
+    elif [[ "${proven}" != "true" ]]; then
+        echo -e "${YELLOW}      1. move the recovery kit somewhere safe${NC}"
+        echo -e "${YELLOW}      2. sign in at https://portal.${KERNEL_DOMAIN:-<kernel-domain>}/login${NC}"
+        echo -e "${YELLOW}      3. ./install.sh --only E-04      (revoke and finish)${NC}"
     else
-        local n=0
-        if [[ "${proven}" != "true" ]]; then
-            echo -e "${YELLOW}    No administrator has exchanged a token yet, so this cluster${NC}"
-            echo -e "${YELLOW}    cannot show that anyone but the installer can write${NC}"
-            echo -e "${YELLOW}    credentials. Until it can:${NC}"
-            echo -e "${YELLOW}      - the installer's bootstrap credential stays live${NC}"
-            echo -e "${YELLOW}      - creating tenants is held back${NC}"
-        fi
-        if [[ "${kit}" != "true" ]]; then
-            echo -e "${YELLOW}    No recovery kit has been exported. The recovery key that${NC}"
-            echo -e "${YELLOW}    opens this OpenBao without Keycloak exists in${NC}"
-            echo -e "${YELLOW}    ${OPENBAO_INIT_FILE:-${HOME}/.gentian/openbao-init.json} and nowhere else — and E-03${NC}"
-            echo -e "${YELLOW}    deletes that file. Export one before finishing handover.${NC}"
-        fi
-        echo ""
-        if [[ "${kit}" != "true" ]]; then
-            n=$((n + 1))
-            echo -e "${YELLOW}      ${n}. ./install.sh --export-recovery-kit <path>${NC}"
-        fi
-        if [[ "${proven}" != "true" ]]; then
-            n=$((n + 1))
-            echo -e "${YELLOW}      ${n}. sign in at https://portal.${KERNEL_DOMAIN:-<kernel-domain>}/login${NC}"
-        fi
-        n=$((n + 1))
-        echo -e "${YELLOW}      ${n}. ./install.sh --only E-03${NC}"
+        echo -e "${YELLOW}    Someone has signed in and a kit exists, so only the revocation${NC}"
+        echo -e "${YELLOW}    is left:${NC}"
+        echo -e "${YELLOW}      ./install.sh --only E-04${NC}"
     fi
     echo ""
 }

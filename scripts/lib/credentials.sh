@@ -549,7 +549,7 @@ collect_bootstrap_credentials() {
     # kernel credential is HMAC(master+salt, …), so a second salt silently
     # renames every derived secret the cluster is already using. That is not
     # hypothetical — the recovery path used to be try_load_creds_from_openbao,
-    # which needs a root token, and E-03 revokes the only one the installer
+    # which needs a root token, and E-04 revokes the only one the installer
     # knows at handover. Every re-run after handover therefore found no salt,
     # minted a fresh one, and derived an administrator password that had never
     # been valid, while Keycloak still held the one derived from the original.

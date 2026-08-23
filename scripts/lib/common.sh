@@ -1838,7 +1838,7 @@ gentian_mail_service_mode() {
 #
 # Read from the Secret create_crossplane_secrets writes, which is where the
 # Cluster claim's masterPasswordSecretRef points. Deliberately not OpenBao:
-# reading OpenBao needs a root token, and E-03 revokes the installer's at
+# reading OpenBao needs a root token, and E-04 revokes the installer's at
 # handover — which is precisely when a re-run most needs this answer.
 #
 # Prints nothing and returns 1 when the cluster has no salt yet (a first

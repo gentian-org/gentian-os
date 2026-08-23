@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# step: E-03-revoke-bootstrap-token
+# step: E-04-revoke-bootstrap-token
 # phase: handover
-# requires: E-02-litellm-reconcile
+# requires: E-03-recovery-kit
 # provides: an installer whose OpenBao token no longer works
 # mutates: revokes BAO_TOKEN; deletes the local openbao-init file
 
@@ -91,7 +91,7 @@ _kit_exported_detail() {
 # _bootstrap_token — the token this step exists to revoke.
 #
 # B-04 exports BAO_TOKEN, but this step is the one an operator runs on its own:
-# the summary ends every incomplete install with `./install.sh --only E-03`,
+# the summary ends every incomplete install with `./install.sh --only E-04`,
 # and a scoped run never reaches B-04. So BAO_TOKEN was unset, check() returned
 # undefined, the step skipped, and the summary printed the same instruction
 # again — telling the operator to run the command they had just run, forever.
@@ -182,21 +182,22 @@ check() {
     # loading credentials, and reporting "revoked" there would announce the
     # install's last safety step as done on a cluster that never installed.
     # The init file counts as somewhere — see _bootstrap_token, without which
-    # `--only E-03` could never do anything at all.
+    # `--only E-04` could never do anything at all.
     _bootstrap_token >/dev/null || return "${CHECK_UNDEFINED}"
 
-    # Revocation needs somewhere else to write credentials from afterwards, and
-    # apply() refuses without it — correctly, since the bootstrap token is
-    # otherwise the only write path. Reporting missing then is a step that
-    # applies on every run and declines every time, which reads as an unfinished
-    # install rather than a cluster whose administrator has not signed in yet.
-    _handover_proven || return "${CHECK_UNDEFINED}"
-
-    # Same reasoning, second precondition: apply() also refuses without a
-    # recovery kit on record, so check() has to agree before asking the
-    # question below, for the identical reason — otherwise this reads as an
-    # unfinished install on every run until someone happens to export one.
+    # A kit is E-03's job and a hard precondition. Without one there is nothing
+    # for this step to do but say so, and undefined keeps it out of the
+    # end-of-run report on a cluster where the operator has not got there yet.
     _kit_exported || return "${CHECK_UNDEFINED}"
+
+    # The sign-in is NOT tested here, deliberately.
+    #
+    # apply() waits for it — that is what makes handover one command rather
+    # than an instruction to come back later — so a cluster where nobody has
+    # signed in yet is a step with work to do, not a step that cannot say. It
+    # reported undefined once, which meant the driver skipped the wait
+    # entirely and the install ended by asking the operator to run the step
+    # that had just declined to run.
 
     # Reachability BEFORE the question, and its own verdict when absent.
     #
@@ -215,6 +216,50 @@ check() {
     ! bao token lookup >/dev/null 2>&1
 }
 
+# _wait_for_sign_in — hold the install open while a human signs in.
+#
+# This is the whole reason handover used to take three commands. Everything
+# else here is automatic; the exchange is not, because only a person at a
+# browser can perform it. Waiting for it turns "run this, then that, then this
+# again" into one run that pauses and tells you what it is waiting for.
+#
+# Bounded and interruptible on purpose: Ctrl-C leaves a cluster that is
+# installed and un-revoked, which is exactly the state a later
+# `./install.sh --only E-04` finishes from. A timeout is the same state.
+_wait_for_sign_in() {
+    local timeout="${GENTIAN_HANDOVER_WAIT_SECS:-1800}"
+    local url="https://portal.${KERNEL_DOMAIN:-<kernel-domain>}/login"
+    local waited=0 interval=10
+
+    echo ""
+    warn "╔══════════════════════════════════════════════════════════════════╗"
+    warn "║  WAITING FOR YOU — sign in to finish the install                 ║"
+    warn "╚══════════════════════════════════════════════════════════════════╝"
+    warn "  ${url}"
+    warn "  as the cluster administrator (credentials are in the summary above)."
+    echo ""
+    info "  Signing in proves someone other than the installer can write"
+    info "  credentials. Until it happens the installer's own credential has to"
+    info "  stay live, so this is the last thing between here and a finished"
+    info "  cluster."
+    echo ""
+    info "  Waiting up to $(( timeout / 60 )) minutes. Ctrl-C is safe — the"
+    info "  cluster stays as it is and ./install.sh picks up from here."
+    echo ""
+
+    while (( waited < timeout )); do
+        if _handover_proven; then
+            echo ""
+            success "Sign-in recorded ($(_handover_proof_detail))."
+            return 0
+        fi
+        sleep "${interval}"
+        waited=$(( waited + interval ))
+        (( waited % 60 == 0 )) && info "  still waiting ($(( waited / 60 ))m of $(( timeout / 60 ))m)..."
+    done
+    return 1
+}
+
 apply() {
     # Both preconditions collected before either is reported, not checked
     # sequentially — an operator missing both should see both gaps on the
@@ -222,6 +267,26 @@ apply() {
     local proven=1 kit=1
     _handover_proven && proven=0
     _kit_exported && kit=0
+
+    # Wait for the sign-in rather than refusing over it.
+    #
+    # Only when a kit exists: without one, revoking is wrong no matter who
+    # signs in, so there is nothing to wait for. And only when someone is there
+    # to sign in — an unattended run has no browser, and blocking a pipeline
+    # for half an hour to reach the same refusal helps nobody.
+    if (( proven != 0 && kit == 0 )) \
+       && [[ "${GENTIAN_NONINTERACTIVE:-0}" != "1" && "${GENTIAN_HANDOVER_NO_WAIT:-0}" != "1" ]]; then
+        if _wait_for_sign_in; then
+            proven=0
+        else
+            echo ""
+            warn "No sign-in recorded within the wait. Nothing has changed:"
+            warn "  the cluster is installed, the installer's credential is still"
+            warn "  live, and creating tenants stays held back."
+            warn "  Sign in, then run: ./install.sh --only E-04"
+            return 0
+        fi
+    fi
 
     if (( proven != 0 || kit != 0 )); then
         warn "Refusing to revoke the bootstrap token — not ready yet:"
@@ -237,7 +302,7 @@ apply() {
         if (( proven != 0 )); then
             warn "  Sign in to the portal as the cluster administrator; the sign-in"
             warn "  performs the exchange and records it. Then:"
-            warn "    ./install.sh --only E-03"
+            warn "    ./install.sh --only E-04"
             warn ""
             warn "  If signing in records nothing, the portal predates the login-time"
             warn "  exchange — open the Admin Console and select the Credentials tab,"
@@ -264,7 +329,7 @@ apply() {
             warn "  OpenBao if the login path above turns out to be broken later:"
             warn "    ./install.sh --export-recovery-kit"
             warn "  Then:"
-            warn "    ./install.sh --only E-03"
+            warn "    ./install.sh --only E-04"
         fi
         return 0
     fi
