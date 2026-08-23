@@ -388,7 +388,18 @@ KERNEL_REALM="${KERNEL_REALM:-kernel}"
 LITELLM_UI_USERNAME="administrator@${KERNEL_DOMAIN}"
 LITELLM_UI_PASSWORD=$(derive_password "portal-bootstrap" "administrator_password")
 VLLM_API_KEY=$(derive_password "llm" "vllm_api_key")
-LITELLM_MASTER_KEY=$(derive_password "llm" "litellm_master_key")
+# sk- prefixed, because LiteLLM requires it of a master key and refuses
+# anything else outright: "LiteLLM Virtual Key expected. Received=a364****5827,
+# expected to start with 'sk-'", HTTP 401, on every authenticated call. The
+# proxy came up with a key it would not accept from itself, and E-02's model
+# sync could not register a single model.
+#
+# The prefix goes here rather than at the callers because it is part of the
+# credential, not of any one use of it: the proxy reads this value, the sync
+# job authenticates with it, and both must see the same string. Derivation is
+# unchanged, so the same master password and salt still reproduce the same key
+# — it simply carries the prefix the consumer demands.
+LITELLM_MASTER_KEY="sk-$(derive_password "llm" "litellm_master_key")"
 LITELLM_DB_PW=$(derive_password "llm" "litellm_db_password")
 LITELLM_REDIS_PW=$(derive_password "llm" "litellm_redis_password")
 # Admin console SSO (platform-admin only; see docs/design/llms.md and the

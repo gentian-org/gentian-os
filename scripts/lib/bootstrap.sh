@@ -1257,11 +1257,18 @@ print_summary_cp() {
 # =============================================================================
 print_handover_summary() {
     local ns="${GENTIAN_SYSTEM_NAMESPACE:-gentian-system}"
-    local proven revoked
+    local proven revoked kit
     proven="$(kubectl get configmap gentian-handover -n "${ns}" \
         -o jsonpath='{.data.writePathProven}' 2>/dev/null || true)"
     revoked="$(kubectl get configmap gentian-handover -n "${ns}" \
         -o jsonpath='{.data.bootstrapCredentialRevoked}' 2>/dev/null || true)"
+    # E-03 gates on BOTH, so this has to name both. It listed only the OIDC
+    # sign-in, which is the half an operator can discover by trying it: run
+    # E-03 without a kit and it says so. The other half is silent until then,
+    # and it is the one with no second chance — the recovery key exists in
+    # /tmp/openbao-init.json and nowhere else until a kit is exported.
+    kit="$(kubectl get configmap gentian-handover -n "${ns}" \
+        -o jsonpath='{.data.recoveryKitExported}' 2>/dev/null || true)"
 
     if [[ "${revoked}" == "true" ]]; then
         echo -e "${GREEN}  Handover complete — the bootstrap credential is revoked.${NC}"
@@ -1270,19 +1277,36 @@ print_handover_summary() {
     fi
 
     echo -e "${YELLOW}  HANDOVER IS NOT FINISHED${NC}"
-    if [[ "${proven}" == "true" ]]; then
-        echo -e "${YELLOW}    An administrator has exchanged a token, so the write path works.${NC}"
-        echo -e "${YELLOW}    Revoke the installer's credential to finish:${NC}"
+    if [[ "${proven}" == "true" && "${kit}" == "true" ]]; then
+        echo -e "${YELLOW}    An administrator has exchanged a token and a recovery kit${NC}"
+        echo -e "${YELLOW}    is on record. Revoke the installer's credential to finish:${NC}"
         echo -e "${YELLOW}      ./install.sh --only E-03${NC}"
     else
-        echo -e "${YELLOW}    No administrator has exchanged a token yet, so this cluster${NC}"
-        echo -e "${YELLOW}    cannot show that anyone but the installer can write${NC}"
-        echo -e "${YELLOW}    credentials. Until it can:${NC}"
-        echo -e "${YELLOW}      - the installer's bootstrap credential stays live${NC}"
-        echo -e "${YELLOW}      - creating tenants is held back${NC}"
+        local n=0
+        if [[ "${proven}" != "true" ]]; then
+            echo -e "${YELLOW}    No administrator has exchanged a token yet, so this cluster${NC}"
+            echo -e "${YELLOW}    cannot show that anyone but the installer can write${NC}"
+            echo -e "${YELLOW}    credentials. Until it can:${NC}"
+            echo -e "${YELLOW}      - the installer's bootstrap credential stays live${NC}"
+            echo -e "${YELLOW}      - creating tenants is held back${NC}"
+        fi
+        if [[ "${kit}" != "true" ]]; then
+            echo -e "${YELLOW}    No recovery kit has been exported. The recovery key that${NC}"
+            echo -e "${YELLOW}    opens this OpenBao without Keycloak exists in${NC}"
+            echo -e "${YELLOW}    ${OPENBAO_INIT_FILE:-/tmp/openbao-init.json} and nowhere else — and E-03${NC}"
+            echo -e "${YELLOW}    deletes that file. Export one before finishing handover.${NC}"
+        fi
         echo ""
-        echo -e "${YELLOW}      1. sign in at https://portal.${KERNEL_DOMAIN:-<kernel-domain>}/login${NC}"
-        echo -e "${YELLOW}      2. ./install.sh --only E-03${NC}"
+        if [[ "${kit}" != "true" ]]; then
+            n=$((n + 1))
+            echo -e "${YELLOW}      ${n}. ./install.sh --export-recovery-kit <path>${NC}"
+        fi
+        if [[ "${proven}" != "true" ]]; then
+            n=$((n + 1))
+            echo -e "${YELLOW}      ${n}. sign in at https://portal.${KERNEL_DOMAIN:-<kernel-domain>}/login${NC}"
+        fi
+        n=$((n + 1))
+        echo -e "${YELLOW}      ${n}. ./install.sh --only E-03${NC}"
     fi
     echo ""
 }
