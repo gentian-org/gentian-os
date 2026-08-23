@@ -32,6 +32,20 @@
 # anywhere — this one inherited http://127.0.0.1:8200 with nothing listening and
 # failed on connection refused, which reads as OpenBao being down rather than as
 # nobody having opened the tunnel.
+# _keycloak_deployed — is there a Keycloak in the services namespace at all?
+#
+# Presence, not readiness: this only decides whether an unreachable discovery
+# document is "not yet" or "wrong". Matched by name rather than by the exact
+# Service the keycloakx chart publishes, because the two callers that do need
+# the precise Service (portal-login-bootstrap.sh) already try three spellings
+# of it, and getting that wrong here would turn a deferral into a hard failure
+# on a cluster where Keycloak is present under a name this did not predict.
+_keycloak_deployed() {
+    local ns
+    ns="$(gentian_services_namespace 2>/dev/null || echo platform-kernel)"
+    kubectl get svc -n "${ns}" -o name 2>/dev/null | grep -qi keycloak
+}
+
 _oidc_bao_addr() {
     [[ -n "${BAO_TOKEN:-}" ]] || return 1
     if BAO_ADDR="$(gentian_service_addr openbao openbao 8200 https)"; then
@@ -151,12 +165,35 @@ apply() {
         return 0
     fi
 
+    # Keycloak has to exist before its discovery document can mean anything.
+    #
+    # It arrives at sync-wave 9 through the root ApplicationSet, which C-02
+    # applies — several phases after this step. So on a first install the realm
+    # is not serving yet, and an unreachable discovery URL says nothing about
+    # whether that URL is correct. Failing here stopped the install at B-07 on
+    # exactly the pass that would have gone on to bring Keycloak up.
+    #
+    # Deferring rather than failing, the same way the missing client secret
+    # above does: check() still reports this step unsatisfied until
+    # auth/oidc/config is readable, so the driver's end-of-run report keeps
+    # naming it until a later pass — with Keycloak up — completes it.
+    if ! _keycloak_deployed; then
+        info "Keycloak is not deployed yet, so its discovery document cannot be"
+        info "  checked. It arrives at sync-wave 9 via the root ApplicationSet"
+        info "  (C-02), after this step. The mount is in place; re-run once"
+        info "  Keycloak is serving to write auth/oidc/config."
+        return 0
+    fi
+
     # Check the discovery document before handing the URL to OpenBao. OpenBao's
     # own refusal is "error checking oidc discovery URL", which does not say
     # whether the name failed to resolve, the TLS was rejected, or the realm
     # simply is not at that path — and the last is the common one, because
     # Keycloak serves either /realms/<realm> or /auth/realms/<realm> depending on
     # how it was deployed.
+    #
+    # Reached only when Keycloak IS deployed, so an unreadable document here is
+    # a real fault — a wrong path or a broken realm — and still stops the run.
     local well_known="${OIDC_DISCOVERY_URL%/}/.well-known/openid-configuration"
     if ! run_validator oidc-discovery "${well_known}" >/dev/null 2>&1; then
         error "The OIDC discovery document is not readable at:"
