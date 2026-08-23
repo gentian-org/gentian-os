@@ -219,6 +219,42 @@ adopt_gentian_os_helm_preflight() {
                  --no-headers -o custom-columns=NAME:.metadata.name 2>/dev/null \
              | grep "^gentian-os-" || true)
 
+    # The cluster-scoped RBAC, for the same reason and by the same mechanism.
+    #
+    # Once Argo CD has reconciled a cluster, the gentian-os Application renders
+    # THIS chart and applies its output directly. Argo's copies therefore carry
+    # the chart's app.kubernetes.io/managed-by=Helm label — which looks like
+    # ownership and is not — but none of the meta.helm.sh/release-*
+    # annotations, which is what Helm actually checks. So a local
+    # `helm upgrade --install` refuses them:
+    #
+    #   ClusterRole "gentian-os" in namespace "" exists and cannot be imported
+    #   into the current release: invalid ownership metadata
+    #
+    # and D-01 stops on a cluster where nothing is wrong except which client
+    # applied the object last. The webhook above had already been given this
+    # treatment; the RBAC had not, so an install after any Argo sync hit it.
+    #
+    # Namespaced objects do not need this: they are recreated in a namespace
+    # the chart owns. These two are cluster-scoped and outlive it.
+    local obj
+    for obj in "clusterrole/gentian-os" "clusterrolebinding/gentian-os"; do
+        kubectl get "${obj}" >/dev/null 2>&1 || continue
+        if kubectl get "${obj}" \
+            -o jsonpath='{.metadata.annotations.meta\.helm\.sh/release-name}' 2>/dev/null \
+            | grep -q .; then
+            continue
+        fi
+        kubectl annotate "${obj}" \
+            "meta.helm.sh/release-name=gentian-os" \
+            "meta.helm.sh/release-namespace=${ns}" \
+            --overwrite >/dev/null
+        kubectl label "${obj}" \
+            "app.kubernetes.io/managed-by=Helm" \
+            --overwrite >/dev/null
+        info "Adopted pre-existing ${obj} into Helm release."
+    done
+
     chart_ns="shared-apps"
     if kubectl get namespace "${chart_ns}" >/dev/null 2>&1; then
         if ! kubectl get namespace "${chart_ns}" \
