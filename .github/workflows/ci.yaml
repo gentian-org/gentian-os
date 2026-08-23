@@ -31,8 +31,15 @@ jobs:
       # Pinned, like controller-gen below. An unpinned @latest picks up a
       # toolchain bump on an unrelated day and fails a run nobody changed —
       # which is how the openfga install broke, and was fixed the same way.
+      #
+      # The version is setup-envtest's own, not controller-runtime's. It is a
+      # separate module under that path with its own tags, so a controller-runtime
+      # version resolves but has no such package:
+      #
+      #   module sigs.k8s.io/controller-runtime@v0.21.0 found, but does not
+      #   contain package sigs.k8s.io/controller-runtime/tools/setup-envtest
       - name: Install setup-envtest
-        run: go install sigs.k8s.io/controller-runtime/tools/setup-envtest@v0.21.0
+        run: go install sigs.k8s.io/controller-runtime/tools/setup-envtest@v0.24.1
         env:
           # A toolchain that exists. setup-envtest declares go 1.26.0, and auto
           # resolves that to the newest 1.26.x it believes in — currently
