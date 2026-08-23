@@ -325,11 +325,7 @@ REALM=%[1]s
 API="${KEYCLOAK_URL}/admin/realms/${REALM}"
 tar xzf %[2]s/realm.tar.gz -C %[2]s
 
-TOKEN=$(curl -sf --max-time 30 -X POST \
-  "${KEYCLOAK_URL}/realms/master/protocol/openid-connect/token" \
-  -H "Content-Type: application/x-www-form-urlencoded" \
-  -d "client_id=admin-cli&username=${KEYCLOAK_ADMIN_USERNAME}&password=${KEYCLOAK_ADMIN_PASSWORD}&grant_type=password" \
-  | jq -r .access_token)
+`+keycloak.ShellAdminToken()+`
 [ -n "${TOKEN}" ] && [ "${TOKEN}" != "null" ] || { echo "ERROR: no admin token" >&2; exit 1; }
 AUTH="Authorization: Bearer ${TOKEN}"
 

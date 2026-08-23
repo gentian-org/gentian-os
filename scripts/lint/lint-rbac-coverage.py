@@ -84,8 +84,7 @@ def load_clusterrole():
     try:
         import yaml
     except ImportError:
-        print(f"{YELLOW}SKIP{NC} — PyYAML not installed.")
-        sys.exit(0)
+        sys.exit("PyYAML is required: pip install pyyaml")
 
     raw = CLUSTERROLE.read_text()
     doc = yaml.safe_load(re.sub(r"\{\{-?.*?-?\}\}", "", raw, flags=re.S))
@@ -150,9 +149,12 @@ def scan_sources():
 
 
 def main() -> int:
+    # A missing ClusterRole is the case this check most needs to catch, not a
+    # reason to pass: every GroupVersionKind the operator touches would be
+    # unbacked by any rule.
     if not CLUSTERROLE.exists():
-        print(f"{YELLOW}SKIP{NC} — {CLUSTERROLE.relative_to(ROOT)} not found.")
-        return 0
+        sys.exit(f"{CLUSTERROLE.relative_to(ROOT)} not found — "
+                 f"run 'make gen-all' to generate it")
 
     pairs, wildcard_groups = load_clusterrole()
     missing, unresolved, checked = [], [], set()

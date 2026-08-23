@@ -138,6 +138,36 @@ echo "resolved client scope ${SCOPE_NAME} id=${SCOPE_UUID}"
 `
 }
 
+// ShellAdminToken emits the master-realm admin token fetch every provisioning
+// script begins with, into ${TOKEN}.
+//
+// It was written thirteen times across seven files, in four variants that
+// differed in ways nobody chose: some passed --max-time and some did not, some
+// parsed the response with sed and one with jq, and the indentation drifted.
+//
+// The --max-time is the reason this is one function rather than a convention.
+// No provisioning Job sets activeDeadlineSeconds, and the pods run with
+// RestartPolicy: OnFailure, so a Keycloak that accepts the connection and never
+// answers gives a curl that blocks forever, a Job that never completes, and a
+// tenant reconcile that waits on that Job with nothing to time it out. Nine of
+// the thirteen call sites had no timeout.
+//
+// Emits no %% verb, so it is safe to concatenate into a fmt.Sprintf format
+// string, which is how every caller builds its script.
+func ShellAdminToken() string {
+	return `
+TOKEN=$(curl -sf --max-time 30 \
+  -X POST "${KEYCLOAK_URL}/realms/master/protocol/openid-connect/token" \
+  -H "Content-Type: application/x-www-form-urlencoded" \
+  -d "client_id=admin-cli&username=${KEYCLOAK_ADMIN_USERNAME}&password=${KEYCLOAK_ADMIN_PASSWORD}&grant_type=password" \
+  | sed 's/.*"access_token":"\([^"]*\)".*/\1/')
+if [ -z "${TOKEN}" ]; then
+  echo "ERROR: could not obtain a Keycloak admin token" >&2
+  exit 1
+fi
+`
+}
+
 // ExtractJSONIDByAttr mirrors the shell logic for unit tests (jq when available).
 func ExtractJSONIDByAttr(raw, attr, value string) string {
 	var walk func(any)

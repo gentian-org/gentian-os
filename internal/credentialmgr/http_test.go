@@ -40,7 +40,9 @@ const theSecretValue = "SENTINEL-secret-value-must-never-be-returned"
 
 type stubValidator struct{ err error }
 
-func (s stubValidator) Validate(context.Context, string, string, map[string]string) error { return s.err }
+func (s stubValidator) Validate(context.Context, string, string, map[string]string) error {
+	return s.err
+}
 
 func testScheme(t *testing.T) *runtime.Scheme {
 	t.Helper()

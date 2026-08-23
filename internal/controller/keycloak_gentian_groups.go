@@ -124,11 +124,7 @@ func validAttrName(s string) bool {
 func buildGentianGroupsScript(realmName string) string {
 	return keycloak.ShellJSONIDExtractor() + fmt.Sprintf(`set -eu
 REALM=%q
-TOKEN=$(curl -sf \
-  -X POST "${KEYCLOAK_URL}/realms/master/protocol/openid-connect/token" \
-  -H "Content-Type: application/x-www-form-urlencoded" \
-  -d "client_id=admin-cli&username=${KEYCLOAK_ADMIN_USERNAME}&password=${KEYCLOAK_ADMIN_PASSWORD}&grant_type=password" \
-  | sed 's/.*"access_token":"\([^"]*\)".*/\1/')
+`+keycloak.ShellAdminToken()+`
 AUTH_HEADER="Authorization: Bearer ${TOKEN}"
 %s
 

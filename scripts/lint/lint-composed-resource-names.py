@@ -47,15 +47,18 @@ MAX_LEN = 253
 
 
 def main() -> int:
+    # Not a skip. This check exists because the same bug shipped three times,
+    # and a check that reports success when it did not run is worse than no
+    # check: it reads as coverage. Same form as gen-provider-rbac.py and
+    # lint-provider-rbac.py, which have always failed here.
     try:
         import yaml
     except ImportError:
-        print(f"{YELLOW}SKIP{NC} — PyYAML not installed.")
-        return 0
+        sys.exit("PyYAML is required: pip install pyyaml")
 
     if not RENDER_DIR.is_dir():
-        print(f"{YELLOW}SKIP{NC} — no render fixtures at {RENDER_DIR.relative_to(ROOT)}.")
-        return 0
+        sys.exit(f"no render fixtures at {RENDER_DIR.relative_to(ROOT)} — "
+                 f"nothing to check, which is not the same as passing")
 
     bad, checked = [], 0
     for expected in sorted(RENDER_DIR.glob("*/expected.yaml")):

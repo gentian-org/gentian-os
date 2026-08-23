@@ -28,6 +28,7 @@ import (
 	"net/url"
 	"sort"
 	"strings"
+	"time"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 	"golang.org/x/crypto/argon2"
@@ -93,6 +94,15 @@ func argon2idPasswdLine(address, password string) (string, error) {
 // Read from Keycloak rather than from the mail system, because Keycloak is
 // where a user comes into existence — a mailbox derived from anywhere else is a
 // second registry that drifts the first time someone is added or removed.
+// keycloakAdminHTTP is used for both calls below.
+//
+// http.DefaultClient has no timeout. A Keycloak that accepts the connection and
+// then never answers — a wedged pod, a NetworkPolicy that blackholes rather than
+// rejects — would block a controller-runtime worker forever, and the tenant
+// whose reconcile owned that worker would simply stop being reconciled with
+// nothing logged.
+var keycloakAdminHTTP = &http.Client{Timeout: 30 * time.Second}
+
 func (r *TenantReconciler) keycloakRealmUsers(ctx context.Context, realm string) ([]string, error) {
 	ns := defaultServicesNamespace()
 	base, err := r.secretValue(ctx, keycloakAdminSecret, ns, "url")
@@ -115,7 +125,15 @@ func (r *TenantReconciler) keycloakRealmUsers(ctx context.Context, realm string)
 		"password":   {pass},
 		"grant_type": {"password"},
 	}
-	resp, err := http.PostForm(base+"/realms/master/protocol/openid-connect/token", form)
+	// NewRequestWithContext, not http.PostForm: PostForm takes no context, so
+	// this call could not be cancelled when the reconcile was.
+	tokenReq, err := http.NewRequestWithContext(ctx, http.MethodPost,
+		base+"/realms/master/protocol/openid-connect/token", strings.NewReader(form.Encode()))
+	if err != nil {
+		return nil, err
+	}
+	tokenReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	resp, err := keycloakAdminHTTP.Do(tokenReq)
 	if err != nil {
 		return nil, err
 	}
@@ -141,7 +159,7 @@ func (r *TenantReconciler) keycloakRealmUsers(ctx context.Context, realm string)
 			return nil, err
 		}
 		req.Header.Set("Authorization", "Bearer "+tok.AccessToken)
-		page, err := http.DefaultClient.Do(req)
+		page, err := keycloakAdminHTTP.Do(req)
 		if err != nil {
 			return nil, err
 		}

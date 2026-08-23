@@ -522,11 +522,7 @@ fi`
 
 	script := fmt.Sprintf(`set -eu
 
-TOKEN=$(curl -sf \
-  -X POST "${KEYCLOAK_URL}/realms/master/protocol/openid-connect/token" \
-  -H "Content-Type: application/x-www-form-urlencoded" \
-  -d "client_id=admin-cli&username=${KEYCLOAK_ADMIN_USERNAME}&password=${KEYCLOAK_ADMIN_PASSWORD}&grant_type=password" \
-  | sed 's/.*"access_token":"\([^"]*\)".*/\1/')
+`+keycloak.ShellAdminToken()+`
 HTTP=$(curl -s -o /dev/null -w "%%{http_code}" \
   -H "Authorization: Bearer ${TOKEN}" \
   "${KEYCLOAK_URL}/admin/realms/%s")
@@ -555,11 +551,7 @@ if [ -n "${KERNEL_REALM:-}" ] && [ -n "${KERNEL_EXTERNAL_URL:-}" ]; then
   BROKER_CLIENT_ID="broker-${REALM_NAME}"
   BROKER_REDIRECT="${KERNEL_EXTERNAL_URL}/realms/${REALM_NAME}/broker/kernel/endpoint"
 
-  TOKEN=$(curl -sf --max-time 30 \
-    -X POST "${KEYCLOAK_URL}/realms/master/protocol/openid-connect/token" \
-    -H "Content-Type: application/x-www-form-urlencoded" \
-    -d "client_id=admin-cli&username=${KEYCLOAK_ADMIN_USERNAME}&password=${KEYCLOAK_ADMIN_PASSWORD}&grant_type=password" \
-    | sed 's/.*"access_token":"\([^"]*\)".*/\1/')
+`+keycloak.ShellAdminToken()+`
 
   BROKER_RESP=$(curl -sf --max-time 30 -H "Authorization: Bearer ${TOKEN}" \
     "${KEYCLOAK_URL}/admin/realms/${KERNEL_REALM}/clients?clientId=${BROKER_CLIENT_ID}")
@@ -615,11 +607,7 @@ func buildClientScript(realmName, clientID, redirectURI string) string {
 	// in sync with what the controller generates (redirect URI may change when
 	// the app type determines a different callback pattern, e.g. Synapse).
 	return fmt.Sprintf(`set -eu
-TOKEN=$(curl -sf \
-  -X POST "${KEYCLOAK_URL}/realms/master/protocol/openid-connect/token" \
-  -H "Content-Type: application/x-www-form-urlencoded" \
-  -d "client_id=admin-cli&username=${KEYCLOAK_ADMIN_USERNAME}&password=${KEYCLOAK_ADMIN_PASSWORD}&grant_type=password" \
-  | sed 's/.*"access_token":"\([^"]*\)".*/\1/')
+`+keycloak.ShellAdminToken()+`
 SECRET_FIELD=""
 if [ -n "${OIDC_CLIENT_SECRET:-}" ]; then
   SECRET_FIELD=",\"secret\":\"${OIDC_CLIENT_SECRET}\""
@@ -648,11 +636,7 @@ fi`, realmName, clientID, clientID, realmName, realmName, clientID, redirectURI,
 
 func buildSAMLClientScript(realmName, entityID, acsURL string) string {
 	return fmt.Sprintf(`set -eu
-TOKEN=$(curl -sf \
-  -X POST "${KEYCLOAK_URL}/realms/master/protocol/openid-connect/token" \
-  -H "Content-Type: application/x-www-form-urlencoded" \
-  -d "client_id=admin-cli&username=${KEYCLOAK_ADMIN_USERNAME}&password=${KEYCLOAK_ADMIN_PASSWORD}&grant_type=password" \
-  | sed 's/.*"access_token":"\([^"]*\)".*/\1/')
+`+keycloak.ShellAdminToken()+`
 EXISTING=$(curl -sf \
   -H "Authorization: Bearer ${TOKEN}" \
   "${KEYCLOAK_URL}/admin/realms/%s/clients?clientId=%s")
@@ -686,11 +670,7 @@ func buildAdminScript(realmName string) string {
 	// All steps are idempotent: users/roles are checked for existence before
 	// POST so re-running the Job is safe.
 	return keycloak.ShellJSONIDExtractor() + fmt.Sprintf(`set -eu
-TOKEN=$(curl -sf \
-  -X POST "${KEYCLOAK_URL}/realms/master/protocol/openid-connect/token" \
-  -H "Content-Type: application/x-www-form-urlencoded" \
-  -d "client_id=admin-cli&username=${KEYCLOAK_ADMIN_USERNAME}&password=${KEYCLOAK_ADMIN_PASSWORD}&grant_type=password" \
-  | sed 's/.*"access_token":"\([^"]*\)".*/\1/')
+`+keycloak.ShellAdminToken()+`
 AUTH_HEADER="Authorization: Bearer ${TOKEN}"
 CREATED=0
 
@@ -780,11 +760,7 @@ fi`,
 
 func buildRealmDeleteScript(realmName string) string {
 	return fmt.Sprintf(`set -eu
-TOKEN=$(curl -sf \
-  -X POST "${KEYCLOAK_URL}/realms/master/protocol/openid-connect/token" \
-  -H "Content-Type: application/x-www-form-urlencoded" \
-  -d "client_id=admin-cli&username=${KEYCLOAK_ADMIN_USERNAME}&password=${KEYCLOAK_ADMIN_PASSWORD}&grant_type=password" \
-  | sed 's/.*"access_token":"\([^"]*\)".*/\1/')
+`+keycloak.ShellAdminToken()+`
 HTTP=$(curl -s -o /dev/null -w "%%{http_code}" \
   -X DELETE \
   -H "Authorization: Bearer ${TOKEN}" \
@@ -796,11 +772,7 @@ echo "realm %s deletion requested (HTTP ${HTTP})"`, realmName, realmName)
 // invalidating all active sessions.
 func buildRealmDisableScript(realmName, adminUsername, kernelRealm string) string {
 	return fmt.Sprintf(`set -eu
-TOKEN=$(curl -sf \
-  -X POST "${KEYCLOAK_URL}/realms/master/protocol/openid-connect/token" \
-  -H "Content-Type: application/x-www-form-urlencoded" \
-  -d "client_id=admin-cli&username=${KEYCLOAK_ADMIN_USERNAME}&password=${KEYCLOAK_ADMIN_PASSWORD}&grant_type=password" \
-  | sed 's/.*"access_token":"\([^"]*\)".*/\1/')
+`+keycloak.ShellAdminToken()+`
 HTTP=$(curl -s -o /dev/null -w "%%{http_code}" \
   -H "Authorization: Bearer ${TOKEN}" \
   "${KEYCLOAK_URL}/admin/realms/%s")

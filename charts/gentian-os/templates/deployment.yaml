@@ -86,8 +86,23 @@ spec:
               value: {{ .Values.openbao.address | quote }}
             - name: BAO_ROLE
               value: {{ .Values.openbao.role | quote }}
+            {{- /* Only when there is nothing to verify against.
+
+                 This used to be an unconditional "true", which meant the
+                 trust anchor above could never take effect for OpenBao:
+                 NewKVClient installs an InsecureSkipVerify transport whenever
+                 this is set, overriding SSL_CERT_FILE. So configuring
+                 trustAnchorSecret bought TLS verification everywhere except the
+                 one connection that carries the master password.
+
+                 Left true when no anchor is configured, because OpenBao serves
+                 a self-signed certificate and the operator could not reach it
+                 at all otherwise — this is the honest default for that case,
+                 not a hidden one. */}}
+            {{- if not .Values.trustAnchorSecret }}
             - name: VAULT_SKIP_VERIFY
               value: "true"
+            {{- end }}
             - name: KERNEL_DOMAIN
               value: {{ .Values.kernelDomain | quote }}
             {{- with .Values.mailEgressHost }}

@@ -136,5 +136,14 @@ spec:
           containers:
             - name: package-runtime
               env:
+                # provider-vault reaches OpenBao at its in-cluster Service name,
+                # where it serves a self-signed certificate. Unlike the operator,
+                # this container is not templated and has no trust anchor mounted,
+                # so there is nothing for it to verify against and this cannot
+                # simply be dropped.
+                #
+                # Closing it means giving the provider the same CA bundle the
+                # operator gets from trustAnchorSecret. Tracked rather than left
+                # to look deliberate.
                 - name: VAULT_SKIP_VERIFY
                   value: "true"

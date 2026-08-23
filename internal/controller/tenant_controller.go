@@ -21,6 +21,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	goerrors "errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -528,7 +529,7 @@ func (r *TenantReconciler) reconcileDelete(ctx context.Context, tenant *gentiano
 		if err == nil {
 			return false, ctrl.Result{}, nil
 		}
-		if err == errDeleteJobPending {
+		if goerrors.Is(err, errDeleteJobPending) {
 			return true, ctrl.Result{RequeueAfter: 2 * time.Second}, nil
 		}
 		return true, ctrl.Result{}, err

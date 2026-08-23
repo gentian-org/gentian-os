@@ -28,8 +28,11 @@ jobs:
       - name: go vet
         run: go vet ./...
 
+      # Pinned, like controller-gen below. An unpinned @latest picks up a
+      # toolchain bump on an unrelated day and fails a run nobody changed —
+      # which is how the openfga install broke, and was fixed the same way.
       - name: Install setup-envtest
-        run: go install sigs.k8s.io/controller-runtime/tools/setup-envtest@latest
+        run: go install sigs.k8s.io/controller-runtime/tools/setup-envtest@v0.21.0
         env:
           # A toolchain that exists. setup-envtest declares go 1.26.0, and auto
           # resolves that to the newest 1.26.x it believes in — currently
@@ -116,6 +119,12 @@ jobs:
       # resolvable references, credential field agreement, claim defaults,
       # cluster-config keys, template placeholders, the phase table, password
       # schemes — plus shellcheck itself.
+      # PyYAML before the lints, for the same reason age is installed before the
+      # recovery-kit check below: two of these are Python and parse YAML, and
+      # until now they ran only because the runner image happened to ship it.
+      - name: lint dependencies
+        run: python3 -m pip install --quiet pyyaml
+
       - name: lints
         run: make lint-shell lint-yaml lint-portability lint-image-digests
 
@@ -129,7 +138,7 @@ jobs:
           make verify-recovery-kit
 
       - name: credential catalogue parity
-        run: python3 -m pip install --quiet pyyaml && make gen-credentials && git diff --exit-code kernel/credentials/
+        run: make gen-credentials && git diff --exit-code kernel/credentials/
 
       # What the authorization rules PERMIT, not what they say.
       #

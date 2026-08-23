@@ -30,6 +30,7 @@ package usage
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 
@@ -292,7 +293,7 @@ func (s *Store) LastPlanBefore(ctx context.Context, t time.Time) (PlanEvent, boo
         ORDER BY occurred_at DESC
         LIMIT 1`, t.UTC()).Scan(&e.OccurredAt, &e.FromPlan, &e.ToPlan, &e.ProductSku, &e.Actor)
 	if err != nil {
-		if err == pgx.ErrNoRows {
+		if errors.Is(err, pgx.ErrNoRows) {
 			return PlanEvent{}, false, nil
 		}
 		return PlanEvent{}, false, fmt.Errorf("query last plan event: %w", err)
