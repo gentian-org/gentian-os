@@ -452,7 +452,7 @@ func TestVolumeUnitsRunInTheTenantNamespaceWithStagedCredentials(t *testing.T) {
 		PassphraseSecret: "tx-nightly-passphrase",
 		PassphraseKey:    "passphrase",
 	}
-	units := r.captureUnits(tenant, "nextcloud-base-ce", profile, export, enc)
+	units := r.captureUnits(context.Background(), tenant, "nextcloud-base-ce", profile, export, enc)
 
 	var volume *captureUnit
 	for i := range units {

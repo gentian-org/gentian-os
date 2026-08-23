@@ -83,6 +83,7 @@ func kernelDovecotOIDCClientJobName() string {
 // the hand-rolled version had.
 func makeDovecotOIDCClientJob(jobName, realmName string, pack oidc.Pack, labels map[string]string) *batchv1.Job {
 	ttl := meta.ProvisioningJobTTLSeconds
+	deadline := meta.ProvisioningJobActiveDeadlineSeconds
 	c := keycloakContainer("dovecot-oidc-client",
 		buildOIDCPackScript(realmName, dovecotOIDCClientID, pack, nil, nil, "", ""))
 	c.Env = append(c.Env, corev1.EnvVar{
@@ -102,6 +103,7 @@ func makeDovecotOIDCClientJob(jobName, realmName string, pack oidc.Pack, labels 
 		},
 		Spec: batchv1.JobSpec{
 			TTLSecondsAfterFinished: &ttl,
+			ActiveDeadlineSeconds:   &deadline,
 			Template: corev1.PodTemplateSpec{
 				Spec: corev1.PodSpec{
 					RestartPolicy: corev1.RestartPolicyOnFailure,

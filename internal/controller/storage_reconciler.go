@@ -106,6 +106,7 @@ func (r *TenantReconciler) deleteStorage(ctx context.Context, tenant *gentianov1
 // to provision storage (SEC-1).
 func makeS3BucketJob(tenant *gentianov1alpha1.Tenant, appName, accessKey, secretKey string) *batchv1.Job {
 	ttl := meta.ProvisioningJobTTLSeconds
+	deadline := meta.ProvisioningJobActiveDeadlineSeconds
 	bucket := s3BucketName(tenant, appName)
 	container := minioContainer("create-bucket", bucket, minioSetupScript(bucket))
 	if accessKey != "" && secretKey != "" {
@@ -126,6 +127,7 @@ func makeS3BucketJob(tenant *gentianov1alpha1.Tenant, appName, accessKey, secret
 		},
 		Spec: batchv1.JobSpec{
 			TTLSecondsAfterFinished: &ttl,
+			ActiveDeadlineSeconds:   &deadline,
 			Template: corev1.PodTemplateSpec{
 				Spec: corev1.PodSpec{
 					RestartPolicy: corev1.RestartPolicyOnFailure,
@@ -149,6 +151,7 @@ func (r *TenantReconciler) minioEndpoint(ctx context.Context) string {
 
 func makeS3BucketDeleteJob(tenant *gentianov1alpha1.Tenant, appName string) *batchv1.Job {
 	ttl := meta.ProvisioningJobTTLSeconds
+	deadline := meta.ProvisioningJobActiveDeadlineSeconds
 	bucket := s3BucketName(tenant, appName)
 	return &batchv1.Job{
 		ObjectMeta: metav1.ObjectMeta{
@@ -162,6 +165,7 @@ func makeS3BucketDeleteJob(tenant *gentianov1alpha1.Tenant, appName string) *bat
 		},
 		Spec: batchv1.JobSpec{
 			TTLSecondsAfterFinished: &ttl,
+			ActiveDeadlineSeconds:   &deadline,
 			Template: corev1.PodTemplateSpec{
 				Spec: corev1.PodSpec{
 					RestartPolicy: corev1.RestartPolicyOnFailure,

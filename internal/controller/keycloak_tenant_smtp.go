@@ -99,6 +99,7 @@ echo "tenant realm SMTP configured for ${REALM} (${SMTP_HOST}:${SMTP_PORT})"
 
 func makeTenantSMTPJob(tenantName, realmName string) *batchv1.Job {
 	ttl := meta.ProvisioningJobTTLSeconds
+	deadline := meta.ProvisioningJobActiveDeadlineSeconds
 	// Older installs predate the mail_service_mode key in the SMTP secret.
 	optionalKey := true
 	c := keycloakContainer("tenant-smtp", buildTenantSMTPConfigureScript(fmt.Sprintf("%q", realmName)))
@@ -207,6 +208,7 @@ func makeTenantSMTPJob(tenantName, realmName string) *batchv1.Job {
 		},
 		Spec: batchv1.JobSpec{
 			TTLSecondsAfterFinished: &ttl,
+			ActiveDeadlineSeconds:   &deadline,
 			Template: corev1.PodTemplateSpec{
 				Spec: corev1.PodSpec{
 					RestartPolicy: corev1.RestartPolicyOnFailure,

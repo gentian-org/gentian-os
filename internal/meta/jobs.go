@@ -29,6 +29,28 @@ const ProvisioningJobTTLSeconds int32 = 600
 // failures while keycloak-realm-* is still running (Jobs are applied in parallel).
 const ProvisioningJobBackoffLimit int32 = 12
 
+// ProvisioningJobActiveDeadlineSeconds is the wall-clock ceiling on a
+// configuration Job, retries included.
+//
+// Without one a Job runs until something outside Kubernetes stops it. Every
+// script here talks to Keycloak, Postgres, Redis or S3 over the network, and a
+// peer that accepts the connection and then goes quiet gives a command that
+// never returns, a pod that never exits, and a reconcile that waits on that Job
+// with nothing to time it out. The Job reports neither success nor failure, so
+// the tenant simply stops progressing.
+//
+// An hour is chosen against the retry budget, not the work: these Jobs finish in
+// seconds, but ActiveDeadlineSeconds covers all attempts, and Kubernetes backs
+// off 10s, 20s, 40s, 80s, 160s, then 360s per attempt. At the default six
+// retries that is about eleven minutes; at ProvisioningJobBackoffLimit's twelve
+// it is roughly forty-six. An hour clears both, so this only ever fires on a Job
+// that is genuinely stuck rather than one still retrying.
+//
+// Deliberately not applied to backup, restore or purge Jobs. Those move data and
+// can legitimately run for hours, so they need a bound derived from the volume
+// they are moving, not this one.
+const ProvisioningJobActiveDeadlineSeconds int64 = 3600
+
 // InitJobResources caps CPU/memory for operator-owned provisioning Jobs in
 // platform-kernel.
 //

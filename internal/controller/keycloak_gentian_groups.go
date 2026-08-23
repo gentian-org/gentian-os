@@ -38,6 +38,7 @@ func (r *TenantReconciler) ensureGentianGroupsJob(ctx context.Context, tenant *g
 
 func makeGentianGroupsJob(tenant *gentianov1alpha1.Tenant, realmName string, groupsJSON string) *batchv1.Job {
 	ttl := meta.ProvisioningJobTTLSeconds
+	deadline := meta.ProvisioningJobActiveDeadlineSeconds
 	backoff := meta.ProvisioningJobBackoffLimit
 	container := keycloakContainer("provision-gentian-groups", buildGentianGroupsScript(realmName))
 	container.Env = append(container.Env,
@@ -57,6 +58,7 @@ func makeGentianGroupsJob(tenant *gentianov1alpha1.Tenant, realmName string, gro
 		Spec: batchv1.JobSpec{
 			BackoffLimit:            &backoff,
 			TTLSecondsAfterFinished: &ttl,
+			ActiveDeadlineSeconds:   &deadline,
 			Template: corev1.PodTemplateSpec{
 				Spec: corev1.PodSpec{
 					RestartPolicy: corev1.RestartPolicyOnFailure,

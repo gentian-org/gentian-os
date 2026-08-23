@@ -20,6 +20,7 @@ import (
 	"context"
 	"fmt"
 	"github.com/gentian-org/gentian-os/internal/keycloak"
+	"github.com/gentian-org/gentian-os/internal/meta"
 
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -77,6 +78,7 @@ AUTH_HEADER="Authorization: Bearer ${TOKEN}"
 
 func makeKernelTenantBrokerJob(tenantName, realmName, kernelRealm string) *batchv1.Job {
 	ttl := int32(3600)
+	deadline := meta.ProvisioningJobActiveDeadlineSeconds
 	c := keycloakContainer("kernel-tenant-broker", buildKernelTenantBrokerScript())
 	c.Env = append(c.Env,
 		// REALM_NAME is passed but unread: it varies per tenant, and the script
@@ -97,6 +99,7 @@ func makeKernelTenantBrokerJob(tenantName, realmName, kernelRealm string) *batch
 		},
 		Spec: batchv1.JobSpec{
 			TTLSecondsAfterFinished: &ttl,
+			ActiveDeadlineSeconds:   &deadline,
 			Template: corev1.PodTemplateSpec{
 				Spec: corev1.PodSpec{
 					RestartPolicy: corev1.RestartPolicyOnFailure,

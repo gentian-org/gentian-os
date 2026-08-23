@@ -229,6 +229,7 @@ func buildDatabaseCR(tenant *gentianov1alpha1.Tenant, nsName, dbName, appName st
 // generates a random password locally (legacy behaviour).
 func makeRoleJob(tenant *gentianov1alpha1.Tenant, nsName, dbName, appName, rolePassword string, schemaPref gentianov1alpha1.SchemaPreference, allowCreateDB bool) *batchv1.Job {
 	ttl := meta.ProvisioningJobTTLSeconds
+	deadline := meta.ProvisioningJobActiveDeadlineSeconds
 	roleName := roleUserName(tenant.Name, appName)
 	container := psqlContainer("provision-role", buildRoleScript(dbName, roleName, schemaPref, allowCreateDB), nsName)
 	if rolePassword != "" {
@@ -249,6 +250,7 @@ func makeRoleJob(tenant *gentianov1alpha1.Tenant, nsName, dbName, appName, roleP
 		},
 		Spec: batchv1.JobSpec{
 			TTLSecondsAfterFinished: &ttl,
+			ActiveDeadlineSeconds:   &deadline,
 			Template: corev1.PodTemplateSpec{
 				Spec: corev1.PodSpec{
 					RestartPolicy: corev1.RestartPolicyOnFailure,

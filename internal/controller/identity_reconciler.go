@@ -293,6 +293,7 @@ func (r *TenantReconciler) deleteIdentity(ctx context.Context, tenant *gentianov
 
 func makeRealmJob(tenant *gentianov1alpha1.Tenant, realmName, kernelDomain string, broker *realmBrokerParams) *batchv1.Job {
 	ttl := meta.ProvisioningJobTTLSeconds
+	deadline := meta.ProvisioningJobActiveDeadlineSeconds
 	c := keycloakContainer("provision-realm", buildRealmScript(realmName, tenant.Spec.DisplayName))
 	// Inject realm name as a shell variable so the IdP brokering section can
 	// reference it without additional fmt.Sprintf substitutions.
@@ -314,6 +315,7 @@ func makeRealmJob(tenant *gentianov1alpha1.Tenant, realmName, kernelDomain strin
 		},
 		Spec: batchv1.JobSpec{
 			TTLSecondsAfterFinished: &ttl,
+			ActiveDeadlineSeconds:   &deadline,
 			Template: corev1.PodTemplateSpec{
 				Spec: corev1.PodSpec{
 					RestartPolicy: corev1.RestartPolicyOnFailure,
@@ -326,6 +328,7 @@ func makeRealmJob(tenant *gentianov1alpha1.Tenant, realmName, kernelDomain strin
 
 func makeClientJob(tenant *gentianov1alpha1.Tenant, realmName, appName, clientID string, redirectURIs []string, clientSecret string) *batchv1.Job {
 	ttl := meta.ProvisioningJobTTLSeconds
+	deadline := meta.ProvisioningJobActiveDeadlineSeconds
 	redirectURI := redirectURIs[0]
 	container := keycloakContainer("provision-client", buildClientScript(realmName, clientID, redirectURI))
 	if clientSecret != "" {
@@ -346,6 +349,7 @@ func makeClientJob(tenant *gentianov1alpha1.Tenant, realmName, appName, clientID
 		},
 		Spec: batchv1.JobSpec{
 			TTLSecondsAfterFinished: &ttl,
+			ActiveDeadlineSeconds:   &deadline,
 			Template: corev1.PodTemplateSpec{
 				Spec: corev1.PodSpec{
 					RestartPolicy: corev1.RestartPolicyOnFailure,
@@ -358,6 +362,7 @@ func makeClientJob(tenant *gentianov1alpha1.Tenant, realmName, appName, clientID
 
 func makeSAMLClientJob(tenant *gentianov1alpha1.Tenant, realmName, appName, entityID, acsURL string) *batchv1.Job {
 	ttl := meta.ProvisioningJobTTLSeconds
+	deadline := meta.ProvisioningJobActiveDeadlineSeconds
 	container := keycloakContainer("provision-saml-client", buildSAMLClientScript(realmName, entityID, acsURL))
 	return &batchv1.Job{
 		ObjectMeta: metav1.ObjectMeta{
@@ -371,6 +376,7 @@ func makeSAMLClientJob(tenant *gentianov1alpha1.Tenant, realmName, appName, enti
 		},
 		Spec: batchv1.JobSpec{
 			TTLSecondsAfterFinished: &ttl,
+			ActiveDeadlineSeconds:   &deadline,
 			Template: corev1.PodTemplateSpec{
 				Spec: corev1.PodSpec{
 					RestartPolicy: corev1.RestartPolicyOnFailure,
@@ -386,6 +392,7 @@ func makeSAMLClientJob(tenant *gentianov1alpha1.Tenant, realmName, appName, enti
 // XTenant that carries the same address cannot disagree about it.
 func makeAdminJob(tenant *gentianov1alpha1.Tenant, realmName, adminEmail string, creds secrets.TenantAdminCreds) *batchv1.Job {
 	ttl := meta.ProvisioningJobTTLSeconds
+	deadline := meta.ProvisioningJobActiveDeadlineSeconds
 	container := keycloakContainer("provision-tenant-admin", buildAdminScript(realmName))
 	container.Env = append(container.Env,
 		corev1.EnvVar{Name: "TENANT_NAME", Value: tenant.Name},
@@ -405,6 +412,7 @@ func makeAdminJob(tenant *gentianov1alpha1.Tenant, realmName, adminEmail string,
 		},
 		Spec: batchv1.JobSpec{
 			TTLSecondsAfterFinished: &ttl,
+			ActiveDeadlineSeconds:   &deadline,
 			Template: corev1.PodTemplateSpec{
 				Spec: corev1.PodSpec{
 					RestartPolicy: corev1.RestartPolicyOnFailure,
@@ -417,6 +425,7 @@ func makeAdminJob(tenant *gentianov1alpha1.Tenant, realmName, adminEmail string,
 
 func makeRealmDisableJob(tenant *gentianov1alpha1.Tenant, realmName, kernelRealm string) *batchv1.Job {
 	ttl := meta.ProvisioningJobTTLSeconds
+	deadline := meta.ProvisioningJobActiveDeadlineSeconds
 	return &batchv1.Job{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      realmDisableJobName(tenant.Name),
@@ -428,6 +437,7 @@ func makeRealmDisableJob(tenant *gentianov1alpha1.Tenant, realmName, kernelRealm
 		},
 		Spec: batchv1.JobSpec{
 			TTLSecondsAfterFinished: &ttl,
+			ActiveDeadlineSeconds:   &deadline,
 			Template: corev1.PodTemplateSpec{
 				Spec: corev1.PodSpec{
 					RestartPolicy: corev1.RestartPolicyOnFailure,
@@ -442,6 +452,7 @@ func makeRealmDisableJob(tenant *gentianov1alpha1.Tenant, realmName, kernelRealm
 
 func makeRealmDeleteJob(tenant *gentianov1alpha1.Tenant, realmName string) *batchv1.Job {
 	ttl := meta.ProvisioningJobTTLSeconds
+	deadline := meta.ProvisioningJobActiveDeadlineSeconds
 	return &batchv1.Job{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      realmDeleteJobName(tenant.Name),
@@ -453,6 +464,7 @@ func makeRealmDeleteJob(tenant *gentianov1alpha1.Tenant, realmName string) *batc
 		},
 		Spec: batchv1.JobSpec{
 			TTLSecondsAfterFinished: &ttl,
+			ActiveDeadlineSeconds:   &deadline,
 			Template: corev1.PodTemplateSpec{
 				Spec: corev1.PodSpec{
 					RestartPolicy: corev1.RestartPolicyOnFailure,

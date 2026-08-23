@@ -196,7 +196,11 @@ func (v *EndpointValidator) smtpProbe(ctx context.Context, fields map[string]str
 	var conn net.Conn
 	if port == "465" {
 		// Implicit TLS. No STARTTLS is offered on this port.
-		conn, err = tls.DialWithDialer(dialer, "tcp", addr, &tls.Config{ServerName: host, MinVersion: tls.VersionTLS12})
+		// tls.Dialer, not tls.DialWithDialer: the latter takes no context, so
+		// this branch ignored cancellation while the STARTTLS branch below
+		// honoured it. The dialer's own timeout still applies.
+		td := &tls.Dialer{NetDialer: dialer, Config: &tls.Config{ServerName: host, MinVersion: tls.VersionTLS12}}
+		conn, err = td.DialContext(ctx, "tcp", addr)
 	} else {
 		conn, err = dialer.DialContext(ctx, "tcp", addr)
 	}

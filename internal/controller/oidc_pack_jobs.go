@@ -265,6 +265,7 @@ func (r *TenantReconciler) ensureOIDCPackJob(ctx context.Context, tenant *gentia
 
 func makeOIDCPackJob(tenant *gentianov1alpha1.Tenant, realmName string, cfg oidcAppConfig, clientSecret, entitlementGroup string) *batchv1.Job {
 	ttl := meta.ProvisioningJobTTLSeconds
+	deadline := meta.ProvisioningJobActiveDeadlineSeconds
 	container := keycloakContainer("provision-oidc-pack",
 		buildOIDCPackScript(realmName, cfg.clientID, *cfg.pack, cfg.templates, cfg.redirectURIs, clientSecret, entitlementGroup))
 	if clientSecret != "" {
@@ -285,6 +286,7 @@ func makeOIDCPackJob(tenant *gentianov1alpha1.Tenant, realmName string, cfg oidc
 		},
 		Spec: batchv1.JobSpec{
 			TTLSecondsAfterFinished: &ttl,
+			ActiveDeadlineSeconds:   &deadline,
 			Template: corev1.PodTemplateSpec{
 				Spec: corev1.PodSpec{
 					RestartPolicy: corev1.RestartPolicyOnFailure,

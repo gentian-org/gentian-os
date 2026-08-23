@@ -194,7 +194,7 @@ func (r *TenantRestoreReconciler) restoreApp(
 		}
 	}
 
-	units := r.restoreUnits(tenant, appName, profile, restore, decryption)
+	units := r.restoreUnits(ctx, tenant, appName, profile, restore, decryption)
 	for _, unit := range units {
 		if unit.Kind == "volume" {
 			if err := r.ensureRestoreVolumeSecret(ctx, restore); err != nil {
@@ -332,6 +332,7 @@ func (r *TenantRestoreReconciler) runRestoreHooks(
 // restoreUnits enumerates what to put back for one app, from the same profile
 // declarations the capture was driven by.
 func (r *TenantRestoreReconciler) restoreUnits(
+	ctx context.Context,
 	tenant *gentianov1alpha1.Tenant,
 	appName string,
 	profile *gentianov1alpha1.AppProfile,
@@ -387,7 +388,7 @@ func (r *TenantRestoreReconciler) restoreUnits(
 			volD.SecretName = dec.IdentitySecretRef.Name
 		}
 	}
-	for i, claim := range r.Reconciler.appVolumes(tenant.Name, appName, profile, spec) {
+	for i, claim := range r.Reconciler.appVolumes(ctx, tenant.Name, appName, profile, spec) {
 		p := volParams
 		p.Name = exportJobName(restore.Name, appName, fmt.Sprintf("vr%d", i))
 		units = append(units, captureUnit{

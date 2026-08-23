@@ -245,7 +245,7 @@ func (r *TenantExportReconciler) captureApp(
 		}
 	}
 
-	units := r.captureUnits(tenant, appName, profile, export, encryption)
+	units := r.captureUnits(ctx, tenant, appName, profile, export, encryption)
 	for _, unit := range units {
 		if unit.Kind == "volume" {
 			if err := r.ensureVolumeUploadSecret(ctx, export, tenant.Name, encryption); err != nil {
@@ -314,6 +314,7 @@ type captureUnit struct {
 // captureUnits enumerates what to capture for one app, entirely from the
 // profile's declared kernelRequirements. No app name appears here, and none may.
 func (r *TenantExportReconciler) captureUnits(
+	ctx context.Context,
 	tenant *gentianov1alpha1.Tenant,
 	appName string,
 	profile *gentianov1alpha1.AppProfile,
@@ -365,7 +366,7 @@ func (r *TenantExportReconciler) captureUnits(
 	if volParams.Encryption.Mode == gentianov1alpha1.ExportEncryptionPassphrase {
 		volParams.Encryption.PassphraseSecret = volumeUploadSecretName(export.Name)
 	}
-	for i, claim := range r.appVolumes(tenant.Name, appName, profile, spec) {
+	for i, claim := range r.appVolumes(ctx, tenant.Name, appName, profile, spec) {
 		p := volParams
 		p.Name = exportJobName(export.Name, appName, fmt.Sprintf("vol%d", i))
 		units = append(units, captureUnit{
@@ -378,7 +379,11 @@ func (r *TenantExportReconciler) captureUnits(
 
 // appVolumes resolves which claims to capture: the profile's explicit list when
 // it has one, otherwise every claim the app owns.
+// Takes a context because it lists PVCs from the API server. It used to pass
+// context.Background(), so the list carried neither the reconcile's deadline nor
+// its cancellation — the caller two frames up had one all along.
 func (r *TenantExportReconciler) appVolumes(
+	ctx context.Context,
 	tenantName, appName string,
 	profile *gentianov1alpha1.AppProfile,
 	spec *gentianov1alpha1.BackupSpec,
@@ -388,7 +393,7 @@ func (r *TenantExportReconciler) appVolumes(
 	}
 
 	pvcs := &corev1.PersistentVolumeClaimList{}
-	if err := r.List(context.Background(), pvcs, client.InNamespace(backup.TenantNamespace(tenantName))); err != nil {
+	if err := r.List(ctx, pvcs, client.InNamespace(backup.TenantNamespace(tenantName))); err != nil {
 		return nil
 	}
 	family := ""
