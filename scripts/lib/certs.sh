@@ -721,10 +721,28 @@ install_kernel_wildcard() {
         || warn "Continuing — wildcard Certificate will issue once the issuer recovers."
 
     # 3) Apply the wildcard Certificate (with domain name templating).
+    # The same platform values and DNS arguments every other render of this
+    # chart passes, even though this one only wants the wildcard Certificate.
+    #
+    # -s selects what is PRINTED, not what is evaluated: helm renders every
+    # template in the chart and then filters. So dns-credentials-externalsecret
+    # .yaml was evaluated here too, its gentian.dns01.profile guard found no
+    # dnsProviders table — the chart defaults dnsProvider to cloudflare, which
+    # is not "none", so the guard applies — and the render died on
+    # "dnsProviders table is empty: render this chart with -f
+    # kernel/platforms.yaml". Which is exactly what this call was not doing.
+    #
+    # That failure was total and silent: `helm template ... | kubectl apply -f -`
+    # printed its error, applied nothing, and the step went on to announce the
+    # Certificate as applied. So the kernel wildcard Certificate was never
+    # created by this path at all.
     helm template gentian-cert-manager "${SCRIPT_DIR}/kernel/manifests/cert-manager/chart" \
+        -f "$(gentian_platforms_values)" \
         -s templates/wildcard-kernel-cert.yaml \
         --set-string kernelDomain="${KERNEL_DOMAIN}" \
         --set-string dns01ClusterIssuer="${DNS01_CLUSTER_ISSUER}" \
+        --set-string dnsProvider="${dns_provider}" \
+        "${dns_args[@]+"${dns_args[@]}"}" \
         | kubectl apply -f -
     success "Kernel wildcard Certificate wildcard-kernel applied (cert-manager namespace)."
     info "Issuance status:  kubectl get certificate wildcard-kernel -n cert-manager"
