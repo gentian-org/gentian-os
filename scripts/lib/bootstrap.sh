@@ -658,16 +658,36 @@ import sys, json, yaml
 want = (yaml.safe_load(open(sys.argv[1])) or {}).get("spec") or {}
 have = json.loads(sys.argv[2] or "{}")
 
+# Subset comparison, and it has to descend into lists as well as dicts.
+#
+# Only keys the file names are compared: the API server adds what the XRD's
+# schema defaults, and a claim is not stale for having been defaulted. That
+# already held for dicts, but lists were compared as strings — so a default
+# applied INSIDE a list element made the whole list unequal, and the claim
+# read as drifted with no edit that could ever settle it. spec.llm.instances
+# is exactly that: the file lists one model, the live object lists the same
+# model plus imageTag: latest from the XRD, and B-08 reported itself
+# outstanding at the end of every otherwise complete install.
+#
+# Lists of different length are still drift — a model added to or removed from
+# the claim is a real change, and the per-element walk cannot express it.
 def drifted(w, h, path=""):
     out = []
-    for k, v in w.items():
-        p = f"{path}.{k}" if path else k
-        if k not in h:
-            out.append(p)
-        elif isinstance(v, dict) and isinstance(h[k], dict):
-            out += drifted(v, h[k], p)
-        elif str(v) != str(h[k]):
-            out.append(p)
+    if isinstance(w, dict) and isinstance(h, dict):
+        for k, v in w.items():
+            p = f"{path}.{k}" if path else k
+            if k not in h:
+                out.append(p)
+            else:
+                out += drifted(v, h[k], p)
+    elif isinstance(w, list) and isinstance(h, list):
+        if len(w) != len(h):
+            out.append(path or "spec")
+        else:
+            for i, (wi, hi) in enumerate(zip(w, h)):
+                out += drifted(wi, hi, f"{path}[{i}]")
+    elif str(w) != str(h):
+        out.append(path or "spec")
     return out
 
 print(" ".join(drifted(want, have)))
