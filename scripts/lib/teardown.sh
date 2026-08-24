@@ -95,6 +95,12 @@ _delete_crossplane_crds() {
     done
 
     success "Crossplane/Upbound CRD sweep completed."
+
+    # The CRDs above are Crossplane's own. A running Crossplane does not notice
+    # they are gone and does not recreate them until it restarts, so a reinstall
+    # that reuses this deployment finds its API missing. See
+    # _purge_restart_crossplane for what that failure looks like.
+    _purge_restart_crossplane
 }
 
 # Helper: strip finalizers via kubectl patch (standard CRD API path).
@@ -514,8 +520,126 @@ _delete_gentianos_api_scaffold() {
 #
 # Runs before the reverse pass: a PVC whose pods are gone releases cleanly,
 # and pvc-protection finalizers are the usual reason a namespace delete hangs.
+# =============================================================================
+# Crossplane's finalizers, cleared before anything that waits on them
+# =============================================================================
+#
+# A purge used to deadlock here, permanently. The chain, observed on ifk-w4h:
+#
+#   Cluster claim ifk-w4h-prod   finalizer.apiextensions.crossplane.io
+#     -> clusters.gentianos.io CRD        customresourcecleanup
+#       -> XRDs xclusters / xsuze        offered + foregroundDeletion
+#         -> Argo Applications crossplane-xrds, gentian-appsets
+#           -> kubectl delete application, blocking with no timeout
+#
+# _delete_gentianos_api_scaffold already strips claim finalizers — but it runs
+# from a step's destroy(), which is *after* the Application deletes that hang.
+# So the helper existed and ran too late. This runs before the reverse pass.
+#
+# It cannot be left to Crossplane. Its composite controllers had tripped their
+# circuit breaker ("Circuit breaker is open", controller=composite/...), so they
+# had stopped reconciling those objects entirely and nothing would ever have
+# removed the finalizers. Waiting was not slow, it was stopped.
+#
+# Order matters and is the reverse of ownership: managed resources, then claims,
+# then composites, then the definitions. Taking a definition first strands its
+# instances with no controller and no schema.
+_purge_strip_crossplane_finalizers() {
+    banner "Purge — clearing Crossplane finalizers"
+
+    # 1. Managed resources. deletionPolicy: Orphan does NOT save these: Upjet
+    #    calls Connect() before it decides to skip the external delete, so an
+    #    Orphan resource whose backend is already torn down retries forever.
+    #    Four Keycloak MRs hung exactly this way, with Keycloak gone and
+    #    provider-keycloak reporting "cannot get terraform setup".
+    local mr count
+    count=0
+    while IFS='|' read -r _ mr; do
+        [[ -n "${mr}" ]] || continue
+        count=$((count + 1))
+    done < <(kubectl get managed -o jsonpath='{range .items[*]}{.metadata.namespace}{"|"}{.metadata.name}{"\n"}{end}' 2>/dev/null || true)
+    if [[ "${count}" -gt 0 ]]; then
+        info "Clearing finalizers on ${count} Crossplane managed resource(s)..."
+        kubectl get managed -o name 2>/dev/null | while IFS= read -r obj; do
+            [[ -n "${obj}" ]] || continue
+            kubectl patch "${obj}" --type=merge \
+                -p='{"metadata":{"finalizers":[]}}' 2>/dev/null || true
+        done
+        success "Managed resource finalizers cleared."
+    else
+        info "No Crossplane managed resources; skipping."
+    fi
+
+    # 2. Claims, then 3. composites. Both are gentianos.io kinds served by the
+    #    XRDs below, so they must go before the definitions that describe them.
+    local kind
+    for kind in $(kubectl api-resources --api-group=gentianos.io -o name 2>/dev/null || true); do
+        _strip_and_delete_crd_instances "${kind}"
+    done
+
+    # 4. The definitions. foregroundDeletion holds an XRD until every dependent
+    #    is gone, which is why the three steps above come first.
+    local xrd
+    for xrd in $(kubectl get compositeresourcedefinitions -o name 2>/dev/null || true); do
+        kubectl patch "${xrd}" --type=merge \
+            -p='{"metadata":{"finalizers":[]}}' 2>/dev/null || true
+    done
+    success "Crossplane finalizers cleared."
+}
+
+# _purge_restart_crossplane — give Crossplane back the CRDs the purge removed.
+#
+# Crossplane v2 ships no CRDs in its Helm chart: `helm template` renders zero,
+# and the core binary installs them itself at startup. So a purge that deletes
+# them leaves a running Crossplane whose own API is missing, and a reinstall
+# that finds `helm status crossplane` satisfied never restores them.
+#
+# What that looks like, if this does not run: every provider and function sits
+# Installed=True Healthy=False, each revision reporting
+#
+#   cannot establish control of object: the server could not find the requested
+#   resource (post managedresourcedefinitions.apiextensions.crossplane.io)
+#
+# and the install blocks in `kubectl wait --for=condition=Healthy` until it
+# times out. A restart fixes it in seconds, because startup is when those CRDs
+# are created. The default DeploymentRuntimeConfig comes back with them.
+_purge_restart_crossplane() {
+    kubectl -n crossplane-system get deploy crossplane >/dev/null 2>&1 || return 0
+    info "Restarting Crossplane so it reinstalls the CRDs this purge removed..."
+    kubectl -n crossplane-system rollout restart deploy/crossplane >/dev/null 2>&1 || true
+    kubectl -n crossplane-system rollout status deploy/crossplane --timeout=180s >/dev/null 2>&1 || true
+    success "Crossplane restarted."
+}
+
+# _purge_guard_single_instance — refuse a second concurrent purge.
+#
+# Two purges ran against this cluster at once and nothing objected; both then
+# blocked on the same `kubectl delete application`, each making the other's
+# wait longer. Nothing about the teardown is safe to interleave with itself.
+_purge_guard_single_instance() {
+    local lock="${TMPDIR:-/tmp}/gentian-purge-${GENTIAN_DEPLOYMENTS_CLUSTER_ID:-cluster}.lock"
+    local holder
+    if [[ -e "${lock}" ]]; then
+        holder=$(cat "${lock}" 2>/dev/null || echo "")
+        if [[ -n "${holder}" ]] && kill -0 "${holder}" 2>/dev/null; then
+            error "A purge is already running for this cluster (pid ${holder})."
+            error "  Two teardowns interleaved is not a state this can reason about."
+            error "  Wait for it, or remove ${lock} if that process is gone."
+            return 1
+        fi
+        info "Stale purge lock from pid ${holder:-unknown}; taking it over."
+    fi
+    echo "$$" > "${lock}" 2>/dev/null || true
+    # shellcheck disable=SC2064
+    trap "rm -f '${lock}'" EXIT
+    return 0
+}
+
 purge_release_volumes() {
     local ns
+    # Before the volumes, because the reverse pass that follows deletes the Argo
+    # Applications that these finalizers block.
+    _purge_strip_crossplane_finalizers
     banner "Purge — releasing volumes"
     for ns in $(gentian_kernel_namespaces); do
         kubectl get namespace "${ns}" >/dev/null 2>&1 || continue
@@ -706,6 +830,7 @@ purge_report_remaining() {
 # rather than a restore. `--export-recovery-kit` is what closes that gap, so
 # whether one exists decides how bad this is.
 purge_confirm() {
+    _purge_guard_single_instance || return 1
     echo ""
     warn "PURGE removes what an uninstall keeps:"
     warn "  • OpenBao's storage — every credential, and the derivation salt"
