@@ -235,8 +235,39 @@ _wait_for_sign_in() {
     warn "╔══════════════════════════════════════════════════════════════════╗"
     warn "║  WAITING FOR YOU — sign in to finish the install                 ║"
     warn "╚══════════════════════════════════════════════════════════════════╝"
-    warn "  ${url}"
-    warn "  as the cluster administrator (credentials are in the summary above)."
+    echo ""
+
+    # The credentials, here, rather than a pointer to them.
+    #
+    # This said "credentials are in the summary above" — and the summary is
+    # printed AFTER the steps, so at this moment there is no summary above.
+    # D-05 printed them, several hundred lines and many minutes earlier. An
+    # instruction to sign in that does not say what to sign in with sends the
+    # operator scrolling, which is the opposite of what a step that has stopped
+    # to wait for them should do.
+    #
+    # print_portal_login_summary is where this already lives and derives the
+    # password the same way the account was created with. Its library is not in
+    # load.sh's set, so source it the way print_summary_cp does.
+    #
+    # Its output is captured rather than printed directly, because it returns
+    # silently when KERNEL_DOMAIN is unset or the password cannot be derived —
+    # reasonable for a summary that has other things to say, useless for a
+    # prompt whose entire purpose is to tell the operator what to sign in with.
+    # A step that has stopped to wait must never go quiet.
+    local creds=""
+    if [[ -f "${SCRIPT_DIR}/scripts/lib/portal-login-bootstrap.sh" ]]; then
+        # shellcheck source=scripts/lib/portal-login-bootstrap.sh
+        source "${SCRIPT_DIR}/scripts/lib/portal-login-bootstrap.sh"
+        creds="$(print_portal_login_summary 2>/dev/null || true)"
+    fi
+    if [[ -n "${creds}" ]]; then
+        printf '%s\n' "${creds}"
+    else
+        warn "  ${url}"
+        warn "  User: administrator@${KERNEL_DOMAIN:-<kernel-domain>}"
+        warn "  Password: derived — print it with ./install.sh --verify-only"
+    fi
     echo ""
     info "  Signing in proves someone other than the installer can write"
     info "  credentials. Until it happens the installer's own credential has to"
