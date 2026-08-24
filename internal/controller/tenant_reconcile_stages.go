@@ -19,6 +19,7 @@ package controller
 import (
 	"context"
 	"fmt"
+	"k8s.io/apimachinery/pkg/api/equality"
 	"strings"
 	"time"
 
@@ -67,9 +68,17 @@ type tenantReconcileState struct {
 	mailResult      ctrl.Result
 	appsResult      ctrl.Result
 	privilegeResult ctrl.Result
+
+	// statusAtEntry is the Tenant status as this reconcile found it, so a
+	// short-circuit can tell a write that changes something from one that
+	// changes nothing. Set by runTenantReconcileStages before any stage runs:
+	// taken later it would already contain that stage's own edits, and those
+	// edits would then never be written.
+	statusAtEntry *gentianov1alpha1.TenantStatus
 }
 
 func (r *TenantReconciler) runTenantReconcileStages(ctx context.Context, state *tenantReconcileState) (ctrl.Result, error) {
+	state.statusAtEntry = state.tenant.Status.DeepCopy()
 	stages := []struct {
 		stage ReconcileStage
 		run   func(context.Context, *tenantReconcileState) (ctrl.Result, error)
@@ -117,7 +126,21 @@ func (r *TenantReconciler) runTenantReconcileStages(ctx context.Context, state *
 				//
 				// persistTenantStageProgress reads this condition to pick the
 				// phase, so refreshing it first fixes the phase too.
-				_ = r.aggregateCrossplaneStatus(ctx, state.tenant)
+				// Only while the answer can still change. Re-reading the
+				// composite costs an API round trip inside the reconcile —
+				// unstructured reads do not come from the cache — and a
+				// converged tenant that requeues every two seconds would pay it
+				// forever for an answer that is already True. With a bounded
+				// worker pool that backlog is what starves the tenants waiting
+				// on a first reconcile, a deletion among them.
+				//
+				// True going False again is still caught: finalize re-evaluates
+				// on any reconcile that reaches it, and the XTenant watch wakes
+				// one. The direction that hangs an install is False going True,
+				// and that is the direction this keeps checking.
+				if !tenantHasConditionTrue(state.tenant, conditionCrossplaneReady) {
+					_ = r.aggregateCrossplaneStatus(ctx, state.tenant)
+				}
 				if updErr := r.persistTenantStageProgress(ctx, state); updErr != nil {
 					return ctrl.Result{}, updErr
 				}
@@ -151,6 +174,16 @@ func (r *TenantReconciler) persistTenantStageProgress(ctx context.Context, state
 		if tenant.Status.Phase != gentianov1alpha1.TenantPhaseDegraded {
 			tenant.Status.Phase = gentianov1alpha1.TenantPhaseProvisioning
 		}
+	}
+
+	// A write that changes nothing is not free: this controller watches Tenant,
+	// so every status update it makes is an event that wakes it again. A tenant
+	// requeueing every two seconds while it converges therefore re-reconciles
+	// itself on top of its own timer, and with a bounded worker pool the tenants
+	// doing that starve the ones waiting for a first reconcile — a deletion
+	// among them. Writing only real changes keeps the timer as the only clock.
+	if state.statusAtEntry != nil && equality.Semantic.DeepEqual(state.statusAtEntry, &tenant.Status) {
+		return nil
 	}
 	return r.Status().Update(ctx, tenant)
 }
