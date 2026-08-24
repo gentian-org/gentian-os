@@ -57,7 +57,7 @@ _oidc_bao_addr() {
 # business, and D-08 reads the live claim because by then B-08 has applied it.
 _oidc_configured() {
     local claim_file url
-    claim_file="${GENTIAN_DEPLOYMENTS_PATH}/clusters/${GENTIAN_DEPLOYMENTS_CLUSTER_ID}/kernel/claims/cluster.yaml"
+    claim_file="${GENTIAN_DEPLOYMENTS_PATH:-}/clusters/${GENTIAN_DEPLOYMENTS_CLUSTER_ID:-}/kernel/claims/cluster.yaml"
     url="$(yq_get '.spec.oidc.discoveryUrl' "${claim_file}" 2>/dev/null || true)"
     if [[ -z "${url}" ]]; then
         url="$(kubectl get cluster.gentianos.io -n crossplane-system \

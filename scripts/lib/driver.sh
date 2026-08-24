@@ -555,6 +555,12 @@ drive_status() {
         printf '  [%s] %-26s %b\n' "$(step_number_of "$id")" "$(step_label_of "$id")" "$state"
     done
     echo ""
+
+    # A step table answers "what has run". This answers "and what is still
+    # lying around because of it" — the kit E-03 wrote is the one artefact of
+    # an install that is dangerous to leave where it landed, and --status is
+    # where an operator looks to find out whether anything is outstanding.
+    report_recovery_kit_left_behind
     return 0
 }
 

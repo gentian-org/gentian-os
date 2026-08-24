@@ -1272,6 +1272,10 @@ print_summary_cp() {
     fi
     echo ""
     print_handover_summary
+    # Before the closing line, not after it: on a finished install this is the
+    # only thing still asked of the operator, and "Install Complete" reads as
+    # nothing-left-to-do if the ask comes after it.
+    report_recovery_kit_left_behind
     if [[ -n "${_gentian_handover_done:-}" ]]; then
         echo -e "${GREEN}  Gentian OS infra bootstrap complete.${NC}"
     else
@@ -1289,6 +1293,52 @@ print_summary_cp() {
 # demonstrated that anyone else can — so the remaining work is the part with the
 # irreversible step in it, announced at the point where attention still exists.
 # =============================================================================
+# report_recovery_kit_left_behind — is the kit still where the installer put it?
+#
+# E-03 writes it beside the checkout because the installer cannot know where
+# this operator keeps break-glass material, and says at length that it has to
+# be moved. Whether it WAS moved is a fact about the filesystem, so it can be
+# checked rather than hoped for — and a kit sitting in a working directory is
+# the failure mode the location was a compromise against: it grants every
+# derived credential in the cluster to anyone who reads it.
+#
+# Reported, never acted on. Deleting a file that might be the operator's only
+# copy is exactly the wrong reflex, and "moved" is indistinguishable from
+# "copied and left" from here.
+report_recovery_kit_left_behind() {
+    local ns="${GENTIAN_SYSTEM_NAMESPACE:-gentian-system}"
+    local path found=""
+
+    path="$(kubectl get configmap gentian-handover -n "${ns}" \
+        -o jsonpath='{.data.recoveryKitPath}' 2>/dev/null || true)"
+    if [[ -n "${path}" && -e "${path}" ]]; then
+        found="${path}"
+    else
+        # A cluster whose handover record predates the path being written, or a
+        # kit exported by hand under any name. Any .age or .enc in the checkout
+        # is treated as one: those are the two extensions --export-recovery-kit
+        # produces, they are what .gitignore covers as kits, and nothing else
+        # in this repository has either. Only the checkout is looked at —
+        # anywhere else is the operator's own filing and none of this
+        # function's business.
+        local f
+        for f in "${SCRIPT_DIR}"/*.age "${SCRIPT_DIR}"/*.enc; do
+            [[ -e "${f}" ]] && { found="${f}"; break; }
+        done
+    fi
+    [[ -n "${found}" ]] || return 0
+
+    echo ""
+    warn "  RECOVERY KIT IS STILL IN THE WORKING DIRECTORY"
+    warn "    ${found}"
+    warn "    It grants every derived credential in this cluster to anyone who"
+    warn "    can decrypt it. Move it to where your break-glass material lives"
+    warn "    — a password manager, a sealed vault, offline media — and delete"
+    warn "    this copy once you have checked the moved one opens:"
+    warn "      age -d <the-moved-kit> | head -1"
+    echo ""
+}
+
 print_handover_summary() {
     local ns="${GENTIAN_SYSTEM_NAMESPACE:-gentian-system}"
     local proven revoked kit

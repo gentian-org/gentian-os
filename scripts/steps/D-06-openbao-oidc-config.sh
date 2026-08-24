@@ -58,7 +58,7 @@ _oidc_values() {
 
     if [[ -z "${OIDC_DISCOVERY_URL}" ]]; then
         local claim_file
-        claim_file="${GENTIAN_DEPLOYMENTS_PATH}/clusters/${GENTIAN_DEPLOYMENTS_CLUSTER_ID}/kernel/claims/cluster.yaml"
+        claim_file="${GENTIAN_DEPLOYMENTS_PATH:-}/clusters/${GENTIAN_DEPLOYMENTS_CLUSTER_ID:-}/kernel/claims/cluster.yaml"
         OIDC_DISCOVERY_URL="$(yq_get '.spec.oidc.discoveryUrl' "${claim_file}" 2>/dev/null || true)"
         OIDC_CLIENT_ID="$(yq_get '.spec.oidc.clientId' "${claim_file}" 2>/dev/null || true)"
         OIDC_SECRET_NS="$(yq_get '.spec.openbao.namespace' "${claim_file}" 2>/dev/null || true)"
