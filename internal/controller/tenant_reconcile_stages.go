@@ -103,6 +103,21 @@ func (r *TenantReconciler) runTenantReconcileStages(ctx context.Context, state *
 		}
 		if res.RequeueAfter > 0 || err != nil {
 			if res.RequeueAfter > 0 && err == nil {
+				// Re-read the composite before persisting. Only two places
+				// evaluated CrossplaneReady: the waitForTenantShell early return
+				// and the finalize stage. Once the shell was ready the first
+				// stopped running, and any stage in between that requeued
+				// returned here without ever reaching the second — so the
+				// condition stayed frozen at what it was moments after the
+				// XTenant was created, when it genuinely had no status yet.
+				// The composite could converge fully with the Tenant still
+				// reporting that it had no status at all, and nothing would
+				// revisit that until the caller timed out and rolled back a
+				// tenant that had actually finished provisioning.
+				//
+				// persistTenantStageProgress reads this condition to pick the
+				// phase, so refreshing it first fixes the phase too.
+				_ = r.aggregateCrossplaneStatus(ctx, state.tenant)
 				if updErr := r.persistTenantStageProgress(ctx, state); updErr != nil {
 					return ctrl.Result{}, updErr
 				}

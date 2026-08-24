@@ -102,6 +102,13 @@ DEPLOYMENTS_CLUSTER="${GENTIAN_DEPLOYMENTS_CLUSTER_ID:-default-cluster}"
 # Any new stage parameter must default to ${DEPLOYMENTS_STAGE}, never a literal.
 DEPLOYMENTS_STAGE="${GENTIAN_DEPLOYMENTS_STAGE:-dev}"
 
+# When a deploy fails, the tenant is torn down and deactivated in Git by default,
+# which is right for an operator who wants a clean cluster back. It is wrong for
+# anyone diagnosing WHY it failed: the teardown removes the Tenant, the XTenant,
+# the namespace and the Jobs, so the evidence is gone before it can be looked at.
+# --no-rollback leaves everything standing and prints where to look instead.
+TENANT_NO_ROLLBACK="${GENTIAN_TENANT_NO_ROLLBACK:-0}"
+
 # The plugin's own version, and a fingerprint of the file it is running from.
 #
 # The declared version answers "which release is this", and the fingerprint
@@ -179,9 +186,11 @@ Usage:
       ACTIVE=no when defined only under definitions/tenants/<name>/.
       LIVE=yes when the Tenant CR exists on the cluster.
 
-    kubectl gentian tenants deploy <instance>
+    kubectl gentian tenants deploy <instance> [--no-rollback]
       Deploy a tenant by applying clusters/<cluster>/tenants/<instance>/.
       If not yet deployed, copies the definition from definitions/tenants/<instance>/.
+      A failed deploy is rolled back and deactivated in Git; --no-rollback leaves
+      it standing so the failure can be inspected.
 
     kubectl gentian tenants undeploy <instance> [--purge|-f]
       Undeploy a tenant instance by removing clusters/<cluster>/tenants/<instance>/
@@ -1675,6 +1684,25 @@ rollback_deploy() {
   local _kustom_file="${4:-}"
   local ns_name="tenant-${tenant_name}"
 
+  if [[ "${TENANT_NO_ROLLBACK}" == "1" ]]; then
+    echo "" >&2
+    echo "failed to provision tenant — leaving it in place (--no-rollback)" >&2
+    echo "" >&2
+    echo "  Nothing has been torn down and nothing has been deactivated in Git." >&2
+    echo "  Inspect the state that failed:" >&2
+    echo "" >&2
+    echo "    kubectl get tenant ${tenant_name} -o yaml" >&2
+    echo "    kubectl get xtenant ${tenant_name} -o yaml" >&2
+    echo "    kubectl get managed | grep ${tenant_name}" >&2
+    echo "    kubectl logs -n gentian-system deploy/gentian-os --tail=200" >&2
+    echo "" >&2
+    echo "  Clean up when you are done:" >&2
+    echo "" >&2
+    echo "    gtnctl tenants undeploy ${instance} --env ${env_name}" >&2
+    echo "" >&2
+    exit 1
+  fi
+
   echo "failed to provision tenant, rolling back" >&2
 
   # Match `tenants undeploy`: deactivate in Git first so ArgoCD stops reconciling
@@ -1997,7 +2025,7 @@ cmd_tenant_deploy() {
   local env_name="${2:-${DEPLOYMENTS_STAGE}}"
 
   if [[ -z "${instance}" ]]; then
-    echo "ERROR: usage: kubectl gentian tenants deploy <instance> [--env <env>]" >&2
+    echo "ERROR: usage: kubectl gentian tenants deploy <instance> [--env <env>] [--no-rollback]" >&2
     exit 1
   fi
 
@@ -3391,6 +3419,10 @@ case "${SUBCOMMAND}" in
             --env|-e)
               TENANT_ENV="${2:-}"
               shift 2
+              ;;
+            --no-rollback)
+              TENANT_NO_ROLLBACK=1
+              shift
               ;;
             *)
               echo "ERROR: unknown flag: ${1}" >&2

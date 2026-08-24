@@ -46,6 +46,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
+	"sigs.k8s.io/controller-runtime/pkg/event"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
@@ -371,6 +372,46 @@ func (r *TenantReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Kind:    cnpgDatabaseKind,
 	})
 
+	// xTenantObj watches the Crossplane composite this controller creates per
+	// Tenant. Without it the composite reaching Ready was not an event at all:
+	// the Tenant re-read it only when some unrelated watched object happened to
+	// fire, so a tenant whose infrastructure had fully converged could sit in
+	// Provisioning with nothing left to wake it.
+	xTenantObj := &unstructured.Unstructured{}
+	xTenantObj.SetGroupVersionKind(xTenantGVK)
+
+	// Status changes only. ensureTenantXR patches the composite's spec on every
+	// reconcile, so watching the object unfiltered means the controller wakes
+	// itself: patch spec, observe the write, reconcile, patch spec again. That
+	// is a hot loop per tenant, and with a bounded worker pool the tenants stuck
+	// in it starve every other tenant — including one that has only just been
+	// created and is waiting for its first reconcile.
+	//
+	// Only the composite's status is worth waking for: it carries the Ready
+	// condition this controller mirrors onto the Tenant.
+	xTenantHasTenantLabel := func(obj client.Object) bool {
+		_, hasLabel := obj.GetLabels()[tenantLabel]
+		return hasLabel
+	}
+	xTenantStatusChanged := predicate.Funcs{
+		CreateFunc:  func(e event.CreateEvent) bool { return xTenantHasTenantLabel(e.Object) },
+		DeleteFunc:  func(e event.DeleteEvent) bool { return xTenantHasTenantLabel(e.Object) },
+		GenericFunc: func(e event.GenericEvent) bool { return xTenantHasTenantLabel(e.Object) },
+		UpdateFunc: func(e event.UpdateEvent) bool {
+			if !xTenantHasTenantLabel(e.ObjectNew) {
+				return false
+			}
+			oldXR, okOld := e.ObjectOld.(*unstructured.Unstructured)
+			newXR, okNew := e.ObjectNew.(*unstructured.Unstructured)
+			if !okOld || !okNew {
+				return true
+			}
+			oldStatus, _, _ := unstructured.NestedMap(oldXR.Object, "status")
+			newStatus, _, _ := unstructured.NestedMap(newXR.Object, "status")
+			return !equality.Semantic.DeepEqual(oldStatus, newStatus)
+		},
+	}
+
 	mapAllTenants := func(ctx context.Context, _ client.Object) []reconcile.Request {
 		tenantList := &gentianov1alpha1.TenantList{}
 		if err := mgr.GetClient().List(ctx, tenantList); err != nil {
@@ -436,6 +477,11 @@ func (r *TenantReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Watches(
 			&gentianov1alpha1.AppProfile{},
 			handler.EnqueueRequestsFromMapFunc(mapAppProfileToTenants),
+		).
+		Watches(
+			xTenantObj,
+			handler.EnqueueRequestsFromMapFunc(mapToTenant),
+			builder.WithPredicates(xTenantStatusChanged),
 		)
 
 	if isGatewayRoutingMode(r.RoutingMode) {
