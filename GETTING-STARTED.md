@@ -12,9 +12,10 @@ already done, so a second run continues rather than restarting.
 ./install.sh     # installs everything, writes the recovery kit, then waits
 ```
 
-It waits for two things only you can do: move the kit somewhere safe, and sign
-in at `https://portal.<your-domain>/login`. It sees the sign-in, finishes
-handover itself, and prints `Install Complete`.
+It then waits for the things only you can do: move the kit somewhere safe, sign
+in at `https://portal.<your-domain>/login`, and supply the runtime credentials
+the portal asks for. It sees the sign-in, finishes handover itself, and prints
+`Install Complete`.
 
 For flags, troubleshooting and the non-default installs — internal domains,
 mirrors, uninstalling — see
@@ -240,23 +241,28 @@ the one thing you have to look after — step 9.
 
 ## 9. Handover
 
-The install pauses here and waits for you. Two things finish it:
+The install pauses here and waits for you. Three things finish it:
 
 1. **Move the recovery kit somewhere safe.** Step 8 wrote it next to the
    checkout and printed the filename. Put it where your break-glass material
    already lives — a password manager, a sealed vault, offline media. Without
    it this cluster cannot be rebuilt as itself.
-2. **Sign in to the portal** as the administrator, at the URL in the summary.
+2. **Sign in to the portal** as the administrator. The installer prints the URL,
+   the username and the password while it waits.
+3. **Supply the runtime credentials.** Once signed in, open the **Credentials**
+   tab and fill in what the cluster is still missing — SMTP relay, any extra app
+   repository and its pull secret.
 
 Signing in is what the installer is waiting for: it proves someone other than
-the installer can write credentials. The moment it sees that, it revokes its
-own credential, deletes the temporary secret files, and prints
-**`Install Complete`**.
+the installer can write credentials. The moment it sees that, it revokes its own
+credential, deletes the temporary secret files, and prints **`Install Complete`**.
 
-While you are signed in, open the **Credentials** tab and supply what the
-cluster is still missing — SMTP relay, any extra app repository and its pull
-secret. If your mail mode is `external`, do the relay first: without it no
-realm can send, so you cannot invite anyone.
+**Do the SMTP relay first.** It is not only about sending mail. Any app whose
+profile asks for SMTP reads those credentials from OpenBao, and they are written
+there only once the relay exists — so until you supply it, those apps do not
+install at all: the tenant stays in `Provisioning` and the app's secret never
+syncs. On a cluster with `mail.serviceMode: external` this is the most common
+reason a first tenant appears to hang.
 
 Interrupting the wait costs nothing. Sign in whenever you like, then:
 

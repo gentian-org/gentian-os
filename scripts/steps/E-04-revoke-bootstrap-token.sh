@@ -233,7 +233,7 @@ _wait_for_sign_in() {
 
     echo ""
     warn "╔══════════════════════════════════════════════════════════════════╗"
-    warn "║  WAITING FOR YOU — two things left                               ║"
+    warn "║  WAITING FOR YOU — three things left                             ║"
     warn "╚══════════════════════════════════════════════════════════════════╝"
     echo ""
 
@@ -294,6 +294,38 @@ _wait_for_sign_in() {
         warn "  ${url}"
         warn "  User: administrator@${KERNEL_DOMAIN:-<kernel-domain>}"
         warn "  Password: derived — print it with ./install.sh --verify-only"
+    fi
+    echo ""
+
+    # The third thing, and the one whose absence is silent until it is not.
+    #
+    # An app profile that declares an smtp mapping gets an ExternalSecret with
+    # smtp-* keys pointing at gentian-os/tenants/<t>/apps/<app>/smtp, which the
+    # mail reconciler writes by copying the tenant's SMTP secret — and that
+    # secret only exists once the relay credentials have been supplied. Without
+    # them the path is never written, ESO fails the WHOLE secret for that one
+    # unresolvable reference, the app's Helm release cannot compose its values,
+    # and the tenant sits in Provisioning until it times out. Observed exactly
+    # that: nextcloud-base-ce stuck for 12 minutes on
+    # "Secret nextcloud-base-ce-sensitive-values not found", four of five KV
+    # paths present and smtp missing.
+    #
+    # The install cannot supply these — they are somebody's relay account — so
+    # naming them here, on the screen that has stopped, is the most it can do.
+    warn "  3. SUPPLY THE RUNTIME CREDENTIALS"
+    warn "     Once signed in, open the Credentials tab and fill in what the"
+    warn "     cluster is still missing. Do the SMTP relay FIRST."
+    local mail_mode
+    mail_mode="$(kubectl get cluster.gentianos.io -n crossplane-system \
+        -o jsonpath='{.items[0].spec.mail.serviceMode}' 2>/dev/null || true)"
+    if [[ "${mail_mode}" == "external" ]]; then
+        warn "     This cluster's mail.serviceMode is 'external', so nothing"
+        warn "     sends until the relay is set — and any tenant app that asks"
+        warn "     for SMTP will not install at all: its credentials never"
+        warn "     reach OpenBao, so its secret never syncs."
+    else
+        warn "     Without it no realm can send, so you cannot invite anyone,"
+        warn "     and tenant apps that ask for SMTP will not install."
     fi
     echo ""
     info "  Signing in proves someone other than the installer can write"
