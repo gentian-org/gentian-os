@@ -701,6 +701,7 @@ spec:
     standardFlowEnabled: false
   managementPolicies:
   - Observe
+  - Create
   providerConfigRef:
     name: keycloak
 ---

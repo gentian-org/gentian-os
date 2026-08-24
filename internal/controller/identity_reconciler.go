@@ -601,6 +601,41 @@ if [ -n "${KERNEL_REALM:-}" ] && [ -n "${KERNEL_EXTERNAL_URL:-}" ]; then
   # Secret. Something has to create it first, and on a realm that does not exist
   # yet that something cannot be the Composition.
 
+  # ── The reverse direction: the kernel realm brokering INTO this tenant ──────
+  #
+  # The mirror of the client above, and for exactly the same reason. That one
+  # lets a tenant user log in through the kernel realm; this one lets the kernel
+  # portal reach a tenant's own users. The client lives in the TENANT realm and
+  # the IdP that consumes it lives in the kernel realm, aliased by the tenant —
+  # tenant-default composes that IdP and observes this client, taking its
+  # credentials from the connection Secret.
+  #
+  # It had no creator. The Composition observes it, by the same design as above,
+  # and nothing wrote it — so every tenant sat at "observe failed: external
+  # resource does not exist" on this client and never reached Ready, while the
+  # apps underneath it came up fine.
+  #
+  # publicClient false is what makes the secret exist at all: a public client
+  # has none, and the IdP authenticates with one. The redirect URI is the kernel
+  # realm's broker endpoint for this tenant's alias, which is the tenant name.
+  REVERSE_CLIENT_ID="broker-kernel-portal"
+  REVERSE_REDIRECT="${KERNEL_EXTERNAL_URL}/realms/${KERNEL_REALM}/broker/${REALM_NAME}/endpoint"
+
+  REVERSE_RESP=$(curl -sf --max-time 30 -H "Authorization: Bearer ${TOKEN}" \
+    "${KEYCLOAK_URL}/admin/realms/${REALM_NAME}/clients?clientId=${REVERSE_CLIENT_ID}")
+  if echo "${REVERSE_RESP}" | grep -q "\"clientId\":\"${REVERSE_CLIENT_ID}\""; then
+    echo "reverse broker client ${REVERSE_CLIENT_ID} already exists in ${REALM_NAME} realm"
+  else
+    curl -sf --max-time 30 -X POST "${KEYCLOAK_URL}/admin/realms/${REALM_NAME}/clients" \
+      -H "Authorization: Bearer ${TOKEN}" \
+      -H "Content-Type: application/json" \
+      -d "{\"clientId\":\"${REVERSE_CLIENT_ID}\",\"redirectUris\":[\"${REVERSE_REDIRECT}\"],\"protocol\":\"openid-connect\",\"standardFlowEnabled\":true,\"publicClient\":false}"
+    echo "reverse broker client ${REVERSE_CLIENT_ID} created in ${REALM_NAME} realm"
+  fi
+  # Created, never updated. The secret is the Composition's to republish and the
+  # IdP's to consume; rewriting it here on every reconcile is the rotation that
+  # would break portal login until the IdP caught up.
+
 # No gentian_username mappers here. This script wrote both — the one that makes
 # the kernel broker client emit the claim, and the one that imports it back into
 # the tenant user's uid — and so did the broker-idp Job, of three writers for two

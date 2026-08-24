@@ -371,9 +371,27 @@ spec:
                 gotemplating.fn.crossplane.io/composition-resource-name: keycloak-portal-bff-client
             spec:
               deletionPolicy: Orphan
-              # Observe-only, deliberately, and the one client here that is not
-              # fully managed. See the forProvider comment below.
-              managementPolicies: ["Observe"]
+              # Create and Observe, and deliberately not Update or
+              # LateInitialize. See the forProvider comment below for why the
+              # update path is the one that cannot be taken here.
+              #
+              # Observe alone left nothing to observe. The Job that used to
+              # create this client was retired on the understanding that the
+              # Composition had taken it over, and the Composition only read it
+              # — so in a tenant realm the client was never created by anything,
+              # this resource sat at "observe failed: external resource does not
+              # exist", and every tenant hung in Provisioning until it timed
+              # out. The kernel realm has one because portal-login-bootstrap.sh
+              # creates it there; no tenant realm did.
+              #
+              # Create is safe precisely where Update is not. The update fails
+              # because the LIVE object holds redirectUris alongside a disabled
+              # standard flow, and any write re-validates that combination. A
+              # create writes only what is declared below, which does not
+              # include those fields, so there is nothing illegal to re-validate
+              # — and a tenant realm has no pre-existing client to inherit the
+              # problem from.
+              managementPolicies: ["Observe", "Create"]
               forProvider:
                 clientId: gentian-portal-bff
                 name: Gentian Portal BFF
