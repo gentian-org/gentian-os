@@ -19,7 +19,9 @@ package credentialmgr
 import (
 	"context"
 	"crypto/tls"
+	"encoding/json"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"net/smtp"
@@ -43,6 +45,12 @@ type EndpointValidator struct {
 	// Relay resolves the SMTP relay endpoint. Nil means smtp validation cannot
 	// run, and says so rather than passing.
 	Relay RelayResolver
+
+	// KernelDomain is the domain DNS-01 challenges are answered for. Empty
+	// means cloudflare-dns validation cannot run, and says so rather than
+	// passing: a token that reaches Cloudflare but not this cluster's zone
+	// would satisfy a check that only asked "is this a valid token".
+	KernelDomain string
 }
 
 // NewEndpointValidator builds a validator with a bounded timeout, so an
@@ -87,6 +95,8 @@ func (v *EndpointValidator) Validate(ctx context.Context, kind, host string, fie
 		return v.bearerProbe(ctx, host, fields["api-token"], "api-token")
 	case "smtp":
 		return v.smtpProbe(ctx, fields)
+	case "cloudflare-dns":
+		return v.cloudflareZoneProbe(ctx, fields["api-token"])
 	default:
 		return fmt.Errorf("unknown validator type %q", kind)
 	}
@@ -267,4 +277,75 @@ func (a loginAuth) Next(fromServer []byte, more bool) ([]byte, error) {
 	default:
 		return nil, fmt.Errorf("unexpected AUTH LOGIN challenge %q", string(fromServer))
 	}
+}
+
+// cloudflareZoneProbe checks that the token can reach the zone DNS-01 has to
+// write into, which is a different question from whether the token is valid.
+//
+// A token can authenticate to Cloudflare and still carry no rights on this
+// cluster's zone — scoped to another account, or to zones that do not include
+// this one. Accepting it would move the failure to the first certificate
+// renewal, where it appears as an ACME timeout with no mention of a credential.
+//
+// The zone list is matched by suffix because the kernel domain is routinely a
+// subdomain of the zone: a cluster on cluster.example.com is served by the
+// example.com zone, and asking Cloudflare for a zone named after the full
+// domain would find nothing and report a working token as broken.
+func (v *EndpointValidator) cloudflareZoneProbe(ctx context.Context, token string) error {
+	if strings.TrimSpace(token) == "" {
+		return fmt.Errorf("api-token is required")
+	}
+	if v.KernelDomain == "" {
+		return fmt.Errorf("cannot check the token: this cluster's kernel domain is not known to the credential manager")
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet,
+		"https://api.cloudflare.com/client/v4/zones?per_page=50", nil)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Authorization", "Bearer "+strings.TrimSpace(token))
+	req.Header.Set("Accept", "application/json")
+
+	resp, err := v.HTTP.Do(req)
+	if err != nil {
+		return fmt.Errorf("could not reach the Cloudflare API: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	switch {
+	case resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden:
+		return fmt.Errorf("Cloudflare rejected the api-token (HTTP %d)", resp.StatusCode)
+	case resp.StatusCode < 200 || resp.StatusCode > 299:
+		return fmt.Errorf("Cloudflare answered HTTP %d listing zones", resp.StatusCode)
+	}
+
+	var payload struct {
+		Success bool `json:"success"`
+		Result  []struct {
+			Name string `json:"name"`
+		} `json:"result"`
+	}
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&payload); err != nil {
+		return fmt.Errorf("could not read the Cloudflare zone list: %w", err)
+	}
+	if !payload.Success {
+		return fmt.Errorf("Cloudflare reported the zone listing as unsuccessful")
+	}
+
+	domain := strings.ToLower(strings.TrimSuffix(v.KernelDomain, "."))
+	for _, zone := range payload.Result {
+		zoneName := strings.ToLower(strings.TrimSuffix(zone.Name, "."))
+		if zoneName == "" {
+			continue
+		}
+		if domain == zoneName || strings.HasSuffix(domain, "."+zoneName) {
+			return nil
+		}
+	}
+	// The zone names are not repeated back: the operator is being told their
+	// token is scoped elsewhere, and listing another account's zones in a
+	// validation error would disclose them to whoever pasted the token.
+	return fmt.Errorf("the api-token reaches Cloudflare but carries no zone covering %s (%d zone(s) visible to it)",
+		domain, len(payload.Result))
 }

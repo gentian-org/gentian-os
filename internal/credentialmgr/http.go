@@ -137,6 +137,12 @@ func NewRunnableFromEnv(mgr manager.Manager, validator Validator) (*Server, erro
 	if ev, ok := validator.(*EndpointValidator); ok && ev.Relay == nil {
 		ev.Relay = clusterRelayResolver(mgr)
 	}
+	// And the domain a DNS credential has to have rights over. Same env the
+	// operator resolves every other kernel hostname from, so the two cannot
+	// disagree about which zone this cluster lives in.
+	if ev, ok := validator.(*EndpointValidator); ok && ev.KernelDomain == "" {
+		ev.KernelDomain = os.Getenv("KERNEL_DOMAIN")
+	}
 	return &Server{
 		Addr: addr,
 		Catalogue: &Catalogue{
