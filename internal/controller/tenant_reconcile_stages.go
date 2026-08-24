@@ -41,6 +41,63 @@ import (
 // how long a fixed cluster stays Degraded against reconcile churn per tenant.
 const tenantBlockedRequeueAfter = 30 * time.Second
 
+const (
+	// How long a tenant may go without any condition transition before its
+	// requeue interval is stretched. A stage asks to be run again in about two
+	// seconds because that is the right pace for something about to finish; it
+	// is the wrong pace for something that has been waiting on the same
+	// external fact for ten minutes, and the reconciler cannot tell the two
+	// apart from inside a single stage.
+	//
+	// A tenant that keeps a worker busy every two seconds is not free. Work
+	// arriving once — a deletion above all — waits behind every tenant still
+	// converging, and the more tenants a cluster has, the longer it waits.
+	tenantConvergenceFastWindow = 1 * time.Minute
+	tenantConvergenceSlowWindow = 5 * time.Minute
+
+	// Stretched, not abandoned. Something that converges after twenty minutes
+	// is still noticed within half a minute of doing so, and anything that
+	// reports its own progress wakes the tenant immediately through a watch
+	// rather than through this timer.
+	tenantConvergenceMaxRequeue = 30 * time.Second
+)
+
+// tenantConvergenceRequeue scales a stage's requested requeue by how long the
+// tenant has gone without a condition transition. A transition is this
+// controller's only general-purpose evidence that something moved, so a tenant
+// that is making progress keeps the pace the stage asked for and one that is
+// stuck backs off.
+func tenantConvergenceRequeue(tenant *gentianov1alpha1.Tenant, base time.Duration, now time.Time) time.Duration {
+	if base <= 0 {
+		return base
+	}
+	var latest time.Time
+	for _, condition := range tenant.Status.Conditions {
+		if condition.LastTransitionTime.Time.After(latest) {
+			latest = condition.LastTransitionTime.Time
+		}
+	}
+	// No transition recorded yet means the tenant has only just arrived, which
+	// is when the stage's own pace is most likely to be right.
+	if latest.IsZero() {
+		return base
+	}
+
+	var scaled time.Duration
+	switch stalled := now.Sub(latest); {
+	case stalled < tenantConvergenceFastWindow:
+		return base
+	case stalled < tenantConvergenceSlowWindow:
+		scaled = base * 4
+	default:
+		scaled = base * 15
+	}
+	if scaled > tenantConvergenceMaxRequeue {
+		return tenantConvergenceMaxRequeue
+	}
+	return scaled
+}
+
 // ReconcileStage names a tenant reconcile pipeline phase. Stages run in order;
 // the first stage that returns RequeueAfter or error short-circuits the pipeline.
 type ReconcileStage string
@@ -146,12 +203,19 @@ func (r *TenantReconciler) runTenantReconcileStages(ctx context.Context, state *
 				}
 			}
 			if res.RequeueAfter > 0 {
+				res.RequeueAfter = tenantConvergenceRequeue(state.tenant, res.RequeueAfter, time.Now())
 				log.FromContext(ctx).Info("tenant reconcile short-circuit", "stage", step.stage, "tenant", state.tenant.Name, "requeueAfter", res.RequeueAfter)
 			}
 			return res, err
 		}
 	}
-	return r.reconcileTenantStageFinalize(ctx, state)
+	// Finalize has a return per data-plane stage; the pacing applies to all of
+	// them, so it is applied to what finalize returns rather than at each one.
+	finalRes, finalErr := r.reconcileTenantStageFinalize(ctx, state)
+	if finalRes.RequeueAfter > 0 {
+		finalRes.RequeueAfter = tenantConvergenceRequeue(state.tenant, finalRes.RequeueAfter, time.Now())
+	}
+	return finalRes, finalErr
 }
 
 // persistTenantStageProgress writes in-memory condition and phase updates when a
