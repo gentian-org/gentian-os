@@ -1251,6 +1251,16 @@ print_summary_cp() {
         print_portal_login_summary
     fi
     echo ""
+    # The CLI, because tenants are created with it and the installer does not
+    # install it. Named here rather than left to the docs: this is the screen an
+    # operator has in front of them when they go looking for what to do next.
+    echo -e "${GREEN}  Manage tenants and apps with the gentian CLI:${NC}"
+    if command -v kubectl-gentian >/dev/null 2>&1; then
+        echo -e "${GREEN}    gtnctl tenants deploy <name>     (installed; 'gtnctl version' to check it)${NC}"
+    else
+        echo -e "${GREEN}    make -C ${SCRIPT_DIR} install-plugin   then: gtnctl tenants deploy <name>${NC}"
+    fi
+    echo ""
     echo -e "${GREEN}  Inspect authz stack:${NC}"
     echo -e "${GREEN}    kubectl get xsuze,suze -n crossplane-system${NC}"
     echo -e "${GREEN}    kubectl get secret openfga-runtime -n platform-kernel${NC}"

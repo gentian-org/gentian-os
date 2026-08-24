@@ -556,11 +556,15 @@ drive_status() {
     done
     echo ""
 
-    # A step table answers "what has run". This answers "and what is still
+    # A step table answers "what has run". These answer "and what is still
     # lying around because of it" — the kit E-03 wrote is the one artefact of
     # an install that is dangerous to leave where it landed, and --status is
     # where an operator looks to find out whether anything is outstanding.
     report_recovery_kit_left_behind
+    # The CLI is not a step, so no row above can report it, and it is the tool
+    # every tenant is created with. A copy that is not this checkout's runs
+    # without complaint and does something slightly different.
+    report_gentian_cli_state
     return 0
 }
 

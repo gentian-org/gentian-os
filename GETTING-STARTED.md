@@ -309,6 +309,15 @@ make install-plugin      # kubectl-gentian + gtnctl into ~/.local/bin
 
 The installer does not do this for you, and `--uninstall` does not remove it:
 one CLI serves every cluster you manage. Remove it with `make uninstall-plugin`.
+Neither needs `sudo` — both write to `~/.local/bin`.
+
+Re-run `make install-plugin` after pulling. The CLI is a copy, not a link, so it
+does not follow the checkout, and `./install.sh --status` warns when the copy on
+your PATH is not the one in your tree. To see which copy answers:
+
+```bash
+gtnctl version           # version, fingerprint, and any other copy on PATH
+```
 
 Scaffold the definition:
 

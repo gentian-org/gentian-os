@@ -102,6 +102,50 @@ DEPLOYMENTS_CLUSTER="${GENTIAN_DEPLOYMENTS_CLUSTER_ID:-default-cluster}"
 # Any new stage parameter must default to ${DEPLOYMENTS_STAGE}, never a literal.
 DEPLOYMENTS_STAGE="${GENTIAN_DEPLOYMENTS_STAGE:-dev}"
 
+# The plugin's own version, and a fingerprint of the file it is running from.
+#
+# The declared version answers "which release is this", and the fingerprint
+# answers the question that actually bites: whether the copy on PATH is the one
+# in the checkout. This is a script copied into place, not a built artefact, so
+# two installs can carry the same version string and different content — a
+# machine can easily end up with ~/.local/bin ahead of /usr/local/bin, or both
+# behind the repo, and nothing said so.
+#
+# Bump alongside charts/gentian-os/Chart.yaml.
+GENTIAN_PLUGIN_VERSION="0.4.0"
+
+# gentian_plugin_fingerprint — sha256 of this file, short form, or "unknown".
+#
+# BASH_SOURCE[0] rather than $0, so it fingerprints the plugin itself when it is
+# invoked through the gtnctl symlink or as `kubectl gentian`.
+gentian_plugin_fingerprint() {
+    local self="${BASH_SOURCE[0]}"
+    local sum=""
+    if command -v sha256sum >/dev/null 2>&1; then
+        sum="$(sha256sum "${self}" 2>/dev/null | cut -c1-12)"
+    elif command -v shasum >/dev/null 2>&1; then
+        sum="$(shasum -a 256 "${self}" 2>/dev/null | cut -c1-12)"
+    fi
+    echo "${sum:-unknown}"
+}
+
+cmd_version() {
+    local self="${BASH_SOURCE[0]}"
+    echo "kubectl-gentian ${GENTIAN_PLUGIN_VERSION}"
+    echo "  fingerprint : $(gentian_plugin_fingerprint)"
+    echo "  path        : ${self}"
+    # Every copy on PATH, because the one that runs is decided by PATH order and
+    # a stale second copy is invisible until it is the one that answers.
+    local found others=""
+    while IFS= read -r found; do
+        [[ -n "${found}" ]] || continue
+        [[ "${found}" == "${self}" ]] && continue
+        others+="    also on PATH: ${found}"$'\n'
+    done < <(type -aP kubectl-gentian 2>/dev/null || true)
+    [[ -n "${others}" ]] && printf '%s' "${others}"
+    return 0
+}
+
 usage() {
   cat <<EOF
 kubectl-gentian — Gentian OS management plugin (also available as gtnctl)
@@ -180,6 +224,12 @@ Examples:
   kubectl gentian tenants deploy demo
   kubectl gentian tenants undeploy demo
   kubectl gentian tenants undeploy demo --purge   # or -f
+
+  kubectl gentian version
+  gtnctl version
+      This plugin's version, the fingerprint of the file running, and any
+      other copy on PATH. Compare the fingerprint with the checkout's
+      scripts/kubectl-gentian when a command behaves unlike the repo does.
 EOF
 }
 
@@ -3378,6 +3428,9 @@ case "${SUBCOMMAND}" in
         exit 1
         ;;
     esac
+    ;;
+  version|--version|-v)
+    cmd_version
     ;;
   help|--help|-h)
     usage
