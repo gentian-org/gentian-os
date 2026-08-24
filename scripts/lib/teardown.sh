@@ -103,6 +103,42 @@ _delete_crossplane_crds() {
     _purge_restart_crossplane
 }
 
+
+# _delete_argocd_application — delete one Application, bounded.
+#
+# `kubectl delete application` has no timeout by default and the Application
+# carries resources-finalizer.argocd.argoproj.io, which Argo clears only once
+# every resource the Application manages is gone. When one of those cannot
+# finalize, the delete does not slow down — it stops, and takes the teardown
+# with it.
+#
+# Seen on ifk-w4h: gentian-appsets and crossplane-xrds each waited on XRDs held
+# by foregroundDeletion, which waited on a Cluster claim whose finalizer nothing
+# would ever remove, because Crossplane's composite controllers had tripped
+# their circuit breaker. Two purges sat on the same command for half an hour,
+# and would have sat there indefinitely.
+#
+# The finalizer strip is the fallback, not the first move. Removing it up front
+# would orphan whatever the Application still manages; letting Argo do its
+# cascade is right, and only a cascade that has demonstrably stalled is worth
+# cutting.
+_delete_argocd_application() {
+    local app="$1" ns="${2:-argocd}" timeout="${3:-120}"
+
+    kubectl get application "${app}" -n "${ns}" >/dev/null 2>&1 || return 0
+
+    if kubectl delete application "${app}" -n "${ns}" \
+        --ignore-not-found=true --timeout="${timeout}s" >/dev/null 2>&1; then
+        return 0
+    fi
+
+    warn "  Application ${app} did not finalize in ${timeout}s — clearing its finalizer."
+    kubectl patch application "${app}" -n "${ns}" --type=merge \
+        -p='{"metadata":{"finalizers":[]}}' >/dev/null 2>&1 || true
+    kubectl delete application "${app}" -n "${ns}" \
+        --ignore-not-found=true --wait=false >/dev/null 2>&1 || true
+}
+
 # Helper: strip finalizers via kubectl patch (standard CRD API path).
 # Works reliably while the CRD is still registered.
 _argocd_strip_kubectl() {

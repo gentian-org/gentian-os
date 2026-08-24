@@ -71,7 +71,6 @@ destroy() {
     # teardown must remove what an earlier run created under a configuration
     # this one no longer has.
     for app in openbao reloader cnpg kernel-admin globals external-dns; do
-        kubectl delete application "$(_bootstrap_app_object_name "$app")" \
-            -n argocd --ignore-not-found=true 2>/dev/null || true
+        _delete_argocd_application "$(_bootstrap_app_object_name "$app")"
     done
 }

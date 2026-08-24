@@ -26,6 +26,5 @@ apply() {
 }
 
 destroy() {
-    kubectl delete application gentian-appsets -n argocd \
-        --ignore-not-found=true 2>/dev/null || true
+    _delete_argocd_application gentian-appsets
 }

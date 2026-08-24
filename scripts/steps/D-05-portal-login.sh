@@ -41,8 +41,7 @@ apply() {
 }
 
 destroy() {
-    kubectl delete application gentian-portal -n argocd \
-        --ignore-not-found=true 2>/dev/null || true
+    _delete_argocd_application gentian-portal
     # Created by configure_keycloak_realm_smtp in this step's apply().
     kubectl delete secret keycloak-smtp-credentials -n platform-kernel \
         --ignore-not-found=true 2>/dev/null || true
