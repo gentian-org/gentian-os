@@ -270,7 +270,7 @@ export_recovery_kit() {
     info "  the keys here belong to the old one — they unseal a restored Raft"
     info "  snapshot, nothing else."
 
-    _record_kit_export_proof
+    _record_kit_export_proof "${out}"
 }
 
 # _record_kit_export_proof — note in gentian-handover that a kit now exists.
@@ -285,8 +285,15 @@ export_recovery_kit() {
 # still a usable kit — the record is a convenience for the gate, not a
 # property of the file — so this warns rather than fails the export.
 _record_kit_export_proof() {
+    local out="${1:-}"
     local ns="${GENTIAN_SYSTEM_NAMESPACE:-gentian-system}"
     local now; now="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+
+    # The path is recorded too, so a later step can name the file rather than
+    # describe it. E-04 stops the install to ask for two things, one of which
+    # is "move that kit" — and an instruction to move a file is no use without
+    # the file's name. It was written and announced hundreds of lines earlier,
+    # which by then has scrolled away.
 
     # patch first: unambiguous (RFC 7396 JSON Merge Patch merges .data by key,
     # never wipes what handover.RecordWritePathProven or E-04 already wrote),
@@ -294,7 +301,7 @@ _record_kit_export_proof() {
     # ConfigMap does not exist yet — expected when export runs before anyone
     # has signed in, which GETTING-STARTED's own ordering invites.
     if kubectl patch configmap gentian-handover -n "${ns}" --type=merge \
-        -p "{\"data\":{\"recoveryKitExported\":\"true\",\"recoveryKitExportedAt\":\"${now}\"}}" \
+        -p "{\"data\":{\"recoveryKitExported\":\"true\",\"recoveryKitExportedAt\":\"${now}\",\"recoveryKitPath\":\"${out}\"}}" \
         >/dev/null 2>&1; then
         return 0
     fi
@@ -307,6 +314,7 @@ _record_kit_export_proof() {
     if kubectl create configmap gentian-handover -n "${ns}" \
         --from-literal="recoveryKitExported=true" \
         --from-literal="recoveryKitExportedAt=${now}" \
+        --from-literal="recoveryKitPath=${out}" \
         >/dev/null 2>&1; then
         return 0
     fi

@@ -233,8 +233,35 @@ _wait_for_sign_in() {
 
     echo ""
     warn "╔══════════════════════════════════════════════════════════════════╗"
-    warn "║  WAITING FOR YOU — sign in to finish the install                 ║"
+    warn "║  WAITING FOR YOU — two things left                               ║"
     warn "╚══════════════════════════════════════════════════════════════════╝"
+    echo ""
+
+    # Both instructions here, in the colour the rest of the installer uses for
+    # things that matter.
+    #
+    # The kit warning used to be printed by E-03, several minutes and a few
+    # hundred lines earlier, and had scrolled off by the time the install
+    # stopped to wait. The one screen an operator is actually looking at — the
+    # one that is not moving — has to carry everything they are being asked to
+    # do. The path comes from the handover record rather than being recomputed,
+    # so this names the file E-03 actually wrote.
+    local kit_path
+    kit_path="$(kubectl get configmap gentian-handover \
+        -n "${GENTIAN_SYSTEM_NAMESPACE:-gentian-system}" \
+        -o jsonpath='{.data.recoveryKitPath}' 2>/dev/null || true)"
+
+    warn "  1. MOVE THE RECOVERY KIT SOMEWHERE SAFE"
+    if [[ -n "${kit_path}" ]]; then
+        warn "       ${kit_path}"
+    else
+        warn "       the gentian-recovery-kit-*.age file beside this checkout"
+    fi
+    warn "     A password manager, a sealed vault, offline media. Without it"
+    warn "     this cluster cannot be rebuilt as itself, and there is no way"
+    warn "     back into OpenBao if its login path ever breaks."
+    echo ""
+    warn "  2. SIGN IN as the cluster administrator"
     echo ""
 
     # The credentials, here, rather than a pointer to them.
