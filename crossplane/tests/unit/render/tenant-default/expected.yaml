@@ -877,6 +877,8 @@ spec:
   deletionPolicy: Orphan
   forProvider:
     accessTokenLifespan: 12h0m0s
+    attributes:
+      frontendUrl: https://id.platform.example.test/auth
     browserFlow: browser
     displayName: Render Fixture
     enabled: true

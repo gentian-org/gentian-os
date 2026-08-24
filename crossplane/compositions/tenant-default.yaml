@@ -1168,6 +1168,32 @@ spec:
                 realm: {{ $tenant }}
                 enabled: true
                 displayName: {{ $spec.displayName | quote }}
+                {{- if $kd }}
+                {{- /* The URL this realm advertises for itself, independent of
+                     how it was asked.
+
+                     Keycloak runs without KC_HOSTNAME and with
+                     KC_PROXY_HEADERS=xforwarded, so it derives the endpoints in
+                     its discovery document from the incoming request. A browser
+                     arriving through the gateway gets external URLs; a service
+                     fetching .well-known over the cluster Service sends no
+                     forwarded headers and gets back the in-cluster address as
+                     authorization_endpoint.
+
+                     An app that reads discovery in-cluster — the ordinary way
+                     for a backend to do it — then redirects the browser to
+                     http://<service>.<ns>.svc.cluster.local:8080, which the
+                     browser cannot resolve. The visible failure is a login that
+                     never leaves the loading screen, with nothing logged
+                     anywhere: the app did what discovery told it to.
+
+                     frontendUrl pins the answer to the address a browser can
+                     actually reach, so both callers get the same one. It is set
+                     as an attribute because that is where Keycloak keeps it;
+                     the provider exposes no dedicated field. */}}
+                attributes:
+                  frontendUrl: https://id.{{ $kd }}/auth
+                {{- end }}
                 # Nobody self-registers into a tenant realm; membership comes from
                 # the kernel realm through the broker.
                 registrationAllowed: false
