@@ -96,11 +96,15 @@ _delete_crossplane_crds() {
 
     success "Crossplane/Upbound CRD sweep completed."
 
-    # The CRDs above are Crossplane's own. A running Crossplane does not notice
-    # they are gone and does not recreate them until it restarts, so a reinstall
-    # that reuses this deployment finds its API missing. See
-    # _purge_restart_crossplane for what that failure looks like.
-    _purge_restart_crossplane
+    # Deliberately no restart here. Crossplane recreates its CRDs at startup, so
+    # restarting it immediately after deleting them puts all twenty-one straight
+    # back — and this runs from A-02's destroy(), before A-01 removes the
+    # deployment, so they then outlive the Crossplane that owns them. A purge
+    # left exactly that behind.
+    #
+    # The install side is where a missing CRD has to be repaired, and A-01's
+    # apply() does it: it checks for them after helm and restarts only if they
+    # are absent.
 }
 
 
@@ -710,29 +714,6 @@ _purge_strip_crossplane_finalizers() {
     success "Crossplane finalizers cleared."
 }
 
-# _purge_restart_crossplane — give Crossplane back the CRDs the purge removed.
-#
-# Crossplane v2 ships no CRDs in its Helm chart: `helm template` renders zero,
-# and the core binary installs them itself at startup. So a purge that deletes
-# them leaves a running Crossplane whose own API is missing, and a reinstall
-# that finds `helm status crossplane` satisfied never restores them.
-#
-# What that looks like, if this does not run: every provider and function sits
-# Installed=True Healthy=False, each revision reporting
-#
-#   cannot establish control of object: the server could not find the requested
-#   resource (post managedresourcedefinitions.apiextensions.crossplane.io)
-#
-# and the install blocks in `kubectl wait --for=condition=Healthy` until it
-# times out. A restart fixes it in seconds, because startup is when those CRDs
-# are created. The default DeploymentRuntimeConfig comes back with them.
-_purge_restart_crossplane() {
-    kubectl -n crossplane-system get deploy crossplane >/dev/null 2>&1 || return 0
-    info "Restarting Crossplane so it reinstalls the CRDs this purge removed..."
-    kubectl -n crossplane-system rollout restart deploy/crossplane >/dev/null 2>&1 || true
-    kubectl -n crossplane-system rollout status deploy/crossplane --timeout=180s >/dev/null 2>&1 || true
-    success "Crossplane restarted."
-}
 
 # _purge_guard_single_instance — refuse a second concurrent purge.
 #

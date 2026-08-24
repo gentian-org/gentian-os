@@ -73,7 +73,7 @@ func tenantConvergenceRequeue(tenant *gentianov1alpha1.Tenant, base time.Duratio
 	}
 	var latest time.Time
 	for _, condition := range tenant.Status.Conditions {
-		if condition.LastTransitionTime.Time.After(latest) {
+		if condition.LastTransitionTime.After(latest) {
 			latest = condition.LastTransitionTime.Time
 		}
 	}
