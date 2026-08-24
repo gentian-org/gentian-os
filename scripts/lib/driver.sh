@@ -721,6 +721,24 @@ validate_step_calls() {
                 local|return|echo|export|source|if|fi|then|else|elif|for|while|do|done|case|'esac'|break|continue|exit)
                     continue ;;
             esac
+            # Commands the installer provisions for itself, which are therefore
+            # absent when this lint runs on a bare machine.
+            #
+            # `bao` is the one that matters: install.sh downloads the OpenBao CLI
+            # to ~/.local/bin at startup, so every step may call it, but a CI
+            # runner has never seen it. Without this the check reported
+            #
+            #   D-06-openbao-oidc-config: calls 'bao', which is not defined or
+            #   on PATH
+            #
+            # and failed every commit on the branch — including commits that
+            # touched nothing near it — while passing on any developer machine
+            # that had run the installer once. A lint whose result depends on
+            # whether you happen to have installed the product is worse than no
+            # lint, because it goes red for everyone and right for no reason.
+            case "${fn}" in
+                bao) continue ;;
+            esac
             # A real external command is fine; only unresolvable names matter.
             command -v "${fn}" >/dev/null 2>&1 && continue
             declare -F "${fn}" >/dev/null 2>&1 && continue
