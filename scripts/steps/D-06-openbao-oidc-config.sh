@@ -258,35 +258,53 @@ apply() {
     # gateway's chain would break a working configuration if the discovery URL
     # resolves anywhere else. So it is a fallback, not the default: try the
     # system trust, and reach for the bundle only when that is refused.
-    if _oidc_write_config "${secret}" ""; then
+    # Both attempts' output is captured, not printed as it happens.
+    #
+    # On a cluster with a private or staging chain — which is most of them — the
+    # first attempt is EXPECTED to fail, and printing OpenBao's refusal as it
+    # arrived put a red "Code: 400 ... error checking oidc discovery URL" in the
+    # middle of a step that then succeeded. An operator reading that reasonably
+    # concludes something is wrong. Nothing is: it is how the step establishes
+    # which trust store applies.
+    #
+    # So the first refusal is held, and only surfaces if the second attempt
+    # fails too — at which point it is the diagnosis rather than noise.
+    local plain_err="" pinned_err="" ca_file=""
+
+    if plain_err="$(_oidc_write_config "${secret}" "" 2>&1)"; then
         success "OIDC auth mount configured (client ${OIDC_CLIENT_ID})."
         return 0
     fi
 
-    local ca_file
     ca_file="$(_oidc_gateway_ca_file)"
-    if [[ -z "${ca_file}" ]]; then
-        error "Could not write auth/oidc/config, and found no gateway CA bundle to retry with."
-        error "  OpenBao fetches ${OIDC_DISCOVERY_URL} itself and verifies its TLS."
-        error "  Looked for wildcard-tls in $(gentian_services_namespace) and"
-        error "  wildcard-kernel-tls in cert-manager; neither had a certificate."
-        return 1
-    fi
-
-    info "Retrying with the gateway CA bundle — OpenBao does not trust the"
-    info "  certificate the cluster serves for ${OIDC_DISCOVERY_URL%%/auth*}."
-    if _oidc_write_config "${secret}" "${ca_file}"; then
+    if [[ -n "${ca_file}" ]]; then
+        info "  OpenBao does not trust the certificate the cluster serves for"
+        info "  ${OIDC_DISCOVERY_URL%%/auth*} — a private or staging chain, which"
+        info "  is normal. Pinning the discovery fetch to the gateway's CA."
+        if pinned_err="$(_oidc_write_config "${secret}" "${ca_file}" 2>&1)"; then
+            rm -f "${ca_file}"
+            success "OIDC auth mount configured (client ${OIDC_CLIENT_ID}, discovery pinned to the gateway CA)."
+            return 0
+        fi
         rm -f "${ca_file}"
-        success "OIDC auth mount configured (client ${OIDC_CLIENT_ID}, discovery pinned to the gateway CA)."
-        return 0
     fi
-    rm -f "${ca_file}"
 
-    error "Could not write auth/oidc/config, with or without the gateway CA bundle."
+    # Only now is any of this an error, so only now is any of it printed.
+    error "Could not write auth/oidc/config."
     error "  OpenBao fetches ${OIDC_DISCOVERY_URL} from inside the cluster and"
-    error "  verifies its TLS; the error above is its own. Check that the name"
-    error "  resolves in-cluster and that what answers serves a chain the"
-    error "  bundle covers."
+    error "  verifies its TLS. Check that the name resolves in-cluster and that"
+    error "  what answers serves a chain the gateway's CA covers."
+    error ""
+    error "  Using the system trust store, OpenBao said:"
+    printf '%s\n' "${plain_err}" | sed 's/^/      /' >&2
+    if [[ -n "${ca_file}" || -n "${pinned_err}" ]]; then
+        error "  Pinned to the gateway CA bundle, it said:"
+        printf '%s\n' "${pinned_err}" | sed 's/^/      /' >&2
+    else
+        error "  No gateway CA bundle was available to retry with: looked for"
+        error "  wildcard-tls in $(gentian_services_namespace) and"
+        error "  wildcard-kernel-tls in cert-manager, and neither had a certificate."
+    fi
     return 1
 }
 
