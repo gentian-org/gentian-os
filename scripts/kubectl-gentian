@@ -141,14 +141,28 @@ cmd_version() {
     echo "kubectl-gentian ${GENTIAN_PLUGIN_VERSION}"
     echo "  fingerprint : $(gentian_plugin_fingerprint)"
     echo "  path        : ${self}"
-    # Every copy on PATH, because the one that runs is decided by PATH order and
-    # a stale second copy is invisible until it is the one that answers.
-    local found others=""
+    # Every OTHER copy on PATH, because the one that runs is decided by PATH
+    # order and a stale second copy is invisible until it is the one that
+    # answers.
+    #
+    # Compared after resolving symlinks, and de-duplicated. gtnctl is installed
+    # as a link beside kubectl-gentian, so the running copy reaches this loop
+    # under a name that does not match ${self} and reported itself as a rival;
+    # and a PATH that names a directory more than once - which is ordinary once
+    # a shell profile and a tool like conda have both prepended it - listed that
+    # same file once per mention.
+    local self_real found found_real others="" seen=""
+    self_real="$(readlink -f "${self}" 2>/dev/null || echo "${self}")"
     while IFS= read -r found; do
         [[ -n "${found}" ]] || continue
-        [[ "${found}" == "${self}" ]] && continue
+        found_real="$(readlink -f "${found}" 2>/dev/null || echo "${found}")"
+        [[ "${found_real}" == "${self_real}" ]] && continue
+        case "${seen}" in
+            *"|${found_real}|"*) continue ;;
+        esac
+        seen+="|${found_real}|"
         others+="    also on PATH: ${found}"$'\n'
-    done < <(type -aP kubectl-gentian 2>/dev/null || true)
+    done < <(type -aP kubectl-gentian gtnctl 2>/dev/null || true)
     [[ -n "${others}" ]] && printf '%s' "${others}"
     return 0
 }

@@ -18,8 +18,10 @@ package secrets
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 )
@@ -75,7 +77,7 @@ func TestEnsureMountCreatesWhenReadSaysBadRequest(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	if err := testTenantAuth(srv).EnsureMount(context.Background(), "acme", "https://kc/realms/acme"); err != nil {
+	if err := testTenantAuth(srv).EnsureMount(context.Background(), "acme", "https://kc/realms/acme", ""); err != nil {
 		t.Fatalf("EnsureMount: %v", err)
 	}
 	if !enabled {
@@ -108,7 +110,7 @@ func TestEnsureMountSkipsCreateWhenPresent(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	if err := testTenantAuth(srv).EnsureMount(context.Background(), "acme", "https://kc/realms/acme"); err != nil {
+	if err := testTenantAuth(srv).EnsureMount(context.Background(), "acme", "https://kc/realms/acme", ""); err != nil {
 		t.Fatalf("EnsureMount: %v", err)
 	}
 	if creates != 0 {
@@ -136,7 +138,83 @@ func TestEnsureMountToleratesRaceOnCreate(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	if err := testTenantAuth(srv).EnsureMount(context.Background(), "acme", "https://kc/realms/acme"); err != nil {
+	if err := testTenantAuth(srv).EnsureMount(context.Background(), "acme", "https://kc/realms/acme", ""); err != nil {
 		t.Fatalf("EnsureMount should tolerate 'already in use': %v", err)
+	}
+}
+
+// A cluster whose Keycloak serves a certificate OpenBao does not trust refuses
+// the config write with "error checking oidc discovery URL" - it fetches the
+// discovery document itself to validate the write. The retry pinned to the
+// cluster's own chain is what makes the mount configurable there, and without
+// it every reconcile of every tenant fails on a message that names the URL and
+// not the trust problem.
+func TestEnsureMountRetriesWithPinnedCA(t *testing.T) {
+	var configBodies []map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/sys/auth/oidc-acme":
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"type":"jwt"}`))
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/auth/oidc-acme/config":
+			var body map[string]any
+			_ = json.NewDecoder(r.Body).Decode(&body)
+			configBodies = append(configBodies, body)
+			if _, pinned := body["oidc_discovery_ca_pem"]; !pinned {
+				w.WriteHeader(http.StatusBadRequest)
+				_, _ = w.Write([]byte(`{"errors":["error checking oidc discovery URL"]}`))
+				return
+			}
+			w.WriteHeader(http.StatusNoContent)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+
+	if err := testTenantAuth(srv).EnsureMount(context.Background(), "acme", "https://kc/realms/acme", "PEM"); err != nil {
+		t.Fatalf("EnsureMount: %v", err)
+	}
+	if len(configBodies) != 2 {
+		t.Fatalf("expected an unpinned attempt then a pinned one, got %d writes", len(configBodies))
+	}
+	// Unpinned first, so a cluster with a publicly trusted certificate is never
+	// pinned to a chain it would have to be re-pinned away from on renewal.
+	if _, pinned := configBodies[0]["oidc_discovery_ca_pem"]; pinned {
+		t.Error("first attempt pinned a CA; it must try the system pool first")
+	}
+	if got := configBodies[1]["oidc_discovery_ca_pem"]; got != "PEM" {
+		t.Errorf("retry did not pin the supplied chain: %v", got)
+	}
+}
+
+// With no chain to pin, the original refusal is what the operator must see.
+// Swallowing it, or reporting a retry that never happened, hides the reason.
+func TestEnsureMountWithoutCAReportsOriginalFailure(t *testing.T) {
+	writes := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/sys/auth/oidc-acme":
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"type":"jwt"}`))
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/auth/oidc-acme/config":
+			writes++
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = w.Write([]byte(`{"errors":["error checking oidc discovery URL"]}`))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+
+	err := testTenantAuth(srv).EnsureMount(context.Background(), "acme", "https://kc/realms/acme", "")
+	if err == nil {
+		t.Fatal("EnsureMount succeeded on a refused config write")
+	}
+	if !strings.Contains(err.Error(), "error checking oidc discovery URL") {
+		t.Errorf("error dropped what OpenBao objected to: %v", err)
+	}
+	if writes != 1 {
+		t.Errorf("expected exactly one attempt with no CA to pin, got %d", writes)
 	}
 }

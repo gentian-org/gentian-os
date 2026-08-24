@@ -21,6 +21,10 @@ import (
 	"fmt"
 	"strings"
 
+	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/types"
+
+	"github.com/gentian-org/gentian-os/internal/kernel/trustanchor"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
@@ -71,7 +75,7 @@ func (r *TenantReconciler) ensureTenantOpenBaoAuth(ctx context.Context, tenant *
 	// verification, which reads as a permissions problem.
 	discovery := fmt.Sprintf("%s/realms/%s", strings.TrimRight(kernelExternalURL(r.KernelDomain), "/"), realm)
 
-	if err := auth.EnsureMount(ctx, realm, discovery); err != nil {
+	if err := auth.EnsureMount(ctx, realm, discovery, r.oidcDiscoveryCA(ctx)); err != nil {
 		return fmt.Errorf("tenant auth mount: %w", err)
 	}
 	if err := auth.EnsureRole(ctx, realm, secrets.RoleConfig{
@@ -134,4 +138,33 @@ func tenantRealm(tenant *gentianov1alpha1.Tenant) string {
 		return tenant.Spec.Isolation.KeycloakRealm
 	}
 	return tenant.Name
+}
+
+// oidcDiscoveryCA returns the certificate chain this cluster's gateway serves,
+// for OpenBao to trust when it fetches a realm's discovery document. Empty when
+// no certificate can be found, which leaves the mount write on the system pool.
+//
+// Same source and precedence ArgoCD's own OIDC wiring uses: ca.crt when the
+// issuer supplied one, tls.crt otherwise. ACME issuers never supply ca.crt, so
+// on that path it is always tls.crt - the leaf plus its chain, which is what
+// has to be trusted anyway. The services-namespace copy comes first because
+// that is the one kernel services actually present; the cert-manager secret is
+// the original it propagates from, read only when the copy is not there yet.
+func (r *TenantReconciler) oidcDiscoveryCA(ctx context.Context) string {
+	sources := []types.NamespacedName{
+		{Namespace: servicesNamespace, Name: kernelWildcardTLSSecretName},
+		{Namespace: trustanchor.DefaultCertManagerNS, Name: trustanchor.DefaultLeafSecret},
+	}
+	for _, ref := range sources {
+		secret := &corev1.Secret{}
+		if err := r.Get(ctx, ref, secret); err != nil {
+			continue
+		}
+		for _, key := range []string{"ca.crt", "tls.crt"} {
+			if value := secret.Data[key]; len(value) > 0 {
+				return string(value)
+			}
+		}
+	}
+	return ""
 }

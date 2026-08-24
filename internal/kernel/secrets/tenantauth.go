@@ -111,14 +111,15 @@ func (t *TenantAuth) do(ctx context.Context, method, apiPath string, body any) (
 }
 
 // EnsureMount enables the JWT backend for a realm and points it at that realm's
-// discovery document.
+// discovery document. caPEM is the chain to trust when fetching that document;
+// empty means "use the system pool".
 //
 // Enabling is not idempotent — OpenBao answers 400 "path is already in use" —
 // so an existing mount is detected first and only its config is written. That
 // is the same shape B-07 uses for the kernel mount, and for the same reason: a
 // mount that exists with the wrong issuer is worse than one that is absent,
 // because it fails at signature verification and reads as a permissions problem.
-func (t *TenantAuth) EnsureMount(ctx context.Context, realm, discoveryURL string) error {
+func (t *TenantAuth) EnsureMount(ctx context.Context, realm, discoveryURL, caPEM string) error {
 	mount := MountPath(realm)
 
 	// Anything but 200 is treated as absent, rather than 404 specifically.
@@ -148,17 +149,45 @@ func (t *TenantAuth) EnsureMount(ctx context.Context, realm, discoveryURL string
 		}
 	}
 
-	st, body, err := t.do(ctx, http.MethodPost, "/v1/auth/"+mount+"/config", map[string]any{
+	config := map[string]any{
 		"oidc_discovery_url": discoveryURL,
 		"default_role":       "",
-	})
+	}
+	st, body, err := t.do(ctx, http.MethodPost, "/v1/auth/"+mount+"/config", config)
 	if err != nil {
 		return err
 	}
-	if st < 200 || st > 299 {
+	if st >= 200 && st <= 299 {
+		return nil
+	}
+
+	// OpenBao fetches the discovery document itself to validate this write, so
+	// the write fails when it does not trust the certificate the cluster's
+	// Keycloak serves — reported only as "error checking oidc discovery URL",
+	// which reads as a bad URL rather than as a trust problem.
+	//
+	// A cluster issued from an ACME staging endpoint, or from its own internal
+	// issuer, presents exactly that: a chain no system pool carries. Retrying
+	// pinned to the chain the gateway actually serves is what makes the mount
+	// configurable there. The unpinned attempt comes first so a cluster with a
+	// publicly trusted certificate never pins to a chain it will have to be
+	// re-pinned away from when that certificate is renewed.
+	if caPEM == "" {
 		return fmt.Errorf("configure auth mount %s: HTTP %d: %s", mount, st, truncateBody(body))
 	}
-	return nil
+	config["oidc_discovery_ca_pem"] = caPEM
+	pinnedSt, pinnedBody, err := t.do(ctx, http.MethodPost, "/v1/auth/"+mount+"/config", config)
+	if err != nil {
+		return err
+	}
+	if pinnedSt >= 200 && pinnedSt <= 299 {
+		return nil
+	}
+	// Both bodies: the first says what OpenBao objected to, the second says
+	// whether pinning changed anything. Reporting only the second turns a trust
+	// failure into a mystery.
+	return fmt.Errorf("configure auth mount %s: HTTP %d: %s (retry with pinned CA: HTTP %d: %s)",
+		mount, st, truncateBody(body), pinnedSt, truncateBody(pinnedBody))
 }
 
 // EnsureRole writes the JWT role a tenant administrator's token is exchanged
