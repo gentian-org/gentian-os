@@ -324,6 +324,7 @@ spec:
       access.token.claim: "true"
       claim.name: tenant
       id.token.claim: "true"
+      introspection.token.claim: "true"
       jsonType.label: String
       user.attribute: tenant
       userinfo.token.claim: "true"

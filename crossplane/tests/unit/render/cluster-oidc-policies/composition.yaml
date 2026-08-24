@@ -563,6 +563,11 @@ spec:
                   id.token.claim: "true"
                   access.token.claim: "true"
                   userinfo.token.claim: "true"
+                  {{- /* Written back by Keycloak whether or not it is asked for,
+                       so leaving it out is a permanent diff rather than a
+                       smaller spec — and a permanent diff here is an update
+                       loop, since the provider re-applies on every pass. */}}
+                  introspection.token.claim: "true"
               providerConfigRef:
                 name: keycloak
 

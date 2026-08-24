@@ -1134,6 +1134,12 @@ spec:
                   access.token.claim: "true"
                   userinfo.token.claim: "true"
                   claim.name: groups
+                  {{- /* Keycloak's own defaults for this mapper type, written
+                       back on every read. Omitting them left the Composition
+                       permanently out of step with what the provider observed,
+                       which it answered by updating forever. */}}
+                  introspection.token.claim: "true"
+                  multivalued: "true"
               providerConfigRef:
                 name: keycloak
             {{- end }}

@@ -1086,6 +1086,21 @@ spec:
                 {{- if and (eq $tmpl.protocolMapper "oidc-usermodel-attribute-mapper") (not (hasKey $cfg "multivalued")) }}
                 {{- $cfg = merge (dict "multivalued" "false") $cfg }}
                 {{- end }}
+                {{- /* introspection.token.claim is the same class of key, and it
+                     bites harder. Keycloak writes it into every mapper it stores
+                     whether or not it was asked for, so a config that omits it
+                     never matches what comes back. The provider reads the extra
+                     key as drift, updates to remove it, Keycloak puts it back,
+                     and the pair never converge — an update loop that costs a
+                     Keycloak API call and a fresh admin password grant each time
+                     round. Observed at roughly twenty requests a second, holding
+                     28k connections open and a full CPU core, on six resources.
+
+                     Defaulted rather than forced: a catalogue template that sets
+                     it explicitly keeps its own value. */}}
+                {{- if not (hasKey $cfg "introspection.token.claim") }}
+                {{- $cfg = merge (dict "introspection.token.claim" "true") $cfg }}
+                {{- end }}
                 config:
                   {{ toYaml $cfg | nindent 18 }}
               providerConfigRef:
