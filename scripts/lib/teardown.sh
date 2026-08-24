@@ -270,7 +270,7 @@ _drain_pvcs() {
 
 # Delete PVs that were previously bound to PVCs in a namespace.
 # This is required for full data destruction when reclaimPolicy is Retain.
-# _reclaim_pv — switch a PV to Delete, remove it, and wait for the disk to go.
+# _reclaim_pv — switch a PV to Delete and remove it, so the disk goes with it.
 #
 # Reclaim policy first, and it is the whole point. Every kernel StorageClass
 # reclaims with Retain, so deleting the PV object removes Kubernetes' record of
@@ -282,38 +282,72 @@ _drain_pvcs() {
 #   allowed (20) exceeded for quota 'volumes'
 #
 # and an install with nothing to do with volumes fails on a PVC that will never
-# bind. Switching to Delete before removing the object is what makes the CSI
-# driver call DeleteVolume.
-_reclaim_pv() {
-    local pv="$1" policy deadline
+# bind.
+#
+# The finalizer is never stripped here, and that is a correction rather than an
+# omission. This used to delete the PV, poll for 60 seconds, and then remove
+# kubernetes.io/pv-protection and external-provisioner's finalizer to "unstick"
+# it. That finalizer is the only thing keeping the object alive until
+# DeleteVolume has actually returned: strip it and the PV disappears, the
+# provisioner drops the work, and the disk is orphaned by the very code meant to
+# collect it. Eight volumes leaked that way in one purge — every volume the
+# install had created — because a remote volume API does not answer eight
+# sequential deletes inside sixty seconds each.
+#
+# So: issue the delete, and let it take as long as it takes. A PV that will not
+# go is reported with its volume handle, and left in place so a later purge or a
+# manual reclaim can still find it. A leftover PV is a nuisance; a leftover disk
+# is a quota that eventually stops installs.
+_reclaim_pv_issue() {
+    local pv="$1" policy
     [[ -n "${pv}" ]] || return 0
-
     policy="$(kubectl get pv "${pv}" -o jsonpath='{.spec.persistentVolumeReclaimPolicy}' 2>/dev/null || true)"
     if [[ "${policy}" != "Delete" ]]; then
         kubectl patch pv "${pv}" --type=merge \
             -p '{"spec":{"persistentVolumeReclaimPolicy":"Delete"}}' >/dev/null 2>&1 || true
     fi
-
-    # Finalizers are NOT stripped up front. external-provisioner's finalizer is
-    # what keeps the object alive until the driver has actually deleted the disk;
-    # removing it first makes the PV disappear cleanly and leak the volume just
-    # the same.
-    kubectl delete pv "${pv}" --ignore-not-found=true --wait=false 2>/dev/null || true
-
-    deadline=$(( SECONDS + 60 ))
-    while kubectl get pv "${pv}" >/dev/null 2>&1; do
-        if (( SECONDS >= deadline )); then
-            warn "  PV ${pv} did not finalize in 60s — stripping finalizers."
-            warn "    Its backing volume may survive in the cloud project; check the"
-            warn "    provider console for a volume named ${pv}."
-            kubectl patch pv "${pv}" \
-                --type=json -p='[{"op":"remove","path":"/metadata/finalizers"}]' \
-                2>/dev/null || true
-            break
-        fi
-        sleep 2
-    done
+    kubectl delete pv "${pv}" --ignore-not-found=true --wait=false >/dev/null 2>&1 || true
 }
+
+# _reclaim_pvs — reclaim a list of PVs together.
+#
+# Deletes are issued for all of them first and waited on once, rather than a
+# full timeout per volume. Eight volumes at sixty seconds each is eight minutes
+# of worst case and eight chances to give up early; issued together they are
+# deleted concurrently by the provisioner and the wait is one window for all.
+_reclaim_pvs() {
+    local pvs="$1" deadline="${2:-600}"
+    local pv left end handle
+    [[ -n "${pvs}" ]] || return 0
+
+    while IFS= read -r pv; do
+        [[ -n "${pv}" ]] || continue
+        _reclaim_pv_issue "${pv}"
+    done <<< "${pvs}"
+
+    end=$(( SECONDS + deadline ))
+    while (( SECONDS < end )); do
+        left=""
+        while IFS= read -r pv; do
+            [[ -n "${pv}" ]] || continue
+            kubectl get pv "${pv}" >/dev/null 2>&1 && left="${left}${pv}"$'\n'
+        done <<< "${pvs}"
+        [[ -z "${left}" ]] && { success "  All volumes reclaimed."; return 0; }
+        sleep 5
+    done
+
+    warn "  Some volumes did not reclaim within ${deadline}s. Their disks are still"
+    warn "  allocated in the cloud project, and their PVs are left in place so a"
+    warn "  later purge can retry rather than losing track of them:"
+    while IFS= read -r pv; do
+        [[ -n "${pv}" ]] || continue
+        kubectl get pv "${pv}" >/dev/null 2>&1 || continue
+        handle="$(kubectl get pv "${pv}" -o jsonpath='{.spec.csi.volumeHandle}' 2>/dev/null || true)"
+        warn "    ${pv}  volume=${handle:-unknown}"
+    done <<< "${pvs}"
+    return 1
+}
+
 
 _delete_pvs_for_namespace() {
     local ns="$1"
@@ -323,9 +357,7 @@ _delete_pvs_for_namespace() {
     [[ -z "${pvs}" ]] && return 0
 
     info "  Deleting PVs previously bound to namespace ${ns}..."
-    while IFS= read -r pv; do
-        _reclaim_pv "${pv}"
-    done <<< "${pvs}"
+    _reclaim_pvs "${pvs}" || true
 }
 
 # _reclaim_orphaned_pvs — every Gentian PV the per-namespace pass did not reach.
@@ -376,11 +408,7 @@ _reclaim_orphaned_pvs() {
 
     count=$(printf '%s\n' "${pvs}" | wc -l | tr -d ' ')
     info "  Reclaiming ${count} Gentian PV(s) the namespace pass did not reach..."
-    while IFS= read -r pv; do
-        [[ -n "${pv}" ]] || continue
-        _reclaim_pv "${pv}"
-    done <<< "${pvs}"
-    success "  Gentian PVs reclaimed."
+    _reclaim_pvs "${pvs}" || true
 }
 
 # Every instance of a kind, as "<namespace>|<name>" lines. Cluster-scoped kinds
