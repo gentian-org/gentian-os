@@ -328,34 +328,59 @@ _delete_pvs_for_namespace() {
     done <<< "${pvs}"
 }
 
-# _reclaim_orphaned_pvs — every PV the per-namespace pass did not reach.
+# _reclaim_orphaned_pvs — every Gentian PV the per-namespace pass did not reach.
 #
 # The pass above walks gentian_kernel_namespaces, which does not include
 # tenant-<name>. So a tenant's volumes were never reclaimed: on ifk-w4h the
 # leftovers included two tenant-corp/nextcloud-nextcloud PVs, and three for
 # platform-kernel/postgres-1 — one per rebuild, because each cycle leaked a
-# fresh one and no cycle collected the last. Thirteen Released PVs held
-# thirteen Cinder volumes against a quota of twenty, and the next install died
+# fresh one and no cycle collected the last. Thirteen Released PVs held thirteen
+# Cinder volumes against a quota of twenty, and the next install died
 # provisioning its first.
 #
-# Selecting on Released rather than on a namespace list is what makes this
-# complete: after the reverse pass, a Released PV is by definition a volume
-# nothing in the cluster can still be using, whatever it was once claimed by.
+# Selected by claimRef namespace, in any phase, and both halves matter:
+#
+#   Phase, because Released is not the only state that holds a disk. Namespace
+#   deletion is asynchronous, so a PV can still be Bound here with its PVC not
+#   yet collected, and a reclaim that errored leaves Failed. Filtering on
+#   Released alone — which is all this did at first — skips both, and each one
+#   skipped is a volume that survives the purge.
+#
+#   Namespace, because "any orphaned PV" is not this command's to delete. A
+#   cluster may host something that is not Gentian's, and a purge that collects
+#   every Released volume it can see would take that with it.
+_gentian_pv_namespaces_regex() {
+    local ns out=""
+    for ns in $(gentian_kernel_namespaces); do
+        # gentian-* and tenant-* are covered by the prefixes below. Matching the
+        # stage-suffixed infra namespace exactly would miss a volume left by an
+        # install at a different stage, which is exactly the kind of leftover
+        # this exists to collect.
+        case "${ns}" in gentian-*|tenant-*) continue ;; esac
+        out="${out}|^${ns}$"
+    done
+    printf '%s' "^tenant-|^gentian-${out}"
+}
+
 _reclaim_orphaned_pvs() {
-    local pvs pv count
-    pvs=$(kubectl get pv \
-        -o jsonpath='{range .items[?(@.status.phase=="Released")]}{.metadata.name}{"\n"}{end}' \
-        2>/dev/null || true)
+    local pvs pv count re
+    re="$(_gentian_pv_namespaces_regex)"
+
+    pvs=$(kubectl get pv -o json 2>/dev/null \
+        | jq -r --arg re "${re}" \
+            '.items[] | select(.spec.claimRef.namespace != null)
+             | select(.spec.claimRef.namespace | test($re))
+             | .metadata.name' 2>/dev/null || true)
     pvs=$(printf '%s\n' "${pvs}" | sed '/^$/d')
-    [[ -z "${pvs}" ]] && { info "  No orphaned PVs remain."; return 0; }
+    [[ -z "${pvs}" ]] && { info "  No Gentian PVs remain."; return 0; }
 
     count=$(printf '%s\n' "${pvs}" | wc -l | tr -d ' ')
-    info "  Reclaiming ${count} orphaned PV(s) no namespace pass reached..."
+    info "  Reclaiming ${count} Gentian PV(s) the namespace pass did not reach..."
     while IFS= read -r pv; do
         [[ -n "${pv}" ]] || continue
         _reclaim_pv "${pv}"
     done <<< "${pvs}"
-    success "  Orphaned PVs reclaimed."
+    success "  Gentian PVs reclaimed."
 }
 
 # Every instance of a kind, as "<namespace>|<name>" lines. Cluster-scoped kinds
