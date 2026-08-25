@@ -315,9 +315,9 @@ func (v *EndpointValidator) cloudflareZoneProbe(ctx context.Context, token strin
 
 	switch {
 	case resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden:
-		return fmt.Errorf("Cloudflare rejected the api-token (HTTP %d)", resp.StatusCode)
+		return fmt.Errorf("the Cloudflare API rejected the api-token (HTTP %d)", resp.StatusCode)
 	case resp.StatusCode < 200 || resp.StatusCode > 299:
-		return fmt.Errorf("Cloudflare answered HTTP %d listing zones", resp.StatusCode)
+		return fmt.Errorf("the Cloudflare API answered HTTP %d listing zones", resp.StatusCode)
 	}
 
 	var payload struct {
@@ -330,7 +330,7 @@ func (v *EndpointValidator) cloudflareZoneProbe(ctx context.Context, token strin
 		return fmt.Errorf("could not read the Cloudflare zone list: %w", err)
 	}
 	if !payload.Success {
-		return fmt.Errorf("Cloudflare reported the zone listing as unsuccessful")
+		return fmt.Errorf("the Cloudflare API reported the zone listing as unsuccessful")
 	}
 
 	domain := strings.ToLower(strings.TrimSuffix(v.KernelDomain, "."))
