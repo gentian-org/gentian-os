@@ -303,6 +303,24 @@ _keycloak_smtp_settings() {
 _keycloak_smtp_configure_shell() {
     cat <<'EOSMTP'
               if [ "${SMTP_CONFIGURE}" = "true" ]; then
+                # The status first, so a failure says which one it was.
+                #
+                # This was a bare `curl -sf`, and when the realm did not exist it
+                # exited 22 with -s swallowing the message: the pod died under
+                # set -e having printed nothing, three times over, and the only
+                # evidence was an exit code. A 404 means the realm is missing, a
+                # 401 means the admin credentials are wrong, and those want
+                # different fixes.
+                REALM_CODE=$(curl -s -o /dev/null -w '%{http_code}' -H "${AUTH}" \
+                  "${KEYCLOAK_BASE}/admin/realms/${REALM}")
+                if [ "${REALM_CODE}" != "200" ]; then
+                  echo "ERROR: cannot read realm ${REALM} (HTTP ${REALM_CODE}) at ${KEYCLOAK_BASE}" >&2
+                  if [ "${REALM_CODE}" = "404" ]; then
+                    echo "  The realm does not exist yet — the portal bootstrap creates it," >&2
+                    echo "  and in D-05 that now runs before this." >&2
+                  fi
+                  exit 1
+                fi
                 REALM_JSON=$(curl -sf -H "${AUTH}" "${KEYCLOAK_BASE}/admin/realms/${REALM}")
                 SMTP_JSON=$(jq -n \
                   --arg host "${SMTP_HOST}" \

@@ -36,8 +36,17 @@ check() {
 apply() {
     # shellcheck source=scripts/lib/portal-login-bootstrap.sh
     source "${SCRIPT_DIR}/scripts/lib/portal-login-bootstrap.sh"
-    configure_keycloak_realm_smtp || warn "Keycloak realm SMTP configuration skipped."
+    # The portal bootstrap first, because it is what creates the kernel realm,
+    # and configuring a realm's SMTP requires the realm.
+    #
+    # The other way round, the SMTP Job GET /admin/realms/kernel before anything
+    # had created it, got a 404, and curl -sf exited 22 under set -e — printing
+    # nothing at all, because -s suppresses the message. Three pods failed in
+    # silence and the step reported only "Keycloak SMTP configure Job failed",
+    # which named the Job rather than the reason. The realm appeared moments
+    # later, created by the very call that used to come second.
     install_portal_login
+    configure_keycloak_realm_smtp || warn "Keycloak realm SMTP configuration skipped."
 }
 
 destroy() {
