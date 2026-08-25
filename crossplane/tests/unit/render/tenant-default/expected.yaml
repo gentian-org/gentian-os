@@ -440,7 +440,6 @@ spec:
     enabled: true
     extraConfig:
       updateProfileFirstLoginMode: "on"
-      useJwksUrl: "true"
     firstBrokerLoginFlowAlias: first-broker-login-gentian
     hideOnLoginPage: true
     issuer: https://id.platform.example.test/auth/realms/kernel
@@ -587,7 +586,6 @@ spec:
     enabled: true
     extraConfig:
       updateProfileFirstLoginMode: "on"
-      useJwksUrl: "true"
     firstBrokerLoginFlowAlias: first-broker-login-kernel-portal
     hideOnLoginPage: true
     issuer: https://id.platform.example.test/auth/realms/render-fixture

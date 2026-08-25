@@ -725,11 +725,22 @@ spec:
                 tokenUrl: {{ $kcInternal }}/realms/{{ $tenant }}/protocol/openid-connect/token
                 jwksUrl: {{ $kcInternal }}/realms/{{ $tenant }}/protocol/openid-connect/certs
                 userInfoUrl: {{ $kcInternal }}/realms/{{ $tenant }}/protocol/openid-connect/userinfo
-                {{- /* Keys the provider has no field for and does not read back —
-                     absent from status.atProvider and from extraConfig, yet set on
-                     the live object, so declared here or lost on the first write. */}}
+                {{- /* updateProfileFirstLoginMode has no field on the provider and
+                     is read back, so it belongs here.
+
+                     useJwksUrl does not, and used to be listed alongside it on the
+                     understanding that it would otherwise be lost. It is not: the
+                     provider sets it from the jwksUrl field above, and the live
+                     object carries useJwksUrl=true and validateSignature=true
+                     without it being asked for — checked against the Admin API on
+                     both brokers. What declaring it did instead was make the two
+                     permanently disagree, because the provider writes the key and
+                     then does not read it back into extraConfig. That is a diff
+                     that can never close, and the provider answered it by updating
+                     forever: roughly twenty requests a second, each carrying an
+                     admin password grant, for about a CPU core between Keycloak
+                     and the provider. */}}
                 extraConfig:
-                  useJwksUrl: "true"
                   updateProfileFirstLoginMode: "on"
                 clientIdSecretRef:
                   name: {{ $tenant }}-kernel-portal-broker-client-id
@@ -1230,8 +1241,13 @@ spec:
                 {{- /* The provider does not observe these: status.atProvider reports
                      securityDefenses as null while the realm plainly carries the
                      headers. So they cannot be confirmed by reading the resource
-                     back, only against the Admin API — the same blind spot as the
-                     kernel IdP's useJwksUrl.
+                     back, only against the Admin API.
+
+                     Unlike the broker IdPs' useJwksUrl, which had the same blind
+                     spot, these cannot simply be dropped: nothing else sets them.
+                     They are declared and unverifiable, which is a diff the
+                     provider re-applies — the cost of managing a field the
+                     provider writes but cannot read.
 
                      Empty strings are deliberate. contentSecurityPolicy and
                      xFrameOptions are cleared so the portal can frame Keycloak;
@@ -1379,14 +1395,16 @@ spec:
                 # Matches a returning user to the account already provisioned for
                 # them by email.
                 firstBrokerLoginFlowAlias: first-broker-login-gentian
-                {{- /* Keys the provider has no field for and does not read back. Both
-                     are absent from status.atProvider and from extraConfig, and both
-                     are set on the live object, so they are declared here or they are
-                     lost on the first write: useJwksUrl is what points signature
-                     validation at the JWKS endpoint, and updateProfileFirstLoginMode
-                     is carried forward as it stands rather than left to a default. */}}
+                {{- /* updateProfileFirstLoginMode has no field on the provider and is
+                     read back, so it is carried here rather than left to a default.
+
+                     useJwksUrl is not, and no longer appears: the provider sets it
+                     from the jwksUrl field above. Verified against the Admin API —
+                     this broker carries useJwksUrl=true and validateSignature=true
+                     with nothing declaring them. Declaring it anyway left a key the
+                     provider writes but never reads back into extraConfig, so the
+                     resource could not converge and was updated on every pass. */}}
                 extraConfig:
-                  useJwksUrl: "true"
                   updateProfileFirstLoginMode: "on"
                 clientIdSecretRef:
                   name: {{ $tenant }}-broker-client-id
