@@ -62,14 +62,14 @@ install_cert_manager() {
     if [[ "${has_existing_crds}" == "1" ]]; then
         # Existing CRDs may come from distro addons or prior non-Helm installs;
         # do not ask Helm to import/manage them.
-        helm upgrade --install cert-manager jetstack/cert-manager \
+        _helm_retry upgrade --install cert-manager jetstack/cert-manager \
             -n cert-manager \
             --version "$(gentian_pin cert-manager chart)" \
             --create-namespace \
             --set crds.enabled=false \
             --wait --timeout 5m
     else
-        helm upgrade --install cert-manager jetstack/cert-manager \
+        _helm_retry upgrade --install cert-manager jetstack/cert-manager \
             -n cert-manager \
             --version "$(gentian_pin cert-manager chart)" \
             --create-namespace \
@@ -330,7 +330,7 @@ install_envoy_gateway() {
         success "Envoy Gateway Helm release already present in ${ns}."
     else
         info "Installing Envoy Gateway ${chart_version} (service type ${svc_type})..."
-        helm upgrade --install eg "$(gentian_pin envoy-gateway repo)" \
+        _helm_retry upgrade --install eg "$(gentian_pin envoy-gateway repo)" \
             --version "${chart_version}" \
             -n "${ns}" \
             --create-namespace \

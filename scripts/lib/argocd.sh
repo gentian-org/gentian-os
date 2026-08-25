@@ -384,7 +384,7 @@ install_argocd_image_updater() {
     helm repo update argo >/dev/null
 
     info "Installing/upgrading argocd-image-updater chart..."
-    helm upgrade --install argocd-image-updater argo/argocd-image-updater \
+    _helm_retry upgrade --install argocd-image-updater argo/argocd-image-updater \
         --namespace argocd-image-updater \
         --create-namespace \
         --set "config.argocd\.namespace=argocd" \

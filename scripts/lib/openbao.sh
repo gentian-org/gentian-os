@@ -116,7 +116,7 @@ install_eso() {
 
     helm repo add external-secrets "$(gentian_pin external-secrets repo)" --force-update
     helm repo update external-secrets
-    helm install external-secrets external-secrets/external-secrets \
+    _helm_retry install external-secrets external-secrets/external-secrets \
         -n external-secrets \
         --version "${ESO_CHART_VERSION}" \
         -f "${SCRIPT_DIR}/kernel/eso/values.yaml" \

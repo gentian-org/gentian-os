@@ -105,7 +105,7 @@ install_crossplane() {
 
     helm repo add crossplane-stable "${CROSSPLANE_HELM_REPO}" --force-update
     helm repo update crossplane-stable
-    helm install crossplane crossplane-stable/crossplane \
+    _helm_retry install crossplane crossplane-stable/crossplane \
         --namespace "${CROSSPLANE_NAMESPACE}" \
         --create-namespace \
         --version "${CROSSPLANE_VERSION}" \

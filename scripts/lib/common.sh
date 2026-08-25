@@ -47,6 +47,62 @@ banner()  { echo -e "\n${CYAN}════════════════�
 # clusters or flaky client networks). Only connection-level failures are retried;
 # resource errors (NotFound, wait timeouts, etc.) fail immediately.
 # Override attempts/delay via KUBECTL_RETRY_ATTEMPTS / KUBECTL_RETRY_DELAY_SECS.
+# _helm_retry — the same idea as _kubectl_retry, for helm.
+#
+# Every chart this installer applies is fetched over the network, from a chart
+# repository or an OCI registry, and those have bad seconds. A single one aborts
+# the whole run:
+#
+#   Error: failed to perform "Fetch" on source: Get "https://production.
+#   cloudfront.docker.com/.../data?Expires=...": EOF
+#
+# That killed an install at A-07 with everything before it already applied. The
+# steps are idempotent so a re-run resumes, but an operator watching a
+# multi-hour install should not have to babysit a CDN.
+#
+# Matched on the error text, like the kubectl helper, so this only ever retries
+# a transport failure. A chart that is genuinely wrong — a bad value, an
+# immutable field, a failed hook — still fails on the first attempt, which is
+# the behaviour worth keeping: retrying those just delays the diagnosis by
+# however long the backoff lasts.
+#
+# Override with HELM_RETRY_ATTEMPTS / HELM_RETRY_DELAY_SECS.
+_helm_retry() {
+    local attempts="${HELM_RETRY_ATTEMPTS:-4}"
+    local delay="${HELM_RETRY_DELAY_SECS:-10}"
+    local n=1 rc=0 err=""
+    local err_file
+    err_file="$(mktemp)"
+    # shellcheck disable=SC2064
+    trap "rm -f '${err_file}'" RETURN
+
+    while (( n <= attempts )); do
+        if helm "$@" 2>"${err_file}"; then
+            return 0
+        else
+            # Inside the else, not after the fi. After `if cmd; then ...; fi`
+            # with no branch taken, $? is the status of the if construct — which
+            # is 0 — so reading it there reported success for every failure the
+            # regex declined to retry. Caught by a test that made helm fail with
+            # a non-transient error and got exit 0 back.
+            rc=$?
+        fi
+        err="$(<"${err_file}")"
+        [[ -n "${err}" ]] && printf '%s\n' "${err}" >&2
+
+        if ! [[ "${err}" =~ (EOF|connection[[:space:]]refused|connection[[:space:]]reset|TLS[[:space:]]handshake[[:space:]]timeout|i/o[[:space:]]timeout|dial[[:space:]]tcp|no[[:space:]]route[[:space:]]to[[:space:]]host|context[[:space:]]deadline[[:space:]]exceeded|failed[[:space:]]to[[:space:]]perform|temporary[[:space:]]failure[[:space:]]in[[:space:]]name[[:space:]]resolution|502[[:space:]]Bad[[:space:]]Gateway|503[[:space:]]Service[[:space:]]Unavailable|504[[:space:]]Gateway[[:space:]]Time) ]]; then
+            return "${rc}"
+        fi
+        if (( n >= attempts )); then
+            return "${rc}"
+        fi
+        warn "helm failed (attempt ${n}/${attempts}): transient network error"
+        warn "  Retrying in ${delay}s..."
+        sleep "${delay}"
+        n=$((n + 1))
+    done
+}
+
 _kubectl_retry() {
     local attempts="${KUBECTL_RETRY_ATTEMPTS:-12}"
     local delay="${KUBECTL_RETRY_DELAY_SECS:-5}"
@@ -59,8 +115,9 @@ _kubectl_retry() {
     while (( n <= attempts )); do
         if kubectl "$@" 2>"${err_file}"; then
             return 0
+        else
+            rc=$?
         fi
-        rc=$?
         err="$(<"${err_file}")"
         if [[ -n "$err" ]]; then
             printf '%s\n' "$err" >&2
