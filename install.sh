@@ -147,8 +147,11 @@ Other options:
   --validate            validate config and step contracts, no cluster changes
   --verify-only         run post-install verification and print the summary
   --no-cluster-infra    skip cert-manager / CNPG / reloader on install
-  --cluster-infra       with --purge, also remove them and their CRDs. They may
-                        serve workloads that are not Gentian's
+  --cluster-infra       with --purge, also remove them and their CRDs: CNPG,
+                        Reloader, external-dns, cert-manager. They may serve
+                        workloads that are not Gentian's, and this discards the
+                        wildcard certificate, which Let's Encrypt rations to
+                        five per week for one set of names
   --config-file PATH    override install.env
   --no-config-files     ignore install.env entirely; take everything from the
                         environment

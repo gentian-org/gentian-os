@@ -45,7 +45,36 @@ apply() {
 }
 
 destroy() {
-    kubectl delete certificate wildcard-kernel-tls -n cert-manager \
+    # Kept unless --cluster-infra, because re-obtaining it is rationed.
+    #
+    # Let's Encrypt allows five certificates per exact identifier set per 168
+    # hours. [gtn.host, *.gtn.host] is one set, so five rebuilds in a week is the
+    # budget — and a teardown that discards the certificate spends one on every
+    # cycle. That limit was reached here, and the next install could not obtain
+    # a certificate at all:
+    #
+    #   429 rateLimited: too many certificates (5) already issued for this exact
+    #   set of identifiers in the last 168h0m0s
+    #
+    # which stops the Gateway serving HTTPS, and with it every check that reads a
+    # public URL. Nothing else in the teardown is scarce in that way: a database
+    # can be recreated in seconds, a certificate cannot be recreated at all until
+    # a clock somewhere else runs out.
+    #
+    # It is also safe to keep. A public certificate is not a credential — the
+    # private key is regenerated on renewal, and a stale one for a domain this
+    # cluster no longer serves grants nobody anything.
+    if [[ "${GENTIAN_PURGE_CLUSTER_INFRA:-0}" != "1" ]]; then
+        info "Keeping the wildcard certificate (Let's Encrypt allows five per week)."
+        info "  Remove it with --cluster-infra if the domain is changing."
+        return 0
+    fi
+
+    # The Certificate is wildcard-kernel; wildcard-kernel-tls is the Secret it
+    # writes. Deleting the latter under the former's name removed nothing, so the
+    # Certificate outlived the purge, found its Secret gone, and re-issued —
+    # spending a quota slot to replace something the teardown had just discarded.
+    kubectl delete certificate wildcard-kernel -n cert-manager \
         --ignore-not-found=true 2>/dev/null || true
     kubectl delete secret wildcard-kernel-tls -n cert-manager \
         --ignore-not-found=true 2>/dev/null || true

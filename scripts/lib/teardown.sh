@@ -969,8 +969,13 @@ purge_confirm() {
     warn "  • ~/.gentian and the OpenBao init files on this machine"
     if [[ "${GENTIAN_PURGE_CLUSTER_INFRA:-0}" == "1" ]]; then
         warn "  • --cluster-infra: the shared operators this installer brought up —"
-        warn "    CNPG, Reloader — and their CRDs. Every Postgres cluster on this"
-        warn "    machine goes with them, not only Gentian's."
+        warn "    CNPG, Reloader, external-dns, cert-manager — and their CRDs."
+        warn "    Every Postgres cluster on this machine goes with them, not only"
+        warn "    Gentian's, and every certificate."
+        warn "    The wildcard certificate goes too, and Let'\''s Encrypt issues"
+        warn "    only five per week for one set of names — so a rebuild that"
+        warn "    keeps it costs nothing, and one that discards it may find the"
+        warn "    quota gone."
     fi
     echo ""
     warn "Without a recovery kit the salt is gone with it, and the same master"
