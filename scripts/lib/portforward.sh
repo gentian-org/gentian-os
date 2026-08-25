@@ -68,7 +68,20 @@ export _GENTIAN_PF_CACHE
 gentian_cleanup_port_forwards() {
     [[ -f "${_GENTIAN_PF_PIDFILE}" ]] || return 0
     while read -r _gentian_pf_pid; do
-        [[ -n "${_gentian_pf_pid}" ]] && kill "${_gentian_pf_pid}" 2>/dev/null
+        # `|| true`, because a port-forward that has already exited is the
+        # normal case, not a fault. kill returns 1 for a pid that is gone and
+        # 2>/dev/null hides its message but not its status, so under the
+        # installer's `set -Eeuo pipefail` the ERR trap fired — from inside the
+        # EXIT trap, after the run had finished. A complete install ended with
+        #
+        #   [ABORT] Install stopped: a command failed and was not handled.
+        #     command   : ...
+        #     call stack: portforward.sh:71 in gentian_cleanup_port_forwards()
+        #
+        # which reads as a crash and is instead this function doing its job on
+        # processes that had outlived their usefulness. Certain after a long
+        # wait, when every forward this started is long dead.
+        [[ -n "${_gentian_pf_pid}" ]] && { kill "${_gentian_pf_pid}" 2>/dev/null || true; }
     done < "${_GENTIAN_PF_PIDFILE}"
     rm -f "${_GENTIAN_PF_PIDFILE}" "${_GENTIAN_PF_CACHE}"
     unset _gentian_pf_pid
