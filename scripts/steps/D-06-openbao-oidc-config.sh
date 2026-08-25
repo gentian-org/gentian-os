@@ -209,10 +209,39 @@ apply() {
     # Keycloak serves either /realms/<realm> or /auth/realms/<realm> depending on
     # how it was deployed.
     #
-    # Reached only when Keycloak IS deployed, so an unreadable document here is
-    # a real fault — a wrong path or a broken realm — and stops the run.
+    # Reached only when Keycloak IS deployed, so a document that stays
+    # unreadable is a real fault — a wrong path or a broken realm — and stops
+    # the run. "Stays" is doing the work there; see the wait below.
     local well_known="${OIDC_DISCOVERY_URL%/}/.well-known/openid-configuration"
-    if ! run_validator oidc-discovery "${well_known}" >/dev/null 2>&1; then
+
+    # Retried, because this is a public URL on a cluster that has just been
+    # built. Reaching it needs DNS for the name, a programmed Gateway, an ACME
+    # certificate that is issued rather than pending, and Keycloak serving the
+    # realm — four things that become true at their own pace, and the
+    # certificate is minutes on a good day.
+    #
+    # _keycloak_deployed above only says the workload exists. That is what makes
+    # an unreadable document "a real fault" in the comment below, and it is true
+    # of a document that stays unreadable — not of one checked eight seconds
+    # after the Gateway came up. D-05 failed exactly this way against Keycloak
+    # itself, on a wait that was too short rather than a check that was wrong.
+    #
+    # The hard failure below is kept, with its diagnosis, for when the budget
+    # really has expired: a wrong path in spec.oidc.discoveryUrl never becomes
+    # right by waiting, and should still stop the run.
+    local _dd_wait="${GENTIAN_OIDC_DISCOVERY_WAIT_SECS:-600}"
+    local _dd_deadline=$(( SECONDS + _dd_wait ))
+    local _dd_ok=0
+    info "Checking the OIDC discovery document (up to $(( _dd_wait / 60 ))m; DNS and the certificate may still be settling)..."
+    while (( SECONDS < _dd_deadline )); do
+        if run_validator oidc-discovery "${well_known}" >/dev/null 2>&1; then
+            _dd_ok=1
+            break
+        fi
+        sleep 10
+    done
+
+    if (( _dd_ok == 0 )); then
         error "The OIDC discovery document is not readable at:"
         error "  ${well_known}"
         error "  OpenBao must fetch this to accept the config, so it is checked first."
