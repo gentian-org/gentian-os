@@ -62,7 +62,7 @@ apply() {
     fi
 
     helm repo add metrics-server "$(gentian_pin metrics-server repo)" --force-update
-    helm repo update
+    helm repo update metrics-server
 
     # --kubelet-insecure-tls is set deliberately and is the norm for a cluster
     # whose kubelets serve the self-signed certificates kubeadm issues. Without

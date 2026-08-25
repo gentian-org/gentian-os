@@ -58,7 +58,7 @@ install_cert_manager() {
     fi
 
     helm repo add jetstack "$(gentian_pin cert-manager repo)" --force-update
-    helm repo update
+    helm repo update jetstack
     if [[ "${has_existing_crds}" == "1" ]]; then
         # Existing CRDs may come from distro addons or prior non-Helm installs;
         # do not ask Helm to import/manage them.

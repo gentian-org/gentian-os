@@ -37,7 +37,7 @@ _ensure_crossplane_package_crds() {
     warn "Crossplane package CRDs missing: ${missing[*]}"
     info "Re-applying Crossplane CRDs from Helm chart..."
     helm repo add crossplane-stable "${CROSSPLANE_HELM_REPO}" --force-update >/dev/null
-    helm repo update >/dev/null
+    helm repo update crossplane-stable >/dev/null
     # --server-side, not plain apply: some of these CRDs' embedded OpenAPI
     # schemas exceed the 256 KiB single-annotation limit once client-side
     # apply embeds the full manifest into kubectl.kubernetes.io/last-applied-
@@ -104,7 +104,7 @@ install_crossplane() {
     fi
 
     helm repo add crossplane-stable "${CROSSPLANE_HELM_REPO}" --force-update
-    helm repo update
+    helm repo update crossplane-stable
     helm install crossplane crossplane-stable/crossplane \
         --namespace "${CROSSPLANE_NAMESPACE}" \
         --create-namespace \

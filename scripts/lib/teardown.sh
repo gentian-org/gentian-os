@@ -765,6 +765,9 @@ purge_delete_volumes() {
     # Then everything the namespace list does not cover — tenant namespaces
     # among them, which is how thirteen volumes accumulated across rebuilds.
     _reclaim_orphaned_pvs
+
+    # And the CRDs Argo CD put back while the reverse pass was still running.
+    purge_sweep_api_scaffold
 }
 
 # purge_local_state — the installer's own files.
@@ -773,6 +776,27 @@ purge_delete_volumes() {
 # reinstall legitimately starts from. Everything here is derived — a plugin
 # config this run wrote, a cache with no cluster left to seed, and init files
 # holding unseal keys for storage that no longer exists.
+# purge_sweep_api_scaffold — the gentianos.io CRDs, once Argo CD cannot undo it.
+#
+# D-01's destroy() already deletes them, and they came back anyway: fourteen of
+# sixteen survived a full purge, none of them mid-deletion and none carrying a
+# finalizer, which is the signature of objects that were deleted and then
+# recreated rather than objects that got stuck.
+#
+# The reverse pass is the reason. Steps are torn down last-first, so D-01
+# (applications) is destroyed while A-09 (control-plane) still has Argo CD
+# running — and Argo owns the gentian-os chart, as D-01's own comment says. It
+# re-synced the Application and re-applied the chart's crds/ directory over the
+# sweep that had just removed it. Helm never deletes crds/ on uninstall, so
+# nothing took them away again.
+#
+# Running the same sweep once more at the end costs nothing when it is already
+# clean and is the only point at which nothing is left to put them back.
+purge_sweep_api_scaffold() {
+    banner "Purge — the API scaffold, after Argo CD is gone"
+    _delete_crds_matching 'gentianos\.io$' 'gentianos.io CRDs'
+}
+
 purge_local_state() {
     banner "Purge — local state"
     local f

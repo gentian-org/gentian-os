@@ -381,7 +381,7 @@ install_argocd_image_updater() {
 
     info "Adding Argo Helm repo..."
     helm repo add argo "$(gentian_pin argocd repo)" --force-update >/dev/null
-    helm repo update >/dev/null
+    helm repo update argo >/dev/null
 
     info "Installing/upgrading argocd-image-updater chart..."
     helm upgrade --install argocd-image-updater argo/argocd-image-updater \
