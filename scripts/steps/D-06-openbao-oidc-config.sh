@@ -220,7 +220,34 @@ apply() {
     # realm — four things that become true at their own pace, and the
     # certificate is minutes on a good day.
     #
-    # _keycloak_deployed above only says the workload exists. That is what makes
+    # _dd_resolves / _dd_tls_ok — which link of the chain is missing.
+#
+# Deliberately not `dig`: it is not in the pre-flight set and a teardown or a
+# minimal image may not have it. getent hosts is in libc, and the Bash /dev/tcp
+# probe needs nothing at all. Both are advisory — they decide what the wait
+# SAYS, never whether it proceeds, so a false negative costs a misleading line
+# and not a failed install.
+_dd_resolves() {
+    local host="$1"
+    getent hosts "${host}" >/dev/null 2>&1 && return 0
+    # busybox getent lacks the hosts database on some images.
+    command -v nslookup >/dev/null 2>&1 && nslookup "${host}" >/dev/null 2>&1
+}
+
+_dd_tls_ok() {
+    local host="$1"
+    curl -sS -o /dev/null --max-time 10 "https://${host}/" >/dev/null 2>&1 && return 0
+    # A 4xx/5xx from the server still means TLS completed; only a transport
+    # failure counts as "no usable certificate".
+    local err
+    err="$(curl -sS -o /dev/null --max-time 10 "https://${host}/" 2>&1 || true)"
+    case "${err}" in
+        *SSL*|*certificate*|*Connection\ refused*|*Could\ not\ resolve*|*"Failed to connect"*) return 1 ;;
+        *) return 0 ;;
+    esac
+}
+
+# _keycloak_deployed above only says the workload exists. That is what makes
     # an unreadable document "a real fault" in the comment below, and it is true
     # of a document that stays unreadable — not of one checked eight seconds
     # after the Gateway came up. D-05 failed exactly this way against Keycloak
@@ -229,19 +256,56 @@ apply() {
     # The hard failure below is kept, with its diagnosis, for when the budget
     # really has expired: a wrong path in spec.oidc.discoveryUrl never becomes
     # right by waiting, and should still stop the run.
-    local _dd_wait="${GENTIAN_OIDC_DISCOVERY_WAIT_SECS:-600}"
+    # Three things have to become true, in order, and the wait says which one it
+    # is on rather than reporting "not readable" for all of them.
+    #
+    # The name has to resolve, TLS has to present a certificate covering it, and
+    # the realm has to answer. Each arrives from somewhere different: the record
+    # from external-dns, the certificate from cert-manager, the realm from
+    # Keycloak. A single yes/no poll across all three said only that the document
+    # could not be read, which was true and useless — the run that found this was
+    # waiting on a DNS record for a domain external-dns had not been deployed to
+    # serve yet, and the message pointed at spec.oidc.discoveryUrl instead.
+    #
+    # This went unnoticed for as long as it did because the DNS records already
+    # existed: the cluster had been installed under a domain whose records were
+    # configured by hand, so the name resolved before the installer ever ran and
+    # the ordering was never exercised.
+    local _dd_host
+    _dd_host="$(printf '%s' "${OIDC_DISCOVERY_URL}" | sed -E 's#^[a-z]+://##; s#/.*$##; s#:.*$##')"
+    local _dd_wait="${GENTIAN_OIDC_DISCOVERY_WAIT_SECS:-900}"
     local _dd_deadline=$(( SECONDS + _dd_wait ))
-    local _dd_ok=0
-    info "Checking the OIDC discovery document (up to $(( _dd_wait / 60 ))m; DNS and the certificate may still be settling)..."
+    local _dd_ok=0 _dd_stage="" _dd_last="" _dd_next=0
+
+    info "Checking the OIDC discovery document (up to $(( _dd_wait / 60 ))m)."
+    info "  ${well_known}"
     while (( SECONDS < _dd_deadline )); do
         if run_validator oidc-discovery "${well_known}" >/dev/null 2>&1; then
             _dd_ok=1
             break
         fi
+
+        # Which of the three is not ready yet. Cheap enough to re-evaluate each
+        # pass, and it is the only way the message can improve as things arrive.
+        if ! _dd_resolves "${_dd_host}"; then
+            _dd_stage="DNS: ${_dd_host} does not resolve yet — external-dns publishes it once it is running"
+        elif ! _dd_tls_ok "${_dd_host}"; then
+            _dd_stage="TLS: ${_dd_host} resolves, but no certificate covering it is served yet"
+        else
+            _dd_stage="HTTP: ${_dd_host} serves TLS, but the realm has not answered yet"
+        fi
+
+        if [[ "${_dd_stage}" != "${_dd_last}" ]] || (( SECONDS >= _dd_next )); then
+            info "  waiting — ${_dd_stage}"
+            _dd_last="${_dd_stage}"
+            _dd_next=$(( SECONDS + 60 ))
+        fi
         sleep 10
     done
 
     if (( _dd_ok == 0 )); then
+        error "Gave up after $(( _dd_wait / 60 ))m. Last state was:"
+        error "  ${_dd_stage}"
         error "The OIDC discovery document is not readable at:"
         error "  ${well_known}"
         error "  OpenBao must fetch this to accept the config, so it is checked first."
