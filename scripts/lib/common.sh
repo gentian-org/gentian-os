@@ -1237,8 +1237,25 @@ prompt_mail_mode() {
                 break
             done
         fi
-        [[ -n "${EXTERNAL_SMTP_HOST:-}" ]] && export EXTERNAL_SMTP_HOST
+        # An `if`, not `[[ ... ]] && export`, because this is the last statement
+        # in the function and its status becomes the function's.
+        #
+        # Unset is the normal case: a non-interactive run has nobody to ask, and
+        # a blank answer is explicitly allowed above ("blank to set later"). But
+        # a false [[ ]] at the end of an && list returns 1, so prompt_mail_mode
+        # returned 1, and under set -Eeuo pipefail the ERR trap turned "the
+        # operator did not name a relay" into:
+        #
+        #   [ABORT] Install stopped: a command failed and was not handled.
+        #     command   : [[ -n "${EXTERNAL_SMTP_HOST:-}" ]]
+        #     call stack: ./install.sh:322 in prepare_deployment_run()
+        #
+        # which stopped --prepare-deployment before it wrote anything at all.
+        if [[ -n "${EXTERNAL_SMTP_HOST:-}" ]]; then
+            export EXTERNAL_SMTP_HOST
+        fi
     fi
+    return 0
 }
 
 # =============================================================================
