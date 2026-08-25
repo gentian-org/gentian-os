@@ -153,11 +153,26 @@ ensure_keycloak_admin_secret_url() {
     local ns="platform-kernel"
     local url current
 
-    if ! url=$(wait_for_keycloak_http_service "${ns}" 120); then
+    # The first wait is the long one, because on a fresh install this is a race
+    # with Argo CD rather than a fault.
+    #
+    # Keycloak arrives through gentian-appsets -> gentian-suze -> keycloak-idp,
+    # and that chain took eleven minutes on a real cluster. The old budget was
+    # 120s here plus 180s after a heal — under half of it — so the step reported
+    # "No Keycloak HTTP service found" and stopped an install whose Keycloak
+    # appeared a couple of minutes later. Nothing was wrong; it was early.
+    #
+    # The heal is still worth attempting, but only once the wait has genuinely
+    # expired: ensure_suze_idp_workloads cannot help while the Suze claim itself
+    # has not been applied yet, which is exactly the state a too-short wait
+    # catches.
+    local kc_wait="${GENTIAN_KEYCLOAK_WAIT_SECS:-900}"
+    info "Waiting up to $(( kc_wait / 60 ))m for Keycloak to appear (Argo CD is still rolling out on a fresh install)..."
+    if ! url=$(wait_for_keycloak_http_service "${ns}" "${kc_wait}"); then
         if declare -F ensure_suze_idp_workloads >/dev/null 2>&1; then
-            warn "Keycloak Service not found — attempting Suze IdP heal..."
+            warn "Keycloak Service still absent after $(( kc_wait / 60 ))m — attempting Suze IdP heal..."
             ensure_suze_idp_workloads "" 600 || true
-            url=$(wait_for_keycloak_http_service "${ns}" 180) || true
+            url=$(wait_for_keycloak_http_service "${ns}" 300) || true
         fi
     fi
 
@@ -402,6 +417,24 @@ configure_keycloak_realm_smtp() {
     local ns="platform-kernel"
     local job_name="keycloak-smtp-configure"
     local kernel_realm="${KERNEL_REALM:-kernel}"
+
+    # Keycloak first, and before the Secret check, because this runs earlier in
+    # the step than the portal-login wait and hits the same race.
+    #
+    # Without it the Job is created against a Keycloak that does not exist, its
+    # pods fail with
+    #
+    #   could not resolve Keycloak OIDC base from KEYCLOAK_URL=...
+    #
+    # three times over, and `kubectl wait` times out on a condition that was
+    # never going to arrive. That is several minutes spent proving something the
+    # caller could have established in one query.
+    if ! wait_for_keycloak_http_service "${ns}" "${GENTIAN_KEYCLOAK_WAIT_SECS:-900}" >/dev/null; then
+        warn "Keycloak is not serving in ${ns} yet — realm SMTP not configured."
+        warn "  Nothing is wrong with the SMTP settings; there is no realm to put"
+        warn "  them in. Re-run once Keycloak is up: ./install.sh --only D-05"
+        return 1
+    fi
 
     if ! kubectl get secret keycloak-admin -n "${ns}" >/dev/null 2>&1; then
         warn "keycloak-admin Secret not present yet — cannot configure realm SMTP."
