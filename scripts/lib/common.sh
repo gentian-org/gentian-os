@@ -41,7 +41,23 @@ info()    { echo -e "${CYAN}[INFO]${NC}  $*"; }
 success() { echo -e "${GREEN}[OK]${NC}    $*"; }
 warn()    { echo -e "${YELLOW}[WARN]${NC}  $*"; }
 error()   { echo -e "${RED}[ERROR]${NC} $*" >&2; }
-banner()  { echo -e "\n${CYAN}══════════════════════════════════════════════════${NC}"; echo -e "${CYAN}  $*${NC}"; echo -e "${CYAN}══════════════════════════════════════════════════${NC}\n"; }
+# banner — a heading for a unit of work inside a step.
+#
+# One line, in the same rule-and-title language the driver uses for a phase, and
+# indented under it. It used to be a three-line box of ═, which made the deepest
+# thing on the screen the loudest: a phase announced itself with a light rule, a
+# step with a bracketed id, and then the work inside that step drew a full-width
+# double box. Two visual languages, and the hierarchy upside down.
+banner() {
+    local _title="$*"
+    # Pad the trailing rule so every heading ends in the same column, rather
+    # than a fixed tail that a long title overruns. No ${var:offset:len} on the
+    # dash string and no printf padding with multi-byte characters — bash 3.2
+    # counts bytes, and ─ is three of them.
+    local _rule="" _i=0 _width=$(( 62 - ${#_title} ))
+    while (( _i < _width )); do _rule="${_rule}─"; _i=$(( _i + 1 )); done
+    echo -e "\n${CYAN}    ── ${_title} ${_rule}${NC}\n"
+}
 
 # Retry kubectl when the API server is temporarily unreachable (common on remote
 # clusters or flaky client networks). Only connection-level failures are retried;
