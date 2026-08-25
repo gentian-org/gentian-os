@@ -13,7 +13,7 @@ check() {
     # (this step's own destroy()) deletes every gentianos.io CRD and the
     # validating webhook; the Deployment can stay Running with both gone since
     # neither is on its own pod's readiness path. tenants.gentianos.io stands
-    # in for the CRD set — C-06, D-07 and E-01 all break silently downstream
+    # in for the CRD set — C-06, D-08 and E-01 all break silently downstream
     # without it, the same shape as A-02's missing ProviderConfig.
     kubectl get crd tenants.gentianos.io >/dev/null 2>&1 || return 1
     kubectl get validatingwebhookconfiguration gentian-os-tenant-validator >/dev/null 2>&1

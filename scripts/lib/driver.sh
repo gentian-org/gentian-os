@@ -732,7 +732,7 @@ validate_step_calls() {
             # to ~/.local/bin at startup, so every step may call it, but a CI
             # runner has never seen it. Without this the check reported
             #
-            #   D-06-openbao-oidc-config: calls 'bao', which is not defined or
+            #   D-07-openbao-oidc-config: calls 'bao', which is not defined or
             #   on PATH
             #
             # and failed every commit on the branch — including commits that

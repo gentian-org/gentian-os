@@ -556,5 +556,5 @@ the inputs exported, which rewrites the credential in Keycloak:
 
 ```bash
 export MASTER_PASSWORD=... DERIVATION_SALT=...
-./install.sh --force --only D-05
+./install.sh --force --only D-06
 ```

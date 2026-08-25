@@ -12,7 +12,7 @@
 # resolving differently in two places:
 #
 #   gentian_mail_namespace answered gentian-<env> while the mail charts deployed
-#   into platform-kernel, so D-03 looked for its own ConfigMap in an empty
+#   into platform-kernel, so D-04 looked for its own ConfigMap in an empty
 #   namespace and called a working mail stack missing.
 #
 #   The portal reconstructed a tenant admin address as admin-<tenant>@gentian.org
@@ -156,7 +156,7 @@ fi
 if (( contradictions > 0 )); then
     echo "${RED}${contradictions} setting(s) with a literal that contradicts the XRD.${NC}"
     echo "A value that resolves one way in the Composition and another in the shell is"
-    echo "the shape that made D-03 report a working mail stack missing. This one fails."
+    echo "the shape that made D-04 report a working mail stack missing. This one fails."
     exit 1
 fi
 echo "${YELLOW}${total} shell default(s) for claim-backed settings, all restating the schema.${NC}"

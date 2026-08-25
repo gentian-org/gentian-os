@@ -313,7 +313,7 @@ _wait_for_sign_in() {
     #
     # This said "credentials are in the summary above" — and the summary is
     # printed AFTER the steps, so at this moment there is no summary above.
-    # D-05 printed them, several hundred lines and many minutes earlier. An
+    # D-06 printed them, several hundred lines and many minutes earlier. An
     # instruction to sign in that does not say what to sign in with sends the
     # operator scrolling, which is the opposite of what a step that has stopped
     # to wait for them should do.

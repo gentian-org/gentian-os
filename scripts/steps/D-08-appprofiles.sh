@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# step: D-07-appprofiles
+# step: D-08-appprofiles
 # phase: applications
 # requires: D-01-operator
 # provides: AppProfile CRs from the gentian-apps repository

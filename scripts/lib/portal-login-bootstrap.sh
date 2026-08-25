@@ -317,7 +317,7 @@ _keycloak_smtp_configure_shell() {
                   echo "ERROR: cannot read realm ${REALM} (HTTP ${REALM_CODE}) at ${KEYCLOAK_BASE}" >&2
                   if [ "${REALM_CODE}" = "404" ]; then
                     echo "  The realm does not exist yet — the portal bootstrap creates it," >&2
-                    echo "  and in D-05 that now runs before this." >&2
+                    echo "  and in D-06 that now runs before this." >&2
                   fi
                   exit 1
                 fi
@@ -430,7 +430,7 @@ _apply_keycloak_smtp_secret() {
     return 0
 }
 
-# Configure Keycloak kernel realm SMTP (standalone Job; used by ./install.sh --step D-03-mail).
+# Configure Keycloak kernel realm SMTP (standalone Job; used by ./install.sh --step D-04-mail).
 configure_keycloak_realm_smtp() {
     local ns="platform-kernel"
     local job_name="keycloak-smtp-configure"
@@ -450,7 +450,7 @@ configure_keycloak_realm_smtp() {
     if ! wait_for_keycloak_http_service "${ns}" "${GENTIAN_KEYCLOAK_WAIT_SECS:-900}" >/dev/null; then
         warn "Keycloak is not serving in ${ns} yet — realm SMTP not configured."
         warn "  Nothing is wrong with the SMTP settings; there is no realm to put"
-        warn "  them in. Re-run once Keycloak is up: ./install.sh --only D-05"
+        warn "  them in. Re-run once Keycloak is up: ./install.sh --only D-06"
         return 1
     fi
 
@@ -682,7 +682,7 @@ run_keycloak_portal_bootstrap_job() {
         )
     else
         warn "SMTP credentials incomplete — Keycloak invite/reset emails will not send" \
-             "until ./install.sh --step D-03-mail (set the claim's mail block:" \
+             "until ./install.sh --step D-04-mail (set the claim's mail block:" \
              "serviceMode kernel, or host/port for an external relay)."
         bootstrap_secret_args+=(
             --from-literal=smtp_configure=false
@@ -1670,7 +1670,7 @@ print_portal_login_summary() {
     # Derived correctly is still not the same as "this is the password".
     #
     # The check above proves this shell agrees with the cluster's Secret. It says
-    # nothing about Keycloak, which holds whatever the last D-05 run wrote — so a
+    # nothing about Keycloak, which holds whatever the last D-06 run wrote — so a
     # cluster whose master password changed after that run prints a value that
     # agrees with every stored input and is refused at the login page. That is
     # the shape the operator hit: no warning, a plausible password, no way to
@@ -1701,16 +1701,16 @@ print_portal_login_summary() {
                     echo ""
                     warn "Keycloak does not accept this password."
                     warn "  Every stored input agrees, so the derivation is right and the value"
-                    warn "  Keycloak holds is older — it was set by the last D-05 run, with a"
+                    warn "  Keycloak holds is older — it was set by the last D-06 run, with a"
                     warn "  master password that has since changed."
-                    warn "  Re-assert it:  ./install.sh --only D-05 --force"
+                    warn "  Re-assert it:  ./install.sh --only D-06 --force"
                     ;;
                 *invalid_client*)
                     echo ""
                     warn "The portal BFF client secret is not the one Keycloak holds, so the"
                     warn "  password below could not be checked. Both are derived from"
                     warn "  MASTER_PASSWORD, so they went stale together."
-                    warn "  Re-assert both:  ./install.sh --only D-05 --force"
+                    warn "  Re-assert both:  ./install.sh --only D-06 --force"
                     ;;
                 *)
                     # Unreachable, mid-rollout, or an answer this does not know.

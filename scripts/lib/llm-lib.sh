@@ -1,7 +1,7 @@
 #!/bin/bash
 # LiteLLM Teams reconciliation — one Team per Gentian Tenant CR.
 # Sourced from scripts/lib/load.sh; called from install_llm_serving
-# (./install.sh --step D-04-llm-serving) and E-02-litellm-reconcile.
+# (./install.sh --step D-05-llm-serving) and E-02-litellm-reconcile.
 
 # Renders kernel/services/llm/chart once per entry in the claim's
 # llm.instances (clusters/<id>/kernel/claims/cluster.yaml — cluster
@@ -150,7 +150,7 @@ yaml.safe_dump({"instances": items}, sys.stdout, default_flow_style=False, sort_
 # Registers/updates every claim llm.instances entry as a LiteLLM model
 # (one shared LiteLLM proxy in front of however many vLLM instances exist
 # — see llm-services.yaml), so editing the claim + `./install.sh --step
-# D-04-llm-serving` is enough on its own — no Admin Console / manual
+# D-05-llm-serving` is enough on its own — no Admin Console / manual
 # `/model/new` step. Each
 # instance is keyed on its own api_base (vllm-<id>-inference.platform-
 # kernel.svc.cluster.local — one Service per instance, never shared): any

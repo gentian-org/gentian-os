@@ -487,10 +487,10 @@ spec:
 step converges on it:
 
 ```bash
-./install.sh --only D-03-mail
+./install.sh --only D-04-mail
 ```
 
-`--force` is not required either direction. `D-03-mail`'s `check()` inspects
+`--force` is not required either direction. `D-04-mail`'s `check()` inspects
 state when the desired mode is `kernel` (the Postfix ConfigMap), and always
 reports "runs every pass" when it is `external`, since `apply()`'s external
 branch is pure verification with no cluster mutation to gate on — cheap enough
@@ -500,7 +500,7 @@ resolved mode and reconciles Postfix/Dovecot from it.
 
 ### Check mail component health
 
-`D-03-mail` runs automated smoke checks on apply: Keycloak master-realm OIDC
+`D-04-mail` runs automated smoke checks on apply: Keycloak master-realm OIDC
 discovery and Dovecot IMAP/LMTP TCP. Re-run anytime:
 
 ```bash
@@ -542,7 +542,7 @@ spec:
 ```
 
 ```bash
-./install.sh --only D-03-mail --force
+./install.sh --only D-04-mail --force
 ```
 
 

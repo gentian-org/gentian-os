@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# step: D-06-openbao-oidc-config
+# step: D-07-openbao-oidc-config
 # phase: applications
-# requires: D-05-portal-login
+# requires: D-06-portal-login, D-03-dns-wait
 # provides: auth/oidc/config, so OpenBao accepts Keycloak logins
 # mutates: OpenBao auth/oidc/config
 
@@ -17,7 +17,7 @@
 #   XR creates, so it cannot precede B-08;
 #
 #   Keycloak itself, serving its discovery document — it arrives at sync-wave 9
-#   through the root ApplicationSet, which C-02 applies, and D-05 is the first
+#   through the root ApplicationSet, which C-02 applies, and D-06 is the first
 #   step that waits for it to answer.
 #
 # Held in B-07 those two could never be satisfied on the pass that ran it. The
@@ -194,7 +194,7 @@ apply() {
     fi
 
     if ! _keycloak_deployed; then
-        # Also a safety net. D-05 has run by now and talks to Keycloak, so a
+        # Also a safety net. D-06 has run by now and talks to Keycloak, so a
         # missing Keycloak here means it was removed or never came up.
         info "Keycloak is not deployed, so its discovery document cannot be checked."
         info "  It arrives at sync-wave 9 via the root ApplicationSet (C-02)."
@@ -250,7 +250,7 @@ _dd_tls_ok() {
 # _keycloak_deployed above only says the workload exists. That is what makes
     # an unreadable document "a real fault" in the comment below, and it is true
     # of a document that stays unreadable — not of one checked eight seconds
-    # after the Gateway came up. D-05 failed exactly this way against Keycloak
+    # after the Gateway came up. D-06 failed exactly this way against Keycloak
     # itself, on a wait that was too short rather than a check that was wrong.
     #
     # The hard failure below is kept, with its diagnosis, for when the budget

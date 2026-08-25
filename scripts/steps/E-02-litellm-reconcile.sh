@@ -9,8 +9,8 @@
 # rather than in a manifest: the SSO client secret it authenticates the console
 # with, and the model registrations that must match spec.llm.instances.
 #
-# Both are cluster-level, so this reads like a tail on D-04-llm-serving. It is a
-# separate step because of ordering: D-04 runs in the applications phase and
+# Both are cluster-level, so this reads like a tail on D-05-llm-serving. It is a
+# separate step because of ordering: D-05 runs in the applications phase and
 # owns the vLLM release, while these two calls need LiteLLM itself to be serving
 # — and LiteLLM arrives through Argo CD, which converges on its own schedule.
 # The handover phase is the first point where waiting for it is reasonable.

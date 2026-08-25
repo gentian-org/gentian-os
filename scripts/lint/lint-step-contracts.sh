@@ -11,8 +11,8 @@
 #   C-02  tested that an Application existed, not that it was right
 #   C-06  tested the requirements; the probes were gone
 #   A-02  tested one XRD of six
-#   D-03  tested another step's artefact entirely
-#   D-05  tested the Application; the store id had never arrived
+#   D-04  tested another step's artefact entirely
+#   D-06  tested the Application; the store id had never arrived
 #   A-03  demanded a namespace apply() never created
 #
 # Six of them meant a partial install read as complete and the step that would
@@ -122,8 +122,8 @@ for file in scripts/steps/*.sh; do
     fi
 
     # A check() testing an object another step's destroy() removes is testing
-    # something it does not own. D-03 checked keycloak-smtp-credentials, which
-    # D-05 creates — so apply() could never satisfy check().
+    # something it does not own. D-04 checked keycloak-smtp-credentials, which
+    # D-06 creates — so apply() could never satisfy check().
     if [[ -n "${check}" ]]; then
         while read -r obj; do
             [[ -n "${obj}" ]] || continue
@@ -143,7 +143,7 @@ done
 #
 # `local path="$1"` in a function called with NO argument is not a silent no-op.
 # Under `set -u` an unbound variable is fatal to the whole shell, so the `|| true`
-# such calls invariably carry does not contain it: the run stops there. D-07
+# such calls invariably carry does not contain it: the run stops there. D-08
 # called _remove_host_cli with nothing, A-09 called _argocd_strip_kubectl and
 # _argocd_strip_raw with nothing — three instances, every one in destroy(), the
 # path nobody runs until an uninstall.

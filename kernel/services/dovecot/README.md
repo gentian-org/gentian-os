@@ -37,7 +37,7 @@ because `result_failure = continue` moves on to the next realm.
 | Deployment / Service | `dovecot-<env>` (e.g. `dovecot-dev`) |
 | LMTP DNS | `dovecot-dev.platform-kernel.svc.cluster.local:24` |
 | Argo CD | ApplicationSet `gentian-infra-helm` (wave 9) |
-| Bootstrap | `install.sh` step `D-03-mail` when `MAIL_SERVICE_MODE=kernel` |
+| Bootstrap | `install.sh` step `D-04-mail` when `MAIL_SERVICE_MODE=kernel` |
 
 ## Image
 

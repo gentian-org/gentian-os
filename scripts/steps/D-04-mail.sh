@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# step: D-03-mail
+# step: D-04-mail
 # phase: applications
 # requires: D-01-operator
 # provides: mail delivery per MAIL_SERVICE_MODE (external relay or kernel Postfix)
@@ -7,7 +7,7 @@
 
 check() {
     # This step's own artefact, not another step's. keycloak-smtp-credentials is
-    # written by configure_keycloak_realm_smtp, which runs in D-05 — and
+    # written by configure_keycloak_realm_smtp, which runs in D-06 — and
     # install_kernel_mail says as much, deferring realm SMTP to portal
     # bootstrap. Testing it here meant apply() could never satisfy check(), so
     # the step reported missing on a cluster whose mail stack was running.
@@ -44,7 +44,7 @@ apply() {
 }
 
 destroy() {
-    # keycloak-smtp-credentials belongs to D-05, which creates it; removing
+    # keycloak-smtp-credentials belongs to D-06, which creates it; removing
     # another step's artefact here would tear it down at the wrong point in the
     # reverse order.
     kubectl delete configmap postfix-kernel-virtual-mailbox-maps \

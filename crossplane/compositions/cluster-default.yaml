@@ -227,9 +227,9 @@ spec:
               name: {{ $name }}-auth-oidc
             spec:
               # Observe only. B-07-openbao-oidc-mount enables this mount and
-              # D-06-openbao-oidc-config writes its config, four phases later
+              # D-07-openbao-oidc-config writes its config, four phases later
               # because that needs Keycloak serving; this resource exists to
-              # READ it. Until D-06 has run, auth/oidc/config is absent and
+              # READ it. Until D-07 has run, auth/oidc/config is absent and
               # this stays unSynced — which is why wait_for_xcluster_ready
               # excludes observe-only resources from what B-08 waits on.
               #
@@ -573,7 +573,7 @@ spec:
 
             {{- /* The cluster admin group is NOT created here.
 
-                 D-05-portal-login creates it and puts administrator@<domain>
+                 D-06-portal-login creates it and puts administrator@<domain>
                  in it, which is the part that matters — a group with no members
                  grants nobody anything. Creating it here as well would be a
                  second writer on an object whose whole purpose is its

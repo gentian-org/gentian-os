@@ -17,7 +17,7 @@ yet configured — see `kernel/services/dovecot/README.md`.
 | Release name | `postfix-<env>` (e.g. `postfix-dev`) |
 | Service DNS | `postfix-dev.platform-kernel.svc.cluster.local:587` |
 | Argo CD | ApplicationSet `gentian-infra-helm` (wave 9) |
-| Bootstrap | `install.sh` step `D-03-mail` when `MAIL_SERVICE_MODE=kernel` |
+| Bootstrap | `install.sh` step `D-04-mail` when `MAIL_SERVICE_MODE=kernel` |
 
 The namespace is not `gentian-<env>`. `mailSharedPostfixHost()` hands every tenant
 app `postfix-<stage>.<servicesNamespace>`, the operator writes

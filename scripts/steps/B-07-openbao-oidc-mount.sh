@@ -20,7 +20,7 @@
 # are the part that benefits from continuous reconciliation, and they only need
 # the mount to exist first — which is why this step precedes B-08.
 #
-# The mount ONLY. Writing auth/oidc/config is D-08-openbao-oidc-config, because
+# The mount ONLY. Writing auth/oidc/config is D-07-openbao-oidc-config, because
 # it cannot be done from here: the config needs the Keycloak client secret,
 # which ESO materialises from a KV path B-08 creates, and it needs Keycloak
 # itself to be serving its discovery document, which arrives at sync-wave 9
@@ -53,8 +53,8 @@ _oidc_bao_addr() {
 # behind the file here, and reading it made this step act on the previous run's
 # configuration.
 #
-# Only whether a discovery URL exists is needed now; its value is D-08's
-# business, and D-08 reads the live claim because by then B-08 has applied it.
+# Only whether a discovery URL exists is needed now; its value is D-07's
+# business, and D-07 reads the live claim because by then B-08 has applied it.
 _oidc_configured() {
     local claim_file url
     claim_file="${GENTIAN_DEPLOYMENTS_PATH:-}/clusters/${GENTIAN_DEPLOYMENTS_CLUSTER_ID:-}/kernel/claims/cluster.yaml"
@@ -74,7 +74,7 @@ check() {
     # reporting missing would blame the cluster for a gap in this shell.
     _oidc_bao_addr || return "${CHECK_UNDEFINED}"
 
-    # The mount, and only the mount. Whether it is CONFIGURED is D-08's verdict
+    # The mount, and only the mount. Whether it is CONFIGURED is D-07's verdict
     # to give; asking it here would report this step unsatisfied for the whole
     # of a first install, on account of work it does not do.
     #
@@ -113,12 +113,12 @@ apply() {
         error "Could not enable the oidc auth mount."
         return 1
     }
-    success "Auth mount oidc/ enabled. D-08 configures it once Keycloak is up."
+    success "Auth mount oidc/ enabled. D-07 configures it once Keycloak is up."
 }
 
 destroy() {
     # Removing the mount takes every role and policy under it with it — and the
-    # config D-08 wrote, which is why D-08 has no destroy() of its own. That is
+    # config D-07 wrote, which is why D-07 has no destroy() of its own. That is
     # what an uninstall wants and what a re-run must never do.
     _oidc_bao_addr || return 0
     if bao auth list -format=json 2>/dev/null | jq -e '."oidc/"' >/dev/null 2>&1; then

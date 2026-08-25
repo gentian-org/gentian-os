@@ -381,7 +381,7 @@ spec:
                       description: >
                         Keycloak group whose members receive the cluster-admin
                         policy. Defaults to the group the platform already
-                        provisions the administrator into — D-05-portal-login
+                        provisions the administrator into — D-06-portal-login
                         creates it and adds administrator@<kernelDomain>, so a
                         cluster admin can log in without being added to anything
                         by hand.

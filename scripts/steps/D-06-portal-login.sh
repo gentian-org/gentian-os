@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# step: D-05-portal-login
+# step: D-06-portal-login
 # phase: applications
-# requires: D-03-mail
+# requires: D-04-mail
 # provides: portal OIDC login, Keycloak realm SMTP configuration
 # mutates: Keycloak realm settings, portal Application
 

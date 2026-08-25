@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# step: D-04-llm-serving
+# step: D-05-llm-serving
 # phase: applications
 # requires: D-01-operator
 # provides: the vLLM GPU release, and LiteLLM tenant/model sync

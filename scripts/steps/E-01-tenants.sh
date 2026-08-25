@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # step: E-01-tenants
 # phase: handover
-# requires: D-08-app-catalogue
+# requires: D-09-app-catalogue
 # provides: nothing at install time — tenants are created after installation
 # mutates: Tenant and App CRs, on teardown only
 

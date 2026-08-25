@@ -228,7 +228,7 @@ from `kernel/bootstrap/chart`, the chart that ships in `gentian-os` itself:
 - `kernel/bootstrap/chart/templates/gentian-portal.yaml` — rendered and
   applied by `apply_gentian_portal_argocd_application()`
   (`scripts/lib/portal-login-bootstrap.sh`, called from
-  `install_portal_login()`, step `D-05-portal-login`). Produces the
+  `install_portal_login()`, step `D-06-portal-login`). Produces the
   `gentian-portal` Application, values layered the same way.
 
 Both are templates in `kernel/bootstrap/chart`, rendered by `helm template`

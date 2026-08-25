@@ -1885,7 +1885,7 @@ gentian_services_namespace() {
 #
 # The two must agree, and agreeing is not enough — they have to be one
 # resolution. When this returned gentian-<env> while the mail charts deployed
-# into platform-kernel, D-03 looked for its own ConfigMap in an empty namespace
+# into platform-kernel, D-04 looked for its own ConfigMap in an empty namespace
 # and reported a working mail stack missing. The operator wrote the map to the
 # services namespace and was right; the lookup was wrong.
 #

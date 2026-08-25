@@ -711,7 +711,7 @@ The Gentian portal shell uses the same Image Updater pattern as the operator:
    Deployments — typically within 30–60 seconds of the CI push.
 
 Keycloak clients and `gentian-portal-secrets` are still created by
-`install.sh --step D-05-portal-login` (`scripts/lib/portal-login-bootstrap.sh`);
+`install.sh --step D-06-portal-login` (`scripts/lib/portal-login-bootstrap.sh`);
 Argo CD owns only the Helm release.
 
 For cluster-to-environment mapping, promotion workflows (with and without a

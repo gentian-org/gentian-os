@@ -492,7 +492,7 @@ against real cluster GPU resources by `validate_config`, see
    creating even for ungated ones too — unauthenticated HF Hub requests
    are rate-limited, which can turn a multi-GB first download into a
    race against the `startupProbe` deadline below).
-3. `./install.sh --step D-04-llm-serving` — applies the release; first startup pulls
+3. `./install.sh --step D-05-llm-serving` — applies the release; first startup pulls
    weights into the PVC, which can take several minutes
    (`startupProbe` allows up to ~20 min before giving up). If it's a
    large model on a slow/unauthenticated HuggingFace connection, the
@@ -504,7 +504,7 @@ against real cluster GPU resources by `validate_config`, see
    then `kubectl logs -n platform-kernel deploy/vllm-<id>-inference -f`
    for download/load progress.
 5. That's it — no separate LiteLLM registration step. The same
-   `./install.sh --step D-04-llm-serving` run also calls `ensure_litellm_vllm_model()`
+   `./install.sh --step D-05-llm-serving` run also calls `ensure_litellm_vllm_model()`
    (`scripts/lib/llm-lib.sh`), which registers/updates every
    `VLLM_INSTANCES` entry as a LiteLLM model, each keyed on its own
    `api_base` (one Service per instance, never shared): a swap to a
@@ -534,7 +534,7 @@ pins an instance to a specific node beyond `nvidia.com/gpu.present`.
 There is no separate "vLLM CLI" for the admin to run against a live
 cluster beyond this — configuration changes are GitOps (edit
 `spec.llm.instances` on the Cluster claim, then
-`./install.sh --step D-04-llm-serving`), and *operational* checks against a running
+`./install.sh --step D-05-llm-serving`), and *operational* checks against a running
 instance are plain HTTP: `GET /health`, `GET /v1/models`, `GET /metrics`
 (Prometheus), `GET /version`, or via the LiteLLM proxy sitting in front
 of it (`litellm --health`, or any OpenAI SDK pointed at

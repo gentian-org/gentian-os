@@ -755,7 +755,7 @@ for x in doc.get("items", []):
 # can template the mount accessor. provider-vault reads that backend through
 # auth/oidc/config, and at this point in the install there is nothing there to
 # read: B-07 enables the mount, but the config is written by
-# D-06-openbao-oidc-config, which is four phases later because it needs both
+# D-07-openbao-oidc-config, which is four phases later because it needs both
 # the Keycloak client secret ESO materialises from a KV path THIS step creates
 # and a Keycloak actually serving its discovery document. Waiting here for an
 # observe-only resource to reflect a write that a later phase makes is waiting
@@ -772,7 +772,7 @@ for x in doc.get("items", []):
 # its seeded paths, the policies, the auth backends and roles it creates, the
 # AppProject and the ClusterSecretStore. All of those are ready in the first
 # pass. Nothing here abandons the rest: the Keycloak objects reconcile when
-# wave 16 lands, and D-06 writes the oidc config later in this same run.
+# wave 16 lands, and D-07 writes the oidc config later in this same run.
 # =============================================================================
 xcluster_structural_ready() {
     local xr_name="$1"
@@ -1587,7 +1587,7 @@ install_llm_serving() {
     || warn "llm-sensitive-values not yet Ready — it will sync when OpenBao is available."
 
     # No team sync here: the TenantReconciler owns per-tenant LiteLLM Teams.
-    ensure_litellm_vllm_model || warn "LiteLLM vLLM model sync failed — retry with ./install.sh --step D-04-llm-serving."
+    ensure_litellm_vllm_model || warn "LiteLLM vLLM model sync failed — retry with ./install.sh --step D-05-llm-serving."
 
     success "LLM serving stack deployment complete."
 }
@@ -1779,7 +1779,7 @@ _claim_cluster_fields() {
     #
     # Its presence is what creates the auth backend: the composition gates the
     # Keycloak client, the client Secret and the OpenBao policies on
-    # oidc.discoveryUrl, B-07 enables the mount, D-06 writes the config. Leave it
+    # oidc.discoveryUrl, B-07 enables the mount, D-07 writes the config. Leave it
     # out and none of that exists — which the XRD describes exactly, and which
     # ends with "no day-2 writes at all".
     #
