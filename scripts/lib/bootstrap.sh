@@ -1774,6 +1774,34 @@ _claim_cluster_fields() {
         printf '  #   gpuTimeSliceReplicas: 1   workloads sharing one physical GPU\n'
         printf '  #   instances: []             the models to serve; see the XRD for fields\n'
     fi
+
+    # Human write access to OpenBao, set rather than left to the operator.
+    #
+    # Its presence is what creates the auth backend: the composition gates the
+    # Keycloak client, the client Secret and the OpenBao policies on
+    # oidc.discoveryUrl, B-07 enables the mount, D-06 writes the config. Leave it
+    # out and none of that exists — which the XRD describes exactly, and which
+    # ends with "no day-2 writes at all".
+    #
+    # That is not a configuration a cluster should reach by default. The install
+    # revokes its own bootstrap token at E-04, and refuses to when nothing else
+    # can write — so a claim without this block produces an install that cannot
+    # finish its last step. Observed: the operator was asked to sign in, did, and
+    # waited on a record that nothing existed to write.
+    #
+    # The URL is derived rather than asked for, because every part of it is
+    # already known: Keycloak is at id.<kernelDomain>/auth and the realm is the
+    # oidc.realm default. Anyone who needs a different issuer edits one line.
+    printf '\n'
+    printf '  # Human write access to OpenBao, federated from Keycloak.\n'
+    printf '  # discoveryUrl is what creates the backend; without it the only\n'
+    printf '  # write path is the installer bootstrap token, which E-04 revokes.\n'
+    printf '  oidc:\n'
+    printf '    discoveryUrl: https://id.%s/auth/realms/kernel\n' "${KERNEL_DOMAIN:-<kernel-domain>}"
+    printf '    # clientId:          openbao\n'
+    printf '    # clientSecretRef:   openbao-oidc-client   Secret in the OpenBao namespace\n'
+    printf '    # clusterAdminGroup: /gentian:platform:superadmin\n'
+    printf '    # externalUrl:                             OpenBao UI callback, if exposed\n'
     return 0
 }
 

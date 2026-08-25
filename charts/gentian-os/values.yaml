@@ -327,7 +327,22 @@ metrics:
 trustAnchorSecret: ""
 
 credentialManager:
-  enabled: false
+  # On by default, because the install cannot finish without it.
+  #
+  # E-04 revokes the installer's bootstrap token, and refuses to until something
+  # else has demonstrably written a credential. That proof is this service
+  # recording its first cluster-admin exchange — it holds no token of its own,
+  # it exchanges the caller's Keycloak one. Off, nothing records anything, and
+  # the last step of every install waits for a fact that cannot be produced.
+  #
+  # It was off by default and nothing turned it on, so that is what happened: an
+  # operator was asked to sign in, did, and watched a timer run out.
+  #
+  # Turning it on costs nothing on a cluster that does not use it. The Service is
+  # ClusterIP-only by deliberate design (see credentialmanager-service.yaml), and
+  # the write path authorises the CALLER's OIDC token rather than holding one, so
+  # a running-but-unused credential manager grants nobody anything.
+  enabled: true
   port: 9444
   # Where the JWT/OIDC auth backend is enabled. Not "jwt": the installer enables
   # it with -path=oidc, so the login endpoint is auth/oidc/login.
