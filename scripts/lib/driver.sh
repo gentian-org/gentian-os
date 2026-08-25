@@ -246,7 +246,7 @@ _step_banner() {
     _phase_banner "$(step_header "$file" phase)"
     provides="$(step_header "$file" provides)"
     echo ""
-    echo -e "${CYAN}[$(step_number_of "$id")]${NC} $(step_label_of "$id")"
+    echo -e "${BOLD}${BLUE}[$(step_number_of "$id")] $(step_label_of "$id")${NC}"
     [[ -n "$provides" ]] && echo "     provides: ${provides}"
     return 0
 }

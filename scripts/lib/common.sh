@@ -37,6 +37,7 @@ export CHECK_SATISFIED CHECK_MISSING CHECK_UNDEFINED CHECK_ALWAYS
 
 # ─── Colour helpers ──────────────────────────────────────────────────────────
 RED='\033[0;31m'; YELLOW='\033[1;33m'; GREEN='\033[0;32m'; CYAN='\033[0;36m'; NC='\033[0m'
+BLUE='\033[0;34m'; BOLD='\033[1m'
 info()    { echo -e "${CYAN}[INFO]${NC}  $*"; }
 success() { echo -e "${GREEN}[OK]${NC}    $*"; }
 warn()    { echo -e "${YELLOW}[WARN]${NC}  $*"; }
@@ -48,15 +49,20 @@ error()   { echo -e "${RED}[ERROR]${NC} $*" >&2; }
 # thing on the screen the loudest: a phase announced itself with a light rule, a
 # step with a bracketed id, and then the work inside that step drew a full-width
 # double box. Two visual languages, and the hierarchy upside down.
+# banner — a section heading, and only where a section actually begins.
+#
+# Silent inside a step. The driver already prints the phase rule and then the
+# step's own title, so a third heading between them said what the line above it
+# had just said, and put a rule across the middle of the step's output. There is
+# one structure on screen now: phase, then step, then what the step does.
+#
+# Still printed outside a step, in the phase's own form, because Credentials and
+# Pre-flight checks run before any phase begins and would otherwise have no
+# heading at all. GENTIAN_CURRENT_STEP is what tells the two apart — the driver
+# sets it around each step and unsets it after.
 banner() {
-    local _title="$*"
-    # Pad the trailing rule so every heading ends in the same column, rather
-    # than a fixed tail that a long title overruns. No ${var:offset:len} on the
-    # dash string and no printf padding with multi-byte characters — bash 3.2
-    # counts bytes, and ─ is three of them.
-    local _rule="" _i=0 _width=$(( 62 - ${#_title} ))
-    while (( _i < _width )); do _rule="${_rule}─"; _i=$(( _i + 1 )); done
-    echo -e "\n${CYAN}    ── ${_title} ${_rule}${NC}\n"
+    [[ -n "${GENTIAN_CURRENT_STEP:-}" ]] && return 0
+    echo -e "\n${CYAN}── $* ───────────────────────────────────────────${NC}\n"
 }
 
 # Retry kubectl when the API server is temporarily unreachable (common on remote
