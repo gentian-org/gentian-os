@@ -27,6 +27,17 @@ spec:
   superuserSecret:
     name: cnpg-superuser   # ExternalSecret — see cnpg-superuser-externalsecret.yaml
 
+  managed:
+    roles:
+      # The console's own login, for operators who have no tenant. CNPG creates
+      # it and keeps its password equal to portal-shell-role's, so nothing has
+      # to run psql to provision it. See portal-shell-database.yaml.
+      - name: portal_shell
+        ensure: present
+        login: true
+        passwordSecret:
+          name: portal-shell-role
+
   storage:
     size: 10Gi
 

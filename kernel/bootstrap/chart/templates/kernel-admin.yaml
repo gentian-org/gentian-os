@@ -56,6 +56,10 @@ spec:
       parameters:
         - name: env
           value: '{{ .Values.stage }}'
+        # Names the console's own portal-shell Secret, which is keyed by the
+        # kernel domain because a platform operator carries no tenant claim.
+        - name: kernelDomain
+          value: '{{ .Values.kernelDomain }}'
   destination:
     server: https://kubernetes.default.svc
     namespace: platform-kernel

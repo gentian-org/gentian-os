@@ -217,6 +217,28 @@ kv_put_once "database/cnpg" "$(cat <<EOF
 EOF
 )"
 
+# --- Portal shell database ---------------------------------------------------
+# The console keeps per-user state — preferences, notifications, audit events —
+# in a database per tenant, resolved from a portal-shell-<tenant> Secret.
+#
+# A platform operator has no tenant. extract_tenant_from_claims deliberately
+# refuses to treat the kernel domain as one, so resolve_user_context falls back
+# to the kernel domain itself as the storage key, and the console then looks for
+# portal-shell-<kernelDomain>. Nothing created it: the operator provisions these
+# from the Tenant reconciler, and the kernel is not a Tenant.
+#
+# The effect is that every kernel-realm sign-in — the only kind that exists on a
+# new cluster — takes a 500 on /api/v1/prefs.
+PORTAL_SHELL_PW=$(derive_password "portal-shell" "role")
+
+kv_put_once "database/portal-shell" "$(cat <<EOF
+{
+  "username": "portal_shell",
+  "password": "${PORTAL_SHELL_PW}"
+}
+EOF
+)"
+
 # --- Bitnami PostgreSQL (kernel platform services) ---------------------------
 kv_put_once "database/postgresql" "$(cat <<EOF
 {

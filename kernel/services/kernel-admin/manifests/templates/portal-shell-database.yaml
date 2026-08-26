@@ -1,0 +1,123 @@
+---
+# The console's own database, for the operators who have no tenant.
+#
+# gentian-portal keeps per-user state — preferences, notifications, audit
+# events — in one database per tenant, and finds it through a Secret named
+# portal-shell-<tenant> in this namespace. Tenants get theirs from the operator
+# (TenantReconciler.ensurePortalShellDatabase); the kernel is not a Tenant and
+# so got nothing.
+#
+# It still needs one. A platform operator authenticates in the kernel realm and
+# carries no tenant claim — extract_tenant_from_claims refuses to read the
+# kernel domain as a tenant, so resolve_user_context falls back to the kernel
+# domain as the storage key. The console then reads portal-shell-<kernelDomain>,
+# which nothing created, and every kernel sign-in takes a 500 on /api/v1/prefs.
+# On a new cluster that is the only kind of sign-in there is.
+#
+# Declared here rather than provisioned by a Job: CNPG owns both halves. A
+# managed role on the Cluster creates the login and keeps its password equal to
+# the Secret's, and a Database CR creates the database with that role as owner.
+# Neither needs psql, an admin connection, or anything to run at the right
+# moment — which is what the per-tenant role Jobs exist to arrange.
+apiVersion: external-secrets.io/v1
+kind: ExternalSecret
+metadata:
+  name: portal-shell-role
+  namespace: platform-kernel
+  annotations:
+    # Wave 0 with the other credentials: the Cluster (wave 1) reads this as the
+    # managed role's passwordSecret, and a role whose secret is missing at
+    # reconcile time is left without a usable password.
+    argocd.argoproj.io/sync-wave: "0"
+spec:
+  refreshInterval: 1h
+  secretStoreRef:
+    name: openbao
+    kind: ClusterSecretStore
+  target:
+    name: portal-shell-role
+    creationPolicy: Owner
+    template:
+      # basic-auth for the same reason cnpg-superuser is: CNPG reads username
+      # and password from these keys and ignores an Opaque Secret.
+      type: kubernetes.io/basic-auth
+      data:
+        username: "{{ "{{" }} .username }}"
+        password: "{{ "{{" }} .password }}"
+  data:
+    - secretKey: username
+      remoteRef:
+        key: gentian-os/kernel/database/portal-shell
+        property: username
+    - secretKey: password
+      remoteRef:
+        key: gentian-os/kernel/database/portal-shell
+        property: password
+---
+# The database itself, owned by the managed role above.
+apiVersion: postgresql.cnpg.io/v1
+kind: Database
+metadata:
+  name: portal-shell
+  namespace: platform-kernel
+  annotations:
+    # Wave 2: after the Cluster exists (wave 1) and therefore after the managed
+    # role that owns this database.
+    argocd.argoproj.io/sync-wave: "2"
+  labels:
+    app.kubernetes.io/name: gentian-portal
+    app.kubernetes.io/component: portal-shell
+spec:
+  cluster:
+    name: postgres
+  name: portal_shell
+  owner: portal_shell
+  ensure: present
+---
+# What the console actually reads.
+#
+# The name carries the kernel domain because that is the key the console
+# resolves for an operator with no tenant. The keys match what the operator
+# writes for a tenant (ensurePortalShellSecret), DATABASE_URL included, so both
+# paths present the console with the same shape.
+apiVersion: external-secrets.io/v1
+kind: ExternalSecret
+metadata:
+  name: portal-shell-{{ .Values.kernelDomain }}
+  namespace: platform-kernel
+  annotations:
+    argocd.argoproj.io/sync-wave: "0"
+  labels:
+    app.kubernetes.io/name: gentian-portal
+    app.kubernetes.io/component: portal-shell
+spec:
+  refreshInterval: 1h
+  secretStoreRef:
+    name: openbao
+    kind: ClusterSecretStore
+  target:
+    name: portal-shell-{{ .Values.kernelDomain }}
+    creationPolicy: Owner
+    template:
+      type: Opaque
+      data:
+        host: postgres-rw.platform-kernel.svc.cluster.local
+        port: "5432"
+        database: portal_shell
+        username: "{{ "{{" }} .username }}"
+        password: "{{ "{{" }} .password }}"
+        # postgresql+psycopg, because the console reads this straight into
+        # SQLAlchemy. Neither half needs escaping: the role name is fixed, and
+        # derive_password emits hex in both secretMode branches — a SHA-256 HMAC
+        # digest when derived, `openssl rand -hex 32` when random.
+        DATABASE_URL: >-
+          postgresql+psycopg://{{ "{{" }} .username }}:{{ "{{" }} .password }}@postgres-rw.platform-kernel.svc.cluster.local:5432/portal_shell
+  data:
+    - secretKey: username
+      remoteRef:
+        key: gentian-os/kernel/database/portal-shell
+        property: username
+    - secretKey: password
+      remoteRef:
+        key: gentian-os/kernel/database/portal-shell
+        property: password
