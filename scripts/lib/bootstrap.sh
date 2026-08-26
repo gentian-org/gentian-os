@@ -1768,10 +1768,33 @@ _claim_cluster_fields() {
             printf '    # dnsParams:                route53 needs region and\n'
             printf '    #                           hostedZoneID; clouddns a project\n'
         fi
-        printf '    # externalDns: true         let external-dns write this zone.\n'
-        printf '    #                           Leave off where something else already\n'
-        printf '    #                           does — on a tunnel cluster the operator\n'
-        printf '    #                           writes the tenant records itself.\n'
+        # On by default where there is a fixed address to publish.
+        #
+        # A cluster with networkMode: static-ip has one stable IP and a named
+        # dnsProvider, which is the whole input external-dns needs — so writing
+        # the records is the obvious behaviour and leaving it off produces a
+        # claim that contradicts itself: a DNS provider named, an address to
+        # point at, and nothing to write anything.
+        #
+        # That contradiction was invisible while clusters ran on domains whose
+        # records had been created by hand. The first install onto a fresh
+        # domain sat waiting for names nothing was publishing, and the wait
+        # blamed the OIDC discovery URL.
+        #
+        # A tunnel cluster is genuinely different and stays commented: it has no
+        # address to publish, its hostnames resolve through the tunnel's own
+        # CNAMEs, and the operator writes the tenant records itself.
+        if [[ "${nm}" == "static-ip" ]]; then
+            printf '    # external-dns writes this zone from the Gateway hostnames.\n'
+            printf '    # Set false where something else already owns these records.\n'
+            printf '    externalDns: true\n'
+        else
+            printf '    # externalDns: true         let external-dns write this zone.\n'
+            printf '    #                           Off while networkMode is tunnel: there\n'
+            printf '    #                           is no fixed address to publish, and the\n'
+            printf '    #                           operator writes the tenant records\n'
+            printf '    #                           through the tunnel CNAMEs itself.\n'
+        fi
     else
         printf '    # dnsProvider:              only read when issuerMode is acme-dns01\n'
     fi
