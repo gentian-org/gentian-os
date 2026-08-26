@@ -29,6 +29,24 @@ api:
   env:
     ENVIRONMENT: development
     TENANCY_MODE: multi
+    # The two gentian-os APIs the console proxies to. Both serve plain HTTP on
+    # the cluster network and neither sends CORS headers, which is why the
+    # browser never calls them directly: the portal API forwards the caller's
+    # own bearer token and adds no authority of its own.
+    #
+    # Unset, each tab fails closed rather than rendering an empty catalogue —
+    # Credentials answers 503 "not configured for this cluster", Resources
+    # reports itself unavailable. Correct as a failure mode, but every cluster
+    # has both services, because the operator chart always installs them.
+    #
+    # It also blocks handover outright. E-04 waits for a human to prove the
+    # write path opens, and the only thing that can record that proof is a
+    # token exchange reaching the credential manager. With no URL here the
+    # Credentials tab cannot issue one, so the installer waits out its full
+    # thirty minutes for a sign-in that already happened and had nowhere to be
+    # recorded.
+    CREDENTIAL_MANAGER_URL: http://gentian-os-credentials.gentian-system.svc.cluster.local:9444
+    APP_LIFECYCLE_URL: http://gentian-os-lifecycle.gentian-system.svc.cluster.local:8082
 
 web:
   image:
