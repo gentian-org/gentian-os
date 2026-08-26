@@ -174,22 +174,84 @@ install_crossplane_providers() {
     # function-go-templating and function-auto-ready are Function resources;
     # the rest are Provider resources. Use the correct type for each so
     # we don't burn the full timeout on the wrong resource kind.
+    # Each wait's result is checked. A timeout here means the package never
+    # became Healthy, and everything after this assumes all of them did — so
+    # carrying on turns "a provider did not start" into a failure somewhere
+    # further along that names the wrong thing.
     for fn in function-go-templating function-extra-resources function-auto-ready; do
         info "  Waiting for: ${fn}"
-        _kubectl_retry wait "function.pkg.crossplane.io/${fn}" \
-            --for=condition=Healthy --timeout="${PROVIDER_WAIT_TIMEOUT}"
+        if ! _kubectl_retry wait "function.pkg.crossplane.io/${fn}" \
+            --for=condition=Healthy --timeout="${PROVIDER_WAIT_TIMEOUT}"; then
+            error "Function ${fn} did not become Healthy within ${PROVIDER_WAIT_TIMEOUT}."
+            error "  Compositions that call it cannot render until it does:"
+            error "    kubectl describe function.pkg.crossplane.io/${fn}"
+            return 1
+        fi
     done
 
     for provider in provider-helm provider-kubernetes provider-vault; do
         info "  Waiting for: ${provider}"
-        _kubectl_retry wait "provider.pkg.crossplane.io/${provider}" \
-            --for=condition=Healthy --timeout="${PROVIDER_WAIT_TIMEOUT}"
+        if ! _kubectl_retry wait "provider.pkg.crossplane.io/${provider}" \
+            --for=condition=Healthy --timeout="${PROVIDER_WAIT_TIMEOUT}"; then
+            error "Provider ${provider} did not become Healthy within ${PROVIDER_WAIT_TIMEOUT}."
+            error "  Its ProviderConfig and every managed resource it owns depend on it:"
+            error "    kubectl describe provider.pkg.crossplane.io/${provider}"
+            return 1
+        fi
     done
 
-    # Apply ProviderConfigs only after all providers are Healthy so the CRDs
-    # (e.g. vault.upbound.io/v1beta1 ProviderConfig) exist.
+    # Healthy is not the same as Established, and this apply needs Established.
+    #
+    # A Provider reports Healthy when its pod is running. Its CRDs are created
+    # separately and take a moment longer to be served, so a ProviderConfig
+    # applied in that window fails with
+    #
+    #   unable to recognize ...: no matches for kind "ProviderConfig" in version
+    #   "vault.upbound.io/v1beta1"
+    #
+    # kubectl applies the documents it CAN and exits non-zero, so the kubernetes
+    # and helm ProviderConfigs in the same file are created and the vault one is
+    # not — a partial success that looks like a whole one at a glance.
+    #
+    # What that costs is not local. provider-vault has no configuration, so every
+    # managed resource it owns fails at Connect() with "cannot get terraform
+    # setup", and B-08 waits for eighteen of them to become Ready until it gives
+    # up. The install fails four steps later than the thing that broke, pointing
+    # at OpenBao.
+    local _pc_crd
+    for _pc_crd in providerconfigs.vault.upbound.io \
+                   providerconfigs.kubernetes.crossplane.io \
+                   providerconfigs.helm.crossplane.io; do
+        kubectl wait "crd/${_pc_crd}" --for=condition=Established \
+            --timeout=180s >/dev/null 2>&1 \
+            || warn "  CRD ${_pc_crd} is not Established; its ProviderConfig may not apply."
+    done
+
+    # And the result is checked. This used to be a bare call, so a failed apply
+    # was indistinguishable from a successful one — which is how the missing
+    # vault ProviderConfig went unnoticed for a whole install.
     info "Applying ProviderConfigs (InjectedIdentity for both kubernetes and openbao)..."
-    _kubectl_retry apply -f "${SCRIPT_DIR}/crossplane/providers/provider-configs.yaml"
+    if ! _kubectl_retry apply -f "${SCRIPT_DIR}/crossplane/providers/provider-configs.yaml"; then
+        error "Applying ProviderConfigs failed."
+        error "  Every provider needs one before any managed resource it owns can"
+        error "  connect, so continuing would fail later and somewhere else."
+        return 1
+    fi
+
+    # Applied is not the same as present, for the same reason: a multi-document
+    # apply reports failure for the file, and the one document that failed is
+    # exactly the one worth naming.
+    for _pc_crd in providerconfig.vault.upbound.io/openbao \
+                   providerconfig.kubernetes.crossplane.io/kubernetes \
+                   providerconfig.helm.crossplane.io/kubernetes; do
+        if ! kubectl get "${_pc_crd}" >/dev/null 2>&1; then
+            error "ProviderConfig ${_pc_crd} does not exist after applying."
+            error "  crossplane/providers/provider-configs.yaml declares it, so either"
+            error "  its CRD is not served yet or the apply was rejected."
+            return 1
+        fi
+    done
+    success "ProviderConfigs applied."
 
     # After a partial uninstall or a failed prior run the CRDs that Crossplane
     # creates for each XRD (e.g. xapps.gentianos.io, apps.gentianos.io) can
