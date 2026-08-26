@@ -228,10 +228,9 @@ apply() {
 # SAYS, never whether it proceeds, so a false negative costs a misleading line
 # and not a failed install.
 _dd_resolves() {
-    local host="$1"
-    getent hosts "${host}" >/dev/null 2>&1 && return 0
-    # busybox getent lacks the hosts database on some images.
-    command -v nslookup >/dev/null 2>&1 && nslookup "${host}" >/dev/null 2>&1
+    # Shared with D-03, and asks the zone's nameservers rather than this
+    # machine's resolver — whose negative cache outlives this wait.
+    gentian_dns_resolves "$1" "${KERNEL_DOMAIN:-}"
 }
 
 _dd_tls_ok() {

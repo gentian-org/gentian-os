@@ -62,7 +62,12 @@ apply() {
         pending=""
         while IFS= read -r host; do
             [[ -n "${host}" ]] || continue
-            getent hosts "${host}" >/dev/null 2>&1 || pending="${pending}${host} "
+            # The zone's own nameservers, not this machine's resolver: see
+            # gentian_dns_resolves. A resolver that asked before the record
+            # existed caches "no" for the zone's negative TTL, which is longer
+            # than this wait and would time out on DNS that is already live.
+            gentian_dns_resolves "${host}" "${KERNEL_DOMAIN:-}" \
+                || pending="${pending}${host} "
         done <<< "${hosts}"
 
         if [[ -z "${pending}" ]]; then

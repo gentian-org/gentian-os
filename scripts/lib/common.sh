@@ -69,6 +69,66 @@ banner() {
 # clusters or flaky client networks). Only connection-level failures are retried;
 # resource errors (NotFound, wait timeouts, etc.) fail immediately.
 # Override attempts/delay via KUBECTL_RETRY_ATTEMPTS / KUBECTL_RETRY_DELAY_SECS.
+# gentian_dns_resolves <host> [zone] — is the name PUBLISHED, not "has my
+# machine noticed".
+#
+# Asks the zone's own nameservers, because the local resolver answers a
+# different question. A resolver that queried while the record was still absent
+# caches that NXDOMAIN for the zone's negative TTL — the last SOA field, 1800s
+# on Cloudflare — so it keeps saying "does not exist" for half an hour after the
+# record is live.
+#
+# That is not hypothetical and not rare: the installer is the thing most likely
+# to have asked too early, since it asks in a loop while waiting for the record
+# to appear. Observed exactly so — external-dns had created id and portal, both
+# authoritative nameservers answered, and getent kept returning nothing while
+# D-03 timed out.
+#
+# The cluster's workloads and Let's Encrypt both resolve from the public DNS
+# rather than from this machine, so "published" is the condition worth testing.
+#
+# Falls back to the local resolver when neither dig nor nslookup is present —
+# pre-flight guarantees neither — and a stale negative answer there is worth a
+# late wait rather than a wrong verdict, since the fallback can only be
+# pessimistic.
+gentian_dns_resolves() {
+    local host="$1"
+    local zone="${2:-}"
+    local ns=""
+
+    [[ -n "${host}" ]] || return 1
+    # The zone defaults to the last two labels, which is right for the domains
+    # this installer publishes and wrong only for multi-label public suffixes —
+    # where the NS lookup simply returns nothing and this falls through.
+    if [[ -z "${zone}" ]]; then
+        zone="$(printf '%s' "${host}" | awk -F. '{ if (NF>=2) print $(NF-1)"."$NF; else print $0 }')"
+    fi
+
+    if command -v dig >/dev/null 2>&1; then
+        ns="$(dig +short NS "${zone}" 2>/dev/null | head -1)"
+        if [[ -n "${ns}" ]]; then
+            [[ -n "$(dig +short A "${host}" "@${ns}" 2>/dev/null | head -1)" ]] && return 0
+            [[ -n "$(dig +short AAAA "${host}" "@${ns}" 2>/dev/null | head -1)" ]] && return 0
+            return 1
+        fi
+        [[ -n "$(dig +short A "${host}" 2>/dev/null | head -1)" ]] && return 0
+        return 1
+    fi
+
+    if command -v nslookup >/dev/null 2>&1; then
+        ns="$(nslookup -type=NS "${zone}" 2>/dev/null | awk '/nameserver =/{print $NF; exit}')"
+        if [[ -n "${ns}" ]]; then
+            nslookup "${host}" "${ns%.}" >/dev/null 2>&1 && return 0
+            return 1
+        fi
+        nslookup "${host}" >/dev/null 2>&1 && return 0
+        return 1
+    fi
+
+    # Local resolver, negative cache and all. Only ever too pessimistic.
+    getent hosts "${host}" >/dev/null 2>&1
+}
+
 # _helm_retry — the same idea as _kubectl_retry, for helm.
 #
 # Every chart this installer applies is fetched over the network, from a chart
