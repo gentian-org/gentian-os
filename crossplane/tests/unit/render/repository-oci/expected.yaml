@@ -153,6 +153,7 @@ kind: CredentialRequirement
 metadata:
   annotations:
     crossplane.io/composition-resource-name: credreq-infra-charts
+    crossplane.io/ready: "True"
   labels:
     crossplane.io/composite: infra-charts
     gentianos.io/credential-phase: runtime

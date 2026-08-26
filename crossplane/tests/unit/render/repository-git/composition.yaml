@@ -127,6 +127,17 @@ spec:
                 {{- end }}
               annotations:
                 {{ setResourceNameAnnotation (printf "credreq-%s" $name) }}
+                # CredentialRequirement is a declaration, not a controller's
+                # object: its CRD has no status subresource and nothing ever
+                # writes conditions to it. function-auto-ready reads readiness
+                # from status.conditions, so left to itself it waits for a Ready
+                # that cannot arrive -- and every Repository claim carrying a
+                # credential stayed Ready=False for the life of the cluster,
+                # while the three without one went Ready immediately.
+                #
+                # The annotation is function-auto-ready's own escape hatch for
+                # exactly this: a composed resource that exists is done.
+                crossplane.io/ready: "True"
             spec:
               displayName: {{ $cred.displayName | quote }}
               description: {{ $cred.description | default "" | quote }}

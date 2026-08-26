@@ -192,6 +192,49 @@ spec:
 # the imperative path having already produced the Secret the composed one is
 # meant to own. Nothing is visibly broken, and the declarative path simply
 # never runs.
+# CredentialRequirement is COMPOSED by repository-default, not merely read, so
+# this grant is wider than the read-only ones beside it: Crossplane creates,
+# updates and deletes the catalogue entry for each repository's credential.
+#
+# Without it the failure is the one already described below for
+# OIDCPackCatalog, and it is just as quiet:
+#
+#   cannot compose resources: cannot get existing composed resources:
+#   cannot get composed resource: Timeout: failed waiting for
+#   *unstructured.Unstructured Informer to sync
+#
+# Nothing names RBAC. The composite stops composing at its first resource, so
+# the git-credentials Object further down the template is never reached either
+# -- and that Object is what produces the Secret the operator mounts to push.
+#
+# The symptom is three steps removed from the cause: installing an app from the
+# store fails with
+#
+#   fatal: unable to open /etc/git/credentials: Is a directory
+#
+# because the Secret was never created, the volume is optional, and a missing
+# optional Secret with a subPath mounts as an empty directory rather than not
+# mounting at all.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: crossplane:composed:credentialrequirements.gentianos.io
+  labels:
+    rbac.crossplane.io/aggregate-to-crossplane: "true"
+rules:
+  - apiGroups:
+      - gentianos.io
+    resources:
+      - credentialrequirements
+    verbs:
+      - get
+      - list
+      - watch
+      - create
+      - update
+      - patch
+      - delete
+---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
