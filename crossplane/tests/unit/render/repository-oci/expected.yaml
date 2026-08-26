@@ -12,7 +12,7 @@ status:
   conditions:
   - lastTransitionTime: "2024-01-01T00:00:00Z"
     message: 'Unready resources: appproject-source-infra-charts, argocd-repo-infra-charts,
-      credprobe-infra-charts, and 3 more'
+      credprobe-infra-charts, and 2 more'
     reason: Creating
     status: "False"
     type: Ready
@@ -153,7 +153,6 @@ kind: CredentialRequirement
 metadata:
   annotations:
     crossplane.io/composition-resource-name: credreq-infra-charts
-    crossplane.io/ready: "True"
   labels:
     crossplane.io/composite: infra-charts
     gentianos.io/credential-phase: runtime

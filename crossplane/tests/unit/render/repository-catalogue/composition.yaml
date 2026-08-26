@@ -135,9 +135,11 @@ spec:
                 # credential stayed Ready=False for the life of the cluster,
                 # while the three without one went Ready immediately.
                 #
-                # The annotation is function-auto-ready's own escape hatch for
-                # exactly this: a composed resource that exists is done.
-                crossplane.io/ready: "True"
+                # function-go-templating's readiness annotation -- its
+                # namespace, not crossplane.io's, and the pipeline here is
+                # go-templating + auto-ready. A composed resource that exists is
+                # done.
+                gotemplating.fn.crossplane.io/ready: "True"
             spec:
               displayName: {{ $cred.displayName | quote }}
               description: {{ $cred.description | default "" | quote }}
