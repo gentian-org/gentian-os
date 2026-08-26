@@ -68,6 +68,13 @@ until it is done.
 - **These tools on your `PATH`:** `kubectl helm jq yq openssl curl crossplane
   python3 git`. The installer checks and names any that are missing. `bao` (the
   OpenBao CLI) installs itself to `~/.local/bin`.
+- **Optional, but install it now:** [`age`](https://age-encryption.org). The
+  installer runs without it, and pre-flight only warns. It encrypts the recovery
+  kit; without it the kit falls back to `openssl`, which encrypts but does not
+  authenticate — a tampered kit then decrypts to garbage rather than failing.
+  The fallback announces itself at the very end of the install, once the kit has
+  already been written, so installing `age` first is a minute against redoing
+  the export.
 - **A domain**, for example `platform.example.com`. It does not have to be
   publicly resolvable.
 - **A token with read access to `gentian-deployments`.** The installer asks for

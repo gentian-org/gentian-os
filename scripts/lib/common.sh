@@ -1615,6 +1615,34 @@ check_prereqs() {
         fi
     done
 
+    # ── Optional tools ────────────────────────────────────────────────────────
+    # Genuinely optional: the install completes without them, and each step that
+    # would have used one says so and falls back. Reported here anyway, because
+    # by the time the fallback announces itself it is too late to act on.
+    #
+    # age is the case that matters. Its absence surfaces at E-03, near the end of
+    # a long install, and the message arrives after the kit has already been
+    # written with the weaker scheme — openssl encrypts it but does not
+    # authenticate it, so a tampered kit decrypts to garbage instead of failing.
+    # Told at the start, installing age costs a minute; told at E-03, it costs
+    # re-exporting the kit and re-recording where it went.
+    # name:reason, not an associative array -- macOS ships bash 3.2, which has
+    # no `local -A`, and lint-portability is the gate that remembers.
+    local optional_tools=(
+        "age:the recovery kit falls back to openssl, which encrypts but does not authenticate it"
+    )
+    local entry opt why
+    for entry in "${optional_tools[@]}"; do
+        opt="${entry%%:*}"
+        why="${entry#*:}"
+        if command -v "${opt}" &>/dev/null; then
+            success "${opt} found (optional)"
+        else
+            warn "Optional command not found: ${opt}"
+            warn "  ${why}"
+        fi
+    done
+
     # ── Cluster connectivity ──────────────────────────────────────────────────
     if ! kubectl cluster-info --request-timeout=5s >/dev/null 2>&1; then
         error "No reachable Kubernetes cluster — set KUBECONFIG or connect to your cluster first."
