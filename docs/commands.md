@@ -364,27 +364,41 @@ Gentian portal login (derived from `MASTER_PASSWORD` during install):
 kubectl get secret keycloak-admin -n platform-kernel -o yaml
 ```
 
-Tenant admin (after `kubectl gentian tenants deploy <tenant>`). OpenBao holds
-it for the life of the tenant, so read it there:
+Tenant admin. `tenants deploy` prints it once; this is how to get it back
+afterwards:
 
 ```bash
-bao kv get -mount=secret gentian-os/tenants/<tenant>/admin
-bao kv get -mount=secret -field=password gentian-os/tenants/<tenant>/admin
+gtnctl tenants credentials <tenant>
 ```
 
-The path stores `username` and `password`, written once when the tenant is
-first provisioned — so it keeps returning the credential the tenant actually
-has, not a fresh derivation.
+It reads OpenBao through the operator, so it needs no `bao` CLI, no
+port-forward and no OpenBao login of your own. The password goes to stdout
+alone and everything else to stderr, so it pipes:
 
-The provisioning Job prints the same values, but only briefly:
+```bash
+gtnctl tenants credentials <tenant> | wl-copy
+```
+
+Two things that look like they should work and do not. The provisioning Job
+prints the same values, but finished Jobs are removed after
+`ProvisioningJobTTLSeconds` — 600s — so ten minutes on it is gone:
 
 ```bash
 kubectl logs -n platform-kernel job/keycloak-admin-<tenant> --tail=20
+# Error from server (NotFound): jobs.batch "keycloak-admin-<tenant>" not found
 ```
 
-Finished Jobs are removed after `ProvisioningJobTTLSeconds`, currently 600s,
-so this returns `Error from server (NotFound)` ten minutes after the tenant
-finishes provisioning. It is the transient copy; OpenBao is the durable one.
+And reading OpenBao directly needs more than the path, because OpenBao is a
+ClusterIP service over TLS and the installer's token is revoked at handover:
+
+```bash
+kubectl -n openbao port-forward svc/openbao 8200:8200 &
+export BAO_ADDR=https://localhost:8200   # localhost is in the cert's SANs
+bao login -method=oidc                   # your Keycloak identity
+bao kv get -mount=secret -field=password gentian-os/tenants/<tenant>/admin
+```
+
+Worth knowing for other paths; not worth it for this one.
 
 Keycloak master-realm admin (Suze stack):
 
