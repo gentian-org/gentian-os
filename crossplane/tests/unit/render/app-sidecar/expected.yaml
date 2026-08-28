@@ -370,7 +370,8 @@ spec:
         gentianos.io/app: demo-app
         gentianos.io/tenant: demo
       upstreamUrl: https://demo.demo.platform.example.test
-    wait: false
+    wait: true
+    waitTimeout: 10m
   providerConfigRef:
     name: kubernetes
   rollbackLimit: 3
@@ -553,7 +554,8 @@ spec:
       podLabels:
         gentianos.io/app: demo-app
         gentianos.io/tenant: demo
-    wait: false
+    wait: true
+    waitTimeout: 10m
   providerConfigRef:
     name: kubernetes
   rollbackLimit: 3

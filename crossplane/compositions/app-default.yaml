@@ -1250,7 +1250,28 @@ spec:
                   name: {{ $chart.name }}
                   version: {{ $chart.version | quote }}
                 namespace: {{ $ns }}
-                wait: false
+                # Wait for the release's workloads, not just for Helm to have
+                # applied the manifests.
+                #
+                # With wait: false the Release goes Ready the moment the objects
+                # exist, so an App whose pods can never schedule still reports
+                # Ready=True -- and function-auto-ready then marks the XR Ready,
+                # and the Tenant says "All App claims are Ready". Odoo sat like
+                # that for hours: its modules PVC asked for a StorageClass the
+                # cluster does not have, three pods were Pending the whole time,
+                # and every signal above them was green.
+                #
+                # The kernel's own releases (infra-data, suze) have always waited.
+                # Apps are what a tenant actually sees, so a false green matters
+                # more here, not less.
+                #
+                # 10m rather than infra-data's 5m: an app's first boot can include
+                # schema migration or module installation. On timeout the Release
+                # reports not-ready and says so, which is the outcome being asked
+                # for -- a wrong answer arriving quickly is worse than a right one
+                # arriving late.
+                wait: true
+                waitTimeout: "10m"
                 skipCRDs: true
                 {{- if gt (len $extraVals) 0 }}
                 values:
@@ -1682,7 +1703,28 @@ spec:
                   name: {{ $sc.chart.name }}
                   version: {{ $sc.chart.version | quote }}
                 namespace: {{ $ns }}
-                wait: false
+                # Wait for the release's workloads, not just for Helm to have
+                # applied the manifests.
+                #
+                # With wait: false the Release goes Ready the moment the objects
+                # exist, so an App whose pods can never schedule still reports
+                # Ready=True -- and function-auto-ready then marks the XR Ready,
+                # and the Tenant says "All App claims are Ready". Odoo sat like
+                # that for hours: its modules PVC asked for a StorageClass the
+                # cluster does not have, three pods were Pending the whole time,
+                # and every signal above them was green.
+                #
+                # The kernel's own releases (infra-data, suze) have always waited.
+                # Apps are what a tenant actually sees, so a false green matters
+                # more here, not less.
+                #
+                # 10m rather than infra-data's 5m: an app's first boot can include
+                # schema migration or module installation. On timeout the Release
+                # reports not-ready and says so, which is the outcome being asked
+                # for -- a wrong answer arriving quickly is worse than a right one
+                # arriving late.
+                wait: true
+                waitTimeout: "10m"
                 skipCRDs: true
                 {{- if gt (len $scExtraVals) 0 }}
                 values:

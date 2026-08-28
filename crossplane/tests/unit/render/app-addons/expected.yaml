@@ -325,7 +325,8 @@ spec:
       podLabels:
         gentianos.io/app: demo-app
         gentianos.io/tenant: demo
-    wait: false
+    wait: true
+    waitTimeout: 10m
   providerConfigRef:
     name: kubernetes
   rollbackLimit: 3

@@ -339,7 +339,8 @@ spec:
       - name: kernel-trust-anchor
         secret:
           secretName: gentian-trust-anchor-tls
-    wait: false
+    wait: true
+    waitTimeout: 10m
   providerConfigRef:
     name: kubernetes
   rollbackLimit: 3
