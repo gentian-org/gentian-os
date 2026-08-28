@@ -53,6 +53,13 @@ applying the Tenant CR on the target cluster triggers the full
 Crossplane Composition, which picks up the existing data from the
 restored databases and buckets.
 
+### 3.1 Node Flavour Migration
+
+Replacing a cluster's worker nodes with a different flavour — sizing from usable
+rather than purchased memory, the drain order the kernel singletons require, and the
+CNPG and RWO cases that need manual steps — is covered in
+[node-pool-migration.md](../node-pool-migration.md).
+
 ## 4. Disaster Recovery
 
 For full-cluster DR, recovery follows the deployment layers:

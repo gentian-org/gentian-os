@@ -33,6 +33,7 @@ bootstrap via `install.sh`.
 - [docs/architecture.md](docs/architecture.md) — system architecture overview
 - [docs/commands.md](docs/commands.md) — `kubectl gentian` / operator commands
 - [docs/deployment.md](docs/deployment.md) — deployment model
+- [docs/node-pool-migration.md](docs/node-pool-migration.md) — migrating a cluster to a new node flavour
 - [docs/faq.md](docs/faq.md) — frequently asked questions
 - [docs/roadmap.md](docs/roadmap.md) — roadmap
 - [docs/design/](docs/design/) — architecture deep-dives (kernel, IAM, gateway, multi-tenancy, security, ...)
