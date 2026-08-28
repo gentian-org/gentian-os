@@ -364,17 +364,27 @@ Gentian portal login (derived from `MASTER_PASSWORD` during install):
 kubectl get secret keycloak-admin -n platform-kernel -o yaml
 ```
 
-Tenant admin (after `kubectl gentian tenants deploy <tenant>` — or read from Job logs):
+Tenant admin (after `kubectl gentian tenants deploy <tenant>`). OpenBao holds
+it for the life of the tenant, so read it there:
+
+```bash
+bao kv get -mount=secret gentian-os/tenants/<tenant>/admin
+bao kv get -mount=secret -field=password gentian-os/tenants/<tenant>/admin
+```
+
+The path stores `username` and `password`, written once when the tenant is
+first provisioned — so it keeps returning the credential the tenant actually
+has, not a fresh derivation.
+
+The provisioning Job prints the same values, but only briefly:
 
 ```bash
 kubectl logs -n platform-kernel job/keycloak-admin-<tenant> --tail=20
 ```
 
-OpenBao fallback (when seeded):
-
-```bash
-bao kv get gentian-os/tenants/<tenant>/identity/admin
-```
+Finished Jobs are removed after `ProvisioningJobTTLSeconds`, currently 600s,
+so this returns `Error from server (NotFound)` ten minutes after the tenant
+finishes provisioning. It is the transient copy; OpenBao is the durable one.
 
 Keycloak master-realm admin (Suze stack):
 
