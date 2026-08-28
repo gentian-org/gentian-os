@@ -19,6 +19,7 @@ package controller
 import (
 	"context"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -76,13 +77,19 @@ func patchHairpinCorefile(corefile, edgeIP, kernelDomain string, tenantHosts map
 	beginIdx := strings.Index(corefile, hairpinBeginMarker)
 	endIdx := strings.Index(corefile, hairpinEndMarker)
 	if beginIdx == -1 || endIdx == -1 || endIdx < beginIdx {
-		block := buildHairpinBlock(edgeIP, kernelDomain, "")
+		block := buildHairpinBlock(edgeIP, httpsHosts, "")
 		if idx := strings.Index(corefile, "hosts {"); idx != -1 {
 			insertAt := idx + len("hosts {")
 			patched := corefile[:insertAt] + "\n" + block + corefile[insertAt:]
 			return patched, true
 		}
-		return corefile, false
+		// No hosts plugin to insert into. Managed CoreDNS distributions ship a
+		// stock Corefile that has none, so there is nothing to extend and the
+		// hairpin would silently never apply -- which is exactly how it failed:
+		// no markers, no error, and every server-side fetch to a tenant host
+		// leaving the cluster for the load balancer's public address, where the
+		// tenant NetworkPolicy drops it. Create the block instead.
+		return insertHostsBlock(corefile, block)
 	}
 
 	block := corefile[beginIdx : endIdx+len(hairpinEndMarker)]
@@ -139,12 +146,23 @@ func patchHairpinCorefile(corefile, edgeIP, kernelDomain string, tenantHosts map
 	return corefile[:beginIdx] + patchedBlock + corefile[endIdx+len(hairpinEndMarker):], true
 }
 
-func buildHairpinBlock(edgeIP, kernelDomain string, existingMailLine string) string {
+// buildHairpinBlock renders the marker-delimited host lines for every host in
+// hosts. It takes the resolved set rather than deriving the kernel hosts itself:
+// a block created from scratch must carry the tenant app hostnames as well, or
+// the very hosts the hairpin exists for are missing until some later reconcile
+// happens to add them.
+func buildHairpinBlock(edgeIP string, hosts map[string]struct{}, existingMailLine string) string {
+	ordered := make([]string, 0, len(hosts))
+	for host := range hosts {
+		ordered = append(ordered, host)
+	}
+	sort.Strings(ordered)
+
 	var b strings.Builder
 	b.WriteString("          ")
 	b.WriteString(hairpinBeginMarker)
 	b.WriteByte('\n')
-	for _, host := range sortedHairpinHosts(kernelDomain) {
+	for _, host := range ordered {
 		fmt.Fprintf(&b, "          %s %s\n", edgeIP, host)
 	}
 	if existingMailLine != "" {
@@ -156,6 +174,33 @@ func buildHairpinBlock(edgeIP, kernelDomain string, existingMailLine string) str
 	b.WriteString("          ")
 	b.WriteString(hairpinEndMarker)
 	return b.String()
+}
+
+// insertHostsBlock injects a complete hosts plugin block into a Corefile that
+// has none, before the kubernetes directive and at its indentation.
+//
+// This is case 3 of the original spliceHairpinHosts (e38da902). When that
+// reconciler was removed (75cf9fd8) and a reduced one reintroduced (44b7157c),
+// only "sentinels already present" and "hosts block exists" came back. Clusters
+// provisioned before the removal kept the block CoreDNS already had, so nothing
+// looked broken; a cluster installed since gets a stock Corefile with no hosts
+// plugin, patchHairpinCorefile returns "unchanged", and the hairpin silently
+// never applies. Every server-side fetch to a tenant host then leaves for the
+// load balancer's public address, where the tenant NetworkPolicy drops it.
+//
+// fallthrough is what keeps the rest of DNS working: without it the hosts
+// plugin answers authoritatively for every name it does not know.
+func insertHostsBlock(corefile, block string) (string, bool) {
+	kubeIdx := strings.Index(corefile, "kubernetes ")
+	if kubeIdx < 0 {
+		return corefile, false
+	}
+	indent := ""
+	if lineStart := strings.LastIndex(corefile[:kubeIdx], "\n"); lineStart >= 0 {
+		indent = corefile[lineStart+1 : kubeIdx]
+	}
+	hostsBlock := fmt.Sprintf("%shosts {\n%s\n%s  fallthrough\n%s}\n", indent, block, indent, indent)
+	return corefile[:kubeIdx] + hostsBlock + corefile[kubeIdx:], true
 }
 
 func sortedHairpinHosts(kernelDomain string) []string {
@@ -226,6 +271,12 @@ func ensureCoreDNSHairpin(ctx context.Context, c client.Client, kernelDomain, te
 	corefile := cm.Data["Corefile"]
 	patched, changed := patchHairpinCorefile(corefile, edgeIP, kernelDomain, tenantHosts)
 	if !changed {
+		// Distinguish "already correct" from "could not be placed". The latter
+		// used to return nil, so a Corefile the hairpin never landed in looked
+		// exactly like a converged one.
+		if !strings.Contains(corefile, hairpinBeginMarker) {
+			return fmt.Errorf("could not place hairpin block in CoreDNS ConfigMap %q: no kubernetes directive to anchor a hosts block to", cmName)
+		}
 		return nil
 	}
 

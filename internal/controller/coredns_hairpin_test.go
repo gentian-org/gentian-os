@@ -107,3 +107,86 @@ func TestPatchHairpinCorefile_AddsTenantAppHosts(t *testing.T) {
 		t.Fatalf("expected collabora host in hairpin block, got:\n%s", patched)
 	}
 }
+
+// A managed CoreDNS ships a stock Corefile with no hosts plugin. That used to
+// return (corefile, false), which ensureCoreDNSHairpin read as "already
+// converged" -- so the hairpin silently never applied and every server-side
+// fetch to a tenant host left the cluster for the load balancer's public IP.
+func TestPatchHairpinCorefile_CreatesHostsBlockWhenAbsent(t *testing.T) {
+	t.Parallel()
+
+	corefile := `.:53 {
+    errors
+    health {
+        lameduck 5s
+    }
+    ready
+    kubernetes cluster.local in-addr.arpa ip6.arpa {
+        pods insecure
+        fallthrough in-addr.arpa ip6.arpa
+        ttl 30
+    }
+    prometheus 0.0.0.0:9153
+    forward . /etc/resolv.conf
+    cache 30
+    loop
+    reload
+    loadbalance
+}`
+
+	tenantHosts := map[string]struct{}{
+		"cloud.demo.platform.example.test": {},
+	}
+	patched, changed := patchHairpinCorefile(corefile, "192.0.2.36", "platform.example.test", tenantHosts)
+	if !changed {
+		t.Fatalf("expected a hosts block to be created, got:\n%s", patched)
+	}
+	if !strings.Contains(patched, "hosts {") {
+		t.Fatalf("expected a hosts plugin block, got:\n%s", patched)
+	}
+	// Without fallthrough the hosts plugin answers authoritatively for names it
+	// does not know and the rest of cluster DNS stops resolving.
+	if !strings.Contains(patched, "fallthrough\n    }") {
+		t.Fatalf("expected fallthrough inside the hosts block, got:\n%s", patched)
+	}
+	// A block created from scratch must already carry the tenant app hosts.
+	if !strings.Contains(patched, "192.0.2.36 cloud.demo.platform.example.test") {
+		t.Fatalf("expected tenant host in the new block, got:\n%s", patched)
+	}
+	if !strings.Contains(patched, "192.0.2.36 id.platform.example.test") {
+		t.Fatalf("expected kernel hosts in the new block, got:\n%s", patched)
+	}
+	if strings.Index(patched, "hosts {") > strings.Index(patched, "kubernetes ") {
+		t.Fatalf("expected hosts block before the kubernetes directive, got:\n%s", patched)
+	}
+	// The kubernetes plugin's own indented brace must not be mistaken for the
+	// server block's.
+	if !strings.Contains(patched, "fallthrough in-addr.arpa ip6.arpa") {
+		t.Fatalf("expected the kubernetes block to survive intact, got:\n%s", patched)
+	}
+}
+
+func TestPatchHairpinCorefile_CreatedBlockIsIdempotent(t *testing.T) {
+	t.Parallel()
+
+	corefile := ".:53 {\n    kubernetes cluster.local\n    forward . /etc/resolv.conf\n}"
+	tenantHosts := map[string]struct{}{"cloud.demo.platform.example.test": {}}
+
+	first, changed := patchHairpinCorefile(corefile, "192.0.2.36", "platform.example.test", tenantHosts)
+	if !changed {
+		t.Fatal("expected the first pass to create the block")
+	}
+	second, changed := patchHairpinCorefile(first, "192.0.2.36", "platform.example.test", tenantHosts)
+	if changed {
+		t.Fatalf("expected the second pass to be a no-op, got:\n%s", second)
+	}
+}
+
+// No server block to place it in: that must be reported, not silently accepted.
+func TestPatchHairpinCorefile_ReportsUnplaceableCorefile(t *testing.T) {
+	t.Parallel()
+
+	if _, changed := patchHairpinCorefile("# nothing here", "192.0.2.36", "platform.example.test", nil); changed {
+		t.Fatal("expected no change when there is no kubernetes directive to anchor the hosts block to")
+	}
+}
