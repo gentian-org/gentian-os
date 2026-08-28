@@ -180,14 +180,79 @@ body.gentian-login a:hover {
   color: var(--gtn-600);
 }
 
-/* Keycloak's own alert blocks on non-overridden screens. Given a background so
- * the message reads as a message rather than loose text, matching the
- * .gentian-login__error / __info treatment used on the login card. */
-body.gentian-login .alert-error,
-body.gentian-login .pf-m-danger .pf-c-alert__title,
-body.gentian-login .pf-m-danger .pf-v5-c-alert__title {
+/* Keycloak's own alert blocks on non-overridden screens, given the
+ * .gentian-login__info / __error treatment used on the login card.
+ *
+ * This block used to set only `color`, which made the message unreadable
+ * rather than merely unstyled. keycloak.v2's template.ftl runs a script that
+ * puts pf-v5-theme-dark on <html> whenever the browser reports
+ * prefers-color-scheme: dark, and PatternFly resolves the alert's background
+ * from --pf-v5-global--BackgroundColor--100, which that theme redefines to a
+ * dark value. The card around it stays light -- this theme is a light paper
+ * design and does not follow the OS -- so an operator on a dark-mode browser
+ * got near-black --gtn-ink-1 text on PatternFly's dark alert. Reported on the
+ * update-password screen an invited user is sent to, where the block carries
+ * the only instruction on the page:
+ *
+ *   "You need to change your password to activate your account."
+ *
+ * Overriding --pf-v5-c-alert--BackgroundColor rather than only `background`
+ * is what makes it hold: the variable is set on the element, so it wins over
+ * the global token whichever theme class is on <html>, and PatternFly's own
+ * internals resolve to the same colour instead of fighting it. `background`
+ * is declared too, for the PatternFly 4 markup that has no such variable.
+ *
+ * The stylesheet is emitted after stylesCommon, so equal-specificity ties go
+ * to these rules.
+ */
+body.gentian-login .pf-c-alert,
+body.gentian-login .pf-v5-c-alert,
+body.gentian-login .alert {
+  --pf-v5-c-alert--BackgroundColor: var(--gtn-50);
+  --pf-v5-c-alert--BorderTopColor: var(--gtn-border);
+  --pf-v5-c-alert--BoxShadow: none;
+  background: var(--gtn-50);
+  color: var(--gtn-ink-2);
+  border: 1px solid var(--gtn-border);
+  border-radius: var(--gtn-r1);
+  box-shadow: none;
+  padding: 8px 12px;
+  font-size: 13px;
+  line-height: 1.45;
+  box-sizing: border-box;
+}
+
+/* The icon PatternFly puts in the alert's grid, and the title beside it. Left
+ * alone the icon keeps the global colour the dark theme gave it. */
+body.gentian-login .pf-c-alert__icon,
+body.gentian-login .pf-v5-c-alert__icon {
+  color: var(--gtn-500);
+}
+body.gentian-login .pf-c-alert__title,
+body.gentian-login .pf-v5-c-alert__title,
+body.gentian-login .pf-c-alert__description,
+body.gentian-login .pf-v5-c-alert__description {
+  color: var(--gtn-ink-2);
+}
+
+/* Errors in the madder palette, the same pairing as .gentian-login__error. */
+body.gentian-login .pf-c-alert.pf-m-danger,
+body.gentian-login .pf-v5-c-alert.pf-m-danger,
+body.gentian-login .alert-error {
+  --pf-v5-c-alert--BackgroundColor: var(--gtn-madder-bg);
+  --pf-v5-c-alert--BorderTopColor: rgba(155, 45, 45, 0.22);
+  background: var(--gtn-madder-bg);
+  border-color: rgba(155, 45, 45, 0.22);
   color: var(--gtn-madder);
 }
+body.gentian-login .pf-m-danger .pf-c-alert__title,
+body.gentian-login .pf-m-danger .pf-v5-c-alert__title,
+body.gentian-login .pf-m-danger .pf-c-alert__icon,
+body.gentian-login .pf-m-danger .pf-v5-c-alert__icon {
+  color: var(--gtn-madder);
+}
+
+/* PatternFly 3's flat classes, still emitted by some screens. */
 body.gentian-login .alert-warning,
 body.gentian-login .alert-info,
 body.gentian-login .alert-success {
