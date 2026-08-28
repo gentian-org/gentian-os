@@ -1038,12 +1038,19 @@ load_deployments_cluster_settings() {
     local cluster="${GENTIAN_DEPLOYMENTS_CLUSTER_ID:-default-cluster}"
     local settings_file="${GENTIAN_DEPLOYMENTS_PATH}/clusters/${cluster}/kernel/cluster-settings.env"
 
+    # Read when present, silent when not. Absent is the CORRECT state on a
+    # current cluster: nothing writes cluster-settings.env any more -- everything
+    # that described the cluster is a field on claims/cluster.yaml, and
+    # --prepare-deployment deliberately stops emitting it (bootstrap.sh). This
+    # branch survives only so a cluster that still has one keeps working while it
+    # migrates.
+    #
+    # Announcing its absence on every run reported the normal case as a finding,
+    # in the installer's first few lines, where an operator has the least context
+    # to judge it -- and the old comment here said installing requires the file,
+    # which stopped being true when the claim replaced it.
     if [[ -r "${settings_file}" ]]; then
         load_env_file_override "${settings_file}" "deployments cluster settings"
-    else
-        # Not an error here: --prepare-deployment runs this before writing the
-        # file. Installing requires it, and says so.
-        info "No deployments cluster settings file found at ${settings_file}."
     fi
 
     # The claim, for everything the Cluster XRD already models.

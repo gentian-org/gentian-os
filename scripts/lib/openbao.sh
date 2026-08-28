@@ -40,13 +40,29 @@ try_load_creds_from_openbao() {
     # Need a reachable OpenBao service. Skip silently if not yet deployed, or if
     # neither the ClusterIP nor a port-forward answers — this is a best-effort
     # convenience path, so it must never abort the install.
+    #
+    # Announced, because reaching it is not instant and everything up to here
+    # was: gentian_service_addr probes the ClusterIP for up to 3s, and when the
+    # host cannot route to the Service network it falls back to a port-forward
+    # it polls for up to 30 iterations. On a cluster whose OpenBao is not up
+    # that is a wordless minute directly after the config lines, which reads as
+    # a hang rather than as work.
+    info "Checking whether OpenBao already holds this cluster's credentials..."
+
     local bao_addr
-    bao_addr=$(gentian_service_addr openbao openbao 8200 https 2>/dev/null) || return 0
-    [[ -n "${bao_addr}" ]] || return 0
+    if ! bao_addr=$(gentian_service_addr openbao openbao 8200 https 2>/dev/null) \
+        || [[ -z "${bao_addr}" ]]; then
+        info "  OpenBao is not reachable yet — asking for the credentials instead."
+        return 0
+    fi
     export VAULT_SKIP_VERIFY=true
 
     # Don't bother if OpenBao is sealed/unreachable.
-    curl -k -sf --max-time 3 "${bao_addr}/v1/sys/health" >/dev/null 2>&1 || return 0
+    if ! curl -k -sf --max-time 3 "${bao_addr}/v1/sys/health" >/dev/null 2>&1; then
+        info "  OpenBao is not answering yet — asking for the credentials instead."
+        return 0
+    fi
+    info "  OpenBao is reachable; reading what it already has."
 
     _bao_get() {
         # $1 = relative path under secret/data/gentian-os/kernel/
