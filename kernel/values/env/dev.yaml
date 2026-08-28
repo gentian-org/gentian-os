@@ -22,13 +22,18 @@
 # Override per-app in _base.yaml if the chart uses a different key
 replicaCount: 1
 
-# Storage class used for all PVCs in this cluster.
-# Bitnami charts read global.storageClass and apply it to every PersistentVolumeClaim.
-# Non-Bitnami charts that don't honour global.storageClass still have this
-# inherited via Helm's global merge semantics.
-# In prod, override with: global.storageClass: longhorn (or similar)
 global:
-  storageClass: nfs-csi
+  # storageClass is intentionally unset, for the reason prod.yaml gives at
+  # length: this file is read from Git by the ApplicationSets and shared by
+  # every cluster on this stage, so naming a class here asserts it exists on
+  # all of them. It said nfs-csi, which exists on one developer's cluster and
+  # nowhere else -- on a cluster with Cinder, EBS or anything else the PVCs
+  # simply sit Pending with `storageclass "nfs-csi" not found`.
+  #
+  # Unset means "use the cluster's default StorageClass". A cluster that needs
+  # a specific non-default class sets storageClass on its own claim, which
+  # reaches every chart through resolve_storage_class() in common.sh -- the
+  # cluster is what knows which classes it has.
   # Optional private-registry pull secret, replicated into tenant namespaces
   # by the operator's ensureRegistryCredentials if a `registry-credentials`
   # Secret exists in the kernel services namespace (see internal/controller/
