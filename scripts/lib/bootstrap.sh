@@ -2011,7 +2011,7 @@ appLifecycle:
     cluster: ${cluster}
     repo: ${GENTIAN_DEPLOYMENTS_REPO:-https://github.com/gentian-org/gentian-deployments.git}
     # Named from the CLAIM, not the composite and not the repo. The Composition
-    # emits <claimName>-git-credentials and B-09 names the claim `deployments`,
+    # emits <claimName>-git-credentials and B-09 names the claim "deployments",
     # so this is deployments-git-credentials. Scaffolding
     # gentian-deployments-git-credentials pointed the operator at a Secret
     # nothing creates -- and because the volume is optional with a subPath, the

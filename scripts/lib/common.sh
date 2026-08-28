@@ -38,6 +38,13 @@ export CHECK_SATISFIED CHECK_MISSING CHECK_UNDEFINED CHECK_ALWAYS
 # ─── Colour helpers ──────────────────────────────────────────────────────────
 RED='\033[0;31m'; YELLOW='\033[1;33m'; GREEN='\033[0;32m'; CYAN='\033[0;36m'; NC='\033[0m'
 BLUE='\033[0;34m'; BOLD='\033[1m'
+# Exported for the same reason as the CHECK_ constants above: the reader is
+# another file. The colours below this line are consumed by the info/success/
+# warn/error helpers here, but BLUE and BOLD are used only by the step heading
+# in scripts/lib/driver.sh, so within this file they look unused and shellcheck
+# says so (SC2034). Exporting states the actual contract rather than silencing
+# the warning.
+export BLUE BOLD
 info()    { echo -e "${CYAN}[INFO]${NC}  $*"; }
 success() { echo -e "${GREEN}[OK]${NC}    $*"; }
 warn()    { echo -e "${YELLOW}[WARN]${NC}  $*"; }
