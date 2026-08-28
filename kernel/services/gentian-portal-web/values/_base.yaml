@@ -54,8 +54,25 @@ web:
     tag: develop
     pullPolicy: Always
 
+# The operator owns the portal's routing, so the chart must not also render it.
+#
+# Both produced an HTTPRoute for portal.<kernel-domain> on kernel-public-gateway
+# with identical rules and backends -- gentian-portal-gentian-portal from here
+# and kernel-gentian-portal from GatewayPlatformReconciler. Two writers of one
+# route, agreeing only because nothing had changed yet.
+#
+# The operator is the right owner because the kernel route is not the whole job.
+# It also serves the portal on every tenant's own host (tenant-<name>-portal),
+# built from the same kernelGentianPortalHTTPRouteRules, so a tenant's login
+# hint survives instead of being dropped by a redirect. Those routes appear and
+# disappear with their tenants, which a static chart value cannot express -- and
+# they must stay identical to the kernel one, which is exactly what sharing a
+# single rule builder guarantees.
+#
+# Not a fallback for routingMode: ingress either. This block renders an
+# HTTPRoute against kernel-public-gateway, which only exists in gateway mode.
 gateway:
-  enabled: true
+  enabled: false
   parentGatewayName: kernel-public-gateway
   parentGatewayNamespace: platform-kernel
   host: portal
