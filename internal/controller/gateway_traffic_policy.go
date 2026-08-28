@@ -72,17 +72,6 @@ func backendTrafficPolicySpecFromIngressAnnotations(annotations map[string]strin
 	if d := gatewayDurationAnnotation(annotations, gentianov1alpha1.AnnotationIngressGatewayRequestTimeout); d != "" {
 		timeout = map[string]interface{}{"http": map[string]interface{}{"requestTimeout": d}}
 	}
-	if d := gatewayDurationAnnotation(annotations, gentianov1alpha1.AnnotationIngressGatewayResponseTimeout); d != "" {
-		if timeout == nil {
-			timeout = map[string]interface{}{}
-		}
-		http, _ := timeout["http"].(map[string]interface{})
-		if http == nil {
-			http = map[string]interface{}{}
-			timeout["http"] = http
-		}
-		http["responseTimeout"] = d
-	}
 	if timeout != nil {
 		spec["timeout"] = timeout
 	}

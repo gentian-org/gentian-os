@@ -49,10 +49,20 @@ const (
 	AnnotationIngressGatewayFrameAncestors = "gentianos.io/gateway-frame-ancestors"
 	// GatewayEscapedSlashesAction sets Envoy ClientTrafficPolicy path.escapedSlashesAction.
 	AnnotationIngressGatewayEscapedSlashesAction = "gentianos.io/gateway-escaped-slashes-action"
-	// GatewayRequestTimeout sets BackendTrafficPolicy timeout.http.requestTimeout (e.g. "3600s" or "3600").
+	// GatewayRequestTimeout sets BackendTrafficPolicy timeout.http.requestTimeout
+	// (e.g. "3600s" or "3600"). This is the whole budget for the exchange, not
+	// just for sending the request -- Envoy holds one route timeout covering the
+	// upstream's response as well.
+	//
+	// There is deliberately no response-timeout companion. One existed, as
+	// gentianos.io/gateway-response-timeout, and did nothing at all:
+	// BackendTrafficPolicy's timeout.http has only connectionIdleTimeout,
+	// maxConnectionDuration and requestTimeout, so the API server pruned the
+	// field on write and every policy came back carrying requestTimeout alone.
+	// Four profiles set it, all to the same value as the request timeout, and
+	// none of them ever got what the name promised. Nothing tested it, which is
+	// why it stayed that way.
 	AnnotationIngressGatewayRequestTimeout = "gentianos.io/gateway-request-timeout"
-	// GatewayResponseTimeout sets BackendTrafficPolicy timeout.http.responseTimeout.
-	AnnotationIngressGatewayResponseTimeout = "gentianos.io/gateway-response-timeout"
 	// GatewayBufferLimit sets BackendTrafficPolicy connection.bufferLimit (e.g. "128m").
 	AnnotationIngressGatewayBufferLimit = "gentianos.io/gateway-buffer-limit"
 )
