@@ -17,8 +17,15 @@ limitations under the License.
 package controller
 
 import (
+	"context"
 	"strings"
 	"testing"
+
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+
+	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 )
 
 func TestGroupAttributeNamesDerivesOdooMapper(t *testing.T) {
@@ -69,5 +76,53 @@ func TestGroupAttributeNamesToleratesMalformedJSON(t *testing.T) {
 	}
 	if got := groupAttributeNames(""); got != nil {
 		t.Fatalf("got %v, want nil", got)
+	}
+}
+
+func TestCollectGentianGroupsJSONIncludesAddonAttributes(t *testing.T) {
+	t.Parallel()
+	// An Odoo module is an addon, and keycloak-group-attributes lives on the
+	// addon profile — the base declares none. Walking only app.Profile dropped
+	// gentianOdooGroupRoles from this JSON, and the attribute mapper is derived
+	// from it, so the claim never reached Odoo and no module role was assigned.
+	base := &gentianov1alpha1.AppProfile{
+		ObjectMeta: metav1.ObjectMeta{Name: "odoo-base-ce"},
+	}
+	addon := &gentianov1alpha1.AppProfile{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "odoo-employees-ce",
+			Annotations: map[string]string{
+				"gentianos.io/keycloak-group-attributes": `{"gentianOdooModules":["hr"],"gentianOdooGroupRoles":["hr.group_hr_user"]}`,
+			},
+		},
+	}
+	tenant := &gentianov1alpha1.Tenant{
+		ObjectMeta: metav1.ObjectMeta{Name: "corp"},
+		Spec: gentianov1alpha1.TenantSpec{
+			Apps: []gentianov1alpha1.TenantApp{{
+				Profile: "odoo-base-ce",
+				Addons:  []string{"odoo-employees-ce"},
+			}},
+		},
+	}
+
+	scheme := runtime.NewScheme()
+	_ = gentianov1alpha1.AddToScheme(scheme)
+	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(base, addon).Build()
+	r := &TenantReconciler{Client: c}
+
+	got, err := r.collectGentianGroupsJSON(context.Background(), tenant, nil)
+	if err != nil {
+		t.Fatalf("collectGentianGroupsJSON: %v", err)
+	}
+	if !strings.Contains(got, "gentian:tenant:corp:app:odoo-employees-ce") {
+		t.Fatalf("addon group missing from groups JSON: %s", got)
+	}
+	if !strings.Contains(got, "hr.group_hr_user") {
+		t.Fatalf("addon attributes missing from groups JSON: %s", got)
+	}
+	// What the provisioning Job turns into protocol mappers.
+	if names := groupAttributeNames(got); strings.Join(names, ",") != "gentianOdooGroupRoles,gentianOdooModules" {
+		t.Fatalf("got %v, want [gentianOdooGroupRoles gentianOdooModules]", names)
 	}
 }

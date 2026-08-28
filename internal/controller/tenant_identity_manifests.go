@@ -390,7 +390,7 @@ func (r *TenantReconciler) collectGentianGroupsJSON(ctx context.Context, tenant 
 		return attrs, nil
 	}
 
-	// 2. Add groups for all tenant apps
+	// 2. Add groups for all tenant apps, and for the addons activated inside them
 	for _, app := range tenant.Spec.Apps {
 		profileName, err := catalogue.ResolveTenantAppProfile(ctx, r.Client, app)
 		if err != nil {
@@ -401,6 +401,24 @@ func (r *TenantReconciler) collectGentianGroupsJSON(ctx context.Context, tenant 
 			return "", err
 		}
 		addGroup(keycloak.TenantAppGroup(tenant.Name, profileName), attrs)
+
+		// An addon is not a separate install — it has no App claim of its own —
+		// but it is where a family's per-module entitlement lives, so it carries
+		// the keycloak-group-attributes annotation the base profile does not.
+		// Every Odoo module declares gentianOdooGroupRoles here and nowhere else.
+		//
+		// Walking only app.Profile is why that stopped reaching Keycloak: the
+		// modules used to be top-level spec.apps entries, and when they became
+		// addons their attributes left this JSON. GENTIAN_GROUP_ATTR_NAMES is
+		// derived from it, so the aggregating protocol mapper was no longer
+		// created either — the claim went missing, and Odoo assigned no roles.
+		for _, addonProfile := range app.Addons {
+			addonAttrs, err := resolveProfileAttrs(addonProfile)
+			if err != nil {
+				return "", err
+			}
+			addGroup(keycloak.TenantAppGroup(tenant.Name, addonProfile), addonAttrs)
+		}
 	}
 
 	// 3. Add groups for any additional profiles (OIDC configs)
