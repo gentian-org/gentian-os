@@ -16,10 +16,33 @@
 # alone, so anything managed outside the cluster — the apex, an MX added by
 # hand, a verification TXT — looks orphaned to it.
 #
-# upsert-only creates and updates but never removes. Move to sync only once the
-# TXT registry below shows it owns exactly what you expect, and understand that
-# sync WILL delete records it believes it owns.
-policy: upsert-only
+# upsert-only creates and updates but never removes -- except it does not update
+# either, and that is why this is now sync.
+#
+# Three records went stale in one afternoon and each needed deleting by hand
+# before external-dns would republish it: both DKIM keys, left over from a
+# tenant that had been undeployed and rebuilt with new keys, and the tenant SPF
+# record after mail.egressHost was set. In every case the DNSEndpoint asked for
+# the new value, external-dns owned the record, and it logged "All records are
+# already up to date" while serving the old one. A signature nobody can verify
+# and an SPF record that authorises the wrong address both fail silently, and
+# the only signal was a bounce from Gmail.
+#
+# The condition this comment previously set for moving to sync has been met and
+# checked, not assumed. The TXT registry owns exactly the fifteen records the
+# platform creates -- the tenant app hosts, the kernel hosts, and the mail MX,
+# SPF, DMARC and DKIM. The two records in the zone it does NOT own are the apex
+# A record and mail-egress, which is manual because the floating IP it names is
+# not something the cluster allocates. sync leaves both alone: ownership is
+# recorded in the TXT registry below, and external-dns only ever touches names
+# it registered itself.
+#
+# sync WILL delete a record it owns once nothing asks for it. That is the point
+# -- a tenant that is removed should take its records with it -- but it is also
+# the reason the registry check above must be repeated before widening the
+# domain filter or pointing this at a zone with records the cluster does not
+# manage.
+policy: sync
 
 # Ownership is recorded in TXT records, so external-dns only ever touches names
 # it registered itself. Without a registry it assumes ownership of everything
