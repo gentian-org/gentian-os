@@ -20,6 +20,7 @@ import (
 	"context"
 	"fmt"
 
+	corev1 "k8s.io/api/core/v1"
 	runtimeMeta "k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -146,15 +147,42 @@ func (r *TenantReconciler) syncTenantMailDNS(ctx context.Context, tenant *gentia
 // and web records come from elsewhere, and republishing them here would let two
 // owners write the same names.
 func (r *TenantReconciler) syncKernelMailDNS(ctx context.Context, dkimPublicKey string) error {
-	if r.KernelDomain == "" || dkimPublicKey == "" {
+	if r.KernelDomain == "" {
 		return nil
 	}
 	ns := defaultServicesNamespace()
 
-	records := []interface{}{
-		dnsEndpointRecord(
+	// The two records are independent. This used to return early without a DKIM
+	// key, which would now also withhold the address the MX points at -- and the
+	// address is what inbound mail needs, whether or not anything signs yet.
+	var records []interface{}
+	if dkimPublicKey != "" {
+		records = append(records, dnsEndpointRecord(
 			postfixDKIMSelector+"._domainkey."+r.KernelDomain, "TXT",
-			fmt.Sprintf("v=DKIM1; h=sha256; k=rsa; s=email; p=%s", dkimPublicKey)),
+			fmt.Sprintf("v=DKIM1; h=sha256; k=rsa; s=email; p=%s", dkimPublicKey)))
+	}
+
+	// The address the MX points at.
+	//
+	// Every tenant's MX names mail.<kernelDomain> — syncTenantMailDNS says so and
+	// explains why it must resolve and must never be a CNAME. Nothing published
+	// it. The MX therefore named a host with no address, which fails twice over:
+	// a sender cannot deliver inbound mail at all, and "v=spf1 mx ~all" — the
+	// fallback used when no egressHost is configured — resolves the MX to no
+	// address and so authorises nothing, failing SPF by construction.
+	//
+	// Taken from the inbound Service rather than a configured value because that
+	// is where the address actually lives: it is assigned by the cloud, can change
+	// when the Service is recreated, and a literal in a claim would be one more
+	// thing to remember to edit. Absent (no LoadBalancer, or none assigned yet)
+	// publishes nothing rather than a wrong answer — a stale A record here points
+	// the internet's mail at something that is not a mail server.
+	if addr := r.kernelMailAddress(ctx); addr != "" {
+		records = append(records, dnsEndpointRecord("mail."+r.KernelDomain, "A", addr))
+	}
+
+	if len(records) == 0 {
+		return nil
 	}
 
 	obj := &unstructured.Unstructured{}
@@ -182,4 +210,31 @@ func (r *TenantReconciler) syncKernelMailDNS(ctx context.Context, dkimPublicKey 
 	}
 	obj.SetResourceVersion(existing.GetResourceVersion())
 	return r.Update(ctx, obj)
+}
+
+// kernelMailAddress is the address inbound mail arrives on: the external
+// address of the Postfix SMTP Service.
+//
+// Empty whenever there is no answer to give — no such Service, not a
+// LoadBalancer, or an address not yet assigned — so the caller publishes no
+// record rather than a wrong one.
+//
+// A hostname is returned as-is for the caller to reject: an MX target must be
+// an address record, so a LoadBalancer that publishes a hostname needs a CNAME
+// this function must not silently pretend is an A.
+func (r *TenantReconciler) kernelMailAddress(ctx context.Context) string {
+	svc := &corev1.Service{}
+	name := types.NamespacedName{
+		Name:      envOrDefault("MAIL_SMTP_SERVICE", "postfix-"+envOrDefault("GENTIAN_STAGE", envOrDefault("ENV", "dev"))+"-smtp"),
+		Namespace: defaultServicesNamespace(),
+	}
+	if err := r.Get(ctx, name, svc); err != nil {
+		return ""
+	}
+	for _, ing := range svc.Status.LoadBalancer.Ingress {
+		if ing.IP != "" {
+			return ing.IP
+		}
+	}
+	return ""
 }
