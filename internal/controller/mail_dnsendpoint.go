@@ -261,7 +261,6 @@ func (r *TenantReconciler) kernelMailAddress(ctx context.Context) string {
 	return ""
 }
 
-
 // mailEgressAddress is the address outbound mail leaves from: the ExternalIP the
 // cloud provider reports on the node carrying the floating IP.
 //
