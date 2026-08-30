@@ -44,6 +44,15 @@ rules:
   - apiGroups:
     - ''
     resources:
+    - nodes
+    verbs:
+    - get
+    - list
+    - watch
+    - patch
+  - apiGroups:
+    - ''
+    resources:
     - pods
     verbs:
     - get

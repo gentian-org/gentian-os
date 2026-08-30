@@ -138,6 +138,16 @@ var xTenantGVK = schema.GroupVersionKind{
 // DNSEndpoint carries a tenant's mail records — MX, SPF, DKIM, DMARC — for
 // external-dns to reconcile into the zone. The web records need no rule here:
 // external-dns reads those from the HTTPRoutes directly.
+// Nodes, read to find the address outbound mail leaves from and patched to
+// mark which node carries it. The read is the ExternalIP the cloud provider
+// reports for an attached floating IP; the write is one label,
+// gentianos.io/mail-egress, which the Postfix chart already selects on.
+//
+// patch on nodes is a cluster-scoped write and cannot be narrowed to one
+// label by RBAC, so it is worth knowing this grant exists and why. Without
+// it the label has no owner: a cluster that sets mail.egressHost renders a
+// nodeSelector matching nothing and Postfix sits Pending.
+// +kubebuilder:rbac:groups="",resources=nodes,verbs=get;list;watch;patch
 // +kubebuilder:rbac:groups=externaldns.k8s.io,resources=dnsendpoints,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=gentianos.io,resources=tenants,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=gentianos.io,resources=tenants/status,verbs=get;update;patch

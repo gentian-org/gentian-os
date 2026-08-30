@@ -618,6 +618,14 @@ func (r *TenantReconciler) syncPostfixDKIMTables(ctx context.Context) error {
 			if dnsErr := r.syncKernelMailDNS(ctx, pub); dnsErr != nil {
 				log.FromContext(ctx).Error(dnsErr, "publish kernel DKIM record")
 			}
+			// Alongside the records, because the label and the egress A record
+			// are derived from the same node and must not disagree about which
+			// node that is. Logged rather than returned: failing to label a node
+			// should not fail a tenant reconcile, and the consequence is only
+			// that Postfix may schedule where it already schedules today.
+			if labelErr := r.syncMailEgressNodeLabel(ctx); labelErr != nil {
+				log.FromContext(ctx).Error(labelErr, "label the mail egress node")
+			}
 		}
 	}
 

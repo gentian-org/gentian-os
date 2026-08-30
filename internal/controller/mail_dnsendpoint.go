@@ -181,6 +181,28 @@ func (r *TenantReconciler) syncKernelMailDNS(ctx context.Context, dkimPublicKey 
 		records = append(records, dnsEndpointRecord("mail."+r.KernelDomain, "A", addr))
 	}
 
+	// The forward half of forward-confirmed reverse DNS.
+	//
+	// A receiver checks that the sending address has a PTR naming a host, and
+	// that the host resolves back to the same address. The PTR is set at the
+	// cloud provider; this is the record it has to agree with, and until now it
+	// was created by hand -- so the one record the platform did not own was the
+	// one holding the pair together.
+	//
+	// The address comes from the node's ExternalIP, which is the floating IP the
+	// provider reports once it is attached to that node's port. That is the same
+	// address mail then leaves from, so the record cannot drift from reality the
+	// way a literal on a claim can.
+	//
+	// Published only when the cluster names an egress host. Without one the
+	// cluster sends from the shared address or relays through a smarthost, and
+	// there is no name to publish.
+	if egress := clusterMailEgressHost(ctx, r.Client, envOrDefault("MAIL_EGRESS_HOST", "")); egress != "" {
+		if addr := r.mailEgressAddress(ctx); addr != "" {
+			records = append(records, dnsEndpointRecord(egress, "A", addr))
+		}
+	}
+
 	if len(records) == 0 {
 		return nil
 	}
@@ -237,4 +259,33 @@ func (r *TenantReconciler) kernelMailAddress(ctx context.Context) string {
 		}
 	}
 	return ""
+}
+
+
+// mailEgressAddress is the address outbound mail leaves from: the ExternalIP the
+// cloud provider reports on the node carrying the floating IP.
+//
+// Exactly one node must carry one. Zero means no dedicated egress has been
+// attached yet; more than one means the cluster cannot say which address mail
+// will leave from, and guessing publishes a record that is wrong half the time.
+// Both return empty, and the caller publishes nothing rather than something
+// unverifiable.
+func (r *TenantReconciler) mailEgressAddress(ctx context.Context) string {
+	nodes := &corev1.NodeList{}
+	if err := r.List(ctx, nodes); err != nil {
+		return ""
+	}
+	var found string
+	for i := range nodes.Items {
+		for _, a := range nodes.Items[i].Status.Addresses {
+			if a.Type != corev1.NodeExternalIP || a.Address == "" {
+				continue
+			}
+			if found != "" && found != a.Address {
+				return ""
+			}
+			found = a.Address
+		}
+	}
+	return found
 }
