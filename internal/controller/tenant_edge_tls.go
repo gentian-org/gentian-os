@@ -64,7 +64,31 @@ func buildTenantWildcardCertificate(
 		tenantLabel:    tenant.Name,
 		managedByLabel: managedByValue,
 	})
-	_ = unstructured.SetNestedStringSlice(obj.Object, []string{"*." + domain, domain}, "spec", "dnsNames")
+	// Wildcard only. The bare domain is deliberately absent, and that is what
+	// keeps the tenant apex reachable.
+	//
+	// This certificate is served by the tenant listener, whose hostname is
+	// "*.<domain>" -- Gateway API requires listeners sharing :443 to be
+	// distinguishable, and the kernel listener is the one that gets to leave its
+	// hostname unset (4eb6235d). A listener's hostname also gates route
+	// attachment, so no route for the bare apex can ever attach here.
+	//
+	// Listing the apex in this certificate therefore advertises a name this
+	// listener cannot route. A browser reads the certificate, sees the apex
+	// covered, and coalesces apex requests onto an open <sub>.<domain>
+	// connection under HTTP/2; Envoy picks the filter chain by SNI, lands on this
+	// listener, finds no matching route and answers 404 route_not_found. It looks
+	// random because it depends on which connection happens to be open, and it
+	// hits the portal that the apex serves (kernel_gateway_routes.go), which is a
+	// critical path, not the redirect the design once assumed.
+	//
+	// Omitting it means the apex cannot be coalesced here at all: it opens its own
+	// connection with its own SNI and is served by the hostname-less kernel
+	// listener, whose certificate covers <tenant>.<kernelDomain> already.
+	//
+	// The invariant, the same one 4eb6235d established for listeners: a
+	// certificate must cover exactly what its listener can route.
+	_ = unstructured.SetNestedStringSlice(obj.Object, []string{"*." + domain}, "spec", "dnsNames")
 	_ = unstructured.SetNestedField(obj.Object, secretName, "spec", "secretName")
 	_ = unstructured.SetNestedField(obj.Object, map[string]interface{}{
 		"name": clusterIssuer,

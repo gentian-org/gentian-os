@@ -62,13 +62,19 @@ Tenant listeners must carry `*.${effectiveDomain}`: Gateway API requires
 listeners sharing a port to be distinguishable, and only one listener on `:443`
 can leave its hostname unset.
 
-Because a tenant certificate also covers `${effectiveDomain}` itself, a browser
-may coalesce a request for the tenant apex onto a connection opened for
-`<subDomain>.${effectiveDomain}`, where the tenant listener's hostname does not
-match it. Keep the tenant apex off the critical path; it carries only the
-redirect described in §5, and that redirect is also reachable through the kernel
-wildcard listener under multi-tenancy, where `${effectiveDomain}` is
-`<tenant>.<kernelDomain>`.
+The tenant certificate must therefore **not** name `${effectiveDomain}` itself
+(§3). While it did, a browser could coalesce a request for the tenant apex onto
+a connection opened for `<subDomain>.${effectiveDomain}` and reach this listener,
+whose hostname does not match the apex and which therefore holds no route for
+it — `404 route_not_found`, intermittently, depending on which connection
+happened to be open.
+
+That was survivable only while the apex carried nothing but a redirect. It no
+longer does: the apex serves the portal itself, so that a login hint on the
+tenant host is not discarded and the address bar stays on the tenant's name
+(`kernel_gateway_routes.go`). The apex is a critical path now, and it is kept
+reachable by keeping it out of the tenant certificate rather than by keeping it
+empty.
 
 The listener hostname also gates route attachment: a route attaches only where
 its hostnames intersect the listener's. `parentRefs.sectionName` narrows that
@@ -131,8 +137,19 @@ TLS issuance is handled by cert-manager:
 
 - Kernel wildcard certificate for kernel hosts.
 - One wildcard certificate per tenant:
-  - DNS names: `*.${effectiveDomain}` and `${effectiveDomain}`
+  - DNS names: `*.${effectiveDomain}` — the apex is **deliberately absent**
   - Secret name: `tenant-<name>-wildcard-tls`
+
+A certificate must cover exactly what its listener can route. The tenant
+listener is scoped to `*.${effectiveDomain}` (§2.1), and a listener hostname
+gates route attachment, so no route for the bare apex can attach there. Naming
+the apex in this certificate would advertise a name that listener cannot serve:
+a browser reads the certificate, coalesces apex requests onto an open
+`<sub>.${effectiveDomain}` connection, Envoy picks the filter chain by SNI, and
+the request lands where no route matches — `404 route_not_found`. Leaving it out
+means the apex opens its own connection with its own SNI and is served by the
+hostname-less kernel listener, whose certificate covers
+`<tenant>.<kernelDomain>` already.
 
 Gateway listeners consume these certificate secrets directly, reading tenant
 secrets across namespaces under the tenant's ReferenceGrant.
@@ -165,10 +182,22 @@ Keycloak OIDC broker policy:
 
 ## 5. Redirects and URL Control
 
-Tenant apex redirects are modeled with HTTPRoute filters.
+The **kernel** apex redirects with an HTTPRoute filter:
 
-- Host: `${effectiveDomain}`
+- Host: `<kernelDomain>`
 - Filter: HTTP redirect to `https://portal.<kernelDomain>/`
+
+The **tenant** apex does not redirect — it serves the portal directly, on the
+same backends as `portal.<kernelDomain>`. A redirect filter replaces path and
+query wholesale, which discarded a login hint arriving on the tenant host, and
+it moved the address bar off the tenant's name. One portal deployment answers on
+both names; it is not copied per tenant, which would put the portal's Keycloak
+admin credentials inside every tenant's blast radius.
+
+Worth knowing: tokens live in `sessionStorage`, which is per origin, so a user
+signed in on the tenant host holds a different session from the same user on
+`portal.<kernelDomain>`. Keycloak's SSO cookie makes crossing between them
+silent, but they are two sessions.
 
 Application-specific redirects and rewrites are expressed with Gateway API route
 filters or Envoy extension policies where advanced behavior is needed.

@@ -66,7 +66,10 @@ groups (`gentian:tenant:<t>:app:<profile>`).
 
 The gentian-os operator creates, for every tenant with edge-routed apps:
 
-1. One cert-manager `Certificate` with `dnsNames: [*.effectiveDomain, effectiveDomain]`.
+1. One cert-manager `Certificate` with `dnsNames: [*.effectiveDomain]`. The apex
+   is deliberately absent: the tenant listener is scoped to `*.effectiveDomain`
+   and cannot route it, so naming it would let browsers coalesce apex requests
+   onto a connection that answers 404. See `docs/design/gateway.md` §3.
 2. Secret `tenant-{name}-wildcard-tls` in the tenant namespace.
 3. One Gateway API `HTTPRoute` per app host, attached to the tenant Gateway and
    `kernel-public-gateway`, all using that TLS secret on the tenant listener.
