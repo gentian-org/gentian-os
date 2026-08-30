@@ -307,6 +307,44 @@ leave through an address you own. Where it cannot, relay through a smarthost
 instead; the alternative is mail that passes SPF and DMARC and still lands in
 spam.
 
+On OpenStack that means attaching a floating IP you own to the port of the node
+Postfix runs on: a port with a floating IP associated egresses through it
+instead of the router's shared address.
+
+```bash
+# the node Postfix is scheduled on, and its Neutron port
+kubectl -n platform-kernel get pod postfix-<stage>-0 -o jsonpath='{.spec.nodeName}'
+kubectl get node <node> -o jsonpath='{.spec.providerID}'      # openstack://<region>/<server-id>
+openstack port list --device-id <server-id> -f value -c ID
+
+openstack floating ip set --port <port-id> <floating-ip-id>
+openstack ptr record set <region>:<floating-ip-id> <egress-host>.
+```
+
+Then publish the forward record — `<egress-host>` A `<floating-ip>` — because
+receivers check both halves, and name the egress on the cluster claim so the
+operator emits an SPF record that matches:
+
+```yaml
+  mail:
+    serviceMode: kernel
+    egressHost: <egress-host>
+```
+
+Confirm the address actually moved before testing delivery; this is the whole
+assumption and it is one command:
+
+```bash
+kubectl -n platform-kernel exec postfix-<stage>-0 -c mail -- curl -s ifconfig.me
+```
+
+Two things this arrangement does not yet do for you. Nothing publishes the
+`<egress-host>` A record — the floating IP is allocated at the provider, so that
+record is manual. And nothing pins Postfix to the node carrying the address:
+`egressHost` is read only to compose the SPF record, so a reschedule moves
+sending back to the shared SNAT silently, and the next bounce is the signal.
+Pin it deliberately until the operator does.
+
 **3. A HELO name that is a FQDN and agrees with the PTR.** Postfix defaults to
 its own hostname, which in Kubernetes is a Service name that resolves nowhere.
 
@@ -370,12 +408,13 @@ LoadBalancer first, then publish the records below.
 
 | Record | Where | Value | Why |
 |---|---|---|---|
-| **MX** | `<tenant-domain>` | `10 mail.<kernel-domain>.` | Tells other servers where to deliver. Needs an A record for the target and port 25 reachable on it. |
-| **A** | `mail.<kernel-domain>` | the mail LoadBalancer IP | The MX target must resolve to an address, never to a CNAME. |
-| **SPF** (TXT) | `<tenant-domain>` | `v=spf1 ip4:<outbound-ip> -all` | Declares which addresses may send as this domain. Without it most providers mark the mail as spam. |
+| **MX** | `<tenant-domain>` | `0 mail.<kernel-domain>.` | Tells other servers where to deliver. Needs an A record for the target and port 25 reachable on it. Preference `0`, not `10`: external-dns's Cloudflare provider reads any preference back as `0`, so anything else never matches what it asked for and the record is deleted and recreated once a minute forever. See `mail_dnsendpoint.go`. |
+| **A** | `mail.<kernel-domain>` | the mail LoadBalancer IP | The MX target must resolve to an address, never to a CNAME. This is where mail ARRIVES; it is not the address mail leaves from, and the two differ on any cluster whose egress is not the load balancer. |
+| **A** | `<egress-host>` | the outbound floating IP | The forward half of forward-confirmed reverse DNS. Receivers check that the PTR names a host and that the host resolves back to the same address, so this record and the PTR must agree. Nothing on the cluster publishes it: the floating IP is allocated at the provider, not by Kubernetes, so this record is manual. |
+| **SPF** (TXT) | `<tenant-domain>` | `v=spf1 a:<egress-host> -all` | Declares which addresses may send as this domain. `a:` rather than an `ip4:` literal so the record follows the egress A record instead of having to be edited in two places — the one that gets forgotten fails closed and silently. Emitted only when `mail.egressHost` is set on the cluster claim; without it the operator falls back to `v=spf1 mx ~all`, which authorises the MX host — the INBOUND load balancer, which never sends anything — and so fails by construction while looking plausible. |
 | **DKIM** (TXT) | `<selector>._domainkey.<tenant-domain>` | the public half of the operator-held key | Signs outbound mail so recipients can verify it was not altered. Published from the same value that signs, so the two cannot drift. |
 | **DMARC** (TXT) | `_dmarc.<tenant-domain>` | `v=DMARC1; p=quarantine; rua=mailto:postmaster@<domain>` | Tells recipients what to do when SPF or DKIM fail, and where to report. |
-| **PTR** | the outbound IP | `mail.<kernel-domain>` | Reverse DNS. Set at the cloud provider, not in DNS hosting. Many providers refuse mail from an IP with no PTR. |
+| **PTR** | the outbound IP | `<egress-host>` | Reverse DNS. Set at the cloud provider, not in DNS hosting. Many providers refuse mail from an IP with no PTR — Gmail rejects with `550-5.7.25 ... does not have a PTR record setup`. It must name the egress host, NOT `mail.<kernel-domain>`: that name resolves to the inbound load balancer, so using it makes the forward and reverse disagree and the check fails. |
 
 **Every signing key belongs to the operator.** It creates an RSA-2048 key per
 tenant as a `dkim-<tenant>` Secret in the kernel namespace, and one for the
@@ -446,6 +485,23 @@ dig +short MX <tenant-domain>
 dig +short TXT <tenant-domain>                      # SPF
 dig +short TXT <selector>._domainkey.<tenant-domain> # DKIM
 dig +short -x <outbound-ip>                          # PTR
+dig +short A <egress-host>                           # must equal <outbound-ip>
+dig +short A mail.<kernel-domain>                    # the MX target must resolve
+```
+
+The PTR and the egress A record are a pair: check both and check they agree.
+A PTR alone passes `dig -x` and still fails at the receiver.
+
+Compare the published DKIM key against the key that signs, rather than trusting
+`opendkim-testkey`. It reports `key OK` for a record that is syntactically valid
+and retrievable, which is not the same as one that matches this private key —
+a tenant rebuilt with new keys leaves a stale record that passes that check and
+fails every signature:
+
+```bash
+kubectl -n platform-kernel exec postfix-<stage>-0 -c mail -- \
+  openssl rsa -in /etc/opendkim/keys/<domain>.private -pubout | grep -v -- ----- | tr -d '\n'
+dig +short TXT <selector>._domainkey.<domain> | tr -d '" ' | sed 's/.*p=//'
 ```
 
 Send a message to a mailbox at a major provider and read the received headers:
