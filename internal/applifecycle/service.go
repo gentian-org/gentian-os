@@ -36,6 +36,7 @@ import (
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 	"github.com/gentian-org/gentian-os/internal/authz"
 	"github.com/gentian-org/gentian-os/internal/customization"
+	"github.com/gentian-org/gentian-os/internal/keycloak"
 	"github.com/gentian-org/gentian-os/internal/usage"
 )
 
@@ -433,6 +434,16 @@ func (s *Service) provisionAppGroupUsers(ctx context.Context, tenantName, profil
 
 	kc := authz.NewKeycloakAdminClient(kcURL, kcUser, kcPass)
 	fullGroupName := fmt.Sprintf("gentian:tenant:%s:app:%s", tenantName, profileName)
+
+	// Provisioning is what separates Install from Provision, and the difference
+	// outlives this call: the tenant admin adding a user later should find this
+	// app already ticked, while one that was merely installed starts unticked.
+	// Recorded on the group because that is what the admin console reads, and
+	// because it is per app and per tenant exactly as the grant is.
+	if attrs == nil {
+		attrs = map[string][]string{}
+	}
+	attrs[keycloak.DefaultGrantAttribute] = []string{"true"}
 
 	groupID, err := kc.EnsureGroup(ctx, tenantName, fullGroupName, attrs)
 	if err != nil {

@@ -139,10 +139,19 @@ echo "${GENTIAN_GROUPS_JSON}" | jq -c '.[]' | while read -r group; do
   keycloak_json_id_by_attr "${GROUP_LIST}" "name" "${GROUP_NAME}"
   
   if [ -n "${_kj_id}" ]; then
-    echo "group ${GROUP_NAME} already exists (id=${_kj_id}), updating attributes"
+    # Merge over what the group already carries. Keycloak's group update replaces
+    # the attribute map wholesale, and this Job is not its only writer: the App
+    # Store marks a group as granted-by-default, and an administrator sets Odoo
+    # roles by hand in the console. PUTting only the profile's own keys deleted
+    # both on every tenant reconcile.
+    echo "group ${GROUP_NAME} already exists (id=${_kj_id}), merging attributes"
+    EXISTING_ATTRS=$(curl -sf -H "${AUTH_HEADER}" \
+      "${KEYCLOAK_URL}/admin/realms/${REALM}/groups/${_kj_id}" \
+      | jq -c '.attributes // {}')
+    MERGED_ATTRS=$(jq -c -n --argjson a "${EXISTING_ATTRS}" --argjson b "${GROUP_ATTRS}" '$a * $b')
     curl -sf -X PUT -H "${AUTH_HEADER}" -H "Content-Type: application/json" \
       "${KEYCLOAK_URL}/admin/realms/${REALM}/groups/${_kj_id}" \
-      -d "{\"name\":\"${GROUP_NAME}\",\"attributes\":${GROUP_ATTRS}}"
+      -d "{\"name\":\"${GROUP_NAME}\",\"attributes\":${MERGED_ATTRS}}"
     continue
   fi
 

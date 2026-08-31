@@ -40,8 +40,9 @@ type keycloakUserRecord struct {
 }
 
 type keycloakGroupRecord struct {
-	ID   string `json:"id"`
-	Name string `json:"name"`
+	ID         string              `json:"id"`
+	Name       string              `json:"name"`
+	Attributes map[string][]string `json:"attributes,omitempty"`
 }
 
 func keycloakUserFromRecord(u keycloakUserRecord) (KeycloakUser, bool) {
@@ -281,6 +282,26 @@ func (c *KeycloakAdminClient) findGroupID(ctx context.Context, realm, groupName 
 	return "", nil
 }
 
+// mergeGroupAttributes returns the group's current attributes with updates
+// applied over them. Keys not named in updates are carried through unchanged.
+func (c *KeycloakAdminClient) mergeGroupAttributes(
+	ctx context.Context, token, realm, groupID string, updates map[string][]string,
+) (map[string][]string, error) {
+	var current keycloakGroupRecord
+	path := fmt.Sprintf("/admin/realms/%s/groups/%s", url.PathEscape(realm), url.PathEscape(groupID))
+	if err := c.getAdminJSON(ctx, token, path, &current); err != nil {
+		return nil, fmt.Errorf("keycloak get group %s: %w", groupID, err)
+	}
+	merged := make(map[string][]string, len(current.Attributes)+len(updates))
+	for k, v := range current.Attributes {
+		merged[k] = v
+	}
+	for k, v := range updates {
+		merged[k] = v
+	}
+	return merged, nil
+}
+
 func (c *KeycloakAdminClient) adminToken(ctx context.Context) (string, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -388,9 +409,19 @@ func (c *KeycloakAdminClient) EnsureGroup(ctx context.Context, realm, groupName 
 			if err != nil {
 				return "", err
 			}
+			// Merge, because Keycloak's group update replaces the attribute map
+			// wholesale and this is not its only writer. The tenant identity Job
+			// writes the keys an AppProfile declares, the App Store writes the
+			// default-grant marker, and an administrator sets others by hand in
+			// the console. Sending only our own keys deleted everyone else's on
+			// every pass.
+			merged, err := c.mergeGroupAttributes(ctx, token, realm, id, attributes)
+			if err != nil {
+				return "", err
+			}
 			body := map[string]any{
 				"name":       groupName,
-				"attributes": attributes,
+				"attributes": merged,
 			}
 			path := fmt.Sprintf("/admin/realms/%s/groups/%s", url.PathEscape(realm), url.PathEscape(id))
 			_, err = c.doAdminExpect(ctx, token, http.MethodPut, path, body, http.StatusNoContent, http.StatusOK)
