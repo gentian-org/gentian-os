@@ -53,6 +53,19 @@ data:
       fsGroup: 1001
       fsGroupChangePolicy: OnRootMismatch
 
+    # Chart default is 15s delay + 15 * 10s = 165s before the startup probe
+    # gives up and the kubelet kills the container. initdb only needs a few
+    # seconds against local storage, but nfs-csi write latency is not
+    # bounded the same way — and a kill mid-initdb leaves a data directory
+    # Postgres can never repair on its own: initdb does not resume, so a
+    # replay against a half-written PGDATA fails the same way forever
+    # ("could not open file global/pg_filenode.map"), on every restart,
+    # until the PVC is wiped by hand. Wider headroom does not change
+    # anything on the common path — initdb still finishes in seconds — it
+    # only changes what happens the one time it does not.
+    startupProbe:
+      failureThreshold: 60
+
     job:
       databases:
         - name: keycloak
