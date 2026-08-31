@@ -829,36 +829,27 @@ docs/plans/tenant-composition-cleanup.md §8.
     satisfied forever" shape for an object whose *template* can change
     independently of the object's presence.
 
-### 2.22 A CNPG Cluster Reports Drift Against Its Own Defaults (*)
+### 2.22 Server-Side Diff — done
 * **Target Domain**: Platform, Infrastructure & Lifecycle
-* **Context**: `kernel-admin-prod` sits OutOfSync while healthy. Git declares
-  seven fields on the CNPG `Cluster`; the live object carries 43 more that CNPG
-  and the API server fill in — `postgresGID`, `primaryUpdateStrategy`,
-  `storage.resizeInUseVolumes`, and 23 postgres parameters injected into
-  `spec.postgresql.parameters`. Argo compares the two and reports a difference
-  that is not one.
-
-  The ExternalSecret case beside it was fixed by naming the five defaulted paths
-  (`scripts/lib/argocd.sh`). The same treatment here means naming 43, of which
-  the postgres parameters change whenever CNPG does — a list that is stale on the
-  next upgrade and silently stops covering what it claims to.
-
-  `managedFieldsManagers` does not help, and the reason is worth keeping: it
-  ignores fields a manager OWNS, and on both objects `argocd-controller` owns
-  exactly what git declares while the defaults have no field manager at all.
-  There is no manager to name.
-* **Proposed Solution**: ServerSideDiff (`controller.diff.server.side` in
-  argocd-cmd-params-cm). Argo runs a server-side apply dry-run, so defaults appear
-  on both sides of the comparison and cancel out — structurally, for every CRD,
-  rather than per field. It is a feature flag defaulting to false and changes the
-  diff for all 59 applications, so it wants deciding rather than drifting into:
-  the win is that no defaulted-field list has to be maintained again, the cost is
-  a global behaviour change and a controller restart.
-* **Backlog Items**:
-  - `[ ]` Decide whether ServerSideDiff is enabled cluster-wide.
-  - `[ ]` If it is, remove the ExternalSecret path list — it becomes redundant.
-  - `[ ]` If it is not, record why `kernel-admin-prod` stays OutOfSync, so the
-    row is a known exception rather than one more red line people learn to skip.
+* **Done**: `controller.diff.server.side` is set by `scripts/lib/argocd.sh`, and
+  Argo CD now compares a dry-run apply against the live object rather than the
+  YAML against the live object. CRD defaults and Kyverno mutations appear on both
+  sides and cancel, so no per-CRD list of defaulted fields is maintained.
+* **What it replaced**: naming the defaulted paths. Five for `ExternalSecret` was
+  maintainable; forty-three for a CNPG `Cluster` — twenty-three of them postgres
+  parameters CNPG injects — was not, and would have covered less after each
+  upstream release without saying so. The `ExternalSecret` list was removed once
+  server-side diff made it redundant.
+* **What did not work, and why**: `managedFieldsManagers` ignores fields a manager
+  *owns*. On both objects `argocd-controller` owns exactly what Git declares and
+  the defaults are written at admission with no field manager at all, so there was
+  no manager to name. Worth remembering before reaching for it again.
+* **Verified as a global change, because it is one**: enabled, controller
+  restarted, all 59 applications reached Synced with no controller errors.
+  Reversible by setting the value to false and restarting.
+* **The trade accepted**: a mutating webhook rewriting a field is now invisible to
+  the diff, because the dry-run applies the same webhook. Auditing that belongs on
+  the admission side. See [architecture.md](architecture.md) §3.2.
 
 ## 3. User Management & Shell UI
 

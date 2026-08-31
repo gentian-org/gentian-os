@@ -229,39 +229,44 @@ install_argocd() {
 }'
     success "ArgoCD Crossplane Keycloak resource-update suppression configured."
 
-    # Stop reporting a controller's own defaults as drift.
+    # Diff what a sync would actually change, not what the YAML literally says.
     #
     # A CRD fills in fields nobody wrote. An ExternalSecret declaring a key and a
-    # property comes back with conversionStrategy, decodingStrategy,
-    # metadataPolicy, nullBytePolicy and mergePolicy set; a CNPG Cluster
-    # declaring seven fields comes back with twenty-five. Argo compares git
-    # against the live object and reports OutOfSync forever, on applications
-    # that are entirely healthy — dovecot-prod, gentian-os and kernel-admin-prod
-    # sat that way, and a row that is permanently red teaches people to skip red
-    # rows, which is how the tenant sequencer bug survived seven weeks.
+    # property comes back with five more set; a CNPG Cluster declaring seven
+    # fields comes back with forty-three more, twenty-three of them postgres
+    # parameters CNPG injects. Argo compared git against the live object and
+    # reported OutOfSync forever on applications that were entirely healthy.
     #
-    # Named paths, not managedFieldsManagers. That was tried first and does
-    # nothing here, for a reason worth recording: managedFieldsManagers ignores
-    # fields OWNED by a manager, and nobody owns these. On the live objects
-    # argocd-controller owns exactly what git declares, external-secrets owns
-    # only metadata.finalizers and status, and the defaults are admission-time
-    # values with no field manager at all. There is no manager to name.
+    # ServerSideDiff asks the API server what the manifest WOULD become — a
+    # dry-run apply — and compares that against live, so defaults and mutating
+    # webhooks land on both sides and cancel. It answers "would applying this
+    # change anything", which is the question a GitOps tool should be answering,
+    # and it needs no per-CRD list of fields to ignore. Kyverno mutates on this
+    # cluster, so the webhook half is not hypothetical either.
     #
-    # ignoreDifferences, not ignoreResourceUpdates: the block above stops the
-    # controller re-queuing on a status write, which is reconcile churn. This is
-    # about the sync verdict, and they are separate settings.
+    # Enumerating the defaulted paths was the alternative and is why this is not
+    # one: five for ExternalSecret is maintainable, forty-three for CNPG is not,
+    # and a list that silently covers less after each upstream upgrade is the
+    # failure mode this platform keeps meeting.
     #
-    # Only ExternalSecret. A CNPG Cluster defaults 43 paths, 23 of them postgres
-    # parameters CNPG injects, and that list would go stale on the next CNPG
-    # upgrade — see docs/roadmap.md for the ServerSideDiff decision that case is
-    # waiting on. Five stable paths are worth naming; forty-three are not.
-    info "Patching argocd-cm with CRD-default diff suppression..."
-    kubectl patch configmap argocd-cm -n argocd --type merge -p '{
-  "data": {
-    "resource.customizations.ignoreDifferences.external-secrets.io_ExternalSecret": "jqPathExpressions:\n- .spec.data[]?.remoteRef.conversionStrategy\n- .spec.data[]?.remoteRef.decodingStrategy\n- .spec.data[]?.remoteRef.metadataPolicy\n- .spec.data[]?.remoteRef.nullBytePolicy\n- .spec.target.template.mergePolicy\n"
-  }
-}'
-    success "ArgoCD CRD-default diff suppression configured."
+    # managedFieldsManagers does not work here and the reason is worth keeping:
+    # it ignores fields a manager OWNS, and these have no field manager at all —
+    # argocd-controller owns exactly what git declares, and the defaults are
+    # written at admission by nobody.
+    #
+    # The cost is a global change to how all applications diff, so it was
+    # verified as one: enabled, controller restarted, and all 59 applications
+    # reached Synced with no controller errors. Reversible by setting this to
+    # false and restarting. See docs/architecture.md §"Diffing".
+    info "Enabling ArgoCD server-side diff..."
+    kubectl patch configmap argocd-cmd-params-cm -n argocd --type merge \
+        -p '{"data":{"controller.diff.server.side":"true"}}'
+    # The controller reads this at startup, so it needs a restart to take. Safe
+    # to run every install: a restart with the value already set is a no-op
+    # reconcile, not a change.
+    kubectl -n argocd rollout restart statefulset argocd-application-controller >/dev/null 2>&1 || true
+    kubectl -n argocd rollout status statefulset argocd-application-controller --timeout=240s >/dev/null 2>&1 || true
+    success "ArgoCD server-side diff enabled."
 
     # Configure ArgoCD server to serve plain HTTP behind the Gateway API edge route.
     # Without this flag ArgoCD redirects HTTP→HTTPS internally and the edge proxy

@@ -72,8 +72,8 @@ NC = "\033[0m"
 # The payload is single-quoted when static and double-quoted when the script
 # interpolates a shell variable into it; both forms appear in argocd.sh.
 PATCH_STATIC = re.compile(
-    r"kubectl\s+patch\s+configmap\s+(?P<cm>[a-z0-9-]+)\s+-n\s+argocd\s+"
-    r"--type\s+merge\s*\\?\s*-p\s+'(?P<body>[^']*)'",
+    r"kubectl\s+(?:-n\s+\S+\s+)?patch\s+configmap\s+(?P<cm>[a-z0-9-]+)"
+    r"(?:\s+-n\s+\S+)?\s+--type\s+merge\s*\\?\s*-p\s+'(?P<body>[^']*)'",
     re.S,
 )
 # Every patch invocation, whatever the payload's quoting. Keys are read out of
@@ -81,7 +81,8 @@ PATCH_STATIC = re.compile(
 # interpolated ones embed `$(jq ... <<<"${var}")`, whose bare quote ends any
 # regex that tries to honour shell quoting. Region-scanning does not care.
 PATCH_ANY = re.compile(
-    r"kubectl\s+patch\s+configmap\s+(?P<cm>[a-z0-9-]+)\s+-n\s+argocd\s+--type\s+merge",
+    r"kubectl\s+(?:-n\s+\S+\s+)?patch\s+configmap\s+(?P<cm>[a-z0-9-]+)"
+    r"(?:\s+-n\s+\S+)?\s+--type\s+merge",
 )
 # Where one invocation's payload stops. Without this the scan runs on into the
 # next patch and credits its keys to the wrong ConfigMap — which it did, and

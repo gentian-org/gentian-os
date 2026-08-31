@@ -239,6 +239,32 @@ For Keycloak consolidation and other follow-ups see [roadmap.md](roadmap.md).
 Placeholder semantics (`${TENANT_DOMAIN}` vs `${KERNEL_DOMAIN}`) are
 documented in [gentian-apps/docs/app-profile-guide.md](../../gentian-apps/docs/app-profile-guide.md) §2.
 
+### 3.2 Diffing: server-side
+
+Argo CD runs with **server-side diff** (`controller.diff.server.side`, set by
+`scripts/lib/argocd.sh`). It asks the API server what a manifest *would* become —
+a dry-run apply — and compares that against the live object, rather than
+comparing the YAML in Git against the live object directly.
+
+The question it answers is therefore "would syncing change anything", not "does
+the file match the object". Fields the platform never wrote are not differences:
+CRD defaults, and the mutations Kyverno applies, appear on both sides and cancel.
+
+This is not a preference. Without it a CRD's own defaults read as drift — an
+`ExternalSecret` declaring a key comes back with five more fields set, a CNPG
+`Cluster` declaring seven comes back with forty-three — and applications sit
+permanently OutOfSync while entirely healthy. The alternative, listing the
+defaulted paths per CRD, covers less after each upstream release without saying
+so.
+
+Two consequences worth knowing:
+
+- **A permanently OutOfSync application is a real finding.** That is the point of
+  removing the false ones.
+- **A mutating webhook rewriting a field is invisible here**, by design, because
+  the dry-run applies the same webhook. If that ever needs auditing, it is a
+  question for the admission side, not for the diff.
+
 ---
 
 ## 4. The Four User-Facing CRDs
