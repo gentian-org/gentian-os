@@ -240,25 +240,28 @@ install_argocd() {
     # sat that way, and a row that is permanently red teaches people to skip red
     # rows, which is how the tenant sequencer bug survived seven weeks.
     #
-    # managedFieldsManagers rather than a list of field paths. Server-side apply
-    # records who set what: argocd-controller owns the fields git declares, and
-    # the controller owns the ones it defaulted. Naming the manager says "compare
-    # what Argo declared, ignore what the controller filled in" — which is the
-    # actual intent, survives the CRD gaining defaults, and keeps a real change
-    # to a declared field visible. The alternative was enumerating five paths for
-    # ExternalSecret and eighteen for CNPG, a list that rots on every upgrade.
+    # Named paths, not managedFieldsManagers. That was tried first and does
+    # nothing here, for a reason worth recording: managedFieldsManagers ignores
+    # fields OWNED by a manager, and nobody owns these. On the live objects
+    # argocd-controller owns exactly what git declares, external-secrets owns
+    # only metadata.finalizers and status, and the defaults are admission-time
+    # values with no field manager at all. There is no manager to name.
     #
     # ignoreDifferences, not ignoreResourceUpdates: the block above stops the
     # controller re-queuing on a status write, which is reconcile churn. This is
     # about the sync verdict, and they are separate settings.
-    info "Patching argocd-cm with controller-defaulted field suppression..."
+    #
+    # Only ExternalSecret. A CNPG Cluster defaults 43 paths, 23 of them postgres
+    # parameters CNPG injects, and that list would go stale on the next CNPG
+    # upgrade — see docs/roadmap.md for the ServerSideDiff decision that case is
+    # waiting on. Five stable paths are worth naming; forty-three are not.
+    info "Patching argocd-cm with CRD-default diff suppression..."
     kubectl patch configmap argocd-cm -n argocd --type merge -p '{
   "data": {
-    "resource.customizations.ignoreDifferences.external-secrets.io_ExternalSecret": "managedFieldsManagers:\n- external-secrets\n",
-    "resource.customizations.ignoreDifferences.postgresql.cnpg.io_Cluster": "managedFieldsManagers:\n- manager\n"
+    "resource.customizations.ignoreDifferences.external-secrets.io_ExternalSecret": "jqPathExpressions:\n- .spec.data[]?.remoteRef.conversionStrategy\n- .spec.data[]?.remoteRef.decodingStrategy\n- .spec.data[]?.remoteRef.metadataPolicy\n- .spec.data[]?.remoteRef.nullBytePolicy\n- .spec.target.template.mergePolicy\n"
   }
 }'
-    success "ArgoCD controller-defaulted field suppression configured."
+    success "ArgoCD CRD-default diff suppression configured."
 
     # Configure ArgoCD server to serve plain HTTP behind the Gateway API edge route.
     # Without this flag ArgoCD redirects HTTP→HTTPS internally and the edge proxy
