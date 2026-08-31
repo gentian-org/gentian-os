@@ -218,13 +218,27 @@ install_crossplane_providers() {
     # setup", and B-08 waits for eighteen of them to become Ready until it gives
     # up. The install fails four steps later than the thing that broke, pointing
     # at OpenBao.
+    #
+    # This used to be a warn-and-proceed: a slow CRD registration (the same
+    # provider pod being Healthy well before the API server serves its CRDs —
+    # ordinary under load, e.g. a fresh install re-registering five providers'
+    # CRDs at once after --purge) let the apply below run anyway, race the same
+    # window, and — because kubectl applies the documents it CAN — still exit
+    # 0 for the two that made it. That surfaced as a Keycloak Release stuck on
+    # "ProviderConfig.helm.crossplane.io kubernetes not found" four steps
+    # later, with nothing at this step to say why. A hard wait here removes
+    # the race instead of hoping the apply below outruns it.
     local _pc_crd
     for _pc_crd in providerconfigs.vault.upbound.io \
                    providerconfigs.kubernetes.crossplane.io \
                    providerconfigs.helm.crossplane.io; do
-        kubectl wait "crd/${_pc_crd}" --for=condition=Established \
-            --timeout=180s >/dev/null 2>&1 \
-            || warn "  CRD ${_pc_crd} is not Established; its ProviderConfig may not apply."
+        if ! kubectl wait "crd/${_pc_crd}" --for=condition=Established \
+            --timeout=300s >/dev/null 2>&1; then
+            error "CRD ${_pc_crd} did not become Established within 300s."
+            error "  Its ProviderConfig cannot apply until the API server serves it:"
+            error "    kubectl get crd ${_pc_crd}"
+            return 1
+        fi
     done
 
     # And the result is checked. This used to be a bare call, so a failed apply
