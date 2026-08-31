@@ -1105,6 +1105,7 @@ bootstrap_root_appset() {
         --set-string "osRepo=${GENTIAN_OS_REPO:-https://github.com/gentian-org/gentian-os}" \
         --set-string "gentianOsBranch=${GENTIAN_OS_BRANCH}" \
         --set-string "kernelDomain=${KERNEL_DOMAIN:-}" \
+        --set-string "storageClass=${STORAGE_CLASS:-}" \
         --set-string "smtpHost=${EXTERNAL_SMTP_HOST:-}" \
         --set-string "smtpPort=${EXTERNAL_SMTP_PORT:-587}" \
         --set-string "mailServiceMode=$(gentian_mail_service_mode)" \

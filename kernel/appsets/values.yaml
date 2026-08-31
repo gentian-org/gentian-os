@@ -14,6 +14,15 @@ targetRevision: develop
 # cluster domain. Passed by root-applicationset.yaml.tmpl from KERNEL_DOMAIN.
 kernelDomain: ""
 
+# storageClass replaces the "storage.class.placeholder" literal carried by
+# raw/08-infra-data.yaml, so the shared PostgreSQL/MariaDB/Redis/MinIO charts
+# render an explicit storageClassName instead of leaving it for the
+# DefaultStorageClass admission plugin to stamp in after the fact — see the
+# comment beside this value in root-applicationset.yaml for what leaving it
+# implicit costs. Passed from STORAGE_CLASS, resolved once by
+# resolve_storage_class() (explicit override, or the cluster's own default).
+storageClass: ""
+
 # The outbound SMTP relay for MAIL_SERVICE_MODE=external, replacing the
 # "external.smtp.host.placeholder" / "external.smtp.port.placeholder" literals in
 # raw/09-infra-helm.yaml. Passed by root-applicationset.yaml.tmpl from

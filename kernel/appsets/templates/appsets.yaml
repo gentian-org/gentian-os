@@ -39,6 +39,7 @@
      | replace "env: dev" (printf "env: %s" $.Values.stage)
      | replace "targetRevision: develop" (printf "targetRevision: %s" $.Values.targetRevision)
      | replace "kernel.domain.placeholder" $.Values.kernelDomain
+     | replace "storage.class.placeholder" (toString $.Values.storageClass)
      | replace "external.smtp.host.placeholder" (toString $.Values.externalSmtpHost)
      | replace "external.smtp.port.placeholder" (toString $.Values.externalSmtpPort)
      | replace "mail.egress.host.placeholder" (toString $.Values.mailEgressHost)

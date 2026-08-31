@@ -49,6 +49,20 @@ spec:
       # recipient with 554 "Access denied".
       - name: kernelDomain
         value: "{{ .Values.kernelDomain }}"
+      # Reaches infra-postgresql/mariadb/redis/minio through the
+      # storage.class.placeholder literal (kernel/appsets/raw/08-infra-data.yaml).
+      # Left empty there, those charts render their PVC/volumeClaimTemplates with
+      # no storageClassName at all; the DefaultStorageClass admission plugin
+      # then stamps one onto the live object at creation, permanently ahead of
+      # what Helm believes it wrote. The next upgrade tries to patch that field
+      # back to nil, which the API server refuses — storageClassName is
+      # immutable once bound — and the release sticks in state: failed forever,
+      # with the pod or StatefulSet otherwise running fine on the revision that
+      # did apply. Threading the resolved default through keeps Helm's desired
+      # state equal to what admission already put there, so there is nothing
+      # left to patch.
+      - name: storageClass
+        value: "{{ .Values.storageClass }}"
       # The outbound relay for MAIL_SERVICE_MODE=external. Unset in kernel mode,
       # which renders an empty host and means direct delivery — so no mail-mode
       # flag is threaded through, only the relay itself.

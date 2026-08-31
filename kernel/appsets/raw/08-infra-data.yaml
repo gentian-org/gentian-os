@@ -51,6 +51,16 @@ spec:
           parameters:
             - name: env
               value: '{{.env}}'
+            # Rewritten from the literal below by kernel/appsets/templates/
+            # appsets.yaml. Each chart's own values.yaml already treats empty
+            # as "let the cluster default it" (kernel/services/infra-*/manifests/
+            # values.yaml) — but for anything backed by a PVC, "let the cluster
+            # default it" means the admission plugin sets the field once and
+            # Helm's next upgrade tries to unset it again, which the API server
+            # refuses. An explicit value keeps Helm's desired state equal to
+            # what is already live.
+            - name: storageClass
+              value: 'storage.class.placeholder'
           # Only stages that genuinely differ carry a values file; the rest
           # inherit the chart defaults.
           valueFiles:
