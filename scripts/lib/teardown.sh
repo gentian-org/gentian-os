@@ -385,17 +385,28 @@ _delete_pvs_for_namespace() {
 #   Namespace, because "any orphaned PV" is not this command's to delete. A
 #   cluster may host something that is not Gentian's, and a purge that collects
 #   every Released volume it can see would take that with it.
+#
+#   That last case is not hypothetical: a bare ^gentian- prefix matched
+#   gentian-server and gentian-corp on a real machine — an unrelated product's
+#   namespaces that happen to share the string, not anything this installer
+#   ever created — and force-patched their live, Bound Postgres PVs to
+#   persistentVolumeReclaimPolicy: Delete before pv-protection blocked the
+#   deletes. gentian-infra-<env> (stage-suffixed) and gentian-system (exact)
+#   are the only gentian-* namespaces this installer actually creates, so
+#   those are what the regex matches now — not everything spelled the same
+#   way by coincidence.
 _gentian_pv_namespaces_regex() {
     local ns out=""
     for ns in $(gentian_kernel_namespaces); do
-        # gentian-* and tenant-* are covered by the prefixes below. Matching the
-        # stage-suffixed infra namespace exactly would miss a volume left by an
-        # install at a different stage, which is exactly the kind of leftover
-        # this exists to collect.
-        case "${ns}" in gentian-*|tenant-*) continue ;; esac
+        # gentian-infra-<env> is stage-suffixed, so matching it exactly would
+        # miss a volume left by an install at a different stage — exactly the
+        # kind of leftover this exists to collect. tenant-<name> is dynamic
+        # and never appears in gentian_kernel_namespaces at all. Both are
+        # covered by the prefixes below instead of an exact anchor.
+        case "${ns}" in gentian-infra-*|tenant-*) continue ;; esac
         out="${out}|^${ns}$"
     done
-    printf '%s' "^tenant-|^gentian-${out}"
+    printf '%s' "^tenant-|^gentian-infra-${out}"
 }
 
 _reclaim_orphaned_pvs() {
