@@ -19,6 +19,7 @@ package controller
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -27,8 +28,12 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/log"
+	"sigs.k8s.io/controller-runtime/pkg/predicate"
+	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 	"github.com/gentian-org/gentian-os/internal/backup"
@@ -47,6 +52,13 @@ const (
 	// per tenant. Named distinctly so a schedule an admin wrote by hand is
 	// never mistaken for one derived from policy, and never deleted by it.
 	managedScheduleName = "policy"
+
+	// credentialProbePrefix names the ExternalSecret that reports whether a
+	// destination's keys have been supplied. One constant rather than four
+	// literals, because SetupWithManager now has to recognise the name it
+	// builds elsewhere, and a prefix spelled twice is a watch that silently
+	// matches nothing.
+	credentialProbePrefix = "credreq-"
 )
 
 // externalSecretGVK is used unstructured rather than through ESO's Go types,
@@ -347,7 +359,7 @@ func (r *BackupPolicyReconciler) deleteDestinationCredential(ctx context.Context
 		return err
 	}
 	for _, es := range []struct{ name, namespace string }{
-		{"credreq-" + name, meta.OperatorNamespace},
+		{credentialProbePrefix + name, meta.OperatorNamespace},
 		{name, kernelNamespace},
 	} {
 		obj := &unstructured.Unstructured{}
@@ -365,7 +377,7 @@ func (r *BackupPolicyReconciler) deleteDestinationCredential(ctx context.Context
 // no Secret and exists only so ESO's Ready condition answers "has this been
 // supplied". The credential manager reads exactly this object.
 func (r *BackupPolicyReconciler) ensureProbe(ctx context.Context, name, vaultPath, scope string) error {
-	return r.applyExternalSecret(ctx, "credreq-"+name, meta.OperatorNamespace, vaultPath, "None", map[string]string{
+	return r.applyExternalSecret(ctx, credentialProbePrefix+name, meta.OperatorNamespace, vaultPath, "None", map[string]string{
 		"gentianos.io/credential-requirement": name,
 		"gentianos.io/credential-phase":       "runtime",
 		"gentianos.io/credential-scope":       scope,
@@ -443,7 +455,7 @@ func (r *BackupPolicyReconciler) applyExternalSecret(
 func (r *BackupPolicyReconciler) credentialSatisfied(ctx context.Context, name string) (bool, string) {
 	es := &unstructured.Unstructured{}
 	es.SetGroupVersionKind(externalSecretGVK)
-	key := types.NamespacedName{Name: "credreq-" + name, Namespace: meta.OperatorNamespace}
+	key := types.NamespacedName{Name: credentialProbePrefix + name, Namespace: meta.OperatorNamespace}
 	if err := r.Get(ctx, key, es); err != nil {
 		return false, "no satisfaction probe found"
 	}
@@ -505,10 +517,67 @@ func setPolicyCondition(policy *gentianov1alpha1.BackupPolicy, status metav1.Con
 	policy.Status.Conditions = append(policy.Status.Conditions, cond)
 }
 
+// isCredentialProbe keeps the watch below to the ExternalSecrets this
+// controller creates. Every app's ExternalSecret would otherwise wake the
+// backup policies, and there is one of those per app per tenant.
+func isCredentialProbe(obj client.Object) bool {
+	return obj.GetNamespace() == meta.OperatorNamespace &&
+		strings.HasPrefix(obj.GetName(), credentialProbePrefix)
+}
+
+// policiesForProbe maps a satisfaction probe back to the policies waiting on it.
+//
+// Matched on status.CredentialRequirement, which is the same name
+// credentialSatisfied looks the probe up by, so the two cannot disagree about
+// which policy a probe belongs to. A policy with no requirement recorded has
+// not reconciled yet and will be reconciled by its own watch; including it here
+// costs one no-op reconcile and covers the ordering where the probe reports
+// before the policy first records what it is waiting for.
+func (r *BackupPolicyReconciler) policiesForProbe(ctx context.Context, obj client.Object) []reconcile.Request {
+	name := strings.TrimPrefix(obj.GetName(), credentialProbePrefix)
+
+	policies := &gentianov1alpha1.BackupPolicyList{}
+	if err := r.List(ctx, policies); err != nil {
+		// Nothing to enqueue and nowhere to return an error to. Logged rather
+		// than dropped: silence here is a policy that never learns its
+		// credential arrived, which is the failure this watch exists to end.
+		log.FromContext(ctx).Error(err, "cannot list backup policies for a credential probe",
+			"probe", obj.GetName())
+		return nil
+	}
+
+	var reqs []reconcile.Request
+	for i := range policies.Items {
+		req := policies.Items[i].Status.CredentialRequirement
+		if req == name || req == "" {
+			reqs = append(reqs, reconcile.Request{
+				NamespacedName: types.NamespacedName{Name: policies.Items[i].Name},
+			})
+		}
+	}
+	return reqs
+}
+
 // SetupWithManager registers the reconciler.
+//
+// The watch on the probe is not decoration. A policy whose keys are missing
+// reports CredentialUnsatisfied and returns without requeueing — correct, since
+// it is waiting on a person rather than on time — but with nothing watching the
+// probe, supplying the keys never woke it. The policy stayed unsatisfied, its
+// schedule was never created, and the only ways out were editing the policy or
+// restarting the operator. Observed on corp: the credential landed, ESO synced
+// it, and the policy still read "supply backup-destination-corp" until it was
+// nudged by hand.
 func (r *BackupPolicyReconciler) SetupWithManager(mgr ctrl.Manager) error {
+	probe := &unstructured.Unstructured{}
+	probe.SetGroupVersionKind(externalSecretGVK)
+
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&gentianov1alpha1.BackupPolicy{}).
+		Watches(probe,
+			handler.EnqueueRequestsFromMapFunc(r.policiesForProbe),
+			builder.WithPredicates(predicate.NewPredicateFuncs(isCredentialProbe)),
+		).
 		Named("backuppolicy").
 		Complete(r)
 }
