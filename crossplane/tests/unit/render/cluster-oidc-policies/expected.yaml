@@ -917,6 +917,27 @@ spec:
       path "secret/data/gentian-os/tenants/+/repositories/*" {
         capabilities = ["read"]
       }
+      # Tenant backup destinations. Same shape as repositories, and
+      # it failed the same way: DestinationVaultPath puts an external
+      # endpoint's keys at tenants/<t>/backup/destination, the two
+      # ExternalSecrets over it answered
+      #
+      #   403 ... GET /v1/secret/data/gentian-os/tenants/corp/backup/destination
+      #
+      # and the BackupPolicy stayed CredentialUnsatisfied while the
+      # keys sat in the path. The write side is the tenant admin's
+      # tenant-<t> policy; this is the read side, and a credential
+      # needs both before it does anything.
+      path "secret/data/gentian-os/tenants/+/backup/*" {
+        capabilities = ["read"]
+      }
+      # Contract integration secrets. app-default composes an
+      # ExternalSecret over tenants/<t>/contracts/<c> for every
+      # integration an app maps, so this is the same omission — not
+      # yet observed only because no installed app maps one.
+      path "secret/data/gentian-os/tenants/+/contracts/*" {
+        capabilities = ["read"]
+      }
       path "secret/metadata/gentian-os/tenants/*" {
         capabilities = ["list"]
       }
