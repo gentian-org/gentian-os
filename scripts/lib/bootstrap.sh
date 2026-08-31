@@ -372,13 +372,7 @@ bootstrap_openbao_for_crossplane() {
     export BAO_ADDR="${VAULT_ADDR}"
     export VAULT_SKIP_VERIFY=true
 
-    if [[ -z "${BAO_TOKEN:-}" ]]; then
-        if [[ -f "${OPENBAO_INIT_FILE}" ]]; then
-            BAO_TOKEN=$(jq -r '.root_token' "${OPENBAO_INIT_FILE}")
-        else
-            read -rp "  Enter OpenBao root token: " BAO_TOKEN; echo ""
-        fi
-    fi
+    _resolve_bao_token
     export VAULT_TOKEN="${BAO_TOKEN}"
 
     # ── 1. KV v2 mount — use KV_MOUNT from install.env (default: secret) ─────

@@ -404,6 +404,87 @@ _dns_credential_fields_json() {
 }
 
 # =============================================================================
+# _resolve_bao_token — get a working OpenBao token for a write, preferring the
+# least powerful option that will do it. Assumes BAO_ADDR is already exported
+# (every caller resolves it immediately before reaching here).
+#
+# Order: already exported, the bootstrap-only init file, an interactive OIDC
+# sign-in as cluster-admin, and only then the raw root-token prompt.
+#
+# The OIDC tier exists for exactly one situation: a cluster that has been
+# handed over. E-04-revoke-bootstrap-token deliberately revokes the root
+# token and strips it from both the openbao-init Secret and this file, so the
+# first two tiers come up empty on any post-handover re-run — asking for the
+# root token at that point is asking for something that cannot exist. It sits
+# ahead of the prompt, not in place of it: a fresh cluster before handover, or
+# one whose OIDC is itself broken, still has the root token as a working
+# fallback, so this tries the better option first and only asks for the worse
+# one if it fails.
+#
+# The role and its policy already exist for this: cluster-default.yaml binds
+# OpenBao's cluster-admin OIDC role to localhost:8250 (the CLI's own callback
+# port) with tokenPolicies: [cluster-admin], and that policy already grants
+# create/update on secret/data/gentian-os/kernel/* — the same tree every
+# caller of this function writes to. Nothing new to configure; `bao login` is
+# a stock OpenBao feature this role was already shaped to support.
+_resolve_bao_token() {
+    [[ -n "${BAO_TOKEN:-}" ]] && return 0
+
+    if [[ -f "${OPENBAO_INIT_FILE}" ]]; then
+        BAO_TOKEN="$(jq -r '.root_token // empty' "${OPENBAO_INIT_FILE}" 2>/dev/null)"
+        if [[ -n "${BAO_TOKEN}" ]]; then
+            export BAO_TOKEN
+            return 0
+        fi
+    fi
+
+    if command -v bao >/dev/null 2>&1 && [[ -n "${BAO_ADDR:-}" ]]; then
+        info "No OpenBao token available; trying an OIDC sign-in as cluster-admin..."
+        info "  A browser should open. Sign in as the cluster administrator."
+        # -token-only: the token and nothing else on stdout (no verification
+        # banner, no wrapping details), and it is not written to the local
+        # token helper file — this shell carries it as BAO_TOKEN like every
+        # other source here, not as a second credential left on disk.
+        # stderr is left unredirected so bao's own "opening your browser…"/URL
+        # output still reaches the terminal; only stdout captures the token.
+        #
+        # Bounded at 2 minutes without the external timeout(1) — not portable,
+        # and this installer runs on stock macOS too (lint-portability). A
+        # background job, polled and killed on its own PID, does the same job
+        # with nothing beyond bash builtins: unattended (no browser, nobody
+        # watching) this would otherwise hang until OpenBao's own login
+        # timeout, which is longer than the prompt it exists to avoid.
+        local oidc_token="" oidc_out oidc_pid oidc_waited=0
+        oidc_out="$(mktemp)"
+        bao login -method=oidc -path=oidc -token-only role=cluster-admin >"${oidc_out}" &
+        oidc_pid=$!
+        while kill -0 "${oidc_pid}" 2>/dev/null && [[ ${oidc_waited} -lt 120 ]]; do
+            sleep 1
+            oidc_waited=$((oidc_waited + 1))
+        done
+        if kill -0 "${oidc_pid}" 2>/dev/null; then
+            kill "${oidc_pid}" 2>/dev/null
+            wait "${oidc_pid}" 2>/dev/null
+            warn "OIDC sign-in timed out after 120s."
+        elif wait "${oidc_pid}"; then
+            oidc_token="$(cat "${oidc_out}")"
+        fi
+        rm -f "${oidc_out}"
+
+        if [[ -n "${oidc_token}" ]]; then
+            BAO_TOKEN="${oidc_token}"
+            export BAO_TOKEN
+            success "Signed in via OIDC."
+            return 0
+        fi
+        warn "OIDC sign-in did not complete; falling back to the root token."
+    fi
+
+    read -rp "  Enter OpenBao root token: " BAO_TOKEN; echo ""
+    export BAO_TOKEN
+}
+
+# =============================================================================
 seed_secrets() {
     banner "Seeding kernel secrets"
 
@@ -415,14 +496,7 @@ seed_secrets() {
     export BAO_ADDR
     export VAULT_SKIP_VERIFY=true
 
-    if [[ -z "${BAO_TOKEN:-}" ]]; then
-        if [[ -f "${OPENBAO_INIT_FILE}" ]]; then
-            BAO_TOKEN=$(jq -r '.root_token' "${OPENBAO_INIT_FILE}")
-        else
-            read -rp "  Enter OpenBao root token: " BAO_TOKEN; echo ""
-        fi
-    fi
-    export BAO_TOKEN
+    _resolve_bao_token
 
     # Automatically query Cloudflare zone ID and tunnel CNAME to seed into OpenBao
     local zone_id=""
