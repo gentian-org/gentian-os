@@ -194,7 +194,14 @@ func (r *TenantRestoreReconciler) restoreApp(
 		}
 	}
 
-	units := r.restoreUnits(ctx, tenant, appName, profile, restore, decryption)
+	units, err := r.restoreUnits(ctx, tenant, appName, profile, restore, decryption)
+	if err != nil {
+		// Worse here than on the export side: silently resolving no claims put
+		// the database back without the files it references and resumed the app
+		// on top of the mismatch, reporting Ready.
+		return r.failApp(ctx, restore, tenant, appName, spec,
+			fmt.Sprintf("enumerate what to restore: %v", err))
+	}
 	for _, unit := range units {
 		if unit.Kind == "volume" {
 			if err := r.ensureRestoreVolumeSecret(ctx, restore); err != nil {
@@ -338,7 +345,7 @@ func (r *TenantRestoreReconciler) restoreUnits(
 	profile *gentianov1alpha1.AppProfile,
 	restore *gentianov1alpha1.TenantRestore,
 	d backup.Decryption,
-) []captureUnit {
+) ([]captureUnit, error) {
 	stores := backup.ProfileStores(profile)
 	spec := profileBackupSpec(profile)
 	params := r.jobParams(tenant, appName, restore)
@@ -388,7 +395,11 @@ func (r *TenantRestoreReconciler) restoreUnits(
 			volD.SecretName = dec.IdentitySecretRef.Name
 		}
 	}
-	for i, claim := range r.Reconciler.appVolumes(ctx, tenant.Name, appName, profile, spec) {
+	claims, err := r.Reconciler.appVolumes(ctx, tenant.Name, appName, profile, spec)
+	if err != nil {
+		return nil, err
+	}
+	for i, claim := range claims {
 		p := volParams
 		p.Name = exportJobName(restore.Name, appName, fmt.Sprintf("vr%d", i))
 		units = append(units, captureUnit{
@@ -396,7 +407,7 @@ func (r *TenantRestoreReconciler) restoreUnits(
 			Job: backup.VolumeRestoreJob(p, volD, claim),
 		})
 	}
-	return units
+	return units, nil
 }
 
 func (r *TenantRestoreReconciler) restoreTenantWide(

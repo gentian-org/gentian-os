@@ -18,6 +18,7 @@ package controller
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	appsv1 "k8s.io/api/apps/v1"
@@ -26,6 +27,7 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -452,7 +454,10 @@ func TestVolumeUnitsRunInTheTenantNamespaceWithStagedCredentials(t *testing.T) {
 		PassphraseSecret: "tx-nightly-passphrase",
 		PassphraseKey:    "passphrase",
 	}
-	units := r.captureUnits(context.Background(), tenant, "nextcloud-base-ce", profile, export, enc)
+	units, err := r.captureUnits(context.Background(), tenant, "nextcloud-base-ce", profile, export, enc)
+	if err != nil {
+		t.Fatalf("captureUnits: %v", err)
+	}
 
 	var volume *captureUnit
 	for i := range units {
@@ -503,6 +508,103 @@ type fakeExecer struct {
 func (f *fakeExecer) Exec(_ context.Context, _, _, _ string, argv []string) (string, error) {
 	f.calls = append(f.calls, argv)
 	return "", nil
+}
+
+// forbiddenReader is the API server refusing a request the ServiceAccount has
+// no rule for. The cached client does not do this — it starts an informer that
+// cannot sync and blocks the caller instead — which is exactly why appVolumes
+// reads uncached and why this double models the uncached behaviour.
+type forbiddenReader struct{ client.Reader }
+
+func (forbiddenReader) List(context.Context, client.ObjectList, ...client.ListOption) error {
+	return apierrors.NewForbidden(
+		schema.GroupResource{Resource: "persistentvolumeclaims"}, "",
+		errors.New(`User "system:serviceaccount:gentian-system:gentian-os" cannot list `+
+			`resource "persistentvolumeclaims" in API group "" at the cluster scope`))
+}
+
+// On 2026-08-30 this permission was missing on corp and the export did not fail.
+// It paused app-store-me, blocked on a cache that could never sync, and left the
+// app scaled to zero with `Running` on the CR and nothing in the log. Failing is
+// the requirement; that the app comes back is the reason it matters.
+//
+// The volume list must never degrade to "no volumes" either. That path reported
+// the app captured and Ready, so the bundle recorded a database with no files
+// beside it — and nothing said so until someone restored it.
+func TestAListThatCannotSeePVCsFailsTheExportAndResumesTheApp(t *testing.T) {
+	s := quiesceScheme(t)
+	if err := gentianov1alpha1.AddToScheme(s); err != nil {
+		t.Fatalf("add gentian scheme: %v", err)
+	}
+
+	start := metav1.Now()
+	export := &gentianov1alpha1.TenantExport{
+		ObjectMeta: metav1.ObjectMeta{Name: "export-x", Namespace: "tenant-demo"},
+		Status: gentianov1alpha1.TenantExportStatus{
+			Bundle:   &gentianov1alpha1.BundleRef{Bucket: "demo-gentian-backup", Prefix: "export-x"},
+			Quiesced: []string{"nextcloud-base-ce"},
+			Apps: []gentianov1alpha1.AppExportStatus{{
+				Name:         "nextcloud-base-ce",
+				Phase:        gentianov1alpha1.TenantExportPhaseRunning,
+				QuiesceStart: &start,
+				QuiesceMode:  string(gentianov1alpha1.BackupQuiesceScaleDown),
+			}},
+		},
+	}
+	tenant := &gentianov1alpha1.Tenant{
+		ObjectMeta: metav1.ObjectMeta{Name: "demo"},
+		Spec: gentianov1alpha1.TenantSpec{
+			Apps: []gentianov1alpha1.TenantApp{{Profile: "nextcloud-base-ce"}},
+		},
+	}
+	profile := &gentianov1alpha1.AppProfile{
+		ObjectMeta: metav1.ObjectMeta{Name: "nextcloud-base-ce"},
+		Spec:       gentianov1alpha1.AppProfileSpec{Family: "nextcloud"},
+	}
+	paused := deployment("nextcloud", "nextcloud-base-ce", 0)
+	paused.Annotations = map[string]string{replicaMemoAnnotation: "1"}
+
+	c := fake.NewClientBuilder().WithScheme(s).
+		WithObjects(export, tenant, profile, paused).
+		WithStatusSubresource(export).Build()
+	r := &TenantExportReconciler{Client: c, Scheme: s,
+		Reconciler:   &TenantReconciler{Client: c, Scheme: s},
+		VolumeReader: forbiddenReader{}}
+
+	if _, err := r.captureApp(context.Background(), export, tenant, "nextcloud-base-ce",
+		backup.Encryption{}, ctrl.Log.WithName("test")); err != nil {
+		t.Fatalf("captureApp: %v", err)
+	}
+
+	entry := appStatus(&export.Status.Apps, "nextcloud-base-ce")
+	if entry.Phase != gentianov1alpha1.TenantExportPhaseFailed {
+		t.Fatalf("app phase = %q, want Failed — a forbidden list is not an empty one", entry.Phase)
+	}
+	if len(export.Status.Quiesced) != 0 {
+		t.Fatalf("status.quiesced = %v, want empty: the app is still shown as offline", export.Status.Quiesced)
+	}
+	if got := *getDeployment(t, c, "nextcloud").Spec.Replicas; got != 1 {
+		t.Fatalf("replicas = %d, want the memoed 1: the app was left paused", got)
+	}
+}
+
+// The same list, one frame down, and the assertion the outage turned on: no
+// error means no volumes, and no volumes silently means a partial bundle.
+func TestAppVolumesReportsAFailedListRatherThanNoVolumes(t *testing.T) {
+	s := quiesceScheme(t)
+	if err := gentianov1alpha1.AddToScheme(s); err != nil {
+		t.Fatalf("add gentian scheme: %v", err)
+	}
+	c := fake.NewClientBuilder().WithScheme(s).Build()
+	r := &TenantExportReconciler{Client: c, Scheme: s, VolumeReader: forbiddenReader{}}
+
+	claims, err := r.appVolumes(context.Background(), "demo", "nextcloud-base-ce", nil, nil)
+	if err == nil {
+		t.Fatalf("appVolumes returned %v and no error", claims)
+	}
+	if !apierrors.IsForbidden(errors.Unwrap(err)) {
+		t.Fatalf("error = %v, want the Forbidden wrapped rather than replaced", err)
+	}
 }
 
 // An app paused by its maintenance hook must be resumed by its resume hook.

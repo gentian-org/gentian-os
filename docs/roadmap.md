@@ -755,6 +755,35 @@ docs/plans/tenant-composition-cleanup.md §8.
   - `[ ]` Require `list` and `watch` wherever a type is read through the cache.
   - `[ ]` Report a granted verb no call site uses, so the ClusterRole shrinks as
     the operator stops writing what Crossplane now owns.
+### 2.20 The RBAC Lint Does Not See Typed Reads (**)
+* **Target Domain**: Build and Release
+* **Context**: `lint-rbac-coverage` checks the GroupVersionKinds the operator
+  builds by hand, and says why it skips the rest: typed clients get their kinds
+  from the scheme, and "they are not where this goes wrong". They are. The
+  export controller read `corev1.PersistentVolumeClaimList` to decide what a
+  backup captures, and `persistentvolumeclaims` was granted to nobody —
+  a third missing rule, in the half of the codebase the lint does not look at.
+  applifecycle's purge lists, gets and deletes the same type and was equally
+  unable to.
+
+  The reasoning behind the exclusion was that a hand-written GVK names a CRD the
+  operator does not own, while a typed read names a core type it surely may
+  read. The core types are exactly where an over-broad assumption survives
+  unexamined: nobody writes `corev1.PersistentVolumeClaimList` wondering whether
+  the ServiceAccount is allowed to.
+
+  envtest cannot catch either kind — its API server has authorization disabled —
+  so the lint is the only thing standing between a missing rule and a deploy.
+* **Proposed Solution**: The general form needs Go type resolution. The specific
+  form does not: the core API group has a closed, small set of resources, so
+  scanning `internal/` for `corev1.<Kind>{}` and `corev1.<Kind>List{}` against
+  that set catches this class without resolving anything. Kinds that are not
+  API resources — `Container`, `Volume`, `PodSpec` — are not in the set and
+  drop out on their own.
+* **Backlog Items**:
+  - `[ ]` Check typed core-group reads against the closed set of core resources.
+  - `[ ]` Decide whether the same is worth doing for `appsv1` and `batchv1`,
+    whose resource sets are equally small.
 
 ## 3. User Management & Shell UI
 

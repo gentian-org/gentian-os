@@ -267,6 +267,10 @@ func main() {
 		Client:     mgr.GetClient(),
 		Scheme:     mgr.GetScheme(),
 		Reconciler: tenantReconciler,
+		// The API reader, not the cached client: appVolumes explains why a
+		// cached PVC read is how an export comes to hold an app offline
+		// indefinitely with nothing in the log.
+		VolumeReader: mgr.GetAPIReader(),
 	}
 	if err := tenantExportReconciler.SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "TenantExport")

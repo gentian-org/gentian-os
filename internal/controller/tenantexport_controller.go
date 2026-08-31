@@ -86,12 +86,29 @@ type TenantExportReconciler struct {
 	// Reconciler supplies the tenant-side helpers (Job waiting, requeue
 	// backoff, catalogue lookups) that already exist on the tenant loop.
 	Reconciler *TenantReconciler
+
+	// VolumeReader lists a tenant's PVCs, uncached, and deliberately so — see
+	// appVolumes for why the cached client is the wrong tool for this one read.
+	// Optional: nil falls back to the cached Client, which is what the unit
+	// suites build with and is correct there, since a fake client has no
+	// informer to wedge.
+	VolumeReader client.Reader
 }
 
 // +kubebuilder:rbac:groups=gentianos.io,resources=tenantexports,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=gentianos.io,resources=tenantexports/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=gentianos.io,resources=tenantexports/finalizers,verbs=update
 // +kubebuilder:rbac:groups=apps,resources=deployments;statefulsets,verbs=get;list;watch;update;patch
+
+// persistentvolumeclaims, for three call sites that had no rule between them:
+// appVolumes lists a tenant's claims to decide what an export captures and a
+// restore puts back, and applifecycle's purge lists, gets and deletes them when
+// an app is uninstalled. No verb here is speculative — get is the purge's
+// wait-for-gone poll, delete is the purge itself.
+//
+// No watch: nothing reads this type through the manager's cache, and after
+// appVolumes stopped doing so, granting it would only invite the read back.
+// +kubebuilder:rbac:groups="",resources=persistentvolumeclaims,verbs=get;list;delete
 
 func (r *TenantExportReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	logger := log.FromContext(ctx).WithName("tenantexport")
@@ -245,7 +262,13 @@ func (r *TenantExportReconciler) captureApp(
 		}
 	}
 
-	units := r.captureUnits(ctx, tenant, appName, profile, export, encryption)
+	units, err := r.captureUnits(ctx, tenant, appName, profile, export, encryption)
+	if err != nil {
+		// The app is paused by this point. failApp resumes it and records why,
+		// which is the whole difference between a failed export and a hung one.
+		return r.failApp(ctx, export, tenant, appName,
+			fmt.Sprintf("enumerate what to capture: %v", err))
+	}
 	for _, unit := range units {
 		if unit.Kind == "volume" {
 			if err := r.ensureVolumeUploadSecret(ctx, export, tenant.Name, encryption); err != nil {
@@ -320,7 +343,7 @@ func (r *TenantExportReconciler) captureUnits(
 	profile *gentianov1alpha1.AppProfile,
 	export *gentianov1alpha1.TenantExport,
 	encryption backup.Encryption,
-) []captureUnit {
+) ([]captureUnit, error) {
 	stores := backup.ProfileStores(profile)
 	spec := profileBackupSpec(profile)
 	params := r.jobParams(tenant, appName, export, encryption)
@@ -366,7 +389,11 @@ func (r *TenantExportReconciler) captureUnits(
 	if volParams.Encryption.Mode == gentianov1alpha1.ExportEncryptionPassphrase {
 		volParams.Encryption.PassphraseSecret = volumeUploadSecretName(export.Name)
 	}
-	for i, claim := range r.appVolumes(ctx, tenant.Name, appName, profile, spec) {
+	claims, err := r.appVolumes(ctx, tenant.Name, appName, profile, spec)
+	if err != nil {
+		return nil, err
+	}
+	for i, claim := range claims {
 		p := volParams
 		p.Name = exportJobName(export.Name, appName, fmt.Sprintf("vol%d", i))
 		units = append(units, captureUnit{
@@ -374,27 +401,51 @@ func (r *TenantExportReconciler) captureUnits(
 			JobName: p.Name, Job: backup.VolumeArchiveJob(p, claim, spec.ExcludedPaths()),
 		})
 	}
-	return units
+	return units, nil
 }
 
 // appVolumes resolves which claims to capture: the profile's explicit list when
 // it has one, otherwise every claim the app owns.
-// Takes a context because it lists PVCs from the API server. It used to pass
-// context.Background(), so the list carried neither the reconcile's deadline nor
-// its cancellation — the caller two frames up had one all along.
+//
+// Reads uncached. The manager's cached client establishes an informer the first
+// time a type is read through it, and an informer that may not list never syncs
+// — it retries on a loop while the read that started it blocks waiting for a
+// sync that will not come. A reconcile carries no deadline, so on 2026-08-30 a
+// missing `persistentvolumeclaims` rule did not surface as the Forbidden it was.
+// It surfaced as an export that paused app-store-me, logged "paused app for
+// capture", and never logged again: one worker wedged forever, the tenant's app
+// offline, no error anywhere. An uncached read returns the Forbidden and the
+// export fails the way a failure should look.
+//
+// Threading the context through here was worth doing, but it was never the
+// bound it looked like — cancellation only helps if something cancels.
+//
+// The list not caching is also just right for the work: this enumerates one
+// namespace's claims once per app per export, which does not warrant holding
+// every PVC in the cluster in memory for the life of the process.
+//
+// A failed list is an error, not an empty result. Returning nil on failure
+// captured no volumes at all and still reported the app Ready — a bundle that
+// looks complete and restores a database without the files it refers to, which
+// is the one outcome a backup must never produce quietly.
 func (r *TenantExportReconciler) appVolumes(
 	ctx context.Context,
 	tenantName, appName string,
 	profile *gentianov1alpha1.AppProfile,
 	spec *gentianov1alpha1.BackupSpec,
-) []string {
+) ([]string, error) {
 	if included := spec.IncludedVolumes(); len(included) > 0 {
-		return included
+		return included, nil
 	}
 
+	namespace := backup.TenantNamespace(tenantName)
+	reader := client.Reader(r.Client)
+	if r.VolumeReader != nil {
+		reader = r.VolumeReader
+	}
 	pvcs := &corev1.PersistentVolumeClaimList{}
-	if err := r.List(ctx, pvcs, client.InNamespace(backup.TenantNamespace(tenantName))); err != nil {
-		return nil
+	if err := reader.List(ctx, pvcs, client.InNamespace(namespace)); err != nil {
+		return nil, fmt.Errorf("list claims in %s: %w", namespace, err)
 	}
 	family := ""
 	if profile != nil {
@@ -407,7 +458,7 @@ func (r *TenantExportReconciler) appVolumes(
 		}
 	}
 	sort.Strings(claims)
-	return claims
+	return claims, nil
 }
 
 // ensureCaptureJob creates a Job if absent and reports whether it has finished.

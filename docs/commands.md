@@ -908,3 +908,27 @@ operator resumes anything it finds paused on the next reconcile, including
 after a restart, so deleting the stuck `TenantExport`/`TenantRestore` is the
 recovery — the workload's `gentianos.io/pre-export-replicas` annotation records
 what it should be scaled back to.
+
+Both of those depend on the operator still reconciling, so establish that
+first. Every step above is a reconcile away from working, and a controller that
+has stopped will not take the delete either: a `TenantExport` carries a
+finalizer, and deleting it hangs rather than resuming anything.
+
+```bash
+# The export controller's own log. Silence since the last "paused app for
+# capture", while other controllers keep logging, is a stopped worker.
+kubectl -n gentian-system logs deploy/gentian-os | grep tenantexport | tail
+
+# What a stopped worker usually is: a cache that cannot sync, because the
+# ServiceAccount may not list the type something read through it.
+kubectl -n gentian-system logs deploy/gentian-os | grep -i forbidden
+```
+
+A restart clears the wedge and the resume follows from it — the operator
+resumes anything it finds paused. It does not clear the cause: if the log names
+a Forbidden, the missing rule is a marker and a `make gen-all` away, and the
+export will wedge again on the next attempt without it.
+
+```bash
+kubectl -n gentian-system rollout restart deploy/gentian-os
+```
