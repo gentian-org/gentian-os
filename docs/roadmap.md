@@ -785,6 +785,50 @@ docs/plans/tenant-composition-cleanup.md §8.
   - `[ ]` Decide whether the same is worth doing for `appsv1` and `batchv1`,
     whose resource sets are equally small.
 
+### 2.21 A Bootstrap Application Never Re-Applies a Template Change (**)
+* **Target Domain**: Build and Release
+* **Context**: `kernel-admin-dev` sat Degraded for days on two failures that
+  turned out to be already fixed in the repo. `d2ce4251` gave the console its
+  own database and, correctly, threaded `kernelDomain` into
+  `kernel-admin.yaml`'s Helm parameters and seeded the credential in
+  `seed-openbao.sh` (`kv_put_once`, safe to re-run). Neither fix ever reached
+  this cluster: the live `kernel-admin-dev` Application still carried only its
+  original `env` parameter, so the console's own ExternalSecret rendered as
+  the literal `portal-shell-` — a trailing hyphen, rejected by the API server
+  on every sync — and `portal-shell-role` referenced a credential that had
+  simply never been written, because the step that writes it
+  (`B-10-seed-secrets`, `CHECK_ALWAYS`) was never the problem; the step that
+  would have re-applied the *Application* with the new parameter was.
+
+  `B-03-argocd-bootstrap-apps`'s `check()` asks whether an Application object
+  named `kernel-admin-<stage>` exists — nothing about whether its spec matches
+  what `kernel/bootstrap/chart` would render today. Once bootstrapped, it
+  reports satisfied forever. Six templates share this path — openbao,
+  reloader, cnpg, kernel-admin, globals, external-dns — so any future change
+  to any of them (a new Helm parameter, a new `ignoreDifferences` entry, a
+  corrected sync-wave) reaches a fresh install and silently never reaches an
+  already-bootstrapped one, until someone notices the symptom, traces it back
+  three layers, and remembers `--force`.
+* **Proposed Solution**: `kubectl apply` of these Applications is what
+  `bootstrap_argocd_apps` already does and is safe to repeat unconditionally —
+  the object updates in place, ArgoCD picks up the new parameters, and nothing
+  about a re-apply is destructive. The obstacle is only `check()` reporting
+  satisfied and skipping it. Two ways to close it, in order of how much they
+  cost: render the template locally and diff it against the live object's
+  spec (catches a parameter addition like this one, costs a `helm template`
+  call per check); or drop the "satisfied forever" premise for this step
+  specifically and make it `CHECK_ALWAYS` like `B-10-seed-secrets` already is
+  — `kubectl apply` is idempotent, so running it every pass costs a no-op diff
+  on a converged cluster and nothing more.
+* **Backlog Items**:
+  - `[ ]` Make `B-03-argocd-bootstrap-apps` re-apply on every run rather than
+    only when its target Application is missing.
+  - `[ ]` If a diff-based check is preferred instead, share the `helm template`
+    call between `check()` and `apply()` rather than rendering twice.
+  - `[ ]` Audit whether any other step follows the same "exists, therefore
+    satisfied forever" shape for an object whose *template* can change
+    independently of the object's presence.
+
 ## 3. User Management & Shell UI
 
 ### 3.1 SCIM & Provisioning Bus Integration (*)
