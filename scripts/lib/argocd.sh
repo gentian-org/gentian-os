@@ -229,6 +229,37 @@ install_argocd() {
 }'
     success "ArgoCD Crossplane Keycloak resource-update suppression configured."
 
+    # Stop reporting a controller's own defaults as drift.
+    #
+    # A CRD fills in fields nobody wrote. An ExternalSecret declaring a key and a
+    # property comes back with conversionStrategy, decodingStrategy,
+    # metadataPolicy, nullBytePolicy and mergePolicy set; a CNPG Cluster
+    # declaring seven fields comes back with twenty-five. Argo compares git
+    # against the live object and reports OutOfSync forever, on applications
+    # that are entirely healthy — dovecot-prod, gentian-os and kernel-admin-prod
+    # sat that way, and a row that is permanently red teaches people to skip red
+    # rows, which is how the tenant sequencer bug survived seven weeks.
+    #
+    # managedFieldsManagers rather than a list of field paths. Server-side apply
+    # records who set what: argocd-controller owns the fields git declares, and
+    # the controller owns the ones it defaulted. Naming the manager says "compare
+    # what Argo declared, ignore what the controller filled in" — which is the
+    # actual intent, survives the CRD gaining defaults, and keeps a real change
+    # to a declared field visible. The alternative was enumerating five paths for
+    # ExternalSecret and eighteen for CNPG, a list that rots on every upgrade.
+    #
+    # ignoreDifferences, not ignoreResourceUpdates: the block above stops the
+    # controller re-queuing on a status write, which is reconcile churn. This is
+    # about the sync verdict, and they are separate settings.
+    info "Patching argocd-cm with controller-defaulted field suppression..."
+    kubectl patch configmap argocd-cm -n argocd --type merge -p '{
+  "data": {
+    "resource.customizations.ignoreDifferences.external-secrets.io_ExternalSecret": "managedFieldsManagers:\n- external-secrets\n",
+    "resource.customizations.ignoreDifferences.postgresql.cnpg.io_Cluster": "managedFieldsManagers:\n- manager\n"
+  }
+}'
+    success "ArgoCD controller-defaulted field suppression configured."
+
     # Configure ArgoCD server to serve plain HTTP behind the Gateway API edge route.
     # Without this flag ArgoCD redirects HTTP→HTTPS internally and the edge proxy
     # gets into a redirect loop when terminating TLS at the Gateway.

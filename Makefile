@@ -22,7 +22,7 @@ CROSSPLANE_IMAGE ?= xpkg.crossplane.io/crossplane/crossplane:$(CROSSPLANE_CLI_VE
 KUBEBUILDER_ASSETS ?= /tmp/envtest-bins/k8s/1.32.0-linux-amd64
 export KUBEBUILDER_ASSETS
 
-.PHONY: all build generate manifests test lint docker-build clean install-plugin uninstall-plugin validate-steps gen-credentials gen-phase-table lint-phase-table check-credentials lint-cluster-config-keys lint-rbac-coverage lint-composed-resource-names lint-sequencer-targets lint-eso-readable-paths lint-template-placeholders lint-portability lint-image-digests check-render-fixtures lint-resolvable lint-bootstrap-apps lint-step-contracts lint-claim-defaults lint-password-schemes test-policy test-policy-openbao test-policy-authz verify-claim-applied verify-image-updates gen-provider-rbac lint-provider-rbac
+.PHONY: all build generate manifests test lint docker-build clean install-plugin uninstall-plugin validate-steps gen-credentials gen-phase-table lint-phase-table check-credentials lint-cluster-config-keys lint-rbac-coverage lint-composed-resource-names lint-sequencer-targets lint-eso-readable-paths lint-template-placeholders lint-portability lint-image-digests check-render-fixtures lint-resolvable lint-bootstrap-apps lint-step-contracts lint-claim-defaults lint-password-schemes test-policy test-policy-openbao test-policy-authz verify-claim-applied verify-argocd-config verify-image-updates gen-provider-rbac lint-provider-rbac
 
 all: generate build test
 
@@ -394,6 +394,17 @@ test-policy-authz:
 ## with no owner. Read-only: it reports, it does not reconcile.
 verify-claim-applied:
 	@bash scripts/tools/verify-claim-applied.sh
+
+## verify-argocd-config: Argo CD is configured the way the installer configures one.
+##
+## Argo CD's own ConfigMaps are written by scripts/lib/argocd.sh and reconciled by
+## nothing — deliberately, because they are bootstrap settings that must be right
+## before the thing that would reconcile them is trustworthy. The cost is that a
+## key patched onto a cluster and never added to the script is lost on the next
+## one, and a key added to the script is absent here, with neither side unhappy.
+## Read-only: it reports, it does not patch.
+verify-argocd-config:
+	@python3 scripts/tools/verify-argocd-config.py
 
 ## verify-image-updates: the cluster runs the images CI publishes.
 ##
