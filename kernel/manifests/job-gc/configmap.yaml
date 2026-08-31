@@ -76,14 +76,13 @@ data:
         -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}' \
         2>/dev/null || true)
     done
----
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: gentian-job-completion-log
-  namespace: platform-kernel
-  labels:
-    app.kubernetes.io/managed-by: gentian-os
-    gentianos.io/component: job-gc
-data:
-  log.txt: ""
+# gentian-job-completion-log is deliberately NOT declared here.
+#
+# It is a log, not configuration: append_log above creates it on first write
+# (kubectl create --dry-run | kubectl apply), labels it, and trims it to
+# MAX_LOG_BYTES. Declaring it with `log.txt: ""` made Argo CD the second writer
+# of a file the GC owns — Argo restored it to empty on every sync, the GC
+# appended again, and the app never reached Synced. The log was erased
+# continuously and the record it exists to keep was worthless.
+#
+# Nothing to reinstate if it goes missing: the next collection recreates it.
