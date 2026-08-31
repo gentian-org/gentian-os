@@ -927,8 +927,14 @@ purge_cluster_infra() {
 
 # What a purge leaves, stated rather than discovered later. Silence here is the
 # failure mode this whole teardown path kept producing.
+#
+# Split against _cluster_infra_crd_patterns rather than reported as one list:
+# most groups a purge finds still registered belong to workloads this
+# installer never touched (Calico, Traefik, Prometheus Operator, whatever else
+# shares the cluster) — telling their owner to rerun with --cluster-infra is
+# wrong, since that flag's removal patterns don't match them and never will.
 purge_report_cluster_residue() {
-    local left
+    local left group pattern matched cluster_infra_left="" other_left=""
     # `|| true` is load-bearing. grep exits 1 when it filters everything out,
     # and under `set -o pipefail` that failed the whole substitution — so the
     # function whose job is to report leftovers aborted the run precisely when
@@ -936,10 +942,29 @@ purge_report_cluster_residue() {
     left="$(kubectl get crd -o name 2>/dev/null \
         | sed 's#.*/##' \
         | grep -vE '\.k8s\.io$|\.kubernetes\.io$|cilium\.io$' \
-        | sed 's/^[^.]*\.//' | sort -u | tr '\n' ' ' || true)"
-    [[ -n "${left// /}" ]] || return 0
-    warn "CRD groups still registered: ${left}"
-    warn "  Remove them with --cluster-infra, or leave them if another workload uses them."
+        | sed 's/^[^.]*\.//' | sort -u || true)"
+    [[ -n "${left}" ]] || return 0
+
+    while IFS= read -r group; do
+        [[ -n "${group}" ]] || continue
+        matched=0
+        for pattern in $(_cluster_infra_crd_patterns); do
+            [[ "${group}" =~ ${pattern} ]] && { matched=1; break; }
+        done
+        if [[ "${matched}" == "1" ]]; then
+            cluster_infra_left+="${group} "
+        else
+            other_left+="${group} "
+        fi
+    done <<< "${left}"
+
+    if [[ -n "${cluster_infra_left}" ]]; then
+        warn "CRD groups still registered: ${cluster_infra_left}"
+        warn "  Remove them with --cluster-infra, or leave them if another workload uses them."
+    fi
+    if [[ -n "${other_left}" ]]; then
+        info "CRD groups left in place, not managed by this installer: ${other_left}"
+    fi
 }
 
 purge_report_remaining() {
