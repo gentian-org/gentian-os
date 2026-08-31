@@ -1482,10 +1482,19 @@ spec:
         resetCompositeReadiness: true
         rules:
           # Tenant shell before kernel Jobs or app claims.
+          #
+          # Every name here must be a resource this Composition renders. The
+          # sequencer waits for one that is absent rather than skipping it, and
+          # reports that as a normal delay — so a name left behind by a resource
+          # that moved elsewhere stops everything after it, silently and
+          # forever, on a composite that still reads Synced=True Ready=True.
+          # networkpolicy sat here for seven weeks after the tenant NetworkPolicy
+          # became the operator's (tenant_network_policy.go), holding vault-policy
+          # back the whole time: no tenant had the OpenBao policy its admin's
+          # token names, so every tenant-scoped credential write answered 403.
           - sequence:
             - namespace
             - limitrange
-            - networkpolicy
             - vault-policy
           # Keycloak realm before other identity Jobs; identity before App Compositions.
           # job-keycloak-(admin|…)-.* deliberately excludes job-keycloak-realm-* —
