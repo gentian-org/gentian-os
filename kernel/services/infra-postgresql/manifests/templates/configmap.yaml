@@ -63,7 +63,26 @@ data:
     # until the PVC is wiped by hand. Wider headroom does not change
     # anything on the common path — initdb still finishes in seconds — it
     # only changes what happens the one time it does not.
+    #
+    # livenessProbe and readinessProbe need the same widening, not just
+    # startupProbe. Kubernetes only evaluates liveness/readiness after
+    # startupProbe has succeeded once — and the official postgres image
+    # runs a temporary internal server during first-time init to execute
+    # init scripts, satisfying pg_isready and activating liveness early,
+    # then stops that server and restarts into the real one. Liveness's
+    # chart-default 15s + 6*10s = 75s budget can then kill the container
+    # during that restart/setup window, before pg_hba.conf's network rule
+    # and the job.users bootstrap job it depends on are ever written — a
+    # kill that looked like three unrelated failures (missing catalog
+    # file, stale password, missing pg_hba entry) depending on exactly
+    # where in that window it landed, when it was really the same
+    # interruption each time. Widening only startupProbe left this gap
+    # open.
     startupProbe:
+      failureThreshold: 60
+    livenessProbe:
+      failureThreshold: 60
+    readinessProbe:
       failureThreshold: 60
 
     job:
