@@ -549,6 +549,47 @@ func TestNoMcImageContainerInvokesTar(t *testing.T) {
 	}
 }
 
+// The mirror image of TestBundleWritersCreateTheirOwnBucket, and the reason it
+// could not simply be extended: an external bucket belongs to whoever owns the
+// account, and the credential a policy carries is scoped to objects. Creating
+// the bucket or rewriting its anonymous policy is denied there, and mc's
+// --ignore-existing does not cover a denial — so issuing them killed the upload
+// container on its first command, before any artefact was sent, and every
+// backup to an external destination failed with nothing written.
+func TestExternalDestinationDoesNotAdministerSomeoneElsesBucket(t *testing.T) {
+	p := params()
+	p.Endpoint = "https://sos-ch-dk-2.exo.io"
+	p.Region = "ch-dk-2"
+	p.UploadCredentialsSecret = "backup-destination-corp"
+
+	manifest, err := ManifestJob(p, &Manifest{Tenant: "demo"},
+		NewBundleInfo("demo", "nightly", "now", p.Encryption))
+	if err != nil {
+		t.Fatalf("ManifestJob: %v", err)
+	}
+	writers := map[string]*batchv1.Job{
+		"postgres upload": PostgresDumpJob(p, "demo_app"),
+		"mariadb upload":  MariaDBDumpJob(p, "demo_app"),
+		"volume upload":   VolumeArchiveJob(p, "data", nil),
+		"realm upload":    RealmExportJob(p, "demo"),
+		"s3 mirror":       S3ArchiveJob(p, "demo-app"),
+		"manifest":        manifest,
+	}
+
+	for name, job := range writers {
+		script := mainScript(job)
+		for _, forbidden := range []string{"mc mb", "mc anonymous"} {
+			if strings.Contains(script, forbidden) {
+				t.Errorf("%s runs %q on a bucket it does not own:\n%s", name, forbidden, script)
+			}
+		}
+		// Still reaches the destination; only the administering is dropped.
+		if !strings.Contains(script, "mc alias set gentian") {
+			t.Errorf("%s no longer connects to the destination:\n%s", name, script)
+		}
+	}
+}
+
 // Where a bundle goes is a fact from the policy; the keys to get in are a
 // credential. Reading the endpoint from the credential Secret would mean
 // whoever can edit that Secret can redirect every tenant's backups — so a

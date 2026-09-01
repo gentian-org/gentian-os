@@ -340,6 +340,38 @@ echo "exported realm ${REALM} ($(wc -l < %[2]s/users.ndjson) users)"`, quoted, w
 // upload step: a Job whose dump failed but whose upload succeeded would leave a
 // truncated artefact in the bundle and report success, which is the one failure
 // mode a backup must never have.
+// bucketPreparation returns the commands that ready the destination bucket,
+// which differ by who owns it.
+//
+// The platform's own MinIO is administered by this operator with the kernel's
+// admin credential, and the bundle bucket may not exist yet — creating it here
+// is what keeps tenant provisioning from depending on backup infrastructure.
+//
+// An external destination is the opposite on every count. The bucket was
+// created by whoever owns the account, and the credential the policy carries is
+// deliberately scoped to objects, so create-bucket and put-bucket-policy are
+// denied. mc's --ignore-existing does not cover a denial; it covers a bucket
+// you already own. Issuing these against someone else's bucket failed on the
+// upload container's first command, before a single artefact was sent:
+//
+//	mc: <ERROR> Unable to make bucket gentian/<bucket>.
+//	    You are not authorized to perform create-bucket on bucket <bucket>
+//
+// A bucket that genuinely is not there still fails, on the mc cp below, with
+// the S3 error that says so. Prechecking instead would mean asking for a
+// listing permission we have equally little right to assume.
+func bucketPreparation(p JobParams) string {
+	if p.Endpoint != "" {
+		return "# External destination: the bucket is not ours to create or configure."
+	}
+	return `# The bundle bucket is created here rather than during tenant provisioning.
+# Gating a tenant's readiness on backup infrastructure would couple every
+# install to a bucket only exports need; --ignore-existing makes this
+# idempotent, and anonymous access is denied on every pass.
+mc mb --ignore-existing "gentian/${BUNDLE_BUCKET}"
+mc anonymous set none "gentian/${BUNDLE_BUCKET}"`
+}
+
 func uploadJob(p JobParams, localFile, artefact string, producers []corev1.Container, extraVolumes []corev1.Volume) *batchv1.Job {
 	// Encryption runs as the last init container, so the uploader below can
 	// only ever see ciphertext: the plaintext is removed before it starts.
@@ -352,18 +384,13 @@ func uploadJob(p JobParams, localFile, artefact string, producers []corev1.Conta
 		Command: []string{"/bin/sh", "-c"},
 		Args: []string{fmt.Sprintf(`set -eu
 mc alias set gentian "${MINIO_ENDPOINT}" "${MINIO_ACCESS_KEY}" "${MINIO_SECRET_KEY}"
-# The bundle bucket is created here rather than during tenant provisioning.
-# Gating a tenant's readiness on backup infrastructure would couple every
-# install to a bucket only exports need; --ignore-existing makes this
-# idempotent, and anonymous access is denied on every pass.
-mc mb --ignore-existing "gentian/${BUNDLE_BUCKET}"
-mc anonymous set none "gentian/${BUNDLE_BUCKET}"
+%[4]s
 mc cp "%[1]s" "%[2]s"
 # The checksum is written after the artefact and read before any restore, so a
 # bundle whose upload was cut short fails verification instead of restoring
 # quietly truncated data.
 sha256sum "%[1]s" | cut -d' ' -f1 | mc pipe "%[2]s.sha256"
-echo "uploaded %[3]s"`, local, target, artefact)},
+echo "uploaded %[3]s"`, local, target, artefact, bucketPreparation(p))},
 		Env:          bundleEnv(p),
 		VolumeMounts: []corev1.VolumeMount{{Name: "work", MountPath: workDir}},
 	}
