@@ -261,3 +261,50 @@ func TestPostgresRestoreNormalisesOwnershipBeforeLoading(t *testing.T) {
 		t.Error("ownership is normalised after the restore, which is too late")
 	}
 }
+
+// A restore reads from wherever the bundle lives and writes into the cluster's
+// own MinIO. Those are one system only when bundles go to platform storage;
+// with an external destination they are two, with different credentials.
+//
+// Sharing one alias sent both at the destination: the restore tried to create
+// the app's bucket in someone else's account, which the policy's object-scoped
+// credential is denied, and had it been permitted it would have mirrored the
+// tenant's objects into the bundle bucket rather than restoring them.
+func TestS3RestoreWritesToPlatformStorageNotTheBundleDestination(t *testing.T) {
+	p := params()
+	p.Endpoint = "https://sos-ch-dk-2.exo.io"
+	p.Region = "ch-dk-2"
+	p.UploadCredentialsSecret = "backup-destination-corp"
+
+	job := S3RestoreJob(p, recipientDecryption(), "corp-nextcloud")
+
+	var restore *corev1.Container
+	for i := range job.Spec.Template.Spec.Containers {
+		if job.Spec.Template.Spec.Containers[i].Name == "s3-restore" {
+			restore = &job.Spec.Template.Spec.Containers[i]
+		}
+	}
+	if restore == nil {
+		t.Fatal("no s3-restore container")
+	}
+
+	// Every credential it uses names the platform's own Secret.
+	for _, env := range restore.Env {
+		if env.Name == "MINIO_ENDPOINT" && env.Value != "" {
+			t.Errorf("endpoint is the bundle's literal %q; the app's bucket does not live there", env.Value)
+		}
+		if env.ValueFrom != nil && env.ValueFrom.SecretKeyRef != nil {
+			if got := env.ValueFrom.SecretKeyRef.Name; got != MinIOAdminSecret {
+				t.Errorf("%s comes from %q, want the platform's %q", env.Name, got, MinIOAdminSecret)
+			}
+		}
+	}
+
+	script := restore.Args[0]
+	if !strings.Contains(script, `mc mirror --preserve --overwrite --remove /work/restore "platform/corp-nextcloud"`) {
+		t.Errorf("restore does not mirror into platform storage:\n%s", script)
+	}
+	if strings.Contains(script, `"gentian/corp-nextcloud"`) {
+		t.Errorf("restore still addresses the bundle alias:\n%s", script)
+	}
+}

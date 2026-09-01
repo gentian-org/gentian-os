@@ -551,6 +551,21 @@ func bundleEnv(p JobParams) []corev1.EnvVar {
 	return env
 }
 
+// PlatformStorageEnv addresses the platform's own MinIO, whose address travels
+// with its credentials.
+//
+// Distinct from bundleEnv, which addresses wherever the bundle lives. The two
+// are the same place only when bundles go to platform storage; with an external
+// destination they are different systems with different credentials, and a Job
+// that needs both must not assume one covers the other.
+func PlatformStorageEnv() []corev1.EnvVar {
+	return []corev1.EnvVar{
+		meta.SecretEnv("MINIO_ENDPOINT", MinIOAdminSecret, "endpoint"),
+		meta.SecretEnv("MINIO_ACCESS_KEY", MinIOAdminSecret, "accessKey"),
+		meta.SecretEnv("MINIO_SECRET_KEY", MinIOAdminSecret, "secretKey"),
+	}
+}
+
 func postgresAdminEnv() []corev1.EnvVar {
 	return []corev1.EnvVar{
 		meta.SecretEnv("PGHOST", PostgresAdminSecret, "host"),

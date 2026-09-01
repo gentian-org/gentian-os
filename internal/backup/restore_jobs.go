@@ -252,19 +252,32 @@ tar xzf %[1]s/bucket.tar.gz -C %[1]s/restore
 echo "unpacked bucket archive"`, workDir)},
 		VolumeMounts: []corev1.VolumeMount{{Name: "work", MountPath: workDir}},
 	}
+	// Platform storage, not the bundle's location. The init container above
+	// fetched the archive from wherever the bundle lives; this one puts the
+	// app's objects back into the cluster's own MinIO, which is a different
+	// system with different credentials whenever the bundle is external.
+	//
+	// Sharing bundleEnv here sent both at the destination: the restore tried to
+	// create the app's bucket in someone else's account — denied, since the
+	// policy's credential is scoped to objects — and had it been permitted it
+	// would have mirrored the tenant's objects into the bundle bucket instead
+	// of restoring them.
 	restore := corev1.Container{
 		Name:    "s3-restore",
 		Image:   mcImage,
 		Command: []string{"/bin/sh", "-c"},
 		Args: []string{fmt.Sprintf(`set -eu
-mc alias set gentian "${MINIO_ENDPOINT}" "${MINIO_ACCESS_KEY}" "${MINIO_SECRET_KEY}"
-mc mb --ignore-existing "gentian/%[2]s"
+mc alias set platform "${MINIO_ENDPOINT}" "${MINIO_ACCESS_KEY}" "${MINIO_SECRET_KEY}"
+# The operator administers the platform's own MinIO, so creating the app's
+# bucket here is both permitted and right: a restore into a cluster that never
+# had this app must not depend on the bucket already existing.
+mc mb --ignore-existing "platform/%[2]s"
 # --remove makes the bucket match the archive rather than merging into it: an
 # object deleted before the backup must not reappear, and one created since must
 # not survive a restore that claims to return the tenant to that point.
-mc mirror --preserve --overwrite --remove %[1]s/restore "gentian/%[2]s"
+mc mirror --preserve --overwrite --remove %[1]s/restore "platform/%[2]s"
 echo "restored bucket %[2]s"`, workDir, bucket)},
-		Env:          bundleEnv(p),
+		Env:          PlatformStorageEnv(),
 		VolumeMounts: []corev1.VolumeMount{{Name: "work", MountPath: workDir}},
 	}
 	return restoreJob(p, []corev1.Container{
