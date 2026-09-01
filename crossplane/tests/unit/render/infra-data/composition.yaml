@@ -60,7 +60,16 @@ spec:
                   version: {{ $pgVersion | quote }}
                 namespace: {{ $infraNs }}
                 wait: true
-                waitTimeout: "5m"
+                # 5m was tight enough that a slow initdb (nfs-csi write
+                # latency is not bounded the way local storage is) let the
+                # StatefulSet itself come up while the post-install bootstrap
+                # Job — which sets the passwords everything else connects
+                # with — was still mid-run or never started, and Crossplane
+                # marked the whole release failed regardless. The Job is
+                # idempotent and safe to give more room; a release that
+                # finishes in 90s on the common path costs nothing extra by
+                # having a longer ceiling.
+                waitTimeout: "10m"
                 valuesFrom:
                   - configMapKeyRef:
                       name: postgresql-base-values
@@ -97,7 +106,12 @@ spec:
                   version: {{ $mdbVersion | quote }}
                 namespace: {{ $infraNs }}
                 wait: true
-                waitTimeout: "5m"
+                # Same reasoning as postgresql's waitTimeout above: a slow
+                # first start on nfs-csi let the server come up while its
+                # own root-password bootstrap was still racing the release's
+                # overall wait, so the readiness probe never agreed with the
+                # password actually set.
+                waitTimeout: "10m"
                 valuesFrom:
                   - configMapKeyRef:
                       name: mariadb-base-values
