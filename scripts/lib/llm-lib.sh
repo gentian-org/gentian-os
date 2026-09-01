@@ -282,6 +282,24 @@ spec:
               BASE="http://litellm-proxy.${ns}.svc.cluster.local:4000"
               AUTH="Authorization: Bearer \${LITELLM_MASTER_KEY}"
               DESIRED='${desired_json}'
+              # litellm-proxy is typically still booting when this Job is
+              # created on a fresh install — its own CNPG database first,
+              # then schema migrations. The first request used to be the
+              # sync itself, so curl died with exit 7 (connection refused)
+              # under set -e, three fast pod retries, Job dead inside two
+              # minutes — on every fresh install, regardless of whether
+              # anything was actually wrong. Wait for the proxy to answer
+              # at all before syncing.
+              lp_tries=0
+              until curl -s -o /dev/null "\${BASE}/health/liveliness"; do
+                lp_tries=\$((lp_tries + 1))
+                if [ "\${lp_tries}" -ge 60 ]; then
+                  echo "litellm-proxy did not answer within 10 minutes" >&2
+                  exit 1
+                fi
+                echo "litellm-proxy not answering yet (attempt \${lp_tries}/60); retrying in 10s..."
+                sleep 10
+              done
               # No -f: LiteLLM's /model/info returns HTTP 500 (not an empty
               # list) when zero models are registered yet — a real state on
               # a fresh proxy, not a fatal error. jq below treats anything
@@ -338,7 +356,7 @@ spec:
                   key: litellm_master_key
 EOF
 
-    if _wait_for_job "${job_name}" "${ns}" 120s; then
+    if _wait_for_job "${job_name}" "${ns}" 720s; then
         kubectl logs -n "${ns}" "job/${job_name}" --tail=30 2>/dev/null || true
         success "LiteLLM model registrations synced."
     else

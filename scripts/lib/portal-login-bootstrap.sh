@@ -506,8 +506,25 @@ spec:
                 done
                 return 1
               }
-              KEYCLOAK_BASE=\$(resolve_keycloak_base) || {
-                printf '\033[0;31m[ERROR]\033[0m %s\n' "could not resolve Keycloak OIDC base from KEYCLOAK_URL=\${KEYCLOAK_URL}" >&2
+              # Poll, don't probe once. On a fresh install Keycloak is
+              # legitimately still booting when this Job starts: it restarts
+              # a few times while the shared database's bootstrap is still
+              # creating its role, then runs first-run schema migrations —
+              # ~10 minutes on a real cluster. A single probe here burned
+              # the Job's whole backoffLimit inside ~90s against a server
+              # that was minutes from healthy, and took the install down.
+              KEYCLOAK_BASE=""
+              kc_tries=0
+              while [ "\${kc_tries}" -lt 60 ]; do
+                if KEYCLOAK_BASE=\$(resolve_keycloak_base); then
+                  break
+                fi
+                kc_tries=\$((kc_tries + 1))
+                echo "Keycloak not answering OIDC discovery yet (attempt \${kc_tries}/60); retrying in 10s..."
+                sleep 10
+              done
+              [ -n "\${KEYCLOAK_BASE}" ] || {
+                printf '\033[0;31m[ERROR]\033[0m %s\n' "could not resolve Keycloak OIDC base from KEYCLOAK_URL=\${KEYCLOAK_URL} after 10 minutes" >&2
                 exit 1
               }
               TOKEN=\$(curl -sf -X POST "\${KEYCLOAK_BASE}/realms/master/protocol/openid-connect/token" \\
@@ -603,7 +620,11 @@ ${smtp_shell}
               memory: 128Mi
 EOF
 
-    if ! kubectl wait "job/${job_name}" -n "${ns}" --for=condition=complete --timeout=120s; then
+    # 720s, not 120s: the Job now polls Keycloak for up to 10 minutes
+    # before touching anything (see the loop in its script), so the wait
+    # here has to outlast that budget or it reports failure over a Job
+    # that is still legitimately waiting.
+    if ! kubectl wait "job/${job_name}" -n "${ns}" --for=condition=complete --timeout=720s; then
         error "Keycloak SMTP configure Job failed."
         kubectl logs -n "${ns}" "job/${job_name}" --tail=40 2>/dev/null || true
         return 1
@@ -741,8 +762,25 @@ spec:
                 done
                 return 1
               }
-              KEYCLOAK_BASE=\$(resolve_keycloak_base) || {
-                printf '\033[0;31m[ERROR]\033[0m %s\n' "could not resolve Keycloak OIDC base from KEYCLOAK_URL=\${KEYCLOAK_URL}" >&2
+              # Poll, don't probe once. On a fresh install Keycloak is
+              # legitimately still booting when this Job starts: it restarts
+              # a few times while the shared database's bootstrap is still
+              # creating its role, then runs first-run schema migrations —
+              # ~10 minutes on a real cluster. A single probe here burned
+              # the Job's whole backoffLimit inside ~90s against a server
+              # that was minutes from healthy, and took the install down.
+              KEYCLOAK_BASE=""
+              kc_tries=0
+              while [ "\${kc_tries}" -lt 60 ]; do
+                if KEYCLOAK_BASE=\$(resolve_keycloak_base); then
+                  break
+                fi
+                kc_tries=\$((kc_tries + 1))
+                echo "Keycloak not answering OIDC discovery yet (attempt \${kc_tries}/60); retrying in 10s..."
+                sleep 10
+              done
+              [ -n "\${KEYCLOAK_BASE}" ] || {
+                printf '\033[0;31m[ERROR]\033[0m %s\n' "could not resolve Keycloak OIDC base from KEYCLOAK_URL=\${KEYCLOAK_URL} after 10 minutes" >&2
                 exit 1
               }
               echo "Using Keycloak base \${KEYCLOAK_BASE}"
@@ -1284,7 +1322,11 @@ ${smtp_shell}
               memory: 128Mi
 EOF
 
-    if ! kubectl wait "job/${job_name}" -n "${ns}" --for=condition=complete --timeout=180s; then
+    # 720s, not 180s: the Job now polls Keycloak for up to 10 minutes
+    # before touching anything (see the loop in its script), so the wait
+    # here has to outlast that budget or it reports failure over a Job
+    # that is still legitimately waiting.
+    if ! kubectl wait "job/${job_name}" -n "${ns}" --for=condition=complete --timeout=720s; then
         error "Keycloak portal bootstrap Job failed."
         kubectl logs -n "${ns}" "job/${job_name}" --tail=80 2>/dev/null || true
         return 1
