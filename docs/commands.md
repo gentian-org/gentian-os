@@ -779,11 +779,36 @@ kubectl get backuppolicy default \
   -o jsonpath='{.status.credentialRequirement} satisfied={.status.credentialSatisfied}{"\n"}'
 ```
 
-A tenant states its own with `scope: tenant` and a `tenant` field; every field
-is optional and an unset one inherits. `suspendSchedule: true` means *none*, as
-distinct from *not stated* — without it a tenant could not opt out of a
-cluster-wide schedule. Set `allowTenantOverride: false` on the cluster policy to
-refuse tenant policies outright; they are then rejected rather than ignored.
+**The name is not free.** Every reader fetches a policy by name: the cluster's
+as `default`, a tenant's as the tenant's own name. Admission enforces both, so a
+misnamed policy is rejected at `kubectl apply` rather than accepted and then
+read by nothing.
+
+A tenant states its own with `scope: tenant` and a `tenant` field. Name it from
+one variable so the two cannot drift:
+
+```bash
+TENANT=demo
+kubectl apply -f - <<EOF
+apiVersion: gentianos.io/v1alpha1
+kind: BackupPolicy
+metadata:
+  name: ${TENANT}          # must equal spec.tenant
+spec:
+  scope: tenant
+  tenant: ${TENANT}
+  destination:
+    endpoint: https://sos-ch-gva-2.exo.io
+    bucket: ${TENANT}-bundles
+    region: ch-gva-2
+  schedule: "0 3 * * *"
+EOF
+```
+
+Every field is optional and an unset one inherits. `suspendSchedule: true` means
+*none*, as distinct from *not stated* — without it a tenant could not opt out of
+a cluster-wide schedule. Set `allowTenantOverride: false` on the cluster policy
+to refuse tenant policies outright; they are then rejected rather than ignored.
 
 Retention tiers are a union: a bundle any rule keeps survives. `keepLast: 7`
 alone reaches back seven nights; adding `keepMonthly: 12` reaches back a year

@@ -49,6 +49,14 @@ spec:
           Cluster-scoped for both scopes, as CredentialRequirement is: the console
           mediates access by spec.tenant, and the credential itself is governed by the
           OpenBao policy its scope selects.
+
+          The name is not free. Every reader of a policy fetches it by name — the
+          cluster's as "default", a tenant's as the tenant's own name — so a policy
+          whose name does not match its scope is never read by anything. That failed
+          silently: the policy reported Accepted, published an effective destination,
+          and bundles went to the platform's own storage as though it had never been
+          written. The two rules below make that object unadmittable rather than
+          merely ineffective.
         properties:
           apiVersion:
             description: |-
@@ -275,6 +283,16 @@ spec:
                 type: integer
             type: object
         type: object
+        x-kubernetes-validations:
+        - message: 'a tenant-scoped BackupPolicy must be named after the tenant it
+            applies to: metadata.name must equal spec.tenant, because that is the
+            name the operator reads it by'
+          rule: '!has(self.spec) || self.spec.scope != ''tenant'' || self.metadata.name
+            == self.spec.tenant'
+        - message: the cluster-scoped BackupPolicy is a singleton and must be named
+            'default', because that is the name the operator reads it by
+          rule: '!has(self.spec) || self.spec.scope != ''cluster'' || self.metadata.name
+            == ''default'''
     served: true
     storage: true
     subresources:

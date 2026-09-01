@@ -213,7 +213,17 @@ type BackupPolicyStatus struct {
 // mediates access by spec.tenant, and the credential itself is governed by the
 // OpenBao policy its scope selects.
 //
+// The name is not free. Every reader of a policy fetches it by name — the
+// cluster's as "default", a tenant's as the tenant's own name — so a policy
+// whose name does not match its scope is never read by anything. That failed
+// silently: the policy reported Accepted, published an effective destination,
+// and bundles went to the platform's own storage as though it had never been
+// written. The two rules below make that object unadmittable rather than
+// merely ineffective.
+//
 // +kubebuilder:object:root=true
+// +kubebuilder:validation:XValidation:rule="!has(self.spec) || self.spec.scope != 'tenant' || self.metadata.name == self.spec.tenant",message="a tenant-scoped BackupPolicy must be named after the tenant it applies to: metadata.name must equal spec.tenant, because that is the name the operator reads it by"
+// +kubebuilder:validation:XValidation:rule="!has(self.spec) || self.spec.scope != 'cluster' || self.metadata.name == 'default'",message="the cluster-scoped BackupPolicy is a singleton and must be named 'default', because that is the name the operator reads it by"
 // +kubebuilder:subresource:status
 // +kubebuilder:resource:scope=Cluster,shortName=bkpol
 // +kubebuilder:printcolumn:name="Scope",type=string,JSONPath=`.spec.scope`

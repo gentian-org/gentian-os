@@ -332,6 +332,10 @@ Scaffold the definition:
 ./install.sh --prepare-tenant acme
 ```
 
+Any name but `default`. A tenant's own `BackupPolicy` has to be named after the
+tenant, and `default` is reserved for the cluster-wide one — so a tenant called
+`default` could never have a backup policy of its own.
+
 A tenant is authored, then deployed. Two directories, and the difference
 matters:
 
