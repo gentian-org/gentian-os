@@ -23,6 +23,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
@@ -128,4 +129,64 @@ func TestAPolicyWithNoRequirementRecordedIsStillWoken(t *testing.T) {
 		t.Fatalf("enqueued %v, want the policy that has not recorded a "+
 			"requirement yet", reqs)
 	}
+}
+
+// The hot loop this closes: applyExternalSecret rewrote the object on every
+// pass whether or not anything had changed. ESO writes it too, so the two
+// raced; the loser got a conflict, the conflict was reported as a failed
+// policy, and writing that status woke the next reconcile — which conflicted
+// again. On corp the Accepted condition flipped between True/Accepted and
+// False/CredentialUnavailable about once a second, indefinitely.
+func TestSteadyStateWritesNothing(t *testing.T) {
+	s := runtime.NewScheme()
+	if err := clientgoscheme.AddToScheme(s); err != nil {
+		t.Fatalf("add client-go scheme: %v", err)
+	}
+	if err := gentianov1alpha1.AddToScheme(s); err != nil {
+		t.Fatalf("add gentian scheme: %v", err)
+	}
+	r := &BackupPolicyReconciler{
+		Client: fake.NewClientBuilder().WithScheme(s).Build(),
+		Scheme: s,
+	}
+	ctx := context.Background()
+	const vault = "gentian-os/tenants/corp/backup/destination"
+
+	if err := r.applyExternalSecret(ctx, "backup-destination-corp", kernelNamespace,
+		vault, "Owner", map[string]string{managedByLabel: managedByValue}); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	first := externalSecretVersion(t, r, "backup-destination-corp")
+
+	// A second pass with identical inputs is what a steady-state reconcile is.
+	if err := r.applyExternalSecret(ctx, "backup-destination-corp", kernelNamespace,
+		vault, "Owner", map[string]string{managedByLabel: managedByValue}); err != nil {
+		t.Fatalf("second pass: %v", err)
+	}
+	if second := externalSecretVersion(t, r, "backup-destination-corp"); second != first {
+		t.Errorf("an unchanged reconcile rewrote the ExternalSecret (%s -> %s); "+
+			"that write is what ESO raced and the race was reported as a broken policy",
+			first, second)
+	}
+
+	// A real change must still be written, or the object would never converge.
+	if err := r.applyExternalSecret(ctx, "backup-destination-corp", kernelNamespace,
+		"gentian-os/tenants/corp/backup/moved", "Owner",
+		map[string]string{managedByLabel: managedByValue}); err != nil {
+		t.Fatalf("changed pass: %v", err)
+	}
+	if changed := externalSecretVersion(t, r, "backup-destination-corp"); changed == first {
+		t.Error("a changed vault path was not written; the ExternalSecret would never converge")
+	}
+}
+
+func externalSecretVersion(t *testing.T, r *BackupPolicyReconciler, name string) string {
+	t.Helper()
+	es := &unstructured.Unstructured{}
+	es.SetGroupVersionKind(externalSecretGVK)
+	if err := r.Get(context.Background(),
+		types.NamespacedName{Name: name, Namespace: kernelNamespace}, es); err != nil {
+		t.Fatalf("get ExternalSecret: %v", err)
+	}
+	return es.GetResourceVersion()
 }

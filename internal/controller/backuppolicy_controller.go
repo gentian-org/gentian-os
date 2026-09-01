@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"strings"
 
+	"k8s.io/apimachinery/pkg/api/equality"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -98,6 +99,14 @@ func (r *BackupPolicyReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	// policy that will fail at 03:00, and the whole point of routing it
 	// through the credential manager is that the failure surfaces now.
 	if err := r.ensureDestinationCredential(ctx, policy); err != nil {
+		if apierrors.IsConflict(err) {
+			// Someone wrote the same object between our read and our write.
+			// That is an instruction to retry, not a policy an admin needs to
+			// fix, and reporting it as one is what made Accepted flip to False
+			// and back about once a second: each flip rewrote the status that
+			// woke the next reconcile, which conflicted again.
+			return ctrl.Result{Requeue: true}, nil
+		}
 		return r.failPolicy(ctx, policy, "CredentialUnavailable", err.Error())
 	}
 
@@ -224,6 +233,11 @@ func (r *BackupPolicyReconciler) ensureManagedSchedule(
 	case getErr != nil:
 		return getErr
 	}
+	if existing.Spec.Schedule == desired.Spec.Schedule &&
+		equality.Semantic.DeepEqual(existing.Spec.Retention, desired.Spec.Retention) &&
+		equality.Semantic.DeepEqual(existing.Labels, desired.Labels) {
+		return nil
+	}
 	existing.Spec.Schedule = desired.Spec.Schedule
 	existing.Spec.Retention = desired.Spec.Retention
 	existing.Labels = desired.Labels
@@ -340,6 +354,10 @@ func (r *BackupPolicyReconciler) ensureDestinationCredential(
 	case err != nil:
 		return err
 	default:
+		if equality.Semantic.DeepEqual(existing.Spec, desired.Spec) &&
+			equality.Semantic.DeepEqual(existing.Labels, desired.Labels) {
+			return nil
+		}
 		existing.Spec = desired.Spec
 		existing.Labels = desired.Labels
 		if err := r.Update(ctx, existing); err != nil {
@@ -442,6 +460,13 @@ func (r *BackupPolicyReconciler) applyExternalSecret(
 		return nil
 	case err != nil:
 		return err
+	}
+	// Only on a real difference. An unconditional Update here rewrote the
+	// object on every pass, and ESO writes it too: the two raced, the loser got
+	// a conflict, and the conflict was reported as a failed policy.
+	if equality.Semantic.DeepEqual(existing.Object["spec"], desired.Object["spec"]) &&
+		equality.Semantic.DeepEqual(existing.GetLabels(), desired.GetLabels()) {
+		return nil
 	}
 	desired.SetResourceVersion(existing.GetResourceVersion())
 	if err := r.Update(ctx, desired); err != nil {
