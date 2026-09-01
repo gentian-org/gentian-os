@@ -27,6 +27,21 @@ data:
     postgres:
       user: postgres
 
+    # initdb's own fsync pass over the fresh data directory ("syncing data
+    # to disk...") does one fsync() per file rather than one bulk write —
+    # confirmed on this cluster's nfs-csi: a single 50MB sequential
+    # write+fsync takes well under a second (104MB/s), but initdb still
+    # ran past a 10-minute startup probe stuck on that exact line, never
+    # reaching "syncing data to disk ... ok". That is NFS's known weak
+    # spot (many small synchronous round-trips, not bulk throughput), and
+    # no probe timeout fixes a per-call latency problem — it only waits
+    # longer for the same slow thing. --no-sync skips that pass; the data
+    # this cluster holds is disposable dev/test data recreated on every
+    # purge, so the durability that buys is not worth losing installs to.
+    extraEnvVars:
+      - name: POSTGRES_INITDB_ARGS
+        value: "--no-sync"
+
     # Runtime image — official Postgres 15 on Alpine
     image:
       registry: registry-1.docker.io
