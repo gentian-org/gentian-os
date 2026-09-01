@@ -131,14 +131,26 @@ func (r *TenantExportScheduleReconciler) Reconcile(ctx context.Context, req ctrl
 //
 // A schedule that has never run does not immediately fire: creating a backup
 // the moment someone declares a schedule would pause a tenant's apps as a side
-// effect of writing YAML.
+// effect of writing YAML. It waits for its first real window instead.
 func (r *TenantExportScheduleReconciler) dueAt(
 	spec cron.Schedule,
 	schedule *gentianov1alpha1.TenantExportSchedule,
 	now time.Time,
 ) (bool, time.Time) {
+	// A schedule that has never fired anchors on its own creation. Anchoring
+	// on LastScheduleTime alone deadlocks: that field is only ever written by
+	// a firing, so "never fired" stayed permanently not-due and the schedule
+	// republished a nextScheduleTime one night further out, for ever, without
+	// ever taking a backup. Creation is the honest anchor — the first window
+	// after someone declared the schedule is the first one they expected.
 	last := schedule.Status.LastScheduleTime
-	if last == nil {
+	if last == nil || last.IsZero() {
+		last = &schedule.CreationTimestamp
+	}
+	if last.IsZero() {
+		// No anchor at all, which means an object that never went through the
+		// API server. Decline this window and take the next, which is what a
+		// fresh creation does anyway.
 		return false, spec.Next(now.UTC())
 	}
 

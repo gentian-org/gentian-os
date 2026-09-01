@@ -50,10 +50,20 @@ func scheduleReconciler(t *testing.T, now time.Time, objs ...client.Object) *Ten
 	}
 }
 
+// scheduleCreated is when every fixture schedule was declared. Stated rather
+// than left zero because dueAt anchors a schedule that has never fired on its
+// own creation, so a zero timestamp would exercise a path no admitted object
+// ever takes.
+var scheduleCreated = time.Date(2026, 8, 18, 2, 0, 0, 0, time.UTC)
+
 func nightly(name string) *gentianov1alpha1.TenantExportSchedule {
 	return &gentianov1alpha1.TenantExportSchedule{
-		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: "tenant-demo"},
-		Spec:       gentianov1alpha1.TenantExportScheduleSpec{Schedule: "0 3 * * *"},
+		ObjectMeta: metav1.ObjectMeta{
+			Name:              name,
+			Namespace:         "tenant-demo",
+			CreationTimestamp: metav1.Time{Time: scheduleCreated},
+		},
+		Spec: gentianov1alpha1.TenantExportScheduleSpec{Schedule: "0 3 * * *"},
 	}
 }
 
@@ -82,8 +92,7 @@ func exportsIn(t *testing.T, r *TenantExportScheduleReconciler) []gentianov1alph
 // Declaring a schedule must not immediately take a backup: that would pause a
 // tenant's apps as a side effect of writing YAML.
 func TestNewScheduleDoesNotFireImmediately(t *testing.T) {
-	now := time.Date(2026, 8, 18, 3, 0, 0, 0, time.UTC)
-	r := scheduleReconciler(t, now, nightly("nightly"))
+	r := scheduleReconciler(t, scheduleCreated, nightly("nightly"))
 
 	out := reconcileSchedule(t, r, "nightly")
 
@@ -92,6 +101,39 @@ func TestNewScheduleDoesNotFireImmediately(t *testing.T) {
 	}
 	if out.Status.NextScheduleTime == nil {
 		t.Error("no next schedule time published")
+	}
+}
+
+// Waiting for the first window must not become waiting for ever. Because
+// LastScheduleTime is written only by a firing, anchoring on it alone let a
+// schedule that had never run decline every window and republish
+// nextScheduleTime a night further out indefinitely — a nightly backup that
+// reported itself Ready, never fired, and wrote nothing to its bucket.
+func TestFirstWindowFiresAfterTheNewScheduleHasWaited(t *testing.T) {
+	firstWindow := time.Date(2026, 8, 18, 3, 0, 0, 0, time.UTC)
+	r := scheduleReconciler(t, scheduleCreated, nightly("nightly"))
+
+	out := reconcileSchedule(t, r, "nightly")
+	if got := len(exportsIn(t, r)); got != 0 {
+		t.Fatalf("created %d export(s) at declaration time, want 0", got)
+	}
+	if out.Status.NextScheduleTime == nil || !out.Status.NextScheduleTime.Time.Equal(firstWindow) {
+		t.Fatalf("nextScheduleTime = %v, want %v", out.Status.NextScheduleTime, firstWindow)
+	}
+
+	// The window the schedule just published for itself arrives.
+	r.Now = func() time.Time { return firstWindow }
+	out = reconcileSchedule(t, r, "nightly")
+
+	if got := len(exportsIn(t, r)); got != 1 {
+		t.Fatalf("created %d export(s) at the first window, want 1", got)
+	}
+	if out.Status.LastScheduleTime == nil {
+		t.Error("lastScheduleTime not recorded; the next window would deadlock the same way")
+	}
+	next := time.Date(2026, 8, 19, 3, 0, 0, 0, time.UTC)
+	if out.Status.NextScheduleTime == nil || !out.Status.NextScheduleTime.Time.Equal(next) {
+		t.Errorf("nextScheduleTime = %v, want %v", out.Status.NextScheduleTime, next)
 	}
 }
 
