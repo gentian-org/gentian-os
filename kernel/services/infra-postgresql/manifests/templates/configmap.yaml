@@ -38,9 +38,24 @@ data:
     # longer for the same slow thing. --no-sync skips that pass; the data
     # this cluster holds is disposable dev/test data recreated on every
     # purge, so the durability that buys is not worth losing installs to.
+    # Without POSTGRES_HOST_AUTH_METHOD set, the official image's entrypoint
+    # never appends a "host all all all <method>" line to pg_hba.conf at
+    # all — initdb's own bare default only allows the Unix socket and
+    # 127.0.0.1/::1 (as `trust`, no password needed). Confirmed directly
+    # on a live pod: nothing in pg_hba.conf matched any pod-network address,
+    # so anything connecting from a different pod — Keycloak, and the
+    # job.users bootstrap Job that creates keycloak_user in the first
+    # place — was rejected before password auth was ever checked. This
+    # was never a startup race: a Job that can never connect doesn't
+    # recover with a longer timeout, it just fails slower, and every
+    # previous credential-looking symptom (missing role, stale password,
+    # missing pg_hba entry) was this one gap surfacing at whatever point
+    # startup happened to reach before something else killed it.
     extraEnvVars:
       - name: POSTGRES_INITDB_ARGS
         value: "--no-sync"
+      - name: POSTGRES_HOST_AUTH_METHOD
+        value: "scram-sha-256"
 
     # Runtime image — official Postgres 15 on Alpine
     image:
