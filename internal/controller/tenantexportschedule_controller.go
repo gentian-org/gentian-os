@@ -137,40 +137,67 @@ func (r *TenantExportScheduleReconciler) dueAt(
 	schedule *gentianov1alpha1.TenantExportSchedule,
 	now time.Time,
 ) (bool, time.Time) {
-	// A schedule that has never fired anchors on its own creation. Anchoring
-	// on LastScheduleTime alone deadlocks: that field is only ever written by
-	// a firing, so "never fired" stayed permanently not-due and the schedule
-	// republished a nextScheduleTime one night further out, for ever, without
-	// ever taking a backup. Creation is the honest anchor — the first window
-	// after someone declared the schedule is the first one they expected.
-	last := schedule.Status.LastScheduleTime
-	if last == nil || last.IsZero() {
-		last = &schedule.CreationTimestamp
-	}
-	if last.IsZero() {
+	// The anchor is the window this schedule last committed to, which is
+	// NextScheduleTime — written on every reconcile, so it advances whether the
+	// window was taken or skipped.
+	//
+	// Anchoring on something only a firing updates deadlocks, and has now done
+	// so twice. First on LastScheduleTime, written solely inside the branch
+	// that creates an export: never fired meant never due. Then on
+	// CreationTimestamp, which un-deadlocked the first window but pinned the
+	// anchor there for ever — miss that one window by more than
+	// scheduleMissedWindow and every later evaluation finds the same window a
+	// day staler, skips it, and publishes a next time one night further out.
+	// Both looked identical from outside: Ready, nightly, and no backup ever.
+	//
+	// What both versions lacked was somewhere to record a window that had been
+	// considered and declined. NextScheduleTime already is that record, and
+	// already says so — "when the next export is due".
+	//
+	// UTC explicitly, throughout. robfig/cron evaluates an expression in the
+	// location of the time it is given, so a timestamp that came back from the
+	// API in a local zone would shift every firing by that zone's offset —
+	// which is the "silently moves by an hour" failure the schedule field
+	// promises not to have.
+	var fireAt time.Time
+	switch {
+	case !isZeroTime(schedule.Status.NextScheduleTime):
+		fireAt = schedule.Status.NextScheduleTime.UTC()
+	case !isZeroTime(schedule.Status.LastScheduleTime):
+		// Fired before, but the next time is gone — suspended and resumed, or
+		// a status lost. Carry on from the last firing.
+		fireAt = spec.Next(schedule.Status.LastScheduleTime.UTC())
+	case !schedule.CreationTimestamp.IsZero():
+		// Never evaluated. The first window after someone declared the
+		// schedule is the first one they expected, and "does not fire
+		// immediately" still holds: spec.Next of the creation time is strictly
+		// after it.
+		fireAt = spec.Next(schedule.CreationTimestamp.UTC())
+	default:
 		// No anchor at all, which means an object that never went through the
 		// API server. Decline this window and take the next, which is what a
 		// fresh creation does anyway.
 		return false, spec.Next(now.UTC())
 	}
 
-	// UTC explicitly, on both sides. robfig/cron evaluates an expression in the
-	// location of the time it is given, so a timestamp that came back from the
-	// API in a local zone would shift every firing by that zone's offset —
-	// which is the "silently moves by an hour" failure the schedule field
-	// promises not to have.
-	fireAt := spec.Next(last.UTC())
 	if fireAt.After(now) {
 		return false, fireAt
 	}
 	// Missed while the operator was down. Take one export if the window is
 	// still recent, then resume the normal cadence — never a burst of catch-up
-	// backups whose contents would be identical.
+	// backups whose contents would be identical. Either way the caller
+	// republishes NextScheduleTime, which is what moves the anchor past a
+	// window that will not be taken.
 	if now.Sub(fireAt) > scheduleMissedWindow {
 		return false, spec.Next(now.UTC())
 	}
 	return true, spec.Next(now.UTC())
 }
+
+// isZeroTime reports whether an optional status timestamp carries no instant.
+// Nil and the zero value mean the same thing here and are wrong in the same
+// way — an anchor that would put every window in 0001.
+func isZeroTime(t *metav1.Time) bool { return t == nil || t.IsZero() }
 
 func (r *TenantExportScheduleReconciler) createExport(
 	ctx context.Context,

@@ -372,3 +372,47 @@ func TestQuiesceModeIsRecoveredFromTheStatusMessage(t *testing.T) {
 		}
 	}
 }
+
+// The failure this covers ran on a real cluster for two nights: a schedule
+// declared on 08-31, whose first window at 09-01 03:00 passed while the
+// operator was on an older image, then reported Ready and nextScheduleTime one
+// night further out every night, for ever, without taking a backup.
+//
+// The existing first-window test reconciles exactly at the window, where the
+// staleness is zero and inside scheduleMissedWindow. It therefore never
+// exercised a first evaluation that arrives late, which is the only way this
+// fails — and the reason two successive anchor fixes both looked correct.
+func TestAMissedFirstWindowIsSkippedOnceAndThenTheNextOneFires(t *testing.T) {
+	firstWindow := time.Date(2026, 8, 18, 3, 0, 0, 0, time.UTC)
+	// Nobody reconciles until long after the first window: more than a day, so
+	// far outside scheduleMissedWindow that it must be skipped rather than taken.
+	late := firstWindow.Add(26 * time.Hour)
+	r := scheduleReconciler(t, late, nightly("nightly"))
+
+	out := reconcileSchedule(t, r, "nightly")
+	if got := len(exportsIn(t, r)); got != 0 {
+		t.Fatalf("created %d export(s) for a window %s stale, want 0 — a backup "+
+			"that late is the burst the missed-window rule exists to prevent",
+			got, late.Sub(firstWindow))
+	}
+	// The anchor must have moved to the next window after now — 08-19 03:00 is
+	// already behind the late reconcile, so the one it can still keep is 08-20.
+	// Leaving it on the missed window is what made every later evaluation skip.
+	nextWindow := time.Date(2026, 8, 20, 3, 0, 0, 0, time.UTC)
+	if out.Status.NextScheduleTime == nil || !out.Status.NextScheduleTime.Time.Equal(nextWindow) {
+		t.Fatalf("nextScheduleTime = %v, want %v", out.Status.NextScheduleTime, nextWindow)
+	}
+
+	// The window it just committed to arrives, and this is the step that was
+	// never taken: the schedule must fire rather than skip again.
+	r.Now = func() time.Time { return nextWindow }
+	out = reconcileSchedule(t, r, "nightly")
+
+	if got := len(exportsIn(t, r)); got != 1 {
+		t.Fatalf("created %d export(s) at the window after the missed one, want 1 — "+
+			"the schedule is wedged and will never back anything up", got)
+	}
+	if out.Status.LastScheduleTime == nil {
+		t.Error("lastScheduleTime not recorded after firing")
+	}
+}
