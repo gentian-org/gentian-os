@@ -512,6 +512,12 @@ bootstrap_argocd_apps() {
         kubectl apply -f "${SCRIPT_DIR}/kernel/argocd/repos/ghcr-stakater.yaml"
         kubectl apply -f "${SCRIPT_DIR}/kernel/argocd/repos/ghcr-cloudnative-pg.yaml"
     fi
+    # Unconditional, unlike the chart claims: this covers the gentian-org git
+    # sources themselves (gentian-os, gentian-ui, gentian-apps), which every
+    # install fetches regardless of cluster-infra. The ExternalSecret syncs
+    # once OpenBao holds the deployments credential (B-10); until then Argo CD
+    # fetches anonymously, exactly as it always did during bootstrap.
+    kubectl apply -f "${SCRIPT_DIR}/kernel/argocd/repos/github-gentian-org-repocreds.yaml"
     success "Applied public chart repository claims."
 
     local apps=(openbao globals)
