@@ -512,8 +512,9 @@ runs both back to back, which is why they are listed together.
    must match what CI publishes — `docker/metadata-action` strips the `v`,
    so tag `vX.Y.Z` becomes image `:X.Y.Z`.
 2. Merge `develop` → `main`.
-3. Create an annotated tag `vX.Y.Z` on `main` whose message names what the
-   release contains.
+3. Write the release notes as `docs/releases/vX.Y.md` — what the release
+   contains, and what an operator must do differently after it. Create an
+   annotated tag `vX.Y.Z` on `main` whose message summarises them.
 4. Wait for CI on the tag. Its `docker` job publishes
    `ghcr.io/gentian-org/gentian-os:X.Y.Z` and `:X.Y`; nothing downstream can
    adopt the release until that lands.
