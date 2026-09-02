@@ -27,6 +27,7 @@ import (
 	networkingv1 "k8s.io/api/networking/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
+	"k8s.io/client-go/kubernetes"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
@@ -57,6 +58,20 @@ func init() {
 	utilruntime.Must(networkingv1.AddToScheme(scheme))
 	utilruntime.Must(gentianov1alpha1.AddToScheme(scheme))
 	utilruntime.Must(gatewayv1.Install(scheme))
+}
+
+// buildLogTailer gives the export loop a way to read a failed capture
+// container's output. A cluster that will not hand out a clientset is not a
+// reason to refuse to run: the operator starts without it and failures are
+// merely less explicit.
+func buildLogTailer(mgr ctrl.Manager) controller.PodLogTailer {
+	cs, err := kubernetes.NewForConfig(mgr.GetConfig())
+	if err != nil {
+		setupLog.Error(err, "no clientset for reading capture logs; "+
+			"capture failures will report that a Job failed but not why")
+		return nil
+	}
+	return controller.ClientsetLogTailer{Clientset: cs}
 }
 
 func main() {
@@ -271,6 +286,10 @@ func main() {
 		// cached PVC read is how an export comes to hold an app offline
 		// indefinitely with nothing in the log.
 		VolumeReader: mgr.GetAPIReader(),
+		// Logs are a subresource served as a stream, so they need a clientset
+		// rather than the manager's client. Nil is tolerated by the reconciler;
+		// a failure then reports that a Job failed and not why.
+		LogTailer: buildLogTailer(mgr),
 	}
 	if err := tenantExportReconciler.SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "TenantExport")

@@ -19,6 +19,7 @@ package controller
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	appsv1 "k8s.io/api/apps/v1"
@@ -911,5 +912,121 @@ func TestAFinishedExportTakesItsStagedSecretsWithIt(t *testing.T) {
 	}
 	if gone("nextcloud-db") {
 		t.Error("an unrelated Secret was deleted")
+	}
+}
+
+// fakeTailer stands in for the clientset. The reconciler suites have no
+// clientset, which is why reading logs is an interface at all.
+type fakeTailer struct {
+	out  map[string]string // container name -> log
+	err  error
+	seen []string
+}
+
+func (f *fakeTailer) Tail(_ context.Context, _, _, container string, _ int64) (string, error) {
+	f.seen = append(f.seen, container)
+	if f.err != nil {
+		return "", f.err
+	}
+	return f.out[container], nil
+}
+
+func failedPod(name, jobName string, initFailed, mainFailed string) *corev1.Pod {
+	pod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{
+		Name: name, Namespace: kernelNamespace,
+		Labels: map[string]string{"job-name": jobName},
+	}}
+	if initFailed != "" {
+		pod.Status.InitContainerStatuses = []corev1.ContainerStatus{
+			{Name: "dump", State: corev1.ContainerState{
+				Terminated: &corev1.ContainerStateTerminated{ExitCode: 0}}},
+			{Name: initFailed, LastTerminationState: corev1.ContainerState{
+				Terminated: &corev1.ContainerStateTerminated{ExitCode: 1}}},
+		}
+	}
+	if mainFailed != "" {
+		pod.Status.ContainerStatuses = []corev1.ContainerStatus{
+			{Name: mainFailed, State: corev1.ContainerState{
+				Terminated: &corev1.ContainerStateTerminated{ExitCode: 1}}},
+		}
+	}
+	return pod
+}
+
+// Three faults were reported in one evening as "capture did not succeed after 3
+// attempts", each naming an app that was working, because the only place the
+// reason existed was a pod deleted the moment the failure was counted.
+func TestACaptureFailureSaysWhatTheContainerSaid(t *testing.T) {
+	s := quiesceScheme(t)
+	if err := gentianov1alpha1.AddToScheme(s); err != nil {
+		t.Fatalf("add gentian scheme: %v", err)
+	}
+
+	pod := failedPod("tx-e-docmost-s3-abc", "tx-e-docmost-s3", "", "upload")
+	c := fake.NewClientBuilder().WithScheme(s).WithObjects(pod).Build()
+	tail := &fakeTailer{out: map[string]string{
+		"upload": "\nmc: <ERROR> Failed to copy `/work/bucket.tar.gz`.\n" +
+			"Insufficient permissions to access this path.\n\n",
+	}}
+	r := &TenantExportReconciler{Client: c, Scheme: s, LogTailer: tail}
+
+	got := r.captureFailureReason(context.Background(), kernelNamespace, "tx-e-docmost-s3")
+
+	if !strings.Contains(got, "Insufficient permissions") {
+		t.Fatalf("the container's error is missing from %q", got)
+	}
+	if !strings.Contains(got, "upload") {
+		t.Errorf("the failing container is not named in %q — which container failed is "+
+			"the difference between a destination problem and a source one", got)
+	}
+	if strings.Contains(got, "\n\n") {
+		t.Errorf("blank lines survived into a status field: %q", got)
+	}
+}
+
+// An init container that fails means the containers after it never ran. Reading
+// the later one's empty log would be a confident answer about nothing.
+func TestTheFirstFailedContainerIsTheOneReported(t *testing.T) {
+	s := quiesceScheme(t)
+	if err := gentianov1alpha1.AddToScheme(s); err != nil {
+		t.Fatalf("add gentian scheme: %v", err)
+	}
+
+	pod := failedPod("tx-e-docmost-s3-abc", "tx-e-docmost-s3", "fetch-bucket", "")
+	c := fake.NewClientBuilder().WithScheme(s).WithObjects(pod).Build()
+	tail := &fakeTailer{out: map[string]string{
+		"fetch-bucket": "mc: <ERROR> Unable to list folder. Access Denied.",
+	}}
+	r := &TenantExportReconciler{Client: c, Scheme: s, LogTailer: tail}
+
+	got := r.captureFailureReason(context.Background(), kernelNamespace, "tx-e-docmost-s3")
+
+	if !strings.Contains(got, "fetch-bucket") || !strings.Contains(got, "Access Denied") {
+		t.Fatalf("the failing init container was not reported: %q", got)
+	}
+	if len(tail.seen) != 1 || tail.seen[0] != "fetch-bucket" {
+		t.Errorf("read logs from %v, want only the container that failed", tail.seen)
+	}
+}
+
+// Collecting the diagnosis must never replace the failure being reported.
+func TestAnUnreadableLogIsNotItselfAFailure(t *testing.T) {
+	s := quiesceScheme(t)
+	if err := gentianov1alpha1.AddToScheme(s); err != nil {
+		t.Fatalf("add gentian scheme: %v", err)
+	}
+	pod := failedPod("p", "tx-e-x", "", "upload")
+	c := fake.NewClientBuilder().WithScheme(s).WithObjects(pod).Build()
+
+	r := &TenantExportReconciler{Client: c, Scheme: s,
+		LogTailer: &fakeTailer{err: errors.New("pod is gone")}}
+	if got := r.captureFailureReason(context.Background(), kernelNamespace, "tx-e-x"); got != "" {
+		t.Errorf("an unreadable log produced %q instead of nothing", got)
+	}
+
+	// And with no tailer at all, which is how every unit suite builds this.
+	r = &TenantExportReconciler{Client: c, Scheme: s}
+	if got := r.captureFailureReason(context.Background(), kernelNamespace, "tx-e-x"); got != "" {
+		t.Errorf("no tailer produced %q instead of nothing", got)
 	}
 }

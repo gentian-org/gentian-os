@@ -15,12 +15,18 @@
 # installs it panics before the first assertion, and on a cluster the type
 # simply stops being installable.
 #
-# This has happened twice on the same file, a day apart, and neither time was it
-# visible: `!= ''` and `!= ”` are one pixel apart in most fonts, the Go code
-# compiles either way, gofmt is happy either way, and vet has no opinion. What
-# caught it both times was an envtest panic several steps later — and the second
-# time it reached the branch, because the CRD in git was still stale and only
-# broke once someone regenerated it.
+# It is gofmt that writes it, which is why care was never going to be enough.
+# Go's doc-comment formatter renders a pair of straight single quotes as a
+# typographic one, the same way it renders a pair of backticks — and a marker is
+# a doc comment. So a CEL rule comparing against an empty string is rewritten
+# into a rule CEL cannot parse, by the formatter, every time it runs. Three
+# commits shipped that before the cause was understood; each surfaced as an
+# envtest panic several steps away, and one reached the branch because the CRD
+# in git was stale and only broke when someone regenerated it.
+#
+# The repair in the rule is to avoid the literal — size(x) > 0 rather than
+# x != empty — which is what api/v1alpha1/tenantexport_types.go now does. This
+# lint is the backstop for the next marker that reaches for a quote.
 #
 # WHAT IT CHECKS
 #

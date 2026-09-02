@@ -112,10 +112,18 @@ func (d *ExportDestination) ResolvedCredentialSource() ExportCredentialSource {
 // ExportDestination is where one export's bundle goes, when that should not be
 // what the policy says.
 //
-// +kubebuilder:validation:XValidation:rule="self.mode != 'custom' || (has(self.endpoint) && self.endpoint != '')",message="mode: custom requires an endpoint"
-// +kubebuilder:validation:XValidation:rule="self.mode != 'custom' || self.credentialSource != 'transient' || (has(self.credentialSecretRef) && self.credentialSecretRef != '')",message="credentialSource: transient requires credentialSecretRef"
-// +kubebuilder:validation:XValidation:rule="self.mode != 'custom' || self.credentialSource != 'managed' || !has(self.credentialSecretRef) || self.credentialSecretRef == ''",message="credentialSource: managed takes the workspace credential; credentialSecretRef belongs to transient"
-// +kubebuilder:validation:XValidation:rule="self.mode == 'custom' || ((!has(self.endpoint) || self.endpoint == '') && (!has(self.credentialSecretRef) || self.credentialSecretRef == '') && (!has(self.region) || self.region == ''))",message="endpoint, region and credentialSecretRef belong to mode: custom only"
+// The rules test emptiness with size() rather than comparing against an empty
+// string literal. Not style: gofmt rewrites a pair of straight single quotes
+// in a doc comment into a
+// typographic quote, the way it does for backticks, and a marker is a doc
+// comment. CEL has no such token, so the API server then refuses the whole CRD
+// — which happened three times before the cause was understood, each time
+// surfacing as an envtest panic several steps away.
+//
+// +kubebuilder:validation:XValidation:rule="self.mode != 'custom' || (has(self.endpoint) && size(self.endpoint) > 0)",message="mode: custom requires an endpoint"
+// +kubebuilder:validation:XValidation:rule="self.mode != 'custom' || self.credentialSource != 'transient' || (has(self.credentialSecretRef) && size(self.credentialSecretRef) > 0)",message="credentialSource: transient requires credentialSecretRef"
+// +kubebuilder:validation:XValidation:rule="self.mode != 'custom' || self.credentialSource != 'managed' || !has(self.credentialSecretRef) || size(self.credentialSecretRef) == 0",message="credentialSource: managed takes the workspace credential; credentialSecretRef belongs to transient"
+// +kubebuilder:validation:XValidation:rule="self.mode == 'custom' || ((!has(self.endpoint) || size(self.endpoint) == 0) && (!has(self.credentialSecretRef) || size(self.credentialSecretRef) == 0) && (!has(self.region) || size(self.region) == 0))",message="endpoint, region and credentialSecretRef belong to mode: custom only"
 type ExportDestination struct {
 	// Mode selects between the policy's answer, the platform's own storage,
 	// and an endpoint named here.
@@ -445,6 +453,22 @@ type AppExportStatus struct {
 	// Message explains a non-terminal or failed state.
 	// +optional
 	Message string `json:"message,omitempty"`
+
+	// LastFailure is what the capture container actually said, from the last
+	// attempt that failed.
+	//
+	// Without it a capture failure reads "did not succeed after 3 attempts",
+	// names a Job, and stops — while the reason sits in a pod that was deleted
+	// the moment the failure was counted. Three separate faults were reported
+	// that way in one evening: an object storage key with no permissions, a key
+	// that had been deleted at the provider, and a source bucket read aimed at
+	// the wrong system. Each named an app that was working, and each needed the
+	// request reproduced by hand to find out anything at all.
+	//
+	// Captured before the Job is deleted, because after that there is nothing
+	// left to read.
+	// +optional
+	LastFailure string `json:"lastFailure,omitempty"`
 }
 
 // TenantExport captures one tenant's data into an encrypted bundle.

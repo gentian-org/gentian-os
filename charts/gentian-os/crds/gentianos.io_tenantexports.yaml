@@ -142,22 +142,22 @@ spec:
                 type: object
                 x-kubernetes-validations:
                 - message: 'mode: custom requires an endpoint'
-                  rule: self.mode != 'custom' || (has(self.endpoint) && self.endpoint
-                    != '')
+                  rule: self.mode != 'custom' || (has(self.endpoint) && size(self.endpoint)
+                    > 0)
                 - message: 'credentialSource: transient requires credentialSecretRef'
                   rule: self.mode != 'custom' || self.credentialSource != 'transient'
-                    || (has(self.credentialSecretRef) && self.credentialSecretRef
-                    != '')
+                    || (has(self.credentialSecretRef) && size(self.credentialSecretRef)
+                    > 0)
                 - message: 'credentialSource: managed takes the workspace credential;
                     credentialSecretRef belongs to transient'
                   rule: self.mode != 'custom' || self.credentialSource != 'managed'
-                    || !has(self.credentialSecretRef) || self.credentialSecretRef
-                    == ''
+                    || !has(self.credentialSecretRef) || size(self.credentialSecretRef)
+                    == 0
                 - message: 'endpoint, region and credentialSecretRef belong to mode:
                     custom only'
-                  rule: self.mode == 'custom' || ((!has(self.endpoint) || self.endpoint
-                    == '') && (!has(self.credentialSecretRef) || self.credentialSecretRef
-                    == '') && (!has(self.region) || self.region == ''))
+                  rule: self.mode == 'custom' || ((!has(self.endpoint) || size(self.endpoint)
+                    == 0) && (!has(self.credentialSecretRef) || size(self.credentialSecretRef)
+                    == 0) && (!has(self.region) || size(self.region) == 0))
               encryption:
                 description: |-
                   Encryption selects how the bundle is protected. Omitting it uses the
@@ -251,6 +251,22 @@ spec:
                         type: string
                       type: array
                       x-kubernetes-list-type: atomic
+                    lastFailure:
+                      description: |-
+                        LastFailure is what the capture container actually said, from the last
+                        attempt that failed.
+
+                        Without it a capture failure reads "did not succeed after 3 attempts",
+                        names a Job, and stops — while the reason sits in a pod that was deleted
+                        the moment the failure was counted. Three separate faults were reported
+                        that way in one evening: an object storage key with no permissions, a key
+                        that had been deleted at the provider, and a source bucket read aimed at
+                        the wrong system. Each named an app that was working, and each needed the
+                        request reproduced by hand to find out anything at all.
+
+                        Captured before the Job is deleted, because after that there is nothing
+                        left to read.
+                      type: string
                     message:
                       description: Message explains a non-terminal or failed state.
                       type: string

@@ -93,6 +93,12 @@ type TenantExportReconciler struct {
 	// suites build with and is correct there, since a fake client has no
 	// informer to wedge.
 	VolumeReader client.Reader
+
+	// LogTailer reads a failed capture container's output, so a failure can say
+	// what went wrong rather than only that it did. Optional: nil keeps the old
+	// behaviour, which the unit suites rely on and which is merely less useful,
+	// not incorrect.
+	LogTailer PodLogTailer
 }
 
 // +kubebuilder:rbac:groups=gentianos.io,resources=tenantexports,verbs=get;list;watch;create;update;patch;delete
@@ -109,6 +115,11 @@ type TenantExportReconciler struct {
 // No watch: nothing reads this type through the manager's cache, and after
 // appVolumes stopped doing so, granting it would only invite the read back.
 // +kubebuilder:rbac:groups="",resources=persistentvolumeclaims,verbs=get;list;delete
+
+// pods/log, to read why a capture container failed. Without it a failure can
+// report that a Job did not succeed and nothing about why, while the reason
+// sits in a pod deleted moments later.
+// +kubebuilder:rbac:groups="",resources=pods/log,verbs=get
 
 func (r *TenantExportReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	logger := log.FromContext(ctx).WithName("tenantexport")
@@ -306,9 +317,14 @@ func (r *TenantExportReconciler) captureApp(
 
 	if !allDone {
 		if entry.Attempts > exportMaxAttempts {
-			return r.failApp(ctx, export, tenant, appName,
-				fmt.Sprintf("capture did not succeed after %d attempts (last waiting on %s)",
-					entry.Attempts, strings.Join(pending, ", ")))
+			why := fmt.Sprintf("capture did not succeed after %d attempts (last waiting on %s)",
+				entry.Attempts, strings.Join(pending, ", "))
+			// What the container said, when it said anything. The Job name alone
+			// sends someone to a pod that no longer exists.
+			if entry.LastFailure != "" {
+				why = fmt.Sprintf("%s — %s", why, entry.LastFailure)
+			}
+			return r.failApp(ctx, export, tenant, appName, why)
 		}
 		// Name what is outstanding. An export sitting at Running with an app
 		// paused is the situation an operator most needs to diagnose, and
@@ -507,6 +523,11 @@ func (r *TenantExportReconciler) ensureCaptureJob(
 		return true, nil
 	}
 	if jobIsFailed(existing) {
+		// Read why before deleting. The pods go with the Job, and they are the
+		// only place the reason exists — after this there is nothing to ask.
+		if reason := r.captureFailureReason(ctx, unit.Job.Namespace, unit.JobName); reason != "" {
+			entry.LastFailure = reason
+		}
 		// Count the failure against the app, then delete so the next pass can
 		// retry — bounded by exportMaxAttempts, unlike the provisioning waiter.
 		entry.Attempts++
