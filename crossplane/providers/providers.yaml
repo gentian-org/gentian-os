@@ -115,6 +115,35 @@ spec:
   serviceAccountTemplate:
     metadata:
       name: provider-helm
+  deploymentTemplate:
+    spec:
+      # The schema requires a selector once deploymentTemplate.spec is set.
+      # vault-config below pins the revision hash here, which goes stale on
+      # every provider version bump; the provider label is on every
+      # revision's pods and stays true across bumps.
+      selector:
+        matchLabels:
+          pkg.crossplane.io/provider: provider-helm
+      template:
+        metadata:
+          labels:
+            pkg.crossplane.io/provider: provider-helm
+        spec:
+          containers:
+            - name: package-runtime
+              args:
+                # provider-helm's --timeout defaults to 10m and is a hard
+                # kill: "Controls how long helm commands may run before they
+                # are killed." Our Release waitTimeouts go to 20m
+                # (infra-data postgresql/mariadb), so a slow first install
+                # was killed mid-Create — after external-create-pending was
+                # stamped and before any outcome could be recorded, which the
+                # dead context then made unrecordable. Every such Release
+                # surfaced as "cannot determine creation result", cleared
+                # only by hand, on every cold install, with nothing in any
+                # log naming this flag. Keep this above the longest
+                # waitTimeout any composition sets, with headroom.
+                - --timeout=30m
 ---
 apiVersion: pkg.crossplane.io/v1beta1
 kind: DeploymentRuntimeConfig
