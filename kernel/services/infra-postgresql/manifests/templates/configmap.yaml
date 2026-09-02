@@ -108,8 +108,17 @@ data:
     # where in that window it landed, when it was really the same
     # interruption each time. Widening only startupProbe left this gap
     # open.
+    # 120, not 60: a measured first boot on this class of cluster took ~11.5
+    # minutes (initdb + image init scripts under a cold-install I/O storm on
+    # nfs-csi), and a 10m15s budget killed the container ~40s before it
+    # finished — which also failed the Helm wait, which skipped the
+    # post-install hook that creates every application role, which left
+    # Keycloak crash-looping against "password authentication failed" on a
+    # healthy database with no hook ever coming. Twenty minutes of headroom
+    # costs nothing on the common path; the probe stops succeeding-fast the
+    # moment the server answers.
     startupProbe:
-      failureThreshold: 60
+      failureThreshold: 120
     livenessProbe:
       failureThreshold: 60
     readinessProbe:

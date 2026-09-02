@@ -52,7 +52,7 @@ spec:
         namespace: gentian-infra-dev
         optional: false
     wait: true
-    waitTimeout: 10m
+    waitTimeout: 20m
   providerConfigRef:
     name: kubernetes
 ---
@@ -140,7 +140,7 @@ spec:
         namespace: gentian-infra-dev
         optional: false
     wait: true
-    waitTimeout: 10m
+    waitTimeout: 20m
   providerConfigRef:
     name: kubernetes
 ---

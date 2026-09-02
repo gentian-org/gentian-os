@@ -69,7 +69,7 @@ spec:
                 # idempotent and safe to give more room; a release that
                 # finishes in 90s on the common path costs nothing extra by
                 # having a longer ceiling.
-                waitTimeout: "10m"
+                waitTimeout: "20m"
                 valuesFrom:
                   - configMapKeyRef:
                       name: postgresql-base-values
@@ -111,7 +111,7 @@ spec:
                 # own root-password bootstrap was still racing the release's
                 # overall wait, so the readiness probe never agreed with the
                 # password actually set.
-                waitTimeout: "10m"
+                waitTimeout: "20m"
                 valuesFrom:
                   - configMapKeyRef:
                       name: mariadb-base-values
