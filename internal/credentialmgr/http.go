@@ -548,6 +548,11 @@ func (s *Server) handleSet(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Stored is not the same as in use. Everything that reads this path is told
+	// to read it again now, rather than at the end of a refresh interval it
+	// cannot see. See refreshConsumers for the failure that motivates it.
+	s.refreshConsumers(r.Context(), req.VaultPath)
+
 	// Metadata only in the response, as everywhere else.
 	writeJSON(w, http.StatusOK, map[string]any{
 		"name":      name,
