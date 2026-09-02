@@ -143,7 +143,10 @@ func (r *TenantExportReconciler) Reconcile(ctx context.Context, req ctrl.Request
 		if err := r.resumeAll(ctx, export, tenantName); err != nil {
 			return ctrl.Result{}, err
 		}
-		return ctrl.Result{}, r.discardPassphrase(ctx, export)
+		if err := r.discardPassphrase(ctx, export); err != nil {
+			return ctrl.Result{}, err
+		}
+		return ctrl.Result{}, r.discardDestinationCredential(ctx, export)
 	}
 
 	tenant := &gentianov1alpha1.Tenant{}
@@ -177,6 +180,10 @@ func (r *TenantExportReconciler) Reconcile(ctx context.Context, req ctrl.Request
 		if effErr != nil {
 			return r.fail(ctx, export, "PolicyUnusable", effErr.Error())
 		}
+		// The export's own choice, applied over the policy. Recorded on the
+		// bundle like everything else here, so a restore reads where this
+		// bundle actually went rather than where the policy points today.
+		eff = backup.ApplyExportDestination(eff, export.Spec.Destination, tenant)
 		export.Status.Bundle = &gentianov1alpha1.BundleRef{
 			Bucket:           eff.Bucket,
 			Prefix:           export.Name,
@@ -197,6 +204,13 @@ func (r *TenantExportReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	encryption, err := r.resolveEncryption(ctx, export)
 	if err != nil {
 		return r.fail(ctx, export, "EncryptionUnavailable", err.Error())
+	}
+
+	// Before any capture, for the reason encryption is: finding out mid-run
+	// that the destination cannot be authenticated leaves an app paused and a
+	// bundle half written.
+	if err := r.stageDestinationCredential(ctx, export); err != nil {
+		return r.fail(ctx, export, "DestinationUnavailable", err.Error())
 	}
 	recordEncryption(export, encryption)
 
@@ -703,6 +717,7 @@ func (r *TenantExportReconciler) finalize(
 	// Best effort, as on the failure path: staged Secrets are transient state
 	// and must not be able to block deletion.
 	_ = r.discardPassphrase(ctx, export)
+	_ = r.discardDestinationCredential(ctx, export)
 	_ = r.discardVolumeUploadSecret(ctx, export)
 
 	// Outstanding capture Jobs upload into the very prefix being deleted;
@@ -906,6 +921,7 @@ func (r *TenantExportReconciler) fail(
 	// Best effort: a failure to tidy the staged secrets must not mask the
 	// failure being reported, but they are still attempted on the way out.
 	_ = r.discardPassphrase(ctx, export)
+	_ = r.discardDestinationCredential(ctx, export)
 	_ = r.discardVolumeUploadSecret(ctx, export)
 	export.Status.Phase = gentianov1alpha1.TenantExportPhaseFailed
 	export.Status.CompletedAt = ptrNow()

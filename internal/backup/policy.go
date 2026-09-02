@@ -101,6 +101,50 @@ type Effective struct {
 // PlatformStorage reports whether bundles go to the platform's own MinIO.
 func (e Effective) PlatformStorage() bool { return e.Endpoint == "" }
 
+// ApplyExportDestination narrows a resolved policy to what one export asked
+// for.
+//
+// Applied after ResolveEffective rather than inside it, because the policy is
+// the standing arrangement and this is one export's departure from it. Keeping
+// them separate is what lets status report both: what the policy says, and
+// what this bundle actually did.
+func ApplyExportDestination(
+	eff Effective,
+	d *gentianov1alpha1.ExportDestination,
+	tenant *gentianov1alpha1.Tenant,
+) Effective {
+	switch d.Resolved() {
+	case gentianov1alpha1.ExportDestinationPlatform:
+		// Everything that addresses somewhere else is cleared together. Half a
+		// destination -- an external endpoint with the platform's credential,
+		// say -- addresses no storage that exists.
+		eff.Endpoint, eff.Region = "", ""
+		eff.CredentialName, eff.CredentialSecret = "", ""
+		eff.Bucket = BackupBucket(tenant)
+		eff.Overridden = true
+
+	case gentianov1alpha1.ExportDestinationCustom:
+		eff.Endpoint, eff.Region = d.Endpoint, d.Region
+		// No CredentialName: a requirement is a standing arrangement someone
+		// administers and rotates, and these keys are used once. The Secret is
+		// staged beside the capture Jobs and discarded with the export.
+		eff.CredentialName = ""
+		eff.CredentialSecret = ExportCredentialSecretName(d.CredentialSecretRef)
+		if d.Bucket != "" {
+			eff.Bucket = d.Bucket
+		}
+		eff.Overridden = true
+	}
+	return eff
+}
+
+// ExportCredentialSecretName is the staged copy's name, beside the capture
+// Jobs. Derived from the export rather than the requester's Secret name, so a
+// tenant cannot aim it at a Secret in the kernel namespace it does not own.
+func ExportCredentialSecretName(exportName string) string {
+	return "tenant-export-destination-" + exportName
+}
+
 // ResolveEffective merges the cluster policy with a tenant's own.
 //
 // A tenant policy is refused rather than silently ignored when the cluster

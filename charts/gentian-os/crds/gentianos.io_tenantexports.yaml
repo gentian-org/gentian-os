@@ -71,6 +71,67 @@ spec:
                 items:
                   type: string
                 type: array
+              destination:
+                description: |-
+                  Destination overrides where this one bundle is written. Omitting it
+                  follows the tenant's BackupPolicy, which is what scheduled exports do
+                  and what keeps a manual backup beside the nightly ones.
+                properties:
+                  bucket:
+                    description: |-
+                      Bucket holds the bundle. Empty keeps the tenant's default bucket name,
+                      which is the right answer for mode: platform and usually wrong for a
+                      bucket someone else created.
+                    maxLength: 63
+                    pattern: ^$|^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$
+                    type: string
+                  credentialSecretRef:
+                    description: |-
+                      CredentialSecretRef names a Secret in the tenant's namespace holding
+                      accessKey and secretKey for this endpoint. Required by mode: custom.
+
+                      A reference rather than the keys themselves, for the reason the
+                      passphrase is a reference: a spec is readable by anyone who can read the
+                      resource, and object storage keys in a manifest are keys in every
+                      backup of etcd.
+                    maxLength: 253
+                    type: string
+                  endpoint:
+                    description: |-
+                      Endpoint is the S3 API URL for mode: custom, e.g.
+                      https://sos-ch-dk-2.exo.io. A scheme is required: "s3.example.org" is
+                      ambiguous about TLS, and a backup silently sent in plaintext is worse
+                      than one that fails.
+                    maxLength: 2048
+                    pattern: ^$|^https?://[^\s/]+(/.*)?$
+                    type: string
+                  mode:
+                    default: policy
+                    description: |-
+                      Mode selects between the policy's answer, the platform's own storage,
+                      and an endpoint named here.
+                    enum:
+                    - policy
+                    - platform
+                    - custom
+                    type: string
+                  region:
+                    description: |-
+                      Region, for providers that require one — Exoscale SOS and AWS do,
+                      MinIO does not.
+                    maxLength: 64
+                    type: string
+                type: object
+                x-kubernetes-validations:
+                - message: 'mode: custom requires both endpoint and credentialSecretRef'
+                  rule: self.mode != 'custom' || (has(self.endpoint) && self.endpoint
+                    != '' && has(self.credentialSecretRef) && self.credentialSecretRef
+                    != '')
+                - message: 'endpoint, region and credentialSecretRef belong to mode:
+                    custom only'
+                  rule: self.mode == 'custom' || ((!has(self.endpoint) || self.endpoint
+                    == '') && (!has(self.credentialSecretRef) || self.credentialSecretRef
+                    == '') && (!has(self.region) || self.region == ''))
               encryption:
                 description: |-
                   Encryption selects how the bundle is protected. Omitting it uses the

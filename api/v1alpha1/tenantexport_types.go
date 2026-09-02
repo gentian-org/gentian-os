@@ -46,6 +46,97 @@ type TenantExportSpec struct {
 	// wants; there is no way to ask for no encryption at all.
 	// +optional
 	Encryption *ExportEncryption `json:"encryption,omitempty"`
+
+	// Destination overrides where this one bundle is written. Omitting it
+	// follows the tenant's BackupPolicy, which is what scheduled exports do
+	// and what keeps a manual backup beside the nightly ones.
+	// +optional
+	Destination *ExportDestination `json:"destination,omitempty"`
+}
+
+// ExportDestinationMode selects where one export's bundle is written.
+// +kubebuilder:validation:Enum=policy;platform;custom
+type ExportDestinationMode string
+
+const (
+	// ExportDestinationPolicy writes wherever the tenant's BackupPolicy
+	// resolves to. The default, and the only mode a scheduled export uses:
+	// a nightly backup has nobody present to choose anything else.
+	ExportDestinationPolicy ExportDestinationMode = "policy"
+
+	// ExportDestinationPlatform writes to the platform's own storage whatever
+	// the policy says. It is the mode for a backup taken just before a risky
+	// change, where the point is a copy within reach rather than a copy that
+	// survives the cluster.
+	//
+	// Worth being clear about what it is not: storage that shares a disk with
+	// the data it protects is not disaster recovery, which is why it is not
+	// the default and why the policy exists.
+	ExportDestinationPlatform ExportDestinationMode = "platform"
+
+	// ExportDestinationCustom writes to an endpoint named on this export,
+	// authenticated with keys supplied alongside it.
+	//
+	// The keys are per-export and deliberately not a CredentialRequirement:
+	// a requirement is a standing arrangement someone administers, and this
+	// is a destination used once. They are staged beside the capture Jobs the
+	// way a passphrase is, and discarded with the export.
+	ExportDestinationCustom ExportDestinationMode = "custom"
+)
+
+// ExportDestination is where one export's bundle goes, when that should not be
+// what the policy says.
+//
+// +kubebuilder:validation:XValidation:rule="self.mode != 'custom' || (has(self.endpoint) && self.endpoint != '' && has(self.credentialSecretRef) && self.credentialSecretRef != '')",message="mode: custom requires both endpoint and credentialSecretRef"
+// +kubebuilder:validation:XValidation:rule="self.mode == 'custom' || ((!has(self.endpoint) || self.endpoint == '') && (!has(self.credentialSecretRef) || self.credentialSecretRef == '') && (!has(self.region) || self.region == ''))",message="endpoint, region and credentialSecretRef belong to mode: custom only"
+type ExportDestination struct {
+	// Mode selects between the policy's answer, the platform's own storage,
+	// and an endpoint named here.
+	// +kubebuilder:default=policy
+	Mode ExportDestinationMode `json:"mode,omitempty"`
+
+	// Endpoint is the S3 API URL for mode: custom, e.g.
+	// https://sos-ch-dk-2.exo.io. A scheme is required: "s3.example.org" is
+	// ambiguous about TLS, and a backup silently sent in plaintext is worse
+	// than one that fails.
+	// +optional
+	// +kubebuilder:validation:MaxLength=2048
+	// +kubebuilder:validation:Pattern=`^$|^https?://[^\s/]+(/.*)?$`
+	Endpoint string `json:"endpoint,omitempty"`
+
+	// Bucket holds the bundle. Empty keeps the tenant's default bucket name,
+	// which is the right answer for mode: platform and usually wrong for a
+	// bucket someone else created.
+	// +optional
+	// +kubebuilder:validation:MaxLength=63
+	// +kubebuilder:validation:Pattern=`^$|^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$`
+	Bucket string `json:"bucket,omitempty"`
+
+	// Region, for providers that require one — Exoscale SOS and AWS do,
+	// MinIO does not.
+	// +optional
+	// +kubebuilder:validation:MaxLength=64
+	Region string `json:"region,omitempty"`
+
+	// CredentialSecretRef names a Secret in the tenant's namespace holding
+	// accessKey and secretKey for this endpoint. Required by mode: custom.
+	//
+	// A reference rather than the keys themselves, for the reason the
+	// passphrase is a reference: a spec is readable by anyone who can read the
+	// resource, and object storage keys in a manifest are keys in every
+	// backup of etcd.
+	// +optional
+	// +kubebuilder:validation:MaxLength=253
+	CredentialSecretRef string `json:"credentialSecretRef,omitempty"`
+}
+
+// Resolved reports the mode in force, treating an unstated destination as the
+// policy's.
+func (d *ExportDestination) Resolved() ExportDestinationMode {
+	if d == nil || d.Mode == "" {
+		return ExportDestinationPolicy
+	}
+	return d.Mode
 }
 
 // ExportEncryptionMode selects who is able to decrypt a bundle.
