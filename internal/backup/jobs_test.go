@@ -654,3 +654,79 @@ func TestPlatformStorageStillReadsItsEndpointFromTheSecret(t *testing.T) {
 	}
 	t.Fatal("no MINIO_ENDPOINT in the upload container")
 }
+
+// An app's bucket lives in the platform's own MinIO. The bundle may not, and
+// the two are the same system only when bundles go to platform storage.
+//
+// Sharing the destination's credentials for the source read sent fetch-bucket
+// looking for the tenant's bucket in someone else's account. It failed before a
+// byte was captured, and reported "capture did not succeed after 3 attempts"
+// against an app that was fine. It stayed hidden for as long as every bundle
+// went to the same MinIO the apps use.
+func TestBucketCaptureReadsTheSourceFromPlatformStorage(t *testing.T) {
+	p := JobParams{
+		Namespace: "platform-kernel",
+		Name:      "tx-demo-docmost-s3",
+		Tenant:    "demo",
+		App:       "docmost-ce",
+		Export:    "demo-export",
+		// An external bundle destination: a different system entirely.
+		Bucket:                  "bigbucket",
+		Prefix:                  "demo-export",
+		Endpoint:                "https://sos-ch-dk-2.exo.io",
+		Region:                  "ch-dk-2",
+		UploadCredentialsSecret: "backup-destination-demo",
+	}
+	job := S3ArchiveJob(p, "demo-docmost-ce")
+
+	var fetch *corev1.Container
+	for i := range job.Spec.Template.Spec.InitContainers {
+		if job.Spec.Template.Spec.InitContainers[i].Name == "fetch-bucket" {
+			fetch = &job.Spec.Template.Spec.InitContainers[i]
+		}
+	}
+	if fetch == nil {
+		t.Fatal("no fetch-bucket container")
+	}
+
+	for _, env := range fetch.Env {
+		if env.Name == "MINIO_ENDPOINT" {
+			if env.Value == p.Endpoint {
+				t.Fatalf("the source read is aimed at the bundle destination (%s); the "+
+					"app's bucket is not there", env.Value)
+			}
+			if env.ValueFrom == nil || env.ValueFrom.SecretKeyRef == nil ||
+				env.ValueFrom.SecretKeyRef.Name != MinIOAdminSecret {
+				t.Errorf("MINIO_ENDPOINT does not come from %s: %+v", MinIOAdminSecret, env)
+			}
+		}
+		if env.Name == "MINIO_ACCESS_KEY" {
+			if env.ValueFrom == nil || env.ValueFrom.SecretKeyRef == nil ||
+				env.ValueFrom.SecretKeyRef.Name != MinIOAdminSecret {
+				t.Errorf("the source read uses the destination's keys, not the "+
+					"platform's: %+v", env)
+			}
+		}
+	}
+
+	// The upload half must still address the destination, or the bundle would
+	// be written back into the platform's own storage.
+	var upload *corev1.Container
+	for i := range job.Spec.Template.Spec.Containers {
+		if job.Spec.Template.Spec.Containers[i].Name == "upload" {
+			upload = &job.Spec.Template.Spec.Containers[i]
+		}
+	}
+	if upload == nil {
+		t.Fatal("no upload container")
+	}
+	var sawDestination bool
+	for _, env := range upload.Env {
+		if env.Name == "MINIO_ENDPOINT" && env.Value == p.Endpoint {
+			sawDestination = true
+		}
+	}
+	if !sawDestination {
+		t.Error("the upload no longer addresses the external destination")
+	}
+}

@@ -230,18 +230,28 @@ echo "archived %s"`, workDir, excludes.String(), claim)},
 // put each object back under the name the app's database refers to.
 func S3ArchiveJob(p JobParams, sourceBucket string) *batchv1.Job {
 	artefact := "s3/" + sourceBucket + ".tar.gz"
+	// The app's bucket is in the platform's own MinIO, always — it is where the
+	// app writes. The bundle may be somewhere else entirely, and the two are the
+	// same system only when bundles go to platform storage.
+	//
+	// Sharing bundleEnv here pointed the source read at the destination: with an
+	// external bundle store this went looking for the tenant's bucket in someone
+	// else's account, and failed in fetch-bucket before a byte was captured. It
+	// worked for as long as it did because every bundle went to the same MinIO
+	// the apps use, which made one set of credentials look like enough for both.
+	// The restore path already carries this distinction; capture did not.
 	fetch := corev1.Container{
 		Name:    "fetch-bucket",
 		Image:   mcImage,
 		Command: []string{"/bin/sh", "-c"},
 		Args: []string{fmt.Sprintf(`set -eu
-mc alias set gentian "${MINIO_ENDPOINT}" "${MINIO_ACCESS_KEY}" "${MINIO_SECRET_KEY}"
+mc alias set platform "${MINIO_ENDPOINT}" "${MINIO_ACCESS_KEY}" "${MINIO_SECRET_KEY}"
 mkdir -p %[1]s/bucket
 # An empty bucket is normal (an app may never have written), so mirror into a
 # directory that already exists and let the pack step archive it empty too.
-mc mirror --preserve "gentian/%[2]s" %[1]s/bucket
+mc mirror --preserve "platform/%[2]s" %[1]s/bucket
 echo "fetched bucket %[2]s"`, workDir, sourceBucket)},
-		Env:          bundleEnv(p),
+		Env:          PlatformStorageEnv(),
 		VolumeMounts: []corev1.VolumeMount{{Name: "work", MountPath: workDir}},
 	}
 	// A separate container because the mc image has no tar.
