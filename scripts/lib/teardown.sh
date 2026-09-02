@@ -15,16 +15,51 @@ GENTIAN_TEARDOWN_LOADED=1
 _delete_provider_config() {
     local resource="$1"   # e.g. providerconfig.kubernetes.crossplane.io/kubernetes
     local label="$2"
-    if kubectl get "${resource}" >/dev/null 2>&1; then
-        # Strip the usage finalizer explicitly first, then delete without waiting.
-        kubectl patch "${resource}" \
-            --type=json -p='[{"op":"remove","path":"/metadata/finalizers"}]' \
-            2>/dev/null || true
-        kubectl delete "${resource}" --ignore-not-found=true --wait=false 2>/dev/null || true
-        success "  ProviderConfig ${label} removed."
-    else
+    local group usages u deadline
+    if ! kubectl get "${resource}" >/dev/null 2>&1; then
         info "  ProviderConfig ${label} not found or CRD absent; skipping."
+        return 0
     fi
+
+    # This used to strip the finalizers once, delete --wait=false, and print
+    # "removed" — a lie whenever the provider was still running: the in-use
+    # finalizer belongs to the provider's usage tracker, which re-adds it as
+    # long as any ProviderConfigUsage references this config. The object then
+    # sat Terminating, destroy() went on to delete the provider — the only
+    # controller that could ever finish the job — and the corpse survived the
+    # purge indefinitely. A reinstall four hours later applied "over" it,
+    # passed its exists-check, and lost the object minutes later when the old
+    # deletion finally completed. So: kill the usages (the actual finalizer
+    # holders) and confirm this object is GONE, here, while the provider is
+    # still alive — order is what makes this terminate.
+    group="${resource%%/*}"
+    group="${group#providerconfig.}"
+    usages="providerconfigusages.${group}"
+
+    kubectl delete "${resource}" --ignore-not-found=true --wait=false 2>/dev/null || true
+
+    deadline=$(( SECONDS + 60 ))
+    while kubectl get "${resource}" >/dev/null 2>&1; do
+        if (( SECONDS >= deadline )); then
+            warn "  ProviderConfig ${label} is STILL Terminating after 60s. Left like"
+            warn "  this it outlives the purge, and the next install's ProviderConfig"
+            warn "  vanishes mid-run when the pending deletion finally completes."
+            warn "    kubectl get ${resource} -o yaml    # see what holds the finalizers"
+            return 1
+        fi
+        # Every round, not once: the provider re-adds the finalizer while any
+        # usage exists, so a single strip is a race it can win. Usages are
+        # pure tracking objects — deleting them is the documented escape
+        # hatch, and in a purge every config of this group is going anyway.
+        while IFS= read -r u; do
+            [[ -n "${u}" ]] || continue
+            kubectl patch "${u}" --type=merge -p='{"metadata":{"finalizers":[]}}' 2>/dev/null || true
+            kubectl delete "${u}" --ignore-not-found=true --wait=false 2>/dev/null || true
+        done <<< "$(kubectl get "${usages}" -o name 2>/dev/null || true)"
+        kubectl patch "${resource}" --type=merge -p='{"metadata":{"finalizers":[]}}' 2>/dev/null || true
+        sleep 2
+    done
+    success "  ProviderConfig ${label} removed."
 }
 
 # Explicitly delete all provider-installed CRDs.  When providers are removed
@@ -82,13 +117,24 @@ _delete_crossplane_crds() {
         fi
 
         if (( SECONDS > deadline )); then
-            warn "Some Crossplane/Upbound CRDs still remain after 180s."
+            # Not a shrug: whatever is Terminating here has no controller left
+            # to finish it, so it survives the purge as-is, and the next
+            # install inherits it — applying "over" a Terminating object
+            # passes every exists-check and then loses the object when the
+            # old deletion completes. That exact sequence cost a full install
+            # once. Name the corpses so the operator can see them before the
+            # next run does.
+            error "Crossplane/Upbound CRDs still Terminating after 180s — the purge is"
+            error "leaving them behind, and the next install WILL collide with them:"
             while IFS= read -r crd; do
                 [[ -z "${crd}" ]] && continue
+                error "    ${crd}"
                 kubectl patch crd "${crd}" \
                     --type=merge -p='{"metadata":{"finalizers":[]}}' \
                     2>/dev/null || true
             done <<< "${left}"
+            error "  Inspect with: kubectl get crd <name> -o yaml (finalizers), and"
+            error "  re-run the purge once they are gone."
             break
         fi
         sleep 3
