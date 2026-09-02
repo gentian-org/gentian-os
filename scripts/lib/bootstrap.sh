@@ -1697,7 +1697,12 @@ install_llm_serving() {
     || warn "llm-sensitive-values not yet Ready — it will sync when OpenBao is available."
 
     # No team sync here: the TenantReconciler owns per-tenant LiteLLM Teams.
-    ensure_litellm_vllm_model || warn "LiteLLM vLLM model sync failed — retry with ./install.sh --step D-05-llm-serving."
+    if ensure_litellm_vllm_model; then :; elif [[ $? -eq 2 ]]; then
+        info "LiteLLM model sync continues in-cluster — the Job retries until the proxy"
+        info "  finishes its cold start, and E-02 verifies the result. No action needed."
+    else
+        warn "LiteLLM vLLM model sync failed — retry with ./install.sh --step D-05-llm-serving."
+    fi
 
     success "LLM serving stack deployment complete."
 }

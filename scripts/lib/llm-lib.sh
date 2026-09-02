@@ -200,14 +200,18 @@ _wait_for_job() {
         error "  ${job} failed (${failed} failed pod(s), retry budget spent)."
         return 1
     fi
+    # 2, not 1: still-in-flight and definitively-failed are different answers,
+    # and the callers word their reports from them — "failed — retry" over a
+    # Job that went on to complete minutes later is how a healthy cold start
+    # kept reading as a broken one.
     active="$(kubectl get "job/${job}" -n "${ns}" -o jsonpath='{.status.active}' 2>/dev/null || echo 0)"
     if [[ "${active:-0}" -ge 1 || "${failed:-0}" -ge 1 ]]; then
         warn "  ${job} is still retrying after ${timeout} (${failed:-0} failed pod(s) so far); not waiting further."
         warn "  It keeps running in-cluster: kubectl get job ${job} -n ${ns}"
-        return 1
+        return 2
     fi
     warn "  ${job} is still running after ${timeout}; not waiting further."
-    return 1
+    return 2
 }
 
 ensure_litellm_vllm_model() {
@@ -373,6 +377,14 @@ EOF
     if _wait_for_job "${job_name}" "${ns}" 720s; then
         kubectl logs -n "${ns}" "job/${job_name}" --tail=30 2>/dev/null || true
         success "LiteLLM model registrations synced."
+    elif [[ $? -eq 2 ]]; then
+        # Not a failure: the LLM stack's cold start (its own database's
+        # initdb, then the proxy's migrations) genuinely outlasts this wait
+        # on a fresh cluster, and the Job's in-script polling carries the
+        # sync home once the proxy answers — observed completing ~10 minutes
+        # after this point, every cold install. E-02 re-runs the sync anyway.
+        kubectl logs -n "${ns}" "job/${job_name}" --tail=15 2>/dev/null || true
+        return 2
     else
         warn "LiteLLM model sync did not complete."
         kubectl logs -n "${ns}" "job/${job_name}" --tail=30 2>/dev/null || true

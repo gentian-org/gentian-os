@@ -43,7 +43,11 @@ apply() {
     fi
 
     ensure_litellm_sso_secret >/dev/null || warn "LiteLLM SSO secret reconciliation failed."
-    ensure_litellm_vllm_model || warn "LiteLLM vLLM model sync failed."
+    if ensure_litellm_vllm_model; then :; elif [[ $? -eq 2 ]]; then
+        info "LiteLLM model sync continues in-cluster; the Job retries until the proxy answers."
+    else
+        warn "LiteLLM vLLM model sync failed."
+    fi
 }
 
 # No destroy(): LiteLLM's database goes when the LiteLLM release goes, and that
