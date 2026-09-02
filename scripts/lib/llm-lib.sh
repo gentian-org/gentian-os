@@ -181,15 +181,29 @@ _wait_for_job() {
         error "  ${job} does not exist in ${ns}."
         return 1
     fi
-    local succeeded failed
+    local succeeded failed job_failed active
     succeeded="$(kubectl get "job/${job}" -n "${ns}" -o jsonpath='{.status.succeeded}' 2>/dev/null || echo 0)"
     failed="$(kubectl get "job/${job}" -n "${ns}" -o jsonpath='{.status.failed}' 2>/dev/null || echo 0)"
     if [[ "${succeeded:-0}" -ge 1 ]]; then
         info "  ${job} completed after the ${timeout} wait expired."
         return 0
     fi
-    if [[ "${failed:-0}" -ge 1 ]]; then
-        error "  ${job} failed (${failed} failed pod(s))."
+    # failed>=1 alone is not a verdict: it counts pods, and a Job whose first
+    # pod exhausted its in-script wait retries with a fresh pod under its
+    # backoffLimit. Reporting "failed" here while pod #2 was mid-poll is
+    # exactly how a sync that went on to register its model got announced as
+    # an install error. The Job has failed only when its Failed condition
+    # says so — backoffLimit spent.
+    job_failed="$(kubectl get "job/${job}" -n "${ns}" \
+        -o jsonpath='{.status.conditions[?(@.type=="Failed")].status}' 2>/dev/null || echo "")"
+    if [[ "${job_failed}" == "True" ]]; then
+        error "  ${job} failed (${failed} failed pod(s), retry budget spent)."
+        return 1
+    fi
+    active="$(kubectl get "job/${job}" -n "${ns}" -o jsonpath='{.status.active}' 2>/dev/null || echo 0)"
+    if [[ "${active:-0}" -ge 1 || "${failed:-0}" -ge 1 ]]; then
+        warn "  ${job} is still retrying after ${timeout} (${failed:-0} failed pod(s) so far); not waiting further."
+        warn "  It keeps running in-cluster: kubectl get job ${job} -n ${ns}"
         return 1
     fi
     warn "  ${job} is still running after ${timeout}; not waiting further."
