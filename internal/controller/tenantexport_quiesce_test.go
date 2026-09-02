@@ -856,3 +856,60 @@ func TestTenantTeardownKeepsTheBundle(t *testing.T) {
 		})
 	}
 }
+
+// Nine passphrase Secrets sat in tenant-corp against one surviving export,
+// because only the copy beside the capture Jobs was ever removed. Each held a
+// live passphrase for a bundle that in most cases no longer existed — material
+// the platform was asked to hold for the length of one backup.
+//
+// It also made a name unreusable: the console offers a name derived from the
+// clock, so a retry inside the same minute proposed the same one, found the
+// leftover, and failed.
+func TestAFinishedExportTakesItsStagedSecretsWithIt(t *testing.T) {
+	s := quiesceScheme(t)
+	if err := gentianov1alpha1.AddToScheme(s); err != nil {
+		t.Fatalf("add gentian scheme: %v", err)
+	}
+
+	export := &gentianov1alpha1.TenantExport{
+		ObjectMeta: metav1.ObjectMeta{Name: "export-x", Namespace: "tenant-demo"},
+	}
+	staged := func(name, namespace, forExport string) *corev1.Secret {
+		return &corev1.Secret{ObjectMeta: metav1.ObjectMeta{
+			Name: name, Namespace: namespace,
+			Labels: map[string]string{backup.ExportLabel: forExport},
+		}}
+	}
+	mine := staged("tenant-export-passphrase-export-x", "tenant-demo", "export-x")
+	myKeys := staged("tenant-export-destination-keys-export-x", "tenant-demo", "export-x")
+	// A concurrent export's material, and an unrelated Secret. Neither is ours.
+	theirs := staged("tenant-export-passphrase-export-y", "tenant-demo", "export-y")
+	unrelated := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{
+		Name: "nextcloud-db", Namespace: "tenant-demo"}}
+
+	c := fake.NewClientBuilder().WithScheme(s).
+		WithObjects(export, mine, myKeys, theirs, unrelated).Build()
+	r := &TenantExportReconciler{Client: c, Scheme: s}
+
+	if err := r.discardPassphrase(context.Background(), export); err != nil {
+		t.Fatalf("discardPassphrase: %v", err)
+	}
+
+	gone := func(name string) bool {
+		err := c.Get(context.Background(),
+			types.NamespacedName{Name: name, Namespace: "tenant-demo"}, &corev1.Secret{})
+		return apierrors.IsNotFound(err)
+	}
+	if !gone("tenant-export-passphrase-export-x") {
+		t.Error("the passphrase this export was given is still in the tenant namespace")
+	}
+	if !gone("tenant-export-destination-keys-export-x") {
+		t.Error("one-off destination keys outlived the export that was given them")
+	}
+	if gone("tenant-export-passphrase-export-y") {
+		t.Error("another export's passphrase was deleted; a concurrent export would lose its key")
+	}
+	if gone("nextcloud-db") {
+		t.Error("an unrelated Secret was deleted")
+	}
+}

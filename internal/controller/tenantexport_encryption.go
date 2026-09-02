@@ -26,6 +26,7 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 	"github.com/gentian-org/gentian-os/internal/backup"
@@ -182,6 +183,42 @@ func (r *TenantExportReconciler) discardPassphrase(
 	}
 	if err := r.Delete(ctx, secret); err != nil && !apierrors.IsNotFound(err) {
 		return err
+	}
+	return r.discardExportSecretsIn(ctx, export.Namespace, export.Name)
+}
+
+// discardExportSecretsIn removes the Secrets a requester staged for one export
+// in the tenant's own namespace — the passphrase, and any one-off destination
+// keys.
+//
+// Only the copies beside the capture Jobs used to be removed, so the originals
+// accumulated: nine passphrase Secrets sat in tenant-corp against a single
+// surviving export, each holding a live passphrase for a bundle that in most
+// cases no longer existed. Every one of them is material the platform was asked
+// to hold for the length of one backup.
+//
+// It also made a name unreusable. The console offers a name derived from the
+// clock, so a retry within the same minute proposes the same one, found the
+// leftover, and failed — which is how this surfaced.
+//
+// Selected by label rather than by name so a Secret whose name convention
+// changes is still collected, and scoped to this export so a concurrent one
+// keeps its own.
+func (r *TenantExportReconciler) discardExportSecretsIn(
+	ctx context.Context,
+	namespace, exportName string,
+) error {
+	secrets := &corev1.SecretList{}
+	if err := r.List(ctx, secrets,
+		client.InNamespace(namespace),
+		client.MatchingLabels{backup.ExportLabel: exportName},
+	); err != nil {
+		return fmt.Errorf("list staged Secrets for export %s: %w", exportName, err)
+	}
+	for i := range secrets.Items {
+		if err := r.Delete(ctx, &secrets.Items[i]); err != nil && !apierrors.IsNotFound(err) {
+			return err
+		}
 	}
 	return nil
 }
