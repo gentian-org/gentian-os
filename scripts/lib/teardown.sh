@@ -497,7 +497,7 @@ _strip_and_delete_one() {
     local kind="$1" ns="$2" name="$3"
     [[ -n "${name}" ]] || return 0
     # Branching rather than an array of flags: bash 3.2 errors on an empty
-    # array expansion under `set -u`, and macOS ships 3.2 (docs/plans §7).
+    # array expansion under `set -u`, and macOS ships 3.2.
     if [[ -n "${ns}" ]]; then
         kubectl patch "${kind}" "${name}" -n "${ns}" \
             --type=merge -p='{"metadata":{"finalizers":[]}}' 2>/dev/null || true

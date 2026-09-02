@@ -174,7 +174,7 @@ _env_var_for() {
 # before prompting, and deleted the moment OpenBao holds the values, at which
 # point it carries nothing OpenBao does not already have. It is a plain file
 # with 0600 in a 0700 directory, because a cache that removed prompting while
-# staying encrypted would need its key beside it — see docs/plans §2, surface 3.
+# staying encrypted would need its key beside it.
 #
 # Set GENTIAN_NO_CREDENTIAL_CACHE=1 to keep credentials in the process only.
 # =============================================================================

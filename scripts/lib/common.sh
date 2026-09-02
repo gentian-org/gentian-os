@@ -1494,7 +1494,7 @@ _is_testnet_ip() {
 # leftover state. Kyverno's MutatingWebhookConfiguration/ValidatingWebhookConfiguration
 # objects are cluster-scoped and survive a `kubectl delete namespace kyverno`
 # (or any teardown that doesn't go through Kyverno's own Helm uninstall hooks,
-# e.g. a manual/partial teardown outside install.sh/uninstall.sh). Kyverno's
+# e.g. a manual/partial teardown outside install.sh). Kyverno's
 # webhooks fail-closed by default, so an orphaned one with no backing service
 # blocks ALL matching resource creation cluster-wide — including Crossplane's
 # own pods, before Kyverno is ever reinstalled later in the sequence.
@@ -2107,7 +2107,8 @@ gentian_kernel_namespaces() {
 # gentian_cluster_claim_name — the Cluster claim's metadata.name for THIS cluster
 #
 # The name used to be the literal "dev-cluster" everywhere: the scaffolder wrote
-# it, and install.sh/uninstall.sh looked the object up by that same literal. That
+# it, and the installer looked the object up by that same literal, in both
+# directions. That
 # is plainly wrong on any cluster that is not the original dev one — a prod
 # cluster ends up owning a claim called "dev-cluster" — but it also cannot simply
 # be recomputed, because clusters provisioned under the old name have a live

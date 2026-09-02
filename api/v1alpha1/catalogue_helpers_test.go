@@ -169,12 +169,12 @@ func TestResolveProfileReference_ByIdentity(t *testing.T) {
 	}
 }
 
-// TestEffectiveDeploymentRoleAddonAlias locks in the migration alias: "module" is
-// the pre-cleanup spelling of "addon" and must normalise to Addon, so callers only
-// ever compare against one value and the catalogue can migrate profile-by-profile
-// instead of in a flag day.
-func TestEffectiveDeploymentRoleAddonAlias(t *testing.T) {
-	for _, annotation := range []string{"addon", "module", "Addon", " module "} {
+// TestEffectiveDeploymentRoleNormalises locks in the case and whitespace handling:
+// the annotation is written by hand in a catalogue repo, so "Addon" and a stray
+// space must resolve like "addon" rather than falling through to Standalone —
+// which would silently deploy an addon as its own app.
+func TestEffectiveDeploymentRoleNormalises(t *testing.T) {
+	for _, annotation := range []string{"addon", "Addon", " addon ", "ADDON"} {
 		p := &v1alpha1.AppProfile{}
 		p.Annotations = map[string]string{v1alpha1.AnnotationProfileDeploymentRole: annotation}
 		if got := v1alpha1.EffectiveDeploymentRole(p); got != v1alpha1.ProfileDeploymentRoleAddon {

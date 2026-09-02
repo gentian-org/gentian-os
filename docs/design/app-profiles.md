@@ -116,14 +116,13 @@ Resolution order: portal tile `tile` → profile `tile` → catalogue default `a
 
 ### 6.2 Catalogue integration
 
-Built from `gentian-ui/design-system/tiles/` (Lucide glyphs + Gentian frame).
-Embedded in the operator at `internal/tiles/catalogue.json`.
+Authored in `gentian-ui/frontend/public/tiles/` (Lucide glyphs + Gentian
+frame), where `catalogue.json` sits beside the SVGs it indexes. The operator
+carries its own copy at `internal/tiles/catalogue.json`.
 
-Rebuild and sync:
-
-```bash
-gentian-ui/design-system/tiles/scripts/sync-consumers.sh
-```
+The two are kept in step by hand — nothing generates or checks either one — so
+a tile added on one side has to be copied to the other, and the copies have
+drifted before.
 
 ### 6.3 CRD
 

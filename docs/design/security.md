@@ -477,7 +477,7 @@ App-level credentials are **not** pre-computed at cluster install time.
 They are created on demand when a tenant first installs an app. The
 closed list of per-app credentials previously hardcoded in
 `seed-openbao.sh` and `install.sh` is replaced by this on-demand
-provisioning (see [iam-restructure.md](../iam-restructure.md) §7).
+provisioning.
 
 ## 7. Write-Once Protection
 

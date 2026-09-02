@@ -7,12 +7,13 @@
 | Version | 18.6.1 (app 7.2.3) |
 | Source | `oci://registry-1.docker.io/bitnamicharts/redis:18.6.1` |
 | Package repo | `charts/infra/packages/` — regenerate with `scripts/tools/publish-infra-charts.sh` |
-| Runtime images | Overridden in `kernel/services/redis/values/_base.yaml` (`docker.io/bitnamilegacy/redis`) |
+| Runtime images | Overridden in `kernel/services/infra-redis/manifests/templates/configmap.yaml` (`docker.io/bitnamilegacy/redis`) |
 | Licence | Apache-2.0 (chart) |
 
 Deployed by InfraData Crossplane XR (`crossplane/compositions/infra-data.yaml`).
 Helm values and ESO secrets are in `kernel/services/infra-redis/`.
-Values layering source: `kernel/services/redis/values/` (sync into infra-redis ConfigMaps when changed).
+Values reach the `Release` through `kernel/services/infra-redis/manifests/`, which
+is the only place they are written.
 
 Re-vendor:
 

@@ -161,6 +161,6 @@ if (( contradictions > 0 )); then
 fi
 echo "${YELLOW}${total} shell default(s) for claim-backed settings, all restating the schema.${NC}"
 echo "Each is a second opinion on a value the Cluster XRD already answers."
-echo "The number must only go down — see docs/plans/config-and-credential-cleanup.md §10c."
+echo "The number must only go down: crossplane/xrds/cluster.yaml is the answer."
 (( STRICT )) && { echo "${RED}--strict: failing.${NC}"; exit 1; }
 exit 0

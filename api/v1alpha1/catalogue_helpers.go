@@ -159,9 +159,7 @@ func EffectiveDeploymentRole(p *AppProfile) ProfileDeploymentRole {
 	switch strings.ToLower(strings.TrimSpace(p.Annotations[AnnotationProfileDeploymentRole])) {
 	case string(ProfileDeploymentRoleBase):
 		return ProfileDeploymentRoleBase
-	// "module" is the deprecated spelling of "addon" and normalises to it, so callers
-	// only ever compare against Addon and the catalogue can migrate incrementally.
-	case string(ProfileDeploymentRoleAddon), string(ProfileDeploymentRoleModule):
+	case string(ProfileDeploymentRoleAddon):
 		return ProfileDeploymentRoleAddon
 	default:
 		return ProfileDeploymentRoleStandalone

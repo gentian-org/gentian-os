@@ -49,7 +49,7 @@ destroy() {
     # Guarded on the CRD as well as fully qualified: with the CRD absent every
     # call below is an error, and the loops would run for nothing.
     if kubectl get crd apps.gentianos.io >/dev/null 2>&1; then
-        # `while read` rather than mapfile: macOS ships bash 3.2 (docs/plans §7).
+        # `while read` rather than mapfile: macOS ships bash 3.2, which has neither.
         kubectl get tenants.gentianos.io --no-headers -o custom-columns='NAME:.metadata.name' 2>/dev/null |
             grep -v '^$' | while IFS= read -r tenant; do
                 info "Deleting App CRs for tenant ${tenant}..."

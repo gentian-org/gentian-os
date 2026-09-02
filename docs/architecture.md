@@ -152,9 +152,9 @@ Observing Crossplane's work and aggregating it into `Tenant.status` is not a fif
 operator being a controller. Eighteen `ensure*` steps provision nothing and exist only to wait and
 report.
 
-This is a boundary, not a description of how far a migration got. Where the two disagree — Keycloak
-Jobs that predate `provider-keycloak`, for instance — the boundary is right and the code has not
-caught up. See [plans/tenant-composition-cleanup.md](plans/tenant-composition-cleanup.md).
+This is a boundary, not a description of how far a migration got. Where the two disagree, the
+boundary is right and the code has not caught up — a Job that survives is only correct if one of
+the four reasons above names it.
 
 **The same rule applies to installer steps.** `scripts/steps/*` is the same question asked at
 bootstrap time instead of tenant-onboarding time: a step that only applies a manifest belongs in an
@@ -435,7 +435,7 @@ Gentian OS sidesteps most browser CORS restrictions by design:
   the app's server, not at a JS `fetch()`.
 - **Cross-origin API calls** that the Gentian shell will make on behalf of the
   browser may be declared in `spec.browserProxy` (see [roadmap.md](roadmap.md)
-  and [gentian-ui/gentian-ui-architecture.md](../../gentian-ui/gentian-ui-architecture.md)):
+  and [gentian-ui/docs/architecture.md](../../gentian-ui/docs/architecture.md)):
   proxy paths under `/api/apps/{name}/…` with forwarded bearer tokens. This is
   not required for apps whose UI only talks to its own origin.
 

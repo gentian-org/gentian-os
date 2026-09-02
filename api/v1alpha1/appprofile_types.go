@@ -1070,7 +1070,7 @@ type AppSidecarSpec struct {
 //
 // Schedule, retention, encryption and destination are deliberately absent: they
 // are platform and tenant policy, and an app author must not be able to weaken
-// them. See docs/plans/backup-plan.md §5.
+// them.
 type BackupSpec struct {
 	// Quiesce controls how writes are paused while the app is captured.
 	// +optional

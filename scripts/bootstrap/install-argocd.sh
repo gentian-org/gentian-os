@@ -27,7 +27,8 @@ echo "Installing ArgoCD ${ARGOCD_VERSION}..."
 if kubectl get namespace "${ARGOCD_NAMESPACE}" --request-timeout=5s \
         -o jsonpath='{.status.phase}' 2>/dev/null | grep -q "Terminating"; then
     echo "Namespace ${ARGOCD_NAMESPACE} is Terminating — force-finalizing..."
-    # Same force-finalize pattern as uninstall.sh: clear spec.finalizers so the
+    # Same force-finalize pattern scripts/lib/teardown.sh uses: clear
+    # spec.finalizers so the
     # API server removes the namespace immediately without waiting for GC.
     kubectl get namespace "${ARGOCD_NAMESPACE}" -o json --request-timeout=10s 2>/dev/null \
         | jq '.spec.finalizers=[]' \

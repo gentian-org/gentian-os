@@ -98,9 +98,9 @@ apply() {
     # Bootstrap only. install_crossplane_providers applies a *named* subset of
     # compositions (cluster-default, the app set, tenant-default). This globs the
     # whole directory, so a composition added to the repo is picked up without being
-    # added to a second list — the divergence that made update.sh's
-    # op_crossplane_update necessary in the first place. Re-applying the named
-    # ones is idempotent.
+    # added to a second list. Keeping two lists in step by hand is what made a
+    # separate update path necessary before this step converged. Re-applying the
+    # named ones is idempotent.
     apply_crossplane_platform_compositions_update
 }
 

@@ -18,8 +18,6 @@ ignore: |
   kernel/manifests/*/chart/templates/
   kernel/bootstrap/chart/templates/
   charts/infra/
-  repo-seeds/**/chart/templates/
-  repo-seeds/gentian-apps/profiles/
   kernel/manifests/flux-crds/
   crossplane/compositions/
   crossplane/tests/unit/render/**/composition.yaml

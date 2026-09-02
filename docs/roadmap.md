@@ -349,8 +349,7 @@ The realm script still creates the kernel-realm broker client. That client is
 `Observe`-only in the Composition by design — `writeConnectionSecretToRef`
 republishes its secret without rotating it, which is what lets the IdP take
 credentials from a Secret — so something has to create it, and on a realm that
-does not exist yet that something cannot be the Composition. See
-docs/plans/tenant-composition-cleanup.md §8.
+does not exist yet that something cannot be the Composition.
 
 ### 1.28 Tenant Separation Belongs to the API Server, Not the Console (***)
 * **Target Domain**: Security & Isolation
@@ -459,8 +458,8 @@ docs/plans/tenant-composition-cleanup.md §8.
 
   Whether that credential exists is runtime state in a Secret, and a Composition
   can neither read a Secret nor render a block conditional on one. Under the
-  boundary in docs/plans/tenant-composition-cleanup.md §6a that is discovery,
-  which is the operator's — so the Job is correct rather than unfinished.
+  boundary in [architecture.md](architecture.md) §3 that is discovery, which is
+  the operator's — so the Job is correct rather than unfinished.
   `ensureTenantSMTPJob` already skips cleanly when no credential is supplied,
   which is why no such Job runs on ifk-w4h at all.
 * **The user profile moved.** It looked like it could not: declaring it means
@@ -530,7 +529,7 @@ docs/plans/tenant-composition-cleanup.md §8.
 
 ### 2.1 Keycloak Provider & Crossplane Consolidation (*)
 * **Target Domain**: Platform Infrastructure
-* **Context**: Keycloak realms and OIDC clients were managed through a mix of Crossplane resources and manifest-bridge bootstrap Jobs, which splits configuration state and makes drift hard to see. **In progress** — the working record, including what each step verified and what it cost, is [plans/tenant-composition-cleanup.md](plans/tenant-composition-cleanup.md).
+* **Context**: Keycloak realms and OIDC clients were managed through a mix of Crossplane resources and manifest-bridge bootstrap Jobs, which splits configuration state and makes drift hard to see. **In progress** — v0.4 moved the tenant realm, its flows, the reverse broker and the OIDC packs onto `provider-keycloak`; the backlog below records what is left and what stays a Job by design.
 * **The stated precondition is met.** This item waited on "upstream provider versions supporting browser-flow tuning and broker integration". `provider-keycloak` v2.19.0 is installed and healthy and ships both: `flows`, `subflows`, `executions`, `executionconfigs` and `bindings` for authentication flows, and `identityproviders` plus `identityprovidermappers` for brokering. Adoption of existing objects also works — a `Client` or `Realm` carrying `crossplane.io/external-name` set to its natural key adopts what is already there rather than creating a duplicate, verified read-only against the live realm and both portal clients — so migrating an existing tenant needs no per-tenant import step.
 * **Proposed Solution**: Move the tenant's Keycloak objects to `provider-keycloak` Managed Resources one Job at a time, adopting rather than recreating, and retire each Job only once its objects are seen to adopt without changing anything.
 * **Backlog Items**:

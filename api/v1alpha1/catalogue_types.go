@@ -78,9 +78,6 @@ const (
 	// for this across all apps; upstream may call them modules (Odoo) or apps
 	// (Nextcloud), but that is their vocabulary, not ours.
 	ProfileDeploymentRoleAddon ProfileDeploymentRole = "addon"
-	// ProfileDeploymentRoleModule is the pre-cleanup spelling of Addon, still accepted
-	// on input so the catalogue can migrate without a flag day. Deprecated: use Addon.
-	ProfileDeploymentRoleModule ProfileDeploymentRole = "module"
 )
 
 // Default catalogue values applied when fields are omitted on legacy profiles.

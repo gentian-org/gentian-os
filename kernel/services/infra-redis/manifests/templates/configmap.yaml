@@ -1,7 +1,7 @@
 # Shared kernel Redis — plain values ConfigMaps
 #
 # Merged by the InfraData Crossplane composition (provider-helm valuesFrom).
-# Source of truth: kernel/values/env/{env}.yaml + kernel/services/redis/values/
+# Source of truth: kernel/values/env/{env}.yaml and this template.
 ---
 apiVersion: v1
 kind: ConfigMap

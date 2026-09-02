@@ -1,5 +1,0 @@
-# UNTESTED — reference values for a future Dovecot Helm chart.
-image: dovecot/dovecot:2.3.21
-service:
-  lmtpPort: 24
-  imapPort: 143

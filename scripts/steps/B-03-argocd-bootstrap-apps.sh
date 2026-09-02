@@ -6,7 +6,7 @@
 # mutates: ArgoCD Applications in argocd
 
 # OpenBao is deployed BY ArgoCD rather than by this installer, which is what
-# keeps it inside drift detection (docs/plans §1, invariant 1).
+# keeps it inside drift detection: what Argo CD deploys, Argo CD also reports on.
 
 # _bootstrap_app_object_name <template> — the Application this template creates.
 #

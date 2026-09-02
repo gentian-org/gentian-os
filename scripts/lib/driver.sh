@@ -53,7 +53,7 @@ GENTIAN_DRIVER_LOADED=1
 GENTIAN_STEPS_DIR="${GENTIAN_STEPS_DIR:-${SCRIPT_DIR}/scripts/steps}"
 
 # Driver state. Parallel arrays rather than associative arrays: macOS ships
-# bash 3.2, which has no `declare -A` (see docs/plans §7, portability).
+# bash 3.2, which has no `declare -A`.
 _STEP_IDS=()
 _STEP_FILES=()
 

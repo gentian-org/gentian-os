@@ -233,7 +233,8 @@ def validate(catalogue):
             if name != "master-password":
                 errors.append(
                     f"{name}: phase 'bootstrap' with validate 'noop' — either give it a "
-                    f"probe or reclassify it as runtime (see docs/plans §10, Phase 3)"
+                    f"probe or reclassify it as runtime — bootstrap validators are "
+                    f"held to curl and openssl, so anything needing more cannot be one"
                 )
 
     return errors
