@@ -112,10 +112,10 @@ func (d *ExportDestination) ResolvedCredentialSource() ExportCredentialSource {
 // ExportDestination is where one export's bundle goes, when that should not be
 // what the policy says.
 //
-// +kubebuilder:validation:XValidation:rule="self.mode != 'custom' || (has(self.endpoint) && self.endpoint != ”)",message="mode: custom requires an endpoint"
-// +kubebuilder:validation:XValidation:rule="self.mode != 'custom' || self.credentialSource != 'transient' || (has(self.credentialSecretRef) && self.credentialSecretRef != ”)",message="credentialSource: transient requires credentialSecretRef"
-// +kubebuilder:validation:XValidation:rule="self.mode != 'custom' || self.credentialSource != 'managed' || !has(self.credentialSecretRef) || self.credentialSecretRef == ”",message="credentialSource: managed takes the workspace credential; credentialSecretRef belongs to transient"
-// +kubebuilder:validation:XValidation:rule="self.mode == 'custom' || ((!has(self.endpoint) || self.endpoint == ”) && (!has(self.credentialSecretRef) || self.credentialSecretRef == ”) && (!has(self.region) || self.region == ”))",message="endpoint, region and credentialSecretRef belong to mode: custom only"
+// +kubebuilder:validation:XValidation:rule="self.mode != 'custom' || (has(self.endpoint) && self.endpoint != '')",message="mode: custom requires an endpoint"
+// +kubebuilder:validation:XValidation:rule="self.mode != 'custom' || self.credentialSource != 'transient' || (has(self.credentialSecretRef) && self.credentialSecretRef != '')",message="credentialSource: transient requires credentialSecretRef"
+// +kubebuilder:validation:XValidation:rule="self.mode != 'custom' || self.credentialSource != 'managed' || !has(self.credentialSecretRef) || self.credentialSecretRef == ''",message="credentialSource: managed takes the workspace credential; credentialSecretRef belongs to transient"
+// +kubebuilder:validation:XValidation:rule="self.mode == 'custom' || ((!has(self.endpoint) || self.endpoint == '') && (!has(self.credentialSecretRef) || self.credentialSecretRef == '') && (!has(self.region) || self.region == ''))",message="endpoint, region and credentialSecretRef belong to mode: custom only"
 type ExportDestination struct {
 	// Mode selects between the policy's answer, the platform's own storage,
 	// and an endpoint named here.

@@ -143,21 +143,21 @@ spec:
                 x-kubernetes-validations:
                 - message: 'mode: custom requires an endpoint'
                   rule: self.mode != 'custom' || (has(self.endpoint) && self.endpoint
-                    != ”)
+                    != '')
                 - message: 'credentialSource: transient requires credentialSecretRef'
                   rule: self.mode != 'custom' || self.credentialSource != 'transient'
                     || (has(self.credentialSecretRef) && self.credentialSecretRef
-                    != ”)
+                    != '')
                 - message: 'credentialSource: managed takes the workspace credential;
                     credentialSecretRef belongs to transient'
                   rule: self.mode != 'custom' || self.credentialSource != 'managed'
                     || !has(self.credentialSecretRef) || self.credentialSecretRef
-                    == ”
+                    == ''
                 - message: 'endpoint, region and credentialSecretRef belong to mode:
                     custom only'
                   rule: self.mode == 'custom' || ((!has(self.endpoint) || self.endpoint
-                    == ”) && (!has(self.credentialSecretRef) || self.credentialSecretRef
-                    == ”) && (!has(self.region) || self.region == ”))
+                    == '') && (!has(self.credentialSecretRef) || self.credentialSecretRef
+                    == '') && (!has(self.region) || self.region == ''))
               encryption:
                 description: |-
                   Encryption selects how the bundle is protected. Omitting it uses the
