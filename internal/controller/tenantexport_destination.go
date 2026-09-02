@@ -32,9 +32,11 @@ import (
 // stageDestinationCredential copies a one-off destination's keys next to the
 // capture Jobs, the way a passphrase is staged.
 //
-// Only mode: custom needs this. The policy's own destinations are reached
-// through a CredentialRequirement, which ESO already materialises into the
-// kernel namespace; these keys belong to one export and are used once.
+// Only mode: custom with credentialSource: transient needs this. Everything
+// else — the policy's own destination, and a custom endpoint authenticating
+// with the workspace's managed credential — is reached through a
+// CredentialRequirement that ESO already materialises into the kernel
+// namespace. These keys belong to one export and are used once.
 //
 // The copy's name is derived from the export, never from the requester's
 // reference. A tenant that could name the staged Secret could aim a capture
@@ -46,6 +48,13 @@ func (r *TenantExportReconciler) stageDestinationCredential(
 ) error {
 	d := export.Spec.Destination
 	if d.Resolved() != gentianov1alpha1.ExportDestinationCustom {
+		return nil
+	}
+	// Only transient keys are staged. A managed source authenticates with the
+	// workspace's own destination credential, which ESO has already put beside
+	// the capture Jobs — copying it would be a second copy of a live credential
+	// for no gain.
+	if d.ResolvedCredentialSource() != gentianov1alpha1.ExportCredentialTransient {
 		return nil
 	}
 

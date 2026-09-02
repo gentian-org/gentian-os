@@ -183,7 +183,7 @@ func (r *TenantExportReconciler) Reconcile(ctx context.Context, req ctrl.Request
 		// The export's own choice, applied over the policy. Recorded on the
 		// bundle like everything else here, so a restore reads where this
 		// bundle actually went rather than where the policy points today.
-		eff = backup.ApplyExportDestination(eff, export.Spec.Destination, tenant)
+		eff = backup.ApplyExportDestination(eff, export.Spec.Destination, tenant, export.Name)
 		export.Status.Bundle = &gentianov1alpha1.BundleRef{
 			Bucket:           eff.Bucket,
 			Prefix:           export.Name,

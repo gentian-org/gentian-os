@@ -207,3 +207,93 @@ func TestSuspendScheduleOptsOutOfTheClusterDefault(t *testing.T) {
 		t.Errorf("schedule = %q, want none after suspending", eff.Schedule)
 	}
 }
+
+// The three targets a manual backup can choose, and what each does to the
+// credential — which is the part that decides whether keys are copied.
+func TestExportDestinationChoosesTargetAndCredential(t *testing.T) {
+	tenant := policyTenant()
+	// What the policy resolved to: the workspace's own external destination,
+	// authenticated with the credential the schedule uses.
+	policy := Effective{
+		Endpoint:         "https://sos-ch-dk-2.exo.io",
+		Region:           "ch-dk-2",
+		Bucket:           "nightly",
+		CredentialName:   "backup-destination-demo",
+		CredentialSecret: "backup-destination-demo",
+	}
+
+	t.Run("existing: the policy's answer, untouched", func(t *testing.T) {
+		got := ApplyExportDestination(policy, nil, tenant, "manual-1")
+		if got != policy {
+			t.Errorf("an unstated destination changed the policy: %+v", got)
+		}
+		if got.Overridden {
+			t.Error("Overridden set for a destination that overrode nothing")
+		}
+	})
+
+	t.Run("local: platform storage, and nothing addressing elsewhere", func(t *testing.T) {
+		got := ApplyExportDestination(policy,
+			&gentianov1alpha1.ExportDestination{Mode: gentianov1alpha1.ExportDestinationPlatform},
+			tenant, "manual-2")
+		if !got.PlatformStorage() {
+			t.Errorf("endpoint = %q, want empty so the platform's own storage is used", got.Endpoint)
+		}
+		// Half a destination — an external credential with no endpoint, or the
+		// reverse — addresses no storage that exists.
+		if got.Region != "" || got.CredentialName != "" || got.CredentialSecret != "" {
+			t.Errorf("something still addresses the external destination: %+v", got)
+		}
+		if got.Bucket != BackupBucket(tenant) {
+			t.Errorf("bucket = %q, want the tenant's own %q", got.Bucket, BackupBucket(tenant))
+		}
+	})
+
+	t.Run("S3 with the managed credential: no keys are copied", func(t *testing.T) {
+		got := ApplyExportDestination(policy, &gentianov1alpha1.ExportDestination{
+			Mode:             gentianov1alpha1.ExportDestinationCustom,
+			CredentialSource: gentianov1alpha1.ExportCredentialManaged,
+			Endpoint:         "https://sos-ch-gva-2.exo.io",
+			Bucket:           "one-off",
+			Region:           "ch-gva-2",
+		}, tenant, "manual-3")
+
+		if got.Endpoint != "https://sos-ch-gva-2.exo.io" || got.Bucket != "one-off" {
+			t.Errorf("endpoint/bucket not taken from the export: %+v", got)
+		}
+		// The whole point of managed: the Secret ESO already materialised is
+		// used where it stands. A staged copy here would be a second copy of a
+		// live credential for no gain.
+		if got.CredentialSecret != policy.CredentialSecret {
+			t.Errorf("CredentialSecret = %q, want the workspace's own %q",
+				got.CredentialSecret, policy.CredentialSecret)
+		}
+		if got.CredentialSecret == ExportCredentialSecretName("manual-3") {
+			t.Error("managed source staged a copy; nothing should have been copied")
+		}
+	})
+
+	t.Run("S3 with transient keys: staged under the export's own name", func(t *testing.T) {
+		got := ApplyExportDestination(policy, &gentianov1alpha1.ExportDestination{
+			Mode:                gentianov1alpha1.ExportDestinationCustom,
+			CredentialSource:    gentianov1alpha1.ExportCredentialTransient,
+			Endpoint:            "https://s3.example.org",
+			CredentialSecretRef: "someone-elses-secret",
+		}, tenant, "manual-4")
+
+		want := ExportCredentialSecretName("manual-4")
+		if got.CredentialSecret != want {
+			t.Errorf("CredentialSecret = %q, want %q", got.CredentialSecret, want)
+		}
+		// Derived from the export, never from the reference: a tenant that
+		// could name the staged Secret could aim a capture Job at any Secret in
+		// the kernel namespace.
+		if strings.Contains(got.CredentialSecret, "someone-elses-secret") {
+			t.Error("the staged name came from the requester's reference")
+		}
+		if got.CredentialName != "" {
+			t.Errorf("CredentialName = %q, want empty: one-off keys are not a "+
+				"standing requirement anyone administers", got.CredentialName)
+		}
+	})
+}

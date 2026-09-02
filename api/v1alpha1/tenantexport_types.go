@@ -84,11 +84,38 @@ const (
 	ExportDestinationCustom ExportDestinationMode = "custom"
 )
 
+// ExportCredentialSource selects which keys authenticate a custom destination.
+// +kubebuilder:validation:Enum=managed;transient
+type ExportCredentialSource string
+
+const (
+	// ExportCredentialManaged authenticates with the workspace's own backup
+	// destination credential, the one the Credential Manager holds and the
+	// schedule uses. The Secret is already where the capture Jobs read it.
+	ExportCredentialManaged ExportCredentialSource = "managed"
+
+	// ExportCredentialTransient authenticates with keys supplied for this
+	// export alone, staged beside the Jobs and removed when it ends.
+	ExportCredentialTransient ExportCredentialSource = "transient"
+)
+
+// ResolvedCredentialSource reports the source in force, treating an unstated
+// one as managed — reusing a credential someone already administers is the
+// safer default than inviting keys into a spec.
+func (d *ExportDestination) ResolvedCredentialSource() ExportCredentialSource {
+	if d == nil || d.CredentialSource == "" {
+		return ExportCredentialManaged
+	}
+	return d.CredentialSource
+}
+
 // ExportDestination is where one export's bundle goes, when that should not be
 // what the policy says.
 //
-// +kubebuilder:validation:XValidation:rule="self.mode != 'custom' || (has(self.endpoint) && self.endpoint != '' && has(self.credentialSecretRef) && self.credentialSecretRef != '')",message="mode: custom requires both endpoint and credentialSecretRef"
-// +kubebuilder:validation:XValidation:rule="self.mode == 'custom' || ((!has(self.endpoint) || self.endpoint == '') && (!has(self.credentialSecretRef) || self.credentialSecretRef == '') && (!has(self.region) || self.region == ''))",message="endpoint, region and credentialSecretRef belong to mode: custom only"
+// +kubebuilder:validation:XValidation:rule="self.mode != 'custom' || (has(self.endpoint) && self.endpoint != ”)",message="mode: custom requires an endpoint"
+// +kubebuilder:validation:XValidation:rule="self.mode != 'custom' || self.credentialSource != 'transient' || (has(self.credentialSecretRef) && self.credentialSecretRef != ”)",message="credentialSource: transient requires credentialSecretRef"
+// +kubebuilder:validation:XValidation:rule="self.mode != 'custom' || self.credentialSource != 'managed' || !has(self.credentialSecretRef) || self.credentialSecretRef == ”",message="credentialSource: managed takes the workspace credential; credentialSecretRef belongs to transient"
+// +kubebuilder:validation:XValidation:rule="self.mode == 'custom' || ((!has(self.endpoint) || self.endpoint == ”) && (!has(self.credentialSecretRef) || self.credentialSecretRef == ”) && (!has(self.region) || self.region == ”))",message="endpoint, region and credentialSecretRef belong to mode: custom only"
 type ExportDestination struct {
 	// Mode selects between the policy's answer, the platform's own storage,
 	// and an endpoint named here.
@@ -118,8 +145,23 @@ type ExportDestination struct {
 	// +kubebuilder:validation:MaxLength=64
 	Region string `json:"region,omitempty"`
 
+	// CredentialSource decides where mode: custom gets its keys.
+	//
+	// managed reuses what the Credential Manager already holds for this
+	// workspace's backups — the same keys the nightly schedule authenticates
+	// with — so a one-off backup to a different bucket on the same provider
+	// needs nobody to retype a secret. Nothing is copied: those keys are
+	// already materialised beside the capture Jobs.
+	//
+	// transient is for keys that exist for this export only. They are supplied
+	// in a Secret, staged beside the Jobs, and removed when the export ends.
+	// +kubebuilder:default=managed
+	// +optional
+	CredentialSource ExportCredentialSource `json:"credentialSource,omitempty"`
+
 	// CredentialSecretRef names a Secret in the tenant's namespace holding
-	// accessKey and secretKey for this endpoint. Required by mode: custom.
+	// accessKey and secretKey for this endpoint. Required by, and only by,
+	// credentialSource: transient.
 	//
 	// A reference rather than the keys themselves, for the reason the
 	// passphrase is a reference: a spec is readable by anyone who can read the

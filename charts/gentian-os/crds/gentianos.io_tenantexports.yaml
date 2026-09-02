@@ -88,13 +88,31 @@ spec:
                   credentialSecretRef:
                     description: |-
                       CredentialSecretRef names a Secret in the tenant's namespace holding
-                      accessKey and secretKey for this endpoint. Required by mode: custom.
+                      accessKey and secretKey for this endpoint. Required by, and only by,
+                      credentialSource: transient.
 
                       A reference rather than the keys themselves, for the reason the
                       passphrase is a reference: a spec is readable by anyone who can read the
                       resource, and object storage keys in a manifest are keys in every
                       backup of etcd.
                     maxLength: 253
+                    type: string
+                  credentialSource:
+                    default: managed
+                    description: |-
+                      CredentialSource decides where mode: custom gets its keys.
+
+                      managed reuses what the Credential Manager already holds for this
+                      workspace's backups — the same keys the nightly schedule authenticates
+                      with — so a one-off backup to a different bucket on the same provider
+                      needs nobody to retype a secret. Nothing is copied: those keys are
+                      already materialised beside the capture Jobs.
+
+                      transient is for keys that exist for this export only. They are supplied
+                      in a Secret, staged beside the Jobs, and removed when the export ends.
+                    enum:
+                    - managed
+                    - transient
                     type: string
                   endpoint:
                     description: |-
@@ -123,10 +141,18 @@ spec:
                     type: string
                 type: object
                 x-kubernetes-validations:
-                - message: 'mode: custom requires both endpoint and credentialSecretRef'
+                - message: 'mode: custom requires an endpoint'
                   rule: self.mode != 'custom' || (has(self.endpoint) && self.endpoint
-                    != '' && has(self.credentialSecretRef) && self.credentialSecretRef
                     != '')
+                - message: 'credentialSource: transient requires credentialSecretRef'
+                  rule: self.mode != 'custom' || self.credentialSource != 'transient'
+                    || (has(self.credentialSecretRef) && self.credentialSecretRef
+                    != '')
+                - message: 'credentialSource: managed takes the workspace credential;
+                    credentialSecretRef belongs to transient'
+                  rule: self.mode != 'custom' || self.credentialSource != 'managed'
+                    || !has(self.credentialSecretRef) || self.credentialSecretRef
+                    == ''
                 - message: 'endpoint, region and credentialSecretRef belong to mode:
                     custom only'
                   rule: self.mode == 'custom' || ((!has(self.endpoint) || self.endpoint

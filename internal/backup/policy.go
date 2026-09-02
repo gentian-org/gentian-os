@@ -112,6 +112,7 @@ func ApplyExportDestination(
 	eff Effective,
 	d *gentianov1alpha1.ExportDestination,
 	tenant *gentianov1alpha1.Tenant,
+	exportName string,
 ) Effective {
 	switch d.Resolved() {
 	case gentianov1alpha1.ExportDestinationPlatform:
@@ -125,14 +126,21 @@ func ApplyExportDestination(
 
 	case gentianov1alpha1.ExportDestinationCustom:
 		eff.Endpoint, eff.Region = d.Endpoint, d.Region
-		// No CredentialName: a requirement is a standing arrangement someone
-		// administers and rotates, and these keys are used once. The Secret is
-		// staged beside the capture Jobs and discarded with the export.
-		eff.CredentialName = ""
-		eff.CredentialSecret = ExportCredentialSecretName(d.CredentialSecretRef)
 		if d.Bucket != "" {
 			eff.Bucket = d.Bucket
 		}
+		if d.ResolvedCredentialSource() == gentianov1alpha1.ExportCredentialTransient {
+			// No CredentialName: a requirement is a standing arrangement
+			// someone administers and rotates, and these keys are used once.
+			// The Secret is staged beside the capture Jobs and discarded with
+			// the export.
+			eff.CredentialName = ""
+			eff.CredentialSecret = ExportCredentialSecretName(exportName)
+		}
+		// credentialSource: managed keeps whatever the policy resolved, which
+		// is the workspace's own destination credential — already materialised
+		// beside the capture Jobs by ESO. Only the endpoint moves; nothing is
+		// copied, and no keys pass through a spec to get here.
 		eff.Overridden = true
 	}
 	return eff
@@ -140,7 +148,8 @@ func ApplyExportDestination(
 
 // ExportCredentialSecretName is the staged copy's name, beside the capture
 // Jobs. Derived from the export rather than the requester's Secret name, so a
-// tenant cannot aim it at a Secret in the kernel namespace it does not own.
+// tenant cannot aim it at a Secret in the kernel namespace it does not own —
+// which is why the export's name is the argument and the reference is not.
 func ExportCredentialSecretName(exportName string) string {
 	return "tenant-export-destination-" + exportName
 }
