@@ -241,6 +241,37 @@ install_crossplane_providers() {
         fi
     done
 
+    # A ProviderConfig can survive a purge in Terminating: provider-helm pins
+    # in-use ProviderConfigs with in-use.crossplane.io finalizers, and a purge
+    # whose stuck Releases held that finalizer past its own end leaves the
+    # object carrying a pending deletion. Applying over it "succeeds" — an
+    # apply on a Terminating object is just an update — and the exists-check
+    # below passes, so the step reports done. Then the finalizer clears, the
+    # OLD deletion completes, and the freshly-applied object vanishes minutes
+    # into the install: every Release on the cluster then fails with
+    # "ProviderConfig not found" and nothing points back here. Wait these
+    # deaths out BEFORE applying, so the apply below creates objects with no
+    # deletion pending against them.
+    local _pc_deadline
+    for _pc_crd in providerconfig.vault.upbound.io/openbao \
+                   providerconfig.kubernetes.crossplane.io/kubernetes \
+                   providerconfig.helm.crossplane.io/kubernetes; do
+        if [[ -n "$(kubectl get "${_pc_crd}" -o jsonpath='{.metadata.deletionTimestamp}' 2>/dev/null)" ]]; then
+            warn "  ${_pc_crd} is Terminating (a prior teardown's deletion is still pending);"
+            warn "  waiting for it to finish so the re-create isn't swept with it..."
+            _pc_deadline=$(( SECONDS + 180 ))
+            while kubectl get "${_pc_crd}" >/dev/null 2>&1; do
+                if (( SECONDS >= _pc_deadline )); then
+                    error "${_pc_crd} is still Terminating after 180s."
+                    error "  Something still references it (kubectl get ${_pc_crd} -o yaml — check"
+                    error "  finalizers, and delete the managed resources holding them)."
+                    return 1
+                fi
+                sleep 3
+            done
+        fi
+    done
+
     # And the result is checked. This used to be a bare call, so a failed apply
     # was indistinguishable from a successful one — which is how the missing
     # vault ProviderConfig went unnoticed for a whole install.
@@ -254,7 +285,9 @@ install_crossplane_providers() {
 
     # Applied is not the same as present, for the same reason: a multi-document
     # apply reports failure for the file, and the one document that failed is
-    # exactly the one worth naming.
+    # exactly the one worth naming. Present-and-dying counts as absent: an
+    # object with a deletionTimestamp is the Terminating trap described above,
+    # caught here if it was deleted between the wait and the apply.
     for _pc_crd in providerconfig.vault.upbound.io/openbao \
                    providerconfig.kubernetes.crossplane.io/kubernetes \
                    providerconfig.helm.crossplane.io/kubernetes; do
@@ -262,6 +295,12 @@ install_crossplane_providers() {
             error "ProviderConfig ${_pc_crd} does not exist after applying."
             error "  crossplane/providers/provider-configs.yaml declares it, so either"
             error "  its CRD is not served yet or the apply was rejected."
+            return 1
+        fi
+        if [[ -n "$(kubectl get "${_pc_crd}" -o jsonpath='{.metadata.deletionTimestamp}' 2>/dev/null)" ]]; then
+            error "ProviderConfig ${_pc_crd} exists but is Terminating — a deletion is"
+            error "  pending against it and it will vanish once its finalizers clear."
+            error "  Re-run this step once it is gone: ./install.sh --step A-02-crossplane-providers"
             return 1
         fi
     done

@@ -19,9 +19,19 @@ check() {
     # any of them to use — every managed resource in the Cluster XR then fails
     # with "referenced ProviderConfig ... not found", and this step reports
     # satisfied the whole time because nothing here ever looked.
-    kubectl get providerconfig.kubernetes.crossplane.io kubernetes >/dev/null 2>&1 || return 1
-    kubectl get providerconfig.helm.crossplane.io kubernetes >/dev/null 2>&1 || return 1
-    kubectl get providerconfig.vault.upbound.io openbao >/dev/null 2>&1 || return 1
+    # Present-and-Terminating counts as missing. A purge can leave a
+    # ProviderConfig carrying a pending deletion (in-use.crossplane.io
+    # finalizers held by its Releases outlive the purge), and `kubectl get`
+    # answers fine for such an object right up until it vanishes. Reporting
+    # satisfied over one skips the apply whose whole job is to wait that
+    # death out and re-create cleanly (see install_crossplane_providers).
+    local pc
+    for pc in providerconfig.kubernetes.crossplane.io/kubernetes \
+              providerconfig.helm.crossplane.io/kubernetes \
+              providerconfig.vault.upbound.io/openbao; do
+        kubectl get "${pc}" >/dev/null 2>&1 || return 1
+        [[ -z "$(kubectl get "${pc}" -o jsonpath='{.metadata.deletionTimestamp}' 2>/dev/null)" ]] || return 1
+    done
 
     # Every XRD in the repo, not just xclusters. Testing one of six let a
     # cluster missing xsuze and xinfradata — the XRDs that compose Keycloak,
