@@ -38,6 +38,19 @@ spec:
               key: uri
         - name: STORE_MODEL_IN_DB
           value: "True"
+        # Without this, a failed `prisma migrate deploy` at startup is a
+        # warning and the proxy serves anyway — with whatever fraction of
+        # the schema made it in. Seen live: two replicas raced the
+        # migration's advisory lock during an install (10s lock timeout,
+        # 157 migrations applying slowly against a database on nfs-csi
+        # mid-sync-storm), 55 of 157 landed, and the proxy then answered
+        # health checks for hours while every DB-backed endpoint 500'd
+        # ("column does not exist") — which took the model-sync Job and
+        # E-02 down with it. Failing hard turns that into a crashloop the
+        # kubelet retries until the migration completes, which it does as
+        # soon as the lock is free and the DB quiets down.
+        - name: ENFORCE_PRISMA_MIGRATION_CHECK
+          value: "true"
         - name: UI_USERNAME
           valueFrom:
             secretKeyRef:
