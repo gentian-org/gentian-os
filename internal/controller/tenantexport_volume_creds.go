@@ -48,23 +48,50 @@ func restoreVolumeSecretName(restoreName string) string {
 	return exportJobName(restoreName, "vol", "rcreds")
 }
 
-// stageVolumeSecret writes the staged copy: the MinIO credentials, plus any
-// extra keys (a passphrase for an encrypting export). Idempotent.
+// stageVolumeSecret writes the staged copy: the credentials the upload will
+// authenticate with, plus any extra keys (a passphrase for an encrypting
+// export). Idempotent.
+//
+// sourceSecret names where those credentials come from, in the kernel
+// namespace. For a bundle going to the platform's own storage that is the MinIO
+// admin Secret; for an external destination it is the Secret ESO materialised
+// from the destination's credential, and the two are different accounts on
+// different systems.
+//
+// Getting that wrong is invisible until the upload runs. Volume Jobs are the
+// only ones that stage credentials — everything else reads them where they
+// already are — so staging MinIO's keys and sending them to Exoscale failed
+// only here, and only after the archive had been made and encrypted:
+//
+//	Back-off restarting failed container upload
+//
+// while every other capture in the same export succeeded.
 func stageVolumeSecret(
 	ctx context.Context,
 	c client.Client,
-	name, namespace, tenantName, owner string,
+	name, namespace, tenantName, owner, sourceSecret string,
+	external bool,
 	extra map[string][]byte,
 ) error {
-	admin := &corev1.Secret{}
-	if err := c.Get(ctx, types.NamespacedName{Name: backup.MinIOAdminSecret, Namespace: kernelNamespace}, admin); err != nil {
-		return fmt.Errorf("read %s: %w", backup.MinIOAdminSecret, err)
+	if sourceSecret == "" {
+		sourceSecret = backup.MinIOAdminSecret
+	}
+	source := &corev1.Secret{}
+	if err := c.Get(ctx, types.NamespacedName{Name: sourceSecret, Namespace: kernelNamespace}, source); err != nil {
+		return fmt.Errorf("read %s: %w", sourceSecret, err)
+	}
+	// An external destination's Secret carries only the keys: the endpoint is a
+	// literal on the Job, from the policy, because it is the platform's own
+	// storage whose address travels with its credentials.
+	want := []string{"endpoint", "accessKey", "secretKey"}
+	if external {
+		want = []string{backup.DestinationAccessKeyField, backup.DestinationSecretKeyField}
 	}
 	data := map[string][]byte{}
-	for _, k := range []string{"endpoint", "accessKey", "secretKey"} {
-		v, ok := admin.Data[k]
+	for _, k := range want {
+		v, ok := source.Data[k]
 		if !ok || len(v) == 0 {
-			return fmt.Errorf("%s has no non-empty key %q", backup.MinIOAdminSecret, k)
+			return fmt.Errorf("%s has no non-empty key %q", sourceSecret, k)
 		}
 		data[k] = v
 	}
@@ -121,9 +148,16 @@ func (r *TenantExportReconciler) ensureVolumeUploadSecret(
 		}
 		extra[enc.PassphraseKey] = value
 	}
+	// Where the bundle actually goes, as recorded when it was assigned.
+	var credentialSecret string
+	var external bool
+	if b := export.Status.Bundle; b != nil {
+		credentialSecret, external = b.CredentialSecret, b.Endpoint != ""
+	}
 	return stageVolumeSecret(ctx, r.Client,
 		volumeUploadSecretName(export.Name), export.Namespace,
-		tenantNameFromNamespace(export.Namespace), export.Name, extra)
+		tenantNameFromNamespace(export.Namespace), export.Name,
+		credentialSecret, external, extra)
 }
 
 func (r *TenantExportReconciler) discardVolumeUploadSecret(ctx context.Context, export *gentianov1alpha1.TenantExport) error {
@@ -131,15 +165,25 @@ func (r *TenantExportReconciler) discardVolumeUploadSecret(ctx context.Context, 
 }
 
 // ensureRestoreVolumeSecret stages the restore's copy into the tenant
-// namespace. Only the MinIO credentials: the decryption key material already
+// namespace. Only the storage credentials: the decryption key material already
 // lives in the tenant namespace, where the operator was told to find it.
+//
+// From wherever the bundle is, which for a restore is the more important half:
+// a bundle written to an external destination can only be read back with that
+// destination's keys, and a cluster rebuilt from one has no other copy.
 func (r *TenantRestoreReconciler) ensureRestoreVolumeSecret(
 	ctx context.Context,
 	restore *gentianov1alpha1.TenantRestore,
 ) error {
+	var credentialSecret string
+	var external bool
+	if b := restore.Status.Bundle; b != nil {
+		credentialSecret, external = b.CredentialSecret, b.Endpoint != ""
+	}
 	return stageVolumeSecret(ctx, r.Client,
 		restoreVolumeSecretName(restore.Name), restore.Namespace,
-		tenantNameFromNamespace(restore.Namespace), restore.Name, nil)
+		tenantNameFromNamespace(restore.Namespace), restore.Name,
+		credentialSecret, external, nil)
 }
 
 func (r *TenantRestoreReconciler) discardRestoreVolumeSecret(ctx context.Context, restore *gentianov1alpha1.TenantRestore) error {

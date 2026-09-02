@@ -1144,3 +1144,112 @@ func TestARunningCaptureIsNotGivenUpOn(t *testing.T) {
 		t.Errorf("a capture that has been archiving for four hours was abandoned: %q", got)
 	}
 }
+
+// Volume Jobs are the only ones that stage credentials — everything else reads
+// them where they already are — so staging the wrong ones failed only here, and
+// only after the archive had been made and encrypted. Every other capture in
+// the same export succeeded, which is what made it look like a Nextcloud
+// problem rather than a credential one.
+func TestVolumeUploadStagesTheDestinationsKeysNotThePlatforms(t *testing.T) {
+	s := quiesceScheme(t)
+	if err := gentianov1alpha1.AddToScheme(s); err != nil {
+		t.Fatalf("add gentian scheme: %v", err)
+	}
+
+	platform := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: backup.MinIOAdminSecret, Namespace: kernelNamespace},
+		Data: map[string][]byte{
+			"endpoint":  []byte("http://minio-prod:9000"),
+			"accessKey": []byte("platform-key"),
+			"secretKey": []byte("platform-secret"),
+		},
+	}
+	destination := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: "backup-destination-demo", Namespace: kernelNamespace},
+		Data: map[string][]byte{
+			backup.DestinationAccessKeyField: []byte("EXO-key"),
+			backup.DestinationSecretKeyField: []byte("EXO-secret"),
+		},
+	}
+	export := &gentianov1alpha1.TenantExport{
+		ObjectMeta: metav1.ObjectMeta{Name: "export-x", Namespace: "tenant-demo"},
+		Status: gentianov1alpha1.TenantExportStatus{
+			Bundle: &gentianov1alpha1.BundleRef{
+				Bucket:           "bigbucket",
+				Prefix:           "export-x",
+				Endpoint:         "https://sos-ch-dk-2.exo.io",
+				CredentialSecret: "backup-destination-demo",
+			},
+		},
+	}
+
+	c := fake.NewClientBuilder().WithScheme(s).
+		WithObjects(platform, destination, export).Build()
+	r := &TenantExportReconciler{Client: c, Scheme: s}
+
+	if err := r.ensureVolumeUploadSecret(context.Background(), export, "demo",
+		backup.Encryption{Mode: gentianov1alpha1.ExportEncryptionRecipient}); err != nil {
+		t.Fatalf("ensureVolumeUploadSecret: %v", err)
+	}
+
+	staged := &corev1.Secret{}
+	if err := c.Get(context.Background(), types.NamespacedName{
+		Name: volumeUploadSecretName("export-x"), Namespace: "tenant-demo"}, staged); err != nil {
+		t.Fatalf("get staged secret: %v", err)
+	}
+
+	if got := string(staged.Data[backup.DestinationAccessKeyField]); got != "EXO-key" {
+		t.Errorf("staged accessKey = %q, want the destination's — the upload "+
+			"authenticates to Exoscale with whatever is here", got)
+	}
+	if string(staged.Data[backup.DestinationSecretKeyField]) != "EXO-secret" {
+		t.Error("staged secretKey is not the destination's")
+	}
+	for _, v := range staged.Data {
+		if strings.HasPrefix(string(v), "platform-") {
+			t.Errorf("the platform's own credentials were staged for an external "+
+				"destination: %q", v)
+		}
+	}
+}
+
+// A bundle going to the platform's own storage must still stage the platform's
+// credentials, endpoint included — that address travels with its keys.
+func TestVolumeUploadStillStagesPlatformKeysForAPlatformBundle(t *testing.T) {
+	s := quiesceScheme(t)
+	if err := gentianov1alpha1.AddToScheme(s); err != nil {
+		t.Fatalf("add gentian scheme: %v", err)
+	}
+	platform := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: backup.MinIOAdminSecret, Namespace: kernelNamespace},
+		Data: map[string][]byte{
+			"endpoint":  []byte("http://minio-prod:9000"),
+			"accessKey": []byte("platform-key"),
+			"secretKey": []byte("platform-secret"),
+		},
+	}
+	export := &gentianov1alpha1.TenantExport{
+		ObjectMeta: metav1.ObjectMeta{Name: "export-y", Namespace: "tenant-demo"},
+		Status: gentianov1alpha1.TenantExportStatus{
+			Bundle: &gentianov1alpha1.BundleRef{Bucket: "demo-backup", Prefix: "export-y"},
+		},
+	}
+	c := fake.NewClientBuilder().WithScheme(s).WithObjects(platform, export).Build()
+	r := &TenantExportReconciler{Client: c, Scheme: s}
+
+	if err := r.ensureVolumeUploadSecret(context.Background(), export, "demo",
+		backup.Encryption{Mode: gentianov1alpha1.ExportEncryptionRecipient}); err != nil {
+		t.Fatalf("ensureVolumeUploadSecret: %v", err)
+	}
+	staged := &corev1.Secret{}
+	if err := c.Get(context.Background(), types.NamespacedName{
+		Name: volumeUploadSecretName("export-y"), Namespace: "tenant-demo"}, staged); err != nil {
+		t.Fatalf("get staged secret: %v", err)
+	}
+	if string(staged.Data["accessKey"]) != "platform-key" {
+		t.Error("a platform bundle did not get the platform's key")
+	}
+	if string(staged.Data["endpoint"]) == "" {
+		t.Error("the platform's endpoint was not staged; it travels with its credentials")
+	}
+}
