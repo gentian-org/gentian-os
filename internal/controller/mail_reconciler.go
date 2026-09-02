@@ -723,6 +723,16 @@ func (b postfixMapsBootstrap) Start(ctx context.Context) error {
 	if err := b.reconciler.syncPostfixVirtualMailboxMaps(ctx); err != nil {
 		logger.Error(err, "deriving Postfix inbound maps at startup")
 	}
+	// The DKIM tables Secret too, and for a harder reason than the maps: the
+	// Postfix chart mounts postfix-dkim-tenants non-optional (a subPath over
+	// a missing key would break the container in a worse way than refusing to
+	// start), so on a cluster with no tenants the pod cannot even begin its
+	// init until this Secret exists — and tenant events, its only other
+	// trigger, never come. Empty tables are the correct content then: OpenDKIM
+	// loads them fine and the kernel domain's own key is ensured inside.
+	if err := b.reconciler.syncPostfixDKIMTables(ctx); err != nil {
+		logger.Error(err, "deriving Postfix DKIM tables at startup")
+	}
 	return nil
 }
 
