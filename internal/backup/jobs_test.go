@@ -730,3 +730,62 @@ func TestBucketCaptureReadsTheSourceFromPlatformStorage(t *testing.T) {
 		t.Error("the upload no longer addresses the external destination")
 	}
 }
+
+// A ReadWriteOnce claim attaches to one node, and a pod running with it keeps
+// it there. A capture that mounts the same claim and lands elsewhere waits on
+//
+//	Multi-Attach error for volume "pvc-..."
+//	Volume is already used by pod(s) nextcloud-...
+//
+// for ever — never failing, because a pod that cannot attach never starts. The
+// app stays paused and the export stays Running. It worked until it didn't:
+// RWO permits many pods on one node, so a capture landing on the app's node
+// attaches fine, and on a two-node cluster that is a coin flip.
+func TestAVolumeCaptureRunsWhereTheVolumeIs(t *testing.T) {
+	p := JobParams{
+		Namespace: "tenant-demo",
+		Name:      "tx-demo-nextcloud-vol0",
+		Tenant:    "demo",
+		App:       "nextcloud-base-ce",
+		Bucket:    "demo-backup",
+		Prefix:    "demo-export",
+		Node:      "node-holding-the-volume",
+	}
+	job := VolumeArchiveJob(p, "nextcloud-nextcloud", nil)
+
+	sel := job.Spec.Template.Spec.NodeSelector
+	if sel[corev1.LabelHostname] != "node-holding-the-volume" {
+		t.Fatalf("nodeSelector = %v, want the node the claim is attached to", sel)
+	}
+}
+
+// Nothing holds the claim — an app paused by scaling down has released it — so
+// the scheduler must be left alone. Pinning to a stale node would be worse than
+// not pinning: it would refuse the placements that do work.
+func TestAnUnheldVolumeLeavesSchedulingAlone(t *testing.T) {
+	p := JobParams{
+		Namespace: "tenant-demo",
+		Name:      "tx-demo-odoo-vol0",
+		Tenant:    "demo",
+		App:       "odoo-base-ce",
+		Bucket:    "demo-backup",
+		Prefix:    "demo-export",
+	}
+	job := VolumeArchiveJob(p, "odoo-data", nil)
+
+	if sel := job.Spec.Template.Spec.NodeSelector; sel != nil {
+		t.Fatalf("nodeSelector = %v, want none when no node is named", sel)
+	}
+}
+
+// Everything that mounts no claim must stay unpinned, or a dump would be
+// confined to whichever node happened to be named.
+func TestJobsWithoutAVolumeAreNotPinned(t *testing.T) {
+	p := JobParams{
+		Namespace: "platform-kernel", Name: "tx-demo-pg", Tenant: "demo",
+		App: "docmost-ce", Bucket: "demo-backup", Prefix: "demo-export",
+	}
+	if sel := PostgresDumpJob(p, "demo_docmost").Spec.Template.Spec.NodeSelector; sel != nil {
+		t.Errorf("a database dump was pinned to %v", sel)
+	}
+}

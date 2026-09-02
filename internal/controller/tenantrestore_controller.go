@@ -402,6 +402,10 @@ func (r *TenantRestoreReconciler) restoreUnits(
 	for i, claim := range claims {
 		p := volParams
 		p.Name = exportJobName(restore.Name, appName, fmt.Sprintf("vr%d", i))
+		// Same constraint as capture, and worse here: this mounts the claim
+		// read-write. An app paused by maintenance mode keeps its volume, so
+		// without this the restore waits on a Multi-Attach that never resolves.
+		p.Node = r.Reconciler.nodeHoldingClaim(ctx, p.Namespace, claim)
 		units = append(units, captureUnit{
 			Kind: "volume", Name: claim, JobName: p.Name,
 			Job: backup.VolumeRestoreJob(p, volD, claim),

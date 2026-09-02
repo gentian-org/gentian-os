@@ -21,7 +21,9 @@ import (
 	"fmt"
 	"io"
 	"strings"
+	"time"
 
+	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/client-go/kubernetes"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -169,4 +171,121 @@ func tidyFailureOutput(out string) string {
 		joined = "…" + joined[len(joined)-failureMessageLimit:]
 	}
 	return joined
+}
+
+// capturePodStartDeadline bounds how long a capture pod may fail to start.
+//
+// Not a bound on the capture, which may legitimately run for hours and is
+// deliberately excluded from the provisioning Jobs' one-hour ceiling. This
+// bounds a pod that has not begun: no container has run, so nothing is being
+// copied and no time is being usefully spent.
+//
+// Generous, because a cold image pull on a busy node is minutes. Short enough
+// that an app is not held offline for an afternoon by a pod that will never
+// start — which is what happened: a volume already attached elsewhere gave
+// "Multi-Attach error", the pod stayed Pending for ever, and a pod that never
+// starts never fails, so nothing counted it and the export stayed Running.
+const capturePodStartDeadline = 8 * time.Minute
+
+// stuckCapture reports why a capture Job's pod has not begun, once it has had
+// long enough that not beginning is the answer.
+//
+// Empty while there is still reason to wait, so the caller treats it as an
+// ordinary in-progress capture.
+func (r *TenantExportReconciler) stuckCapture(ctx context.Context, job *batchv1.Job) string {
+	pods := &corev1.PodList{}
+	if err := r.List(ctx, pods,
+		client.InNamespace(job.Namespace),
+		client.MatchingLabels{"job-name": job.Name},
+	); err != nil {
+		return ""
+	}
+
+	for i := range pods.Items {
+		pod := &pods.Items[i]
+		if pod.Status.Phase != corev1.PodPending {
+			continue
+		}
+		if anyContainerStarted(pod) {
+			continue
+		}
+		if time.Since(pod.CreationTimestamp.Time) < capturePodStartDeadline {
+			continue
+		}
+		return fmt.Sprintf("capture pod %s did not start within %s: %s",
+			pod.Name, capturePodStartDeadline, podStallReason(pod))
+	}
+	return ""
+}
+
+// anyContainerStarted reports whether the pod ever got as far as running
+// something. A container that has run and exited counts: the pod is making
+// progress, or has already failed in a way the Job will report.
+func anyContainerStarted(pod *corev1.Pod) bool {
+	all := append(append([]corev1.ContainerStatus{},
+		pod.Status.InitContainerStatuses...), pod.Status.ContainerStatuses...)
+	for _, s := range all {
+		if s.State.Running != nil || s.State.Terminated != nil ||
+			s.LastTerminationState.Terminated != nil {
+			return true
+		}
+	}
+	return false
+}
+
+// podStallReason says what the pod is waiting on, in the words the cluster used.
+//
+// Conditions first, because an unschedulable pod says so there. Then the
+// waiting container, which carries an image-pull failure. A pod that cannot
+// attach a volume says neither — the attach lives in an event, which the
+// operator has no permission to read — so that case falls through to a
+// statement of what is true and a pointer at the usual cause.
+func podStallReason(pod *corev1.Pod) string {
+	for _, c := range pod.Status.Conditions {
+		if c.Status == corev1.ConditionFalse && c.Message != "" {
+			return fmt.Sprintf("%s: %s", c.Reason, c.Message)
+		}
+	}
+	all := append(append([]corev1.ContainerStatus{},
+		pod.Status.InitContainerStatuses...), pod.Status.ContainerStatuses...)
+	for _, s := range all {
+		if s.State.Waiting != nil && s.State.Waiting.Reason != "" {
+			return fmt.Sprintf("%s waiting: %s %s",
+				s.Name, s.State.Waiting.Reason, s.State.Waiting.Message)
+		}
+	}
+	return "no container started; a ReadWriteOnce volume already attached to " +
+		"another node is the usual cause"
+}
+
+// nodeHoldingClaim names the node a claim is currently attached to, via a pod
+// that is running with it mounted.
+//
+// A ReadWriteOnce claim attaches to one node, and a pod running with it keeps it
+// there. A capture that mounts the same claim must therefore run on that node or
+// wait for ever, and waiting for ever is what it did.
+//
+// Only Running pods count. A Pending one proves nothing — it may be a previous
+// capture attempt stuck against this very problem, and pinning to its node
+// would copy the mistake forward.
+func (r *TenantExportReconciler) nodeHoldingClaim(
+	ctx context.Context,
+	namespace, claim string,
+) string {
+	pods := &corev1.PodList{}
+	if err := r.List(ctx, pods, client.InNamespace(namespace)); err != nil {
+		return ""
+	}
+	for i := range pods.Items {
+		pod := &pods.Items[i]
+		if pod.Status.Phase != corev1.PodRunning || pod.Spec.NodeName == "" {
+			continue
+		}
+		for _, v := range pod.Spec.Volumes {
+			if v.PersistentVolumeClaim != nil && v.PersistentVolumeClaim.ClaimName == claim {
+				return pod.Spec.NodeName
+			}
+		}
+	}
+	return ""
 }

@@ -73,6 +73,11 @@ type JobParams struct {
 	App    string
 	// Export names the TenantExport this Job serves, for provenance.
 	Export string
+	// Node pins this Job to one node, when it must run where a volume already
+	// is. Empty leaves scheduling alone, which is right for every Job that
+	// mounts no claim.
+	Node string
+
 	// Bucket and Prefix locate the bundle this Job writes into.
 	Bucket string
 	Prefix string
@@ -436,6 +441,19 @@ echo "deleted bundle ${BUNDLE_BUCKET}/${BUNDLE_PREFIX}"`},
 	return newJob(p, []corev1.Container{del}, nil, nil)
 }
 
+// nodeSelectorFor pins a Job to one node by hostname, or leaves scheduling
+// alone when no node is named.
+//
+// A selector rather than affinity: the requirement is absolute — the volume is
+// on that node and nowhere else — and a selector says so in one line that
+// kubectl describe prints plainly.
+func nodeSelectorFor(node string) map[string]string {
+	if node == "" {
+		return nil
+	}
+	return map[string]string{corev1.LabelHostname: node}
+}
+
 func newJob(p JobParams, containers, initContainers []corev1.Container, extraVolumes []corev1.Volume) *batchv1.Job {
 	ttl := meta.ProvisioningJobTTLSeconds
 	backoff := p.BackoffLimit
@@ -482,6 +500,21 @@ func newJob(p JobParams, containers, initContainers []corev1.Container, extraVol
 					},
 				},
 				Spec: corev1.PodSpec{
+					// Where the volume already is, when that matters. A
+					// ReadWriteOnce claim attaches to one node, and the app
+					// holding it keeps it there: a capture pod scheduled
+					// anywhere else waits on
+					//
+					//   Multi-Attach error for volume "pvc-..."
+					//   Volume is already used by pod(s) nextcloud-...
+					//
+					// for ever. Never failing, because a pod that cannot attach
+					// never starts and so never fails — the app stays paused and
+					// the export stays Running. It worked until now by luck: RWO
+					// permits many pods on one node, so a capture landing on the
+					// app's node attaches fine, and on a two-node cluster that is
+					// a coin flip.
+					NodeSelector: nodeSelectorFor(p.Node),
 					// Never Always: a capture is a one-shot, and a restarting
 					// pod would re-dump into an artefact already uploaded.
 					RestartPolicy: corev1.RestartPolicyOnFailure,

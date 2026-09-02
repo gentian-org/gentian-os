@@ -426,6 +426,10 @@ func (r *TenantExportReconciler) captureUnits(
 	for i, claim := range claims {
 		p := volParams
 		p.Name = exportJobName(export.Name, appName, fmt.Sprintf("vol%d", i))
+		// Where the claim already is. Empty when nothing holds it — an app
+		// paused by scaling down releases its volume, and then the scheduler
+		// may place this anywhere.
+		p.Node = r.nodeHoldingClaim(ctx, p.Namespace, claim)
 		units = append(units, captureUnit{
 			Kind: "volume", Name: claim, Path: "volumes/" + claim + ".tar.gz",
 			JobName: p.Name, Job: backup.VolumeArchiveJob(p, claim, spec.ExcludedPaths()),
@@ -522,6 +526,19 @@ func (r *TenantExportReconciler) ensureCaptureJob(
 		entry.CompletedUnits = append(entry.CompletedUnits, unit.JobName)
 		return true, nil
 	}
+	// A pod that cannot start never fails, so nothing else here would ever
+	// count it — and the app stays paused meanwhile.
+	if stall := r.stuckCapture(ctx, existing); stall != "" {
+		entry.LastFailure = stall
+		entry.Attempts++
+		if err := r.Delete(ctx, existing,
+			client.PropagationPolicy(metav1.DeletePropagationBackground)); err != nil &&
+			!apierrors.IsNotFound(err) {
+			return false, err
+		}
+		return false, nil
+	}
+
 	if jobIsFailed(existing) {
 		// Read why before deleting. The pods go with the Job, and they are the
 		// only place the reason exists — after this there is nothing to ask.

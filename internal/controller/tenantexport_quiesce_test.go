@@ -21,6 +21,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
 	batchv1 "k8s.io/api/batch/v1"
@@ -1028,5 +1029,118 @@ func TestAnUnreadableLogIsNotItselfAFailure(t *testing.T) {
 	r = &TenantExportReconciler{Client: c, Scheme: s}
 	if got := r.captureFailureReason(context.Background(), kernelNamespace, "tx-e-x"); got != "" {
 		t.Errorf("no tailer produced %q instead of nothing", got)
+	}
+}
+
+func podOn(name, node, claim string, phase corev1.PodPhase) *corev1.Pod {
+	p := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: "tenant-demo"}}
+	p.Spec.NodeName = node
+	p.Status.Phase = phase
+	if claim != "" {
+		p.Spec.Volumes = []corev1.Volume{{
+			Name: "data",
+			VolumeSource: corev1.VolumeSource{
+				PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{ClaimName: claim},
+			},
+		}}
+	}
+	return p
+}
+
+func TestTheNodeHoldingAClaimIsFoundFromTheRunningPod(t *testing.T) {
+	s := quiesceScheme(t)
+	c := fake.NewClientBuilder().WithScheme(s).WithObjects(
+		podOn("nextcloud-abc", "node-a", "nextcloud-nextcloud", corev1.PodRunning),
+		podOn("odoo-xyz", "node-b", "odoo-data", corev1.PodRunning),
+		podOn("no-volumes", "node-b", "", corev1.PodRunning),
+	).Build()
+	r := &TenantExportReconciler{Client: c, Scheme: s}
+
+	if got := r.nodeHoldingClaim(context.Background(), "tenant-demo", "nextcloud-nextcloud"); got != "node-a" {
+		t.Errorf("claim is on node-a, got %q", got)
+	}
+	if got := r.nodeHoldingClaim(context.Background(), "tenant-demo", "odoo-data"); got != "node-b" {
+		t.Errorf("claim is on node-b, got %q", got)
+	}
+	// Nothing holds it: the scheduler must be left free rather than pinned to a guess.
+	if got := r.nodeHoldingClaim(context.Background(), "tenant-demo", "unheld"); got != "" {
+		t.Errorf("an unheld claim named node %q", got)
+	}
+}
+
+// A Pending pod proves nothing, and may be a previous capture attempt stuck
+// against this very problem. Pinning to its node would copy the mistake forward.
+func TestAPendingPodDoesNotDecideWhereAVolumeIs(t *testing.T) {
+	s := quiesceScheme(t)
+	c := fake.NewClientBuilder().WithScheme(s).WithObjects(
+		podOn("stuck-capture", "node-wrong", "nextcloud-nextcloud", corev1.PodPending),
+	).Build()
+	r := &TenantExportReconciler{Client: c, Scheme: s}
+
+	if got := r.nodeHoldingClaim(context.Background(), "tenant-demo", "nextcloud-nextcloud"); got != "" {
+		t.Errorf("a Pending pod was treated as holding the volume: %q", got)
+	}
+}
+
+// The bound. A pod that cannot attach never starts, so it never fails, so
+// nothing counted it — the export stayed Running and the app stayed paused for
+// as long as anyone left it.
+func TestACapturePodThatNeverStartsIsGivenUpOn(t *testing.T) {
+	s := quiesceScheme(t)
+	job := &batchv1.Job{ObjectMeta: metav1.ObjectMeta{
+		Name: "tx-e-nextcloud-vol0", Namespace: "tenant-demo"}}
+
+	stuck := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{
+		Name: "tx-e-nextcloud-vol0-abc", Namespace: "tenant-demo",
+		Labels:            map[string]string{"job-name": "tx-e-nextcloud-vol0"},
+		CreationTimestamp: metav1.NewTime(time.Now().Add(-30 * time.Minute)),
+	}}
+	stuck.Status.Phase = corev1.PodPending
+	stuck.Status.InitContainerStatuses = []corev1.ContainerStatus{
+		{Name: "archive", State: corev1.ContainerState{
+			Waiting: &corev1.ContainerStateWaiting{Reason: "PodInitializing"}}},
+	}
+
+	c := fake.NewClientBuilder().WithScheme(s).WithObjects(job, stuck).Build()
+	r := &TenantExportReconciler{Client: c, Scheme: s}
+
+	got := r.stuckCapture(context.Background(), job)
+	if got == "" {
+		t.Fatal("a pod pending for 30 minutes with nothing started was not given up on; " +
+			"the export would stay Running and the app paused indefinitely")
+	}
+	if !strings.Contains(got, "did not start") {
+		t.Errorf("message does not say what happened: %q", got)
+	}
+
+	// A young pod is still starting, and must be left to.
+	stuck.CreationTimestamp = metav1.NewTime(time.Now())
+	c2 := fake.NewClientBuilder().WithScheme(s).WithObjects(job, stuck).Build()
+	r2 := &TenantExportReconciler{Client: c2, Scheme: s}
+	if got := r2.stuckCapture(context.Background(), job); got != "" {
+		t.Errorf("a pod seconds old was given up on: %q", got)
+	}
+}
+
+// A pod that is doing the work must never be mistaken for a stalled one: these
+// captures legitimately run for hours.
+func TestARunningCaptureIsNotGivenUpOn(t *testing.T) {
+	s := quiesceScheme(t)
+	job := &batchv1.Job{ObjectMeta: metav1.ObjectMeta{
+		Name: "tx-e-nextcloud-vol0", Namespace: "tenant-demo"}}
+	working := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{
+		Name: "tx-e-nextcloud-vol0-abc", Namespace: "tenant-demo",
+		Labels:            map[string]string{"job-name": "tx-e-nextcloud-vol0"},
+		CreationTimestamp: metav1.NewTime(time.Now().Add(-4 * time.Hour)),
+	}}
+	working.Status.Phase = corev1.PodPending
+	working.Status.InitContainerStatuses = []corev1.ContainerStatus{
+		{Name: "archive", State: corev1.ContainerState{Running: &corev1.ContainerStateRunning{}}},
+	}
+
+	c := fake.NewClientBuilder().WithScheme(s).WithObjects(job, working).Build()
+	r := &TenantExportReconciler{Client: c, Scheme: s}
+	if got := r.stuckCapture(context.Background(), job); got != "" {
+		t.Errorf("a capture that has been archiving for four hours was abandoned: %q", got)
 	}
 }
