@@ -1253,3 +1253,140 @@ func TestVolumeUploadStillStagesPlatformKeysForAPlatformBundle(t *testing.T) {
 		t.Error("the platform's endpoint was not staged; it travels with its credentials")
 	}
 }
+
+// A finished export must not show its own tenant-wide capture as still to do.
+// The entry exists to hold completedUnits and nothing moved it off Pending, so
+// a bundle containing the realm and the portal database reported both as
+// outstanding — and the tenant-backup guide tells an administrator their check
+// is "every app is listed and Ready".
+func TestTheTenantWideEntryIsReadyWhenItsJobsAre(t *testing.T) {
+	s := quiesceScheme(t)
+	if err := gentianov1alpha1.AddToScheme(s); err != nil {
+		t.Fatalf("add gentian scheme: %v", err)
+	}
+
+	export := &gentianov1alpha1.TenantExport{
+		ObjectMeta: metav1.ObjectMeta{Name: "export-x", Namespace: "tenant-demo"},
+		Status: gentianov1alpha1.TenantExportStatus{
+			Bundle: &gentianov1alpha1.BundleRef{Bucket: "demo-backup", Prefix: "export-x"},
+		},
+	}
+	tenant := &gentianov1alpha1.Tenant{ObjectMeta: metav1.ObjectMeta{Name: "demo"}}
+
+	c := fake.NewClientBuilder().WithScheme(s).
+		WithObjects(export, tenant).WithStatusSubresource(export).Build()
+	r := &TenantExportReconciler{Client: c, Scheme: s,
+		Reconciler: &TenantReconciler{Client: c, Scheme: s}}
+
+	// First pass creates the Jobs and reports not-done.
+	done, err := r.captureTenantWide(context.Background(), export, tenant, backup.Encryption{})
+	if err != nil {
+		t.Fatalf("captureTenantWide: %v", err)
+	}
+	if done {
+		t.Fatal("reported done before any Job had run")
+	}
+
+	// Mark every Job complete, as the cluster would.
+	jobs := &batchv1.JobList{}
+	if err := c.List(context.Background(), jobs); err != nil {
+		t.Fatalf("list jobs: %v", err)
+	}
+	if len(jobs.Items) == 0 {
+		t.Fatal("no capture Jobs were created")
+	}
+	for i := range jobs.Items {
+		jobs.Items[i].Status.Conditions = []batchv1.JobCondition{
+			{Type: batchv1.JobComplete, Status: corev1.ConditionTrue},
+		}
+		jobs.Items[i].Status.Succeeded = 1
+		if err := c.Status().Update(context.Background(), &jobs.Items[i]); err != nil {
+			t.Fatalf("mark job complete: %v", err)
+		}
+	}
+
+	done, err = r.captureTenantWide(context.Background(), export, tenant, backup.Encryption{})
+	if err != nil {
+		t.Fatalf("captureTenantWide (second pass): %v", err)
+	}
+	if !done {
+		t.Fatal("Jobs are complete but the capture reported not done")
+	}
+
+	entry := appStatus(&export.Status.Apps, backupTenantComponent)
+	if entry.Phase != gentianov1alpha1.TenantExportPhaseReady {
+		t.Errorf("%s phase = %q, want Ready — a finished export shows it as "+
+			"outstanding, and the documented check is that every entry is Ready",
+			backupTenantComponent, entry.Phase)
+	}
+	if len(entry.Stores) == 0 {
+		t.Error("no stores recorded for the tenant-wide capture; the entry says " +
+			"nothing about what it contains")
+	}
+}
+
+// The race this closes. The Job controller deletes the pod when the backoff
+// limit is exceeded, so reading only at Job failure loses to it — on corp it
+// did, twice, on the two failures the field exists for: the operator saw a
+// failed Job with no pods behind it and recorded nothing.
+//
+// A container that has already exited non-zero is the same evidence and is
+// there on every pass in between, while the Job is still merely retrying.
+func TestTheFailureReasonIsTakenWhileThePodStillExists(t *testing.T) {
+	s := quiesceScheme(t)
+	if err := gentianov1alpha1.AddToScheme(s); err != nil {
+		t.Fatalf("add gentian scheme: %v", err)
+	}
+
+	// A Job that has not failed yet — it is retrying — with a pod whose upload
+	// container has already died. This is the window that used to be missed.
+	job := &batchv1.Job{ObjectMeta: metav1.ObjectMeta{
+		Name: "tx-e-nextcloud-vol0", Namespace: kernelNamespace}}
+	pod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{
+		Name: "tx-e-nextcloud-vol0-abc", Namespace: kernelNamespace,
+		Labels: map[string]string{"job-name": "tx-e-nextcloud-vol0"},
+	}}
+	pod.Status.Phase = corev1.PodRunning
+	pod.Status.ContainerStatuses = []corev1.ContainerStatus{{
+		Name: "upload",
+		LastTerminationState: corev1.ContainerState{
+			Terminated: &corev1.ContainerStateTerminated{ExitCode: 1},
+		},
+	}}
+
+	export := &gentianov1alpha1.TenantExport{
+		ObjectMeta: metav1.ObjectMeta{Name: "e", Namespace: "tenant-demo"},
+		Status: gentianov1alpha1.TenantExportStatus{
+			Apps: []gentianov1alpha1.AppExportStatus{{Name: "nextcloud-base-ce"}},
+		},
+	}
+
+	c := fake.NewClientBuilder().WithScheme(s).WithObjects(job, pod, export).Build()
+	tail := &fakeTailer{out: map[string]string{
+		"upload": "mc: <ERROR> Failed to copy. Access Key you provided does not exist in our records.",
+	}}
+	r := &TenantExportReconciler{Client: c, Scheme: s, LogTailer: tail}
+
+	unit := captureUnit{
+		Kind: "volume", Name: "nextcloud-nextcloud", JobName: job.Name,
+		Job: &batchv1.Job{ObjectMeta: metav1.ObjectMeta{
+			Name: job.Name, Namespace: kernelNamespace,
+			Labels: map[string]string{meta.AppLabel: "nextcloud-base-ce"},
+		}},
+	}
+	if _, err := r.ensureCaptureJob(context.Background(), export, unit); err != nil {
+		t.Fatalf("ensureCaptureJob: %v", err)
+	}
+
+	entry := appStatus(&export.Status.Apps, "nextcloud-base-ce")
+	if entry.LastFailure == "" {
+		t.Fatal("nothing recorded while the pod was still there; this is the " +
+			"window the Job controller closes, and the reason is gone after it")
+	}
+	if !strings.Contains(entry.LastFailure, "does not exist in our records") {
+		t.Errorf("the container's own words are missing: %q", entry.LastFailure)
+	}
+	if !strings.Contains(entry.LastFailure, "upload") {
+		t.Errorf("the failing container is not named: %q", entry.LastFailure)
+	}
+}

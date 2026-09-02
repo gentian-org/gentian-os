@@ -526,6 +526,23 @@ func (r *TenantExportReconciler) ensureCaptureJob(
 		entry.CompletedUnits = append(entry.CompletedUnits, unit.JobName)
 		return true, nil
 	}
+	// Read the reason while there is still a pod to read it from.
+	//
+	// Not at Job failure, which is where this used to be: the Job controller
+	// deletes the pod when the backoff limit is exceeded, and on corp it won
+	// that race twice — the operator saw a failed Job with no pods behind it
+	// and recorded nothing, on the two failures the field exists for. A
+	// container that has already exited non-zero is the same evidence, and it
+	// is there for every pass in between.
+	//
+	// The first one is kept. A retry usually fails the same way, and the first
+	// failure is the one that explains the export.
+	if entry.LastFailure == "" {
+		if reason := r.captureFailureReason(ctx, unit.Job.Namespace, unit.JobName); reason != "" {
+			entry.LastFailure = reason
+		}
+	}
+
 	// A pod that cannot start never fails, so nothing else here would ever
 	// count it — and the app stays paused meanwhile.
 	if stall := r.stuckCapture(ctx, existing); stall != "" {
@@ -540,10 +557,12 @@ func (r *TenantExportReconciler) ensureCaptureJob(
 	}
 
 	if jobIsFailed(existing) {
-		// Read why before deleting. The pods go with the Job, and they are the
-		// only place the reason exists — after this there is nothing to ask.
-		if reason := r.captureFailureReason(ctx, unit.Job.Namespace, unit.JobName); reason != "" {
-			entry.LastFailure = reason
+		// One last look, for the case where the pod outlived the Job's own
+		// cleanup and nothing above had seen it yet.
+		if entry.LastFailure == "" {
+			if reason := r.captureFailureReason(ctx, unit.Job.Namespace, unit.JobName); reason != "" {
+				entry.LastFailure = reason
+			}
 		}
 		// Count the failure against the app, then delete so the next pass can
 		// retry — bounded by exportMaxAttempts, unlike the provisioning waiter.
@@ -590,6 +609,21 @@ func (r *TenantExportReconciler) captureTenantWide(
 		if !done {
 			allDone = false
 		}
+	}
+
+	// Say so on the entry, as captureApp does for an app.
+	//
+	// ensureCaptureJob creates this entry to hold completedUnits and nothing
+	// ever moved it off Pending, so a finished export showed the realm and the
+	// portal database as still to do — on a bundle that contained both. The
+	// tenant-backup guide tells an administrator their check is "every app is
+	// listed and Ready", which made the documented verification report a good
+	// backup as incomplete.
+	if allDone {
+		entry := appStatus(&export.Status.Apps, backupTenantComponent)
+		entry.Phase = gentianov1alpha1.TenantExportPhaseReady
+		entry.Stores = unitKinds(units)
+		entry.Message = ""
 	}
 	return allDone, nil
 }
