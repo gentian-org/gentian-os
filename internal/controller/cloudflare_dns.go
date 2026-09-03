@@ -174,8 +174,14 @@ func (c *CloudflareDNSClient) ensureTunnelIngress(ctx context.Context, hostname,
 
 	config, err := c.getTunnelConfig(ctx, accountID, tunnelID)
 	if err != nil {
+		// 1055 only: a tunnel with no configuration yet is a cluster whose
+		// routes are set up by hand, which is a supported way to run and not an
+		// error. An authorization failure is not — it is a token missing a
+		// permission, it will not fix itself, and skipping it would leave tenant
+		// hostnames unrouted while the tenant reported Ready. It is returned so
+		// TunnelIngressReady carries the reason, which now names the permission.
 		if strings.Contains(err.Error(), "1055") || strings.Contains(err.Error(), "not found") {
-			ctrl.LoggerFrom(ctx).Info("Cloudflare tunnel configuration not found or access denied; skipping dynamic tunnel routing updates. Ensure a wildcard or manual ingress rule is set up in your Cloudflare dashboard.", "tunnel", tunnelID, "err", err)
+			ctrl.LoggerFrom(ctx).Info("Cloudflare tunnel has no configuration; skipping dynamic tunnel routing updates. Ensure a wildcard or manual ingress rule is set up in your Cloudflare dashboard.", "tunnel", tunnelID, "err", err)
 			return nil
 		}
 		return err
@@ -469,7 +475,13 @@ func formatCloudflareErrors(errors []cfError) error {
 	if len(errors) == 0 {
 		return fmt.Errorf("unknown error")
 	}
-	if errors[0].Code == 10000 {
+	// 10000 is Cloudflare's generic authentication error; 1001 is what the
+	// tunnel endpoints return for a token that authenticated but carries no
+	// Account → Cloudflare Tunnel permission. Both mean the same thing to an
+	// operator, and 1001 is the one a DNS-scoped token actually produces — it
+	// went without the hint until a tenant deploy spent half an hour retrying
+	// "Not authorized" with nothing to act on.
+	if errors[0].Code == 10000 || errors[0].Code == 1001 {
 		return fmt.Errorf("%v (grant Account → Cloudflare Tunnel → Edit on the API token, or set CLOUDFLARE_TUNNEL_API_TOKEN)", errors)
 	}
 	return fmt.Errorf("%v", errors)

@@ -138,7 +138,7 @@ validate_git_https() {
 # the zone. It also passes for a valid token with no access to this domain,
 # which is the failure that actually matters.
 validate_cloudflare_dns() {
-    local name="$1" token="${2:-}" candidate url body code count matched=""
+    local name="$1" token="${2:-}" candidate url body code count matched="" account_id=""
 
     # The kernel domain is a HOSTNAME; Cloudflare zones are registrable domains.
     # desk.gentian.org is not a zone — gentian.org is, and the DNS-01 challenge
@@ -175,6 +175,11 @@ validate_cloudflare_dns() {
         count="$(jq -r '.result | length' <<<"${body}" 2>/dev/null || echo 0)"
         if [[ "${count}" != "0" ]]; then
             matched="${candidate}"
+            # The tunnel probe below needs the account, and this response already
+            # carries it — the operator resolves it the same way rather than
+            # asking the token to enumerate accounts, which is a permission of
+            # its own.
+            account_id="$(jq -r '.result[0].account.id // empty' <<<"${body}" 2>/dev/null || true)"
             break
         fi
 
@@ -192,7 +197,115 @@ validate_cloudflare_dns() {
 
     [[ "${matched}" != "${name}" ]] &&
         info "  Cloudflare zone for ${name}: ${matched}"
+
+    _validate_cloudflare_tunnel_scope "${token}" "${account_id}" || return 1
     return 0
+}
+
+# _validate_cloudflare_tunnel_scope <token> <account_id>
+#
+# The second scope the same token needs, and the one nothing used to ask about.
+#
+# On a tunnel cluster the operator does more than write DNS records: it reads and
+# rewrites the tunnel's ingress rules so a new tenant hostname reaches the
+# gateway. Those endpoints are account-scoped, not zone-scoped, so a token
+# holding exactly the DNS rights this validator has just confirmed still fails
+# there with 1001 Not authorized — and not until a tenant is deployed, half an
+# hour of retries after the install said it was finished.
+#
+# Two probes, because the cheap one does not discriminate. Listing an account's
+# tunnels with a DNS-only token returns 200 and an EMPTY result rather than 403:
+# the token can address the account, it simply cannot see the resource. An empty
+# list is therefore ambiguous — a token with no tunnel permission and an account
+# whose tunnel has not been created yet look identical. Only the configurations
+# endpoint answers definitively, and it needs the tunnel's id, which exists once
+# cloudflared is running. So: ask that when the id can be found, and say plainly
+# that the answer is inconclusive when it cannot.
+#
+# Both are one authenticated GET, inside the curl-only ceiling bootstrap
+# validators are held to. Neither proves the token may WRITE the configuration,
+# because Cloudflare offers no way to ask that without writing.
+_validate_cloudflare_tunnel_scope() {
+    local token="$1" account_id="$2" tunnel_id url body code
+
+    # static-ip clusters route through a load balancer and own no tunnel. Bare
+    # ${NETWORK_MODE:-} on purpose: an unset value here means the claim does not
+    # exist yet, on a first install, and the XRD's default is tunnel — so the
+    # probe runs. A literal default would be a second opinion on the schema.
+    [[ "${NETWORK_MODE:-}" == "static-ip" ]] && return 0
+
+    # No account means the zone lookup matched without one, which is not a thing
+    # Cloudflare does. Skipping is right: the DNS answer stands on its own.
+    [[ -n "${account_id}" ]] || return 0
+
+    tunnel_id="$(_cloudflare_tunnel_id)"
+
+    if [[ -n "${tunnel_id}" ]]; then
+        url="https://api.cloudflare.com/client/v4/accounts/${account_id}/cfd_tunnel/${tunnel_id}/configurations"
+    else
+        url="https://api.cloudflare.com/client/v4/accounts/${account_id}/cfd_tunnel?per_page=1"
+    fi
+
+    body="$(curl -s -w $'\n%{http_code}' --max-time "${GENTIAN_VALIDATE_TIMEOUT}" \
+        -H "Authorization: Bearer ${token}" "${url}" 2>/dev/null)" || body=$'\n000'
+    code="${body##*$'\n'}"
+    body="${body%$'\n'*}"
+
+    if [[ "${code}" == "000" ]]; then
+        _v_fail "${url}" "unreachable" \
+            "no HTTP response within ${GENTIAN_VALIDATE_TIMEOUT}s"
+        return 1
+    fi
+
+    # Cloudflare answers some authorization failures with 200 and success:false,
+    # so the status alone is not the verdict.
+    if [[ "${code}" == "200" && "$(jq -r '.success // false' <<<"${body}" 2>/dev/null)" == "true" ]]; then
+        if [[ -n "${tunnel_id}" ]]; then
+            return 0
+        fi
+        if [[ "$(jq -r '.result | length' <<<"${body}" 2>/dev/null || echo 0)" != "0" ]]; then
+            return 0
+        fi
+        warn "Could not confirm this token may configure Cloudflare Tunnels."
+        warn "  ${account_id} lists no tunnels, which happens both when none exists"
+        warn "  yet and when the token has no Account -> Cloudflare Tunnel permission."
+        warn "  On a networkMode: tunnel cluster the operator needs that permission to"
+        warn "  route tenant hostnames; without it, tenants stall at TunnelIngressReady."
+        return 0
+    fi
+
+    _v_fail "${url}" "token cannot read this account's Cloudflare Tunnel configuration (HTTP ${code})" \
+        "$(jq -r '.errors[0].message // empty' <<<"${body}" 2>/dev/null)"
+    error "  This cluster is networkMode: tunnel, so the operator rewrites the"
+    error "  tunnel's ingress rules for every tenant hostname. That needs"
+    error "  Account -> Cloudflare Tunnel -> Edit on this token, in addition to"
+    error "  the zone DNS rights it already has."
+    error "  Add the permission and re-enter the token, or set networkMode:"
+    error "  static-ip on the Cluster claim if this cluster has no tunnel."
+    return 1
+}
+
+# _cloudflare_tunnel_id — the running tunnel's id, when the cluster can name it.
+#
+# Best effort by design. On a first install nothing has been created yet and the
+# answer is empty, which the caller handles; on a re-run against a live cluster
+# — which is when this check earns its place, because the token is already in
+# use and already failing — cloudflared's own credential names it. Read the same
+# two Secrets, in the same order, as the seeding step that resolves the tunnel
+# CNAME, so the two cannot disagree about which tunnel this cluster runs.
+_cloudflare_tunnel_id() {
+    local token_val id=""
+    command -v kubectl >/dev/null 2>&1 || return 0
+
+    token_val="$(kubectl get secret cf-tunnel -n default -o jsonpath='{.data.token}' 2>/dev/null \
+        | base64 -d 2>/dev/null | base64 -d 2>/dev/null || true)"
+    [[ -n "${token_val}" ]] && id="$(jq -r '.t // empty' <<<"${token_val}" 2>/dev/null || true)"
+
+    if [[ -z "${id}" ]]; then
+        id="$(kubectl get secret tunnel-credentials -n default -o jsonpath='{.data}' 2>/dev/null \
+            | jq -r 'keys[0] // empty' 2>/dev/null | sed 's/\.json$//' || true)"
+    fi
+    printf '%s' "${id}"
 }
 
 # validate_image_tag <repository> <tag>
