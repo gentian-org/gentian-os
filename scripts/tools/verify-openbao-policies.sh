@@ -227,7 +227,7 @@ expect "${TENANT_TOKEN}" "DENIED another tenant's data" \
 expect "${TENANT_TOKEN}" "DENIED another tenant's metadata" \
     "secret/metadata/gentian-os/tenants/other/repositories/x" "deny"
 expect "${TENANT_TOKEN}" "allowed own tenant data" \
-    "secret/data/gentian-os/tenants/acme/repositories/x" "create,read,update"
+    "secret/data/gentian-os/tenants/acme/repositories/x" "create,patch,read,update"
 expect "${TENANT_TOKEN}" "allowed own tenant metadata (records who set a value)" \
     "secret/metadata/gentian-os/tenants/acme/repositories/x" "create,list,read,update"
 
@@ -240,12 +240,12 @@ echo "  tenant-admin ${DIM}(a second identity, tenant=globex)${NC}"
 expect "${OTHER_TOKEN}" "DENIED the first tenant's data" \
     "secret/data/gentian-os/tenants/acme/repositories/x" "deny"
 expect "${OTHER_TOKEN}" "allowed its own tenant's data" \
-    "secret/data/gentian-os/tenants/globex/repositories/x" "create,read,update"
+    "secret/data/gentian-os/tenants/globex/repositories/x" "create,patch,read,update"
 
 echo ""
 echo "  cluster-admin"
 expect "${CLUSTER_TOKEN}" "allowed kernel data" \
-    "secret/data/gentian-os/kernel/dns/cloudflare" "create,read,update"
+    "secret/data/gentian-os/kernel/dns/cloudflare" "create,patch,read,update"
 expect "${CLUSTER_TOKEN}" "allowed kernel metadata" \
     "secret/metadata/gentian-os/kernel/dns/cloudflare" "list,read"
 expect "${CLUSTER_TOKEN}" "DENIED a tenant's data — cluster-admin is not a superuser here" \
@@ -301,7 +301,7 @@ if [[ -f "${OPERATOR_POLICY_FILE}" ]]; then
         expect "${OPERATOR_TOKEN}" "DENIED the kernel's own OIDC mount" \
             "auth/oidc/config" "deny"
         expect "${OPERATOR_TOKEN}" "allowed its own secret tree" \
-            "secret/data/gentian-os/kernel/dns/cloudflare" "create,read,update,delete"
+            "secret/data/gentian-os/kernel/dns/cloudflare" "create,read,update,patch,delete"
     else
         echo "    ${YELLOW}SKIP${NC} — could not read operator-write from ${OPERATOR_POLICY_FILE}"
     fi

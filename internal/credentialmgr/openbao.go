@@ -439,11 +439,78 @@ func (b *OpenBao) Write(ctx context.Context, token, path string, fields map[stri
 	// Omitting options entirely is an unconditional write, which is what
 	// "supply this credential" means. The mount does not set cas_required,
 	// so nothing is being bypassed.
+	// PATCH, not POST: a KV v2 write REPLACES the document, and several paths
+	// hold more than the one credential a form supplies.
+	//
+	// gentian-os/kernel/dns/cloudflare is the case that found this. The
+	// installer seeds api-token, zone-id and tunnel-cname there as one
+	// document; the catalogue declares only api-token as an operator-supplied
+	// field, because the other two are derived from the token and the running
+	// cloudflared rather than typed by anyone. Supplying a rotated token
+	// through the console therefore wrote a document containing api-token
+	// alone, and the other two keys ceased to exist.
+	//
+	// Nothing said so. The write succeeded and the console reported success;
+	// the ExternalSecret that reads all three failed two components away with
+	// `cannot find secret data for key: "zone-id"`, kept serving the Secret's
+	// last good content — the superseded token — and the operator went on
+	// authenticating with a credential that had already been revoked.
+	//
+	// A merge patch is a server-side merge: keys present in the request are
+	// written, keys absent are left alone, which is what "supply this
+	// credential" has always meant. Doing it in this client instead would mean
+	// reading the document first, and this client deliberately cannot read
+	// values at all — see Metadata.
 	payload := map[string]any{
 		"data": fields,
 	}
 	body, _ := json.Marshal(payload)
 	url := fmt.Sprintf("%s/v1/%s/data/%s", b.Addr, b.KVMount, strings.TrimPrefix(path, "/"))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPatch, url, bytes.NewReader(body))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("X-Vault-Token", token)
+	req.Header.Set("Content-Type", "application/merge-patch+json")
+
+	resp, err := b.HTTP.Do(req)
+	if err != nil {
+		return fmt.Errorf("%w: %w", ErrUpstream, err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	// A patch needs something to merge onto. 404 is a path with no version
+	// yet — a credential nothing has seeded — where a full write is both
+	// correct and the only option, and destroys nothing because there is
+	// nothing there.
+	if resp.StatusCode == http.StatusNotFound {
+		return b.createAndRecord(ctx, token, path, url, body, setBy)
+	}
+
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusNoContent {
+		// OpenBao's own words, not a guess at them. "the caller's policy may
+		// not permit this" was a plausible reading of every non-2xx, and it
+		// sent an operator to audit a policy that already granted the path
+		// while the actual answer was in a response body nobody read.
+		//
+		// Safe to relay: reaching here means the caller already authenticated
+		// and holds the cluster-admin policy, so the path and the reason are
+		// things they may see. The value is not in the response.
+		detail := strings.TrimSpace(readCapped(resp.Body, 2048))
+		if detail == "" {
+			detail = "no detail returned"
+		}
+		return fmt.Errorf("openbao rejected the write to %s (HTTP %d): %s", path, resp.StatusCode, detail)
+	}
+	return b.setCustomMetadata(ctx, token, path, setBy)
+}
+
+// createAndRecord writes the whole document, for a path that does not exist yet.
+//
+// Only reachable from Write's 404 branch. It is the pre-patch behaviour, kept
+// for the one case where replacing the document cannot lose anything: there is
+// no document.
+func (b *OpenBao) createAndRecord(ctx context.Context, token, path, url string, body []byte, setBy string) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
 	if err != nil {
 		return err
@@ -458,14 +525,6 @@ func (b *OpenBao) Write(ctx context.Context, token, path string, fields map[stri
 	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusNoContent {
-		// OpenBao's own words, not a guess at them. "the caller's policy may
-		// not permit this" was a plausible reading of every non-2xx, and it
-		// sent an operator to audit a policy that already granted the path
-		// while the actual answer was in a response body nobody read.
-		//
-		// Safe to relay: reaching here means the caller already authenticated
-		// and holds the cluster-admin policy, so the path and the reason are
-		// things they may see. The value is not in the response.
 		detail := strings.TrimSpace(readCapped(resp.Body, 2048))
 		if detail == "" {
 			detail = "no detail returned"
