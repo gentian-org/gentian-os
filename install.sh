@@ -411,6 +411,28 @@ main() {
             # Reads the cluster and OpenBao; changes neither.
             load_operator_config
             load_deployments_cluster_settings
+            # Get a token the way every other OpenBao caller does, rather than
+            # requiring one to be exported already.
+            #
+            # try_load_creds_from_openbao below tries only BAO_TOKEN and the
+            # init file's root token, and E-04 revokes that token and strips it
+            # from the file at handover. So on any cluster past handover — which
+            # is every cluster this command is for — both came up empty, the
+            # lookup returned silently, and the export failed with "the master
+            # password and derivation salt are both required. Set BAO_TOKEN and
+            # retry", naming the one thing the installer already knows how to
+            # obtain.
+            #
+            # _resolve_bao_token was written for exactly this: it prefers the
+            # init file, then an OIDC sign-in as cluster-admin, and only then
+            # prompts. The kit export was the one path that never called it.
+            #
+            # Failure here is not fatal under set -e: an unreachable OpenBao
+            # still leaves the environment and the init files to gather from,
+            # and export_recovery_kit says precisely what it could not find.
+            # Aborting on an address lookup would replace that with a worse
+            # message about a Service.
+            resolve_openbao_access || true
             try_load_creds_from_openbao
             export_recovery_kit "${GENTIAN_KIT_PATH:-}"
             ;;

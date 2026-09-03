@@ -485,6 +485,27 @@ _resolve_bao_token() {
 }
 
 # =============================================================================
+# resolve_openbao_access — point at OpenBao and get a token, for a read-only
+# command that is not part of an install.
+#
+# seed_secrets does the same three lines inline, but it exits on failure because
+# an install that cannot seed is over. A command that only reads must not: the
+# caller reports what it could not gather, which is a better message than an
+# address lookup's.
+#
+# Returns non-zero when OpenBao cannot be reached, leaving BAO_TOKEN unset.
+resolve_openbao_access() {
+    if ! BAO_ADDR=$(gentian_service_addr openbao openbao 8200 https); then
+        warn "Could not reach the openbao Service on :8200."
+        warn "  Neither the ClusterIP nor a kubectl port-forward responded."
+        return 1
+    fi
+    export BAO_ADDR
+    export VAULT_SKIP_VERIFY=true
+    _resolve_bao_token
+}
+
+# =============================================================================
 seed_secrets() {
     banner "Seeding kernel secrets"
 

@@ -435,8 +435,18 @@ export_recovery_kit() {
     # password alone reproduces nothing.
     if [[ -z "${MASTER_PASSWORD:-}" || -z "${DERIVATION_SALT:-}" ]]; then
         error "Cannot export: the master password and derivation salt are both required."
-        error "  Neither the environment nor OpenBao supplied them. Set BAO_TOKEN and retry,"
-        error "  or run this while the values are still in a live install shell."
+        error "  Neither the environment nor OpenBao supplied them."
+        error ""
+        error "  The export tries an OIDC sign-in as cluster-admin when it has no token,"
+        error "  so reaching this means that did not complete either — no browser, the"
+        error "  sign-in was cancelled, or OpenBao is unreachable from here."
+        error ""
+        error "  Supply a token directly:"
+        error "    export BAO_ADDR=https://localhost:8200   # localhost is in the cert SANs"
+        error "    bao login -method=oidc                   # your Keycloak identity"
+        error "    export BAO_TOKEN=\"\$(bao print token)\""
+        error ""
+        error "  Or run this while the values are still in a live install shell."
         return 1
     fi
 
