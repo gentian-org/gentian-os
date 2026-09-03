@@ -870,8 +870,13 @@ spec:
     name: cluster-admin
     policy: |
       # Every credential a cluster operator may supply.
+      #
+      # patch is what makes supplying one field of a shared path
+      # safe: several kernel paths hold a supplied credential
+      # alongside values derived at install time, and update alone
+      # replaces the whole document, silently dropping the rest.
       path "secret/data/gentian-os/kernel/*" {
-        capabilities = ["create", "update", "read"]
+        capabilities = ["create", "update", "patch", "read"]
       }
       path "secret/metadata/gentian-os/kernel/*" {
         capabilities = ["list", "read"]
@@ -1006,7 +1011,7 @@ spec:
       # mapping writes, so the path a token reaches is decided by the
       # verified claim rather than by anything the caller sends.
       path "secret/data/gentian-os/tenants/{{identity.entity.aliases.auth_oidc_1a2b3c4d.metadata.tenant}}/*" {
-        capabilities = ["create", "update", "read"]
+        capabilities = ["create", "update", "patch", "read"]
       }
       # Metadata on the same prefix. The write path records who set a
       # credential as custom metadata, and that write is deliberately
