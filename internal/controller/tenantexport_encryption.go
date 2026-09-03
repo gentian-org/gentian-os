@@ -20,6 +20,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"slices"
 	"strings"
 
 	corev1 "k8s.io/api/core/v1"
@@ -27,6 +28,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 	"github.com/gentian-org/gentian-os/internal/backup"
@@ -47,33 +49,59 @@ const BackupRecipientsPath = "gentian-os/kernel/backup/recipients"
 // backupRecipientsKey is the field at that path.
 const backupRecipientsKey = "recipients"
 
-// clusterRecipients returns the age public keys the platform can decrypt with.
+// clusterRecipients returns the age public keys the platform encrypts to.
 //
 // These are the recipients a scheduled export uses, and the reason it can run
 // with nobody present: the matching identity lives in the recovery kit, off the
 // cluster, so an export taken at 03:00 is still readable during the incident
 // that made it matter.
 //
-// OpenBao first, then the environment. The env var is per-cluster Helm values,
-// which nothing generates — so a cluster nobody had hand-edited had no key, the
-// only mode a schedule can use was unavailable, and the nightly backup failed
-// every night with a message telling an administrator to go and configure one.
-// Writing it when the recovery kit is made puts the key where the identity's
-// escrow already happens, and makes the default mode work on a cluster nobody
-// has edited.
+// Git wins. The environment carries backupRecipients from the cluster's values
+// in gentian-deployments — reviewed, versioned, and not writable by the cluster
+// — and OpenBao is consulted only when git says nothing.
 //
-// The env var still wins nothing and loses nothing: it is checked second so a
-// cluster that sets it explicitly keeps working, and it remains the way to name
-// a recipient the platform did not generate.
+// That order matters more than it looks. The operator holds create and update
+// on gentian-os/* in OpenBao, so whoever takes the cluster can put their own
+// public key there and every later backup is encrypted to them, willingly, by
+// the platform. Git is the copy they cannot rewrite from inside. Reading
+// OpenBao first — which this did briefly — made the tamper-resistant store the
+// fallback and the tamperable one the authority.
+//
+// OpenBao remains the answer for a cluster nobody has pinned, which is the
+// whole point of generating a key with the recovery kit: the default mode has
+// to work before anyone has edited anything.
+//
+// A disagreement is reported and git is used. Refusing to back up would let
+// anyone who can write one OpenBao path stop every backup on the cluster, which
+// is a worse failure than the one being defended against.
 func (r *TenantExportReconciler) clusterRecipients(ctx context.Context) []string {
-	if r.Reconciler != nil && r.Reconciler.Seeder != nil && r.Reconciler.Seeder.KV() != nil {
-		if data, err := r.Reconciler.Seeder.Read(ctx, BackupRecipientsPath); err == nil {
-			if got := splitRecipients(data[backupRecipientsKey]); len(got) > 0 {
-				return got
-			}
-		}
+	pinned := splitRecipients(os.Getenv(backupRecipientsEnv))
+	stored := r.storedRecipients(ctx)
+
+	if len(pinned) == 0 {
+		return stored
 	}
-	return splitRecipients(os.Getenv(backupRecipientsEnv))
+	if len(stored) > 0 && !slices.Equal(pinned, stored) {
+		log.FromContext(ctx).Error(nil,
+			"the backup recipient in OpenBao does not match the one pinned in this "+
+				"cluster's values; using the pinned one. A recipient that changed "+
+				"underneath the platform is how bundles come to be encrypted to "+
+				"somebody else",
+			"pinned", pinned, "stored", stored, "path", BackupRecipientsPath)
+	}
+	return pinned
+}
+
+// storedRecipients reads what the recovery kit wrote, if anything.
+func (r *TenantExportReconciler) storedRecipients(ctx context.Context) []string {
+	if r.Reconciler == nil || r.Reconciler.Seeder == nil || r.Reconciler.Seeder.KV() == nil {
+		return nil
+	}
+	data, err := r.Reconciler.Seeder.Read(ctx, BackupRecipientsPath)
+	if err != nil {
+		return nil
+	}
+	return splitRecipients(data[backupRecipientsKey])
 }
 
 func splitRecipients(raw string) []string {

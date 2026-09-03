@@ -114,6 +114,61 @@ _kit_from_json() {
     jq -r "$2 // empty" "$1" 2>/dev/null
 }
 
+# _kit_print_backup_key <identity-file> <recipient>
+#
+# The sheet to put in a safe. Printed once, at generation, because the identity
+# is in the kit and nowhere else — there is no later command that can reproduce
+# this without the kit already in hand.
+#
+# Paper is a real answer for a key of this shape, not a curiosity. An age
+# identity is 74 characters of bech32: small enough for a QR at the highest
+# error correction, and bech32 carries a checksum, so a character misread off
+# paper is detected rather than silently wrong. That is the property that makes
+# transcription survivable.
+#
+# The public key is on the sheet too. It is what lets someone hold this page
+# against a running cluster and confirm it is the right one, without decrypting
+# anything and without the cluster learning anything it does not already have.
+_kit_print_backup_key() {
+    local identity_file="$1" recipient="$2" identity cluster
+    identity="$(grep -m1 'AGE-SECRET-KEY-' "${identity_file}" 2>/dev/null || true)"
+    [[ -n "${identity}" ]] || return 0
+    cluster="${GENTIAN_DEPLOYMENTS_CLUSTER_ID:-${KERNEL_DOMAIN:-unknown}}"
+
+    echo
+    echo "  ┌───────────────────────────────────────────────────────────────┐"
+    echo "  │  GENTIAN BACKUP KEY — PRINT THIS AND STORE IT OFFLINE         │"
+    echo "  └───────────────────────────────────────────────────────────────┘"
+    echo
+    echo "    Cluster : ${cluster}"
+    echo "    Created : $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    echo
+    echo "    Public key (safe to share; identifies this cluster's backups):"
+    echo "      ${recipient}"
+    echo
+    echo "    IDENTITY — this opens every backup. Treat it as the backup itself:"
+    echo "      ${identity}"
+    echo
+
+    if command -v qrencode >/dev/null 2>&1; then
+        echo "    Same identity as a QR code:"
+        qrencode -t UTF8 -l H -m 2 "${identity}" 2>/dev/null || true
+        echo
+    else
+        echo "    (install qrencode to get this as a scannable QR code)"
+        echo
+    fi
+
+    echo "    To read a bundle with it:"
+    echo "      age -d -i <this-key-file> manifest.json.age > manifest.json"
+    echo
+    echo "    Losing this makes every backup encrypted to the key above"
+    echo "    unreadable. There is no recovery path, by design. Store it where"
+    echo "    the recovery kit and the master password live — and not on the"
+    echo "    cluster it protects."
+    echo
+}
+
 # _kit_recipient — the cluster's backup recipient, if it has one.
 _kit_recipient() {
     [[ -n "${BAO_TOKEN:-}" ]] || return 0
@@ -190,9 +245,17 @@ _kit_backup_identity() {
     fi
 
     BACKUP_AGE_IDENTITY="$(cat "${tmp}")"
-    rm -rf "${dir}"
     success "  Backup key generated. Public half in OpenBao, identity in this kit."
-    info    "  ${recipient}"
+    _kit_print_backup_key "${tmp}" "${recipient}"
+    rm -rf "${dir}"
+
+    # Pin it where the cluster cannot rewrite it. OpenBao is what makes the
+    # default work untouched; git is what stops a compromised cluster pointing
+    # future backups at somebody else's key, because the operator prefers the
+    # pinned value and reports a disagreement.
+    warn "  Add this to clusters/<cluster>/kernel/values.yaml in gentian-deployments:"
+    warn "    backupRecipients:"
+    warn "      - ${recipient}"
 }
 
 # _kit_gather — fill the exportable variables from whatever source has them.
