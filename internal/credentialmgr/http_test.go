@@ -197,6 +197,11 @@ func TestNoRouteReturnsASecretValue(t *testing.T) {
 		{"GET", "/v1/credentials/smtp-relay", ""},
 		{"PUT", "/v1/credentials/smtp-relay",
 			fmt.Sprintf(`{"fields":{"password":%q}}`, theSecretValue)},
+		// The escrowed backup identity is the one value on this service that
+		// opens a tenant's whole history, so "no route echoes a secret back"
+		// has to cover it too.
+		{"PUT", "/v1/backup-identity",
+			fmt.Sprintf(`{"identity":"AGE-SECRET-KEY-%s"}`, theSecretValue)},
 		{"GET", "/v1/repositories", ""},
 		{"PUT", "/v1/repositories/smtp-relay",
 			fmt.Sprintf(`{"role":"apps","type":"git","url":"https://git.example/x","confirm":%q}`, theSecretValue)},
@@ -224,6 +229,7 @@ func TestEveryRouteIsEnumerated(t *testing.T) {
 		"GET /v1/credentials",
 		"GET /v1/credentials/{name}",
 		"PUT /v1/credentials/{name}",
+		"PUT /v1/backup-identity",
 		"GET /v1/repositories",
 		"PUT /v1/repositories/{name}",
 		"DELETE /v1/repositories/{name}",
@@ -239,7 +245,7 @@ func TestEveryRouteIsEnumerated(t *testing.T) {
 	}
 	// And the reverse: a route registered but absent from the leak test's cases
 	// is what this is really guarding, so the two lists must be the same length.
-	if got, want := len(registered), 7; got != want {
+	if got, want := len(registered), 8; got != want {
 		t.Fatalf("route list changed (%d); update TestNoRouteReturnsASecretValue too", got)
 	}
 }

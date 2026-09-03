@@ -1885,6 +1885,15 @@ _claim_cluster_fields() {
     _claim_default_line routingMode  "${ROUTING_MODE:-}"  gateway 'Envoy Gateway plus the Gateway API; the only supported value'
     _claim_default_line storageClass "${STORAGE_CLASS:-}" ''      'empty means the clusters default StorageClass'
 
+    printf '\n'
+    printf '  # Where the backup private key lives. On by default: it goes to OpenBao as\n'
+    printf '  # well as the recovery kit, so a cluster administrator can restore without\n'
+    printf '  # the kit -- and anyone who reaches OpenBao as one can read every bundle.\n'
+    printf '  # Set false to keep it in the kit alone: nothing the cluster holds can then\n'
+    printf '  # open a bundle, and losing every copy of the kit loses every backup.\n'
+    printf '  # backup:\n'
+    printf '  #   escrowIdentity: true\n'
+
     if [[ "${LLM_SUPPORT:-false}" == "true" ]]; then
         printf '  llm:\n'
         printf '    enabled: true\n'

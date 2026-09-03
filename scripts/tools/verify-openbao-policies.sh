@@ -230,6 +230,13 @@ expect "${TENANT_TOKEN}" "allowed own tenant data" \
     "secret/data/gentian-os/tenants/acme/repositories/x" "create,patch,read,update"
 expect "${TENANT_TOKEN}" "allowed own tenant metadata (records who set a value)" \
     "secret/metadata/gentian-os/tenants/acme/repositories/x" "create,list,read,update"
+# Escrow, one subtree down from the cluster's. The tenant administrator writes
+# it and reads it back for a restore; nothing else may.
+# patch as well as update: Bao.Write sends a merge patch so supplying one field
+# does not delete the others at a path, and a policy without it would refuse the
+# escrow write at runtime with a 403 that looked like a permissions mistake.
+expect "${TENANT_TOKEN}" "allowed escrowing and reading back its own backup identity" \
+    "secret/data/gentian-os/tenants/acme/backup/identity" "create,patch,read,update"
 
 # The claim decides the path, not the caller. A second identity asking for a
 # different tenant must land somewhere else entirely — this is what makes the
@@ -237,6 +244,8 @@ expect "${TENANT_TOKEN}" "allowed own tenant metadata (records who set a value)"
 OTHER_TOKEN="$(mint_tenant_token globex)"
 echo ""
 echo "  tenant-admin ${DIM}(a second identity, tenant=globex)${NC}"
+expect "${OTHER_TOKEN}" "DENIED the first tenant's escrowed backup identity" \
+    "secret/data/gentian-os/tenants/acme/backup/identity" "deny"
 expect "${OTHER_TOKEN}" "DENIED the first tenant's data" \
     "secret/data/gentian-os/tenants/acme/repositories/x" "deny"
 expect "${OTHER_TOKEN}" "allowed its own tenant's data" \
@@ -252,6 +261,12 @@ expect "${CLUSTER_TOKEN}" "DENIED a tenant's data — cluster-admin is not a sup
     "secret/data/gentian-os/tenants/acme/repositories/x" "deny"
 expect "${CLUSTER_TOKEN}" "DENIED paths outside gentian-os" \
     "secret/data/somewhere/else" "deny"
+# Escrow, when a cluster turns it on, puts the backup private key here. The
+# whole arrangement rests on exactly one asymmetry — this identity reads it and
+# the next one does not — so both halves are asserted rather than reasoned
+# about.
+expect "${CLUSTER_TOKEN}" "allowed the escrowed backup identity — this is who escrow is for" \
+    "secret/data/gentian-os/kernel/backup/identity" "create,patch,read,update"
 
 echo ""
 echo "  eso-read ${DIM}(the only identity ESO holds)${NC}"
@@ -263,6 +278,31 @@ expect "${ESO_TOKEN}" "allowed reading a tenant's app credentials" \
     "secret/data/gentian-os/tenants/acme/apps/some-app" "read"
 expect "${ESO_TOKEN}" "allowed reading a tenant's repository credentials" \
     "secret/data/gentian-os/tenants/acme/repositories/x" "read"
+# The escrowed backup identity, denied by an exact path that has to beat the
+# kernel/* glob two lines above it in the same policy. If OpenBao ever resolved
+# those the other way, anything able to write an ExternalSecret could materialise
+# the key that opens every bundle into an ordinary Secret — and escrow would
+# silently mean "the cluster holds its own decryption key" rather than "a cluster
+# administrator can read it". Asserted against a real bao, because the precedence
+# rule is the load-bearing part and no comment can check it.
+expect "${ESO_TOKEN}" "DENIED the escrowed backup identity — deny beats the kernel glob" \
+    "secret/data/gentian-os/kernel/backup/identity" "deny"
+expect "${ESO_TOKEN}" "DENIED its metadata — the path name is a hint on its own" \
+    "secret/metadata/gentian-os/kernel/backup/identity" "deny"
+# The sibling path must be unaffected: a deny that swallowed the subtree would
+# take the recipient with it, and the operator would stop being able to encrypt
+# at all.
+expect "${ESO_TOKEN}" "allowed the backup recipient beside it — the deny is one path, not a subtree" \
+    "secret/data/gentian-os/kernel/backup/recipients" "read"
+# The same asymmetry for a tenant's own escrowed key, which sits inside a subtree
+# eso-read genuinely needs: tenants/<t>/backup/destination must become a Secret,
+# and tenants/<t>/backup/identity must never.
+expect "${ESO_TOKEN}" "DENIED a tenant's escrowed backup identity" \
+    "secret/data/gentian-os/tenants/acme/backup/identity" "deny"
+expect "${ESO_TOKEN}" "DENIED its metadata" \
+    "secret/metadata/gentian-os/tenants/acme/backup/identity" "deny"
+expect "${ESO_TOKEN}" "allowed the destination credential in the same subtree" \
+    "secret/data/gentian-os/tenants/acme/backup/destination" "read"
 expect "${ESO_TOKEN}" "DENIED paths outside gentian-os" \
     "secret/data/somewhere/else" "deny"
 

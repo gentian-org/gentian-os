@@ -176,6 +176,66 @@ _kit_recipient() {
         gentian-os/kernel/backup/recipients 2>/dev/null || true
 }
 
+# _kit_backup_escrow_path — where an escrowed identity lives.
+#
+# Under kernel/, so the cluster-admin policy already reads it and no new grant
+# is needed for the person who would be restoring. eso-read denies this exact
+# path — see the Cluster composition — so escrow means "a cluster administrator
+# can read it", not "the cluster can read it". The distinction is the whole
+# point: a key ESO could materialise into a Secret would be readable by anything
+# that takes the cluster, which is the one thing escrow must not come to mean.
+_KIT_BACKUP_ESCROW_PATH="gentian-os/kernel/backup/identity"
+
+# _kit_escrow_enabled — whether this cluster escrows the backup identity.
+#
+# On unless the cluster says otherwise, because the likelier disaster is a lost
+# recovery kit rather than a stolen cluster, and a backup nobody can open is not
+# a backup. Read from the live Cluster resource, which is where the claim in
+# gentian-deployments lands, so the answer is the one committed in git rather
+# than one supplied at the prompt.
+#
+# Only the literal "false" turns it off. The XRD defaults the field to true, so
+# a current cluster always states it either way and the empty case means the
+# resource could not be read — an XRD that predates this field, no cluster
+# access, a kit exported from elsewhere. Empty follows the documented default
+# rather than quietly inverting it, and _kit_backup_identity says which way it
+# went so the choice is visible in the transcript rather than inferred.
+#
+# The narrow risk this accepts: a claim that says false, on a cluster whose XRD
+# is too old to know the field, reads as empty and escrows anyway. That window
+# closes the moment the XRD is applied, and GENTIAN_BACKUP_ESCROW_IDENTITY=false
+# forces the answer meanwhile.
+_kit_escrow_enabled() {
+    if [[ -n "${GENTIAN_BACKUP_ESCROW_IDENTITY:-}" ]]; then
+        [[ "${GENTIAN_BACKUP_ESCROW_IDENTITY}" != "false" ]]
+        return
+    fi
+    local value
+    value="$(kubectl get cluster.gentianos.io -A \
+        -o jsonpath='{.items[0].spec.backup.escrowIdentity}' 2>/dev/null || true)"
+    [[ "${value}" != "false" ]]
+}
+
+# _kit_escrow_stated — whether the cluster actually answered, or we defaulted.
+#
+# Reported rather than hidden: "escrowed because the cluster asked" and
+# "escrowed because nothing could be read" are the same outcome and very
+# different facts, and only one of them is a decision somebody made.
+_kit_escrow_stated() {
+    [[ -n "${GENTIAN_BACKUP_ESCROW_IDENTITY:-}" ]] && return 0
+    local value
+    value="$(kubectl get cluster.gentianos.io -A \
+        -o jsonpath='{.items[0].spec.backup.escrowIdentity}' 2>/dev/null || true)"
+    [[ -n "${value}" ]]
+}
+
+# _kit_escrowed_identity — the identity OpenBao holds, when escrow is on.
+_kit_escrowed_identity() {
+    [[ -n "${BAO_TOKEN:-}" ]] || return 0
+    bao kv get -mount=secret -field=identity \
+        "${_KIT_BACKUP_ESCROW_PATH}" 2>/dev/null || true
+}
+
 # _kit_backup_identity — the cluster's own age key pair for bundle encryption.
 #
 # The public half goes into OpenBao, where the operator reads it; the private
@@ -202,10 +262,30 @@ _kit_backup_identity() {
     existing="$(_kit_recipient)"
 
     if [[ -n "${existing}" ]]; then
-        if [[ -z "${BACKUP_AGE_IDENTITY:-}" ]]; then
-            warn "  This cluster already has a backup recipient (${existing:0:16}...)."
-            warn "  Its identity is not available here, so this kit cannot carry it."
-            warn "  The kit that created it remains the only copy — keep it."
+        if [[ -n "${BACKUP_AGE_IDENTITY:-}" ]]; then
+            return 0
+        fi
+        # Escrow's first payoff, and the reason it is worth having beyond a
+        # restore: the identity can be fetched, so a second kit carries it too.
+        # Without escrow this is the point at which the earlier kit becomes
+        # irreplaceable, and every kit written afterwards is missing the one
+        # value that cannot be regenerated.
+        local escrowed=""
+        if _kit_escrow_enabled; then
+            escrowed="$(_kit_escrowed_identity)"
+        fi
+        if [[ -n "${escrowed}" ]]; then
+            BACKUP_AGE_IDENTITY="${escrowed}"
+            success "  Backup identity read from OpenBao escrow; this kit carries it."
+            return 0
+        fi
+        warn "  This cluster already has a backup recipient (${existing:0:16}...)."
+        warn "  Its identity is not available here, so this kit cannot carry it."
+        warn "  The kit that created it remains the only copy — keep it."
+        if _kit_escrow_enabled; then
+            warn "  Escrow is on but OpenBao holds no identity: the key predates it."
+            warn "  Supply it once to close the gap:"
+            warn "    bao kv put -mount=secret ${_KIT_BACKUP_ESCROW_PATH} identity=@identity.txt"
         fi
         return 0
     fi
@@ -245,7 +325,34 @@ _kit_backup_identity() {
     fi
 
     BACKUP_AGE_IDENTITY="$(cat "${tmp}")"
-    success "  Backup key generated. Public half in OpenBao, identity in this kit."
+
+    # The private half, only when the cluster definition asks for it. Written
+    # after the recipient rather than before: a cluster whose escrow write fails
+    # still has a working key and a kit that carries it, which is the default
+    # arrangement — the reverse would leave an identity escrowed for a recipient
+    # nothing encrypts to.
+    if _kit_escrow_enabled; then
+        if bao kv put -mount=secret "${_KIT_BACKUP_ESCROW_PATH}" \
+            "identity=${BACKUP_AGE_IDENTITY}" >/dev/null 2>&1; then
+            success "  Backup key generated. Public half and escrowed identity in OpenBao."
+            if _kit_escrow_stated; then
+                warn "  This cluster escrows the backup identity (spec.backup.escrowIdentity)."
+            else
+                warn "  Escrowed by default: this cluster's definition could not be read, so"
+                warn "  the documented default applied. Set spec.backup.escrowIdentity to say"
+                warn "  so deliberately, or false to keep the key in this kit alone."
+            fi
+            warn "  A cluster administrator can restore without this kit — and anyone who"
+            warn "  reaches OpenBao as one can read every bundle. Keep the kit anyway: it"
+            warn "  is the only copy that survives losing the cluster."
+        else
+            warn "  Could not escrow the identity in OpenBao; it is in this kit only."
+            warn "  This kit is therefore the only copy. Keep it, and fix the escrow write."
+        fi
+    else
+        success "  Backup key generated. Public half in OpenBao, identity in this kit."
+    fi
+
     _kit_print_backup_key "${tmp}" "${recipient}"
     rm -rf "${dir}"
 
@@ -352,12 +459,20 @@ export_recovery_kit() {
     # salt from OpenBao, the tokens from the init files — so overwriting was
     # always safe, and install(1) overwrites unconditionally at a fixed default
     # name. The backup identity is the first value in a kit that exists nowhere
-    # else: OpenBao holds only its public half, deliberately.
+    # else unless this cluster escrows it: without escrow OpenBao holds only its
+    # public half, deliberately.
     #
     # So a second export from a shell that does not have the identity would
     # write a kit without it over the kit that had it, while printing "the
     # earlier kit is the only copy — keep it". That is the whole key to every
     # scheduled bundle, gone, with a reassuring message.
+    #
+    # _kit_gather has already run, and on an escrowing cluster it fetched the
+    # identity, so BACKUP_AGE_IDENTITY is set and this does not fire. That is
+    # the guard working, not being bypassed: the kit about to be written carries
+    # the same key as the one it replaces. It still fires on an escrowing
+    # cluster whose escrow is empty or unreadable, which is exactly when the
+    # earlier kit is again the only copy.
     if [[ -z "${BACKUP_AGE_IDENTITY:-}" && -e "${out}" && -n "$(_kit_recipient)" ]]; then
         error "Refusing to overwrite ${out}."
         error "  This cluster has a backup recipient, so a kit exists that carries the"
@@ -366,6 +481,11 @@ export_recovery_kit() {
         error "  key that opens every scheduled bundle."
         error "  Either supply it:      export BACKUP_AGE_IDENTITY=\"\$(...from the existing kit...)\""
         error "  or write elsewhere:    ./install.sh --export-recovery-kit /path/to/new-kit.age"
+        if _kit_escrow_enabled; then
+            error "  This cluster sets spec.backup.escrowIdentity, but OpenBao holds no"
+            error "  identity at ${_KIT_BACKUP_ESCROW_PATH} — the key predates escrow, or"
+            error "  BAO_TOKEN cannot read it."
+        fi
         return 1
     fi
 

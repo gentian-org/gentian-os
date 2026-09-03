@@ -254,6 +254,40 @@ spec:
                     StorageClass for kernel PVCs. Empty means the cluster's
                     default, which is right for most installs and wrong for any
                     cluster with more than one.
+                backup:
+                  type: object
+                  description: >
+                    Where this cluster's backup key lives. The public half is
+                    always in OpenBao, because the operator needs it to encrypt.
+                    This decides what happens to the private half.
+                  properties:
+                    escrowIdentity:
+                      type: boolean
+                      default: true
+                      description: >
+                        Whether the backup private key is also stored in
+                        OpenBao, at gentian-os/kernel/backup/identity. Readable
+                        there by the cluster-admin policy and explicitly denied
+                        to eso-read, so it cannot be turned into a Kubernetes
+                        Secret by anything that can write an ExternalSecret. It
+                        means a cluster administrator can read the key, not that
+                        the cluster can.
+
+                        True, the default, because the likelier disaster is a
+                        lost recovery kit rather than a stolen cluster, and a
+                        backup nobody can open is not a backup. A cluster
+                        administrator restores with OpenBao credentials alone,
+                        and a later --export-recovery-kit reads the key back so
+                        the new kit carries it too.
+
+                        False keeps the private key in the recovery kit and
+                        nowhere else. Nothing the cluster holds can then open a
+                        bundle, so whoever takes the cluster gets ciphertext and
+                        a public key — what an attacker who already has the
+                        bucket has. The price is that the first kit becomes
+                        irreplaceable: losing every copy loses every backup,
+                        with no recourse. Choose it when the cluster is the
+                        likelier loss and you are certain of your kit custody.
                 llm:
                   type: object
                   description: LLM serving sizing. Hardware-dependent, not stage-dependent.

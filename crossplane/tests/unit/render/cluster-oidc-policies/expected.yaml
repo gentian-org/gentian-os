@@ -909,6 +909,27 @@ spec:
       path "secret/metadata/gentian-os/kernel/*" {
         capabilities = ["list"]
       }
+      # The backup identity, when spec.backup.escrowIdentity puts it
+      # here, is the one kernel path ESO must never reach. The glob
+      # above would otherwise cover it, and then anything able to
+      # write an ExternalSecret could materialise the key that opens
+      # every bundle into an ordinary Secret — which is the whole of
+      # what escrow was meant not to mean.
+      #
+      # Escrow makes the key readable by a cluster administrator
+      # holding OpenBao credentials. It does not make it readable by
+      # the cluster. Denied unconditionally, because a rule that
+      # appeared only when escrow was on would be a rule nobody had
+      # ever seen work.
+      #
+      # An exact path beats a glob in OpenBao's policy engine, and
+      # deny beats everything.
+      path "secret/data/gentian-os/kernel/backup/identity" {
+        capabilities = ["deny"]
+      }
+      path "secret/metadata/gentian-os/kernel/backup/identity" {
+        capabilities = ["deny"]
+      }
       path "secret/data/gentian-os/tenants/+/apps/*" {
         capabilities = ["read"]
       }
@@ -935,6 +956,17 @@ spec:
       # needs both before it does anything.
       path "secret/data/gentian-os/tenants/+/backup/*" {
         capabilities = ["read"]
+      }
+      # ...but not the escrowed backup identity beside it. The glob
+      # above is for destination credentials, which exist precisely
+      # to become Secrets; the identity is the key that opens the
+      # tenant's entire history and must never become one. Same
+      # reasoning as the kernel path above, one subtree down.
+      path "secret/data/gentian-os/tenants/+/backup/identity" {
+        capabilities = ["deny"]
+      }
+      path "secret/metadata/gentian-os/tenants/+/backup/identity" {
+        capabilities = ["deny"]
       }
       # Contract integration secrets. app-default composes an
       # ExternalSecret over tenants/<t>/contracts/<c> for every
