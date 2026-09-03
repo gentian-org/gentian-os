@@ -223,7 +223,7 @@ func (r *TenantExportReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	if err := r.stageDestinationCredential(ctx, export); err != nil {
 		return r.fail(ctx, export, "DestinationUnavailable", err.Error())
 	}
-	recordEncryption(export, encryption)
+	recordEncryption(export, encryption, r.clusterRecipients(ctx))
 
 	apps, err := r.exportAppSet(ctx, tenant, export)
 	if err != nil {

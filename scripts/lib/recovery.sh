@@ -40,6 +40,7 @@ _KIT_KEYS=(
     CF_API_TOKEN
     SMTP_RELAY_USERNAME SMTP_RELAY_PASSWORD
     TRANSIT_UNSEAL_KEY OPENBAO_RECOVERY_KEYS OPENBAO_ROOT_TOKEN
+    BACKUP_AGE_IDENTITY
 )
 
 # =============================================================================
@@ -113,6 +114,81 @@ _kit_from_json() {
     jq -r "$2 // empty" "$1" 2>/dev/null
 }
 
+# _kit_backup_identity — the cluster's own age key pair for bundle encryption.
+#
+# The public half goes into OpenBao, where the operator reads it; the private
+# half goes into this kit and nowhere else. That split is the whole point: a key
+# stored on the cluster it protects is readable by whoever takes that cluster,
+# which is precisely the situation backups exist for.
+#
+# Generated here rather than by hand because "Platform key" is the documented
+# default and the only mode a schedule can use — a passphrase has nobody to type
+# it at 03:00 — and nothing generated one. A cluster nobody had hand-edited
+# therefore had no key at all, and its nightly backup failed every night with a
+# message telling an administrator to go and configure one. The kit is the right
+# moment: it is already the step whose output must be kept off the cluster.
+#
+# Never regenerates. A second pair would orphan every bundle written to the
+# first, silently, and the symptom would be an unreadable backup during the
+# incident that needed it. If OpenBao already holds a recipient and this run
+# cannot supply the matching identity, the kit goes out without it and says so —
+# the earlier kit is then the only copy, and that is worth knowing loudly.
+_kit_backup_identity() {
+    [[ -n "${BAO_TOKEN:-}" ]] || return 0
+
+    local existing
+    existing="$(bao kv get -mount=secret -field=recipients \
+        gentian-os/kernel/backup/recipients 2>/dev/null || true)"
+
+    if [[ -n "${existing}" ]]; then
+        if [[ -z "${BACKUP_AGE_IDENTITY:-}" ]]; then
+            warn "  This cluster already has a backup recipient (${existing:0:16}...)."
+            warn "  Its identity is not available here, so this kit cannot carry it."
+            warn "  The kit that created it remains the only copy — keep it."
+        fi
+        return 0
+    fi
+
+    if ! command -v age-keygen >/dev/null 2>&1; then
+        warn "  age-keygen not found: no backup key generated."
+        warn "  Scheduled backups need one; they use the platform key, because a"
+        warn "  passphrase has nobody to type it at 03:00."
+        return 0
+    fi
+
+    # A directory, not mktemp's file: age-keygen -o refuses to write over a
+    # path that already exists, and mktemp creates the file it names.
+    local dir tmp recipient
+    dir="$(mktemp -d)"
+    chmod 700 "${dir}"
+    tmp="${dir}/identity.txt"
+    if ! age-keygen -o "${tmp}" >/dev/null 2>&1; then
+        warn "  Could not generate a backup key pair."
+        rm -rf "${dir}"
+        return 0
+    fi
+    recipient="$(age-keygen -y "${tmp}" 2>/dev/null || true)"
+    if [[ -z "${recipient}" ]]; then
+        rm -rf "${dir}"
+        return 0
+    fi
+
+    # The public half first. If this fails there is no key on the cluster and no
+    # identity in the kit, which is the state we started in — better than a kit
+    # holding an identity for a recipient nothing uses.
+    if ! bao kv put -mount=secret gentian-os/kernel/backup/recipients \
+        "recipients=${recipient}" >/dev/null 2>&1; then
+        warn "  Could not store the backup recipient in OpenBao; no key configured."
+        rm -rf "${dir}"
+        return 0
+    fi
+
+    BACKUP_AGE_IDENTITY="$(cat "${tmp}")"
+    rm -rf "${dir}"
+    success "  Backup key generated. Public half in OpenBao, identity in this kit."
+    info    "  ${recipient}"
+}
+
 # _kit_gather — fill the exportable variables from whatever source has them.
 #
 # Every value has at least two sources because the interesting case is a
@@ -149,6 +225,8 @@ _kit_gather() {
             '(.recovery_keys_base64 // .recovery_keys_b64 // []) | join(",")' || true)}"
     OPENBAO_ROOT_TOKEN="${OPENBAO_ROOT_TOKEN:-${BAO_TOKEN:-$(
         _kit_from_json "${OPENBAO_INIT_FILE:-${HOME}/.gentian/openbao-init.json}" '.root_token' || true)}}"
+
+    _kit_backup_identity
 
     if [[ -z "${KERNEL_DOMAIN:-}" ]]; then
         KERNEL_DOMAIN="$(kubectl get cluster.gentianos.io -n crossplane-system \

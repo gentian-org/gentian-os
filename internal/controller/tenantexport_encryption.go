@@ -36,17 +36,47 @@ import (
 // Plumbed from the chart's backupRecipients value.
 const backupRecipientsEnv = "BACKUP_AGE_RECIPIENTS"
 
+// BackupRecipientsPath is where the cluster's own age recipients live in
+// OpenBao, written when the recovery kit is created.
+//
+// The public half only. The identity goes into the kit and nowhere else: a key
+// stored on the cluster it protects is readable by whoever takes that cluster,
+// which is the situation backups exist for.
+const BackupRecipientsPath = "gentian-os/kernel/backup/recipients"
+
+// backupRecipientsKey is the field at that path.
+const backupRecipientsKey = "recipients"
+
 // clusterRecipients returns the age public keys the platform can decrypt with.
 //
 // These are the recipients a scheduled export uses, and the reason it can run
-// with nobody present: the matching identity lives in the recovery kit, off
-// the cluster, so an export taken at 03:00 is still readable during the
-// incident that made it matter.
-func clusterRecipients() []string {
-	raw := os.Getenv(backupRecipientsEnv)
-	if raw == "" {
-		return nil
+// with nobody present: the matching identity lives in the recovery kit, off the
+// cluster, so an export taken at 03:00 is still readable during the incident
+// that made it matter.
+//
+// OpenBao first, then the environment. The env var is per-cluster Helm values,
+// which nothing generates — so a cluster nobody had hand-edited had no key, the
+// only mode a schedule can use was unavailable, and the nightly backup failed
+// every night with a message telling an administrator to go and configure one.
+// Writing it when the recovery kit is made puts the key where the identity's
+// escrow already happens, and makes the default mode work on a cluster nobody
+// has edited.
+//
+// The env var still wins nothing and loses nothing: it is checked second so a
+// cluster that sets it explicitly keeps working, and it remains the way to name
+// a recipient the platform did not generate.
+func (r *TenantExportReconciler) clusterRecipients(ctx context.Context) []string {
+	if r.Reconciler != nil && r.Reconciler.Seeder != nil && r.Reconciler.Seeder.KV() != nil {
+		if data, err := r.Reconciler.Seeder.Read(ctx, BackupRecipientsPath); err == nil {
+			if got := splitRecipients(data[backupRecipientsKey]); len(got) > 0 {
+				return got
+			}
+		}
 	}
+	return splitRecipients(os.Getenv(backupRecipientsEnv))
+}
+
+func splitRecipients(raw string) []string {
 	var out []string
 	for _, part := range strings.Split(raw, ",") {
 		if trimmed := strings.TrimSpace(part); trimmed != "" {
@@ -78,7 +108,7 @@ func (r *TenantExportReconciler) resolveEncryption(
 
 	switch mode {
 	case gentianov1alpha1.ExportEncryptionRecipient:
-		enc.Recipients = clusterRecipients()
+		enc.Recipients = r.clusterRecipients(ctx)
 		if spec != nil && len(spec.Recipients) > 0 {
 			// Requester-supplied recipients replace the cluster's rather than
 			// adding to them. Appending would silently keep the platform able
@@ -225,10 +255,14 @@ func (r *TenantExportReconciler) discardExportSecretsIn(
 
 // recordEncryption publishes what was applied, including the blunt statement of
 // whether the platform can still read the result.
-func recordEncryption(export *gentianov1alpha1.TenantExport, enc backup.Encryption) {
+func recordEncryption(
+	export *gentianov1alpha1.TenantExport,
+	enc backup.Encryption,
+	clusterRecipients []string,
+) {
 	status := &gentianov1alpha1.ExportEncryptionStatus{
 		Mode:             enc.Mode,
-		PlatformReadable: enc.PlatformReadable(clusterRecipients()),
+		PlatformReadable: enc.PlatformReadable(clusterRecipients),
 	}
 	if enc.Mode == gentianov1alpha1.ExportEncryptionRecipient {
 		status.Recipients = enc.Recipients

@@ -90,7 +90,7 @@ func TestDefaultModeUsesClusterRecipientsUnattended(t *testing.T) {
 		t.Errorf("recipients = %v (whitespace should be trimmed)", enc.Recipients)
 	}
 
-	recordEncryption(export, enc)
+	recordEncryption(export, enc, []string{"age1clusterkey", "age1secondkey"})
 	if !export.Status.Encryption.PlatformReadable {
 		t.Error("a bundle encrypted to the cluster key must report as platform-readable")
 	}
@@ -115,7 +115,7 @@ func TestOwnRecipientReplacesClusterAndDropsPlatformAccess(t *testing.T) {
 		t.Errorf("recipients = %v, want only the admin's key", enc.Recipients)
 	}
 
-	recordEncryption(export, enc)
+	recordEncryption(export, enc, []string{"age1clusterkey"})
 	if export.Status.Encryption.PlatformReadable {
 		t.Error("platform must not claim it can read a bundle it has no identity for")
 	}
@@ -223,5 +223,44 @@ func TestPassphraseHonoursACustomKey(t *testing.T) {
 	}
 	if enc.PassphraseKey != "pw" {
 		t.Errorf("passphrase key = %q, want pw", enc.PassphraseKey)
+	}
+}
+
+// The default mode is the platform key, and it is the only mode a schedule can
+// use — a passphrase has nobody to type it at 03:00. Nothing generated one, and
+// the value that carries it is per-cluster Helm config, so a cluster nobody had
+// hand-edited had no key: its nightly backup failed every night, instantly,
+// telling an administrator to go and configure something.
+//
+// The recovery kit now writes the public half here when it makes the identity,
+// which is the step whose output already has to leave the cluster.
+func TestRecipientsComeFromOpenBaoBeforeTheEnvironment(t *testing.T) {
+	t.Setenv(backupRecipientsEnv, "age1fromenv")
+
+	// No OpenBao wired up: the environment is still honoured, so a cluster that
+	// sets the value explicitly keeps working.
+	r := &TenantExportReconciler{}
+	got := r.clusterRecipients(context.Background())
+	if len(got) != 1 || got[0] != "age1fromenv" {
+		t.Fatalf("recipients = %v, want the environment's when OpenBao has none", got)
+	}
+}
+
+func TestRecipientsAreParsedAndTrimmed(t *testing.T) {
+	for _, tc := range []struct {
+		raw  string
+		want int
+	}{
+		{"", 0},
+		{"age1one", 1},
+		{" age1one , age1two ", 2},
+		{"age1one,,age1two", 2},
+	} {
+		if got := splitRecipients(tc.raw); len(got) != tc.want {
+			t.Errorf("splitRecipients(%q) = %v, want %d", tc.raw, got, tc.want)
+		}
+	}
+	if got := splitRecipients(" age1one , age1two "); got[0] != "age1one" || got[1] != "age1two" {
+		t.Errorf("whitespace was not trimmed: %v", got)
 	}
 }
