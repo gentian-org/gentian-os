@@ -450,7 +450,8 @@ func buildSeeder() *secrets.Seeder {
 // variables. Returns nil (feature disabled) if any required variable is absent.
 //
 //	CLOUDFLARE_API_TOKEN        – Cloudflare API token (Zone:Read + DNS:Edit)
-//	CLOUDFLARE_TUNNEL_API_TOKEN – optional token with Account → Cloudflare Tunnel → Edit
+//	CLOUDFLARE_TUNNEL_API_TOKEN – optional token with Account → Cloudflare One
+//	                              Connector: cloudflared → Edit
 //	CLOUDFLARE_ZONE_ID          – Cloudflare zone ID for the kernel domain
 //	CLOUDFLARE_TUNNEL_CNAME     – tunnel target, e.g. <uuid>.cfargotunnel.com
 func buildCloudflareDNSClient() *controller.CloudflareDNSClient {

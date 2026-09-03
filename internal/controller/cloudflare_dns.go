@@ -45,7 +45,8 @@ type CloudflareDNSClient struct {
 
 // NewCloudflareDNSClient creates a CloudflareDNSClient. tunnelToken may be empty;
 // when set it is used for Cloudflare Tunnel configuration API calls (requires
-// Account → Cloudflare Tunnel → Edit), while token is used for DNS record API.
+// Account → Cloudflare One Connector: cloudflared → Edit), while token is used
+// for the DNS record API.
 func NewCloudflareDNSClient(token, zoneID, tunnelCNAME, tunnelToken string) *CloudflareDNSClient {
 	return &CloudflareDNSClient{
 		token:       token,
@@ -477,12 +478,20 @@ func formatCloudflareErrors(errors []cfError) error {
 	}
 	// 10000 is Cloudflare's generic authentication error; 1001 is what the
 	// tunnel endpoints return for a token that authenticated but carries no
-	// Account → Cloudflare Tunnel permission. Both mean the same thing to an
-	// operator, and 1001 is the one a DNS-scoped token actually produces — it
-	// went without the hint until a tenant deploy spent half an hour retrying
-	// "Not authorized" with nothing to act on.
+	// tunnel permission. Both mean the same thing to an operator, and 1001 is
+	// the one a DNS-scoped token actually produces — it went without the hint
+	// until a tenant deploy spent half an hour retrying "Not authorized" with
+	// nothing to act on.
+	//
+	// The permission is named as the dashboard names it today. Cloudflare
+	// folded tunnels into Cloudflare One and renamed it, so "Cloudflare Tunnel"
+	// — what this said, and what the API still implies — appears nowhere in the
+	// permission list an operator is reading. Sending someone to look for a
+	// setting under a name it no longer has is the same defect as saying
+	// nothing, so both names are given.
 	if errors[0].Code == 10000 || errors[0].Code == 1001 {
-		return fmt.Errorf("%v (grant Account → Cloudflare Tunnel → Edit on the API token, or set CLOUDFLARE_TUNNEL_API_TOKEN)", errors)
+		return fmt.Errorf("%v (grant Account → Cloudflare One Connector: cloudflared → Edit"+
+			" — older accounts call it Cloudflare Tunnel — or set CLOUDFLARE_TUNNEL_API_TOKEN)", errors)
 	}
 	return fmt.Errorf("%v", errors)
 }

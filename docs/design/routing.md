@@ -165,7 +165,7 @@ two unrelated jobs.
 | Job | Where | Cloudflare permission |
 |---|---|---|
 | DNS-01 challenges and the proxied CNAMEs tenants resolve through | cert-manager, external-dns, the operator | **Zone → DNS → Edit** on the kernel domain's zone |
-| Rewriting the tunnel's ingress rules so each new tenant hostname reaches the gateway | the operator, per tenant | **Account → Cloudflare Tunnel → Edit** |
+| Rewriting the tunnel's ingress rules so each new tenant hostname reaches the gateway | the operator, per tenant | **Account → Cloudflare One Connector: cloudflared → Edit** |
 
 **Both are required on a tunnel cluster.** The second is easy to miss because
 nothing else needs it: a token with only the DNS permission installs cleanly,
@@ -175,8 +175,15 @@ issues every certificate, and then fails the first time a tenant is deployed —
 seconds until the deploy times out. Everything else about that tenant is
 healthy, which is what makes it confusing.
 
+**The second permission is not called what the API implies.** Cloudflare folded
+tunnels into Cloudflare One and renamed it, so there is no "Cloudflare Tunnel"
+entry in the permission list — it is **Cloudflare One Connector: cloudflared**,
+and older accounts may still show *Argo Tunnel (Legacy)*, which covers the same
+endpoints. Nothing under **Access** or **Zero Trust** grants them; those are the
+identity layer in front of an application, not the tunnel's own configuration.
+
 The two permissions have different shapes. DNS rights can be narrowed to a
-single zone; Cloudflare Tunnel permissions exist only at account level, with no
+single zone; tunnel permissions exist only at account level, with no
 per-tunnel scoping. So granting both to one token necessarily widens it to the
 account, and that token is held by cert-manager and external-dns as well as the
 operator. **One token is the supported default** — it is one prompt, one OpenBao

@@ -268,7 +268,8 @@ _validate_cloudflare_tunnel_scope() {
         fi
         warn "Could not confirm this token may configure Cloudflare Tunnels."
         warn "  ${account_id} lists no tunnels, which happens both when none exists"
-        warn "  yet and when the token has no Account -> Cloudflare Tunnel permission."
+        warn "  yet and when the token has no Account -> Cloudflare One Connector:"
+        warn "  cloudflared permission."
         warn "  On a networkMode: tunnel cluster the operator needs that permission to"
         warn "  route tenant hostnames; without it, tenants stall at TunnelIngressReady."
         return 0
@@ -278,8 +279,9 @@ _validate_cloudflare_tunnel_scope() {
         "$(jq -r '.errors[0].message // empty' <<<"${body}" 2>/dev/null)"
     error "  This cluster is networkMode: tunnel, so the operator rewrites the"
     error "  tunnel's ingress rules for every tenant hostname. That needs"
-    error "  Account -> Cloudflare Tunnel -> Edit on this token, in addition to"
-    error "  the zone DNS rights it already has."
+    error "  Account -> Cloudflare One Connector: cloudflared -> Edit on this"
+    error "  token, in addition to the zone DNS rights it already has. Older"
+    error "  accounts list the same permission as Cloudflare Tunnel."
     error "  Add the permission and re-enter the token, or set networkMode:"
     error "  static-ip on the Cluster claim if this cluster has no tunnel."
     return 1
