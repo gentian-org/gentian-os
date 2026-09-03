@@ -114,6 +114,13 @@ _kit_from_json() {
     jq -r "$2 // empty" "$1" 2>/dev/null
 }
 
+# _kit_recipient — the cluster's backup recipient, if it has one.
+_kit_recipient() {
+    [[ -n "${BAO_TOKEN:-}" ]] || return 0
+    bao kv get -mount=secret -field=recipients \
+        gentian-os/kernel/backup/recipients 2>/dev/null || true
+}
+
 # _kit_backup_identity — the cluster's own age key pair for bundle encryption.
 #
 # The public half goes into OpenBao, where the operator reads it; the private
@@ -137,8 +144,7 @@ _kit_backup_identity() {
     [[ -n "${BAO_TOKEN:-}" ]] || return 0
 
     local existing
-    existing="$(bao kv get -mount=secret -field=recipients \
-        gentian-os/kernel/backup/recipients 2>/dev/null || true)"
+    existing="$(_kit_recipient)"
 
     if [[ -n "${existing}" ]]; then
         if [[ -z "${BACKUP_AGE_IDENTITY:-}" ]]; then
@@ -276,6 +282,29 @@ export_recovery_kit() {
         # survives the round trip without any quoting rules to get wrong.
         body+="${key}=$(printf '%s' "${value}" | openssl base64 -A)"$'\n'
     done
+
+    # Refuse to replace a kit that holds a key this one does not.
+    #
+    # Every other value here is re-read on each run — the master password and
+    # salt from OpenBao, the tokens from the init files — so overwriting was
+    # always safe, and install(1) overwrites unconditionally at a fixed default
+    # name. The backup identity is the first value in a kit that exists nowhere
+    # else: OpenBao holds only its public half, deliberately.
+    #
+    # So a second export from a shell that does not have the identity would
+    # write a kit without it over the kit that had it, while printing "the
+    # earlier kit is the only copy — keep it". That is the whole key to every
+    # scheduled bundle, gone, with a reassuring message.
+    if [[ -z "${BACKUP_AGE_IDENTITY:-}" && -e "${out}" && -n "$(_kit_recipient)" ]]; then
+        error "Refusing to overwrite ${out}."
+        error "  This cluster has a backup recipient, so a kit exists that carries the"
+        error "  matching identity — and this run does not have it, so the kit it would"
+        error "  write would not either. Overwriting would destroy the only copy of the"
+        error "  key that opens every scheduled bundle."
+        error "  Either supply it:      export BACKUP_AGE_IDENTITY=\"\$(...from the existing kit...)\""
+        error "  or write elsewhere:    ./install.sh --export-recovery-kit /path/to/new-kit.age"
+        return 1
+    fi
 
     local tmp; tmp="$(mktemp)"
     if ! printf '%s' "${body}" | _kit_encrypt "${tmp}"; then
