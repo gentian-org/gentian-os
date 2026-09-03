@@ -445,7 +445,7 @@ permits it. The gentian-os controller injects this on every edge route it
 creates:
 
 - Envoy `BackendTrafficPolicy` / `HTTPRoute` `ResponseHeaderModifier` filters
-  (see [design/gateway.md](design/gateway.md)).
+  (see [design/routing.md](design/routing.md)).
 
 For standard AppProfile apps (Element, Jitsi, OpenProject, …) it clears upstream
 `X-Frame-Options` and `Content-Security-Policy`, then sets a single

@@ -210,7 +210,9 @@ it.** Under the default `acme-dns01`, DNS-01 issues every kernel certificate,
 not just the wildcard, so an absent or rejected token leaves the cluster with no
 working TLS. Set `certificates.issuerMode` on the Cluster claim to `acme-http01`
 (public DNS, port 80 reachable, no wildcards) or `self-signed` (internal
-domains) if you do not want to supply one.
+domains) if you do not want to supply one. On a tunnel cluster the same token
+needs a second permission for tenant routing — see
+[design/routing.md](docs/design/routing.md) §3a for what to grant it.
 
 If a value is rejected, the installer names where it came from and asks for a
 replacement rather than aborting.

@@ -23,7 +23,7 @@ Gentian OS uses **Gateway API + Envoy Gateway** as the only edge stack. Set
 `ROUTING_MODE=gateway` in `install.env` and `routingMode: gateway` in
 `gentian-deployments/clusters/<cluster>/kernel/values.yaml`.
 
-See [design/gateway.md](design/gateway.md) for Gateway API topology (`gentian-envoy` GatewayClass, kernel and tenant Gateways).
+See [design/routing.md](design/routing.md) for Gateway API topology (`gentian-envoy` GatewayClass, kernel and tenant Gateways).
 
 Fresh installs run `install.sh --step A-07-envoy-gateway`, which installs Envoy Gateway into
 `envoy-gateway-system` and verifies Gateway API CRDs.
@@ -48,4 +48,4 @@ Choose exposure by `NETWORK_MODE`:
 
 > **Note:** `ROUTING_MODE=ingress` (ingress-nginx) is no longer supported.
 > All clusters must use `ROUTING_MODE=gateway`. See
-> [design/gateway.md](design/gateway.md).
+> [design/routing.md](design/routing.md).
