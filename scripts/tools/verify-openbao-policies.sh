@@ -232,8 +232,11 @@ expect "${TENANT_TOKEN}" "allowed own tenant metadata (records who set a value)"
     "secret/metadata/gentian-os/tenants/acme/repositories/x" "create,list,read,update"
 # Escrow, one subtree down from the cluster's. The tenant administrator writes
 # it and reads it back for a restore; nothing else may.
+# patch as well as update: Bao.Write sends a merge patch so supplying one field
+# does not delete the others at a path, and a policy without it would refuse the
+# escrow write at runtime with a 403 that looked like a permissions mistake.
 expect "${TENANT_TOKEN}" "allowed escrowing and reading back its own backup identity" \
-    "secret/data/gentian-os/tenants/acme/backup/identity" "create,read,update"
+    "secret/data/gentian-os/tenants/acme/backup/identity" "create,patch,read,update"
 
 # The claim decides the path, not the caller. A second identity asking for a
 # different tenant must land somewhere else entirely — this is what makes the
@@ -263,7 +266,7 @@ expect "${CLUSTER_TOKEN}" "DENIED paths outside gentian-os" \
 # the next one does not — so both halves are asserted rather than reasoned
 # about.
 expect "${CLUSTER_TOKEN}" "allowed the escrowed backup identity — this is who escrow is for" \
-    "secret/data/gentian-os/kernel/backup/identity" "create,read,update"
+    "secret/data/gentian-os/kernel/backup/identity" "create,patch,read,update"
 
 echo ""
 echo "  eso-read ${DIM}(the only identity ESO holds)${NC}"
