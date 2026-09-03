@@ -506,6 +506,17 @@ settled by supporting both rather than choosing:
 | `recipient` + own `recipients` | only the requester | an admin who wants a bundle the platform cannot read |
 | `passphrase` | only the passphrase holder | admin-triggered exports, where the platform should retain nothing |
 
+The middle row is a standing arrangement, not only a per-export one:
+`BackupPolicy.spec.encryption.recipients` names the keys a tenant's scheduled
+bundles are encrypted to, and the operator carries them onto the managed
+`TenantExportSchedule`. Stated recipients **replace** the cluster's rather than
+adding to them — appending would leave the platform able to read a bundle
+somebody asked to be readable only by them — so a tenant that wants both keeps
+support's help by listing the platform's key alongside its own. Only tenant
+scope may state one: the cluster's recipients are pinned in git and written by
+the installer, which is what makes "the key a bundle is encrypted to is the key
+the repository says it is" checkable.
+
 Both produce an ordinary age file, so a bundle opens with `age -d` or
 `age -d -i <identity>` and needs no Gentian tooling — which matters most in the
 situation a backup exists for. `status.encryption.platformReadable` states

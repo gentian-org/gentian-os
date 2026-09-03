@@ -110,6 +110,42 @@ func (r *BackupRetention) IsSet() bool {
 		r.KeepMonthly > 0 || r.KeepYearly > 0
 }
 
+// BackupEncryption decides who can read the bundles a policy produces.
+//
+// Scheduled backups cannot use a passphrase — there is nobody to type one at
+// 03:00 — so the only question a policy answers is which age public keys the
+// bundles are encrypted to.
+//
+// Unset means the cluster's own recipients, which is the right default: the
+// platform can open a bundle, so support can help restore one. Naming
+// recipients here replaces that rather than adding to it, so a tenant that
+// states its own key gets bundles the platform cannot read at all. That is the
+// guarantee, and it is also the whole risk — the platform can no longer help,
+// and a lost identity is lost backups.
+type BackupEncryption struct {
+	// Recipients are age public keys (age1…) to encrypt to. Empty inherits.
+	//
+	// Every listed recipient can decrypt independently, so naming both a
+	// tenant's key and the platform's is how a tenant keeps its own copy
+	// without giving up support's ability to restore.
+	//
+	// The pattern is age's bech32 encoding of an X25519 public key: the "age1"
+	// prefix and 58 characters of the bech32 charset, which excludes the four
+	// letters most often misread off paper (1, b, i, o). Checked here so a key
+	// mistyped into a form is refused while the person is still looking at it,
+	// rather than at 03:00 in an export's status.
+	// +optional
+	// +kubebuilder:validation:MaxItems=8
+	// +kubebuilder:validation:items:MaxLength=128
+	// +kubebuilder:validation:items:Pattern=`^age1[02-9ac-hj-np-z]{58}$`
+	Recipients []string `json:"recipients,omitempty"`
+}
+
+// IsSet reports whether this states any recipient of its own.
+func (e *BackupEncryption) IsSet() bool {
+	return e != nil && len(e.Recipients) > 0
+}
+
 // BackupPolicySpec is one backup arrangement: the cluster's default, or one
 // tenant's override of it.
 //
@@ -155,6 +191,11 @@ type BackupPolicySpec struct {
 	// +optional
 	Retention *BackupRetention `json:"retention,omitempty"`
 
+	// Encryption names the keys bundles are encrypted to. Unset inherits, and
+	// inheriting all the way up means the cluster's own key.
+	// +optional
+	Encryption *BackupEncryption `json:"encryption,omitempty"`
+
 	// AllowTenantOverride lets tenants state policies of their own. Read only
 	// from the cluster-scoped policy; meaningless on a tenant's own.
 	//
@@ -186,6 +227,14 @@ type BackupPolicyStatus struct {
 	EffectiveBucket string `json:"effectiveBucket,omitempty"`
 	// +optional
 	EffectiveSchedule string `json:"effectiveSchedule,omitempty"`
+
+	// EffectiveRecipients are the age public keys in force, empty when the
+	// cluster's own key is used. Published because "which key are my backups
+	// encrypted to" is the one question this feature exists to answer, and an
+	// admin must be able to read the answer rather than infer it from an
+	// absence.
+	// +optional
+	EffectiveRecipients []string `json:"effectiveRecipients,omitempty"`
 
 	// CredentialRequirement names the requirement carrying this destination's
 	// keys, and CredentialSatisfied reports whether it has been filled. A

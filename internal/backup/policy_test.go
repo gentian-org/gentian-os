@@ -17,6 +17,7 @@ limitations under the License.
 package backup
 
 import (
+	"reflect"
 	"strings"
 	"testing"
 
@@ -224,7 +225,7 @@ func TestExportDestinationChoosesTargetAndCredential(t *testing.T) {
 
 	t.Run("existing: the policy's answer, untouched", func(t *testing.T) {
 		got := ApplyExportDestination(policy, nil, tenant, "manual-1")
-		if got != policy {
+		if !reflect.DeepEqual(got, policy) {
 			t.Errorf("an unstated destination changed the policy: %+v", got)
 		}
 		if got.Overridden {
@@ -294,6 +295,77 @@ func TestExportDestinationChoosesTargetAndCredential(t *testing.T) {
 		if got.CredentialName != "" {
 			t.Errorf("CredentialName = %q, want empty: one-off keys are not a "+
 				"standing requirement anyone administers", got.CredentialName)
+		}
+	})
+}
+
+// A tenant that names its own key gets bundles the platform cannot read.
+//
+// The replace-rather-than-append rule is the whole feature: a tenant asks for
+// backups nobody else can open, and silently adding the cluster's recipient
+// alongside would grant exactly the access that was refused — while every
+// screen still said the tenant's key was in force.
+func TestResolveEffectiveTenantKeyReplacesTheClusters(t *testing.T) {
+	const tenantKey = "age17lr9cmnutfg66r92rwc20umdz82sgx3wq86c5lmht8d7sm8dlqpqr3d4zw"
+	const platformKey = "age1rvkgylm0264jym5vpu7lmczsxerc8wwzfv8sv34h2yqlhgaqs56qk80dp8"
+
+	t.Run("unset inherits, and inheriting to the top means the cluster's key", func(t *testing.T) {
+		eff, err := ResolveEffective(policyTenant(),
+			clusterPolicy(gentianov1alpha1.BackupPolicySpec{}),
+			tenantPolicy(gentianov1alpha1.BackupPolicySpec{}))
+		if err != nil {
+			t.Fatalf("ResolveEffective: %v", err)
+		}
+		// Empty, not the cluster's literal key: the export controller resolves
+		// that for itself from the pinned recipients, and duplicating it here
+		// would give two places to change it.
+		if len(eff.Recipients) != 0 {
+			t.Errorf("recipients = %v, want none so the cluster's key applies", eff.Recipients)
+		}
+	})
+
+	t.Run("the tenant's own replaces the cluster's", func(t *testing.T) {
+		eff, err := ResolveEffective(policyTenant(),
+			clusterPolicy(gentianov1alpha1.BackupPolicySpec{
+				Encryption: &gentianov1alpha1.BackupEncryption{Recipients: []string{platformKey}},
+			}),
+			tenantPolicy(gentianov1alpha1.BackupPolicySpec{
+				Encryption: &gentianov1alpha1.BackupEncryption{Recipients: []string{tenantKey}},
+			}))
+		if err != nil {
+			t.Fatalf("ResolveEffective: %v", err)
+		}
+		if !reflect.DeepEqual(eff.Recipients, []string{tenantKey}) {
+			t.Errorf("recipients = %v, want only the tenant's key", eff.Recipients)
+		}
+	})
+
+	t.Run("both, when a tenant wants its own copy and support's help", func(t *testing.T) {
+		eff, err := ResolveEffective(policyTenant(), nil,
+			tenantPolicy(gentianov1alpha1.BackupPolicySpec{
+				Encryption: &gentianov1alpha1.BackupEncryption{
+					Recipients: []string{tenantKey, platformKey},
+				},
+			}))
+		if err != nil {
+			t.Fatalf("ResolveEffective: %v", err)
+		}
+		if len(eff.Recipients) != 2 {
+			t.Errorf("recipients = %v, want both keys", eff.Recipients)
+		}
+	})
+
+	// Choosing a key the platform has no identity for is exactly the kind of
+	// departure allowTenantOverride exists to forbid, so it has to count as
+	// stating a policy.
+	t.Run("refused when the cluster forbids overrides", func(t *testing.T) {
+		_, err := ResolveEffective(policyTenant(),
+			clusterPolicy(gentianov1alpha1.BackupPolicySpec{AllowTenantOverride: ptrBool(false)}),
+			tenantPolicy(gentianov1alpha1.BackupPolicySpec{
+				Encryption: &gentianov1alpha1.BackupEncryption{Recipients: []string{tenantKey}},
+			}))
+		if err == nil {
+			t.Fatal("a tenant key was accepted on a cluster that forbids overrides")
 		}
 	})
 }

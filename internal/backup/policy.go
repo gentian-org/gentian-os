@@ -18,6 +18,7 @@ package backup
 
 import (
 	"fmt"
+	"slices"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 )
@@ -91,6 +92,11 @@ type Effective struct {
 	// Schedule is a cron expression in UTC; empty means no scheduled backups.
 	Schedule  string
 	Retention gentianov1alpha1.BackupRetention
+
+	// Recipients are the age public keys bundles are encrypted to. Empty means
+	// the cluster's own key, which the export controller resolves for itself;
+	// non-empty means the platform cannot read what it writes.
+	Recipients []string
 
 	// Overridden records that the tenant, not the cluster, chose the
 	// destination — the difference between bundles the platform can reach and
@@ -189,6 +195,12 @@ func ResolveEffective(
 		if p.Spec.Retention.IsSet() {
 			eff.Retention = *p.Spec.Retention
 		}
+		if p.Spec.Encryption.IsSet() {
+			// Replace, never append. A tenant that names its own key is asking
+			// for bundles nobody else can read; quietly adding the cluster's
+			// alongside would answer a different question than the one asked.
+			eff.Recipients = slices.Clone(p.Spec.Encryption.Recipients)
+		}
 	}
 
 	if cluster != nil {
@@ -207,7 +219,7 @@ func ResolveEffective(
 	}
 	states := override.Spec.Destination.IsSet() ||
 		override.Spec.Schedule != "" || override.Spec.SuspendSchedule ||
-		override.Spec.Retention.IsSet()
+		override.Spec.Retention.IsSet() || override.Spec.Encryption.IsSet()
 	if !overrideAllowed && states {
 		return eff, fmt.Errorf(
 			"this cluster does not permit tenants to set their own backup policy (allowTenantOverride is false)")

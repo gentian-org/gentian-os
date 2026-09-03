@@ -181,8 +181,9 @@ what the backup recorded, and everything written since is lost.
 
 1. **Which backup** — the name from the Backup tab.
 2. **Which apps**, if you only want some of them restored.
-3. **The passphrase**, if you chose your own. Without it nobody can help you,
-   including them.
+3. **The passphrase**, if you chose your own for a manual backup, or **the
+   private key** (`AGE-SECRET-KEY-…`) if your schedule encrypts to a key only
+   you hold. Without it nobody can help you, including them.
 
 ### What to expect afterwards
 
@@ -225,12 +226,53 @@ first, so the current state is recoverable too.
 
 ## 8. Regular backups
 
-Backups on a schedule are set up by your cluster administrator, per workspace.
-Ask for one — a nightly backup you never think about is worth considerably more
-than a manual one you take when you remember.
+Backups on a schedule are set in **Admin Console → Backup settings**, per
+workspace, by your workspace administrator — or by your cluster administrator on
+your behalf. Set one up: a nightly backup you never think about is worth
+considerably more than a manual one you take when you remember.
 
-Scheduled backups always use the platform key, because a passphrase has nobody
-to type it at three in the morning.
+### Which key a schedule uses
+
+A schedule cannot use a passphrase — there is nobody to type one at three in the
+morning — so the choice is which key it encrypts to, in **Admin Console → Backup
+settings → Who can read the backups**.
+
+| Choice | Who can read the bundles | Choose it when |
+|---|---|---|
+| **The platform's key** | you, and whoever holds the cluster's backup key — normally your provider | this is a routine backup and you would like help restoring it |
+| **A key only you hold** | only you | the backups must not be readable by the platform or its operators |
+
+Choosing your own key means what it says: every bundle from the next run onwards
+is written in a form nobody at the platform can open, so nobody there can help
+you restore one. Lose the private key and those bundles are gone.
+
+Get a key pair one of two ways:
+
+- **Generate it yourself**, which is the stronger route:
+
+  ```bash
+  age-keygen -o backup-identity.txt
+  age-keygen -y backup-identity.txt        # the public key — paste this one
+  ```
+
+  The private key never reaches the platform at all.
+
+- **Ask the console to generate one**, with *Generate a key for me*. The private
+  key is shown once and stored nowhere, but it was made on the server, so it is
+  only as private as the server is.
+
+Paste the **public** key — the line starting `age1` — into the form. Keep the
+private key, the line starting `AGE-SECRET-KEY-`, offline; a copy on the cluster
+you would be restoring *from* is no copy at all.
+
+You can name more than one key, one per line. Every listed key opens the bundle
+independently, so naming your provider's alongside your own is how you keep a key
+of your own without giving up their help.
+
+Restoring from a bundle encrypted to your own key means supplying the private key
+at the time — see [§6](#6-recovering-your-data). Switching keys applies from the next run;
+bundles already taken keep the key they were written with and are still
+restorable.
 
 Two things worth asking your administrator to confirm:
 

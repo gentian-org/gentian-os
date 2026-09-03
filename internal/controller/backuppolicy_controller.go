@@ -19,6 +19,7 @@ package controller
 import (
 	"context"
 	"fmt"
+	"slices"
 	"strings"
 
 	"k8s.io/apimachinery/pkg/api/equality"
@@ -118,6 +119,7 @@ func (r *BackupPolicyReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	policy.Status.EffectiveEndpoint = eff.Endpoint
 	policy.Status.EffectiveBucket = eff.Bucket
 	policy.Status.EffectiveSchedule = eff.Schedule
+	policy.Status.EffectiveRecipients = slices.Clone(eff.Recipients)
 	policy.Status.CredentialRequirement = eff.CredentialName
 	policy.Status.CredentialSatisfied = true
 	message := "backups write to the platform's own storage"
@@ -219,8 +221,9 @@ func (r *BackupPolicyReconciler) ensureManagedSchedule(
 			},
 		},
 		Spec: gentianov1alpha1.TenantExportScheduleSpec{
-			Schedule:  eff.Schedule,
-			Retention: &retention,
+			Schedule:   eff.Schedule,
+			Retention:  &retention,
+			Encryption: scheduleEncryption(eff),
 		},
 	}
 
@@ -235,13 +238,34 @@ func (r *BackupPolicyReconciler) ensureManagedSchedule(
 	}
 	if existing.Spec.Schedule == desired.Spec.Schedule &&
 		equality.Semantic.DeepEqual(existing.Spec.Retention, desired.Spec.Retention) &&
+		equality.Semantic.DeepEqual(existing.Spec.Encryption, desired.Spec.Encryption) &&
 		equality.Semantic.DeepEqual(existing.Labels, desired.Labels) {
 		return nil
 	}
 	existing.Spec.Schedule = desired.Spec.Schedule
 	existing.Spec.Retention = desired.Spec.Retention
+	// Assigned rather than merged, including when it becomes nil: a tenant
+	// that clears its own key is asking to go back to the platform's, and a
+	// field left behind would keep writing bundles nobody at the platform can
+	// read while the console says otherwise.
+	existing.Spec.Encryption = desired.Spec.Encryption
 	existing.Labels = desired.Labels
 	return r.Update(ctx, existing)
+}
+
+// scheduleEncryption turns the resolved recipients into a schedule's
+// encryption block, or nil when the cluster's own key applies.
+//
+// nil rather than an empty Recipients list, so "inherit" is one value rather
+// than two that a DeepEqual would call different and rewrite for ever.
+func scheduleEncryption(eff backup.Effective) *gentianov1alpha1.ExportEncryption {
+	if len(eff.Recipients) == 0 {
+		return nil
+	}
+	return &gentianov1alpha1.ExportEncryption{
+		Mode:       gentianov1alpha1.ExportEncryptionRecipient,
+		Recipients: slices.Clone(eff.Recipients),
+	}
 }
 
 // effectiveForTenant resolves the cluster policy against one tenant's own.
