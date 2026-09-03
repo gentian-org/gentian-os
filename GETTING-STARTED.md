@@ -66,15 +66,21 @@ until it is done.
 - **A Kubernetes cluster you are an admin on.** The installer does not create
   one. It runs 100+ pods, so a laptop-sized node pool will be tight.
 - **These tools on your `PATH`:** `kubectl helm jq yq openssl curl crossplane
-  python3 git`. The installer checks and names any that are missing. `bao` (the
-  OpenBao CLI) installs itself to `~/.local/bin`.
-- **Optional, but install it now:** [`age`](https://age-encryption.org). The
-  installer runs without it, and pre-flight only warns. It encrypts the recovery
-  kit; without it the kit falls back to `openssl`, which encrypts but does not
-  authenticate — a tampered kit then decrypts to garbage rather than failing.
-  The fallback announces itself at the very end of the install, once the kit has
-  already been written, so installing `age` first is a minute against redoing
-  the export.
+  python3 git age age-keygen`. The installer checks and names any that are
+  missing, and refuses to start without them. `bao` (the OpenBao CLI) installs
+  itself to `~/.local/bin`.
+
+  [`age`](https://age-encryption.org) ships both binaries — `sudo apt install
+  age`, `brew install age`, `apk add age`. It does two jobs here, and the second
+  has no fallback:
+
+  - It encrypts the recovery kit. Without it the kit falls back to `openssl`,
+    which encrypts but does not authenticate, so a tampered kit decrypts to
+    garbage rather than failing.
+  - It **generates this cluster's backup key** — the age key pair whose public
+    half every scheduled export encrypts to. Nothing else can make one. Without
+    it the install would finish and every nightly backup would fail with `no age
+    recipients configured`, for as long as nobody looked.
 - **A domain**, for example `platform.example.com`. It does not have to be
   publicly resolvable.
 - **A token with read access to `gentian-deployments`.** The installer asks for
@@ -500,7 +506,8 @@ credentials, which is a migration rather than a restore. The kit does **not**
 back up your data, and it does not restore OpenBao itself — a fresh instance
 issues its own unseal material.
 
-It is encrypted with `age` when that is installed and `openssl` otherwise;
+It is encrypted with `age`, which pre-flight requires — `openssl` remains only
+as a fallback for a kit exported on a machine that somehow lacks it;
 there is no unencrypted path. Both ask for a passphrase, so an unattended
 install needs `GENTIAN_KIT_RECIPIENT` set to an age public key instead.
 

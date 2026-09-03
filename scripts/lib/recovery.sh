@@ -290,11 +290,27 @@ _kit_backup_identity() {
         return 0
     fi
 
+    # Refused, not warned. This is the only thing that creates the cluster's
+    # backup key, and a warning here produced exactly the outcome it described:
+    # a kit exported, "recoveryKitExported = true" recorded, no key anywhere,
+    # and a nightly export failing with "no age recipients configured" until
+    # somebody went looking. Pre-flight now requires age, so reaching this means
+    # the export was run standalone on a machine without it.
+    #
+    # Non-zero, so the caller fails rather than continuing to write a kit that
+    # is missing the one value it was re-run to produce.
     if ! command -v age-keygen >/dev/null 2>&1; then
-        warn "  age-keygen not found: no backup key generated."
-        warn "  Scheduled backups need one; they use the platform key, because a"
-        warn "  passphrase has nobody to type it at 03:00."
-        return 0
+        error "  age-keygen not found, and this cluster has no backup key."
+        error ""
+        error "  It is the only thing that can make one, and every scheduled export"
+        error "  encrypts to it. Writing a kit now would record a successful export"
+        error "  and leave the nightly backup failing with \"no age recipients"
+        error "  configured\"."
+        error "    Debian/Ubuntu   sudo apt install age"
+        error "    macOS           brew install age"
+        error "    Alpine          apk add age"
+        error "  Then run this again."
+        return 1
     fi
 
     # A directory, not mktemp's file: age-keygen -o refuses to write over a
@@ -402,7 +418,7 @@ _kit_gather() {
     OPENBAO_ROOT_TOKEN="${OPENBAO_ROOT_TOKEN:-${BAO_TOKEN:-$(
         _kit_from_json "${OPENBAO_INIT_FILE:-${HOME}/.gentian/openbao-init.json}" '.root_token' || true)}}"
 
-    _kit_backup_identity
+    _kit_backup_identity || return 1
 
     if [[ -z "${KERNEL_DOMAIN:-}" ]]; then
         KERNEL_DOMAIN="$(kubectl get cluster.gentianos.io -n crossplane-system \
@@ -428,7 +444,7 @@ export_recovery_kit() {
     local out="${1:-$(_kit_default_path)}"
 
     banner "Recovery kit"
-    _kit_gather
+    _kit_gather || return 1
 
     # The salt is the reason this command exists. It lives only in OpenBao, so a
     # disaster that loses OpenBao's storage loses it too — and then the master

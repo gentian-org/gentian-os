@@ -1615,47 +1615,51 @@ check_prereqs() {
     local missing=0
 
     # ── CLI tools ─────────────────────────────────────────────────────────────
-    local base_tools=(kubectl helm jq yq openssl curl bao)
+    # age is required, not optional. It was optional while the kit's own
+    # encryption was the only thing it affected — openssl encrypts the kit but
+    # does not authenticate it, which is worse and survivable. It is now also
+    # the only thing that generates this cluster's backup key: E-03 creates the
+    # age key pair whose public half every scheduled export encrypts to, and
+    # there is no fallback because there is no other way to make an age key.
+    #
+    # Without it the install completes and the cluster has no backup key, so
+    # every nightly export fails with "no age recipients configured" — for as
+    # long as nobody looks. A cluster that cannot back itself up is not an
+    # installed cluster, and this is the last moment the answer costs a minute
+    # rather than a re-export.
+    local base_tools=(kubectl helm jq yq openssl curl bao age age-keygen)
     # Crossplane-based installer also needs the crossplane CLI and python3.
     local extra_tools=()
     [[ "${CROSSPLANE_MODE:-0}" == "1" ]] && extra_tools=(crossplane python3)
 
+    local missing_age=0
     for cmd in "${base_tools[@]}" "${extra_tools[@]}"; do
         if ! command -v "$cmd" &>/dev/null; then
             error "Required command not found: $cmd"
             missing=$((missing + 1))
+            case "$cmd" in age|age-keygen) missing_age=1 ;; esac
         else
             success "$cmd found"
         fi
     done
+    # Named once for the pair, and with the consequence rather than only the
+    # binary: "age not found" reads like a missing convenience.
+    if [[ ${missing_age} -eq 1 ]]; then
+        error ""
+        error "  age and age-keygen ship together and both are required."
+        error "  They generate this cluster's backup key, which every scheduled"
+        error "  export encrypts to. Without one, the install would finish and"
+        error "  every nightly backup would fail with \"no age recipients configured\"."
+        error "    Debian/Ubuntu   sudo apt install age"
+        error "    macOS           brew install age"
+        error "    Alpine          apk add age"
+        error "    or              https://age-encryption.org"
+        error ""
+    fi
 
-    # ── Optional tools ────────────────────────────────────────────────────────
-    # Genuinely optional: the install completes without them, and each step that
-    # would have used one says so and falls back. Reported here anyway, because
-    # by the time the fallback announces itself it is too late to act on.
-    #
-    # age is the case that matters. Its absence surfaces at E-03, near the end of
-    # a long install, and the message arrives after the kit has already been
-    # written with the weaker scheme — openssl encrypts it but does not
-    # authenticate it, so a tampered kit decrypts to garbage instead of failing.
-    # Told at the start, installing age costs a minute; told at E-03, it costs
-    # re-exporting the kit and re-recording where it went.
-    # name:reason, not an associative array -- macOS ships bash 3.2, which has
-    # no `local -A`, and lint-portability is the gate that remembers.
-    local optional_tools=(
-        "age:the recovery kit falls back to openssl, which encrypts but does not authenticate it"
-    )
-    local entry opt why
-    for entry in "${optional_tools[@]}"; do
-        opt="${entry%%:*}"
-        why="${entry#*:}"
-        if command -v "${opt}" &>/dev/null; then
-            success "${opt} found (optional)"
-        else
-            warn "Optional command not found: ${opt}"
-            warn "  ${why}"
-        fi
-    done
+    # No optional tools today. age was the only entry and is now required
+    # above; the loop went with it rather than being left to describe an empty
+    # list. Restore both together if something genuinely optional appears.
 
     # ── Cluster connectivity ──────────────────────────────────────────────────
     if ! kubectl cluster-info --request-timeout=5s >/dev/null 2>&1; then
