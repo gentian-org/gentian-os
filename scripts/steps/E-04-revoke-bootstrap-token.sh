@@ -88,6 +88,15 @@ _kit_exported_detail() {
         -o jsonpath='{.data.recoveryKitExportedAt}' 2>/dev/null || true
 }
 
+# _revoked_at_detail — when, if the record says so. Formatted for the middle of
+# a sentence, and empty rather than "unknown" when the record is not there.
+_revoked_at_detail() {
+    local ns="${GENTIAN_SYSTEM_NAMESPACE:-gentian-system}" at
+    at="$(kubectl get configmap gentian-handover -n "${ns}" \
+        -o jsonpath='{.data.revokedAt}' 2>/dev/null || true)"
+    [[ -n "${at}" ]] && printf ' at %s' "${at}"
+}
+
 # _bootstrap_token — the token this step exists to revoke.
 #
 # B-04 exports BAO_TOKEN, but this step is the one an operator runs on its own:
@@ -125,6 +134,39 @@ _bao_reachable() {
         return 0
     fi
     return 1
+}
+
+# _token_is_root — is the token in this shell the bootstrap credential, or a
+# session that replaced it?
+#
+# The distinction did not exist while the bootstrap token was the only way to
+# reach OpenBao. After handover it is the whole question, and check() was still
+# asking the old one: "does a token authenticate", which is true of the very
+# thing this step hands over TO.
+#
+# _resolve_bao_token falls back to an OIDC sign-in as cluster-admin once the
+# init file is gone, which is exactly the state a handed-over cluster is in. So
+# every later run — re-seeding a credential, fixing one step — carried a live
+# cluster-admin token, check() saw a token that authenticated, and the run ended
+# by reporting a finished cluster as unfinished. Following that advice would
+# then self-revoke the operator's own session and announce it as the bootstrap
+# token, over a revokedAt that was already true.
+#
+# Root is the property that separates them, and OpenBao reports it: the
+# bootstrap token carries the root policy, an OIDC token carries the policies
+# its role binds. Read from the token itself rather than from the handover
+# record, because a record says what happened once and this asks what is true
+# now — which is the distinction the rest of this step is built on.
+# 0 = a live root token, 1 = live but not root, or not live at all, 2 = OpenBao
+# would not say. Two failure meanings are folded into 1 on purpose: "there is no
+# live root token here" is the same answer to this step whether the token is
+# somebody's cluster-admin session or already dead.
+_token_is_root() {
+    local lookup policies
+    lookup="$(bao token lookup -format=json 2>/dev/null)" || return 1
+    policies="$(jq -r '.data.policies[]?' <<<"${lookup}" 2>/dev/null || true)"
+    [[ -n "${policies}" ]] || return 2
+    grep -qx "root" <<<"${policies}"
 }
 
 # _credential_manager_ready — is the thing that records the proof actually there?
@@ -258,7 +300,26 @@ check() {
     # insist on: observe the fact, never infer it from a proxy.
     _bao_reachable || return "${CHECK_UNDEFINED}"
 
-    ! bao token lookup >/dev/null 2>&1
+    # A token that does not authenticate is the finished state, whatever it was.
+    bao token lookup >/dev/null 2>&1 || return 0
+
+    # It authenticates. Satisfied still, unless it is the bootstrap credential:
+    # a cluster-admin token from the OIDC sign-in _resolve_bao_token performs is
+    # the write path this step hands over to, not the one it revokes.
+    #
+    # The status is captured rather than read from $? after the call. `if !
+    # _token_is_root` would set $? to the negation's own 0, so a nested test for
+    # 2 could never fire and "cannot tell" would silently read as "not root".
+    local root_rc=0
+    _token_is_root || root_rc=$?
+    case "${root_rc}" in
+        0) return "${CHECK_MISSING}" ;;
+        # Authenticated, but OpenBao would not say with which policies. Nothing
+        # about that answers the question, and guessing either way is how this
+        # step reported a live root token as revoked once before.
+        2) return "${CHECK_UNDEFINED}" ;;
+        *) return 0 ;;
+    esac
 }
 
 # _wait_for_sign_in — hold the install open while a human signs in.
@@ -532,6 +593,27 @@ apply() {
 
     if [[ -z "${BAO_TOKEN:-}" ]]; then
         info "No bootstrap token in this shell; nothing to revoke."
+        return 0
+    fi
+
+    # Revoke the bootstrap credential, and nothing else.
+    #
+    # `bao token revoke -self` kills whatever this shell is holding, and after
+    # handover that is usually an OIDC session belonging to the person running
+    # the installer. Revoking it does no lasting harm — it is short-lived — but
+    # it ends their session, reports it as the bootstrap token, and re-stamps a
+    # revokedAt that was already true, which reads as work done where none was.
+    local root_rc=0
+    _token_is_root || root_rc=$?
+    if (( root_rc == 2 )); then
+        warn "Cannot tell whether this shell's token is the bootstrap one."
+        warn "  OpenBao did not report its policies, so nothing was revoked."
+        return 0
+    fi
+    if (( root_rc != 0 )); then
+        info "This shell's token is not the bootstrap credential — after handover"
+        info "  the installer signs in as cluster-admin instead."
+        info "  The bootstrap credential was already revoked$(_revoked_at_detail); nothing left to do."
         return 0
     fi
 

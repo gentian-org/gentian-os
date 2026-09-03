@@ -22,7 +22,7 @@ CROSSPLANE_IMAGE ?= xpkg.crossplane.io/crossplane/crossplane:$(CROSSPLANE_CLI_VE
 KUBEBUILDER_ASSETS ?= /tmp/envtest-bins/k8s/1.32.0-linux-amd64
 export KUBEBUILDER_ASSETS
 
-.PHONY: all build generate manifests test lint docker-build clean install-plugin uninstall-plugin validate-steps gen-credentials gen-phase-table lint-phase-table check-credentials lint-cluster-config-keys lint-rbac-coverage lint-marker-ascii lint-composed-resource-names lint-sequencer-targets lint-eso-readable-paths lint-template-placeholders lint-portability lint-image-digests check-render-fixtures lint-resolvable lint-bootstrap-apps lint-step-contracts lint-claim-defaults lint-password-schemes test-policy test-policy-openbao test-policy-authz verify-claim-applied verify-argocd-config verify-image-updates gen-provider-rbac lint-provider-rbac
+.PHONY: all build generate manifests test lint docker-build clean install-plugin uninstall-plugin validate-steps gen-credentials gen-phase-table lint-phase-table check-credentials lint-cluster-config-keys lint-rbac-coverage lint-marker-ascii test-e04-token-classification lint-composed-resource-names lint-sequencer-targets lint-eso-readable-paths lint-template-placeholders lint-portability lint-image-digests check-render-fixtures lint-resolvable lint-bootstrap-apps lint-step-contracts lint-claim-defaults lint-password-schemes test-policy test-policy-openbao test-policy-authz verify-claim-applied verify-argocd-config verify-image-updates gen-provider-rbac lint-provider-rbac
 
 all: generate build test
 
@@ -124,7 +124,7 @@ lint-yaml:
 ## The file list and flags must match CI exactly: -x follows sourced files, and no
 ## -S filter means info/style findings fail the build too. Hand-rolling a narrower
 ## invocation is how an SC2153 reached develop green-looking.
-lint-shell: validate-steps lint-step-contracts lint-resolvable lint-bootstrap-apps lint-credential-fields lint-claim-defaults lint-cluster-config-keys lint-template-placeholders lint-phase-table lint-provider-rbac lint-password-schemes lint-rbac-coverage lint-composed-resource-names lint-sequencer-targets lint-eso-readable-paths lint-marker-ascii
+lint-shell: validate-steps lint-step-contracts lint-resolvable lint-bootstrap-apps lint-credential-fields lint-claim-defaults lint-cluster-config-keys lint-template-placeholders lint-phase-table lint-provider-rbac lint-password-schemes lint-rbac-coverage lint-composed-resource-names lint-sequencer-targets lint-eso-readable-paths lint-marker-ascii test-e04-token-classification
 	@git ls-files -z -- '*.sh' | xargs -0 shellcheck -x scripts/kubectl-gentian
 
 ## Round-trip the recovery kit: export one, load it back, prove every value
@@ -132,6 +132,11 @@ lint-shell: validate-steps lint-step-contracts lint-resolvable lint-bootstrap-ap
 ## openssl fallback reads its passphrase from a terminal.
 verify-recovery-kit:
 	@bash scripts/tools/verify-recovery-kit.sh
+
+## E-04 must tell the bootstrap credential apart from the cluster-admin session
+## every run carries after handover. Stubs the bao CLI; needs no cluster.
+test-e04-token-classification:
+	@bash scripts/tests/test-e04-token-classification.sh
 
 ## Report which declared credentials are satisfied. --source picks where to look:
 ## vault (installer preflight), cluster (day-2), git (CI on a deployments branch).
