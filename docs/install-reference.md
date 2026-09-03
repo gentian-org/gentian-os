@@ -152,6 +152,56 @@ The salt is generated at first install and stored in OpenBao beside the password
 
 Under `random` there is nothing to reproduce; recovery means restoring OpenBao.
 
+### Where the backup key lives
+
+Scheduled backups are encrypted to the cluster's age key. Encryption needs only
+the public half, so that is all the operator ever holds — the private half is
+what opens a bundle, and where it lives is a choice.
+
+`./install.sh --export-recovery-kit` generates the pair on a cluster that has
+none: the public half goes to OpenBao at `gentian-os/kernel/backup/recipients`,
+and the private half into the kit. It never regenerates, because a second pair
+would orphan every bundle written to the first.
+
+`spec.backup.escrowIdentity` in the cluster claim decides whether the private
+half is *also* stored in OpenBao, at `gentian-os/kernel/backup/identity`:
+
+| | Restoring needs | The risk you are taking |
+|---|---|---|
+| `false` (default) | the recovery kit | losing every copy of the kit loses every backup, with no recourse |
+| `true` | OpenBao credentials, or the kit | whoever reaches OpenBao as a cluster administrator gets the bundles *and* the key that opens them |
+
+Off is the stronger position and the reason the arrangement exists: nothing the
+cluster holds can open a bundle, so an attacker who takes the cluster gets
+ciphertext and a public key — which is what an attacker who already has the
+bucket has. Turn escrow on when losing the kit is the likelier failure than
+losing the cluster, which for a single-operator install it often is.
+
+Escrow is read by the `cluster-admin` policy and explicitly denied to `eso-read`,
+so the key cannot be turned into a Kubernetes Secret by anything that can write
+an `ExternalSecret`. It means "a cluster administrator can read it", not "the
+cluster can read it"; `make test-policy-openbao` asserts both halves against a
+real OpenBao.
+
+It also has a second effect worth knowing: with escrow on, a later
+`--export-recovery-kit` reads the identity back and the new kit carries it. With
+escrow off, the first kit is irreplaceable, and every kit written afterwards is
+missing the one value that cannot be regenerated.
+
+To restore from an escrowed key:
+
+```bash
+bao kv get -mount=secret -field=identity gentian-os/kernel/backup/identity > identity.txt
+age -d -i identity.txt manifest.json.age > manifest.json
+```
+
+Turning escrow on for a cluster whose key predates it stores nothing by itself —
+the key is only ever written at generation. Supply it once from the kit:
+
+```bash
+bao kv put -mount=secret gentian-os/kernel/backup/identity identity=@identity.txt
+```
+
 ---
 
 ## 5. Installing on an internal domain

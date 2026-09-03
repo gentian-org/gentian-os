@@ -252,6 +252,12 @@ expect "${CLUSTER_TOKEN}" "DENIED a tenant's data — cluster-admin is not a sup
     "secret/data/gentian-os/tenants/acme/repositories/x" "deny"
 expect "${CLUSTER_TOKEN}" "DENIED paths outside gentian-os" \
     "secret/data/somewhere/else" "deny"
+# Escrow, when a cluster turns it on, puts the backup private key here. The
+# whole arrangement rests on exactly one asymmetry — this identity reads it and
+# the next one does not — so both halves are asserted rather than reasoned
+# about.
+expect "${CLUSTER_TOKEN}" "allowed the escrowed backup identity — this is who escrow is for" \
+    "secret/data/gentian-os/kernel/backup/identity" "create,read,update"
 
 echo ""
 echo "  eso-read ${DIM}(the only identity ESO holds)${NC}"
@@ -263,6 +269,22 @@ expect "${ESO_TOKEN}" "allowed reading a tenant's app credentials" \
     "secret/data/gentian-os/tenants/acme/apps/some-app" "read"
 expect "${ESO_TOKEN}" "allowed reading a tenant's repository credentials" \
     "secret/data/gentian-os/tenants/acme/repositories/x" "read"
+# The escrowed backup identity, denied by an exact path that has to beat the
+# kernel/* glob two lines above it in the same policy. If OpenBao ever resolved
+# those the other way, anything able to write an ExternalSecret could materialise
+# the key that opens every bundle into an ordinary Secret — and escrow would
+# silently mean "the cluster holds its own decryption key" rather than "a cluster
+# administrator can read it". Asserted against a real bao, because the precedence
+# rule is the load-bearing part and no comment can check it.
+expect "${ESO_TOKEN}" "DENIED the escrowed backup identity — deny beats the kernel glob" \
+    "secret/data/gentian-os/kernel/backup/identity" "deny"
+expect "${ESO_TOKEN}" "DENIED its metadata — the path name is a hint on its own" \
+    "secret/metadata/gentian-os/kernel/backup/identity" "deny"
+# The sibling path must be unaffected: a deny that swallowed the subtree would
+# take the recipient with it, and the operator would stop being able to encrypt
+# at all.
+expect "${ESO_TOKEN}" "allowed the backup recipient beside it — the deny is one path, not a subtree" \
+    "secret/data/gentian-os/kernel/backup/recipients" "read"
 expect "${ESO_TOKEN}" "DENIED paths outside gentian-os" \
     "secret/data/somewhere/else" "deny"
 
