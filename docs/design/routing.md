@@ -1,4 +1,4 @@
-# Gateway and Edge Routing
+# Routing and the Edge
 
 **Companion to:** [architecture.md](../architecture.md)
 
@@ -153,6 +153,63 @@ hostname-less kernel listener, whose certificate covers
 
 Gateway listeners consume these certificate secrets directly, reading tenant
 secrets across namespaces under the tenant's ReferenceGrant.
+
+---
+
+## 3a. The Cloudflare API token
+
+A cluster whose `networkMode` is `tunnel` — the Cluster XRD's default — reaches
+the internet through a Cloudflare Tunnel, and gentian-os asks one token to do
+two unrelated jobs.
+
+| Job | Where | Cloudflare permission |
+|---|---|---|
+| DNS-01 challenges and the proxied CNAMEs tenants resolve through | cert-manager, external-dns, the operator | **Zone → DNS → Edit** on the kernel domain's zone |
+| Rewriting the tunnel's ingress rules so each new tenant hostname reaches the gateway | the operator, per tenant | **Account → Cloudflare Tunnel → Edit** |
+
+**Both are required on a tunnel cluster.** The second is easy to miss because
+nothing else needs it: a token with only the DNS permission installs cleanly,
+issues every certificate, and then fails the first time a tenant is deployed —
+`TunnelIngressReady=False`, reason `CloudflareTunnelSyncFailed`, message
+`cloudflare get tunnel config: [{1001 Not authorized}]`, retrying every few
+seconds until the deploy times out. Everything else about that tenant is
+healthy, which is what makes it confusing.
+
+The two permissions have different shapes. DNS rights can be narrowed to a
+single zone; Cloudflare Tunnel permissions exist only at account level, with no
+per-tunnel scoping. So granting both to one token necessarily widens it to the
+account, and that token is held by cert-manager and external-dns as well as the
+operator. **One token is the supported default** — it is one prompt, one OpenBao
+path, one rotation, and the tunnel scope is needed by nearly every cluster since
+`tunnel` is the default mode. Where that reach is too broad — a Cloudflare
+account carrying tunnels beyond this cluster — set
+`cloudflare.tunnelAPITokenSecretRef` in the operator's chart values to a second,
+account-scoped token; the operator prefers it and falls back to the DNS token
+when it is unset.
+
+### Supplying it
+
+The token is credential `acme-dns-cloudflare`, declared in
+`kernel/platforms.yaml` under `dnsProviders.cloudflare`. The installer prompts
+for it, or reads `CF_API_TOKEN` from the environment for a non-interactive run,
+and stores it at `gentian-os/kernel/dns/cloudflare` in OpenBao. The zone id and
+tunnel CNAME are resolved from the token and the running `cloudflared`, not
+asked for.
+
+Before writing it, the installer probes it twice: once for the zone DNS-01 will
+solve in, and once for the tunnel configuration the operator will rewrite. The
+second probe is the reason this section exists — a DNS-only token does **not**
+fail the tunnel list endpoint outright, it comes back `200` with an empty
+result, so only reading the running tunnel's configuration distinguishes "no
+permission" from "no tunnel yet". On a first install, where cloudflared is not
+running to be named, that check is inconclusive and says so rather than passing
+quietly.
+
+### If a cluster has no tunnel
+
+Set `networkMode: static-ip` on the Cluster claim. DNS then points at the node
+address behind a load balancer, no tunnel exists, and the token needs the DNS
+permission only.
 
 ---
 
