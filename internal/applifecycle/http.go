@@ -136,8 +136,12 @@ func (h *HTTPServer) handleSetAddons(w http.ResponseWriter, r *http.Request) {
 		Addons []string `json:"addons"`
 		// Provision mirrors the app-level flag: install and grant access to all
 		// existing tenant users, rather than install and leave access to group
-		// assignment.
+		// assignment. It applies to every addon in the request.
 		Provision bool `json:"provision"`
+		// ProvisionFor is the same choice made per addon, which is how the store
+		// asks it — Install and Provision are separate buttons on each row. Given
+		// both, this one decides; an addon it omits is installed and not granted.
+		ProvisionFor []string `json:"provisionFor"`
 	}
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 64<<10)).Decode(&body); err != nil {
 		writeErr(w, http.StatusBadRequest, fmt.Errorf("invalid request body: %w", err))
@@ -145,11 +149,12 @@ func (h *HTTPServer) handleSetAddons(w http.ResponseWriter, r *http.Request) {
 	}
 
 	result, err := h.Service.SetAddons(r.Context(), SetAddonsRequest{
-		Tenant:    tenant,
-		Profile:   profile,
-		Addons:    body.Addons,
-		Provision: body.Provision,
-		Actor:     actor,
+		Tenant:       tenant,
+		Profile:      profile,
+		Addons:       body.Addons,
+		Provision:    body.Provision,
+		ProvisionFor: body.ProvisionFor,
+		Actor:        actor,
 	})
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, err)

@@ -519,16 +519,28 @@ func (s *Service) SetAddons(ctx context.Context, req SetAddonsRequest) (*Result,
 
 	// Installing an addon activates it; it does not decide who may see it. Access
 	// comes from membership of the addon's own group, which carries the grant
-	// attributes declared on its profile. Provision is the same shortcut it is for
-	// an app: put every existing tenant user in that group now, rather than leaving
-	// the admin to assign them.
+	// attributes declared on its profile. Provisioning is the same shortcut it is
+	// for an app: put every existing tenant user in that group now, rather than
+	// leaving the admin to assign them.
+	//
+	// Per addon, because that is the choice the caller actually makes — the store
+	// offers Install and Provision as separate buttons on each row. This used to
+	// be one bool for the whole request, and the store sent it as "did you
+	// provision anything at all", so the two ways of being wrong were symmetric:
+	// provisioning one addon quietly provisioned every addon in the same save,
+	// and installing one without provisioning left every addon in that save with
+	// a group that has the right role attribute on it and no members. The second
+	// is how an installed Odoo CRM answered "You are not allowed to access
+	// 'Lead'" — the role was declared, granted to a group, and the group was
+	// empty.
 	var warnings []string
-	if req.Provision {
-		for _, addon := range resolved {
-			if err := s.provisionAppGroupUsers(ctx, req.Tenant, addon.Profile); err != nil {
-				warnings = append(warnings,
-					fmt.Sprintf("provision access for %s: %v", addon.Profile, err))
-			}
+	for _, addon := range resolved {
+		if !req.provisions(addon.Profile) {
+			continue
+		}
+		if err := s.provisionAppGroupUsers(ctx, req.Tenant, addon.Profile); err != nil {
+			warnings = append(warnings,
+				fmt.Sprintf("provision access for %s: %v", addon.Profile, err))
 		}
 	}
 	return &Result{Status: status, Tenant: req.Tenant, Profile: req.Profile, Warnings: warnings}, nil
