@@ -230,6 +230,10 @@ expect "${TENANT_TOKEN}" "allowed own tenant data" \
     "secret/data/gentian-os/tenants/acme/repositories/x" "create,read,update"
 expect "${TENANT_TOKEN}" "allowed own tenant metadata (records who set a value)" \
     "secret/metadata/gentian-os/tenants/acme/repositories/x" "create,list,read,update"
+# Escrow, one subtree down from the cluster's. The tenant administrator writes
+# it and reads it back for a restore; nothing else may.
+expect "${TENANT_TOKEN}" "allowed escrowing and reading back its own backup identity" \
+    "secret/data/gentian-os/tenants/acme/backup/identity" "create,read,update"
 
 # The claim decides the path, not the caller. A second identity asking for a
 # different tenant must land somewhere else entirely — this is what makes the
@@ -237,6 +241,8 @@ expect "${TENANT_TOKEN}" "allowed own tenant metadata (records who set a value)"
 OTHER_TOKEN="$(mint_tenant_token globex)"
 echo ""
 echo "  tenant-admin ${DIM}(a second identity, tenant=globex)${NC}"
+expect "${OTHER_TOKEN}" "DENIED the first tenant's escrowed backup identity" \
+    "secret/data/gentian-os/tenants/acme/backup/identity" "deny"
 expect "${OTHER_TOKEN}" "DENIED the first tenant's data" \
     "secret/data/gentian-os/tenants/acme/repositories/x" "deny"
 expect "${OTHER_TOKEN}" "allowed its own tenant's data" \
@@ -285,6 +291,15 @@ expect "${ESO_TOKEN}" "DENIED its metadata — the path name is a hint on its ow
 # at all.
 expect "${ESO_TOKEN}" "allowed the backup recipient beside it — the deny is one path, not a subtree" \
     "secret/data/gentian-os/kernel/backup/recipients" "read"
+# The same asymmetry for a tenant's own escrowed key, which sits inside a subtree
+# eso-read genuinely needs: tenants/<t>/backup/destination must become a Secret,
+# and tenants/<t>/backup/identity must never.
+expect "${ESO_TOKEN}" "DENIED a tenant's escrowed backup identity" \
+    "secret/data/gentian-os/tenants/acme/backup/identity" "deny"
+expect "${ESO_TOKEN}" "DENIED its metadata" \
+    "secret/metadata/gentian-os/tenants/acme/backup/identity" "deny"
+expect "${ESO_TOKEN}" "allowed the destination credential in the same subtree" \
+    "secret/data/gentian-os/tenants/acme/backup/destination" "read"
 expect "${ESO_TOKEN}" "DENIED paths outside gentian-os" \
     "secret/data/somewhere/else" "deny"
 

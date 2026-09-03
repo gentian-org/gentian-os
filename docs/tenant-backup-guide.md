@@ -265,6 +265,21 @@ Paste the **public** key — the line starting `age1` — into the form. Keep th
 private key, the line starting `AGE-SECRET-KEY-`, offline; a copy on the cluster
 you would be restoring *from* is no copy at all.
 
+**Keep a copy in the vault** is ticked by default when the console generates a
+key for you. It stores the private key in your workspace's own area of the
+platform's vault, so a download you never got round to saving is not fatal: you
+can read the key back and restore. It is readable by a workspace administrator
+and by nobody else — not other workspaces, and not the platform, which is
+refused it explicitly.
+
+Untick it and the download is the only copy in existence. That is the stronger
+position and the one to choose if the point of holding your own key is that no
+copy should sit on the platform at all. It also means losing the file loses the
+backups, with nothing anyone can do.
+
+Either way, save the download. The vault copy lives on the same cluster as the
+backups; a disaster that takes the cluster takes it too.
+
 You can name more than one key, one per line. Every listed key opens the bundle
 independently, so naming your provider's alongside your own is how you keep a key
 of your own without giving up their help.

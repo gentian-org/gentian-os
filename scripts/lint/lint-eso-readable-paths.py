@@ -89,6 +89,17 @@ OPERATOR_ONLY = {
     "gentian-os/tenants/+/admin":
         "a derivation salt, not a stored credential (seeder.go). Nothing reads "
         "it back and no Secret is made from it.",
+    "gentian-os/kernel/backup/identity":
+        "the cluster's escrowed backup key, when spec.backup.escrowIdentity is "
+        "on. Read by a cluster administrator performing a restore, and by "
+        "--export-recovery-kit. Denied to ESO in the same policy: a key that "
+        "could become a Secret would be readable by whoever takes the cluster, "
+        "which is the one thing escrow must not come to mean.",
+    "gentian-os/tenants/+/backup/identity":
+        "one tenant's escrowed backup key (credentialmgr/backupidentity.go). "
+        "Same reasoning one subtree down, and the reason the sibling grant on "
+        "tenants/+/backup/* is not enough: the destination credential there "
+        "exists to become a Secret, and this must never.",
 }
 
 # What a placeholder becomes when a pattern is made concrete. Any single
@@ -140,8 +151,20 @@ def normalise(raw: str):
 
 
 def policy_read_paths(text, yaml):
-    """The paths eso-read grants `read` on, from the golden render."""
-    granted = []
+    """What eso-read can actually read: the `read` grants, minus the denies.
+
+    Both halves, because the policy now has both. A path can sit inside a glob
+    this policy reads and still be unreadable, which is how the escrowed backup
+    identities work: `tenants/+/backup/*` is granted so destination credentials
+    become Secrets, and `tenants/+/backup/identity` is denied inside it so the
+    key that opens a tenant's whole history never can.
+
+    Reading only the grants made this lint agree that those paths were readable
+    when OpenBao refuses them — and, worse, it would have gone on agreeing if
+    the deny were ever deleted. A lint whose subject is "can anything read this"
+    has to model the half of the policy that says no.
+    """
+    granted, denied = [], []
     for doc in yaml.safe_load_all(text):
         if not isinstance(doc, dict):
             continue
@@ -154,9 +177,13 @@ def policy_read_paths(text, yaml):
         for match in re.finditer(r'path\s+"([^"]+)"\s*\{([^}]*)\}', body):
             path, block = match.group(1), match.group(2)
             caps = re.search(r"capabilities\s*=\s*\[([^\]]*)\]", block)
-            if caps and "read" in caps.group(1):
+            if not caps:
+                continue
+            if "deny" in caps.group(1):
+                denied.append(path)
+            elif "read" in caps.group(1):
                 granted.append(path)
-    return granted
+    return granted, denied
 
 
 def vault_glob_matches(policy_path: str, concrete: str) -> bool:
@@ -229,7 +256,7 @@ def main() -> int:
         sys.exit(f"no golden render at {GOLDEN.relative_to(ROOT)} — "
                  f"the eso-read policy can only be read from one")
 
-    granted = policy_read_paths(GOLDEN.read_text(), yaml)
+    granted, denied = policy_read_paths(GOLDEN.read_text(), yaml)
     if not granted:
         sys.exit(f"found no read grants for policy {ESO_POLICY_NAME!r} in "
                  f"{GOLDEN.relative_to(ROOT)} — refusing to pass every path")
@@ -240,9 +267,23 @@ def main() -> int:
 
     allowed = {waiver_key(k) for k in OPERATOR_ONLY}
 
-    unreadable, waived, stale_waivers = [], [], []
+    unreadable, waived, stale_waivers, exposed = [], [], [], []
     for path in sorted(patterns):
-        if any(vault_glob_matches(g, KV_DATA_PREFIX + path) for g in granted):
+        concrete = KV_DATA_PREFIX + path
+        # Deny first, and deny wins — which is how OpenBao resolves it too. A
+        # path inside a granted glob is still unreadable if a deny names it.
+        readable = any(vault_glob_matches(g, concrete) for g in granted) and not any(
+            vault_glob_matches(d, concrete) for d in denied
+        )
+        if readable:
+            # The inverse finding, and the more serious one. A path declared
+            # operator-only that ESO CAN read is a value somebody wrote down as
+            # unreachable and that anything able to create an ExternalSecret can
+            # reach. Deleting a deny used to produce silence here, which made
+            # the deny protecting the escrowed backup keys unguarded by the one
+            # lint whose subject is who can read what.
+            if path in allowed:
+                exposed.append((path, sorted(patterns[path])))
             continue
         if path in allowed:
             waived.append(path)
@@ -259,13 +300,24 @@ def main() -> int:
     for path, origins in unreadable:
         print(f"  {RED}ERROR{NC} {path}")
         print(f"        {DIM}built in {', '.join(origins)}{NC}")
-        print(f"        {DIM}eso-read grants no read on secret/data/{path} — a value{NC}")
+        print(f"        {DIM}eso-read cannot read secret/data/{path} — a value{NC}")
         print(f"        {DIM}stored here is written successfully and never materialises.{NC}")
+    for path, origins in exposed:
+        print(f"  {RED}ERROR{NC} {path}")
+        print(f"        {DIM}built in {', '.join(origins)}{NC}")
+        print(f"        {DIM}declared operator-only, but eso-read CAN read it. Either the{NC}")
+        print(f"        {DIM}deny protecting it was removed, or a grant now covers it.{NC}")
     for key in stale_waivers:
         print(f"  {YELLOW}WARN{NC}  {key}: waived as operator-only, but nothing builds it")
         print(f"        {DIM}Remove it from OPERATOR_ONLY so the list stays a "
               f"statement about this code.{NC}")
     print(f"{DIM}────────────────────────────────────────────────────────────{NC}")
+    if exposed:
+        print(f"{RED}{len(exposed)} path(s) declared operator-only that ESO can read.{NC}")
+        print(f"{DIM}Restore the deny in the eso-read policy in{NC}")
+        print(f"{DIM}crossplane/compositions/cluster-default.yaml, or remove the{NC}")
+        print(f"{DIM}OPERATOR_ONLY entry if the path is genuinely meant to be a Secret.{NC}")
+        return 1
     if unreadable:
         print(f"{RED}{len(unreadable)} path(s) ESO cannot read.{NC}")
         print(f"{DIM}Add a named grant to the eso-read policy in{NC}")

@@ -636,6 +636,17 @@ spec:
       path "secret/data/gentian-os/tenants/+/backup/*" {
         capabilities = ["read"]
       }
+      # ...but not the escrowed backup identity beside it. The glob
+      # above is for destination credentials, which exist precisely
+      # to become Secrets; the identity is the key that opens the
+      # tenant's entire history and must never become one. Same
+      # reasoning as the kernel path above, one subtree down.
+      path "secret/data/gentian-os/tenants/+/backup/identity" {
+        capabilities = ["deny"]
+      }
+      path "secret/metadata/gentian-os/tenants/+/backup/identity" {
+        capabilities = ["deny"]
+      }
       # Contract integration secrets. app-default composes an
       # ExternalSecret over tenants/<t>/contracts/<c> for every
       # integration an app maps, so this is the same omission — not
