@@ -168,14 +168,17 @@ half is *also* stored in OpenBao, at `gentian-os/kernel/backup/identity`:
 
 | | Restoring needs | The risk you are taking |
 |---|---|---|
-| `false` (default) | the recovery kit | losing every copy of the kit loses every backup, with no recourse |
-| `true` | OpenBao credentials, or the kit | whoever reaches OpenBao as a cluster administrator gets the bundles *and* the key that opens them |
+| `true` (default) | OpenBao credentials, or the kit | whoever reaches OpenBao as a cluster administrator gets the bundles *and* the key that opens them |
+| `false` | the recovery kit | losing every copy of the kit loses every backup, with no recourse |
 
-Off is the stronger position and the reason the arrangement exists: nothing the
-cluster holds can open a bundle, so an attacker who takes the cluster gets
-ciphertext and a public key — which is what an attacker who already has the
-bucket has. Turn escrow on when losing the kit is the likelier failure than
-losing the cluster, which for a single-operator install it often is.
+On by default, because the likelier disaster is a lost recovery kit rather than
+a stolen cluster, and a backup nobody can open is not a backup.
+
+Off is the stronger position against tampering and theft: nothing the cluster
+holds can open a bundle, so an attacker who takes the cluster gets ciphertext
+and a public key — which is what an attacker who already has the bucket has.
+Choose it when the cluster is the likelier loss and you are certain of your kit
+custody, because it makes the first kit irreplaceable.
 
 Escrow is read by the `cluster-admin` policy and explicitly denied to `eso-read`,
 so the key cannot be turned into a Kubernetes Secret by anything that can write
@@ -187,6 +190,11 @@ It also has a second effect worth knowing: with escrow on, a later
 `--export-recovery-kit` reads the identity back and the new kit carries it. With
 escrow off, the first kit is irreplaceable, and every kit written afterwards is
 missing the one value that cannot be regenerated.
+
+Only the literal `false` turns escrow off. The XRD defaults the field, so a
+current cluster always states it; an empty answer means the resource could not
+be read at all, and the kit export says which way it defaulted rather than
+leaving it to be inferred.
 
 To restore from an escrowed key:
 

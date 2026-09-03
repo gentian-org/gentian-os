@@ -183,26 +183,50 @@ _kit_recipient() {
 # path — see the Cluster composition — so escrow means "a cluster administrator
 # can read it", not "the cluster can read it". The distinction is the whole
 # point: a key ESO could materialise into a Secret would be readable by anything
-# that takes the cluster, which is what the default arrangement exists to avoid.
+# that takes the cluster, which is the one thing escrow must not come to mean.
 _KIT_BACKUP_ESCROW_PATH="gentian-os/kernel/backup/identity"
 
 # _kit_escrow_enabled — whether this cluster escrows the backup identity.
 #
-# Off unless the cluster says otherwise. Read from the live Cluster resource,
-# which is where the claim in gentian-deployments lands, so the answer is the
-# one committed in git rather than one supplied at the prompt. The environment
-# override exists for the case the resource cannot be read — a cluster mid-
-# bootstrap, or a kit exported from outside it — where refusing to decide would
-# silently mean "no escrow" on a cluster whose definition asked for it.
+# On unless the cluster says otherwise, because the likelier disaster is a lost
+# recovery kit rather than a stolen cluster, and a backup nobody can open is not
+# a backup. Read from the live Cluster resource, which is where the claim in
+# gentian-deployments lands, so the answer is the one committed in git rather
+# than one supplied at the prompt.
+#
+# Only the literal "false" turns it off. The XRD defaults the field to true, so
+# a current cluster always states it either way and the empty case means the
+# resource could not be read — an XRD that predates this field, no cluster
+# access, a kit exported from elsewhere. Empty follows the documented default
+# rather than quietly inverting it, and _kit_backup_identity says which way it
+# went so the choice is visible in the transcript rather than inferred.
+#
+# The narrow risk this accepts: a claim that says false, on a cluster whose XRD
+# is too old to know the field, reads as empty and escrows anyway. That window
+# closes the moment the XRD is applied, and GENTIAN_BACKUP_ESCROW_IDENTITY=false
+# forces the answer meanwhile.
 _kit_escrow_enabled() {
     if [[ -n "${GENTIAN_BACKUP_ESCROW_IDENTITY:-}" ]]; then
-        [[ "${GENTIAN_BACKUP_ESCROW_IDENTITY}" == "true" ]]
+        [[ "${GENTIAN_BACKUP_ESCROW_IDENTITY}" != "false" ]]
         return
     fi
     local value
     value="$(kubectl get cluster.gentianos.io -A \
         -o jsonpath='{.items[0].spec.backup.escrowIdentity}' 2>/dev/null || true)"
-    [[ "${value}" == "true" ]]
+    [[ "${value}" != "false" ]]
+}
+
+# _kit_escrow_stated — whether the cluster actually answered, or we defaulted.
+#
+# Reported rather than hidden: "escrowed because the cluster asked" and
+# "escrowed because nothing could be read" are the same outcome and very
+# different facts, and only one of them is a decision somebody made.
+_kit_escrow_stated() {
+    [[ -n "${GENTIAN_BACKUP_ESCROW_IDENTITY:-}" ]] && return 0
+    local value
+    value="$(kubectl get cluster.gentianos.io -A \
+        -o jsonpath='{.items[0].spec.backup.escrowIdentity}' 2>/dev/null || true)"
+    [[ -n "${value}" ]]
 }
 
 # _kit_escrowed_identity — the identity OpenBao holds, when escrow is on.
@@ -311,7 +335,13 @@ _kit_backup_identity() {
         if bao kv put -mount=secret "${_KIT_BACKUP_ESCROW_PATH}" \
             "identity=${BACKUP_AGE_IDENTITY}" >/dev/null 2>&1; then
             success "  Backup key generated. Public half and escrowed identity in OpenBao."
-            warn "  This cluster escrows the backup identity (spec.backup.escrowIdentity)."
+            if _kit_escrow_stated; then
+                warn "  This cluster escrows the backup identity (spec.backup.escrowIdentity)."
+            else
+                warn "  Escrowed by default: this cluster's definition could not be read, so"
+                warn "  the documented default applied. Set spec.backup.escrowIdentity to say"
+                warn "  so deliberately, or false to keep the key in this kit alone."
+            fi
             warn "  A cluster administrator can restore without this kit — and anyone who"
             warn "  reaches OpenBao as one can read every bundle. Keep the kit anyway: it"
             warn "  is the only copy that survives losing the cluster."
