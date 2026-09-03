@@ -183,8 +183,8 @@ func TestTenant_DeepCopy(t *testing.T) {
 				S3Prefix:       "gtn-demo-",
 			},
 			Mail: &v1alpha1.TenantMail{
-				Mode:         v1alpha1.MailModeSelfhosted,
-				Domain:       "gtn-demo.example.com",
+				Mode:   v1alpha1.MailModeSelfhosted,
+				Domain: "gtn-demo.example.com",
 			},
 			Quotas: &v1alpha1.TenantQuotas{
 				MaxApps: 20,
