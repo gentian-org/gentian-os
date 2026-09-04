@@ -428,6 +428,10 @@ func (r *TenantRestoreReconciler) restoreTenantWide(
 
 	shellParams := params
 	shellParams.Name = exportJobName(restore.Name, backupTenantComponent, "shellr")
+	// Named for the shell, not for the tenant-wide component the Job is
+	// labelled with -- that is the role the provisioner created alongside the
+	// database.
+	shellParams.Role = backup.PostgresRole(tenant.Name, portalShellAppName)
 	shellDB := databaseName(tenant, portalShellAppName)
 
 	units := []captureUnit{

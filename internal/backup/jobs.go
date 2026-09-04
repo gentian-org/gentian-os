@@ -71,6 +71,14 @@ type JobParams struct {
 	// such as the portal shell database.
 	Tenant string
 	App    string
+	// Role overrides the database role a restore hands ownership to. Empty
+	// derives it from Tenant and App, which is right for an app: its database,
+	// its role and its label are all the same name. The portal shell is the
+	// exception -- it is labelled with the tenant-wide component so its
+	// progress aggregates there, while its database and role are named for the
+	// shell. Deriving the role from the label restored into a role that has
+	// never existed.
+	Role string
 	// Export names the TenantExport this Job serves, for provenance.
 	Export string
 	// Node pins this Job to one node, when it must run where a volume already
