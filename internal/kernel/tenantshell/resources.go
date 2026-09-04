@@ -131,9 +131,15 @@ func ResourceQuota(tenantName, nsName string, quotas *gentianov1alpha1.TenantQuo
 //
 // That is not hypothetical: requests.cpu and requests.memory were added here
 // and not to the Composition, and a tenant moved onto a plan received its
-// limits and none of its reserved capacity. Change one, change both, and
-// extend the tenant-default render fixture — which now sets quotas precisely
-// so this cannot drift silently again.
+// limits and none of its reserved capacity. Adding them to the Composition was
+// not enough either — the quantities still have to survive the Tenant -> XTenant
+// projection in internal/controller and the XRD's structural schema, and they
+// survived neither, so the same tenants kept getting the same half a plan.
+//
+// Change one, change all four: this mirror, the Composition, xtenantQuotas in
+// internal/controller, and crossplane/xrds/tenant.yaml. Two tests now fail when
+// any of them drifts — composition_agreement_test.go here, and
+// xtenant_quotas_agreement_test.go for the two hops between Tenant and XTenant.
 func ResourceListFromQuotas(q *gentianov1alpha1.TenantQuotas) corev1.ResourceList {
 	if q == nil {
 		return nil

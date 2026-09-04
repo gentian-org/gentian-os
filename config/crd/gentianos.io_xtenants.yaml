@@ -3,6 +3,20 @@
 # The real schema is defined by the Crossplane XRD (crossplane/xrds/tenant.yaml);
 # this stub exists only so that the envtest environment can load the CRD and the
 # TenantReconciler can create/watch XTenant composites during unit tests.
+#
+# spec is x-kubernetes-preserve-unknown-fields, so envtest accepts whatever the
+# reconciler writes. The real XRD is a structural schema and prunes whatever it
+# does not declare, in silence. That difference is not a detail: the entire
+# controller suite stayed green while a real cluster dropped spec.quotas
+# .requestsCpu and .requestsMemory from every XTenant, and tenants moved onto a
+# ResourcePlan were sold reserved capacity nothing enforced.
+#
+# Tightening this stub to mirror the XRD would only move the drift here. What
+# guards the boundary instead is
+# internal/controller/xtenant_quotas_agreement_test.go, which reads the XRD and
+# fails when the reconciler writes a field it does not declare. A new field on
+# the XTenant spec wants the same treatment — no test that runs against this
+# stub can tell you the cluster kept it.
 apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
 metadata:
