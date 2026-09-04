@@ -20,8 +20,10 @@ import (
 	"context"
 	"fmt"
 	"strconv"
+	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
@@ -131,6 +133,69 @@ func resumeQuiescedApp(
 // and on every reconcile that finds a stale entry in status.quiesced.
 func (r *TenantReconciler) resumeApp(ctx context.Context, tenantName, appName string) error {
 	return r.scaleAppWorkloads(ctx, tenantName, appName, -1)
+}
+
+// restartWorkloadAnnotation is the one kubectl itself writes, so a roll this
+// causes is indistinguishable from `kubectl rollout restart` in the history.
+const restartWorkloadAnnotation = "kubectl.kubernetes.io/restartedAt"
+
+// restartAppWorkloads rolls an app's pods, the way `kubectl rollout restart`
+// does.
+//
+// A restore replaces an app's database, bucket and volumes underneath a process
+// that is still running, and a command-mode quiesce never recreates the pod --
+// maintenance mode goes on and off around it. What survives is everything the
+// old pod had already read: its caches in Redis and APCu, and every ConfigMap
+// mounted with subPath, which Kubernetes materialises once at pod start and
+// never updates again.
+//
+// That last one is not theoretical. Nextcloud's session configuration is one
+// such mount, and a pod carrying an empty copy of it could not write a session
+// at all: logins failed at the OIDC callback with 403 while the app looked
+// healthy. A restore could not clear it, because nothing ever restarted the pod.
+func (r *TenantReconciler) restartAppWorkloads(ctx context.Context, tenantName, appName string) error {
+	ns := backup.TenantNamespace(tenantName)
+	stamp := time.Now().UTC().Format(time.RFC3339)
+
+	deployments := &appsv1.DeploymentList{}
+	if err := r.List(ctx, deployments, client.InNamespace(ns)); err != nil {
+		return fmt.Errorf("list deployments in %s: %w", ns, err)
+	}
+	for i := range deployments.Items {
+		d := &deployments.Items[i]
+		if !workloadBelongsToApp(d.Labels, d.Name, appName) {
+			continue
+		}
+		patch := client.MergeFrom(d.DeepCopy())
+		setTemplateAnnotation(&d.Spec.Template.ObjectMeta, stamp)
+		if err := r.Patch(ctx, d, patch); err != nil {
+			return fmt.Errorf("restart deployment %s/%s: %w", ns, d.Name, err)
+		}
+	}
+
+	statefulSets := &appsv1.StatefulSetList{}
+	if err := r.List(ctx, statefulSets, client.InNamespace(ns)); err != nil {
+		return fmt.Errorf("list statefulsets in %s: %w", ns, err)
+	}
+	for i := range statefulSets.Items {
+		st := &statefulSets.Items[i]
+		if !workloadBelongsToApp(st.Labels, st.Name, appName) {
+			continue
+		}
+		patch := client.MergeFrom(st.DeepCopy())
+		setTemplateAnnotation(&st.Spec.Template.ObjectMeta, stamp)
+		if err := r.Patch(ctx, st, patch); err != nil {
+			return fmt.Errorf("restart statefulset %s/%s: %w", ns, st.Name, err)
+		}
+	}
+	return nil
+}
+
+func setTemplateAnnotation(meta *metav1.ObjectMeta, stamp string) {
+	if meta.Annotations == nil {
+		meta.Annotations = map[string]string{}
+	}
+	meta.Annotations[restartWorkloadAnnotation] = stamp
 }
 
 // scaleAppWorkloads scales an app's Deployments and StatefulSets. A replicas of
