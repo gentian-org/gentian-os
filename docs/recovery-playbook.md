@@ -102,18 +102,29 @@ and any manual one that did not choose a passphrase.
 
 ### Get the identity
 
-Three sources, in order of convenience:
+Three places it can be, and a switch for each:
+
+| Where it is | Pass |
+|---|---|
+| OpenBao, when the cluster escrows it | `--from-vault` |
+| The recovery kit (`BACKUP_AGE_IDENTITY`) | `--key-file id.txt` |
+| The printed QR code | `--qr photo.png` |
+
+`--qr` takes the image — a scan or a phone photo — and decodes it. Nothing is
+transcribed by hand, which is the point of printing a machine-readable code.
+
+By hand, the same three:
 
 ```bash
-# a. OpenBao, when the cluster escrows it (spec.backup.escrowIdentity, default true)
+# from OpenBao
 bao kv get -mount=secret -field=identity gentian-os/kernel/backup/identity > id.txt
-
-# b. The recovery kit — BACKUP_AGE_IDENTITY
-# c. The printed QR code — scan it, paste the AGE-SECRET-KEY- line into id.txt
+# from the kit: the BACKUP_AGE_IDENTITY line
+# from the QR: zbarimg --raw photo.png > id.txt
 ```
 
-Confirm it is the right key before relying on it: its public half must match
-what the bundle was encrypted to.
+Confirm it is the right key before relying on it — its public half must match
+what the bundle was encrypted to. `scripts/recovery.sh` prints the public half
+for exactly this reason; by hand:
 
 ```bash
 age-keygen -y id.txt
@@ -188,17 +199,17 @@ against your provider too.
 
 ### What they will do with it
 
-The key goes into a Secret in your namespace, and is deleted afterwards:
+Whichever form you hand over — a key file, the QR image itself, or a passphrase
+typed at the prompt so it is never written down:
 
 ```bash
-# passphrase bundle
-kubectl create secret generic restore-key -n tenant-<t> --from-literal=passphrase='…'
-# own-key bundle
-kubectl create secret generic restore-key -n tenant-<t> --from-file=identity=id.txt
+scripts/recovery.sh tenant --tenant <t> --key-file yours.txt --confirm <t>
+scripts/recovery.sh tenant --tenant <t> --qr yours.png     --confirm <t>
+scripts/recovery.sh tenant --tenant <t> --passphrase       --confirm <t>
 ```
 
-...referenced as `passphraseSecretRef` or `identitySecretRef` in the
-`TenantRestore` from scenario 2.
+Each stages the key as a Secret in your namespace, runs the restore, and
+deletes the Secret afterwards — the key is not left on the cluster.
 
 ### Expect afterwards
 

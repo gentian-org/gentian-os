@@ -48,3 +48,4 @@ config/rbac/
 # the repo reports a modification that has nothing to do with the work.
 .claude/worktrees/
 backup-key*
+*.png
