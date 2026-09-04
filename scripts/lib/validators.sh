@@ -96,14 +96,20 @@ validate_oci_registry() {
 # git-https — the smart-HTTP ref advertisement, the cheapest authenticated read
 # =============================================================================
 validate_git_https() {
-    local repo="$1" user="$2" token="$3" url code auth=()
+    local repo="$1" user="$2" token="$3" authtype="${4:-basic}" url code auth=()
     repo="${repo%.git}"; repo="${repo%/}"
     url="${repo}.git/info/refs?service=git-upload-pack"
 
     # Only send credentials when there are some. Passing -u with an empty
     # password makes a public repository answer 401, which would report a
     # perfectly good public repo as a rejected credential.
-    [[ -n "${token}" ]] && auth=(-u "${user}:${token}")
+    if [[ -n "${token}" ]]; then
+        if [[ "${authtype}" == "bearer" ]]; then
+            auth=(-H "Authorization: Bearer ${token}")
+        else
+            auth=(-u "${user}:${token}")
+        fi
+    fi
 
     code=$(curl -s -o /dev/null -w '%{http_code}' \
         --max-time "${GENTIAN_VALIDATE_TIMEOUT}" \

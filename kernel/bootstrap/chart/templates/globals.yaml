@@ -13,7 +13,7 @@ metadata:
 spec:
   project: gentian
   source:
-    repoURL: https://github.com/gentian-org/gentian-os
+    repoURL: {{ .Values.osRepo | default "https://github.com/gentian-org/gentian-os" }}
     targetRevision: {{ .Values.gentianOsBranch }}
     path: kernel/services/_globals
     directory:

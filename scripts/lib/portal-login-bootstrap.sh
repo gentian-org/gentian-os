@@ -1520,7 +1520,9 @@ apply_gentian_portal_argocd_application() {
     helm template gentian-bootstrap "${SCRIPT_DIR}/kernel/bootstrap/chart" \
         -s templates/gentian-portal.yaml \
         --set-string "gentianOsBranch=${GENTIAN_OS_BRANCH}" \
+        --set-string "osRepo=${GENTIAN_OS_REPO:-}" \
         --set-string "uiBranch=${gentian_ui_branch}" \
+        --set-string "uiRepo=${GENTIAN_UI_REPO:-}" \
         --set-string "portalImageTag=${portal_tag}" \
         --set-string "deploymentsRepo=${GENTIAN_DEPLOYMENTS_REPO}" \
         --set-string "deploymentsBranch=${GENTIAN_DEPLOYMENTS_BRANCH}" \

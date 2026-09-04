@@ -1,0 +1,230 @@
+---
+apiVersion: gentianos.io/v1alpha1
+kind: XRepository
+metadata:
+  name: deployments-b3rk1
+status:
+  artefacts:
+  - credreq-deployments-b3rk1
+  - credprobe-deployments-b3rk1
+  - argocd-repo-deployments-b3rk1
+  - appproject-source-deployments-b3rk1
+  conditions:
+  - lastTransitionTime: "2024-01-01T00:00:00Z"
+    message: 'Unready resources: appproject-source-deployments-b3rk1, argocd-repo-deployments-b3rk1,
+      credprobe-deployments-b3rk1, and 1 more'
+    reason: Creating
+    status: "False"
+    type: Ready
+  credentialMessage: credential present at gentian/repositories/deployments
+  credentialSatisfied: true
+---
+apiVersion: kubernetes.crossplane.io/v1alpha2
+kind: Object
+metadata:
+  annotations:
+    crossplane.io/composition-resource-name: appproject-source-deployments-b3rk1
+  generateName: deployments-b3rk1-
+  labels:
+    crossplane.io/claim-name: deployments
+    crossplane.io/claim-namespace: crossplane-system
+    crossplane.io/composite: deployments-b3rk1
+  ownerReferences:
+  - apiVersion: gentianos.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XRepository
+    name: deployments-b3rk1
+    uid: ""
+spec:
+  forProvider:
+    manifest:
+      apiVersion: argoproj.io/v1alpha1
+      kind: AppProject
+      metadata:
+        name: gentianos-tenants
+        namespace: argocd
+      spec:
+        sourceRepos:
+        - https://git.internal.example/gentian-deployments
+  managementPolicies:
+  - Observe
+  - Create
+  - Update
+  providerConfigRef:
+    name: kubernetes
+---
+apiVersion: kubernetes.crossplane.io/v1alpha2
+kind: Object
+metadata:
+  annotations:
+    crossplane.io/composition-resource-name: argocd-repo-deployments-b3rk1
+  generateName: deployments-b3rk1-
+  labels:
+    crossplane.io/claim-name: deployments
+    crossplane.io/claim-namespace: crossplane-system
+    crossplane.io/composite: deployments-b3rk1
+  ownerReferences:
+  - apiVersion: gentianos.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XRepository
+    name: deployments-b3rk1
+    uid: ""
+spec:
+  forProvider:
+    manifest:
+      apiVersion: external-secrets.io/v1
+      kind: ExternalSecret
+      metadata:
+        name: repo-deployments-b3rk1
+        namespace: argocd
+      spec:
+        data:
+        - remoteRef:
+            key: gentian/repositories/deployments
+            property: password
+          secretKey: password
+        refreshInterval: 1h
+        secretStoreRef:
+          kind: ClusterSecretStore
+          name: openbao
+        target:
+          name: repo-deployments-b3rk1
+          template:
+            data:
+              bearerToken: '{{ .password }}'
+              type: git
+              url: https://git.internal.example/gentian-deployments
+            metadata:
+              labels:
+                argocd.argoproj.io/secret-type: repository
+  providerConfigRef:
+    name: kubernetes
+---
+apiVersion: kubernetes.crossplane.io/v1alpha2
+kind: Object
+metadata:
+  annotations:
+    crossplane.io/composition-resource-name: credprobe-deployments-b3rk1
+  generateName: deployments-b3rk1-
+  labels:
+    crossplane.io/claim-name: deployments
+    crossplane.io/claim-namespace: crossplane-system
+    crossplane.io/composite: deployments-b3rk1
+  ownerReferences:
+  - apiVersion: gentianos.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XRepository
+    name: deployments-b3rk1
+    uid: ""
+spec:
+  forProvider:
+    manifest:
+      apiVersion: external-secrets.io/v1
+      kind: ExternalSecret
+      metadata:
+        labels:
+          gentianos.io/credential-requirement: deployments-b3rk1
+        name: credreq-repository-deployments-b3rk1
+        namespace: gentian-system
+      spec:
+        data:
+        - remoteRef:
+            key: gentian/repositories/deployments
+            property: username
+          secretKey: username
+        - remoteRef:
+            key: gentian/repositories/deployments
+            property: password
+          secretKey: password
+        refreshInterval: 1h
+        secretStoreRef:
+          kind: ClusterSecretStore
+          name: openbao
+        target:
+          creationPolicy: None
+  providerConfigRef:
+    name: kubernetes
+---
+apiVersion: gentianos.io/v1alpha1
+kind: CredentialRequirement
+metadata:
+  annotations:
+    crossplane.io/composition-resource-name: credreq-deployments-b3rk1
+  labels:
+    crossplane.io/claim-name: deployments
+    crossplane.io/claim-namespace: crossplane-system
+    crossplane.io/composite: deployments-b3rk1
+    gentianos.io/credential-phase: bootstrap
+    gentianos.io/credential-scope: cluster
+  name: repository-deployments-b3rk1
+  ownerReferences:
+  - apiVersion: gentianos.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XRepository
+    name: deployments-b3rk1
+    uid: ""
+spec:
+  consumedBy:
+  - kind: XRepository
+    name: deployments-b3rk1
+  description: ""
+  displayName: Deployments Repository Access
+  fields:
+  - format: token
+    key: password
+    secret: true
+  optional: false
+  phase: bootstrap
+  scope: cluster
+  validate:
+    host: https://git.internal.example/gentian-deployments
+    type: git-https
+  vaultPath: gentian/repositories/deployments
+---
+apiVersion: kubernetes.crossplane.io/v1alpha2
+kind: Object
+metadata:
+  annotations:
+    crossplane.io/composition-resource-name: git-credentials-deployments-b3rk1
+  generateName: deployments-b3rk1-
+  labels:
+    crossplane.io/claim-name: deployments
+    crossplane.io/claim-namespace: crossplane-system
+    crossplane.io/composite: deployments-b3rk1
+  ownerReferences:
+  - apiVersion: gentianos.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XRepository
+    name: deployments-b3rk1
+    uid: ""
+spec:
+  forProvider:
+    manifest:
+      apiVersion: external-secrets.io/v1
+      kind: ExternalSecret
+      metadata:
+        name: deployments-git-credentials
+        namespace: gentian-system
+      spec:
+        data:
+        - remoteRef:
+            key: gentian/repositories/deployments
+            property: password
+          secretKey: password
+        refreshInterval: 1h
+        secretStoreRef:
+          kind: ClusterSecretStore
+          name: openbao
+        target:
+          name: deployments-git-credentials
+          template:
+            data:
+              token: |
+                {{ .password }}
+  providerConfigRef:
+    name: kubernetes

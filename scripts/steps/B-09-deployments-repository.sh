@@ -28,6 +28,23 @@ apply() {
     echo "     + kubectl apply — Repository/deployments → ${GENTIAN_DEPLOYMENTS_REPO}"
     [[ "${GENTIAN_DRY_RUN:-0}" == "1" ]] && return 0
 
+    # GENTIAN_DEPLOYMENTS_AUTH=none (public deployments repo) omits the
+    # credential block entirely — see repository-default.yaml's $hasCred
+    # branch. Declaring one that nothing will ever write to OpenBao would
+    # leave credentialSatisfied false forever and block the repo Secret and
+    # the operator's push-access Secret from ever being emitted.
+    local auth; auth="$(_repo_auth_for deployments-repository)"
+    local cred_block=""
+    if [[ "${auth}" != "none" ]]; then
+        cred_block="  credential:
+    vaultPath: gentian-os/kernel/repositories/deployments
+    displayName: \"Deployments Repository Access\"
+    phase: bootstrap
+    authType: ${auth}
+    validate:
+      type: git-https"
+    fi
+
     kubectl apply -f - <<EOF
 apiVersion: gentianos.io/v1alpha1
 kind: Repository
@@ -48,12 +65,7 @@ spec:
   # The operator pushes here: installing an app from the store commits a
   # manifest to this repository.
   writable: true
-  credential:
-    vaultPath: gentian-os/kernel/repositories/deployments
-    displayName: "Deployments Repository Access"
-    phase: bootstrap
-    validate:
-      type: git-https
+${cred_block}
 EOF
 }
 

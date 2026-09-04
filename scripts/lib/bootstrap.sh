@@ -1094,20 +1094,49 @@ seed_secrets_remaining() {
 seed_repository_credentials() {
     if [[ -z "${GENTIAN_DEPLOYMENTS_GIT_TOKEN:-}" ]]; then
         info "No deployments repository token supplied; skipping its OpenBao path."
-        return 0
-    fi
-    local username="${GENTIAN_DEPLOYMENTS_GIT_USERNAME:-x-access-token}"
-    info "Seeding gentian-os/kernel/repositories/deployments..."
-    # kv put, not kv_put_once: a rotated token must actually replace the old one.
-    if bao kv put -mount=secret "gentian-os/kernel/repositories/deployments" \
-        "username=${username}" \
-        "password=${GENTIAN_DEPLOYMENTS_GIT_TOKEN}" >/dev/null 2>&1; then
-        success "Deployments repository credential stored."
     else
-        error "Could not write the deployments repository credential to OpenBao."
-        error "  The Repository claim in step 16b will not become satisfied without it."
-        return 1
+        local username="${GENTIAN_DEPLOYMENTS_GIT_USERNAME:-x-access-token}"
+        info "Seeding gentian-os/kernel/repositories/deployments..."
+        # kv put, not kv_put_once: a rotated token must actually replace the old one.
+        if bao kv put -mount=secret "gentian-os/kernel/repositories/deployments" \
+            "username=${username}" \
+            "password=${GENTIAN_DEPLOYMENTS_GIT_TOKEN}" >/dev/null 2>&1; then
+            success "Deployments repository credential stored."
+        else
+            error "Could not write the deployments repository credential to OpenBao."
+            error "  The Repository claim in step 16b will not become satisfied without it."
+            return 1
+        fi
     fi
+
+    # os/apps/ui follow the same shape: B-11/B-12/B-13's Repository claims
+    # declare a CredentialRequirement against these same paths, and their
+    # ExternalSecrets would sit unsatisfied forever without a value here —
+    # the same bug this function exists to fix for deployments, one role at
+    # a time. Skipped when AUTH is none, which for the public gentian-org
+    # default is every install that has not opted into a mirror.
+    _seed_one_repo_credential() {
+        local role="$1" path="$2" auth_req="$3" user_var="$4" token_var="$5"
+        [[ "$(_repo_auth_for "${auth_req}")" != "none" ]] || return 0
+        local token="${!token_var:-}"
+        [[ -n "${token}" ]] || return 0
+        local username="${!user_var:-x-access-token}"
+        info "Seeding gentian-os/kernel/repositories/${path}..."
+        if bao kv put -mount=secret "gentian-os/kernel/repositories/${path}" \
+            "username=${username}" \
+            "password=${token}" >/dev/null 2>&1; then
+            success "${role} repository credential stored."
+        else
+            error "Could not write the ${role} repository credential to OpenBao."
+            return 1
+        fi
+    }
+    _seed_one_repo_credential "os" "os" gentian-os-repository \
+        GENTIAN_OS_GIT_USERNAME GENTIAN_OS_GIT_TOKEN || return 1
+    _seed_one_repo_credential "apps" "apps" gentian-apps-repository \
+        GENTIAN_APPS_GIT_USERNAME GENTIAN_APPS_GIT_TOKEN || return 1
+    _seed_one_repo_credential "ui" "ui" gentian-ui-repository \
+        GENTIAN_UI_GIT_USERNAME GENTIAN_UI_GIT_TOKEN || return 1
 }
 
 # =============================================================================

@@ -66,13 +66,16 @@ spec:
                   default: main
                 role:
                   type: string
-                  enum: [apps, deployments]
+                  enum: [apps, deployments, os, ui]
                   description: >
                     What this repository is for. apps is additive — a private
                     catalogue alongside the cluster's, and removing it removes
                     those apps. deployments is a source of truth: repointing it
                     changes what everything reconciles from, which is why the
                     API makes that a confirmed operation rather than an edit.
+                    os and ui are the gentian-os and gentian-ui source
+                    repositories themselves, credentialed only for a mirrored
+                    or air-gapped install.
 
                     Required, and deliberately without a default. The two values
                     are not equally safe — apps is the weaker guard — so a
@@ -144,6 +147,21 @@ spec:
                     optional:
                       type: boolean
                       default: false
+                    authType:
+                      type: string
+                      enum:
+                        - basic
+                        - bearer
+                      default: basic
+                      description: >
+                        Shape of the stored credential. basic is
+                        username+password, resolved into the repository
+                        Secret's username/password fields. bearer is a single
+                        token stored under the password field, resolved into
+                        the repository Secret's bearerToken field instead —
+                        the vault path and its field names do not change, only
+                        which fields the operator is asked to supply and which
+                        Secret key the token lands under.
                     validate:
                       type: object
                       properties:
