@@ -6,6 +6,70 @@
 # =============================================================================
 
 # =============================================================================
+# _apply_argocd_repo_creds <role> <repo_var> <auth_var> <user_var> <token_var>
+#
+# Registers a prefix-matched ArgoCD repo-creds Secret directly from the
+# shell-collected credential — the one Path-A exception in an otherwise
+# ESO/OpenBao-managed credential design (see repository-default.yaml). Exists
+# only for repositories a bootstrap Application needs before OpenBao is
+# reachable; today that is os alone, called from install_argocd() above.
+#
+# url is a PREFIX match in an ArgoCD repo-creds Secret (secret-type:
+# repo-creds, as opposed to the exact-match secret-type: repository the
+# Composition emits later) — an exact repo URL here matches only that repo, so
+# it does not need trimming or wildcarding.
+#
+# Skipped, not an error, when auth is "none" (public repo, nothing to
+# authenticate) or when the credential was never collected — collect_bootstrap_credentials
+# only gathers it when _requirement_applies() gated it in, which mirrors the
+# same GENTIAN_OS_AUTH check here.
+# =============================================================================
+_apply_argocd_repo_creds() {
+    local role="$1" repo_var="$2" auth_var="$3" user_var="$4" token_var="$5"
+    local repo="${!repo_var:-}"
+    local auth="${!auth_var:-none}"
+    [[ -n "${repo}" && "${auth}" != "none" ]] || return 0
+
+    local user="${!user_var:-}" token="${!token_var:-}"
+    if [[ -z "${token}" ]]; then
+        warn "No credential collected for ${role} repository (${auth_var}=${auth}); skipping bootstrap ArgoCD repo-creds Secret."
+        return 0
+    fi
+
+    info "Registering bootstrap ArgoCD repo-creds for ${role} (${repo})..."
+    if [[ "${auth}" == "bearer" ]]; then
+        kubectl apply -f - <<EOF
+apiVersion: v1
+kind: Secret
+metadata:
+  name: argocd-repo-creds-bootstrap-${role}
+  namespace: argocd
+  labels:
+    argocd.argoproj.io/secret-type: repo-creds
+stringData:
+  type: git
+  url: ${repo}
+  bearerToken: "${token}"
+EOF
+    else
+        kubectl apply -f - <<EOF
+apiVersion: v1
+kind: Secret
+metadata:
+  name: argocd-repo-creds-bootstrap-${role}
+  namespace: argocd
+  labels:
+    argocd.argoproj.io/secret-type: repo-creds
+stringData:
+  type: git
+  url: ${repo}
+  username: "${user}"
+  password: "${token}"
+EOF
+    fi
+}
+
+# =============================================================================
 # 4. Install ArgoCD + AppProject
 # =============================================================================
 resolve_argocd_url() {
@@ -166,8 +230,30 @@ install_argocd() {
     # skipped for being "already installed".
     tune_argocd_runtime
 
-    kubectl apply -f "${SCRIPT_DIR}/kernel/argocd/projects/gentian.yaml"
+    # Defaults mirror every other call site that threads these through
+    # (bootstrap_root_appset, apply_bootstrap_application,
+    # apply_gentian_portal_argocd_application) — install_argocd runs at A-09,
+    # before any of those, so it cannot assume one of them has already
+    # resolved a default into the environment.
+    : "${GENTIAN_OS_REPO:=https://github.com/gentian-org/gentian-os}"
+    : "${GENTIAN_APPS_REPO:=https://github.com/gentian-org/gentian-apps}"
+    : "${GENTIAN_DEPLOYMENTS_REPO:=https://github.com/gentian-org/gentian-deployments}"
+    : "${GENTIAN_UI_REPO:=https://github.com/gentian-org/gentian-ui}"
+    GENTIAN_OS_REPO="${GENTIAN_OS_REPO}" GENTIAN_APPS_REPO="${GENTIAN_APPS_REPO}" \
+        GENTIAN_DEPLOYMENTS_REPO="${GENTIAN_DEPLOYMENTS_REPO}" GENTIAN_UI_REPO="${GENTIAN_UI_REPO}" \
+        envsubst '${GENTIAN_OS_REPO} ${GENTIAN_APPS_REPO} ${GENTIAN_DEPLOYMENTS_REPO} ${GENTIAN_UI_REPO}' \
+        < "${SCRIPT_DIR}/kernel/argocd/projects/gentian.yaml" | kubectl apply -f -
     success "AppProject applied."
+
+    # os is the one repository ArgoCD must authenticate to before OpenBao
+    # exists: B-01-openbao-transit (right after this step) applies the
+    # openbao-transit bootstrap Application, and ArgoCD has to pull its chart
+    # from osRepo to sync it. Every other credentialed repository (apps, ui,
+    # deployments) is first consumed by an Application or ApplicationSet that
+    # does not exist until phase B/C, by which point the os-role Repository
+    # claim's own ESO-managed Secret has taken over — see
+    # scripts/steps/B-XX-os-repository.sh's handoff.
+    _apply_argocd_repo_creds os GENTIAN_OS_REPO GENTIAN_OS_AUTH GENTIAN_OS_GIT_USERNAME GENTIAN_OS_GIT_TOKEN
 
     info "Patching argocd-cm with annotation-based resource tracking..."
     # application.resourceTrackingMethod=annotation prevents ArgoCD from

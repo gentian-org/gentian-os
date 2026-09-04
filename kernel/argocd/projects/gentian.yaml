@@ -11,13 +11,28 @@ spec:
 
   # Source repositories
   sourceRepos:
-  # Multi-source $values ref (bootstrap + ApplicationSets)
+  # Multi-source $values ref (bootstrap + ApplicationSets). The public
+  # gentian-org defaults stay listed literally so the common, unmirrored case
+  # never depends on envsubst having run. The ${GENTIAN_*_REPO} lines below
+  # are this file's one templated part — expanded by install_argocd()
+  # (scripts/lib/argocd.sh) before apply, from the same install.env vars the
+  # bootstrap chart and appsets already thread through. For an unmirrored
+  # install they resolve to the same URLs already listed above, so the
+  # duplication is harmless; for a mirrored or air-gapped install they are
+  # what lets the kernel Applications (project: gentian) sync from the mirror
+  # at all — without an entry here ArgoCD refuses an unlisted source with a
+  # permission error, not an authentication one.
   - 'https://github.com/gentian-org/gentian-os'
   - 'https://github.com/gentian-org/gentian-os/*'                                                         # Paths under gentian-os repo
   - 'https://raw.githubusercontent.com/gentian-org/gentian-os/*'                                         # Vendored infra chart packages (postgres, mariadb)
   - 'https://github.com/gentian-org/gentian-apps'                                                       # App store catalogue (AppProfiles)
   - 'https://github.com/gentian-org/gentian-deployments'                                                # Deployment configuration repository
   - 'https://github.com/gentian-org/gentian-ui'                                                         # Gentian portal UI (branding + Helm chart)
+  - '${GENTIAN_OS_REPO}'
+  - '${GENTIAN_OS_REPO}/*'
+  - '${GENTIAN_APPS_REPO}'
+  - '${GENTIAN_DEPLOYMENTS_REPO}'
+  - '${GENTIAN_UI_REPO}'
   #
   # This list covers the platform's own repositories only.
   #

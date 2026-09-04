@@ -523,8 +523,14 @@ INPUT_HIERARCHY_VARS=(
     ROUTING_MODE
     GENTIAN_APPS_REPO
     GENTIAN_APPS_BRANCH
+    GENTIAN_APPS_AUTH
+    GENTIAN_UI_REPO
+    GENTIAN_UI_BRANCH
+    GENTIAN_UI_AUTH
+    GENTIAN_OS_AUTH
     GENTIAN_DEPLOYMENTS_REPO
     GENTIAN_DEPLOYMENTS_BRANCH
+    GENTIAN_DEPLOYMENTS_AUTH
     GENTIAN_DEPLOYMENTS_PATH
     GENTIAN_DEPLOYMENTS_CLUSTER_ID
     GENTIAN_DEPLOYMENTS_STAGE
@@ -1623,7 +1629,7 @@ check_prereqs() {
     # age is required: E-03 generates the cluster's backup key with it, and
     # there is no fallback. Without it the install finishes with no key and
     # every nightly export fails.
-    local base_tools=(kubectl helm jq yq openssl curl bao age age-keygen)
+    local base_tools=(kubectl helm jq yq openssl curl bao age age-keygen envsubst)
     # Crossplane-based installer also needs the crossplane CLI and python3.
     local extra_tools=()
     [[ "${CROSSPLANE_MODE:-0}" == "1" ]] && extra_tools=(crossplane python3)
@@ -2227,6 +2233,7 @@ apply_bootstrap_application() {
     if ! helm template gentian-bootstrap "${chart}" -s "templates/${name}.yaml" \
             -f "${SCRIPT_DIR}/kernel/platforms.yaml" \
             --set-string "gentianOsBranch=${GENTIAN_OS_BRANCH}" \
+            --set-string "osRepo=${GENTIAN_OS_REPO:-}" \
             --set-string "storageClass=${STORAGE_CLASS}" \
             --set-string "stage=${GENTIAN_DEPLOYMENTS_STAGE}" \
             --set-string "kernelDomain=${KERNEL_DOMAIN:-}" \
