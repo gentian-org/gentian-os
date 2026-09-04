@@ -22,6 +22,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"sort"
 
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -326,6 +327,47 @@ func crossplaneOwnsOIDCClient(profile *gentianov1alpha1.AppProfile, cfg oidcAppC
 	return true
 }
 
+// adminRolesAttribute is the group attribute gentian_os reads roles from, and
+// memberRolesAttribute is what a profile declares for the members of its own
+// app group. They are the same attribute: an app admin's extra roles ride on
+// the app-admins group rather than on a claim of their own, so the aggregating
+// protocol mapper unions both onto the user without knowing the difference.
+const adminRolesAttribute = "gentianOdooGroupRoles"
+
+// profileAdminRolesAttribute is what a profile declares as "the roles someone
+// administering this app should hold" — distinct from the member roles beside
+// it, because they are granted to a different group.
+const profileAdminRolesAttribute = "gentianOdooAdminRoles"
+
+// takeAdminRoles moves a profile's declared admin roles out of its own app
+// group's attributes and into the collected set for the tenant's app-admins
+// group, returning what remains for the app group itself.
+//
+// Moved rather than copied: on the app group the attribute means nothing —
+// nothing reads it there — and leaving it would have the provisioning Job build
+// a protocol mapper for a claim no one consumes.
+func takeAdminRoles(attrs map[string][]string, collected map[string]struct{}) map[string][]string {
+	roles, ok := attrs[profileAdminRolesAttribute]
+	if !ok {
+		return attrs
+	}
+	for _, role := range roles {
+		if role != "" {
+			collected[role] = struct{}{}
+		}
+	}
+	remaining := make(map[string][]string, len(attrs)-1)
+	for k, v := range attrs {
+		if k != profileAdminRolesAttribute {
+			remaining[k] = v
+		}
+	}
+	if len(remaining) == 0 {
+		return nil
+	}
+	return remaining
+}
+
 func (r *TenantReconciler) collectGentianGroupsJSON(ctx context.Context, tenant *gentianov1alpha1.Tenant, oidcConfigs []oidcAppConfig) (string, error) {
 	type groupSpec struct {
 		Name       string              `json:"name"`
@@ -349,10 +391,25 @@ func (r *TenantReconciler) collectGentianGroupsJSON(ctx context.Context, tenant 
 		})
 	}
 
-	// 1. Add tenant default groups
+	// 1. Add tenant default groups. App admins comes last, after the app loop
+	// below, because what it grants is collected from the installed profiles.
 	addGroup(keycloak.TenantMembersGroup(tenant.Name), nil)
 	addGroup(keycloak.TenantAdminsGroup(tenant.Name), nil)
-	addGroup(keycloak.TenantAppAdminsGroup(tenant.Name), nil)
+
+	// The Odoo roles an app admin gets, unioned across everything installed.
+	//
+	// Odoo does not imply these. Its own documentation is explicit that holding
+	// Administration/Settings does not carry an application's manager group with
+	// it — Sales/Administrator, Employees/Administrator and the rest are separate
+	// grants. So an app admin held base.group_system and could still not open
+	// CRM's Configuration menu, which is gated on sales_team.group_sale_manager.
+	//
+	// Collected from the profiles rather than listed here, for the same reason
+	// the mapper names are: the platform should not have to know what roles Odoo
+	// has. gentian_os res_users maps them from the same gentianOdooGroupRoles
+	// claim that carries the per-module member roles, so nothing downstream
+	// changes — this only decides which roles ride on the app-admins group.
+	adminRoles := map[string]struct{}{}
 
 	// Helper to extract attributes from AppProfile name
 	resolveProfileAttrs := func(profileName string) (map[string][]string, error) {
@@ -400,7 +457,7 @@ func (r *TenantReconciler) collectGentianGroupsJSON(ctx context.Context, tenant 
 		if err != nil {
 			return "", err
 		}
-		addGroup(keycloak.TenantAppGroup(tenant.Name, profileName), attrs)
+		addGroup(keycloak.TenantAppGroup(tenant.Name, profileName), takeAdminRoles(attrs, adminRoles))
 
 		// An addon is not a separate install — it has no App claim of its own —
 		// but it is where a family's per-module entitlement lives, so it carries
@@ -417,7 +474,7 @@ func (r *TenantReconciler) collectGentianGroupsJSON(ctx context.Context, tenant 
 			if err != nil {
 				return "", err
 			}
-			addGroup(keycloak.TenantAppGroup(tenant.Name, addonProfile), addonAttrs)
+			addGroup(keycloak.TenantAppGroup(tenant.Name, addonProfile), takeAdminRoles(addonAttrs, adminRoles))
 		}
 	}
 
@@ -427,8 +484,26 @@ func (r *TenantReconciler) collectGentianGroupsJSON(ctx context.Context, tenant 
 		if err != nil {
 			return "", err
 		}
-		addGroup(keycloak.TenantAppGroup(tenant.Name, cfg.profileName), attrs)
+		addGroup(keycloak.TenantAppGroup(tenant.Name, cfg.profileName), takeAdminRoles(attrs, adminRoles))
 	}
+
+	// 4. App admins, now that every installed profile has had its say.
+	//
+	// Carried as gentianOdooGroupRoles, the attribute the member roles already
+	// use, so this needs no second claim, no second mapper, and no change in
+	// gentian_os: a user in this group simply has more roles aggregated onto
+	// them. Removal is symmetric too — res_users tracks what it granted in
+	// gentian_dynamic_roles and withdraws what a later sign-in no longer claims.
+	var appAdminAttrs map[string][]string
+	if len(adminRoles) > 0 {
+		roles := make([]string, 0, len(adminRoles))
+		for role := range adminRoles {
+			roles = append(roles, role)
+		}
+		sort.Strings(roles) // a stable order keeps the Job spec from churning
+		appAdminAttrs = map[string][]string{adminRolesAttribute: roles}
+	}
+	addGroup(keycloak.TenantAppAdminsGroup(tenant.Name), appAdminAttrs)
 
 	data, err := json.Marshal(specs)
 	if err != nil {
