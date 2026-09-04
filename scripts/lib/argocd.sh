@@ -239,10 +239,18 @@ install_argocd() {
     : "${GENTIAN_APPS_REPO:=https://github.com/gentian-org/gentian-apps}"
     : "${GENTIAN_DEPLOYMENTS_REPO:=https://github.com/gentian-org/gentian-deployments}"
     : "${GENTIAN_UI_REPO:=https://github.com/gentian-org/gentian-ui}"
-    GENTIAN_OS_REPO="${GENTIAN_OS_REPO}" GENTIAN_APPS_REPO="${GENTIAN_APPS_REPO}" \
-        GENTIAN_DEPLOYMENTS_REPO="${GENTIAN_DEPLOYMENTS_REPO}" GENTIAN_UI_REPO="${GENTIAN_UI_REPO}" \
-        envsubst '${GENTIAN_OS_REPO} ${GENTIAN_APPS_REPO} ${GENTIAN_DEPLOYMENTS_REPO} ${GENTIAN_UI_REPO}' \
-        < "${SCRIPT_DIR}/kernel/argocd/projects/gentian.yaml" | kubectl apply -f -
+    # Plain bash substitution instead of envsubst: one less required tool
+    # (envsubst ships with gettext, not installed by default on macOS), and
+    # ${var//search/replace} is literal-string, not regex, so a repo URL
+    # containing '/' or any sed-delimiter character needs no escaping on
+    # either side. $(<file) and this expansion form are both bash-3.2-safe.
+    local _gentian_project
+    _gentian_project="$(<"${SCRIPT_DIR}/kernel/argocd/projects/gentian.yaml")"
+    _gentian_project="${_gentian_project//\$\{GENTIAN_OS_REPO\}/${GENTIAN_OS_REPO}}"
+    _gentian_project="${_gentian_project//\$\{GENTIAN_APPS_REPO\}/${GENTIAN_APPS_REPO}}"
+    _gentian_project="${_gentian_project//\$\{GENTIAN_DEPLOYMENTS_REPO\}/${GENTIAN_DEPLOYMENTS_REPO}}"
+    _gentian_project="${_gentian_project//\$\{GENTIAN_UI_REPO\}/${GENTIAN_UI_REPO}}"
+    printf '%s\n' "${_gentian_project}" | kubectl apply -f -
     success "AppProject applied."
 
     # os is the one repository ArgoCD must authenticate to before OpenBao
