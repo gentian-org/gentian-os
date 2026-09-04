@@ -503,7 +503,15 @@ spec:
               # there too — see GIT_CONFIG_COUNT below in this Deployment.
               CLONE_URL="${GENTIAN_DEPLOYMENTS_REPO}"
               {{- if $lifecycleGitCredsFile }}
-              [ -s /etc/git/credentials ] && CLONE_URL="$(cat /etc/git/credentials)"
+              # git-credentials is an OPTIONAL Secret volume subPath-mounted
+              # here: when the Secret doesn't exist yet (ESO/OpenBao not
+              # satisfied yet), Kubernetes falls back to an empty DIRECTORY
+              # at this path instead of failing the mount — and `-s` alone
+              # reports true for a directory too (nonzero size on most
+              # filesystems), so `cat` on it fails with "Is a directory". -f
+              # rules the directory case out; retry picks this up once the
+              # Secret exists.
+              [ -f /etc/git/credentials ] && [ -s /etc/git/credentials ] && CLONE_URL="$(cat /etc/git/credentials)"
               {{- end }}
               for attempt in 1 2 3 4 5; do
                 if [ -d {{ $lifecycleDeployments.path | default "/data/gentian-deployments" }}/.git ]; then
