@@ -908,7 +908,10 @@ Two behaviours worth knowing:
 ## 15. Restore Drill
 
 Run this on a scratch tenant before you need it. An untested backup is a
-hypothesis.
+hypothesis. For the procedures themselves — rebuilding a cluster, restoring a
+tenant with the cluster key, or with a tenant's own — see
+[recovery-playbook.md](recovery-playbook.md), or run `scripts/recovery.sh`,
+which performs them.
 
 ```bash
 # 1. Take a bundle
