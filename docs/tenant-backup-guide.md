@@ -328,3 +328,5 @@ That is the guarantee you chose when you selected it.
 The operator-side procedures — the `TenantExport`, `TenantRestore` and
 `TenantExportSchedule` resources, and a restore drill worth running before any
 of this is relied on — are in [commands.md](commands.md) §11–§15.
+The recovery procedures themselves are in
+[recovery-playbook.md](recovery-playbook.md).

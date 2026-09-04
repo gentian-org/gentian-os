@@ -479,8 +479,8 @@ does not exist yet that something cannot be the Composition.
     have a declarative form worth using. Both do; both are composed.
 ### 1.31 Bootstrap Validator Library: Missing `smtp` and No Automated Coverage (**)
 * **Target Domain**: Platform Security & Credential Validation
-* **Context**: `scripts/lib/validators.sh` covers the `phase: bootstrap` credential set (§10,
-  `docs/plans/config-and-credential-cleanup.md`), and its own design table names `smtp` as one of
+* **Context**: `scripts/lib/validators.sh` covers the `phase: bootstrap` credential set, and its
+  own design table names `smtp` as one of
   the five bootstrap-phase types, probed by `openssl s_client -starttls smtp` then `AUTH LOGIN`.
   `run_validator`'s dispatch has no `smtp` case at all — an unimplemented type, not an untested one.
   It is silently unreachable today only because the sole `type: smtp` credential in

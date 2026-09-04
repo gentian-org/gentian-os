@@ -40,6 +40,8 @@ config/rbac/
 # command from, which is usually this one.
 *.age
 *.enc
+backup-key*
+*.png
 
 # Agent worktrees. These are checkouts of this repo living inside it, so an
 # `add -A` records each one as a gitlink — a submodule entry with no
@@ -47,4 +49,3 @@ config/rbac/
 # populate, and the entry goes stale on every commit made in the worktree, so
 # the repo reports a modification that has nothing to do with the work.
 .claude/worktrees/
-backup-key*
