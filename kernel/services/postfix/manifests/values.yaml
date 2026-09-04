@@ -76,6 +76,14 @@ smtpIngress:
     # address, and a new one silently breaks inbound mail — senders retry for
     # days, then bounce.
     loadbalancer.openstack.org/keep-floatingip: "true"
+    # MetalLB only (self-hosted platform, NETWORK_MODE=static-ip): the
+    # cluster's one external address is shared with the kernel gateway, and
+    # MetalLB refuses to co-assign an IP to two Services unless both carry
+    # this same opaque key — see kernel/platforms.yaml's self-hosted profile,
+    # the other half of this pairing. Unconditional here rather than
+    # platform-gated: ignored by every other provider, same as the OpenStack
+    # annotations above.
+    metallb.io/allow-shared-ip: gentian-kernel-lb
 
 # The hostname mail LEAVES from, when this cluster sends from an address it owns.
 #

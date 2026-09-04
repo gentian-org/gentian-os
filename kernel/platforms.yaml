@@ -42,6 +42,15 @@ platforms:
     supportsLoadBalancerIP: true
     lbAnnotations:
       metallb.universe.tf/loadBalancerIPs: '{{ .Values.nodeIp }}'
+      # NETWORK_MODE=static-ip gives the whole cluster one external address —
+      # the node's own IP — so the kernel gateway and Postfix's SMTP Service
+      # (kernel/services/postfix/manifests/templates/service-smtp.yaml) both
+      # land on it. MetalLB refuses to co-assign an IP to two Services unless
+      # each carries this same opaque key; the value itself is arbitrary; only
+      # equality across both Services matters. Postfix's copy is unconditional
+      # (harmless on any other platform, same as its OpenStack annotations),
+      # so this is the one place the pairing needs to stay in sync by hand.
+      metallb.io/allow-shared-ip: gentian-kernel-lb
 
   # A cluster with no load balancer implementation at all: k3s ServiceLB, a
   # single node behind a tunnel, or an edge fronted by something outside the
