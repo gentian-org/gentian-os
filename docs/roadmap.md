@@ -147,7 +147,7 @@ For the current baseline design of the system, refer to [architecture.md](archit
 
 ### 1.16 Provider RBAC Scoping (***)
 * **Target Domain**: Platform Security & Crossplane
-* **Context**: `provider-kubernetes` and `provider-helm` authenticate as their own ServiceAccounts (`credentials.source: InjectedIdentity`) and are bound to `cluster-admin` by `crossplane/providers/provider-rbac.yaml`. The grant is currently necessary — Crossplane's generated per-provider role covers only the provider's own CRDs, so without it every composed `Object` fails to observe and the XCluster never reaches Ready — but it means any Composition, or a compromised provider pod, holds unrestricted control of the cluster. This is the widest standing privilege in the platform and sits outside the tenant isolation model that the rest of section 1 hardens.
+* **Context**: `provider-kubernetes` and `provider-helm` authenticate as their own ServiceAccounts (`credentials.source: InjectedIdentity`). **`provider-kubernetes` is scoped**: `crossplane/providers/provider-rbac.yaml` binds it to a generated `gentian-provider-kubernetes` ClusterRole covering the kinds the Compositions actually compose, and a lint fails when a render fixture carries a kind the role omits. `provider-helm` is still `cluster-admin`, deliberately and for the reason the next paragraph gives. The grant was originally necessary for both — Crossplane's generated per-provider role covers only the provider's own CRDs, so without it every composed `Object` fails to observe and the XCluster never reaches Ready — but where it remains, any Composition or a compromised provider pod holds unrestricted control of the cluster. `provider-helm`'s grant is therefore the widest standing privilege left in the platform, and it sits outside the tenant isolation model that the rest of section 1 hardens.
 * **Constraint — the two providers are not equally scopable.** `provider-helm` installs charts that ship their own `ClusterRole`s; Kubernetes refuses to create a role granting permissions the creator does not itself hold. Scoping it therefore requires either holding the union of everything every installed chart grants — which includes cluster-wide `secrets` read, from cert-manager among others — or holding `escalate` on `clusterroles`, which permits minting any role and is `cluster-admin` under another name. A scoped role derived from chart templates alone does not work: it breaks the charts that carry RBAC. The precondition for scoping `provider-helm` is that the platform owns the RBAC for the charts it installs (`rbac.create=false`, roles held in-repo and reviewed), which is a policy decision about third-party software rather than a provider change, and belongs with the kernel rights-management work. `provider-kubernetes` composes a small set of ordinary kinds — namespaces, config, secrets, jobs, routes, and the platform's own CRs — none of them RBAC, and can be scoped independently of any of that.
 * **Constraint — no single source enumerates the kinds.** A running cluster shows only the paths it has exercised. The render fixtures show only the paths that have a fixture. A scan of the Composition templates shows fewer than either, because kinds sit behind conditionals. Each of the three omits kinds the others carry, so the list must be a union of them, and a CI guard must fail when a fixture carries a kind the role omits. A path that has neither a fixture nor a live object is reachable only by exercising it.
 * **The same problem in Keycloak, and it is worse there.** `provider-keycloak` authenticates as `client_id: admin-cli` in the `master` realm with the username and password from the `keycloak-admin` Secret — Keycloak's bootstrap administrator, which upstream intends as a temporary account to be replaced after install. Every tenant provisioning Job authenticates the same way: `makeAdminJob` and its siblings take `KEYCLOAK_ADMIN_USERNAME` / `KEYCLOAK_ADMIN_PASSWORD` from that Secret and call the Admin REST API with them. So the Job that provisions one tenant holds rights over every realm, including `master` and every other tenant, and one wrong realm name in a template is a cross-tenant write rather than an error. Nothing is scoped, and nothing is attributable: the admin events record the shared bootstrap account no matter which Job or which person acted.
@@ -209,17 +209,17 @@ For the current baseline design of the system, refer to [architecture.md](archit
   - `[x]` Mount the tenant DKIM private keys into the Postfix Pod. *(Seeded from `postfix-dkim-tenants` into a persistent volume by an init container, ahead of the image's own generation.)*
   - `[ ]` Restart or reload Postfix when the tenant domain list changes, so a new tenant signs without waiting for an unrelated restart.
   - `[ ]` Surface the full DNS record — selector, `v=DKIM1` prefix and key — on tenant status rather than the bare key.
-  - `[x]` Verify with a message to a major provider that the received headers report `dkim=pass` and `dmarc=pass`. *(Gmail, 2026-08-20: `dkim=pass header.i=@corp.gtn.host header.s=mail`, `spf=pass` for 37.156.43.16, `dmarc=pass (p=QUARANTINE dis=NONE)` — the quarantine policy evaluated and applied no disposition.)*
+  - `[x]` Verify with a message to a major provider that the received headers report `dkim=pass` and `dmarc=pass`. *(Gmail, 2026-08-20: `dkim=pass header.i=@<tenant-domain> header.s=mail`, `spf=pass` for the sending IP, `dmarc=pass (p=QUARANTINE dis=NONE)` — the quarantine policy evaluated and applied no disposition.)*
   - `[ ]` Decide a rotation story, using a second selector so signing and publishing never disagree.
 
 ---
 
 ### 1.21 external-dns Loses the MX Preference on Read (*)
 * **Target Domain**: Kernel DNS
-* **Context**: external-dns's Cloudflare provider does not preserve an MX record's preference when it reads the record back. Debug logging shows it holding a record Cloudflare serves as `10 mail.gtn.host` as `0 mail.gtn.host`, so a published preference of 10 never compares equal to what is observed and every reconcile plans a change. Cloudflare applies that as a delete followed by a create, so the name had no MX for a moment every minute — and a sender resolving in that window falls back to the tenant's A record, which is the portal, not Postfix. Every other record external-dns manages here converged and stayed put, which is what isolated it to MX. Worked around by asking for preference 0, which is what the provider reports whatever is actually stored, so desired and observed finally agree and it stops rewriting. Note what that does and does not do: the churn stops, but the published record keeps whatever preference it last had — 10 on this cluster — because the whole point is that external-dns no longer touches it. The record is valid either way; preference only orders one MX against another. That is sound only while each domain has exactly one MX, which is the case: preference orders one MX against another and there is nothing to order.
+* **Context**: external-dns's Cloudflare provider does not preserve an MX record's preference when it reads the record back. Debug logging shows it holding a record Cloudflare serves as `10 mail.<domain>` as `0 mail.<domain>`, so a published preference of 10 never compares equal to what is observed and every reconcile plans a change. Cloudflare applies that as a delete followed by a create, so the name had no MX for a moment every minute — and a sender resolving in that window falls back to the tenant's A record, which is the portal, not Postfix. Every other record external-dns manages here converged and stayed put, which is what isolated it to MX. Worked around by asking for preference 0, which is what the provider reports whatever is actually stored, so desired and observed finally agree and it stops rewriting. Note what that does and does not do: the churn stops, but the published record keeps whatever preference it last had — 10 on this cluster — because the whole point is that external-dns no longer touches it. The record is valid either way; preference only orders one MX against another. That is sound only while each domain has exactly one MX, which is the case: preference orders one MX against another and there is nothing to order.
 * **Proposed Solution**: Fix the read upstream so the preference survives, then publish a meaningful preference again. Until then the workaround holds, and the constraint it depends on — one MX per domain — should be checked rather than assumed if a backup MX is ever added.
 * **Backlog Items**:
-  - `[x]` Capture what external-dns reads back for the MX and compare it to the desired endpoint. *(Debug logging: `gtn.host 1 IN MX  0 mail.gtn.host` against a zone serving `10`.)*
+  - `[x]` Capture what external-dns reads back for the MX and compare it to the desired endpoint. *(Debug logging: `<domain> 1 IN MX  0 mail.<domain>` against a zone serving `10`.)*
   - `[x]` Stop the churn. *(Ask for preference 0, matching what the provider reads back; verified by four consecutive "all records are already up to date" cycles and zero changes over four minutes, from roughly three a minute indefinitely.)*
   - `[ ]` Report the lost preference upstream against the Cloudflare provider.
   - `[ ]` Alert on sustained record churn, so a non-converging reconcile is noticed without reading logs.
@@ -251,7 +251,7 @@ For the current baseline design of the system, refer to [architecture.md](archit
   images_updated=0 errors=0`, every two minutes, with a condition of *No errors*
   and the Application Healthy.
 
-  ifk-w4h therefore ran a 17-hour-old operator through a day of merged fixes,
+  The cluster therefore ran a 17-hour-old operator through a day of merged fixes,
   including two that were verified against a binary that did not contain them.
   Nothing in the cluster said so; the only symptom was a retired Job that kept
   reappearing. One annotation patch fixed it, and the next cycle reported
@@ -277,7 +277,7 @@ For the current baseline design of the system, refer to [architecture.md](archit
 
 ### 1.24 gentian-cluster-config Keeps Keys the Composition No Longer Writes (*)
 * **Target Domain**: Platform Configuration
-* **Context**: The ConfigMap is applied by provider-kubernetes, which patches rather than replaces, so a key the composition stops writing stays in the object indefinitely. On ifk-w4h 16 of its 26 keys are leftovers of that kind — `cnpg.*`, `network.*`, `secretMode`, `storageClass`, `tenant.initJob.*` — none read by anything today. The cost is not the storage. A stale key is indistinguishable from a live one by inspection, and reads as authoritative: `mail.serviceMode` sat there saying `kernel`, which is the correct answer, while nothing maintained it and the composition did not write it at all. That is exactly how it was mistaken for evidence that the mechanism was already working.
+* **Context**: The ConfigMap is applied by provider-kubernetes, which patches rather than replaces, so a key the composition stops writing stays in the object indefinitely. On one cluster 16 of its 26 keys were leftovers of that kind — `cnpg.*`, `network.*`, `secretMode`, `storageClass`, `tenant.initJob.*` — none read by anything today. The cost is not the storage. A stale key is indistinguishable from a live one by inspection, and reads as authoritative: `mail.serviceMode` sat there saying `kernel`, which is the correct answer, while nothing maintained it and the composition did not write it at all. That is exactly how it was mistaken for evidence that the mechanism was already working.
 * **Proposed Solution**: Make the ConfigMap's contents a function of the composition and nothing else — replace rather than patch, or prune keys absent from the render — so its contents can be trusted as current. Failing that, the lint should compare the live object against the producer's key set and report leftovers, so they are at least named.
 * **Backlog Items**:
   - `[ ]` Prune keys the composition no longer writes, or replace the object outright.
@@ -328,7 +328,7 @@ To close: clear `redirectUris` and `webOrigins` on the `corp` realm client
 
 **The post-logout URIs are stored, contrary to what this item used to say.** The
 live client carries
-`attributes["post.logout.redirect.uris"] = "https://portal.gtn.host/login##https://portal.gtn.host/*"`,
+`attributes["post.logout.redirect.uris"] = "https://portal.platform.example.com/login##https://portal.platform.example.com/*"`,
 not an empty `attributes` map, so they are a third field to account for rather
 than a derived default to ignore. Whether they are load-bearing has to be
 settled before anything is cleared: `redirectUris` genuinely cannot be reached
@@ -416,9 +416,9 @@ does not exist yet that something cannot be the Composition.
   role as a group `Roles` with `exhaustive: false`. tenant-default composes the
   groups themselves. The Job's log is four lines, all "already exists".
 
-  Every one of them adopted rather than being recreated — verified on corp, ids
-  unchanged throughout: three mappers, one client role, five groups, and the
-  role-mapping still on the group.
+  Every one of them adopted rather than being recreated — verified on a live
+  cluster, ids unchanged throughout: three mappers, one client role, five
+  groups, and the role-mapping still on the group.
 * **The rule that made it possible**: a Keycloak object whose id is a UUID cannot
   be adopted from `crossplane.io/external-name`, but it does not need to be. Given
   the *parent's* real id and no external-name at all, the provider resolves the
@@ -461,7 +461,7 @@ does not exist yet that something cannot be the Composition.
   boundary in [architecture.md](architecture.md) §3 that is discovery, which is
   the operator's — so the Job is correct rather than unfinished.
   `ensureTenantSMTPJob` already skips cleanly when no credential is supplied,
-  which is why no such Job runs on ifk-w4h at all.
+  which is why no such Job runs on the cluster this was checked against.
 * **The user profile moved.** It looked like it could not: declaring it means
   owning all six attributes with their validators and permissions, where the
   script only added two and relaxed two. But the provider has a `UserProfile`
@@ -479,8 +479,8 @@ does not exist yet that something cannot be the Composition.
     have a declarative form worth using. Both do; both are composed.
 ### 1.31 Bootstrap Validator Library: Missing `smtp` and No Automated Coverage (**)
 * **Target Domain**: Platform Security & Credential Validation
-* **Context**: `scripts/lib/validators.sh` covers the `phase: bootstrap` credential set (§10,
-  `docs/plans/config-and-credential-cleanup.md`), and its own design table names `smtp` as one of
+* **Context**: `scripts/lib/validators.sh` covers the `phase: bootstrap` credential set, and its
+  own design table names `smtp` as one of
   the five bootstrap-phase types, probed by `openssl s_client -starttls smtp` then `AUTH LOGIN`.
   `run_validator`'s dispatch has no `smtp` case at all — an unimplemented type, not an untested one.
   It is silently unreachable today only because the sole `type: smtp` credential in
@@ -493,11 +493,15 @@ does not exist yet that something cannot be the Composition.
   Separately, none of the four implemented validators (`oci-registry`, `git-https`,
   `oidc-discovery`, `cloudflare-dns`) has an automated test. `oci-registry` and `smtp` have never
   been exercised at all; `git-https` and `oidc-discovery` were verified by hand against live
-  endpoints once, in both directions, which is not repeatable and does not run in CI. There is no
-  shell-test framework anywhere in this repository to build on — every existing shell-adjacent
-  check in this class (`scripts/tools/verify-openbao-policies.sh`, the Go `fakeRelay` in
-  `internal/credentialmgr/validator_smtp_test.go`) works by standing up a real throwaway service
-  and asserting against it, not by mocking.
+  endpoints once, in both directions, which is not repeatable and does not run in CI.
+
+  There is now something to build on. `scripts/tests/test-e04-token-classification.sh` stubs a CLI
+  on `PATH`, asserts return codes against it, needs no cluster, and runs under `make lint-shell` —
+  which is the shape a validator test wants, and it did not exist when this item was written. The
+  other checks in this class (`scripts/tools/verify-openbao-policies.sh`, the Go `fakeRelay` in
+  `internal/credentialmgr/validator_smtp_test.go`) stand up a real throwaway service instead. Both
+  patterns are available; which suits a given validator depends on whether the protocol can be
+  faked by a stub or has to be spoken.
 * **Proposed Solution**: Write `validate_smtp` for the shell validator library, and build a
   fake-server test harness reusable across all four validator types, following the pattern already
   established by `verify-openbao-policies.sh`.
@@ -524,6 +528,81 @@ does not exist yet that something cannot be the Composition.
     no-STARTTLS-offered.
   - `[ ]` Wire the new tests into a `make` target and CI, closing Phase 3 acceptance criterion 1
     ("none of the validators is automated").
+
+### 1.32 Retire the gentian-groups Job (*)
+* **Target Domain**: Identity
+* **Done**: the tenant's entitlement groups are composed. tenant-default declares
+  the three that belong to the tenant — members, admins, app-admins — and
+  app-default declares one per app, carrying that profile's
+  `gentianos.io/keycloak-group-attributes`. All five adopted on a live cluster
+  with their Keycloak ids unchanged, and app-default also composes the group's
+  grant of the app's client role.
+
+  The per-app group is app-default's because nine of the catalogue's thirty-one
+  profiles carry those attributes — the Odoo ones name the modules and roles the
+  app provisions from — and only app-default fetches the AppProfile. It sits
+  above the OIDC conditional because an entitlement group is per app, not per
+  OIDC client: app-store-me declares no oidc block, and a group rendered inside
+  that conditional skipped it silently.
+* **What is left**: the Job still creates the same groups, so they have two
+  writers that happen to agree. Two things block removing it:
+
+  1. It also makes groups for OIDC pack profiles that are not on `spec.apps` —
+     `collectGentianGroupsJSON` walks `oidcConfigs` as well as the apps, so a
+     tenant can carry `gentian:tenant:<tenant>:app:<app>` for an app no longer in
+     its spec. A Composition sees only what the spec lists.
+  2. It also adds the "groups" client scope to the realm's
+     default-default-client-scopes. The scope itself and its protocol mapper are
+     now composed by tenant-default, so what is left of this is the realm's
+     default-scope binding — realm state rather than group state, and the last
+     thing the Job holds that nothing else writes.
+* **Backlog Items**:
+  - `[x]` Compose the three tenant groups and the per-app group with attributes.
+  - `[x]` Compose the group's grant of the app's client role.
+  - `[x]` Decided: a group outlives the app that created it. Members stay in it
+    and a re-install finds it again, so the Job's `oidcConfigs` pass is
+    deliberate rather than dead weight — and the Composition, which sees only
+    `spec.apps`, therefore cannot be the only writer of groups. A group left
+    behind by an app that has since left the spec is correct, not residue.
+  - `[ ]` Given that, decide what the Composition is for here: it holds the
+    groups the spec implies, and the Job holds the rest. Two writers that agree
+    by construction, which is a weaker guarantee than one writer.
+  - `[x]` Compose the "groups" client scope and its mapper.
+  - `[ ]` Add the scope to the realm's default-default-client-scopes, then retire
+    the Job.
+
+### 1.33 The Tenant Admin Password Is Readable Twice Over (***)
+* **Target Domain**: Security
+* **Context**: `makeAdminJob` passes the generated password as a literal env
+  value, so it sits in the Job spec for anyone with `get jobs` in
+  platform-kernel:
+
+      TENANT_ADMIN_PASSWORD=Gt!...
+
+  and the script then echoes it:
+
+      echo "INITIAL_TENANT_ADMIN realm=%s username=${TENANT_ADMIN_USERNAME} password=${TENANT_ADMIN_PASSWORD}"
+
+  so it is in the Job's logs too, until the GC removes them.
+
+  The codebase already knows this class. keycloak_dovecot_tenant_client.go says
+  it plainly: "makeOIDCPackJob passes app client secrets literally, which puts
+  them in a Job spec readable by anyone with get on Jobs in the kernel
+  namespace; this path keeps the secretKeyRef the hand-rolled version had." The
+  Dovecot path was fixed. The tenant admin password was not, and it is the more
+  sensitive of the two.
+* **Not obviously a mistake**: the line immediately after prints how to fetch the
+  same value from OpenBao —
+  `INITIAL_TENANT_ADMIN_RETRIEVE bao kv get -mount=secret -field=password
+  gentian-os/tenants/<t>/admin` — which reads as deliberate first-run
+  convenience. If it is, the echo is redundant with a safer alternative sitting
+  next to it.
+* **Proposed Solution**: Pass the password by `secretKeyRef` as the Dovecot path
+  does, and print only the retrieve hint. Both are small; whether the echo goes
+  is a product decision about first-run experience, not a technical one.
+* **Backlog Items**:
+  - `[ ]` Decide whether the plaintext echo is wanted at all.
+  - `[ ]` Pass the password by reference rather than by value.
 
 ## 2. Platform, Infrastructure & Lifecycle
 
@@ -900,7 +979,7 @@ does not exist yet that something cannot be the Composition.
 
 ### 3.6 Effective Resource Requirements in the Catalogue (**)
 * **Target Domain**: UI/UX & Shell
-* **Context**: The app store shows a "Resource Profile" taken from the AppProfile's `extraValues.resources`. That field is the profile's *override* block, not the app's requirement, so an app content with its chart's defaults declares nothing and the store had nothing to show — Docmost reserves 1 CPU and 1Gi from `charts/docmost/values.yaml` and appeared to reserve nothing. Of seventeen profiles, fourteen declare no override; most legitimately (the nine Nextcloud add-ons install into an existing Nextcloud and start no pods, gentian-subscriptions is an ApiProfile with no workload), but docmost, mathesar, litellm and the app store itself all run pods on chart defaults. A tenant admin deciding what fits sees a blank where a whole core belongs. Mitigated for now by saying "not set by this profile — the chart's own defaults apply" instead of omitting the panel, so a blank is never read as free; the tenant resources panel shows the truth, but only once the app is installed, which is after the decision.
+* **Context**: The app store shows a "Resource Profile" taken from the AppProfile's `extraValues.resources`. That field is the profile's *override* block, not the app's requirement, so an app content with its chart's defaults declares nothing and the store had nothing to show — Docmost reserves 1 CPU and 1Gi from `charts/docmost/values.yaml` and appeared to reserve nothing. Of thirty-one profiles, fourteen declare no override; most legitimately (the nine Nextcloud add-ons install into an existing Nextcloud and start no pods, and an ApiProfile has no workload of its own), but docmost, mathesar, litellm and the app store itself all run pods on chart defaults. A tenant admin deciding what fits sees a blank where a whole core belongs. Mitigated for now by saying "not set by this profile — the chart's own defaults apply" instead of omitting the panel, so a blank is never read as free; the tenant resources panel shows the truth, but only once the app is installed, which is after the decision.
 * **Proposed Solution**: Resolve the *effective* resources at catalogue-build time rather than reading the override block — the chart is already pulled, so its values are available — and serve requests and limits whether or not the profile overrides them. Copying the numbers into each profile is the alternative and the wrong one: it duplicates the chart's own values and drifts the first time a chart is bumped.
 * **Backlog Items**:
   - `[ ]` Resolve requests and limits from the chart's values when the profile declares no override.
@@ -939,74 +1018,3 @@ does not exist yet that something cannot be the Composition.
   - `[ ]` Deploy an event listener that executes workflow scripts on NATS message triggers.
   - `[ ]` Implement the AppProfile code generation tool.
   - `[ ]` Integrate the agentic engine with the tenant provisioning API.
-
-### 1.32 Retire the gentian-groups Job (*)
-* **Target Domain**: Identity
-* **Done**: the tenant's entitlement groups are composed. tenant-default declares
-  the three that belong to the tenant — members, admins, app-admins — and
-  app-default declares one per app, carrying that profile's
-  `gentianos.io/keycloak-group-attributes`. All five adopted on corp with their
-  Keycloak ids unchanged, and app-default also composes the group's grant of the
-  app's client role.
-
-  The per-app group is app-default's because nine of the catalogue's thirty-one
-  profiles carry those attributes — the Odoo ones name the modules and roles the
-  app provisions from — and only app-default fetches the AppProfile. It sits
-  above the OIDC conditional because an entitlement group is per app, not per
-  OIDC client: app-store-me declares no oidc block, and a group rendered inside
-  that conditional skipped it silently.
-* **What is left**: the Job still creates the same groups, so they have two
-  writers that happen to agree. Two things block removing it:
-
-  1. It also makes groups for OIDC pack profiles that are not on `spec.apps` —
-     `collectGentianGroupsJSON` walks `oidcConfigs` as well as the apps, and corp
-     carries `gentian:tenant:corp:app:gentian-subscriptions-me` for an app no
-     longer in its spec. A Composition sees only what the spec lists.
-  2. It also creates the realm's "groups" client scope, its protocol mapper, and
-     adds that scope to the realm's default-default-client-scopes. That is realm
-     state, not group state, and needs its own resources.
-* **Backlog Items**:
-  - `[x]` Compose the three tenant groups and the per-app group with attributes.
-  - `[x]` Compose the group's grant of the app's client role.
-  - `[x]` Decided: a group outlives the app that created it. Members stay in it
-    and a re-install finds it again, so the Job's `oidcConfigs` pass is
-    deliberate rather than dead weight — and the Composition, which sees only
-    `spec.apps`, therefore cannot be the only writer of groups. corp's
-    `gentian:tenant:corp:app:gentian-subscriptions-me` is correct, not residue.
-  - `[ ]` Given that, decide what the Composition is for here: it holds the
-    groups the spec implies, and the Job holds the rest. Two writers that agree
-    by construction, which is a weaker guarantee than one writer.
-  - `[ ]` Compose the "groups" client scope and its mapper, then retire the Job.
-
-### 1.33 The Tenant Admin Password Is Readable Twice Over (***)
-* **Target Domain**: Security
-* **Context**: `makeAdminJob` passes the generated password as a literal env
-  value, so it sits in the Job spec for anyone with `get jobs` in
-  platform-kernel:
-
-      TENANT_ADMIN_PASSWORD=Gt!...
-
-  and the script then echoes it:
-
-      echo "INITIAL_TENANT_ADMIN realm=%s username=${TENANT_ADMIN_USERNAME} password=${TENANT_ADMIN_PASSWORD}"
-
-  so it is in the Job's logs too, until the GC removes them.
-
-  The codebase already knows this class. keycloak_dovecot_tenant_client.go says
-  it plainly: "makeOIDCPackJob passes app client secrets literally, which puts
-  them in a Job spec readable by anyone with get on Jobs in the kernel
-  namespace; this path keeps the secretKeyRef the hand-rolled version had." The
-  Dovecot path was fixed. The tenant admin password was not, and it is the more
-  sensitive of the two.
-* **Not obviously a mistake**: the line immediately after prints how to fetch the
-  same value from OpenBao —
-  `INITIAL_TENANT_ADMIN_RETRIEVE bao kv get -mount=secret -field=password
-  gentian-os/tenants/<t>/admin` — which reads as deliberate first-run
-  convenience. If it is, the echo is redundant with a safer alternative sitting
-  next to it.
-* **Proposed Solution**: Pass the password by `secretKeyRef` as the Dovecot path
-  does, and print only the retrieve hint. Both are small; whether the echo goes
-  is a product decision about first-run experience, not a technical one.
-* **Backlog Items**:
-  - `[ ]` Decide whether the plaintext echo is wanted at all.
-  - `[ ]` Pass the password by reference rather than by value.
