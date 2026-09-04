@@ -357,7 +357,12 @@ func truncate(s string, n int) string {
 // PathMetadata is what the API is allowed to say about a stored credential.
 // There is no field here that can carry a value, and that is the point.
 type PathMetadata struct {
-	Exists    bool      `json:"exists"`
+	Exists bool `json:"exists"`
+	// Recipient is an age public key recorded alongside a stored identity.
+	// Metadata rather than data, deliberately: a public key is not a secret,
+	// and keeping it here means asking "which key is escrowed" never reads the
+	// private half at all.
+	Recipient string    `json:"recipient,omitempty"`
 	SetBy     string    `json:"setBy,omitempty"`
 	UpdatedAt time.Time `json:"updatedAt,omitempty"`
 	Version   int       `json:"version,omitempty"`
@@ -392,7 +397,8 @@ func (b *OpenBao) Metadata(ctx context.Context, token, path string) (PathMetadat
 			CurrentVersion int    `json:"current_version"`
 			UpdatedTime    string `json:"updated_time"`
 			CustomMetadata struct {
-				SetBy string `json:"set_by"`
+				SetBy     string `json:"set_by"`
+				Recipient string `json:"recipient"`
 			} `json:"custom_metadata"`
 		} `json:"data"`
 	}
@@ -400,9 +406,10 @@ func (b *OpenBao) Metadata(ctx context.Context, token, path string) (PathMetadat
 		return PathMetadata{}, err
 	}
 	md := PathMetadata{
-		Exists:  true,
-		Version: out.Data.CurrentVersion,
-		SetBy:   out.Data.CustomMetadata.SetBy,
+		Exists:    true,
+		Version:   out.Data.CurrentVersion,
+		SetBy:     out.Data.CustomMetadata.SetBy,
+		Recipient: out.Data.CustomMetadata.Recipient,
 	}
 	if t, err := time.Parse(time.RFC3339, out.Data.UpdatedTime); err == nil {
 		md.UpdatedAt = t
@@ -420,6 +427,13 @@ func (b *OpenBao) Metadata(ctx context.Context, token, path string) (PathMetadat
 // survives independently of the audit device, which an operator reading the UI
 // may not have access to.
 func (b *OpenBao) Write(ctx context.Context, token, path string, fields map[string]string, setBy string) error {
+	return b.WriteWithMetadata(ctx, token, path, fields, setBy, nil)
+}
+
+// WriteWithMetadata stores a value and records extra custom metadata beside it.
+// Used for the escrowed backup key, whose public half belongs in metadata so
+// that reading it never touches the private one.
+func (b *OpenBao) WriteWithMetadata(ctx context.Context, token, path string, fields map[string]string, setBy string, extra map[string]string) error {
 	if token == "" {
 		return fmt.Errorf("no caller token: the credential manager cannot write on its own authority")
 	}
@@ -484,7 +498,7 @@ func (b *OpenBao) Write(ctx context.Context, token, path string, fields map[stri
 	// correct and the only option, and destroys nothing because there is
 	// nothing there.
 	if resp.StatusCode == http.StatusNotFound {
-		return b.createAndRecord(ctx, token, path, url, body, setBy)
+		return b.createAndRecord(ctx, token, path, url, body, setBy, extra)
 	}
 
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusNoContent {
@@ -502,7 +516,7 @@ func (b *OpenBao) Write(ctx context.Context, token, path string, fields map[stri
 		}
 		return fmt.Errorf("openbao rejected the write to %s (HTTP %d): %s", path, resp.StatusCode, detail)
 	}
-	return b.setCustomMetadata(ctx, token, path, setBy)
+	return b.setCustomMetadata(ctx, token, path, setBy, extra)
 }
 
 // createAndRecord writes the whole document, for a path that does not exist yet.
@@ -510,7 +524,7 @@ func (b *OpenBao) Write(ctx context.Context, token, path string, fields map[stri
 // Only reachable from Write's 404 branch. It is the pre-patch behaviour, kept
 // for the one case where replacing the document cannot lose anything: there is
 // no document.
-func (b *OpenBao) createAndRecord(ctx context.Context, token, path, url string, body []byte, setBy string) error {
+func (b *OpenBao) createAndRecord(ctx context.Context, token, path, url string, body []byte, setBy string, extra map[string]string) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
 	if err != nil {
 		return err
@@ -531,16 +545,23 @@ func (b *OpenBao) createAndRecord(ctx context.Context, token, path, url string, 
 		}
 		return fmt.Errorf("openbao rejected the write to %s (HTTP %d): %s", path, resp.StatusCode, detail)
 	}
-	return b.setCustomMetadata(ctx, token, path, setBy)
+	return b.setCustomMetadata(ctx, token, path, setBy, extra)
 }
 
-func (b *OpenBao) setCustomMetadata(ctx context.Context, token, path, setBy string) error {
-	if setBy == "" {
+func (b *OpenBao) setCustomMetadata(ctx context.Context, token, path, setBy string, extra map[string]string) error {
+	meta := map[string]string{}
+	for k, v := range extra {
+		if v != "" {
+			meta[k] = v
+		}
+	}
+	if setBy != "" {
+		meta["set_by"] = setBy
+	}
+	if len(meta) == 0 {
 		return nil
 	}
-	body, _ := json.Marshal(map[string]any{
-		"custom_metadata": map[string]string{"set_by": setBy},
-	})
+	body, _ := json.Marshal(map[string]any{"custom_metadata": meta})
 	url := fmt.Sprintf("%s/v1/%s/metadata/%s", b.Addr, b.KVMount, strings.TrimPrefix(path, "/"))
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
 	if err != nil {
