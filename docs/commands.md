@@ -582,23 +582,30 @@ encrypted bundle, pausing each app in turn so its data is internally consistent.
 
 | Choice | Who can decrypt | Use for |
 |---|---|---|
-| **Platform key** (default) | whoever holds the identity for `backupRecipients`, escrowed with the recovery kit | routine and scheduled backups; the only mode support can help restore |
+| **Platform key** (default) | whoever holds the identity for `backupRecipients` — in the recovery kit, and in OpenBao when the cluster escrows it | routine and scheduled backups; the only mode support can help restore |
 | **My passphrase** | only the passphrase holder | a bundle the platform must not be able to read |
 
 Both produce ordinary [age](https://age-encryption.org) files. A lost passphrase
 means a lost bundle — there is no recovery path, by design.
 
-A cluster must set `backupRecipients` before the default mode works:
+A cluster needs a key pair before the default mode works, and
+`./install.sh --export-recovery-kit` makes one on a cluster that has none: the
+public half goes to OpenBao at `gentian-os/kernel/backup/recipients`, the
+private half into the kit and, unless `spec.backup.escrowIdentity` is `false`,
+to `gentian-os/kernel/backup/identity` as well. It never regenerates — a second
+pair would orphan every bundle written to the first.
+
+Pin the public half in git so the operator prefers a value the cluster cannot
+rewrite:
 
 ```yaml
-# gentian-deployments/clusters/<cluster>/kernel/... (gentian-os Helm values)
+# gentian-deployments/clusters/<cluster>/kernel/values.yaml
 backupRecipients:
-  - age1...          # public key; keep the identity OFF this cluster
+  - age1...          # public key; safe to commit
 ```
 
-With none configured, an export fails rather than writing a tenant's data
-unencrypted. Generate the pair with `age-keygen` and store the identity with the
-recovery kit.
+With no recipient anywhere, an export fails rather than writing a tenant's data
+unencrypted.
 
 ### From the CLI
 
@@ -689,6 +696,36 @@ age -d manifest.json.age > manifest.json
 `manifest.json` lists what was captured per app, the chart versions at capture
 time, and the pause window each app saw.
 
+#### When the bundle is on external storage
+
+`mc` above is aliased to the platform's own MinIO. A tenant whose policy names
+an external endpoint writes there instead, with a credential the operator keeps
+in the kernel namespace rather than the tenant's — so reading such a bundle
+means aliasing that endpoint first:
+
+```bash
+ns=platform-kernel                       # not the tenant namespace
+sec=backup-destination-<tenant>          # from status.bundle.credentialSecret
+ak=$(kubectl get secret "$sec" -n "$ns" -o jsonpath='{.data.accessKey}'  | base64 -d)
+sk=$(kubectl get secret "$sec" -n "$ns" -o jsonpath='{.data.secretKey}' | base64 -d)
+
+mc alias set ext https://sos-ch-dk-2.exo.io "$ak" "$sk" --api S3v4
+mc ls  ext/<bucket>/<prefix>/
+mc cat ext/<bucket>/<prefix>/bundle-info.json
+```
+
+`kubectl get tenantexport <name> -n tenant-<t> -o jsonpath='{.status.bundle}'`
+names the endpoint, bucket, prefix and credential for any given export, so
+nothing here has to be guessed.
+
+The identity to decrypt with comes from the recovery kit, from the printed QR,
+or — on a cluster that escrows it — straight out of OpenBao:
+
+```bash
+bao kv get -mount=secret -field=identity gentian-os/kernel/backup/identity > id.txt
+mc cat ext/<bucket>/<prefix>/manifest.json.age | age -d -i id.txt
+```
+
 ## 12. Tenant Restore
 
 A restore **replaces** live data with what a bundle recorded. Anything written
@@ -712,8 +749,11 @@ spec:
 EOF
 ```
 
-The identity is not on the cluster — that is the point of the escrow — so a
-restore is where you prove you still have it:
+Where the identity comes from depends on `spec.backup.escrowIdentity`. With it
+`true` (the default) OpenBao holds a copy at `gentian-os/kernel/backup/identity`,
+readable by `cluster-admin` and denied to External Secrets — so a cluster
+administrator can restore without the kit. With it `false` the kit is the only
+copy, and a restore is where you prove you still have it:
 
 ```bash
 kubectl create secret generic backup-identity -n tenant-demo \

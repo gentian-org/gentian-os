@@ -1615,18 +1615,9 @@ check_prereqs() {
     local missing=0
 
     # ── CLI tools ─────────────────────────────────────────────────────────────
-    # age is required, not optional. It was optional while the kit's own
-    # encryption was the only thing it affected — openssl encrypts the kit but
-    # does not authenticate it, which is worse and survivable. It is now also
-    # the only thing that generates this cluster's backup key: E-03 creates the
-    # age key pair whose public half every scheduled export encrypts to, and
-    # there is no fallback because there is no other way to make an age key.
-    #
-    # Without it the install completes and the cluster has no backup key, so
-    # every nightly export fails with "no age recipients configured" — for as
-    # long as nobody looks. A cluster that cannot back itself up is not an
-    # installed cluster, and this is the last moment the answer costs a minute
-    # rather than a re-export.
+    # age is required: E-03 generates the cluster's backup key with it, and
+    # there is no fallback. Without it the install finishes with no key and
+    # every nightly export fails.
     local base_tools=(kubectl helm jq yq openssl curl bao age age-keygen)
     # Crossplane-based installer also needs the crossplane CLI and python3.
     local extra_tools=()
@@ -1642,8 +1633,7 @@ check_prereqs() {
             success "$cmd found"
         fi
     done
-    # Named once for the pair, and with the consequence rather than only the
-    # binary: "age not found" reads like a missing convenience.
+    # Named once for the pair: "age not found" reads like a missing convenience.
     if [[ ${missing_age} -eq 1 ]]; then
         error ""
         error "  age and age-keygen ship together and both are required."
@@ -1657,9 +1647,16 @@ check_prereqs() {
         error ""
     fi
 
-    # No optional tools today. age was the only entry and is now required
-    # above; the loop went with it rather than being left to describe an empty
-    # list. Restore both together if something genuinely optional appears.
+    # ── Optional tools ────────────────────────────────────────────────────────
+    # Reported here rather than where they are used, because by the time the
+    # fallback announces itself it is too late to act on.
+    if command -v qrencode &>/dev/null; then
+        success "qrencode found (optional)"
+    else
+        warn "Optional command not found: qrencode"
+        warn "  The recovery kit prints the backup key as text either way; with"
+        warn "  qrencode it also prints a QR code to keep on paper."
+    fi
 
     # ── Cluster connectivity ──────────────────────────────────────────────────
     if ! kubectl cluster-info --request-timeout=5s >/dev/null 2>&1; then
