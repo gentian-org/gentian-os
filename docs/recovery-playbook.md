@@ -270,9 +270,12 @@ The cheapest useful check costs nothing and touches nothing:
 scripts/recovery.sh inspect --tenant <t> --from-vault
 ```
 
-It resolves the bundle from the export's own status, aliases the endpoint with
-the credential the operator keeps, prints `bundle-info.json` and decrypts the
-manifest — writing nothing. By hand:
+With no `--export` it takes the newest completed backup and says which one it
+chose. Name a specific one with `--export <name>`, or point straight at storage
+with `--s3-bucket` when there is no cluster to ask. It reads the bundle's
+location from the export's own status, aliases the endpoint with the credential
+the operator keeps, prints `bundle-info.json` and decrypts the manifest —
+writing nothing. By hand:
 
 ```bash
 mc cat <alias>/<bucket>/<prefix>/bundle-info.json
