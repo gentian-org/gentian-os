@@ -33,19 +33,15 @@ apply() {
     # branch. Declaring one that nothing will ever write to OpenBao would
     # leave credentialSatisfied false forever and block the repo Secret and
     # the operator's push-access Secret from ever being emitted.
+    #
+    # Two full heredocs rather than one with an interpolated credential-block
+    # variable: validate_step_calls (scripts/lib/driver.sh) strips heredoc
+    # BODIES before scanning a step for undefined calls, but has no such
+    # allowance for YAML sitting in an ordinary multi-line string assignment
+    # — every "key:" line in one reads as a 4-space-indented bare command.
     local auth; auth="$(_repo_auth_for deployments-repository)"
-    local cred_block=""
     if [[ "${auth}" != "none" ]]; then
-        cred_block="  credential:
-    vaultPath: gentian-os/kernel/repositories/deployments
-    displayName: \"Deployments Repository Access\"
-    phase: bootstrap
-    authType: ${auth}
-    validate:
-      type: git-https"
-    fi
-
-    kubectl apply -f - <<EOF
+        kubectl apply -f - <<EOF
 apiVersion: gentianos.io/v1alpha1
 kind: Repository
 metadata:
@@ -65,8 +61,30 @@ spec:
   # The operator pushes here: installing an app from the store commits a
   # manifest to this repository.
   writable: true
-${cred_block}
+  credential:
+    vaultPath: gentian-os/kernel/repositories/deployments
+    displayName: "Deployments Repository Access"
+    phase: bootstrap
+    authType: ${auth}
+    validate:
+      type: git-https
 EOF
+    else
+        kubectl apply -f - <<EOF
+apiVersion: gentianos.io/v1alpha1
+kind: Repository
+metadata:
+  name: deployments
+  namespace: crossplane-system
+spec:
+  type: git
+  role: deployments
+  endpoints:
+    inCluster: ${GENTIAN_DEPLOYMENTS_REPO}
+  branch: ${GENTIAN_DEPLOYMENTS_BRANCH:-main}
+  writable: true
+EOF
+    fi
 }
 
 destroy() {
