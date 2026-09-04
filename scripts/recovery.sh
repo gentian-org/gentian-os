@@ -68,8 +68,25 @@ inspect
   --tenant NAME      the workspace whose bundle to read
   --export NAME      which export (default: the newest Ready one)
 
+Reaching the bundle straight from object storage, with no cluster
+  --s3-endpoint URL  e.g. https://sos-ch-dk-2.exo.io
+  --s3-bucket NAME
+  --s3-prefix NAME   the bundle's prefix, e.g. policy-20260904-0300
+  --s3-region NAME
+  --s3-access-key K  or AWS_ACCESS_KEY_ID
+  --s3-secret-key S  or AWS_SECRET_ACCESS_KEY
+
+  Credentials are taken from these flags first, then the environment, then the
+  cluster -- so this works when there is no cluster left to ask.
+
 Examples
   scripts/recovery.sh inspect --tenant corp --from-vault
+
+  # nothing but a bucket, a key and the printed QR code
+  scripts/recovery.sh inspect --s3-endpoint https://sos-ch-dk-2.exo.io \
+                              --s3-bucket bigbucket --s3-prefix policy-20260904-0300 \
+                              --s3-access-key EXO... --s3-secret-key ... \
+                              --qr backup-key.png
   scripts/recovery.sh tenant  --tenant corp --export policy-20260904-0300 \
                               --qr backup-key.png --confirm corp
   scripts/recovery.sh cluster --kit gentian-recovery-kit-ifk-w4h.age
@@ -185,6 +202,15 @@ BUNDLE_MODE=""
 
 # locate_bundle — from --bundle, or from the export's own status.
 locate_bundle() {
+    if [[ -n "${OPT_S3_BUCKET}" ]]; then
+        BUNDLE_ENDPOINT="${OPT_S3_ENDPOINT}"
+        BUNDLE_BUCKET="${OPT_S3_BUCKET}"
+        BUNDLE_PREFIX="${OPT_S3_PREFIX}"
+        BUNDLE_REGION="${OPT_S3_REGION}"
+        [[ -n "${BUNDLE_ENDPOINT}" ]] || { error "--s3-bucket needs --s3-endpoint."; return 1; }
+        [[ -n "${BUNDLE_PREFIX}" ]]  || { error "--s3-bucket needs --s3-prefix."; return 1; }
+        return 0
+    fi
     if [[ -n "${OPT_BUNDLE}" ]]; then
         BUNDLE_ENDPOINT="$(printf '%s' "${OPT_BUNDLE}" | cut -d, -f1)"
         BUNDLE_BUCKET="$(printf '%s' "${OPT_BUNDLE}" | cut -d, -f2)"
@@ -194,6 +220,7 @@ locate_bundle() {
     fi
 
     need kubectl || return 1
+    need jq || return 1
     local ns="tenant-${OPT_TENANT}"
     if [[ -z "${OPT_EXPORT}" ]]; then
         OPT_EXPORT="$(kubectl get tenantexports.gentianos.io -n "${ns}" \
@@ -216,30 +243,48 @@ locate_bundle() {
     [[ -n "${BUNDLE_BUCKET}" ]] || { error "Export ${OPT_EXPORT} records no bundle."; return 1; }
 }
 
-# mc_alias — point mc at the bundle's storage, platform or external.
+# mc_alias — point mc at the bundle's storage.
 #
-# The credential for an external destination is in the kernel namespace, not
-# the tenant's: the restore Jobs run there, so that is where ESO puts it.
+# Credentials come from the flags first, then the environment, and only then
+# from the cluster. That order is the whole point: the case this script exists
+# for is a cluster that is gone, and reaching for kubectl first would make the
+# tool useless exactly when it is needed. The cluster path stays because it
+# saves looking anything up while the cluster is still there.
 mc_alias() {
     need mc "https://min.io/docs/minio/linux/reference/minio-mc.html" || return 1
-    local ak sk kn="platform-kernel"
+    local ak="" sk="" kn="platform-kernel"
+
     if [[ -z "${BUNDLE_ENDPOINT}" ]]; then
-        error "This bundle is in the platform's own storage; alias it yourself"
-        error "  (see docs/commands.md §11) or pass --bundle with an endpoint."
+        error "No endpoint for this bundle. Pass --s3-endpoint, or --bundle with one."
         return 1
     fi
-    [[ -n "${BUNDLE_SECRET}" ]] || { error "No credential recorded for this bundle."; return 1; }
-    ak="$(kubectl get secret "${BUNDLE_SECRET}" -n "${kn}" -o jsonpath='{.data.accessKey}' 2>/dev/null | base64 -d || true)"
-    sk="$(kubectl get secret "${BUNDLE_SECRET}" -n "${kn}" -o jsonpath='{.data.secretKey}' 2>/dev/null | base64 -d || true)"
-    [[ -n "${ak}" && -n "${sk}" ]] || { error "Cannot read ${BUNDLE_SECRET} in ${kn}."; return 1; }
+
+    if [[ -n "${OPT_S3_AK}" && -n "${OPT_S3_SK}" ]]; then
+        ak="${OPT_S3_AK}"; sk="${OPT_S3_SK}"
+        info "using the credentials given on the command line"
+    elif [[ -n "${AWS_ACCESS_KEY_ID:-}" && -n "${AWS_SECRET_ACCESS_KEY:-}" ]]; then
+        ak="${AWS_ACCESS_KEY_ID}"; sk="${AWS_SECRET_ACCESS_KEY}"
+        info "using AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY"
+    elif [[ -n "${BUNDLE_SECRET}" ]] && command -v kubectl >/dev/null 2>&1; then
+        ak="$(kubectl get secret "${BUNDLE_SECRET}" -n "${kn}" -o jsonpath='{.data.accessKey}' 2>/dev/null | base64 -d || true)"
+        sk="$(kubectl get secret "${BUNDLE_SECRET}" -n "${kn}" -o jsonpath='{.data.secretKey}' 2>/dev/null | base64 -d || true)"
+        [[ -n "${ak}" ]] && info "using ${BUNDLE_SECRET} from the cluster"
+    fi
+
+    if [[ -z "${ak}" || -z "${sk}" ]]; then
+        error "No credentials for ${BUNDLE_ENDPOINT}."
+        error "  Pass --s3-access-key and --s3-secret-key, or set"
+        error "  AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY."
+        return 1
+    fi
     mc alias set gtn-recovery "${BUNDLE_ENDPOINT}" "${ak}" "${sk}" --api S3v4 >/dev/null
 }
 
 # ── commands ─────────────────────────────────────────────────────────────────
 
 cmd_inspect() {
-    [[ -n "${OPT_TENANT}" || -n "${OPT_BUNDLE}" ]] || { error "inspect needs --tenant or --bundle."; usage; return 1; }
-    need jq || return 1
+    [[ -n "${OPT_TENANT}" || -n "${OPT_BUNDLE}" || -n "${OPT_S3_BUCKET}" ]] ||
+        { error "inspect needs --tenant, --bundle or --s3-bucket."; usage; return 1; }
     locate_bundle || return 1
 
     banner "Bundle"
@@ -276,7 +321,7 @@ cmd_tenant() {
         error "  --confirm ${OPT_TENANT}"
         return 1
     fi
-    need kubectl || return 1; need jq || return 1
+    need kubectl || return 1
     locate_bundle || return 1
     resolve_key || return 1
 
@@ -377,6 +422,8 @@ cmd_show_key() {
 OPT_KIT=""; OPT_TENANT=""; OPT_EXPORT=""; OPT_BUNDLE=""; OPT_APPS=""
 OPT_CONFIRM=""; OPT_KEY_FILE=""; OPT_QR=""; OPT_PASSPHRASE="0"
 OPT_DRY_RUN="0"
+OPT_S3_ENDPOINT=""; OPT_S3_BUCKET=""; OPT_S3_PREFIX=""; OPT_S3_REGION=""
+OPT_S3_AK=""; OPT_S3_SK=""
 
 [[ $# -gt 0 ]] || { usage; exit 1; }
 COMMAND="$1"; shift
@@ -394,6 +441,12 @@ while [[ $# -gt 0 ]]; do
         --from-vault) : ;;
         --passphrase) OPT_PASSPHRASE="1" ;;
         --dry-run)    OPT_DRY_RUN="1" ;;
+        --s3-endpoint)   shift; OPT_S3_ENDPOINT="${1:-}" ;;
+        --s3-bucket)     shift; OPT_S3_BUCKET="${1:-}" ;;
+        --s3-prefix)     shift; OPT_S3_PREFIX="${1:-}" ;;
+        --s3-region)     shift; OPT_S3_REGION="${1:-}" ;;
+        --s3-access-key) shift; OPT_S3_AK="${1:-}" ;;
+        --s3-secret-key) shift; OPT_S3_SK="${1:-}" ;;
         -h|--help)    usage; exit 0 ;;
         *) error "Unknown option: $1"; usage; exit 1 ;;
     esac

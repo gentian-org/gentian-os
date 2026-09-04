@@ -81,6 +81,25 @@ kubectl gentian tenants deploy <tenant>
 # 3. Put each tenant's data back — scenario 2 below, once per tenant.
 ```
 
+### Reading the bundles before the cluster exists
+
+The restore in step 3 needs a cluster to restore *into*, but reading a bundle
+does not. With the bucket, its credentials and the key, `inspect` works from a
+laptop:
+
+```bash
+scripts/recovery.sh inspect \
+  --s3-endpoint https://sos-ch-dk-2.exo.io \
+  --s3-bucket bigbucket --s3-prefix policy-20260904-0300 \
+  --s3-access-key ... --s3-secret-key ... \
+  --qr backup-key.png
+```
+
+Credentials come from those flags first, then `AWS_ACCESS_KEY_ID` /
+`AWS_SECRET_ACCESS_KEY`, and only then from the cluster — so this answers "is
+the data still there and can I open it" while the cluster is still gone. Worth
+doing before you start rebuilding, because the answer changes what you do next.
+
 ### What does not come back
 
 - **Member passwords.** Keycloak's export carries no hashes. Every member needs
@@ -102,16 +121,21 @@ and any manual one that did not choose a passphrase.
 
 ### Get the identity
 
-Three places it can be, and a switch for each:
+Three places it can be. Add the matching flag to any `recovery.sh` command:
 
-| Where it is | Pass |
-|---|---|
-| OpenBao, when the cluster escrows it | `--from-vault` |
-| The recovery kit (`BACKUP_AGE_IDENTITY`) | `--key-file id.txt` |
-| The printed QR code | `--qr photo.png` |
+```bash
+# in OpenBao, because the cluster escrows it (the default)
+scripts/recovery.sh inspect --tenant corp --from-vault
 
-`--qr` takes the image — a scan or a phone photo — and decodes it. Nothing is
-transcribed by hand, which is the point of printing a machine-readable code.
+# in the recovery kit — the BACKUP_AGE_IDENTITY line, saved to a file
+scripts/recovery.sh inspect --tenant corp --key-file id.txt
+
+# on paper — hand it the photo, it decodes the QR itself
+scripts/recovery.sh inspect --tenant corp --qr backup-key.png
+```
+
+Nothing is transcribed by hand, which is the point of printing a
+machine-readable code.
 
 By hand, the same three:
 
