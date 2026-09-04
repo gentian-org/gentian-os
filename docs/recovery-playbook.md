@@ -13,12 +13,24 @@ what you are doing:
 
 ```bash
 # mc — the MinIO client, for reading bundles out of object storage
+mkdir -p ~/.local/bin
 curl -sSL https://dl.min.io/client/mc/release/linux-amd64/mc -o ~/.local/bin/mc
 chmod +x ~/.local/bin/mc          # macOS: brew install minio/stable/mc
 
 # to read a QR code back in, and to write one out
 sudo apt install zbar-tools qrencode
 ```
+
+If `mc` is still not found after that, `~/.local/bin` is not on this shell's
+`PATH` — `~/.profile` adds it only when the directory existed at login, so the
+first thing you ever install there is invisible until you say so:
+
+```bash
+export PATH="$HOME/.local/bin:$PATH"                      # this shell
+echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.bashrc  # and future ones
+```
+
+The installer puts `bao` in the same place, so this fixes both at once.
 
 `jq` is needed for anything that asks the cluster, and `bao` for
 `--from-vault`. Each is named at the point it is missing, so you can also just
