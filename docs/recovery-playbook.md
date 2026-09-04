@@ -40,10 +40,11 @@ run the command and see.
 
 ## Using the script
 
-Four commands:
+Five commands:
 
 | | What it does | Writes anything? |
 |---|---|---|
+| `list` | what backups exist for a workspace | no |
 | `inspect` | reads a bundle: is it there, and does your key open it | no |
 | `show-key` | prints the backup key and writes its QR code | a PNG |
 | `tenant` | restores one workspace from a bundle | **replaces live data** |
@@ -53,7 +54,25 @@ Four commands:
 
 ### Which backup?
 
-Pick **one** of these three ways to say it:
+`list` answers that first — every backup, oldest to newest, with how each was
+encrypted and where it went:
+
+```bash
+scripts/recovery.sh list --tenant corp
+```
+
+```
+export-2026-09-03-14-32   Ready  2026-09-03T14:37:43Z  recipient   https://sos-ch-dk-2.exo.io/bigbucket
+policy-20260904-0300      Ready  2026-09-04T03:04:43Z  recipient   https://sos-ch-dk-2.exo.io/bigbucket
+export-2026-09-04-04-54   Ready  2026-09-04T06:49:13Z  passphrase  platform/corp-gentian-backup
+```
+
+The mode column tells you which key you will need: `recipient` wants
+`--from-vault`, `--key-file` or `--qr`; `passphrase` wants `--passphrase`. With
+no cluster left to ask, `--s3-bucket` lists the prefixes in storage instead —
+less than the cluster knows, and still enough to restore from.
+
+Then pick **one** of these three ways to name it:
 
 | | Use when |
 |---|---|

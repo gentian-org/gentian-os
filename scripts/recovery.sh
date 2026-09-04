@@ -48,6 +48,7 @@ Usage: scripts/recovery.sh <command> [options]
 Commands
   cluster    rebuild this cluster from a recovery kit
   tenant     restore one tenant from a bundle
+  list       what backups exist for a workspace
   inspect    read a bundle's manifest; changes nothing
   show-key   print the backup key, and write its QR code
 
@@ -67,6 +68,10 @@ tenant
   --confirm NAME     required; must equal --tenant
   --dry-run          print the TenantRestore instead of applying it
 
+list
+  --tenant NAME      the workspace to list backups for
+                     (or the --s3-* flags below, to list a bucket instead)
+
 inspect
   --tenant NAME      the workspace whose bundle to read
   --export NAME      which export (default: the newest Ready one)
@@ -83,6 +88,7 @@ Reaching the bundle straight from object storage, with no cluster
   cluster -- so this works when there is no cluster left to ask.
 
 Examples
+  scripts/recovery.sh list    --tenant corp
   scripts/recovery.sh inspect --tenant corp --from-vault
 
   # nothing but a bucket, a key and the printed QR code
@@ -362,6 +368,50 @@ platform_storage_forward() {
 
 # ── commands ─────────────────────────────────────────────────────────────────
 
+# cmd_list — what backups exist, and which one you would name.
+#
+# From the cluster when it is there, because the export objects carry what the
+# bucket cannot: whether the capture actually succeeded, and which key it was
+# encrypted to. From the bucket when it is not, because then the prefixes are
+# all that is left and they are still enough to restore from.
+cmd_list() {
+    if [[ -n "${OPT_S3_BUCKET}" ]]; then
+        locate_bundle || return 1
+        mc_alias || return 1
+        banner "Bundles in ${BUNDLE_BUCKET}"
+        info "listed from storage: whether each finished is not recorded here"
+        mc ls "gtn-recovery/${BUNDLE_BUCKET}/" | sed 's/^/  /'
+        return 0
+    fi
+
+    [[ -n "${OPT_TENANT}" ]] || { error "list needs --tenant, or --s3-bucket."; return 1; }
+    need kubectl || return 1
+    need jq || return 1
+
+    banner "Backups for ${OPT_TENANT}"
+    local json
+    json="$(kubectl get tenantexports.gentianos.io -n "tenant-${OPT_TENANT}" -o json 2>/dev/null || true)"
+    [[ -n "${json}" ]] || { error "No workspace tenant-${OPT_TENANT}, or no access to it."; return 1; }
+
+    # Newest last, so the one inspect would pick by default is the one your eye
+    # lands on at the bottom -- and the same order both commands mean by "newest".
+    printf '%s' "${json}" | jq -r '
+      [ .items[] ] | sort_by(.status.completedAt // .metadata.creationTimestamp) | .[]
+      | [ .metadata.name,
+          (.status.phase // "?"),
+          (.status.completedAt // "-"),
+          (.status.encryption.mode // .spec.encryption.mode // "?"),
+          ((.status.bundle.endpoint // "platform") + "/" + (.status.bundle.bucket // "?"))
+        ] | @tsv' |
+    while IFS=$'\t' read -r name phase done_at mode where; do
+        printf '  %-26s %-8s %-21s %-11s %s\n' "${name}" "${phase}" "${done_at}" "${mode}" "${where}"
+    done
+
+    echo ""
+    info "restore one with:  --export <name>"
+    info "a passphrase bundle also needs --passphrase; a platform-key one --from-vault"
+}
+
 cmd_inspect() {
     [[ -n "${OPT_TENANT}" || -n "${OPT_S3_BUCKET}" ]] ||
         { error "inspect needs --tenant or --s3-bucket."; usage; return 1; }
@@ -508,7 +558,7 @@ COMMAND="$1"; shift
 # this, "recovery.sh --tenant corp" took --tenant as the command and then
 # failed on "corp" with "Unknown option".
 case "${COMMAND}" in
-    cluster|tenant|inspect|show-key|-h|--help|help) : ;;
+    cluster|tenant|list|inspect|show-key|-h|--help|help) : ;;
     -*)
         error "No command given — ${COMMAND} is an option, not a command."
         error "  Read a bundle:     scripts/recovery.sh inspect ${COMMAND} $*"
@@ -516,7 +566,7 @@ case "${COMMAND}" in
         exit 1 ;;
     *)
         error "Unknown command: ${COMMAND}"
-        error "  One of: cluster, tenant, inspect, show-key"
+        error "  One of: cluster, tenant, list, inspect, show-key"
         exit 1 ;;
 esac
 
@@ -546,6 +596,7 @@ done
 
 case "${COMMAND}" in
     cluster)  cmd_cluster ;;
+    list)     cmd_list ;;
     tenant)   cmd_tenant ;;
     inspect)  cmd_inspect ;;
     show-key) cmd_show_key ;;
