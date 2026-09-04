@@ -33,7 +33,12 @@ VAULT_IDENTITY_PATH="gentian-os/kernel/backup/identity"
 # Everything the identity touches lives here, 0700, removed on exit however we
 # leave. A private key must not survive the process that used it.
 WORK=""
-cleanup() { [[ -n "${WORK}" && -d "${WORK}" ]] && rm -rf "${WORK}"; }
+PF_PID=""
+cleanup() {
+    [[ -n "${PF_PID}" ]] && kill "${PF_PID}" 2>/dev/null
+    [[ -n "${WORK}" && -d "${WORK}" ]] && rm -rf "${WORK}"
+    return 0
+}
 trap cleanup EXIT
 
 usage() {
@@ -252,9 +257,11 @@ mc_alias() {
     need mc "https://min.io/docs/minio/linux/reference/minio-mc.html" || return 1
     local ak="" sk="" kn="platform-kernel"
 
+    # An empty endpoint means the platform's own MinIO, whose address is a
+    # cluster-internal Service name. Nothing outside the cluster resolves it, so
+    # forward a port and talk to that instead.
     if [[ -z "${BUNDLE_ENDPOINT}" ]]; then
-        error "No endpoint for this bundle. Pass --s3-endpoint."
-        return 1
+        platform_storage_forward || return 1
     fi
 
     if [[ -n "${OPT_S3_AK}" && -n "${OPT_S3_SK}" ]]; then
@@ -276,6 +283,66 @@ mc_alias() {
         return 1
     fi
     mc alias set gtn-recovery "${BUNDLE_ENDPOINT}" "${ak}" "${sk}" --api S3v4 >/dev/null
+}
+
+# age_decrypt <file> — print the plaintext, whichever key kind we hold.
+#
+# A passphrase cannot simply be piped: age reads it from the terminal and
+# refuses a pipe, which is why the export gives it a pty through script(1).
+# The same trick, and both spellings of it, because BSD script takes its
+# command as arguments and util-linux takes it after -c.
+age_decrypt() {
+    local file="$1"
+    if [[ "${KEY_KIND}" != "passphrase" ]]; then
+        age -d -i "${WORK}/identity" "${file}"
+        return
+    fi
+    local pass; pass="$(cat "${WORK}/passphrase")"
+    # Removed first: age writes nothing on a wrong passphrase, so a leftover
+    # plaintext from an earlier attempt would be printed as if it had worked.
+    rm -f "${WORK}/plain"
+    if script -qec true /dev/null >/dev/null 2>&1; then
+        printf '%s\n' "${pass}" |
+            script -qec "age -d -o '${WORK}/plain' '${file}'" /dev/null >/dev/null
+    else
+        printf '%s\n' "${pass}" |
+            script -q /dev/null age -d -o "${WORK}/plain" "${file}" >/dev/null
+    fi
+    [[ -s "${WORK}/plain" ]] || { error "Decryption failed — wrong passphrase?"; return 1; }
+    cat "${WORK}/plain"
+}
+
+# platform_storage_forward — reach the platform's own MinIO from outside.
+#
+# Its endpoint is http://<svc>.<ns>.svc.cluster.local:9000, which resolves only
+# inside the cluster. The Service is forwarded to a local port and the alias
+# points there; the forward dies with the script.
+platform_storage_forward() {
+    need kubectl || return 1
+    local raw host svc ns port lport=19000
+    raw="$(kubectl get secret minio-admin -n platform-kernel \
+        -o jsonpath='{.data.endpoint}' 2>/dev/null | base64 -d || true)"
+    [[ -n "${raw}" ]] || { error "Cannot read the minio-admin endpoint in platform-kernel."; return 1; }
+
+    host="${raw#*://}"; port="${host##*:}"; host="${host%%:*}"
+    svc="${host%%.*}"; ns="${host#*.}"; ns="${ns%%.*}"
+    [[ -n "${svc}" && -n "${ns}" ]] || { error "Cannot parse ${raw}"; return 1; }
+
+    OPT_S3_AK="$(kubectl get secret minio-admin -n platform-kernel -o jsonpath='{.data.accessKey}' 2>/dev/null | base64 -d || true)"
+    OPT_S3_SK="$(kubectl get secret minio-admin -n platform-kernel -o jsonpath='{.data.secretKey}' 2>/dev/null | base64 -d || true)"
+    [[ -n "${OPT_S3_AK}" ]] || { error "Cannot read the minio-admin credentials."; return 1; }
+
+    info "forwarding ${svc}.${ns}:${port} to localhost:${lport}"
+    kubectl port-forward -n "${ns}" "svc/${svc}" "${lport}:${port}" >/dev/null 2>&1 &
+    PF_PID=$!
+
+    local i=0
+    while [[ ${i} -lt 15 ]]; do
+        (echo > "/dev/tcp/127.0.0.1/${lport}") 2>/dev/null && break
+        sleep 1; i=$((i + 1))
+    done
+    [[ ${i} -lt 15 ]] || { error "Port-forward to ${svc}.${ns} did not come up."; return 1; }
+    BUNDLE_ENDPOINT="http://localhost:${lport}"
 }
 
 # ── commands ─────────────────────────────────────────────────────────────────
@@ -301,13 +368,8 @@ cmd_inspect() {
 
     resolve_key || return 1
     banner "manifest.json"
-    if [[ "${KEY_KIND}" == "passphrase" ]]; then
-        mc cat "${base}/manifest.json.age" | age -d -i /dev/null 2>/dev/null ||
-            mc cat "${base}/manifest.json.age" > "${WORK}/m.age" &&
-            age -d "${WORK}/m.age"
-    else
-        mc cat "${base}/manifest.json.age" | age -d -i "${WORK}/identity"
-    fi
+    mc cat "${base}/manifest.json.age" > "${WORK}/manifest.age" || return 1
+    age_decrypt "${WORK}/manifest.age" || return 1
     echo ""
     success "The bundle is readable and this key opens it."
 }
