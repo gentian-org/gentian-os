@@ -222,12 +222,20 @@ locate_bundle() {
     need kubectl || return 1
     need jq || return 1
     local ns="tenant-${OPT_TENANT}"
+    # Newest by completion time, not by name. kubectl lists in name order, so
+    # taking the last line picks whatever sorts last -- which on a tenant with
+    # both scheduled and manual exports is the wrong backup, silently.
     if [[ -z "${OPT_EXPORT}" ]]; then
-        OPT_EXPORT="$(kubectl get tenantexports.gentianos.io -n "${ns}" \
-            -o jsonpath='{range .items[?(@.status.phase=="Ready")]}{.metadata.name}{"\n"}{end}' \
-            2>/dev/null | tail -1)"
-        [[ -n "${OPT_EXPORT}" ]] || { error "No Ready export in ${ns}. Name one with --export."; return 1; }
-        info "using the newest Ready export: ${OPT_EXPORT}"
+        local newest
+        newest="$(kubectl get tenantexports.gentianos.io -n "${ns}" -o json 2>/dev/null | jq -r '
+            [ .items[]
+              | select(.status.phase == "Ready")
+              | select(.status.completedAt != null) ]
+            | sort_by(.status.completedAt) | last
+            | if . == null then "" else "\(.metadata.name) \(.status.completedAt)" end')"
+        OPT_EXPORT="$(printf '%s' "${newest}" | cut -d' ' -f1)"
+        [[ -n "${OPT_EXPORT}" ]] || { error "No completed export in ${ns}. Name one with --export."; return 1; }
+        info "newest export: ${OPT_EXPORT} (completed $(printf '%s' "${newest}" | cut -d' ' -f2))"
     fi
 
     local json
