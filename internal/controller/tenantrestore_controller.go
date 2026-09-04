@@ -281,6 +281,25 @@ func (r *TenantRestoreReconciler) restoreApp(
 		entry.QuiesceEnd = ptrNow()
 		unmarkQuiesced(&restore.Status.Quiesced, appName)
 	}
+
+	// Roll the app, but only where the quiesce did not already do it for us.
+	//
+	// A scale-down quiesce ends by scaling back up, so the pods serving the
+	// restored data are new ones and there is nothing stale left to clear. A
+	// command-mode quiesce keeps the same pod throughout, and that pod has now
+	// had its database, bucket and volumes replaced underneath it while holding
+	// caches and subPath mounts from before the restore.
+	//
+	// After the resume, not before: the hooks above need a pod to exec into,
+	// and a pod restarted while maintenance mode was still on would come back
+	// still holding users out.
+	if used != gentianov1alpha1.BackupQuiesceScaleDown {
+		if err := r.Tenant.restartAppWorkloads(ctx, tenant.Name, appName); err != nil {
+			return ctrl.Result{}, fmt.Errorf("restart %s after restore: %w", appName, err)
+		}
+		logger.Info("rolled app after restore", "app", appName)
+	}
+
 	entry.Phase = gentianov1alpha1.TenantExportPhaseReady
 	entry.Message = ""
 	logger.Info("restored app", "app", appName)

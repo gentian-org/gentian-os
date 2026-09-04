@@ -1390,3 +1390,68 @@ func TestTheFailureReasonIsTakenWhileThePodStillExists(t *testing.T) {
 		t.Errorf("the failing container is not named: %q", entry.LastFailure)
 	}
 }
+
+// A restore has to leave the app running new pods, not the ones that were
+// serving before it.
+//
+// The pod that was running through a command-mode quiesce holds two things a
+// restore invalidates and cannot reach: its caches, and every ConfigMap mounted
+// with subPath, which Kubernetes materialises once at pod start and never
+// refreshes. A Nextcloud pod carrying an empty copy of its session config could
+// not write a session at all — logins failed at the OIDC callback with 403 —
+// and no restore could clear it, because nothing restarted the pod.
+func TestRestartAppWorkloadsRollsDeploymentsAndStatefulSets(t *testing.T) {
+	_ = quiesceScheme(t)
+	sts := &appsv1.StatefulSet{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "nextcloud-db",
+			Namespace: "tenant-demo",
+			Labels:    map[string]string{"gentianos.io/app": "nextcloud-base-ce"},
+		},
+	}
+	r := quiesceReconciler(deployment("nextcloud", "nextcloud-base-ce", 2), sts)
+	ctx := context.Background()
+
+	before := getDeployment(t, r.Client, "nextcloud")
+	if _, stamped := before.Spec.Template.Annotations[restartWorkloadAnnotation]; stamped {
+		t.Fatal("the fixture already carries a restart stamp")
+	}
+
+	if err := r.restartAppWorkloads(ctx, "demo", "nextcloud-base-ce"); err != nil {
+		t.Fatalf("restartAppWorkloads: %v", err)
+	}
+
+	after := getDeployment(t, r.Client, "nextcloud")
+	if after.Spec.Template.Annotations[restartWorkloadAnnotation] == "" {
+		t.Error("the deployment was not rolled")
+	}
+	// The replica count is not a restart's business — a roll must not resize.
+	if *after.Spec.Replicas != 2 {
+		t.Errorf("replicas = %d, want 2 — a restart must not scale", *after.Spec.Replicas)
+	}
+
+	rolledSts := &appsv1.StatefulSet{}
+	if err := r.Get(ctx, types.NamespacedName{Name: "nextcloud-db", Namespace: "tenant-demo"}, rolledSts); err != nil {
+		t.Fatalf("get statefulset: %v", err)
+	}
+	if rolledSts.Spec.Template.Annotations[restartWorkloadAnnotation] == "" {
+		t.Error("the statefulset was not rolled")
+	}
+}
+
+// Another app's workloads are not collateral. A restore of one app must not
+// restart the tenant's other apps, which are serving users throughout.
+func TestRestartAppWorkloadsLeavesOtherAppsAlone(t *testing.T) {
+	_ = quiesceScheme(t)
+	r := quiesceReconciler(
+		deployment("nextcloud", "nextcloud-base-ce", 1),
+		deployment("docmost", "docmost-ce", 1),
+	)
+	if err := r.restartAppWorkloads(context.Background(), "demo", "nextcloud-base-ce"); err != nil {
+		t.Fatalf("restartAppWorkloads: %v", err)
+	}
+	other := getDeployment(t, r.Client, "docmost")
+	if _, stamped := other.Spec.Template.Annotations[restartWorkloadAnnotation]; stamped {
+		t.Error("restoring one app rolled another app's pods")
+	}
+}
