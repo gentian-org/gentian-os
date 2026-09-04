@@ -99,3 +99,49 @@ func TestBackupIdentityDoesNotEchoTheKey(t *testing.T) {
 		t.Errorf("no confirmation that it was stored: %s", w.Body.String())
 	}
 }
+
+// Asking which key a workspace uses must never be able to return the key.
+//
+// The answer comes from the path's metadata endpoint, which does not carry the
+// stored value at all — so this holds by construction rather than by the
+// handler choosing not to include it.
+func TestBackupIdentityGetReturnsTheRecipientNotTheKey(t *testing.T) {
+	s, _ := newServerAsTenant(t, "acme")
+	if w := do(t, s, "PUT", "/v1/backup-identity",
+		`{"identity":"`+testIdentity+`","recipient":"age1qqqq"}`); w.Code != 200 {
+		t.Fatalf("seed failed: %d %s", w.Code, w.Body.String())
+	}
+
+	w := do(t, s, "GET", "/v1/backup-identity", "")
+	if w.Code != 200 {
+		t.Fatalf("status = %d, body %s", w.Code, w.Body.String())
+	}
+	if strings.Contains(w.Body.String(), testIdentity) {
+		t.Errorf("the escrowed identity came back over the wire:\n%s", w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), `"tenant":"acme"`) {
+		t.Errorf("answered for the wrong workspace: %s", w.Body.String())
+	}
+}
+
+// A public key in the private half's field is the mistake worth catching: it
+// would be escrowed as though it opened the backups, and nothing later would
+// disagree until a restore.
+func TestBackupIdentityRefusesAPublicKeyAsTheRecipientField(t *testing.T) {
+	s, _ := newServerAsTenant(t, "acme")
+	w := do(t, s, "PUT", "/v1/backup-identity",
+		`{"identity":"`+testIdentity+`","recipient":"AGE-SECRET-KEY-1SOMETHING"}`)
+	if w.Code != 400 {
+		t.Errorf("status = %d, want 400; body %s", w.Code, w.Body.String())
+	}
+}
+
+// A workspace with no key gets a plain "no", not an error -- the console asks
+// this before offering the choice, on every tenant.
+func TestBackupIdentityGetIsFineWhenNothingIsEscrowed(t *testing.T) {
+	s, _ := newServerAsTenant(t, "empty")
+	w := do(t, s, "GET", "/v1/backup-identity", "")
+	if w.Code != 200 {
+		t.Fatalf("status = %d, body %s", w.Code, w.Body.String())
+	}
+}

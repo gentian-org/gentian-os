@@ -69,7 +69,15 @@ func BackupIdentityPath(tenant string) string {
 
 type backupIdentityRequest struct {
 	Identity string `json:"identity"`
+	// Recipient is the public half. Recorded as metadata beside the identity so
+	// that "which key is escrowed" can be answered without reading the private
+	// one -- a public key is not a secret, and asking which key a workspace
+	// uses should not require handling the key that opens its backups.
+	Recipient string `json:"recipient"`
 }
+
+// recipientPrefix is what an age public key starts with.
+const recipientPrefix = "age1"
 
 // handleSetBackupIdentity escrows the caller's tenant backup identity.
 func (s *Server) handleSetBackupIdentity(w http.ResponseWriter, r *http.Request) {
@@ -110,9 +118,17 @@ func (s *Server) handleSetBackupIdentity(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
+	recipient := strings.TrimSpace(body.Recipient)
+	if recipient != "" && !strings.HasPrefix(recipient, recipientPrefix) {
+		writeErr(w, http.StatusBadRequest,
+			fmt.Errorf("that is not an age public key; they start with %s", recipientPrefix))
+		return
+	}
+
 	path := BackupIdentityPath(tenant)
 	fields := map[string]string{backupIdentityField: identity}
-	if err := s.Bao.Write(r.Context(), c.bao.Token, path, fields, c.name); err != nil {
+	meta := map[string]string{"recipient": recipient}
+	if err := s.Bao.WriteWithMetadata(r.Context(), c.bao.Token, path, fields, c.name, meta); err != nil {
 		log := ctrl.Log.WithName("credentialmgr")
 		if errors.Is(err, ErrUpstream) {
 			log.Error(err, "cannot reach OpenBao to escrow this backup key", "tenant", tenant)
@@ -136,5 +152,41 @@ func (s *Server) handleSetBackupIdentity(w http.ResponseWriter, r *http.Request)
 		"vaultPath": path,
 		"stored":    true,
 		"setBy":     c.name,
+		"recipient": recipient,
+	})
+}
+
+// handleGetBackupIdentity answers whether a workspace has an escrowed backup
+// key, and which one -- never the key itself.
+//
+// Metadata only, and that is not a courtesy: it reads the path's metadata
+// endpoint, which does not return the stored value at all. So this cannot leak
+// the identity even if it wanted to, and the public half it does return is the
+// thing a caller needs in order to encrypt to the existing key.
+func (s *Server) handleGetBackupIdentity(w http.ResponseWriter, r *http.Request) {
+	c, err := s.identify(r.Context(), r)
+	if err != nil {
+		s.writeIdentityErr(w, err)
+		return
+	}
+	tenant := c.view.Tenant
+	if tenant == "" {
+		writeErr(w, http.StatusForbidden,
+			errors.New("only a workspace administrator has a backup key"))
+		return
+	}
+
+	md, err := s.Bao.Metadata(r.Context(), c.bao.Token, BackupIdentityPath(tenant))
+	if err != nil {
+		writeErr(w, http.StatusBadGateway,
+			errors.New("the credential manager cannot reach OpenBao"))
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"tenant":    tenant,
+		"exists":    md.Exists,
+		"recipient": md.Recipient,
+		"setBy":     md.SetBy,
+		"updatedAt": md.UpdatedAt,
 	})
 }
