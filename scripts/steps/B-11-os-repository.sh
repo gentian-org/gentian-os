@@ -35,19 +35,14 @@ apply() {
     # entirely — see repository-default.yaml's $hasCred branch. Declaring one
     # that nothing will ever write to OpenBao would leave credentialSatisfied
     # false forever.
-    local cred_block=""
+    #
+    # Two full heredocs rather than one with an interpolated credential-block
+    # variable: validate_step_calls (scripts/lib/driver.sh) strips heredoc
+    # BODIES before scanning a step for undefined calls, but has no such
+    # allowance for YAML sitting in an ordinary multi-line string assignment
+    # — every "key:" line in one reads as a 4-space-indented bare command.
     if [[ "${auth}" != "none" ]]; then
-        cred_block="  credential:
-    vaultPath: gentian-os/kernel/repositories/os
-    displayName: \"Gentian OS Repository Access\"
-    phase: bootstrap
-    optional: true
-    authType: ${auth}
-    validate:
-      type: git-https"
-    fi
-
-    kubectl apply -f - <<EOF
+        kubectl apply -f - <<EOF
 apiVersion: gentianos.io/v1alpha1
 kind: Repository
 metadata:
@@ -60,8 +55,31 @@ spec:
     inCluster: ${GENTIAN_OS_REPO}
   branch: ${GENTIAN_OS_BRANCH:-main}
   writable: false
-${cred_block}
+  credential:
+    vaultPath: gentian-os/kernel/repositories/os
+    displayName: "Gentian OS Repository Access"
+    phase: bootstrap
+    optional: true
+    authType: ${auth}
+    validate:
+      type: git-https
 EOF
+    else
+        kubectl apply -f - <<EOF
+apiVersion: gentianos.io/v1alpha1
+kind: Repository
+metadata:
+  name: os
+  namespace: crossplane-system
+spec:
+  type: git
+  role: os
+  endpoints:
+    inCluster: ${GENTIAN_OS_REPO}
+  branch: ${GENTIAN_OS_BRANCH:-main}
+  writable: false
+EOF
+    fi
 }
 
 destroy() {
