@@ -6,14 +6,72 @@ starting from what you still have rather than from what broke.
 `scripts/recovery.sh` does all three. The long form of each is kept below,
 because a recovery you cannot perform by hand is one you cannot debug.
 
-```bash
-scripts/recovery.sh cluster  --kit gentian-recovery-kit-<cluster>.age
-scripts/recovery.sh tenant   --tenant corp --qr backup-key.png --confirm corp
-scripts/recovery.sh inspect  --tenant corp            # reads, changes nothing
-```
+---
 
-The key can arrive however you have it — `--key-file`, `--qr` (a photo of the
-printed code), `--from-vault`, or `--passphrase`. See `--help`.
+## Using the script
+
+Four commands:
+
+| | What it does | Writes anything? |
+|---|---|---|
+| `inspect` | reads a bundle: is it there, and does your key open it | no |
+| `show-key` | prints the backup key and writes its QR code | a PNG |
+| `tenant` | restores one workspace from a bundle | **replaces live data** |
+| `cluster` | rebuilds the cluster from a recovery kit | **rebuilds everything** |
+
+`inspect`, `show-key` and `tenant` each need an answer to two questions.
+
+### Which backup?
+
+Pick **one** of these three ways to say it:
+
+| | Use when |
+|---|---|
+| `--tenant corp` | the cluster is up. Takes the newest completed backup and says which one it chose. |
+| `--tenant corp --export <name>` | you want a specific one — `kubectl get tenantexports -n tenant-corp` lists them. |
+| `--s3-endpoint URL --s3-bucket B --s3-prefix P` | there is no cluster to ask. Add `--s3-access-key` / `--s3-secret-key`, or set `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY`. |
+
+`show-key` needs none of them — it only deals with the key.
+
+### Which key?
+
+Pick **one**. Everything below ends up as the same thing, so use whichever form
+you actually have:
+
+| | Use when |
+|---|---|
+| `--from-vault` | the cluster is up and escrows the key. **This is the default** if you name no key at all. |
+| `--key-file id.txt` | you have the `AGE-SECRET-KEY-…` line in a file — from the recovery kit, say. |
+| `--qr photo.png` | you have the printed QR code. Hand it the image; it decodes it. |
+| `--passphrase` | the backup was made with a passphrase rather than a key. Prompts for it. |
+
+### The rest
+
+| | |
+|---|---|
+| `--confirm NAME` | **required by `tenant`**, and must equal `--tenant`. It replaces live data; this is the guard. |
+| `--kit PATH` | **required by `cluster`**. The recovery kit to rebuild from. |
+| `--apps a,b` | restore only these apps. Default: every app in the bundle. |
+| `--dry-run` | print the `TenantRestore` instead of applying it. |
+
+### Put together
+
+```bash
+# is last night's backup readable?
+scripts/recovery.sh inspect --tenant corp
+
+# same question, from a laptop, with nothing but the bucket and the paper key
+scripts/recovery.sh inspect --s3-endpoint https://sos-ch-dk-2.exo.io \
+    --s3-bucket bigbucket --s3-prefix policy-20260904-0300 \
+    --s3-access-key ... --s3-secret-key ... --qr backup-key.png
+
+# put a workspace back from a specific backup
+scripts/recovery.sh tenant --tenant corp --export policy-20260904-0300 \
+    --from-vault --confirm corp
+
+# rebuild the cluster itself
+scripts/recovery.sh cluster --kit gentian-recovery-kit-ifk-w4h.age
+```
 
 For the underlying resources see [commands.md](commands.md) §11–§15; for the
 tenant-facing view see [tenant-backup-guide.md](tenant-backup-guide.md).

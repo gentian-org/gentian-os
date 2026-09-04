@@ -58,8 +58,6 @@ cluster
 tenant
   --tenant NAME      the workspace to restore into
   --export NAME      a TenantExport in that workspace
-  --bundle ENDPOINT,BUCKET,PREFIX[,REGION]
-                     a bundle by location, when the export is gone
   --apps a,b         only these apps (default: every app in the bundle)
   --confirm NAME     required; must equal --tenant
   --dry-run          print the TenantRestore instead of applying it
@@ -211,14 +209,6 @@ locate_bundle() {
         [[ -n "${BUNDLE_PREFIX}" ]]  || { error "--s3-bucket needs --s3-prefix."; return 1; }
         return 0
     fi
-    if [[ -n "${OPT_BUNDLE}" ]]; then
-        BUNDLE_ENDPOINT="$(printf '%s' "${OPT_BUNDLE}" | cut -d, -f1)"
-        BUNDLE_BUCKET="$(printf '%s' "${OPT_BUNDLE}" | cut -d, -f2)"
-        BUNDLE_PREFIX="$(printf '%s' "${OPT_BUNDLE}" | cut -d, -f3)"
-        BUNDLE_REGION="$(printf '%s' "${OPT_BUNDLE}" | cut -d, -f4)"
-        return 0
-    fi
-
     need kubectl || return 1
     need jq || return 1
     local ns="tenant-${OPT_TENANT}"
@@ -263,7 +253,7 @@ mc_alias() {
     local ak="" sk="" kn="platform-kernel"
 
     if [[ -z "${BUNDLE_ENDPOINT}" ]]; then
-        error "No endpoint for this bundle. Pass --s3-endpoint, or --bundle with one."
+        error "No endpoint for this bundle. Pass --s3-endpoint."
         return 1
     fi
 
@@ -291,8 +281,8 @@ mc_alias() {
 # ── commands ─────────────────────────────────────────────────────────────────
 
 cmd_inspect() {
-    [[ -n "${OPT_TENANT}" || -n "${OPT_BUNDLE}" || -n "${OPT_S3_BUCKET}" ]] ||
-        { error "inspect needs --tenant, --bundle or --s3-bucket."; usage; return 1; }
+    [[ -n "${OPT_TENANT}" || -n "${OPT_S3_BUCKET}" ]] ||
+        { error "inspect needs --tenant or --s3-bucket."; usage; return 1; }
     locate_bundle || return 1
 
     banner "Bundle"
@@ -337,7 +327,7 @@ cmd_tenant() {
     [[ -n "${OPT_APPS}" ]] && apps="[$(printf '%s' "${OPT_APPS}" | sed 's/,/","/g; s/^/"/; s/$/"/')]"
 
     local source_block
-    if [[ -n "${OPT_EXPORT}" && -z "${OPT_BUNDLE}" ]]; then
+    if [[ -n "${OPT_EXPORT}" && -z "${OPT_S3_BUCKET}" ]]; then
         source_block="  exportRef: ${OPT_EXPORT}"
     else
         source_block="  bundle:
@@ -427,7 +417,7 @@ cmd_show_key() {
 
 # ── arguments ────────────────────────────────────────────────────────────────
 
-OPT_KIT=""; OPT_TENANT=""; OPT_EXPORT=""; OPT_BUNDLE=""; OPT_APPS=""
+OPT_KIT=""; OPT_TENANT=""; OPT_EXPORT=""; OPT_APPS=""
 OPT_CONFIRM=""; OPT_KEY_FILE=""; OPT_QR=""; OPT_PASSPHRASE="0"
 OPT_DRY_RUN="0"
 OPT_S3_ENDPOINT=""; OPT_S3_BUCKET=""; OPT_S3_PREFIX=""; OPT_S3_REGION=""
@@ -441,7 +431,6 @@ while [[ $# -gt 0 ]]; do
         --kit)        shift; OPT_KIT="${1:-}" ;;
         --tenant)     shift; OPT_TENANT="${1:-}" ;;
         --export)     shift; OPT_EXPORT="${1:-}" ;;
-        --bundle)     shift; OPT_BUNDLE="${1:-}" ;;
         --apps)       shift; OPT_APPS="${1:-}" ;;
         --confirm)    shift; OPT_CONFIRM="${1:-}" ;;
         --key-file)   shift; OPT_KEY_FILE="${1:-}" ;;
