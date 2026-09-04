@@ -1629,7 +1629,7 @@ check_prereqs() {
     # age is required: E-03 generates the cluster's backup key with it, and
     # there is no fallback. Without it the install finishes with no key and
     # every nightly export fails.
-    local base_tools=(kubectl helm jq yq openssl curl bao age age-keygen envsubst)
+    local base_tools=(kubectl helm jq yq openssl curl bao age age-keygen)
     # Crossplane-based installer also needs the crossplane CLI and python3.
     local extra_tools=()
     [[ "${CROSSPLANE_MODE:-0}" == "1" ]] && extra_tools=(crossplane python3)

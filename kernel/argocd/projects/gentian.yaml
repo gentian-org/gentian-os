@@ -13,8 +13,8 @@ spec:
   sourceRepos:
   # Multi-source $values ref (bootstrap + ApplicationSets). The public
   # gentian-org defaults stay listed literally so the common, unmirrored case
-  # never depends on envsubst having run. The ${GENTIAN_*_REPO} lines below
-  # are this file's one templated part — expanded by install_argocd()
+  # never depends on the substitution below having run. The ${GENTIAN_*_REPO}
+  # lines are this file's one templated part — expanded by install_argocd()
   # (scripts/lib/argocd.sh) before apply, from the same install.env vars the
   # bootstrap chart and appsets already thread through. For an unmirrored
   # install they resolve to the same URLs already listed above, so the
