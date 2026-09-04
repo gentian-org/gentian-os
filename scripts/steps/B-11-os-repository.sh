@@ -2,30 +2,27 @@
 # step: B-11-os-repository
 # phase: secrets
 # requires: B-10-seed-secrets
-# provides: Repository claim for gentian-os — hands ArgoCD's os-repo credential off from the A-09 bootstrap bridge to OpenBao/ESO
-# mutates: Repository claim in crossplane-system; deletes argocd-repo-creds-bootstrap-os once the handoff completes
+# provides: Repository claim for gentian-os — Path-B credential source, not yet handed off
+# mutates: Repository claim in crossplane-system
 
 # os is the one repository role with a Path-A bootstrap bridge
 # (_apply_argocd_repo_creds, applied by install_argocd() at A-09):
 # B-01-openbao-transit needs ArgoCD to already authenticate to a private or
 # mirrored osRepo before OpenBao exists to back Path B (ESO-managed, the
 # mechanism every other credentialed repository uses exclusively). This step
-# creates the Path-B Repository claim as soon as OpenBao is reachable, then —
-# only once its credential is confirmed satisfied FROM OPENBAO, not merely
-# applied — deletes the bootstrap bridge Secret. Confirm-then-delete, so
-# there is never a window with zero working credential for osRepo.
+# only applies the Path-B Repository claim — same shape as
+# B-09-deployments-repository, apply-and-move-on, no readiness wait.
 #
-# Positioned after B-10 rather than immediately after B-02 (OpenBao becoming
-# reachable, the earliest this could in principle run): B-09's own
-# prerequisites already establish that the AppProject, Cluster XR and
-# ClusterSecretStore machinery this claim's ExternalSecret needs are only
-# reliably up by the end of phase B, and appending here needs no renumbering
-# of the existing B-03..B-10 sequence for what is otherwise a small delay in
-# closing the bootstrap bridge window.
+# The wait for credentialSatisfied and the bootstrap bridge Secret's deletion
+# live in C-07-os-repository-handoff, not here: this claim's
+# CredentialRequirement composes against the credentialrequirements.gentianos.io
+# CRD, which C-06-credential-catalogue installs by hand in phase C — a whole
+# phase after this step. Polling for satisfaction here would always time out
+# against a CRD that cannot exist yet, the same way it did before this file was
+# split (see C-07's header for the mechanics of the fix).
 
 check() {
-    kubectl get repository.gentianos.io os -n crossplane-system >/dev/null 2>&1 &&
-        ! kubectl get secret argocd-repo-creds-bootstrap-os -n argocd >/dev/null 2>&1
+    kubectl get repository.gentianos.io os -n crossplane-system >/dev/null 2>&1
 }
 
 apply() {
@@ -65,28 +62,6 @@ spec:
   writable: false
 ${cred_block}
 EOF
-
-    # Nothing to hand off: no credential declared, or the A-09 bridge was
-    # never created (also implied by auth=none — _apply_argocd_repo_creds
-    # returns early on the same check).
-    [[ "${auth}" == "none" ]] && return 0
-    kubectl get secret argocd-repo-creds-bootstrap-os -n argocd >/dev/null 2>&1 || return 0
-
-    info "Waiting for Repository/os credential to be satisfied from OpenBao (up to 2m)..."
-    local i=0
-    until [[ "$(kubectl get repository.gentianos.io os -n crossplane-system -o jsonpath='{.status.credentialSatisfied}' 2>/dev/null)" == "true" ]]; do
-        echo -n "."
-        sleep 5; i=$((i + 5))
-        [[ $i -lt 120 ]] || {
-            warn "Repository/os not yet credentialSatisfied after 2m — leaving the bootstrap bridge Secret in place; re-run install.sh to retry the handoff."
-            echo ""
-            return 0
-        }
-    done
-    echo ""
-
-    info "Repository/os credential satisfied from OpenBao — removing the bootstrap ArgoCD repo-creds bridge."
-    kubectl delete secret argocd-repo-creds-bootstrap-os -n argocd --ignore-not-found=true
 }
 
 destroy() {
