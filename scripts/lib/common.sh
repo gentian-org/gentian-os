@@ -958,9 +958,14 @@ EOF
         warn "GENTIAN_DEPLOYMENTS_GIT_TOKEN not set — in-cluster App Store installs cannot push to gentian-deployments."
         warn "  Export it, or let the installer prompt and cache it, when needed."
     fi
-    : "${GENTIAN_DEPLOYMENTS_GIT_USERNAME:=x-access-token}"
-    export GENTIAN_DEPLOYMENTS_GIT_USERNAME
-
+    # No default+export for GENTIAN_DEPLOYMENTS_GIT_USERNAME here — this runs
+    # before collect_bootstrap_credentials, so defaulting it this early wins
+    # the "already set" race against the 0600 cache and OpenBao recovery
+    # (_load_credential_cache / try_load_creds_from_openbao both skip a var
+    # that's already non-empty). A cluster whose username genuinely is
+    # x-access-token still gets it — _validate_requirement's own
+    # "${!user_var:-x-access-token}" fallback applies it at the point of use,
+    # after recovery has had its chance.
 }
 
 
