@@ -308,3 +308,42 @@ func TestS3RestoreWritesToPlatformStorageNotTheBundleDestination(t *testing.T) {
 		t.Errorf("restore still addresses the bundle alias:\n%s", script)
 	}
 }
+
+// The portal shell restores into the role the provisioner made, not the one
+// its label implies.
+//
+// This is the one place where a Job's label and its database disagree on
+// purpose: the shell is labelled with the tenant-wide component so its progress
+// aggregates there, while its database and role are named for the shell. The
+// role was derived from the label, so every restore ended at
+//
+//	ERROR: role "<tenant>_gentian-tenant" does not exist
+//
+// after the bundle had been fetched and decrypted — far enough to look like it
+// was working, and only on the tenant-wide step, which is the last one.
+func TestPostgresRestoreUsesTheRoleThatExists(t *testing.T) {
+	shell := JobParams{
+		Namespace: "platform-kernel",
+		Name:      "tx-r-shellr",
+		Tenant:    "corp",
+		App:       "gentian-tenant", // the label, deliberately
+		Role:      PostgresRole("corp", "shell"),
+	}
+	script := PostgresRestoreJob(shell, Decryption{Mode: "recipient", SecretName: "k", SecretKey: "identity"},
+		"corp_shell").Spec.Template.Spec.Containers[0].Args[0]
+
+	if !strings.Contains(script, "'corp_shell'") {
+		t.Errorf("restore does not name the shell role:\n%s", script)
+	}
+	if strings.Contains(script, "corp_gentian-tenant") {
+		t.Errorf("restore still derives the role from the label:\n%s", script)
+	}
+
+	// An app names one thing, so leaving Role empty must keep working.
+	app := JobParams{Namespace: "platform-kernel", Name: "tx-r-pgr", Tenant: "corp", App: "docmost-ce"}
+	appScript := PostgresRestoreJob(app, Decryption{Mode: "recipient", SecretName: "k", SecretKey: "identity"},
+		"corp_docmost_ce").Spec.Template.Spec.Containers[0].Args[0]
+	if !strings.Contains(appScript, "'corp_docmost-ce'") {
+		t.Errorf("an app's role is no longer derived from its name:\n%s", appScript)
+	}
+}

@@ -197,7 +197,7 @@ echo "ownership normalised to ${ROLE}"
 # table oc_appconfig" — data perfectly restored, unreadable by its owner.
 pg_restore --role="${ROLE}" --clean --if-exists --no-owner --no-acl --single-transaction \
   --dbname="${DB}" %[3]s/dump.pgc
-echo "restored %[4]s"`, shellSingleQuote(PostgresRole(p.Tenant, p.App)), shellSingleQuote(database), workDir, database)},
+echo "restored %[4]s"`, shellSingleQuote(p.restoreRole()), shellSingleQuote(database), workDir, database)},
 		Env:          postgresAdminEnv(),
 		VolumeMounts: []corev1.VolumeMount{{Name: "work", MountPath: workDir}},
 	}
@@ -236,6 +236,14 @@ echo "restored ${DB}"`, shellSingleQuote(database), workDir)},
 	return restoreJob(p, []corev1.Container{
 		fetchAndDecrypt(d, p, artefact, "dump.sql.gz"),
 	}, restore, nil)
+}
+
+// restoreRole is the role a restore gives the objects to.
+func (p JobParams) restoreRole() string {
+	if p.Role != "" {
+		return p.Role
+	}
+	return PostgresRole(p.Tenant, p.App)
 }
 
 // S3RestoreJob puts one app bucket's objects back.
