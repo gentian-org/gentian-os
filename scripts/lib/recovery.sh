@@ -130,42 +130,54 @@ _kit_from_json() {
 # against a running cluster and confirm it is the right one, without decrypting
 # anything and without the cluster learning anything it does not already have.
 _kit_print_backup_key() {
-    local identity_file="$1" recipient="$2" identity cluster
+    local identity_file="$1" recipient="$2" identity cluster png
     identity="$(grep -m1 'AGE-SECRET-KEY-' "${identity_file}" 2>/dev/null || true)"
     [[ -n "${identity}" ]] || return 0
     cluster="${GENTIAN_DEPLOYMENTS_CLUSTER_ID:-${KERNEL_DOMAIN:-unknown}}"
+    png="gentian-backup-key-${cluster}.png"
 
     echo
     echo "  ┌───────────────────────────────────────────────────────────────┐"
-    echo "  │  GENTIAN BACKUP KEY — PRINT THIS AND STORE IT OFFLINE         │"
+    echo "  │  GENTIAN BACKUP KEY — PRINT IT, THEN STORE IT OFFLINE         │"
     echo "  └───────────────────────────────────────────────────────────────┘"
     echo
     echo "    Cluster : ${cluster}"
     echo "    Created : $(date -u +%Y-%m-%dT%H:%M:%SZ)"
     echo
-    echo "    Public key (safe to share; identifies this cluster's backups):"
+    echo "    Public key (safe to share):"
     echo "      ${recipient}"
     echo
-    echo "    IDENTITY — this opens every backup. Treat it as the backup itself:"
+    echo "    IDENTITY — opens every backup. Treat it as the backup itself:"
     echo "      ${identity}"
     echo
 
+    # The PNG is the copy that survives losing every computer. Written 0600
+    # first, so it is never briefly world-readable with a private key in it.
     if command -v qrencode >/dev/null 2>&1; then
-        echo "    Same identity as a QR code:"
+        if (umask 077 && qrencode -o "${png}" -l H -s 8 "${identity}" 2>/dev/null); then
+            success "  QR code written to ${png}"
+        else
+            png=""
+            warn "  Could not write the QR code; the identity above is the copy to keep."
+        fi
         qrencode -t UTF8 -l H -m 2 "${identity}" 2>/dev/null || true
         echo
     else
-        echo "    (install qrencode to get this as a scannable QR code)"
+        png=""
+        warn "  qrencode is not installed, so no QR code was written."
+        warn "  Install it (apt/brew/apk install qrencode) and run:"
+        warn "    qrencode -o ${png:-backup-key.png} -l H -s 8 '<the identity above>'"
         echo
     fi
 
-    echo "    To read a bundle with it:"
-    echo "      age -d -i <this-key-file> manifest.json.age > manifest.json"
+    echo "    WHAT TO DO NOW"
+    echo "      1. Print ${png:-the identity above}."
+    echo "      2. Put the paper where your break-glass material lives — a safe,"
+    echo "         not this cluster and not the machine you would restore from."
+    echo "      3. Delete the PNG from this disk once it is printed."
     echo
-    echo "    Losing this makes every backup encrypted to the key above"
-    echo "    unreadable. There is no recovery path, by design. Store it where"
-    echo "    the recovery kit and the master password live — and not on the"
-    echo "    cluster it protects."
+    echo "    Without it every backup is permanently unreadable. To use it:"
+    echo "      age -d -i <key-file> manifest.json.age > manifest.json"
     echo
 }
 

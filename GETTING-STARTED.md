@@ -81,6 +81,11 @@ until it is done.
     half every scheduled export encrypts to. Nothing else can make one. Without
     it the install would finish and every nightly backup would fail with `no age
     recipients configured`, for as long as nobody looked.
+- **Optional:** [`qrencode`](https://fukuchi.org/works/qrencode/) — `sudo apt
+  install qrencode`, `brew install qrencode`, `apk add qrencode`. The recovery
+  kit prints the backup key as text either way; with `qrencode` it also prints
+  it as a QR code, which is what you keep on paper. Pre-flight warns if it is
+  missing, since the kit is written near the end of a long install.
 - **A domain**, for example `platform.example.com`. It does not have to be
   publicly resolvable.
 - **A token with read access to `gentian-deployments`.** The installer asks for
