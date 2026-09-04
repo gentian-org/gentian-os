@@ -254,7 +254,9 @@ locate_bundle() {
 # tool useless exactly when it is needed. The cluster path stays because it
 # saves looking anything up while the cluster is still there.
 mc_alias() {
-    need mc "https://min.io/docs/minio/linux/reference/minio-mc.html" || return 1
+    need mc "mc is the MinIO client, for reading bundles out of object storage:
+  curl -sSL https://dl.min.io/client/mc/release/linux-amd64/mc -o ~/.local/bin/mc && chmod +x ~/.local/bin/mc
+  macOS: brew install minio/stable/mc" || return 1
     local ak="" sk="" kn="platform-kernel"
 
     # An empty endpoint means the platform's own MinIO, whose address is a
@@ -293,6 +295,7 @@ mc_alias() {
 # command as arguments and util-linux takes it after -c.
 age_decrypt() {
     local file="$1"
+    need age "It is what a bundle is encrypted with: apt/brew/apk install age" || return 1
     if [[ "${KEY_KIND}" != "passphrase" ]]; then
         age -d -i "${WORK}/identity" "${file}"
         return

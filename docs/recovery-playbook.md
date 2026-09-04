@@ -6,6 +6,24 @@ starting from what you still have rather than from what broke.
 `scripts/recovery.sh` does all three. The long form of each is kept below,
 because a recovery you cannot perform by hand is one you cannot debug.
 
+### What it needs on your machine
+
+`age` and `kubectl` you already have from the install. Two more, depending on
+what you are doing:
+
+```bash
+# mc — the MinIO client, for reading bundles out of object storage
+curl -sSL https://dl.min.io/client/mc/release/linux-amd64/mc -o ~/.local/bin/mc
+chmod +x ~/.local/bin/mc          # macOS: brew install minio/stable/mc
+
+# to read a QR code back in, and to write one out
+sudo apt install zbar-tools qrencode
+```
+
+`jq` is needed for anything that asks the cluster, and `bao` for
+`--from-vault`. Each is named at the point it is missing, so you can also just
+run the command and see.
+
 ---
 
 ## Using the script
