@@ -1167,6 +1167,51 @@ func (r *TenantReconciler) deleteXTenant(ctx context.Context, tenant *gentianov1
 	return client.IgnoreNotFound(r.Delete(ctx, xr))
 }
 
+// xtenantQuotas projects a Tenant's quotas onto the XTenant spec.
+//
+// Every field of TenantQuotas has to appear here AND in the quotas schema of
+// crossplane/xrds/tenant.yaml. An XRD is a structural schema, so a field this
+// function emits that the XRD does not declare is pruned on write — silently,
+// with no event and no condition. The Tenant keeps showing the quantity, the
+// XTenant never receives it, and the Composition's template for it never fires.
+//
+// That is not hypothetical. requestsCpu and requestsMemory reached the
+// Composition and the Go mirror in internal/kernel/tenantshell but neither this
+// mapping nor the XRD, so a tenant moved onto a ResourcePlan received the plan's
+// limits and none of its reserved capacity — and reserved capacity is the half a
+// plan is priced on (see TenantQuotas.RequestsCPU). Nothing failed; the tenant
+// was simply sold something the cluster was never told to enforce.
+//
+// xtenant_quotas_agreement_test.go holds the two ends together.
+func xtenantQuotas(q *gentianov1alpha1.TenantQuotas) map[string]interface{} {
+	if q == nil {
+		return nil
+	}
+	quotas := map[string]interface{}{}
+	if q.Storage != nil {
+		quotas["storage"] = q.Storage.String()
+	}
+	if q.CPU != nil {
+		quotas["cpu"] = q.CPU.String()
+	}
+	if q.Memory != nil {
+		quotas["memory"] = q.Memory.String()
+	}
+	if q.RequestsCPU != nil {
+		quotas["requestsCpu"] = q.RequestsCPU.String()
+	}
+	if q.RequestsMemory != nil {
+		quotas["requestsMemory"] = q.RequestsMemory.String()
+	}
+	if q.MaxApps > 0 {
+		quotas["maxApps"] = int64(q.MaxApps)
+	}
+	if q.MaxPods > 0 {
+		quotas["maxPods"] = int64(q.MaxPods)
+	}
+	return quotas
+}
+
 // buildXTenant constructs an XTenant composite object from a Tenant's spec.
 // The XTenant is cluster-scoped; its name matches the Tenant name.
 func (r *TenantReconciler) buildXTenant(ctx context.Context, tenant *gentianov1alpha1.Tenant) (*unstructured.Unstructured, error) {
@@ -1214,26 +1259,8 @@ func (r *TenantReconciler) buildXTenant(ctx context.Context, tenant *gentianov1a
 		}
 	}
 
-	if tenant.Spec.Quotas != nil {
-		quotas := map[string]interface{}{}
-		if tenant.Spec.Quotas.Storage != nil {
-			quotas["storage"] = tenant.Spec.Quotas.Storage.String()
-		}
-		if tenant.Spec.Quotas.CPU != nil {
-			quotas["cpu"] = tenant.Spec.Quotas.CPU.String()
-		}
-		if tenant.Spec.Quotas.Memory != nil {
-			quotas["memory"] = tenant.Spec.Quotas.Memory.String()
-		}
-		if tenant.Spec.Quotas.MaxApps > 0 {
-			quotas["maxApps"] = int64(tenant.Spec.Quotas.MaxApps)
-		}
-		if tenant.Spec.Quotas.MaxPods > 0 {
-			quotas["maxPods"] = int64(tenant.Spec.Quotas.MaxPods)
-		}
-		if len(quotas) > 0 {
-			spec["quotas"] = quotas
-		}
+	if quotas := xtenantQuotas(tenant.Spec.Quotas); len(quotas) > 0 {
+		spec["quotas"] = quotas
 	}
 
 	profileIndex, err := loadAppProfileIndex(ctx, r.Client)

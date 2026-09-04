@@ -11,17 +11,24 @@ spec:
   apps:
     - name: catalogue-test-app
       profile: catalogue-test-app
-  # Set so the ResourceQuota is actually rendered. Without quotas the
-  # Composition skips that Object entirely, and the mapping from plan
-  # quantities to quota keys went untested — which is how requests.cpu and
-  # requests.memory came to exist in the Go mirror and not here, and a tenant
-  # moved onto a plan received its limits and none of its reserved capacity.
+  # Every field of TenantQuotas, set so the ResourceQuota is rendered and every
+  # key of it compared. Without quotas the Composition skips that Object
+  # entirely and the mapping from plan quantities to quota keys goes untested.
+  #
+  # Completeness is the point, and it is enforced:
+  # TestRenderFixtureExercisesTheRealQuotas fails when a field of TenantQuotas is
+  # missing here. This fixture writes an XR directly and so skips both hops the
+  # real path takes — Tenant -> XTenant projection, then the XRD's structural
+  # schema — which is how it went on rendering requests.cpu correctly while the
+  # real path pruned it and tenants on a plan got none of the reserved capacity
+  # they were sold.
   quotas:
     requestsCpu: "2"
     requestsMemory: 4Gi
     cpu: "8"
     memory: 8Gi
     storage: 50Gi
+    maxApps: 10
     maxPods: 100
   compositeDeletePolicy: Background
   resourceRefs: []
