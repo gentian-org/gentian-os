@@ -47,4 +47,4 @@ config/rbac/
 # populate, and the entry goes stale on every commit made in the worktree, so
 # the repo reports a modification that has nothing to do with the work.
 .claude/worktrees/
-backup-key.png
+backup-key*
