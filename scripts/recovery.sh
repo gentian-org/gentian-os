@@ -503,6 +503,23 @@ OPT_S3_AK=""; OPT_S3_SK=""
 [[ $# -gt 0 ]] || { usage; exit 1; }
 COMMAND="$1"; shift
 
+# Validated before the options are read, so a missing or misspelt command is
+# reported as itself rather than as whatever the next word looked like. Without
+# this, "recovery.sh --tenant corp" took --tenant as the command and then
+# failed on "corp" with "Unknown option".
+case "${COMMAND}" in
+    cluster|tenant|inspect|show-key|-h|--help|help) : ;;
+    -*)
+        error "No command given — ${COMMAND} is an option, not a command."
+        error "  Read a bundle:     scripts/recovery.sh inspect ${COMMAND} $*"
+        error "  Restore into one:  scripts/recovery.sh tenant  ${COMMAND} $*"
+        exit 1 ;;
+    *)
+        error "Unknown command: ${COMMAND}"
+        error "  One of: cluster, tenant, inspect, show-key"
+        exit 1 ;;
+esac
+
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --kit)        shift; OPT_KIT="${1:-}" ;;
