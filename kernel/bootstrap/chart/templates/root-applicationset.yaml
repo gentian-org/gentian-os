@@ -81,6 +81,10 @@ spec:
         value: "{{ .Values.llmGpuAcceleration }}"
       - name: mailEgressHost
         value: "{{ .Values.mailEgressHost }}"
+      # Whether the MetalLB Kyverno exception (raw/05b-metallb-exception.yaml)
+      # is generated. From the Cluster claim's platformParams.metallb.
+      - name: metallbException
+        value: "{{ .Values.metallbException }}"
       # Every child ApplicationSet points back at this repo. Without this the
       # children would keep the literal branch baked into raw/*.yaml while the
       # parent tracked another one, so a cluster pinned to a release tag would

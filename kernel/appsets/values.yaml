@@ -48,6 +48,12 @@ mailServiceMode: external
 llmEnabled: "false"
 llmGpuAcceleration: "false"
 
+# Whether the Kyverno host-namespace exception MetalLB's speaker DaemonSet
+# needs (raw/05b-metallb-exception.yaml) is generated at all. From the Cluster
+# claim's platformParams.metallb — off by default, since a self-hosted cluster
+# not running MetalLB should never get it.
+metallbException: "false"
+
 # Where gentian-os itself comes from. The children hardcoded this URL, so a
 # mirrored or forked install could pin the ref but not the origin (§9, platform
 # provenance). Passed by root-applicationset.yaml.tmpl from GENTIAN_OS_REPO.

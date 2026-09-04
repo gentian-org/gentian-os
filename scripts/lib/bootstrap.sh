@@ -1159,6 +1159,7 @@ bootstrap_root_appset() {
         --set-string "llmEnabled=${LLM_SUPPORT:-false}" \
         --set-string "llmGpuAcceleration=${GPU_ACCELERATION:-false}" \
         --set-string "mailEgressHost=${MAIL_EGRESS_HOST:-}" \
+        --set-string "metallbException=${METALLB_EXCEPTION:-false}" \
         | kubectl apply -f -
     success "gentian-appsets Application applied."
 

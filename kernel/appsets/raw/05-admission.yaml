@@ -20,6 +20,14 @@ spec:
       valuesObject:
         admissionController:
           replicas: 1
+          container:
+            extraArgs:
+              # Off by default in Kyverno itself. Needed for
+              # raw/05b-metallb-exception.yaml — restricted to metallb-system so
+              # only that PolicyException (not one an operator drops in some
+              # other namespace) is honored.
+              enablePolicyException: "true"
+              exceptionNamespace: "metallb-system"
         backgroundController:
           replicas: 1
         cleanupController:

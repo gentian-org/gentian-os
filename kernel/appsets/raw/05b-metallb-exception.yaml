@@ -1,0 +1,46 @@
+---
+# MetalLB's Kyverno exception lives under its own AppProject, isolated from
+# the shared "gentian" one entirely — that project is common to every
+# gentian-os cluster whether or not it runs MetalLB, and the point of this
+# isolation is to keep MetalLB's footprint from touching it at all, rather
+# than conditionally adding to it. Generated only when a cluster's claim sets
+# platformParams.metallb: "true" (kernel/appsets/templates/appsets.yaml).
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: metallb
+  namespace: argocd
+spec:
+  description: MetalLB's Kyverno PolicyException — isolated from the gentian project
+  sourceRepos:
+  - https://github.com/gentian-org/gentian-os
+  destinations:
+  - namespace: metallb-system
+    server: https://kubernetes.default.svc
+  clusterResourceWhitelist: []
+  namespaceResourceWhitelist:
+  - group: kyverno.io
+    kind: PolicyException
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: metallb-policy-exception
+  namespace: argocd
+  finalizers:
+  - resources-finalizer.argocd.argoproj.io
+spec:
+  project: metallb
+  source:
+    repoURL: https://github.com/gentian-org/gentian-os
+    targetRevision: develop
+    path: kernel/security/metallb
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: metallb-system
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+    - ServerSideApply=true

@@ -1129,6 +1129,11 @@ load_deployments_cluster_settings() {
         # requirement.
         claim_setting     PLATFORM        platform        "${claim_file}"
         claim_map_setting PLATFORM_PARAMS platformParams  "${claim_file}"
+        # One specific platformParams key, read directly rather than parsed out
+        # of PLATFORM_PARAMS' comma-joined string — gates whether the Kyverno
+        # host-namespace exception MetalLB's speaker needs gets deployed at all
+        # (kernel/appsets/raw/05b-metallb-exception.yaml).
+        claim_setting     METALLB_EXCEPTION platformParams.metallb "${claim_file}"
         claim_setting     EDGE_ADDRESS_REF addressRef     "${claim_file}"
         claim_setting     DNS_PROVIDER    certificates.dnsProvider "${claim_file}"
         claim_map_setting DNS_PARAMS      certificates.dnsParams   "${claim_file}"
