@@ -349,15 +349,19 @@ spec:
             - name: GIT_CONFIG_VALUE_1
               value: "Authorization: Bearer $(GIT_BEARER_TOKEN)"
             {{- else }}
+            # No credential.helper: it needs a lock file beside --file even
+            # for a plain read, which is fatal against a read-only mounted
+            # Secret ("unable to get credential storage lock ... Permission
+            # denied"). The init container's clone URL already carries
+            # user:pass (see git-clone-deployments below), so it lands in
+            # this checkout's origin remote and every push/fetch against
+            # origin reads it straight from there — no credential lookup, no
+            # lock, nothing for this container to mount at all.
             - name: GIT_CONFIG_COUNT
-              value: "2"
+              value: "1"
             - name: GIT_CONFIG_KEY_0
-              value: credential.helper
-            - name: GIT_CONFIG_VALUE_0
-              value: store --file=/etc/git/credentials
-            - name: GIT_CONFIG_KEY_1
               value: safe.directory
-            - name: GIT_CONFIG_VALUE_1
+            - name: GIT_CONFIG_VALUE_0
               value: {{ $lifecycleDeployments.path | default "/data/gentian-deployments" | quote }}
             {{- end }}
             - name: GIT_AUTHOR_NAME
@@ -436,12 +440,12 @@ spec:
             - name: deployments-checkout
               mountPath: {{ $lifecycleDeployments.path | default "/data/gentian-deployments" }}
             {{- end }}
-            {{- if $lifecycleGitCredsFile }}
-            - name: git-credentials
-              mountPath: /etc/git/credentials
-              subPath: .git-credentials
-              readOnly: true
-            {{- end }}
+            {{- /* No git-credentials mount here for basic auth: the init
+                 container's clone URL already carries user:pass, so it is
+                 in this checkout's origin remote and this container never
+                 needs to read the credential itself. Bearer's token comes
+                 through GIT_BEARER_TOKEN (secretKeyRef) above, not a mount
+                 either. */}}
           {{- end }}
       {{- with .Values.nodeSelector }}
       nodeSelector:
@@ -487,11 +491,25 @@ spec:
             - -c
             - |
               set -e
+              # credential.helper 'store' needs a lock file beside its --file
+              # target even for a plain read, which fails outright against a
+              # read-only mounted Secret ("unable to get credential storage
+              # lock ... Permission denied") — not a silent no-op. The
+              # mounted file already IS a complete scheme://user:pass@host/path
+              # URL (crossplane/compositions/repository-default.yaml), so
+              # clone from that directly and skip credential.helper entirely.
+              # It then lands in this checkout's origin remote, so the
+              # gentian-os container's own later pushes read it straight from
+              # there too — see GIT_CONFIG_COUNT below in this Deployment.
+              CLONE_URL="${GENTIAN_DEPLOYMENTS_REPO}"
+              {{- if $lifecycleGitCredsFile }}
+              [ -s /etc/git/credentials ] && CLONE_URL="$(cat /etc/git/credentials)"
+              {{- end }}
               for attempt in 1 2 3 4 5; do
                 if [ -d {{ $lifecycleDeployments.path | default "/data/gentian-deployments" }}/.git ]; then
                   exit 0
                 fi
-                if git clone "${GENTIAN_DEPLOYMENTS_REPO}" {{ $lifecycleDeployments.path | default "/data/gentian-deployments" }}; then
+                if git clone "${CLONE_URL}" {{ $lifecycleDeployments.path | default "/data/gentian-deployments" }}; then
                   exit 0
                 fi
                 echo "git clone attempt ${attempt} failed; retrying..."
@@ -501,10 +519,9 @@ spec:
           env:
             - name: GENTIAN_DEPLOYMENTS_REPO
               value: {{ $lifecycleDeployments.repo | default "https://git.example.domain/gentian-deployments" | quote }}
-            {{- if $lifecycleGitCredsSecret }}
+            {{- if $lifecycleBearer }}
             - name: HOME
               value: /tmp
-            {{- if $lifecycleBearer }}
             - name: GIT_CONFIG_COUNT
               value: "1"
             - name: GIT_BEARER_TOKEN
@@ -517,14 +534,6 @@ spec:
               value: http.extraHeader
             - name: GIT_CONFIG_VALUE_0
               value: "Authorization: Bearer $(GIT_BEARER_TOKEN)"
-            {{- else }}
-            - name: GIT_CONFIG_COUNT
-              value: "1"
-            - name: GIT_CONFIG_KEY_0
-              value: credential.helper
-            - name: GIT_CONFIG_VALUE_0
-              value: store --file=/etc/git/credentials
-            {{- end }}
             {{- end }}
           securityContext:
             runAsUser: 65532
