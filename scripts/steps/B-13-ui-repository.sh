@@ -20,19 +20,13 @@ apply() {
     echo "     + kubectl apply — Repository/ui → ${GENTIAN_UI_REPO} (auth=${auth})"
     [[ "${GENTIAN_DRY_RUN:-0}" == "1" ]] && return 0
 
-    local cred_block=""
+    # Two full heredocs rather than one with an interpolated credential-block
+    # variable: validate_step_calls (scripts/lib/driver.sh) strips heredoc
+    # BODIES before scanning a step for undefined calls, but has no such
+    # allowance for YAML sitting in an ordinary multi-line string assignment
+    # — every "key:" line in one reads as a 4-space-indented bare command.
     if [[ "${auth}" != "none" ]]; then
-        cred_block="  credential:
-    vaultPath: gentian-os/kernel/repositories/ui
-    displayName: \"Gentian UI Repository Access\"
-    phase: bootstrap
-    optional: true
-    authType: ${auth}
-    validate:
-      type: git-https"
-    fi
-
-    kubectl apply -f - <<EOF
+        kubectl apply -f - <<EOF
 apiVersion: gentianos.io/v1alpha1
 kind: Repository
 metadata:
@@ -45,8 +39,31 @@ spec:
     inCluster: ${GENTIAN_UI_REPO}
   branch: ${GENTIAN_UI_BRANCH:-develop}
   writable: false
-${cred_block}
+  credential:
+    vaultPath: gentian-os/kernel/repositories/ui
+    displayName: "Gentian UI Repository Access"
+    phase: bootstrap
+    optional: true
+    authType: ${auth}
+    validate:
+      type: git-https
 EOF
+    else
+        kubectl apply -f - <<EOF
+apiVersion: gentianos.io/v1alpha1
+kind: Repository
+metadata:
+  name: ui
+  namespace: crossplane-system
+spec:
+  type: git
+  role: ui
+  endpoints:
+    inCluster: ${GENTIAN_UI_REPO}
+  branch: ${GENTIAN_UI_BRANCH:-develop}
+  writable: false
+EOF
+    fi
 }
 
 destroy() {
