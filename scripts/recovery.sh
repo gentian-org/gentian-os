@@ -115,7 +115,9 @@ decode_qr() {
     [[ -r "${image}" ]] || { error "Cannot read ${image}"; return 1; }
 
     if command -v zbarimg >/dev/null 2>&1; then
-        out="$(zbarimg --quiet --raw "${image}" 2>/dev/null | head -1 || true)"
+        # Not head -1: a QR of a whole key file is multi-line, and its first
+        # line is age-keygen's "# created:" comment.
+        out="$(zbarimg --quiet --raw "${image}" 2>/dev/null || true)"
     fi
     if [[ -z "${out}" ]] && command -v python3 >/dev/null 2>&1; then
         out="$(python3 - "${image}" <<'PY' 2>/dev/null || true
@@ -131,17 +133,27 @@ PY
 )"
     fi
 
-    out="$(printf '%s' "${out}" | tr -d '[:space:]')"
-    if [[ -z "${out}" ]]; then
+    if [[ -z "$(printf '%s' "${out}" | tr -d '[:space:]')" ]]; then
         error "No QR code found in ${image}."
         error "  Install a decoder:  sudo apt install zbar-tools"
         error "                  or  pip install pyzbar pillow"
         return 1
     fi
-    case "${out}" in
-        AGE-SECRET-KEY-*) printf '%s\n' "${out}" ;;
-        *) error "That QR code is not an age identity (got ${out:0:16}...)."; return 1 ;;
-    esac
+
+    # The key line out of whatever was encoded. A QR made from the whole
+    # age-keygen file carries its "# created:" and "# public key:" comments
+    # too, and that is a perfectly good thing to have printed -- so take the
+    # line rather than insisting the payload be nothing else. Newlines are kept
+    # until here for the same reason: flattening them first turns a three-line
+    # file into one unsplittable blob.
+    local key
+    key="$(printf '%s\n' "${out}" | grep -m1 -o 'AGE-SECRET-KEY-[0-9A-Za-z]*' || true)"
+    if [[ -z "${key}" ]]; then
+        error "No age identity in that QR code."
+        error "  It decoded to: $(printf '%s' "${out}" | head -c 40 | tr '\n' ' ')..."
+        return 1
+    fi
+    printf '%s\n' "${key}"
 }
 
 # identity_from_vault — the escrowed copy, when the cluster keeps one.
