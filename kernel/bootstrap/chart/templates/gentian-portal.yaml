@@ -22,23 +22,28 @@ metadata:
   namespace: argocd
   annotations:
     argocd.argoproj.io/sync-wave: "1"
-    # KNOWN DEFECT — same shape as the one fixed in
-    # gentian-os-application.yaml.tmpl: pinning image-list to the moving
-    # {{ .Values.portalImageTag }} (develop) makes the candidate set a single entry whose
-    # name never changes, so newest-build re-picks it every cycle and
-    # api.image.tag / web.image.tag never move. New portal builds do not reach
-    # the cluster; the controller reports images_updated=0 while looking healthy.
+    # The image-list deliberately carries NO tag, and allow-tags does the
+    # selecting instead — the same shape as gentian-os.yaml beside this file.
     #
-    # Not fixed here because the fix requires branch-scoped immutable tags
-    # (develop-<sha>) to exist in the portal image repos, and those are built by
-    # gentian-portal-api / gentian-portal-web, not by this repo's CI. An
-    # allow-tags regexp added before that would match nothing and change no
-    # behaviour. Once those pipelines publish branch-prefixed sha tags, drop the
-    # tag from image-list and add, per alias:
-    #   argocd-image-updater.argoproj.io/<alias>.allow-tags: regexp:^{{ .Values.portalImageTag }}-[0-9a-f]{7,}$
+    # Pinning image-list to the moving {{ .Values.portalImageTag }} tag makes the candidate
+    # set a single entry whose name never changes, so newest-build re-picks it
+    # every cycle, api.image.tag / web.image.tag never move, and no build
+    # reaches the cluster while the controller reports images_updated=0 and
+    # looks perfectly healthy.
+    #
+    # allow-tags restricts candidates to the branch-scoped immutable tags the
+    # portal CI publishes ({{ .Values.portalImageTag }}-abc1234, see the build job in
+    # gentian-ui/.github/workflows/gentian-portal.yaml). The bare short-sha tag
+    # published beside them must NOT be tracked: every branch publishes into
+    # that namespace, so a main build would be a valid candidate for a develop
+    # cluster. When {{ .Values.portalImageTag }} is a release tag rather than a branch, no
+    # candidate matches and the pinned images are left alone — which is what a
+    # pinned release should do.
     argocd-image-updater.argoproj.io/image-list: >-
-      api=ghcr.io/gentian-org/gentian-portal-api:{{ .Values.portalImageTag }},
-      web=ghcr.io/gentian-org/gentian-portal-web:{{ .Values.portalImageTag }}
+      api=ghcr.io/gentian-org/gentian-portal-api,
+      web=ghcr.io/gentian-org/gentian-portal-web
+    argocd-image-updater.argoproj.io/api.allow-tags: regexp:^{{ .Values.portalImageTag }}-[0-9a-f]{7,}$
+    argocd-image-updater.argoproj.io/web.allow-tags: regexp:^{{ .Values.portalImageTag }}-[0-9a-f]{7,}$
     argocd-image-updater.argoproj.io/api.update-strategy: newest-build
     argocd-image-updater.argoproj.io/web.update-strategy: newest-build
     argocd-image-updater.argoproj.io/api.helm.image-name: api.image.repository
