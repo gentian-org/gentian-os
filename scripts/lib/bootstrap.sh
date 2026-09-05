@@ -1155,6 +1155,8 @@ bootstrap_root_appset() {
         --set-string "storageClass=${STORAGE_CLASS:-}" \
         --set-string "smtpHost=${EXTERNAL_SMTP_HOST:-}" \
         --set-string "smtpPort=${EXTERNAL_SMTP_PORT:-587}" \
+        --set-string "smtpSsl=${EXTERNAL_SMTP_SSL:-false}" \
+        --set-string "smtpStarttls=${EXTERNAL_SMTP_STARTTLS:-true}" \
         --set-string "mailServiceMode=$(gentian_mail_service_mode)" \
         --set-string "llmEnabled=${LLM_SUPPORT:-false}" \
         --set-string "llmGpuAcceleration=${GPU_ACCELERATION:-false}" \

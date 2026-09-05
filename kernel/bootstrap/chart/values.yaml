@@ -31,6 +31,8 @@ dnsProviders: {}
 kernelDomain: ""
 smtpHost: ""
 smtpPort: "587"
+smtpSsl: "false"
+smtpStarttls: "true"
 
 # Which mail stack this cluster runs, from the Cluster claim's
 # mail.serviceMode. Not inferred from smtpHost: a relay host says only that
