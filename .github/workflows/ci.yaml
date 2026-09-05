@@ -5,6 +5,11 @@ on:
     branches:
       - main
       - develop
+      # test-cb is the pointer branch the desk.gentian.org test cluster tracks.
+      # It is only ever force-pushed to the tip of whatever feature branch is
+      # under test — nothing is merged out of it — so it needs the same
+      # published image any tracked branch needs. See the docker job below.
+      - test-cb
       # Feature branches, so a push is checked before a pull request exists.
       # Nothing here publishes from one: see the docker job's push condition.
       - "feat/**"
@@ -263,12 +268,21 @@ jobs:
         with:
           context: .
           platforms: linux/amd64,linux/arm64
-          # main, develop and release tags publish. A feature branch builds
-          # the image — which is the check — and pushes nothing.
+          # main, develop, test-cb and release tags publish. A feature branch
+          # builds the image — which is the check — and pushes nothing.
+          #
+          # test-cb publishes because a cluster tracks it: without a
+          # test-cb-<sha> tag in GHCR, argocd-image-updater's allow-tags
+          # regexp in kernel/bootstrap/chart/templates/gentian-os.yaml matches
+          # no candidate and the cluster keeps running whatever it ran before,
+          # silently. It is a flat name on purpose — docker/metadata-action
+          # slugifies {{branch}}, so a branch with a "/" publishes feat-xyz-<sha>
+          # while the regexp interpolates the raw "feat/xyz" and never matches.
           push: >-
             ${{ github.event_name != 'pull_request'
             && (github.ref == 'refs/heads/main'
             || github.ref == 'refs/heads/develop'
+            || github.ref == 'refs/heads/test-cb'
             || startsWith(github.ref, 'refs/tags/v')) }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
