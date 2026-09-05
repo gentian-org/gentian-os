@@ -523,8 +523,14 @@ INPUT_HIERARCHY_VARS=(
     ROUTING_MODE
     GENTIAN_APPS_REPO
     GENTIAN_APPS_BRANCH
+    GENTIAN_APPS_AUTH
+    GENTIAN_UI_REPO
+    GENTIAN_UI_BRANCH
+    GENTIAN_UI_AUTH
+    GENTIAN_OS_AUTH
     GENTIAN_DEPLOYMENTS_REPO
     GENTIAN_DEPLOYMENTS_BRANCH
+    GENTIAN_DEPLOYMENTS_AUTH
     GENTIAN_DEPLOYMENTS_PATH
     GENTIAN_DEPLOYMENTS_CLUSTER_ID
     GENTIAN_DEPLOYMENTS_STAGE
@@ -952,9 +958,14 @@ EOF
         warn "GENTIAN_DEPLOYMENTS_GIT_TOKEN not set — in-cluster App Store installs cannot push to gentian-deployments."
         warn "  Export it, or let the installer prompt and cache it, when needed."
     fi
-    : "${GENTIAN_DEPLOYMENTS_GIT_USERNAME:=x-access-token}"
-    export GENTIAN_DEPLOYMENTS_GIT_USERNAME
-
+    # No default+export for GENTIAN_DEPLOYMENTS_GIT_USERNAME here — this runs
+    # before collect_bootstrap_credentials, so defaulting it this early wins
+    # the "already set" race against the 0600 cache and OpenBao recovery
+    # (_load_credential_cache / try_load_creds_from_openbao both skip a var
+    # that's already non-empty). A cluster whose username genuinely is
+    # x-access-token still gets it — _validate_requirement's own
+    # "${!user_var:-x-access-token}" fallback applies it at the point of use,
+    # after recovery has had its chance.
 }
 
 
@@ -2227,6 +2238,7 @@ apply_bootstrap_application() {
     if ! helm template gentian-bootstrap "${chart}" -s "templates/${name}.yaml" \
             -f "${SCRIPT_DIR}/kernel/platforms.yaml" \
             --set-string "gentianOsBranch=${GENTIAN_OS_BRANCH}" \
+            --set-string "osRepo=${GENTIAN_OS_REPO:-}" \
             --set-string "storageClass=${STORAGE_CLASS}" \
             --set-string "stage=${GENTIAN_DEPLOYMENTS_STAGE}" \
             --set-string "kernelDomain=${KERNEL_DOMAIN:-}" \

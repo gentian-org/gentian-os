@@ -1,0 +1,28 @@
+# A private, writable Git repository authenticated with a single bearer
+# token rather than username+password — the authType: bearer branch added
+# alongside os/apps/ui repository support. Exercises both bearer-specific
+# artefacts at once: the ArgoCD repository Secret's bearerToken field (every
+# credentialled repository has one) and the operator's push-access Secret's
+# "token" key instead of .git-credentials (writable repositories only,
+# currently just role: deployments).
+apiVersion: gentianos.io/v1alpha1
+kind: XRepository
+metadata:
+  name: deployments-b3rk1
+  labels:
+    crossplane.io/claim-name: deployments
+    crossplane.io/claim-namespace: crossplane-system
+spec:
+  type: git
+  role: deployments
+  endpoints:
+    inCluster: https://git.internal.example/gentian-deployments
+  branch: main
+  writable: true
+  credential:
+    vaultPath: gentian/repositories/deployments
+    displayName: "Deployments Repository Access"
+    phase: bootstrap
+    authType: bearer
+    validate:
+      type: git-https

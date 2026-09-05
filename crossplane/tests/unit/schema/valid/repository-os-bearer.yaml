@@ -1,0 +1,19 @@
+# role: os and authType: bearer both pass schema validation — the two fields
+# added for mirrored/air-gapped install support alongside apps and ui.
+apiVersion: gentianos.io/v1alpha1
+kind: Repository
+metadata:
+  name: schema-valid-repository-os-bearer
+  namespace: crossplane-system
+spec:
+  type: git
+  role: os
+  endpoints:
+    inCluster: https://github.com/example/gentian-os
+  credential:
+    vaultPath: gentian-os/kernel/repositories/os
+    displayName: "Gentian OS Repository Access"
+    phase: bootstrap
+    authType: bearer
+    validate:
+      type: git-https
