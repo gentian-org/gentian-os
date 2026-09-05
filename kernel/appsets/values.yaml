@@ -32,6 +32,8 @@ storageClass: ""
 # mail mode is therefore not a value here — only whether a relay host exists.
 externalSmtpHost: ""
 externalSmtpPort: "587"
+externalSmtpSsl: "false"
+externalSmtpStarttls: "true"
 
 # kernel  — Postfix delivers locally and Dovecot serves the mailboxes.
 # external — Postfix relays to a smarthost; mailboxes live at the provider, so

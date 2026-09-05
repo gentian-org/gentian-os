@@ -11,6 +11,8 @@ storageClass: ""
 mailServiceMode: external
 relayHost: ""
 relayPort: "587"
+relaySsl: "false"
+relayStarttls: "true"
 kernelDomain: ""
 # The realm the cluster's own users live in. Tenants have their own realms and
 # are configured by the operator, not from here.

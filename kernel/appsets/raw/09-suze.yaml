@@ -55,6 +55,10 @@ spec:
               value: 'external.smtp.host.placeholder'
             - name: relayPort
               value: 'external.smtp.port.placeholder'
+            - name: relaySsl
+              value: 'external.smtp.ssl.placeholder'
+            - name: relayStarttls
+              value: 'external.smtp.starttls.placeholder'
             - name: mailServiceMode
               value: 'mail.service.mode.placeholder'
           # Only stages that genuinely differ carry a values file; the rest
