@@ -571,7 +571,11 @@ install_gentian_os_operator() {
     kubectl apply -f "$crd_dir"
     adopt_gentian_os_helm_preflight "$ns"
 
-    local operator_tag="${GENTIAN_OS_IMAGE_TAG:-develop}"
+    # Derived from GENTIAN_OS_BRANCH, not a fixed "develop": this helm install
+    # is what the cluster runs until the image updater has anything to say, and
+    # on a release-pinned cluster the updater deliberately never speaks.
+    resolve_gentian_os_image_tag
+    local operator_tag="${GENTIAN_OS_IMAGE_TAG}"
     local _infra_ns="${INFRA_NAMESPACE:-gentian-infra-${ENV:-dev}}"
     info "Using gentian-os operator image ghcr.io/gentian-org/gentian-os:${operator_tag} (CI)."
 

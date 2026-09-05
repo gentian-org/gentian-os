@@ -1785,7 +1785,8 @@ check_prereqs() {
     if [[ -r "${_os_values}" ]]; then
         _os_tag="$(yq_get '.image.tag' "${_os_values}" 2>/dev/null || true)"
     fi
-    _os_tag="${_os_tag:-${GENTIAN_OS_IMAGE_TAG:-develop}}"
+    resolve_gentian_os_image_tag
+    _os_tag="${_os_tag:-${GENTIAN_OS_IMAGE_TAG}}"
     if validate_image_tag "${_os_repo}" "${_os_tag}"; then
         success "Operator image ${_os_repo}:${_os_tag} exists"
     else
@@ -2167,6 +2168,60 @@ resolve_gentian_os_branch() {
         detected="develop"
     fi
     export GENTIAN_OS_BRANCH="${detected}"
+}
+
+# =============================================================================
+# resolve_gentian_os_image_tag — the operator image that goes with the ref this
+# cluster tracks.
+#
+# GENTIAN_OS_BRANCH says which ref every in-cluster Application follows. This
+# says which image runs alongside it, and the two used to be unrelated: the tag
+# defaulted to the literal "develop" whatever the branch was. A cluster pinned
+# to a release tag was helm-installed with develop code and left for
+# argocd-image-updater to correct — except that on a release pin the updater
+# never corrects it. allow-tags matches no candidate for a release tag, which is
+# deliberate ("the pinned image is left alone"), so the pin ran develop for the
+# life of the cluster while every Application reported the release it tracked.
+#
+# The mapping is CI's own, from .github/workflows/ci.yaml:
+#   v1.2.3        → 1.2.3    type=semver publishes the version, not the tag name
+#   main/develop  → same     type=ref,event=branch — the moving branch tag
+#   test-cb       → test-cb  likewise; it publishes because a cluster tracks it
+#   feat/xyz      → none     a feature branch builds the image and pushes nothing
+#
+# Exported, not printed, because two callers need the same answer: the preflight
+# asks ghcr.io whether the tag exists, and the helm install pulls it. Validating
+# a different tag than the install pulls is a check that passes for the wrong
+# image — which is what the shared "develop" default was doing.
+# =============================================================================
+resolve_gentian_os_image_tag() {
+    if [[ -n "${GENTIAN_OS_IMAGE_TAG:-}" ]]; then
+        export GENTIAN_OS_IMAGE_TAG
+        return 0
+    fi
+    resolve_gentian_os_branch
+    case "${GENTIAN_OS_BRANCH}" in
+        v[0-9]*.[0-9]*.[0-9]*)
+            export GENTIAN_OS_IMAGE_TAG="${GENTIAN_OS_BRANCH#v}"
+            ;;
+        */*)
+            # Nothing was published for this ref, so there is no right answer —
+            # only a said-out-loud wrong one. develop is the tag certain to
+            # exist, and it is what this resolved to before; the difference is
+            # that the cluster no longer runs it silently.
+            warn "CI publishes no image for ${GENTIAN_OS_BRANCH} — the operator will run develop."
+            warn "  Set GENTIAN_OS_IMAGE_TAG in install.env to choose another, or track a"
+            warn "  branch CI publishes from (main, develop, test-cb)."
+            export GENTIAN_OS_IMAGE_TAG="develop"
+            ;;
+        *)
+            # A branch CI does not publish from lands here and resolves to a tag
+            # that does not exist. That is the intended outcome: validate_image_tag
+            # answers it with a 404 before anything is deployed, which is the
+            # whole reason that check exists.
+            export GENTIAN_OS_IMAGE_TAG="${GENTIAN_OS_BRANCH}"
+            ;;
+    esac
 }
 
 # =============================================================================
