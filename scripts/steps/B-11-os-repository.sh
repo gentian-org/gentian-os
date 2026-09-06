@@ -22,13 +22,13 @@
 # split (see C-07's header for the mechanics of the fix).
 
 check() {
-    kubectl get repository.gentianos.io os -n crossplane-system >/dev/null 2>&1
+    kubectl get repository.gentianos.io gentian-os -n crossplane-system >/dev/null 2>&1
 }
 
 apply() {
     [[ -n "${GENTIAN_OS_REPO:-}" ]] || { error "GENTIAN_OS_REPO is unset."; return 1; }
     local auth; auth="$(_repo_auth_for gentian-os-repository)"
-    echo "     + kubectl apply — Repository/os → ${GENTIAN_OS_REPO} (auth=${auth})"
+    echo "     + kubectl apply — Repository/gentian-os → ${GENTIAN_OS_REPO} (auth=${auth})"
     [[ "${GENTIAN_DRY_RUN:-0}" == "1" ]] && return 0
 
     # AUTH=none (the public gentian-org default) omits the credential block
@@ -46,17 +46,17 @@ apply() {
 apiVersion: gentianos.io/v1alpha1
 kind: Repository
 metadata:
-  name: os
+  name: gentian-os
   namespace: crossplane-system
 spec:
   type: git
-  role: os
+  role: gentian-os
   endpoints:
     inCluster: ${GENTIAN_OS_REPO}
   branch: ${GENTIAN_OS_BRANCH:-main}
   writable: false
   credential:
-    vaultPath: gentian-os/kernel/repositories/os
+    vaultPath: gentian-os/kernel/repositories/gentian-os
     displayName: "Gentian OS Repository Access"
     phase: bootstrap
     optional: true
@@ -69,11 +69,11 @@ EOF
 apiVersion: gentianos.io/v1alpha1
 kind: Repository
 metadata:
-  name: os
+  name: gentian-os
   namespace: crossplane-system
 spec:
   type: git
-  role: os
+  role: gentian-os
   endpoints:
     inCluster: ${GENTIAN_OS_REPO}
   branch: ${GENTIAN_OS_BRANCH:-main}
@@ -83,6 +83,6 @@ EOF
 }
 
 destroy() {
-    kubectl delete repository.gentianos.io os -n crossplane-system \
+    kubectl delete repository.gentianos.io gentian-os -n crossplane-system \
         --ignore-not-found=true --timeout=60s 2>/dev/null || true
 }

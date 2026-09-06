@@ -12,7 +12,7 @@
 # shell-collected credential — the one Path-A exception in an otherwise
 # ESO/OpenBao-managed credential design (see repository-default.yaml). Exists
 # only for repositories a bootstrap Application needs before OpenBao is
-# reachable; today that is os alone, called from install_argocd() above.
+# reachable; today that is gentian-os alone, called from install_argocd() above.
 #
 # url is a PREFIX match in an ArgoCD repo-creds Secret (secret-type:
 # repo-creds, as opposed to the exact-match secret-type: repository the
@@ -253,15 +253,15 @@ install_argocd() {
     printf '%s\n' "${_gentian_project}" | kubectl apply -f -
     success "AppProject applied."
 
-    # os is the one repository ArgoCD must authenticate to before OpenBao
-    # exists: B-01-openbao-transit (right after this step) applies the
+    # gentian-os is the one repository ArgoCD must authenticate to before
+    # OpenBao exists: B-01-openbao-transit (right after this step) applies the
     # openbao-transit bootstrap Application, and ArgoCD has to pull its chart
-    # from osRepo to sync it. Every other credentialed repository (apps, ui,
-    # deployments) is first consumed by an Application or ApplicationSet that
-    # does not exist until phase B/C, by which point the os-role Repository
-    # claim's own ESO-managed Secret has taken over — see
-    # scripts/steps/B-XX-os-repository.sh's handoff.
-    _apply_argocd_repo_creds os GENTIAN_OS_REPO GENTIAN_OS_AUTH GENTIAN_OS_GIT_USERNAME GENTIAN_OS_GIT_TOKEN
+    # from osRepo to sync it. Every other credentialed repository (apps,
+    # gentian-ui, deployments) is first consumed by an Application or
+    # ApplicationSet that does not exist until phase B/C, by which point the
+    # gentian-os Repository claim's own ESO-managed Secret has taken over —
+    # see scripts/steps/B-XX-os-repository.sh's handoff.
+    _apply_argocd_repo_creds gentian-os GENTIAN_OS_REPO GENTIAN_OS_AUTH GENTIAN_OS_GIT_USERNAME GENTIAN_OS_GIT_TOKEN
 
     info "Patching argocd-cm with annotation-based resource tracking..."
     # application.resourceTrackingMethod=annotation prevents ArgoCD from

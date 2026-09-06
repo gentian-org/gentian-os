@@ -11,13 +11,13 @@
 # is the whole of it.
 
 check() {
-    kubectl get repository.gentianos.io ui -n crossplane-system >/dev/null 2>&1
+    kubectl get repository.gentianos.io gentian-ui -n crossplane-system >/dev/null 2>&1
 }
 
 apply() {
     [[ -n "${GENTIAN_UI_REPO:-}" ]] || { error "GENTIAN_UI_REPO is unset."; return 1; }
     local auth; auth="$(_repo_auth_for gentian-ui-repository)"
-    echo "     + kubectl apply — Repository/ui → ${GENTIAN_UI_REPO} (auth=${auth})"
+    echo "     + kubectl apply — Repository/gentian-ui → ${GENTIAN_UI_REPO} (auth=${auth})"
     [[ "${GENTIAN_DRY_RUN:-0}" == "1" ]] && return 0
 
     # Two full heredocs rather than one with an interpolated credential-block
@@ -30,17 +30,17 @@ apply() {
 apiVersion: gentianos.io/v1alpha1
 kind: Repository
 metadata:
-  name: ui
+  name: gentian-ui
   namespace: crossplane-system
 spec:
   type: git
-  role: ui
+  role: gentian-ui
   endpoints:
     inCluster: ${GENTIAN_UI_REPO}
   branch: ${GENTIAN_UI_BRANCH:-develop}
   writable: false
   credential:
-    vaultPath: gentian-os/kernel/repositories/ui
+    vaultPath: gentian-os/kernel/repositories/gentian-ui
     displayName: "Gentian UI Repository Access"
     phase: bootstrap
     optional: true
@@ -53,11 +53,11 @@ EOF
 apiVersion: gentianos.io/v1alpha1
 kind: Repository
 metadata:
-  name: ui
+  name: gentian-ui
   namespace: crossplane-system
 spec:
   type: git
-  role: ui
+  role: gentian-ui
   endpoints:
     inCluster: ${GENTIAN_UI_REPO}
   branch: ${GENTIAN_UI_BRANCH:-develop}
@@ -67,6 +67,6 @@ EOF
 }
 
 destroy() {
-    kubectl delete repository.gentianos.io ui -n crossplane-system \
+    kubectl delete repository.gentianos.io gentian-ui -n crossplane-system \
         --ignore-not-found=true --timeout=60s 2>/dev/null || true
 }

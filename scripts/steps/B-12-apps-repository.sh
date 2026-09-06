@@ -11,13 +11,13 @@
 # B-09-deployments-repository.sh, minus the tier-0 write-access grant.
 
 check() {
-    kubectl get repository.gentianos.io apps -n crossplane-system >/dev/null 2>&1
+    kubectl get repository.gentianos.io gentian-apps -n crossplane-system >/dev/null 2>&1
 }
 
 apply() {
     [[ -n "${GENTIAN_APPS_REPO:-}" ]] || { error "GENTIAN_APPS_REPO is unset."; return 1; }
     local auth; auth="$(_repo_auth_for gentian-apps-repository)"
-    echo "     + kubectl apply — Repository/apps → ${GENTIAN_APPS_REPO} (auth=${auth})"
+    echo "     + kubectl apply — Repository/gentian-apps → ${GENTIAN_APPS_REPO} (auth=${auth})"
     [[ "${GENTIAN_DRY_RUN:-0}" == "1" ]] && return 0
 
     # Two full heredocs rather than one with an interpolated credential-block
@@ -30,7 +30,7 @@ apply() {
 apiVersion: gentianos.io/v1alpha1
 kind: Repository
 metadata:
-  name: apps
+  name: gentian-apps
   namespace: crossplane-system
 spec:
   type: git
@@ -40,7 +40,7 @@ spec:
   branch: ${GENTIAN_APPS_BRANCH:-main}
   writable: false
   credential:
-    vaultPath: gentian-os/kernel/repositories/apps
+    vaultPath: gentian-os/kernel/repositories/gentian-apps
     displayName: "Gentian Apps Repository Access"
     phase: bootstrap
     optional: true
@@ -53,7 +53,7 @@ EOF
 apiVersion: gentianos.io/v1alpha1
 kind: Repository
 metadata:
-  name: apps
+  name: gentian-apps
   namespace: crossplane-system
 spec:
   type: git
@@ -67,6 +67,6 @@ EOF
 }
 
 destroy() {
-    kubectl delete repository.gentianos.io apps -n crossplane-system \
+    kubectl delete repository.gentianos.io gentian-apps -n crossplane-system \
         --ignore-not-found=true --timeout=60s 2>/dev/null || true
 }
