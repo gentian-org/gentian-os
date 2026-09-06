@@ -1214,13 +1214,6 @@ bootstrap_root_appset() {
 }
 
 # =============================================================================
-# Bootstrap gentian-catalogue ApplicationSet (profile bundles from gentian-apps)
-# =============================================================================
-bootstrap_appprofiles() {
-    install_catalogue_sync
-}
-
-# =============================================================================
 # Install provider-helm
 # provider-helm deploys Helm charts as Crossplane Managed Resources (InfraData XR,
 # kernel services, tenant apps via compositions).

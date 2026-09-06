@@ -2376,7 +2376,7 @@ resolve_kernel_domain_from_claim() {
 # Generic app-default and tenant/cluster compositions live in gentian-os.
 # Profile-specific compositions are synced from gentian-apps via the
 # catalogue-sync ApplicationSet the gentian-apps Repository claim composes
-# (see install_catalogue_sync).
+# (see scripts/steps/B-12-apps-repository.sh).
 
 apply_crossplane_app_compositions() {
     local comp_dir="${SCRIPT_DIR}/crossplane/compositions"
