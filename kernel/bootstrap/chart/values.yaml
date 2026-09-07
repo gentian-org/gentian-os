@@ -13,8 +13,10 @@ stage: dev
 # stage this is.
 osRepo: https://github.com/gentian-org/gentian-os
 osImageRepository: ghcr.io/gentian-org/gentian-os
+appsRepo: https://github.com/gentian-org/gentian-apps
 deploymentsRepo: ""
 deploymentsBranch: main
+uiRepo: https://github.com/gentian-org/gentian-ui
 uiBranch: develop
 portalImageTag: develop
 cluster: ""
