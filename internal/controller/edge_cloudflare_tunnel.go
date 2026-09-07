@@ -28,6 +28,36 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 )
 
+const cloudflareAPIBase = "https://api.cloudflare.com/client/v4"
+
+// cfError and formatCloudflareErrors are shared with any future Cloudflare
+// implementation; they live here because this is the only one left.
+type cfError struct {
+	Code    int    `json:"code"`
+	Message string `json:"message"`
+}
+
+func formatCloudflareErrors(errors []cfError) error {
+	if len(errors) == 0 {
+		return fmt.Errorf("unknown error")
+	}
+	// 10000 is Cloudflare's generic authentication error; 1001 is what the
+	// tunnel endpoints return for a token that authenticated but carries no
+	// tunnel permission. Both mean the same thing to an operator, and 1001 is
+	// the one a DNS-scoped token actually produces.
+	//
+	// The permission is named as the dashboard names it today. Cloudflare
+	// folded tunnels into Cloudflare One and renamed it, so "Cloudflare Tunnel"
+	// appears nowhere in the permission list an operator is reading. Sending
+	// someone to look for a setting under a name it no longer has is the same
+	// defect as saying nothing, so both names are given.
+	if errors[0].Code == 10000 || errors[0].Code == 1001 {
+		return fmt.Errorf("%v (grant Account → Cloudflare One Connector: cloudflared → Edit"+
+			" — older accounts call it Cloudflare Tunnel — or set CF_TUNNEL_TOKEN)", errors)
+	}
+	return fmt.Errorf("%v", errors)
+}
+
 // CloudflareTunnelIngress implements EdgeIngress against a remotely-managed
 // Cloudflare Tunnel. It programs which hostnames the tunnel routes to which
 // origin, and reports the CNAME those hostnames must resolve to.
@@ -71,14 +101,24 @@ func NewCloudflareTunnelIngress(token, zoneID, tunnelCNAME, accountID string) *C
 	}
 }
 
-// Target implements EdgeIngress: a tunnel is reached by a proxied CNAME to its
-// own hostname. Proxied is not optional -- cfargotunnel.com resolves to
-// nothing a client could connect to directly.
-func (c *CloudflareTunnelIngress) Target() EdgeTarget {
+// DNSAnnotations implements EdgeIngress.
+//
+// external-dns publishes what a Gateway resolves to, and a tunnelled Gateway
+// has no address — so the target is supplied here instead. Proxied is not a
+// preference: cfargotunnel.com resolves to nothing a client could connect to,
+// so an unproxied record would be a name that answers and then refuses every
+// connection.
+//
+// Empty when there is no tunnel to point at, which leaves external-dns reading
+// the Gateway's own address — correct for a cluster that has one.
+func (c *CloudflareTunnelIngress) DNSAnnotations() map[string]string {
 	if c.tunnelCNAME == "" {
-		return EdgeTarget{}
+		return nil
 	}
-	return EdgeTarget{Type: "CNAME", Value: c.tunnelCNAME, Proxied: true}
+	return map[string]string{
+		"external-dns.alpha.kubernetes.io/target":             c.tunnelCNAME,
+		"external-dns.alpha.kubernetes.io/cloudflare-proxied": "true",
+	}
 }
 
 // EnsureRoute implements EdgeIngress.

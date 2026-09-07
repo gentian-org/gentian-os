@@ -227,11 +227,13 @@ logLevel: info
 # Watched namespaces (empty = cluster-wide)
 watchNamespaces: []
 
-# Optional Cloudflare edge-DNS adapter. When all fields are set, the operator
-# ensures a proxied CNAME *.<effectiveDomain> per tenant so Total TLS can mint
-# edge certs for tenant app hostnames (e.g. meet.demo.platform.example.com) that
-# Universal SSL does not cover. Origin TLS is still issued by cert-manager in
-# the tenant namespace. Leave empty to disable (use grey-cloud DNS or passthrough).
+# Cloudflare Tunnel edge ingress. Set tunnelCNAME and a token and the operator
+# programs the tunnel's routing rules for kernel and tenant hostnames, and
+# annotates the kernel Gateway so external-dns publishes records that reach it.
+#
+# The operator writes no DNS records itself — external-dns does, for every
+# provider. These values are the ingress half only. Leave tunnelCNAME empty on
+# a cluster whose traffic arrives through a LoadBalancer instead.
 cloudflare:
   # Cloudflare API token with DNS:Edit permission for the zone.
   # Injected from a Secret via apiTokenSecretRef — do not set a plain value here.

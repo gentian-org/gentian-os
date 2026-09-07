@@ -196,27 +196,61 @@ when it is unset.
 
 ### Supplying it
 
-There are **two** credentials, because the edge is two things — see
-[architecture.md §3.0](../architecture.md#30-who-does-what-tenant-install) and
-`internal/controller/edge.go`:
+The edge is two questions, and they have different owners:
+
+```
+what must a hostname RESOLVE to?   → external-dns.  Every provider, always.
+how does traffic REACH a service?  → EdgeIngress.   Provider-specific.
+```
+
+**DNS is never provider-specific here.** external-dns writes this cluster's
+records for all eight providers in `kernel/platforms.yaml`, from two sources it
+is already configured with: `gateway-httproute` for every hostname the operator
+routes, and `crd` (`DNSEndpoint`) for records with no HTTP object behind them,
+which is how mail publishes. There is no per-provider DNS code in the operator,
+and there was: a Cloudflare-only record writer, which meant a Route 53 cluster
+had no DNS writer at all and a static-ip cluster had none either. Both failed
+silently — names simply never resolved.
+
+What a tunnel actually lacks is not a writer but a **target**. external-dns
+publishes what a Gateway resolves to, and a tunnelled Gateway has no address:
+traffic arrives through `cloudflared`, not a LoadBalancer. So the ingress
+declares what its hostnames must point at, the operator stamps that on the
+kernel Gateway, and external-dns does the rest exactly as on a static-ip
+cluster:
+
+```
+external-dns.alpha.kubernetes.io/target            = <uuid>.cfargotunnel.com
+external-dns.alpha.kubernetes.io/cloudflare-proxied = true
+```
+
+Proxied is not a preference: `cfargotunnel.com` resolves to nothing a client
+could connect to, so an unproxied record answers and then refuses. It is set
+per record, on the Gateway — the chart's global `cloudflare.proxied` stays
+`false`, because proxying an MX target routes mail through an HTTP edge that
+does not carry SMTP.
+
+### The two credentials
 
 | | credential | scope | OpenBao path | env |
 |---|---|---|---|---|
-| **DNS** — what a hostname resolves to | `acme-dns-cloudflare`, under `dnsProviders.cloudflare` | Zone → Zone → Read **and** Zone → DNS → Edit | `gentian-os/kernel/dns/cloudflare` | `CF_API_TOKEN` |
-| **Ingress** — how traffic reaches a service | `edge-ingress-cf-tunnel`, under `edgeIngress.cf-tunnel` | Account → Cloudflare One Connector: cloudflared → Edit | `gentian-os/kernel/edge/cf-tunnel` | `CF_TUNNEL_TOKEN` |
+| **DNS** — read by external-dns and cert-manager | `acme-dns-cloudflare`, under `dnsProviders.cloudflare` | Zone → Zone → Read **and** Zone → DNS → Edit | `gentian-os/kernel/dns/cloudflare` | `CF_API_TOKEN` |
+| **Ingress** — read by the operator | `edge-ingress-cf-tunnel`, under `edgeIngress.cf-tunnel` | Account → Cloudflare One Connector: cloudflared → Edit | `gentian-os/kernel/edge/cf-tunnel` | `CF_TUNNEL_TOKEN` |
 
 **One Cloudflare token may hold both grants, and many do.** Then the same value
 is entered twice, once for each. That is deliberate: they are stored and probed
-separately, so a cluster that later narrows one of them — a tunnel token scoped
-to the account and nothing else, say — does not discover the split at the same
-moment as the failure. The installer asks for the ingress token whenever this
-cluster's ingress is `cf-tunnel`, with no second switch deciding whether to ask.
+separately, so a cluster that later narrows one of them does not discover the
+split at the same moment as the failure. The installer asks for the ingress
+token whenever this cluster's ingress is `cf-tunnel`.
 
 `cf-tunnel`, not `tunnel`: the name says whose. Ingress rules, the
 `cfargotunnel.com` target and the account-scoped permission are all
-Cloudflare's shape, and a generic-sounding value would invite the assumption
-that changing it swaps the mechanism. inlets or frp would be their own entry in
-`edgeIngress`, not another value of one "tunnel" setting.
+Cloudflare's shape. inlets or frp would be their own entry in `edgeIngress`,
+not another value of one "tunnel" setting.
+
+Note what the DNS token is **not** used for any more: the operator does not
+write records, so that credential belongs to external-dns and cert-manager. The
+operator holds only the ingress token.
 
 The zone id and tunnel CNAME are resolved from the token and the running
 `cloudflared`, not asked for.
@@ -228,7 +262,7 @@ is written:
   a TXT record created and deleted immediately, under a name of ours that
   resolves to nothing. Reading a zone is `Zone:Read`; writing a record is
   `DNS:Edit`, and a read-scoped token passes every check short of the write
-  itself and then fails at reconcile time.
+  itself and then fails when external-dns tries to publish.
 - The **ingress** token is asked for the tunnel configuration the operator
   rewrites. A DNS-only token does **not** fail the tunnel *list* endpoint
   outright — it comes back `200` with an empty result — so only reading the
@@ -243,10 +277,14 @@ the account permission and nothing else.
 
 ### If a cluster has no tunnel
 
-Set `networkMode: static-ip` on the Cluster claim. DNS then points at the node
-address behind a load balancer, no ingress is programmed at all, and only the
-DNS credential is asked for — `edge-ingress-cf-tunnel` does not apply to a
-cluster whose ingress is `none`.
+Set `networkMode: static-ip` on the Cluster claim. There is then no ingress to
+program: the LoadBalancer routes by address, external-dns reads that address
+off the Gateway and publishes it, and the Gateway carries no target annotation
+because none is needed. Only the DNS credential is asked for —
+`edge-ingress-cf-tunnel` does not apply to a cluster whose ingress is `none`.
+
+This is the same DNS path a tunnel cluster uses. The difference is one
+annotation, not a different mechanism.
 
 ---
 

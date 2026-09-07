@@ -383,9 +383,11 @@ fi
 #
 # Only required when the cluster solves DNS-01 — a wildcard certificate is the
 # only thing that needs it. Cloudflare carries two extra fields no other
-# provider has: the zone id and tunnel CNAME the operator's optional edge-DNS
-# adapter reads. They are written alongside the token rather than at a path of
-# their own, because they are the same account's configuration.
+# provider has: the zone id and tunnel CNAME the operator's edge INGRESS reads
+# to address the tunnel. They are written alongside the token rather than at a
+# path of their own, because they are the same account's configuration. The
+# token itself is external-dns's and cert-manager's; the operator no longer
+# writes DNS records.
 DNS_PROVIDER="${DNS_PROVIDER:-cloudflare}"
 if [ "${DNS_PROVIDER}" = "cloudflare" ] && [ -n "${CF_API_TOKEN:-}" ]; then
     kv_put "dns/cloudflare" "$(jq -n \

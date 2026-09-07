@@ -18,136 +18,83 @@ package controller
 
 import "context"
 
-// The cluster's edge is two questions, and Cloudflare is the reason they were
-// ever one type.
+// The edge is two questions with two different answers about who owns them.
 //
-//	how does traffic for a hostname REACH a service?   — EdgeIngress
-//	what must that hostname RESOLVE to?                — EdgeDNSWriter
+//	what must a hostname RESOLVE to?   — external-dns. Every provider, always.
+//	how does traffic REACH a service?  — EdgeIngress. Provider-specific, below.
 //
-// With Cloudflare both are the same vendor, the same account and (by default)
-// the same token, so a single client answering both reads as natural. It is a
-// coincidence of one provider. With inlets, frp, or a WireGuard exit node the
-// ingress is a host you run and DNS is whoever serves the zone — different
-// vendors, different credentials, no shared API. static-ip mode already shows
-// the split inside this codebase today: no tunnel at all, DNS pointing straight
-// at a LoadBalancer address.
+// DNS is not in this file, and that is the point. external-dns already writes
+// records for all eight providers in kernel/platforms.yaml, from the
+// HTTPRoutes this operator writes (gateway-httproute) and from DNSEndpoint CRs
+// for records with no HTTP object behind them, which is how mail already
+// publishes. An operator that wrote records itself would be a ninth
+// implementation of a solved problem, and it was: a Cloudflare-only one, which
+// meant a Route 53 cluster had no DNS writer at all.
 //
-// Keeping them apart costs one indirection now and is what makes a second edge
-// possible later without touching the DNS side, or a second DNS provider
-// without touching the tunnel.
+// What is genuinely missing on a tunnel cluster is not a writer but a TARGET.
+// external-dns publishes what a Gateway resolves to, and a tunnelled Gateway
+// has no address — traffic arrives through cloudflared, not through a
+// LoadBalancer. So the ingress declares what its hostnames must point at, the
+// operator stamps that on the kernel Gateway, and external-dns does the rest
+// exactly as it does for a static-ip cluster.
+//
+// That is the whole seam. It is one annotation wide, and it keeps the DNS side
+// generic while letting the ingress side be as vendor-specific as it must be:
+// tunnels are a Cloudflare product, and inlets or frp would be their own
+// implementation here rather than another value of one "tunnel" setting.
 
-// EdgeTarget is what a hostname must resolve to for traffic to arrive: the
-// value a DNS record carries, and the record type that carries it.
+// EdgeIngress makes traffic for a hostname reach an in-cluster service, and
+// tells external-dns what those hostnames must resolve to.
 //
-// This is the whole contract between the two halves. EdgeIngress decides it —
-// a Cloudflare tunnel answers with a CNAME to <id>.cfargotunnel.com, a
-// LoadBalancer with an A record to its address — and EdgeDNSWriter writes
-// whatever it is handed without knowing which produced it.
-type EdgeTarget struct {
-	// Type is a DNS record type: "CNAME" or "A".
-	Type string
-	// Value is the record's content: a hostname for CNAME, an address for A.
-	Value string
-	// Proxied asks the DNS provider to terminate traffic at its own edge
-	// rather than hand the client this address to connect to directly —
-	// Cloudflare's orange cloud, and the equivalent on any CDN-backed DNS.
-	//
-	// It belongs to the ingress, not to the writer, because only the ingress
-	// knows whether it requires one: a cfargotunnel.com CNAME does not work
-	// unproxied, since the tunnel has no address a client could reach. A
-	// LoadBalancer address is the opposite case. A provider with no such
-	// concept ignores it.
-	Proxied bool
-}
-
-// IsZero reports whether an ingress declined to name a target. A static-ip
-// cluster whose address is not yet allocated is the ordinary case, and the
-// caller skips the DNS write rather than writing an empty record.
-func (t EdgeTarget) IsZero() bool { return t.Type == "" || t.Value == "" }
-
-// EdgeDNSWriter makes a hostname resolve to the cluster's edge.
-//
-// Deliberately ignorant of tunnels. Every provider on the dnsProviders list in
-// kernel/platforms.yaml can implement this — it is a CNAME or an A record and
-// nothing else — which is why external-dns already serves as a generic
-// implementation of exactly this interface for eight providers at once.
-type EdgeDNSWriter interface {
-	// EnsureRecord makes hostname resolve to target, idempotently.
-	EnsureRecord(ctx context.Context, hostname string, target EdgeTarget) error
-	// DeleteRecord removes the records for hostname. Absent is not an error.
-	DeleteRecord(ctx context.Context, hostname string) error
-}
-
-// EdgeIngress makes traffic for a hostname reach an in-cluster service.
-//
-// Implementations are edge-shaped rather than DNS-shaped: a Cloudflare tunnel
-// programs ingress rules on a remotely-managed tunnel; inlets would configure
-// an exit node; a static-ip cluster does nothing at all here, because a
-// LoadBalancer already routes by address and only DNS is missing.
+// nil is a valid edge: a static-ip cluster routes by LoadBalancer address, so
+// there is nothing to program and external-dns reads the address from the
+// Gateway itself. Callers use the helpers below rather than testing for nil.
 type EdgeIngress interface {
 	// EnsureRoute makes traffic for hostname reach service, idempotently.
 	// service is an origin URL as the ingress understands it.
 	EnsureRoute(ctx context.Context, hostname, service string) error
+
 	// DeleteRoute removes the route for hostname. Absent is not an error.
 	DeleteRoute(ctx context.Context, hostname string) error
-	// Target is what DNS must point at to reach this ingress.
-	Target() EdgeTarget
+
+	// DNSAnnotations are stamped on the kernel Gateway so external-dns
+	// publishes records that reach this ingress.
+	//
+	// Returned rather than applied, because which annotations mean what is the
+	// ingress's knowledge and the operator has no business holding a table of
+	// them. It is also where provider-specific DNS behaviour belongs when an
+	// ingress requires it: a Cloudflare tunnel needs its records proxied,
+	// since cfargotunnel.com resolves to nothing a client could connect to,
+	// and that is a fact about the tunnel rather than about DNS.
+	DNSAnnotations() map[string]string
 }
 
-// Edge is the pair, as a reconciler holds them.
+// edgeEnsureRoute programs a route when there is an ingress to program it on.
 //
-// Either may be nil and they are nil independently: a cluster can publish DNS
-// with no tunnel (static-ip), and a cluster whose DNS an operator maintains by
-// hand can have a tunnel with no writer. Callers check the half they need
-// rather than assuming both arrived together.
-type Edge struct {
-	DNS     EdgeDNSWriter
-	Ingress EdgeIngress
+// A static-ip cluster has none and needs none: the LoadBalancer already routes
+// by address. Callers say what they want to be true and this decides whether
+// anything has to happen, rather than each of them testing for nil.
+func edgeEnsureRoute(ctx context.Context, ing EdgeIngress, hostname, service string) error {
+	if ing == nil {
+		return nil
+	}
+	return ing.EnsureRoute(ctx, hostname, service)
 }
 
-// EnsureHostname is the invariant the kernel path got wrong: a route to a
-// hostname nothing resolves is unreachable, and a record pointing at an
-// ingress that does not route it is a name that answers and then fails. They
-// are one operation, so there is one method that does both.
-func (e *Edge) EnsureHostname(ctx context.Context, hostname, service string) error {
-	if e == nil {
+// edgeDeleteRoute is edgeEnsureRoute's inverse.
+func edgeDeleteRoute(ctx context.Context, ing EdgeIngress, hostname string) error {
+	if ing == nil {
 		return nil
 	}
-	if e.Ingress != nil {
-		if err := e.Ingress.EnsureRoute(ctx, hostname, service); err != nil {
-			return err
-		}
-	}
-	if e.DNS == nil {
-		return nil
-	}
-	// The target comes from the ingress when there is one. Without an ingress
-	// there is nothing to point at from here, and DNS is someone else's job —
-	// external-dns, or an operator by hand.
-	if e.Ingress == nil {
-		return nil
-	}
-	target := e.Ingress.Target()
-	if target.IsZero() {
-		return nil
-	}
-	return e.DNS.EnsureRecord(ctx, hostname, target)
+	return ing.DeleteRoute(ctx, hostname)
 }
 
-// DeleteHostname reverses EnsureHostname. DNS first: a name that still
-// resolves to an ingress that no longer routes it serves errors, while a route
-// nobody can reach is merely inert.
-func (e *Edge) DeleteHostname(ctx context.Context, hostname string) error {
-	if e == nil {
+// edgeDNSAnnotations is what the kernel Gateway carries so external-dns can
+// resolve this cluster's hostnames. Empty when no ingress needs one, which is
+// the static-ip case: external-dns reads the Gateway's own address instead.
+func edgeDNSAnnotations(ing EdgeIngress) map[string]string {
+	if ing == nil {
 		return nil
 	}
-	if e.DNS != nil {
-		if err := e.DNS.DeleteRecord(ctx, hostname); err != nil {
-			return err
-		}
-	}
-	if e.Ingress != nil {
-		return e.Ingress.DeleteRoute(ctx, hostname)
-	}
-	return nil
+	return ing.DNSAnnotations()
 }

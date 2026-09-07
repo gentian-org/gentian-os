@@ -604,24 +604,28 @@ bootstrap_argocd_apps() {
     local apps=(openbao globals)
     if [[ "$INSTALL_CLUSTER_INFRA" == "1" ]]; then
         apps+=(reloader cnpg kernel-admin)
-        # external-dns was written and then never applied: nothing named it in
-        # this list, and the bootstrap chart only renders the templates it is
-        # asked for. So the controller that makes tenant hostnames resolve was
-        # present in the repository and absent from every cluster, and the gap
-        # read as "DNS is managed by hand here" rather than as a missing step.
+        # external-dns writes this cluster's DNS records — all of them, on
+        # every provider, in both network modes. It reads the HTTPRoutes the
+        # operator writes, and DNSEndpoint CRs for records with no HTTP object
+        # behind them, which is how mail publishes.
         #
-        # Opt-in, though, because it is the SECOND writer. On a tunnel cluster
-        # the operator's edge-DNS adapter already creates the tenant CNAMEs and
-        # the tunnel ingress rules; adding external-dns to that is two
-        # controllers reconciling one record set. Switching that on as a side
-        # effect of a re-run somebody started for another reason is not a
-        # decision an installer gets to make — so the claim makes it.
-        if [[ "${EXTERNAL_DNS_ENABLED:-false}" == "true" ]]; then
+        # It used to be opt-in, to keep it off the record set the operator's
+        # own Cloudflare adapter was writing. That adapter is gone: it covered
+        # one provider of eight, so a Route 53 cluster had no DNS writer at
+        # all, and a static-ip cluster had none either since the adapter needs
+        # a tunnel to point at. Both failed silently — names never resolved.
+        #
+        # Still skipped when the cluster names no zone host, which is the
+        # honest case for one whose records somebody else maintains.
+        if [[ "${EXTERNAL_DNS_ENABLED:-true}" == "true" && "${DNS_PROVIDER:-none}" != "none" ]]; then
             apps+=(external-dns)
+        elif [[ "${DNS_PROVIDER:-none}" == "none" ]]; then
+            info "certificates.dnsProvider is none; external-dns is not installed."
+            info "  Nothing publishes this cluster's records — they are yours to write."
         else
-            info "certificates.externalDns is not set; external-dns is not installed."
-            info "  DNS records are whatever already writes them here — by hand,"
-            info "  or the operator's own adapter."
+            info "certificates.externalDns is false; external-dns is not installed."
+            info "  Nothing else writes records now that the operator does not,"
+            info "  so this cluster's hostnames resolve only if you publish them."
         fi
     fi
 

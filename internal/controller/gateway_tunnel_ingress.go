@@ -34,10 +34,10 @@ import (
 func ensureKernelGatewayTunnelIngress(
 	ctx context.Context,
 	c client.Client,
-	edge *Edge,
+	ing EdgeIngress,
 	kernelDomain, tenancyMode string,
 ) error {
-	if edge == nil || kernelDomain == "" {
+	if ing == nil || kernelDomain == "" {
 		return nil
 	}
 	origin, err := kernelGatewayTunnelOrigin(ctx, c)
@@ -87,30 +87,21 @@ func ensureKernelGatewayTunnelIngress(
 	}
 	sort.Strings(sorted)
 	for _, host := range sorted {
-		// Route and record together. An ingress rule for a hostname nothing
-		// resolves is unreachable, so EnsureHostname does both rather than
-		// leaving it to each caller to remember the second half — which is
-		// exactly what this path forgot: it programmed routes for every kernel
-		// hostname and wrote no DNS at all.
-		//
-		// It stayed invisible because every cluster until now ran on a zone
-		// whose kernel records predated the install, made by hand. A new zone
-		// has none, so id.<domain> and portal.<domain> never resolved, D-03
-		// waited out its full 15 minutes, and the warning it prints blames the
-		// Cloudflare credential — which is the one thing that was working.
-		if err := edge.EnsureHostname(ctx, host, origin); err != nil {
-			logger.Error(err, "ensure kernel edge hostname", "host", host, "origin", origin)
+		// Routes only. What these hostnames RESOLVE to is external-dns's job,
+		// from the annotations this ingress puts on the kernel Gateway — the
+		// same path a static-ip cluster uses, where the Gateway's own address
+		// answers instead. The operator writing records itself is what made a
+		// Route 53 cluster have no DNS writer at all.
+		if err := edgeEnsureRoute(ctx, ing, host, origin); err != nil {
+			logger.Error(err, "ensure kernel edge route", "host", host, "origin", origin)
 			return err
 		}
 	}
-	// Direct, not through Edge: this removes a stale ROUTE without touching
-	// DNS. The wildcard record is still wanted; only the wildcard tunnel rule
-	// is being retired in favour of the explicit per-host rules above.
-	if edge.Ingress != nil {
-		if err := edge.Ingress.DeleteRoute(ctx, "*."+kernelDomain); err != nil {
-			logger.Error(err, "delete kernel wildcard tunnel route", "host", "*."+kernelDomain)
-			return err
-		}
+	// A stale wildcard RULE, retired in favour of the explicit per-host rules
+	// above. Nothing to undo in DNS: the wildcard record is still wanted.
+	if err := edgeDeleteRoute(ctx, ing, "*."+kernelDomain); err != nil {
+		logger.Error(err, "delete kernel wildcard tunnel route", "host", "*."+kernelDomain)
+		return err
 	}
 	return nil
 }

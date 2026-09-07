@@ -65,10 +65,10 @@ import (
 // resources: the shared GatewayClass and kernel-public-gateway.
 type GatewayPlatformReconciler struct {
 	client.Client
-	KernelDomain  string
-	TenancyMode   string
-	RoutingMode   string
-	Edge *Edge
+	KernelDomain string
+	TenancyMode  string
+	RoutingMode  string
+	Ingress      EdgeIngress
 }
 
 func (r *GatewayPlatformReconciler) Reconcile(ctx context.Context, _ reconcile.Request) (reconcile.Result, error) {
@@ -89,7 +89,7 @@ func (r *GatewayPlatformReconciler) Reconcile(ctx context.Context, _ reconcile.R
 		logger.Error(err, "reconcile kernel HTTPRoutes")
 		return reconcile.Result{RequeueAfter: 30 * time.Second}, err
 	}
-	if err := ensureKernelGatewayTunnelIngress(ctx, r.Client, r.Edge, r.KernelDomain, r.TenancyMode); err != nil {
+	if err := ensureKernelGatewayTunnelIngress(ctx, r.Client, r.Ingress, r.KernelDomain, r.TenancyMode); err != nil {
 		logger.Error(err, "ensure kernel Cloudflare tunnel ingress")
 		return reconcile.Result{RequeueAfter: 30 * time.Second}, err
 	}
@@ -207,6 +207,22 @@ func (r *GatewayPlatformReconciler) ensureKernelGateway(ctx context.Context) err
 	}
 	// Tenant ReferenceGrants are owned by Crossplane via each tenant's manifest bridge.
 	desired := buildKernelGateway(r.KernelDomain, r.TenancyMode, tenantList.Items)
+
+	// What every hostname on this Gateway must resolve to, declared by the
+	// ingress and read by external-dns. One object rather than one per route:
+	// the kernel Gateway is what all of them attach to, so annotating it
+	// covers kernel and tenant hostnames alike.
+	//
+	// Empty on a static-ip cluster, where external-dns reads the Gateway's own
+	// LoadBalancer address and needs telling nothing.
+	if ann := edgeDNSAnnotations(r.Ingress); len(ann) > 0 {
+		if desired.Annotations == nil {
+			desired.Annotations = map[string]string{}
+		}
+		for k, v := range ann {
+			desired.Annotations[k] = v
+		}
+	}
 	return ensureGatewayResource(ctx, r.Client, desired)
 }
 
@@ -386,9 +402,31 @@ func ensureGatewayResource(ctx context.Context, c client.Client, desired *gatewa
 		return err
 	}
 
-	if !equality.Semantic.DeepEqual(existing.Spec, desired.Spec) {
+	// Annotations as well as spec. The external-dns target lives here and
+	// changes whenever the tunnel is rebuilt under a new id; a spec-only
+	// comparison would carry the old target for the life of the Gateway, and
+	// every hostname would resolve to a tunnel that no longer exists.
+	//
+	// Merged rather than replaced: other controllers annotate this object too,
+	// and reconciling ours must not delete theirs.
+	annotationsDiffer := false
+	for k, v := range desired.Annotations {
+		if existing.Annotations[k] != v {
+			annotationsDiffer = true
+			break
+		}
+	}
+	if !equality.Semantic.DeepEqual(existing.Spec, desired.Spec) || annotationsDiffer {
 		patch := client.MergeFrom(existing.DeepCopy())
 		existing.Spec = desired.Spec
+		if annotationsDiffer {
+			if existing.Annotations == nil {
+				existing.Annotations = map[string]string{}
+			}
+			for k, v := range desired.Annotations {
+				existing.Annotations[k] = v
+			}
+		}
 		return c.Patch(ctx, existing, patch)
 	}
 	return nil
