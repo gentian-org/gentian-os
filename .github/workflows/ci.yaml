@@ -5,7 +5,7 @@ on:
     branches:
       - main
       - develop
-      # test-cb is the pointer branch the desk.gentian.org test cluster tracks.
+      # test-cb is the pointer branch the test.gentian-os.org test cluster tracks.
       # It is only ever force-pushed to the tip of whatever feature branch is
       # under test — nothing is merged out of it — so it needs the same
       # published image any tracked branch needs. See the docker job below.
