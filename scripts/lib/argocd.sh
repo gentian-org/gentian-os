@@ -230,27 +230,14 @@ install_argocd() {
     # skipped for being "already installed".
     tune_argocd_runtime
 
-    # Defaults mirror every other call site that threads these through
-    # (bootstrap_root_appset, apply_bootstrap_application,
-    # apply_gentian_portal_argocd_application) — install_argocd runs at A-09,
-    # before any of those, so it cannot assume one of them has already
-    # resolved a default into the environment.
-    : "${GENTIAN_OS_REPO:=https://github.com/gentian-org/gentian-os}"
-    : "${GENTIAN_APPS_REPO:=https://github.com/gentian-org/gentian-apps}"
-    : "${GENTIAN_DEPLOYMENTS_REPO:=https://github.com/gentian-org/gentian-deployments}"
-    : "${GENTIAN_UI_REPO:=https://github.com/gentian-org/gentian-ui}"
-    # Plain bash substitution instead of envsubst: one less required tool
-    # (envsubst ships with gettext, not installed by default on macOS), and
-    # ${var//search/replace} is literal-string, not regex, so a repo URL
-    # containing '/' or any sed-delimiter character needs no escaping on
-    # either side. $(<file) and this expansion form are both bash-3.2-safe.
-    local _gentian_project
-    _gentian_project="$(<"${SCRIPT_DIR}/kernel/argocd/projects/gentian.yaml")"
-    _gentian_project="${_gentian_project//\$\{GENTIAN_OS_REPO\}/${GENTIAN_OS_REPO}}"
-    _gentian_project="${_gentian_project//\$\{GENTIAN_APPS_REPO\}/${GENTIAN_APPS_REPO}}"
-    _gentian_project="${_gentian_project//\$\{GENTIAN_DEPLOYMENTS_REPO\}/${GENTIAN_DEPLOYMENTS_REPO}}"
-    _gentian_project="${_gentian_project//\$\{GENTIAN_UI_REPO\}/${GENTIAN_UI_REPO}}"
-    printf '%s\n' "${_gentian_project}" | kubectl apply -f -
+    # Rendered from kernel/bootstrap/chart like every other bootstrap
+    # Application, not read as text and patched — a placeholder Helm never
+    # received falls back to the template's own default instead of reaching
+    # the cluster unexpanded, which a text substitution cannot promise (see
+    # the git history: `render the bootstrap Applications from a chart`, the
+    # sweep this file predates because it never had a placeholder to convert
+    # until GENTIAN_{OS,APPS,DEPLOYMENTS,UI}_REPO existed).
+    apply_bootstrap_application gentian-appproject
     success "AppProject applied."
 
     # gentian-os is the one repository ArgoCD must authenticate to before

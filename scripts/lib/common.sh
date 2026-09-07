@@ -2294,6 +2294,9 @@ apply_bootstrap_application() {
             -f "${SCRIPT_DIR}/kernel/platforms.yaml" \
             --set-string "gentianOsBranch=${GENTIAN_OS_BRANCH}" \
             --set-string "osRepo=${GENTIAN_OS_REPO:-}" \
+            --set-string "appsRepo=${GENTIAN_APPS_REPO:-}" \
+            --set-string "deploymentsRepo=${GENTIAN_DEPLOYMENTS_REPO:-}" \
+            --set-string "uiRepo=${GENTIAN_UI_REPO:-}" \
             --set-string "storageClass=${STORAGE_CLASS}" \
             --set-string "stage=${GENTIAN_DEPLOYMENTS_STAGE}" \
             --set-string "kernelDomain=${KERNEL_DOMAIN:-}" \

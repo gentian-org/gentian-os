@@ -1,5 +1,3 @@
-# SPDX-FileCopyrightText: 2026 Gentian Organization
-# SPDX-License-Identifier: AGPL-3.0-or-later
 ---
 apiVersion: argoproj.io/v1alpha1
 kind: AppProject
@@ -11,28 +9,22 @@ spec:
 
   # Source repositories
   sourceRepos:
-  # Multi-source $values ref (bootstrap + ApplicationSets). The public
-  # gentian-org defaults stay listed literally so the common, unmirrored case
-  # never depends on the substitution below having run. The ${GENTIAN_*_REPO}
-  # lines are this file's one templated part — expanded by install_argocd()
-  # (scripts/lib/argocd.sh) before apply, from the same install.env vars the
-  # bootstrap chart and appsets already thread through. For an unmirrored
-  # install they resolve to the same URLs already listed above, so the
-  # duplication is harmless; for a mirrored or air-gapped install they are
-  # what lets the kernel Applications (project: gentian) sync from the mirror
-  # at all — without an entry here ArgoCD refuses an unlisted source with a
+  # Multi-source $values ref (bootstrap + ApplicationSets). Each entry
+  # defaults to the public gentian-org repo, so an unmirrored install (the
+  # common case) renders exactly these URLs; a mirrored or air-gapped install
+  # sets GENTIAN_{OS,APPS,DEPLOYMENTS,UI}_REPO in install.env and gets the
+  # mirror instead. Helm's own `default` is what makes this safe — unlike a
+  # shell substitution, a value Helm never received cannot render as a
+  # literal placeholder, it falls back. Without an entry here for whichever
+  # URL is actually configured, ArgoCD refuses an unlisted source with a
   # permission error, not an authentication one.
-  - 'https://github.com/gentian-org/gentian-os'
-  - 'https://github.com/gentian-org/gentian-os/*'                                                         # Paths under gentian-os repo
-  - 'https://raw.githubusercontent.com/gentian-org/gentian-os/*'                                         # Vendored infra chart packages (postgres, mariadb)
-  - 'https://github.com/gentian-org/gentian-apps'                                                       # App store catalogue (AppProfiles)
-  - 'https://github.com/gentian-org/gentian-deployments'                                                # Deployment configuration repository
-  - 'https://github.com/gentian-org/gentian-ui'                                                         # Gentian portal UI (branding + Helm chart)
-  - '${GENTIAN_OS_REPO}'
-  - '${GENTIAN_OS_REPO}/*'
-  - '${GENTIAN_APPS_REPO}'
-  - '${GENTIAN_DEPLOYMENTS_REPO}'
-  - '${GENTIAN_UI_REPO}'
+  {{- $osRepo := .Values.osRepo | default "https://github.com/gentian-org/gentian-os" }}
+  - {{ $osRepo | quote }}
+  - {{ printf "%s/*" $osRepo | quote }}                                                                  # Paths under gentian-os repo
+  - {{ printf "https://raw.githubusercontent.com/gentian-org/gentian-os/*" | quote }}                    # Vendored infra chart packages (postgres, mariadb)
+  - {{ .Values.appsRepo | default "https://github.com/gentian-org/gentian-apps" | quote }}                # App store catalogue (AppProfiles)
+  - {{ .Values.deploymentsRepo | default "https://github.com/gentian-org/gentian-deployments" | quote }} # Deployment configuration repository
+  - {{ .Values.uiRepo | default "https://github.com/gentian-org/gentian-ui" | quote }}                   # Gentian portal UI (branding + Helm chart)
   #
   # This list covers the platform's own repositories only.
   #
@@ -45,11 +37,10 @@ spec:
   - 'oci://registry-1.docker.io/bitnamicharts/*'                                                        # Bitnami charts specifically
   - 'registry-1.docker.io/bitnamicharts'                                                                # Bitnami charts (without protocol)
   - 'https://openbao.github.io/openbao-helm'                                                            # OpenBao Helm chart repo
-  - 'ghcr.io/stakater/charts'                                                                           # Stakater OCI charts registry (Reloader)
-  - 'ghcr.io/cloudnative-pg/charts'                                                                     # CloudNativePG OCI charts registry
-  - 'https://kyverno.github.io/kyverno/*'
-  # external-dns, upstream chart. Bitnami's was withdrawn in 2025.
-  - 'https://kubernetes-sigs.github.io/external-dns/'                                                               # Kyverno admission controller
+  - 'ghcr.io/stakater/charts'                                                                             # Stakater OCI charts registry (Reloader)
+  - 'ghcr.io/cloudnative-pg/charts'                                                                       # CloudNativePG OCI charts registry
+  - 'https://kyverno.github.io/kyverno/*'                                                                 # Kyverno admission controller
+  - 'https://kubernetes-sigs.github.io/external-dns/'                                                     # external-dns, upstream chart. Bitnami's was withdrawn in 2025.
 
   # Destination clusters and namespaces
   destinations:
