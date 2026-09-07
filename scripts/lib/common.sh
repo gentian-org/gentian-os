@@ -645,11 +645,15 @@ load_env_file_override() {
 validate_config() {
     local errors=0 warnings=0
     local deployments_root cluster
-    local cluster_settings_file
+    local cluster_claim_file
 
     deployments_root="${GENTIAN_DEPLOYMENTS_PATH:-${HOME}/.gentian/gentian-deployments}"
     cluster="${GENTIAN_DEPLOYMENTS_CLUSTER_ID:-default-cluster}"
-    cluster_settings_file="${deployments_root}/clusters/${cluster}/kernel/cluster-settings.env"
+    # The Cluster claim, not cluster-settings.env. That file was retired when
+    # its declarative half moved onto the claim, and these messages went on
+    # naming it — telling an operator to fix a value in a file that no longer
+    # exists, on the one screen whose whole purpose is saying what to fix.
+    cluster_claim_file="${deployments_root}/clusters/${cluster}/claims/cluster.yaml"
 
     _file_header() {
         local file="$1" role="$2"
@@ -691,11 +695,11 @@ validate_config() {
         echo "  [OK]       CF_ZONE_NAME"
     fi
 
-    _file_header "${cluster_settings_file}" "Cluster checks (cluster-settings.env)"
+    _file_header "${cluster_claim_file}" "Cluster checks (the Cluster claim)"
 
     MAIL_SERVICE_MODE="$(gentian_mail_service_mode)"
     if [[ "${MAIL_SERVICE_MODE}" != "external" && "${MAIL_SERVICE_MODE}" != "kernel" ]]; then
-        echo "  [INVALID]  MAIL_SERVICE_MODE=${MAIL_SERVICE_MODE}  — must be 'external' or 'kernel' (set in ${cluster_settings_file})"
+        echo "  [INVALID]  MAIL_SERVICE_MODE=${MAIL_SERVICE_MODE}  — must be 'external' or 'kernel' (set in ${cluster_claim_file})"
         (( errors++ )) || true
     else
         echo "  [OK]       MAIL_SERVICE_MODE=${MAIL_SERVICE_MODE}  (install-time; invitation mail uses in-cluster Postfix when kernel)"
@@ -736,21 +740,21 @@ validate_config() {
     fi
     TENANCY_MODE="${TENANCY_MODE:-multi}"
     if [[ "${TENANCY_MODE}" != "multi" && "${TENANCY_MODE}" != "single" ]]; then
-        echo "  [INVALID]  TENANCY_MODE=${TENANCY_MODE}  — must be 'multi' or 'single' (set in ${cluster_settings_file})"
+        echo "  [INVALID]  TENANCY_MODE=${TENANCY_MODE}  — must be 'multi' or 'single' (set in ${cluster_claim_file})"
         (( errors++ )) || true
     else
         echo "  [OK]       TENANCY_MODE=${TENANCY_MODE}"
     fi
 
-    _opt_from NETWORK_MODE  "networking mode: tunnel (default) or static-ip" "${cluster_settings_file}"
+    _opt_from NETWORK_MODE  "networking mode: tunnel (default) or static-ip" "${cluster_claim_file}"
     if [[ "${NETWORK_MODE:-tunnel}" == "static-ip" ]]; then
-        _req_from NODE_IP   "required in static-ip mode" "${cluster_settings_file}"
+        _req_from NODE_IP   "required in static-ip mode" "${cluster_claim_file}"
     else
         echo "  [OK]       NODE_IP  (not required for NETWORK_MODE=${NETWORK_MODE:-tunnel})"
     fi
 
     _file_header "${INSTALL_CONFIG_FILE}" "Installer config checks (install.env)"
-    _opt_from LETSENCRYPT_EMAIL  "required for Let's Encrypt ACME; falls back to a dummy address" "${INSTALL_CONFIG_FILE}"
+    _opt_from LETSENCRYPT_EMAIL  "the ACME account address — certManager.letsencryptEmail on the claim; defaults to admin@\${KERNEL_DOMAIN}" "${cluster_claim_file}"
     _opt_from GENTIAN_APPS_REPO       "defaults to https://git.example.domain/gentian-apps" "${INSTALL_CONFIG_FILE}"
     _opt_from GENTIAN_APPS_BRANCH     "defaults to 'main'" "${INSTALL_CONFIG_FILE}"
     _opt_from GENTIAN_DEPLOYMENTS_REPO    "defaults to https://git.example.domain/gentian-deployments" "${INSTALL_CONFIG_FILE}"
@@ -760,7 +764,7 @@ validate_config() {
 
     LLM_SUPPORT="${LLM_SUPPORT:-false}"
     if [[ "${LLM_SUPPORT}" != "true" && "${LLM_SUPPORT}" != "false" ]]; then
-        echo "  [INVALID]  LLM_SUPPORT=${LLM_SUPPORT}  — must be 'true' or 'false' (set in ${INSTALL_CONFIG_FILE} or ${cluster_settings_file})"
+        echo "  [INVALID]  LLM_SUPPORT=${LLM_SUPPORT}  — must be 'true' or 'false' (set in ${INSTALL_CONFIG_FILE} or ${cluster_claim_file})"
         (( errors++ )) || true
     else
         echo "  [OK]       LLM_SUPPORT=${LLM_SUPPORT}"
@@ -768,7 +772,7 @@ validate_config() {
 
     GPU_ACCELERATION="${GPU_ACCELERATION:-false}"
     if [[ "${GPU_ACCELERATION}" != "true" && "${GPU_ACCELERATION}" != "false" ]]; then
-        echo "  [INVALID]  GPU_ACCELERATION=${GPU_ACCELERATION}  — must be 'true' or 'false' (set in ${INSTALL_CONFIG_FILE} or ${cluster_settings_file})"
+        echo "  [INVALID]  GPU_ACCELERATION=${GPU_ACCELERATION}  — must be 'true' or 'false' (set in ${INSTALL_CONFIG_FILE} or ${cluster_claim_file})"
         (( errors++ )) || true
     else
         echo "  [OK]       GPU_ACCELERATION=${GPU_ACCELERATION}"
@@ -776,7 +780,7 @@ validate_config() {
 
     if [[ "${GPU_ACCELERATION}" == "true" ]]; then
         if [[ "${LLM_SUPPORT}" != "true" ]]; then
-            echo "  [INVALID]  GPU_ACCELERATION=true requires LLM_SUPPORT=true (set in ${INSTALL_CONFIG_FILE} or ${cluster_settings_file})"
+            echo "  [INVALID]  GPU_ACCELERATION=true requires LLM_SUPPORT=true (set in ${INSTALL_CONFIG_FILE} or ${cluster_claim_file})"
             (( errors++ )) || true
         fi
 
@@ -1094,11 +1098,18 @@ load_deployments_cluster_settings() {
     # Reported, not overridden: an operator who wrote it there meant something,
     # and silently reversing the precedence would be the same fault in the other
     # direction.
+    #
+    # LETSENCRYPT_EMAIL and KV_MOUNT were missing from this list while having
+    # certManager.letsencryptEmail and openbao.kvMount on the claim, which the
+    # Cluster Composition reads. So those two had the fault this loop exists to
+    # report and no report: the claim field was authored, the Composition read
+    # it, and the install.env value won anyway with nothing said.
     local v
     for v in TENANCY_MODE NETWORK_MODE NODE_IP ROUTING_MODE SECRET_MODE \
              STORAGE_CLASS MAIL_SERVICE_MODE LB_PROVIDER LB_ANNOTATIONS \
              PLATFORM PLATFORM_PARAMS EDGE_ADDRESS_REF DNS_PROVIDER DNS_PARAMS \
-             LLM_SUPPORT GPU_ACCELERATION GPU_TIME_SLICE_REPLICAS; do
+             LLM_SUPPORT GPU_ACCELERATION GPU_TIME_SLICE_REPLICAS \
+             LETSENCRYPT_EMAIL KV_MOUNT ACME_ENV; do
         [[ -n "${!v:-}" ]] || continue
         [[ -r "${INSTALL_CONFIG_FILE:-}" ]] || continue
         grep -qE "^[[:space:]]*(export[[:space:]]+)?${v}=" "${INSTALL_CONFIG_FILE}" || continue
@@ -1114,6 +1125,19 @@ load_deployments_cluster_settings() {
         claim_setting NODE_IP           nodeIp           "${claim_file}"
         claim_setting STORAGE_CLASS     storageClass     "${claim_file}"
         claim_setting MAIL_SERVICE_MODE mail.serviceMode "${claim_file}"
+        # Two the shell read only from install.env while the Cluster Composition
+        # read them from the claim — certManager.letsencryptEmail at
+        # cluster-default.yaml:33, openbao.kvMount at :27. Not an override, which
+        # is what the loop above reports, but two independent readers of the same
+        # setting, free to disagree with no precedence between them to appeal to.
+        claim_setting LETSENCRYPT_EMAIL certManager.letsencryptEmail "${claim_file}"
+        claim_setting KV_MOUNT          openbao.kvMount              "${claim_file}"
+        # Which Let's Encrypt endpoint. Read here rather than from the stage
+        # profile that deployment.md points at, because the issuers are applied
+        # at A-06 and a stage profile is Helm values Argo CD renders later —
+        # unreadable at the moment the answer is needed. The claim is a file
+        # before it is an object, which is exactly why it can serve both.
+        claim_setting ACME_ENV          certificates.acmeEnv         "${claim_file}"
         # The external relay, when mail.serviceMode is external. Same object,
         # same claim; EXTERNAL_SMTP_* were only ever the shell's names for them.
         claim_setting MAIL_EGRESS_HOST       mail.egressHost "${claim_file}"
@@ -2159,14 +2183,19 @@ gentian_suze_claim_name()      { gentian_claim_name suze       dev-suze;       }
 # back to this repo.
 #
 # Exports GENTIAN_OS_BRANCH for apply_bootstrap_application, which passes it to
-# the bootstrap chart as gentianOsBranch. Set GENTIAN_OS_BRANCH in install.env to
-# pin a cluster to a branch or release tag; otherwise it follows the checkout the
-# installer is running from, which is what a dev cluster wants.
+# the bootstrap chart as gentianOsBranch. install.env states it; the template
+# ships it uncommented so that choosing is an act rather than an omission.
 #
-# Detached HEAD returns the literal "HEAD" from rev-parse, which is not a ref
-# ArgoCD can track — every Application would sit Unknown pointing at a revision
-# that does not resolve. Treat it as "no branch" and fall back, the same as a
-# missing .git.
+# Where it is unset, the checkout's own branch answers — an observation, not a
+# guess, and it cannot disagree with the code doing the installing.
+#
+# What this refuses to do is guess. A detached checkout — which is what `git
+# checkout v0.4.0` gives you — returns the literal "HEAD" from rev-parse, and
+# this used to answer "develop" for it. That is the worst possible answer to the
+# one case where being wrong is expensive: an operator pinning a release gets a
+# cluster tracking the tip of the development branch, with every Application
+# healthy and pointing somewhere they did not choose. Refusing is better, and it
+# is the only case where the ref cannot be observed.
 # =============================================================================
 resolve_gentian_os_branch() {
     if [[ -n "${GENTIAN_OS_BRANCH:-}" ]]; then
@@ -2176,7 +2205,16 @@ resolve_gentian_os_branch() {
     local detected
     detected="$(git -C "${SCRIPT_DIR}" rev-parse --abbrev-ref HEAD 2>/dev/null || true)"
     if [[ -z "${detected}" || "${detected}" == "HEAD" ]]; then
-        detected="develop"
+        error "GENTIAN_OS_BRANCH is not set and this checkout has no branch to read."
+        error "  Every in-cluster Application tracks this ref, so it decides which"
+        error "  gentian-os a cluster runs. It cannot be inferred from a detached"
+        error "  checkout or a missing .git, and guessing it wrong is a cluster"
+        error "  following a ref nobody chose."
+        error ""
+        error "  Set it in install.env:"
+        error "    GENTIAN_OS_BRANCH=v0.4.0   pin this cluster to a release"
+        error "    GENTIAN_OS_BRANCH=develop  track the development line"
+        return 1
     fi
     export GENTIAN_OS_BRANCH="${detected}"
 }

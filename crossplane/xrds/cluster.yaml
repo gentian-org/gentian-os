@@ -488,6 +488,31 @@ spec:
                         - private-ca
                         - self-signed
                       default: acme-dns01
+                    acmeEnv:
+                      type: string
+                      description: >
+                        Which Let's Encrypt endpoint the ACME issuers use, when
+                        issuerMode is one of the acme- modes.
+
+                        staging      untrusted certificates, generous rate
+                                     limits — what a cluster being rebuilt
+                                     repeatedly wants.
+                        production   trusted certificates, five duplicate
+                                     certificates per week per name.
+                        both         render both issuers and let a Certificate
+                                     name the one it wants.
+
+                        Read by the installer from this file at A-06, before the
+                        Cluster XR exists — the same way networkMode and nodeIp
+                        are read at A-05 and A-07. No Composition consumes it;
+                        the cluster issuers are shell-applied, and this is where
+                        the cluster says which endpoint it is on rather than the
+                        installer's pointer file saying so on its behalf.
+                      enum:
+                        - staging
+                        - production
+                        - both
+                      default: production
                     dnsProvider:
                       type: string
                       description: >

@@ -114,12 +114,19 @@ Edit it. These are the values that matter for a first install:
 
 | Variable | Set it to |
 |---|---|
-| `GENTIAN_DEPLOYMENTS_CLUSTER_ID` | This cluster's ID, e.g. `pck-cf2sw4h`. It names the directory under `clusters/` |
+| `GENTIAN_DEPLOYMENTS_CLUSTER_ID` | This cluster's ID. It names the directory under `clusters/` |
 | `GENTIAN_DEPLOYMENTS_STAGE` | `dev`, `staging` or `prod` |
 | `GENTIAN_DEPLOYMENTS_REPO` / `_BRANCH` | Your deployments repository |
 | `GENTIAN_APPS_REPO` / `_BRANCH` | The app catalogue |
 
-Leave the rest at their defaults.
+Leave the rest at their defaults. The repository URLs, branches and auth modes
+above them are already filled in — they are defaults for a fork or a mirror, not
+questions.
+
+**Nothing about the cluster itself is set here.** Its domain, network and
+routing modes, certificate issuer, mail mode and storage class live on the
+Cluster claim, which the next step writes. `install.env` says how to run the
+install; the claim says what the cluster is.
 
 ## 3. Generate this cluster's configuration
 
@@ -190,12 +197,17 @@ stops, so a cluster is never configured by a default nobody read.
 ## 6. Preview the install
 
 ```bash
-./install.sh --dry-run
+./install.sh --validate      # is this configuration coherent? No cluster needed.
+./install.sh --dry-run       # what would the install do to THIS cluster?
 ```
 
-Runs every step's check against the cluster and prints what it would do. It
-collects no credentials and changes nothing, so run it before you have gathered
-a single secret — it is how you find out what the install intends.
+`--validate` reads the configuration and the step contracts and reports what is
+missing or contradictory. It never contacts a cluster, so it is the first thing
+to run.
+
+`--dry-run` runs every step's check against the cluster and prints what it would
+do. It collects no credentials and changes nothing, so run it before you have
+gathered a single secret — it is how you find out what the install intends.
 
 ## 7. Have the credentials ready
 
