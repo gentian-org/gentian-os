@@ -190,12 +190,17 @@ stops, so a cluster is never configured by a default nobody read.
 ## 6. Preview the install
 
 ```bash
-./install.sh --dry-run
+./install.sh --validate      # is this configuration coherent? No cluster needed.
+./install.sh --dry-run       # what would the install do to THIS cluster?
 ```
 
-Runs every step's check against the cluster and prints what it would do. It
-collects no credentials and changes nothing, so run it before you have gathered
-a single secret — it is how you find out what the install intends.
+`--validate` reads the configuration and the step contracts and reports what is
+missing or contradictory. It never contacts a cluster, so it is the first thing
+to run.
+
+`--dry-run` runs every step's check against the cluster and prints what it would
+do. It collects no credentials and changes nothing, so run it before you have
+gathered a single secret — it is how you find out what the install intends.
 
 ## 7. Have the credentials ready
 
