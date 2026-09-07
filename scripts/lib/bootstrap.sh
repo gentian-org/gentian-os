@@ -1131,11 +1131,11 @@ seed_repository_credentials() {
             return 1
         fi
     }
-    _seed_one_repo_credential "os" "os" gentian-os-repository \
+    _seed_one_repo_credential "os" "gentian-os" gentian-os-repository \
         GENTIAN_OS_GIT_USERNAME GENTIAN_OS_GIT_TOKEN || return 1
-    _seed_one_repo_credential "apps" "apps" gentian-apps-repository \
+    _seed_one_repo_credential "apps" "gentian-apps" gentian-apps-repository \
         GENTIAN_APPS_GIT_USERNAME GENTIAN_APPS_GIT_TOKEN || return 1
-    _seed_one_repo_credential "ui" "ui" gentian-ui-repository \
+    _seed_one_repo_credential "ui" "gentian-ui" gentian-ui-repository \
         GENTIAN_UI_GIT_USERNAME GENTIAN_UI_GIT_TOKEN || return 1
 }
 

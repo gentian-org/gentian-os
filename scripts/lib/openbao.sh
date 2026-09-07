@@ -110,31 +110,31 @@ try_load_creds_from_openbao() {
     # every run, for the common unmirrored install.
     if [[ "$(_repo_auth_for gentian-os-repository)" != "none" ]]; then
         if [[ -z "${GENTIAN_OS_GIT_USERNAME:-}" ]]; then
-            v=$(_bao_get "repositories/os" '.data.data.username')
+            v=$(_bao_get "repositories/gentian-os" '.data.data.username')
             [[ -n "$v" ]] && { export GENTIAN_OS_GIT_USERNAME="$v"; loaded=1; }
         fi
         if [[ -z "${GENTIAN_OS_GIT_TOKEN:-}" ]]; then
-            v=$(_bao_get "repositories/os" '.data.data.password')
+            v=$(_bao_get "repositories/gentian-os" '.data.data.password')
             [[ -n "$v" ]] && { export GENTIAN_OS_GIT_TOKEN="$v"; loaded=1; }
         fi
     fi
     if [[ "$(_repo_auth_for gentian-apps-repository)" != "none" ]]; then
         if [[ -z "${GENTIAN_APPS_GIT_USERNAME:-}" ]]; then
-            v=$(_bao_get "repositories/apps" '.data.data.username')
+            v=$(_bao_get "repositories/gentian-apps" '.data.data.username')
             [[ -n "$v" ]] && { export GENTIAN_APPS_GIT_USERNAME="$v"; loaded=1; }
         fi
         if [[ -z "${GENTIAN_APPS_GIT_TOKEN:-}" ]]; then
-            v=$(_bao_get "repositories/apps" '.data.data.password')
+            v=$(_bao_get "repositories/gentian-apps" '.data.data.password')
             [[ -n "$v" ]] && { export GENTIAN_APPS_GIT_TOKEN="$v"; loaded=1; }
         fi
     fi
     if [[ "$(_repo_auth_for gentian-ui-repository)" != "none" ]]; then
         if [[ -z "${GENTIAN_UI_GIT_USERNAME:-}" ]]; then
-            v=$(_bao_get "repositories/ui" '.data.data.username')
+            v=$(_bao_get "repositories/gentian-ui" '.data.data.username')
             [[ -n "$v" ]] && { export GENTIAN_UI_GIT_USERNAME="$v"; loaded=1; }
         fi
         if [[ -z "${GENTIAN_UI_GIT_TOKEN:-}" ]]; then
-            v=$(_bao_get "repositories/ui" '.data.data.password')
+            v=$(_bao_get "repositories/gentian-ui" '.data.data.password')
             [[ -n "$v" ]] && { export GENTIAN_UI_GIT_TOKEN="$v"; loaded=1; }
         fi
     fi
