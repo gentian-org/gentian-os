@@ -2183,14 +2183,19 @@ gentian_suze_claim_name()      { gentian_claim_name suze       dev-suze;       }
 # back to this repo.
 #
 # Exports GENTIAN_OS_BRANCH for apply_bootstrap_application, which passes it to
-# the bootstrap chart as gentianOsBranch. Set GENTIAN_OS_BRANCH in install.env to
-# pin a cluster to a branch or release tag; otherwise it follows the checkout the
-# installer is running from, which is what a dev cluster wants.
+# the bootstrap chart as gentianOsBranch. install.env states it; the template
+# ships it uncommented so that choosing is an act rather than an omission.
 #
-# Detached HEAD returns the literal "HEAD" from rev-parse, which is not a ref
-# ArgoCD can track — every Application would sit Unknown pointing at a revision
-# that does not resolve. Treat it as "no branch" and fall back, the same as a
-# missing .git.
+# Where it is unset, the checkout's own branch answers — an observation, not a
+# guess, and it cannot disagree with the code doing the installing.
+#
+# What this refuses to do is guess. A detached checkout — which is what `git
+# checkout v0.4.0` gives you — returns the literal "HEAD" from rev-parse, and
+# this used to answer "develop" for it. That is the worst possible answer to the
+# one case where being wrong is expensive: an operator pinning a release gets a
+# cluster tracking the tip of the development branch, with every Application
+# healthy and pointing somewhere they did not choose. Refusing is better, and it
+# is the only case where the ref cannot be observed.
 # =============================================================================
 resolve_gentian_os_branch() {
     if [[ -n "${GENTIAN_OS_BRANCH:-}" ]]; then
@@ -2200,7 +2205,16 @@ resolve_gentian_os_branch() {
     local detected
     detected="$(git -C "${SCRIPT_DIR}" rev-parse --abbrev-ref HEAD 2>/dev/null || true)"
     if [[ -z "${detected}" || "${detected}" == "HEAD" ]]; then
-        detected="develop"
+        error "GENTIAN_OS_BRANCH is not set and this checkout has no branch to read."
+        error "  Every in-cluster Application tracks this ref, so it decides which"
+        error "  gentian-os a cluster runs. It cannot be inferred from a detached"
+        error "  checkout or a missing .git, and guessing it wrong is a cluster"
+        error "  following a ref nobody chose."
+        error ""
+        error "  Set it in install.env:"
+        error "    GENTIAN_OS_BRANCH=v0.4.0   pin this cluster to a release"
+        error "    GENTIAN_OS_BRANCH=develop  track the development line"
+        return 1
     fi
     export GENTIAN_OS_BRANCH="${detected}"
 }
