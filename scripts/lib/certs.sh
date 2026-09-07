@@ -151,11 +151,14 @@ gentian_set_args_from_pairs() {
 }
 
 gentian_cluster_issuers_manifest() {
-    if [[ "${ACME_ENV:-production}" == "staging" ]]; then
-        echo "cluster-issuers-staging.yaml"
-    else
-        echo "cluster-issuers.yaml"
-    fi
+    case "${ACME_ENV:-production}" in
+        staging) echo "cluster-issuers-staging.yaml" ;;
+        # Both issuers in one apply — kernel services can stay on production
+        # while a dev-stage tenant profile points elsewhere (tenantDNS01ClusterIssuer)
+        # at the staging one, without a second install.sh run.
+        both)    printf '%s\n' "cluster-issuers.yaml" "cluster-issuers-staging.yaml" ;;
+        *)       echo "cluster-issuers.yaml" ;;
+    esac
 }
 
 # Apply (or refresh) kernel ClusterIssuers. Safe to re-run
@@ -200,9 +203,16 @@ apply_gentian_cluster_issuers() {
     while IFS= read -r arg; do dns_args+=("${arg}"); done \
         < <(gentian_set_args_from_pairs dnsParams "${DNS_PARAMS:-}")
 
+    # -s may be repeated: ACME_ENV=both selects both issuer templates, rendered
+    # (and applied) together in this one invocation.
+    local show_args=()
+    while IFS= read -r manifest; do
+        show_args+=(-s "templates/${manifest}")
+    done < <(gentian_cluster_issuers_manifest)
+
     helm template gentian-cert-manager "${SCRIPT_DIR}/kernel/manifests/cert-manager/chart" \
         -f "$(gentian_platforms_values)" \
-        -s "templates/$(gentian_cluster_issuers_manifest)" \
+        "${show_args[@]}" \
         --set-string letsencryptEmail="${LETSENCRYPT_EMAIL}" \
         --set-string kernelDomain="${KERNEL_DOMAIN}" \
         --set-string gatewayNamespace="${KERNEL_PUBLIC_GATEWAY_NAMESPACE}" \
