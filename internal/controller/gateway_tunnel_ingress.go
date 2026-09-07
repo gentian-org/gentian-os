@@ -91,6 +91,20 @@ func ensureKernelGatewayTunnelIngress(
 			logger.Error(err, "ensure Cloudflare kernel tunnel ingress", "host", host, "origin", origin)
 			return err
 		}
+		// An ingress rule for a hostname nothing resolves is unreachable, so
+		// the two belong together: whatever we program a route for, we point
+		// at the tunnel. This half was missing, and only for kernel hosts —
+		// the tenant path (ensureTenantWildcardEdgeDNS) has always done both.
+		//
+		// It stayed invisible because every cluster until now ran on a zone
+		// whose kernel records predated the install, made by hand. A new zone
+		// has none, so id.<domain> and portal.<domain> never resolved, D-03
+		// waited out its full 15 minutes, and the warning it prints blames the
+		// Cloudflare credential — which is the one thing that was working.
+		if err := cf.ensureCNAME(ctx, host, cf.tunnelCNAME); err != nil {
+			logger.Error(err, "ensure Cloudflare kernel DNS CNAME", "host", host, "target", cf.tunnelCNAME)
+			return err
+		}
 	}
 	if err := cf.deleteTunnelIngress(ctx, "*."+kernelDomain); err != nil {
 		logger.Error(err, "delete Cloudflare kernel wildcard tunnel ingress", "host", "*."+kernelDomain)
