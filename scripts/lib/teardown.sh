@@ -162,7 +162,7 @@ _delete_crossplane_crds() {
 # finalize, the delete does not slow down — it stops, and takes the teardown
 # with it.
 #
-# Seen on ifk-w4h: gentian-appsets and crossplane-xrds each waited on XRDs held
+# Seen in practice: gentian-appsets and crossplane-xrds each waited on XRDs held
 # by foregroundDeletion, which waited on a Cluster claim whose finalizer nothing
 # would ever remove, because Crossplane's composite controllers had tripped
 # their circuit breaker. Two purges sat on the same command for half an hour,
@@ -413,8 +413,8 @@ _delete_pvs_for_namespace() {
 # _reclaim_orphaned_pvs — every Gentian PV the per-namespace pass did not reach.
 #
 # The pass above walks gentian_kernel_namespaces, which does not include
-# tenant-<name>. So a tenant's volumes were never reclaimed: on ifk-w4h the
-# leftovers included two tenant-corp/nextcloud-nextcloud PVs, and three for
+# tenant-<name>. So a tenant's volumes were never reclaimed: on one cluster the
+# leftovers included two tenant-<name>/nextcloud-nextcloud PVs, and three for
 # platform-kernel/postgres-1 — one per rebuild, because each cycle leaked a
 # fresh one and no cycle collected the last. Thirteen Released PVs held thirteen
 # Cinder volumes against a quota of twenty, and the next install died
@@ -709,9 +709,9 @@ _delete_gentianos_api_scaffold() {
 # Crossplane's finalizers, cleared before anything that waits on them
 # =============================================================================
 #
-# A purge used to deadlock here, permanently. The chain, observed on ifk-w4h:
+# A purge used to deadlock here, permanently. The chain, as observed:
 #
-#   Cluster claim ifk-w4h-prod   finalizer.apiextensions.crossplane.io
+#   Cluster claim <cluster>-prod  finalizer.apiextensions.crossplane.io
 #     -> clusters.gentianos.io CRD        customresourcecleanup
 #       -> XRDs xclusters / xsuze        offered + foregroundDeletion
 #         -> Argo Applications crossplane-xrds, gentian-appsets
