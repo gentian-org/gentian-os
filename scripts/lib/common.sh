@@ -645,11 +645,15 @@ load_env_file_override() {
 validate_config() {
     local errors=0 warnings=0
     local deployments_root cluster
-    local cluster_settings_file
+    local cluster_claim_file
 
     deployments_root="${GENTIAN_DEPLOYMENTS_PATH:-${HOME}/.gentian/gentian-deployments}"
     cluster="${GENTIAN_DEPLOYMENTS_CLUSTER_ID:-default-cluster}"
-    cluster_settings_file="${deployments_root}/clusters/${cluster}/kernel/cluster-settings.env"
+    # The Cluster claim, not cluster-settings.env. That file was retired when
+    # its declarative half moved onto the claim, and these messages went on
+    # naming it — telling an operator to fix a value in a file that no longer
+    # exists, on the one screen whose whole purpose is saying what to fix.
+    cluster_claim_file="${deployments_root}/clusters/${cluster}/claims/cluster.yaml"
 
     _file_header() {
         local file="$1" role="$2"
@@ -691,11 +695,11 @@ validate_config() {
         echo "  [OK]       CF_ZONE_NAME"
     fi
 
-    _file_header "${cluster_settings_file}" "Cluster checks (cluster-settings.env)"
+    _file_header "${cluster_claim_file}" "Cluster checks (the Cluster claim)"
 
     MAIL_SERVICE_MODE="$(gentian_mail_service_mode)"
     if [[ "${MAIL_SERVICE_MODE}" != "external" && "${MAIL_SERVICE_MODE}" != "kernel" ]]; then
-        echo "  [INVALID]  MAIL_SERVICE_MODE=${MAIL_SERVICE_MODE}  — must be 'external' or 'kernel' (set in ${cluster_settings_file})"
+        echo "  [INVALID]  MAIL_SERVICE_MODE=${MAIL_SERVICE_MODE}  — must be 'external' or 'kernel' (set in ${cluster_claim_file})"
         (( errors++ )) || true
     else
         echo "  [OK]       MAIL_SERVICE_MODE=${MAIL_SERVICE_MODE}  (install-time; invitation mail uses in-cluster Postfix when kernel)"
@@ -736,15 +740,15 @@ validate_config() {
     fi
     TENANCY_MODE="${TENANCY_MODE:-multi}"
     if [[ "${TENANCY_MODE}" != "multi" && "${TENANCY_MODE}" != "single" ]]; then
-        echo "  [INVALID]  TENANCY_MODE=${TENANCY_MODE}  — must be 'multi' or 'single' (set in ${cluster_settings_file})"
+        echo "  [INVALID]  TENANCY_MODE=${TENANCY_MODE}  — must be 'multi' or 'single' (set in ${cluster_claim_file})"
         (( errors++ )) || true
     else
         echo "  [OK]       TENANCY_MODE=${TENANCY_MODE}"
     fi
 
-    _opt_from NETWORK_MODE  "networking mode: tunnel (default) or static-ip" "${cluster_settings_file}"
+    _opt_from NETWORK_MODE  "networking mode: tunnel (default) or static-ip" "${cluster_claim_file}"
     if [[ "${NETWORK_MODE:-tunnel}" == "static-ip" ]]; then
-        _req_from NODE_IP   "required in static-ip mode" "${cluster_settings_file}"
+        _req_from NODE_IP   "required in static-ip mode" "${cluster_claim_file}"
     else
         echo "  [OK]       NODE_IP  (not required for NETWORK_MODE=${NETWORK_MODE:-tunnel})"
     fi
@@ -760,7 +764,7 @@ validate_config() {
 
     LLM_SUPPORT="${LLM_SUPPORT:-false}"
     if [[ "${LLM_SUPPORT}" != "true" && "${LLM_SUPPORT}" != "false" ]]; then
-        echo "  [INVALID]  LLM_SUPPORT=${LLM_SUPPORT}  — must be 'true' or 'false' (set in ${INSTALL_CONFIG_FILE} or ${cluster_settings_file})"
+        echo "  [INVALID]  LLM_SUPPORT=${LLM_SUPPORT}  — must be 'true' or 'false' (set in ${INSTALL_CONFIG_FILE} or ${cluster_claim_file})"
         (( errors++ )) || true
     else
         echo "  [OK]       LLM_SUPPORT=${LLM_SUPPORT}"
@@ -768,7 +772,7 @@ validate_config() {
 
     GPU_ACCELERATION="${GPU_ACCELERATION:-false}"
     if [[ "${GPU_ACCELERATION}" != "true" && "${GPU_ACCELERATION}" != "false" ]]; then
-        echo "  [INVALID]  GPU_ACCELERATION=${GPU_ACCELERATION}  — must be 'true' or 'false' (set in ${INSTALL_CONFIG_FILE} or ${cluster_settings_file})"
+        echo "  [INVALID]  GPU_ACCELERATION=${GPU_ACCELERATION}  — must be 'true' or 'false' (set in ${INSTALL_CONFIG_FILE} or ${cluster_claim_file})"
         (( errors++ )) || true
     else
         echo "  [OK]       GPU_ACCELERATION=${GPU_ACCELERATION}"
@@ -776,7 +780,7 @@ validate_config() {
 
     if [[ "${GPU_ACCELERATION}" == "true" ]]; then
         if [[ "${LLM_SUPPORT}" != "true" ]]; then
-            echo "  [INVALID]  GPU_ACCELERATION=true requires LLM_SUPPORT=true (set in ${INSTALL_CONFIG_FILE} or ${cluster_settings_file})"
+            echo "  [INVALID]  GPU_ACCELERATION=true requires LLM_SUPPORT=true (set in ${INSTALL_CONFIG_FILE} or ${cluster_claim_file})"
             (( errors++ )) || true
         fi
 
