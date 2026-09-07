@@ -111,16 +111,21 @@ func (r *TenantReconciler) deleteLegacyKernelWildcardSecret(ctx context.Context,
 }
 
 func (r *TenantReconciler) ensureTenantWildcardEdgeDNS(ctx context.Context, tenant *gentianov1alpha1.Tenant, effectiveDomain string) {
-	if r.CloudflareDNS == nil {
+	if r.Edge == nil {
 		return
 	}
 	logger := ctrl.LoggerFrom(ctx)
 	wildcard := "*." + effectiveDomain
-	if err := r.CloudflareDNS.ensureCNAME(ctx, wildcard, r.CloudflareDNS.tunnelCNAME); err != nil {
-		logger.Error(err, "ensure Cloudflare wildcard DNS CNAME", "host", wildcard)
-	}
-	if err := r.CloudflareDNS.ensureCNAME(ctx, effectiveDomain, r.CloudflareDNS.tunnelCNAME); err != nil {
-		logger.Error(err, "ensure Cloudflare apex DNS CNAME", "host", effectiveDomain)
+	// DNS only here; the routes are programmed below, once the origin is
+	// known. Splitting them this way is why these two calls address the DNS
+	// half directly rather than going through EnsureHostname.
+	if r.Edge.DNS != nil && r.Edge.Ingress != nil {
+		target := r.Edge.Ingress.Target()
+		for _, host := range []string{wildcard, effectiveDomain} {
+			if err := r.Edge.DNS.EnsureRecord(ctx, host, target); err != nil {
+				logger.Error(err, "ensure tenant edge DNS record", "host", host)
+			}
+		}
 	}
 	origin, err := kernelGatewayTunnelOrigin(ctx, r.Client)
 	if err != nil {
@@ -131,8 +136,11 @@ func (r *TenantReconciler) ensureTenantWildcardEdgeDNS(ctx context.Context, tena
 	tunnelOK := true
 	var tunnelMsg string
 	for _, host := range []string{wildcard, effectiveDomain} {
-		if err := r.CloudflareDNS.ensureTunnelIngress(ctx, host, origin); err != nil {
-			logger.Error(err, "ensure Cloudflare tunnel ingress", "host", host, "origin", origin)
+		if r.Edge.Ingress == nil {
+			break
+		}
+		if err := r.Edge.Ingress.EnsureRoute(ctx, host, origin); err != nil {
+			logger.Error(err, "ensure tenant edge route", "host", host, "origin", origin)
 			tunnelOK = false
 			tunnelMsg = err.Error()
 		}
@@ -168,14 +176,13 @@ func (r *TenantReconciler) deleteEdgeRouting(ctx context.Context, tenant *gentia
 		return fmt.Errorf("delete tenant wildcard Certificate: %w", err)
 	}
 
-	if effectiveDomain != "" && r.CloudflareDNS != nil {
+	if effectiveDomain != "" && r.Edge != nil {
 		wildcard := "*." + effectiveDomain
-		if err := r.CloudflareDNS.deleteCNAME(ctx, wildcard); err != nil {
-			logger.Error(err, "delete Cloudflare wildcard DNS CNAME", "host", wildcard)
-		}
+		// DeleteHostname takes DNS down before the route, so a name never
+		// resolves to an edge that has stopped routing it.
 		for _, host := range []string{wildcard, effectiveDomain} {
-			if err := r.CloudflareDNS.deleteTunnelIngress(ctx, host); err != nil {
-				logger.Error(err, "delete Cloudflare tunnel ingress", "host", host)
+			if err := r.Edge.DeleteHostname(ctx, host); err != nil {
+				logger.Error(err, "delete tenant edge hostname", "host", host)
 			}
 		}
 	}

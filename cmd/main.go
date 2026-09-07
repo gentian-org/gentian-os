@@ -134,7 +134,7 @@ func main() {
 		MailServiceMode:          os.Getenv("MAIL_SERVICE_MODE"),
 		TenantDNS01ClusterIssuer: os.Getenv("TENANT_DNS01_CLUSTER_ISSUER"),
 		KernelRealm:              kernelRealmOrDefault(os.Getenv("KERNEL_REALM")),
-		CloudflareDNS:            buildCloudflareDNSClient(),
+		Edge:                     buildEdge(),
 		RoutingMode:              routingMode,
 		CrossplaneOnly:           controller.EnvBool("TENANT_CROSSPLANE_ONLY"),
 		CommerceEnabled:          controller.EnvBool("GENTIAN_COMMERCE_ENABLED"),
@@ -207,11 +207,11 @@ func main() {
 	}
 
 	if err := (&controller.GatewayPlatformReconciler{
-		Client:        mgr.GetClient(),
-		KernelDomain:  os.Getenv("KERNEL_DOMAIN"),
-		TenancyMode:   os.Getenv("TENANCY_MODE"),
-		RoutingMode:   routingMode,
-		CloudflareDNS: buildCloudflareDNSClient(),
+		Client:       mgr.GetClient(),
+		KernelDomain: os.Getenv("KERNEL_DOMAIN"),
+		TenancyMode:  os.Getenv("TENANCY_MODE"),
+		RoutingMode:  routingMode,
+		Edge:         buildEdge(),
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "GatewayPlatform")
 		os.Exit(1)
@@ -446,25 +446,55 @@ func buildSeeder() *secrets.Seeder {
 	return secrets.NewSeeder(kv, deriver)
 }
 
-// buildCloudflareDNSClient constructs a cloudflareDNSClient from environment
-// variables. Returns nil (feature disabled) if any required variable is absent.
+// buildEdge assembles the cluster's edge from environment.
 //
-//	CLOUDFLARE_API_TOKEN        – Cloudflare API token (Zone:Read + DNS:Edit)
-//	CLOUDFLARE_TUNNEL_API_TOKEN – optional token with Account → Cloudflare One
-//	                              Connector: cloudflared → Edit
-//	CLOUDFLARE_ZONE_ID          – Cloudflare zone ID for the kernel domain
+// Two halves, two credentials, resolved independently — see internal/controller
+// /edge.go for why they are separate at all. Either may be absent: a cluster can
+// publish DNS with no tunnel, and a cluster whose records an operator maintains
+// by hand can route a tunnel with no writer.
+//
+//	CLOUDFLARE_API_TOKEN        – DNS half. Zone -> Zone -> Read and
+//	                              Zone -> DNS -> Edit on the kernel domain's zone.
+//	CLOUDFLARE_ZONE_ID          – the zone those records are written in.
+//	CLOUDFLARE_TUNNEL_API_TOKEN – ingress half. Account -> Cloudflare One
+//	                              Connector: cloudflared -> Edit. Falls back to
+//	                              CLOUDFLARE_API_TOKEN, which is the ordinary
+//	                              single-token deployment; the fallback is a
+//	                              convenience, not the contract.
 //	CLOUDFLARE_TUNNEL_CNAME     – tunnel target, e.g. <uuid>.cfargotunnel.com
-func buildCloudflareDNSClient() *controller.CloudflareDNSClient {
-	token := os.Getenv("CLOUDFLARE_API_TOKEN")
+//	CLOUDFLARE_ACCOUNT_ID       – optional. Supplied, the ingress never reads the
+//	                              zone, so its token needs no Zone:Read.
+func buildEdge() *controller.Edge {
+	dnsToken := os.Getenv("CLOUDFLARE_API_TOKEN")
 	zoneID := os.Getenv("CLOUDFLARE_ZONE_ID")
 	tunnelCNAME := os.Getenv("CLOUDFLARE_TUNNEL_CNAME")
-	if token == "" || zoneID == "" || tunnelCNAME == "" {
-		setupLog.Info("Cloudflare DNS management disabled (CLOUDFLARE_API_TOKEN/CLOUDFLARE_ZONE_ID/CLOUDFLARE_TUNNEL_CNAME not set)")
+	accountID := os.Getenv("CLOUDFLARE_ACCOUNT_ID")
+
+	tunnelToken := os.Getenv("CLOUDFLARE_TUNNEL_API_TOKEN")
+	if tunnelToken == "" {
+		tunnelToken = dnsToken
+	}
+
+	edge := &controller.Edge{}
+	if dnsToken != "" && zoneID != "" {
+		edge.DNS = controller.NewCloudflareDNSWriter(dnsToken, zoneID)
+	}
+	if tunnelToken != "" && tunnelCNAME != "" {
+		edge.Ingress = controller.NewCloudflareTunnelIngress(tunnelToken, zoneID, tunnelCNAME, accountID)
+	}
+
+	if edge.DNS == nil && edge.Ingress == nil {
+		setupLog.Info("edge management disabled (no Cloudflare DNS or tunnel configuration)")
 		return nil
 	}
-	tunnelToken := os.Getenv("CLOUDFLARE_TUNNEL_API_TOKEN")
-	setupLog.Info("Cloudflare DNS management enabled", "zone_id", zoneID, "tunnel_cname", tunnelCNAME, "tunnel_api_token", tunnelToken != "")
-	return controller.NewCloudflareDNSClient(token, zoneID, tunnelCNAME, tunnelToken)
+	setupLog.Info("edge management enabled",
+		"dns", edge.DNS != nil,
+		"ingress", edge.Ingress != nil,
+		"zone_id", zoneID,
+		"tunnel_cname", tunnelCNAME,
+		"separate_tunnel_token", os.Getenv("CLOUDFLARE_TUNNEL_API_TOKEN") != "",
+		"account_id_supplied", accountID != "")
+	return edge
 }
 
 // envOrDefault reads an environment variable, falling back when it is unset or

@@ -259,7 +259,7 @@ type TenantReconciler struct {
 	// TLS can provision edge certs for tenant app hostnames (e.g.
 	// meet.demo.platform.example.com). Nil when CLOUDFLARE_* env vars are unset;
 	// use DNS-only (grey cloud) or passthrough to origin in that case.
-	CloudflareDNS *CloudflareDNSClient
+	Edge *Edge
 	// RoutingMode is always gateway (Gateway API + Envoy). Sourced from ROUTING_MODE.
 	RoutingMode string
 	// CrossplaneOnly skips shared-kernel side effects (mail, portal redirect)

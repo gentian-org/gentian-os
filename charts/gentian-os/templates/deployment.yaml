@@ -204,6 +204,22 @@ spec:
               {{- else }}
               value: ""
               {{- end }}
+            # Optional. Supplied, the tunnel ingress addresses the account
+            # directly and never reads the zone — so its token needs only the
+            # account permission, not Zone:Read. See internal/controller/
+            # edge_cloudflare_tunnel.go.
+            - name: CLOUDFLARE_ACCOUNT_ID
+              {{- if .Values.cloudflare.accountID }}
+              value: {{ .Values.cloudflare.accountID | quote }}
+              {{- else if .Values.cloudflare.apiTokenSecretRef.name }}
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.cloudflare.apiTokenSecretRef.name | quote }}
+                  key: "account-id"
+                  optional: true
+              {{- else }}
+              value: ""
+              {{- end }}
             - name: CLOUDFLARE_TUNNEL_CNAME
               {{- if .Values.cloudflare.tunnelCNAME }}
               value: {{ .Values.cloudflare.tunnelCNAME | quote }}

@@ -23,70 +23,72 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"net/url"
 	"strings"
 
 	ctrl "sigs.k8s.io/controller-runtime"
 )
 
-const cloudflareAPIBase = "https://api.cloudflare.com/client/v4"
-
-// CloudflareDNSClient is an optional edge-DNS adapter for Cloudflare. It manages
-// proxied CNAME records for *.<effectiveDomain> and, in gateway+tunnel mode,
-// public hostname → origin mappings on the remotely-managed Cloudflare tunnel.
-type CloudflareDNSClient struct {
+// CloudflareTunnelIngress implements EdgeIngress against a remotely-managed
+// Cloudflare Tunnel. It programs which hostnames the tunnel routes to which
+// origin, and reports the CNAME those hostnames must resolve to.
+//
+// Its credential is the tunnel credential -- Account -> Cloudflare One
+// Connector: cloudflared -> Edit, which older accounts list as Cloudflare
+// Tunnel. This is an ACCOUNT-scoped permission, where the DNS half's is
+// ZONE-scoped: they are genuinely different grants and a token can hold either
+// without the other, which is the failure formatCloudflareErrors explains.
+//
+// zoneID is here only to resolve the account id, which the tunnel endpoints
+// are addressed by. It is not used to write anything.
+//
+// That lookup is the one place the split is not clean, and it is worth naming.
+// Reading /zones/<id> needs Zone -> Zone -> Read, which is a DNS-side grant;
+// before the split it ran on the DNS token, because there was only one client.
+// Now that the halves hold their own credentials, either the tunnel token also
+// carries Zone:Read, or the account id is supplied outright and no zone is
+// read at all. accountID exists for the second, and CLOUDFLARE_ACCOUNT_ID is
+// how a deployment provides it — the escape hatch for a tunnel token scoped to
+// exactly the account permission it needs and nothing else.
+type CloudflareTunnelIngress struct {
 	token       string
-	tunnelToken string // optional; falls back to token for tunnel configuration API
 	zoneID      string
-	tunnelCNAME string // e.g. <uuid>.cfargotunnel.com
-	accountID   string // lazily resolved from zone metadata
+	tunnelCNAME string // <uuid>.cfargotunnel.com
+	accountID   string // supplied, or lazily resolved from zone metadata
 	http        *http.Client
 }
 
-// NewCloudflareDNSClient creates a CloudflareDNSClient. tunnelToken may be empty;
-// when set it is used for Cloudflare Tunnel configuration API calls (requires
-// Account → Cloudflare One Connector: cloudflared → Edit), while token is used
-// for the DNS record API.
-func NewCloudflareDNSClient(token, zoneID, tunnelCNAME, tunnelToken string) *CloudflareDNSClient {
-	return &CloudflareDNSClient{
+// NewCloudflareTunnelIngress builds the ingress half of a Cloudflare edge.
+//
+// accountID may be empty, in which case it is resolved from the zone on first
+// use — see the note on the struct about what that asks of the token.
+func NewCloudflareTunnelIngress(token, zoneID, tunnelCNAME, accountID string) *CloudflareTunnelIngress {
+	return &CloudflareTunnelIngress{
 		token:       token,
-		tunnelToken: tunnelToken,
 		zoneID:      zoneID,
 		tunnelCNAME: tunnelCNAME,
+		accountID:   accountID,
 		http:        &http.Client{},
 	}
 }
 
-func (c *CloudflareDNSClient) tunnelAPIToken() string {
-	if c.tunnelToken != "" {
-		return c.tunnelToken
+// Target implements EdgeIngress: a tunnel is reached by a proxied CNAME to its
+// own hostname. Proxied is not optional -- cfargotunnel.com resolves to
+// nothing a client could connect to directly.
+func (c *CloudflareTunnelIngress) Target() EdgeTarget {
+	if c.tunnelCNAME == "" {
+		return EdgeTarget{}
 	}
-	return c.token
+	return EdgeTarget{Type: "CNAME", Value: c.tunnelCNAME, Proxied: true}
 }
 
-type cfDNSRecord struct {
-	ID      string `json:"id,omitempty"`
-	Type    string `json:"type"`
-	Name    string `json:"name"`
-	Content string `json:"content"`
-	Proxied bool   `json:"proxied"`
+// EnsureRoute implements EdgeIngress.
+func (c *CloudflareTunnelIngress) EnsureRoute(ctx context.Context, hostname, service string) error {
+	return c.ensureTunnelIngress(ctx, hostname, service)
 }
 
-type cfListResponse struct {
-	Success bool          `json:"success"`
-	Result  []cfDNSRecord `json:"result"`
-	Errors  []cfError     `json:"errors"`
-}
-
-type cfCreateResponse struct {
-	Success bool        `json:"success"`
-	Result  cfDNSRecord `json:"result"`
-	Errors  []cfError   `json:"errors"`
-}
-
-type cfError struct {
-	Code    int    `json:"code"`
-	Message string `json:"message"`
+// DeleteRoute implements EdgeIngress.
+func (c *CloudflareTunnelIngress) DeleteRoute(ctx context.Context, hostname string) error {
+	return c.deleteTunnelIngress(ctx, hostname)
 }
 
 type cfZoneResponse struct {
@@ -160,7 +162,8 @@ func parseTunnelID(tunnelCNAME string) string {
 
 // ensureTunnelIngress adds or updates a public hostname → service mapping on the
 // remotely-managed Cloudflare tunnel. Existing ingress rules are preserved.
-func (c *CloudflareDNSClient) ensureTunnelIngress(ctx context.Context, hostname, service string) error {
+
+func (c *CloudflareTunnelIngress) ensureTunnelIngress(ctx context.Context, hostname, service string) error {
 	if hostname == "" || service == "" {
 		return nil
 	}
@@ -200,7 +203,7 @@ func (c *CloudflareDNSClient) ensureTunnelIngress(ctx context.Context, hostname,
 }
 
 // deleteTunnelIngress removes a hostname from the tunnel ingress configuration.
-func (c *CloudflareDNSClient) deleteTunnelIngress(ctx context.Context, hostname string) error {
+func (c *CloudflareTunnelIngress) deleteTunnelIngress(ctx context.Context, hostname string) error {
 	if hostname == "" {
 		return nil
 	}
@@ -227,7 +230,7 @@ func (c *CloudflareDNSClient) deleteTunnelIngress(ctx context.Context, hostname 
 	return c.putTunnelConfig(ctx, accountID, tunnelID, config)
 }
 
-func (c *CloudflareDNSClient) accountIDForZone(ctx context.Context) (string, error) {
+func (c *CloudflareTunnelIngress) accountIDForZone(ctx context.Context) (string, error) {
 	if c.accountID != "" {
 		return c.accountID, nil
 	}
@@ -236,7 +239,7 @@ func (c *CloudflareDNSClient) accountIDForZone(ctx context.Context) (string, err
 	if err != nil {
 		return "", err
 	}
-	c.setHeaders(req)
+	c.setTunnelHeaders(req)
 	resp, err := c.http.Do(req)
 	if err != nil {
 		return "", err
@@ -254,7 +257,7 @@ func (c *CloudflareDNSClient) accountIDForZone(ctx context.Context) (string, err
 	return c.accountID, nil
 }
 
-func (c *CloudflareDNSClient) getTunnelConfig(ctx context.Context, accountID, tunnelID string) (cfTunnelConfig, error) {
+func (c *CloudflareTunnelIngress) getTunnelConfig(ctx context.Context, accountID, tunnelID string) (cfTunnelConfig, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet,
 		fmt.Sprintf("%s/accounts/%s/cfd_tunnel/%s/configurations", cloudflareAPIBase, accountID, tunnelID), nil)
 	if err != nil {
@@ -280,7 +283,7 @@ func (c *CloudflareDNSClient) getTunnelConfig(ctx context.Context, accountID, tu
 	return result.Result.Config, nil
 }
 
-func (c *CloudflareDNSClient) putTunnelConfig(ctx context.Context, accountID, tunnelID string, config cfTunnelConfig) error {
+func (c *CloudflareTunnelIngress) putTunnelConfig(ctx context.Context, accountID, tunnelID string, config cfTunnelConfig) error {
 	payload, err := json.Marshal(map[string]interface{}{"config": config})
 	if err != nil {
 		return err
@@ -342,156 +345,7 @@ func upsertTunnelIngress(rules []cfTunnelIngressRule, rule cfTunnelIngressRule) 
 
 // ensureCNAME creates or updates a proxied CNAME record pointing hostname → target.
 // Idempotent: if a record with the exact same content already exists, it is left unchanged.
-func (c *CloudflareDNSClient) ensureCNAME(ctx context.Context, hostname, target string) error {
-	existing, err := c.listRecords(ctx, hostname)
-	if err != nil {
-		return err
-	}
-	for _, r := range existing {
-		if r.Type != "CNAME" {
-			continue
-		}
-		if r.Content == target && r.Proxied {
-			return nil // already correct
-		}
-		return c.updateRecord(ctx, r.ID, cfDNSRecord{
-			Type:    "CNAME",
-			Name:    hostname,
-			Content: target,
-			Proxied: true,
-		})
-	}
-	return c.createRecord(ctx, cfDNSRecord{
-		Type:    "CNAME",
-		Name:    hostname,
-		Content: target,
-		Proxied: true,
-	})
-}
 
-// deleteCNAME deletes all CNAME records for hostname. Silently returns nil if
-// no records exist.
-func (c *CloudflareDNSClient) deleteCNAME(ctx context.Context, hostname string) error {
-	records, err := c.listRecords(ctx, hostname)
-	if err != nil {
-		return err
-	}
-	for _, r := range records {
-		if r.Type != "CNAME" {
-			continue
-		}
-		req, err := http.NewRequestWithContext(ctx, http.MethodDelete,
-			fmt.Sprintf("%s/zones/%s/dns_records/%s", cloudflareAPIBase, c.zoneID, r.ID), nil)
-		if err != nil {
-			return err
-		}
-		c.setHeaders(req)
-		resp, err := c.http.Do(req)
-		if err != nil {
-			return err
-		}
-		_ = resp.Body.Close()
-		if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusNoContent {
-			return fmt.Errorf("delete DNS record %s: HTTP %d", r.ID, resp.StatusCode)
-		}
-	}
-	return nil
-}
-
-func (c *CloudflareDNSClient) listRecords(ctx context.Context, name string) ([]cfDNSRecord, error) {
-	u := fmt.Sprintf("%s/zones/%s/dns_records?%s",
-		cloudflareAPIBase, c.zoneID,
-		url.Values{"name": {name}}.Encode())
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
-	if err != nil {
-		return nil, err
-	}
-	c.setHeaders(req)
-	resp, err := c.http.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = resp.Body.Close() }()
-	body, _ := io.ReadAll(resp.Body)
-	var result cfListResponse
-	if err := json.Unmarshal(body, &result); err != nil {
-		return nil, fmt.Errorf("parse Cloudflare list response: %w", err)
-	}
-	if !result.Success {
-		return nil, fmt.Errorf("cloudflare list DNS records: %v", result.Errors)
-	}
-	return result.Result, nil
-}
-
-// writeRecord is create and update: same body, same headers, same response
-// shape, differing only in method and URL. They were two functions whose bodies
-// matched line for line apart from the word "create"/"update" in one error
-// string, which is how a fix to one of them misses the other.
-func (c *CloudflareDNSClient) writeRecord(ctx context.Context, method, url, verb string, rec cfDNSRecord) error {
-	payload, err := json.Marshal(rec)
-	if err != nil {
-		return err
-	}
-	req, err := http.NewRequestWithContext(ctx, method, url, bytes.NewReader(payload))
-	if err != nil {
-		return err
-	}
-	c.setHeaders(req)
-	req.Header.Set("Content-Type", "application/json")
-	resp, err := c.http.Do(req)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = resp.Body.Close() }()
-	body, _ := io.ReadAll(resp.Body)
-	var result cfCreateResponse
-	if err := json.Unmarshal(body, &result); err != nil {
-		return fmt.Errorf("parse Cloudflare %s response: %w", verb, err)
-	}
-	if !result.Success {
-		return fmt.Errorf("cloudflare %s DNS record: %v", verb, result.Errors)
-	}
-	return nil
-}
-
-func (c *CloudflareDNSClient) createRecord(ctx context.Context, rec cfDNSRecord) error {
-	return c.writeRecord(ctx, http.MethodPost,
-		fmt.Sprintf("%s/zones/%s/dns_records", cloudflareAPIBase, c.zoneID), "create", rec)
-}
-
-func (c *CloudflareDNSClient) updateRecord(ctx context.Context, id string, rec cfDNSRecord) error {
-	return c.writeRecord(ctx, http.MethodPut,
-		fmt.Sprintf("%s/zones/%s/dns_records/%s", cloudflareAPIBase, c.zoneID, id), "update", rec)
-}
-
-func (c *CloudflareDNSClient) setHeaders(req *http.Request) {
+func (c *CloudflareTunnelIngress) setTunnelHeaders(req *http.Request) {
 	req.Header.Set("Authorization", "Bearer "+c.token)
-}
-
-func (c *CloudflareDNSClient) setTunnelHeaders(req *http.Request) {
-	req.Header.Set("Authorization", "Bearer "+c.tunnelAPIToken())
-}
-
-func formatCloudflareErrors(errors []cfError) error {
-	if len(errors) == 0 {
-		return fmt.Errorf("unknown error")
-	}
-	// 10000 is Cloudflare's generic authentication error; 1001 is what the
-	// tunnel endpoints return for a token that authenticated but carries no
-	// tunnel permission. Both mean the same thing to an operator, and 1001 is
-	// the one a DNS-scoped token actually produces — it went without the hint
-	// until a tenant deploy spent half an hour retrying "Not authorized" with
-	// nothing to act on.
-	//
-	// The permission is named as the dashboard names it today. Cloudflare
-	// folded tunnels into Cloudflare One and renamed it, so "Cloudflare Tunnel"
-	// — what this said, and what the API still implies — appears nowhere in the
-	// permission list an operator is reading. Sending someone to look for a
-	// setting under a name it no longer has is the same defect as saying
-	// nothing, so both names are given.
-	if errors[0].Code == 10000 || errors[0].Code == 1001 {
-		return fmt.Errorf("%v (grant Account → Cloudflare One Connector: cloudflared → Edit"+
-			" — older accounts call it Cloudflare Tunnel — or set CLOUDFLARE_TUNNEL_API_TOKEN)", errors)
-	}
-	return fmt.Errorf("%v", errors)
 }

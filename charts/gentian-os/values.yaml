@@ -254,6 +254,10 @@ cloudflare:
   tunnelAPITokenSecretRef:
     name: ""
     key: "api-token"
+  # Optional: lets the tunnel ingress skip the zone lookup, so its token
+  # needs no Zone:Read. Falls back to the "account-id" key on the DNS token
+  # Secret when unset.
+  accountID: ""
 
 # OpenBao / Vault integration
 openbao:

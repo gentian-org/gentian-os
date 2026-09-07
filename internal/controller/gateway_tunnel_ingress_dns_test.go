@@ -57,7 +57,7 @@ func (f *fakeCloudflare) RoundTrip(req *http.Request) (*http.Response, error) {
 	switch {
 	case strings.Contains(req.URL.Path, "/dns_records"):
 		if req.Method == http.MethodGet {
-			// No existing record: forces ensureCNAME down the create path.
+			// No existing record: forces EnsureRecord down the create path.
 			body = `{"success":true,"errors":[],"result":[]}`
 		} else {
 			body = `{"success":true,"errors":[],"result":{"id":"rec1"}}`
@@ -77,11 +77,16 @@ func (f *fakeCloudflare) RoundTrip(req *http.Request) (*http.Response, error) {
 	}, nil
 }
 
-func newFakeCloudflareClient() (*CloudflareDNSClient, *fakeCloudflare) {
+// newFakeEdge builds both halves over one recording transport, the way a
+// single-token deployment does, so a test can assert on the pair.
+func newFakeEdge() (*Edge, *fakeCloudflare) {
 	fake := &fakeCloudflare{}
-	c := NewCloudflareDNSClient("dns-token", "zone1", "abc-123.cfargotunnel.com", "tunnel-token")
-	c.http = &http.Client{Transport: fake}
-	return c, fake
+	tr := &http.Client{Transport: fake}
+	dns := NewCloudflareDNSWriter("dns-token", "zone1")
+	dns.http = tr
+	ing := NewCloudflareTunnelIngress("tunnel-token", "zone1", "abc-123.cfargotunnel.com", "")
+	ing.http = tr
+	return &Edge{DNS: dns, Ingress: ing}, fake
 }
 
 func countCalls(calls []string, method, needle string) int {
@@ -98,10 +103,11 @@ func countCalls(calls []string, method, needle string) int {
 // record must reach the create endpoint. Without it, every assertion below
 // could pass against a client that silently does nothing.
 func TestEnsureCNAMEWritesARecord(t *testing.T) {
-	c, fake := newFakeCloudflareClient()
+	edge, fake := newFakeEdge()
 
-	if err := c.ensureCNAME(context.Background(), "id.example.test", c.tunnelCNAME); err != nil {
-		t.Fatalf("ensureCNAME: %v", err)
+	if err := edge.DNS.EnsureRecord(context.Background(), "id.example.test",
+		edge.Ingress.Target()); err != nil {
+		t.Fatalf("EnsureRecord: %v", err)
 	}
 
 	calls := fake.snapshot()
@@ -118,7 +124,7 @@ func TestEnsureCNAMEWritesARecord(t *testing.T) {
 // a non-idempotent write would rewrite every kernel record continuously.
 func TestEnsureCNAMEIsIdempotent(t *testing.T) {
 	fake := &fakeCloudflare{}
-	c := NewCloudflareDNSClient("dns-token", "zone1", "abc-123.cfargotunnel.com", "")
+	c := NewCloudflareDNSWriter("dns-token", "zone1")
 	c.http = &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
 		fake.record(req.Method, req.URL.Path)
 		body := `{"success":true,"errors":[],"result":[]}`
@@ -136,8 +142,9 @@ func TestEnsureCNAMEIsIdempotent(t *testing.T) {
 		}, nil
 	})}
 
-	if err := c.ensureCNAME(context.Background(), "id.example.test", c.tunnelCNAME); err != nil {
-		t.Fatalf("ensureCNAME: %v", err)
+	target := EdgeTarget{Type: "CNAME", Value: "abc-123.cfargotunnel.com", Proxied: true}
+	if err := c.EnsureRecord(context.Background(), "id.example.test", target); err != nil {
+		t.Fatalf("EnsureRecord: %v", err)
 	}
 
 	calls := fake.snapshot()
@@ -156,16 +163,15 @@ func TestEnsureCNAMEIsIdempotent(t *testing.T) {
 // BOTH calls happen is what pins the invariant: a route to a hostname that
 // does not resolve is unreachable, so the two are one operation.
 func TestKernelIngressAlsoWritesDNS(t *testing.T) {
-	c, fake := newFakeCloudflareClient()
+	edge, fake := newFakeEdge()
 	ctx := context.Background()
 
+	// One call per host, exactly as the kernel path now makes it. If
+	// EnsureHostname ever stops doing both halves, this is what notices.
 	hosts := []string{"id.example.test", "portal.example.test"}
 	for _, h := range hosts {
-		if err := c.ensureTunnelIngress(ctx, h, "http://gw.platform-kernel.svc:80"); err != nil {
-			t.Fatalf("ensureTunnelIngress(%s): %v", h, err)
-		}
-		if err := c.ensureCNAME(ctx, h, c.tunnelCNAME); err != nil {
-			t.Fatalf("ensureCNAME(%s): %v", h, err)
+		if err := edge.EnsureHostname(ctx, h, "http://gw.platform-kernel.svc:80"); err != nil {
+			t.Fatalf("EnsureHostname(%s): %v", h, err)
 		}
 	}
 
@@ -187,8 +193,9 @@ func TestDNSAndTunnelUseTheirOwnTokens(t *testing.T) {
 	seen := map[string]string{} // path-kind -> bearer
 	var mu sync.Mutex
 
-	c := NewCloudflareDNSClient("dns-token", "zone1", "abc-123.cfargotunnel.com", "tunnel-token")
-	c.http = &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+	dns := NewCloudflareDNSWriter("dns-token", "zone1")
+	ing := NewCloudflareTunnelIngress("tunnel-token", "zone1", "abc-123.cfargotunnel.com", "acct1")
+	tr := roundTripFunc(func(req *http.Request) (*http.Response, error) {
 		kind := "other"
 		switch {
 		case strings.Contains(req.URL.Path, "/dns_records"):
@@ -221,14 +228,16 @@ func TestDNSAndTunnelUseTheirOwnTokens(t *testing.T) {
 			Header:     http.Header{},
 			Request:    req,
 		}, nil
-	})}
+	})
+	dns.http = &http.Client{Transport: tr}
+	ing.http = &http.Client{Transport: tr}
 
 	ctx := context.Background()
-	if err := c.ensureCNAME(ctx, "id.example.test", c.tunnelCNAME); err != nil {
-		t.Fatalf("ensureCNAME: %v", err)
+	if err := dns.EnsureRecord(ctx, "id.example.test", ing.Target()); err != nil {
+		t.Fatalf("EnsureRecord: %v", err)
 	}
-	if err := c.ensureTunnelIngress(ctx, "id.example.test", "http://gw:80"); err != nil {
-		t.Fatalf("ensureTunnelIngress: %v", err)
+	if err := ing.EnsureRoute(ctx, "id.example.test", "http://gw:80"); err != nil {
+		t.Fatalf("EnsureRoute: %v", err)
 	}
 
 	if seen["dns"] != "dns-token" {
@@ -239,13 +248,32 @@ func TestDNSAndTunnelUseTheirOwnTokens(t *testing.T) {
 	}
 }
 
-// TestTunnelTokenFallsBackToDNSToken: one token carrying both permissions is a
-// supported deployment, so an unset tunnel token must not break the tunnel
-// path. It is a fallback, not the contract — see the test above.
-func TestTunnelTokenFallsBackToDNSToken(t *testing.T) {
-	c := NewCloudflareDNSClient("only-token", "zone1", "abc-123.cfargotunnel.com", "")
-	if got := c.tunnelAPIToken(); got != "only-token" {
-		t.Errorf("expected fallback to the DNS token, got %q", got)
+// TestIngressTargetIsAProxiedCNAME pins what the tunnel asks DNS to write.
+// cfargotunnel.com resolves to nothing reachable, so an unproxied record would
+// be a name that answers and then refuses every connection.
+func TestIngressTargetIsAProxiedCNAME(t *testing.T) {
+	ing := NewCloudflareTunnelIngress("t", "zone1", "abc-123.cfargotunnel.com", "")
+	got := ing.Target()
+	if got.Type != "CNAME" || got.Value != "abc-123.cfargotunnel.com" || !got.Proxied {
+		t.Errorf("unexpected tunnel target: %+v", got)
+	}
+	if (&CloudflareTunnelIngress{}).Target().IsZero() != true {
+		t.Error("an ingress with no tunnel must report no target")
+	}
+}
+
+// TestEdgeHalvesAreIndependent: each half is usable without the other, which
+// is the point of the split. A DNS-only edge writes nothing on its own (it has
+// no target to write), and neither shape may panic.
+func TestEdgeHalvesAreIndependent(t *testing.T) {
+	ctx := context.Background()
+	dnsOnly := &Edge{DNS: NewCloudflareDNSWriter("t", "z")}
+	if err := dnsOnly.EnsureHostname(ctx, "a.example.test", "http://gw:80"); err != nil {
+		t.Errorf("DNS-only edge should be inert, got %v", err)
+	}
+	var nilEdge *Edge
+	if err := nilEdge.EnsureHostname(ctx, "a.example.test", "http://gw:80"); err != nil {
+		t.Errorf("nil edge should be inert, got %v", err)
 	}
 }
 
