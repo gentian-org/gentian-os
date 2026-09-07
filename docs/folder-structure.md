@@ -87,7 +87,7 @@ The kernel's static/GitOps side, ordered by bootstrap stage:
 | `xrds/` | Composite definitions: `Cluster`, `Tenant`, `App`, `InfraData`, `Suze`. These generate the `apps.gentianos.io` / `xtenants.gentianos.io` CRDs on-cluster — which is exactly why the chart must *not* ship them. |
 | `compositions/` | The pipelines: `cluster-default`, `tenant-default`, `app-default`, `infra-data`, `suze`. Catalogue repos may ship their own compositions and point at them via `AppProfile.spec.compositionRef`. |
 | `providers/` | `Provider` packages, their `ProviderConfig`s, and the RBAC they need. |
-| `tests/unit/render/` | Golden-file tests: each case is `xr.yaml` + a `composition.yaml` **symlink** into `compositions/` + `functions.yaml` + `expected.yaml`, run by `make test-unit-render`. |
+| `tests/unit/render/` | Golden-file tests: each case is `xr.yaml` + a `composition.yaml` **copy** of the deployed Composition + `functions.yaml` + `expected.yaml`, run by `make test-unit-render`. A copy, not a symlink, so `check-render-fixtures.sh` has something to compare — a stale copy keeps a golden test green against a Composition nobody runs. |
 | `tests/unit/schema/` | `valid/` fixtures that must pass and `invalid/` fixtures that must be rejected by `crossplane beta validate` against `xrds/`. |
 | `tests/e2e/scripts/` | Staged live-cluster scripts P0–P4 plus the kernel-service smoke check, exposed as `make e2e-p*`. |
 | `functions/` | Reserved for in-repo composition functions; empty today (only pipeline functions from upstream packages are used). |
@@ -119,11 +119,18 @@ predicts where a file belongs:
 | `bootstrap/` | One-shot helpers a step shells out to during an install | Steps |
 | `gen/` | Code generators | `make gen-all` |
 | `lint/` | Repository checks | `make lint-shell` and CI |
+| `tests/` | Checks with a fixture rather than a repository to scan — a stubbed CLI, asserted return codes, no cluster | `make lint-shell` and CI |
 | `tools/` | Maintainer utilities on no install path | A human, occasionally |
 
-Two files stay at the top because their path is part of their interface:
-`kubectl-gentian`, which kubectl discovers by name on `PATH`, and
-`check-credentials.sh`, which operators run directly.
+`lint/` and `tests/` differ by what they are pointed at, not by how they run:
+a lint scans the repository and reports on what it finds there, a test builds
+the situation it wants and asserts an answer. Both are shell, both run under
+`make lint-shell`, and a check that needs a fixture belongs in the second.
+
+Three files stay at the top because their path is part of their interface:
+`kubectl-gentian`, which kubectl discovers by name on `PATH`,
+`check-credentials.sh`, which operators run directly, and `recovery.sh`, which
+is run from a rescue shell against a cluster that may have nothing else left.
 
 The rule that keeps this from decaying: **anything sourced lives in `lib/`.**
 `lib-runtime.sh`, `mail-lib.sh`, `llm-lib.sh`, `verify-kernel-services.sh` and
@@ -146,7 +153,7 @@ Configuration surfaces at the repo root:
 | `authz/model/v0/` | The OpenFGA authorization model (`model.fga`, `model.json`) and its test suite. Embedded into the operator by `internal/authz/model_embed.go` — the version directory is the migration unit. |
 | `config/crd/` | Two different things: controller-gen output for `gentianos.io_*`, **and** hand-maintained fixtures that only exist so envtest can start — third-party CRDs (Argo CD, cert-manager, Gateway API, CNPG, provider-helm) and stubs for the Crossplane-owned `apps`/`xtenants` kinds. |
 | `config/rbac/` | Gitignored controller-gen intermediate; the committed artifact is the chart's `clusterrole.yaml`. |
-| `docs/` | `architecture.md` and its `design/` deep-dives; `deployment.md`, `install-reference.md`, `commands.md`, `app-customization.md`, `faq.md`, `roadmap.md`; `research/` for exploratory notes. |
+| `docs/` | `architecture.md` and its `design/` deep-dives; `deployment.md`, `install-reference.md`, `commands.md`, `app-customization.md`, `faq.md`, `roadmap.md`; the operator runbooks `recovery-playbook.md`, `tenant-backup-guide.md` and `node-pool-migration.md`; `releases/` for one file per release; `research/` for exploratory notes. |
 
 Root docs: `README.md` (scope and what this repo is *not*), `AGENTS.md` (rules
 for coding agents), `GETTING-STARTED.md` (the steps to a running cluster; flags,
