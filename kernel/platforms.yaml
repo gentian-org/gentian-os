@@ -427,11 +427,16 @@ edgeIngress:
     # static-ip clusters: a LoadBalancer already routes by address, so there is
     # no ingress to program and only DNS is missing.
 
-  cloudflare-tunnel:
+  # cf-tunnel, not "tunnel": the name says whose. A generic-sounding option
+  # invites the assumption that swapping the value swaps the mechanism, and
+  # nothing here is generic — ingress rules, the cfargotunnel.com target and
+  # the account-scoped permission are all Cloudflare's shape. inlets or frp
+  # would be their own entry, not another value of one "tunnel" setting.
+  cf-tunnel:
     displayName: Cloudflare Tunnel
     credential:
       secretName: cloudflare-tunnel-api-token
-      vaultPath: gentian-os/kernel/edge/cloudflare-tunnel
+      vaultPath: gentian-os/kernel/edge/cf-tunnel
       displayName: Cloudflare Tunnel API Token
       phase: bootstrap
       description: >
@@ -439,8 +444,12 @@ edgeIngress:
         rules — Account → Cloudflare One Connector: cloudflared → Edit, which
         older accounts list as Cloudflare Tunnel. This is an ACCOUNT-scoped
         grant, where the DNS token's is ZONE-scoped: a token can hold either
-        without the other. Leave unset to reuse the DNS token, which works
-        when that one carries both.
+        without the other, which is why they are two credentials.
+
+        One token may hold both, and many do. Then this is the same value as
+        the DNS token and is simply entered twice — stored and checked on its
+        own either way, so that a cluster which later narrows one of them does
+        not have to discover the split at the same time as the failure.
       validate: cloudflare-tunnel
       fields:
         - key: api-token

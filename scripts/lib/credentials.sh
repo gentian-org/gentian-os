@@ -157,10 +157,10 @@ _env_var_for() {
         # name each rather than a table entry per provider.
         acme-dns-cloudflare/api-token)     echo CF_API_TOKEN ;;
         acme-dns-*/*)                      echo "GENTIAN_DNS_$(printf '%s' "$2" | tr 'a-z.-' 'A-Z__')" ;;
-        # The ingress half's own token. Named for the tunnel rather than for
-        # Cloudflare-the-DNS-provider, because it is a different grant on a
-        # different scope — see kernel/platforms.yaml's edgeIngress table.
-        edge-ingress-cloudflare-tunnel/api-token) echo CLOUDFLARE_TUNNEL_API_TOKEN ;;
+        # The ingress half's own token, beside CF_API_TOKEN and named the same
+        # way: a different grant on a different scope, so a different variable.
+        # See kernel/platforms.yaml's edgeIngress table.
+        edge-ingress-cf-tunnel/api-token)  echo CF_TUNNEL_TOKEN ;;
         edge-ingress-*/*)                  echo "GENTIAN_EDGE_$(printf '%s' "$2" | tr 'a-z.-' 'A-Z__')" ;;
         smtp-relay/relay_username)         echo SMTP_RELAY_USERNAME ;;
         smtp-relay/relay_password)         echo SMTP_RELAY_PASSWORD ;;
@@ -253,7 +253,7 @@ _GENTIAN_CACHED_CREDENTIAL_VARS=(
     REGISTRY_USER
     REGISTRY_PASSWORD
     CF_API_TOKEN
-    CLOUDFLARE_TUNNEL_API_TOKEN
+    CF_TUNNEL_TOKEN
 )
 
 # _repo_auth_for <req> — echoes the resolved GENTIAN_*_AUTH value for one of
@@ -272,6 +272,25 @@ _repo_auth_for() {
         gentian-ui-repository)   echo "${GENTIAN_UI_AUTH:-none}" ;;
         *)                       echo "" ;;
     esac
+}
+
+# _edge_ingress_provider — which EdgeIngress this cluster runs.
+#
+# EDGE_INGRESS states it; otherwise it follows networkMode, which is the only
+# thing that decides it today: a tunnel cluster runs the Cloudflare tunnel, a
+# static-ip cluster routes by LoadBalancer address and programs no ingress at
+# all. Kept as one function so that when a second ingress exists, this is the
+# one place that learns to choose between them.
+_edge_ingress_provider() {
+    if [[ -n "${EDGE_INGRESS:-}" ]]; then
+        printf '%s' "${EDGE_INGRESS}"
+        return 0
+    fi
+    if [[ "${NETWORK_MODE:-tunnel}" == "static-ip" ]]; then
+        printf 'none'
+    else
+        printf 'cf-tunnel'
+    fi
 }
 
 # _requirement_applies <req> — whether this cluster needs the credential at all.
@@ -297,13 +316,14 @@ _requirement_applies() {
             [[ "$1" == "acme-dns-${DNS_PROVIDER:-cloudflare}" ]] || return 1
             [[ "${CERT_ISSUER_MODE:-acme-dns01}" == "acme-dns01" ]]
             ;;
-        edge-ingress-cloudflare-tunnel)
-            # Only a tunnel cluster programs ingress at all; static-ip routes by
-            # address. And only when the operator wants a SEPARATE token: unset,
-            # the tunnel half falls back to the DNS token, which is the ordinary
-            # single-token Cloudflare deployment and needs nothing asked here.
-            [[ "${NETWORK_MODE:-tunnel}" != "static-ip" ]] || return 1
-            [[ "${GENTIAN_SEPARATE_TUNNEL_TOKEN:-false}" == "true" ]]
+        edge-ingress-cf-tunnel)
+            # Asked for whenever this cluster's ingress IS cf-tunnel, with no
+            # second switch deciding whether to ask. One token often carries
+            # both grants, and then this is the same value entered twice —
+            # which is the honest cost of storing and checking them
+            # separately, and cheaper than a flag whose wrong setting is a
+            # credential silently missing.
+            [[ "$(_edge_ingress_provider)" == "cf-tunnel" ]]
             ;;
         edge-ingress-*)
             # No other ingress provider is implemented yet; the catalogue lists
@@ -378,10 +398,10 @@ _validate_requirement() {
             run_validator cloudflare-dns "${CF_ZONE_NAME:-${KERNEL_DOMAIN:-}}" "${CF_API_TOKEN}"
             ;;
         cloudflare-tunnel)
-            [[ -n "${CLOUDFLARE_TUNNEL_API_TOKEN:-}" ]] || return 0
+            [[ -n "${CF_TUNNEL_TOKEN:-}" ]] || return 0
             # Its own token, checked on its own. The account id comes from the
             # DNS validator, which resolved it from the zone it had to read.
-            run_validator cloudflare-tunnel "${CLOUDFLARE_TUNNEL_API_TOKEN}"
+            run_validator cloudflare-tunnel "${CF_TUNNEL_TOKEN}"
             ;;
         *)
             error "Requirement '${name}' declares validator '${vtype}', which the installer does not implement."

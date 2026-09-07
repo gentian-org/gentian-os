@@ -196,27 +196,57 @@ when it is unset.
 
 ### Supplying it
 
-The token is credential `acme-dns-cloudflare`, declared in
-`kernel/platforms.yaml` under `dnsProviders.cloudflare`. The installer prompts
-for it, or reads `CF_API_TOKEN` from the environment for a non-interactive run,
-and stores it at `gentian-os/kernel/dns/cloudflare` in OpenBao. The zone id and
-tunnel CNAME are resolved from the token and the running `cloudflared`, not
-asked for.
+There are **two** credentials, because the edge is two things — see
+[architecture.md §3.0](../architecture.md#30-who-does-what-tenant-install) and
+`internal/controller/edge.go`:
 
-Before writing it, the installer probes it twice: once for the zone DNS-01 will
-solve in, and once for the tunnel configuration the operator will rewrite. The
-second probe is the reason this section exists — a DNS-only token does **not**
-fail the tunnel list endpoint outright, it comes back `200` with an empty
-result, so only reading the running tunnel's configuration distinguishes "no
-permission" from "no tunnel yet". On a first install, where cloudflared is not
-running to be named, that check is inconclusive and says so rather than passing
-quietly.
+| | credential | scope | OpenBao path | env |
+|---|---|---|---|---|
+| **DNS** — what a hostname resolves to | `acme-dns-cloudflare`, under `dnsProviders.cloudflare` | Zone → Zone → Read **and** Zone → DNS → Edit | `gentian-os/kernel/dns/cloudflare` | `CF_API_TOKEN` |
+| **Ingress** — how traffic reaches a service | `edge-ingress-cf-tunnel`, under `edgeIngress.cf-tunnel` | Account → Cloudflare One Connector: cloudflared → Edit | `gentian-os/kernel/edge/cf-tunnel` | `CF_TUNNEL_TOKEN` |
+
+**One Cloudflare token may hold both grants, and many do.** Then the same value
+is entered twice, once for each. That is deliberate: they are stored and probed
+separately, so a cluster that later narrows one of them — a tunnel token scoped
+to the account and nothing else, say — does not discover the split at the same
+moment as the failure. The installer asks for the ingress token whenever this
+cluster's ingress is `cf-tunnel`, with no second switch deciding whether to ask.
+
+`cf-tunnel`, not `tunnel`: the name says whose. Ingress rules, the
+`cfargotunnel.com` target and the account-scoped permission are all
+Cloudflare's shape, and a generic-sounding value would invite the assumption
+that changing it swaps the mechanism. inlets or frp would be their own entry in
+`edgeIngress`, not another value of one "tunnel" setting.
+
+The zone id and tunnel CNAME are resolved from the token and the running
+`cloudflared`, not asked for.
+
+Each token is probed against what it will actually be used for, before either
+is written:
+
+- The **DNS** token is walked up to the enclosing zone, then asked to *write* —
+  a TXT record created and deleted immediately, under a name of ours that
+  resolves to nothing. Reading a zone is `Zone:Read`; writing a record is
+  `DNS:Edit`, and a read-scoped token passes every check short of the write
+  itself and then fails at reconcile time.
+- The **ingress** token is asked for the tunnel configuration the operator
+  rewrites. A DNS-only token does **not** fail the tunnel *list* endpoint
+  outright — it comes back `200` with an empty result — so only reading the
+  running tunnel's configuration distinguishes "no permission" from "no tunnel
+  yet". On a first install, where `cloudflared` is not running to be named,
+  that check is inconclusive and says so rather than passing quietly.
+
+Resolving the account for that second probe reads the zone, which is a
+DNS-side grant. It is carried over from the DNS probe rather than re-derived,
+and `CLOUDFLARE_ACCOUNT_ID` supplies it outright so an ingress token can carry
+the account permission and nothing else.
 
 ### If a cluster has no tunnel
 
 Set `networkMode: static-ip` on the Cluster claim. DNS then points at the node
-address behind a load balancer, no tunnel exists, and the token needs the DNS
-permission only.
+address behind a load balancer, no ingress is programmed at all, and only the
+DNS credential is asked for — `edge-ingress-cf-tunnel` does not apply to a
+cluster whose ingress is `none`.
 
 ---
 
