@@ -113,6 +113,45 @@ Everything you supply belongs to one of three places.
 [docs/deployment.md](deployment.md) covers the layering inside
 `gentian-deployments`.
 
+A cluster property set in `install.env` beats the claim, silently — the file is
+loaded first. The installer reports it rather than reversing the precedence,
+because an operator who wrote it there meant something, but the claim is where
+it belongs.
+
+### What `install.env` holds
+
+The template carries one line per setting; the reasoning is here.
+
+| | |
+|---|---|
+| `GENTIAN_DEPLOYMENTS_CLUSTER_ID` | The directory name under `clusters/` — **not** the Kubernetes cluster name and not a kubeconfig context. With `_STAGE` it also names the Cluster claim on first bootstrap, so it must be right before the first run: scaffolding pushes the tree it names to a shared repository. |
+| `GENTIAN_DEPLOYMENTS_STAGE` | `dev`, `staging` or `prod`. A cluster keeps one stage for life, which is why there is no `<stage>` segment inside its own tree. |
+| `GENTIAN_*_AUTH` | `none`, `basic` (username + token) or `bearer` — how the installer authenticates to that repository. The credential itself is prompted for. Deployments defaults to `basic` because a private repository cannot describe its own access; set `none` for a public one. |
+| `GENTIAN_*_REPO` / `_BRANCH` | Point them at a mirror for a forked or air-gapped install; the child ApplicationSets follow. |
+| `GENTIAN_OS_BRANCH` | The ref every in-cluster Application tracks — [deployment.md §4](deployment.md). |
+| `INSTALL_CLUSTER_INFRA` | `0` when cert-manager, CloudNativePG and Reloader are managed elsewhere on this cluster. |
+| `OPENBAO_CLI_VERSION` | Which `bao` to fetch when none is on `PATH`. Defaults to the pin in `versions.yaml`, which is where component versions are declared. |
+| `INFRA_CHART_REPO` / `_PRIVATE` | Where the infrastructure charts come from, and whether that registry needs a credential. Install-time rather than cluster state: it decides what the installer does before a cluster exists. |
+
+### Image tags
+
+The installer pulls published images and builds none. CI publishes a moving tag
+per branch (`develop`), the version for a release tag (`v1.2.3` → `1.2.3`), and
+`<branch>-<short-sha>` per commit.
+
+`GENTIAN_OS_IMAGE_TAG` follows `GENTIAN_OS_BRANCH` unless set, so a cluster
+tracking a ref runs the image that ref published — set it only to run something
+else. `PORTAL_IMAGE_TAG` follows gentian-ui's tags the same way. A cluster pins
+its own tags in `clusters/<cluster>/kernel/values.yaml`.
+
+### App Store write-back
+
+The in-cluster App Store pushes install and uninstall commits to
+`gentian-deployments` through the operator's lifecycle API. Set
+`GENTIAN_DEPLOYMENTS_GIT_TOKEN` in `install.secrets.env` — the installer creates
+`gentian-deployments-git-credentials` in `gentian-system` — and enable
+`appLifecycle.deployments` in `clusters/<cluster>/kernel/values.yaml`.
+
 ### Which credentials the installer handles
 
 `credentials.yaml` gives every requirement a `phase`, and the phase decides who

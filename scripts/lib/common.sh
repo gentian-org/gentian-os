@@ -2401,9 +2401,28 @@ resolve_kernel_domain_from_claim() {
     # unbound variable" — which is what --validate did outside a configured
     # checkout, the one place the no-op was most obviously the intent.
     local claim_file="${GENTIAN_DEPLOYMENTS_PATH:-}/clusters/${GENTIAN_DEPLOYMENTS_CLUSTER_ID:-}/kernel/claims/cluster.yaml"
-    [[ -n "${KERNEL_DOMAIN:-}" ]] && return 0
 
     local domain
+    if [[ -n "${KERNEL_DOMAIN:-}" ]]; then
+        # Already answered — by install.env, or by the prompt on a first run.
+        #
+        # Legitimate before the claim exists, which is the whole reason the
+        # variable is accepted at all. After it exists, an install.env value
+        # silently decides the cluster's domain while the claim says otherwise,
+        # and the domain is the last value in the system worth resolving
+        # quietly: every hostname, certificate and OIDC redirect follows it.
+        #
+        # Not fatal, for the same reason the cluster-property loop is not: an
+        # operator who wrote it there meant something. Said out loud, though.
+        if domain=$(yq_get '.spec.kernelDomain' "${claim_file}") &&
+           [[ -n "${domain}" && "${domain}" != "${KERNEL_DOMAIN}" ]]; then
+            warn "KERNEL_DOMAIN=${KERNEL_DOMAIN} overrides the claim, which says ${domain}."
+            warn "  ${claim_file} is where the domain is authored; unset it in"
+            warn "  install.env unless you mean to install a different cluster."
+        fi
+        return 0
+    fi
+
     if domain=$(yq_get '.spec.kernelDomain' "${claim_file}"); then
         export KERNEL_DOMAIN="${domain}"
         info "KERNEL_DOMAIN=${KERNEL_DOMAIN} (read from ${claim_file})"
