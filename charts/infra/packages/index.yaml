@@ -5,7 +5,7 @@ entries:
       category: Database
       licenses: Apache-2.0
     apiVersion: v2
-    created: "2026-06-28T13:45:31.5448263+02:00"
+    created: "2026-09-07T10:14:51.253725678+02:00"
     dependencies:
     - name: common
       repository: https://charts.bitnami.com/bitnami
@@ -13,7 +13,7 @@ entries:
       - bitnami-common
       version: ^2.x.x
     description: A Helm chart for running MariaDB database
-    digest: efe8cff77b3f0213f203f88366331f15583160fa590f6ae21d7cb566e3b02ae1
+    digest: 28046c75093a2b3c266706f67c81730e996cb6c7ee009c6a237bb0268822b8a3
     home: https://zendis.de
     keywords:
     - mariadb
