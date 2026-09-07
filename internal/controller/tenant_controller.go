@@ -254,12 +254,13 @@ type TenantReconciler struct {
 	// KernelRealm is the name of the shared Keycloak realm for platform identity.
 	// Sourced from the KERNEL_REALM env var at startup.
 	KernelRealm string
-	// CloudflareDNS is an optional edge-DNS adapter: when set, the operator
-	// ensures a proxied CNAME *.<effectiveDomain> → tunnel so Cloudflare Total
-	// TLS can provision edge certs for tenant app hostnames (e.g.
-	// meet.demo.platform.example.com). Nil when CLOUDFLARE_* env vars are unset;
-	// use DNS-only (grey cloud) or passthrough to origin in that case.
-	CloudflareDNS *CloudflareDNSClient
+	// Ingress programs how a tenant's hostnames are REACHED — tunnel routes
+	// today. It writes no DNS: external-dns publishes every hostname from the
+	// HTTPRoutes this operator writes, pointed at the ingress by the
+	// annotations it puts on the kernel Gateway. Nil on a static-ip cluster,
+	// where the LoadBalancer already routes and the Gateway's own address is
+	// what external-dns reads.
+	Ingress EdgeIngress
 	// RoutingMode is always gateway (Gateway API + Envoy). Sourced from ROUTING_MODE.
 	RoutingMode string
 	// CrossplaneOnly skips shared-kernel side effects (mail, portal redirect)

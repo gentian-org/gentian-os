@@ -204,6 +204,22 @@ spec:
               {{- else }}
               value: ""
               {{- end }}
+            # Optional. Supplied, the tunnel ingress addresses the account
+            # directly and never reads the zone — so its token needs only the
+            # account permission, not Zone:Read. See internal/controller/
+            # edge_cloudflare_tunnel.go.
+            - name: CLOUDFLARE_ACCOUNT_ID
+              {{- if .Values.cloudflare.accountID }}
+              value: {{ .Values.cloudflare.accountID | quote }}
+              {{- else if .Values.cloudflare.apiTokenSecretRef.name }}
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.cloudflare.apiTokenSecretRef.name | quote }}
+                  key: "account-id"
+                  optional: true
+              {{- else }}
+              value: ""
+              {{- end }}
             - name: CLOUDFLARE_TUNNEL_CNAME
               {{- if .Values.cloudflare.tunnelCNAME }}
               value: {{ .Values.cloudflare.tunnelCNAME | quote }}
@@ -225,11 +241,17 @@ spec:
                   optional: true
             {{- end }}
             {{- if .Values.cloudflare.tunnelAPITokenSecretRef.name }}
-            - name: CLOUDFLARE_TUNNEL_API_TOKEN
+            # CF_TUNNEL_TOKEN, matching what the operator reads and what the
+            # installer collects. optional: a cluster whose OpenBao has no
+            # edge/cf-tunnel path yet must still start -- the operator falls
+            # back to the DNS token, which is every cluster installed before
+            # this credential existed.
+            - name: CF_TUNNEL_TOKEN
               valueFrom:
                 secretKeyRef:
                   name: {{ .Values.cloudflare.tunnelAPITokenSecretRef.name | quote }}
                   key: {{ .Values.cloudflare.tunnelAPITokenSecretRef.key | default "api-token" | quote }}
+                  optional: true
             {{- end }}
             - name: INFRA_NAMESPACE
               value: {{ .Values.infraNamespace | quote }}

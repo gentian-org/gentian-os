@@ -227,11 +227,13 @@ logLevel: info
 # Watched namespaces (empty = cluster-wide)
 watchNamespaces: []
 
-# Optional Cloudflare edge-DNS adapter. When all fields are set, the operator
-# ensures a proxied CNAME *.<effectiveDomain> per tenant so Total TLS can mint
-# edge certs for tenant app hostnames (e.g. meet.demo.platform.example.com) that
-# Universal SSL does not cover. Origin TLS is still issued by cert-manager in
-# the tenant namespace. Leave empty to disable (use grey-cloud DNS or passthrough).
+# Cloudflare Tunnel edge ingress. Set tunnelCNAME and a token and the operator
+# programs the tunnel's routing rules for kernel and tenant hostnames, and
+# annotates the kernel Gateway so external-dns publishes records that reach it.
+#
+# The operator writes no DNS records itself — external-dns does, for every
+# provider. These values are the ingress half only. Leave tunnelCNAME empty on
+# a cluster whose traffic arrives through a LoadBalancer instead.
 cloudflare:
   # Cloudflare API token with DNS:Edit permission for the zone.
   # Injected from a Secret via apiTokenSecretRef — do not set a plain value here.
@@ -247,13 +249,34 @@ cloudflare:
   zoneID: ""
   # CNAME target for the Cloudflare Tunnel, e.g. <uuid>.cfargotunnel.com
   tunnelCNAME: ""
-  # Optional separate API token with Account → Cloudflare One Connector:
-  # cloudflared → Edit (older accounts list it as Cloudflare Tunnel) for
-  # automated tenant public hostname routing in tunnel mode. When unset, the
-  # DNS token above is used (and must also hold tunnel permissions).
+  # The ingress half's credential: Account → Cloudflare One Connector:
+  # cloudflared → Edit (older accounts list it as Cloudflare Tunnel), which
+  # programs tenant and kernel hostname routing in tunnel mode.
+  #
+  # Its own OpenBao path because it is its own grant — account-scoped, where
+  # the DNS token's is zone-scoped. One token may hold both and often does;
+  # then this path simply holds the same value, and a cluster that later
+  # narrows one of them does not have to rewrite the other's consumer.
+  #
+  # Clear name to disable: the operator then falls back to the DNS token at
+  # runtime, which is what an already-installed single-token cluster relies on.
+  # Empty by default, and deliberately: an ExternalSecret pointing at an
+  # OpenBao path no existing cluster has been seeded would sit in permanent
+  # error, and the operator would hold an env var referencing a Secret that
+  # never appears. Unset, the operator falls back to the DNS token, which is
+  # exactly how every cluster installed before this credential existed runs.
+  #
+  # Set both to give the ingress its own credential:
+  #   name:        cloudflare-tunnel-api-token-gentian-system
+  #   openbaoPath: gentian-os/kernel/edge/cf-tunnel
   tunnelAPITokenSecretRef:
     name: ""
     key: "api-token"
+    openbaoPath: ""
+  # Optional: lets the tunnel ingress skip the zone lookup, so its token
+  # needs no Zone:Read. Falls back to the "account-id" key on the DNS token
+  # Secret when unset.
+  accountID: ""
 
 # OpenBao / Vault integration
 openbao:

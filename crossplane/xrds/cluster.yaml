@@ -549,21 +549,28 @@ spec:
                         provider in kernel/platforms.yaml.
                     externalDns:
                       type: boolean
-                      default: false
+                      default: true
                       description: >
                         Whether external-dns writes this cluster's records.
 
-                        Off by default, and deliberately, because it is the
-                        second writer. On a tunnel cluster the operator's own
-                        edge-DNS adapter already creates the tenant CNAMEs and
-                        the tunnel ingress rules, and two controllers reconciling
-                        one record set is how a hostname comes to flip between
-                        two answers depending on which ran last.
+                        On by default, because it is the only thing that writes
+                        them. Every hostname this cluster serves is published
+                        from the HTTPRoutes the operator writes, and records
+                        with no HTTP object behind them — mail — arrive as
+                        DNSEndpoint CRs. One mechanism, all eight providers in
+                        kernel/platforms.yaml, both network modes.
 
-                        Turn it on for a cluster where the operator is NOT
-                        managing DNS — a static-ip cluster, or any zone host
-                        other than Cloudflare, where the operator's adapter is
-                        nil and nothing else writes records at all.
+                        It was off by default while the operator wrote records
+                        itself, to keep two controllers off one record set. That
+                        writer existed for Cloudflare only, so a cluster on any
+                        other zone host had nothing writing records at all, and
+                        a static-ip cluster had nothing either — the adapter
+                        needs a tunnel to point at. Both were silent: names
+                        simply never resolved.
+
+                        Turn it off only where an operator publishes this
+                        cluster's records by hand, or where something outside
+                        the platform already does.
 
                         Independent of certificates.dnsProvider: that decides
                         who can solve a DNS-01 challenge, which is needed for a

@@ -144,7 +144,7 @@ validate_git_https() {
 # the zone. It also passes for a valid token with no access to this domain,
 # which is the failure that actually matters.
 validate_cloudflare_dns() {
-    local name="$1" token="${2:-}" candidate url body code count matched="" account_id=""
+    local name="$1" token="${2:-}" candidate url body code count matched="" account_id="" zone_id=""
 
     # The kernel domain is a HOSTNAME; Cloudflare zones are registrable domains.
     # test.gentian-os.org is not a zone — gentian-os.org is, and the DNS-01
@@ -185,8 +185,11 @@ validate_cloudflare_dns() {
             # The tunnel probe below needs the account, and this response already
             # carries it — the operator resolves it the same way rather than
             # asking the token to enumerate accounts, which is a permission of
-            # its own.
+            # its own. The zone id comes from the same response for the same
+            # reason: the write probe addresses records by zone id, and looking
+            # it up twice invites the two lookups to disagree.
             account_id="$(jq -r '.result[0].account.id // empty' <<<"${body}" 2>/dev/null || true)"
+            zone_id="$(jq -r '.result[0].id // empty' <<<"${body}" 2>/dev/null || true)"
             break
         fi
 
@@ -205,7 +208,117 @@ validate_cloudflare_dns() {
     [[ "${matched}" != "${name}" ]] &&
         info "  Cloudflare zone for ${name}: ${matched}"
 
-    _validate_cloudflare_tunnel_scope "${token}" "${account_id}" || return 1
+    _validate_cloudflare_dns_write "${token}" "${zone_id}" "${matched}" || return 1
+
+    # The tunnel is NOT validated here any more. It is a different credential
+    # with a different scope (account, not zone), validated by
+    # validate_cloudflare_tunnel against whichever token actually configures
+    # the tunnel — which is this one only when the operator supplied no
+    # separate one. Checking it here would have passed a DNS token that
+    # happens to carry the account permission and said nothing about the token
+    # the tunnel half will really use.
+    #
+    # The account id is exported rather than dropped: the tunnel probe is
+    # addressed by account, and resolving it needs the zone read that just
+    # happened. Without this the tunnel validator would need Zone:Read on a
+    # token that should not require it.
+    GENTIAN_CLOUDFLARE_ACCOUNT_ID="${account_id}"
+    export GENTIAN_CLOUDFLARE_ACCOUNT_ID
+    return 0
+}
+
+# validate_cloudflare_tunnel <token>
+#
+# The ingress half's own credential, checked on its own. Account -> Cloudflare
+# One Connector: cloudflared -> Edit, which is account-scoped where the DNS
+# token's grant is zone-scoped; a token can hold either without the other,
+# which is exactly why they are two requirements rather than one.
+#
+# The account id comes from the DNS validator, which resolved it from the zone
+# it had to read anyway. When that has not run -- this credential supplied
+# alone, or re-validated by itself -- CLOUDFLARE_ACCOUNT_ID answers, and
+# failing both the probe says it could not run rather than guessing.
+validate_cloudflare_tunnel() {
+    local token="${1:-}" account_id
+
+    [[ -n "${token}" ]] || return 0
+
+    account_id="${GENTIAN_CLOUDFLARE_ACCOUNT_ID:-${CLOUDFLARE_ACCOUNT_ID:-}}"
+    if [[ -z "${account_id}" ]]; then
+        warn "Cannot check the Cloudflare Tunnel token: this cluster's account id is unknown."
+        warn "  It is normally resolved from the zone while validating the DNS token."
+        warn "  Set CLOUDFLARE_ACCOUNT_ID to check this credential on its own."
+        return 0
+    fi
+
+    _validate_cloudflare_tunnel_scope "${token}" "${account_id}"
+}
+
+# _validate_cloudflare_dns_write <token> <zone_id> <zone_name>
+#
+# Everything above this proves the token can SEE the zone. Nothing proved it can
+# write a record into it, and seeing is the lesser half: Zone → Zone → Read is a
+# separate permission from Zone → DNS → Edit, and a token carrying only the
+# first passes every check that existed before this one.
+#
+# That gap is not hypothetical. The operator writes a CNAME per kernel and
+# tenant hostname, and a read-scoped token fails every one of them at reconcile
+# time — hours after the installer said the credential was good, surfacing as
+# hostnames that never resolve rather than as anything naming a permission.
+#
+# Cloudflare exposes no "may I write" question, so the probe is the write: a TXT
+# record created and immediately deleted. Deliberately a TXT and deliberately
+# under a name of ours — it resolves to nothing, collides with nothing, and
+# affects no traffic even in the window where it exists or if cleanup is the
+# thing that fails.
+_validate_cloudflare_dns_write() {
+    local token="$1" zone_id="$2" zone_name="$3"
+    local probe_name="_gentian-preflight.${zone_name}"
+    local url="https://api.cloudflare.com/client/v4/zones/${zone_id}/dns_records"
+    local body code rec_id
+
+    # No zone id means the walk matched a zone whose response carried none,
+    # which Cloudflare does not do. The read result stands on its own rather
+    # than failing an install over a probe that cannot be addressed.
+    [[ -n "${zone_id}" ]] || return 0
+
+    body="$(curl -s -w $'\n%{http_code}' --max-time "${GENTIAN_VALIDATE_TIMEOUT}" \
+        -X POST -H "Authorization: Bearer ${token}" -H "Content-Type: application/json" \
+        --data "{\"type\":\"TXT\",\"name\":\"${probe_name}\",\"content\":\"gentian-os installer permission probe\",\"ttl\":60}" \
+        "${url}" 2>/dev/null)" || body=$'\n000'
+    code="${body##*$'\n'}"
+    body="${body%$'\n'*}"
+
+    if [[ "${code}" == "000" ]]; then
+        _v_fail "${url}" "unreachable" \
+            "no HTTP response within ${GENTIAN_VALIDATE_TIMEOUT}s"
+        return 1
+    fi
+
+    # As elsewhere on this API, 200 with success:false is a real refusal.
+    if [[ "${code}" != "200" ]] || \
+       [[ "$(jq -r '.success // false' <<<"${body}" 2>/dev/null)" != "true" ]]; then
+        _v_fail "${url}" "token cannot write DNS records in ${zone_name} (HTTP ${code})" \
+            "$(jq -r '.errors[0].message // empty' <<<"${body}" 2>/dev/null)"
+        error "  The token can READ this zone — that is what the check above"
+        error "  confirmed — but reading is not the permission the platform"
+        error "  needs. Every kernel and tenant hostname is a CNAME this token"
+        error "  writes, so without Zone -> DNS -> Edit no name this cluster"
+        error "  serves will ever resolve, and the failure appears at reconcile"
+        error "  time rather than here."
+        error "  Add Zone -> DNS -> Edit on ${zone_name} and re-enter the token."
+        return 1
+    fi
+
+    # Clean up. A leftover TXT is harmless, so a failed delete warns rather than
+    # failing an install over a record that resolves to nothing.
+    rec_id="$(jq -r '.result.id // empty' <<<"${body}" 2>/dev/null || true)"
+    if [[ -n "${rec_id}" ]]; then
+        if ! curl -s -o /dev/null --max-time "${GENTIAN_VALIDATE_TIMEOUT}" \
+            -X DELETE -H "Authorization: Bearer ${token}" "${url}/${rec_id}" 2>/dev/null; then
+            warn "Left the permission-probe record ${probe_name} behind; delete it by hand."
+        fi
+    fi
     return 0
 }
 
@@ -396,6 +509,7 @@ run_validator() {
         git-https)      validate_git_https "$@" ;;
         oidc-discovery) validate_oidc_discovery "$@" ;;
         cloudflare-dns) validate_cloudflare_dns "$@" ;;
+        cloudflare-tunnel) validate_cloudflare_tunnel "$@" ;;
         *)
             error "Unknown validator type '${type}'."
             error "  Bootstrap validators are curl/openssl only; anything else is phase: runtime."

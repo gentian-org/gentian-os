@@ -34,10 +34,10 @@ import (
 func ensureKernelGatewayTunnelIngress(
 	ctx context.Context,
 	c client.Client,
-	cf *CloudflareDNSClient,
+	ing EdgeIngress,
 	kernelDomain, tenancyMode string,
 ) error {
-	if cf == nil || kernelDomain == "" {
+	if ing == nil || kernelDomain == "" {
 		return nil
 	}
 	origin, err := kernelGatewayTunnelOrigin(ctx, c)
@@ -87,13 +87,20 @@ func ensureKernelGatewayTunnelIngress(
 	}
 	sort.Strings(sorted)
 	for _, host := range sorted {
-		if err := cf.ensureTunnelIngress(ctx, host, origin); err != nil {
-			logger.Error(err, "ensure Cloudflare kernel tunnel ingress", "host", host, "origin", origin)
+		// Routes only. What these hostnames RESOLVE to is external-dns's job,
+		// from the annotations this ingress puts on the kernel Gateway — the
+		// same path a static-ip cluster uses, where the Gateway's own address
+		// answers instead. The operator writing records itself is what made a
+		// Route 53 cluster have no DNS writer at all.
+		if err := edgeEnsureRoute(ctx, ing, host, origin); err != nil {
+			logger.Error(err, "ensure kernel edge route", "host", host, "origin", origin)
 			return err
 		}
 	}
-	if err := cf.deleteTunnelIngress(ctx, "*."+kernelDomain); err != nil {
-		logger.Error(err, "delete Cloudflare kernel wildcard tunnel ingress", "host", "*."+kernelDomain)
+	// A stale wildcard RULE, retired in favour of the explicit per-host rules
+	// above. Nothing to undo in DNS: the wildcard record is still wanted.
+	if err := edgeDeleteRoute(ctx, ing, "*."+kernelDomain); err != nil {
+		logger.Error(err, "delete kernel wildcard tunnel route", "host", "*."+kernelDomain)
 		return err
 	}
 	return nil

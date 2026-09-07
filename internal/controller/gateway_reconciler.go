@@ -74,7 +74,7 @@ func (r *TenantReconciler) ensureGateway(ctx context.Context, tenant *gentianov1
 	if err := r.deleteTenantGateway(ctx, nsName, tenant.Name); err != nil {
 		return ctrl.Result{}, err
 	}
-	r.ensureTenantWildcardEdgeDNS(ctx, tenant, effectiveDomain)
+	r.ensureTenantEdgeRoutes(ctx, tenant, effectiveDomain)
 
 	expectedRoutes := make(map[string]struct{}, len(intents))
 	expectedPolicies := make(map[string]struct{})

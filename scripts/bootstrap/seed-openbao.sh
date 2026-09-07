@@ -383,9 +383,11 @@ fi
 #
 # Only required when the cluster solves DNS-01 — a wildcard certificate is the
 # only thing that needs it. Cloudflare carries two extra fields no other
-# provider has: the zone id and tunnel CNAME the operator's optional edge-DNS
-# adapter reads. They are written alongside the token rather than at a path of
-# their own, because they are the same account's configuration.
+# provider has: the zone id and tunnel CNAME the operator's edge INGRESS reads
+# to address the tunnel. They are written alongside the token rather than at a
+# path of their own, because they are the same account's configuration. The
+# token itself is external-dns's and cert-manager's; the operator no longer
+# writes DNS records.
 DNS_PROVIDER="${DNS_PROVIDER:-cloudflare}"
 if [ "${DNS_PROVIDER}" = "cloudflare" ] && [ -n "${CF_API_TOKEN:-}" ]; then
     kv_put "dns/cloudflare" "$(jq -n \
@@ -393,7 +395,20 @@ if [ "${DNS_PROVIDER}" = "cloudflare" ] && [ -n "${CF_API_TOKEN:-}" ]; then
         --arg zone_id "${CF_ZONE_ID:-}" \
         --arg tunnel_cname "${CF_TUNNEL_CNAME:-}" \
         '{"api-token": $api_token, "zone-id": $zone_id, "tunnel-cname": $tunnel_cname}')"
-elif [ "${DNS_PROVIDER}" != "cloudflare" ] && [ "${DNS_PROVIDER}" != "none" ] && [ -n "${GENTIAN_DNS_FIELDS_JSON:-}" ]; then
+fi
+
+# The ingress half, at its own path. Separate from dns/cloudflare above even
+# when the value is identical: they are different grants, and a cluster that
+# later narrows one of them should not have to discover the split at the same
+# moment as the failure. Written whenever the token was collected, which
+# _requirement_applies gates on the cluster's edge ingress being cf-tunnel.
+if [ -n "${CF_TUNNEL_TOKEN:-}" ]; then
+    kv_put "edge/cf-tunnel" "$(jq -n \
+        --arg api_token "${CF_TUNNEL_TOKEN}" \
+        '{"api-token": $api_token}')"
+fi
+
+if [ "${DNS_PROVIDER}" != "cloudflare" ] && [ "${DNS_PROVIDER}" != "none" ] && [ -n "${GENTIAN_DNS_FIELDS_JSON:-}" ]; then
     # Every other provider: the installer collected its fields by name from the
     # catalogue and handed them over as one JSON object, so this stays a single
     # write regardless of how many fields the provider has.

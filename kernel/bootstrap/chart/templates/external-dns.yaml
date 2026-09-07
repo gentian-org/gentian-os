@@ -139,9 +139,17 @@ spec:
           {{- end }}
         {{- end }}
         {{- if eq $provider "cloudflare" }}
-        # Proxied would send mail and non-HTTP traffic through Cloudflare's HTTP
-        # edge, which does not carry SMTP: an orange-clouded MX target breaks mail
-        # delivery silently. Records are DNS-only; enable the proxy per record.
+        # DNS-only by default, and it must stay that way: proxying sends
+        # traffic through Cloudflare's HTTP edge, which does not carry SMTP, so
+        # an orange-clouded MX target breaks mail delivery silently.
+        #
+        # This is the DEFAULT, not a ban. A tunnel cluster's web records must
+        # be proxied — cfargotunnel.com resolves to nothing a client could
+        # connect to — and they opt in per record through the
+        # external-dns.alpha.kubernetes.io/cloudflare-proxied annotation the
+        # kernel Gateway carries, put there by the edge ingress
+        # (internal/controller/edge_cloudflare_tunnel.go). Flipping this global
+        # to true to "fix" a tunnel cluster would take mail down with it.
         cloudflare:
           proxied: false
         {{- end }}

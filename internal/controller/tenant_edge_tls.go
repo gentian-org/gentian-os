@@ -110,18 +110,19 @@ func (r *TenantReconciler) deleteLegacyKernelWildcardSecret(ctx context.Context,
 	return nil
 }
 
-func (r *TenantReconciler) ensureTenantWildcardEdgeDNS(ctx context.Context, tenant *gentianov1alpha1.Tenant, effectiveDomain string) {
-	if r.CloudflareDNS == nil {
+// ensureTenantEdgeRoutes programs how a tenant's hostnames are reached.
+//
+// No DNS here, and none needed: the tenant's HTTPRoutes attach to the kernel
+// Gateway, and external-dns publishes them from there — pointed at this
+// ingress by the annotations the Gateway carries, or at the Gateway's own
+// address on a cluster that has one. Records for eight providers, written by
+// the component that already does that for mail.
+func (r *TenantReconciler) ensureTenantEdgeRoutes(ctx context.Context, tenant *gentianov1alpha1.Tenant, effectiveDomain string) {
+	if r.Ingress == nil {
 		return
 	}
 	logger := ctrl.LoggerFrom(ctx)
 	wildcard := "*." + effectiveDomain
-	if err := r.CloudflareDNS.ensureCNAME(ctx, wildcard, r.CloudflareDNS.tunnelCNAME); err != nil {
-		logger.Error(err, "ensure Cloudflare wildcard DNS CNAME", "host", wildcard)
-	}
-	if err := r.CloudflareDNS.ensureCNAME(ctx, effectiveDomain, r.CloudflareDNS.tunnelCNAME); err != nil {
-		logger.Error(err, "ensure Cloudflare apex DNS CNAME", "host", effectiveDomain)
-	}
 	origin, err := kernelGatewayTunnelOrigin(ctx, r.Client)
 	if err != nil {
 		logger.Error(err, "resolve kernel gateway tunnel origin")
@@ -131,8 +132,8 @@ func (r *TenantReconciler) ensureTenantWildcardEdgeDNS(ctx context.Context, tena
 	tunnelOK := true
 	var tunnelMsg string
 	for _, host := range []string{wildcard, effectiveDomain} {
-		if err := r.CloudflareDNS.ensureTunnelIngress(ctx, host, origin); err != nil {
-			logger.Error(err, "ensure Cloudflare tunnel ingress", "host", host, "origin", origin)
+		if err := edgeEnsureRoute(ctx, r.Ingress, host, origin); err != nil {
+			logger.Error(err, "ensure tenant edge route", "host", host, "origin", origin)
 			tunnelOK = false
 			tunnelMsg = err.Error()
 		}
@@ -168,14 +169,13 @@ func (r *TenantReconciler) deleteEdgeRouting(ctx context.Context, tenant *gentia
 		return fmt.Errorf("delete tenant wildcard Certificate: %w", err)
 	}
 
-	if effectiveDomain != "" && r.CloudflareDNS != nil {
+	if effectiveDomain != "" {
+		// Routes only. The records go with the HTTPRoutes: external-dns
+		// removes what it published once the route it published from is gone.
 		wildcard := "*." + effectiveDomain
-		if err := r.CloudflareDNS.deleteCNAME(ctx, wildcard); err != nil {
-			logger.Error(err, "delete Cloudflare wildcard DNS CNAME", "host", wildcard)
-		}
 		for _, host := range []string{wildcard, effectiveDomain} {
-			if err := r.CloudflareDNS.deleteTunnelIngress(ctx, host); err != nil {
-				logger.Error(err, "delete Cloudflare tunnel ingress", "host", host)
+			if err := edgeDeleteRoute(ctx, r.Ingress, host); err != nil {
+				logger.Error(err, "delete tenant edge route", "host", host)
 			}
 		}
 	}
