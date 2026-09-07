@@ -754,7 +754,7 @@ validate_config() {
     fi
 
     _file_header "${INSTALL_CONFIG_FILE}" "Installer config checks (install.env)"
-    _opt_from LETSENCRYPT_EMAIL  "required for Let's Encrypt ACME; falls back to a dummy address" "${INSTALL_CONFIG_FILE}"
+    _opt_from LETSENCRYPT_EMAIL  "the ACME account address — certManager.letsencryptEmail on the claim; defaults to admin@\${KERNEL_DOMAIN}" "${cluster_claim_file}"
     _opt_from GENTIAN_APPS_REPO       "defaults to https://git.example.domain/gentian-apps" "${INSTALL_CONFIG_FILE}"
     _opt_from GENTIAN_APPS_BRANCH     "defaults to 'main'" "${INSTALL_CONFIG_FILE}"
     _opt_from GENTIAN_DEPLOYMENTS_REPO    "defaults to https://git.example.domain/gentian-deployments" "${INSTALL_CONFIG_FILE}"
@@ -1098,11 +1098,18 @@ load_deployments_cluster_settings() {
     # Reported, not overridden: an operator who wrote it there meant something,
     # and silently reversing the precedence would be the same fault in the other
     # direction.
+    #
+    # LETSENCRYPT_EMAIL and KV_MOUNT were missing from this list while having
+    # certManager.letsencryptEmail and openbao.kvMount on the claim, which the
+    # Cluster Composition reads. So those two had the fault this loop exists to
+    # report and no report: the claim field was authored, the Composition read
+    # it, and the install.env value won anyway with nothing said.
     local v
     for v in TENANCY_MODE NETWORK_MODE NODE_IP ROUTING_MODE SECRET_MODE \
              STORAGE_CLASS MAIL_SERVICE_MODE LB_PROVIDER LB_ANNOTATIONS \
              PLATFORM PLATFORM_PARAMS EDGE_ADDRESS_REF DNS_PROVIDER DNS_PARAMS \
-             LLM_SUPPORT GPU_ACCELERATION GPU_TIME_SLICE_REPLICAS; do
+             LLM_SUPPORT GPU_ACCELERATION GPU_TIME_SLICE_REPLICAS \
+             LETSENCRYPT_EMAIL KV_MOUNT ACME_ENV; do
         [[ -n "${!v:-}" ]] || continue
         [[ -r "${INSTALL_CONFIG_FILE:-}" ]] || continue
         grep -qE "^[[:space:]]*(export[[:space:]]+)?${v}=" "${INSTALL_CONFIG_FILE}" || continue
@@ -1118,6 +1125,19 @@ load_deployments_cluster_settings() {
         claim_setting NODE_IP           nodeIp           "${claim_file}"
         claim_setting STORAGE_CLASS     storageClass     "${claim_file}"
         claim_setting MAIL_SERVICE_MODE mail.serviceMode "${claim_file}"
+        # Two the shell read only from install.env while the Cluster Composition
+        # read them from the claim — certManager.letsencryptEmail at
+        # cluster-default.yaml:33, openbao.kvMount at :27. Not an override, which
+        # is what the loop above reports, but two independent readers of the same
+        # setting, free to disagree with no precedence between them to appeal to.
+        claim_setting LETSENCRYPT_EMAIL certManager.letsencryptEmail "${claim_file}"
+        claim_setting KV_MOUNT          openbao.kvMount              "${claim_file}"
+        # Which Let's Encrypt endpoint. Read here rather than from the stage
+        # profile that deployment.md points at, because the issuers are applied
+        # at A-06 and a stage profile is Helm values Argo CD renders later —
+        # unreadable at the moment the answer is needed. The claim is a file
+        # before it is an object, which is exactly why it can serve both.
+        claim_setting ACME_ENV          certificates.acmeEnv         "${claim_file}"
         # The external relay, when mail.serviceMode is external. Same object,
         # same claim; EXTERNAL_SMTP_* were only ever the shell's names for them.
         claim_setting MAIL_EGRESS_HOST       mail.egressHost "${claim_file}"

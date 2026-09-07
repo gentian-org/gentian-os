@@ -1782,6 +1782,7 @@ _claim_cluster_fields() {
     local im="${CERT_ISSUER_MODE:-acme-dns01}"
     local pf="${PLATFORM:-}"
     local dp="${DNS_PROVIDER:-cloudflare}"
+    local st="${GENTIAN_DEPLOYMENTS_STAGE:-dev}"
 
     printf '\n'
     printf '  # Where this cluster runs. Selects the edge load-balancer settings\n'
@@ -1832,6 +1833,19 @@ _claim_cluster_fields() {
     printf '  #   self-signed  no public DNS and no ACME reachability; browsers warn\n'
     printf '  certificates:\n'
     printf '    issuerMode: %s\n' "${im}"
+    if [[ "${im}" == acme-* ]]; then
+        # Staging on dev, production everywhere else. A dev cluster is rebuilt
+        # often and Let's Encrypt allows five duplicate certificates per name
+        # per week, which one bad afternoon exhausts — and the rate limit is per
+        # name, so it outlives the cluster that spent it.
+        if [[ "${st}" == "dev" ]]; then
+            printf '    # staging: untrusted certificates, generous rate limits.\n'
+            printf '    # Switch to production once the names are settled.\n'
+            printf '    acmeEnv: staging\n'
+        else
+            printf '    acmeEnv: production\n'
+        fi
+    fi
     if [[ "${im}" == "acme-dns01" ]]; then
         printf '    # cloudflare, route53, clouddns, azuredns, rfc2136, hetzner,\n'
         printf '    # infomaniak — independent of platform above.\n'
