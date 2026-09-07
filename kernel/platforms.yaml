@@ -403,3 +403,46 @@ dnsProviders:
       provider: webhook
       secretKeys:
         api-token: api-token
+
+# =============================================================================
+# Edge ingress providers — how traffic REACHES the cluster
+# =============================================================================
+# The other half of the edge, and a separate table on purpose. dnsProviders
+# above answers "what does this hostname resolve to"; this answers "how does
+# traffic for it arrive". With Cloudflare both are one vendor and, by default,
+# one token, which is why they were one thing in the code until they were not.
+# With inlets, frp, or a WireGuard exit node the ingress is a host you run and
+# DNS is whoever serves the zone — two vendors, two credentials, no shared API.
+#
+# The credential here is stored and validated independently of the DNS one for
+# that reason. On Cloudflare the same token may satisfy both, and the installer
+# lets one answer serve twice rather than asking for it again; that is a
+# convenience of one provider, not the shape of the model.
+#
+# Matches internal/controller/edge.go's EdgeIngress. Adding a provider is an
+# entry here plus an implementation of that interface.
+edgeIngress:
+  none:
+    displayName: No managed ingress
+    # static-ip clusters: a LoadBalancer already routes by address, so there is
+    # no ingress to program and only DNS is missing.
+
+  cloudflare-tunnel:
+    displayName: Cloudflare Tunnel
+    credential:
+      secretName: cloudflare-tunnel-api-token
+      vaultPath: gentian-os/kernel/edge/cloudflare-tunnel
+      displayName: Cloudflare Tunnel API Token
+      phase: bootstrap
+      description: >
+        Token that may configure this account's Cloudflare Tunnel ingress
+        rules — Account → Cloudflare One Connector: cloudflared → Edit, which
+        older accounts list as Cloudflare Tunnel. This is an ACCOUNT-scoped
+        grant, where the DNS token's is ZONE-scoped: a token can hold either
+        without the other. Leave unset to reuse the DNS token, which works
+        when that one carries both.
+      validate: cloudflare-tunnel
+      fields:
+        - key: api-token
+          format: token
+          secret: true

@@ -26,6 +26,10 @@ except ImportError:  # pragma: no cover
 
 ROOT = Path(__file__).resolve().parents[2]   # scripts/gen/ -> repo root
 SOURCE = ROOT / "credentials.yaml"
+
+
+def _platforms():
+    return yaml.safe_load(PLATFORMS.read_text())
 PLATFORMS = ROOT / "kernel" / "platforms.yaml"
 TARGET = ROOT / "kernel" / "credentials" / "credential-requirements.yaml"
 
@@ -115,6 +119,42 @@ def dns_requirements(platforms):
             "scope": "cluster",
             # Every one of them is optional: a cluster uses at most one, and a
             # cluster on HTTP-01 or a private CA uses none.
+            "optional": True,
+            "vaultPath": cred["vaultPath"],
+            "fields": cred["fields"],
+            "consumedBy": [{"kind": "XCluster", "name": "cluster"}],
+        }
+        if cred.get("description"):
+            req["description"] = cred["description"]
+        if cred.get("validate"):
+            req["validate"] = {"type": cred["validate"]}
+        reqs.append(req)
+    return reqs
+
+
+def edge_ingress_requirements(platforms):
+    """The edge ingress providers' credentials, from the same table shape.
+
+    Separate from dns_requirements because the credential is separate: DNS is a
+    zone-scoped grant and ingress is account-scoped, and on every provider but
+    Cloudflare they are not even the same vendor. Stored and validated on their
+    own so a cluster can hold one without the other -- see
+    internal/controller/edge.go.
+
+    Optional, like the DNS ones and for the same reason: a static-ip cluster
+    programs no ingress at all, and a Cloudflare cluster whose DNS token
+    already carries the account permission supplies nothing here.
+    """
+    reqs = []
+    for name, profile in sorted((platforms.get("edgeIngress") or {}).items()):
+        cred = profile.get("credential")
+        if not cred:
+            continue          # "none", and any ingress whose access is not a secret
+        req = {
+            "name": f"edge-ingress-{name}",
+            "displayName": cred.get("displayName", f"{profile.get('displayName', name)} Credentials"),
+            "phase": cred.get("phase", "runtime"),
+            "scope": "cluster",
             "optional": True,
             "vaultPath": cred["vaultPath"],
             "fields": cred["fields"],
@@ -249,7 +289,8 @@ def main():
     # rather than restated in credentials.yaml — see dns_requirements. Merged
     # before validation, so they are held to the same rules as everything else.
     catalogue.setdefault("requirements", []).extend(
-        dns_requirements(yaml.safe_load(PLATFORMS.read_text()))
+        dns_requirements(_platforms())
+        + edge_ingress_requirements(_platforms())
     )
 
     errors = validate(catalogue)

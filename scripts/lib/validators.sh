@@ -209,8 +209,49 @@ validate_cloudflare_dns() {
         info "  Cloudflare zone for ${name}: ${matched}"
 
     _validate_cloudflare_dns_write "${token}" "${zone_id}" "${matched}" || return 1
-    _validate_cloudflare_tunnel_scope "${token}" "${account_id}" || return 1
+
+    # The tunnel is NOT validated here any more. It is a different credential
+    # with a different scope (account, not zone), validated by
+    # validate_cloudflare_tunnel against whichever token actually configures
+    # the tunnel — which is this one only when the operator supplied no
+    # separate one. Checking it here would have passed a DNS token that
+    # happens to carry the account permission and said nothing about the token
+    # the tunnel half will really use.
+    #
+    # The account id is exported rather than dropped: the tunnel probe is
+    # addressed by account, and resolving it needs the zone read that just
+    # happened. Without this the tunnel validator would need Zone:Read on a
+    # token that should not require it.
+    GENTIAN_CLOUDFLARE_ACCOUNT_ID="${account_id}"
+    export GENTIAN_CLOUDFLARE_ACCOUNT_ID
     return 0
+}
+
+# validate_cloudflare_tunnel <token>
+#
+# The ingress half's own credential, checked on its own. Account -> Cloudflare
+# One Connector: cloudflared -> Edit, which is account-scoped where the DNS
+# token's grant is zone-scoped; a token can hold either without the other,
+# which is exactly why they are two requirements rather than one.
+#
+# The account id comes from the DNS validator, which resolved it from the zone
+# it had to read anyway. When that has not run -- this credential supplied
+# alone, or re-validated by itself -- CLOUDFLARE_ACCOUNT_ID answers, and
+# failing both the probe says it could not run rather than guessing.
+validate_cloudflare_tunnel() {
+    local token="${1:-}" account_id
+
+    [[ -n "${token}" ]] || return 0
+
+    account_id="${GENTIAN_CLOUDFLARE_ACCOUNT_ID:-${CLOUDFLARE_ACCOUNT_ID:-}}"
+    if [[ -z "${account_id}" ]]; then
+        warn "Cannot check the Cloudflare Tunnel token: this cluster's account id is unknown."
+        warn "  It is normally resolved from the zone while validating the DNS token."
+        warn "  Set CLOUDFLARE_ACCOUNT_ID to check this credential on its own."
+        return 0
+    fi
+
+    _validate_cloudflare_tunnel_scope "${token}" "${account_id}"
 }
 
 # _validate_cloudflare_dns_write <token> <zone_id> <zone_name>
@@ -468,6 +509,7 @@ run_validator() {
         git-https)      validate_git_https "$@" ;;
         oidc-discovery) validate_oidc_discovery "$@" ;;
         cloudflare-dns) validate_cloudflare_dns "$@" ;;
+        cloudflare-tunnel) validate_cloudflare_tunnel "$@" ;;
         *)
             error "Unknown validator type '${type}'."
             error "  Bootstrap validators are curl/openssl only; anything else is phase: runtime."

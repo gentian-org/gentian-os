@@ -157,6 +157,11 @@ _env_var_for() {
         # name each rather than a table entry per provider.
         acme-dns-cloudflare/api-token)     echo CF_API_TOKEN ;;
         acme-dns-*/*)                      echo "GENTIAN_DNS_$(printf '%s' "$2" | tr 'a-z.-' 'A-Z__')" ;;
+        # The ingress half's own token. Named for the tunnel rather than for
+        # Cloudflare-the-DNS-provider, because it is a different grant on a
+        # different scope — see kernel/platforms.yaml's edgeIngress table.
+        edge-ingress-cloudflare-tunnel/api-token) echo CLOUDFLARE_TUNNEL_API_TOKEN ;;
+        edge-ingress-*/*)                  echo "GENTIAN_EDGE_$(printf '%s' "$2" | tr 'a-z.-' 'A-Z__')" ;;
         smtp-relay/relay_username)         echo SMTP_RELAY_USERNAME ;;
         smtp-relay/relay_password)         echo SMTP_RELAY_PASSWORD ;;
         smtp-relay/host)                   echo EXTERNAL_SMTP_HOST ;;
@@ -248,6 +253,7 @@ _GENTIAN_CACHED_CREDENTIAL_VARS=(
     REGISTRY_USER
     REGISTRY_PASSWORD
     CF_API_TOKEN
+    CLOUDFLARE_TUNNEL_API_TOKEN
 )
 
 # _repo_auth_for <req> — echoes the resolved GENTIAN_*_AUTH value for one of
@@ -290,6 +296,19 @@ _requirement_applies() {
             # zone credential is asking for something the cluster cannot use.
             [[ "$1" == "acme-dns-${DNS_PROVIDER:-cloudflare}" ]] || return 1
             [[ "${CERT_ISSUER_MODE:-acme-dns01}" == "acme-dns01" ]]
+            ;;
+        edge-ingress-cloudflare-tunnel)
+            # Only a tunnel cluster programs ingress at all; static-ip routes by
+            # address. And only when the operator wants a SEPARATE token: unset,
+            # the tunnel half falls back to the DNS token, which is the ordinary
+            # single-token Cloudflare deployment and needs nothing asked here.
+            [[ "${NETWORK_MODE:-tunnel}" != "static-ip" ]] || return 1
+            [[ "${GENTIAN_SEPARATE_TUNNEL_TOKEN:-false}" == "true" ]]
+            ;;
+        edge-ingress-*)
+            # No other ingress provider is implemented yet; the catalogue lists
+            # them, this decides none applies.
+            return 1
             ;;
         # The four repo-credential requirements, gated on their own
         # GENTIAN_*_AUTH var rather than optional: true/false — "does this
@@ -357,6 +376,12 @@ _validate_requirement() {
             [[ -n "${CF_API_TOKEN:-}" ]] || return 0
             # The zone is the kernel domain: that is the one DNS-01 solves in.
             run_validator cloudflare-dns "${CF_ZONE_NAME:-${KERNEL_DOMAIN:-}}" "${CF_API_TOKEN}"
+            ;;
+        cloudflare-tunnel)
+            [[ -n "${CLOUDFLARE_TUNNEL_API_TOKEN:-}" ]] || return 0
+            # Its own token, checked on its own. The account id comes from the
+            # DNS validator, which resolved it from the zone it had to read.
+            run_validator cloudflare-tunnel "${CLOUDFLARE_TUNNEL_API_TOKEN}"
             ;;
         *)
             error "Requirement '${name}' declares validator '${vtype}', which the installer does not implement."
