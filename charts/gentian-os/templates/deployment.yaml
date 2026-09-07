@@ -241,11 +241,17 @@ spec:
                   optional: true
             {{- end }}
             {{- if .Values.cloudflare.tunnelAPITokenSecretRef.name }}
-            - name: CLOUDFLARE_TUNNEL_API_TOKEN
+            # CF_TUNNEL_TOKEN, matching what the operator reads and what the
+            # installer collects. optional: a cluster whose OpenBao has no
+            # edge/cf-tunnel path yet must still start -- the operator falls
+            # back to the DNS token, which is every cluster installed before
+            # this credential existed.
+            - name: CF_TUNNEL_TOKEN
               valueFrom:
                 secretKeyRef:
                   name: {{ .Values.cloudflare.tunnelAPITokenSecretRef.name | quote }}
                   key: {{ .Values.cloudflare.tunnelAPITokenSecretRef.key | default "api-token" | quote }}
+                  optional: true
             {{- end }}
             - name: INFRA_NAMESPACE
               value: {{ .Values.infraNamespace | quote }}

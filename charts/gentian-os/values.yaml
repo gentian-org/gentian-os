@@ -260,10 +260,19 @@ cloudflare:
   #
   # Clear name to disable: the operator then falls back to the DNS token at
   # runtime, which is what an already-installed single-token cluster relies on.
+  # Empty by default, and deliberately: an ExternalSecret pointing at an
+  # OpenBao path no existing cluster has been seeded would sit in permanent
+  # error, and the operator would hold an env var referencing a Secret that
+  # never appears. Unset, the operator falls back to the DNS token, which is
+  # exactly how every cluster installed before this credential existed runs.
+  #
+  # Set both to give the ingress its own credential:
+  #   name:        cloudflare-tunnel-api-token-gentian-system
+  #   openbaoPath: gentian-os/kernel/edge/cf-tunnel
   tunnelAPITokenSecretRef:
-    name: "cloudflare-tunnel-api-token-gentian-system"
+    name: ""
     key: "api-token"
-    openbaoPath: "gentian-os/kernel/edge/cf-tunnel"
+    openbaoPath: ""
   # Optional: lets the tunnel ingress skip the zone lookup, so its token
   # needs no Zone:Read. Falls back to the "account-id" key on the DNS token
   # Secret when unset.
