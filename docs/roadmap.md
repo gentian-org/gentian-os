@@ -27,6 +27,18 @@ For the current baseline design of the system, refer to [architecture.md](archit
   - `[ ]` Map `gentianos.io/app` and tenant labels to SPIFFE ID templates.
   - `[ ]` Wire service mesh traffic policy rules to platform integration bindings.
   - `[ ]` Enforce mutual TLS (mTLS) across all platform control plane and tenant communications.
+  - `[ ]` Move the OpenFGA authz bridge off its pre-shared key. OpenFGA offers
+    `authn.method: none | preshared | oidc`; this cluster runs `preshared`, which
+    is the getting-started option, and the key is HMAC-derived from the master
+    password, seeded into OpenBao and delivered to both OpenFGA and the operator
+    by ExternalSecrets. Everything about that is careful and none of it needs to
+    exist: `oidc` lets OpenFGA validate a JWT against an issuer and audience, and
+    the platform already runs the issuer. Either a Keycloak service account on a
+    client-credentials grant, or — better for an in-cluster caller — a projected
+    Kubernetes ServiceAccount token bound to OpenFGA's audience, which the
+    kubelet rotates and which is never stored anywhere. This is the smallest
+    concrete instance of this whole item, and the one with an upstream feature
+    waiting for it rather than a design to invent.
 
 ### 1.3 Contract-Mediated Data Plane Access (***)
 * **Target Domain**: Platform Security & Storage
