@@ -94,13 +94,13 @@ spec:
     - .spec.template.spec.containers[].readinessProbe.httpGet.scheme
     - .spec.template.spec.containers[].env[].valueFrom.fieldRef.apiVersion
   sources:
-  - repoURL: https://github.com/gentian-org/gentian-os
+  - repoURL: {{ .Values.osRepo | default "https://github.com/gentian-org/gentian-os" }}
     targetRevision: {{ .Values.gentianOsBranch }}
     ref: values
   - repoURL: {{ .Values.deploymentsRepo }}
     targetRevision: {{ .Values.deploymentsBranch }}
     ref: deploy
-  - repoURL: https://github.com/gentian-org/gentian-ui
+  - repoURL: {{ .Values.uiRepo | default "https://github.com/gentian-org/gentian-ui" }}
     targetRevision: {{ .Values.uiBranch }}
     path: chart
     helm:

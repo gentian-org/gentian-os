@@ -38,7 +38,7 @@ spec:
       - name: server.dataStorage.storageClass
         value: "{{ .Values.storageClass }}"
   # Source 2: Values file from Git (referenced as $values by Source 1)
-  - repoURL: https://github.com/gentian-org/gentian-os
+  - repoURL: {{ .Values.osRepo | default "https://github.com/gentian-org/gentian-os" }}
     targetRevision: {{ .Values.gentianOsBranch }}
     ref: values
   destination:

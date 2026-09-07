@@ -143,6 +143,12 @@ _env_var_for() {
         # prompted for. A mapping here would put it in the prompt loop.
         deployments-repository/username)   echo GENTIAN_DEPLOYMENTS_GIT_USERNAME ;;
         deployments-repository/password)   echo GENTIAN_DEPLOYMENTS_GIT_TOKEN ;;
+        gentian-os-repository/username)    echo GENTIAN_OS_GIT_USERNAME ;;
+        gentian-os-repository/password)    echo GENTIAN_OS_GIT_TOKEN ;;
+        gentian-apps-repository/username)  echo GENTIAN_APPS_GIT_USERNAME ;;
+        gentian-apps-repository/password)  echo GENTIAN_APPS_GIT_TOKEN ;;
+        gentian-ui-repository/username)    echo GENTIAN_UI_GIT_USERNAME ;;
+        gentian-ui-repository/password)    echo GENTIAN_UI_GIT_TOKEN ;;
         infra-chart-registry/username)     echo REGISTRY_USER ;;
         infra-chart-registry/password)     echo REGISTRY_PASSWORD ;;
         # The DNS credential, whichever provider hosts the zone. CF_API_TOKEN is
@@ -233,10 +239,34 @@ _GENTIAN_CACHED_CREDENTIAL_VARS=(
     DERIVATION_SALT
     GENTIAN_DEPLOYMENTS_GIT_USERNAME
     GENTIAN_DEPLOYMENTS_GIT_TOKEN
+    GENTIAN_OS_GIT_USERNAME
+    GENTIAN_OS_GIT_TOKEN
+    GENTIAN_APPS_GIT_USERNAME
+    GENTIAN_APPS_GIT_TOKEN
+    GENTIAN_UI_GIT_USERNAME
+    GENTIAN_UI_GIT_TOKEN
     REGISTRY_USER
     REGISTRY_PASSWORD
     CF_API_TOKEN
 )
+
+# _repo_auth_for <req> — echoes the resolved GENTIAN_*_AUTH value for one of
+# the four repo-credential requirements, its own default included, or nothing
+# for any other requirement. The one place that mapping lives, shared by
+# _requirement_applies (gate the whole requirement) and _prompt_field (skip
+# just the username field under bearer).
+_repo_auth_for() {
+    case "$1" in
+        # deployments-repository defaults to basic — today's always-prompt
+        # behavior, unchanged for an unset install.env. os/apps/ui default to
+        # none, since the public gentian-org GitHub needs nothing.
+        deployments-repository)  echo "${GENTIAN_DEPLOYMENTS_AUTH:-basic}" ;;
+        gentian-os-repository)   echo "${GENTIAN_OS_AUTH:-none}" ;;
+        gentian-apps-repository) echo "${GENTIAN_APPS_AUTH:-none}" ;;
+        gentian-ui-repository)   echo "${GENTIAN_UI_AUTH:-none}" ;;
+        *)                       echo "" ;;
+    esac
+}
 
 # _requirement_applies <req> — whether this cluster needs the credential at all.
 #
@@ -260,6 +290,13 @@ _requirement_applies() {
             # zone credential is asking for something the cluster cannot use.
             [[ "$1" == "acme-dns-${DNS_PROVIDER:-cloudflare}" ]] || return 1
             [[ "${CERT_ISSUER_MODE:-acme-dns01}" == "acme-dns01" ]]
+            ;;
+        # The four repo-credential requirements, gated on their own
+        # GENTIAN_*_AUTH var rather than optional: true/false — "does this
+        # cluster's config actually need a credential" is a per-repo question
+        # (what host it points at), not a fixed platform-wide answer.
+        deployments-repository|gentian-os-repository|gentian-apps-repository|gentian-ui-repository)
+            [[ "$(_repo_auth_for "$1")" != "none" ]]
             ;;
         *)
             return 0
@@ -290,10 +327,27 @@ _validate_requirement() {
             run_validator oci-registry "${vhost:-${INFRA_CHART_REPO:-}}" "${user}" "${pass}"
             ;;
         git-https)
-            [[ -n "${GENTIAN_DEPLOYMENTS_GIT_TOKEN:-}" ]] || return 0
-            run_validator git-https "${GENTIAN_DEPLOYMENTS_REPO:-}" \
-                "${GENTIAN_DEPLOYMENTS_GIT_USERNAME:-x-access-token}" \
-                "${GENTIAN_DEPLOYMENTS_GIT_TOKEN}"
+            # deployments-repository, gentian-os-repository,
+            # gentian-apps-repository, gentian-ui-repository all validate
+            # this way; only the REPO var differs by name, since
+            # _env_var_for already gives the right username/password vars
+            # for any of the four, and _repo_auth_for the auth type.
+            local repo_var user_var token_var auth
+            case "${name}" in
+                deployments-repository)  repo_var=GENTIAN_DEPLOYMENTS_REPO ;;
+                gentian-os-repository)   repo_var=GENTIAN_OS_REPO ;;
+                gentian-apps-repository) repo_var=GENTIAN_APPS_REPO ;;
+                gentian-ui-repository)   repo_var=GENTIAN_UI_REPO ;;
+                *) error "git-https validator: no REPO var known for requirement '${name}'."; return 1 ;;
+            esac
+            user_var="$(_env_var_for "${name}" username)"
+            token_var="$(_env_var_for "${name}" password)"
+            auth="$(_repo_auth_for "${name}")"
+            [[ -n "${!token_var:-}" ]] || return 0
+            run_validator git-https "${!repo_var:-}" \
+                "${!user_var:-x-access-token}" \
+                "${!token_var}" \
+                "${auth:-basic}"
             ;;
         oidc-discovery)
             [[ -n "${CF_API_TOKEN:-}" ]] || return 0
@@ -360,6 +414,12 @@ _reprompt_requirement() {
 
 _prompt_field() {
     local req="$1" key="$2" var secret minlen example label value
+
+    # bearer auth is a token only — no username to collect. Basic and the
+    # unmapped-field guard below both still apply normally.
+    if [[ "${key}" == "username" ]] && [[ "$(_repo_auth_for "${req}")" == "bearer" ]]; then
+        return 0
+    fi
 
     var="$(_env_var_for "${req}" "${key}")"
     if [[ -z "${var}" ]]; then

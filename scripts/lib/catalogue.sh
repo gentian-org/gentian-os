@@ -95,45 +95,19 @@ report_gentian_cli_state() {
 # =============================================================================
 # 15. Repository claim for the default app catalogue (gentian-apps)
 # =============================================================================
-# The gentian-apps Repository claim, not a hand-authored ApplicationSet: any
-# role: apps, type: git repository composes its own catalogue-sync
-# ApplicationSet (crossplane/compositions/repository-default.yaml), so the
-# cluster's default catalogue works the same way a tenant's private one does.
+# The Repository claim itself is B-12-apps-repository.sh's job now (it needs
+# to run in the secrets phase, before D, to carry the OpenBao/ESO credential
+# for a private repo — this file's install_catalogue_sync used to apply a
+# second, credential-less Repository/gentian-apps here, which duplicated it:
+# any role: apps, type: git repository composes its own catalogue-sync
+# ApplicationSet (crossplane/compositions/repository-default.yaml) named after
+# the claim, so two claims for the same repo meant two ApplicationSets
+# fighting over the same Applications. D-08-appprofiles.sh just verifies
+# B-12's claim exists now.
+#
 # Once synced, each profiles/<name>/ bundle becomes an Application
 # (catalogue-<name>) that applies AppProfile, optional composition.yaml, and
 # optional cluster assets.
-#
-# Applied here rather than through the gentian-claims ApplicationSet because
-# GENTIAN_APPS_REPO/GENTIAN_APPS_BRANCH are install-time configuration a
-# cluster may override, and every cluster gets the default catalogue without
-# the deployments repository having to commit anything for it — the same
-# reason B-09 applies the deployments Repository claim directly rather than
-# through Git.
-install_catalogue_sync() {
-    banner "App catalogue (gentian-apps Repository claim)"
-
-    info "Applying Repository claim gentian-apps:"
-    info "  repo:   ${GENTIAN_APPS_REPO}"
-    info "  branch: ${GENTIAN_APPS_BRANCH}"
-    [[ "${GENTIAN_DRY_RUN:-0}" == "1" ]] && return 0
-
-    kubectl apply -f - <<EOF
-apiVersion: gentianos.io/v1alpha1
-kind: Repository
-metadata:
-  name: gentian-apps
-  namespace: crossplane-system
-spec:
-  type: git
-  role: apps
-  endpoints:
-    inCluster: ${GENTIAN_APPS_REPO}
-  branch: ${GENTIAN_APPS_BRANCH}
-EOF
-    success "Repository claim applied. Argo CD will sync profiles/<name>/ bundles."
-    info "After sync, list available app profiles with:"
-    info "  kubectl gentian apps list"
-}
 
 # =============================================================================
 # 15. Install gentian-os orchestrator (Helm chart + ArgoCD Application)
