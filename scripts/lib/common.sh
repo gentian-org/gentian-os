@@ -2195,28 +2195,125 @@ gentian_suze_claim_name()      { gentian_claim_name suze       dev-suze;       }
 # one case where being wrong is expensive: an operator pinning a release gets a
 # cluster tracking the tip of the development branch, with every Application
 # healthy and pointing somewhere they did not choose. Refusing is better, and it
-# is the only case where the ref cannot be observed.
+# is the only case where the ref cannot be observed — LOCALLY.
+#
+# It is not the only case where the ref cannot be RESOLVED, and that gap is what
+# _verify_gentian_os_ref_exists below closes. A ref only has to be spellable to
+# get this far; it has to actually EXIST on GENTIAN_OS_REPO for a single
+# Application to sync. `GENTIAN_OS_BRANCH=cb-test` against a remote whose branch
+# is `test-cb` is two transposed characters, and it installed a whole cluster:
+# every bootstrap Application sat SYNC=Unknown, HEALTH=Healthy — healthy because
+# it owns nothing yet, not because anything worked — until B-01 timed out after
+# 300s on a StatefulSet that was never going to appear. ArgoCD's own error names
+# the repo and not the ref ("failed to get git client for repo ..."), so the
+# search starts at credentials and network and reaches the typo last.
+#
+# An unpublished local branch reads from rev-parse exactly like a real one and
+# fails identically, so both paths are checked, not just the typo-able one.
 # =============================================================================
 resolve_gentian_os_branch() {
+    local branch
     if [[ -n "${GENTIAN_OS_BRANCH:-}" ]]; then
-        export GENTIAN_OS_BRANCH
-        return 0
+        branch="${GENTIAN_OS_BRANCH}"
+    else
+        branch="$(git -C "${SCRIPT_DIR}" rev-parse --abbrev-ref HEAD 2>/dev/null || true)"
+        if [[ -z "${branch}" || "${branch}" == "HEAD" ]]; then
+            error "GENTIAN_OS_BRANCH is not set and this checkout has no branch to read."
+            error "  Every in-cluster Application tracks this ref, so it decides which"
+            error "  gentian-os a cluster runs. It cannot be inferred from a detached"
+            error "  checkout or a missing .git, and guessing it wrong is a cluster"
+            error "  following a ref nobody chose."
+            error ""
+            error "  Set it in install.env:"
+            error "    GENTIAN_OS_BRANCH=v0.4.0   pin this cluster to a release"
+            error "    GENTIAN_OS_BRANCH=develop  track the development line"
+            return 1
+        fi
     fi
-    local detected
-    detected="$(git -C "${SCRIPT_DIR}" rev-parse --abbrev-ref HEAD 2>/dev/null || true)"
-    if [[ -z "${detected}" || "${detected}" == "HEAD" ]]; then
-        error "GENTIAN_OS_BRANCH is not set and this checkout has no branch to read."
-        error "  Every in-cluster Application tracks this ref, so it decides which"
-        error "  gentian-os a cluster runs. It cannot be inferred from a detached"
-        error "  checkout or a missing .git, and guessing it wrong is a cluster"
-        error "  following a ref nobody chose."
+
+    # Verified once per install run, not once per call: apply_bootstrap_application
+    # alone calls this once per template — ten-odd times — and a network round
+    # trip on each would add up for an answer that cannot have changed since the
+    # last one. Keyed on the value, not a bare flag, so a branch that somehow
+    # changes mid-run is re-checked rather than trusted from a stale cache.
+    if [[ "${_GENTIAN_OS_BRANCH_VERIFIED:-}" != "${branch}" ]]; then
+        _verify_gentian_os_ref_exists "${branch}" || return 1
+        _GENTIAN_OS_BRANCH_VERIFIED="${branch}"
+    fi
+    export GENTIAN_OS_BRANCH="${branch}"
+}
+
+# _verify_gentian_os_ref_exists <ref> — confirms the ref this cluster is about
+# to track exists on GENTIAN_OS_REPO, not just in this checkout.
+#
+# Branches and tags in one call, since GENTIAN_OS_BRANCH is documented to hold
+# either. ls-remote's exit status is what makes this safe to gate an install on:
+#
+#   0   the ref is there
+#   2   the remote answered and does not have it — the only status that refuses
+#   *   the remote could not be asked at all
+#
+# The third case does NOT fail the install. Since GENTIAN_OS_REPO may be a
+# private mirror (12a), an unreachable or unauthenticated remote is a statement
+# about this shell's credentials, not about the ref, and blocking on it would
+# break exactly the air-gapped installs the mirror exists to serve. It warns,
+# because a check that cannot run must say so rather than pass quietly.
+#
+# GIT_TERMINAL_PROMPT=0 for the same reason: against a private mirror git would
+# otherwise stop and ask for a username, and an installer that hangs on a
+# hidden prompt is worse than one that fails. The low-speed knobs bound a
+# stalled connection without a timeout(1) dependency — the tool's own flags,
+# same rule scripts/lib/validators.sh follows.
+_verify_gentian_os_ref_exists() {
+    local ref="$1"
+    local repo="${GENTIAN_OS_REPO:-https://github.com/gentian-org/gentian-os}"
+    local rc=0
+    GIT_TERMINAL_PROMPT=0 \
+    GIT_HTTP_LOW_SPEED_LIMIT=1000 GIT_HTTP_LOW_SPEED_TIME="${GENTIAN_VALIDATE_TIMEOUT:-15}" \
+        git ls-remote --exit-code --heads --tags "${repo}" \
+            "refs/heads/${ref}" "refs/tags/${ref}" >/dev/null 2>&1 || rc=$?
+
+    case "${rc}" in
+        0) return 0 ;;
+        2) ;;
+        *)
+            warn "Could not reach ${repo} to confirm GENTIAN_OS_BRANCH=${ref} exists."
+            warn "  Continuing: a private or air-gapped mirror that this shell cannot"
+            warn "  read says nothing about whether the ref is there. If every Argo CD"
+            warn "  Application later sits SYNC=Unknown, check this ref first."
+            return 0
+            ;;
+    esac
+
+    error "GENTIAN_OS_BRANCH=${ref} does not exist on ${repo}."
+    error "  Every in-cluster Application tracks this ref. Applying them against a"
+    error "  ref the remote does not have produces Applications that never sync —"
+    error "  SYNC=Unknown with HEALTH=Healthy, healthy only because they own"
+    error "  nothing — and the first symptom is a step timing out much later."
+    error ""
+    if [[ -z "${GENTIAN_OS_BRANCH:-}" ]]; then
+        error "  This is the branch of the checkout you are installing FROM, taken"
+        error "  because install.env sets no GENTIAN_OS_BRANCH. It exists here and"
+        error "  not on the remote, so push it, or name a published ref instead."
+    else
+        error "  This came from install.env. Check it against the list below — a"
+        error "  transposition (cb-test for test-cb) reads correctly right up until"
+        error "  nothing syncs."
+    fi
+
+    # The list is the point: a typo is obvious next to the real name, and
+    # invisible on its own. Failure here is not fatal — the refusal above
+    # already stands on ls-remote's own verdict.
+    local available
+    available="$(GIT_TERMINAL_PROMPT=0 git ls-remote --heads --tags "${repo}" 2>/dev/null \
+        | sed -e 's#.*refs/heads/#  #' -e 's#.*refs/tags/#  #' -e '/\^{}$/d' \
+        | sort -u | head -25)"
+    if [[ -n "${available}" ]]; then
         error ""
-        error "  Set it in install.env:"
-        error "    GENTIAN_OS_BRANCH=v0.4.0   pin this cluster to a release"
-        error "    GENTIAN_OS_BRANCH=develop  track the development line"
-        return 1
+        error "  Refs on ${repo}:"
+        while IFS= read -r line; do error "  ${line}"; done <<<"${available}"
     fi
-    export GENTIAN_OS_BRANCH="${detected}"
+    return 1
 }
 
 # =============================================================================

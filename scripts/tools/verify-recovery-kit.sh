@@ -64,7 +64,7 @@ export GENTIAN_KIT_RECIPIENT GENTIAN_KIT_IDENTITY
 WANT_MASTER_PASSWORD='p@ss "with" $(quotes) `and` \backslashes\ and ümlauts'
 WANT_DERIVATION_SALT=$'salt-with\nnewline\tand-tab'
 WANT_TOKEN="ghp_$(printf 'x%.0s' {1..36})"
-WANT_DOMAIN='desk.gentian.org'
+WANT_DOMAIN='test.gentian-os.org'
 
 export MASTER_PASSWORD="${WANT_MASTER_PASSWORD}"
 export DERIVATION_SALT="${WANT_DERIVATION_SALT}"

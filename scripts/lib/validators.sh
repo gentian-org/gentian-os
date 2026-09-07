@@ -147,10 +147,11 @@ validate_cloudflare_dns() {
     local name="$1" token="${2:-}" candidate url body code count matched="" account_id=""
 
     # The kernel domain is a HOSTNAME; Cloudflare zones are registrable domains.
-    # desk.gentian.org is not a zone — gentian.org is, and the DNS-01 challenge
-    # record _acme-challenge.desk.gentian.org is created inside it. Asking for a
-    # zone named after the host therefore returns an empty list for a token with
-    # exactly the right access, which reads as "no access to this domain".
+    # test.gentian-os.org is not a zone — gentian-os.org is, and the DNS-01
+    # challenge record _acme-challenge.test.gentian-os.org is created inside it.
+    # Asking for a zone named after the host therefore returns an empty list for
+    # a token with exactly the right access, which reads as "no access to this
+    # domain".
     #
     # So walk up the labels to the closest enclosing zone, which is what
     # cert-manager's solver does with the same token. Stops before the public
