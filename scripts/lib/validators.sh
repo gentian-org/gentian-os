@@ -478,9 +478,19 @@ validate_oidc_discovery() {
     local url="$1" token="${2:-}" code auth=()
     [[ -n "${token}" ]] && auth=(-H "Authorization: Bearer ${token}")
 
+    # GENTIAN_CURL_RESOLVE pins host:port:addr for this request, set by a caller
+    # that has already resolved the name against the zone's own nameservers.
+    # Without it this probe inherits the local resolver, which on the run that
+    # prompted this held a negative for the A record — from the upstream router,
+    # so flushing locally changed nothing — while the service was up and its
+    # certificate valid. The probe would have reported the endpoint unreadable
+    # for as long as that cache lived.
+    local resolve=()
+    [[ -n "${GENTIAN_CURL_RESOLVE:-}" ]] && resolve=(--resolve "${GENTIAN_CURL_RESOLVE}")
+
     code=$(curl -s -o /dev/null -w '%{http_code}' \
         --max-time "${GENTIAN_VALIDATE_TIMEOUT}" \
-        "${auth[@]}" "${url}" 2>/dev/null) || code="000"
+        "${resolve[@]}" "${auth[@]}" "${url}" 2>/dev/null) || code="000"
 
     case "${code}" in
         200) return 0 ;;

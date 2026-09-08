@@ -233,15 +233,53 @@ _dd_resolves() {
     gentian_dns_resolves "$1" "${KERNEL_DOMAIN:-}"
 }
 
-_dd_tls_ok() {
-    local host="$1"
-    curl -sS -o /dev/null --max-time 10 "https://${host}/" >/dev/null 2>&1 && return 0
-    # A 4xx/5xx from the server still means TLS completed; only a transport
-    # failure counts as "no usable certificate".
-    local err
-    err="$(curl -sS -o /dev/null --max-time 10 "https://${host}/" 2>&1 || true)"
+_dd_curl_resolve_args() {
+    local host="$1" addr
+    # Connect to the address the ZONE gives, not the one this machine's
+    # resolver remembers. Three distinct failures collapse into one wrong
+    # message otherwise, and all three were seen on one host in one afternoon:
+    #
+    #   - the local resolver holding a negative for the A record long after the
+    #     record was republished, and the upstream router holding its own copy
+    #     of that negative, so flushing locally changed nothing;
+    #   - a proxied name always publishing AAAA, so a host with no IPv6 route
+    #     connects to an unreachable address and fails in one millisecond;
+    #   - neither of which has anything to do with a certificate.
+    #
+    # --resolve pins the address for the request and skips name resolution
+    # entirely, so what gets tested is the edge, which is what this step waits
+    # for. Empty when no address can be found, and the caller falls back to
+    # ordinary resolution rather than refusing to probe.
+    addr="$(gentian_dns_address "${host}" "${KERNEL_DOMAIN:-}" 2>/dev/null || true)"
+    [[ -n "${addr}" ]] || return 1
+    printf -- '--resolve\n%s:443:%s\n' "${host}" "${addr}"
+}
+
+# _dd_transport_ok <host> — can this machine open a connection at all?
+#
+# Separate from the TLS question so neither can be reported as the other. A
+# connect failure is the network; saying "no certificate" about it sends the
+# reader to the zone's TLS settings for a routing problem.
+_dd_transport_ok() {
+    local host="$1" err
+    local -a ra=(); mapfile -t ra < <(_dd_curl_resolve_args "${host}" || true)
+    curl -sS "${ra[@]}" -o /dev/null --max-time 10 "https://${host}/" >/dev/null 2>&1 && return 0
+    err="$(curl -sS "${ra[@]}" -o /dev/null --max-time 10 "https://${host}/" 2>&1 || true)"
     case "${err}" in
-        *SSL*|*certificate*|*Connection\ refused*|*Could\ not\ resolve*|*"Failed to connect"*) return 1 ;;
+        *"Failed to connect"*|*"Connection refused"*|*"Couldn't connect"*|*"Could not resolve"*) return 1 ;;
+        *) return 0 ;;
+    esac
+}
+
+_dd_tls_ok() {
+    local host="$1" err
+    local -a ra=(); mapfile -t ra < <(_dd_curl_resolve_args "${host}" || true)
+    curl -sS "${ra[@]}" -o /dev/null --max-time 10 "https://${host}/" >/dev/null 2>&1 && return 0
+    # A 4xx/5xx from the server still means TLS completed; only a TLS failure
+    # counts as "no usable certificate".
+    err="$(curl -sS "${ra[@]}" -o /dev/null --max-time 10 "https://${host}/" 2>&1 || true)"
+    case "${err}" in
+        *SSL*|*certificate*|*handshake*) return 1 ;;
         *) return 0 ;;
     esac
 }
@@ -279,8 +317,19 @@ _dd_tls_ok() {
     info "Checking the OIDC discovery document (up to $(( _dd_wait / 60 ))m)."
     info "  ${well_known}"
     while (( SECONDS < _dd_deadline )); do
+        # Same address the stage probes use, so the validator and the diagnosis
+        # cannot disagree about which host they reached.
+        local _dd_addr
+        _dd_addr="$(gentian_dns_address "${_dd_host}" "${KERNEL_DOMAIN:-}" 2>/dev/null || true)"
+        if [[ -n "${_dd_addr}" ]]; then
+            export GENTIAN_CURL_RESOLVE="${_dd_host}:443:${_dd_addr}"
+        else
+            unset GENTIAN_CURL_RESOLVE
+        fi
+
         if run_validator oidc-discovery "${well_known}" >/dev/null 2>&1; then
             _dd_ok=1
+            unset GENTIAN_CURL_RESOLVE
             break
         fi
 
@@ -288,8 +337,10 @@ _dd_tls_ok() {
         # pass, and it is the only way the message can improve as things arrive.
         if ! _dd_resolves "${_dd_host}"; then
             _dd_stage="DNS: ${_dd_host} does not resolve yet — external-dns publishes it once it is running"
+        elif ! _dd_transport_ok "${_dd_host}"; then
+            _dd_stage="NETWORK: ${_dd_host} resolves, but no connection can be opened to it — egress, or an AAAA address with no route from this host"
         elif ! _dd_tls_ok "${_dd_host}"; then
-            _dd_stage="TLS: ${_dd_host} resolves, but no certificate covering it is served yet"
+            _dd_stage="TLS: ${_dd_host} is reachable, but serves no certificate covering it — on Cloudflare a name more than one label below the zone apex needs Total TLS or an advanced certificate, and issuance can outlast this wait or stall on a CA rate limit"
         else
             _dd_stage="HTTP: ${_dd_host} serves TLS, but the realm has not answered yet"
         fi
@@ -314,7 +365,37 @@ _dd_tls_ok() {
                 error "  Some Keycloak deployments serve the realm under /auth. Try:"
                 error "    ${OIDC_DISCOVERY_URL/\/realms\//\/auth\/realms\/}" ;;
         esac
-        error "  Fix spec.oidc.discoveryUrl on the Cluster claim and re-run."
+        # What to do next follows from WHICH of the three stages it died on.
+        # The old advice was "fix spec.oidc.discoveryUrl" regardless, which is
+        # right only for the HTTP case: a run that timed out on certificate
+        # issuance sent the operator to edit a correct value, and cost about
+        # forty minutes of looking in the wrong place.
+        case "${_dd_stage}" in
+            DNS:*)
+                error "  Nothing is publishing this name. Check external-dns is running and"
+                error "  that its domain filter includes the ZONE, not just the kernel domain."
+                ;;
+            NETWORK:*)
+                error "  The name resolves but this machine cannot reach it, so nothing"
+                error "  about the cluster is proven either way. A proxied name always"
+                error "  publishes AAAA: a host with no IPv6 route connects to an address"
+                error "  it cannot use. Check egress from here before changing the cluster."
+                ;;
+            TLS:*)
+                error "  The edge serves no certificate for this name. It is not the"
+                error "  discovery URL and not the cluster."
+                error "    - Universal SSL covers the apex and ONE label below it. A kernel"
+                error "      domain deeper than that needs Total TLS or an advanced"
+                error "      certificate."
+                error "    - Issuance takes minutes, and repeated installs against one"
+                error "      domain can exhaust a CA's rate limit — Let's Encrypt allows"
+                error "      five duplicate certificates a week. Switching the certificate"
+                error "      authority clears that immediately."
+                ;;
+            *)
+                error "  Fix spec.oidc.discoveryUrl on the Cluster claim and re-run."
+                ;;
+        esac
         return 1
     fi
 

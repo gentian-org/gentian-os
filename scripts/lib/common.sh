@@ -126,6 +126,42 @@ _gentian_zone_nameserver() {
     return 1
 }
 
+# gentian_dns_address <host> [zone] — one IPv4 address for host, from the zone's
+# own nameservers.
+#
+# For probes that must CONNECT rather than merely confirm publication. Two
+# things make the local resolver the wrong source for that:
+#
+#   - It caches negatives for the zone's SOA minimum, 1800s on the zones this
+#     installs into, which outlives every wait here. A resolver that asked
+#     while a record was being republished holds "no A record" long after the
+#     record is back.
+#   - A Cloudflare-proxied name always publishes AAAA as well, so a host with
+#     no IPv6 route connects to an address it cannot reach and reports a
+#     failure that has nothing to do with the service.
+#
+# Both were observed together: curl chose the AAAA and failed to connect in one
+# millisecond, while curl -4 could not resolve at all because the A record was
+# negatively cached. The certificates were valid the whole time, and the step
+# reported that none was served.
+#
+# Callers pass the result to curl --resolve, which bypasses name resolution for
+# that request entirely.
+gentian_dns_address() {
+    local host="$1" zone="${2:-}" ns=""
+    [[ -n "${host}" ]] || return 1
+    command -v dig >/dev/null 2>&1 || return 1
+    if [[ -z "${zone}" ]]; then
+        zone="$(printf '%s' "${host}" | awk -F. '{ if (NF>=2) print $(NF-1)"."$NF; else print $0 }')"
+    fi
+    ns="$(_gentian_zone_nameserver "${zone}" || true)"
+    if [[ -n "${ns}" ]]; then
+        dig +short A "${host}" "@${ns}" 2>/dev/null | grep -E '^[0-9.]+$' | head -1
+        return 0
+    fi
+    dig +short A "${host}" 2>/dev/null | grep -E '^[0-9.]+$' | head -1
+}
+
 gentian_dns_resolves() {
     local host="$1"
     local zone="${2:-}"
