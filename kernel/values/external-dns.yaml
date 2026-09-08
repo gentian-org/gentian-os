@@ -48,8 +48,11 @@ policy: sync
 # it registered itself. Without a registry it assumes ownership of everything
 # matching the domain filter, which is how unrelated records get removed.
 registry: txt
-txtOwnerId: gentian
 txtPrefix: _extdns.
+
+# No txtOwnerId here. It is per-cluster, and the bootstrap template sets it —
+# see the note there. A shared value would make every Gentian cluster claim
+# ownership under the same name, and "mine" would mean "some Gentian cluster's".
 
 # No sources: here. Which sources run depends on the cluster's networkMode —
 # a tunnelled Gateway deadlocks the gateway-httproute source, see the

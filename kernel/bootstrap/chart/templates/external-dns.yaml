@@ -165,6 +165,27 @@ spec:
         publishable. Two labels is the floor, same as the solver walk: the
         next strip would be a public suffix.
         */}}
+        {{- /*
+        Ownership, scoped to THIS cluster.
+
+        external-dns runs policy: sync, and the TXT registry is the only thing
+        standing between that and a zone it shares with anyone. Before deleting
+        a record it checks for a companion TXT naming the owner — so a
+        hand-made record, having none, is safe.
+
+        The owner name has to identify the cluster, not the product. Shared,
+        the companion says "some Gentian cluster owns this", and a second
+        cluster whose domain filter reaches the same zone reads its neighbour's
+        records as its own, finds no source producing them, and deletes them.
+        Reproduced deliberately against a live zone: a record with a
+        matching ownership TXT and no source was planned for DELETE on the next
+        sync.
+
+        Two clusters need not share a zone for this — one kernel domain deep
+        enough for the zone walk to widen a filter onto a zone another cluster
+        writes to is enough.
+        */}}
+        txtOwnerId: {{ required "cluster is required: external-dns ownership must identify this cluster, not the product" .Values.cluster | quote }}
         {{- $kd := required "kernelDomain is required for external-dns domainFilters" .Values.kernelDomain }}
         {{- $labels := splitList "." $kd }}
         domainFilters:
