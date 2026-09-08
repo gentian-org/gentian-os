@@ -182,17 +182,13 @@ ensure_keycloak_admin_secret_url() {
     fi
     # The Service existing is not Keycloak answering. On a fresh cluster it
     # starts before CloudNativePG has created its database, exits with
-    # 'FATAL: database "keycloak" does not exist', and restarts -- six times on
-    # the run that prompted this. The bootstrap Job created during that window
-    # spends its entire sixty-attempt budget failing, ten minutes, and only the
-    # Job's own retry succeeds afterwards. Nothing is broken and nothing says
-    # so: the install prints sixty retry lines and an ERROR for work that
-    # completes moments later.
+    # 'FATAL: database "keycloak" does not exist' and restarts, so a bootstrap
+    # Job created in that window spends its whole retry budget failing and only
+    # the Job's own retry succeeds -- ten minutes, and a failed pod that reads
+    # like a broken install.
     #
-    # Waiting for Ready costs nothing when Keycloak is already up and skips the
-    # whole cycle when it is not. Non-fatal on timeout: the Job retries either
-    # way, so a slow cluster should not lose the step -- this removes a
-    # predictable ten minutes, it does not become a new way to fail.
+    # Non-fatal on timeout: the Job retries either way, so this removes a
+    # predictable delay rather than becoming a new way to fail.
     if ! kubectl wait --for=condition=Ready pod \
             -l "app.kubernetes.io/name=keycloakx" -n "${ns}" \
             --timeout="${GENTIAN_KEYCLOAK_READY_WAIT_SECS:-600}s" >/dev/null 2>&1; then
@@ -641,39 +637,7 @@ EOF
 
     # 720s, not 120s: the Job now polls Keycloak for up to 10 minutes
     # before touching anything (see the loop in its script), so the wait
-    # here has to outlast that budget or it reports failure over a Job# gentian_job_logs <ns> <job> <outcome> [tail]
-#
-# The logs of the pod that produced <outcome>, not whichever pod kubectl
-# happens to pick.
-#
-# `kubectl logs job/<name>` selects one pod from the job's label selector, and a
-# Job with backoffRetry has more than one: on a fresh cluster Keycloak starts
-# before CloudNativePG has created its database, crash-loops, and the first
-# bootstrap pod exhausts its retries before the second runs and succeeds in
-# seconds. The Job then reports succeeded=1 failed=1, and the tail printed
-# after the success was the FAILED pod's — so the install logged sixty retry
-# lines and "[ERROR] could not resolve Keycloak OIDC base" immediately before
-# "[OK] ... are ready", about work that had already completed.
-#
-# Reading that as a broken install is the correct reading of what it said. The
-# step knew which outcome it had; only the log selection did not.
-#
-# outcome is Succeeded or Failed. Falls back to the job selector when no pod
-# matches, so a Job whose pods have been garbage-collected still prints
-# something rather than nothing.
-gentian_job_logs() {
-    local ns="$1" job="$2" outcome="$3" tail="${4:-20}" pod
-    pod="$(kubectl get pods -n "${ns}" -l "job-name=${job}" \
-        --field-selector="status.phase=${outcome}" \
-        -o jsonpath='{.items[-1:].metadata.name}' 2>/dev/null || true)"
-    if [[ -n "${pod}" ]]; then
-        kubectl logs -n "${ns}" "${pod}" --tail="${tail}" 2>/dev/null || true
-        return 0
-    fi
-    kubectl logs -n "${ns}" "job/${job}" --tail="${tail}" 2>/dev/null || true
-}
-
-
+    # here has to outlast that budget or it reports failure over a Job
     # that is still legitimately waiting.
     if ! kubectl wait "job/${job_name}" -n "${ns}" --for=condition=complete --timeout=720s; then
         error "Keycloak SMTP configure Job failed."
@@ -700,6 +664,32 @@ gentian_job_logs() {
 #
 # The kernel realm is a different case and stays here: configure_keycloak_realm_smtp
 # above configures the kernel realm, which has no Tenant CR to reconcile from.
+
+# gentian_job_logs <ns> <job> <outcome> [tail]
+#
+# The logs of the pod that produced <outcome>, not whichever pod kubectl picks.
+#
+# `kubectl logs job/<name>` selects one pod from the job's label selector, and a
+# Job with a retry has more than one. On a fresh cluster Keycloak starts before
+# CloudNativePG has created its database, crash-loops, and the first bootstrap
+# pod exhausts its retries before a second runs and succeeds in seconds. The Job
+# then reports succeeded=1 failed=1, and the tail printed after the success was
+# the FAILED pod's — sixty retry lines and an ERROR immediately before the OK,
+# about work that had already completed.
+#
+# outcome is Succeeded or Failed. Falls back to the job selector when no pod
+# matches, so a Job whose pods were garbage-collected still prints something.
+gentian_job_logs() {
+    local ns="$1" job="$2" outcome="$3" tail="${4:-20}" pod
+    pod="$(kubectl get pods -n "${ns}" -l "job-name=${job}" \
+        --field-selector="status.phase=${outcome}" \
+        -o jsonpath='{.items[-1:].metadata.name}' 2>/dev/null || true)"
+    if [[ -n "${pod}" ]]; then
+        kubectl logs -n "${ns}" "${pod}" --tail="${tail}" 2>/dev/null || true
+        return 0
+    fi
+    kubectl logs -n "${ns}" "job/${job}" --tail="${tail}" 2>/dev/null || true
+}
 
 # Keycloak Admin API calls run in-cluster (Job). The keycloak-admin Secret URL is
 # an in-cluster Service DNS name and is not reachable from the install host.
