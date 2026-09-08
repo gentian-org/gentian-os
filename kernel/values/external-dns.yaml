@@ -51,9 +51,11 @@ registry: txt
 txtOwnerId: gentian
 txtPrefix: _extdns.
 
-sources:
-  - gateway-httproute
-  - crd
+# No sources: here. Which sources run depends on the cluster's networkMode —
+# a tunnelled Gateway deadlocks the gateway-httproute source, see the
+# bootstrap template — so the per-cluster inline values set them, and a list
+# here would be dead weight that Helm always overrides and a reader always
+# trusts.
 
 policyOptions: {}
 interval: 1m

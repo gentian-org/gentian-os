@@ -2437,6 +2437,7 @@ apply_bootstrap_application() {
             --set-string "stage=${GENTIAN_DEPLOYMENTS_STAGE}" \
             --set-string "kernelDomain=${KERNEL_DOMAIN:-}" \
             --set-string "dnsProvider=${DNS_PROVIDER:-cloudflare}" \
+            --set-string "networkMode=${NETWORK_MODE:-tunnel}" \
             --set-string "cluster=${GENTIAN_DEPLOYMENTS_CLUSTER_ID}" >"${rendered}"; then
         rm -f "${rendered}"
         error "Rendering ${name} failed; nothing was applied."

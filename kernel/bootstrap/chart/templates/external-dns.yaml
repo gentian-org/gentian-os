@@ -126,6 +126,28 @@ spec:
         # under a key named after it, as Bitnami's did.
         provider:
           name: {{ $extdns.provider }}
+        # Which sources run depends on how traffic arrives, not on preference.
+        #
+        # static-ip: gateway-httproute + crd, exactly as today. The Gateway has
+        # a LoadBalancer address, the source publishes every routed hostname
+        # from it, and this cluster shape is the one where DNS already works —
+        # nothing about it changes.
+        #
+        # tunnel: crd only. A tunnelled Gateway never gets an address, and
+        # external-dns v0.21.0's gateway-httproute source does not skip such a
+        # Gateway — it deadlocks on it. Observed directly: the controller
+        # stopped syncing fourteen seconds after the kernel Gateway appeared
+        # and never completed another loop, which also silenced the crd source
+        # and with it mail's records. The operator publishes every routed
+        # hostname as a DNSEndpoint on tunnel clusters instead
+        # (internal/controller/edge_dnsendpoint.go), so crd is the one source
+        # that carries everything — and the one that cannot be starved by a
+        # Gateway that will never be Programmed.
+        sources:
+        {{- if ne .Values.networkMode "tunnel" }}
+          - gateway-httproute
+        {{- end }}
+          - crd
         domainFilters:
           - {{ required "kernelDomain is required for external-dns domainFilters" .Values.kernelDomain }}
         {{- if $cred }}

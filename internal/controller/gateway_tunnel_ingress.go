@@ -103,5 +103,17 @@ func ensureKernelGatewayTunnelIngress(
 		logger.Error(err, "delete kernel wildcard tunnel route", "host", "*."+kernelDomain)
 		return err
 	}
+
+	// The same hostnames, as records — through a DNSEndpoint the crd source
+	// reads, not the gateway-httproute source. That source takes its target
+	// from the Gateway's status addresses, which a tunnelled Gateway never
+	// has; see edge_dnsendpoint.go for the deadlock that surfaced this. A
+	// no-op when the ingress supplies no target, which is the static-ip
+	// cluster — its records keep coming from gateway-httproute exactly as
+	// they do today.
+	if err := syncEdgeDNSEndpoint(ctx, c, ing, defaultServicesNamespace(), sorted); err != nil {
+		logger.Error(err, "sync edge DNSEndpoint")
+		return err
+	}
 	return nil
 }

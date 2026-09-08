@@ -129,6 +129,15 @@ func (r *TenantReconciler) ensureTenantEdgeRoutes(ctx context.Context, tenant *g
 		r.setCondition(tenant, conditionTunnelIngressReady, metav1.ConditionFalse, "OriginLookupFailed", err.Error())
 		return
 	}
+	// The wildcard as a record, alongside the routes. The kernel DNSEndpoint
+	// carries every explicitly-routed hostname; the per-tenant one carries the
+	// wildcard, which only a tenant has — one object per owner, so removing a
+	// tenant removes exactly its records. No-op without a tunnel target, which
+	// keeps the static-ip path exactly as it is.
+	if err := syncTenantEdgeDNSEndpoint(ctx, r.Client, r.Ingress, tenant.Name,
+		[]string{wildcard, effectiveDomain}); err != nil {
+		logger.Error(err, "sync tenant edge DNSEndpoint")
+	}
 	tunnelOK := true
 	var tunnelMsg string
 	for _, host := range []string{wildcard, effectiveDomain} {

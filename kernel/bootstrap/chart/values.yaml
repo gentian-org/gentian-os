@@ -43,6 +43,11 @@ smtpStarttls: "true"
 # outbound but reachable inbound. Inferring would take Dovecot away from it.
 mailServiceMode: external
 
+# How traffic reaches this cluster, from the Cluster claim's networkMode.
+# external-dns's source list branches on it — see its template for why a
+# tunnel cluster must not run the gateway-httproute source.
+networkMode: tunnel
+
 # Whether this cluster serves LLMs, and whether it has GPUs — from the Cluster
 # claim's llm.enabled and llm.gpuAcceleration. The first decides whether the LLM
 # ApplicationSet is generated at all; the second whether the mock inference
