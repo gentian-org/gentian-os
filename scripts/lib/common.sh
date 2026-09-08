@@ -98,6 +98,34 @@ banner() {
 # pre-flight guarantees neither — and a stale negative answer there is worth a
 # late wait rather than a wrong verdict, since the fallback can only be
 # pessimistic.
+# _gentian_zone_nameserver <name> — an authoritative nameserver for the zone
+# that CONTAINS name, walking up until one answers.
+#
+# Callers pass the kernel domain, and a kernel domain is a HOSTNAME: asking for
+# NS at test.gentian-os.org returns nothing, because the zone is
+# gentian-os.org. The caller then fell through to the local resolver — the one
+# path gentian_dns_resolves exists to avoid, since a resolver that asked while
+# the name did not exist holds that "no" for the zone's negative TTL, 30
+# minutes here, which outlasts the wait.
+#
+# So the symptom was a step waiting out its full timeout on DNS that had been
+# live for ten minutes, while dig against the zone's own nameservers answered
+# immediately. Same hostname-versus-zone confusion the cert-manager solver walk
+# and the external-dns domain filter each had to fix.
+#
+# Stops at two labels: the next strip is a public suffix, whose NS records
+# would answer for the registry rather than for this zone.
+_gentian_zone_nameserver() {
+    local candidate="$1" ns=""
+    while [[ -n "${candidate}" ]]; do
+        ns="$(dig +short NS "${candidate}" 2>/dev/null | head -1)"
+        [[ -n "${ns}" ]] && { printf '%s' "${ns}"; return 0; }
+        [[ "${candidate}" == *.*.* ]] || break
+        candidate="${candidate#*.}"
+    done
+    return 1
+}
+
 gentian_dns_resolves() {
     local host="$1"
     local zone="${2:-}"
@@ -112,7 +140,7 @@ gentian_dns_resolves() {
     fi
 
     if command -v dig >/dev/null 2>&1; then
-        ns="$(dig +short NS "${zone}" 2>/dev/null | head -1)"
+        ns="$(_gentian_zone_nameserver "${zone}")"
         if [[ -n "${ns}" ]]; then
             [[ -n "$(dig +short A "${host}" "@${ns}" 2>/dev/null | head -1)" ]] && return 0
             [[ -n "$(dig +short AAAA "${host}" "@${ns}" 2>/dev/null | head -1)" ]] && return 0
@@ -123,7 +151,15 @@ gentian_dns_resolves() {
     fi
 
     if command -v nslookup >/dev/null 2>&1; then
-        ns="$(nslookup -type=NS "${zone}" 2>/dev/null | awk '/nameserver =/{print $NF; exit}')"
+        # Same walk as the dig branch, for the same reason: the caller's zone
+        # is a hostname, and only its enclosing zone has NS records.
+        local candidate="${zone}"
+        while [[ -n "${candidate}" ]]; do
+            ns="$(nslookup -type=NS "${candidate}" 2>/dev/null | awk '/nameserver =/{print $NF; exit}')"
+            [[ -n "${ns}" ]] && break
+            [[ "${candidate}" == *.*.* ]] || break
+            candidate="${candidate#*.}"
+        done
         if [[ -n "${ns}" ]]; then
             nslookup "${host}" "${ns%.}" >/dev/null 2>&1 && return 0
             return 1
