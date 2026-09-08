@@ -25,8 +25,24 @@ try_load_creds_from_openbao() {
     [[ "$(_repo_auth_for gentian-os-repository)" != "none" && -z "${GENTIAN_OS_GIT_TOKEN:-}" ]] && _os_ready=0
     [[ "$(_repo_auth_for gentian-apps-repository)" != "none" && -z "${GENTIAN_APPS_GIT_TOKEN:-}" ]] && _apps_ready=0
     [[ "$(_repo_auth_for gentian-ui-repository)" != "none" && -z "${GENTIAN_UI_GIT_TOKEN:-}" ]] && _ui_ready=0
+    # The provider credentials count too. Without them the fast path returns
+    # with the zone and ingress tokens still unset, and the prompt loop asks
+    # for what OpenBao is holding -- the same defect the recovery below fixes,
+    # reached by skipping it instead of by not implementing it.
+    local _providers_ready=1 _pr _pk _pv
+    while IFS= read -r _pr; do
+        [[ -n "${_pr}" ]] || continue
+        while IFS= read -r _pk; do
+            [[ -n "${_pk}" ]] || continue
+            _pv="$(_env_var_for "${_pr}" "${_pk}" 2>/dev/null || true)"
+            [[ -n "${_pv}" ]] || continue
+            [[ -n "${!_pv:-}" ]] || _providers_ready=0
+        done < <(catalogue_field_keys "${_pr}" 2>/dev/null || true)
+    done < <(_provider_requirement_names 2>/dev/null || true)
+
     if [[ -n "${MASTER_PASSWORD:-}" && -n "${GENTIAN_DEPLOYMENTS_GIT_TOKEN:-}" \
-        && "${_os_ready}" == "1" && "${_apps_ready}" == "1" && "${_ui_ready}" == "1" ]]; then
+        && "${_os_ready}" == "1" && "${_apps_ready}" == "1" && "${_ui_ready}" == "1" \
+        && "${_providers_ready}" == "1" ]]; then
         if [[ "${MAIL_SERVICE_MODE}" == "external" \
             && -n "${SMTP_RELAY_USERNAME:-}" \
             && -n "${SMTP_RELAY_PASSWORD:-}" ]]; then
@@ -146,11 +162,34 @@ try_load_creds_from_openbao() {
         v=$(_bao_get "storage/registry" '.data.data.password')
         [[ -n "$v" ]] && { export REGISTRY_PASSWORD="$v"; loaded=1; }
     fi
-    if [[ -z "${CF_API_TOKEN:-}" ]]; then
-        # Bracket notation: jq reads a hyphen in a bare path as subtraction.
-        v=$(_bao_get "dns/cloudflare" '.data.data["api-token"]')
-        [[ -n "$v" ]] && { export CF_API_TOKEN="$v"; loaded=1; }
-    fi
+    # Provider credentials -- the zone host and the edge ingress -- read back
+    # from the same tables that decided to ask for them, so what was seeded is
+    # what is recovered.
+    #
+    # This was one hardcoded lookup of dns/cloudflare. Everything else the
+    # provider tables contribute was seeded to OpenBao and never read back, so
+    # B-10 deleted the local cache and every later run prompted again for
+    # credentials OpenBao was already holding: CF_TUNNEL_TOKEN always, and
+    # every field of every non-Cloudflare provider. The cache exists to stop
+    # exactly that, and one step later it was undone.
+    #
+    # Bracket notation in the jq path: a hyphen in a bare path reads as
+    # subtraction, and every provider field here is hyphenated (api-token,
+    # access-key-id). The same trap as unquoted yq paths, in the other tool.
+    local _req _path _key _var
+    while IFS= read -r _req; do
+        [[ -n "${_req}" ]] || continue
+        _path="$(catalogue_get "${_req}" vaultPath 2>/dev/null || true)"
+        [[ -n "${_path}" ]] || continue
+        while IFS= read -r _key; do
+            [[ -n "${_key}" ]] || continue
+            _var="$(_env_var_for "${_req}" "${_key}" 2>/dev/null || true)"
+            [[ -n "${_var}" ]] || continue
+            [[ -n "${!_var:-}" ]] && continue
+            v=$(_bao_get "${_path#gentian-os/kernel/}" ".data.data[\"${_key}\"]")
+            [[ -n "$v" ]] && { export "${_var}=$v"; loaded=1; }
+        done < <(catalogue_field_keys "${_req}" 2>/dev/null || true)
+    done < <(_provider_requirement_names 2>/dev/null || true)
     if [[ -z "${SMTP_RELAY_USERNAME:-}" ]]; then
         v=$(_bao_get "mail/postfix" '.data.data.relay_username')
         [[ -n "$v" ]] && { export SMTP_RELAY_USERNAME="$v"; loaded=1; }
