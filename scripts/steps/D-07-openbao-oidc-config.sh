@@ -249,10 +249,12 @@ _dd_curl_resolve_args() {
     # --resolve pins the address for the request and skips name resolution
     # entirely, so what gets tested is the edge, which is what this step waits
     # for. Empty when no address can be found, and the caller falls back to
-    # ordinary resolution rather than refusing to probe.
+    # ordinary resolution rather than refusing to probe. Echoes the address
+    # alone -- the caller builds the curl arguments, because stock macOS bash
+    # is 3.2 and has neither mapfile nor readarray to read a multi-line list.
     addr="$(gentian_dns_address "${host}" "${KERNEL_DOMAIN:-}" 2>/dev/null || true)"
     [[ -n "${addr}" ]] || return 1
-    printf -- '--resolve\n%s:443:%s\n' "${host}" "${addr}"
+    printf '%s' "${addr}"
 }
 
 # _dd_transport_ok <host> — can this machine open a connection at all?
@@ -261,8 +263,10 @@ _dd_curl_resolve_args() {
 # connect failure is the network; saying "no certificate" about it sends the
 # reader to the zone's TLS settings for a routing problem.
 _dd_transport_ok() {
-    local host="$1" err
-    local -a ra=(); mapfile -t ra < <(_dd_curl_resolve_args "${host}" || true)
+    local host="$1" err addr
+    local -a ra=()
+    addr="$(_dd_curl_resolve_args "${host}" || true)"
+    [[ -n "${addr}" ]] && ra=(--resolve "${host}:443:${addr}")
     curl -sS "${ra[@]}" -o /dev/null --max-time 10 "https://${host}/" >/dev/null 2>&1 && return 0
     err="$(curl -sS "${ra[@]}" -o /dev/null --max-time 10 "https://${host}/" 2>&1 || true)"
     case "${err}" in
@@ -272,8 +276,10 @@ _dd_transport_ok() {
 }
 
 _dd_tls_ok() {
-    local host="$1" err
-    local -a ra=(); mapfile -t ra < <(_dd_curl_resolve_args "${host}" || true)
+    local host="$1" err addr
+    local -a ra=()
+    addr="$(_dd_curl_resolve_args "${host}" || true)"
+    [[ -n "${addr}" ]] && ra=(--resolve "${host}:443:${addr}")
     curl -sS "${ra[@]}" -o /dev/null --max-time 10 "https://${host}/" >/dev/null 2>&1 && return 0
     # A 4xx/5xx from the server still means TLS completed; only a TLS failure
     # counts as "no usable certificate".
