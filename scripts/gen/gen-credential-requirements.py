@@ -1,3 +1,58 @@
+# The provider tables in kernel/platforms.yaml that carry credentials, and the
+# requirement-name prefix each one uses.
+#
+# Must match GENTIAN_PROVIDER_TABLES in scripts/lib/credentials.sh. They are
+# two readers of one fact, and lint-credential-catalogue.py fails when they
+# disagree — which is the check that would have caught edgeIngress being
+# generated here and invisible to the installer.
+PROVIDER_TABLES = (
+    ("dnsProviders", "acme-dns"),
+    ("edgeIngress", "edge-ingress"),
+)
+
+
+def provider_requirements(platforms):
+    """Every provider credential, from the tables that also define the providers.
+
+    They are not written out in credentials.yaml because they are already
+    written down: kernel/platforms.yaml gives each provider the Secret its
+    consumer reads, the OpenBao path behind it and the fields it carries.
+    Restating that here would be the same fact in two files, and the one that
+    drifts is always the one nothing renders.
+
+    Every provider is emitted, not only the one a given cluster selected. The
+    catalogue describes the platform; which entry applies to a cluster is the
+    installer's question, and it answers it from the same table.
+    """
+    reqs = []
+    for table, prefix in PROVIDER_TABLES:
+        for name, profile in sorted((platforms.get(table) or {}).items()):
+            cred = profile.get("credential")
+            if not cred:
+                continue      # "none", and any provider whose access is not a secret
+            req = {
+                "name": f"{prefix}-{name}",
+                "displayName": cred.get(
+                    "displayName", f"{profile.get('displayName', name)} Credentials"),
+                # Bootstrap only where the provider has a probe the installer
+                # can actually run; see the notes in kernel/platforms.yaml.
+                "phase": cred.get("phase", "runtime"),
+                "scope": "cluster",
+                # Every one of them is optional: a cluster uses at most one per
+                # table, and a cluster may use none.
+                "optional": True,
+                "vaultPath": cred["vaultPath"],
+                "fields": cred["fields"],
+                "consumedBy": [{"kind": "XCluster", "name": "cluster"}],
+            }
+            if cred.get("description"):
+                req["description"] = cred["description"]
+            if cred.get("validate"):
+                req["validate"] = {"type": cred["validate"]}
+            reqs.append(req)
+    return reqs
+
+
 #!/usr/bin/env python3
 """Render credentials.yaml into CredentialRequirement CRs.
 
@@ -289,8 +344,7 @@ def main():
     # rather than restated in credentials.yaml — see dns_requirements. Merged
     # before validation, so they are held to the same rules as everything else.
     catalogue.setdefault("requirements", []).extend(
-        dns_requirements(_platforms())
-        + edge_ingress_requirements(_platforms())
+        provider_requirements(_platforms())
     )
 
     errors = validate(catalogue)

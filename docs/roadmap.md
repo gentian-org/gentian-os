@@ -941,67 +941,71 @@ does not exist yet that something cannot be the Composition.
   the diff, because the dry-run applies the same webhook. Auditing that belongs on
   the admission side. See [architecture.md](architecture.md) §3.2.
 
-### 2.23 One Provider Table, Two Ways In — and a Cloudflare Fallback That Hides It (**)
-* **Target Domain**: Platform Infrastructure & Installer
-* **When**: alongside adding or stress-testing a second platform / DNS provider.
-  Everything below is invisible while Cloudflare is the only provider exercised,
-  which is exactly why it belongs with that work rather than before it.
-* **Context**: `kernel/platforms.yaml` is the provider registry — `platforms`,
-  `dnsProviders`, `edgeIngress` — and a provider entry may carry a `credential:`
-  block. That makes it a second source of credential definitions beside
-  `credentials.yaml`, and the installer bridges the two for exactly **one**
-  entry: `_dns_requirement_name` in `scripts/lib/credentials.sh` reaches into
-  `.dnsProviders.<provider>.credential`, and `catalogue_names` appends that one
-  name to the list it iterates.
+### 2.23 One Provider Table, Two Ways In — done
+* **What it was**: `kernel/platforms.yaml` carries provider credentials, and the
+  installer reached into it through exactly one hard-coded hook — the DNS one.
+  A second table, `edgeIngress`, was generated correctly into
+  `credential-requirements.yaml` and was invisible to the installer. Nothing
+  was prompted, nothing was seeded, and nothing failed: the generator passed,
+  the Go tests passed, and the only symptom was a prompt that did not happen.
+* **What replaced it**: one rule instead of one exception.
+  `GENTIAN_PROVIDER_TABLES` in `scripts/lib/credentials.sh` and
+  `PROVIDER_TABLES` in the generator are two readers of the same fact — table,
+  requirement prefix, selector. `_provider_requirement_names` and
+  `_provider_req_path` replace `_dns_requirement_name` / `_dns_req_path`, and
+  every catalogue helper reads through them. Applicability, env-var naming and
+  OpenBao seeding are all table-driven; adding a provider table is a row in two
+  places and nothing else.
+* **What it cost to find**: three bugs the generalisation itself surfaced, none
+  of which would have failed loudly.
+  - `.edgeIngress.cf-tunnel` in an unquoted yq path parses as **subtraction**,
+    not a key. Every `dnsProviders` key is one word, so this could only ever
+    have appeared on a second table — and it made `cf-tunnel` resolve to
+    nothing while looking correct.
+  - `_provider_requirement_names | grep -qxF` fails under `set -o pipefail`
+    whenever the match is not the last line, because `grep -q` exits early and
+    SIGPIPEs the producer. A tunnel cluster silently stopped being asked for
+    its DNS token the moment a second table contributed a name.
+  - `jq -n` pretty-prints, which split one credential across several lines of a
+    line-oriented seed list and wrote none of them.
+* **The guard**: `scripts/lint/lint-credential-catalogue.py` compares what the
+  generator emits against what the installer can address, per provider, with
+  that provider selected. It is the check neither side can perform alone —
+  every artefact was individually valid and the defect lived in the gap.
+  Mutation-checked by removing the `edgeIngress` row.
+* **Left deliberately**: `CF_API_TOKEN` and `CF_TUNNEL_TOKEN` keep their names.
+  They are exported by hand, written in runbooks and carried in recovery kits,
+  so renaming breaks restores; every other field of every table gets a
+  generated `GENTIAN_DNS_*` / `GENTIAN_EDGE_*` name, so the exception costs
+  nothing as tables are added. The ingress token still falls back to the DNS
+  token when unset, which is what an already-installed single-token cluster
+  runs on.
 
-  There is no general rule, so a second table gets forgotten. That already
-  happened: `edgeIngress.cf-tunnel`'s credential generates correctly into
-  `kernel/credentials/credential-requirements.yaml` and is completely invisible
-  to the installer, which reads `credentials.yaml` plus the one DNS hook. The
-  operator is never prompted for `CF_TUNNEL_TOKEN`, nothing is seeded to
-  `gentian-os/kernel/edge/cf-tunnel`, and nothing notices — the generator
-  passes, the Go tests pass, and the only symptom is a prompt that does not
-  appear.
+### 2.24 One `txtOwnerId` For Every Cluster (**)
+* **Target Domain**: Platform Infrastructure
+* **Context**: external-dns runs with `--policy=sync --registry=txt
+  --txt-owner-id=gentian`, and that owner id is the same literal string on every
+  cluster. The TXT registry is what stops it deleting records it did not create,
+  and it works: a hand-made record with no `_extdns.` companion is left alone,
+  verified by dry-run against a live zone.
 
-  Two Cloudflare-shaped special cases sit on the same seam and hide it further:
-
-  - `_env_var_for` maps `acme-dns-cloudflare/api-token` to `CF_API_TOKEN` by
-    hand, while every other provider gets a generated `GENTIAN_DNS_<FIELD>`
-    name. Deliberate — it is exported by hand, written in runbooks and carried
-    in recovery kits — but it means the one provider anybody installs is the
-    one path not exercising the generic naming, so a break there surfaces only
-    on a provider nobody has tried.
-  - The ingress token falls back to the DNS token when unset. Convenient for
-    the single-token deployment, and it is why the missing prompt above did not
-    fail the install: the operator silently used the other credential. A
-    fallback that makes a missing credential indistinguishable from a present
-    one is the shape §15.4 of the cleanup plan catalogues.
-* **Proposed Solution**: one rule instead of one exception. A single table of
-  "requirements that live in platforms.yaml" — table name, path template,
-  applicability — that `catalogue_names`, `catalogue_get`, `catalogue_field_keys`
-  and `_dns_req_path` all read, so adding a provider table costs an entry rather
-  than a hook nobody remembers to write.
-
-  Then decide the fallback deliberately rather than by inheritance: either
-  generalise it (a provider declares that one credential satisfies another,
-  stated in the table) or remove it so a missing credential fails loudly. It
-  should not remain one vendor's undocumented convenience.
+  What it does not stop is one Gentian cluster deleting **another's** records.
+  A record carrying a `gentian`-owned companion that no source produces is
+  planned for `DELETE`, which was reproduced deliberately: a synthetic
+  `othercluster.` record with a matching ownership TXT was scheduled for
+  deletion on the next sync. Today the domain filters of the two clusters do not
+  overlap, so nothing is at risk; a third cluster sharing a zone, or a kernel
+  domain that widens a filter onto a zone another cluster writes to, is enough.
+* **Proposed Solution**: a cluster-scoped owner id — `gentian-<cluster>` — with
+  `--txt-owner-id-old=gentian` for one release so existing records are adopted
+  rather than orphaned. The migration is the risky part and wants doing
+  deliberately, not alongside an install.
 * **Backlog Items**:
-  - `[ ]` Replace `_dns_requirement_name` / `_dns_req_path` with a general
-    platforms.yaml requirement table the catalogue helpers read.
-  - `[ ]` Wire `edge-ingress-cf-tunnel` through it, and confirm the installer
-    prompts for and seeds `CF_TUNNEL_TOKEN` on a `cf-tunnel` cluster.
-  - `[ ]` Lint: every requirement the generator emits must be reachable from
-    the installer's catalogue. This defect is silent by construction — the
-    generated artefact is correct and the prompt simply never happens — so the
-    check has to compare the two lists rather than validate either alone.
-  - `[ ]` Decide `CF_API_TOKEN`: keep it as a documented alias with the generic
-    `GENTIAN_DNS_API_TOKEN` accepted alongside, or retire it. Recovery kits
-    carry the old name, so either way a rename needs an alias.
-  - `[ ]` Decide the ingress-token fallback: generalise it as a declared
-    property of the provider, or remove it.
-  - `[ ]` Exercise the whole path on a non-Cloudflare provider — Route 53 or
-    Hetzner — which is the only thing that proves the generic path works.
+  - `[ ]` Make `txtOwnerId` cluster-scoped, with the old id set for migration.
+  - `[ ]` Verify on a cluster with existing records that adoption rewrites the
+    companion TXT rather than duplicating the record.
+  - `[ ]` Re-run the two-cluster deletion reproduction and confirm it no longer
+    plans a delete.
 
 ## 3. User Management & Shell UI
 

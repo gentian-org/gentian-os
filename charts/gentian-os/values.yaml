@@ -227,6 +227,18 @@ logLevel: info
 # Watched namespaces (empty = cluster-wide)
 watchNamespaces: []
 
+# Which edge ingress this cluster runs — a key in kernel/platforms.yaml's
+# edgeIngress table ("cf-tunnel", "none"). Empty follows networkMode below,
+# which is what every existing cluster relies on.
+#
+# Adding an ingress means adding it to that table and registering an
+# implementation (internal/controller/edge_registry.go); this value then selects
+# it, and nothing else in the chart or the operator changes.
+edgeIngress: ""
+
+# How traffic reaches this cluster, from the Cluster claim's networkMode.
+networkMode: ""
+
 # Cloudflare Tunnel edge ingress. Set tunnelCNAME and a token and the operator
 # programs the tunnel's routing rules for kernel and tenant hostnames, and
 # annotates the kernel Gateway so external-dns publishes records that reach it.

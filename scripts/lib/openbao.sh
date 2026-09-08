@@ -430,19 +430,46 @@ init_openbao() {
 # kernel/platforms.yaml, and values from the environment variables the prompt
 # loop wrote. Empty when the provider is Cloudflare (which has its own
 # variables, kept for compatibility), "none", or when nothing was collected.
-_dns_credential_fields_json() {
-    local provider="${DNS_PROVIDER:-cloudflare}" key var value args=()
-    [[ "${provider}" == "cloudflare" || "${provider}" == "none" ]] && return 0
+_provider_credential_fields_json() {
+    local req="$1" key var value args=()
+    [[ -n "${req}" ]] || return 0
     while IFS= read -r key; do
         [[ -n "${key}" ]] || continue
-        var="$(_env_var_for "acme-dns-${provider}" "${key}")"
+        var="$(_env_var_for "${req}" "${key}")"
         [[ -n "${var}" ]] || continue
         value="${!var:-}"
         [[ -n "${value}" ]] || continue
         args+=(--arg "${key}" "${value}")
-    done < <(catalogue_field_keys "acme-dns-${provider}")
+    done < <(catalogue_field_keys "${req}")
     [[ ${#args[@]} -gt 0 ]] || return 0
-    jq -n "${args[@]}" '$ARGS.named'
+    # -c because _provider_seed_pairs emits one TAB-separated line per
+    # credential and the seeder reads it line by line: pretty-printed JSON
+    # would split one credential across several lines and write none of them.
+    jq -nc "${args[@]}" '$ARGS.named'
+}
+
+# _provider_seed_pairs — "<vaultPath>\t<fields-json>" for every provider
+# credential this cluster actually collected, one line each.
+#
+# Table-driven, from the same GENTIAN_PROVIDER_TABLES the prompt loop uses, so
+# a credential that was asked for is a credential that gets written. The old
+# shape was a hand-written block per provider, which is how edgeIngress came to
+# have a requirement, a validator and a vault path with nothing ever seeding
+# it.
+#
+# The vault path comes from the catalogue and is stripped of the store prefix
+# the seeder adds back, so the path an operator reads in platforms.yaml is the
+# path the secret lands at.
+_provider_seed_pairs() {
+    local req path json
+    while IFS= read -r req; do
+        [[ -n "${req}" ]] || continue
+        json="$(_provider_credential_fields_json "${req}")"
+        [[ -n "${json}" ]] || continue
+        path="$(catalogue_get "${req}" vaultPath)"
+        [[ -n "${path}" ]] || continue
+        printf '%s\t%s\n' "${path#gentian-os/kernel/}" "${json}"
+    done < <(_provider_requirement_names)
 }
 
 # =============================================================================
@@ -615,14 +642,14 @@ seed_secrets() {
     # built from the catalogue rather than from a variable per provider — the
     # installer already knows which fields the provider declares, and a second
     # list here would be the place they stop matching.
-    local dns_fields_json=""
-    dns_fields_json="$(_dns_credential_fields_json)"
+    local provider_seed_pairs=""
+    provider_seed_pairs="$(_provider_seed_pairs)"
 
     # CF_API_TOKEN is forwarded via env var (not positional) so the
     # seed-openbao.sh contract stays backward-compatible. Seed-openbao
     # writes it to secret/gentian-os/kernel/dns/<provider> when present.
     DNS_PROVIDER="${DNS_PROVIDER:-cloudflare}" \
-    GENTIAN_DNS_FIELDS_JSON="${dns_fields_json}" \
+    GENTIAN_PROVIDER_SEED_PAIRS="${provider_seed_pairs}" \
     CF_API_TOKEN="${CF_API_TOKEN:-}" \
     CF_ZONE_ID="${zone_id}" \
     CF_TUNNEL_CNAME="${tunnel_cname}" \
