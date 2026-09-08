@@ -20,6 +20,7 @@ import (
 	"context"
 	"io"
 	"net/http"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -192,3 +193,52 @@ func TestIngressUsesItsOwnToken(t *testing.T) {
 type roundTripFunc func(*http.Request) (*http.Response, error)
 
 func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
+
+// TestEdgeRecordCarriesProviderSettingsPerRecord pins the defect that left
+// five CNAMEs pointing at cfargotunnel.com unproxied — a target that resolves
+// to nothing, so the names answered no address and served no certificate.
+//
+// The settings were on the DNSEndpoint OBJECT as annotations, which is how the
+// service and ingress sources take their hints and is not how the crd source
+// takes anything: it reads spec.endpoints[].providerSpecific and nothing else.
+// The annotation looked right, applied cleanly, and did nothing.
+//
+// Asserted on the record, therefore, not on the object.
+func TestEdgeRecordCarriesProviderSettingsPerRecord(t *testing.T) {
+	ing := NewCloudflareTunnelIngress("t", "zone1", "abc-123.cfargotunnel.com", "")
+	rec := edgeDNSRecord("id.example.test", "abc-123.cfargotunnel.com", ing)
+
+	ps, ok := rec["providerSpecific"].([]interface{})
+	if !ok || len(ps) == 0 {
+		t.Fatalf("record carries no providerSpecific; the crd source reads nothing else: %#v", rec)
+	}
+
+	got := map[string]string{}
+	for _, e := range ps {
+		m := e.(map[string]interface{})
+		got[m["name"].(string)] = m["value"].(string)
+	}
+	if got["external-dns.alpha.kubernetes.io/cloudflare-proxied"] != "true" {
+		t.Errorf("cloudflare-proxied not carried per record: %v", got)
+	}
+	// The target is the record's own value, not a provider setting.
+	if _, leaked := got[edgeDNSTargetKey]; leaked {
+		t.Errorf("target leaked into providerSpecific: %v", got)
+	}
+	if tg, _ := rec["targets"].([]interface{}); len(tg) != 1 || tg[0] != "abc-123.cfargotunnel.com" {
+		t.Errorf("unexpected targets: %#v", rec["targets"])
+	}
+}
+
+// TestEdgeRecordIsStableAcrossCalls: Go randomises map iteration, and this
+// record set is compared field by field on every reconcile. An unstable order
+// would rewrite the object on roughly every pass, forever.
+func TestEdgeRecordIsStableAcrossCalls(t *testing.T) {
+	ing := NewCloudflareTunnelIngress("t", "zone1", "abc-123.cfargotunnel.com", "")
+	first := edgeDNSRecord("id.example.test", "abc-123.cfargotunnel.com", ing)
+	for i := 0; i < 50; i++ {
+		if !reflect.DeepEqual(first, edgeDNSRecord("id.example.test", "abc-123.cfargotunnel.com", ing)) {
+			t.Fatal("record differs between identical calls; the object would be rewritten every reconcile")
+		}
+	}
+}

@@ -101,8 +101,20 @@ func TestTunnelClusterPublishesEveryHostname(t *testing.T) {
 	if len(targets) != 1 || targets[0] != "abc-123.cfargotunnel.com" {
 		t.Errorf("targets = %v, want the tunnel CNAME", targets)
 	}
-	if got.GetAnnotations()["external-dns.alpha.kubernetes.io/cloudflare-proxied"] != "true" {
-		t.Error("a tunnel record must be proxied — cfargotunnel.com is unreachable unproxied")
+	// On the RECORD, not the object. The crd source reads
+	// spec.endpoints[].providerSpecific and ignores object annotations, which
+	// is how this assertion passed against five unproxied CNAMEs pointing at a
+	// target that resolves to nothing.
+	ps, _ := first["providerSpecific"].([]interface{})
+	proxied := ""
+	for _, e := range ps {
+		m := e.(map[string]interface{})
+		if m["name"] == "external-dns.alpha.kubernetes.io/cloudflare-proxied" {
+			proxied, _ = m["value"].(string)
+		}
+	}
+	if proxied != "true" {
+		t.Errorf("a tunnel record must be proxied per record — cfargotunnel.com is unreachable unproxied; providerSpecific=%v", ps)
 	}
 }
 

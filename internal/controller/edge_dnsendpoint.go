@@ -87,7 +87,7 @@ func syncEdgeDNSEndpoint(
 
 	records := make([]interface{}, 0, len(uniq))
 	for _, h := range uniq {
-		records = append(records, dnsEndpointRecord(h, "CNAME", target))
+		records = append(records, edgeDNSRecord(h, target, ing))
 	}
 
 	obj := &unstructured.Unstructured{}
@@ -95,14 +95,6 @@ func syncEdgeDNSEndpoint(
 	obj.SetName("edge-kernel")
 	obj.SetNamespace(namespace)
 	obj.SetLabels(map[string]string{managedByLabel: managedByValue})
-	// Proxied is not a preference: a cfargotunnel.com CNAME resolves to nothing
-	// a client could connect to, so an unproxied record answers and refuses.
-	// external-dns reads this per record, which is why the chart's global
-	// cloudflare.proxied stays false — proxying an MX target would route mail
-	// through an HTTP edge that does not carry SMTP.
-	obj.SetAnnotations(map[string]string{
-		"external-dns.alpha.kubernetes.io/cloudflare-proxied": "true",
-	})
 	if err := unstructured.SetNestedSlice(obj.Object, records, "spec", "endpoints"); err != nil {
 		return err
 	}
@@ -136,7 +128,52 @@ func edgeDNSTarget(ing EdgeIngress) string {
 	if ann == nil {
 		return ""
 	}
-	return ann["external-dns.alpha.kubernetes.io/target"]
+	return ann[edgeDNSTargetKey]
+}
+
+const edgeDNSTargetKey = "external-dns.alpha.kubernetes.io/target"
+
+// edgeDNSRecord is dnsEndpointRecord plus the ingress's provider-specific
+// settings, attached PER RECORD.
+//
+// The crd source does not read annotations off the DNSEndpoint object — that
+// is how the service and ingress sources take their hints, and reusing the
+// shape here looked right and did nothing. Provider settings reach the crd
+// source only through spec.endpoints[].providerSpecific, which is why an
+// object annotation asking Cloudflare to proxy these records produced five
+// unproxied CNAMEs pointing at cfargotunnel.com — a target that resolves to
+// nothing at all, so the names existed, answered no address, and served no
+// certificate.
+//
+// external-dns uses the same key strings in both forms, so the ingress still
+// declares them once and this only changes where they are carried. Everything
+// except the target is a provider setting; the target is the record's own
+// value and is already its targets field.
+func edgeDNSRecord(name, target string, ing EdgeIngress) map[string]interface{} {
+	rec := dnsEndpointRecord(name, "CNAME", target)
+
+	ann := edgeDNSAnnotations(ing)
+	keys := make([]string, 0, len(ann))
+	for k := range ann {
+		if k == edgeDNSTargetKey {
+			continue
+		}
+		keys = append(keys, k)
+	}
+	if len(keys) == 0 {
+		return rec
+	}
+	// Sorted, because this map is compared field by field on every reconcile
+	// and Go randomises map iteration: unsorted, the object would be rewritten
+	// on roughly every pass forever.
+	sort.Strings(keys)
+
+	ps := make([]interface{}, 0, len(keys))
+	for _, k := range keys {
+		ps = append(ps, map[string]interface{}{"name": k, "value": ann[k]})
+	}
+	rec["providerSpecific"] = ps
+	return rec
 }
 
 // syncTenantEdgeDNSEndpoint is the per-tenant sibling of syncEdgeDNSEndpoint:
@@ -159,7 +196,7 @@ func syncTenantEdgeDNSEndpoint(
 		if h == "" {
 			continue
 		}
-		records = append(records, dnsEndpointRecord(h, "CNAME", target))
+		records = append(records, edgeDNSRecord(h, target, ing))
 	}
 	if len(records) == 0 {
 		return nil
@@ -172,9 +209,6 @@ func syncTenantEdgeDNSEndpoint(
 	obj.SetLabels(map[string]string{
 		managedByLabel: managedByValue,
 		tenantLabel:    tenantName,
-	})
-	obj.SetAnnotations(map[string]string{
-		"external-dns.alpha.kubernetes.io/cloudflare-proxied": "true",
 	})
 	if err := unstructured.SetNestedSlice(obj.Object, records, "spec", "endpoints"); err != nil {
 		return err
