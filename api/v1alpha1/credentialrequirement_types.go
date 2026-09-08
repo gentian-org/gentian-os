@@ -166,7 +166,11 @@ type CredentialValidation struct {
 	// API: one authenticated GET, so it stays inside the curl-only ceiling, and
 	// it answers whether the token can reach the zone DNS-01 must write to
 	// rather than what kind of token it is.
-	// +kubebuilder:validation:Enum=oci-registry;git-https;oidc-discovery;cloudflare-dns;smtp;noop
+	// cloudflare-tunnel is the ingress half's own probe: an account-scoped
+	// grant, where cloudflare-dns's is zone-scoped, so a token can pass one and
+	// fail the other. It is a separate value here for the same reason it is a
+	// separate credential — see kernel/platforms.yaml's edgeIngress table.
+	// +kubebuilder:validation:Enum=oci-registry;git-https;oidc-discovery;cloudflare-dns;cloudflare-tunnel;smtp;noop
 	Type string `json:"type"`
 
 	// Host is the endpoint probed, when the validator needs one that is not
