@@ -584,6 +584,8 @@ spec:
                 realmId: {{ $realm | quote }}
                 clientIdRef:
                   name: {{ $name }}-openbao-keycloak-client
+                  policy:
+                    resolve: Always
                 name: groups
                 claimName: groups
                 fullPath: true
@@ -611,6 +613,8 @@ spec:
                 realmId: {{ $realm | quote }}
                 clientIdRef:
                   name: {{ $name }}-openbao-keycloak-client
+                  policy:
+                    resolve: Always
                 name: tenant
                 protocol: openid-connect
                 protocolMapper: oidc-usermodel-attribute-mapper

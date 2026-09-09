@@ -723,6 +723,8 @@ spec:
   forProvider:
     clientIdRef:
       name: render-fixture-portal-bff-client
+      policy:
+        resolve: Always
     defaultScopes:
     - acr
     - basic
@@ -756,6 +758,8 @@ spec:
   forProvider:
     clientIdRef:
       name: render-fixture-portal-public-client
+      policy:
+        resolve: Always
     config:
       access.token.claim: "true"
       id.token.claim: "false"
@@ -840,6 +844,8 @@ spec:
   forProvider:
     clientIdRef:
       name: render-fixture-portal-public-client
+      policy:
+        resolve: Always
     config:
       access.token.claim: "true"
       claim.name: tenant

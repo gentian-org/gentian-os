@@ -983,6 +983,8 @@ spec:
                 realmId: {{ $tenant }}
                 clientIdRef:
                   name: {{ $tenant }}-{{ $app }}-keycloak-client
+                  policy:
+                    resolve: Always
                 defaultScopes:
                   {{ toYaml (index $oidcPackDefaultScopes $oidcPackKey) | nindent 18 }}
               providerConfigRef:
@@ -1115,6 +1117,13 @@ spec:
                  external-name to the Keycloak id, and the reference yields that
                  id rather than a name.
 
+                 resolve: Always because that normalisation holds only while the
+                 client keeps the id it was created with. The default,
+                 IfNotPresent, writes the resolved id into
+                 spec.forProvider.clientId and never looks again; a client
+                 recreated under a new id leaves the reference naming a dead one,
+                 and the role 404s on every reconcile with no path back.
+
                  No external-name, as with the mappers — a role is identified by
                  its UUID, and the provider resolves the existing one from the
                  client and name it is given. */}}
@@ -1132,6 +1141,8 @@ spec:
                 realmId: {{ $tenant }}
                 clientIdRef:
                   name: {{ $tenant }}-{{ $app }}-keycloak-client
+                  policy:
+                    resolve: Always
                 name: {{ $pack.clientRole | quote }}
               providerConfigRef:
                 name: keycloak
