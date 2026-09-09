@@ -333,6 +333,16 @@ spec:
             resource never goes Ready, and nothing in the loop can recover it.
             Re-resolving each pass costs a lookup and keeps the mapper following
             the Client it names.
+
+            No external-name, as the two mappers further down already do and as
+            app-default does throughout. A protocol mapper is identified by its
+            UUID; seeding the annotation with the mapper's NAME does not give
+            the provider a natural key to adopt by, it gives it an id that will
+            never match. The create then succeeds once and is never recognised
+            again: Observe looks for a mapper whose id is the literal string,
+            finds none, and Create is rejected because the mapper it made last
+            time is still there. Left unset, the provider records the id
+            Keycloak returns, which is what makes the mappers below work.
             */}}
             ---
             apiVersion: client.keycloak.crossplane.io/v1alpha1
@@ -340,7 +350,6 @@ spec:
             metadata:
               name: {{ $tenant }}-portal-openbao-audience
               annotations:
-                crossplane.io/external-name: openbao-audience
                 gotemplating.fn.crossplane.io/composition-resource-name: keycloak-portal-openbao-audience
             spec:
               deletionPolicy: Orphan
@@ -504,6 +513,10 @@ spec:
 
                  The tenant NAME, not the realm. They are the same by default, but
                  isolation.keycloakRealm may differ and every path is keyed by name.
+
+                 No external-name, for the reason given at the openbao-audience
+                 mapper above: the annotation holds a mapper's UUID, and seeding
+                 it with the name strands the mapper the first create makes.
               */}}
             ---
             apiVersion: client.keycloak.crossplane.io/v1alpha1
@@ -511,7 +524,6 @@ spec:
             metadata:
               name: {{ $tenant }}-portal-tenant-claim
               annotations:
-                crossplane.io/external-name: tenant
                 gotemplating.fn.crossplane.io/composition-resource-name: keycloak-portal-tenant-claim
             spec:
               deletionPolicy: Orphan
