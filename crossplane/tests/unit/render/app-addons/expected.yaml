@@ -32,6 +32,8 @@ spec:
   forProvider:
     clientIdRef:
       name: demo-demo-app-keycloak-client
+      policy:
+        resolve: Always
     name: catalogue-test-client-access-control
     realmId: demo
   providerConfigRef:
@@ -218,6 +220,8 @@ spec:
   forProvider:
     clientIdRef:
       name: demo-demo-app-keycloak-client
+      policy:
+        resolve: Always
     defaultScopes:
     - profile
     - email

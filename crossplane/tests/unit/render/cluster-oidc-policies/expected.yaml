@@ -219,6 +219,8 @@ spec:
     claimName: groups
     clientIdRef:
       name: dev-cluster-openbao-keycloak-client
+      policy:
+        resolve: Always
     fullPath: true
     name: groups
     realmId: kernel
@@ -320,6 +322,8 @@ spec:
   forProvider:
     clientIdRef:
       name: dev-cluster-openbao-keycloak-client
+      policy:
+        resolve: Always
     config:
       access.token.claim: "true"
       claim.name: tenant

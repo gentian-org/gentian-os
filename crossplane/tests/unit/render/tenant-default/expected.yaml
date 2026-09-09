@@ -723,6 +723,8 @@ spec:
   forProvider:
     clientIdRef:
       name: render-fixture-portal-bff-client
+      policy:
+        resolve: Always
     defaultScopes:
     - acr
     - basic
@@ -740,7 +742,6 @@ kind: ProtocolMapper
 metadata:
   annotations:
     crossplane.io/composition-resource-name: keycloak-portal-openbao-audience
-    crossplane.io/external-name: openbao-audience
   labels:
     crossplane.io/composite: render-fixture
   name: render-fixture-portal-openbao-audience
@@ -756,6 +757,8 @@ spec:
   forProvider:
     clientIdRef:
       name: render-fixture-portal-public-client
+      policy:
+        resolve: Always
     config:
       access.token.claim: "true"
       id.token.claim: "false"
@@ -824,7 +827,6 @@ kind: ProtocolMapper
 metadata:
   annotations:
     crossplane.io/composition-resource-name: keycloak-portal-tenant-claim
-    crossplane.io/external-name: tenant
   labels:
     crossplane.io/composite: render-fixture
   name: render-fixture-portal-tenant-claim
@@ -840,6 +842,8 @@ spec:
   forProvider:
     clientIdRef:
       name: render-fixture-portal-public-client
+      policy:
+        resolve: Always
     config:
       access.token.claim: "true"
       claim.name: tenant
