@@ -1917,6 +1917,31 @@ _claim_cluster_fields() {
         printf '    # host:                     not used while serviceMode is kernel\n'
     fi
 
+    # egressHost, in both modes, because load_deployments_cluster_settings reads
+    # it back (claim_setting MAIL_EGRESS_HOST mail.egressHost) and nothing else
+    # writes it. Omitting it entirely is what made this worth emitting: a
+    # kernel-mail cluster scaffolded without it gets the operator's fallback SPF
+    # record, "v=spf1 mx ~all", which names the INBOUND load balancer — an
+    # address that never sends — so SPF fails by construction while reading as
+    # plausible. mail_reconciler.go says so; the record only becomes correct
+    # once this names the address outbound mail actually leaves from.
+    #
+    # Commented rather than guessed when unset: it has to agree with a floating
+    # IP, a PTR record and an A record that are not in this repo, so a value the
+    # scaffold invented would be wrong in a way that looks configured.
+    if [[ -n "${MAIL_EGRESS_HOST:-}" ]]; then
+        printf '    egressHost: %s\n' "${MAIL_EGRESS_HOST}"
+    elif [[ "${mm}" == "kernel" ]]; then
+        printf '    # egressHost:               the name outbound mail leaves from, e.g.\n'
+        printf '    #                           mail-egress.%s — required for SPF to pass.\n' "${KERNEL_DOMAIN:-example.com}"
+        printf '    #                           Needs a PTR back to it and an A record to the\n'
+        printf '    #                           sending address; without it the SPF record\n'
+        printf '    #                           names the inbound load balancer and fails.\n'
+    else
+        printf '    # egressHost:               only for a cluster that sends from its own\n'
+        printf '    #                           address rather than through the relay above\n'
+    fi
+
     printf '\n'
     printf '  # Defaults below are in effect. Uncomment a line to change it.\n'
     _claim_default_line tenancyMode  "${TENANCY_MODE:-}"  multi   'one subdomain and Keycloak realm per tenant; single = one tenant owns the cluster'
