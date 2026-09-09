@@ -2452,6 +2452,92 @@ resolve_gentian_os_image_tag() {
 # (STORAGE_CLASS) reach them at all: they are the objects that install the agent
 # that will read everything else from Git.
 # =============================================================================
+# render_bootstrap_application <name> <outfile>
+#
+# The render half of apply_bootstrap_application, split out so the drift check
+# in B-03 renders EXACTLY what the apply renders. A second renderer would be a
+# second thing to keep in step, and a check that renders differently from the
+# apply is worse than no check: it would report drift that applying cannot fix,
+# or miss drift that it could.
+#
+# Returns 2 for "this template deliberately renders nothing" (external-dns on a
+# cluster with no DNS provider), 1 for a real render failure, 0 on success.
+# Never exits — the caller decides, because check() must not kill an install.
+render_bootstrap_application() {
+    local name="$1" out="$2"
+    local chart="${SCRIPT_DIR}/kernel/bootstrap/chart"
+
+    [[ -f "${chart}/templates/${name}.yaml" ]] || return 1
+    [[ -n "${STORAGE_CLASS:-}" ]] || return 1
+    [[ -n "${GENTIAN_DEPLOYMENTS_STAGE:-}" ]] || return 1
+    [[ -n "${GENTIAN_DEPLOYMENTS_CLUSTER_ID:-}" ]] || return 1
+    resolve_gentian_os_branch || return 1
+
+    helm template gentian-bootstrap "${chart}" -s "templates/${name}.yaml" \
+        -f "${SCRIPT_DIR}/kernel/platforms.yaml" \
+        --set-string "gentianOsBranch=${GENTIAN_OS_BRANCH}" \
+        --set-string "osRepo=${GENTIAN_OS_REPO:-}" \
+        --set-string "appsRepo=${GENTIAN_APPS_REPO:-}" \
+        --set-string "deploymentsRepo=${GENTIAN_DEPLOYMENTS_REPO:-}" \
+        --set-string "uiRepo=${GENTIAN_UI_REPO:-}" \
+        --set-string "storageClass=${STORAGE_CLASS}" \
+        --set-string "stage=${GENTIAN_DEPLOYMENTS_STAGE}" \
+        --set-string "kernelDomain=${KERNEL_DOMAIN:-}" \
+        --set-string "dnsProvider=${DNS_PROVIDER:-cloudflare}" \
+        --set-string "networkMode=${NETWORK_MODE:-tunnel}" \
+        --set-string "cluster=${GENTIAN_DEPLOYMENTS_CLUSTER_ID}" >"${out}" 2>/dev/null || return 1
+
+    [[ -s "${out}" ]] || return 2
+    return 0
+}
+
+# bootstrap_application_matches <template> <object-name>
+#
+# Whether the live Application still carries what its template declares.
+#
+# Returns 0 matches, 1 drifted, 2 cannot tell. "Cannot tell" is its own answer
+# and never means drift: a missing python3, an unreadable object or a render
+# that needs values this shell has not resolved must not make a step re-apply
+# on every run.
+bootstrap_application_matches() {
+    local tmpl="$1" obj="$2" rendered live rc
+    command -v python3 >/dev/null 2>&1 || return 2
+
+    rendered="$(mktemp)"; live="$(mktemp)"
+    render_bootstrap_application "${tmpl}" "${rendered}"; rc=$?
+    if [[ ${rc} -ne 0 ]]; then
+        rm -f "${rendered}" "${live}"
+        # 2 from the render is "this template deliberately emits nothing",
+        # which is not an Application that can have drifted.
+        [[ ${rc} -eq 2 ]] && return 0
+        return 2
+    fi
+    if ! kubectl get application "${obj}" -n argocd -o json >"${live}" 2>/dev/null; then
+        rm -f "${rendered}" "${live}"
+        return 1   # absent is the strongest possible drift
+    fi
+
+    python3 "${SCRIPT_DIR}/scripts/lib/bootstrap-app-drift.py" "${rendered}" "${live}" >/dev/null 2>&1
+    rc=$?
+    rm -f "${rendered}" "${live}"
+    return ${rc}
+}
+
+# bootstrap_application_drift_report <template> <object-name>
+#
+# The same comparison, printing what differs. Used by apply() so a re-apply
+# says why it was needed rather than repeating itself silently.
+bootstrap_application_drift_report() {
+    local tmpl="$1" obj="$2" rendered live
+    command -v python3 >/dev/null 2>&1 || return 0
+    rendered="$(mktemp)"; live="$(mktemp)"
+    if render_bootstrap_application "${tmpl}" "${rendered}" &&
+       kubectl get application "${obj}" -n argocd -o json >"${live}" 2>/dev/null; then
+        python3 "${SCRIPT_DIR}/scripts/lib/bootstrap-app-drift.py" "${rendered}" "${live}" 2>/dev/null || true
+    fi
+    rm -f "${rendered}" "${live}"
+}
+
 apply_bootstrap_application() {
     local name="$1"
     local chart="${SCRIPT_DIR}/kernel/bootstrap/chart"
