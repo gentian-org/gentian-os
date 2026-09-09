@@ -855,6 +855,37 @@ purge_sweep_api_scaffold() {
     _delete_crds_matching 'gentianos\.io$' 'gentianos.io CRDs'
 }
 
+# teardown_freeze_edge_dns — stop external-dns BEFORE its sources disappear.
+#
+# Nothing in a teardown deletes DNS records explicitly, and yet a teardown
+# deleted them. drive_reverse removes the operator, and with it the HTTPRoutes
+# and DNSEndpoints every published record comes from, while external-dns is
+# still running under policy: sync several steps from its own destroy(). It
+# does exactly what it is configured to do: the desired set is now empty, the
+# records are its own by the TXT registry, so it removes them.
+#
+# That is expensive in a way nothing about it announces. Cloudflare issues an
+# edge certificate per proxied hostname; deleting the record drops the
+# certificate, and recreating it asks a CA for another. A few install/uninstall
+# cycles on one domain exhausted Let's Encrypt's five-duplicates-per-week
+# limit, which is a rolling window measured in days — the zone then serves no
+# certificate for those names, and no amount of reinstalling fixes it.
+#
+# So the records now survive a teardown, and only --cluster-infra removes them:
+# that flag already means "take the shared infrastructure too", and a cluster
+# whose infrastructure is being removed is not one whose hostnames should keep
+# resolving. Scaled rather than deleted, so a teardown that stops halfway
+# leaves an object Argo CD can restore rather than a missing Deployment.
+teardown_freeze_edge_dns() {
+    kubectl get deploy external-dns -n external-dns >/dev/null 2>&1 || return 0
+    info "Stopping external-dns before its sources are removed, so published"
+    info "  records survive this teardown. Certificate issuance is rate-limited"
+    info "  per domain, so deleting and recreating them has a cost that outlives"
+    info "  the cluster. --purge --cluster-infra removes them deliberately."
+    kubectl scale deploy external-dns -n external-dns --replicas=0 >/dev/null 2>&1 ||
+        warn "  Could not scale external-dns down; records may be pruned as sources go."
+}
+
 purge_local_state() {
     banner "Purge — local state"
     local f

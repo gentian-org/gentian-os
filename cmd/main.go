@@ -446,31 +446,38 @@ func buildSeeder() *secrets.Seeder {
 	return secrets.NewSeeder(kv, deriver)
 }
 
-// buildEdgeIngress constructs how traffic reaches this cluster, or nil when
-// nothing has to be programmed.
+// buildEdgeIngress constructs how traffic reaches this cluster, by NAME.
 //
-// There is no DNS half here, deliberately. external-dns writes this cluster's
-// records — every provider in kernel/platforms.yaml, from the HTTPRoutes this
-// operator writes and from DNSEndpoint CRs for records with no HTTP object
-// behind them. The operator used to write them itself, for Cloudflare only,
-// which meant a Route 53 cluster had no DNS writer at all.
+// The name is the key in kernel/platforms.yaml's edgeIngress table, which is
+// also what decides the credential the installer asks for. One string, two
+// consumers, so they cannot disagree. Which implementation that name maps to
+// lives in the registry (internal/controller/edge_registry.go), not here, so
+// adding an ingress never touches this function.
 //
-// What an ingress supplies instead is the TARGET, through the annotations it
-// puts on the kernel Gateway. See internal/controller/edge.go.
+// There is no DNS half. external-dns writes this cluster's records -- every
+// provider in kernel/platforms.yaml, from the HTTPRoutes this operator writes
+// and from DNSEndpoint CRs for hostnames a tunnelled Gateway cannot supply an
+// address for. What an ingress contributes is the TARGET those records point
+// at. See internal/controller/edge.go.
 //
-//	CF_TUNNEL_TOKEN       – Account -> Cloudflare One Connector: cloudflared ->
-//	                        Edit. Falls back to CLOUDFLARE_API_TOKEN, which is
-//	                        the single-token deployment; the fallback is a
-//	                        convenience, not the contract.
-//	CLOUDFLARE_TUNNEL_CNAME – tunnel target, e.g. <uuid>.cfargotunnel.com
-//	CLOUDFLARE_ACCOUNT_ID – optional. Supplied, the ingress never reads the
-//	                        zone, so its token needs no Zone:Read.
-//	CLOUDFLARE_ZONE_ID    – only to resolve the account when the above is unset.
+//	EDGE_INGRESS            – which one; defaults from NETWORK_MODE so an
+//	                          existing cluster needs no new value
+//	CF_TUNNEL_TOKEN         – the ingress credential, falling back to
+//	                          CLOUDFLARE_API_TOKEN for single-token clusters
+//	CLOUDFLARE_TUNNEL_CNAME – the tunnel to point at
+//	CLOUDFLARE_ZONE_ID      – only to resolve the account when the next is unset
+//	CLOUDFLARE_ACCOUNT_ID   – supplied, the ingress never reads the zone
 func buildEdgeIngress() controller.EdgeIngress {
-	tunnelCNAME := os.Getenv("CLOUDFLARE_TUNNEL_CNAME")
-	if tunnelCNAME == "" {
-		setupLog.Info("no edge ingress configured; traffic is expected to reach the gateway directly (static-ip)")
-		return nil
+	name := os.Getenv("EDGE_INGRESS")
+	if name == "" {
+		// Follows networkMode, the only thing that decides it today. A
+		// static-ip cluster routes by LoadBalancer address and programs no
+		// ingress; anything else is the tunnel.
+		if os.Getenv("NETWORK_MODE") == "static-ip" {
+			name = "none"
+		} else {
+			name = "cf-tunnel"
+		}
 	}
 
 	token := os.Getenv("CF_TUNNEL_TOKEN")
@@ -478,19 +485,29 @@ func buildEdgeIngress() controller.EdgeIngress {
 	if token == "" {
 		token = os.Getenv("CLOUDFLARE_API_TOKEN")
 	}
-	if token == "" {
-		setupLog.Info("a tunnel is configured but no token can reach it; ingress routing disabled",
-			"tunnel_cname", tunnelCNAME)
+
+	ing, err := controller.BuildEdgeIngress(name, controller.EdgeIngressConfig{
+		Token:   token,
+		Target:  os.Getenv("CLOUDFLARE_TUNNEL_CNAME"),
+		Zone:    os.Getenv("CLOUDFLARE_ZONE_ID"),
+		Account: os.Getenv("CLOUDFLARE_ACCOUNT_ID"),
+	})
+	if err != nil {
+		// Named but unbuildable is a configuration error, and continuing would
+		// route nothing while looking like a cluster that programs no ingress.
+		setupLog.Error(err, "edge ingress is configured but could not be built", "edge_ingress", name)
 		return nil
 	}
-
-	zoneID := os.Getenv("CLOUDFLARE_ZONE_ID")
-	accountID := os.Getenv("CLOUDFLARE_ACCOUNT_ID")
-	setupLog.Info("edge ingress enabled (cf-tunnel)",
-		"tunnel_cname", tunnelCNAME,
-		"separate_tunnel_token", separate,
-		"account_id_supplied", accountID != "")
-	return controller.NewCloudflareTunnelIngress(token, zoneID, tunnelCNAME, accountID)
+	if ing == nil {
+		setupLog.Info("no edge ingress; traffic is expected to reach the gateway directly",
+			"edge_ingress", name)
+		return nil
+	}
+	setupLog.Info("edge ingress enabled",
+		"edge_ingress", name,
+		"separate_token", separate,
+		"account_id_supplied", os.Getenv("CLOUDFLARE_ACCOUNT_ID") != "")
+	return ing
 }
 
 // envOrDefault reads an environment variable, falling back when it is unset or

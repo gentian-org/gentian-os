@@ -126,8 +126,75 @@ spec:
         # under a key named after it, as Bitnami's did.
         provider:
           name: {{ $extdns.provider }}
+        # Which sources run depends on how traffic arrives, not on preference.
+        #
+        # static-ip: gateway-httproute + crd, exactly as today. The Gateway has
+        # a LoadBalancer address, the source publishes every routed hostname
+        # from it, and this cluster shape is the one where DNS already works —
+        # nothing about it changes.
+        #
+        # tunnel: crd only. A tunnelled Gateway never gets an address, and
+        # external-dns v0.21.0's gateway-httproute source does not skip such a
+        # Gateway — it deadlocks on it. Observed directly: the controller
+        # stopped syncing fourteen seconds after the kernel Gateway appeared
+        # and never completed another loop, which also silenced the crd source
+        # and with it mail's records. The operator publishes every routed
+        # hostname as a DNSEndpoint on tunnel clusters instead
+        # (internal/controller/edge_dnsendpoint.go), so crd is the one source
+        # that carries everything — and the one that cannot be starved by a
+        # Gateway that will never be Programmed.
+        sources:
+        {{- if ne .Values.networkMode "tunnel" }}
+          - gateway-httproute
+        {{- end }}
+          - crd
+        {{- /*
+        The kernel domain AND every suffix of it down to the registrable
+        domain, because external-dns matches domainFilters against ZONES as
+        well as records. The kernel domain is a HOSTNAME; the zone it lives in
+        is a registrable domain — the same distinction the cert-manager solver
+        walk exists for. Filtering on the hostname alone rejected the zone
+        itself, and every record then logged "no hosted zone matching record
+        DNS Name" at debug and was silently skipped: a filter meant to scope
+        records instead turned the publisher off, invisibly, on any cluster
+        whose kernel domain is not the zone apex.
+
+        The walk is lexical, so it costs no provider call and holds for all
+        eight providers. Suffixes that are not zones match nothing and do
+        nothing; the one that is a zone is the one that makes every record
+        publishable. Two labels is the floor, same as the solver walk: the
+        next strip would be a public suffix.
+        */}}
+        {{- /*
+        Ownership, scoped to THIS cluster.
+
+        external-dns runs policy: sync, and the TXT registry is the only thing
+        standing between that and a zone it shares with anyone. Before deleting
+        a record it checks for a companion TXT naming the owner — so a
+        hand-made record, having none, is safe.
+
+        The owner name has to identify the cluster, not the product. Shared,
+        the companion says "some Gentian cluster owns this", and a second
+        cluster whose domain filter reaches the same zone reads its neighbour's
+        records as its own, finds no source producing them, and deletes them.
+        Reproduced deliberately against a live zone: a record with a
+        matching ownership TXT and no source was planned for DELETE on the next
+        sync.
+
+        Two clusters need not share a zone for this — one kernel domain deep
+        enough for the zone walk to widen a filter onto a zone another cluster
+        writes to is enough.
+        */}}
+        txtOwnerId: {{ required "cluster is required: external-dns ownership must identify this cluster, not the product" .Values.cluster | quote }}
+        {{- $kd := required "kernelDomain is required for external-dns domainFilters" .Values.kernelDomain }}
+        {{- $labels := splitList "." $kd }}
         domainFilters:
-          - {{ required "kernelDomain is required for external-dns domainFilters" .Values.kernelDomain }}
+        {{- range $i, $_ := $labels }}
+        {{- $suffix := join "." (slice $labels $i) }}
+        {{- if ge (len (splitList "." $suffix)) 2 }}
+          - {{ $suffix }}
+        {{- end }}
+        {{- end }}
         {{- if $cred }}
         env:
           {{- range $var, $key := (or $extdns.env $extdns.secretKeys) }}

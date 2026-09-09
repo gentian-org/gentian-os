@@ -25,8 +25,24 @@ try_load_creds_from_openbao() {
     [[ "$(_repo_auth_for gentian-os-repository)" != "none" && -z "${GENTIAN_OS_GIT_TOKEN:-}" ]] && _os_ready=0
     [[ "$(_repo_auth_for gentian-apps-repository)" != "none" && -z "${GENTIAN_APPS_GIT_TOKEN:-}" ]] && _apps_ready=0
     [[ "$(_repo_auth_for gentian-ui-repository)" != "none" && -z "${GENTIAN_UI_GIT_TOKEN:-}" ]] && _ui_ready=0
+    # The provider credentials count too. Without them the fast path returns
+    # with the zone and ingress tokens still unset, and the prompt loop asks
+    # for what OpenBao is holding -- the same defect the recovery below fixes,
+    # reached by skipping it instead of by not implementing it.
+    local _providers_ready=1 _pr _pk _pv
+    while IFS= read -r _pr; do
+        [[ -n "${_pr}" ]] || continue
+        while IFS= read -r _pk; do
+            [[ -n "${_pk}" ]] || continue
+            _pv="$(_env_var_for "${_pr}" "${_pk}" 2>/dev/null || true)"
+            [[ -n "${_pv}" ]] || continue
+            [[ -n "${!_pv:-}" ]] || _providers_ready=0
+        done < <(catalogue_field_keys "${_pr}" 2>/dev/null || true)
+    done < <(_provider_requirement_names 2>/dev/null || true)
+
     if [[ -n "${MASTER_PASSWORD:-}" && -n "${GENTIAN_DEPLOYMENTS_GIT_TOKEN:-}" \
-        && "${_os_ready}" == "1" && "${_apps_ready}" == "1" && "${_ui_ready}" == "1" ]]; then
+        && "${_os_ready}" == "1" && "${_apps_ready}" == "1" && "${_ui_ready}" == "1" \
+        && "${_providers_ready}" == "1" ]]; then
         if [[ "${MAIL_SERVICE_MODE}" == "external" \
             && -n "${SMTP_RELAY_USERNAME:-}" \
             && -n "${SMTP_RELAY_PASSWORD:-}" ]]; then
@@ -146,11 +162,34 @@ try_load_creds_from_openbao() {
         v=$(_bao_get "storage/registry" '.data.data.password')
         [[ -n "$v" ]] && { export REGISTRY_PASSWORD="$v"; loaded=1; }
     fi
-    if [[ -z "${CF_API_TOKEN:-}" ]]; then
-        # Bracket notation: jq reads a hyphen in a bare path as subtraction.
-        v=$(_bao_get "dns/cloudflare" '.data.data["api-token"]')
-        [[ -n "$v" ]] && { export CF_API_TOKEN="$v"; loaded=1; }
-    fi
+    # Provider credentials -- the zone host and the edge ingress -- read back
+    # from the same tables that decided to ask for them, so what was seeded is
+    # what is recovered.
+    #
+    # This was one hardcoded lookup of dns/cloudflare. Everything else the
+    # provider tables contribute was seeded to OpenBao and never read back, so
+    # B-10 deleted the local cache and every later run prompted again for
+    # credentials OpenBao was already holding: CF_TUNNEL_TOKEN always, and
+    # every field of every non-Cloudflare provider. The cache exists to stop
+    # exactly that, and one step later it was undone.
+    #
+    # Bracket notation in the jq path: a hyphen in a bare path reads as
+    # subtraction, and every provider field here is hyphenated (api-token,
+    # access-key-id). The same trap as unquoted yq paths, in the other tool.
+    local _req _path _key _var
+    while IFS= read -r _req; do
+        [[ -n "${_req}" ]] || continue
+        _path="$(catalogue_get "${_req}" vaultPath 2>/dev/null || true)"
+        [[ -n "${_path}" ]] || continue
+        while IFS= read -r _key; do
+            [[ -n "${_key}" ]] || continue
+            _var="$(_env_var_for "${_req}" "${_key}" 2>/dev/null || true)"
+            [[ -n "${_var}" ]] || continue
+            [[ -n "${!_var:-}" ]] && continue
+            v=$(_bao_get "${_path#gentian-os/kernel/}" ".data.data[\"${_key}\"]")
+            [[ -n "$v" ]] && { export "${_var}=$v"; loaded=1; }
+        done < <(catalogue_field_keys "${_req}" 2>/dev/null || true)
+    done < <(_provider_requirement_names 2>/dev/null || true)
     if [[ -z "${SMTP_RELAY_USERNAME:-}" ]]; then
         v=$(_bao_get "mail/postfix" '.data.data.relay_username')
         [[ -n "$v" ]] && { export SMTP_RELAY_USERNAME="$v"; loaded=1; }
@@ -430,19 +469,46 @@ init_openbao() {
 # kernel/platforms.yaml, and values from the environment variables the prompt
 # loop wrote. Empty when the provider is Cloudflare (which has its own
 # variables, kept for compatibility), "none", or when nothing was collected.
-_dns_credential_fields_json() {
-    local provider="${DNS_PROVIDER:-cloudflare}" key var value args=()
-    [[ "${provider}" == "cloudflare" || "${provider}" == "none" ]] && return 0
+_provider_credential_fields_json() {
+    local req="$1" key var value args=()
+    [[ -n "${req}" ]] || return 0
     while IFS= read -r key; do
         [[ -n "${key}" ]] || continue
-        var="$(_env_var_for "acme-dns-${provider}" "${key}")"
+        var="$(_env_var_for "${req}" "${key}")"
         [[ -n "${var}" ]] || continue
         value="${!var:-}"
         [[ -n "${value}" ]] || continue
         args+=(--arg "${key}" "${value}")
-    done < <(catalogue_field_keys "acme-dns-${provider}")
+    done < <(catalogue_field_keys "${req}")
     [[ ${#args[@]} -gt 0 ]] || return 0
-    jq -n "${args[@]}" '$ARGS.named'
+    # -c because _provider_seed_pairs emits one TAB-separated line per
+    # credential and the seeder reads it line by line: pretty-printed JSON
+    # would split one credential across several lines and write none of them.
+    jq -nc "${args[@]}" '$ARGS.named'
+}
+
+# _provider_seed_pairs — "<vaultPath>\t<fields-json>" for every provider
+# credential this cluster actually collected, one line each.
+#
+# Table-driven, from the same GENTIAN_PROVIDER_TABLES the prompt loop uses, so
+# a credential that was asked for is a credential that gets written. The old
+# shape was a hand-written block per provider, which is how edgeIngress came to
+# have a requirement, a validator and a vault path with nothing ever seeding
+# it.
+#
+# The vault path comes from the catalogue and is stripped of the store prefix
+# the seeder adds back, so the path an operator reads in platforms.yaml is the
+# path the secret lands at.
+_provider_seed_pairs() {
+    local req path json
+    while IFS= read -r req; do
+        [[ -n "${req}" ]] || continue
+        json="$(_provider_credential_fields_json "${req}")"
+        [[ -n "${json}" ]] || continue
+        path="$(catalogue_get "${req}" vaultPath)"
+        [[ -n "${path}" ]] || continue
+        printf '%s\t%s\n' "${path#gentian-os/kernel/}" "${json}"
+    done < <(_provider_requirement_names)
 }
 
 # =============================================================================
@@ -615,14 +681,14 @@ seed_secrets() {
     # built from the catalogue rather than from a variable per provider — the
     # installer already knows which fields the provider declares, and a second
     # list here would be the place they stop matching.
-    local dns_fields_json=""
-    dns_fields_json="$(_dns_credential_fields_json)"
+    local provider_seed_pairs=""
+    provider_seed_pairs="$(_provider_seed_pairs)"
 
     # CF_API_TOKEN is forwarded via env var (not positional) so the
     # seed-openbao.sh contract stays backward-compatible. Seed-openbao
     # writes it to secret/gentian-os/kernel/dns/<provider> when present.
     DNS_PROVIDER="${DNS_PROVIDER:-cloudflare}" \
-    GENTIAN_DNS_FIELDS_JSON="${dns_fields_json}" \
+    GENTIAN_PROVIDER_SEED_PAIRS="${provider_seed_pairs}" \
     CF_API_TOKEN="${CF_API_TOKEN:-}" \
     CF_ZONE_ID="${zone_id}" \
     CF_TUNNEL_CNAME="${tunnel_cname}" \

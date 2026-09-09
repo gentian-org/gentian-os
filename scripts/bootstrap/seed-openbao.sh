@@ -378,17 +378,18 @@ else
     echo "  To add them later: bao kv put gentian-os/kernel/storage/registry username=<u> password=<p>"
 fi
 
-# --- Cloudflare API token (DNS-01 ACME for kernel wildcard) ---
-# The zone credential, under the path its provider owns in kernel/platforms.yaml.
+# --- Provider credentials (DNS zone host, edge ingress) ---
+# Each under the path its provider owns in kernel/platforms.yaml.
 #
-# Only required when the cluster solves DNS-01 — a wildcard certificate is the
-# only thing that needs it. Cloudflare carries two extra fields no other
-# provider has: the zone id and tunnel CNAME the operator's edge INGRESS reads
-# to address the tunnel. They are written alongside the token rather than at a
-# path of their own, because they are the same account's configuration. The
-# token itself is external-dns's and cert-manager's; the operator no longer
-# writes DNS records.
+# The DNS one is only required when the cluster solves DNS-01 — a wildcard
+# certificate is the only thing that needs it.
 DNS_PROVIDER="${DNS_PROVIDER:-cloudflare}"
+
+# Cloudflare's DNS credential carries two extra fields no other provider has:
+# the zone id and tunnel CNAME the operator's edge INGRESS reads to address the
+# tunnel. They are written alongside the token rather than at a path of their
+# own, because they are the same account's configuration. The token itself is
+# external-dns's and cert-manager's; the operator no longer writes DNS records.
 if [ "${DNS_PROVIDER}" = "cloudflare" ] && [ -n "${CF_API_TOKEN:-}" ]; then
     kv_put "dns/cloudflare" "$(jq -n \
         --arg api_token "${CF_API_TOKEN}" \
@@ -397,27 +398,22 @@ if [ "${DNS_PROVIDER}" = "cloudflare" ] && [ -n "${CF_API_TOKEN:-}" ]; then
         '{"api-token": $api_token, "zone-id": $zone_id, "tunnel-cname": $tunnel_cname}')"
 fi
 
-# The ingress half, at its own path. Separate from dns/cloudflare above even
-# when the value is identical: they are different grants, and a cluster that
-# later narrows one of them should not have to discover the split at the same
-# moment as the failure. Written whenever the token was collected, which
-# _requirement_applies gates on the cluster's edge ingress being cf-tunnel.
-if [ -n "${CF_TUNNEL_TOKEN:-}" ]; then
-    kv_put "edge/cf-tunnel" "$(jq -n \
-        --arg api_token "${CF_TUNNEL_TOKEN}" \
-        '{"api-token": $api_token}')"
-fi
-
-if [ "${DNS_PROVIDER}" != "cloudflare" ] && [ "${DNS_PROVIDER}" != "none" ] && [ -n "${GENTIAN_DNS_FIELDS_JSON:-}" ]; then
-    # Every other provider: the installer collected its fields by name from the
-    # catalogue and handed them over as one JSON object, so this stays a single
-    # write regardless of how many fields the provider has.
-    kv_put "dns/${DNS_PROVIDER}" "${GENTIAN_DNS_FIELDS_JSON}"
-else
-    echo ""
-    echo "  Skipping the DNS-01 credential for provider ${DNS_PROVIDER}."
-    echo "  To add it later, supply it to the credential manager, or:"
-    echo "    bao kv put gentian-os/kernel/dns/${DNS_PROVIDER} <field>=<value>"
+# Every other provider credential, from every provider table, as
+# "<path><TAB><json>" lines the installer assembled from the catalogue.
+#
+# One loop rather than a block per provider. The installer already knows which
+# fields each provider declares and which ones it collected, so a second list
+# here would be the place the two stop matching — which is exactly how the
+# edge-ingress credential came to have a requirement, a validator and a vault
+# path with nothing ever writing to it.
+if [ -n "${GENTIAN_PROVIDER_SEED_PAIRS:-}" ]; then
+    printf '%s\n' "${GENTIAN_PROVIDER_SEED_PAIRS}" | while IFS="$(printf '\t')" read -r _path _json; do
+        [ -n "${_path}" ] || continue
+        [ -n "${_json}" ] || continue
+        # Cloudflare's DNS entry is written above with its extra fields.
+        [ "${_path}" = "dns/cloudflare" ] && continue
+        kv_put "${_path}" "${_json}"
+    done
 fi
 
 # --- LLM serving (LiteLLM / vLLM credentials) ---

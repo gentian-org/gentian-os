@@ -192,6 +192,13 @@ spec:
                   optional: true
             {{- end }}
             {{- end }}
+            # Which EdgeIngress this cluster runs, by the name
+            # kernel/platforms.yaml uses. Empty follows networkMode, so an
+            # existing cluster needs no new value to keep behaving as it does.
+            - name: EDGE_INGRESS
+              value: {{ .Values.edgeIngress | default "" | quote }}
+            - name: NETWORK_MODE
+              value: {{ .Values.networkMode | default "" | quote }}
             - name: CLOUDFLARE_ZONE_ID
               {{- if .Values.cloudflare.zoneID }}
               value: {{ .Values.cloudflare.zoneID | quote }}

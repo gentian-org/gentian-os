@@ -151,7 +151,12 @@ Other options:
                         Reloader, external-dns, cert-manager. They may serve
                         workloads that are not Gentian's, and this discards the
                         wildcard certificate, which Let's Encrypt rations to
-                        five per week for one set of names
+                        five per week for one set of names.
+                        It is also the ONLY thing that removes this cluster's
+                        published DNS records: without it external-dns is
+                        stopped before its sources go, so the records — and
+                        the per-hostname edge certificates that depend on them
+                        existing — survive a teardown
   --config-file PATH    override install.env
   --no-config-files     ignore install.env entirely; take everything from the
                         environment
@@ -467,6 +472,13 @@ main() {
                 fi
             else
                 warn "Uninstalling — this removes Gentian OS from the current cluster."
+            fi
+            # Before the reverse drive, not during it: the sources external-dns
+            # publishes from are removed early on, and it prunes what it can no
+            # longer see. --cluster-infra is the one case where the records
+            # SHOULD go, and there it is left running to take them.
+            if [[ "${GENTIAN_PURGE_CLUSTER_INFRA}" != "1" && "${GENTIAN_DRY_RUN}" != "1" ]]; then
+                teardown_freeze_edge_dns
             fi
             drive_reverse
             if [[ "${GENTIAN_PURGE}" == "1" && "${GENTIAN_DRY_RUN}" != "1" ]]; then

@@ -180,6 +180,21 @@ ensure_keycloak_admin_secret_url() {
         error "No Keycloak HTTP service found in ${ns} (expected ${GENTIAN_IDP_KEYCLOAK_RELEASE:-gentian-idp-keycloak}-keycloakx-http)."
         return 1
     fi
+    # The Service existing is not Keycloak answering. On a fresh cluster it
+    # starts before CloudNativePG has created its database, exits with
+    # 'FATAL: database "keycloak" does not exist' and restarts, so a bootstrap
+    # Job created in that window spends its whole retry budget failing and only
+    # the Job's own retry succeeds -- ten minutes, and a failed pod that reads
+    # like a broken install.
+    #
+    # Non-fatal on timeout: the Job retries either way, so this removes a
+    # predictable delay rather than becoming a new way to fail.
+    if ! kubectl wait --for=condition=Ready pod \
+            -l "app.kubernetes.io/name=keycloakx" -n "${ns}" \
+            --timeout="${GENTIAN_KEYCLOAK_READY_WAIT_SECS:-600}s" >/dev/null 2>&1; then
+        warn "Keycloak is not Ready yet; the bootstrap Job will retry until it is."
+    fi
+
     current=$(kubectl get secret keycloak-admin -n "${ns}" -o jsonpath='{.data.url}' 2>/dev/null | base64 -d || true)
     if [[ "${current}" == "${url}" ]]; then
         info "keycloak-admin URL: ${url}"
@@ -626,11 +641,11 @@ EOF
     # that is still legitimately waiting.
     if ! kubectl wait "job/${job_name}" -n "${ns}" --for=condition=complete --timeout=720s; then
         error "Keycloak SMTP configure Job failed."
-        kubectl logs -n "${ns}" "job/${job_name}" --tail=40 2>/dev/null || true
+        gentian_job_logs "${ns}" "${job_name}" Failed 40
         return 1
     fi
 
-    kubectl logs -n "${ns}" "job/${job_name}" --tail=5 2>/dev/null || true
+    gentian_job_logs "${ns}" "${job_name}" Succeeded 5
     success "Keycloak realm ${kernel_realm} SMTP configured ($(gentian_mail_service_mode))."
 }
 
@@ -649,6 +664,32 @@ EOF
 #
 # The kernel realm is a different case and stays here: configure_keycloak_realm_smtp
 # above configures the kernel realm, which has no Tenant CR to reconcile from.
+
+# gentian_job_logs <ns> <job> <outcome> [tail]
+#
+# The logs of the pod that produced <outcome>, not whichever pod kubectl picks.
+#
+# `kubectl logs job/<name>` selects one pod from the job's label selector, and a
+# Job with a retry has more than one. On a fresh cluster Keycloak starts before
+# CloudNativePG has created its database, crash-loops, and the first bootstrap
+# pod exhausts its retries before a second runs and succeeds in seconds. The Job
+# then reports succeeded=1 failed=1, and the tail printed after the success was
+# the FAILED pod's — sixty retry lines and an ERROR immediately before the OK,
+# about work that had already completed.
+#
+# outcome is Succeeded or Failed. Falls back to the job selector when no pod
+# matches, so a Job whose pods were garbage-collected still prints something.
+gentian_job_logs() {
+    local ns="$1" job="$2" outcome="$3" tail="${4:-20}" pod
+    pod="$(kubectl get pods -n "${ns}" -l "job-name=${job}" \
+        --field-selector="status.phase=${outcome}" \
+        -o jsonpath='{.items[-1:].metadata.name}' 2>/dev/null || true)"
+    if [[ -n "${pod}" ]]; then
+        kubectl logs -n "${ns}" "${pod}" --tail="${tail}" 2>/dev/null || true
+        return 0
+    fi
+    kubectl logs -n "${ns}" "job/${job}" --tail="${tail}" 2>/dev/null || true
+}
 
 # Keycloak Admin API calls run in-cluster (Job). The keycloak-admin Secret URL is
 # an in-cluster Service DNS name and is not reachable from the install host.
@@ -1328,11 +1369,11 @@ EOF
     # that is still legitimately waiting.
     if ! kubectl wait "job/${job_name}" -n "${ns}" --for=condition=complete --timeout=720s; then
         error "Keycloak portal bootstrap Job failed."
-        kubectl logs -n "${ns}" "job/${job_name}" --tail=80 2>/dev/null || true
+        gentian_job_logs "${ns}" "${job_name}" Failed 80
         return 1
     fi
 
-    kubectl logs -n "${ns}" "job/${job_name}" --tail=20 2>/dev/null || true
+    gentian_job_logs "${ns}" "${job_name}" Succeeded 20
     success "Keycloak gentian-portal client and platform admin ${username} are ready."
     info "OIDC issuer: https://id.${kernel_domain}/auth/realms/${kernel_realm}"
     info "Portal login credentials:"

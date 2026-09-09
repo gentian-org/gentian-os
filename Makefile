@@ -22,7 +22,7 @@ CROSSPLANE_IMAGE ?= xpkg.crossplane.io/crossplane/crossplane:$(CROSSPLANE_CLI_VE
 KUBEBUILDER_ASSETS ?= /tmp/envtest-bins/k8s/1.32.0-linux-amd64
 export KUBEBUILDER_ASSETS
 
-.PHONY: all build generate manifests test lint docker-build clean install-plugin uninstall-plugin validate-steps gen-credentials check-credentials lint-cluster-config-keys lint-rbac-coverage lint-marker-ascii test-e04-token-classification lint-composed-resource-names lint-sequencer-targets lint-eso-readable-paths lint-template-placeholders lint-portability lint-image-digests check-render-fixtures lint-resolvable lint-bootstrap-apps lint-step-contracts lint-claim-defaults lint-live-identifiers lint-password-schemes test-policy test-policy-openbao test-policy-authz verify-claim-applied verify-argocd-config verify-image-updates gen-provider-rbac lint-provider-rbac lint-credential-validators
+.PHONY: all build generate manifests test lint docker-build clean install-plugin uninstall-plugin validate-steps gen-credentials check-credentials lint-cluster-config-keys lint-rbac-coverage lint-marker-ascii test-e04-token-classification lint-composed-resource-names lint-sequencer-targets lint-eso-readable-paths lint-template-placeholders lint-portability lint-image-digests check-render-fixtures lint-resolvable lint-bootstrap-apps lint-step-contracts lint-claim-defaults lint-live-identifiers lint-password-schemes test-policy test-policy-openbao test-policy-authz verify-claim-applied verify-argocd-config verify-image-updates gen-provider-rbac lint-provider-rbac lint-credential-validators lint-credential-catalogue
 
 all: generate build test
 
@@ -124,7 +124,7 @@ lint-yaml:
 ## The file list and flags must match CI exactly: -x follows sourced files, and no
 ## -S filter means info/style findings fail the build too. Hand-rolling a narrower
 ## invocation is how an SC2153 reached develop green-looking.
-lint-shell: validate-steps lint-step-contracts lint-resolvable lint-bootstrap-apps lint-credential-fields lint-credential-validators lint-claim-defaults lint-live-identifiers lint-cluster-config-keys lint-template-placeholders lint-provider-rbac lint-password-schemes lint-rbac-coverage lint-composed-resource-names lint-sequencer-targets lint-eso-readable-paths lint-marker-ascii test-e04-token-classification
+lint-shell: validate-steps lint-step-contracts lint-resolvable lint-bootstrap-apps lint-credential-fields lint-credential-validators lint-credential-catalogue lint-claim-defaults lint-live-identifiers lint-cluster-config-keys lint-template-placeholders lint-provider-rbac lint-password-schemes lint-rbac-coverage lint-composed-resource-names lint-sequencer-targets lint-eso-readable-paths lint-marker-ascii test-e04-token-classification
 	@git ls-files -z -- '*.sh' | xargs -0 shellcheck -x scripts/kubectl-gentian
 
 ## Round-trip the recovery kit: export one, load it back, prove every value
@@ -169,6 +169,12 @@ lint-credential-fields:
 ## real install at C-06.
 lint-credential-validators:
 	@python3 scripts/lint/lint-credential-validators.py
+
+## Assert the generator and the installer agree on which provider tables exist,
+## and that every generated requirement is one a cluster can actually be
+## prompted for. Neither side can check this alone.
+lint-credential-catalogue:
+	@python3 scripts/lint/lint-credential-catalogue.py
 
 ## Report shell defaults for settings the Cluster XRD already answers. Expected
 ## non-zero until the call sites read the claim; the number must only go down.

@@ -55,42 +55,112 @@ _cat_yq() {
 # =============================================================================
 GENTIAN_PLATFORMS_FILE="${GENTIAN_PLATFORMS_FILE:-${SCRIPT_DIR}/kernel/platforms.yaml}"
 
-_dns_requirement_name() {
-    local provider="${DNS_PROVIDER:-cloudflare}"
-    [[ "${provider}" == "none" ]] && return 1
-    yq_get ".dnsProviders.${provider}.credential.vaultPath" "${GENTIAN_PLATFORMS_FILE}" \
-        >/dev/null 2>&1 || return 1
-    echo "acme-dns-${provider}"
+# -----------------------------------------------------------------------------
+# Provider tables
+# -----------------------------------------------------------------------------
+# kernel/platforms.yaml holds more than one table of providers, and any of them
+# may carry a credential. This is the list of them, and it is the ONLY place
+# that knowledge lives.
+#
+# It used to be one hard-coded hook for DNS. Then edgeIngress was added as a
+# second table, generated correctly into the on-cluster catalogue, and was
+# invisible to the installer — which reads credentials.yaml plus that one hook.
+# The operator was never prompted for the tunnel token, nothing was seeded, and
+# nothing failed: the generator passed, the tests passed, and the only symptom
+# was a prompt that did not happen. A second exception would have been a third
+# way to make that mistake.
+#
+# Each row is  <table>:<requirement-prefix>:<selector-function>
+#
+#   table       the key in kernel/platforms.yaml
+#   prefix      requirement names are <prefix>-<provider>, and the generator
+#               (scripts/gen/gen-credential-requirements.py) uses the same rule
+#   selector    a function echoing which provider of that table this cluster
+#               runs, or "none"
+#
+# Adding a table is a row here plus the matching block in the generator. There
+# is no third place, and lint-credential-catalogue.py fails if the two ever
+# disagree about what exists.
+GENTIAN_PROVIDER_TABLES=(
+    "dnsProviders:acme-dns:_dns_provider"
+    "edgeIngress:edge-ingress:_edge_ingress_provider"
+)
+
+# _dns_provider — which zone host this cluster uses.
+_dns_provider() { printf '%s' "${DNS_PROVIDER:-cloudflare}"; }
+
+# _provider_requirement_names — the requirement each table contributes for THIS
+# cluster, one line each.
+#
+# Only the ACTIVE provider of each table. The catalogue describes the platform
+# and carries every provider; an installer that offered all of them would ask
+# an operator on Route 53 for a Cloudflare token.
+_provider_requirement_names() {
+    local row table prefix selector provider
+    for row in "${GENTIAN_PROVIDER_TABLES[@]}"; do
+        IFS=: read -r table prefix selector <<<"${row}"
+        provider="$("${selector}")"
+        [[ -z "${provider}" || "${provider}" == "none" ]] && continue
+        # No credential block means access is not a secret — "none", and any
+        # provider reached without one.
+        # The provider is QUOTED in the path. yq reads .edgeIngress.cf-tunnel
+        # as a subtraction, not a key, so an unquoted hyphenated provider
+        # silently resolves to nothing -- which is how cf-tunnel had a working
+        # req path, a bootstrap phase in the file, and still never reached the
+        # prompt loop. Every dnsProviders key happens to be one word, so this
+        # could only ever have shown up on the second table.
+        yq_get ".${table}.\"${provider}\".credential.vaultPath" "${GENTIAN_PLATFORMS_FILE}" \
+            >/dev/null 2>&1 || continue
+        echo "${prefix}-${provider}"
+    done
 }
 
-# _dns_req <name> — the platforms.yaml path for a requirement this file owns,
-# or nothing when the name belongs to credentials.yaml.
-_dns_req_path() {
-    local want; want="$(_dns_requirement_name || true)"
-    [[ -n "${want}" && "$1" == "${want}" ]] || return 1
-    echo ".dnsProviders.${want#acme-dns-}.credential"
+# _provider_req_path <name> — the platforms.yaml path for a requirement one of
+# those tables owns, or nothing when the name belongs to credentials.yaml.
+_provider_req_path() {
+    local want="$1" row table prefix selector provider
+    for row in "${GENTIAN_PROVIDER_TABLES[@]}"; do
+        IFS=: read -r table prefix selector <<<"${row}"
+        provider="$("${selector}")"
+        [[ -z "${provider}" || "${provider}" == "none" ]] && continue
+        if [[ "${want}" == "${prefix}-${provider}" ]]; then
+            echo ".${table}.\"${provider}\".credential"
+            return 0
+        fi
+    done
+    return 1
+}
+
+# _provider_req_prefixes — the requirement-name prefixes, for callers matching
+# on shape rather than on an exact name.
+_provider_req_prefixes() {
+    local row table prefix selector
+    for row in "${GENTIAN_PROVIDER_TABLES[@]}"; do
+        IFS=: read -r table prefix selector <<<"${row}"
+        echo "${prefix}"
+    done
 }
 
 # catalogue_names [phase] — requirement names, optionally filtered by phase.
 catalogue_names() {
-    local phase="${1:-}" dns_name dns_phase
+    local phase="${1:-}" name p
     if [[ -n "${phase}" ]]; then
         _cat_yq ".requirements[] | select(.phase == \"${phase}\") | .name"
     else
         _cat_yq '.requirements[].name'
     fi
-    dns_name="$(_dns_requirement_name || true)"
-    if [[ -n "${dns_name}" ]]; then
-        dns_phase="$(catalogue_get "${dns_name}" phase)"
-        [[ -z "${phase}" || "${phase}" == "${dns_phase}" ]] && echo "${dns_name}"
-    fi
+    while IFS= read -r name; do
+        [[ -n "${name}" ]] || continue
+        p="$(catalogue_get "${name}" phase)"
+        [[ -z "${phase}" || "${phase}" == "${p}" ]] && echo "${name}"
+    done < <(_provider_requirement_names)
     return 0
 }
 
 # catalogue_get <name> <field> — one scalar from a requirement.
 catalogue_get() {
     local base
-    if base="$(_dns_req_path "$1")"; then
+    if base="$(_provider_req_path "$1")"; then
         case "$2" in
             # Constant for every DNS credential: a cluster uses at most one, and
             # a cluster on HTTP-01 or a private CA uses none.
@@ -109,7 +179,7 @@ catalogue_get() {
 # catalogue_field_keys <name> — the field keys of a requirement, in order.
 catalogue_field_keys() {
     local base
-    if base="$(_dns_req_path "$1")"; then
+    if base="$(_provider_req_path "$1")"; then
         yq_get "${base}.fields[].key" "${GENTIAN_PLATFORMS_FILE}" 2>/dev/null || true
         return 0
     fi
@@ -119,7 +189,7 @@ catalogue_field_keys() {
 # catalogue_field_attr <name> <key> <attr>
 catalogue_field_attr() {
     local base
-    if base="$(_dns_req_path "$1")"; then
+    if base="$(_provider_req_path "$1")"; then
         yq_get "${base}.fields[] | select(.key == \"$2\") | .$3" \
             "${GENTIAN_PLATFORMS_FILE}" 2>/dev/null || true
         return 0
@@ -155,12 +225,13 @@ _env_var_for() {
         # kept for Cloudflare because it is exported by hand, written in runbooks
         # and cached on disk from earlier installs; the rest get one generated
         # name each rather than a table entry per provider.
+        # Two legacy names, kept deliberately and only these two: they are
+        # exported by hand, written in runbooks and carried in recovery kits,
+        # so renaming them breaks restores. Every other field of every provider
+        # table gets one generated name, so a new table costs no entry here.
         acme-dns-cloudflare/api-token)     echo CF_API_TOKEN ;;
-        acme-dns-*/*)                      echo "GENTIAN_DNS_$(printf '%s' "$2" | tr 'a-z.-' 'A-Z__')" ;;
-        # The ingress half's own token, beside CF_API_TOKEN and named the same
-        # way: a different grant on a different scope, so a different variable.
-        # See kernel/platforms.yaml's edgeIngress table.
         edge-ingress-cf-tunnel/api-token)  echo CF_TUNNEL_TOKEN ;;
+        acme-dns-*/*)                      echo "GENTIAN_DNS_$(printf '%s' "$2" | tr 'a-z.-' 'A-Z__')" ;;
         edge-ingress-*/*)                  echo "GENTIAN_EDGE_$(printf '%s' "$2" | tr 'a-z.-' 'A-Z__')" ;;
         smtp-relay/relay_username)         echo SMTP_RELAY_USERNAME ;;
         smtp-relay/relay_password)         echo SMTP_RELAY_PASSWORD ;;
@@ -308,27 +379,36 @@ _requirement_applies() {
             # otherwise, and a public registry has no credential to give.
             [[ "${INFRA_CHART_PRIVATE:-false}" == "true" ]]
             ;;
-        acme-dns-*)
-            # Only the provider this cluster named, and only when it is going to
-            # solve a DNS-01 challenge at all. On HTTP-01, a private CA or a
-            # self-signed anchor there is no challenge to solve, so asking for a
-            # zone credential is asking for something the cluster cannot use.
-            [[ "$1" == "acme-dns-${DNS_PROVIDER:-cloudflare}" ]] || return 1
-            [[ "${CERT_ISSUER_MODE:-acme-dns01}" == "acme-dns01" ]]
-            ;;
-        edge-ingress-cf-tunnel)
-            # Asked for whenever this cluster's ingress IS cf-tunnel, with no
-            # second switch deciding whether to ask. One token often carries
-            # both grants, and then this is the same value entered twice —
-            # which is the honest cost of storing and checking them
-            # separately, and cheaper than a flag whose wrong setting is a
+        acme-dns-*|edge-ingress-*)
+            # One rule for every provider table: the requirement applies when
+            # it names the provider this cluster actually runs. Which provider
+            # that is comes from the table's own selector, so a new table needs
+            # no case of its own here.
+            # Captured, then matched in bash. NOT piped into grep -q: that
+            # exits on the first match and SIGPIPEs the producer, so under
+            # `set -o pipefail` the pipeline fails whenever the match is not
+            # the LAST line. The symptom was the first requirement of the list
+            # being silently skipped and the last one working -- so a tunnel
+            # cluster stopped being asked for its DNS token the moment a second
+            # provider table started contributing a name.
+            local _selected
+            _selected="$(_provider_requirement_names)"
+            [[ $'\n'"${_selected}"$'\n' == *$'\n'"$1"$'\n'* ]] || return 1
+
+            # Then any extra condition the table alone cannot answer. DNS has
+            # one: on HTTP-01, a private CA or a self-signed anchor there is no
+            # challenge to solve, so a zone credential unlocks nothing.
+            #
+            # Edge ingress has none. It is asked for whenever the cluster runs
+            # that ingress, with no second switch deciding whether to ask — one
+            # token often satisfies both it and DNS, and then the same value is
+            # entered twice. That is the honest cost of storing and probing
+            # them separately, and cheaper than a flag whose wrong setting is a
             # credential silently missing.
-            [[ "$(_edge_ingress_provider)" == "cf-tunnel" ]]
-            ;;
-        edge-ingress-*)
-            # No other ingress provider is implemented yet; the catalogue lists
-            # them, this decides none applies.
-            return 1
+            case "$1" in
+                acme-dns-*) [[ "${CERT_ISSUER_MODE:-acme-dns01}" == "acme-dns01" ]] ;;
+                *)          return 0 ;;
+            esac
             ;;
         # The four repo-credential requirements, gated on their own
         # GENTIAN_*_AUTH var rather than optional: true/false — "does this

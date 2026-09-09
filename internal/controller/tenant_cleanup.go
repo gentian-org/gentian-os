@@ -23,6 +23,7 @@ import (
 
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
+	runtimeMeta "k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -159,6 +160,28 @@ func (r *TenantReconciler) purgeTenantKernelResources(ctx context.Context, tenan
 	for i := range secList.Items {
 		if err := r.Delete(ctx, &secList.Items[i]); client.IgnoreNotFound(err) != nil {
 			return fmt.Errorf("delete Secret %s: %w", secList.Items[i].Name, err)
+		}
+	}
+
+	// The tenant's edge DNSEndpoint, so its records leave the zone with it —
+	// external-dns's policy: sync deletes what its source object stops
+	// declaring. Listed by the same label pair as everything else here; absent
+	// (static-ip, or no external-dns) the list is simply empty.
+	depList := &unstructured.UnstructuredList{}
+	depList.SetGroupVersionKind(schema.GroupVersionKind{
+		Group:   dnsEndpointGVK.Group,
+		Version: dnsEndpointGVK.Version,
+		Kind:    dnsEndpointGVK.Kind + "List",
+	})
+	if err := r.List(ctx, depList, selector); err != nil {
+		// A cluster without the CRD cannot list it; that is not residue.
+		if !runtimeMeta.IsNoMatchError(err) {
+			return fmt.Errorf("list DNSEndpoints for tenant %s: %w", tenant.Name, err)
+		}
+	}
+	for i := range depList.Items {
+		if err := r.Delete(ctx, &depList.Items[i]); client.IgnoreNotFound(err) != nil {
+			return fmt.Errorf("delete DNSEndpoint %s: %w", depList.Items[i].GetName(), err)
 		}
 	}
 
