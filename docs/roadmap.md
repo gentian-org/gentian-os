@@ -911,10 +911,14 @@ does not exist yet that something cannot be the Composition.
   — `kubectl apply` is idempotent, so running it every pass costs a no-op diff
   on a converged cluster and nothing more.
 * **Backlog Items**:
-  - `[ ]` Make `B-03-argocd-bootstrap-apps` re-apply on every run rather than
-    only when its target Application is missing.
-  - `[ ]` If a diff-based check is preferred instead, share the `helm template`
-    call between `check()` and `apply()` rather than rendering twice.
+  - `[x]` The diff-based check, taken rather than unconditional re-apply:
+    `check()` compares each Application against what its template renders
+    today. A **subset** test, not equality — on a freshly installed cluster
+    `kubectl diff` reports three differences that are not drift (the generation
+    the dry-run apply itself increments, and `directory: {recurse: false}` and
+    `syncOptions: []`, which the API server does not store because they are
+    zero values), so an equality check would re-apply forever and a satisfied
+    step would stop meaning anything.
   - `[ ]` Audit whether any other step follows the same "exists, therefore
     satisfied forever" shape for an object whose *template* can change
     independently of the object's presence.
