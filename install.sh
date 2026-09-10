@@ -43,9 +43,10 @@
 # commit and push them before installing. Installing does not write them.
 #
 # A tenant is the same shape one level down, and stops in the same place:
-# --prepare-tenant writes its DEFINITION, you choose its apps, and
+# --prepare-tenant writes its DEFINITION, and
 # `kubectl gentian tenants deploy <name>` is what turns a definition into
-# something Argo CD syncs. The installer never applies a Tenant, and never
+# something Argo CD syncs. Apps are installed afterwards, by the tenant
+# admin from the app store. The installer never applies a Tenant, and never
 # writes the deployed copy — the operator writes into that one too, as apps
 # are installed from the store.
 #
