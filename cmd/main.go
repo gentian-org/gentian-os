@@ -27,6 +27,7 @@ import (
 	networkingv1 "k8s.io/api/networking/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
+	"k8s.io/client-go/kubernetes"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
@@ -38,7 +39,10 @@ import (
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 	"github.com/gentian-org/gentian-os/internal/applifecycle"
 	"github.com/gentian-org/gentian-os/internal/controller"
+	"github.com/gentian-org/gentian-os/internal/credentialmgr"
 	"github.com/gentian-org/gentian-os/internal/kernel/secrets"
+	"github.com/gentian-org/gentian-os/internal/meta"
+	"github.com/gentian-org/gentian-os/internal/usage"
 	"github.com/gentian-org/gentian-os/internal/webhook"
 )
 
@@ -54,6 +58,20 @@ func init() {
 	utilruntime.Must(networkingv1.AddToScheme(scheme))
 	utilruntime.Must(gentianov1alpha1.AddToScheme(scheme))
 	utilruntime.Must(gatewayv1.Install(scheme))
+}
+
+// buildLogTailer gives the export loop a way to read a failed capture
+// container's output. A cluster that will not hand out a clientset is not a
+// reason to refuse to run: the operator starts without it and failures are
+// merely less explicit.
+func buildLogTailer(mgr ctrl.Manager) controller.PodLogTailer {
+	cs, err := kubernetes.NewForConfig(mgr.GetConfig())
+	if err != nil {
+		setupLog.Error(err, "no clientset for reading capture logs; "+
+			"capture failures will report that a Job failed but not why")
+		return nil
+	}
+	return controller.ClientsetLogTailer{Clientset: cs}
 }
 
 func main() {
@@ -94,20 +112,34 @@ func main() {
 	}
 	setupLog.Info("edge routing mode", "routing_mode", routingMode)
 
+	// Exec lets a profile's maintenance-mode and restore hooks run inside the
+	// app's own pod. Optional: without it those fall back to scaling the app,
+	// which still pauses writes, so a failure here must not stop the operator.
+	// The nil stays a plain interface nil: assigning a typed-nil *PodExecer
+	// would make every `Exec == nil` guard pass while calls panic.
+	var appExecer controller.AppExecer
+	if podExecer, execErr := controller.NewPodExecer(mgr.GetConfig()); execErr != nil {
+		setupLog.Error(execErr, "pod exec unavailable; backup hooks will fall back to scaling")
+	} else {
+		appExecer = podExecer
+	}
+
 	tenantReconciler := &controller.TenantReconciler{
 		Client:                   mgr.GetClient(),
+		Exec:                     appExecer,
 		Scheme:                   mgr.GetScheme(),
 		Seeder:                   buildSeeder(),
 		KernelDomain:             os.Getenv("KERNEL_DOMAIN"),
 		TenancyMode:              os.Getenv("TENANCY_MODE"),
+		MailServiceMode:          os.Getenv("MAIL_SERVICE_MODE"),
 		TenantDNS01ClusterIssuer: os.Getenv("TENANT_DNS01_CLUSTER_ISSUER"),
 		KernelRealm:              kernelRealmOrDefault(os.Getenv("KERNEL_REALM")),
-		CloudflareDNS:            buildCloudflareDNSClient(),
+		Ingress:                  buildEdgeIngress(),
 		RoutingMode:              routingMode,
 		CrossplaneOnly:           controller.EnvBool("TENANT_CROSSPLANE_ONLY"),
 		CommerceEnabled:          controller.EnvBool("GENTIAN_COMMERCE_ENABLED"),
-		CorpAPIURL:               os.Getenv("GENTIAN_CORP_API_URL"),
-		OperatorToken:            os.Getenv("GENTIAN_CORP_OPERATOR_TOKEN"),
+		CommerceAPIURL:           os.Getenv("GENTIAN_COMMERCE_API_URL"),
+		CommerceAPIToken:         os.Getenv("GENTIAN_COMMERCE_API_TOKEN"),
 	}
 	if err := tenantReconciler.SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "Tenant")
@@ -131,6 +163,38 @@ func main() {
 		}
 	}
 
+	// Usage sampling: the tenant ceiling and what is committed under it,
+	// recorded on a ticker so "current use" has a history behind it and a
+	// month resolves to something invoiceable. Off by a single env var, since
+	// a cluster without the per-tenant shell databases has nowhere to write.
+	if os.Getenv("USAGE_SAMPLER_ENABLED") != "false" {
+		sampler := &usage.Sampler{
+			Client:          mgr.GetClient(),
+			KernelNamespace: envOrDefault("KERNEL_NAMESPACE", meta.KernelNamespace),
+			Interval:        envDuration("USAGE_SAMPLE_INTERVAL", 15*time.Minute),
+			Retention:       envDuration("USAGE_RETENTION", 400*24*time.Hour),
+		}
+		// The live series is optional and its absence is not an error: a
+		// cluster with no metrics-server still records the figures a plan is
+		// chosen and billed on, and only loses the answer to "is this tenant
+		// using what they pay for".
+		if controller.EnvBool("METRICS_SERVER_ENABLED") {
+			src, err := usage.NewMetricsAPISource(mgr.GetConfig())
+			if err != nil {
+				setupLog.Error(err, "unable to build the metrics usage source; sampling committed usage only")
+			} else {
+				sampler.Actual = src
+			}
+		}
+		if err := mgr.Add(sampler); err != nil {
+			setupLog.Error(err, "unable to add the usage sampler to manager")
+			os.Exit(1)
+		}
+		setupLog.Info("usage sampler enabled",
+			"interval", sampler.Interval, "retention", sampler.Retention,
+			"actualSource", sampler.Actual != nil)
+	}
+
 	if err := (&controller.KeycloakPlatformReconciler{
 		Client:       mgr.GetClient(),
 		KernelDomain: os.Getenv("KERNEL_DOMAIN"),
@@ -143,11 +207,11 @@ func main() {
 	}
 
 	if err := (&controller.GatewayPlatformReconciler{
-		Client:        mgr.GetClient(),
-		KernelDomain:  os.Getenv("KERNEL_DOMAIN"),
-		TenancyMode:   os.Getenv("TENANCY_MODE"),
-		RoutingMode:   routingMode,
-		CloudflareDNS: buildCloudflareDNSClient(),
+		Client:       mgr.GetClient(),
+		KernelDomain: os.Getenv("KERNEL_DOMAIN"),
+		TenancyMode:  os.Getenv("TENANCY_MODE"),
+		RoutingMode:  routingMode,
+		Ingress:      buildEdgeIngress(),
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "GatewayPlatform")
 		os.Exit(1)
@@ -214,11 +278,61 @@ func main() {
 		os.Exit(1)
 	}
 
+	tenantExportReconciler := &controller.TenantExportReconciler{
+		Client:     mgr.GetClient(),
+		Scheme:     mgr.GetScheme(),
+		Reconciler: tenantReconciler,
+		// The API reader, not the cached client: appVolumes explains why a
+		// cached PVC read is how an export comes to hold an app offline
+		// indefinitely with nothing in the log.
+		VolumeReader: mgr.GetAPIReader(),
+		// Logs are a subresource served as a stream, so they need a clientset
+		// rather than the manager's client. Nil is tolerated by the reconciler;
+		// a failure then reports that a Job failed and not why.
+		LogTailer: buildLogTailer(mgr),
+	}
+	if err := tenantExportReconciler.SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "unable to create controller", "controller", "TenantExport")
+		os.Exit(1)
+	}
+
+	if err := (&controller.TenantRestoreReconciler{
+		Client:     mgr.GetClient(),
+		Scheme:     mgr.GetScheme(),
+		Reconciler: tenantExportReconciler,
+		Tenant:     tenantReconciler,
+	}).SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "unable to create controller", "controller", "TenantRestore")
+		os.Exit(1)
+	}
+
+	if err := (&controller.TenantExportScheduleReconciler{
+		Client: mgr.GetClient(),
+		Scheme: mgr.GetScheme(),
+	}).SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "unable to create controller", "controller", "TenantExportSchedule")
+		os.Exit(1)
+	}
+
+	if err := (&controller.BackupPolicyReconciler{
+		Client: mgr.GetClient(),
+		Scheme: mgr.GetScheme(),
+	}).SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "unable to create controller", "controller", "BackupPolicy")
+		os.Exit(1)
+	}
+
 	if enableWebhook {
 		(&webhook.TenantValidator{
 			Client:       mgr.GetClient(),
 			TenancyMode:  os.Getenv("TENANCY_MODE"),
 			KernelDomain: os.Getenv("KERNEL_DOMAIN"),
+			// Default on. A cluster that has not proven its administrator can
+			// write credentials is one where the recovery from a broken write
+			// path is still cheap, and admitting tenants is what makes it
+			// expensive — so the safe default is the one that keeps the exit open.
+			GateOnHandover:    os.Getenv("HANDOVER_GATE_TENANTS") != "false",
+			HandoverNamespace: envOrDefault("HANDOVER_NAMESPACE", envOrDefault("OPERATOR_NAMESPACE", "gentian-system")),
 		}).SetupWithManager(mgr)
 
 		(&webhook.AppProfileValidator{
@@ -237,6 +351,23 @@ func main() {
 			os.Exit(1)
 		}
 		setupLog.Info("app lifecycle API enabled", "addr", lifecycle.Server.Addr)
+	}
+
+	// Credential Manager — a view over the CredentialRequirement catalogue and
+	// ESO's satisfaction status, plus a write path that writes as the CALLER.
+	// It rides this manager rather than being a second Deployment, and holds no
+	// OpenBao token of its own: every write exchanges the user's OIDC token.
+	if os.Getenv("CREDENTIAL_MANAGER_ENABLED") == "true" {
+		credmgr, err := credentialmgr.NewRunnableFromEnv(mgr, credentialmgr.NewEndpointValidator())
+		if err != nil {
+			setupLog.Error(err, "unable to create the credential manager")
+			os.Exit(1)
+		}
+		if err := mgr.Add(credmgr); err != nil {
+			setupLog.Error(err, "unable to add the credential manager")
+			os.Exit(1)
+		}
+		setupLog.Info("credential manager API enabled", "addr", credmgr.Addr)
 	}
 
 	if err := mgr.AddHealthzCheck("healthz", healthz.Ping); err != nil {
@@ -314,22 +445,98 @@ func buildSeeder() *secrets.Seeder {
 		"bao_addr", baoAddr, "bao_role", role, "deterministic", deriver != nil)
 	return secrets.NewSeeder(kv, deriver)
 }
-// buildCloudflareDNSClient constructs a cloudflareDNSClient from environment
-// variables. Returns nil (feature disabled) if any required variable is absent.
+
+// buildEdgeIngress constructs how traffic reaches this cluster, by NAME.
 //
-//   CLOUDFLARE_API_TOKEN        – Cloudflare API token (Zone:Read + DNS:Edit)
-//   CLOUDFLARE_TUNNEL_API_TOKEN – optional token with Account → Cloudflare Tunnel → Edit
-//   CLOUDFLARE_ZONE_ID          – Cloudflare zone ID for the kernel domain
-//   CLOUDFLARE_TUNNEL_CNAME     – tunnel target, e.g. <uuid>.cfargotunnel.com
-func buildCloudflareDNSClient() *controller.CloudflareDNSClient {
-        token := os.Getenv("CLOUDFLARE_API_TOKEN")
-        zoneID := os.Getenv("CLOUDFLARE_ZONE_ID")
-        tunnelCNAME := os.Getenv("CLOUDFLARE_TUNNEL_CNAME")
-        if token == "" || zoneID == "" || tunnelCNAME == "" {
-                setupLog.Info("Cloudflare DNS management disabled (CLOUDFLARE_API_TOKEN/CLOUDFLARE_ZONE_ID/CLOUDFLARE_TUNNEL_CNAME not set)")
-                return nil
-        }
-        tunnelToken := os.Getenv("CLOUDFLARE_TUNNEL_API_TOKEN")
-        setupLog.Info("Cloudflare DNS management enabled", "zone_id", zoneID, "tunnel_cname", tunnelCNAME, "tunnel_api_token", tunnelToken != "")
-        return controller.NewCloudflareDNSClient(token, zoneID, tunnelCNAME, tunnelToken)
+// The name is the key in kernel/platforms.yaml's edgeIngress table, which is
+// also what decides the credential the installer asks for. One string, two
+// consumers, so they cannot disagree. Which implementation that name maps to
+// lives in the registry (internal/controller/edge_registry.go), not here, so
+// adding an ingress never touches this function.
+//
+// There is no DNS half. external-dns writes this cluster's records -- every
+// provider in kernel/platforms.yaml, from the HTTPRoutes this operator writes
+// and from DNSEndpoint CRs for hostnames a tunnelled Gateway cannot supply an
+// address for. What an ingress contributes is the TARGET those records point
+// at. See internal/controller/edge.go.
+//
+//	EDGE_INGRESS            – which one; defaults from NETWORK_MODE so an
+//	                          existing cluster needs no new value
+//	CF_TUNNEL_TOKEN         – the ingress credential, falling back to
+//	                          CLOUDFLARE_API_TOKEN for single-token clusters
+//	CLOUDFLARE_TUNNEL_CNAME – the tunnel to point at
+//	CLOUDFLARE_ZONE_ID      – only to resolve the account when the next is unset
+//	CLOUDFLARE_ACCOUNT_ID   – supplied, the ingress never reads the zone
+func buildEdgeIngress() controller.EdgeIngress {
+	name := os.Getenv("EDGE_INGRESS")
+	if name == "" {
+		// Follows networkMode, the only thing that decides it today. A
+		// static-ip cluster routes by LoadBalancer address and programs no
+		// ingress; anything else is the tunnel.
+		if os.Getenv("NETWORK_MODE") == "static-ip" {
+			name = "none"
+		} else {
+			name = "cf-tunnel"
+		}
+	}
+
+	token := os.Getenv("CF_TUNNEL_TOKEN")
+	separate := token != ""
+	if token == "" {
+		token = os.Getenv("CLOUDFLARE_API_TOKEN")
+	}
+
+	ing, err := controller.BuildEdgeIngress(name, controller.EdgeIngressConfig{
+		Token:   token,
+		Target:  os.Getenv("CLOUDFLARE_TUNNEL_CNAME"),
+		Zone:    os.Getenv("CLOUDFLARE_ZONE_ID"),
+		Account: os.Getenv("CLOUDFLARE_ACCOUNT_ID"),
+	})
+	if err != nil {
+		// Named but unbuildable is a configuration error, and continuing would
+		// route nothing while looking like a cluster that programs no ingress.
+		setupLog.Error(err, "edge ingress is configured but could not be built", "edge_ingress", name)
+		return nil
+	}
+	if ing == nil {
+		setupLog.Info("no edge ingress; traffic is expected to reach the gateway directly",
+			"edge_ingress", name)
+		return nil
+	}
+	setupLog.Info("edge ingress enabled",
+		"edge_ingress", name,
+		"separate_token", separate,
+		"account_id_supplied", os.Getenv("CLOUDFLARE_ACCOUNT_ID") != "")
+	return ing
+}
+
+// envOrDefault reads an environment variable, falling back when it is unset or
+// empty. Empty and unset are treated alike deliberately: a Helm value rendered
+// to "" is how an unset chart value reaches a container, and treating that as a
+// deliberate empty string means a default that silently stops applying.
+func envOrDefault(key, def string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
+	}
+	return def
+}
+
+// envDuration reads a Go duration from the environment, falling back when it is
+// unset or unparseable.
+//
+// A malformed value falls back rather than exiting: the sampler's interval is
+// an operational preference, and refusing to start the whole operator over a
+// mistyped "15min" would turn a cosmetic error into an outage.
+func envDuration(key string, def time.Duration) time.Duration {
+	v := os.Getenv(key)
+	if v == "" {
+		return def
+	}
+	parsed, err := time.ParseDuration(v)
+	if err != nil || parsed <= 0 {
+		setupLog.Info("ignoring unparseable duration; using the default",
+			"key", key, "value", v, "default", def)
+		return def
+	}
+	return parsed
 }

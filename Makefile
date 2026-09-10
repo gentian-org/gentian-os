@@ -13,14 +13,16 @@ BOILERPLATE := hack/boilerplate.go.txt
 IMG ?= ghcr.io/gentian-org/gentian-os:latest
 
 # Crossplane CLI/core version used for install-tools, CI, and schema validation.
-CROSSPLANE_CLI_VERSION ?= v2.2.1
+# Read from versions.yaml so the pin exists once — it was previously duplicated
+# here, in install.sh and in scripts/bootstrap/install-crossplane-cli.sh, in two spellings.
+CROSSPLANE_CLI_VERSION ?= $(shell bash scripts/lib/versions.sh crossplane cli)
 CROSSPLANE_IMAGE ?= xpkg.crossplane.io/crossplane/crossplane:$(CROSSPLANE_CLI_VERSION)
 
 # Envtest binaries — set KUBEBUILDER_ASSETS to override (e.g. in CI via setup-envtest)
 KUBEBUILDER_ASSETS ?= /tmp/envtest-bins/k8s/1.32.0-linux-amd64
 export KUBEBUILDER_ASSETS
 
-.PHONY: all build generate manifests test lint docker-build clean install-plugin
+.PHONY: all build generate manifests test lint docker-build clean install-plugin uninstall-plugin validate-steps gen-credentials check-credentials lint-cluster-config-keys lint-rbac-coverage lint-marker-ascii test-e04-token-classification lint-composed-resource-names lint-sequencer-targets lint-eso-readable-paths lint-template-placeholders lint-portability lint-image-digests check-render-fixtures lint-resolvable lint-bootstrap-apps lint-step-contracts lint-claim-defaults lint-live-identifiers lint-password-schemes test-policy test-policy-openbao test-policy-authz verify-claim-applied verify-argocd-config verify-image-updates gen-provider-rbac lint-provider-rbac lint-credential-validators lint-credential-catalogue
 
 all: generate build test
 
@@ -34,13 +36,31 @@ install-plugin:
 	install -m 0755 scripts/kubectl-gentian $(HOME)/.local/bin/kubectl-gentian
 	ln -sf kubectl-gentian $(HOME)/.local/bin/gtnctl
 	@echo "Installed kubectl-gentian and gtnctl (-> kubectl-gentian) to $(HOME)/.local/bin"
+	@command -v kubectl-gentian >/dev/null 2>&1 || \
+		echo "NOTE: $(HOME)/.local/bin is not on your PATH — add it to use 'kubectl gentian'."
+
+## Remove the kubectl-gentian plugin and gtnctl symlink from ~/.local/bin
+##
+## The installer no longer removes these on --uninstall: tearing one cluster
+## down should not disarm the CLI that manages the others. Removal is a host
+## operation, so it is a host command.
+uninstall-plugin:
+	rm -f $(HOME)/.local/bin/kubectl-gentian $(HOME)/.local/bin/gtnctl
+	@echo "Removed kubectl-gentian and gtnctl from $(HOME)/.local/bin"
+	@if [ -e /usr/local/bin/kubectl-gentian ] || [ -e /usr/local/bin/gtnctl ]; then \
+		echo "An older install left copies in /usr/local/bin. Remove them with:"; \
+		echo "  sudo rm -f /usr/local/bin/kubectl-gentian /usr/local/bin/gtnctl"; \
+	fi
 
 ## Run unit tests
 # internal/controller uses envtest whose watch goroutines conflict with -race;
 # all other packages are tested with the race detector enabled.
 test:
 	go test $$(go list ./... | grep -v 'internal/controller') -race
-	go test ./internal/controller/...
+	# -timeout, because envtest waits are bounded at 3 minutes each: enough
+	# simultaneous failures would exceed Go's 10-minute default and replace
+	# readable per-test failures with a whole-package panic dump.
+	go test ./internal/controller/... -timeout 20m
 
 ## Generate deepcopy methods
 generate:
@@ -49,22 +69,203 @@ generate:
 ## Generate CRD manifests and sync them into the Helm chart crds/ directory
 manifests:
 	$(CONTROLLER_GEN) $(CRD_OPTIONS) paths="./api/..." output:crd:artifacts:config=config/crd
-	cp config/crd/gentianos.io_*.yaml charts/gentian-os/crds/
+	@# Not a blanket copy: Apps and XTenants are Crossplane XRD-generated, and
+	@# Helm claims server-side apply ownership of everything in crds/, so shipping
+	@# them there fights Crossplane for the same objects — see crds/README.md.
+	@# The blanket copy used to drop both into crds/ on every run, leaving two
+	@# untracked files one commit away from breaking the install.
+	@for f in config/crd/gentianos.io_*.yaml; do \
+		case "$$f" in *_apps.yaml|*_xtenants.yaml) continue ;; esac; \
+		cp "$$f" charts/gentian-os/crds/; \
+	done
+	@# RBAC is generated from the +kubebuilder:rbac markers, which live in
+	@# ./internal/... — NOT ./api/..., where the CRD run above looks. Scanning
+	@# only ./api/... is what let the chart's hand-written ClusterRole drift from
+	@# the markers for eleven separate permissions; see scripts/gen/gen-clusterrole.py.
+	$(CONTROLLER_GEN) rbac:roleName=gentian-os paths="./internal/..." output:rbac:artifacts:config=config/rbac
+	python3 scripts/gen/gen-clusterrole.py
+
+## Render the Keycloak login theme sources into the ConfigMap Argo CD applies
+gen-theme:
+	python3 scripts/gen/gen-keycloak-theme-configmap.py
+
+## Render credentials.yaml into the packaged CredentialRequirement CRs
+gen-credentials:
+	python3 scripts/gen/gen-credential-requirements.py
+
+## Regenerate the provider-kubernetes ClusterRole from provider-kubernetes-kinds.yaml
+gen-provider-rbac:
+	python3 scripts/gen/gen-provider-rbac.py
 
 ## Both generate and manifests in order
-gen-all: generate manifests
+gen-all: generate manifests gen-theme gen-credentials gen-provider-rbac
 
 ## Verify generated files are up to date (CI check)
 verify-gen: gen-all
-	git diff --exit-code api/ config/crd/ charts/gentian-os/crds/ || (echo "Generated files are out of date. Run 'make gen-all'." && exit 1)
+	python3 scripts/gen/gen-credential-requirements.py --check
+	git diff --exit-code api/ config/crd/ charts/gentian-os/crds/ charts/gentian-os/templates/clusterrole.yaml kernel/services/keycloak-idp/manifests/ kernel/credentials/ crossplane/providers/provider-rbac.yaml || (echo "Generated files are out of date. Run 'make gen-all'." && exit 1)
 
 ## Tidy module dependencies
 tidy:
 	go mod tidy
 
+## Run every linter the CI Lint job runs (Go, YAML, shell)
+lint: lint-go lint-yaml lint-shell
+
 ## Run golangci-lint (install from https://golangci-lint.run/usage/install/)
-lint:
+lint-go:
 	golangci-lint run ./...
+
+## Run yamllint over the repo, as .github/workflows/ci.yaml does
+lint-yaml:
+	yamllint -c .yamllint.yml .
+
+## Run shellcheck over every tracked shell script, as .github/workflows/ci.yaml does.
+## The file list and flags must match CI exactly: -x follows sourced files, and no
+## -S filter means info/style findings fail the build too. Hand-rolling a narrower
+## invocation is how an SC2153 reached develop green-looking.
+lint-shell: validate-steps lint-step-contracts lint-resolvable lint-bootstrap-apps lint-credential-fields lint-credential-validators lint-credential-catalogue lint-claim-defaults lint-live-identifiers lint-cluster-config-keys lint-template-placeholders lint-provider-rbac lint-password-schemes lint-rbac-coverage lint-composed-resource-names lint-sequencer-targets lint-eso-readable-paths lint-marker-ascii test-e04-token-classification
+	@git ls-files -z -- '*.sh' | xargs -0 shellcheck -x scripts/kubectl-gentian
+
+## Round-trip the recovery kit: export one, load it back, prove every value
+## returns byte-exact. Needs no cluster; skips when age is absent, because the
+## openssl fallback reads its passphrase from a terminal.
+verify-recovery-kit:
+	@bash scripts/tools/verify-recovery-kit.sh
+
+## E-04 must tell the bootstrap credential apart from the cluster-admin session
+## every run carries after handover. Stubs the bao CLI; needs no cluster.
+test-e04-token-classification:
+	@bash scripts/tests/test-e04-token-classification.sh
+
+## Report which declared credentials are satisfied. --source picks where to look:
+## vault (installer preflight), cluster (day-2), git (CI on a deployments branch).
+check-credentials:
+	@bash scripts/check-credentials.sh --source=$${SOURCE:-cluster}
+
+## Assert every pinned image digest is a manifest list, not a single
+## architecture. Queries the registry, so it needs network and is not part of
+## the offline lint set.
+lint-image-digests:
+	@bash scripts/lint/lint-image-digests.sh
+
+## Assert every function call in every shell file resolves. Catches deleting a
+## function whose last caller was not checked — the most repeated mistake here.
+lint-step-contracts:
+	@bash scripts/lint/lint-step-contracts.sh
+
+lint-resolvable:
+	@bash scripts/lint/lint-resolvable.sh
+
+## Assert every reader of an OpenBao path names a field the catalogue declares
+## and the installer writes. A value under the right path with the wrong key
+## reads as absent and presents as an ESO fault; it has cost two clusters.
+lint-credential-fields:
+	@python3 scripts/lint/lint-credential-fields.py
+
+## Assert every generated requirement names a validator its own CRD admits.
+## The catalogue and the CRD are generated from different sources, so each can
+## be internally correct while disagreeing with the other — which aborted a
+## real install at C-06.
+lint-credential-validators:
+	@python3 scripts/lint/lint-credential-validators.py
+
+## Assert the generator and the installer agree on which provider tables exist,
+## and that every generated requirement is one a cluster can actually be
+## prompted for. Neither side can check this alone.
+lint-credential-catalogue:
+	@python3 scripts/lint/lint-credential-catalogue.py
+
+## Report shell defaults for settings the Cluster XRD already answers. Expected
+## non-zero until the call sites read the claim; the number must only go down.
+## Fail if anything writes a password where Dovecot expects a hash.
+lint-password-schemes:
+	@bash scripts/lint/lint-password-schemes.sh
+
+lint-claim-defaults:
+	@bash scripts/lint/lint-claim-defaults.sh
+
+## Count the places this repo names one specific deployment — a cluster id, the
+## platform domain, a tenant. Reported, not fatal; the number must only go down.
+lint-live-identifiers:
+	@bash scripts/lint/lint-live-identifiers.sh
+
+## Assert every gentian-cluster-config key a Composition reads is one the
+## producer writes. sprig's dig defaults a missing key to "", so a rename or
+## typo renders empty rather than failing — and the render fixtures do not
+## catch it either, because they supply a partial ConfigMap.
+lint-cluster-config-keys:
+	@python3 scripts/lint/lint-cluster-config-keys.py
+
+## Assert the operator may read every GroupVersionKind it constructs.
+##
+## envtest does not enforce RBAC, so the controller suite passes with a
+## ServiceAccount a real cluster would refuse. That is not hypothetical: the mail
+## reconcile began waiting on a Crossplane-composed Keycloak Client, every test
+## passed, and the deploy could not read it — every tenant reconcile failed until
+## the marker was added. Replacing a Job with a wait on the object Crossplane
+## owns turns a write into a read, and each such step arms the same trap.
+lint-rbac-coverage:
+	@python3 scripts/lint/lint-rbac-coverage.py
+
+## kubebuilder markers are machine input, copied into the CRD and — for a CEL
+## rule — compiled by the API server. A typographic quote is not a token CEL
+## knows, so the API server refuses the whole CRD and every test installing it
+## panics before its first assertion. Two commits shipped that, a day apart.
+lint-marker-ascii:
+	@python3 scripts/lint/lint-marker-ascii.py
+
+## Assert every composed resource name is one Kubernetes will accept.
+##
+## Composed resources are named from the thing they represent, and Keycloak
+## names things Kubernetes will not take: gentian_useruuid has an underscore,
+## VERIFY_PROFILE lowercases to verify_profile, some catalogues name a mapper
+## "full name". Each produces an invalid-RFC-1123 error and leaves the composite
+## Synced=False. `crossplane render` does not catch it — no API server sees the
+## object — so the fixtures go green with a name the cluster refuses.
+lint-composed-resource-names:
+	@python3 scripts/lint/lint-composed-resource-names.py
+
+## A function-sequencer rule holds back everything after a name until a resource
+## matching it exists. A name nothing renders therefore blocks the rest forever,
+## and the sequencer reports that as an ordinary delay on a composite that stays
+## Synced=True — which is how `networkpolicy` outlived its resource by seven
+## weeks and kept every tenant's OpenBao policy from ever being created.
+lint-sequencer-targets:
+	@python3 scripts/lint/lint-sequencer-targets.py
+
+## A credential has two halves: something writes it to OpenBao, and ESO reads it
+## back into a Secret. When only the write is permitted the value stores fine and
+## never materialises — a 403 on the read, and a satisfaction probe that reports
+## the credential missing while it sits in the path. Three paths have shipped that
+## way. Every path this repo builds must be ESO-readable or declared operator-only.
+lint-eso-readable-paths:
+	@python3 scripts/lint/lint-eso-readable-paths.py
+
+## Regenerate the §11 phase table from the phase sections
+## Fail when the phase table disagrees with the phase sections
+## Fail when a render fixture composes a kind provider-kubernetes-kinds.yaml does not cover
+lint-provider-rbac:
+	@python3 scripts/lint/lint-provider-rbac.py
+
+## Shell placeholders in Helm templates, which nothing expands
+lint-template-placeholders:
+	@python3 scripts/lint/lint-template-placeholders.py
+
+## Report macOS/BSD portability violations. Expected non-zero until Phase 13
+## migrates the call sites; the count must only go down.
+lint-portability:
+	@bash scripts/lint/lint-portability.sh
+
+## Assert every bootstrap Application name resolves to a chart template.
+## Reads only the repository — no cluster.
+lint-bootstrap-apps:
+	@bash scripts/lint/lint-bootstrap-apps.sh
+
+## Assert every scripts/steps/*.sh declares its contract and defines apply().
+## Reads only the step files — no cluster, no kubeconfig.
+validate-steps:
+	@SCRIPT_DIR="$(CURDIR)" bash -c 'source scripts/lib/load.sh; source scripts/lib/driver.sh; validate_steps'
 
 ## Build the operator container image
 docker-build:
@@ -77,9 +278,14 @@ clean:
 # Crossplane unit tests (no cluster required)
 # ---------------------------------------------------------------------------
 
+## Assert each render test's Composition copy matches the deployed one. A stale
+## copy keeps the golden test green against a Composition nobody runs.
+check-render-fixtures:
+	@bash scripts/lint/check-render-fixtures.sh
+
 ## Run crossplane render golden-file tests for all test cases in crossplane/tests/unit/render/
 ## Skip directories without an expected.yaml (run 'make test-unit-render-update' to generate them)
-test-unit-render:
+test-unit-render: check-render-fixtures
 	@echo "=== crossplane render golden tests ==="
 	@failed=0; \
 	for dir in crossplane/tests/unit/render/*/; do \
@@ -186,6 +392,58 @@ test-unit-schema:
 test-unit: test-unit-render test-unit-functions test-unit-schema
 	@echo "=== all crossplane unit tests passed ==="
 
+## Assert what the authorization rules actually permit, not just what they say.
+## Two layers that fail in different ways:
+##   OpenBao path policies — who may read which secret path. The tenant-admin
+##   deny on gentian-os/kernel/* is the one rule where a mistake is a breach.
+##   Skips cleanly when `bao` is absent.
+##   The OpenFGA model — who may launch an app or read a document.
+## test-unit-render covers the same policies as TEXT; these run them.
+test-policy: test-policy-openbao test-policy-authz
+	@echo "=== authorization policy tests passed ==="
+
+test-policy-openbao:
+	@bash scripts/tools/verify-openbao-policies.sh
+
+test-policy-authz:
+	@bash scripts/tools/verify-authz-model.sh
+
+## verify-claim-applied: the live cluster carries what its Cluster claim says.
+##
+## Not part of `test`, because it needs a cluster rather than a checkout. The
+## settings that reach ApplicationSets do so as Helm parameters the installer
+## writes once and never re-applies, so git and the claim can agree while the
+## cluster runs on something else — which is how mail.serviceMode came to say
+## kernel in the claim and external on the cluster, leaving Dovecot running
+## with no owner. Read-only: it reports, it does not reconcile.
+verify-claim-applied:
+	@bash scripts/tools/verify-claim-applied.sh
+
+## verify-argocd-config: Argo CD is configured the way the installer configures one.
+##
+## Argo CD's own ConfigMaps are written by scripts/lib/argocd.sh and reconciled by
+## nothing — deliberately, because they are bootstrap settings that must be right
+## before the thing that would reconcile them is trustworthy. The cost is that a
+## key patched onto a cluster and never added to the script is lost on the next
+## one, and a key added to the script is absent here, with neither side unhappy.
+## Read-only: it reports, it does not patch.
+verify-argocd-config:
+	@python3 scripts/tools/verify-argocd-config.py
+
+## verify-image-updates: the cluster runs the images CI publishes.
+##
+## Also not part of `test`, and for the same reason as above: the annotations
+## argocd-image-updater reads are written onto an Application the installer
+## applies once. lint-template-placeholders.py guards the template those
+## annotations come from; this checks what the cluster ended up with, because
+## the two can disagree for as long as nobody looks.
+##
+## The updater reports success when it does nothing — an image it cannot
+## resolve is skipped, not failed, so the cluster reads Healthy with pods
+## Running while every merged fix stays unpublished. Read-only.
+verify-image-updates:
+	@bash scripts/tools/verify-image-updates.sh
+
 # ---------------------------------------------------------------------------
 # E2E tests (live dev cluster required)
 # ---------------------------------------------------------------------------
@@ -195,7 +453,7 @@ install-tools:
 	@which crossplane >/dev/null 2>&1 || { \
 		echo "Installing crossplane CLI..."; \
 		tmpdir=$$(mktemp -d); \
-		( cd "$$tmpdir" && XP_VERSION=$(CROSSPLANE_CLI_VERSION) bash "$(shell pwd)/scripts/install-crossplane-cli.sh" \
+		( cd "$$tmpdir" && XP_VERSION=$(CROSSPLANE_CLI_VERSION) bash "$(shell pwd)/scripts/bootstrap/install-crossplane-cli.sh" \
 		  && sudo mv crossplane /usr/local/bin/crossplane ); \
 		rmdir "$$tmpdir"; \
 	}

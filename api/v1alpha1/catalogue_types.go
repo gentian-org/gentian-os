@@ -49,10 +49,20 @@ const (
 	AnnotationIngressGatewayFrameAncestors = "gentianos.io/gateway-frame-ancestors"
 	// GatewayEscapedSlashesAction sets Envoy ClientTrafficPolicy path.escapedSlashesAction.
 	AnnotationIngressGatewayEscapedSlashesAction = "gentianos.io/gateway-escaped-slashes-action"
-	// GatewayRequestTimeout sets BackendTrafficPolicy timeout.http.requestTimeout (e.g. "3600s" or "3600").
+	// GatewayRequestTimeout sets BackendTrafficPolicy timeout.http.requestTimeout
+	// (e.g. "3600s" or "3600"). This is the whole budget for the exchange, not
+	// just for sending the request -- Envoy holds one route timeout covering the
+	// upstream's response as well.
+	//
+	// There is deliberately no response-timeout companion. One existed, as
+	// gentianos.io/gateway-response-timeout, and did nothing at all:
+	// BackendTrafficPolicy's timeout.http has only connectionIdleTimeout,
+	// maxConnectionDuration and requestTimeout, so the API server pruned the
+	// field on write and every policy came back carrying requestTimeout alone.
+	// Four profiles set it, all to the same value as the request timeout, and
+	// none of them ever got what the name promised. Nothing tested it, which is
+	// why it stayed that way.
 	AnnotationIngressGatewayRequestTimeout = "gentianos.io/gateway-request-timeout"
-	// GatewayResponseTimeout sets BackendTrafficPolicy timeout.http.responseTimeout.
-	AnnotationIngressGatewayResponseTimeout = "gentianos.io/gateway-response-timeout"
 	// GatewayBufferLimit sets BackendTrafficPolicy connection.bufferLimit (e.g. "128m").
 	AnnotationIngressGatewayBufferLimit = "gentianos.io/gateway-buffer-limit"
 )
@@ -68,9 +78,6 @@ const (
 	// for this across all apps; upstream may call them modules (Odoo) or apps
 	// (Nextcloud), but that is their vocabulary, not ours.
 	ProfileDeploymentRoleAddon ProfileDeploymentRole = "addon"
-	// ProfileDeploymentRoleModule is the pre-cleanup spelling of Addon, still accepted
-	// on input so the catalogue can migrate without a flag day. Deprecated: use Addon.
-	ProfileDeploymentRoleModule ProfileDeploymentRole = "module"
 )
 
 // Default catalogue values applied when fields are omitted on legacy profiles.
@@ -80,15 +87,16 @@ const (
 
 // Edition identifies which edition of an app a profile packages:
 //
-//	ce  — community edition, as published by the upstream organisation
-//	me  — maintained edition: ce plus active maintenance by Gentian
-//	pro — commercial, supplied by a vendor (see AppProfile.spec.author)
+//	ce — community edition, as published by the upstream organisation
+//	me — maintained edition: ce plus active maintenance by Gentian
+//	ee — commercially licensed, entitlement-gated; supplied either by the upstream
+//	     organisation or by a third party (see AppProfile.spec.author)
 //
 // Editions are technically interchangeable; what decides whether one may run is
 // authorization (a paid licence), and technical addon/base compatibility is managed
-// by version. See gentian-apps/docs/L3-cleanup.md §2.1.
+// by version. See gentian-os/docs/app-customization.md §4.2.
 //
-// +kubebuilder:validation:Enum=ce;me;pro
+// +kubebuilder:validation:Enum=ce;me;ee
 type Edition string
 
 const (
@@ -96,8 +104,10 @@ const (
 	EditionCE Edition = "ce"
 	// EditionME is the community edition plus active maintenance by Gentian.
 	EditionME Edition = "me"
-	// EditionPro is a commercial edition supplied by a vendor (see spec.author).
-	EditionPro Edition = "pro"
+	// EditionEE is a commercially licensed edition requiring an entitlement. It says
+	// the entry is paid-for, not who publishes it: spec.author names the supplier,
+	// which may be the upstream organisation or a third party packaging it.
+	EditionEE Edition = "ee"
 )
 
 // TrustTier describes platform certification / review level for a catalogue entry.
@@ -126,7 +136,7 @@ type ProfileIdentity struct {
 	// +kubebuilder:validation:Pattern=`^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-[\w.-]+)?(?:\+[\w.-]+)?$`
 	CatalogueVersion string `json:"catalogueVersion"`
 
-	// Edition selects the edition (ce, me, pro).
+	// Edition selects the edition (ce, me, ee).
 	// +optional
 	// +kubebuilder:default=ce
 	Edition Edition `json:"edition,omitempty"`

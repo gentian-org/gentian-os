@@ -14,7 +14,6 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-
 package controller
 
 import (
@@ -30,10 +29,10 @@ import (
 )
 
 const (
-	gatewayComponentLabel    = "gentianos.io/gateway-component"
-	gatewayComponentApp      = "app-route"
-	gatewayComponentApex     = "apex-redirect"
-	gatewayComponentKernel   = "kernel-route"
+	gatewayComponentLabel  = "gentianos.io/gateway-component"
+	gatewayComponentApp    = "app-route"
+	gatewayComponentApex   = "apex-redirect"
+	gatewayComponentKernel = "kernel-route"
 )
 
 type ingressIntent struct {
@@ -48,10 +47,6 @@ func appHTTPRouteName(tenantName, appProfile string) string {
 
 func appBackendTrafficPolicyName(tenantName, appProfile string) string {
 	return fmt.Sprintf("btp-%s-%s", tenantName, appProfile)
-}
-
-func tenantEscapedSlashesClientTrafficPolicyName(tenantName string) string {
-	return fmt.Sprintf("ctp-%s-escaped-slashes", tenantName)
 }
 
 func tenantApexRedirectRouteName(tenantName string) string {
@@ -75,21 +70,40 @@ func kernelGatewayParentRef() gatewayv1.ParentReference {
 	return ref
 }
 
-func tenantGatewayParentRefs(tenantName string) []gatewayv1.ParentReference {
-	return []gatewayv1.ParentReference{
-		gatewayParentRef(tenantGatewayName(tenantName)),
-		kernelGatewayParentRef(),
+// tenantGatewayParentRefs attaches a tenant route to the kernel Gateway.
+//
+// kernelSectionName names the listener to bind. Pinning is required: an
+// unpinned route attaches to every listener whose hostname matches, and the
+// Gateway's plaintext :80 listener is hostname-less, so the route would outrank
+// the redirect route there and serve the app over http.
+func tenantGatewayParentRefs(kernelSectionName string) []gatewayv1.ParentReference {
+	kernelRef := kernelGatewayParentRef()
+	if kernelSectionName != "" {
+		s := gatewayv1.SectionName(kernelSectionName)
+		kernelRef.SectionName = &s
+	}
+	return []gatewayv1.ParentReference{kernelRef}
+}
+
+// pathMatch builds an HTTPRouteMatch of the given path-match type.
+//
+// pathExactMatch and pathPrefixMatch were separate copies in separate files,
+// differing in one constant.
+func pathMatch(t gatewayv1.PathMatchType, value string) gatewayv1.HTTPRouteMatch {
+	return gatewayv1.HTTPRouteMatch{
+		Path: &gatewayv1.HTTPPathMatch{
+			Type:  &t,
+			Value: &value,
+		},
 	}
 }
 
 func pathPrefixMatch(prefix string) gatewayv1.HTTPRouteMatch {
-	t := gatewayv1.PathMatchPathPrefix
-	return gatewayv1.HTTPRouteMatch{
-		Path: &gatewayv1.HTTPPathMatch{
-			Type:  &t,
-			Value: &prefix,
-		},
-	}
+	return pathMatch(gatewayv1.PathMatchPathPrefix, prefix)
+}
+
+func pathExactMatch(path string) gatewayv1.HTTPRouteMatch {
+	return pathMatch(gatewayv1.PathMatchExact, path)
 }
 
 // appHTTPRoutesForIntents builds the desired per-app HTTPRoutes for a tenant.
@@ -245,7 +259,21 @@ func buildAppHTTPRoute(
 		},
 		Spec: gatewayv1.HTTPRouteSpec{
 			CommonRouteSpec: gatewayv1.CommonRouteSpec{
-				ParentRefs: tenantGatewayParentRefs(tenant.Name),
+				// An app served on the tenant apex belongs to the apex listener;
+				// anything else is a subdomain covered by the tenant wildcard.
+				// An app on the tenant apex is served by the kernel catch-all
+				// listener (the kernel certificate covers <tenant>.<domain>);
+				// anything deeper needs the tenant certificate.
+				// An app on the tenant apex is served by the kernel catch-all
+				// listener (the kernel certificate covers <tenant>.<domain>);
+				// anything deeper needs the tenant certificate's listener.
+				ParentRefs: func() []gatewayv1.ParentReference {
+					section := tenantGatewayListenerName(tenant.Name)
+					if host == effectiveDomain {
+						section = wildcardListenerName
+					}
+					return tenantGatewayParentRefs(section)
+				}(),
 			},
 			Hostnames: []gatewayv1.Hostname{gatewayv1.Hostname(host)},
 			Rules:     rules,
@@ -336,48 +364,6 @@ func appAPIBackendRules(
 	return rules
 }
 
-func buildTenantApexRedirectHTTPRoute(tenant *gentianov1alpha1.Tenant, nsName, effectiveDomain, kernelDomain string) *gatewayv1.HTTPRoute {
-	scheme := "https"
-	status := 302
-	port := gatewayv1.PortNumber(443)
-	pathType := gatewayv1.FullPathHTTPPathModifier
-	loginPath := "/login/"
-	portalHost := gatewayv1.PreciseHostname(kernelPortalHost(kernelDomain))
-	return &gatewayv1.HTTPRoute{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      tenantApexRedirectRouteName(tenant.Name),
-			Namespace: nsName,
-			Labels:    portalRedirectLabels(tenant.Name, tenantApexRedirectRouteName(tenant.Name)),
-		},
-		Spec: gatewayv1.HTTPRouteSpec{
-			CommonRouteSpec: gatewayv1.CommonRouteSpec{
-				ParentRefs: tenantGatewayParentRefs(tenant.Name),
-			},
-			Hostnames: []gatewayv1.Hostname{gatewayv1.Hostname(effectiveDomain)},
-			Rules: []gatewayv1.HTTPRouteRule{
-				{
-					Matches: []gatewayv1.HTTPRouteMatch{pathPrefixMatch("/")},
-					Filters: []gatewayv1.HTTPRouteFilter{
-						{
-							Type: gatewayv1.HTTPRouteFilterRequestRedirect,
-							RequestRedirect: &gatewayv1.HTTPRequestRedirectFilter{
-								Scheme:   &scheme,
-								Hostname: &portalHost,
-								Path: &gatewayv1.HTTPPathModifier{
-									Type:            pathType,
-									ReplaceFullPath: &loginPath,
-								},
-								Port:       &port,
-								StatusCode: &status,
-							},
-						},
-					},
-				},
-			},
-		},
-	}
-}
-
 func gatewayEmbeddingResponseFilters(
 	kernelDomain, effectiveDomain, ingressSubDomain, mainIngressSubDomain string,
 	ingress *gentianov1alpha1.IngressSpec,
@@ -421,13 +407,34 @@ type gatewayFrameAncestorsPolicy struct {
 	Origins string
 }
 
-func computeGatewayFrameAncestorsPolicy(kernelDomain, effectiveDomain, _ string) gatewayFrameAncestorsPolicy {
+// portalOrigins lists every origin the portal answers on for one tenant. There
+// are two: the shared kernel host, and the tenant's own apex, which
+// kernelHTTPRouteSpecs serves the same portal deployment from. Anything an
+// embedded app may be framed by has to name both, since frame-ancestors is
+// checked against the whole ancestor chain and the top frame is whichever host
+// the user happens to be signed in on.
+//
+// Both the computed default below and the "portal" token in
+// ingressFrameAncestorsPolicy resolve through here. They used to enumerate the
+// hosts separately, and when the portal gained the tenant apex the token kept
+// naming only portal.<kernel-domain> — so the one route that opts out of the
+// default (Collabora) lost the origin the user was actually on, and every
+// document open failed with "Failed to load Nextcloud Office" while the server
+// side stayed healthy. A third portal hostname must reach both policies at once.
+func portalOrigins(kernelDomain, effectiveDomain string) []string {
 	var origins []string
 	if kernelDomain != "" {
-		origins = append(origins, fmt.Sprintf("https://portal.%s", kernelDomain))
+		origins = append(origins, fmt.Sprintf("https://%s", kernelPortalHost(kernelDomain)))
 	}
 	if effectiveDomain != "" && effectiveDomain != kernelDomain {
 		origins = append(origins, fmt.Sprintf("https://%s", effectiveDomain))
+	}
+	return origins
+}
+
+func computeGatewayFrameAncestorsPolicy(kernelDomain, effectiveDomain, _ string) gatewayFrameAncestorsPolicy {
+	origins := portalOrigins(kernelDomain, effectiveDomain)
+	if effectiveDomain != "" && effectiveDomain != kernelDomain {
 		origins = append(origins, fmt.Sprintf("https://*.%s", effectiveDomain))
 	}
 	if len(origins) > 0 {

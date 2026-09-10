@@ -14,12 +14,12 @@ covers architecture in depth.
   builds). Cluster configuration is layered and reconciled via ArgoCD, with cluster-specific
   values living in [gentian-deployments](https://github.com/gentian-org/gentian-deployments) (see
   [docs/deployment.md](docs/deployment.md)).
-* **Do not build images, run `install.sh`/`uninstall.sh` against a shared cluster, or hand-patch
+* **Do not build images, run `install.sh` (in either direction) against a shared cluster, or hand-patch
   live resources.** Changes belong in git (this repo for kernel/chart defaults, `gentian-deployments`
   for cluster-specific overlays) and get applied by CI/ArgoCD reconciliation. Accelerating
   reconciliation — e.g. deleting a stuck resource so the operator/ArgoCD recreates it cleanly —
   is fine; manually recreating it yourself with different config is not.
-* `install.sh`/`uninstall.sh` are for local dev clusters and documented bootstrap scenarios
+* `install.sh` is for local dev clusters and documented bootstrap scenarios
   (see GETTING-STARTED.md), not a substitute for GitOps on shared clusters.
 
 ## App customization — the ladder is generic, the apps are not

@@ -1,0 +1,591 @@
+apiVersion: apiextensions.crossplane.io/v1
+kind: Composition
+metadata:
+  name: repository-default
+  labels:
+    gentianos.io/composition: repository
+spec:
+  compositeTypeRef:
+    apiVersion: gentianos.io/v1alpha1
+    kind: XRepository
+  mode: Pipeline
+  pipeline:
+
+    # ── Is this repository's credential satisfied? ───────────────────────────
+    # ESO maintains the answer as a condition on the probe ExternalSecret this
+    # composition emits below. Fetching it here is the whole of the gate: no
+    # bespoke component polls OpenBao, and nothing holds a token to do so.
+    #
+    # minMatch: 0 because the probe does not exist on the very first
+    # reconcile — the composition has not created it yet. An absent probe is
+    # treated as unsatisfied, so the first pass emits the requirement and the
+    # probe and nothing else, and the second pass emits the consumers once ESO
+    # has had a chance to answer.
+    - step: fetch-credential-probe
+      functionRef:
+        name: function-extra-resources
+      input:
+        apiVersion: extra-resources.fn.crossplane.io/v1beta1
+        kind: Input
+        spec:
+          extraResources:
+            - kind: ExternalSecret
+              into: credentialProbe
+              apiVersion: external-secrets.io/v1
+              type: Selector
+              selector:
+                maxMatch: 1
+                minMatch: 0
+                matchLabels:
+                  - key: gentianos.io/credential-requirement
+                    type: FromCompositeFieldPath
+                    valueFromFieldPath: metadata.name
+
+    # ── Emit the credential declaration and every consumer-shaped artefact ────
+    # One OpenBao path per repository, one rotation point, N artefacts kept in
+    # lockstep. Adding a repository is one claim and no new Composition.
+    #
+    # The CredentialRequirement is emitted here rather than hand-written so it
+    # cannot drift from the claim that needs it. ESO's sync status on the
+    # emitted ExternalSecret is what makes the requirement satisfied or not —
+    # nothing polls OpenBao, and no component holds a token to do so.
+    - step: render-artefacts
+      functionRef:
+        name: function-go-templating
+      input:
+        apiVersion: gotemplating.fn.crossplane.io/v1beta1
+        kind: GoTemplate
+        source: Inline
+        inline:
+          template: |
+            {{- $spec := .observed.composite.resource.spec }}
+            {{- $name := .observed.composite.resource.metadata.name }}
+            {{- /* The claim's name, which unlike $name carries no generated suffix.
+                 Used only for the Secret a consumer references by name: a chart value
+                 cannot be written against "deployments-m288c", and that suffix changes
+                 if the claim is recreated. Everything else stays keyed to the
+                 composite, so composed resources remain unambiguous when two claims
+                 share a name in different namespaces. */}}
+            {{- $claimName := dig "labels" "crossplane.io/claim-name" $name .observed.composite.resource.metadata }}
+            {{- $cred := $spec.credential | default dict }}
+            {{- /* A repository need not have a credential: a public chart registry or a
+                 public Git remote has none, and requiring one produced a
+                 CredentialRequirement nobody could satisfy and an ExternalSecret reading
+                 a vault path that was never written. Without one, this emits the
+                 repository and nothing that waits on a secret. */}}
+            {{- $hasCred := ne (len $cred) 0 }}
+            {{- /* A repository owned by a tenant produces a tenant-scoped
+                 credential. Scope on its own only says "a tenant may see this";
+                 the tenant name is what stops one tenant reading another's
+                 repository credential out of the catalogue. */}}
+            {{- $tenant := default "" (dig "tenant" "" $spec) }}
+            {{- $credScope := ternary "tenant" "cluster" (ne $tenant "") }}
+            {{- $isOci := eq $spec.type "oci" }}
+            {{- $isGit := eq $spec.type "git" }}
+            {{- $vtype := (($cred.validate).type) | default "noop" }}
+            {{- $authType := $cred.authType | default "basic" }}
+            {{- $isBearer := eq $authType "bearer" }}
+            {{- /*
+                 Everything written into the cluster uses the in-cluster
+                 address. The external address exists only for the installer's
+                 own reachability probes and must never leak into a Secret or
+                 an ApplicationSet.
+            */ -}}
+            {{- $url := $spec.endpoints.inCluster }}
+            {{- /*
+                 All-or-nothing per claim. A claim composing five resources
+                 where one consumes a missing credential must create ZERO of
+                 them, not four — otherwise "unsatisfied" degrades into
+                 "half-applied", which is the state a rollback would exist to
+                 clean up. The requirement and its probe are the exception:
+                 they are emitted unconditionally, because they are how an
+                 operator learns what to supply.
+            */ -}}
+            {{- $extra  := index .context "apiextensions.crossplane.io/extra-resources" }}
+            {{- $probes := dig "credentialProbe" list $extra }}
+            {{- /* No credential means nothing to wait for, so the artefacts below are
+                 emitted immediately rather than never. */}}
+            {{- $satisfied := not $hasCred }}
+            {{- range $probes }}
+              {{- range (dig "status" "conditions" list .) }}
+                {{- if and (eq .type "Ready") (eq .status "True") }}
+                  {{- $satisfied = true }}
+                {{- end }}
+              {{- end }}
+            {{- end }}
+
+            {{- if $hasCred }}
+            ---
+            # The catalogue entry for this repository's credential.
+            apiVersion: gentianos.io/v1alpha1
+            kind: CredentialRequirement
+            metadata:
+              name: repository-{{ $name }}
+              labels:
+                gentianos.io/credential-phase: {{ $cred.phase | default "runtime" }}
+                gentianos.io/credential-scope: {{ $credScope }}
+                {{- if ne $tenant "" }}
+                gentianos.io/tenant: {{ $tenant | quote }}
+                {{- end }}
+              annotations:
+                {{ setResourceNameAnnotation (printf "credreq-%s" $name) }}
+                # CredentialRequirement is a declaration, not a controller's
+                # object: its CRD has no status subresource and nothing ever
+                # writes conditions to it. function-auto-ready reads readiness
+                # from status.conditions, so left to itself it waits for a Ready
+                # that cannot arrive -- and every Repository claim carrying a
+                # credential stayed Ready=False for the life of the cluster,
+                # while the three without one went Ready immediately.
+                #
+                # function-go-templating's readiness annotation -- its
+                # namespace, not crossplane.io's, and the pipeline here is
+                # go-templating + auto-ready. A composed resource that exists is
+                # done.
+                gotemplating.fn.crossplane.io/ready: "True"
+            spec:
+              displayName: {{ $cred.displayName | quote }}
+              description: {{ $cred.description | default "" | quote }}
+              phase: {{ $cred.phase | default "runtime" }}
+              scope: {{ $credScope }}
+              {{- if ne $tenant "" }}
+              tenant: {{ $tenant | quote }}
+              {{- end }}
+              optional: {{ $cred.optional | default false }}
+              vaultPath: {{ $cred.vaultPath | quote }}
+              fields:
+                {{- if not $isBearer }}
+                - key: username
+                  format: string
+                  secret: false
+                {{- end }}
+                - key: password
+                  format: {{ if $isBearer }}token{{ else }}password{{ end }}
+                  secret: true
+              validate:
+                type: {{ $vtype }}
+                {{- if ne $vtype "noop" }}
+                # The repository's own address, not asked for a second time:
+                # oci-registry and git-https need an endpoint their declared
+                # fields (username/password) do not carry, and it is exactly
+                # what this claim already has. Without it the probe cannot
+                # run at all — see EndpointValidator.Validate.
+                host: {{ $url | quote }}
+                {{- end }}
+              consumedBy:
+                - kind: XRepository
+                  name: {{ $name }}
+
+            ---
+            # The satisfaction probe. creationPolicy: None means ESO resolves the
+            # remote reference and reports SecretSynced without creating a
+            # Secret — observable satisfaction, nothing materialised.
+            apiVersion: kubernetes.crossplane.io/v1alpha2
+            kind: Object
+            metadata:
+              annotations:
+                {{ setResourceNameAnnotation (printf "credprobe-%s" $name) }}
+            spec:
+              forProvider:
+                manifest:
+                  apiVersion: external-secrets.io/v1
+                  kind: ExternalSecret
+                  metadata:
+                    name: credreq-repository-{{ $name }}
+                    namespace: gentian-system
+                    labels:
+                      gentianos.io/credential-requirement: {{ $name }}
+                  spec:
+                    refreshInterval: 1h
+                    secretStoreRef:
+                      name: openbao
+                      kind: ClusterSecretStore
+                    target:
+                      creationPolicy: None
+                    data:
+                      - secretKey: username
+                        remoteRef:
+                          key: {{ $cred.vaultPath | quote }}
+                          property: username
+                      - secretKey: password
+                        remoteRef:
+                          key: {{ $cred.vaultPath | quote }}
+                          property: password
+              providerConfigRef:
+                name: kubernetes
+
+            {{- end }}
+            ---
+            # Status on the composite itself. Emitting the XR's own GVK is how
+            # go-templating writes composite status; the message names the
+            # requirement and the path, so an operator reading `kubectl describe`
+            # learns WHICH credential is blocking rather than that "something is
+            # not Ready".
+            apiVersion: gentianos.io/v1alpha1
+            kind: XRepository
+            status:
+              credentialSatisfied: {{ $satisfied }}
+              {{- if not $hasCred }}
+              credentialMessage: "no credential required for this repository"
+              artefacts:
+                - argocd-repo-{{ $name }}
+                - appproject-source-{{ $name }}
+                {{- if and $isGit (eq $spec.role "apps") }}
+                - catalogue-{{ $name }}
+                {{- end }}
+              {{- else if $satisfied }}
+              credentialMessage: "credential present at {{ $cred.vaultPath }}"
+              artefacts:
+                - credreq-{{ $name }}
+                - credprobe-{{ $name }}
+                - argocd-repo-{{ $name }}
+                - appproject-source-{{ $name }}
+                {{- if and $isGit (eq $spec.role "apps") }}
+                - catalogue-{{ $name }}
+                {{- end }}
+              {{- else }}
+              credentialMessage: >-
+                requirement {{ $name }} is unsatisfied: no value at
+                {{ $cred.vaultPath }}. Supply it through the credential manager,
+                or with the installer for phase: bootstrap.
+              artefacts:
+                - credreq-{{ $name }}
+                - credprobe-{{ $name }}
+              {{- end }}
+
+            {{- if $satisfied }}
+
+            ---
+            # ArgoCD reads repository credentials from Secrets carrying this
+            # label. Materialised by ESO from the vault path, so rotation
+            # propagates without a Git commit.
+            apiVersion: kubernetes.crossplane.io/v1alpha2
+            kind: Object
+            metadata:
+              annotations:
+                {{ setResourceNameAnnotation (printf "argocd-repo-%s" $name) }}
+            spec:
+              forProvider:
+                manifest:
+                  {{- if not $hasCred }}
+                  # No credential: a plain Secret, because there is nothing for ESO to
+                  # resolve. ArgoCD reads type and url from the same keys either way, so
+                  # what a consumer sees does not change with whether the repo is public.
+                  apiVersion: v1
+                  kind: Secret
+                  metadata:
+                    name: repo-{{ $name }}
+                    namespace: argocd
+                    labels:
+                      argocd.argoproj.io/secret-type: repository
+                  stringData:
+                    type: {{ if $isOci }}helm{{ else }}git{{ end }}
+                    url: {{ $url | quote }}
+                    {{- if $isOci }}
+                    # Without this ArgoCD treats the url as a classic Helm chart
+                    # repository, and the pull fails on a registry that only speaks OCI.
+                    enableOCI: "true"
+                    {{- end }}
+                  {{- else }}
+                  apiVersion: external-secrets.io/v1
+                  kind: ExternalSecret
+                  metadata:
+                    name: repo-{{ $name }}
+                    namespace: argocd
+                  spec:
+                    refreshInterval: 1h
+                    secretStoreRef:
+                      name: openbao
+                      kind: ClusterSecretStore
+                    target:
+                      name: repo-{{ $name }}
+                      template:
+                        metadata:
+                          labels:
+                            argocd.argoproj.io/secret-type: repository
+                        data:
+                          type: {{ if $isOci }}helm{{ else }}git{{ end }}
+                          url: {{ $url | quote }}
+                          {{- if $isOci }}
+                          # Without this ArgoCD treats the url as a classic Helm chart
+                          # repository, and the pull fails on a registry that only speaks OCI.
+                          enableOCI: "true"
+                          {{- end }}
+                          {{- if $isBearer }}
+                          bearerToken: "{{ `{{ .password }}` }}"
+                          {{- else }}
+                          username: "{{ `{{ .username }}` }}"
+                          password: "{{ `{{ .password }}` }}"
+                          {{- end }}
+                    data:
+                      {{- if not $isBearer }}
+                      - secretKey: username
+                        remoteRef:
+                          key: {{ $cred.vaultPath | quote }}
+                          property: username
+                      {{- end }}
+                      - secretKey: password
+                        remoteRef:
+                          key: {{ $cred.vaultPath | quote }}
+                          property: password
+                    {{- end }}
+              providerConfigRef:
+                name: kubernetes
+
+            ---
+            # Whitelist the source in the tenants AppProject. ArgoCD refuses to
+            # sync an Application whose source is not listed, so a repository
+            # that is credentialled but not whitelisted fails at sync with a
+            # PERMISSION error rather than an authentication one — a misleading
+            # symptom. Emitting it here keeps adding a repository to one object.
+            apiVersion: kubernetes.crossplane.io/v1alpha2
+            kind: Object
+            metadata:
+              annotations:
+                {{ setResourceNameAnnotation (printf "appproject-source-%s" $name) }}
+            spec:
+              managementPolicies: ["Observe", "Create", "Update"]
+              forProvider:
+                manifest:
+                  apiVersion: argoproj.io/v1alpha1
+                  kind: AppProject
+                  metadata:
+                    name: gentianos-tenants
+                    namespace: argocd
+                  spec:
+                    sourceRepos:
+                      - {{ $url | quote }}
+              providerConfigRef:
+                name: kubernetes
+
+            {{- if and $isGit (eq $spec.role "apps") }}
+            ---
+            # role: apps on a git repository composes the app catalogue: an
+            # ApplicationSet syncing profile bundles (AppProfile + optional
+            # composition.yaml, customizations/, assets/) from it. The schema
+            # already promises this is additive — "a private catalogue
+            # alongside the cluster's" — so every such repository gets its own
+            # ApplicationSet rather than one hardcoded source. The cluster's
+            # default catalogue is just the first claim of this shape;
+            # deleting any of them removes the Applications, and so the
+            # AppProfiles, it owns.
+            #
+            # A **files** generator (not directories) because gentian-apps
+            # groups profiles at mixed depth — singletons at
+            # profiles/<family>/<name>/, families with addons at
+            # profiles/<family>/{base,addons,packages}/<name>/. Matching a
+            # marker file rather than a fixed directory depth supports both
+            # without an exclude-list of "known family folders".
+            #
+            # Naming Applications from the AppProfile CR (.metadata.name)
+            # rather than the source path matters: AppProfile is
+            # cluster-scoped, so metadata.name is globally unique by
+            # definition, whereas leaf directory names are not —
+            # profiles/odoo/addons/crm-ce and a future
+            # profiles/foo/addons/crm-ce would both basename to "crm-ce".
+            apiVersion: kubernetes.crossplane.io/v1alpha2
+            kind: Object
+            metadata:
+              annotations:
+                {{ setResourceNameAnnotation (printf "catalogue-%s" $name) }}
+            spec:
+              forProvider:
+                manifest:
+                  apiVersion: argoproj.io/v1alpha1
+                  kind: ApplicationSet
+                  metadata:
+                    name: catalogue-{{ $name }}
+                    namespace: argocd
+                    finalizers:
+                      - resources-finalizer.argocd.argoproj.io
+                  spec:
+                    goTemplate: true
+                    goTemplateOptions: ["missingkey=error"]
+                    generators:
+                      - git:
+                          repoURL: {{ $url | quote }}
+                          revision: {{ $spec.branch | quote }}
+                          files:
+                            - path: profiles/**/profile.yaml
+                    template:
+                      metadata:
+                        name: 'catalogue-{{ `{{ .metadata.name }}` }}'
+                        finalizers:
+                          - resources-finalizer.argocd.argoproj.io
+                      spec:
+                        project: gentian
+                        source:
+                          repoURL: {{ $url | quote }}
+                          targetRevision: {{ $spec.branch | quote }}
+                          path: '{{ `{{ .path.path }}` }}'
+                        destination:
+                          server: https://kubernetes.default.svc
+                          namespace: gentian-system
+                        # Only ever list fields the API server *adds by
+                        # itself*, i.e. fields with a CRD default — never one
+                        # a profile is meant to set.
+                        # spec.kernelRequirements.database.allowDynamicDatabaseCreation
+                        # was in this list once: it has no CRD default, Argo
+                        # stopped seeing a diff and reported Synced, and the
+                        # value never reached the cluster — creating a
+                        # database failed with "permission denied".
+                        ignoreDifferences:
+                          - group: gentianos.io
+                            kind: AppProfile
+                            jsonPointers:
+                              - /metadata/annotations/argocd.argoproj.io~1tracking-id
+                          - group: gentianos.io
+                            kind: AppProfile
+                            jqPathExpressions:
+                              - .spec.ingress.clusterIssuer
+                              - .spec.additionalIngresses[]?.clusterIssuer
+                              - .spec.browserProxy[]?.authMode
+                              - .spec.browserProxy[]?.stripPrefix
+                        syncPolicy:
+                          automated:
+                            prune: true
+                            selfHeal: true
+                          syncOptions:
+                            - CreateNamespace=false
+                            - ServerSideApply=true
+              providerConfigRef:
+                name: kubernetes
+            {{- end }}
+
+            {{- if and $isOci $hasCred }}
+            ---
+            # dockerconfigjson for kubelet, in every matching namespace present
+            # and future. A ClusterExternalSecret rather than one per namespace,
+            # so adding a tenant does not add a Git object.
+            apiVersion: kubernetes.crossplane.io/v1alpha2
+            kind: Object
+            metadata:
+              annotations:
+                {{ setResourceNameAnnotation (printf "pull-secret-%s" $name) }}
+            spec:
+              forProvider:
+                manifest:
+                  apiVersion: external-secrets.io/v1
+                  kind: ClusterExternalSecret
+                  metadata:
+                    name: pull-{{ $name }}
+                  spec:
+                    externalSecretName: pull-{{ $name }}
+                    namespaceSelector:
+                      matchLabels:
+                        {{- with (($spec.namespaceSelector).matchLabels) }}
+                        {{- toYaml . | nindent 24 }}
+                        {{- else }}
+                        gentianos.io/pull-secrets: "true"
+                        {{- end }}
+                    refreshTime: 1h
+                    externalSecretSpec:
+                      secretStoreRef:
+                        name: openbao
+                        kind: ClusterSecretStore
+                      target:
+                        name: pull-{{ $name }}
+                        template:
+                          type: kubernetes.io/dockerconfigjson
+                          data:
+                            .dockerconfigjson: |
+                              {"auths":{"{{ $url }}":{"username":"{{ `{{ .username }}` }}","password":"{{ `{{ .password }}` }}"}}}
+                      data:
+                        - secretKey: username
+                          remoteRef:
+                            key: {{ $cred.vaultPath | quote }}
+                            property: username
+                        - secretKey: password
+                          remoteRef:
+                            key: {{ $cred.vaultPath | quote }}
+                            property: password
+              providerConfigRef:
+                name: kubernetes
+
+            ---
+            # Crossplane's own package pulls (providers, Configuration packages)
+            # authenticate through ImageConfig, not through a ServiceAccount
+            # pull secret.
+            apiVersion: kubernetes.crossplane.io/v1alpha2
+            kind: Object
+            metadata:
+              annotations:
+                {{ setResourceNameAnnotation (printf "imageconfig-%s" $name) }}
+            spec:
+              forProvider:
+                manifest:
+                  apiVersion: pkg.crossplane.io/v1beta1
+                  kind: ImageConfig
+                  metadata:
+                    name: {{ $name }}
+                  spec:
+                    matchImages:
+                      - prefix: {{ $url | quote }}
+                    registry:
+                      authentication:
+                        pullSecretRef:
+                          name: pull-{{ $name }}
+              providerConfigRef:
+                name: kubernetes
+            {{- end }}
+
+            {{- if and $isGit $spec.writable $hasCred }}
+            ---
+            # Push access for the operator's GitOps app lifecycle: installing an
+            # app from the store commits to gentian-deployments.
+            apiVersion: kubernetes.crossplane.io/v1alpha2
+            kind: Object
+            metadata:
+              annotations:
+                {{ setResourceNameAnnotation (printf "git-credentials-%s" $name) }}
+            spec:
+              forProvider:
+                manifest:
+                  apiVersion: external-secrets.io/v1
+                  kind: ExternalSecret
+                  metadata:
+                    name: {{ $claimName }}-git-credentials
+                    namespace: gentian-system
+                  spec:
+                    refreshInterval: 1h
+                    secretStoreRef:
+                      name: openbao
+                      kind: ClusterSecretStore
+                    target:
+                      name: {{ $claimName }}-git-credentials
+                      template:
+                        data:
+                          {{- if $isBearer }}
+                          # Plain git speaks Basic auth via .git-credentials; a
+                          # bearer token has no equivalent userinfo form, so
+                          # this is consumed instead as
+                          # `git -c http.extraHeader="Authorization: Bearer $(cat token)"`
+                          # by whatever clones or pushes with this credential.
+                          token: |
+                            {{ `{{ .password }}` }}
+                          {{- else }}
+                          .git-credentials: |
+                            {{- $scheme := "https://" }}
+                            {{- if hasPrefix "http://" $url }}
+                            {{- $scheme = "http://" }}
+                            {{- end }}
+                            {{ $scheme }}{{ `{{ .username }}` }}:{{ `{{ .password }}` }}@{{ trimPrefix $scheme $url }}
+                          {{- end }}
+                    data:
+                      {{- if not $isBearer }}
+                      - secretKey: username
+                        remoteRef:
+                          key: {{ $cred.vaultPath | quote }}
+                          property: username
+                      {{- end }}
+                      - secretKey: password
+                        remoteRef:
+                          key: {{ $cred.vaultPath | quote }}
+                          property: password
+              providerConfigRef:
+                name: kubernetes
+            {{- end }}
+            {{- end }}
+
+    - step: auto-ready
+      functionRef:
+        name: function-auto-ready

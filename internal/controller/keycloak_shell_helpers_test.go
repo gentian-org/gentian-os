@@ -32,17 +32,44 @@ func TestBuildRealmScript_UsesKeycloakJSONIDExtractor(t *testing.T) {
 	if !strings.Contains(script, "SSO Identity Brokering") {
 		t.Fatal("expected kernel SSO brokering block in realm script")
 	}
-	if !strings.Contains(script, `\"firstBrokerLoginFlowAlias\":\"first broker login\"`) {
-		t.Fatal("realm script must use built-in first broker login flow for initial IdP registration")
+	// The IdP is not written here at all any more, so there is no alias to
+	// preserve and no bootstrap value to fall back to. The whole
+	// carry-forward-the-observed-alias mechanism existed to keep two writers from
+	// contradicting each other; with one writer there is nothing to carry.
+	for _, gone := range []string{
+		`FBL_ALIAS`,
+		`firstBrokerLoginFlowAlias`,
+		`IDP_BODY`,
+		`identity-provider/instances`,
+		"first-broker-login-gentian",
+	} {
+		if strings.Contains(script, gone) {
+			t.Fatalf("realm script still writes the kernel IdP: %s", gone)
+		}
 	}
-	if strings.Contains(script, firstBrokerLoginFlowAlias) {
-		t.Fatal("realm script must register kernel IdP with built-in first broker login flow only")
+	// The broker client stays: it is Observe-only in the Composition by design,
+	// so something has to create it, and on a realm that does not exist yet that
+	// something cannot be the Composition.
+	if !strings.Contains(script, `${KERNEL_REALM}/clients`) {
+		t.Fatal("realm script must still bootstrap the kernel-realm broker client")
 	}
-	if !strings.Contains(script, "gentian.inviteEmail") {
-		t.Fatal("expected gentian.inviteEmail user profile block in realm script")
+	// The user profile is tenant-default's now: it declares all six attributes
+	// whole, where this script appended one patch to add uid and
+	// gentian.inviteEmail and a second to strip `required` off the name fields.
+	if strings.Contains(script, "gentian.inviteEmail") {
+		t.Fatal("realm script must not write the user profile; the Composition owns it")
 	}
-	if !strings.Contains(script, "VERIFY_PROFILE UPDATE_PROFILE") {
-		t.Fatal("expected profile prompt required actions to be disabled in realm script")
+	// The two profile-prompt required actions are tenant-default's now — it
+	// composes a RequiredAction for each, and both adopted the live ones. The
+	// realm script must not disable them as well.
+	if strings.Contains(script, "VERIFY_PROFILE UPDATE_PROFILE") {
+		t.Fatal("realm script must not disable the profile prompts; the Composition owns them")
+	}
+	// Nor the profile relaxation. It is the composed UserProfile's absence of
+	// requiredForRoles on firstName and lastName — declared, rather than patched
+	// back out of the document on every run.
+	if strings.Contains(script, `.name == "firstName" or .name == "lastName"`) {
+		t.Fatal("realm script must not relax the name fields; the Composition declares them optional")
 	}
 
 	path := t.TempDir() + "/realm.sh"

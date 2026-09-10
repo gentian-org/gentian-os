@@ -1,0 +1,259 @@
+---
+# Bootstrap Application: manages the gentian-os operator via ArgoCD.
+#
+# Intentionally contains ONLY the operator (Helm chart + ImageUpdater CR).
+# Tenant CRs live in the separate `gentian-tenants` ApplicationSet so that
+# long-running tenant provisioning never stalls operator image rollouts:
+# argocd-image-updater targets only `gentian-os`, which is a clean Helm
+# deployment.  When a new image lands in GHCR, ArgoCD syncs it in seconds
+# regardless of tenant health.
+#
+# Sources:
+#   Source 1: gentian-os Helm chart — operator Deployment, CRDs, RBAC, etc.
+#             Values layer per docs/deployment.md §1: chart defaults ->
+#             profiles/_base.yaml -> profiles/{{ .Values.stage }}.yaml ->
+#             clusters/{{ .Values.cluster }}/kernel/values.yaml (kernelDomain etc.).
+#   Source 2: gentian-deployments ref only — provides the $deploy variable
+#             for Source 1's layered valueFiles; renders no manifests.
+# The ImageUpdater CR is inlined below (its content never varies by cluster
+# or stage — no reason to make it a separate cross-repo file reference).
+#
+# Placeholders filled in by handoff_gentian_os_to_argocd() / install_gentian_os_operator()
+# in scripts/lib/catalogue.sh:
+#   {{ .Values.gentianOsBranch }}   — branch/tag of this repo (e.g. develop, main, v1.2.3)
+#   {{ .Values.deploymentsRepo }}    — gentian-deployments repo URL
+#   {{ .Values.deploymentsBranch }}  — gentian-deployments branch
+#   {{ .Values.cluster }}             — cluster identifier in deployments repo (e.g. pck-kulxwmm)
+#   {{ .Values.stage }}               — stage name (dev / staging / prod)
+#
+# Apply:
+#   Rendered and applied automatically by ./install.sh --step D-01-operator.
+#   Re-run that step for a day-2 re-apply (e.g. to fix a missing Application);
+#   it is convergent and reads the cluster's claim + values from
+#   gentian-deployments.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: gentian-os
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "0"
+    # Image updater: follow new builds published for {{ .Values.gentianOsBranch }} and
+    # update image.tag in the Application's Helm parameters so ArgoCD triggers
+    # a Helm upgrade (rolling restart) whenever a new image lands in GHCR.
+    #
+    # The image-list deliberately carries NO tag. Pinning it to the moving
+    # `{{ .Values.gentianOsBranch }}` tag made the candidate set exactly one entry whose
+    # name never changes, so newest-build re-selected it every cycle, image.tag
+    # never changed, and no new build ever reached the cluster — the controller
+    # reported images_considered=N images_updated=0 forever while looking
+    # perfectly healthy. Combined with imagePullPolicy IfNotPresent (a node that
+    # has cached a moving tag never re-pulls it), CI could publish for weeks
+    # while the cluster ran the same code.
+    #
+    # allow-tags restricts candidates to the branch-scoped immutable tags CI
+    # publishes (develop-abc1234, see the docker job in .github/workflows/ci.yaml).
+    # The bare short-sha tag is published from every branch and must NOT be
+    # tracked: a main build would be a valid candidate for a develop cluster.
+    # When {{ .Values.gentianOsBranch }} is a release tag rather than a branch, no
+    # candidate matches and the pinned image is left alone — which is what a
+    # pinned release should do.
+    # {{ `{{ .Values.osImageRepository }}` }}, not ${GENTIAN_OS_IMAGE_REPOSITORY}: this is a
+    # Helm template and nothing runs envsubst over it, so the shell form reached the
+    # cluster verbatim. The updater then looked for a repository literally named
+    # "${GENTIAN_OS_IMAGE_REPOSITORY}", found none, and skipped it every cycle —
+    # reporting images_considered=2 images_skipped=1 images_updated=0 with no
+    # errors, the same "perfectly healthy" silence the comment above describes.
+    # The value is the one already passed to image.repository below.
+    argocd-image-updater.argoproj.io/image-list: gentianos={{ .Values.osImageRepository }}
+    argocd-image-updater.argoproj.io/gentianos.allow-tags: regexp:^{{ .Values.gentianOsBranch }}-[0-9a-f]{7,}$
+    argocd-image-updater.argoproj.io/gentianos.update-strategy: newest-build
+    argocd-image-updater.argoproj.io/gentianos.helm.image-name: image.repository
+    argocd-image-updater.argoproj.io/gentianos.helm.image-tag: image.tag
+    argocd-image-updater.argoproj.io/write-back-method: argocd
+  finalizers:
+  - resources-finalizer.argocd.argoproj.io
+spec:
+  project: gentian
+  ignoreDifferences:
+  - group: admissionregistration.k8s.io
+    kind: ValidatingWebhookConfiguration
+    name: gentian-os-tenant-validator
+    jsonPointers:
+    - /webhooks/0/clientConfig/caBundle
+  - group: apps
+    kind: Deployment
+    name: gentian-os
+    namespace: gentian-system
+    jsonPointers:
+    - /metadata/annotations
+    - /spec/template/metadata/annotations/kubectl.kubernetes.io~1restartedAt
+    # Direct Helm bootstrap + ArgoCD SSA leave kube-defaulted Deployment
+    # fields on the live object that the Helm chart omits (same pattern as
+    # gentian-portal ApplicationSet). Without these, gentian-os stays OutOfSync
+    # while Healthy and install Step 14 times out every run.
+    jqPathExpressions:
+    - .spec.progressDeadlineSeconds
+    - .spec.revisionHistoryLimit
+    - .spec.strategy
+    - .spec.template.metadata.creationTimestamp
+    - .spec.template.spec.dnsPolicy
+    - .spec.template.spec.restartPolicy
+    - .spec.template.spec.schedulerName
+    - .spec.template.spec.terminationGracePeriodSeconds
+    - .spec.template.spec.serviceAccount
+    - .spec.template.spec.serviceAccountName
+    - .spec.template.spec.containers[].imagePullPolicy
+    - .spec.template.spec.containers[].resources
+    - .spec.template.spec.containers[].terminationMessagePath
+    - .spec.template.spec.containers[].terminationMessagePolicy
+    - .spec.template.spec.containers[].livenessProbe.failureThreshold
+    - .spec.template.spec.containers[].livenessProbe.successThreshold
+    - .spec.template.spec.containers[].livenessProbe.timeoutSeconds
+    - .spec.template.spec.containers[].livenessProbe.httpGet.scheme
+    - .spec.template.spec.containers[].readinessProbe.failureThreshold
+    - .spec.template.spec.containers[].readinessProbe.successThreshold
+    - .spec.template.spec.containers[].readinessProbe.timeoutSeconds
+    - .spec.template.spec.containers[].readinessProbe.httpGet.scheme
+    - .spec.template.spec.containers[].env[].valueFrom.fieldRef.apiVersion
+    - .spec.template.spec.initContainers[].imagePullPolicy
+    - .spec.template.spec.initContainers[].resources
+    - .spec.template.spec.initContainers[].terminationMessagePath
+    - .spec.template.spec.initContainers[].terminationMessagePolicy
+    - .spec.template.spec.volumes[].secret.defaultMode
+  # Crossplane enriches gentianos.io XRD-owned CRDs with additional printer
+  # columns and its own spec properties (compositionRef, resourceRefs, etc.)
+  # after the initial install. Ignore spec.versions drift so ArgoCD does not
+  # report permanent OutOfSync noise.
+  - group: apiextensions.k8s.io
+    kind: CustomResourceDefinition
+    name: apps.gentianos.io
+    jsonPointers:
+    - /spec/versions
+  - group: apiextensions.k8s.io
+    kind: CustomResourceDefinition
+    name: xtenants.gentianos.io
+    jsonPointers:
+    - /spec/versions
+  # ESO adds default remoteRef fields and a cleanup finalizer after apply.
+  # Ignore them so gentian-os stays Synced (same pattern as gentian-infra-helm).
+  - group: external-secrets.io
+    kind: ExternalSecret
+    name: cloudflare-api-token-gentian-system
+    namespace: gentian-system
+    jqPathExpressions:
+    - .spec.data[].remoteRef.conversionStrategy
+    - .spec.data[].remoteRef.decodingStrategy
+    - .spec.data[].remoteRef.metadataPolicy
+    - .spec.data[].remoteRef.nullBytePolicy
+    - .metadata.finalizers
+  sources:
+  # Source 1: gentian-os Helm chart (operator)
+  # Values are layered per docs/deployment.md §1 (chart defaults are
+  # already applied by Helm itself, so only Layers 2-3 need listing here):
+  #   - $deploy/profiles/_base.yaml       (shared across every stage)
+  #   - $deploy/profiles/{{ .Values.stage }}.yaml     (stage-tier policy)
+  #   - $deploy/clusters/{{ .Values.cluster }}/kernel/values.yaml  (cluster deltas, incl. kernelDomain)
+  # image.tag is further overridden in-cluster by
+  # argocd-image-updater via the Application's Helm parameters.
+  - repoURL: {{ .Values.osRepo }}
+    targetRevision: {{ .Values.gentianOsBranch }}
+    path: charts/gentian-os
+    helm:
+      # image.repository is passed rather than left to the chart default, so a
+      # mirrored install redirects images as well as Git. Without it, an
+      # air-gapped cluster clones from its mirror and then tries to pull the
+      # operator from the vendor's registry — Git redirected, images not.
+      parameters:
+      - name: image.repository
+        value: {{ .Values.osImageRepository }}
+      valueFiles:
+      - $deploy/profiles/_base.yaml
+      - $deploy/profiles/{{ .Values.stage }}.yaml
+      - $deploy/clusters/{{ .Values.cluster }}/kernel/values.yaml
+  # Source 2: deployments ref only (provides $deploy variable, no manifests)
+  - repoURL: {{ .Values.deploymentsRepo }}
+    targetRevision: {{ .Values.deploymentsBranch }}
+    ref: deploy
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: gentian-system
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+    - CreateNamespace=true
+    - ServerSideApply=true
+---
+# Bootstrap ApplicationSet: manages Tenant CRs via ArgoCD.
+#
+# Kept separate from `gentian-os` so that long-running tenant provisioning
+# never blocks operator image rollouts. This generator scans all activated
+# tenants on this cluster:
+#
+#   clusters/{{ .Values.cluster }}/tenants/<tenant>
+#
+# No further stage nesting here — a cluster has exactly one stage for its
+# whole lifetime (docs/deployment.md §1), so re-encoding it under a cluster's
+# own tenants/ tree would be redundant. Stage only matters when *choosing*
+# a tenant definition to activate (definitions/tenants/<tenant>/), not once it's
+# live on a cluster that's already pinned to one stage.
+# Each tenant directory must contain a kustomization.yaml and tenant.yaml.
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: gentian-tenants
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "2"
+spec:
+  goTemplate: true
+  goTemplateOptions: ["missingkey=error"]
+  generators:
+  - git:
+      repoURL: {{ .Values.deploymentsRepo }}
+      revision: {{ .Values.deploymentsBranch }}
+      directories:
+      - path: clusters/{{ .Values.cluster }}/tenants/*
+  template:
+    metadata:
+      name: '{{ `{{ .path.path | replace "/" "-" }}` }}'
+      finalizers:
+      - resources-finalizer.argocd.argoproj.io
+    spec:
+      project: gentian
+      source:
+        repoURL: {{ .Values.deploymentsRepo }}
+        targetRevision: {{ .Values.deploymentsBranch }}
+        path: '{{ `{{ .path.path }}` }}'
+      destination:
+        server: https://kubernetes.default.svc
+        namespace: gentian-system
+      syncPolicy:
+        automated:
+          prune: true
+          selfHeal: true
+        syncOptions:
+        - CreateNamespace=true
+        - ServerSideApply=true
+---
+# ImageUpdater CR — identical for every cluster/stage, no placeholders
+# needed. Must live in the argocd namespace (controller is configured with
+# watch.namespaces=argocd) alongside the Applications it watches.
+apiVersion: argocd-image-updater.argoproj.io/v1alpha1
+kind: ImageUpdater
+metadata:
+  name: gentian-os
+  namespace: argocd
+spec:
+  writeBackConfig:
+    method: argocd
+  applicationRefs:
+    - namePattern: "gentian-os"
+      useAnnotations: true
+    - namePattern: "gentian-portal"
+      useAnnotations: true
+  # Only gentian-os's own Applications belong here. An optional add-on deployed
+  # alongside the platform ships its own ImageUpdater — several may coexist in
+  # this namespace — so the platform never has to name it.

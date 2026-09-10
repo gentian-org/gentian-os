@@ -17,6 +17,8 @@ limitations under the License.
 package controller
 
 import (
+	"maps"
+	"slices"
 	"strings"
 	"testing"
 
@@ -52,7 +54,7 @@ func TestBuildKernelGateway(t *testing.T) {
 	tenants := []gentianov1alpha1.Tenant{
 		{ObjectMeta: metav1.ObjectMeta{Name: "demo"}},
 	}
-	gw := buildKernelGateway("desk.gentian.org", "multi", tenants)
+	gw := buildKernelGateway("platform.example.test", "multi", tenants)
 	if gw.Name != KernelPublicGatewayName {
 		t.Fatalf("name = %q", gw.Name)
 	}
@@ -62,51 +64,68 @@ func TestBuildKernelGateway(t *testing.T) {
 	if string(gw.Spec.GatewayClassName) != GentianGatewayClassName {
 		t.Fatalf("gatewayClassName = %q", gw.Spec.GatewayClassName)
 	}
-	if len(gw.Spec.Listeners) != 4 {
-		t.Fatalf("listeners = %d, want 4", len(gw.Spec.Listeners))
+	// Looked up by name rather than by index. These assertions used to be
+	// positional, so adding the :80 http-redirect listener — which buildGateway
+	// inserts second, before the caller's extraListeners — shifted https-apex and
+	// every tenant listener down one and failed the test on a count mismatch
+	// rather than on anything meaningful. Names are the stable identity here.
+	byName := map[string]gatewayv1.Listener{}
+	for _, l := range gw.Spec.Listeners {
+		byName[string(l.Name)] = l
 	}
-	if gw.Spec.Listeners[0].Name != "https-wildcard" {
-		t.Fatalf("wildcard listener name = %q", gw.Spec.Listeners[0].Name)
+	if len(gw.Spec.Listeners) != len(byName) {
+		t.Fatalf("duplicate listener names in %d listeners", len(gw.Spec.Listeners))
 	}
-	if gw.Spec.Listeners[0].Hostname == nil || string(*gw.Spec.Listeners[0].Hostname) != "*.desk.gentian.org" {
-		t.Fatalf("wildcard listener hostname = %v", gw.Spec.Listeners[0].Hostname)
+	// The kernel HTTPS listener carries NO hostname on purpose.
+	//
+	// A listener's hostname both selects it by SNI and gates which routes may
+	// attach, and a route only attaches where its hostnames intersect. The
+	// kernel certificate covers platform.example.test and *.platform.example.test, so a
+	// browser may coalesce portal.platform.example.test onto an existing
+	// platform.example.test connection; with a listener scoped to the apex that
+	// request had nowhere to attach and Envoy returned a bare 404. Serving every
+	// name the certificate covers from one listener removes the hole.
+	wildcard, ok := byName["https-wildcard"]
+	if !ok {
+		t.Fatalf("listener https-wildcard missing; have %v", slices.Sorted(maps.Keys(byName)))
 	}
-	if gw.Spec.Listeners[1].Name != "https-apex" {
-		t.Fatalf("apex listener name = %q", gw.Spec.Listeners[1].Name)
+	if wildcard.Hostname != nil {
+		t.Fatalf("kernel HTTPS listener hostname = %q, want none so coalesced requests still route", *wildcard.Hostname)
 	}
-	if gw.Spec.Listeners[1].Hostname == nil || string(*gw.Spec.Listeners[1].Hostname) != "desk.gentian.org" {
-		t.Fatalf("apex listener hostname = %v", gw.Spec.Listeners[1].Hostname)
+	if _, exists := byName["https-apex"]; exists {
+		t.Fatal("https-apex listener still present: the catch-all serves the apex, and a narrow apex listener makes every other host unroutable on connections coalesced onto it")
 	}
-	if gw.Spec.Listeners[2].Name != "https-tenant-demo-wildcard" {
-		t.Fatalf("tenant wildcard listener name = %q", gw.Spec.Listeners[2].Name)
+	// Tenant subdomains need the tenant certificate, so they keep a listener.
+	tenantL, ok := byName["https-tenant-demo-wildcard"]
+	if !ok {
+		t.Fatalf("listener https-tenant-demo-wildcard missing; have %v", slices.Sorted(maps.Keys(byName)))
 	}
-	if gw.Spec.Listeners[2].Hostname == nil || string(*gw.Spec.Listeners[2].Hostname) != "*.demo.desk.gentian.org" {
-		t.Fatalf("tenant wildcard listener hostname = %v", gw.Spec.Listeners[2].Hostname)
+	if tenantL.Hostname == nil || string(*tenantL.Hostname) != "*.demo.platform.example.test" {
+		t.Fatalf("tenant listener hostname = %v", tenantL.Hostname)
 	}
-	if gw.Spec.Listeners[0].AllowedRoutes == nil || gw.Spec.Listeners[0].AllowedRoutes.Namespaces.From == nil ||
-		*gw.Spec.Listeners[0].AllowedRoutes.Namespaces.From != gatewayv1.NamespacesFromAll {
-		t.Fatalf("kernel gateway should allow cross-namespace routes, got %v", gw.Spec.Listeners[0].AllowedRoutes)
+	if _, exists := byName["https-tenant-demo-apex"]; exists {
+		t.Fatal("https-tenant-demo-apex still present: the tenant apex is covered by the kernel certificate and served by the catch-all")
 	}
-	if string(gw.Spec.Listeners[0].TLS.CertificateRefs[0].Name) != kernelWildcardTLSSecretName {
-		t.Fatalf("tls secret = %q", gw.Spec.Listeners[0].TLS.CertificateRefs[0].Name)
-	}
-}
 
-func TestBuildTenantGateway(t *testing.T) {
-	t.Parallel()
-	tenant := &gentianov1alpha1.Tenant{ObjectMeta: metav1.ObjectMeta{Name: "demo"}}
-	gw := buildTenantGateway(tenant, "tenant-demo", "demo.desk.gentian.org", "tenant-demo-wildcard-tls")
-	if gw.Name != "tenant-demo-gateway" {
-		t.Fatalf("name = %q", gw.Name)
+	// The :80 redirect listener is hostname-less on purpose: it must match every
+	// host so any plaintext request can be bounced to https.
+	redirect, ok := byName[httpRedirectListenerName]
+	if !ok {
+		t.Fatalf("listener %q missing; have %v", httpRedirectListenerName, slices.Sorted(maps.Keys(byName)))
 	}
-	if gw.Namespace != "tenant-demo" {
-		t.Fatalf("namespace = %q", gw.Namespace)
+	if redirect.Port != 80 {
+		t.Fatalf("redirect listener port = %d, want 80", redirect.Port)
 	}
-	if gw.Labels[tenantLabel] != "demo" {
-		t.Fatalf("tenant label = %q", gw.Labels[tenantLabel])
+	if redirect.Hostname != nil {
+		t.Fatalf("redirect listener hostname = %v, want nil (match all hosts)", *redirect.Hostname)
 	}
-	if string(*gw.Spec.Listeners[0].Hostname) != "*.demo.desk.gentian.org" {
-		t.Fatalf("hostname = %v", gw.Spec.Listeners[0].Hostname)
+
+	if wildcard.AllowedRoutes == nil || wildcard.AllowedRoutes.Namespaces.From == nil ||
+		*wildcard.AllowedRoutes.Namespaces.From != gatewayv1.NamespacesFromAll {
+		t.Fatalf("kernel gateway should allow cross-namespace routes, got %v", wildcard.AllowedRoutes)
+	}
+	if string(wildcard.TLS.CertificateRefs[0].Name) != kernelWildcardTLSSecretName {
+		t.Fatalf("tls secret = %q", wildcard.TLS.CertificateRefs[0].Name)
 	}
 }
 
@@ -117,10 +136,9 @@ func TestGatewayProgrammed(t *testing.T) {
 		t.Fatalf("install gateway scheme: %v", err)
 	}
 
-	gw := buildTenantGateway(
-		&gentianov1alpha1.Tenant{ObjectMeta: metav1.ObjectMeta{Name: "demo"}},
-		"tenant-demo", "demo.desk.gentian.org", "tenant-demo-wildcard-tls",
-	)
+	gw := &gatewayv1.Gateway{
+		ObjectMeta: metav1.ObjectMeta{Name: KernelPublicGatewayName, Namespace: "platform-kernel"},
+	}
 	gw.Status.Conditions = []metav1.Condition{
 		{Type: string(gatewayv1.GatewayConditionProgrammed), Status: metav1.ConditionTrue, Reason: "Programmed"},
 	}
@@ -139,10 +157,9 @@ func TestGatewayProgrammedAddressNotAssignedWithListeners(t *testing.T) {
 		t.Fatalf("install gateway scheme: %v", err)
 	}
 
-	gw := buildTenantGateway(
-		&gentianov1alpha1.Tenant{ObjectMeta: metav1.ObjectMeta{Name: "demo"}},
-		"tenant-demo", "demo.desk.gentian.org", "tenant-demo-wildcard-tls",
-	)
+	gw := &gatewayv1.Gateway{
+		ObjectMeta: metav1.ObjectMeta{Name: KernelPublicGatewayName, Namespace: "platform-kernel"},
+	}
 	gw.Status.Conditions = []metav1.Condition{
 		{
 			Type:   string(gatewayv1.GatewayConditionProgrammed),
@@ -182,24 +199,26 @@ func TestBuildAppHTTPRoute(t *testing.T) {
 	route := buildAppHTTPRoute(tenant, "tenant-demo", ingressIntent{
 		appProfile: "catalogue-test-app",
 		ingress:    ingress,
-	}, "demo.desk.gentian.org", "desk.gentian.org")
+	}, "demo.platform.example.test", "platform.example.test")
 	if route.Name != "httproute-demo-catalogue-test-app" {
 		t.Fatalf("name = %q", route.Name)
 	}
-	if len(route.Spec.Hostnames) != 1 || string(route.Spec.Hostnames[0]) != "app.demo.desk.gentian.org" {
+	if len(route.Spec.Hostnames) != 1 || string(route.Spec.Hostnames[0]) != "app.demo.platform.example.test" {
 		t.Fatalf("hostnames = %v", route.Spec.Hostnames)
 	}
-	if len(route.Spec.ParentRefs) != 2 {
-		t.Fatalf("parent refs = %d, want 2", len(route.Spec.ParentRefs))
+	// One parent: the kernel Gateway, pinned to this tenant's listener.
+	if len(route.Spec.ParentRefs) != 1 {
+		t.Fatalf("parent refs = %d, want 1", len(route.Spec.ParentRefs))
 	}
-	if route.Spec.ParentRefs[0].Name != "tenant-demo-gateway" {
-		t.Fatalf("tenant parent = %v", route.Spec.ParentRefs[0].Name)
+	if route.Spec.ParentRefs[0].Name != KernelPublicGatewayName {
+		t.Fatalf("kernel parent = %v", route.Spec.ParentRefs[0].Name)
 	}
-	if route.Spec.ParentRefs[1].Name != KernelPublicGatewayName {
-		t.Fatalf("kernel parent = %v", route.Spec.ParentRefs[1].Name)
+	if route.Spec.ParentRefs[0].Namespace == nil || string(*route.Spec.ParentRefs[0].Namespace) != servicesNamespace {
+		t.Fatalf("kernel parent namespace = %v", route.Spec.ParentRefs[0].Namespace)
 	}
-	if route.Spec.ParentRefs[1].Namespace == nil || string(*route.Spec.ParentRefs[1].Namespace) != servicesNamespace {
-		t.Fatalf("kernel parent namespace = %v", route.Spec.ParentRefs[1].Namespace)
+	if route.Spec.ParentRefs[0].SectionName == nil ||
+		string(*route.Spec.ParentRefs[0].SectionName) != tenantGatewayListenerName("demo") {
+		t.Fatalf("kernel parent sectionName = %v", route.Spec.ParentRefs[0].SectionName)
 	}
 	if len(route.Spec.Rules[0].Filters) == 0 {
 		t.Fatal("expected embedding response filters")
@@ -226,7 +245,7 @@ func TestBuildAppHTTPRouteRootRedirect(t *testing.T) {
 		appProfile: "multi-route-app",
 		profile:    profile,
 		ingress:    ingress,
-	}, "demo.desk.gentian.org", "desk.gentian.org")
+	}, "demo.platform.example.test", "platform.example.test")
 	if len(route.Spec.Rules) != 3 {
 		t.Fatalf("rules = %d, want 3", len(route.Spec.Rules))
 	}
@@ -242,35 +261,13 @@ func TestBuildAppHTTPRouteRootRedirect(t *testing.T) {
 	}
 }
 
-func TestBuildTenantApexRedirectHTTPRoute(t *testing.T) {
-	t.Parallel()
-	tenant := &gentianov1alpha1.Tenant{ObjectMeta: metav1.ObjectMeta{Name: "demo"}}
-	route := buildTenantApexRedirectHTTPRoute(tenant, "tenant-demo", "demo.desk.gentian.org", "desk.gentian.org")
-	if route.Name != tenantPortalRedirectName("demo") {
-		t.Fatalf("name = %q", route.Name)
-	}
-	if len(route.Spec.Rules) != 1 || len(route.Spec.Rules[0].Filters) != 1 {
-		t.Fatalf("rules = %+v", route.Spec.Rules)
-	}
-	redirect := route.Spec.Rules[0].Filters[0].RequestRedirect
-	if redirect == nil || redirect.Scheme == nil || *redirect.Scheme != "https" {
-		t.Fatalf("redirect scheme = %v", redirect)
-	}
-	if redirect.Hostname == nil || string(*redirect.Hostname) != "portal.desk.gentian.org" {
-		t.Fatalf("redirect hostname = %v", redirect.Hostname)
-	}
-	if redirect.Path == nil || redirect.Path.ReplaceFullPath == nil || *redirect.Path.ReplaceFullPath != "/login/" {
-		t.Fatalf("redirect path = %v", redirect.Path)
-	}
-}
-
 func TestComputeGatewayFrameAncestorsPolicy(t *testing.T) {
 	t.Parallel()
-	policy := computeGatewayFrameAncestorsPolicy("desk.gentian.org", "demo.desk.gentian.org", "app")
+	policy := computeGatewayFrameAncestorsPolicy("platform.example.test", "demo.platform.example.test", "app")
 	if policy.Mode != gatewayFrameAncestorsReplace {
 		t.Fatalf("mode = %q", policy.Mode)
 	}
-	if policy.Origins != "https://portal.desk.gentian.org https://demo.desk.gentian.org https://*.demo.desk.gentian.org" {
+	if policy.Origins != "https://portal.platform.example.test https://demo.platform.example.test https://*.demo.platform.example.test" {
 		t.Fatalf("origins = %q", policy.Origins)
 	}
 }
@@ -282,7 +279,7 @@ func TestIngressGatewayFrameAncestorsPolicy(t *testing.T) {
 			gentianov1alpha1.AnnotationIngressGatewayFrameAncestors: `{"mode":"replace","origins":["mainApp","portal"]}`,
 		},
 	}
-	policy, ok, err := ingressFrameAncestorsPolicy("desk.gentian.org", "demo.desk.gentian.org", "cloud", ingress)
+	policy, ok, err := ingressFrameAncestorsPolicy("platform.example.test", "demo.platform.example.test", "cloud", ingress)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -292,11 +289,58 @@ func TestIngressGatewayFrameAncestorsPolicy(t *testing.T) {
 	if policy.Mode != gatewayFrameAncestorsReplace {
 		t.Fatalf("mode = %q", policy.Mode)
 	}
-	if !strings.Contains(policy.Origins, "https://cloud.demo.desk.gentian.org") {
+	if !strings.Contains(policy.Origins, "https://cloud.demo.platform.example.test") {
 		t.Fatalf("origins = %q", policy.Origins)
 	}
-	if !strings.Contains(policy.Origins, "https://portal.desk.gentian.org") {
+	if !strings.Contains(policy.Origins, "https://portal.platform.example.test") {
 		t.Fatalf("origins = %q", policy.Origins)
+	}
+	// The portal answers on the tenant apex too, and that is the host a tenant
+	// user is normally signed in on. Leaving it out passes every server-side
+	// check and still blocks the iframe in the browser, so assert it explicitly.
+	if !strings.Contains(policy.Origins, "https://demo.platform.example.test") {
+		t.Fatalf("origins = %q", policy.Origins)
+	}
+}
+
+// The "portal" token must resolve to the same hosts the portal is actually
+// routed on, so a policy that opts out of the computed default does not silently
+// carry a narrower list than the default it replaced.
+func TestIngressGatewayFrameAncestorsPortalTokenMatchesRoutedPortalHosts(t *testing.T) {
+	t.Parallel()
+	ingress := &gentianov1alpha1.IngressSpec{
+		Annotations: map[string]string{
+			gentianov1alpha1.AnnotationIngressGatewayFrameAncestors: `{"mode":"replace","origins":["portal"]}`,
+		},
+	}
+	policy, ok, err := ingressFrameAncestorsPolicy("platform.example.test", "demo.platform.example.test", "cloud", ingress)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok {
+		t.Fatal("expected custom policy")
+	}
+	want := strings.Join(portalOrigins("platform.example.test", "demo.platform.example.test"), " ")
+	if policy.Origins != want {
+		t.Fatalf("origins = %q, want %q", policy.Origins, want)
+	}
+}
+
+// mainApp and portal collapse to one origin when the app is the tenant apex;
+// a repeated origin in the header is noise, not a second permission.
+func TestIngressGatewayFrameAncestorsDeduplicatesOrigins(t *testing.T) {
+	t.Parallel()
+	ingress := &gentianov1alpha1.IngressSpec{
+		Annotations: map[string]string{
+			gentianov1alpha1.AnnotationIngressGatewayFrameAncestors: `{"mode":"replace","origins":["mainApp","portal"]}`,
+		},
+	}
+	policy, _, err := ingressFrameAncestorsPolicy("platform.example.test", "demo.platform.example.test", "@", ingress)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Count(policy.Origins, "https://demo.platform.example.test"); got != 1 {
+		t.Fatalf("origins = %q, want demo apex once", policy.Origins)
 	}
 }
 
@@ -336,7 +380,7 @@ func TestAppAPIBackendRulesApplyEmbeddingFilters(t *testing.T) {
 		},
 	}
 	ingress := &gentianov1alpha1.IngressSpec{SubDomain: "projects"}
-	rules := appAPIBackendRules(profile, 8080, "desk.gentian.org", "demo.desk.gentian.org", ingress)
+	rules := appAPIBackendRules(profile, 8080, "platform.example.test", "demo.platform.example.test", ingress)
 	if len(rules) != 1 {
 		t.Fatalf("rules = %d, want 1", len(rules))
 	}
@@ -347,7 +391,7 @@ func TestAppAPIBackendRulesApplyEmbeddingFilters(t *testing.T) {
 	if modifier == nil || len(modifier.Set) != 1 {
 		t.Fatalf("modifier = %+v", modifier)
 	}
-	if !strings.Contains(modifier.Set[0].Value, "https://portal.desk.gentian.org") {
+	if !strings.Contains(modifier.Set[0].Value, "https://portal.platform.example.test") {
 		t.Fatalf("csp = %q", modifier.Set[0].Value)
 	}
 }
@@ -404,15 +448,27 @@ func TestBuildAppBackendTrafficPolicyObject(t *testing.T) {
 
 func TestKernelHTTPRouteSpecs(t *testing.T) {
 	t.Parallel()
-	specs := kernelHTTPRouteSpecs("desk.gentian.org", []string{"demo.desk.gentian.org"}, nil, []string{"demo"})
-	if len(specs) != 4 {
-		t.Fatalf("spec count = %d, want 4", len(specs))
+	specs := kernelHTTPRouteSpecs("platform.example.test", []string{"demo.platform.example.test"}, nil, []string{"demo"}, false)
+	// One route per kernel host, plus one per tenant host serving the portal.
+	// Asserted by name rather than by count, so adding a route does not fail a
+	// test that has nothing to do with it.
+	byName := map[string]kernelHTTPRouteSpec{}
+	for _, s := range specs {
+		byName[s.name] = s
+	}
+	for _, want := range []string{
+		kernelRouteKeycloakIDP, kernelRouteGentianPortal, kernelRouteKernelApex,
+		kernelRouteArgoCD, "tenant-demo-portal",
+	} {
+		if _, ok := byName[want]; !ok {
+			t.Fatalf("missing kernel route %q; got %v", want, specs)
+		}
 	}
 	idRoute := buildKernelHTTPRoute(specs[0])
 	if idRoute.Name != kernelRouteKeycloakIDP {
 		t.Fatalf("id route name = %q", idRoute.Name)
 	}
-	if string(idRoute.Spec.Hostnames[0]) != "id.desk.gentian.org" {
+	if string(idRoute.Spec.Hostnames[0]) != "id.platform.example.test" {
 		t.Fatalf("id host = %v", idRoute.Spec.Hostnames[0])
 	}
 	if got := *idRoute.Spec.Rules[0].BackendRefs[0].Port; got != gatewayv1.PortNumber(8080) {
@@ -426,7 +482,7 @@ func TestKernelHTTPRouteSpecs(t *testing.T) {
 	if portalRoute.Name != kernelRouteGentianPortal {
 		t.Fatalf("portal route name = %q", portalRoute.Name)
 	}
-	if string(portalRoute.Spec.Hostnames[0]) != "portal.desk.gentian.org" {
+	if string(portalRoute.Spec.Hostnames[0]) != "portal.platform.example.test" {
 		t.Fatalf("portal host = %v", portalRoute.Spec.Hostnames[0])
 	}
 	ns := portalRoute.Spec.Rules[0].BackendRefs[0].Namespace
@@ -436,25 +492,42 @@ func TestKernelHTTPRouteSpecs(t *testing.T) {
 }
 
 func TestKernelHTTPRouteSpecsLLMDisabledByDefault(t *testing.T) {
-	specs := kernelHTTPRouteSpecs("desk.gentian.org", []string{"demo.desk.gentian.org"}, nil, []string{"demo"})
+	specs := kernelHTTPRouteSpecs("platform.example.test", []string{"demo.platform.example.test"}, nil, []string{"demo"}, false)
 	for _, spec := range specs {
 		if spec.name == kernelRouteLiteLLM {
-			t.Fatalf("kernel-llm route present without LLM_SUPPORT=true")
+			t.Fatalf("kernel-llm route present with llm disabled")
 		}
 	}
 }
 
 func TestKernelHTTPRouteSpecsLLMEnabled(t *testing.T) {
-	t.Setenv("LLM_SUPPORT", "true")
-	specs := kernelHTTPRouteSpecs("desk.gentian.org", nil, nil, nil)
-	if len(specs) != 5 {
-		t.Fatalf("spec count = %d, want 5 with LLM_SUPPORT=true", len(specs))
+	specs := kernelHTTPRouteSpecs("platform.example.test", nil, nil, nil, true)
+	// 6, not 5: the :80 -> :443 redirect route (kernel-http-redirect) is emitted
+	// alongside the apex and argocd routes. The LLM route is still appended last,
+	// which is what the specs[len-1] lookup below relies on.
+	if len(specs) != 6 {
+		t.Fatalf("spec count = %d, want 6 with llm enabled", len(specs))
+	}
+	var haveRedirect bool
+	for _, s := range specs {
+		if s.name == kernelRouteHTTPRedirect {
+			haveRedirect = true
+			if s.sectionName != httpRedirectListenerName {
+				t.Fatalf("redirect route sectionName = %q, want %q", s.sectionName, httpRedirectListenerName)
+			}
+			if s.host != "" {
+				t.Fatalf("redirect route host = %q, want empty (match all hosts)", s.host)
+			}
+		}
+	}
+	if !haveRedirect {
+		t.Fatalf("route %q missing from kernel specs", kernelRouteHTTPRedirect)
 	}
 	llmRoute := buildKernelHTTPRoute(specs[len(specs)-1])
 	if llmRoute.Name != kernelRouteLiteLLM {
 		t.Fatalf("llm route name = %q, want %q", llmRoute.Name, kernelRouteLiteLLM)
 	}
-	if string(llmRoute.Spec.Hostnames[0]) != "llm.desk.gentian.org" {
+	if string(llmRoute.Spec.Hostnames[0]) != "llm.platform.example.test" {
 		t.Fatalf("llm host = %v", llmRoute.Spec.Hostnames[0])
 	}
 	backend := llmRoute.Spec.Rules[0].BackendRefs[0]
@@ -471,12 +544,100 @@ func TestKernelHTTPRouteSpecsLLMEnabled(t *testing.T) {
 
 func TestKernelApexRedirectRule(t *testing.T) {
 	t.Parallel()
-	rule := kernelApexRedirectRule("desk.gentian.org")
+	rule := kernelApexRedirectRule("platform.example.test")
 	if len(rule.Filters) != 1 || rule.Filters[0].RequestRedirect == nil {
 		t.Fatalf("rule = %+v", rule)
 	}
 	redirect := rule.Filters[0].RequestRedirect
-	if redirect.Hostname == nil || string(*redirect.Hostname) != "portal.desk.gentian.org" {
+	if redirect.Hostname == nil || string(*redirect.Hostname) != "portal.platform.example.test" {
 		t.Fatalf("hostname = %v", redirect.Hostname)
+	}
+	// No trailing slash: the portal router declares "/login" and TanStack Router
+	// does not normalise "/login/", so the apex redirect landed users on the
+	// app's not-found page. The static server answers both paths with 200 and
+	// index.html, so nothing outside the browser could see it.
+	if redirect.Path == nil || redirect.Path.ReplaceFullPath == nil {
+		t.Fatalf("apex redirect has no path modifier: %+v", redirect)
+	}
+	if got := *redirect.Path.ReplaceFullPath; got != "/login" {
+		t.Fatalf("apex redirect path = %q, want %q", got, "/login")
+	}
+}
+
+// TestKernelHTTPRouteSpecsAllBindToAListener guards the HTTP->HTTPS redirect.
+//
+// buildGateway gives every Gateway a hostname-less :80 listener carrying the
+// redirect. A route that omits sectionName attaches to EVERY listener whose
+// hostname matches, and a hostname-less listener matches everything — so each
+// content route silently attached to :80 as well. Gateway API then ranks a
+// route's specific hostname above the redirect route's absent one, so plaintext
+// requests were answered with content instead of a redirect and every kernel
+// host was reachable unencrypted (verified live: http://portal.<domain> -> 200).
+//
+// The invariant is therefore: every kernel route names exactly one listener.
+func TestKernelHTTPRouteSpecsAllBindToAListener(t *testing.T) {
+	specs := kernelHTTPRouteSpecs(
+		"platform.example.test",
+		[]string{"demo.platform.example.test"},
+		nil,
+		[]string{"demo"},
+		true,
+	)
+	if len(specs) == 0 {
+		t.Fatal("no kernel route specs produced")
+	}
+	for _, s := range specs {
+		if s.sectionName == "" {
+			t.Errorf("route %q has no sectionName: it will also attach to the :80 "+
+				"redirect listener and be served in plaintext", s.name)
+		}
+	}
+}
+
+// TestKernelHTTPRedirectBindsOnlyToPort80 pins the other half of the invariant:
+// the catch-all redirect must stay on :80. If it ever attached to a :443
+// listener it would redirect https traffic back to itself, forever.
+func TestKernelHTTPRedirectBindsOnlyToPort80(t *testing.T) {
+	specs := kernelHTTPRouteSpecs("platform.example.test", nil, nil, nil, false)
+	var found bool
+	for _, s := range specs {
+		if s.name != kernelRouteHTTPRedirect {
+			continue
+		}
+		found = true
+		if s.sectionName != httpRedirectListenerName {
+			t.Fatalf("redirect route bound to %q, want %q", s.sectionName, httpRedirectListenerName)
+		}
+		if s.host != "" {
+			t.Fatalf("redirect route host = %q, want empty so it matches every host", s.host)
+		}
+	}
+	if !found {
+		t.Fatalf("route %q missing", kernelRouteHTTPRedirect)
+	}
+}
+
+// Tenant app routes bind to the kernel Gateway pinned to the tenant listener.
+// Without the pin they would also attach to the hostname-less :80 listener and
+// outrank the redirect route there, serving the app in the clear.
+func TestTenantAppRouteBindsToTenantListener(t *testing.T) {
+	refs := tenantGatewayParentRefs(tenantGatewayListenerName("demo"))
+	if len(refs) != 1 {
+		t.Fatalf("want exactly the kernel Gateway parentRef, got %d", len(refs))
+	}
+	var kernelRef *gatewayv1.ParentReference
+	for i := range refs {
+		if string(refs[i].Name) == KernelPublicGatewayName {
+			kernelRef = &refs[i]
+		}
+	}
+	if kernelRef == nil {
+		t.Fatal("no kernel Gateway parentRef")
+	}
+	if kernelRef.SectionName == nil {
+		t.Fatal("kernel parentRef has no sectionName; route would also attach to :80")
+	}
+	if string(*kernelRef.SectionName) != "https-tenant-demo-wildcard" {
+		t.Fatalf("sectionName = %q", *kernelRef.SectionName)
 	}
 }

@@ -25,10 +25,55 @@ spec:
               required:
                 - kernelDomain
               properties:
+                identity:
+                  type: object
+                  # The object itself defaults, not just its fields. A nested default
+                  # only materialises when its parent is present, so without this the
+                  # internalUrl default below is unreachable on any cluster whose claim
+                  # does not mention identity — which is every one of them. spec.oidc
+                  # shows the same shape: its realm has defaulted to "kernel" since it
+                  # was written and no composite has ever carried the value.
+                  default: {}
+                  description: >
+                    Where the in-cluster Keycloak answers. Tenant realms broker to
+                    the kernel realm, and the server-to-server half of that exchange
+                    must not leave the cluster.
+                  properties:
+                    kernelRealm:
+                      type: string
+                      description: >
+                        The shared realm tenant realms broker to, and the realm the
+                        broker client lives in.
+
+                        oidc.realm names the same realm for OpenBao and wins when a
+                        claim sets it. This carries the default because oidc is inert
+                        by design — its discoveryUrl is what creates the auth backend,
+                        so the block stays absent on clusters that do not use it, and a
+                        default parked there would never materialise.
+                      default: kernel
+                    internalUrl:
+                      type: string
+                      description: >
+                        Keycloak's in-cluster base URL, including the relative path its
+                        realm endpoints hang off.
+
+                        The broker IdP splits its endpoints deliberately. The browser is
+                        sent to the public id.<kernelDomain> URL, while token, JWKS and
+                        userinfo are fetched over this one, so Keycloak does not hairpin
+                        out through the ingress and back in to reach itself during the
+                        broker code exchange.
+
+                        This is NOT gentian-kernel-services' KEYCLOAK_INTERNAL_URL, which
+                        is documented as a base with no path. Realm endpoints are relative
+                        to /auth, so the two cannot be the same string, and the Compositions
+                        need the /auth form. Keeping them separate keys is deliberate:
+                        collapsing them would silently give one consumer the other's
+                        contract.
+                      default: http://gentian-idp-keycloak-keycloakx-http.platform-kernel.svc.cluster.local:8080/auth
                 kernelDomain:
                   type: string
                   description: >
-                    Cluster-wide platform DNS suffix, e.g. "desk.gentian.org".
+                    Cluster-wide platform DNS suffix, e.g. "platform.example.com".
                     All kernel services are reachable under this domain.
                 masterPasswordSecretRef:
                   type: object
@@ -99,6 +144,497 @@ spec:
                       description: >
                         ACME account e-mail for Let's Encrypt. Defaults to
                         "admin@{kernelDomain}" when omitted.
+                # ── Cluster modes ────────────────────────────────────────
+                # Consumed directly by Compositions, which is why these live on
+                # the claim rather than in the Helm values chain. Everything
+                # here came from cluster-settings.env, a shell file the
+                # installer read and no reconciler could see (§2).
+                tenancyMode:
+                  type: string
+                  description: Whether the cluster hosts one tenant or many.
+                  enum:
+                    - single
+                    - multi
+                  default: multi
+                networkMode:
+                  type: string
+                  description: >
+                    How traffic reaches the cluster. tunnel sits behind a
+                    reverse proxy and needs no reachable node IP; static-ip
+                    requires one and a load balancer in front of it.
+                  enum:
+                    - tunnel
+                    - static-ip
+                  default: tunnel
+                routingMode:
+                  type: string
+                  description: Which ingress implementation kernel routes use.
+                  enum:
+                    - gateway
+                    - ingress
+                  default: gateway
+                secretMode:
+                  type: string
+                  description: >
+                    derived reproduces every kernel credential by HMAC-SHA256 of
+                    the master password, so a rebuild yields the same values.
+                    random generates them once, which breaks that property and
+                    is only for clusters that never rebuild.
+                  enum:
+                    - derived
+                    - random
+                  default: derived
+
+                # ── Sizing and placement ─────────────────────────────────
+                # The rest of cluster-settings.env's declared half. Every field
+                # here feeds the gentian-cluster-config ConfigMap that
+                # Compositions read, which this composition emits.
+                nodeIp:
+                  type: string
+                  description: >
+                    Node address that app profiles may reference as ${NODE_IP}
+                    in their values. The installer discovers it and writes it
+                    here, so it is declared rather than detected at runtime — a
+                    Composition cannot read a Node.
+                platform:
+                  type: string
+                  enum:
+                    - self-hosted
+                    - openstack
+                    - infomaniak
+                    - hetzner
+                    - aws
+                    - gcp
+                    - azure
+                    - none
+                    - ""
+                  description: >
+                    Where this cluster runs. Selects an entry in
+                    kernel/platforms.yaml, which is what a provider's edge
+                    LoadBalancer needs to be reachable — AWS's target type and
+                    scheme, Hetzner's location, OpenStack's health monitor.
+                    Detected from the nodes' spec.providerID when absent, so
+                    this is an override rather than a required field; "" emits
+                    no preset at all.
+                platformParams:
+                  type: object
+                  x-kubernetes-preserve-unknown-fields: true
+                  description: >
+                    What a platform's annotations need beyond an address:
+                    Hetzner's location, Azure's public-IP resource group. Which
+                    keys are required is declared per platform in
+                    kernel/platforms.yaml under requiredParams, and a missing
+                    one refuses to render rather than emitting a Service that
+                    stays Pending with no event explaining why.
+                addressRef:
+                  type: string
+                  description: >
+                    A pre-allocated edge address named the way its provider
+                    names it, for the providers that will not take one by IP:
+                    AWS Elastic IP allocation ids and Azure public IP names.
+                    Everywhere else the address is nodeIp.
+                lbProvider:
+                  type: string
+                  enum: [openstack, metallb, aws, gcp, ""]
+                  description: >
+                    platform under its former name, from when the edge load
+                    balancer was the only thing it selected. Still read, so a
+                    claim written before the rename installs unchanged; new
+                    claims set platform.
+                lbAnnotations:
+                  type: string
+                  description: >
+                    Extra annotations for the edge LoadBalancer Service, as
+                    comma-separated key=value pairs. The escape hatch for a
+                    platform the table has no entry for, applied on top of
+                    whatever that entry contributes.
+                storageClass:
+                  type: string
+                  description: >
+                    StorageClass for kernel PVCs. Empty means the cluster's
+                    default, which is right for most installs and wrong for any
+                    cluster with more than one.
+                backup:
+                  type: object
+                  description: >
+                    Where this cluster's backup key lives. The public half is
+                    always in OpenBao, because the operator needs it to encrypt.
+                    This decides what happens to the private half.
+                  properties:
+                    escrowIdentity:
+                      type: boolean
+                      default: true
+                      description: >
+                        Whether the backup private key is also stored in
+                        OpenBao, at gentian-os/kernel/backup/identity. Readable
+                        there by the cluster-admin policy and explicitly denied
+                        to eso-read, so it cannot be turned into a Kubernetes
+                        Secret by anything that can write an ExternalSecret. It
+                        means a cluster administrator can read the key, not that
+                        the cluster can.
+
+                        True, the default, because the likelier disaster is a
+                        lost recovery kit rather than a stolen cluster, and a
+                        backup nobody can open is not a backup. A cluster
+                        administrator restores with OpenBao credentials alone,
+                        and a later --export-recovery-kit reads the key back so
+                        the new kit carries it too.
+
+                        False keeps the private key in the recovery kit and
+                        nowhere else. Nothing the cluster holds can then open a
+                        bundle, so whoever takes the cluster gets ciphertext and
+                        a public key — what an attacker who already has the
+                        bucket has. The price is that the first kit becomes
+                        irreplaceable: losing every copy loses every backup,
+                        with no recourse. Choose it when the cluster is the
+                        likelier loss and you are certain of your kit custody.
+                llm:
+                  type: object
+                  description: LLM serving sizing. Hardware-dependent, not stage-dependent.
+                  properties:
+                    enabled:
+                      type: boolean
+                      default: false
+                    gpuAcceleration:
+                      type: boolean
+                      description: >
+                        Whether this cluster has GPUs to serve models on. With
+                        it false the vLLM instance list renders empty, which is
+                        what a CPU-only cluster wants; the sizing fields below
+                        are read only when it is true.
+                      default: false
+                    gpuTimeSliceReplicas:
+                      type: integer
+                      description: >
+                        How many workloads share one physical GPU. Time slicing,
+                        not partitioning — they contend for the whole device
+                        rather than getting a fraction of it.
+                      default: 1
+                    instances:
+                      type: array
+                      description: >
+                        The models this cluster serves. One Deployment, Service
+                        and PVC each, and removing an entry removes its workload
+                        — the cached weights survive, so re-adding the same name
+                        does not re-download tens of gigabytes.
+
+                        Read only when gpuAcceleration is true. An empty list is
+                        a CPU-only cluster, which is the default.
+                      items:
+                        type: object
+                        required: [name, modelId]
+                        properties:
+                          name:
+                            type: string
+                            description: >
+                              Kubernetes name for this instance, and the key its
+                              cached weights are kept under.
+                            pattern: '^[a-z0-9]([-a-z0-9]*[a-z0-9])?$'
+                          modelId:
+                            type: string
+                            description: Hugging Face model id, e.g. Qwen/Qwen2.5-7B-Instruct.
+                          gpuMemoryUtilization:
+                            type: string
+                            description: Fraction of GPU memory vLLM may use, e.g. "0.85".
+                            default: "0.85"
+                          maxModelLen:
+                            type: string
+                            description: Context window to serve, in tokens.
+                            default: "8192"
+                          modelCacheSize:
+                            type: string
+                            description: PVC size for the downloaded weights.
+                            default: 60Gi
+                          imageTag:
+                            type: string
+                            description: vLLM image tag.
+                            default: latest
+                          toolCallParser:
+                            type: string
+                            description: >
+                              vLLM tool-call parser for this model, e.g. hermes.
+                              Empty disables tool calling.
+                      default: []
+                tenantDefaults:
+                  type: object
+                  description: >
+                    Resource defaults applied to every tenant namespace. Usually
+                    identical across a deployment's clusters, so they belong in
+                    profiles/_base.yaml rather than being restated per cluster —
+                    they are on the claim so a cluster that genuinely differs
+                    can say so.
+                  properties:
+                    limitRange:
+                      type: object
+                      properties:
+                        defaultCpu:
+                          type: string
+                          default: 500m
+                        defaultMemory:
+                          type: string
+                          default: 512Mi
+                        defaultRequestCpu:
+                          type: string
+                          default: 100m
+                        defaultRequestMemory:
+                          type: string
+                          default: 128Mi
+
+                # ── OIDC write path ──────────────────────────────────────
+                oidc:
+                  type: object
+                  description: >
+                    Human write access to OpenBao, federated from Keycloak. When
+                    unset the OIDC backend is not created and the only write
+                    path is the installer's bootstrap token — which §7 requires
+                    be revoked, so leaving this unset means no day-2 writes at
+                    all. Set it once Keycloak is reachable.
+                  properties:
+                    discoveryUrl:
+                      type: string
+                      description: >
+                        The realm's OIDC discovery URL. Its presence is what
+                        creates the backend, so an incomplete block stays inert
+                        rather than half-configuring an auth method.
+                    clientId:
+                      type: string
+                      default: openbao
+                    clientSecretRef:
+                      type: string
+                      description: >
+                        Name of the Secret holding the client secret, in the
+                        OpenBao namespace. A reference, never the value — a
+                        secret in a spec field is the one thing §7 prohibits
+                        outright.
+                      default: openbao-oidc-client
+                    externalUrl:
+                      type: string
+                      description: OpenBao's browser-reachable URL, for the OIDC redirect.
+                    clusterAdminGroup:
+                      type: string
+                      description: >
+                        Keycloak group whose members receive the cluster-admin
+                        policy. Defaults to the group the platform already
+                        provisions the administrator into — D-06-portal-login
+                        creates it and adds administrator@<kernelDomain>, so a
+                        cluster admin can log in without being added to anything
+                        by hand.
+                      default: "/gentian:platform:superadmin"
+                    additionalAudiences:
+                      type: array
+                      items:
+                        type: string
+                      description: >
+                        Further client IDs whose tokens OpenBao accepts, beyond
+                        clientId. The console authenticates with its own Keycloak
+                        client, so its tokens carry its own audience; without it
+                        listed here every console request fails the token
+                        exchange. Group membership still gates what a token can
+                        do — this only decides which clients may present one.
+                      default:
+                        - gentian-portal
+                    realm:
+                      type: string
+                      description: >
+                        The shared Keycloak realm holding platform users. The
+                        OpenBao client, its mappers and the admin groups are
+                        created here.
+                      default: kernel
+                    tenantAdminGroup:
+                      type: string
+                      description: >
+                        Group pattern whose members receive the tenant-admin
+                        policy. A glob, because the kernel realm imports each
+                        tenant's own admins group by name rather than collecting
+                        everyone into one — so the pattern matches per-tenant
+                        groups instead of naming a single shared one.
+
+                        Membership alone grants nothing: the policy templates its
+                        path from the tenant claim, so a member without one
+                        reaches no tenant.
+                      default: "/gentian:tenant:*:admins"
+                    tenantClaim:
+                      type: string
+                      description: >
+                        Token claim naming the tenant a user administers. It is
+                        mapped into OpenBao alias metadata, which is both what
+                        the tenant-admin policy templates its path from and what
+                        the credential manager filters the catalogue by — so the
+                        write path and the read path cannot disagree.
+                      default: tenant
+
+                # ── Trust anchor ─────────────────────────────────────────
+                certificates:
+                  type: object
+                  description: >
+                    How this cluster issues TLS certificates. The dimension that
+                    decides whether an install on an internal domain is possible
+                    at all — an installer that can only succeed with public ACME
+                    is not a self-hostable installer (§9).
+                  properties:
+                    issuerMode:
+                      type: string
+                      description: >
+                        acme-dns01   public DNS, wildcard capable, needs a DNS
+                                     provider credential.
+                        acme-http01  public DNS reachable on :80, no wildcards.
+                        private-ca   an existing CA the operator supplies.
+                        self-signed  a CA this cluster generates. Offline,
+                                     instant, and not publicly trusted — the
+                                     mode for an internal domain.
+                      enum:
+                        - acme-dns01
+                        - acme-http01
+                        - private-ca
+                        - self-signed
+                      default: acme-dns01
+                    acmeEnv:
+                      type: string
+                      description: >
+                        Which Let's Encrypt endpoint the ACME issuers use, when
+                        issuerMode is one of the acme- modes.
+
+                        staging      untrusted certificates, generous rate
+                                     limits — what a cluster being rebuilt
+                                     repeatedly wants.
+                        production   trusted certificates, five duplicate
+                                     certificates per week per name.
+                        both         render both issuers and let a Certificate
+                                     name the one it wants.
+
+                        Read by the installer from this file at A-06, before the
+                        Cluster XR exists — the same way networkMode and nodeIp
+                        are read at A-05 and A-07. No Composition consumes it;
+                        the cluster issuers are shell-applied, and this is where
+                        the cluster says which endpoint it is on rather than the
+                        installer's pointer file saying so on its behalf.
+                      enum:
+                        - staging
+                        - production
+                        - both
+                      default: production
+                    dnsProvider:
+                      type: string
+                      description: >
+                        Who hosts the zone, when issuerMode is acme-dns01.
+
+                        Separate from issuerMode because they answer different
+                        questions — how control is proved, and by whom — and
+                        folding them together is what made acme-dns01 mean
+                        Cloudflare. Each value is an entry in
+                        kernel/platforms.yaml carrying the cert-manager solver,
+                        the external-dns provider and the one credential both
+                        read.
+
+                        Independent of `platform`: a Hetzner cluster on a
+                        Cloudflare zone is ordinary.
+                      enum:
+                        - cloudflare
+                        - route53
+                        - clouddns
+                        - azuredns
+                        - rfc2136
+                        - hetzner
+                        - infomaniak
+                        - none
+                      default: cloudflare
+                    dnsParams:
+                      type: object
+                      x-kubernetes-preserve-unknown-fields: true
+                      description: >
+                        What a provider's solver needs beyond its credential:
+                        Route 53's region and hosted zone, Cloud DNS's project,
+                        Azure's subscription and resource group, the nameserver
+                        for a self-hosted zone. Required keys are declared per
+                        provider in kernel/platforms.yaml.
+                    externalDns:
+                      type: boolean
+                      default: true
+                      description: >
+                        Whether external-dns writes this cluster's records.
+
+                        On by default, because it is the only thing that writes
+                        them. Every hostname this cluster serves is published
+                        from the HTTPRoutes the operator writes, and records
+                        with no HTTP object behind them — mail — arrive as
+                        DNSEndpoint CRs. One mechanism, all eight providers in
+                        kernel/platforms.yaml, both network modes.
+
+                        It was off by default while the operator wrote records
+                        itself, to keep two controllers off one record set. That
+                        writer existed for Cloudflare only, so a cluster on any
+                        other zone host had nothing writing records at all, and
+                        a static-ip cluster had nothing either — the adapter
+                        needs a tunnel to point at. Both were silent: names
+                        simply never resolved.
+
+                        Turn it off only where an operator publishes this
+                        cluster's records by hand, or where something outside
+                        the platform already does.
+
+                        Independent of certificates.dnsProvider: that decides
+                        who can solve a DNS-01 challenge, which is needed for a
+                        wildcard whether or not anything writes records.
+                    caBundleSecretRef:
+                      type: object
+                      description: >
+                        Where the trust anchor's certificate lives, so consumers
+                        that validate kernel hostnames can be given it. Defaults
+                        to what the self-signed mode produces.
+                      properties:
+                        name:
+                          type: string
+                          default: gentian-root-ca-tls
+                        namespace:
+                          type: string
+                          default: cert-manager
+
+                # ── Mail ─────────────────────────────────────────────────────
+                mail:
+                  type: object
+                  description: >
+                    Where the cluster sends mail. The relay's credentials are
+                    NOT here — they are the smtp-relay CredentialRequirement,
+                    and this carries only its address and transport settings.
+                  properties:
+                    serviceMode:
+                      type: string
+                      description: >
+                        external relays through an upstream provider; kernel
+                        runs Postfix in-cluster.
+                      enum:
+                        - external
+                        - kernel
+                      default: external
+                    egressHost:
+                      type: string
+                      description: >
+                        The hostname outbound mail leaves from, when this cluster sends from
+                        an address it owns rather than the shared egress.
+
+                        Postfix greets remote servers with this name and is pinned to the node
+                        carrying that floating IP, because they are one decision: an address
+                        that can move is an address whose PTR and SPF record stop matching.
+
+                        It must resolve to the sending address, and that address must resolve
+                        back to this name. It is not the MX name — mail arrives on the load
+                        balancer and leaves via the node.
+
+                        Empty means the shared egress address or a smarthost relay.
+                    host:
+                      type: string
+                      description: Relay hostname. Required when serviceMode is external.
+                    port:
+                      type: integer
+                      default: 587
+                    ssl:
+                      type: boolean
+                      description: Implicit TLS on connect, as opposed to STARTTLS.
+                      default: false
+                    starttls:
+                      type: boolean
+                      default: true
+
             status:
               type: object
               properties:

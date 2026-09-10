@@ -14,13 +14,11 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-
 package controller
 
 import (
 	"context"
 	"fmt"
-	"os"
 
 	"k8s.io/apimachinery/pkg/api/equality"
 	"k8s.io/apimachinery/pkg/api/errors"
@@ -36,6 +34,7 @@ import (
 const (
 	kernelRouteKeycloakIDP   = "kernel-idp"
 	kernelRouteKernelApex    = "kernel-apex-redirect"
+	kernelRouteHTTPRedirect  = "kernel-http-redirect"
 	kernelRouteArgoCD        = "kernel-argocd"
 	kernelRouteGentianPortal = "kernel-gentian-portal"
 	kernelRouteLiteLLM       = "kernel-llm"
@@ -49,9 +48,16 @@ const (
 )
 
 type kernelHTTPRouteSpec struct {
-	name         string
-	host         string
-	rules        []gatewayv1.HTTPRouteRule
+	name string
+	// host empty means "match every hostname" — used by the :80 redirect, which
+	// must catch apex, wildcard and tenant domains without enumerating them.
+	host  string
+	rules []gatewayv1.HTTPRouteRule
+	// sectionName binds the route to a single Gateway listener. Without it a
+	// route attaches to every listener whose hostname matches, which for the
+	// HTTP->HTTPS redirect would include the :443 listeners and send TLS
+	// requests into an infinite redirect back to themselves.
+	sectionName  string
 	policy       map[string]interface{}
 	clientPolicy map[string]interface{}
 }
@@ -85,14 +91,14 @@ func (r *GatewayPlatformReconciler) reconcileKernelHTTPRoutes(ctx context.Contex
 	if err != nil {
 		return fmt.Errorf("collect OIDC ingress subdomains: %w", err)
 	}
-	if err := r.ensureArgoCDReferenceGrant(ctx); err != nil {
-		return fmt.Errorf("ensure ArgoCD ReferenceGrant: %w", err)
-	}
-	if err := r.ensureGentianPortalReferenceGrant(ctx); err != nil {
-		return fmt.Errorf("ensure Gentian portal ReferenceGrant: %w", err)
+	for _, ns := range []string{argocdNamespace, kernelNamespace} {
+		if err := r.ensureRouteReferenceGrant(ctx, ns); err != nil {
+			return fmt.Errorf("ensure ReferenceGrant in %s: %w", ns, err)
+		}
 	}
 
-	specs := kernelHTTPRouteSpecs(r.KernelDomain, effectiveDomains, oidcSubs, tenantNames)
+	specs := kernelHTTPRouteSpecs(r.KernelDomain, effectiveDomains, oidcSubs, tenantNames,
+		clusterLLMEnabled(ctx, r.Client))
 	expected := make(map[string]struct{}, len(specs))
 	for _, spec := range specs {
 		expected[spec.name] = struct{}{}
@@ -116,12 +122,12 @@ func (r *GatewayPlatformReconciler) reconcileKernelHTTPRoutes(ctx context.Contex
 		return fmt.Errorf("detect escaped-slashes gateway policy need: %w", err)
 	}
 	if needsWildcard {
-		if err := r.ensureKernelClientTrafficPolicyNamed(ctx, "kernel-wildcard-escaped-slashes", "https-wildcard", escapedSlashesKeepUnchangedClientTrafficPolicySpec()); err != nil {
+		if err := r.ensureKernelClientTrafficPolicyNamed(ctx, "kernel-wildcard-escaped-slashes", wildcardListenerName, escapedSlashesKeepUnchangedClientTrafficPolicySpec()); err != nil {
 			return fmt.Errorf("ensure kernel wildcard escaped-slashes ClientTrafficPolicy: %w", err)
 		}
 		for _, tenantName := range tenantNames {
 			name := fmt.Sprintf("tenant-%s-wildcard-escaped-slashes", tenantName)
-			sectionName := fmt.Sprintf("https-tenant-%s-wildcard", tenantName)
+			sectionName := tenantGatewayListenerName(tenantName)
 			if err := r.ensureKernelClientTrafficPolicyNamed(ctx, name, sectionName, escapedSlashesKeepUnchangedClientTrafficPolicySpec()); err != nil {
 				return fmt.Errorf("ensure kernel tenant wildcard escaped-slashes ClientTrafficPolicy: %w", err)
 			}
@@ -135,6 +141,7 @@ func kernelHTTPRouteSpecs(
 	tenantEffectiveDomains []string,
 	tenantOIDCSubdomains map[string][]string,
 	tenantNames []string,
+	llmEnabled bool,
 ) []kernelHTTPRouteSpec {
 	idHost := fmt.Sprintf("id.%s", kernelDomain)
 	portalHost := kernelPortalHost(kernelDomain)
@@ -144,8 +151,9 @@ func kernelHTTPRouteSpecs(
 
 	specs := []kernelHTTPRouteSpec{
 		{
-			name: kernelRouteKeycloakIDP,
-			host: idHost,
+			name:        kernelRouteKeycloakIDP,
+			host:        idHost,
+			sectionName: wildcardListenerName,
 			rules: []gatewayv1.HTTPRouteRule{
 				kernelBackendRulePrefixNS(
 					kcService,
@@ -161,33 +169,73 @@ func kernelHTTPRouteSpecs(
 	// Gentian UI portal (API + SPA) runs in platform-kernel; edge traffic reaches
 	// kernel-public-gateway in servicesNamespace via Cloudflare tunnel.
 	specs = append(specs, kernelHTTPRouteSpec{
-		name:  kernelRouteGentianPortal,
-		host:  portalHost,
-		rules: kernelGentianPortalHTTPRouteRules(),
+		name:        kernelRouteGentianPortal,
+		host:        portalHost,
+		sectionName: wildcardListenerName,
+		rules:       kernelGentianPortalHTTPRouteRules(),
 	})
+	// Serve the portal on each tenant's own host, rather than redirecting there to
+	// the shared one.
+	//
+	// A redirect cannot carry anything: the gateway filter replaces path and query
+	// wholesale, so a login hint travelling on <tenant>.<kernel-domain> was dropped
+	// before the portal ever saw it. Answering directly also means the address bar
+	// stays on the tenant's name instead of bouncing through portal.<kernel-domain>.
+	//
+	// Same rules and the same backends as the shared route, so there is one portal
+	// deployment answering on more names — not a copy per tenant, which would put
+	// the portal's Keycloak admin credentials inside every tenant's blast radius.
+	//
+	// Consequence worth knowing: tokens live in sessionStorage, which is per origin,
+	// so a user signed in on the tenant host is a separate session from the same
+	// user on portal.<kernel-domain>. Keycloak's SSO cookie makes crossing between
+	// them silent, but they are two sessions.
+	for i, domain := range tenantEffectiveDomains {
+		if i >= len(tenantNames) {
+			break
+		}
+		specs = append(specs, kernelHTTPRouteSpec{
+			name: fmt.Sprintf("tenant-%s-portal", tenantNames[i]),
+			host: domain,
+			// The tenant apex listener carries the tenant's own certificate.
+			// buildKernelGateway creates it from the same filtered tenant list
+			// that produced this route, so it is always present.
+			sectionName: wildcardListenerName,
+			rules:       kernelGentianPortalHTTPRouteRules(),
+		})
+	}
 	specs = append(specs,
 		kernelHTTPRouteSpec{
-			name: kernelRouteKernelApex,
-			host: kernelDomain,
+			name:        kernelRouteKernelApex,
+			host:        kernelDomain,
+			sectionName: wildcardListenerName,
 			rules: []gatewayv1.HTTPRouteRule{
 				kernelApexRedirectRule(kernelDomain),
 			},
 		},
 		kernelHTTPRouteSpec{
-			name: kernelRouteArgoCD,
-			host: fmt.Sprintf("argocd.%s", kernelDomain),
+			// Plaintext :80 -> https, bound to the http-redirect listener only.
+			name:        kernelRouteHTTPRedirect,
+			sectionName: httpRedirectListenerName,
+			rules:       []gatewayv1.HTTPRouteRule{kernelHTTPSRedirectRule()},
+		},
+		kernelHTTPRouteSpec{
+			name:        kernelRouteArgoCD,
+			host:        fmt.Sprintf("argocd.%s", kernelDomain),
+			sectionName: wildcardListenerName,
 			rules: []gatewayv1.HTTPRouteRule{
 				kernelBackendRuleCrossNamespace(argocdServerServiceName, argocdNamespace, 80),
 			},
 		},
 	)
-	// LiteLLM admin console — platform-level only (LLM_SUPPORT=true). Tenants
-	// do not get their own route; app-catalogue "litellm" tiles stay unused
-	// until per-tenant access is designed (see docs/design/llms.md).
-	if os.Getenv("LLM_SUPPORT") == "true" {
+	// LiteLLM admin console — platform-level only (the claim's llm.enabled).
+	// Tenants do not get their own route; app-catalogue "litellm" tiles stay
+	// unused until per-tenant access is designed (see docs/design/llms.md).
+	if llmEnabled {
 		specs = append(specs, kernelHTTPRouteSpec{
-			name: kernelRouteLiteLLM,
-			host: fmt.Sprintf("llm.%s", kernelDomain),
+			name:        kernelRouteLiteLLM,
+			host:        fmt.Sprintf("llm.%s", kernelDomain),
+			sectionName: wildcardListenerName,
 			rules: []gatewayv1.HTTPRouteRule{
 				kernelBackendRulePrefixNS(litellmProxyServiceName, kernelNamespace, litellmProxyPort, "/"),
 			},
@@ -205,7 +253,11 @@ func kernelGentianPortalHTTPRouteRules() []gatewayv1.HTTPRouteRule {
 	}
 }
 
-func kernelBackendRulePrefixNS(serviceName, namespace string, port int32, prefix string, filters ...gatewayv1.HTTPRouteFilter) gatewayv1.HTTPRouteRule {
+// kernelBackendRuleNS routes one match to one Service, optionally cross-namespace.
+//
+// The prefix and exact variants below were full copies of this, differing in
+// which path matcher they called.
+func kernelBackendRuleNS(serviceName, namespace string, port int32, match gatewayv1.HTTPRouteMatch, filters ...gatewayv1.HTTPRouteFilter) gatewayv1.HTTPRouteRule {
 	p := gatewayv1.PortNumber(port)
 	ref := gatewayv1.BackendObjectReference{
 		Name: gatewayv1.ObjectName(serviceName),
@@ -216,7 +268,7 @@ func kernelBackendRulePrefixNS(serviceName, namespace string, port int32, prefix
 		ref.Namespace = &ns
 	}
 	rule := gatewayv1.HTTPRouteRule{
-		Matches: []gatewayv1.HTTPRouteMatch{pathPrefixMatch(prefix)},
+		Matches: []gatewayv1.HTTPRouteMatch{match},
 		BackendRefs: []gatewayv1.HTTPBackendRef{
 			{BackendRef: gatewayv1.BackendRef{BackendObjectReference: ref}},
 		},
@@ -227,26 +279,12 @@ func kernelBackendRulePrefixNS(serviceName, namespace string, port int32, prefix
 	return rule
 }
 
+func kernelBackendRulePrefixNS(serviceName, namespace string, port int32, prefix string, filters ...gatewayv1.HTTPRouteFilter) gatewayv1.HTTPRouteRule {
+	return kernelBackendRuleNS(serviceName, namespace, port, pathPrefixMatch(prefix), filters...)
+}
+
 func kernelBackendRuleExactNS(serviceName, namespace string, port int32, path string, filters ...gatewayv1.HTTPRouteFilter) gatewayv1.HTTPRouteRule {
-	p := gatewayv1.PortNumber(port)
-	ref := gatewayv1.BackendObjectReference{
-		Name: gatewayv1.ObjectName(serviceName),
-		Port: &p,
-	}
-	if namespace != "" {
-		ns := gatewayv1.Namespace(namespace)
-		ref.Namespace = &ns
-	}
-	rule := gatewayv1.HTTPRouteRule{
-		Matches: []gatewayv1.HTTPRouteMatch{pathExactMatch(path)},
-		BackendRefs: []gatewayv1.HTTPBackendRef{
-			{BackendRef: gatewayv1.BackendRef{BackendObjectReference: ref}},
-		},
-	}
-	if len(filters) > 0 {
-		rule.Filters = filters
-	}
-	return rule
+	return kernelBackendRuleNS(serviceName, namespace, port, pathExactMatch(path), filters...)
 }
 
 func kernelBackendRuleCrossNamespace(serviceName, namespace string, port int32) gatewayv1.HTTPRouteRule {
@@ -268,7 +306,15 @@ func kernelBackendRuleCrossNamespace(serviceName, namespace string, port int32) 
 	}
 }
 
-func (r *GatewayPlatformReconciler) ensureArgoCDReferenceGrant(ctx context.Context) error {
+// ensureRouteReferenceGrant lets the kernel gateway's HTTPRoutes, which live in
+// the services namespace, reference Services in ns.
+//
+// This was two functions — one for argocd, one for platform-kernel — identical
+// for forty lines apart from the namespace they targeted. Which is exactly the
+// shape that goes wrong quietly: a change to the grant made in one and not the
+// other leaves half the kernel's routes unable to resolve their backend, and the
+// symptom is a 500 from the gateway rather than anything naming a ReferenceGrant.
+func (r *GatewayPlatformReconciler) ensureRouteReferenceGrant(ctx context.Context, ns string) error {
 	spec := map[string]interface{}{
 		"from": []interface{}{
 			map[string]interface{}{
@@ -287,7 +333,7 @@ func (r *GatewayPlatformReconciler) ensureArgoCDReferenceGrant(ctx context.Conte
 	desired := &unstructured.Unstructured{}
 	desired.SetGroupVersionKind(referenceGrantGVK)
 	desired.SetName("allow-kernel-gateway-routes")
-	desired.SetNamespace(argocdNamespace)
+	desired.SetNamespace(ns)
 	desired.SetLabels(map[string]string{
 		managedByLabel: managedByValue,
 	})
@@ -297,7 +343,7 @@ func (r *GatewayPlatformReconciler) ensureArgoCDReferenceGrant(ctx context.Conte
 
 	existing := &unstructured.Unstructured{}
 	existing.SetGroupVersionKind(referenceGrantGVK)
-	err := r.Get(ctx, client.ObjectKey{Name: desired.GetName(), Namespace: argocdNamespace}, existing)
+	err := r.Get(ctx, client.ObjectKey{Name: desired.GetName(), Namespace: ns}, existing)
 	if errors.IsNotFound(err) {
 		return r.Create(ctx, desired)
 	}
@@ -314,50 +360,34 @@ func (r *GatewayPlatformReconciler) ensureArgoCDReferenceGrant(ctx context.Conte
 	return nil
 }
 
-func (r *GatewayPlatformReconciler) ensureGentianPortalReferenceGrant(ctx context.Context) error {
-	spec := map[string]interface{}{
-		"from": []interface{}{
-			map[string]interface{}{
-				"group":     gatewayv1.GroupName,
-				"kind":      "HTTPRoute",
-				"namespace": servicesNamespace,
+// kernelHTTPSRedirectRule sends any plaintext request straight to https on the
+// same host and path.
+//
+// 301 (permanent) is the industry-standard status for http->https: it is
+// cacheable, and it is what HSTS preload and every scanner expects. Gateway API
+// permits only 301 or 302 here, so 308 — which would additionally preserve the
+// request method — is not available; that is immaterial in practice because the
+// requests reaching :80 are browsers issuing GET on a bare hostname.
+//
+// Hostname is deliberately not set, so the requested host is preserved and one
+// rule covers apex, wildcard and tenant domains.
+func kernelHTTPSRedirectRule() gatewayv1.HTTPRouteRule {
+	scheme := "https"
+	status := 301
+	port := gatewayv1.PortNumber(443)
+	return gatewayv1.HTTPRouteRule{
+		Matches: []gatewayv1.HTTPRouteMatch{pathPrefixMatch("/")},
+		Filters: []gatewayv1.HTTPRouteFilter{
+			{
+				Type: gatewayv1.HTTPRouteFilterRequestRedirect,
+				RequestRedirect: &gatewayv1.HTTPRequestRedirectFilter{
+					Scheme:     &scheme,
+					Port:       &port,
+					StatusCode: &status,
+				},
 			},
 		},
-		"to": []interface{}{
-			map[string]interface{}{
-				"group": "",
-				"kind":  "Service",
-			},
-		},
 	}
-	desired := &unstructured.Unstructured{}
-	desired.SetGroupVersionKind(referenceGrantGVK)
-	desired.SetName("allow-kernel-gateway-routes")
-	desired.SetNamespace(kernelNamespace)
-	desired.SetLabels(map[string]string{
-		managedByLabel: managedByValue,
-	})
-	if err := unstructured.SetNestedField(desired.Object, spec, "spec"); err != nil {
-		return err
-	}
-
-	existing := &unstructured.Unstructured{}
-	existing.SetGroupVersionKind(referenceGrantGVK)
-	err := r.Get(ctx, client.ObjectKey{Name: desired.GetName(), Namespace: kernelNamespace}, existing)
-	if errors.IsNotFound(err) {
-		return r.Create(ctx, desired)
-	}
-	if err != nil {
-		return err
-	}
-	if !equality.Semantic.DeepEqual(existing.Object["spec"], desired.Object["spec"]) {
-		patch := client.MergeFrom(existing.DeepCopy())
-		if err := unstructured.SetNestedField(existing.Object, spec, "spec"); err != nil {
-			return err
-		}
-		return r.Patch(ctx, existing, patch)
-	}
-	return nil
 }
 
 func kernelApexRedirectRule(kernelDomain string) gatewayv1.HTTPRouteRule {
@@ -365,7 +395,13 @@ func kernelApexRedirectRule(kernelDomain string) gatewayv1.HTTPRouteRule {
 	status := 302
 	port := gatewayv1.PortNumber(443)
 	pathType := gatewayv1.FullPathHTTPPathModifier
-	loginPath := "/login/"
+	// No trailing slash. The portal's router declares the route as "/login"
+	// (frontend/src/router.tsx) and TanStack Router does not normalise the
+	// difference — "/login/" matches nothing and renders its not-found page. The
+	// static server answers both with 200 and index.html, so this is invisible
+	// from the outside: only the browser sees the 404, and only via the apex
+	// redirect, since nothing in the app ever links to "/login/".
+	loginPath := "/login"
 	portalHost := gatewayv1.PreciseHostname(kernelPortalHost(kernelDomain))
 	return gatewayv1.HTTPRouteRule{
 		Matches: []gatewayv1.HTTPRouteMatch{pathPrefixMatch("/")},
@@ -380,16 +416,6 @@ func kernelApexRedirectRule(kernelDomain string) gatewayv1.HTTPRouteRule {
 					StatusCode: &status,
 				},
 			},
-		},
-	}
-}
-
-func pathExactMatch(path string) gatewayv1.HTTPRouteMatch {
-	t := gatewayv1.PathMatchExact
-	return gatewayv1.HTTPRouteMatch{
-		Path: &gatewayv1.HTTPPathMatch{
-			Type:  &t,
-			Value: &path,
 		},
 	}
 }
@@ -419,6 +445,19 @@ func escapedSlashesKeepUnchangedClientTrafficPolicySpec() map[string]interface{}
 }
 
 func buildKernelHTTPRoute(spec kernelHTTPRouteSpec) *gatewayv1.HTTPRoute {
+	parentRef := gatewayParentRef(KernelPublicGatewayName)
+	if spec.sectionName != "" {
+		s := gatewayv1.SectionName(spec.sectionName)
+		parentRef.SectionName = &s
+	}
+
+	// An empty Hostnames list matches every host, which is what the :80
+	// redirect needs. Emitting []Hostname{""} instead would be rejected.
+	var hostnames []gatewayv1.Hostname
+	if spec.host != "" {
+		hostnames = []gatewayv1.Hostname{gatewayv1.Hostname(spec.host)}
+	}
+
 	return &gatewayv1.HTTPRoute{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      spec.name,
@@ -431,10 +470,10 @@ func buildKernelHTTPRoute(spec kernelHTTPRouteSpec) *gatewayv1.HTTPRoute {
 		Spec: gatewayv1.HTTPRouteSpec{
 			CommonRouteSpec: gatewayv1.CommonRouteSpec{
 				ParentRefs: []gatewayv1.ParentReference{
-					gatewayParentRef(KernelPublicGatewayName),
+					parentRef,
 				},
 			},
-			Hostnames: []gatewayv1.Hostname{gatewayv1.Hostname(spec.host)},
+			Hostnames: hostnames,
 			Rules:     spec.rules,
 		},
 	}
@@ -450,7 +489,7 @@ func (r *GatewayPlatformReconciler) ensureKernelClientTrafficPolicy(ctx context.
 	if spec.clientPolicy == nil {
 		return nil
 	}
-	return r.ensureKernelClientTrafficPolicyNamed(ctx, spec.name, "https-wildcard", spec.clientPolicy)
+	return r.ensureKernelClientTrafficPolicyNamed(ctx, spec.name, wildcardListenerName, spec.clientPolicy)
 }
 
 func (r *GatewayPlatformReconciler) ensureKernelClientTrafficPolicyNamed(

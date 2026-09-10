@@ -38,4 +38,4 @@ type document
     define owner: [user]
     define reader: [user] or member from parent or owner
     define acting_for: [user]
-    define can_read: reader or acting_for
+    define can_read: reader or (acting_for and member from parent)

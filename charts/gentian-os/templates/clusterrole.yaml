@@ -1,3 +1,15 @@
+{{- /*
+  GENERATED FILE — DO NOT EDIT.
+
+  Rendered by scripts/gen/gen-clusterrole.py from the +kubebuilder:rbac markers in
+  internal/..., via controller-gen. To change a permission, edit the marker next
+  to the code that needs it and run `make gen-all`. Editing this file by hand
+  will be reverted by the next generation run, and CI's verify-gen job fails on
+  any drift between the two.
+
+  The rationale for each grant lives with its marker, where it stays next to the
+  code that depends on it.
+*/ -}}
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
@@ -5,86 +17,329 @@ metadata:
   labels:
     {{- include "gentian-os.labels" . | nindent 4 }}
 rules:
-  # Gentian OS CRDs
-  - apiGroups: ["gentianos.io"]
-    resources: ["tenants", "tenants/status", "tenants/finalizers"]
-    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
-  - apiGroups: ["gentianos.io"]
-    resources: ["appprofiles"]
-    verbs: ["get", "list", "watch"]
-  - apiGroups: ["gentianos.io"]
-    resources: ["apps"]
-    verbs: ["get", "list", "watch", "delete"]
-  - apiGroups: ["gentianos.io"]
-    resources: ["integrationbindings", "integrationbindings/status", "integrationbindings/finalizers"]
-    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
-  - apiGroups: ["gentianos.io"]
-    resources: ["appgrants", "appgrants/status", "appgrants/finalizers"]
-    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
-  - apiGroups: ["gentianos.io"]
-    resources: ["platformsecuritypolicies", "platformsecuritypolicies/status", "platformsecuritypolicies/finalizers"]
-    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
-  # Customization records — the operator computes derived debt state on status,
-  # but never authors records: those are written in git by humans and agents.
-  - apiGroups: ["gentianos.io"]
-    resources: ["customizations"]
-    verbs: ["get", "list", "watch", "update", "patch"]
-  - apiGroups: ["gentianos.io"]
-    resources: ["customizations/status"]
-    verbs: ["get", "update", "patch"]
-  # Core resources
-  - apiGroups: [""]
-    resources: ["namespaces"]
-    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
-  - apiGroups: [""]
-    resources: ["resourcequotas", "limitranges"]
-    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
-  - apiGroups: [""]
-    resources: ["secrets"]
-    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
-  - apiGroups: [""]
-    resources: ["pods"]
-    verbs: ["get", "list", "create"]
-  - apiGroups: [""]
-    resources: ["services"]
-    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
-  - apiGroups: [""]
-    resources: ["configmaps"]
-    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
-  - apiGroups: [""]
-    resources: ["events"]
-    verbs: ["create", "patch"]
-  # Networking
-  - apiGroups: ["networking.k8s.io"]
-    resources: ["networkpolicies", "ingresses"]
-    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
-  # Gateway API (edge routing when ROUTING_MODE=gateway)
-  - apiGroups: ["gateway.networking.k8s.io"]
-    resources: ["gateways", "gateways/status", "httproutes", "httproutes/status"]
-    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
-  - apiGroups: ["gateway.networking.k8s.io"]
-    resources: ["gatewayclasses"]
-    verbs: ["get", "list", "watch", "create", "update", "patch"]
-  - apiGroups: ["gateway.envoyproxy.io"]
-    resources: ["backendtrafficpolicies"]
-    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
-  # Batch
-  - apiGroups: ["batch"]
-    resources: ["jobs"]
-    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
-  # ArgoCD Applications
-  - apiGroups: ["argoproj.io"]
-    resources: ["applications"]
-    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
-  # CloudNative-PG Databases
-  - apiGroups: ["postgresql.cnpg.io"]
-    resources: ["databases"]
-    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
-  # External Secrets
-  - apiGroups: ["external-secrets.io"]
-    resources: ["externalsecrets"]
-    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
-  # Leader election
-  - apiGroups: ["coordination.k8s.io"]
-    resources: ["leases"]
-    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  - apiGroups:
+    - ''
+    resources:
+    - configmaps
+    - limitranges
+    - namespaces
+    - resourcequotas
+    - secrets
+    - services
+    verbs:
+    - get
+    - list
+    - watch
+    - create
+    - update
+    - patch
+    - delete
+  - apiGroups:
+    - ''
+    resources:
+    - events
+    verbs:
+    - create
+    - patch
+  - apiGroups:
+    - ''
+    resources:
+    - nodes
+    verbs:
+    - get
+    - list
+    - watch
+    - patch
+  - apiGroups:
+    - ''
+    resources:
+    - persistentvolumeclaims
+    verbs:
+    - get
+    - list
+    - delete
+  - apiGroups:
+    - ''
+    resources:
+    - pods
+    verbs:
+    - get
+    - list
+    - watch
+    - create
+    - delete
+  - apiGroups:
+    - ''
+    resources:
+    - pods/exec
+    verbs:
+    - create
+  - apiGroups:
+    - ''
+    resources:
+    - pods/log
+    verbs:
+    - get
+  - apiGroups:
+    - apps
+    resources:
+    - deployments
+    - statefulsets
+    verbs:
+    - get
+    - list
+    - watch
+    - update
+    - patch
+  - apiGroups:
+    - argoproj.io
+    resources:
+    - applications
+    verbs:
+    - get
+    - list
+    - watch
+    - create
+    - update
+    - patch
+    - delete
+  - apiGroups:
+    - batch
+    resources:
+    - jobs
+    verbs:
+    - get
+    - list
+    - watch
+    - create
+    - update
+    - patch
+    - delete
+  - apiGroups:
+    - cert-manager.io
+    resources:
+    - certificates
+    verbs:
+    - get
+    - list
+    - watch
+    - create
+    - update
+    - patch
+    - delete
+  - apiGroups:
+    - coordination.k8s.io
+    resources:
+    - leases
+    verbs:
+    - get
+    - list
+    - watch
+    - create
+    - update
+    - patch
+    - delete
+  - apiGroups:
+    - discovery.k8s.io
+    resources:
+    - endpointslices
+    verbs:
+    - get
+    - list
+    - watch
+  - apiGroups:
+    - external-secrets.io
+    resources:
+    - externalsecrets
+    verbs:
+    - get
+    - list
+    - watch
+    - create
+    - update
+    - patch
+    - delete
+  - apiGroups:
+    - externaldns.k8s.io
+    resources:
+    - dnsendpoints
+    verbs:
+    - get
+    - list
+    - watch
+    - create
+    - update
+    - patch
+    - delete
+  - apiGroups:
+    - gateway.envoyproxy.io
+    resources:
+    - backendtrafficpolicies
+    - clienttrafficpolicies
+    verbs:
+    - get
+    - list
+    - watch
+    - create
+    - update
+    - patch
+    - delete
+  - apiGroups:
+    - gateway.networking.k8s.io
+    resources:
+    - gatewayclasses
+    verbs:
+    - get
+    - list
+    - watch
+    - create
+    - update
+    - patch
+  - apiGroups:
+    - gateway.networking.k8s.io
+    resources:
+    - gateways
+    - gateways/status
+    - httproutes
+    - httproutes/status
+    - referencegrants
+    verbs:
+    - get
+    - list
+    - watch
+    - create
+    - update
+    - patch
+    - delete
+  - apiGroups:
+    - gentianos.io
+    resources:
+    - appcatalogues
+    - appgrants
+    - apps
+    - backuppolicies
+    - credentialrequirements
+    - integrationbindings
+    - platformsecuritypolicies
+    - repositories
+    - tenantexports
+    - tenantexportschedules
+    - tenantrestores
+    - tenants
+    - xtenants
+    verbs:
+    - get
+    - list
+    - watch
+    - create
+    - update
+    - patch
+    - delete
+  - apiGroups:
+    - gentianos.io
+    resources:
+    - appcatalogues/status
+    - appgrants/status
+    - backuppolicies/status
+    - customizations/status
+    - integrationbindings/status
+    - platformsecuritypolicies/status
+    - resourceplans/status
+    - tenantexports/status
+    - tenantexportschedules/status
+    - tenantrestores/status
+    - tenants/status
+    verbs:
+    - get
+    - update
+    - patch
+  - apiGroups:
+    - gentianos.io
+    resources:
+    - appgrants/finalizers
+    - integrationbindings/finalizers
+    - platformsecuritypolicies/finalizers
+    - tenantexports/finalizers
+    - tenantrestores/finalizers
+    - tenants/finalizers
+    verbs:
+    - update
+  - apiGroups:
+    - gentianos.io
+    resources:
+    - appprofiles
+    - customizations
+    verbs:
+    - get
+    - list
+    - watch
+    - update
+    - patch
+  - apiGroups:
+    - gentianos.io
+    resources:
+    - clusters
+    - oidcpackcatalogs
+    - resourceplans
+    - xapps
+    verbs:
+    - get
+    - list
+    - watch
+  - apiGroups:
+    - helm.crossplane.io
+    resources:
+    - releases
+    verbs:
+    - get
+    - list
+    - watch
+    - delete
+  - apiGroups:
+    - kubernetes.crossplane.io
+    resources:
+    - objects
+    verbs:
+    - get
+    - list
+    - watch
+  - apiGroups:
+    - metrics.k8s.io
+    resources:
+    - pods
+    verbs:
+    - get
+    - list
+  - apiGroups:
+    - networking.k8s.io
+    resources:
+    - ingresses
+    - networkpolicies
+    verbs:
+    - get
+    - list
+    - watch
+    - create
+    - update
+    - patch
+    - delete
+  - apiGroups:
+    - openidclient.keycloak.crossplane.io
+    resources:
+    - clients
+    verbs:
+    - get
+    - list
+    - watch
+  - apiGroups:
+    - postgresql.cnpg.io
+    resources:
+    - databases
+    verbs:
+    - get
+    - list
+    - watch
+    - create
+    - update
+    - patch
+    - delete

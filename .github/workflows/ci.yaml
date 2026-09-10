@@ -5,6 +5,16 @@ on:
     branches:
       - main
       - develop
+      # test-cb is the pointer branch the test.gentian-os.org test cluster tracks.
+      # It is only ever force-pushed to the tip of whatever feature branch is
+      # under test — nothing is merged out of it — so it needs the same
+      # published image any tracked branch needs. See the docker job below.
+      - test-cb
+      # Feature branches, so a push is checked before a pull request exists.
+      # Nothing here publishes from one: see the docker job's push condition.
+      - "feat/**"
+      - "fix/**"
+      - "chore/**"
     tags: ["v*"]
   pull_request:
     branches:
@@ -28,10 +38,25 @@ jobs:
       - name: go vet
         run: go vet ./...
 
+      # Pinned, like controller-gen below. An unpinned @latest picks up a
+      # toolchain bump on an unrelated day and fails a run nobody changed —
+      # which is how the openfga install broke, and was fixed the same way.
+      #
+      # The version is setup-envtest's own, not controller-runtime's. It is a
+      # separate module under that path with its own tags, so a controller-runtime
+      # version resolves but has no such package:
+      #
+      #   module sigs.k8s.io/controller-runtime@v0.21.0 found, but does not
+      #   contain package sigs.k8s.io/controller-runtime/tools/setup-envtest
       - name: Install setup-envtest
-        run: go install sigs.k8s.io/controller-runtime/tools/setup-envtest@latest
+        run: go install sigs.k8s.io/controller-runtime/tools/setup-envtest@v0.24.1
         env:
-          GOTOOLCHAIN: auto
+          # A toolchain that exists. setup-envtest declares go 1.26.0, and auto
+          # resolves that to the newest 1.26.x it believes in — currently
+          # go1.26.7, which is not published as a toolchain module and answers
+          # 404. The step then fails before any test runs, so every commit shows
+          # a red Go job whatever it changed, including shell-only ones.
+          GOTOOLCHAIN: go1.26.0
 
       - name: Download envtest binaries
         run: |
@@ -43,7 +68,7 @@ jobs:
           # internal/controller uses envtest whose watch goroutines are incompatible
           # with the race detector; run it separately without -race.
           go test $(go list ./... | grep -v 'internal/controller') -race -count=1
-          go test ./internal/controller/... -count=1 -parallel 8
+          go test ./internal/controller/... -count=1 -parallel 8 -timeout 20m
 
       - name: go build
         run: go build ./...
@@ -97,6 +122,102 @@ jobs:
           files+=("scripts/kubectl-gentian")
           shellcheck -x "${files[@]}"
 
+      - name: step contracts
+        run: make validate-steps
+
+      # Every lint the repository defines, as one step.
+      #
+      # These existed and gated nothing: eleven checks CI never ran, one of them
+      # failing, in a repository that has repeatedly been bitten by tests
+      # agreeing with the defect they were meant to catch. A check nobody runs
+      # is worse than an absent one, because it reads as coverage.
+      #
+      # lint-shell is the aggregate over the structural checks — step contracts,
+      # resolvable references, credential field agreement, claim defaults,
+      # cluster-config keys, template placeholders, the phase table, password
+      # schemes — plus shellcheck itself.
+      # PyYAML before the lints, for the same reason age is installed before the
+      # recovery-kit check below: two of these are Python and parse YAML, and
+      # until now they ran only because the runner image happened to ship it.
+      - name: lint dependencies
+        run: python3 -m pip install --quiet pyyaml
+
+      - name: lints
+        run: make lint-shell lint-yaml lint-portability lint-image-digests
+
+      # The recovery kit is what rebuilds a cluster once its OpenBao is gone,
+      # and only its export was ever exercised. age is installed rather than
+      # letting the check skip: a test that silently does nothing on the one
+      # machine that always runs it is not coverage.
+      - name: recovery kit round trip
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq age
+          make verify-recovery-kit
+
+      - name: credential catalogue parity
+        run: make gen-credentials && git diff --exit-code kernel/credentials/
+
+      # What the authorization rules PERMIT, not what they say.
+      #
+      # The render tests compare generated policy text against a golden file, so
+      # they prove the text came out as expected and can say nothing about what
+      # it grants. A path glob with a typo — gentian-os/kernel* for
+      # gentian-os/kernel/* — renders correctly, matches its golden, and opens a
+      # neighbouring path. The only way to catch that is to load the policy into
+      # a real OpenBao and try the access.
+      #
+      # The sharp rule is cluster-admin being DENIED a tenant's data. That is
+      # what makes this platform multi-tenant rather than multi-namespace, and a
+      # mistake in it is a breach rather than a bug.
+      #
+      # bao is installed rather than letting the script skip, for the reason the
+      # recovery kit installs age: this suite skipped on every machine that had
+      # no bao, which is every machine, and read as coverage. Seven of its
+      # assertions had additionally never run anywhere, behind a yq mismatch
+      # that printed SKIP. The version is the same pin the installer requires of
+      # an install host, read from versions.yaml rather than repeated here.
+      #
+      # The OpenFGA half installs its own fga CLI via go install; this job
+      # already sets up Go.
+      - name: authorization policy tests
+        run: |
+          # The tarball, not the .deb: OpenBao publishes no .deb for this tag.
+          # Asset names capitalise the platform (Linux_x86_64) while the SBOM
+          # files beside them do not, so this is copied from the release rather
+          # than guessed.
+          BAO_VERSION="$(bash scripts/lib/versions.sh openbao cli)"
+          curl -fsSL -o /tmp/bao.tar.gz \
+            "https://github.com/openbao/openbao/releases/download/${BAO_VERSION}/bao_${BAO_VERSION#v}_Linux_x86_64.tar.gz"
+          tar -xzf /tmp/bao.tar.gz -C /tmp bao
+          sudo install -m 0755 /tmp/bao /usr/local/bin/bao
+          bao version
+          make test-policy
+
+  # macOS is a supported install host, so the installer has to be exercised on
+  # BSD userland and stock bash 3.2 — not just checked for it. This job is
+  # SEPARATE from lint on purpose: it is expected to fail on portability until
+  # Phase 13 migrates the call sites, and burying that in the main lint job
+  # would either block every merge or train people to ignore a red X.
+  portability:
+    name: Portability (macOS)
+    runs-on: macos-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: bash version on the runner
+        run: /bin/bash --version | head -1
+
+      - name: portability lint
+        run: bash scripts/lint/lint-portability.sh
+
+      - name: driver runs on stock bash 3.2
+        run: |
+          # --explain reads only step headers: no kubeconfig, no cluster, and it
+          # exercises discovery, ordering and selection, which is most of the
+          # driver's own logic.
+          /bin/bash ./install.sh --explain
+
   docker:
     name: Docker build and push
     runs-on: ubuntu-latest
@@ -127,12 +248,42 @@ jobs:
             type=semver,pattern={{major}}.{{minor}}
             type=ref,event=branch
             type=sha,prefix=,format=short
+            # Branch-scoped immutable tag (develop-abc1234). The bare short-sha
+            # tag above is published from every branch, so it cannot be tracked
+            # safely — a main build would be a valid candidate for a develop
+            # cluster. argocd-image-updater follows THIS pattern via allow-tags
+            # in kernel/bootstrap/chart/templates/gentian-os.yaml: the moving
+            # `develop` tag can never resolve to a new value, so tracking it
+            # meant image.tag never changed and new builds never deployed.
+            type=sha,prefix={{branch}}-,format=short,enable=${{ github.event_name == 'push' && startsWith(github.ref, 'refs/heads/') }}
+
+      # Required for platforms:. Without buildx the default builder ignores the
+      # list and produces an amd64-only image, silently — which is the same
+      # failure mode as the single-arch digest pin this change exists to fix.
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v3
 
       - name: Build and push image
         uses: docker/build-push-action@v6
         with:
           context: .
-          push: ${{ github.event_name != 'pull_request' }}
+          platforms: linux/amd64,linux/arm64
+          # main, develop, test-cb and release tags publish. A feature branch
+          # builds the image — which is the check — and pushes nothing.
+          #
+          # test-cb publishes because a cluster tracks it: without a
+          # test-cb-<sha> tag in GHCR, argocd-image-updater's allow-tags
+          # regexp in kernel/bootstrap/chart/templates/gentian-os.yaml matches
+          # no candidate and the cluster keeps running whatever it ran before,
+          # silently. It is a flat name on purpose — docker/metadata-action
+          # slugifies {{branch}}, so a branch with a "/" publishes feat-xyz-<sha>
+          # while the regexp interpolates the raw "feat/xyz" and never matches.
+          push: >-
+            ${{ github.event_name != 'pull_request'
+            && (github.ref == 'refs/heads/main'
+            || github.ref == 'refs/heads/develop'
+            || github.ref == 'refs/heads/test-cb'
+            || startsWith(github.ref, 'refs/tags/v')) }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
 
@@ -156,7 +307,7 @@ jobs:
           trap 'rm -rf "$tmpdir"' EXIT
           (
             cd "$tmpdir"
-            XP_VERSION=v2.2.1 bash "${GITHUB_WORKSPACE}/scripts/install-crossplane-cli.sh"
+            XP_VERSION=v2.2.1 bash "${GITHUB_WORKSPACE}/scripts/bootstrap/install-crossplane-cli.sh"
             sudo mv crossplane /usr/local/bin/crossplane
           )
           crossplane version || true   # exits 1 when no cluster, CLI itself is OK

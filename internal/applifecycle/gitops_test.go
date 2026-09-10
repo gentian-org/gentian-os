@@ -17,6 +17,7 @@ limitations under the License.
 package applifecycle
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"testing"
@@ -55,7 +56,7 @@ func TestGitOps_tenantFile_prefersActiveTenantsPath(t *testing.T) {
 	t.Setenv("PATH", root+":"+os.Getenv("PATH"))
 
 	g := NewGitOps(root, "", cluster)
-	got, err := g.tenantFile(tenant)
+	got, err := g.tenantFile(context.Background(), tenant)
 	if err != nil {
 		t.Fatalf("tenantFile: %v", err)
 	}

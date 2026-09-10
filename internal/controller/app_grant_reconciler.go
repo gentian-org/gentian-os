@@ -14,7 +14,6 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-
 package controller
 
 import (
@@ -40,6 +39,10 @@ const (
 	conditionAppGrantReady = "AppGrantReady"
 	appGrantRequeue        = 2 * time.Minute
 )
+
+// +kubebuilder:rbac:groups=gentianos.io,resources=appgrants,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=gentianos.io,resources=appgrants/status,verbs=get;update;patch
+// +kubebuilder:rbac:groups=gentianos.io,resources=appgrants/finalizers,verbs=update
 
 // AppGrantReconciler syncs AppGrant objects to OpenFGA tuples.
 type AppGrantReconciler struct {

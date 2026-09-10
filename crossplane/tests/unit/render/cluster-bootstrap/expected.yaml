@@ -6,8 +6,8 @@ metadata:
 status:
   conditions:
   - lastTransitionTime: "2024-01-01T00:00:00Z"
-    message: 'Unready resources: argocd-appproject-tenants, cert-issuer-http01, eso-cluster-secret-store,
-      and 16 more'
+    message: 'Unready resources: argocd-appproject-tenants, eso-cluster-secret-store,
+      gentian-cluster-config, and 16 more'
     reason: Creating
     status: "False"
     type: Ready
@@ -58,45 +58,6 @@ apiVersion: kubernetes.crossplane.io/v1alpha2
 kind: Object
 metadata:
   annotations:
-    crossplane.io/composition-resource-name: cert-issuer-http01
-  labels:
-    crossplane.io/composite: dev-cluster
-  name: dev-cluster-cluster-issuer-http01
-  ownerReferences:
-  - apiVersion: gentianos.io/v1alpha1
-    blockOwnerDeletion: true
-    controller: true
-    kind: XCluster
-    name: dev-cluster
-    uid: ""
-spec:
-  forProvider:
-    manifest:
-      apiVersion: cert-manager.io/v1
-      kind: ClusterIssuer
-      metadata:
-        name: letsencrypt-http01
-      spec:
-        acme:
-          email: admin@desk.gentian.org
-          privateKeySecretRef:
-            name: letsencrypt-http01-account-key
-          server: https://acme-v02.api.letsencrypt.org/directory
-          solvers:
-          - http01:
-              gatewayHTTPRoute:
-                parentRefs:
-                - group: gateway.networking.k8s.io
-                  kind: Gateway
-                  name: kernel-public-gateway
-                  namespace: gentian-dev
-  providerConfigRef:
-    name: kubernetes
----
-apiVersion: kubernetes.crossplane.io/v1alpha2
-kind: Object
-metadata:
-  annotations:
     crossplane.io/composition-resource-name: eso-cluster-secret-store
   labels:
     crossplane.io/composite: dev-cluster
@@ -133,6 +94,48 @@ spec:
             path: secret
             server: https://openbao.openbao.svc.cluster.local:8200
             version: v2
+  providerConfigRef:
+    name: kubernetes
+---
+apiVersion: kubernetes.crossplane.io/v1alpha2
+kind: Object
+metadata:
+  annotations:
+    crossplane.io/composition-resource-name: gentian-cluster-config
+  labels:
+    crossplane.io/composite: dev-cluster
+  name: dev-cluster-cluster-config
+  ownerReferences:
+  - apiVersion: gentianos.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XCluster
+    name: dev-cluster
+    uid: ""
+spec:
+  forProvider:
+    manifest:
+      apiVersion: v1
+      data:
+        certificates.trustAnchorSecret: ""
+        identity.internalUrl: ""
+        identity.kernelRealm: ""
+        llm.enabled: "false"
+        mail.egressHost: ""
+        mail.serviceMode: ""
+        mail.smtpHost: ""
+        node.ip: ""
+        tenant.limitRange.default.cpu: 500m
+        tenant.limitRange.default.memory: 512Mi
+        tenant.limitRange.defaultRequest.cpu: 100m
+        tenant.limitRange.defaultRequest.memory: 128Mi
+      kind: ConfigMap
+      metadata:
+        labels:
+          app.kubernetes.io/managed-by: crossplane
+          gentianos.io/config-type: cluster-config
+        name: gentian-cluster-config
+        namespace: crossplane-system
   providerConfigRef:
     name: kubernetes
 ---
@@ -192,8 +195,8 @@ spec:
   providerConfigRef:
     name: kubernetes
 ---
-apiVersion: auth.vault.upbound.io/v1alpha1
-kind: BackendConfig
+apiVersion: kubernetes.vault.upbound.io/v1alpha1
+kind: AuthBackendConfig
 metadata:
   annotations:
     crossplane.io/composition-resource-name: vault-auth-backend-config
@@ -219,6 +222,7 @@ kind: Backend
 metadata:
   annotations:
     crossplane.io/composition-resource-name: vault-auth-backend-kubernetes
+    crossplane.io/external-name: kubernetes
   labels:
     crossplane.io/composite: dev-cluster
   name: dev-cluster-auth-kubernetes
@@ -234,11 +238,14 @@ spec:
     description: Kubernetes service-account auth for Crossplane providers and ESO
     path: kubernetes
     type: kubernetes
+  managementPolicies:
+  - Observe
+  - Create
   providerConfigRef:
     name: openbao
 ---
-apiVersion: auth.vault.upbound.io/v1alpha1
-kind: BackendRole
+apiVersion: kubernetes.vault.upbound.io/v1alpha1
+kind: AuthBackendRole
 metadata:
   annotations:
     crossplane.io/composition-resource-name: vault-auth-role-crossplane
@@ -266,8 +273,8 @@ spec:
   providerConfigRef:
     name: openbao
 ---
-apiVersion: auth.vault.upbound.io/v1alpha1
-kind: BackendRole
+apiVersion: kubernetes.vault.upbound.io/v1alpha1
+kind: AuthBackendRole
 metadata:
   annotations:
     crossplane.io/composition-resource-name: vault-auth-role-eso
@@ -444,6 +451,35 @@ apiVersion: kv.vault.upbound.io/v1alpha1
 kind: SecretV2
 metadata:
   annotations:
+    crossplane.io/composition-resource-name: vault-kv-mail-dovecot
+  labels:
+    crossplane.io/composite: dev-cluster
+  name: dev-cluster-kv-mail-dovecot
+  ownerReferences:
+  - apiVersion: gentianos.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XCluster
+    name: dev-cluster
+    uid: ""
+spec:
+  forProvider:
+    dataJsonSecretRef:
+      key: data.json
+      name: gentian-os-kernel-mail-dovecot
+      namespace: crossplane-system
+    mount: secret
+    name: gentian-os/kernel/mail/dovecot
+  managementPolicies:
+  - Observe
+  - Create
+  providerConfigRef:
+    name: openbao
+---
+apiVersion: kv.vault.upbound.io/v1alpha1
+kind: SecretV2
+metadata:
+  annotations:
     crossplane.io/composition-resource-name: vault-kv-mail-postfix
   labels:
     crossplane.io/composite: dev-cluster
@@ -469,14 +505,14 @@ spec:
   providerConfigRef:
     name: openbao
 ---
-apiVersion: mount.vault.upbound.io/v1alpha1
-kind: SecretMount
+apiVersion: kv.vault.upbound.io/v1alpha1
+kind: SecretV2
 metadata:
   annotations:
-    crossplane.io/composition-resource-name: vault-kv-mount
+    crossplane.io/composition-resource-name: vault-kv-oidc-openbao
   labels:
     crossplane.io/composite: dev-cluster
-  name: dev-cluster-kv-mount
+  name: dev-cluster-kv-oidc-openbao
   ownerReferences:
   - apiVersion: gentianos.io/v1alpha1
     blockOwnerDeletion: true
@@ -486,11 +522,15 @@ metadata:
     uid: ""
 spec:
   forProvider:
-    description: KV v2 store for all Gentian OS secrets
-    options:
-      version: "2"
-    path: secret
-    type: kv
+    dataJsonSecretRef:
+      key: data.json
+      name: gentian-os-kernel-oidc-openbao
+      namespace: crossplane-system
+    mount: secret
+    name: gentian-os/kernel/oidc/openbao
+  managementPolicies:
+  - Observe
+  - Create
   providerConfigRef:
     name: openbao
 ---
@@ -523,41 +563,7 @@ spec:
   providerConfigRef:
     name: openbao
 ---
-apiVersion: policy.vault.upbound.io/v1alpha1
-kind: Policy
-metadata:
-  annotations:
-    crossplane.io/composition-resource-name: vault-policy-crossplane-write
-  labels:
-    crossplane.io/composite: dev-cluster
-  name: dev-cluster-policy-crossplane-write
-  ownerReferences:
-  - apiVersion: gentianos.io/v1alpha1
-    blockOwnerDeletion: true
-    controller: true
-    kind: XCluster
-    name: dev-cluster
-    uid: ""
-spec:
-  forProvider:
-    name: crossplane-write
-    policy: |
-      path "secret/data/gentian-os/*" {
-        capabilities = ["create", "read", "update", "delete"]
-      }
-      path "secret/metadata/gentian-os/*" {
-        capabilities = ["list", "read", "delete"]
-      }
-      path "auth/token/create" {
-        capabilities = ["update"]
-      }
-      path "auth/token/lookup-self" {
-        capabilities = ["read"]
-      }
-  providerConfigRef:
-    name: openbao
----
-apiVersion: policy.vault.upbound.io/v1alpha1
+apiVersion: vault.vault.upbound.io/v1alpha1
 kind: Policy
 metadata:
   annotations:
@@ -582,7 +588,70 @@ spec:
       path "secret/metadata/gentian-os/kernel/*" {
         capabilities = ["list"]
       }
+      # The backup identity, when spec.backup.escrowIdentity puts it
+      # here, is the one kernel path ESO must never reach. The glob
+      # above would otherwise cover it, and then anything able to
+      # write an ExternalSecret could materialise the key that opens
+      # every bundle into an ordinary Secret — which is the whole of
+      # what escrow was meant not to mean.
+      #
+      # Escrow makes the key readable by a cluster administrator
+      # holding OpenBao credentials. It does not make it readable by
+      # the cluster. Denied unconditionally, because a rule that
+      # appeared only when escrow was on would be a rule nobody had
+      # ever seen work.
+      #
+      # An exact path beats a glob in OpenBao's policy engine, and
+      # deny beats everything.
+      path "secret/data/gentian-os/kernel/backup/identity" {
+        capabilities = ["deny"]
+      }
+      path "secret/metadata/gentian-os/kernel/backup/identity" {
+        capabilities = ["deny"]
+      }
       path "secret/data/gentian-os/tenants/+/apps/*" {
+        capabilities = ["read"]
+      }
+      # Tenant repository credentials. Without this a tenant admin's
+      # write succeeds and nothing works: the satisfaction probe
+      # never syncs, so the credential reads as missing while it is
+      # sitting in the path, and the Argo CD repository Secret is
+      # never materialised. Named rather than widened to
+      # tenants/+/* — ESO should read what becomes a Secret, not
+      # everything a tenant owns.
+      path "secret/data/gentian-os/tenants/+/repositories/*" {
+        capabilities = ["read"]
+      }
+      # Tenant backup destinations. Same shape as repositories, and
+      # it failed the same way: DestinationVaultPath puts an external
+      # endpoint's keys at tenants/<t>/backup/destination, the two
+      # ExternalSecrets over it answered
+      #
+      #   403 ... GET /v1/secret/data/gentian-os/tenants/corp/backup/destination
+      #
+      # and the BackupPolicy stayed CredentialUnsatisfied while the
+      # keys sat in the path. The write side is the tenant admin's
+      # tenant-<t> policy; this is the read side, and a credential
+      # needs both before it does anything.
+      path "secret/data/gentian-os/tenants/+/backup/*" {
+        capabilities = ["read"]
+      }
+      # ...but not the escrowed backup identity beside it. The glob
+      # above is for destination credentials, which exist precisely
+      # to become Secrets; the identity is the key that opens the
+      # tenant's entire history and must never become one. Same
+      # reasoning as the kernel path above, one subtree down.
+      path "secret/data/gentian-os/tenants/+/backup/identity" {
+        capabilities = ["deny"]
+      }
+      path "secret/metadata/gentian-os/tenants/+/backup/identity" {
+        capabilities = ["deny"]
+      }
+      # Contract integration secrets. app-default composes an
+      # ExternalSecret over tenants/<t>/contracts/<c> for every
+      # integration an app maps, so this is the same omission — not
+      # yet observed only because no installed app maps one.
+      path "secret/data/gentian-os/tenants/+/contracts/*" {
         capabilities = ["read"]
       }
       path "secret/metadata/gentian-os/tenants/*" {

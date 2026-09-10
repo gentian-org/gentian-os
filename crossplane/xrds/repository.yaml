@@ -1,0 +1,270 @@
+apiVersion: apiextensions.crossplane.io/v1
+kind: CompositeResourceDefinition
+metadata:
+  name: xrepositories.gentianos.io
+spec:
+  group: gentianos.io
+  names:
+    kind: XRepository
+    plural: xrepositories
+  claimNames:
+    kind: Repository
+    plural: repositories
+  defaultCompositionRef:
+    name: repository-default
+  versions:
+    - name: v1alpha1
+      served: true
+      referenceable: true
+      schema:
+        openAPIV3Schema:
+          type: object
+          properties:
+            spec:
+              type: object
+              required:
+                - type
+                - role
+                - endpoints
+              properties:
+                type:
+                  type: string
+                  description: >
+                    Which consumer-shaped artefacts to emit. A separate
+                    XGitRepository and XRegistry would share credential
+                    handling, requirement emission and gating, and differ only
+                    in what they emit — that is a field, not a second API.
+                  enum:
+                    - git
+                    - oci
+                endpoints:
+                  type: object
+                  description: >
+                    Two addresses, because the install host and in-cluster pods
+                    do not always share a network path — a tunnelled cluster, a
+                    NAT boundary, split-horizon DNS. A single url field forces
+                    one of the two consumers to be wrong, and the resulting
+                    failure reports the repository as unreachable when the
+                    address is merely wrong for that caller.
+                  required:
+                    - inCluster
+                  properties:
+                    inCluster:
+                      type: string
+                      description: >
+                        The address controllers and pods use. Everything written
+                        into the cluster reads this.
+                    external:
+                      type: string
+                      description: >
+                        The address the install host uses. Defaults to
+                        inCluster, which is the common case; set it only when
+                        the two genuinely differ.
+                branch:
+                  type: string
+                  description: Git ref to track. Ignored when type is oci.
+                  default: main
+                role:
+                  type: string
+                  enum: [apps, deployments, gentian-os, gentian-ui]
+                  description: >
+                    What this repository is for. apps is additive — a private
+                    catalogue alongside the cluster's, and removing it removes
+                    those apps. deployments is a source of truth: repointing it
+                    changes what everything reconciles from, which is why the
+                    API makes that a confirmed operation rather than an edit.
+                    gentian-os and gentian-ui are the gentian-os and gentian-ui
+                    source repositories themselves, credentialed only for a
+                    mirrored or air-gapped install.
+
+                    Required, and deliberately without a default. The two values
+                    are not equally safe — apps is the weaker guard — so a
+                    default would mean an omission silently chooses the weaker
+                    one. That is what happened to the cluster's own deployments
+                    repository, which sat labelled apps and was protected as an
+                    optional app source.
+                tenant:
+                  type: string
+                  description: >
+                    The tenant that owns this repository. Set it and the
+                    credential becomes tenant-scoped and visible only to that
+                    tenant's administrators; leave it empty and the repository
+                    belongs to the cluster.
+
+                    This is what keeps a tenant-proprietary repository's
+                    credential out of every other tenant's credential list —
+                    scope alone says "a tenant may see this", not which one.
+                writable:
+                  type: boolean
+                  description: >
+                    Emit the operator's .git-credentials Secret, granting push
+                    access for GitOps app lifecycle. Git repositories only.
+                  default: false
+                namespaceSelector:
+                  type: object
+                  description: >
+                    Which namespaces receive the image pull Secret. A selector
+                    rather than a list, so adding a tenant does not add a Git
+                    object. OCI repositories only.
+                  properties:
+                    matchLabels:
+                      type: object
+                      additionalProperties:
+                        type: string
+                # Optional. A public chart registry or a public Git repository has no
+                # credential, and requiring one meant inventing a vault path for a
+                # secret that does not exist — which then surfaces in the credential
+                # manager as a requirement nobody can ever satisfy. Omit it and the
+                # repository is emitted without an ExternalSecret, a
+                # CredentialRequirement, or anything waiting on one.
+                credential:
+                  type: object
+                  description: >
+                    The credential DECLARATION, never a value. The Composition
+                    emits a CredentialRequirement from this alongside the
+                    consumer artefacts, so a private repository is one object in
+                    Git rather than a claim plus a hand-kept requirement that
+                    drifts from it.
+                  required:
+                    - vaultPath
+                    - displayName
+                  properties:
+                    vaultPath:
+                      type: string
+                      description: >
+                        Several claims may share one path — when a single token
+                        covers many repositories, rotation stays one write.
+                    displayName:
+                      type: string
+                    description:
+                      type: string
+                    phase:
+                      type: string
+                      enum:
+                        - bootstrap
+                        - runtime
+                      default: runtime
+                    optional:
+                      type: boolean
+                      default: false
+                    authType:
+                      type: string
+                      enum:
+                        - basic
+                        - bearer
+                      default: basic
+                      description: >
+                        Shape of the stored credential. basic is
+                        username+password, resolved into the repository
+                        Secret's username/password fields. bearer is a single
+                        token stored under the password field, resolved into
+                        the repository Secret's bearerToken field instead —
+                        the vault path and its field names do not change, only
+                        which fields the operator is asked to supply and which
+                        Secret key the token lands under.
+                    validate:
+                      type: object
+                      properties:
+                        type:
+                          type: string
+                          enum:
+                            - oci-registry
+                            - git-https
+                            - oidc-discovery
+                            - smtp
+                            - noop
+                          default: noop
+            status:
+              type: object
+              properties:
+                credentialSatisfied:
+                  type: boolean
+                  description: >
+                    Mirrors the emitted ExternalSecret's sync status. ESO is the
+                    satisfaction probe; nothing here polls OpenBao.
+                credentialMessage:
+                  type: string
+                  description: >
+                    Names the unsatisfied requirement and its path, so
+                    `kubectl describe` answers "which credential is blocking"
+                    rather than "something is not Ready".
+                artefacts:
+                  type: array
+                  description: Names of the consumer artefacts emitted.
+                  items:
+                    type: string
+---
+# Grant the Crossplane SA read access to ExternalSecrets so that
+# repository-default's fetch-credential-probe step can read the satisfaction
+# probe for the repository's credential.
+#
+# The failure without it is not a permission error. function-extra-resources
+# lists through an informer, the informer cannot sync because the list is
+# forbidden, and the step times out with
+#
+#   cannot run Composition pipeline step "fetch-credential-probe": fetching
+#   resources for credentialProbe: cannot list required resources: Timeout:
+#   failed waiting for *unstructured.Unstructured Informer to sync
+#
+# so the XRepository stays Synced=False forever while B-09 reports satisfied —
+# the imperative path having already produced the Secret the composed one is
+# meant to own. Nothing is visibly broken, and the declarative path simply
+# never runs.
+# CredentialRequirement is COMPOSED by repository-default, not merely read, so
+# this grant is wider than the read-only ones beside it: Crossplane creates,
+# updates and deletes the catalogue entry for each repository's credential.
+#
+# Without it the failure is the one already described below for
+# OIDCPackCatalog, and it is just as quiet:
+#
+#   cannot compose resources: cannot get existing composed resources:
+#   cannot get composed resource: Timeout: failed waiting for
+#   *unstructured.Unstructured Informer to sync
+#
+# Nothing names RBAC. The composite stops composing at its first resource, so
+# the git-credentials Object further down the template is never reached either
+# -- and that Object is what produces the Secret the operator mounts to push.
+#
+# The symptom is three steps removed from the cause: installing an app from the
+# store fails with
+#
+#   fatal: unable to open /etc/git/credentials: Is a directory
+#
+# because the Secret was never created, the volume is optional, and a missing
+# optional Secret with a subPath mounts as an empty directory rather than not
+# mounting at all.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: crossplane:composed:credentialrequirements.gentianos.io
+  labels:
+    rbac.crossplane.io/aggregate-to-crossplane: "true"
+rules:
+  - apiGroups:
+      - gentianos.io
+    resources:
+      - credentialrequirements
+    verbs:
+      - get
+      - list
+      - watch
+      - create
+      - update
+      - patch
+      - delete
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: crossplane:extra-resources:externalsecrets.external-secrets.io
+  labels:
+    rbac.crossplane.io/aggregate-to-crossplane: "true"
+rules:
+  - apiGroups:
+      - external-secrets.io
+    resources:
+      - externalsecrets
+    verbs:
+      - get
+      - list
+      - watch

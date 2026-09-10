@@ -32,13 +32,18 @@ const (
 type MailMode string
 
 const (
-	// MailModeSelfhosted deploys a full Postfix+Dovecot stack per tenant.
+	// MailModeSelfhosted registers the tenant in the SHARED kernel Postfix and
+	// Dovecot — one stack per cluster, tenant-scoped by domain and maildir path.
+	// It does not deploy anything per tenant; whether Dovecot exists at all is
+	// the cluster's mail.serviceMode, not this field. See docs/design/mail.md §8.
 	MailModeSelfhosted MailMode = "selfhosted"
-	// MailModeExternal routes mail to an external provider via SMTP relay.
+	// MailModeExternal relays through the tenant's own provider, whose credentials
+	// it supplies as spec.mail.smtpCredentialsSecret. Required for this mode.
 	MailModeExternal MailMode = "external"
-	// MailModeTransportOnly delivers outbound mail only; no IMAP storage.
+	// MailModeTransportOnly registers the tenant in the shared Postfix relay for
+	// outbound only — no Dovecot registration, so no mailbox and no IMAP.
 	MailModeTransportOnly MailMode = "transport-only"
-	// MailModeDisabled disables all mail functionality for the tenant.
+	// MailModeDisabled provisions no mail for the tenant at all.
 	MailModeDisabled MailMode = "disabled"
 )
 
@@ -74,13 +79,19 @@ const (
 )
 
 // DeploymentMethod determines how the orchestrator delivers the app.
-// +kubebuilder:validation:Enum=argocd;crossplane;api
+//
+// There used to be a third value, "argocd", from when the operator created a
+// per-app Argo CD Application itself. That path is gone — reconcileTenantApps
+// creates no Applications — and no profile in the catalogue declared it. What
+// kept it alive was one branch treating any non-crossplane value as "the
+// operator owns the OIDC client", and a dozen test fixtures using it as an
+// arbitrary value, which meant the suite exercised a configuration no real
+// profile had.
+//
+// +kubebuilder:validation:Enum=crossplane;api
 type DeploymentMethod string
 
 const (
-	// DeploymentMethodArgoCD uses an ArgoCD Application CR for kernel-layer services
-	// that are managed directly by the cache or identity reconcilers.
-	DeploymentMethodArgoCD DeploymentMethod = "argocd"
 	// DeploymentMethodCrossplane uses a Crossplane App claim. The claim drives an
 	// App Composition that emits an ExternalSecret and a provider-helm Release.
 	DeploymentMethodCrossplane DeploymentMethod = "crossplane"
@@ -88,6 +99,39 @@ const (
 	// workload pods. The orchestrator provisions no Helm release or App claim;
 	// runtime traffic is served by an external service (see spec.apiIntegration).
 	DeploymentMethodAPI DeploymentMethod = "api"
+)
+
+// BackupQuiesceMode selects how an app's writes are paused while it is captured.
+// +kubebuilder:validation:Enum=none;scaleDown;command
+type BackupQuiesceMode string
+
+const (
+	// BackupQuiesceNone captures the app while it keeps serving. Only safe for
+	// an app whose stores hold no references to each other, since nothing keeps
+	// two of them mutually consistent.
+	BackupQuiesceNone BackupQuiesceMode = "none"
+	// BackupQuiesceScaleDown scales the app's workloads to zero for the
+	// duration of the capture. The default: it works for every app, at the cost
+	// of the longest pause.
+	BackupQuiesceScaleDown BackupQuiesceMode = "scaleDown"
+	// BackupQuiesceCommand runs the profile's own maintenance-mode commands,
+	// which usually pauses writes without taking the app offline.
+	BackupQuiesceCommand BackupQuiesceMode = "command"
+)
+
+// BackupConsistency selects the window an app's stores must be captured within.
+// +kubebuilder:validation:Enum=app;perStore
+type BackupConsistency string
+
+const (
+	// BackupConsistencyApp captures every store of the app inside a single
+	// quiesce window, because its database, buckets and volumes reference each
+	// other. This is the boundary that matters; two different apps share no
+	// transactional state, so skew between them is harmless.
+	BackupConsistencyApp BackupConsistency = "app"
+	// BackupConsistencyPerStore lets each store be captured independently, for
+	// an app whose stores hold no references to each other.
+	BackupConsistencyPerStore BackupConsistency = "perStore"
 )
 
 // TenantPhase represents the overall lifecycle phase of a Tenant.

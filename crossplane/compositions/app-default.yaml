@@ -108,6 +108,7 @@ spec:
         inline:
           template: |
             {{- $xr     := .observed.composite.resource }}
+            {{- $observed := .observed }}
             {{- $spec   := $xr.spec }}
             {{- $xrName := $xr.metadata.name }}
             {{- /* App claim name (e.g. "demo-app"). Used as the Helm release name
@@ -143,13 +144,23 @@ spec:
             {{- $ccData     := dig "data" dict $ccCM }}
             {{- $nodeIP        := dig "node.ip"        "" $ccData }}
 
-            {{- /* OIDC pack scopes from the profile's OIDCPackCatalog CR. */}}
+            {{- /* OIDC pack scopes from the profile's OIDCPackCatalog CR.
+
+                 The packs themselves and the catalogue's mapperTemplates are kept
+                 too, not just the two values derived here: the client scope, its
+                 protocol mappers, the client role and the group that grants it are
+                 all described by the same object, and were provisioned by a Job
+                 reading it rather than by this Composition. Everything needed to
+                 declare them is already in scope; nothing new is fetched. */}}
             {{- $oidcPackDefaultScopes := dict }}
             {{- $oidcPackFullScopeAllowed := dict }}
+            {{- $oidcPacks := dict }}
+            {{- $oidcMapperTemplates := dict }}
             {{- $catalogRes := dig "oidcPackCatalog" list $extraRes }}
             {{- if gt (len $catalogRes) 0 }}
             {{- $catSpec := dig "spec" dict (index $catalogRes 0) }}
             {{- $catPacks := default dict $catSpec.packs }}
+            {{- $oidcMapperTemplates = default dict $catSpec.mapperTemplates }}
             {{- range $clientId, $pack := $catPacks }}
             {{- $scopes := default list $pack.defaultScopes }}
             {{- if $pack.scopeName }}
@@ -157,6 +168,7 @@ spec:
             {{- end }}
             {{- $_ := set $oidcPackDefaultScopes $clientId $scopes }}
             {{- $_ := set $oidcPackFullScopeAllowed $clientId (default false $pack.fullScopeAllowed) }}
+            {{- $_ := set $oidcPacks $clientId $pack }}
             {{- end }}
             {{- end }}
 
@@ -233,6 +245,9 @@ spec:
             {{- end }}
             {{- if $vm.cache.portKey }}
             {{- $esData = append $esData (dict "secretKey" "cache-port"     "remoteRef" (dict "key" $cachePath "property" "port")) }}
+            {{- end }}
+            {{- if $vm.cache.userKey }}
+            {{- $esData = append $esData (dict "secretKey" "cache-user"     "remoteRef" (dict "key" $cachePath "property" "user")) }}
             {{- end }}
             {{- if $vm.cache.passwordKey }}
             {{- $esData = append $esData (dict "secretKey" "cache-password" "remoteRef" (dict "key" $cachePath "property" "password")) }}
@@ -331,6 +346,20 @@ spec:
             metadata:
               annotations:
                 gotemplating.fn.crossplane.io/composition-resource-name: {{ $app }}-{{ $safeName }}-kv
+                # Ties this managed resource to the KV path rather than to the
+                # install that happened to create it. Without it the provider
+                # has nothing to observe against, treats the path as absent,
+                # and Creates -- overwriting a secret the app's database is
+                # still hashed against. The MR name carries the composite's
+                # generated suffix, so every reinstall minted a new MR, and a
+                # new MR meant a new value. This is what makes a secret live as
+                # long as the app rather than as long as one installation of
+                # it: purge deletes the path and the next install writes a
+                # fresh value, while a plain reinstall observes what is already
+                # there and keeps it. Format is the Terraform resource id for
+                # vault_kv_secret_v2, "<mount>/data/<name>" -- see
+                # status.atProvider.id on any existing instance.
+                crossplane.io/external-name: secret/data/{{ $kvPath }}
               name: {{ $seedName }}-kv
             spec:
               deletionPolicy: Orphan
@@ -434,6 +463,10 @@ spec:
             {{- $relSet = append $relSet (dict "name" $vm.cache.portKey
                 "valueFrom" (dict "secretKeyRef" (dict "name" $secretName "namespace" $ns "key" "cache-port"))) }}
             {{- end }}
+            {{- if $vm.cache.userKey }}
+            {{- $relSet = append $relSet (dict "name" $vm.cache.userKey
+                "valueFrom" (dict "secretKeyRef" (dict "name" $secretName "namespace" $ns "key" "cache-user"))) }}
+            {{- end }}
             {{- if $vm.cache.passwordKey }}
             {{- $relSet = append $relSet (dict "name" $vm.cache.passwordKey
                 "valueFrom" (dict "secretKeyRef" (dict "name" $secretName "namespace" $ns "key" "cache-password"))) }}
@@ -503,31 +536,23 @@ spec:
             {{- /*   ${TENANT_DOMAIN}    — effective tenant domain                 */}}
             {{- /*   ${TENANT_NAMESPACE} — tenant k8s namespace                    */}}
             {{- /*   ${TENANT_ID}        — tenant name (e.g. gtn-demo)             */}}
-            {{- /*   ${S3_ENDPOINT}      — MinIO/S3 endpoint URL (from kernel CM)  */}}
-            {{- /*   ${MYSQL_HOST}       — MariaDB/MySQL hostname (from kernel CM) */}}
-            {{- /*   ${SMTP_HOST}        — shared Postfix submission endpoint     */}}
-            {{- /*   ${TURN_*}           — shared TURN server (from kernel CM)     */}}
+            {{- /*
+                 Identity only. No endpoint is substituted here, and none
+                 should be: S3_ENDPOINT, MYSQL_HOST, REDIS_HOST, SMTP_HOST and
+                 TURN_* each handed an app a hostname with no credential —
+                 TURN_CREDENTIALS handed it an actual shared secret, into a
+                 ConfigMap. See P9 in docs/app-customization.md.
+
+                 A tenant's id, namespace and domain are facts about the app's
+                 own context. They name nothing to connect to and carry nothing
+                 to authenticate with, which is what makes them safe to expand.
+            */}}
             {{- $extraVals := dict }}
             {{- /* Load kernel service endpoints from the fetched ConfigMap */}}
             {{- $ksRes := dig "kernelServices" list $extraRes }}
             {{- $ksCM  := default dict (index $ksRes 0) }}
             {{- $ksCMData := dig "data" dict $ksCM }}
             {{- $kernelDomain := dig "KERNEL_DOMAIN" "" $ksCMData }}
-            {{- $s3Endpoint := dig "S3_ENDPOINT"  "" $ksCMData }}
-            {{- $mysqlHost  := dig "MYSQL_HOST"   "" $ksCMData }}
-            {{- $redisHost  := dig "REDIS_HOST"   "" $ksCMData }}
-            {{- $turnHost     := dig "TURN_HOST"        "" $ksCMData }}
-            {{- $turnPort     := dig "TURN_PORT"        "3478" $ksCMData }}
-            {{- $turnTLSHost  := dig "TURN_TLS_HOST"    "" $ksCMData }}
-            {{- $turnTLSPort  := dig "TURN_TLS_PORT"    "5349" $ksCMData }}
-            {{- $turnTransport := dig "TURN_TRANSPORT"  "udp" $ksCMData }}
-            {{- $turnCreds    := dig "TURN_CREDENTIALS" "" $ksCMData }}
-            {{- $smtpHost     := "" }}
-            {{- $ccSmtpHost := dig "mail.smtpHost" "" $ccData }}
-            {{- if $ccSmtpHost }}{{- $smtpHost = $ccSmtpHost }}{{- end }}
-            {{- if not $smtpHost }}
-            {{- $smtpHost = dig "SMTP_HOST" "" $ksCMData }}
-            {{- end }}
             {{- if $pSpec.extraValues }}
             {{- $raw := $pSpec.extraValues | toJson }}
             {{- $raw = $raw | replace "${TENANT_DOMAIN}"    $domain }}
@@ -535,16 +560,25 @@ spec:
             {{- $raw = $raw | replace "${TENANT_ID}"        $tenant }}
             {{- $raw = $raw | replace "${APP_ID}"           $app }}
             {{- if $kernelDomain }}{{ $raw = $raw | replace "${KERNEL_DOMAIN}" $kernelDomain }}{{ end }}
-            {{- if $s3Endpoint  }}{{ $raw = $raw | replace "${S3_ENDPOINT}"   $s3Endpoint  }}{{ end }}
-            {{- if $mysqlHost   }}{{ $raw = $raw | replace "${MYSQL_HOST}"    $mysqlHost   }}{{ end }}
-            {{- if $redisHost   }}{{ $raw = $raw | replace "${REDIS_HOST}"    $redisHost   }}{{ end }}
-            {{- $raw = $raw | replace "${SMTP_HOST}"    $smtpHost }}
-            {{- $raw = $raw | replace "${TURN_HOST}"        $turnHost }}
-            {{- $raw = $raw | replace "${TURN_PORT}"        $turnPort }}
-            {{- $raw = $raw | replace "${TURN_TLS_HOST}"    $turnTLSHost }}
-            {{- $raw = $raw | replace "${TURN_TLS_PORT}"   $turnTLSPort }}
-            {{- $raw = $raw | replace "${TURN_TRANSPORT}" $turnTransport }}
-            {{- $raw = $raw | replace "${TURN_CREDENTIALS}" $turnCreds }}
+            {{- /*
+            No endpoint substitutions. ${S3_ENDPOINT}, ${MYSQL_HOST},
+            ${REDIS_HOST} and ${SMTP_HOST} used to be replaced here.
+
+            Each handed an app a literal hostname and no credential, so a
+            profile using one hard-coded an assumption about where a service
+            lives while the values it actually needs arrived separately through
+            valueMapping — two mechanisms wiring one dependency, and only one of
+            them able to carry a password. ${SMTP_HOST} additionally resolved to
+            the upstream relay, which no app can authenticate to.
+
+            An app declares kernelRequirements.<category> and maps its own chart
+            keys under valueMapping; the values then reach it as secretKeyRef
+            entries it never resolves. See docs/app-customization.md P9.
+
+            The identity placeholders below stay: a tenant's id, namespace and
+            domain are facts about the app's own context, not endpoints, and
+            carry nothing to authenticate with.
+            */}}
             {{- if $nodeIP      }}{{ $raw = $raw | replace "${NODE_IP}"       $nodeIP      }}{{ end }}
             {{- $extraVals = $raw | fromJson }}
             {{- end }}
@@ -593,6 +627,19 @@ spec:
             {{- $activation := dig "customization" "addonActivation" dict $pSpec }}
             {{- if and $activation.valuesPath $activation.script }}
             {{- $script := $activation.script | replace "__GENTIAN_ADDON_IDS__" (join " " $addons) }}
+            {{- /* Same ${TENANT_DOMAIN}/${TENANT_NAMESPACE}/${TENANT_ID}/${APP_ID}
+                   substitution as extraValues above, because addonActivation.script
+                   is not part of extraValues and so never went through that pass —
+                   confirmed live: nextcloud-base-ce's script used ${TENANT_NAMESPACE}
+                   to address the Collabora Service, the token reached the container
+                   as literal text, and `set -u` in the hook killed the pod on every
+                   start with "TENANT_NAMESPACE: unbound variable". An addon script is
+                   exactly as app-specific as an extraValues hook, so it gets the same
+                   token vocabulary rather than a second, narrower one. */}}
+            {{- $script = $script | replace "${TENANT_DOMAIN}"    $domain }}
+            {{- $script = $script | replace "${TENANT_NAMESPACE}" $ns }}
+            {{- $script = $script | replace "${TENANT_ID}"        $tenant }}
+            {{- $script = $script | replace "${APP_ID}"           $app }}
             {{- $parts := splitList "." $activation.valuesPath }}
             {{- /* Append to whatever the app already puts at this path rather than
                    replacing it. Many charts expose a single lifecycle hook, and the app
@@ -660,33 +707,55 @@ spec:
             ) }}
             {{- end }}
 
+            {{- /* Any anchor a public CA did not sign has to be handed to the
+                   workloads that validate kernel hostnames, or every in-cluster
+                   TLS call to id.<kernel-domain> fails. ACME staging was the
+                   first such anchor and for a while the only one this gate knew
+                   about, so self-signed and private-ca clusters mounted nothing
+                   and their apps could not reach the issuer they were told to
+                   trust. certificates.trustAnchorSecret carries the answer for
+                   all three: it names the secret, and is empty exactly when a
+                   public CA signed and there is nothing to distribute. */}}
             {{- $acmeStaging := eq (dig "ACME_STAGING" "false" $ksCMData) "true" }}
-            {{- if $acmeStaging }}
+            {{- /* certificates.trustAnchorSecret names where the anchor lives at
+                 CLUSTER scope — cert-manager/gentian-root-ca-tls under self-signed
+                 and private-ca. A pod cannot mount that: it is in another
+                 namespace. The operator replicates the anchor into each namespace
+                 under one fixed name, and that is what is mounted here.
+
+                 Mounting the cluster-scope name was a bug that only a self-signed
+                 or private-ca install would have shown: the operator wrote
+                 gentian-trust-anchor-tls into the namespace while this asked for
+                 gentian-root-ca-tls, and a volume naming a Secret that is not
+                 there stops the pod from starting at all. */}}
+            {{- $hasAnchor := or (dig "certificates.trustAnchorSecret" "" $ccData) $acmeStaging }}
+            {{- $anchorSecret := "gentian-trust-anchor-tls" }}
+            {{- if $hasAnchor }}
             {{- $krStaging := default dict $pSpec.kernelRequirements }}
             {{- $identityStaging := default dict $krStaging.identity }}
             {{- $oidcStaging := default dict $identityStaging.oidc }}
             {{- $stagingVol := dict
-                "name" "gentian-staging-ca"
-                "secret" (dict "secretName" "gentian-staging-ca-tls")
+                "name" "kernel-trust-anchor"
+                "secret" (dict "secretName" $anchorSecret)
             }}
             {{- $stagingMounts := list
-                (dict "name" "gentian-staging-ca" "mountPath" "/opt/gentian-staging-ca" "readOnly" true)
+                (dict "name" "kernel-trust-anchor" "mountPath" "/opt/gentian-trust-anchor" "readOnly" true)
             }}
             {{- $stagingEnv := list
-                (dict "name" "REQUESTS_CA_BUNDLE" "value" "/opt/gentian-staging-ca/ca.crt")
-                (dict "name" "SSL_CERT_FILE" "value" "/opt/gentian-staging-ca/ca.crt")
-                (dict "name" "DENO_CERT" "value" "/opt/gentian-staging-ca/ca.crt")
+                (dict "name" "REQUESTS_CA_BUNDLE" "value" "/opt/gentian-trust-anchor/ca.crt")
+                (dict "name" "SSL_CERT_FILE" "value" "/opt/gentian-trust-anchor/ca.crt")
+                (dict "name" "DENO_CERT" "value" "/opt/gentian-trust-anchor/ca.crt")
             }}
             {{- /* Charts that render env from values.environment need OIDC/truststore keys merged there too. */}}
             {{- /* ignore top-level extraEnvVars — merge staging CA paths there too. */}}
             {{- $stagingEnvironment := dict
-                "REQUESTS_CA_BUNDLE" "/opt/gentian-staging-ca/ca.crt"
-                "SSL_CERT_FILE" "/opt/gentian-staging-ca/ca.crt"
-                "DENO_CERT" "/opt/gentian-staging-ca/ca.crt"
+                "REQUESTS_CA_BUNDLE" "/opt/gentian-trust-anchor/ca.crt"
+                "SSL_CERT_FILE" "/opt/gentian-trust-anchor/ca.crt"
+                "DENO_CERT" "/opt/gentian-trust-anchor/ca.crt"
             }}
             {{- $existingEnvironment := default dict (dig "environment" dict $extraVals) }}
             {{- $stagingJavaOpts := list
-                "-Djavax.net.ssl.trustStore=/opt/gentian-staging-ca/truststore.jks"
+                "-Djavax.net.ssl.trustStore=/opt/gentian-trust-anchor/truststore.jks"
                 "-Djavax.net.ssl.trustStoreType=JKS"
                 "-Djavax.net.ssl.trustStorePassword=changeit"
             }}
@@ -753,6 +822,49 @@ spec:
             {{- /* to get automatic per-tenant Keycloak client registration.        */}}
             {{- $kr       := default dict $pSpec.kernelRequirements }}
             {{- $identity := default dict $kr.identity }}
+            {{- /* Outside the OIDC block on purpose: an entitlement group is per
+                 APP, not per OIDC client. The groups Job makes one either way, and
+                 app-store-me has no oidc block in its profile — so a group rendered
+                 inside that conditional silently skipped it. */}}
+            {{- $entGroup := printf "gentian:tenant:%s:app:%s" $tenant $app | lower | replace ":" "-" | replace "_" "-" | replace "." "-" }}
+            {{- /* The app's entitlement group.
+
+                 Here rather than in tenant-default because its attributes come
+                 from this profile's gentianos.io/keycloak-group-attributes
+                 annotation, and only this Composition fetches the AppProfile.
+                 Nine of the catalogue's profiles carry one — the Odoo ones name
+                 the modules and roles the app provisions from — so a Group
+                 declared without them would strip what the groups Job sets.
+
+                 Values are coerced to lists: Keycloak group attributes are
+                 map[string][]string, and the annotation writes a bare string for
+                 single values, exactly as collectGentianGroupsJSON normalises. */}}
+            {{- $gAttrsRaw := dig "metadata" "annotations" "gentianos.io/keycloak-group-attributes" "" $profile }}
+            {{- $gAttrs := dict }}
+            {{- if $gAttrsRaw }}
+            {{- range $k, $v := (fromJson $gAttrsRaw) }}
+            {{- $_ := set $gAttrs $k (ternary $v (list (toString $v)) (kindIs "slice" $v)) }}
+            {{- end }}
+            {{- end }}
+            ---
+            apiVersion: group.keycloak.crossplane.io/v1alpha1
+            kind: Group
+            metadata:
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: {{ $app }}-entitlement-group
+              name: {{ $entGroup }}
+            spec:
+              deletionPolicy: Orphan
+              forProvider:
+                realmId: {{ $tenant }}
+                name: {{ printf "gentian:tenant:%s:app:%s" $tenant $app | quote }}
+                {{- if $gAttrs }}
+                attributes:
+                  {{ toYaml $gAttrs | nindent 18 }}
+                {{- end }}
+              providerConfigRef:
+                name: keycloak
+
             {{- $oidcCl   := default dict $identity.oidc }}
             {{- if $oidcCl.clientId }}
             {{- $oidcPackKey := default $oidcCl.clientId $oidcCl.oidcPackRef }}
@@ -808,6 +920,22 @@ spec:
               name: {{ $tenant }}-{{ $app }}-keycloak-client
             spec:
               deletionPolicy: Delete
+              # Everything except LateInitialize. The default "*" includes it, and
+              # this client has a second writer: the OIDC pack Job still configures
+              # the same clientId ("client <id> configured" in its log).
+              #
+              # Late-init copies fields the provider observes but this template does
+              # not set out of the live object and into spec.forProvider. With a Job
+              # writing the same object, that means the Job's values silently become
+              # this resource's declared intent. The portal BFF client is what that
+              # looks like when it goes wrong: the copied-back fields were ones the
+              # provider then refused to write, and it sat Synced=False, unable to
+              # reconcile, while reading Ready=True.
+              #
+              # Nothing is known to be wrong here — the two writers agree today. This
+              # is so that if they stop agreeing, the Composition still says what it
+              # was written to say.
+              managementPolicies: ["Observe", "Create", "Update", "Delete"]
               forProvider:
                 clientId: {{ $oidcCl.clientId | quote }}
                 name: {{ default $oidcCl.clientId $oidcCl.name | quote }}
@@ -855,10 +983,202 @@ spec:
                 realmId: {{ $tenant }}
                 clientIdRef:
                   name: {{ $tenant }}-{{ $app }}-keycloak-client
+                  policy:
+                    resolve: Always
                 defaultScopes:
                   {{ toYaml (index $oidcPackDefaultScopes $oidcPackKey) | nindent 18 }}
               providerConfigRef:
                 name: keycloak
+            {{- end }}
+
+            {{- /* ── the client scope the pack describes, and its mappers ───────
+                 Observed, not managed, for now. The OIDC pack Job still creates
+                 both; this is the read-back that proves the provider resolves
+                 them from the names the pack gives, before anything writes.
+
+                 That check is the one the portal BFF client did not get: a Job
+                 writes through the Admin API, which enforces less than the schema
+                 the provider validates against, and the resource sat Synced=False
+                 unable to reconcile while reading Ready=True.
+
+                 serviceClient packs are skipped because they genuinely have none
+                 of this — gentian-dovecot provisions a credential and nothing
+                 else, and the Job's own validation rejects a serviceClient that
+                 carries mappers. */}}
+            {{- $pack := dig $oidcPackKey dict $oidcPacks }}
+            {{- if and $pack.scopeName (not $pack.serviceClient) }}
+            ---
+            apiVersion: openidclient.keycloak.crossplane.io/v1alpha1
+            kind: ClientScope
+            metadata:
+              annotations:
+                crossplane.io/external-name: {{ $pack.scopeName }}
+                gotemplating.fn.crossplane.io/composition-resource-name: {{ $app }}-keycloak-client-scope
+              name: {{ $tenant }}-{{ $app }}-keycloak-client-scope
+            spec:
+              deletionPolicy: Orphan
+              managementPolicies: ["Observe"]
+              forProvider:
+                realmId: {{ $tenant }}
+                name: {{ $pack.scopeName | quote }}
+                description: {{ default "" $pack.scopeDescription | quote }}
+              providerConfigRef:
+                name: keycloak
+            {{- /* The pack's protocol mappers, on the scope above.
+
+                 These cannot be adopted. A Keycloak protocol mapper is identified
+                 by its UUID, not its name, so crossplane.io/external-name set to
+                 "email" fails with "observe failed: external resource does not
+                 exist" — where the ClientScope above adopts from its name without
+                 trouble. No external-name is set here, so Crossplane creates them
+                 and records the UUID it gets back.
+
+                 While the OIDC pack Job still makes the same mappers, these
+                 creates are expected to fail: Keycloak rejects a second mapper of
+                 the same name on one scope. That is the safe way round — the
+                 existing mapper keeps working and the resource reports the
+                 conflict, rather than a duplicate quietly emitting a claim twice.
+                 They converge when the Job stops making them and the originals
+                 are removed. */}}
+            {{- /* The observed ClientScope's Keycloak id. Empty until Crossplane
+                 has observed it once, and the mappers simply do not render until
+                 then rather than rendering against a name. */}}
+            {{- $scopeID := dig "resources" (printf "%s-keycloak-client-scope" $app) "resource" "status" "atProvider" "id" "" $observed }}
+            {{- range $mapperName := (default list $pack.mappers) }}
+            {{- $tmpl := dig $mapperName dict $oidcMapperTemplates }}
+            {{- if and $tmpl.protocolMapper $scopeID }}
+            {{- /* keycloakName exists because some catalogues name a mapper
+                 differently in Keycloak than in the pack — "full name" against
+                 full_name. The Keycloak name identifies the object; the slug only
+                 has to be a valid RFC 1123 object name. */}}
+            {{- $kcName := default $mapperName $tmpl.keycloakName }}
+            {{- $slug := $mapperName | lower | replace "_" "-" | replace " " "-" | replace "." "-" }}
+            ---
+            apiVersion: client.keycloak.crossplane.io/v1alpha1
+            kind: ProtocolMapper
+            metadata:
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: {{ $app }}-scope-mapper-{{ $slug }}
+              name: {{ $tenant }}-{{ $app }}-scope-mapper-{{ $slug }}
+            spec:
+              deletionPolicy: Orphan
+              forProvider:
+                realmId: {{ $tenant }}
+                name: {{ $kcName | quote }}
+                protocol: openid-connect
+                protocolMapper: {{ $tmpl.protocolMapper | quote }}
+                {{- /* The scope's real id, read off the observed ClientScope.
+
+                     Not clientScopeIdRef: a Crossplane reference resolves to the
+                     referenced resource's external-name, and the ClientScope is
+                     adopted by name, so the ref handed the provider
+                     "gentian-<app>-scope" where Keycloak's API path needs a UUID.
+                     The create failed with a 404 on
+                     /client-scopes/gentian-<app>-scope/protocol-mappers/models
+                     before it ever reached Keycloak's duplicate check. */}}
+                clientScopeId: {{ $scopeID }}
+                {{- /* multivalued defaults in for attribute mappers, exactly as
+                     buildOIDCPackScript does. The catalogue templates leave it out
+                     and Keycloak treats its absence as false, so this changes
+                     nothing — but without it the Composition and the Job disagree
+                     about one key, and each would strip what the other set on
+                     every pass. Observed doing precisely that: adopting the
+                     mappers removed multivalued from two of them. */}}
+                {{- $cfg := default dict $tmpl.config }}
+                {{- if and (eq $tmpl.protocolMapper "oidc-usermodel-attribute-mapper") (not (hasKey $cfg "multivalued")) }}
+                {{- $cfg = merge (dict "multivalued" "false") $cfg }}
+                {{- end }}
+                {{- /* introspection.token.claim is the same class of key, and it
+                     bites harder. Keycloak writes it into every mapper it stores
+                     whether or not it was asked for, so a config that omits it
+                     never matches what comes back. The provider reads the extra
+                     key as drift, updates to remove it, Keycloak puts it back,
+                     and the pair never converge — an update loop that costs a
+                     Keycloak API call and a fresh admin password grant each time
+                     round. Observed at roughly twenty requests a second, holding
+                     28k connections open and a full CPU core, on six resources.
+
+                     Defaulted rather than forced: a catalogue template that sets
+                     it explicitly keeps its own value. */}}
+                {{- if not (hasKey $cfg "introspection.token.claim") }}
+                {{- $cfg = merge (dict "introspection.token.claim" "true") $cfg }}
+                {{- end }}
+                config:
+                  {{ toYaml $cfg | nindent 18 }}
+              providerConfigRef:
+                name: keycloak
+            {{- end }}
+            {{- end }}
+
+            {{- /* The client role the entitlement group is granted.
+
+                 clientIdRef resolves here where clientScopeIdRef did not: the
+                 composed Client is managed, so the provider normalised its
+                 external-name to the Keycloak id, and the reference yields that
+                 id rather than a name.
+
+                 resolve: Always because that normalisation holds only while the
+                 client keeps the id it was created with. The default,
+                 IfNotPresent, writes the resolved id into
+                 spec.forProvider.clientId and never looks again; a client
+                 recreated under a new id leaves the reference naming a dead one,
+                 and the role 404s on every reconcile with no path back.
+
+                 No external-name, as with the mappers — a role is identified by
+                 its UUID, and the provider resolves the existing one from the
+                 client and name it is given. */}}
+            {{- if $pack.clientRole }}
+            ---
+            apiVersion: role.keycloak.crossplane.io/v1alpha1
+            kind: Role
+            metadata:
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: {{ $app }}-client-role
+              name: {{ $tenant }}-{{ $app }}-client-role
+            spec:
+              deletionPolicy: Orphan
+              forProvider:
+                realmId: {{ $tenant }}
+                clientIdRef:
+                  name: {{ $tenant }}-{{ $app }}-keycloak-client
+                  policy:
+                    resolve: Always
+                name: {{ $pack.clientRole | quote }}
+              providerConfigRef:
+                name: keycloak
+            {{- end }}
+
+            {{- /* The entitlement group's grant of that client role.
+
+                 Both refs resolve to Keycloak ids because both targets are
+                 managed and their external-names are already ids — the Group is
+                 composed by tenant-default, and a Crossplane reference finds a
+                 managed resource by name wherever it was composed.
+
+                 exhaustive: false, matching the Job, which adds the mapping and
+                 leaves anything else on the group alone. True would make this
+                 resource the group's entire role list and strip whatever it did
+                 not name. */}}
+            {{- if $pack.clientRole }}
+            ---
+            apiVersion: group.keycloak.crossplane.io/v1alpha1
+            kind: Roles
+            metadata:
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: {{ $app }}-group-roles
+              name: {{ $tenant }}-{{ $app }}-group-roles
+            spec:
+              deletionPolicy: Orphan
+              forProvider:
+                realmId: {{ $tenant }}
+                exhaustive: false
+                groupIdRef:
+                  name: {{ $entGroup }}
+                roleIdsRefs:
+                  - name: {{ $tenant }}-{{ $app }}-client-role
+              providerConfigRef:
+                name: keycloak
+            {{- end }}
             {{- end }}
             {{- end }}
 
@@ -941,7 +1261,28 @@ spec:
                   name: {{ $chart.name }}
                   version: {{ $chart.version | quote }}
                 namespace: {{ $ns }}
-                wait: false
+                # Wait for the release's workloads, not just for Helm to have
+                # applied the manifests.
+                #
+                # With wait: false the Release goes Ready the moment the objects
+                # exist, so an App whose pods can never schedule still reports
+                # Ready=True -- and function-auto-ready then marks the XR Ready,
+                # and the Tenant says "All App claims are Ready". Odoo sat like
+                # that for hours: its modules PVC asked for a StorageClass the
+                # cluster does not have, three pods were Pending the whole time,
+                # and every signal above them was green.
+                #
+                # The kernel's own releases (infra-data, suze) have always waited.
+                # Apps are what a tenant actually sees, so a false green matters
+                # more here, not less.
+                #
+                # 10m rather than infra-data's 5m: an app's first boot can include
+                # schema migration or module installation. On timeout the Release
+                # reports not-ready and says so, which is the outcome being asked
+                # for -- a wrong answer arriving quickly is worse than a right one
+                # arriving late.
+                wait: true
+                waitTimeout: "10m"
                 skipCRDs: true
                 {{- if gt (len $extraVals) 0 }}
                 values:
@@ -1035,11 +1376,74 @@ spec:
             {{- $pijImage := dig "image" "" $pij }}
             {{- if $pijImage }}
             {{- $pijScript := dig "script" "" $pij }}
+            {{- /* Same token vocabulary as extraValues and addonActivation.script.
+                   A post-install script is exactly as app-specific as those, and
+                   without this pass a ${TENANT_DOMAIN} written in a profile reaches
+                   the container as literal text — the failure addonActivation.script
+                   already records above, where the token arrived unsubstituted and
+                   `set -u` killed the pod on every start. */}}
+            {{- $pijScript = $pijScript | replace "${TENANT_DOMAIN}"    $domain }}
+            {{- $pijScript = $pijScript | replace "${TENANT_NAMESPACE}" $ns }}
+            {{- $pijScript = $pijScript | replace "${TENANT_ID}"        $tenant }}
+            {{- $pijScript = $pijScript | replace "${APP_ID}"           $app }}
             {{- $pijEnvFrom := dig "envFrom" list $pij }}
             {{- $pijSA := dig "serviceAccountName" "" $pij }}
             {{- $pijPVC := dig "readOnlyPVC" dict $pij }}
             {{- $pijPVCClaim := dig "claimName" "" $pijPVC }}
             {{- $pijPVCMount := dig "mountPath" "" $pijPVC }}
+
+            {{- /* ── Individual secretKeyRef env vars for postInstallJob ─────────── */}}
+            {{- /* envFrom (above) injects a whole Secret's keys as env vars, but    */}}
+            {{- /* Kubernetes silently drops any key that is not a valid C_IDENTIFIER */}}
+            {{- /* — which every hyphenated db, oidc, s3, etc. key here is. A         */}}
+            {{- /* bootstrap script that needs its own app's database or OIDC client  */}}
+            {{- /* credentials (e.g. to call `manage.py createsuperuser` before any   */}}
+            {{- /* HTTP API exists to talk to) has no other way to reach them. These   */}}
+            {{- /* fixed, documented names are a stable contract for postInstallJob    */}}
+            {{- /* scripts, independent of whatever Helm value path a profile's        */}}
+            {{- /* valueMapping happens to set for the Release itself.                 */}}
+            {{- $pijEnv := list }}
+            {{- if $vm.database }}
+            {{- if $vm.database.hostKey }}{{ $pijEnv = append $pijEnv (dict "name" "DB_HOST" "key" "db-host") }}{{ end }}
+            {{- if $vm.database.portKey }}{{ $pijEnv = append $pijEnv (dict "name" "DB_PORT" "key" "db-port") }}{{ end }}
+            {{- if $vm.database.nameKey }}{{ $pijEnv = append $pijEnv (dict "name" "DB_NAME" "key" "db-name") }}{{ end }}
+            {{- if $vm.database.userKey }}{{ $pijEnv = append $pijEnv (dict "name" "DB_USER" "key" "db-user") }}{{ end }}
+            {{- if $vm.database.passwordKey }}{{ $pijEnv = append $pijEnv (dict "name" "DB_PASSWORD" "key" "db-password") }}{{ end }}
+            {{- end }}
+            {{- if $vm.oidc }}
+            {{- if $vm.oidc.issuerKey }}{{ $pijEnv = append $pijEnv (dict "name" "OIDC_ISSUER" "key" "oidc-issuer") }}{{ end }}
+            {{- if $vm.oidc.clientIdKey }}{{ $pijEnv = append $pijEnv (dict "name" "OIDC_CLIENT_ID" "key" "oidc-client-id") }}{{ end }}
+            {{- if $vm.oidc.clientSecretKey }}{{ $pijEnv = append $pijEnv (dict "name" "OIDC_CLIENT_SECRET" "key" "oidc-client-secret") }}{{ end }}
+            {{- end }}
+            {{- if $vm.s3 }}
+            {{- if $vm.s3.endpointKey }}{{ $pijEnv = append $pijEnv (dict "name" "S3_ENDPOINT" "key" "s3-endpoint") }}{{ end }}
+            {{- if $vm.s3.bucketKey }}{{ $pijEnv = append $pijEnv (dict "name" "S3_BUCKET" "key" "s3-bucket") }}{{ end }}
+            {{- if $vm.s3.accessKeyKey }}{{ $pijEnv = append $pijEnv (dict "name" "S3_ACCESS_KEY" "key" "s3-access-key") }}{{ end }}
+            {{- if $vm.s3.secretKeyKey }}{{ $pijEnv = append $pijEnv (dict "name" "S3_SECRET_KEY" "key" "s3-secret-key") }}{{ end }}
+            {{- if $vm.s3.regionKey }}{{ $pijEnv = append $pijEnv (dict "name" "S3_REGION" "key" "s3-region") }}{{ end }}
+            {{- end }}
+            {{- if $vm.cache }}
+            {{- if $vm.cache.hostKey }}{{ $pijEnv = append $pijEnv (dict "name" "CACHE_HOST" "key" "cache-host") }}{{ end }}
+            {{- if $vm.cache.portKey }}{{ $pijEnv = append $pijEnv (dict "name" "CACHE_PORT" "key" "cache-port") }}{{ end }}
+            {{- if $vm.cache.userKey }}{{ $pijEnv = append $pijEnv (dict "name" "CACHE_USER" "key" "cache-user") }}{{ end }}
+            {{- if $vm.cache.passwordKey }}{{ $pijEnv = append $pijEnv (dict "name" "CACHE_PASSWORD" "key" "cache-password") }}{{ end }}
+            {{- end }}
+            {{- if $vm.smtp }}
+            {{- if $vm.smtp.hostKey }}{{ $pijEnv = append $pijEnv (dict "name" "SMTP_HOST" "key" "smtp-host") }}{{ end }}
+            {{- if $vm.smtp.portKey }}{{ $pijEnv = append $pijEnv (dict "name" "SMTP_PORT" "key" "smtp-port") }}{{ end }}
+            {{- if $vm.smtp.userKey }}{{ $pijEnv = append $pijEnv (dict "name" "SMTP_USER" "key" "smtp-user") }}{{ end }}
+            {{- if $vm.smtp.passwordKey }}{{ $pijEnv = append $pijEnv (dict "name" "SMTP_PASSWORD" "key" "smtp-password") }}{{ end }}
+            {{- end }}
+            {{- if $vm.imap }}
+            {{- if $vm.imap.hostKey }}{{ $pijEnv = append $pijEnv (dict "name" "IMAP_HOST" "key" "imap-host") }}{{ end }}
+            {{- if $vm.imap.portKey }}{{ $pijEnv = append $pijEnv (dict "name" "IMAP_PORT" "key" "imap-port") }}{{ end }}
+            {{- end }}
+            {{- /* appSecrets: env var name is the declared name, upper-cased. */}}
+            {{- range $s := $appSecrets }}
+            {{- if $s.name }}
+            {{- $pijEnv = append $pijEnv (dict "name" (upper $s.name) "key" (printf "internal-%s" $s.name)) }}
+            {{- end }}
+            {{- end }}
             ---
             apiVersion: kubernetes.crossplane.io/v1alpha2
             kind: Object
@@ -1128,11 +1532,21 @@ spec:
                                 mountPath: {{ $pijPVCMount }}
                                 readOnly: true
                               {{- end }}
+                            {{- if gt (len $pijEnv) 0 }}
+                            env:
+                              {{- range $e := $pijEnv }}
+                              - name: {{ $e.name }}
+                                valueFrom:
+                                  secretKeyRef:
+                                    name: {{ $secretName }}
+                                    key: {{ $e.key }}
+                              {{- end }}
+                            {{- end }}
                             {{- if gt (len $pijEnvFrom) 0 }}
                             envFrom:
-                              {{- range $secretName := $pijEnvFrom }}
+                              {{- range $secretRefName := $pijEnvFrom }}
                               - secretRef:
-                                  name: {{ $secretName }}
+                                  name: {{ $secretRefName }}
                               {{- end }}
                             {{- end }}
               providerConfigRef:
@@ -1201,6 +1615,10 @@ spec:
             metadata:
               annotations:
                 gotemplating.fn.crossplane.io/composition-resource-name: {{ $app }}-{{ $sc.name }}-{{ $scSafeName }}-kv
+                # Same reasoning as the primary app's secrets above: identify
+                # the resource by its KV path so a reinstall observes the
+                # existing value instead of overwriting it.
+                crossplane.io/external-name: secret/data/{{ $scKvPath }}
               name: {{ $scSeedName }}-kv
             spec:
               deletionPolicy: Orphan
@@ -1263,20 +1681,24 @@ spec:
             {{- $scRaw = $scRaw | replace "${APP_ID}"           $app }}
             {{- $scRaw = $scRaw | replace "${SIDECAR_ID}"       $sc.name }}
             {{- if $kernelDomain }}{{ $scRaw = $scRaw | replace "${KERNEL_DOMAIN}" $kernelDomain }}{{ end }}
-            {{- if $s3Endpoint  }}{{ $scRaw = $scRaw | replace "${S3_ENDPOINT}"   $s3Endpoint  }}{{ end }}
-            {{- if $mysqlHost   }}{{ $scRaw = $scRaw | replace "${MYSQL_HOST}"    $mysqlHost   }}{{ end }}
-            {{- if $redisHost   }}{{ $scRaw = $scRaw | replace "${REDIS_HOST}"    $redisHost   }}{{ end }}
-            {{- $scRaw = $scRaw | replace "${SMTP_HOST}"    $smtpHost }}
-            {{- $scRaw = $scRaw | replace "${TURN_HOST}"        $turnHost }}
-            {{- $scRaw = $scRaw | replace "${TURN_PORT}"        $turnPort }}
-            {{- $scRaw = $scRaw | replace "${TURN_TLS_HOST}"    $turnTLSHost }}
-            {{- $scRaw = $scRaw | replace "${TURN_TLS_PORT}"   $turnTLSPort }}
-            {{- $scRaw = $scRaw | replace "${TURN_TRANSPORT}" $turnTransport }}
-            {{- $scRaw = $scRaw | replace "${TURN_CREDENTIALS}" $turnCreds }}
+            {{- /* No endpoint substitutions here either — see the note above the
+            app's own extraValues block. A sidecar reaches its dependencies the
+            same way its app does. */}}
             {{- if $nodeIP      }}{{ $scRaw = $scRaw | replace "${NODE_IP}"       $nodeIP      }}{{ end }}
             {{- $scExtraVals = $scRaw | fromJson }}
             {{- end }}
             {{- $scExtraVals = $scExtraVals | toJson | fromJson }}
+            {{- /* The same two labels the app's own pods carry, for the same two
+                   reasons: the tenant's kernel-access NetworkPolicy selects on
+                   gentianos.io/app, and anything attributing resource use to an
+                   app counts by it. A sidecar is part of its app, so leaving it
+                   unlabelled put it outside both — its pods were neither granted
+                   the app's kernel egress nor counted against the app that owns
+                   them. Requires the sidecar chart to honour podLabels, which is
+                   the same requirement the app's own chart already carries. */}}
+            {{- $scPodLabels := default dict (dig "podLabels" dict $scExtraVals) }}
+            {{- $scPodLabels = mergeOverwrite $scPodLabels (dict "gentianos.io/app" $app "gentianos.io/tenant" $tenant) }}
+            {{- $scExtraVals = mergeOverwrite $scExtraVals (dict "podLabels" $scPodLabels) }}
             ---
             apiVersion: helm.crossplane.io/v1beta1
             kind: Release
@@ -1292,7 +1714,28 @@ spec:
                   name: {{ $sc.chart.name }}
                   version: {{ $sc.chart.version | quote }}
                 namespace: {{ $ns }}
-                wait: false
+                # Wait for the release's workloads, not just for Helm to have
+                # applied the manifests.
+                #
+                # With wait: false the Release goes Ready the moment the objects
+                # exist, so an App whose pods can never schedule still reports
+                # Ready=True -- and function-auto-ready then marks the XR Ready,
+                # and the Tenant says "All App claims are Ready". Odoo sat like
+                # that for hours: its modules PVC asked for a StorageClass the
+                # cluster does not have, three pods were Pending the whole time,
+                # and every signal above them was green.
+                #
+                # The kernel's own releases (infra-data, suze) have always waited.
+                # Apps are what a tenant actually sees, so a false green matters
+                # more here, not less.
+                #
+                # 10m rather than infra-data's 5m: an app's first boot can include
+                # schema migration or module installation. On timeout the Release
+                # reports not-ready and says so, which is the outcome being asked
+                # for -- a wrong answer arriving quickly is worse than a right one
+                # arriving late.
+                wait: true
+                waitTimeout: "10m"
                 skipCRDs: true
                 {{- if gt (len $scExtraVals) 0 }}
                 values:

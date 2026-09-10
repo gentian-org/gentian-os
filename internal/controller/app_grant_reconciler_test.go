@@ -71,9 +71,9 @@ func TestAppGrantReconciler_SyncsTupleDiff(t *testing.T) {
 
 	grant := &gentianov1alpha1.AppGrant{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      "provider",
-			Namespace: "tenant-demo",
-			Labels:    map[string]string{tenantLabel: "demo"},
+			Name:       "provider",
+			Namespace:  "tenant-demo",
+			Labels:     map[string]string{tenantLabel: "demo"},
 			Finalizers: []string{appGrantFinalizer},
 			Annotations: map[string]string{
 				syncedTupleKeysAnnotation: `[{"user":"tenant:demo","relation":"tenant","object":"installed_app:demo--provider"}]`,

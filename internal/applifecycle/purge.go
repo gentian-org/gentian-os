@@ -23,15 +23,17 @@ import (
 	"strings"
 	"time"
 
+	authv1 "k8s.io/api/authentication/v1"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
-	authv1 "k8s.io/api/authentication/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/tools/remotecommand"
+	"sigs.k8s.io/controller-runtime/pkg/log"
 
+	"github.com/gentian-org/gentian-os/internal/backup"
 	"github.com/gentian-org/gentian-os/internal/kernel"
 	"github.com/gentian-org/gentian-os/internal/meta"
 
@@ -52,6 +54,13 @@ const mariadbDeleteScript = "" +
 	"$MARIADB -e \"DROP DATABASE IF EXISTS ${DB_NAME};\"\n" +
 	"echo \"deleted database ${DB_NAME} and user ${DB_USER}\"\n"
 
+const (
+	// A purge must not return while volumes are still Terminating; NFS in
+	// particular can take a while, so allow generously before declaring failure.
+	pvcDeletionTimeout = 3 * time.Minute
+	pvcPollInterval    = 3 * time.Second
+)
+
 func (s *Service) purge(ctx context.Context, tenant *gentianov1alpha1.Tenant, profile *gentianov1alpha1.AppProfile, app string) []string {
 	var warnings []string
 	dbEngine, s3Req, redisReq := profileKernelReqs(profile)
@@ -60,7 +69,7 @@ func (s *Service) purge(ctx context.Context, tenant *gentianov1alpha1.Tenant, pr
 	}
 	switch dbEngine {
 	case gentianov1alpha1.DatabaseEnginePostgreSQL:
-		warnings = append(warnings, s.purgePostgres(ctx, tenant.Name, app)...)
+		warnings = append(warnings, s.purgePostgres(ctx, tenant, app)...)
 	case gentianov1alpha1.DatabaseEngineMariaDB:
 		warnings = append(warnings, s.runMariaDBDeleteJob(ctx, tenant, app)...)
 	case "":
@@ -81,51 +90,85 @@ func (s *Service) purge(ctx context.Context, tenant *gentianov1alpha1.Tenant, pr
 }
 
 func profileKernelReqs(profile *gentianov1alpha1.AppProfile) (db gentianov1alpha1.DatabaseEngine, s3, redis bool) {
-	if profile == nil || profile.Spec.KernelRequirements == nil {
-		return "", false, false
-	}
-	kr := profile.Spec.KernelRequirements
-	if kr.Database != nil {
-		db = kr.Database.Engine
-	}
-	if kr.Storage != nil && kr.Storage.S3 != nil {
-		s3 = true
-	}
-	if kr.Cache != nil && kr.Cache.Engine == gentianov1alpha1.CacheEngineRedis {
-		redis = true
-	}
-	return db, s3, redis
+	stores := backup.ProfileStores(profile)
+	return stores.Database, stores.S3, stores.Redis
 }
 
 func sidecarNames(profile *gentianov1alpha1.AppProfile) []string {
-	if profile == nil {
-		return nil
-	}
-	out := make([]string, 0, len(profile.Spec.Sidecars))
-	for _, sc := range profile.Spec.Sidecars {
-		if sc.Name != "" {
-			out = append(out, sc.Name)
-		}
-	}
-	return out
+	return backup.SidecarNames(profile)
 }
 
-func (s *Service) purgePostgres(ctx context.Context, tenant, app string) []string {
-	dbName := dbRoleName(tenant, app)
+func (s *Service) purgePostgres(ctx context.Context, tenant *gentianov1alpha1.Tenant, app string) []string {
+	// The database and the role are named differently -- see pgRoleName -- and
+	// conflating them meant the role always survived a purge.
+	dbName := databaseName(tenant, app)
+	roleName := pgRoleName(tenant.Name, app)
 	pod, err := s.postgresPod(ctx)
 	if err != nil || pod == "" {
 		return []string{fmt.Sprintf("Postgres pod not found; skipped purge for %s", dbName)}
 	}
-	for _, sql := range []string{
+	// Apps that declare allowDynamicDatabaseCreation own every database their
+	// users made, not just the provisioned one. Dropping the role would fail
+	// while it still owns objects, and leaving them would strand tenant data on
+	// the shared cluster under a role nobody can log in as any more. Ownership
+	// is the join: CREATE DATABASE makes the creating role the owner, so this
+	// finds them without the platform having to track names it never chose.
+	extra, err := s.databasesOwnedBy(ctx, pod, roleName)
+	if err != nil {
+		return []string{fmt.Sprintf("Postgres purge could not list databases owned by %s: %v", roleName, err)}
+	}
+
+	var statements []string
+	for _, db := range extra {
+		statements = append(statements,
+			fmt.Sprintf("SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = '%s';", db),
+			fmt.Sprintf(`DROP DATABASE IF EXISTS "%s";`, db),
+		)
+	}
+	statements = append(statements,
 		fmt.Sprintf("SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = '%s';", dbName),
 		fmt.Sprintf(`DROP DATABASE IF EXISTS "%s";`, dbName),
-		fmt.Sprintf(`DROP ROLE IF EXISTS "%s";`, dbName),
-	} {
+		// Anything the role still owns outside its own databases would block
+		// the drop and strand the role; DROP OWNED clears those grants first.
+		// Guarded because DROP OWNED errors on a missing role, and purge has to
+		// stay re-runnable -- it is retried whenever an uninstall is repeated.
+		fmt.Sprintf(`DO $$ BEGIN IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = '%s') `+
+			`THEN EXECUTE 'DROP OWNED BY "%s"'; END IF; END $$;`, roleName, roleName),
+		fmt.Sprintf(`DROP ROLE IF EXISTS "%s";`, roleName),
+	)
+
+	for _, sql := range statements {
 		if out, err := s.execPostgres(ctx, pod, sql); err != nil || strings.Contains(strings.ToUpper(out), "ERROR") {
 			return []string{fmt.Sprintf("Postgres purge failed for %s: %s", dbName, out)}
 		}
 	}
 	return nil
+}
+
+// databasesOwnedBy lists databases owned by role, excluding the app's own
+// provisioned database, which the caller drops last.
+func (s *Service) databasesOwnedBy(ctx context.Context, pod, role string) ([]string, error) {
+	out, err := s.execPostgres(ctx, pod, fmt.Sprintf(
+		"SELECT d.datname FROM pg_database d JOIN pg_roles r ON r.oid = d.datdba "+
+			"WHERE r.rolname = '%s' AND d.datname <> '%s' AND NOT d.datistemplate;", role, role))
+	if err != nil {
+		return nil, err
+	}
+	if strings.Contains(strings.ToUpper(out), "ERROR") {
+		return nil, fmt.Errorf("%s", strings.TrimSpace(out))
+	}
+	var names []string
+	for _, line := range strings.Split(out, "\n") {
+		name := strings.TrimSpace(line)
+		// psql's default output frames the rows with a header, a rule and a
+		// "(N rows)" footer; only the indented value lines are database names.
+		if name == "" || strings.HasPrefix(name, "datname") || strings.HasPrefix(name, "-") ||
+			strings.HasPrefix(name, "(") {
+			continue
+		}
+		names = append(names, name)
+	}
+	return names, nil
 }
 
 func (s *Service) postgresPod(ctx context.Context) (string, error) {
@@ -257,38 +300,26 @@ func kernelDeleteJob(ns, name, tenant, app, image, container, script string, env
 
 func mysqlAdminEnv() []corev1.EnvVar {
 	return []corev1.EnvVar{
-		secretEnv("MYSQL_HOST", "mariadb-admin", "host"),
-		secretEnv("MYSQL_TCP_PORT", "mariadb-admin", "port"),
-		secretEnv("MYSQL_PWD", "mariadb-admin", "password"),
-		secretEnv("MYSQL_ADMIN_USER", "mariadb-admin", "username"),
+		meta.SecretEnv("MYSQL_HOST", "mariadb-admin", "host"),
+		meta.SecretEnv("MYSQL_TCP_PORT", "mariadb-admin", "port"),
+		meta.SecretEnv("MYSQL_PWD", "mariadb-admin", "password"),
+		meta.SecretEnv("MYSQL_ADMIN_USER", "mariadb-admin", "username"),
 	}
 }
 
 func minioAdminEnv() []corev1.EnvVar {
 	return []corev1.EnvVar{
-		secretEnv("MINIO_ENDPOINT", "minio-admin", "endpoint"),
-		secretEnv("MINIO_ACCESS_KEY", "minio-admin", "accessKey"),
-		secretEnv("MINIO_SECRET_KEY", "minio-admin", "secretKey"),
+		meta.SecretEnv("MINIO_ENDPOINT", "minio-admin", "endpoint"),
+		meta.SecretEnv("MINIO_ACCESS_KEY", "minio-admin", "accessKey"),
+		meta.SecretEnv("MINIO_SECRET_KEY", "minio-admin", "secretKey"),
 	}
 }
 
 func redisAdminEnv() []corev1.EnvVar {
 	return []corev1.EnvVar{
-		secretEnv("REDIS_HOST", "redis-admin", "host"),
-		secretEnv("REDIS_PORT", "redis-admin", "port"),
-		secretEnv("REDIS_PASSWORD", "redis-admin", "password"),
-	}
-}
-
-func secretEnv(name, secret, key string) corev1.EnvVar {
-	return corev1.EnvVar{
-		Name: name,
-		ValueFrom: &corev1.EnvVarSource{
-			SecretKeyRef: &corev1.SecretKeySelector{
-				LocalObjectReference: corev1.LocalObjectReference{Name: secret},
-				Key:                  key,
-			},
-		},
+		meta.SecretEnv("REDIS_HOST", "redis-admin", "host"),
+		meta.SecretEnv("REDIS_PORT", "redis-admin", "port"),
+		meta.SecretEnv("REDIS_PASSWORD", "redis-admin", "password"),
 	}
 }
 
@@ -314,8 +345,13 @@ func (s *Service) purgeOpenBaoPath(ctx context.Context, tenant, appKey string) [
 		return []string{fmt.Sprintf("OpenBao purge skipped for %q (pod unavailable)", appKey)}
 	}
 	base := fmt.Sprintf("gentian-os/tenants/%s/apps/%s", tenant, appKey)
+	// https and the pod's own CA. The listener has only ever been https, so the
+	// http address was reset by the peer — and every command in the script below
+	// ends in `|| true`, so the purge reported success while deleting nothing.
+	// Addressed by service DNS because the certificate carries no IP SAN.
 	script := fmt.Sprintf(`set -eu
-BAO_ADDR=http://127.0.0.1:8200
+BAO_ADDR=https://openbao.openbao.svc.cluster.local:8200
+BAO_CACERT=/openbao/tls/ca.crt
 BAO_TOKEN='%s'
 BASE='%s'
 purge_kv_tree() {
@@ -405,6 +441,42 @@ func (s *Service) purgeClusterArtifacts(ctx context.Context, tenant, app string)
 			PropagationPolicy: ptr(metav1.DeletePropagationBackground),
 		})
 	}
+	// Jobs the operator creates directly in the tenant namespace (the app-admins
+	// sync among them) have no owner that Crossplane deletes with the App claim,
+	// so sweeping only the kernel namespace left them behind — and a finished
+	// Job's pod keeps its logs and its mounted member list with it.
+	tenantJobs, err := s.clientset.BatchV1().Jobs(tenantNamespace(tenant)).
+		List(ctx, metav1.ListOptions{LabelSelector: selector})
+	if err != nil {
+		warnings = append(warnings, fmt.Sprintf("list tenant jobs: %v", err))
+	} else {
+		for _, job := range tenantJobs.Items {
+			if err := s.clientset.BatchV1().Jobs(tenantNamespace(tenant)).
+				Delete(ctx, job.Name, metav1.DeleteOptions{
+					PropagationPolicy: ptr(metav1.DeletePropagationBackground),
+				}); err != nil && !apierrors.IsNotFound(err) {
+				warnings = append(warnings, fmt.Sprintf("delete tenant job %s: %v", job.Name, err))
+			}
+		}
+	}
+	// Pods outlive their Job when whatever deleted the Job did not cascade —
+	// Crossplane removing the wrapping Object for a post-install Job orphans its
+	// pods exactly this way, so a purged app left completed pods sitting in the
+	// namespace with their logs and mounted config. Sweeping by the app selector
+	// catches them whatever orphaned them; live pods of the app itself are gone
+	// with the Helm release long before this runs.
+	tenantPods, err := s.clientset.CoreV1().Pods(tenantNamespace(tenant)).
+		List(ctx, metav1.ListOptions{LabelSelector: selector})
+	if err != nil {
+		warnings = append(warnings, fmt.Sprintf("list tenant pods: %v", err))
+	} else {
+		for _, pod := range tenantPods.Items {
+			if err := s.clientset.CoreV1().Pods(tenantNamespace(tenant)).
+				Delete(ctx, pod.Name, metav1.DeleteOptions{}); err != nil && !apierrors.IsNotFound(err) {
+				warnings = append(warnings, fmt.Sprintf("delete tenant pod %s: %v", pod.Name, err))
+			}
+		}
+	}
 	secrets, err := s.clientset.CoreV1().Secrets(s.opts.KernelNamespace).List(ctx, metav1.ListOptions{LabelSelector: selector})
 	if err != nil {
 		warnings = append(warnings, fmt.Sprintf("list kernel secrets: %v", err))
@@ -413,6 +485,28 @@ func (s *Service) purgeClusterArtifacts(ctx context.Context, tenant, app string)
 			_ = s.clientset.CoreV1().Secrets(s.opts.KernelNamespace).Delete(ctx, sec.Name, metav1.DeleteOptions{})
 		}
 	}
+	// The operator also writes Secrets into the tenant's own namespace — the LLM
+	// credentials among them — and this only ever swept the kernel namespace, so
+	// every install left one behind forever. The demo tenant had accumulated ten,
+	// including some for profiles renamed out of existence months earlier.
+	//
+	// The selector is app-scoped, so tenant-wide Secrets such as
+	// gentian-trust-anchor-tls (labelled managed-by and tenant, but no app) are not
+	// matched. Secrets owned by an ExternalSecret are already removed with it when
+	// Crossplane deletes the App claim.
+	tenantSecrets, err := s.clientset.CoreV1().Secrets(tenantNamespace(tenant)).
+		List(ctx, metav1.ListOptions{LabelSelector: selector})
+	if err != nil {
+		warnings = append(warnings, fmt.Sprintf("list tenant secrets: %v", err))
+	} else {
+		for _, sec := range tenantSecrets.Items {
+			if err := s.clientset.CoreV1().Secrets(tenantNamespace(tenant)).
+				Delete(ctx, sec.Name, metav1.DeleteOptions{}); err != nil && !apierrors.IsNotFound(err) {
+				warnings = append(warnings, fmt.Sprintf("delete tenant secret %s: %v", sec.Name, err))
+			}
+		}
+	}
+
 	dbCR := cnpgDatabaseName(tenant, app)
 	dbObj := &unstructured.Unstructured{}
 	dbObj.SetGroupVersionKind(schema.GroupVersionKind{
@@ -442,41 +536,147 @@ func (s *Service) purgePVCs(ctx context.Context, tenantName, appName string, pro
 		family = profile.Spec.Family
 	}
 
+	logger := log.FromContext(ctx).WithName("purge").WithValues("app", appName)
+
+	var doomed []string
 	for _, pvc := range pvcs.Items {
-		shouldDelete := false
-
-		// 1. Check if the PVC label gentianos.io/app matches the appName
-		if pvc.Labels["gentianos.io/app"] == appName {
-			shouldDelete = true
+		if !pvcBelongsToApp(pvc, appName, family) {
+			continue
 		}
-
-		// 2. Check if the PVC app.kubernetes.io/instance label prefix matches appName
-		if instance, ok := pvc.Labels["app.kubernetes.io/instance"]; ok {
-			if strings.HasPrefix(instance, appName) {
-				shouldDelete = true
-			}
+		if rel, other := ownedByOtherRelease(pvc.Annotations, appName); other {
+			// Deliberately not a warning: skipping is the correct outcome, and
+			// warnings fail the purge.
+			logger.Info("skipping PVC owned by another Helm release",
+				"pvc", pvc.Name, "release", rel)
+			continue
 		}
+		doomed = append(doomed, pvc.Name)
+	}
+	if len(doomed) == 0 {
+		return nil
+	}
 
-		// 3. Check if the app.kubernetes.io/name matches appName or family
-		if name, ok := pvc.Labels["app.kubernetes.io/name"]; ok {
-			if name == appName || (family != "" && name == family) {
-				shouldDelete = true
-			}
+	// Delete the pods still holding these volumes first.
+	//
+	// A PVC carries the pvc-protection finalizer while any pod references it, and
+	// that includes pods which have already Succeeded — a finished install Job
+	// keeps the claim alive indefinitely. Deleting the PVC alone leaves it
+	// Terminating forever, and worse, a reinstall then cannot schedule ("claim is
+	// being deleted") while its own Pending pods add fresh references. That is a
+	// deadlock that never resolves on its own.
+	warnings = append(warnings, s.releasePVCHolders(ctx, ns, doomed)...)
+
+	for _, name := range doomed {
+		err := s.clientset.CoreV1().PersistentVolumeClaims(ns).Delete(ctx, name, metav1.DeleteOptions{})
+		if err != nil && !apierrors.IsNotFound(err) {
+			warnings = append(warnings, fmt.Sprintf("delete PVC %s/%s: %v", ns, name, err))
 		}
+	}
 
-		// 4. Fallback name checks
-		if strings.Contains(pvc.Name, appName) || (family != "" && strings.Contains(pvc.Name, family)) {
-			shouldDelete = true
+	// Wait for them to actually go. A purge that returns while volumes are still
+	// Terminating reports success for work it has not finished, and the caller has
+	// no way to know the next install will be blocked by it.
+	if err := s.waitForPVCsGone(ctx, ns, doomed); err != nil {
+		warnings = append(warnings, err.Error())
+	}
+	return warnings
+}
+
+// ownedByOtherRelease reports whether a Helm-managed object belongs to some
+// release other than this app's, returning the release name for the log line.
+//
+// This is a veto over the matching below, and it exists because the damage is
+// asymmetric. provider-helm reconciles release *state*, not cluster contents:
+// it compares the desired chart and values against the recorded release and
+// does nothing when they agree. Delete an object out from under a live release
+// and nothing puts it back — not the next sync, not selfHeal, not a pod
+// restart — until someone changes the chart version or a value. The app just
+// runs without it. Meanwhile the cost of skipping wrongly is a leftover volume,
+// which the next purge or an operator can remove.
+//
+// pvcBelongsToApp falls back to a name substring, which is broad enough to
+// reach a sibling app's volume when two profiles share a family (purging
+// nextcloud-base-ce matches anything containing "nextcloud"). That is precisely
+// the case where deleting is unrecoverable, so Helm's own ownership record wins.
+//
+// Releases for one app are named after it — "<profile>-<suffix>-release" for
+// the app itself, "<tenant>-<profile>-<sidecar>" for its sidecars — so a
+// substring test identifies our own releases without needing the composite,
+// which is already gone by the time purge runs.
+func ownedByOtherRelease(annotations map[string]string, appName string) (string, bool) {
+	return backup.OwnedByOtherRelease(annotations, appName)
+}
+
+// pvcBelongsToApp reports whether a PVC was provisioned for this app.
+func pvcBelongsToApp(pvc corev1.PersistentVolumeClaim, appName, family string) bool {
+	return backup.PVCBelongsToApp(pvc, appName, family)
+}
+
+// releasePVCHolders deletes pods referencing any of the named claims so the
+// pvc-protection finalizer can clear.
+func (s *Service) releasePVCHolders(ctx context.Context, ns string, claims []string) []string {
+	doomed := make(map[string]struct{}, len(claims))
+	for _, c := range claims {
+		doomed[c] = struct{}{}
+	}
+
+	pods, err := s.clientset.CoreV1().Pods(ns).List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return []string{fmt.Sprintf("list pods holding PVCs in %s: %v", ns, err)}
+	}
+
+	var warnings []string
+	for _, pod := range pods.Items {
+		if !podReferencesAny(pod, doomed) {
+			continue
 		}
-
-		if shouldDelete {
-			err := s.clientset.CoreV1().PersistentVolumeClaims(ns).Delete(ctx, pvc.Name, metav1.DeleteOptions{})
-			if err != nil && !apierrors.IsNotFound(err) {
-				warnings = append(warnings, fmt.Sprintf("delete PVC %s/%s: %v", ns, pvc.Name, err))
-			}
+		err := s.clientset.CoreV1().Pods(ns).Delete(ctx, pod.Name, metav1.DeleteOptions{})
+		if err != nil && !apierrors.IsNotFound(err) {
+			warnings = append(warnings, fmt.Sprintf("delete pod %s/%s holding a purged PVC: %v", ns, pod.Name, err))
 		}
 	}
 	return warnings
+}
+
+func podReferencesAny(pod corev1.Pod, claims map[string]struct{}) bool {
+	for _, v := range pod.Spec.Volumes {
+		if v.PersistentVolumeClaim == nil {
+			continue
+		}
+		if _, ok := claims[v.PersistentVolumeClaim.ClaimName]; ok {
+			return true
+		}
+	}
+	return false
+}
+
+// waitForPVCsGone blocks until the claims disappear, or reports which remain.
+func (s *Service) waitForPVCsGone(ctx context.Context, ns string, claims []string) error {
+	deadline := time.Now().Add(pvcDeletionTimeout)
+	for {
+		var remaining []string
+		for _, name := range claims {
+			_, err := s.clientset.CoreV1().PersistentVolumeClaims(ns).Get(ctx, name, metav1.GetOptions{})
+			if err == nil {
+				remaining = append(remaining, name)
+			} else if !apierrors.IsNotFound(err) {
+				remaining = append(remaining, name)
+			}
+		}
+		if len(remaining) == 0 {
+			return nil
+		}
+		if time.Now().After(deadline) {
+			return fmt.Errorf(
+				"PVCs still present after %s: %s — the next install of this app will not schedule until they are gone",
+				pvcDeletionTimeout, strings.Join(remaining, ", "))
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(pvcPollInterval):
+		}
+	}
 }
 
 func ptr[T any](v T) *T { return &v }

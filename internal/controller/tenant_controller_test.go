@@ -27,8 +27,8 @@ import (
 	"testing"
 	"time"
 
-	batchv1 "k8s.io/api/batch/v1"
 	appsv1 "k8s.io/api/apps/v1"
+	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
 	k8serrors "k8s.io/apimachinery/pkg/api/errors"
@@ -46,15 +46,27 @@ import (
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 	"github.com/gentian-org/gentian-os/internal/controller"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 )
 
 // testClient is the shared client used by all tests in this package.
 var testClient client.Client
 
 // envtestWaitTimeout is the default poll deadline for controller envtest waits.
-// Tests share one manager; under t.Parallel() load on CI runners, shorter
-// deadlines flake when many tenants reconcile and extra Keycloak Jobs run.
-const envtestWaitTimeout = 45 * time.Second
+//
+// 140 t.Parallel() tests share one manager and one envtest apiserver, so a test
+// that loses the scheduling race against the others exceeds a short deadline
+// and fails with "timed out waiting for condition" — and which test loses is
+// arbitrary. That makes a red build in this package ambiguous: a regression and
+// a starved runner are indistinguishable without re-running, which is the worst
+// property a suite can have.
+//
+// Three minutes is a bound on being starved, not on being wrong. These waits
+// poll reconcile loops rather than burn CPU, so the extra ceiling costs nothing
+// on a healthy run — it is only reached when the answer was never coming, and a
+// genuinely hung reconciler still reports, just later.
+const envtestWaitTimeout = 3 * time.Minute
 
 // tenantReadyTimeout is an alias for Phase=Ready waits (same ceiling as job waits).
 const tenantReadyTimeout = envtestWaitTimeout
@@ -275,10 +287,14 @@ func TestMain(m *testing.M) {
 		Client:                   mgr.GetClient(),
 		APIReader:                mgr.GetAPIReader(),
 		Scheme:                   mgr.GetScheme(),
-		KernelDomain:             "desk.gentian.org",
+		KernelDomain:             "platform.example.test",
 		TenantDNS01ClusterIssuer: "letsencrypt-dns01-cloudflare",
 		KernelRealm:              "kernel",
 		RoutingMode:              controller.RoutingModeGateway,
+		// The mail tests assert the shared Postfix AND Dovecot artefacts, which
+		// is what kernel mode provisions. With this unset the suite would run as
+		// external, where Dovecot is deliberately not configured at all.
+		MailServiceMode: "kernel",
 	}).SetupWithManager(mgr); err != nil {
 		panic(err)
 	}
@@ -296,6 +312,21 @@ func TestMain(m *testing.M) {
 	startXTenantShellSimulator(ctx, testClient)
 	startTenantProvisioningJobSimulator(ctx, testClient)
 	go func() { _ = mgr.Start(ctx) }()
+
+	// Stand in for Crossplane and provider-keycloak, which do not run here.
+	//
+	// The mail path waits for the tenant's Dovecot OIDC client to be Ready before
+	// it writes Dovecot's realm auth config, because that config carries the
+	// client secret and introspection URL and is useless pointed at a client that
+	// does not exist. On a real cluster the Composition creates the client and the
+	// provider marks it Ready; under envtest nothing does either, so the wait
+	// never ends and every tenant stops at mail.
+	//
+	// It has to do both halves, because neither runs here: create the client the
+	// Composition would create for each XTenant, and mark it Ready the way the
+	// provider would. Marking alone was not enough — with no Crossplane there is
+	// nothing to mark, so the wait never ended.
+	go fakeKeycloakClientProvider(ctx, mgr.GetClient())
 
 	// platform-kernel namespace is required by the identity reconciler for Keycloak Jobs.
 	if err := testClient.Create(context.Background(), &corev1.Namespace{
@@ -335,6 +366,21 @@ func TestMain(m *testing.M) {
 			"url":      []byte(fakeKC.URL),
 			"username": []byte("kcadmin"),
 			"password": []byte("test-kc-password"),
+		},
+	}); err != nil {
+		panic(err)
+	}
+
+	// The kernel OIDCPackCatalog, as the operator chart ships it. Selfhosted mail
+	// resolves the gentian-dovecot service pack from it to provision the client
+	// Dovecot introspects IMAP XOAUTH2 tokens with, so without it every tenant
+	// using mail waits on a catalogue that never arrives.
+	if err := testClient.Create(context.Background(), &gentianov1alpha1.OIDCPackCatalog{
+		ObjectMeta: metav1.ObjectMeta{Name: "gentian-kernel"},
+		Spec: gentianov1alpha1.OIDCPackCatalogSpec{
+			Packs: map[string]gentianov1alpha1.OIDCPackSpec{
+				"gentian-dovecot": {ServiceClient: true},
+			},
 		},
 	}); err != nil {
 		panic(err)
@@ -476,7 +522,6 @@ func TestTenantReconciler_CreatesNamespace(t *testing.T) {
 		Spec: gentianov1alpha1.TenantSpec{
 			DisplayName: "GTN Demo",
 			Domain:      "acme.example.com",
-			AdminEmail:  "admin@acme.example.com",
 		},
 	}
 	if err := testClient.Create(context.Background(), tenant); err != nil {
@@ -504,7 +549,6 @@ func TestTenantReconciler_SetsStatusReady(t *testing.T) {
 		Spec: gentianov1alpha1.TenantSpec{
 			DisplayName: "Beta Co",
 			Domain:      "beta.example.com",
-			AdminEmail:  "admin@beta.example.com",
 		},
 	}
 	if err := testClient.Create(context.Background(), tenant); err != nil {
@@ -548,7 +592,6 @@ func TestTenantReconciler_AppliesResourceQuota(t *testing.T) {
 		Spec: gentianov1alpha1.TenantSpec{
 			DisplayName: "Gamma Inc",
 			Domain:      "gamma.example.com",
-			AdminEmail:  "admin@gamma.example.com",
 			Quotas: &gentianov1alpha1.TenantQuotas{
 				Storage: &storage,
 				CPU:     &cpu,
@@ -581,7 +624,6 @@ func TestTenantReconciler_AppliesLimitRange(t *testing.T) {
 		Spec: gentianov1alpha1.TenantSpec{
 			DisplayName: "Delta Ltd",
 			Domain:      "delta.example.com",
-			AdminEmail:  "admin@delta.example.com",
 		},
 	}
 	if err := testClient.Create(context.Background(), tenant); err != nil {
@@ -613,7 +655,6 @@ func TestTenantReconciler_AppliesNetworkPolicy(t *testing.T) {
 		Spec: gentianov1alpha1.TenantSpec{
 			DisplayName: "Epsilon GmbH",
 			Domain:      "epsilon.example.com",
-			AdminEmail:  "admin@epsilon.example.com",
 		},
 	}
 	if err := testClient.Create(context.Background(), tenant); err != nil {
@@ -647,7 +688,6 @@ func TestTenantReconciler_ProfilesMissingBlocksProvisioning(t *testing.T) {
 		Spec: gentianov1alpha1.TenantSpec{
 			DisplayName: "Missing Profile Co",
 			Domain:      "missing-profile.example.com",
-			AdminEmail:  "admin@missing-profile.example.com",
 			Apps: []gentianov1alpha1.TenantApp{
 				{Profile: "does-not-exist"},
 			},
@@ -699,7 +739,6 @@ func TestTenantReconciler_CustomNamespace(t *testing.T) {
 		Spec: gentianov1alpha1.TenantSpec{
 			DisplayName: "Zeta Corp",
 			Domain:      "zeta.example.com",
-			AdminEmail:  "admin@zeta.example.com",
 			Isolation:   &gentianov1alpha1.TenantIsolation{Namespace: "zeta-custom"},
 		},
 	}
@@ -725,7 +764,6 @@ func TestTenantReconciler_DeleteRetainKeepsNamespace(t *testing.T) {
 		Spec: gentianov1alpha1.TenantSpec{
 			DisplayName:    "Retainer LLC",
 			Domain:         "retainer.example.com",
-			AdminEmail:     "admin@retainer.example.com",
 			DeletionPolicy: gentianov1alpha1.DeletionPolicyRetain,
 		},
 	}
@@ -764,7 +802,6 @@ func TestTenantReconciler_DeleteDeleteRemovesNamespace(t *testing.T) {
 		Spec: gentianov1alpha1.TenantSpec{
 			DisplayName:    "Destroyer Co",
 			Domain:         "destroyer.example.com",
-			AdminEmail:     "admin@destroyer.example.com",
 			DeletionPolicy: gentianov1alpha1.DeletionPolicyDelete,
 		},
 	}
@@ -816,7 +853,6 @@ func TestTenantReconciler_DataPlaneRedisAndPostgresJobs(t *testing.T) {
 		Spec: gentianov1alpha1.TenantSpec{
 			DisplayName: "Combo DP Co",
 			Domain:      "combodp.example.com",
-			AdminEmail:  "admin@combodp.example.com",
 			Apps: []gentianov1alpha1.TenantApp{
 				{Profile: "combo-pg"},
 				{Profile: "combo-redis"},
@@ -848,4 +884,77 @@ func containsPolicyType(types []networkingv1.PolicyType, t networkingv1.PolicyTy
 		}
 	}
 	return false
+}
+
+// fakeKeycloakClientProvider stands in for Crossplane and provider-keycloak.
+//
+// For every Tenant it ensures the Dovecot OIDC client the tenant Composition
+// declares exists, and marks it Ready as the provider would. Polling rather than
+// watching: the manager cache is already running by then, and a poll is easier to
+// reason about in a test binary than another informer racing setup.
+//
+// Keyed off Tenant, not XTenant. The Composition names the client after the
+// XTenant, and the two names are the same — but nothing creates an XTenant in
+// envtest, because that is Crossplane's job and Crossplane is what this function
+// is pretending to be. Keying off XTenant meant the client appeared only for the
+// handful of tests that made one by hand, so the operator's wait never finished
+// anywhere else and four reconcilers reported a nil Ready condition, none of
+// them having anything to do with mail.
+//
+// The name matches the Composition's, because that is what the operator looks
+// for. If the Composition renames it, this must move with it — a fake that
+// answers to the wrong name would make the wait pass here and hang on a cluster.
+func fakeKeycloakClientProvider(ctx context.Context, c client.Client) {
+	tenantGVK := schema.GroupVersionKind{Group: "gentianos.io", Version: "v1alpha1", Kind: "TenantList"}
+	clientGVK := schema.GroupVersionKind{Group: "openidclient.keycloak.crossplane.io", Version: "v1alpha1", Kind: "Client"}
+
+	ticker := time.NewTicker(200 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			xts := &unstructured.UnstructuredList{}
+			xts.SetGroupVersionKind(tenantGVK)
+			if err := c.List(ctx, xts); err != nil {
+				continue
+			}
+			for i := range xts.Items {
+				name := xts.Items[i].GetName() + "-dovecot-oidc-client"
+				obj := &unstructured.Unstructured{}
+				obj.SetGroupVersionKind(clientGVK)
+				err := c.Get(ctx, types.NamespacedName{Name: name}, obj)
+				if err != nil {
+					created := &unstructured.Unstructured{}
+					created.SetGroupVersionKind(clientGVK)
+					created.SetName(name)
+					_ = unstructured.SetNestedMap(created.Object, map[string]interface{}{
+						"clientId": "gentian-dovecot",
+						"realmId":  xts.Items[i].GetName(),
+					}, "spec", "forProvider")
+					if err := c.Create(ctx, created); err != nil {
+						continue
+					}
+					obj = created
+				}
+				conds, _, _ := unstructured.NestedSlice(obj.Object, "status", "conditions")
+				for _, cond := range conds {
+					if m, ok := cond.(map[string]interface{}); ok && m["type"] == "Ready" && m["status"] == "True" {
+						goto next
+					}
+				}
+				_ = unstructured.SetNestedSlice(obj.Object, []interface{}{
+					map[string]interface{}{
+						"type":               "Ready",
+						"status":             "True",
+						"reason":             "Available",
+						"lastTransitionTime": time.Now().UTC().Format(time.RFC3339),
+					},
+				}, "status", "conditions")
+				_ = c.Status().Update(ctx, obj)
+			next:
+			}
+		}
+	}
 }

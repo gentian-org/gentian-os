@@ -24,7 +24,7 @@ import (
 // EffectiveEdition returns the edition for a profile, defaulting to ce.
 //
 // ce is the right default: an entry that does not say otherwise is the upstream
-// community edition. Defaulting to me or pro would silently claim maintenance or
+// community edition. Defaulting to me or ee would silently claim maintenance or
 // a commercial relationship that nobody declared.
 func EffectiveEdition(e Edition) Edition {
 	if e == "" {
@@ -132,8 +132,8 @@ func ProfileReferenceMatches(ref ProfileReference, p *AppProfile) bool {
 		id.Edition == EffectiveEdition(want.Edition)
 }
 
-// ProfileRequiresEntitlement reports whether CRM entitlement is required before install.
-// Premium profiles in gentian-pro use license: proprietary.
+// ProfileRequiresEntitlement reports whether an entitlement must be redeemed
+// before install. Any catalogue entry marked license: proprietary needs one.
 func ProfileRequiresEntitlement(p *AppProfile) bool {
 	return strings.EqualFold(p.Spec.License, "proprietary")
 }
@@ -159,9 +159,7 @@ func EffectiveDeploymentRole(p *AppProfile) ProfileDeploymentRole {
 	switch strings.ToLower(strings.TrimSpace(p.Annotations[AnnotationProfileDeploymentRole])) {
 	case string(ProfileDeploymentRoleBase):
 		return ProfileDeploymentRoleBase
-	// "module" is the deprecated spelling of "addon" and normalises to it, so callers
-	// only ever compare against Addon and the catalogue can migrate incrementally.
-	case string(ProfileDeploymentRoleAddon), string(ProfileDeploymentRoleModule):
+	case string(ProfileDeploymentRoleAddon):
 		return ProfileDeploymentRoleAddon
 	default:
 		return ProfileDeploymentRoleStandalone

@@ -38,13 +38,13 @@ const (
 	appCatalogueName = "default"
 )
 
-// AppStoreReconciler watches AppProfile and Tenant CRs and maintains the singleton
-// AppCatalogue CR so that CLIs and UIs can discover available apps.
-//
 // +kubebuilder:rbac:groups=gentianos.io,resources=appcatalogues,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=gentianos.io,resources=appcatalogues/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=gentianos.io,resources=appprofiles,verbs=get;list;watch;update;patch
 // +kubebuilder:rbac:groups=gentianos.io,resources=tenants,verbs=get;list;watch
+
+// AppStoreReconciler watches AppProfile and Tenant CRs and maintains the singleton
+// AppCatalogue CR so that CLIs and UIs can discover available apps.
 type AppStoreReconciler struct {
 	client.Client
 	Scheme *runtime.Scheme

@@ -17,15 +17,58 @@ kernelDomain: ""
 # Plumbed as TENANCY_MODE.
 tenancyMode: multi
 
+# mailServiceMode is the cluster's mail stack — kernel or external — from the
+# Cluster claim. external means Dovecot is not deployed, so the operator does
+# not provision it: no per-realm Keycloak client, no XOAUTH2 realm auth, no
+# domain registration. Plumbed as MAIL_SERVICE_MODE.
+mailServiceMode: external
+
 # routingMode selects the edge routing stack (Gateway API + Envoy Gateway).
 # Plumbed as ROUTING_MODE.
 routingMode: gateway
+
+# handover controls the gate that keeps a cluster's recovery cheap until its
+# administrator has been seen to write a credential through the login path.
+#
+# The proof is recorded by the credential manager on the first successful
+# cluster-admin token exchange — a normal portal sign-in produces it. Until
+# then, creating a Tenant is refused with an explanation, because the recovery
+# from a broken write path is re-initialising OpenBao: an inconvenience on an
+# empty cluster and a data-loss event on one carrying tenants.
+#
+# gateTenants: false turns the gate off for a cluster that accepts that risk.
+# A single tenant can be admitted without turning it off by annotating it
+# gentianos.io/handover-override with a reason.
+handover:
+  gateTenants: true
+
+# dnsProvider is who hosts the kernel domain's zone — an entry in
+# kernel/platforms.yaml. It names the cluster's DNS-01 ClusterIssuer, which is
+# what per-tenant wildcards default to.
+dnsProvider: cloudflare
 
 # tenantDNS01ClusterIssuer is the cert-manager ClusterIssuer used for per-tenant
 # wildcard certificates (*.<effectiveDomain>). Must use a DNS-01 solver that can
 # write records in the zone containing effectiveDomain (platform zone for default
 # tenants, customer zone for vanity domains). Plumbed as TENANT_DNS01_CLUSTER_ISSUER.
+#
+# Empty means the cluster's own issuer, derived from dnsProvider above. Set it
+# only when tenant zones are hosted somewhere the kernel zone is not.
 tenantDNS01ClusterIssuer: ""
+
+# backupRecipients are age public keys (age1...) that tenant export bundles are
+# encrypted to. Plumbed as BACKUP_AGE_RECIPIENTS.
+#
+# Set this before anyone expects a backup: with no recipient configured, an
+# export requested without its own key fails rather than writing a tenant's
+# data unencrypted. Scheduled exports have nobody to prompt, so this is what
+# makes them possible at all.
+#
+# Keep the matching identity OFF the cluster — in the recovery kit alongside
+# the master password. An identity stored in the cluster it protects is
+# readable by whoever compromises that cluster, which is the case backups exist
+# for. List more than one to allow independent recovery keys.
+backupRecipients: []
 
 # tenantProvisioning controls operator orchestration behaviour. When crossplaneOnly
 # is true the operator skips shared-kernel side effects (mail, portal redirect)
@@ -46,7 +89,27 @@ kernelRealm: ""
 authzBridge:
   enabled: true
   openfgaURL: "http://gentian-openfga.platform-kernel.svc.cluster.local:8080"
-  openfgaToken: ""
+  # The token is read from a Secret, never given here. A literal value used to
+  # be accepted and was rendered straight into the Deployment as an env value,
+  # while the installer pinned the same string into the Argo CD Application's
+  # helm.parameters — cleartext in two objects far more widely readable than a
+  # Secret. That field is gone; there is no way to set the credential inline.
+  #
+  # Read from a Secret via secretKeyRef, mirroring
+  # cloudflare.apiTokenSecretRef. When openbaoPath is set the chart also renders
+  # an ExternalSecret that syncs it out of OpenBao, so the token never transits
+  # a Helm value, an Application spec, or the installer's process arguments.
+  openfgaTokenSecretRef:
+    name: "gentian-os-openfga-token"
+    # The key inside the Kubernetes Secret the Deployment reads.
+    key: "api-token"
+    openbaoPath: "gentian-os/kernel/authz/openfga"
+    # The field name inside that OpenBao secret, which is a different thing from
+    # the key above and does not have to match it. The value is derived once as
+    # `preshared_key` and OpenFGA's own ExternalSecret reads it under that name;
+    # asking OpenBao for "api-token" finds nothing, and the bridge then calls
+    # OpenFGA with no bearer token and is refused with 401.
+    openbaoProperty: "preshared_key"
 
 # platformSecurityPolicy is the cluster singleton edited by platform administrators
 # (Admin Console → Platform security). AppProfile.spec.security.macWaivers requests
@@ -54,10 +117,11 @@ authzBridge:
 platformSecurityPolicy:
   create: true
   allowedMacWaivers: []
-  # Example (dev Element Jitsi sidecar):
-  # - profile: element
+  # Shape of an entry (scope narrows the waiver to one workload of the profile,
+  # e.g. a sidecar, instead of the whole app):
+  # - profile: <app-profile-name>
   #   policy: gentian-require-non-root
-  #   scope: sidecar-jitsi
+  #   scope: <workload-scope>
 
 # infraNamespace hosts shared infrastructure (MariaDB, Redis, MinIO).
 # Set per cluster in gentian-deployments kernel values (e.g. gentian-infra-dev).
@@ -66,7 +130,8 @@ infraNamespace: ""
 # openbaoNamespace hosts OpenBao; tenant app init Jobs authenticate here.
 openbaoNamespace: "openbao"
 
-# servicesNamespace hosts platform services (Postfix, Nextcloud, …).
+# servicesNamespace hosts kernel platform services (Postfix, Dovecot, …).
+# Tenant apps never live here — they get their own tenant-* namespaces.
 # "platform-kernel" is this platform's fixed naming convention, not a
 # per-stage or per-cluster choice — override in a cluster's own
 # gentian-deployments values.yaml only if a specific cluster truly needs
@@ -76,13 +141,15 @@ servicesNamespace: "platform-kernel"
 # kernelServices exposes cluster-wide infrastructure endpoints to Crossplane
 # compositions. Published as a `gentian-kernel-services` ConfigMap in gentian-system
 # and fetched by app-default.yaml via function-extra-resources.
-# Template variables substituted in AppProfile extraValues:
-#   ${S3_ENDPOINT}  — MinIO/S3 object-storage endpoint URL
-#   ${MYSQL_HOST}   — MariaDB/MySQL hostname (no port)
-#   ${REDIS_HOST}   — Redis primary hostname (no port)
-#   ${TURN_*}       — Shared TURN server settings for Element + Jitsi
-#   KEYCLOAK_INTERNAL_URL — In-cluster Keycloak base (no path); Synapse uses this
-#                           for token/userinfo/JWKS while the browser keeps https://id.*
+# No endpoint is substituted into AppProfile extraValues any more. ${S3_ENDPOINT},
+# ${MYSQL_HOST}, ${REDIS_HOST}, ${SMTP_HOST} and ${TURN_*} were, and each handed
+# an app a hostname with nothing to authenticate with — an app declares
+# kernelRequirements and maps its own chart keys instead (P9 in
+# docs/app-customization.md). The values below are still read by the operator
+# and by compositions; they are simply no longer expanded into app values.
+#   KEYCLOAK_INTERNAL_URL — In-cluster Keycloak base (no path), for apps whose
+#                           server-side OIDC calls (token/userinfo/JWKS) must not
+#                           leave the cluster while the browser keeps https://id.*
 kernelServices:
   s3Endpoint: ""
   mysqlHost: ""
@@ -91,22 +158,40 @@ kernelServices:
   keycloakInternalURL: ""
   # In-cluster Postfix submission host for shared mail mode (operator MAIL_SMTP_HOST).
   smtpHost: ""
-  turnHost: ""
-  turnPort: "3478"
-  turnTLSHost: ""
-  turnTLSPort: "5349"
-  turnTransport: "udp"
-  turnCredentials: ""
-  # OpenProject Enterprise token (host must match projects.<tenant-domain>).
-  # Set via install.secrets.env OPENPROJECT_ENTERPRISE_TOKEN; enables portal OIDC SSO.
-  openprojectEnterpriseToken: ""
+  # extra publishes additional cluster-supplied key/value pairs into the
+  # ConfigMap verbatim, so a cluster can hand a value to an app profile without
+  # gentian-os growing a field named after that app. Keys are used as-is: a
+  # profile whose extraValues reference ${FOO} just needs `extra.FOO` set here,
+  # in the cluster's own gentian-deployments values (or via a
+  # GENTIAN_KERNEL_SERVICE_FOO env var at install time).
+  # This is a plain ConfigMap, readable by anything with get access to
+  # gentian-system/platform-kernel — put only values you are willing to expose
+  # at that blast radius here. Credentials belong in OpenBao + ExternalSecret.
+  extra: {}
 
 image:
   repository: ghcr.io/gentian-org/gentian-os
-  # Image Updater mutates image.tag on every new build, so a fresh tag
-  # always triggers a pull regardless of pullPolicy — IfNotPresent avoids
-  # re-pulling the same tag on unrelated pod restarts.
-  pullPolicy: IfNotPresent
+  # IfNotPresent was chosen on the assumption that Image Updater mutates
+  # image.tag on every build, making each pull a fresh tag. That does not hold
+  # as configured: the Application's image-list pins the candidate to the
+  # literal tag (gentianos=<repo>:develop), so "newest-build" resolves to
+  # develop every cycle and image.tag never changes — Image Updater logs
+  # images_considered=3 images_updated=0 forever. With a mutable tag and
+  # IfNotPresent, a node that has cached :develop never re-pulls, so CI can
+  # publish a new image and the cluster keeps running the old code through
+  # restarts and rollouts alike, with nothing reporting the drift.
+  #
+  # CI now publishes branch-scoped immutable tags (develop-<sha>) and Image
+  # Updater tracks those via allow-tags, so image.tag does move per build and
+  # the original reasoning holds again for steady-state operation.
+  #
+  # Always is kept regardless, deliberately: the moving `develop` tag still
+  # exists and is what a fresh bootstrap deploys before Image Updater has
+  # written a pinned tag, so IfNotPresent would reintroduce the stale-image
+  # trap in exactly the window where it is hardest to notice. The cost is one
+  # registry round-trip per pod start. Set image.digest below to pin exactly
+  # and make the question moot.
+  pullPolicy: Always
   # Overrides the image tag whose default is the chart appVersion.
   # Ignored when image.digest is set.
   tag: ""
@@ -142,11 +227,25 @@ logLevel: info
 # Watched namespaces (empty = cluster-wide)
 watchNamespaces: []
 
-# Optional Cloudflare edge-DNS adapter. When all fields are set, the operator
-# ensures a proxied CNAME *.<effectiveDomain> per tenant so Total TLS can mint
-# edge certs for tenant app hostnames (e.g. meet.demo.desk.gentian.org) that
-# Universal SSL does not cover. Origin TLS is still issued by cert-manager in
-# the tenant namespace. Leave empty to disable (use grey-cloud DNS or passthrough).
+# Which edge ingress this cluster runs — a key in kernel/platforms.yaml's
+# edgeIngress table ("cf-tunnel", "none"). Empty follows networkMode below,
+# which is what every existing cluster relies on.
+#
+# Adding an ingress means adding it to that table and registering an
+# implementation (internal/controller/edge_registry.go); this value then selects
+# it, and nothing else in the chart or the operator changes.
+edgeIngress: ""
+
+# How traffic reaches this cluster, from the Cluster claim's networkMode.
+networkMode: ""
+
+# Cloudflare Tunnel edge ingress. Set tunnelCNAME and a token and the operator
+# programs the tunnel's routing rules for kernel and tenant hostnames, and
+# annotates the kernel Gateway so external-dns publishes records that reach it.
+#
+# The operator writes no DNS records itself — external-dns does, for every
+# provider. These values are the ingress half only. Leave tunnelCNAME empty on
+# a cluster whose traffic arrives through a LoadBalancer instead.
 cloudflare:
   # Cloudflare API token with DNS:Edit permission for the zone.
   # Injected from a Secret via apiTokenSecretRef — do not set a plain value here.
@@ -162,12 +261,34 @@ cloudflare:
   zoneID: ""
   # CNAME target for the Cloudflare Tunnel, e.g. <uuid>.cfargotunnel.com
   tunnelCNAME: ""
-  # Optional separate API token with Account → Cloudflare Tunnel → Edit for
-  # automated tenant public hostname routing in tunnel mode. When unset, the
-  # DNS token above is used (and must also hold tunnel permissions).
+  # The ingress half's credential: Account → Cloudflare One Connector:
+  # cloudflared → Edit (older accounts list it as Cloudflare Tunnel), which
+  # programs tenant and kernel hostname routing in tunnel mode.
+  #
+  # Its own OpenBao path because it is its own grant — account-scoped, where
+  # the DNS token's is zone-scoped. One token may hold both and often does;
+  # then this path simply holds the same value, and a cluster that later
+  # narrows one of them does not have to rewrite the other's consumer.
+  #
+  # Clear name to disable: the operator then falls back to the DNS token at
+  # runtime, which is what an already-installed single-token cluster relies on.
+  # Empty by default, and deliberately: an ExternalSecret pointing at an
+  # OpenBao path no existing cluster has been seeded would sit in permanent
+  # error, and the operator would hold an env var referencing a Secret that
+  # never appears. Unset, the operator falls back to the DNS token, which is
+  # exactly how every cluster installed before this credential existed runs.
+  #
+  # Set both to give the ingress its own credential:
+  #   name:        cloudflare-tunnel-api-token-gentian-system
+  #   openbaoPath: gentian-os/kernel/edge/cf-tunnel
   tunnelAPITokenSecretRef:
     name: ""
     key: "api-token"
+    openbaoPath: ""
+  # Optional: lets the tunnel ingress skip the zone lookup, so its token
+  # needs no Zone:Read. Falls back to the "account-id" key on the DNS token
+  # Secret when unset.
+  accountID: ""
 
 # OpenBao / Vault integration
 openbao:
@@ -190,8 +311,10 @@ argocd:
   project: "gentianos-tenants"
 
 # Provisioner images for operator-managed data-plane Jobs (postgres/mariadb/redis/memcached).
+# The postgres client major must be >= the CNPG server major (pg_dump refuses
+# a newer server); CNPG's operator default is 17.x today.
 provisioners:
-  postgres: "postgres:16-alpine"
+  postgres: "postgres:17-alpine"
   mariadb: "mariadb:11"
   redis: "redis:7-alpine"
   keycloak: "alpine:3.20"
@@ -220,6 +343,192 @@ metrics:
     additionalLabels: {}
 
 # App lifecycle HTTP API (install/uninstall/purge — shared by App Store and kubectl-gentian).
+# The credential manager: a view over the CredentialRequirement catalogue and
+# ESO's satisfaction status, plus a write path that writes AS THE CALLER —
+# it holds no OpenBao token of its own and exchanges the user's OIDC token.
+#
+# Off by default. It is the only component that can write credentials.
+# The cluster's trust anchor, when a public CA did not sign its certificates.
+#
+# Set to the Secret holding the anchor (cert-manager's gentian-root-ca-tls under
+# self-signed and private-ca), empty when certificates are publicly trusted. The
+# operator talks to Keycloak and OpenBao over kernel hostnames, so without this
+# it fails exactly as a tenant app does — and it fails at login, which makes it
+# look like an identity problem rather than a trust one.
+#
+# The value follows certificates.issuerMode in the cluster claim; the installer
+# passes it, so it is not a second place to keep in sync by hand.
+trustAnchorSecret: ""
+
+credentialManager:
+  # On by default, because the install cannot finish without it.
+  #
+  # E-04 revokes the installer's bootstrap token, and refuses to until something
+  # else has demonstrably written a credential. That proof is this service
+  # recording its first cluster-admin exchange — it holds no token of its own,
+  # it exchanges the caller's Keycloak one. Off, nothing records anything, and
+  # the last step of every install waits for a fact that cannot be produced.
+  #
+  # It was off by default and nothing turned it on, so that is what happened: an
+  # operator was asked to sign in, did, and watched a timer run out.
+  #
+  # Turning it on costs nothing on a cluster that does not use it. The Service is
+  # ClusterIP-only by deliberate design (see credentialmanager-service.yaml), and
+  # the write path authorises the CALLER's OIDC token rather than holding one, so
+  # a running-but-unused credential manager grants nobody anything.
+  enabled: true
+  port: 9444
+  # Where the JWT/OIDC auth backend is enabled. Not "jwt": the installer enables
+  # it with -path=oidc, so the login endpoint is auth/oidc/login.
+  authMount: oidc
+  # Roles the caller's token is offered to, in order, until one accepts it.
+  #
+  # They must be role_type jwt. The identically-purposed oidc roles serve the
+  # browser flow into OpenBao's UI, and the plugin refuses a direct token
+  # exchange against those — a refusal this service cannot tell apart from "you
+  # are not authorised".
+  #
+  # Both are listed because the roles bind different group claims and OpenBao,
+  # not this service, decides which one a caller matches. Listing only the
+  # cluster role would leave every tenant admin unable to authenticate.
+  # Tried in order against whichever mount the token's issuer selects — which is
+  # why both names appear even though neither mount has both roles.
+  # cluster-admin-jwt exists only on the kernel mount, tenant-admin only on a
+  # tenant realm's mount, so the inapplicable one is refused as an unknown role.
+  # That costs one round trip and saves this service from having to know the
+  # cluster's realm layout.
+  oidcRoles:
+    - cluster-admin-jwt
+    - tenant-admin
+  # Namespace holding the ESO satisfaction probes it reads.
+  probeNamespace: gentian-system
+  # Where the CA that signs OpenBao's serving certificate lives. Read through
+  # the API, because a Pod cannot mount a Secret from another namespace — the
+  # same reason ESO's ClusterSecretStore names it as a caProvider.
+  caSecret: openbao-tls
+  caSecretNamespace: openbao
+  # Last resort for a cluster whose CA cannot be read at all. Prefer fixing the
+  # Secret reference: this turns off verification for every exchange.
+  tlsSkipVerify: false
+  # The OpenBao policy whose presence on an exchanged token means the caller may
+  # see cluster-scoped requirements. Read from the policies OpenBao attached
+  # rather than from a Keycloak group name, so the two cannot drift apart.
+  clusterAdminPolicy: cluster-admin
+  # The auth.metadata key the OIDC role maps the tenant into. A role that maps
+  # nothing here yields a caller who sees no tenant-scoped requirement, which is
+  # the safe direction.
+  tenantClaim: tenant
+
+# Resource plans and usage history — the Admin Console's Resources tab, the
+# `kubectl gentian resources` CLI, and the invoiceable record behind both.
+#
+# The sampler records each tenant's enforced ceiling and what is committed
+# beneath it into that tenant's own {tenant}_shell database, on a ticker. That
+# series needs no metrics stack: it comes from the ResourceQuota the cluster
+# actually enforces, which is what a plan is priced on.
+usage:
+  sampler:
+    # Off only for a cluster whose tenants have no shell database to write to.
+    # With it off there is no usage history, and the Resources tab shows the
+    # current ceiling with no series behind it.
+    enabled: true
+    # How often every tenant is sampled. Quarter-hourly is fine detail for a
+    # quantity that changes when someone installs an app.
+    interval: "15m"
+    # How long samples are kept. Plan-change events are never pruned — they are
+    # the billing record, and they accrue per plan change rather than per tick.
+    retention: "9600h"
+  # metrics-server, when installed, adds a live-consumption series beside the
+  # committed one, so the console can show a tenant paying for 32 CPU and
+  # burning 3. Purely advisory: nothing billed depends on it, and a cluster
+  # without metrics-server reports the committed figures unchanged.
+  #
+  # Flip to true once scripts/steps/A-11-metrics-server.sh has run.
+  metricsServer:
+    enabled: false
+
+  # The priced catalogue of tenant ceilings. Selecting a plan is the only way
+  # the resources API will change a tenant's quotas — it accepts a plan name and
+  # never a quantity — so every ceiling reachable through the API or the console
+  # is one the platform has priced, and a month of usage resolves to SKUs.
+  #
+  # A cluster selling something else replaces `catalogue` wholesale. Free-form
+  # quantities remain available to whoever edits the deployments repository by
+  # hand, which is the cluster operator, which is the person entitled to make an
+  # unpriced choice.
+  plans:
+    enabled: true
+    # One node unit is 2 vCPU / 4 GB / 50 GB, and every plan is a whole number
+    # of them, so a plan is a quantity the platform can actually go and buy.
+    #
+    # requestsCpu / requestsMemory are what is sold: requests are what the
+    # scheduler reserves, so two cores of requests is two cores of a node that
+    # nothing else can schedule into. cpu / memory are the *limits* ceiling and
+    # are not sold — they bound a runaway container, nothing more.
+    #
+    # The limits multiples (4x CPU, 2x memory) are measured, not guessed. A
+    # tenant running Nextcloud with Collabora, the App Store and Open WebUI
+    # reserves 1.0 core and 2.5Gi while its container limits sum to 5.95 cores
+    # and 5.5Gi — chart defaults are generous with limits. A tighter ceiling
+    # would refuse pods on a plan whose reserved capacity is barely touched.
+    # That app set fits `base` with room, which is what a one-node plan should
+    # mean.
+    catalogue:
+      base:
+        displayName: Base · 1 node
+        description: One node — enough for a workspace with Nextcloud and the App Store.
+        tier: 0
+        default: true
+        productSku: gentian-resources-nodes-1
+        quotas:
+          requestsCpu: "2"
+          requestsMemory: 4Gi
+          cpu: "8"
+          memory: 8Gi
+          storage: 50Gi
+      nodes-2:
+        displayName: 2 nodes
+        description: Twice the reserved capacity, for a workspace running several apps.
+        tier: 10
+        productSku: gentian-resources-nodes-2
+        quotas:
+          requestsCpu: "4"
+          requestsMemory: 8Gi
+          cpu: "16"
+          memory: 16Gi
+          storage: 100Gi
+      nodes-4:
+        displayName: 4 nodes
+        tier: 20
+        productSku: gentian-resources-nodes-4
+        quotas:
+          requestsCpu: "8"
+          requestsMemory: 16Gi
+          cpu: "32"
+          memory: 32Gi
+          storage: 200Gi
+      nodes-8:
+        displayName: 8 nodes
+        tier: 30
+        productSku: gentian-resources-nodes-8
+        quotas:
+          requestsCpu: "16"
+          requestsMemory: 32Gi
+          cpu: "64"
+          memory: 64Gi
+          storage: 400Gi
+      nodes-16:
+        displayName: 16 nodes
+        description: The largest catalogue plan. Beyond this, arrange a ceiling with the platform operator.
+        tier: 40
+        productSku: gentian-resources-nodes-16
+        quotas:
+          requestsCpu: "32"
+          requestsMemory: 64Gi
+          cpu: "128"
+          memory: 128Gi
+          storage: 800Gi
+
 appLifecycle:
   port: 8082
   deployments:
@@ -228,8 +537,12 @@ appLifecycle:
     repo: https://git.example.domain/gentian-deployments
     cluster: default-cluster
     stage: dev
-    # Secret with key .git-credentials (https://user:token@host) for git push.
+    # basic: Secret with key .git-credentials (https://user:token@host) for git
+    # push. bearer: Secret with key "token" instead, injected as an
+    # Authorization: Bearer header — see repository-default.yaml's $isBearer
+    # branch, which decides which shape gitCredentialsSecret is written in.
     gitCredentialsSecret: ""
+    authType: basic
 
 # Admission webhook for Tenant create/update validation.
 webhook:
@@ -246,11 +559,25 @@ grafana:
     namespace: ""
 
 # Commerce integration configuration
+# Optional commerce backend: the service that redeems install grants for
+# proprietary-licensed profiles and receives metering reports. Any service
+# implementing POST /api/v1/install-grants/{jti}/exchange and
+# POST /api/v1/metering/report will do; gentian-os ships no such service and
+# does not assume one exists. Left disabled, proprietary profiles simply refuse
+# to install and no metering is reported.
 commerce:
   enabled: false
-  corpAPIURL: ""
-  operatorToken: ""
+  apiURL: ""
+  apiToken: ""
   meteringInterval: ""
 
-# LLM serving support configuration
+# LLM serving support. Fallback only: the operator decides from the claim's
+# llm.enabled (read via the gentian-cluster-config ConfigMap) and consults
+# this — as the LLM_SUPPORT env var — only while that ConfigMap does not
+# exist yet or predates the llm.enabled key.
 llmSupport: false
+
+# The hostname outbound mail leaves from, from spec.mail.egressHost on the
+# Cluster claim. Used for the SPF record the mail reconciler publishes. Empty
+# means a shared egress address or a smarthost relay.
+mailEgressHost: ""

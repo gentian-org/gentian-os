@@ -1,0 +1,334 @@
+# Helm values for the public bokysan/mail chart (Pattern B).
+# Namespace {{ .Values.servicesNamespace }} → Service postfix-{{ .Values.env }}.{{ .Values.servicesNamespace }}.svc.cluster.local:587
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: postfix-base-values
+  namespace: {{ .Values.servicesNamespace }}
+  annotations:
+    argocd.argoproj.io/sync-wave: "-1"
+data:
+  values.yaml: |
+    # Helm chart: bokysan/mail — https://bokysan.github.io/docker-postfix/
+    # Kept deliberately, not required. platform-kernel IS in the exclusion list
+    # of the Kyverno baseline policies (gentian-disallow-privilege-escalation,
+    # gentian-require-seccomp), so nothing here is enforced against this Pod —
+    # these are set anyway because a relay that can escalate is worth avoiding on
+    # its own merits, and because the exclusion list is a policy decision that
+    # could be tightened later without wanting mail to break.
+    #
+    # runAsNonRoot and a capability drop are deliberately omitted: Postfix binds
+    # 25/587. Kyverno's non-root and capabilities rules are "=(securityContext)"
+    # conditionals that only engage on keys that are present, so leaving them out
+    # stays compliant without needing a MAC waiver if the exclusion is ever removed.
+    container:
+      postfix:
+        securityContext:
+          allowPrivilegeEscalation: false
+          seccompProfile:
+            type: RuntimeDefault
+    fullnameOverride: postfix-{{ .Values.env }}
+    image:
+      repository: boky/postfix
+      pullPolicy: IfNotPresent
+    # Pin Postfix to the node that carries the egress floating IP.
+    #
+    # Outbound mail leaves by whatever address its node egresses from. With no
+    # floating IP that is the router's shared SNAT address, whose reverse DNS
+    # nobody owns; with one attached to a node, that node sends as the floating
+    # IP and its PTR can be set. Either way the sending address follows the
+    # scheduler unless it is pinned — and a reschedule that silently changes the
+    # sending address breaks SPF and PTR at once, with no signal beyond mail
+    # starting to land in spam.
+    #
+    # Empty leaves scheduling free, which is correct for a cluster relaying
+    # through a smarthost: there the last hop is the relay's address and the
+    # node's does not matter.
+    # Pinned to the node holding the egress floating IP whenever an egress host
+    # is declared. One value drives both, because they are one decision: a
+    # cluster that sends from an address it owns must keep sending from it, and
+    # a reschedule to a node without that floating IP reverts to the shared SNAT
+    # address — breaking the PTR and the SPF record together, with no signal
+    # beyond mail starting to land in spam.
+    #
+    # Unset means relaying through a smarthost or accepting the shared address;
+    # in both cases the node does not matter and scheduling stays free.
+    nodeSelector:
+    {{- if .Values.egressHost }}
+      {{ .Values.egressNodeLabel }}: "true"
+    {{- end }}
+    persistence:
+      enabled: false
+    service:
+      type: ClusterIP
+      port: 587
+    config:
+      general:
+        TZ: "UTC"
+        # Rendered from the cluster's kernel domain, NOT patched in afterwards.
+        #
+        # This used to ship the literal "example.domain" for scripts/lib/mail-lib.sh
+        # to kubectl-patch on install. That ConfigMap is Argo CD-managed with
+        # selfHeal, so the patch was reverted to the placeholder on the next
+        # sync. The failure is severe and silent: the bokysan chart builds
+        # smtpd_recipient_restrictions ending in a bare `reject`, permitting only
+        # senders listed in /etc/postfix/allowed_senders, so with the placeholder
+        # in place Postfix answered EVERY recipient with
+        #   554 5.7.1 <user@domain>: Recipient address rejected: Access denied
+        # and no invite or password-reset mail could leave the cluster.
+        # The kernel domain alone. This is the fallback, not the whole answer:
+        # extraEnv below overrides it with the operator's full domain list once
+        # that exists, and an explicit env entry wins over this envFrom value.
+        ALLOWED_SENDER_DOMAINS: "{{ .Values.kernelDomain | default "example.domain" }}"
+        # Sign outbound mail with DKIM.
+        #
+        # Without this the image generates no keys and leaves smtpd_milters empty,
+        # so opendkim runs but never sees a message and everything leaves
+        # unsigned. Receiving providers weight an unsigned message from a new IP
+        # heavily towards spam, which is indistinguishable from mail being lost.
+        #
+        # The image generates one key per domain in ALLOWED_SENDER_DOMAINS on
+        # first start, writing /etc/opendkim/keys/<domain>.txt for publication as
+        # a TXT record. Keys therefore only cover the domains named above — a
+        # placeholder there yields a key nobody can verify.
+        #
+        # kernel mode only. Relaying through a smarthost means the smarthost
+        # signs — Gmail signs as gmail.com — and a second signature from a key
+        # whose TXT record nobody published verifies for no one. Generating it
+        # anyway cost an hour of crash-looping when the tables it writes were
+        # mounted read-only, for a signature that was never going to be checked.
+        #
+        # Omitted entirely outside kernel mode, rather than set to "0". The image asks
+        # [[ -n "${DKIM_AUTOGENERATE}" ]] — whether the variable is NON-EMPTY, not
+        # whether it says yes — so "0" enabled it exactly as "1" does. The switch read
+        # as off while signing ran, and the only reason that was harmless here is that
+        # this cluster wants it on.
+        #
+        # An unset variable is the only value that reads as absent to a -n test, so the
+        # key has to disappear rather than say no.
+        {{- if eq (.Values.mailServiceMode | default "external") "kernel" }}
+        DKIM_AUTOGENERATE: "1"
+        {{- end }}
+      postfix:
+        # The name Postfix greets a remote server with, and it must be a FQDN that
+        # resolves back to the sending address. It defaulted to the Service name —
+        # Gmail recorded "Received: from postfix-prod ([37.x.x.x])" — which is not a
+        # FQDN, resolves to nothing, and is one of the strongest spam signals a new
+        # sender can emit, alongside a missing PTR.
+        #
+        # smtpHelo must name the OUTBOUND address, which is not necessarily the
+        # inbound MX address: mail leaves via the node egress IP while it arrives on
+        # the load balancer. Receivers check forward-confirmed reverse DNS — the PTR
+        # of the sending IP names a host, and that host resolves back to the same IP
+        # — so this name, its A record and the PTR must all agree.
+        myhostname: {{ .Values.egressHost | default (printf "mail.%s" .Values.kernelDomain) }}
+        # Inbound tenant mail: hand every message for a registered tenant domain
+        # to Dovecot over LMTP, which files it into /var/mail/<domain>/<user>.
+        virtual_transport: "lmtp:[dovecot-{{ .Values.env }}.{{ .Values.servicesNamespace }}.svc.cluster.local]:24"
+        # Both maps are texthash: files, not lmdb:.
+        #
+        # The files come from a ConfigMap mount, so they are read-only and can
+        # never be compiled — lmdb: makes Postfix look for
+        # /etc/postfix/kernel-maps/virtual_mailbox_maps.lmdb, log
+        #   error: open database ...lmdb: No such file
+        # and then reject every recipient in a virtual domain with
+        #   554 5.7.1 <user@domain>: Recipient address rejected: Access denied
+        # since a virtual_mailbox_domain whose map cannot be read has no valid
+        # addresses. texthash: reads the file at lookup time and needs no
+        # postmap run, which is also what makes tenant churn restart-free: the
+        # operator rewrites the ConfigMap, kubelet swaps the mounted files, and
+        # the next lookup sees the new domain.
+        virtual_mailbox_domains: "texthash:/etc/postfix/kernel-maps/virtual_mailbox_domains"
+        virtual_mailbox_maps: "texthash:/etc/postfix/kernel-maps/virtual_mailbox_maps"
+        # Who may SEND, from the same operator-maintained file that decides who
+        # may receive.
+        #
+        # The image builds /etc/postfix/allowed_senders from
+        # ALLOWED_SENDER_DOMAINS once, at start, and that variable carries the
+        # kernel domain only — so a tenant user could receive mail but every
+        # message they sent was refused with
+        #   554 5.7.1 <user@tenant>: Sender address rejected: Access denied
+        # and adding a tenant would have needed a Postfix restart to fix.
+        #
+        # texthash: for the same reason as the two maps above — read at lookup
+        # time, so a new tenant can send as soon as the operator rewrites the
+        # ConfigMap, with no restart and no postmap.
+        # Order matters, and getting it wrong breaks a whole direction of mail.
+        #
+        # check_recipient_access comes FIRST and permits anything addressed to a
+        # domain this cluster hosts, whoever sent it. Without that, the sender rule
+        # below also governs INBOUND mail: a stranger writing to a tenant is not in
+        # sender_access, falls through to reject, and Gmail bounces with
+        #   554 5.7.1 <user@tenant>: Recipient address rejected: Access denied
+        # which reads as a recipient problem and is nothing of the sort.
+        #
+        # check_sender_access then applies only to what is left — mail for domains
+        # we do NOT host, i.e. relaying — so it still stops this being an open relay
+        # while letting the world deliver to our tenants.
+        smtpd_recipient_restrictions: "reject_non_fqdn_recipient, reject_unknown_recipient_domain, check_recipient_access texthash:/etc/postfix/kernel-maps/virtual_mailbox_domains, check_sender_access texthash:/etc/postfix/kernel-maps/sender_access, reject"
+    # postfix-kernel-virtual-mailbox-maps is written by the operator from the
+    # tenant domain registry, and is therefore NOT part of this chart — a chart
+    # copy would be reverted onto the operator's content by Argo CD self-heal on
+    # every sync.
+    #
+    # optional: true because the ConfigMap only exists once the cluster has run
+    # the mail step. A required mount that is absent holds the Pod in
+    # ContainerCreating indefinitely:
+    #   FailedMount (x901 over 30h): configmap
+    #   "postfix-kernel-virtual-mailbox-maps" not found
+    # Optional means Postfix starts with the maps empty — accepting mail for no
+    # tenant domain, which is the truth at that point — and kubelet populates
+    # the mount when the ConfigMap appears.
+    #
+    # Mounted as a directory, without subPath: a subPath mount is copied once at
+    # Pod start and never tracks later ConfigMap updates, so every new tenant
+    # would need a Postfix restart to receive mail.
+    # Seed the operator's per-tenant DKIM keys before the image looks.
+    #
+    # Two things generate DKIM keys and only one may win. The operator creates a
+    # key per tenant and publishes its public half on tenant status, which is
+    # what reaches DNS; the image generates a key per domain in
+    # ALLOWED_SENDER_DOMAINS. If both ran, Postfix would sign with the image's
+    # key while DNS advertised the operator's, and every signature would fail
+    # verification against a record that looks correct — worse than not signing.
+    #
+    # The image skips generation when a key is already present, so copying the
+    # operator's keys in first makes it adopt them and build KeyTable entries
+    # pointing at them. Operator owns the keys, image owns the tables, and
+    # neither has to know about the other.
+    #
+    # The operator's copy wins when the two differ, because the operator is what
+    # publishes the DNS record — so its key is by definition the one verifiers
+    # check against. Leaving a stale image-generated key here would keep Postfix
+    # signing with a key DNS no longer advertises.
+    #
+    # Keys the operator does not supply are left untouched: those are the image's
+    # own, and replacing one is what invalidates an already-published record.
+    # Every domain this cluster signs for, from the operator.
+    #
+    # OpenDKIM builds a KeyTable entry only for domains named here, so a tenant
+    # missing from this list sends unsigned however correct its key and its
+    # published DNS record are. The value above carries the kernel domain only,
+    # which is why tenant mail left unsigned while everything looked configured.
+    #
+    # optional, and deliberately so. A missing key leaves this entry unset and the
+    # envFrom value above still applies, so a cluster whose operator has not
+    # written the list yet keeps signing for the kernel domain rather than starting
+    # with no sender domains at all — which Postfix refuses to do, taking all mail
+    # with it. Verified rather than assumed: an env entry whose optional source is
+    # absent does not suppress the envFrom value.
+    #
+    # Read once at start, unlike the texthash maps beside it, so a new tenant signs
+    # only after Postfix restarts.
+    extraEnv:
+      - name: ALLOWED_SENDER_DOMAINS
+        valueFrom:
+          configMapKeyRef:
+            name: postfix-kernel-virtual-mailbox-maps
+            key: allowed_sender_domains
+            optional: true
+    # A string, not a list: the chart passes this value through tpl, which takes
+    # a template to render and fails type-checking on a list — "wrong type for
+    # value" from the release, with the previous StatefulSet left running.
+    extraInitContainers: |
+      - name: seed-dkim-keys
+        image: busybox:1.36
+        command:
+          - sh
+          - -c
+          - |
+            set -eu
+            [ -d /tenant-keys ] || exit 0
+            for k in /tenant-keys/*.private; do
+              [ -e "$k" ] || continue
+              name=$(basename "$k")
+              if cmp -s "$k" "/keys/$name"; then
+                echo "unchanged $name"
+              else
+                cp "$k" "/keys/$name"
+                chmod 600 "/keys/$name"
+                echo "seeded $name"
+              fi
+            done
+        volumeMounts:
+          - name: dkim-keys
+            mountPath: /keys
+          - name: dkim-tenants
+            mountPath: /tenant-keys
+            readOnly: true
+    extraVolumes:
+      # The DKIM signing keys.
+      #
+      # The image generates a key per domain at start and writes it under
+      # /etc/opendkim/keys, which is the container filesystem — so every restart
+      # produced a NEW key and silently invalidated the DNS record published for
+      # the old one. Signatures then fail verification against a record that looks
+      # correct, which is worse than not signing at all.
+      #
+      # The image skips generation when a key is already present ("Will not
+      # overwrite"), so persisting the directory is enough to make a published
+      # record stay valid. The chart's own persistence covers only the mail queue.
+      - name: dkim-keys
+        persistentVolumeClaim:
+          claimName: postfix-{{ .Values.env }}-dkim-keys
+      - name: kernel-maps
+        configMap:
+          name: postfix-kernel-virtual-mailbox-maps
+          optional: true
+      # Per-tenant DKIM: the two OpenDKIM tables plus the private keys they
+      # name, written by the operator from the tenant registry.
+      #
+      # NOT optional, deliberately. The tables are mounted over the image's own
+      # with subPath, and a subPath naming a key that does not exist stops the
+      # container starting — which would take all mail down, not just signing.
+      - name: dkim-tenants
+        secret:
+          secretName: postfix-dkim-tenants
+          defaultMode: 0400
+    extraVolumeMounts:
+      - name: dkim-keys
+        mountPath: /etc/opendkim/keys
+      # Postfix warns about this mount on every start:
+      #
+      #   warning: group or other writable:
+      #     /etc/postfix/./kernel-maps/virtual_mailbox_domains
+      #
+      # Expected, and not worth restructuring for. The files are 0644 and the
+      # payload directory 0755; it is the volume ROOT that is 0777, because
+      # that is how kubelet creates a ConfigMap mount and defaultMode does not
+      # reach it. postfix-script walks the path, sees a world-writable parent,
+      # and says so. The maps still load — `postmap -q <domain>
+      # texthash:/etc/postfix/kernel-maps/virtual_mailbox_domains` answers OK.
+      - name: kernel-maps
+        mountPath: /etc/postfix/kernel-maps
+        readOnly: true
+      # The keys as a directory, so a tenant added later appears without a
+      # restart. KeyTable references /etc/opendkim/tenant-keys/<domain>.private.
+      - name: dkim-tenants
+        mountPath: /etc/opendkim/tenant-keys
+        readOnly: true
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: postfix-{{ .Values.env }}-values
+  namespace: {{ .Values.servicesNamespace }}
+  annotations:
+    argocd.argoproj.io/sync-wave: "-1"
+data:
+  values.yaml: |
+    # Env overrides. Nothing rewrites this at install time any more: the relay for
+    # MAIL_SERVICE_MODE=external arrives as relayHost/relayPort from the
+    # ApplicationSet and is rendered into postfix-sensitive-values, because this
+    # object is Argo CD-managed and an imperative rewrite was reverted on the next
+    # sync. Schema is bokysan/mail, which has no top-level `postfix:` key — values
+    # written under one were silently discarded.
+    replicaCount: 1
+    resources:
+      limits:
+        cpu: 500m
+        memory: 256Mi
+      requests:
+        cpu: 50m
+        memory: 64Mi

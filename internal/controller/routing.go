@@ -14,7 +14,6 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-
 package controller
 
 import (
@@ -30,7 +29,6 @@ const (
 	GentianGatewayClassName      = "gentian-envoy"
 	GentianGatewayControllerName = "gateway.envoyproxy.io/gentian-gatewayclass-controller"
 	KernelPublicGatewayName      = "kernel-public-gateway"
-	kernelCollaboraListenerName  = "https-office"
 	kernelWildcardTLSSecretName  = "wildcard-tls"
 	envoyGatewayInstallNamespace = "envoy-gateway-system"
 	gatewayPlatformReconcileKey  = "gateway-platform"

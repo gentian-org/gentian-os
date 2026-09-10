@@ -1,0 +1,63 @@
+apiVersion: gentianos.io/v1alpha1
+kind: AppProfile
+metadata:
+  name: demo-app
+  labels:
+    gentianos.io/profile-name: demo-app
+spec:
+  displayName: Demo App
+  compositionRef: app-demo-app
+  chart:
+    repository: oci://example.invalid/demo-app
+    name: demo-app
+    version: "1.0.0"
+  kernelRequirements:
+    identity:
+      oidc:
+        clientId: catalogue-test-client
+        name: Demo App
+        accessType: CONFIDENTIAL
+        redirectUris:
+          - "https://demo.${TENANT_DOMAIN}/oidc/callback"
+        postLogoutRedirectUris:
+          - "https://demo.${TENANT_DOMAIN}/"
+  extraValues:
+    # The app already uses this hook — activation must append, not replace.
+    demoApp:
+      hooks:
+        before-starting: |
+          #!/bin/bash
+          echo "app's own setup: install portal bridge, hide header"
+  customization:
+    # Overlay fires only when the addon is selected. The fixture selects
+    # calendar+mail, so "sidecarthing" must stay absent from the rendered values.
+    addonValues:
+      - whenAddon: mail
+        values:
+          demoSubchart:
+            enabled: true
+      - whenAddon: sidecarthing
+        values:
+          neverRendered:
+            enabled: true
+    # The activation recipe lives with the app profile; the platform only renders
+    # it and never knows what the app's own addon system calls things.
+    # __GENTIAN_ADDON_IDS__ is replaced with the space-separated selection.
+    # ${TENANT_NAMESPACE}/${TENANT_DOMAIN} exercise the same substitution
+    # extraValues gets — a live regression (TENANT_NAMESPACE: unbound variable,
+    # the app crashlooping) shipped because this fixture didn't cover a script
+    # actually using them.
+    addonActivation:
+      valuesPath: demoApp.hooks.before-starting
+      script: |
+        #!/bin/sh
+        set -eu
+        SELECTED="__GENTIAN_ADDON_IDS__"
+        COMPANION="http://demo-app-companion.${TENANT_NAMESPACE}.svc.cluster.local:9980"
+        PUBLIC="https://companion.${TENANT_DOMAIN}"
+        for id in $SELECTED; do
+          demo-app-cli addon:enable "$id" || true
+        done
+  valueMapping:
+    oidc:
+      clientSecretKey: demo-app.oidc.secret

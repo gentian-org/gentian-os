@@ -50,8 +50,8 @@ type AppProfileSpec struct {
 	CatalogueVersion string `json:"catalogueVersion,omitempty"`
 
 	// Edition selects the edition: ce (community, as upstream publishes it), me
-	// (ce plus active Gentian maintenance) or pro (commercial, supplied by the
-	// vendor named in spec.author).
+	// (ce plus active Gentian maintenance) or ee (commercially licensed and
+	// entitlement-gated, supplied by whoever spec.author names).
 	// +optional
 	// +kubebuilder:default=ce
 	Edition Edition `json:"edition,omitempty"`
@@ -62,20 +62,21 @@ type AppProfileSpec struct {
 	TrustTier TrustTier `json:"trustTier,omitempty"`
 
 	// License is the SPDX license identifier for this catalogue entry (e.g. Apache-2.0).
-	// Pro profiles in gentian-pro typically use proprietary.
+	// Entries requiring a paid entitlement use proprietary; see
+	// ProfileRequiresEntitlement.
 	// +optional
 	License string `json:"license,omitempty"`
 
 	// Author is who supplies and maintains *this* catalogue entry — a company
 	// (vendor), an organisation, or an individual. It describes the entry, not the
 	// upstream project: the same application can appear as several profiles from
-	// different authors, e.g. a "ce" edition packaged by Gentian alongside a "pro"
-	// edition supplied by openDesk.
+	// different authors, e.g. a "ce" edition packaged by Gentian alongside an "ee"
+	// edition supplied by a third-party vendor.
 	//
 	// This is why the edition must never be inferred from a profile's name. Two
-	// profiles may both be edition "pro" from different authors and carry entirely
+	// profiles may both be edition "ee" from different authors and carry entirely
 	// unrelated names; spec.edition and spec.author are the authoritative pair, the
-	// name is only a hint. See gentian-apps/docs/L3-cleanup.md §2.2.
+	// name is only a hint. See gentian-os/docs/app-customization.md §4.2.
 	// +optional
 	// +kubebuilder:validation:MaxLength=128
 	Author string `json:"author,omitempty"`
@@ -112,6 +113,13 @@ type AppProfileSpec struct {
 	// +optional
 	KernelRequirements *KernelRequirements `json:"kernelRequirements,omitempty"`
 
+	// Backup declares how this app must be captured and restored. Optional:
+	// omitting it selects the safe default (scale to zero, dump every store in
+	// kernelRequirements, archive every release-owned volume), which is correct
+	// for most apps.
+	// +optional
+	Backup *BackupSpec `json:"backup,omitempty"`
+
 	// Provides lists the integration contracts this app can act as a provider for.
 	// +optional
 	Provides []ContractRef `json:"provides,omitempty"`
@@ -120,8 +128,8 @@ type AppProfileSpec struct {
 	// +optional
 	OptionalIntegrations []IntegrationRef `json:"optionalIntegrations,omitempty"`
 
-	// Chart references the upstream Helm chart for this app. Required for
-	// crossplane and argocd deployment methods; omitted for ApiProfiles
+	// Chart references the upstream Helm chart for this app. Required for the
+	// crossplane deployment method; omitted for ApiProfiles
 	// (deploymentMethod: api), which run no workload. Enforced by a spec-level
 	// validation rule.
 	// +optional
@@ -159,9 +167,9 @@ type AppProfileSpec struct {
 	ExtraValues *runtime.RawExtension `json:"extraValues,omitempty"`
 
 	// DeploymentMethod controls how the orchestrator deploys this app.
-	// Defaults to crossplane. Use argocd for kernel-layer services managed
-	// directly by the cache or identity reconcilers. Use api for an ApiProfile
-	// that runs no workload (see spec.apiIntegration).
+	// Defaults to crossplane: a Crossplane App claim drives the Composition that
+	// emits the app's ExternalSecret and provider-helm Release. Use api for an
+	// ApiProfile, which runs no workload at all (see spec.apiIntegration).
 	// +optional
 	// +kubebuilder:default=crossplane
 	DeploymentMethod DeploymentMethod `json:"deploymentMethod,omitempty"`
@@ -247,6 +255,88 @@ type ProvisioningSpec struct {
 	// administrator role (for example the Nextcloud "admin" group).
 	// +optional
 	PrivilegedRole *PrivilegedRoleSpec `json:"privilegedRole,omitempty"`
+
+	// SyncJob is how this app applies PrivilegedRole. The operator resolves
+	// app-admins membership, publishes it, and runs this Job; the script inside
+	// speaks whatever protocol the application happens to expose.
+	//
+	// The division is deliberate and load-bearing: resolving a Keycloak group,
+	// detecting membership changes and running a Job to completion are platform
+	// concerns, so they live here. Knowing that one app wants a JSON-RPC call
+	// and another an OCS POST is not, so it lives in the catalogue entry that
+	// owns that app. No application's protocol, endpoint or account model may
+	// be encoded in the kernel — see the platform boundary in
+	// gentian-apps/docs/app-profile-guide.md.
+	// +optional
+	SyncJob *ProvisioningJobSpec `json:"syncJob,omitempty"`
+}
+
+// ProvisioningJobSpec is an app-supplied Job the operator runs to apply a
+// provisioning decision the platform has made.
+type ProvisioningJobSpec struct {
+	// Image the script runs in. Usually the application's own image, which
+	// already has whatever client library its API needs.
+	// +kubebuilder:validation:Required
+	// +kubebuilder:validation:MinLength=1
+	Image string `json:"image"`
+
+	// Script executed with /bin/sh. It is re-run whenever membership changes,
+	// so it must be idempotent: converge the app to exactly the membership it
+	// is given rather than applying a delta.
+	//
+	// The operator provides:
+	//   GENTIAN_APP_ADMINS_FILE  path to a JSON array of the privileged
+	//                            members, each {"id","username","email"}
+	//   GENTIAN_PRIVILEGED_ROLE  spec.provisioning.privilegedRole.name
+	//   GENTIAN_TENANT           tenant name
+	//   GENTIAN_APP              this profile's name
+	// plus every key of envFrom below.
+	// +kubebuilder:validation:Required
+	// +kubebuilder:validation:MinLength=1
+	Script string `json:"script"`
+
+	// Env binds individual Secret keys to environment variables. Prefer this
+	// over EnvFrom for platform-managed credentials: the keys of an app's
+	// sensitive-values Secret are hyphenated (db-host, internal-admin_password),
+	// and Kubernetes silently drops any envFrom key that is not a valid
+	// identifier — the variable simply never appears and the script fails on
+	// something unrelated.
+	// +optional
+	Env []ProvisioningEnvVar `json:"env,omitempty"`
+
+	// EnvFrom names Secrets in the tenant namespace whose keys become
+	// environment variables. Only useful when every key is already a valid
+	// environment variable name; see Env above.
+	// +optional
+	EnvFrom []string `json:"envFrom,omitempty"`
+
+	// ServiceAccountName runs the Job under an existing ServiceAccount.
+	// +optional
+	ServiceAccountName string `json:"serviceAccountName,omitempty"`
+}
+
+// ProvisioningEnvVar binds one key of a Secret in the tenant namespace to an
+// environment variable in the Job.
+type ProvisioningEnvVar struct {
+	// Name of the environment variable.
+	// +kubebuilder:validation:Required
+	// +kubebuilder:validation:Pattern=`^[A-Za-z_][A-Za-z0-9_]*$`
+	Name string `json:"name"`
+
+	// SecretKeyRef is the Secret key to read it from.
+	// +kubebuilder:validation:Required
+	SecretKeyRef ProvisioningSecretKeyRef `json:"secretKeyRef"`
+}
+
+// ProvisioningSecretKeyRef selects one key of one Secret.
+type ProvisioningSecretKeyRef struct {
+	// +kubebuilder:validation:Required
+	// +kubebuilder:validation:MinLength=1
+	Name string `json:"name"`
+
+	// +kubebuilder:validation:Required
+	// +kubebuilder:validation:MinLength=1
+	Key string `json:"key"`
 }
 
 // PrivilegedRoleKind is the native app role type referenced by PrivilegedRoleSpec.
@@ -266,6 +356,9 @@ type PrivilegedRoleSpec struct {
 	Kind PrivilegedRoleKind `json:"kind"`
 
 	// Name is the in-app role identifier (for example Nextcloud group "admin").
+	// It is passed to the sync Job as GENTIAN_PRIVILEGED_ROLE. Apps whose
+	// privilege model is a flag rather than a named role may ignore it; set a
+	// descriptive value anyway so the declaration reads honestly.
 	// +kubebuilder:validation:Required
 	// +kubebuilder:validation:MinLength=1
 	// +kubebuilder:validation:MaxLength=64
@@ -287,7 +380,8 @@ type TileSpec struct {
 	Logo string `json:"logo,omitempty"`
 
 	// Image is a profile-relative SVG path used in git only (e.g. assets/tile.svg).
-	// Run scripts/sync-profile-tile.py to inline into tile.logo before commit.
+	// Run gentian-apps' scripts/sync-profile-tile.py to inline into tile.logo
+	// before commit — profiles live in that repository, and so does the script.
 	// +optional
 	Image string `json:"image,omitempty"`
 }
@@ -541,12 +635,20 @@ type DatabaseRequirement struct {
 	// +kubebuilder:default=true
 	DatabasePerTenant bool `json:"databasePerTenant"`
 
-	// AllowDynamicDatabaseCreation grants the app user privileges to create new databases
-	// dynamically at runtime (e.g. GRANT ALL PRIVILEGES ON *.*). Use with caution.
-	// Only supported by the mariadb engine. Omitted is equivalent to false, which
-	// is also Go's zero value for bool — left undefaulted at the schema level so
-	// profiles that omit it don't permanently diff against GitOps tooling that
-	// applies CRD defaults server-side.
+	// AllowDynamicDatabaseCreation lets the app create databases of its own at
+	// runtime — mariadb via GRANT ALL PRIVILEGES ON *.*, postgresql via role
+	// CREATEDB. Ask for it only when creating databases is what the app is for
+	// (a data explorer, say); an app that merely stores its own state must not.
+	//
+	// Databases created this way are still purged with the app: they are owned
+	// by the app role, and uninstall --purge drops everything that role owns.
+	// They are not otherwise governed — the tenant chooses the names, and they
+	// do not appear in the catalogue's provisioning model.
+	//
+	// Omitted is equivalent to false, which is also Go's zero value for bool —
+	// left undefaulted at the schema level so profiles that omit it don't
+	// permanently diff against GitOps tooling that applies CRD defaults
+	// server-side.
 	// +optional
 	AllowDynamicDatabaseCreation bool `json:"allowDynamicDatabaseCreation,omitempty"`
 
@@ -584,7 +686,7 @@ type StorageRequirement struct {
 	// +optional
 	S3 *S3Requirement `json:"s3,omitempty"`
 
-	// Files requests WebDAV access to the tenant's Nextcloud instance.
+	// Files requests WebDAV access to the tenant's file-storage service.
 	// +optional
 	Files *FilesRequirement `json:"files,omitempty"`
 }
@@ -629,26 +731,24 @@ type MailRequirement struct {
 	IMAP *IMAPRequirement `json:"imap,omitempty"`
 }
 
-// SMTPRequirement describes SMTP submission needs.
-type SMTPRequirement struct {
-	// Auth is the SMTP authentication mechanism.
-	// +optional
-	// +kubebuilder:validation:Enum=plain;login;cram-md5
-	Auth string `json:"auth,omitempty"`
+// SMTPRequirement declares that an app sends mail. It carries nothing.
+//
+// It had auth and port, and neither was ever read — not by the operator, not by
+// any Composition. They also asked the wrong party: the mechanism a server
+// accepts and the port it listens on are the platform's to know, and an app
+// asserting "587, plain" is asserting something it cannot verify and would be
+// wrong about the moment the cluster changed. The values an app receives are
+// mapped through valueMapping.smtp, which is where the app describes its own
+// chart rather than the cluster's mail server.
+//
+// Empty on purpose, and a struct rather than a bool so a future field that is
+// genuinely the app's to state — a required TLS level, say — has somewhere to
+// go without changing every profile.
+type SMTPRequirement struct{}
 
-	// Port is the SMTP submission port.
-	// +optional
-	// +kubebuilder:default=587
-	Port int32 `json:"port,omitempty"`
-}
-
-// IMAPRequirement describes IMAP access needs.
-type IMAPRequirement struct {
-	// Port is the IMAP port.
-	// +optional
-	// +kubebuilder:default=993
-	Port int32 `json:"port,omitempty"`
-}
+// IMAPRequirement declares that an app reads mail. It carries nothing, for the
+// same reason as SMTPRequirement.
+type IMAPRequirement struct{}
 
 // MCPRequirement describes a Model Context Protocol server endpoint.
 type MCPRequirement struct {
@@ -878,6 +978,12 @@ type CacheValueMapping struct {
 	// PortKey is the Helm value key for the cache port.
 	// +optional
 	PortKey string `json:"portKey,omitempty"`
+	// UserKey is the Helm value key for the cache ACL username. The kernel
+	// provisions a per-app user and records it alongside the password, so profiles
+	// should map this key rather than reconstructing the naming rule themselves.
+	// Engines without per-app users (memcached) leave it unset.
+	// +optional
+	UserKey string `json:"userKey,omitempty"`
 	// PasswordKey is the Helm value key for the cache password/ACL token.
 	// +optional
 	PasswordKey string `json:"passwordKey,omitempty"`
@@ -949,6 +1055,222 @@ type AppSidecarSpec struct {
 	// applies CRD defaults server-side.
 	// +optional
 	StableServicePort int32 `json:"stableServicePort,omitempty"`
+}
+
+// BackupSpec tells the platform how this app must be captured and put back.
+// spec.kernelRequirements already declares *which* stores the app has; this
+// declares how to pause it, what on its volumes is worth keeping, and what has
+// to run after a restore before the app is usable again — knowledge only the
+// app's author has.
+//
+// Every field is optional, and a profile that declares nothing gets the safe
+// default: scale the app to zero, dump every store in spec.kernelRequirements,
+// and archive every PersistentVolumeClaim its Helm release owns. That is
+// correct for most apps, so the section exists for the ones that deviate.
+//
+// Schedule, retention, encryption and destination are deliberately absent: they
+// are platform and tenant policy, and an app author must not be able to weaken
+// them.
+type BackupSpec struct {
+	// Quiesce controls how writes are paused while the app is captured.
+	// +optional
+	Quiesce *BackupQuiesce `json:"quiesce,omitempty"`
+
+	// Volumes narrows what is captured from the app's PersistentVolumeClaims.
+	// +optional
+	Volumes *BackupVolumes `json:"volumes,omitempty"`
+
+	// BoundSecrets lists secrets this app's data is welded to: not derived, held
+	// outside the app's own captured data, and required to make sense of that
+	// data again. They travel inside the encrypted bundle.
+	//
+	// Most apps need none. Values under spec.appSecrets are HMAC-derived from
+	// the master password and reproduce byte-identically, and a secret an app
+	// writes into its own config file on a captured volume already travels with
+	// that volume.
+	// +optional
+	BoundSecrets []BackupBoundSecret `json:"boundSecrets,omitempty"`
+
+	// Restore declares what must run after this app's data is loaded and before
+	// it is resumed.
+	// +optional
+	Restore *BackupRestore `json:"restore,omitempty"`
+
+	// Consistency selects whether all of this app's stores must be captured
+	// inside one quiesce window. Defaults to app.
+	// +optional
+	// +kubebuilder:default=app
+	Consistency BackupConsistency `json:"consistency,omitempty"`
+
+	// MinRestoreVersion refuses to restore a bundle into an app older than this
+	// version, expressed as the app version the profile's chart deploys.
+	// Restoring older data into a newer app is allowed — that just runs the
+	// app's own migrations — but the reverse silently corrupts.
+	// +optional
+	MinRestoreVersion string `json:"minRestoreVersion,omitempty"`
+}
+
+// BackupQuiesce declares how to pause an app's writes for the duration of a
+// capture. Pausing is the only way to get a consistent view across an app's
+// database, buckets and volumes: nothing else coordinates independent stores.
+// +kubebuilder:validation:XValidation:rule="self.mode != 'command' || (has(self.pre) && size(self.pre) > 0)",message="quiesce.pre is required when mode is command"
+type BackupQuiesce struct {
+	// Mode selects how writes are paused. Defaults to scaleDown, which works
+	// for every app; command is better where the app has a real maintenance
+	// mode, because it keeps the app reachable while it is captured.
+	// +optional
+	// +kubebuilder:default=scaleDown
+	Mode BackupQuiesceMode `json:"mode,omitempty"`
+
+	// Pre is the command that pauses writes, required when mode is command.
+	// This is an argv, not a shell line: the first element is the binary and
+	// the rest are its arguments, so nothing is word-split or glob-expanded.
+	// +optional
+	Pre []string `json:"pre,omitempty"`
+
+	// Post is the command that resumes writes. It must be safe to run when Pre
+	// never ran or already resumed — it also runs on the failure path, and an
+	// app left paused is an outage.
+	// +optional
+	Post []string `json:"post,omitempty"`
+
+	// Container names the container to run Pre and Post in. Defaults to the
+	// first container in the app's pod.
+	// +optional
+	Container string `json:"container,omitempty"`
+}
+
+// BackupVolumes narrows what is captured from an app's volumes.
+type BackupVolumes struct {
+	// Include names the PersistentVolumeClaims to capture. When empty, every
+	// claim the app's Helm release owns is captured.
+	// +optional
+	Include []string `json:"include,omitempty"`
+
+	// ExcludePaths drops matching paths from the captured archive, as glob
+	// patterns relative to each volume root. Use it for data the app rebuilds
+	// by itself — thumbnails, search indexes, caches — which is often most of
+	// an app's disk.
+	//
+	// Never exclude a path holding app configuration. An app that keeps the key
+	// its data was encrypted with in its own config file becomes unrestorable
+	// the moment that file is excluded, and nothing detects it until a restore.
+	// +optional
+	ExcludePaths []string `json:"excludePaths,omitempty"`
+}
+
+// BackupBoundSecret references a secret in the tenant's OpenBao tree that must
+// travel with the app's data.
+type BackupBoundSecret struct {
+	// OpenBaoPath is relative to this tenant's own prefix
+	// (gentian-os/tenants/{tenant}/), so a profile can only ever name secrets
+	// belonging to the tenant being captured.
+	//
+	// The pattern enforces that containment: it accepts slash-separated segments
+	// that each begin with an alphanumeric, which rejects a leading slash and
+	// any ".." segment — the only forms that escape the prefix. Expressing it as
+	// a pattern rather than a CEL rule is deliberate. CEL here costs more than
+	// it is worth: Kubernetes bounds the estimated cost of every rule in a CRD,
+	// and one rule over an unbounded string inside an unbounded list put the
+	// whole AppProfile schema over budget, so the API server refused to install
+	// it at all. The pattern is also the more precise statement, since a name
+	// like "my..app" traverses nothing and should be allowed.
+	// +kubebuilder:validation:Required
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=253
+	// +kubebuilder:validation:Pattern=`^[a-zA-Z0-9][a-zA-Z0-9._-]*(/[a-zA-Z0-9][a-zA-Z0-9._-]*)*$`
+	OpenBaoPath string `json:"openBaoPath"`
+
+	// Keys selects individual keys at that path. When empty, every key there is
+	// captured.
+	// +optional
+	Keys []string `json:"keys,omitempty"`
+}
+
+// BackupRestore declares what runs after an app's data is put back.
+type BackupRestore struct {
+	// Post lists commands run in order once the app's data is loaded and before
+	// it is resumed — cache invalidation, re-indexing, fingerprinting. Each
+	// entry is an argv, for the same reason as BackupQuiesce.Pre.
+	// +optional
+	Post [][]string `json:"post,omitempty"`
+
+	// Verify is a single command that must exit zero before the restore is
+	// reported successful. Without one, a restore can only report that the data
+	// was written, not that the app can read it.
+	// +optional
+	Verify []string `json:"verify,omitempty"`
+}
+
+// QuiesceMode returns how this app's writes should be paused, resolving the
+// default for a profile that declares no backup block.
+func (b *BackupSpec) QuiesceMode() BackupQuiesceMode {
+	if b == nil || b.Quiesce == nil || b.Quiesce.Mode == "" {
+		return BackupQuiesceScaleDown
+	}
+	return b.Quiesce.Mode
+}
+
+// ConsistencyMode returns the window this app's stores must be captured within,
+// resolving the default.
+func (b *BackupSpec) ConsistencyMode() BackupConsistency {
+	if b == nil || b.Consistency == "" {
+		return BackupConsistencyApp
+	}
+	return b.Consistency
+}
+
+// QuiesceCommands returns the commands that pause and resume writes. Both are
+// empty unless the mode is command.
+func (b *BackupSpec) QuiesceCommands() (pre, post []string) {
+	if b.QuiesceMode() != BackupQuiesceCommand || b.Quiesce == nil {
+		return nil, nil
+	}
+	return b.Quiesce.Pre, b.Quiesce.Post
+}
+
+// QuiesceContainer returns the container to run quiesce commands in. Empty
+// means the first container in the app's pod.
+func (b *BackupSpec) QuiesceContainer() string {
+	if b == nil || b.Quiesce == nil {
+		return ""
+	}
+	return b.Quiesce.Container
+}
+
+// IncludedVolumes returns the claims to capture. Empty means every
+// PersistentVolumeClaim the app's Helm release owns, which is the default.
+func (b *BackupSpec) IncludedVolumes() []string {
+	if b == nil || b.Volumes == nil {
+		return nil
+	}
+	return b.Volumes.Include
+}
+
+// ExcludedPaths returns the glob patterns to drop from captured volumes.
+func (b *BackupSpec) ExcludedPaths() []string {
+	if b == nil || b.Volumes == nil {
+		return nil
+	}
+	return b.Volumes.ExcludePaths
+}
+
+// BoundSecretRefs returns the secrets that must travel with this app's data.
+func (b *BackupSpec) BoundSecretRefs() []BackupBoundSecret {
+	if b == nil {
+		return nil
+	}
+	return b.BoundSecrets
+}
+
+// RestoreCommands returns the commands to run once this app's data is loaded,
+// and the single command that must succeed before the restore is reported
+// successful.
+func (b *BackupSpec) RestoreCommands() (post [][]string, verify []string) {
+	if b == nil || b.Restore == nil {
+		return nil, nil
+	}
+	return b.Restore.Post, b.Restore.Verify
 }
 
 // AppPostInstallJob configures a Kubernetes Job the app-default composition

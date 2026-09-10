@@ -101,10 +101,10 @@ func TestResolveAddonsRejectsWrongBaseAndFamily(t *testing.T) {
 
 func TestResolveAddonsRejectsDuplicateAppSideID(t *testing.T) {
 	base, idx := odooFixture()
-	// a pro edition of the same addon resolves to the same Odoo module
-	idx["odoo-crm-pro"] = profile("odoo-crm-pro", "odoo", "addon",
+	// an ee edition of the same addon resolves to the same Odoo module
+	idx["odoo-crm-ee"] = profile("odoo-crm-ee", "odoo", "addon",
 		&gentianov1alpha1.CustomizationAddon{ID: "crm", Of: "odoo-base-ce"}, "proprietary")
-	_, errs := ResolveAddons(base, []string{"odoo-crm-ce", "odoo-crm-pro"}, idx)
+	_, errs := ResolveAddons(base, []string{"odoo-crm-ce", "odoo-crm-ee"}, idx)
 	if !anyContains(errs, "both resolve to id") {
 		t.Fatalf("expected duplicate-id rejection, got %v", errs)
 	}
@@ -120,9 +120,9 @@ func TestResolveAddonsReportsEveryProblem(t *testing.T) {
 
 func TestEntitledAddonsBlocksUngrantedCommercial(t *testing.T) {
 	base, idx := odooFixture()
-	idx["odoo-payroll-pro"] = profile("odoo-payroll-pro", "odoo", "addon",
+	idx["odoo-payroll-ee"] = profile("odoo-payroll-ee", "odoo", "addon",
 		&gentianov1alpha1.CustomizationAddon{ID: "payroll", Of: "odoo-base-ce"}, "proprietary")
-	resolved, errs := ResolveAddons(base, []string{"odoo-crm-ce", "odoo-payroll-pro"}, idx)
+	resolved, errs := ResolveAddons(base, []string{"odoo-crm-ce", "odoo-payroll-ee"}, idx)
 	if len(errs) != 0 {
 		t.Fatalf("unexpected errors: %v", errs)
 	}
@@ -130,11 +130,11 @@ func TestEntitledAddonsBlocksUngrantedCommercial(t *testing.T) {
 	if len(allowed) != 1 || allowed[0].ID != "crm" {
 		t.Fatalf("allowed: %+v", allowed)
 	}
-	if len(blocked) != 1 || blocked[0].Profile != "odoo-payroll-pro" {
+	if len(blocked) != 1 || blocked[0].Profile != "odoo-payroll-ee" {
 		t.Fatalf("blocked: %+v", blocked)
 	}
 	// granting the entitlement unblocks it — compatibility never was the gate
-	allowed, blocked = EntitledAddons(resolved, map[string]bool{"odoo-payroll-pro": true})
+	allowed, blocked = EntitledAddons(resolved, map[string]bool{"odoo-payroll-ee": true})
 	if len(allowed) != 2 || len(blocked) != 0 {
 		t.Fatalf("after grant: allowed=%d blocked=%d", len(allowed), len(blocked))
 	}

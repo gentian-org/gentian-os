@@ -108,3 +108,33 @@ rules:
       - get
       - list
       - watch
+---
+# Same grant for OIDCPackCatalog: the app-default composition fetches BOTH
+# AppProfile and OIDCPackCatalog in its fetch-extra-resources step, but only the
+# former was ever granted.
+#
+# The missing half does not fail as a permission error. function-extra-resources
+# lists through an informer, the informer cannot sync because the list is
+# forbidden, and the step times out with
+#
+#   fetching resources for oidcPackCatalog: cannot list required resources:
+#   Timeout: failed waiting for *unstructured.Unstructured Informer to sync
+#
+# so every XApp stays Synced=False and its claim never goes Ready — which
+# surfaces as a tenant stuck in Provisioning on "Unready resources:
+# app-<profile>" with nothing in the logs naming RBAC.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: crossplane:extra-resources:oidcpackcatalogs.gentianos.io
+  labels:
+    rbac.crossplane.io/aggregate-to-crossplane: "true"
+rules:
+  - apiGroups:
+      - gentianos.io
+    resources:
+      - oidcpackcatalogs
+    verbs:
+      - get
+      - list
+      - watch

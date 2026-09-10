@@ -39,7 +39,7 @@ spec:
                 kernelDomain:
                   type: string
                   description: >
-                    Cluster-wide platform DNS suffix (e.g. "desk.gentian.org").
+                    Cluster-wide platform DNS suffix (e.g. "platform.example.com").
                     Injected by the TenantReconciler from its KernelDomain field.
                 isolation:
                   type: object
@@ -78,12 +78,6 @@ spec:
                     domain:
                       type: string
                       description: Mail domain. Defaults to spec.domain.
-                    quotaPerUser:
-                      type: string
-                      description: Per-user mailbox storage quota (e.g. "5Gi").
-                    rateLimit:
-                      type: string
-                      description: Outbound email rate limit (e.g. "100/h").
                     smtpCredentialsSecret:
                       type: string
                       description: >
@@ -101,10 +95,24 @@ spec:
                       description: Total storage quota (e.g. "200Gi").
                     cpu:
                       type: string
-                      description: Total CPU request limit (e.g. "8").
+                      description: >
+                        Ceiling on the sum of container CPU *limits* — the burst
+                        ceiling, which reserves nothing (e.g. "16").
                     memory:
                       type: string
-                      description: Total memory request limit (e.g. "16Gi").
+                      description: >
+                        Ceiling on the sum of container memory *limits* (e.g. "16Gi").
+                    requestsCpu:
+                      type: string
+                      description: >
+                        Ceiling on the sum of container CPU *requests* — the
+                        capacity the scheduler actually reserves, and the
+                        quantity a ResourcePlan is priced on (e.g. "4").
+                    requestsMemory:
+                      type: string
+                      description: >
+                        Ceiling on the sum of container memory *requests* —
+                        reserved capacity, priced, as requestsCpu is (e.g. "8Gi").
                     maxPods:
                       type: integer
                       description: Maximum number of pods in the tenant namespace.

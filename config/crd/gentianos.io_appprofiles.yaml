@@ -221,15 +221,173 @@ spec:
                   Author is who supplies and maintains *this* catalogue entry — a company
                   (vendor), an organisation, or an individual. It describes the entry, not the
                   upstream project: the same application can appear as several profiles from
-                  different authors, e.g. a "ce" edition packaged by Gentian alongside a "pro"
-                  edition supplied by openDesk.
+                  different authors, e.g. a "ce" edition packaged by Gentian alongside an "ee"
+                  edition supplied by a third-party vendor.
 
                   This is why the edition must never be inferred from a profile's name. Two
-                  profiles may both be edition "pro" from different authors and carry entirely
+                  profiles may both be edition "ee" from different authors and carry entirely
                   unrelated names; spec.edition and spec.author are the authoritative pair, the
-                  name is only a hint. See gentian-apps/docs/L3-cleanup.md §2.2.
+                  name is only a hint. See gentian-os/docs/app-customization.md §4.2.
                 maxLength: 128
                 type: string
+              backup:
+                description: |-
+                  Backup declares how this app must be captured and restored. Optional:
+                  omitting it selects the safe default (scale to zero, dump every store in
+                  kernelRequirements, archive every release-owned volume), which is correct
+                  for most apps.
+                properties:
+                  boundSecrets:
+                    description: |-
+                      BoundSecrets lists secrets this app's data is welded to: not derived, held
+                      outside the app's own captured data, and required to make sense of that
+                      data again. They travel inside the encrypted bundle.
+
+                      Most apps need none. Values under spec.appSecrets are HMAC-derived from
+                      the master password and reproduce byte-identically, and a secret an app
+                      writes into its own config file on a captured volume already travels with
+                      that volume.
+                    items:
+                      description: |-
+                        BackupBoundSecret references a secret in the tenant's OpenBao tree that must
+                        travel with the app's data.
+                      properties:
+                        keys:
+                          description: |-
+                            Keys selects individual keys at that path. When empty, every key there is
+                            captured.
+                          items:
+                            type: string
+                          type: array
+                        openBaoPath:
+                          description: |-
+                            OpenBaoPath is relative to this tenant's own prefix
+                            (gentian-os/tenants/{tenant}/), so a profile can only ever name secrets
+                            belonging to the tenant being captured.
+
+                            The pattern enforces that containment: it accepts slash-separated segments
+                            that each begin with an alphanumeric, which rejects a leading slash and
+                            any ".." segment — the only forms that escape the prefix. Expressing it as
+                            a pattern rather than a CEL rule is deliberate. CEL here costs more than
+                            it is worth: Kubernetes bounds the estimated cost of every rule in a CRD,
+                            and one rule over an unbounded string inside an unbounded list put the
+                            whole AppProfile schema over budget, so the API server refused to install
+                            it at all. The pattern is also the more precise statement, since a name
+                            like "my..app" traverses nothing and should be allowed.
+                          maxLength: 253
+                          minLength: 1
+                          pattern: ^[a-zA-Z0-9][a-zA-Z0-9._-]*(/[a-zA-Z0-9][a-zA-Z0-9._-]*)*$
+                          type: string
+                      required:
+                      - openBaoPath
+                      type: object
+                    type: array
+                  consistency:
+                    default: app
+                    description: |-
+                      Consistency selects whether all of this app's stores must be captured
+                      inside one quiesce window. Defaults to app.
+                    enum:
+                    - app
+                    - perStore
+                    type: string
+                  minRestoreVersion:
+                    description: |-
+                      MinRestoreVersion refuses to restore a bundle into an app older than this
+                      version, expressed as the app version the profile's chart deploys.
+                      Restoring older data into a newer app is allowed — that just runs the
+                      app's own migrations — but the reverse silently corrupts.
+                    type: string
+                  quiesce:
+                    description: Quiesce controls how writes are paused while the
+                      app is captured.
+                    properties:
+                      container:
+                        description: |-
+                          Container names the container to run Pre and Post in. Defaults to the
+                          first container in the app's pod.
+                        type: string
+                      mode:
+                        default: scaleDown
+                        description: |-
+                          Mode selects how writes are paused. Defaults to scaleDown, which works
+                          for every app; command is better where the app has a real maintenance
+                          mode, because it keeps the app reachable while it is captured.
+                        enum:
+                        - none
+                        - scaleDown
+                        - command
+                        type: string
+                      post:
+                        description: |-
+                          Post is the command that resumes writes. It must be safe to run when Pre
+                          never ran or already resumed — it also runs on the failure path, and an
+                          app left paused is an outage.
+                        items:
+                          type: string
+                        type: array
+                      pre:
+                        description: |-
+                          Pre is the command that pauses writes, required when mode is command.
+                          This is an argv, not a shell line: the first element is the binary and
+                          the rest are its arguments, so nothing is word-split or glob-expanded.
+                        items:
+                          type: string
+                        type: array
+                    type: object
+                    x-kubernetes-validations:
+                    - message: quiesce.pre is required when mode is command
+                      rule: self.mode != 'command' || (has(self.pre) && size(self.pre)
+                        > 0)
+                  restore:
+                    description: |-
+                      Restore declares what must run after this app's data is loaded and before
+                      it is resumed.
+                    properties:
+                      post:
+                        description: |-
+                          Post lists commands run in order once the app's data is loaded and before
+                          it is resumed — cache invalidation, re-indexing, fingerprinting. Each
+                          entry is an argv, for the same reason as BackupQuiesce.Pre.
+                        items:
+                          items:
+                            type: string
+                          type: array
+                        type: array
+                      verify:
+                        description: |-
+                          Verify is a single command that must exit zero before the restore is
+                          reported successful. Without one, a restore can only report that the data
+                          was written, not that the app can read it.
+                        items:
+                          type: string
+                        type: array
+                    type: object
+                  volumes:
+                    description: Volumes narrows what is captured from the app's PersistentVolumeClaims.
+                    properties:
+                      excludePaths:
+                        description: |-
+                          ExcludePaths drops matching paths from the captured archive, as glob
+                          patterns relative to each volume root. Use it for data the app rebuilds
+                          by itself — thumbnails, search indexes, caches — which is often most of
+                          an app's disk.
+
+                          Never exclude a path holding app configuration. An app that keeps the key
+                          its data was encrypted with in its own config file becomes unrestorable
+                          the moment that file is excluded, and nothing detects it until a restore.
+                        items:
+                          type: string
+                        type: array
+                      include:
+                        description: |-
+                          Include names the PersistentVolumeClaims to capture. When empty, every
+                          claim the app's Helm release owns is captured.
+                        items:
+                          type: string
+                        type: array
+                    type: object
+                type: object
               browserProxy:
                 description: |-
                   BrowserProxy declares HTTP routes the shell backend should transparently
@@ -296,8 +454,8 @@ spec:
                 type: array
               chart:
                 description: |-
-                  Chart references the upstream Helm chart for this app. Required for
-                  crossplane and argocd deployment methods; omitted for ApiProfiles
+                  Chart references the upstream Helm chart for this app. Required for the
+                  crossplane deployment method; omitted for ApiProfiles
                   (deploymentMethod: api), which run no workload. Enforced by a spec-level
                   validation rule.
                 properties:
@@ -732,11 +890,10 @@ spec:
                 default: crossplane
                 description: |-
                   DeploymentMethod controls how the orchestrator deploys this app.
-                  Defaults to crossplane. Use argocd for kernel-layer services managed
-                  directly by the cache or identity reconcilers. Use api for an ApiProfile
-                  that runs no workload (see spec.apiIntegration).
+                  Defaults to crossplane: a Crossplane App claim drives the Composition that
+                  emits the app's ExternalSecret and provider-helm Release. Use api for an
+                  ApiProfile, which runs no workload at all (see spec.apiIntegration).
                 enum:
-                - argocd
                 - crossplane
                 - api
                 type: string
@@ -785,12 +942,12 @@ spec:
                 default: ce
                 description: |-
                   Edition selects the edition: ce (community, as upstream publishes it), me
-                  (ce plus active Gentian maintenance) or pro (commercial, supplied by the
-                  vendor named in spec.author).
+                  (ce plus active Gentian maintenance) or ee (commercially licensed and
+                  entitlement-gated, supplied by whoever spec.author names).
                 enum:
                 - ce
                 - me
-                - pro
+                - ee
                 type: string
               extraValues:
                 description: |-
@@ -875,12 +1032,20 @@ spec:
                     properties:
                       allowDynamicDatabaseCreation:
                         description: |-
-                          AllowDynamicDatabaseCreation grants the app user privileges to create new databases
-                          dynamically at runtime (e.g. GRANT ALL PRIVILEGES ON *.*). Use with caution.
-                          Only supported by the mariadb engine. Omitted is equivalent to false, which
-                          is also Go's zero value for bool — left undefaulted at the schema level so
-                          profiles that omit it don't permanently diff against GitOps tooling that
-                          applies CRD defaults server-side.
+                          AllowDynamicDatabaseCreation lets the app create databases of its own at
+                          runtime — mariadb via GRANT ALL PRIVILEGES ON *.*, postgresql via role
+                          CREATEDB. Ask for it only when creating databases is what the app is for
+                          (a data explorer, say); an app that merely stores its own state must not.
+
+                          Databases created this way are still purged with the app: they are owned
+                          by the app role, and uninstall --purge drops everything that role owns.
+                          They are not otherwise governed — the tenant chooses the names, and they
+                          do not appear in the catalogue's provisioning model.
+
+                          Omitted is equivalent to false, which is also Go's zero value for bool —
+                          left undefaulted at the schema level so profiles that omit it don't
+                          permanently diff against GitOps tooling that applies CRD defaults
+                          server-side.
                         type: boolean
                       databasePerTenant:
                         default: true
@@ -1002,29 +1167,10 @@ spec:
                     properties:
                       imap:
                         description: IMAP requests inbound mail (IMAP) credentials.
-                        properties:
-                          port:
-                            default: 993
-                            description: Port is the IMAP port.
-                            format: int32
-                            type: integer
                         type: object
                       smtp:
                         description: SMTP requests outbound mail (SMTP submission)
                           credentials.
-                        properties:
-                          auth:
-                            description: Auth is the SMTP authentication mechanism.
-                            enum:
-                            - plain
-                            - login
-                            - cram-md5
-                            type: string
-                          port:
-                            default: 587
-                            description: Port is the SMTP submission port.
-                            format: int32
-                            type: integer
                         type: object
                     type: object
                   mcp:
@@ -1059,7 +1205,7 @@ spec:
                     properties:
                       files:
                         description: Files requests WebDAV access to the tenant's
-                          Nextcloud instance.
+                          file-storage service.
                         properties:
                           capabilities:
                             description: Capabilities lists the required access capabilities.
@@ -1094,7 +1240,8 @@ spec:
               license:
                 description: |-
                   License is the SPDX license identifier for this catalogue entry (e.g. Apache-2.0).
-                  Pro profiles in gentian-pro typically use proprietary.
+                  Entries requiring a paid entitlement use proprietary; see
+                  ProfileRequiresEntitlement.
                 type: string
               optionalIntegrations:
                 description: OptionalIntegrations lists contracts this app can consume
@@ -1190,7 +1337,8 @@ spec:
                         image:
                           description: |-
                             Image is a profile-relative SVG path used in git only (e.g. assets/tile.svg).
-                            Run scripts/sync-profile-tile.py to inline into tile.logo before commit.
+                            Run gentian-apps' scripts/sync-profile-tile.py to inline into tile.logo
+                            before commit — profiles live in that repository, and so does the script.
                           type: string
                         logo:
                           description: Logo is a custom tile as a data URI (path 1).
@@ -1307,14 +1455,104 @@ spec:
                           "group" is supported today.
                         type: string
                       name:
-                        description: Name is the in-app role identifier (for example
-                          Nextcloud group "admin").
+                        description: |-
+                          Name is the in-app role identifier (for example Nextcloud group "admin").
+                          It is passed to the sync Job as GENTIAN_PRIVILEGED_ROLE. Apps whose
+                          privilege model is a flag rather than a named role may ignore it; set a
+                          descriptive value anyway so the declaration reads honestly.
                         maxLength: 64
                         minLength: 1
                         type: string
                     required:
                     - kind
                     - name
+                    type: object
+                  syncJob:
+                    description: |-
+                      SyncJob is how this app applies PrivilegedRole. The operator resolves
+                      app-admins membership, publishes it, and runs this Job; the script inside
+                      speaks whatever protocol the application happens to expose.
+
+                      The division is deliberate and load-bearing: resolving a Keycloak group,
+                      detecting membership changes and running a Job to completion are platform
+                      concerns, so they live here. Knowing that one app wants a JSON-RPC call
+                      and another an OCS POST is not, so it lives in the catalogue entry that
+                      owns that app. No application's protocol, endpoint or account model may
+                      be encoded in the kernel — see the platform boundary in
+                      gentian-apps/docs/app-profile-guide.md.
+                    properties:
+                      env:
+                        description: |-
+                          Env binds individual Secret keys to environment variables. Prefer this
+                          over EnvFrom for platform-managed credentials: the keys of an app's
+                          sensitive-values Secret are hyphenated (db-host, internal-admin_password),
+                          and Kubernetes silently drops any envFrom key that is not a valid
+                          identifier — the variable simply never appears and the script fails on
+                          something unrelated.
+                        items:
+                          description: |-
+                            ProvisioningEnvVar binds one key of a Secret in the tenant namespace to an
+                            environment variable in the Job.
+                          properties:
+                            name:
+                              description: Name of the environment variable.
+                              pattern: ^[A-Za-z_][A-Za-z0-9_]*$
+                              type: string
+                            secretKeyRef:
+                              description: SecretKeyRef is the Secret key to read
+                                it from.
+                              properties:
+                                key:
+                                  minLength: 1
+                                  type: string
+                                name:
+                                  minLength: 1
+                                  type: string
+                              required:
+                              - key
+                              - name
+                              type: object
+                          required:
+                          - name
+                          - secretKeyRef
+                          type: object
+                        type: array
+                      envFrom:
+                        description: |-
+                          EnvFrom names Secrets in the tenant namespace whose keys become
+                          environment variables. Only useful when every key is already a valid
+                          environment variable name; see Env above.
+                        items:
+                          type: string
+                        type: array
+                      image:
+                        description: |-
+                          Image the script runs in. Usually the application's own image, which
+                          already has whatever client library its API needs.
+                        minLength: 1
+                        type: string
+                      script:
+                        description: |-
+                          Script executed with /bin/sh. It is re-run whenever membership changes,
+                          so it must be idempotent: converge the app to exactly the membership it
+                          is given rather than applying a delta.
+
+                          The operator provides:
+                            GENTIAN_APP_ADMINS_FILE  path to a JSON array of the privileged
+                                                     members, each {"id","username","email"}
+                            GENTIAN_PRIVILEGED_ROLE  spec.provisioning.privilegedRole.name
+                            GENTIAN_TENANT           tenant name
+                            GENTIAN_APP              this profile's name
+                          plus every key of envFrom below.
+                        minLength: 1
+                        type: string
+                      serviceAccountName:
+                        description: ServiceAccountName runs the Job under an existing
+                          ServiceAccount.
+                        type: string
+                    required:
+                    - image
+                    - script
                     type: object
                 type: object
               security:
@@ -1624,12 +1862,20 @@ spec:
                           properties:
                             allowDynamicDatabaseCreation:
                               description: |-
-                                AllowDynamicDatabaseCreation grants the app user privileges to create new databases
-                                dynamically at runtime (e.g. GRANT ALL PRIVILEGES ON *.*). Use with caution.
-                                Only supported by the mariadb engine. Omitted is equivalent to false, which
-                                is also Go's zero value for bool — left undefaulted at the schema level so
-                                profiles that omit it don't permanently diff against GitOps tooling that
-                                applies CRD defaults server-side.
+                                AllowDynamicDatabaseCreation lets the app create databases of its own at
+                                runtime — mariadb via GRANT ALL PRIVILEGES ON *.*, postgresql via role
+                                CREATEDB. Ask for it only when creating databases is what the app is for
+                                (a data explorer, say); an app that merely stores its own state must not.
+
+                                Databases created this way are still purged with the app: they are owned
+                                by the app role, and uninstall --purge drops everything that role owns.
+                                They are not otherwise governed — the tenant chooses the names, and they
+                                do not appear in the catalogue's provisioning model.
+
+                                Omitted is equivalent to false, which is also Go's zero value for bool —
+                                left undefaulted at the schema level so profiles that omit it don't
+                                permanently diff against GitOps tooling that applies CRD defaults
+                                server-side.
                               type: boolean
                             databasePerTenant:
                               default: true
@@ -1751,29 +1997,10 @@ spec:
                           properties:
                             imap:
                               description: IMAP requests inbound mail (IMAP) credentials.
-                              properties:
-                                port:
-                                  default: 993
-                                  description: Port is the IMAP port.
-                                  format: int32
-                                  type: integer
                               type: object
                             smtp:
                               description: SMTP requests outbound mail (SMTP submission)
                                 credentials.
-                              properties:
-                                auth:
-                                  description: Auth is the SMTP authentication mechanism.
-                                  enum:
-                                  - plain
-                                  - login
-                                  - cram-md5
-                                  type: string
-                                port:
-                                  default: 587
-                                  description: Port is the SMTP submission port.
-                                  format: int32
-                                  type: integer
                               type: object
                           type: object
                         mcp:
@@ -1809,7 +2036,7 @@ spec:
                           properties:
                             files:
                               description: Files requests WebDAV access to the tenant's
-                                Nextcloud instance.
+                                file-storage service.
                               properties:
                                 capabilities:
                                   description: Capabilities lists the required access
@@ -1878,7 +2105,8 @@ spec:
                   image:
                     description: |-
                       Image is a profile-relative SVG path used in git only (e.g. assets/tile.svg).
-                      Run scripts/sync-profile-tile.py to inline into tile.logo before commit.
+                      Run gentian-apps' scripts/sync-profile-tile.py to inline into tile.logo
+                      before commit — profiles live in that repository, and so does the script.
                     type: string
                   logo:
                     description: Logo is a custom tile as a data URI (path 1). Mutually
@@ -1912,6 +2140,13 @@ spec:
                         type: string
                       portKey:
                         description: PortKey is the Helm value key for the cache port.
+                        type: string
+                      userKey:
+                        description: |-
+                          UserKey is the Helm value key for the cache ACL username. The kernel
+                          provisions a per-app user and records it alongside the password, so profiles
+                          should map this key rather than reconstructing the naming rule themselves.
+                          Engines without per-app users (memcached) leave it unset.
                         type: string
                     type: object
                   database:

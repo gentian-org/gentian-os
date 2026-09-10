@@ -14,7 +14,6 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-
 package controller
 
 import (
@@ -40,14 +39,36 @@ import (
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 )
 
+// +kubebuilder:rbac:groups=gateway.networking.k8s.io,resources=gateways;gateways/status;httproutes;httproutes/status,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=gateway.networking.k8s.io,resources=gatewayclasses,verbs=get;list;watch;create;update;patch
+//
+// ReferenceGrants authorise cross-namespace HTTPRoute -> Service references
+// (e.g. the kernel Gateway routing to Argo CD). gateway_reference_grant.go
+// creates them and tenant_edge_tls.go deletes them on teardown. A missing grant
+// does not crash the operator — it just never converges, failing every pass
+// with "ensure ArgoCD ReferenceGrant: referencegrants... is forbidden".
+// +kubebuilder:rbac:groups=gateway.networking.k8s.io,resources=referencegrants,verbs=get;list;watch;create;update;patch;delete
+//
+// ClientTrafficPolicy sits alongside BackendTrafficPolicy: the kernel routes
+// reconciler creates them and tenant cleanup lists them for stale removal.
+// +kubebuilder:rbac:groups=gateway.envoyproxy.io,resources=backendtrafficpolicies;clienttrafficpolicies,verbs=get;list;watch;create;update;patch;delete
+//
+// Deployments back the CoreDNS hairpin (coredns_hairpin.go): the ConfigMap name
+// is discovered from the volume the CoreDNS Deployment mounts, and the
+// Deployment is then patched to restart CoreDNS after the Corefile changes. The
+// apps group was absent from the ClusterRole entirely, so restartCoreDNSDeployment
+// could never have worked. list+watch accompany get because the manager's client
+// reads through its cache, so a Get starts an informer that must be able to list.
+// +kubebuilder:rbac:groups=apps,resources=deployments,verbs=get;list;watch;patch
+
 // GatewayPlatformReconciler ensures cluster-scoped Gateway API foundation
 // resources: the shared GatewayClass and kernel-public-gateway.
 type GatewayPlatformReconciler struct {
 	client.Client
-	KernelDomain  string
-	TenancyMode   string
-	RoutingMode   string
-	CloudflareDNS *CloudflareDNSClient
+	KernelDomain string
+	TenancyMode  string
+	RoutingMode  string
+	Ingress      EdgeIngress
 }
 
 func (r *GatewayPlatformReconciler) Reconcile(ctx context.Context, _ reconcile.Request) (reconcile.Result, error) {
@@ -68,7 +89,7 @@ func (r *GatewayPlatformReconciler) Reconcile(ctx context.Context, _ reconcile.R
 		logger.Error(err, "reconcile kernel HTTPRoutes")
 		return reconcile.Result{RequeueAfter: 30 * time.Second}, err
 	}
-	if err := ensureKernelGatewayTunnelIngress(ctx, r.Client, r.CloudflareDNS, r.KernelDomain, r.TenancyMode); err != nil {
+	if err := ensureKernelGatewayTunnelIngress(ctx, r.Client, r.Ingress, r.KernelDomain, r.TenancyMode); err != nil {
 		logger.Error(err, "ensure kernel Cloudflare tunnel ingress")
 		return reconcile.Result{RequeueAfter: 30 * time.Second}, err
 	}
@@ -186,13 +207,31 @@ func (r *GatewayPlatformReconciler) ensureKernelGateway(ctx context.Context) err
 	}
 	// Tenant ReferenceGrants are owned by Crossplane via each tenant's manifest bridge.
 	desired := buildKernelGateway(r.KernelDomain, r.TenancyMode, tenantList.Items)
+
+	// What every hostname on this Gateway must resolve to, declared by the
+	// ingress and read by external-dns. One object rather than one per route:
+	// the kernel Gateway is what all of them attach to, so annotating it
+	// covers kernel and tenant hostnames alike.
+	//
+	// Empty on a static-ip cluster, where external-dns reads the Gateway's own
+	// LoadBalancer address and needs telling nothing.
+	if ann := edgeDNSAnnotations(r.Ingress); len(ann) > 0 {
+		if desired.Annotations == nil {
+			desired.Annotations = map[string]string{}
+		}
+		for k, v := range ann {
+			desired.Annotations[k] = v
+		}
+	}
 	return ensureGatewayResource(ctx, r.Client, desired)
 }
 
 func buildKernelGateway(kernelDomain, tenancyMode string, tenants []gentianov1alpha1.Tenant) *gatewayv1.Gateway {
-	extraListeners := []gatewayv1.Listener{
-		kernelApexListener(kernelDomain, kernelWildcardTLSSecretName),
-	}
+	// No apex listener. The catch-all HTTPS listener already serves gtn.host —
+	// the kernel certificate carries it alongside *.gtn.host — and a separate
+	// listener scoped to the apex only served to make portal.gtn.host
+	// unroutable on connections a browser had coalesced onto gtn.host.
+	var extraListeners []gatewayv1.Listener
 	for i := range tenants {
 		tenant := &tenants[i]
 		if tenant.DeletionTimestamp != nil {
@@ -204,9 +243,13 @@ func buildKernelGateway(kernelDomain, tenancyMode string, tenants []gentianov1al
 		}
 		nsName := tenantNamespaceName(tenant)
 		tlsSecret := tenantWildcardSecretName(tenant.Name)
+		// Subdomains only. <tenant>.<kernel-domain> is already covered by the
+		// kernel certificate and served by the catch-all listener; giving it its
+		// own narrow listener reintroduced the coalescing hole one level down,
+		// where a connection opened for the tenant apex could not route
+		// <app>.<tenant>.<kernel-domain>.
 		extraListeners = append(extraListeners,
-			tenantKernelGatewayListener(tenant.Name, effectiveDomain, tlsSecret, nsName, false),
-			tenantKernelGatewayListener(tenant.Name, effectiveDomain, tlsSecret, nsName, true),
+			tenantKernelGatewayListener(tenant.Name, effectiveDomain, tlsSecret, nsName),
 		)
 	}
 	return buildGateway(KernelPublicGatewayName, servicesNamespace, kernelDomain, kernelWildcardTLSSecretName, map[string]string{
@@ -218,18 +261,29 @@ func buildKernelGateway(kernelDomain, tenancyMode string, tenants []gentianov1al
 	})
 }
 
-func kernelApexListener(kernelDomain, tlsSecret string) gatewayv1.Listener {
-	return tlsListener("https-apex", gatewayv1.Hostname(kernelDomain), tlsSecret, servicesNamespace)
+// Listener names are the binding target for every route's parentRef
+// sectionName. A content route that omits sectionName attaches to EVERY
+// listener whose hostname matches — including the plaintext :80 redirect
+// listener, which is hostname-less and therefore matches everything. Gateway
+// API then ranks the content route's specific hostname above the redirect
+// route's absent one, so http://<any-host> was served in the clear instead of
+// being redirected. Every content route must name its HTTPS listener.
+const (
+	wildcardListenerName = "https-wildcard"
+)
+
+// tenantGatewayListenerName is the kernel-Gateway listener carrying a tenant's
+// own certificate, for the tenant's apex or its wildcard subdomains.
+// tenantGatewayListenerName is the kernel-Gateway listener carrying a tenant's
+// own certificate for its subdomains. There is no apex variant: the tenant apex
+// is covered by the kernel certificate and served by the catch-all listener.
+func tenantGatewayListenerName(tenantName string) string {
+	return fmt.Sprintf("https-tenant-%s-wildcard", tenantName)
 }
 
-func tenantKernelGatewayListener(tenantName, effectiveDomain, tlsSecret, tlsSecretNamespace string, apex bool) gatewayv1.Listener {
-	name := fmt.Sprintf("https-tenant-%s-wildcard", tenantName)
+func tenantKernelGatewayListener(tenantName, effectiveDomain, tlsSecret, tlsSecretNamespace string) gatewayv1.Listener {
 	hostname := gatewayv1.Hostname(fmt.Sprintf("*.%s", effectiveDomain))
-	if apex {
-		name = fmt.Sprintf("https-tenant-%s-apex", tenantName)
-		hostname = gatewayv1.Hostname(effectiveDomain)
-	}
-	return tlsListener(name, hostname, tlsSecret, tlsSecretNamespace)
+	return tlsListener(tenantGatewayListenerName(tenantName), hostname, tlsSecret, tlsSecretNamespace)
 }
 
 func tlsListener(name string, hostname gatewayv1.Hostname, tlsSecret, tlsSecretNamespace string) gatewayv1.Listener {
@@ -244,17 +298,55 @@ func tlsListener(name string, hostname gatewayv1.Hostname, tlsSecret, tlsSecretN
 		ns := gatewayv1.Namespace(tlsSecretNamespace)
 		ref.Namespace = &ns
 	}
-	return gatewayv1.Listener{
+	l := gatewayv1.Listener{
 		Name:     gatewayv1.SectionName(name),
 		Protocol: gatewayv1.HTTPSProtocolType,
 		Port:     port,
-		Hostname: &hostname,
 		TLS: &gatewayv1.GatewayTLSConfig{
 			Mode: &mode,
 			CertificateRefs: []gatewayv1.SecretObjectReference{
 				ref,
 			},
 		},
+	}
+	// An empty hostname makes the listener match every SNI the certificate
+	// covers. A listener's hostname does double duty in Gateway API: it selects
+	// the listener by SNI AND gates which routes may attach, and a route only
+	// attaches where its hostnames intersect the listener's.
+	//
+	// Splitting one certificate across narrow listeners therefore breaks HTTP/2
+	// connection coalescing. The kernel certificate carries both gtn.host and
+	// *.gtn.host, so a browser may legitimately reuse the gtn.host connection
+	// for portal.gtn.host; the request then arrives on the apex listener, where
+	// portal.gtn.host could never attach, and Envoy answers 404 with no route.
+	// It reads as random because coalescing depends on which connection is open:
+	// arriving via the apex redirect coalesces, opening the host directly does
+	// not, and curl never reproduces it because it opens one connection per host.
+	if hostname != "" {
+		l.Hostname = &hostname
+	}
+	return l
+}
+
+// httpRedirectListenerName is the plaintext listener that exists solely so
+// http:// requests can be answered with a permanent redirect to https://.
+//
+// Serving nothing on :80 is the unusual choice: a browser given a bare hostname
+// tries http:// first, and with no listener that is a connection refusal, which
+// is indistinguishable from an outage. It also blocks HSTS preload (which
+// requires the redirect to exist) and ACME HTTP-01, should DNS-01 ever be
+// unavailable.
+const httpRedirectListenerName = "http-redirect"
+
+// httpRedirectListener is deliberately hostname-less so it matches every host
+// arriving on :80 — apex, wildcard and tenant domains alike — and needs no
+// updating as domains come and go. The redirect itself lives in an HTTPRoute
+// bound to this listener by sectionName; see kernelHTTPRedirectRouteSpec.
+func httpRedirectListener() gatewayv1.Listener {
+	return gatewayv1.Listener{
+		Name:     gatewayv1.SectionName(httpRedirectListenerName),
+		Protocol: gatewayv1.HTTPProtocolType,
+		Port:     gatewayv1.PortNumber(80),
 	}
 }
 
@@ -263,17 +355,12 @@ type gatewayBuildOptions struct {
 	extraListeners            []gatewayv1.Listener
 }
 
-func buildTenantGateway(tenant *gentianov1alpha1.Tenant, nsName, effectiveDomain, tlsSecret string) *gatewayv1.Gateway {
-	return buildGateway(tenantGatewayName(tenant.Name), nsName, effectiveDomain, tlsSecret, map[string]string{
-		tenantLabel:    tenant.Name,
-		managedByLabel: managedByValue,
-	}, gatewayBuildOptions{})
-}
-
 func buildGateway(name, namespace, domain, tlsSecret string, labels map[string]string, opts gatewayBuildOptions) *gatewayv1.Gateway {
-	hostname := gatewayv1.Hostname(fmt.Sprintf("*.%s", domain))
+	// No hostname: this listener serves every name its certificate covers, which
+	// is what keeps connection coalescing working (see tlsListener).
 	listeners := []gatewayv1.Listener{
-		withAllowedRoutes(tlsListener("https-wildcard", hostname, tlsSecret, namespace), opts.allowCrossNamespaceRoutes),
+		withAllowedRoutes(tlsListener(wildcardListenerName, "", tlsSecret, namespace), opts.allowCrossNamespaceRoutes),
+		withAllowedRoutes(httpRedirectListener(), opts.allowCrossNamespaceRoutes),
 	}
 	for i := range opts.extraListeners {
 		listeners = append(listeners, withAllowedRoutes(opts.extraListeners[i], opts.allowCrossNamespaceRoutes))
@@ -315,9 +402,31 @@ func ensureGatewayResource(ctx context.Context, c client.Client, desired *gatewa
 		return err
 	}
 
-	if !equality.Semantic.DeepEqual(existing.Spec, desired.Spec) {
+	// Annotations as well as spec. The external-dns target lives here and
+	// changes whenever the tunnel is rebuilt under a new id; a spec-only
+	// comparison would carry the old target for the life of the Gateway, and
+	// every hostname would resolve to a tunnel that no longer exists.
+	//
+	// Merged rather than replaced: other controllers annotate this object too,
+	// and reconciling ours must not delete theirs.
+	annotationsDiffer := false
+	for k, v := range desired.Annotations {
+		if existing.Annotations[k] != v {
+			annotationsDiffer = true
+			break
+		}
+	}
+	if !equality.Semantic.DeepEqual(existing.Spec, desired.Spec) || annotationsDiffer {
 		patch := client.MergeFrom(existing.DeepCopy())
 		existing.Spec = desired.Spec
+		if annotationsDiffer {
+			if existing.Annotations == nil {
+				existing.Annotations = map[string]string{}
+			}
+			for k, v := range desired.Annotations {
+				existing.Annotations[k] = v
+			}
+		}
 		return c.Patch(ctx, existing, patch)
 	}
 	return nil

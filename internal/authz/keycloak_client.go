@@ -14,7 +14,6 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-
 package authz
 
 import (
@@ -41,8 +40,9 @@ type keycloakUserRecord struct {
 }
 
 type keycloakGroupRecord struct {
-	ID   string `json:"id"`
-	Name string `json:"name"`
+	ID         string              `json:"id"`
+	Name       string              `json:"name"`
+	Attributes map[string][]string `json:"attributes,omitempty"`
 }
 
 func keycloakUserFromRecord(u keycloakUserRecord) (KeycloakUser, bool) {
@@ -87,9 +87,9 @@ type KeycloakUser struct {
 
 // KeycloakAdminClient calls the Keycloak Admin REST API.
 type KeycloakAdminClient struct {
-	baseURL   string
-	username  string
-	password  string
+	baseURL    string
+	username   string
+	password   string
 	httpClient *http.Client
 
 	mu          sync.Mutex
@@ -172,7 +172,14 @@ func BrowserSecurityHeadersJSON() string {
 	return string(b)
 }
 
-// UpdateRealmBrowserSecurityHeaders applies DefaultBrowserSecurityHeaders and functional session timeouts (12 hours) to a realm.
+// GentianLoginTheme is the Keycloak login theme shipped in
+// kernel/services/keycloak-idp/theme/. Keycloak falls back to the built-in theme
+// if it is absent, so setting this before the theme is deployed degrades to stock
+// styling rather than breaking login.
+const GentianLoginTheme = "gentian"
+
+// UpdateRealmBrowserSecurityHeaders applies DefaultBrowserSecurityHeaders,
+// functional session timeouts (12 hours) and the Gentian login theme to a realm.
 func (c *KeycloakAdminClient) UpdateRealmBrowserSecurityHeaders(ctx context.Context, realm string) error {
 	if realm == "" {
 		return nil
@@ -186,6 +193,11 @@ func (c *KeycloakAdminClient) UpdateRealmBrowserSecurityHeaders(ctx context.Cont
 		"accessTokenLifespan":    43200, // 12 hours
 		"ssoSessionIdleTimeout":  43200, // 12 hours
 		"ssoSessionMaxLifespan":  43200, // 12 hours
+		// Every realm that can render a login screen renders Gentian's, so a user
+		// sent to the IdP sees the portal's own card rather than stock Keycloak.
+		// Set here rather than per realm-creation path because the kernel realm has
+		// no such path — it is bootstrapped once at install.
+		"loginTheme": GentianLoginTheme,
 	}
 	_, err = c.doAdminExpect(ctx, token, http.MethodPut, "/admin/realms/"+url.PathEscape(realm), body, http.StatusNoContent, http.StatusOK)
 	return err
@@ -270,6 +282,26 @@ func (c *KeycloakAdminClient) findGroupID(ctx context.Context, realm, groupName 
 	return "", nil
 }
 
+// mergeGroupAttributes returns the group's current attributes with updates
+// applied over them. Keys not named in updates are carried through unchanged.
+func (c *KeycloakAdminClient) mergeGroupAttributes(
+	ctx context.Context, token, realm, groupID string, updates map[string][]string,
+) (map[string][]string, error) {
+	var current keycloakGroupRecord
+	path := fmt.Sprintf("/admin/realms/%s/groups/%s", url.PathEscape(realm), url.PathEscape(groupID))
+	if err := c.getAdminJSON(ctx, token, path, &current); err != nil {
+		return nil, fmt.Errorf("keycloak get group %s: %w", groupID, err)
+	}
+	merged := make(map[string][]string, len(current.Attributes)+len(updates))
+	for k, v := range current.Attributes {
+		merged[k] = v
+	}
+	for k, v := range updates {
+		merged[k] = v
+	}
+	return merged, nil
+}
+
 func (c *KeycloakAdminClient) adminToken(ctx context.Context) (string, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -320,7 +352,6 @@ func (c *KeycloakAdminClient) doAdmin(ctx context.Context, token, method, path s
 		if err != nil {
 			return 0, err
 		}
-		fmt.Printf("DEBUG: doAdmin method=%s path=%s payload=%s\n", method, path, string(payload))
 	}
 	req, err := c.newAdminRequest(ctx, token, method, path, payload)
 	if err != nil {
@@ -378,9 +409,19 @@ func (c *KeycloakAdminClient) EnsureGroup(ctx context.Context, realm, groupName 
 			if err != nil {
 				return "", err
 			}
+			// Merge, because Keycloak's group update replaces the attribute map
+			// wholesale and this is not its only writer. The tenant identity Job
+			// writes the keys an AppProfile declares, the App Store writes the
+			// default-grant marker, and an administrator sets others by hand in
+			// the console. Sending only our own keys deleted everyone else's on
+			// every pass.
+			merged, err := c.mergeGroupAttributes(ctx, token, realm, id, attributes)
+			if err != nil {
+				return "", err
+			}
 			body := map[string]any{
 				"name":       groupName,
-				"attributes": attributes,
+				"attributes": merged,
 			}
 			path := fmt.Sprintf("/admin/realms/%s/groups/%s", url.PathEscape(realm), url.PathEscape(id))
 			_, err = c.doAdminExpect(ctx, token, http.MethodPut, path, body, http.StatusNoContent, http.StatusOK)
@@ -427,4 +468,3 @@ func (c *KeycloakAdminClient) AddUserToGroup(ctx context.Context, realm, userID,
 	_, err = c.doAdminExpect(ctx, token, http.MethodPut, path, nil, http.StatusNoContent, http.StatusOK)
 	return err
 }
-

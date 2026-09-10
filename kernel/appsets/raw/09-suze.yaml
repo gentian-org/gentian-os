@@ -35,7 +35,37 @@ spec:
       source:
         repoURL: https://github.com/gentian-org/gentian-os
         targetRevision: develop
-        path: kernel/services/{{.app}}/manifests/{{.env}}
+        path: kernel/services/{{.app}}/manifests
+        helm:
+          # env drives every stage-specific string in the chart, so adding a
+          # stage needs no new directory — the old manifests/<env> layout meant
+          # a missing directory failed as "app path does not exist" with the
+          # Application stuck Unknown and no values ConfigMaps created.
+          parameters:
+            - name: env
+              value: '{{.env}}'
+            # Realm SMTP for keycloak-idp, rewritten from these literals by
+            # kernel/appsets/templates/appsets.yaml — the same mechanism and the
+            # same claim fields Postfix is given in 09-infra-helm.yaml, because
+            # both send through the one relay the cluster declares. openfga is
+            # rendered from this template too and simply does not read them.
+            - name: kernelDomain
+              value: 'kernel.domain.placeholder'
+            - name: relayHost
+              value: 'external.smtp.host.placeholder'
+            - name: relayPort
+              value: 'external.smtp.port.placeholder'
+            - name: relaySsl
+              value: 'external.smtp.ssl.placeholder'
+            - name: relayStarttls
+              value: 'external.smtp.starttls.placeholder'
+            - name: mailServiceMode
+              value: 'mail.service.mode.placeholder'
+          # Only stages that genuinely differ carry a values file; the rest
+          # inherit the chart defaults.
+          valueFiles:
+            - values-{{.env}}.yaml
+          ignoreMissingValueFiles: true
       destination:
         server: https://kubernetes.default.svc
         namespace: platform-kernel

@@ -41,6 +41,58 @@ func tenantHasConditionTrue(tenant *gentianov1alpha1.Tenant, condType string) bo
 	return false
 }
 
+// tenantFoundationConditions are the conditions a Tenant must carry, all True,
+// before it can be Ready: the identity and data-plane stages.
+//
+// Exactly the stages the phase calculation already consults through their
+// RequeueAfter, and deliberately not AppsReady, MailReady or
+// AppPrivilegesReady — finalize logs "tenant ready; apps still converging" and
+// returns their result, so those three are understood to settle after Ready and
+// must not hold it back.
+//
+// Every one of them is set on every path its stage takes, including the
+// not-applicable path, which reports True with a reason saying so:
+// NoStorageRequired, PortalShellReady, "No apps require provisioning". So an
+// absent condition here means the stage has not run, never that it had nothing
+// to do.
+var tenantFoundationConditions = []string{
+	conditionIdentityReady,
+	conditionDatabaseReady,
+	conditionMariaDBReady,
+	conditionStorageReady,
+	conditionCacheReady,
+}
+
+// tenantFoundationNotReady returns the first foundation condition that is absent
+// or not True, or "" when all of them are True.
+//
+// The phase used to be decided by whether any stage asked to be requeued, which
+// is a different question. A Tenant reconciled before its AppProfiles resolve
+// runs the data-plane stage with nothing yet to do, asks for no requeue, and
+// finalizes — so it read Ready while carrying AppsReady=False and with all five
+// of the conditions above never set at all.
+//
+// Absent counts as not ready, and that is the whole point: the conditions were
+// missing rather than False, so a check for "no False condition" would have
+// called that tenant Ready too.
+func tenantFoundationNotReady(tenant *gentianov1alpha1.Tenant) string {
+	for _, want := range tenantFoundationConditions {
+		satisfied := false
+		for i := range tenant.Status.Conditions {
+			c := tenant.Status.Conditions[i]
+			if c.Type != want {
+				continue
+			}
+			satisfied = c.Status == metav1.ConditionTrue
+			break
+		}
+		if !satisfied {
+			return want
+		}
+	}
+	return ""
+}
+
 // aggregateCrossplaneStatus maps XTenant readiness onto Tenant.status.conditions so
 // operators can correlate Tenant Ready with the Crossplane composite graph.
 func (r *TenantReconciler) aggregateCrossplaneStatus(ctx context.Context, tenant *gentianov1alpha1.Tenant) error {

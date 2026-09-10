@@ -23,12 +23,15 @@ import (
 
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
+	runtimeMeta "k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
+	"github.com/gentian-org/gentian-os/internal/kernel/secrets"
+	"sigs.k8s.io/controller-runtime/pkg/log"
 )
 
 func tenantKernelLabelSelector(tenantName string) client.MatchingLabels {
@@ -129,6 +132,23 @@ func (r *TenantReconciler) purgeTenantKernelResources(ctx context.Context, tenan
 
 	selector := tenantKernelLabelSelector(tenant.Name)
 
+	// The tenant's own OpenBao subtree. Only per-app subtrees were purged, so
+	// …/tenants/<t>/admin outlived the tenant — and the admin credential is
+	// seeded write-once, so a tenant recreated under the same name silently
+	// inherited the previous one's login. "Delete it and make it again" did not
+	// do what it looks like it does.
+	//
+	// Reported rather than fatal: OpenBao being unreachable must not strand the
+	// finalizer and with it the Tenant, and the residue is a path, not a
+	// workload. Retain skips this with everything else, which is the policy's
+	// meaning — the data stays.
+	if r.Seeder != nil && r.Seeder.KV() != nil {
+		if err := r.Seeder.KV().DeleteTree(ctx, secrets.TenantPath(tenant.Name)); err != nil {
+			log.FromContext(ctx).Error(err, "could not purge the tenant's OpenBao paths",
+				"tenant", tenant.Name)
+		}
+	}
+
 	if err := r.deleteTenantLabeledDatabaseCRs(ctx, tenant.Name); err != nil {
 		return err
 	}
@@ -140,6 +160,28 @@ func (r *TenantReconciler) purgeTenantKernelResources(ctx context.Context, tenan
 	for i := range secList.Items {
 		if err := r.Delete(ctx, &secList.Items[i]); client.IgnoreNotFound(err) != nil {
 			return fmt.Errorf("delete Secret %s: %w", secList.Items[i].Name, err)
+		}
+	}
+
+	// The tenant's edge DNSEndpoint, so its records leave the zone with it —
+	// external-dns's policy: sync deletes what its source object stops
+	// declaring. Listed by the same label pair as everything else here; absent
+	// (static-ip, or no external-dns) the list is simply empty.
+	depList := &unstructured.UnstructuredList{}
+	depList.SetGroupVersionKind(schema.GroupVersionKind{
+		Group:   dnsEndpointGVK.Group,
+		Version: dnsEndpointGVK.Version,
+		Kind:    dnsEndpointGVK.Kind + "List",
+	})
+	if err := r.List(ctx, depList, selector); err != nil {
+		// A cluster without the CRD cannot list it; that is not residue.
+		if !runtimeMeta.IsNoMatchError(err) {
+			return fmt.Errorf("list DNSEndpoints for tenant %s: %w", tenant.Name, err)
+		}
+	}
+	for i := range depList.Items {
+		if err := r.Delete(ctx, &depList.Items[i]); client.IgnoreNotFound(err) != nil {
+			return fmt.Errorf("delete DNSEndpoint %s: %w", depList.Items[i].GetName(), err)
 		}
 	}
 

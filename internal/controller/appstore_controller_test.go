@@ -22,6 +22,7 @@ import (
 	"testing"
 	"time"
 
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
@@ -38,7 +39,7 @@ func makeProfile(name string) *gentianov1alpha1.AppProfile {
 		ObjectMeta: metav1.ObjectMeta{Name: name},
 		Spec: gentianov1alpha1.AppProfileSpec{
 			DisplayName:      name,
-			DeploymentMethod: gentianov1alpha1.DeploymentMethodArgoCD,
+			DeploymentMethod: gentianov1alpha1.DeploymentMethodCrossplane,
 			Chart: gentianov1alpha1.ChartRef{
 				Repository: "oci://charts.example.com",
 				Name:       name,
@@ -172,7 +173,6 @@ func TestAppCatalogue_InstalledCountUpdatesOnTenantChange(t *testing.T) {
 		Spec: gentianov1alpha1.TenantSpec{
 			DisplayName: "Catalogue Install Tenant",
 			Domain:      "cat-install.example.com",
-			AdminEmail:  "admin@cat-install.example.com",
 			Apps:        []gentianov1alpha1.TenantApp{{Profile: "cat-installable"}},
 		},
 	}
@@ -198,14 +198,21 @@ func TestAppCatalogue_InstalledCountUpdatesOnTenantChange(t *testing.T) {
 		t.Fatalf("InstalledCount did not reach 1: %v", err)
 	}
 
-	// Re-fetch before update to get the latest resourceVersion (avoid conflict).
-	if err := testClient.Get(ctx, types.NamespacedName{Name: tenant.Name}, tenant); err != nil {
-		t.Fatalf("re-fetch tenant: %v", err)
-	}
-	// Remove all apps from the tenant (simulate uninstall).
-	tenant.Spec.Apps = nil
-	if err := testClient.Update(ctx, tenant); err != nil {
-		t.Fatalf("update tenant: %v", err)
+	// Remove all apps from the tenant (simulate uninstall). Retry on conflict:
+	// a single re-fetch is not enough, because the tenant reconciler is running
+	// and may write to the tenant between our Get and Update.
+	for {
+		if err := testClient.Get(ctx, types.NamespacedName{Name: tenant.Name}, tenant); err != nil {
+			t.Fatalf("re-fetch tenant: %v", err)
+		}
+		tenant.Spec.Apps = nil
+		if err := testClient.Update(ctx, tenant); err != nil {
+			if apierrors.IsConflict(err) {
+				continue
+			}
+			t.Fatalf("update tenant: %v", err)
+		}
+		break
 	}
 
 	// Wait until InstalledCount == 0.
@@ -250,7 +257,6 @@ func TestTenantValidator_MaxAppsExceeded(t *testing.T) {
 		Spec: gentianov1alpha1.TenantSpec{
 			DisplayName: "Validator Max Test",
 			Domain:      "tval.example.com",
-			AdminEmail:  "admin@tval.example.com",
 			Quotas:      &gentianov1alpha1.TenantQuotas{MaxApps: maxApps},
 			Apps: []gentianov1alpha1.TenantApp{
 				{Profile: "tval-a"},
@@ -286,7 +292,6 @@ func TestTenantValidator_MissingAppProfile(t *testing.T) {
 		Spec: gentianov1alpha1.TenantSpec{
 			DisplayName: "Missing Profile Tenant",
 			Domain:      "missing.example.com",
-			AdminEmail:  "admin@missing.example.com",
 			Apps:        []gentianov1alpha1.TenantApp{{Profile: missing}},
 		},
 	}
@@ -316,7 +321,6 @@ func TestAppCatalogue_MultipleTenantsInstalledCount(t *testing.T) {
 			Spec: gentianov1alpha1.TenantSpec{
 				DisplayName: fmt.Sprintf("Multi Tenant %d", i),
 				Domain:      fmt.Sprintf("multi%d.example.com", i),
-				AdminEmail:  fmt.Sprintf("admin@multi%d.example.com", i),
 				Quotas: &gentianov1alpha1.TenantQuotas{
 					MaxApps: 5,
 					Storage: &quota,

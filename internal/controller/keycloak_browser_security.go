@@ -20,39 +20,15 @@ import (
 	"context"
 	"fmt"
 
-	batchv1 "k8s.io/api/batch/v1"
-	"k8s.io/apimachinery/pkg/api/errors"
-	"sigs.k8s.io/controller-runtime/pkg/log"
-
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 	"github.com/gentian-org/gentian-os/internal/authz"
 )
-
-func kernelBrowserSecurityJobName() string {
-	return "keycloak-browser-security-kernel"
-}
-
-func tenantBrowserSecurityJobName(tenantName string) string {
-	return fmt.Sprintf("keycloak-browser-security-%s", tenantName)
-}
-
-func (r *TenantReconciler) deleteLegacyBrowserSecurityJobs(ctx context.Context, names ...string) {
-	logger := log.FromContext(ctx)
-	for _, name := range names {
-		job := &batchv1.Job{}
-		job.Name = name
-		job.Namespace = kernelNamespace
-		if err := r.Delete(ctx, job); err != nil && !errors.IsNotFound(err) {
-			logger.Error(err, "delete legacy browser security job", "job", name)
-		}
-	}
-}
 
 func (r *TenantReconciler) ensureRealmBrowserSecurityHeaders(ctx context.Context, realm string) error {
 	if realm == "" {
 		return nil
 	}
-	kcURL, kcUser, kcPass, err := r.loadKeycloakAdmin(ctx)
+	kcURL, kcUser, kcPass, err := loadKeycloakAdmin(ctx, r.Client)
 	if err != nil {
 		return fmt.Errorf("load keycloak-admin for browser security headers: %w", err)
 	}
@@ -73,10 +49,14 @@ func (r *TenantReconciler) ensureKeycloakBrowserSecurityHeaders(ctx context.Cont
 	if err := r.ensureRealmBrowserSecurityHeaders(ctx, kernelRealm); err != nil {
 		return err
 	}
-	if err := r.ensureRealmBrowserSecurityHeaders(ctx, keycloakRealmName(tenant)); err != nil {
-		return err
-	}
+	// Not the tenant realm. tenant-default composes a Realm that declares the
+	// same browser security headers, and the same twelve-hour session and token
+	// lifespans and login theme this function used to write alongside them.
+	//
+	// The kernel realm above stays, and has to: no XTenant exists for it, so no
+	// Composition covers it. It is bootstrapped once at install and this is the
+	// only thing that maintains it.
 
-	r.deleteLegacyBrowserSecurityJobs(ctx, kernelBrowserSecurityJobName(), tenantBrowserSecurityJobName(tenant.Name))
+	r.deleteRetiredJobs(ctx, kernelBrowserSecurityJobName(), tenantBrowserSecurityJobName(tenant.Name))
 	return nil
 }

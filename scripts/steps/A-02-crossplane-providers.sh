@@ -1,0 +1,136 @@
+#!/usr/bin/env bash
+# step: A-02-crossplane-providers
+# phase: control-plane
+# requires: A-01-crossplane
+# provides: provider-kubernetes, provider-helm, provider-vault, XRDs, Compositions
+# mutates: Crossplane Provider/ProviderConfig objects, gentianos.io XRDs
+# pins: crossplane
+
+check() {
+    local p
+    for p in provider-kubernetes provider-helm provider-vault; do
+        kubectl get provider.pkg.crossplane.io "$p" >/dev/null 2>&1 || return 1
+    done
+
+    # The ProviderConfig objects themselves, not just the provider packages.
+    # destroy() below deletes exactly these three, and a purge that reaches
+    # this step's destroy() but not a later apply() (or an install run before
+    # this fix existed) leaves the packages Healthy with no ProviderConfig for
+    # any of them to use — every managed resource in the Cluster XR then fails
+    # with "referenced ProviderConfig ... not found", and this step reports
+    # satisfied the whole time because nothing here ever looked.
+    # Present-and-Terminating counts as missing. A purge can leave a
+    # ProviderConfig carrying a pending deletion (in-use.crossplane.io
+    # finalizers held by its Releases outlive the purge), and `kubectl get`
+    # answers fine for such an object right up until it vanishes. Reporting
+    # satisfied over one skips the apply whose whole job is to wait that
+    # death out and re-create cleanly (see install_crossplane_providers).
+    local pc
+    for pc in providerconfig.kubernetes.crossplane.io/kubernetes \
+              providerconfig.helm.crossplane.io/kubernetes \
+              providerconfig.vault.upbound.io/openbao; do
+        kubectl get "${pc}" >/dev/null 2>&1 || return 1
+        [[ -z "$(kubectl get "${pc}" -o jsonpath='{.metadata.deletionTimestamp}' 2>/dev/null)" ]] || return 1
+    done
+
+    # Every XRD in the repo, not just xclusters. Testing one of six let a
+    # cluster missing xsuze and xinfradata — the XRDs that compose Keycloak,
+    # OpenFGA and the infra databases — report satisfied, so the step that
+    # would have restored them was skipped and the failure surfaced four
+    # phases later as a missing Keycloak Service.
+    local f name
+    for f in "${SCRIPT_DIR}"/crossplane/xrds/*.yaml; do
+        [[ -f "${f}" ]] || continue
+        name="$(awk '/^  name:/{print $2; exit}' "${f}")"
+        [[ -n "${name}" ]] || continue
+        kubectl get xrd "${name}" >/dev/null 2>&1 || return 1
+    done
+
+    # Compositions too — they are half this step's `provides:`, and an XRD with
+    # no Composition admits claims it can never satisfy.
+    for f in "${SCRIPT_DIR}"/crossplane/compositions/*.yaml; do
+        [[ -f "${f}" ]] || continue
+        name="$(awk '/^  name:/{print $2; exit}' "${f}")"
+        [[ -n "${name}" ]] || continue
+        kubectl get composition "${name}" >/dev/null 2>&1 || return 1
+    done
+    return 0
+}
+
+# _argocd_owns_crossplane_platform — have the XRD/Composition Applications been
+# created yet?
+#
+# kernel/appsets/raw/03-crossplane-platform.yaml defines these two over
+# crossplane/xrds and crossplane/compositions with prune and selfHeal, which makes
+# Git the authority for both directories from the moment they exist.
+_argocd_owns_crossplane_platform() {
+    local a
+    for a in crossplane-xrds crossplane-compositions; do
+        kubectl get application "${a}" -n argocd >/dev/null 2>&1 || return 1
+    done
+    return 0
+}
+
+apply() {
+    # Providers stay unconditional: they are this step's own `provides:` and no
+    # Application manages them.
+    install_crossplane_providers
+
+    # XRDs and Compositions are applied from the local working tree ONLY before
+    # Argo CD is managing them.
+    #
+    # Once crossplane-xrds and crossplane-compositions exist, Git is the authority
+    # and this would apply whatever happens to be checked out over what Git says —
+    # then selfHeal reverts it, and a re-run does it again. That is how a cluster
+    # ends up matching the last person's working tree rather than any commit, and
+    # it is the same double-writer shape that kept gentian-appsets OutOfSync.
+    #
+    # Deliberately no kubectl-triggered refresh here: if Argo CD owns them and has
+    # not delivered them, check() stays unsatisfied and the driver reports THIS
+    # step — which is the honest signal — rather than the installer papering over a
+    # sync that is not happening.
+    if _argocd_owns_crossplane_platform; then
+        info "Argo CD owns crossplane/xrds and crossplane/compositions" \
+             "(Applications crossplane-xrds, crossplane-compositions) — not applying from the local tree."
+        return 0
+    fi
+
+    # Bootstrap only. install_crossplane_providers applies a *named* subset of
+    # compositions (cluster-default, the app set, tenant-default). This globs the
+    # whole directory, so a composition added to the repo is picked up without being
+    # added to a second list. Keeping two lists in step by hand is what made a
+    # separate update path necessary before this step converged. Re-applying the
+    # named ones is idempotent.
+    apply_crossplane_platform_compositions_update
+}
+
+destroy() {
+    _delete_provider_config "providerconfig.kubernetes.crossplane.io/kubernetes" "provider-kubernetes/kubernetes" || true
+    _delete_provider_config "providerconfig.helm.crossplane.io/kubernetes"       "provider-helm/kubernetes" || true
+    _delete_provider_config "providerconfig.vault.upbound.io/openbao"            "provider-vault/openbao" || true
+
+    local p
+    for p in provider-kubernetes provider-helm provider-vault; do
+        kubectl delete provider.pkg.crossplane.io "$p" --ignore-not-found=true --timeout=60s 2>/dev/null || true
+    done
+
+    # The bindings that grant each provider its RBAC — cluster-admin for
+    # provider-helm and provider-vault, the scoped gentian-provider-kubernetes
+    # role for provider-kubernetes. Crossplane's package manager
+    # garbage-collects them only while it is running, and it is gone by the
+    # time A-01 finishes — so they outlive the providers they belong to, still
+    # naming a ServiceAccount any later workload could occupy.
+    kubectl delete clusterrolebinding \
+        crossplane-provider-helm-admin \
+        crossplane-provider-kubernetes-admin \
+        crossplane-provider-kubernetes-scoped \
+        crossplane-provider-vault-admin \
+        --ignore-not-found=true --wait=false 2>/dev/null || true
+
+    # The scoped role itself. Only provider-kubernetes has one of these; helm
+    # and vault bind the built-in cluster-admin, which teardown does not own.
+    kubectl delete clusterrole gentian-provider-kubernetes \
+        --ignore-not-found=true --wait=false 2>/dev/null || true
+
+    _delete_crossplane_crds || true
+}

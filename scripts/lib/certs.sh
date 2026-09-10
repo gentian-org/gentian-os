@@ -14,7 +14,7 @@ install_cert_manager() {
         return
     fi
 
-    banner "Step 2 — Installing cert-manager"
+    banner "Installing cert-manager"
 
     if helm status cert-manager -n cert-manager &>/dev/null; then
         # Existing Helm release may have been created by a previous install.sh run.
@@ -57,19 +57,21 @@ install_cert_manager() {
         warn "Proceeding with Helm install while reusing existing CRDs."
     fi
 
-    helm repo add jetstack https://charts.jetstack.io --force-update
-    helm repo update
+    helm repo add jetstack "$(gentian_pin cert-manager repo)" --force-update
+    helm repo update jetstack
     if [[ "${has_existing_crds}" == "1" ]]; then
         # Existing CRDs may come from distro addons or prior non-Helm installs;
         # do not ask Helm to import/manage them.
-        helm upgrade --install cert-manager jetstack/cert-manager \
+        _helm_retry upgrade --install cert-manager jetstack/cert-manager \
             -n cert-manager \
+            --version "$(gentian_pin cert-manager chart)" \
             --create-namespace \
             --set crds.enabled=false \
             --wait --timeout 5m
     else
-        helm upgrade --install cert-manager jetstack/cert-manager \
+        _helm_retry upgrade --install cert-manager jetstack/cert-manager \
             -n cert-manager \
+            --version "$(gentian_pin cert-manager chart)" \
             --create-namespace \
             --set crds.enabled=true \
             --wait --timeout 5m
@@ -81,25 +83,86 @@ install_cert_manager() {
     success "cert-manager installed."
 }
 
+# The zone's host. Cloudflare stays the default so a cluster that never named
+# one installs exactly as it did before; every other value is an entry in
+# kernel/platforms.yaml.
+gentian_dns_provider() { echo "${DNS_PROVIDER:-cloudflare}"; }
+
 # ACME_ENV: production (default) or staging (Let's Encrypt staging API).
 # Staging avoids production rate limits; certs are not browser-trusted.
+#
+# The provider is part of the name because the issuers are per-provider: a
+# cluster that switches from Cloudflare to Route 53 gets a new issuer rather
+# than one whose solver changed underneath the Certificates pointing at it.
 gentian_dns01_cluster_issuer_name() {
+    local provider; provider="$(gentian_dns_provider)"
     if [[ "${ACME_ENV:-production}" == "staging" ]]; then
-        echo "letsencrypt-staging-dns01-cloudflare"
+        echo "letsencrypt-staging-dns01-${provider}"
     else
-        echo "letsencrypt-dns01-cloudflare"
+        echo "letsencrypt-dns01-${provider}"
     fi
+}
+
+# The DNS provider's Secret name and OpenBao path, read from the same table the
+# charts render from. yq rather than a shell copy of the mapping: a second copy
+# is how the issuer and the credential come to disagree about a Secret name.
+gentian_dns_credential_secret_name() {
+    yq_get ".dnsProviders.$(gentian_dns_provider).credential.secretName" \
+        "$(gentian_platforms_values)" 2>/dev/null || true
+}
+
+gentian_dns_credential_vault_path() {
+    yq_get ".dnsProviders.$(gentian_dns_provider).credential.vaultPath" \
+        "$(gentian_platforms_values)" 2>/dev/null || true
+}
+
+# Whether this cluster has been given the credential its DNS provider needs.
+#
+# OpenBao is the record, because that is where every other consumer reads it
+# from — the ESO ClusterSecretStore, the credential manager, external-dns.
+# Asking the installer's own environment instead is what tied the wildcard to
+# CF_API_TOKEN being exported in the shell that happened to run the install.
+gentian_dns_credential_present() {
+    local path; path="$(gentian_dns_credential_vault_path)"
+    [[ -n "${path}" && "${path}" != "null" ]] || return 1
+    [[ -n "${BAO_TOKEN:-}" ]] || return 1
+    bao kv get -mount=secret "${path}" >/dev/null 2>&1
+}
+
+# gentian_platforms_values — the table both charts are rendered against.
+gentian_platforms_values() { echo "${SCRIPT_DIR}/kernel/platforms.yaml"; }
+
+# gentian_set_args_from_pairs <prefix> <k=v,k=v> — helm --set-string arguments
+# from the flattened maps the claim reader produces.
+#
+# One parser, three callers: platformParams, dnsParams and the free-form
+# lbAnnotations all arrive in the same shape, and each having its own loop is
+# how the third one came to skip the malformed-entry warning.
+gentian_set_args_from_pairs() {
+    local prefix="$1" pairs="${2:-}" pair
+    while IFS= read -r pair; do
+        [[ -z "${pair}" ]] && continue
+        if [[ "${pair}" != *=* ]]; then
+            warn "Ignoring malformed ${prefix} entry: ${pair}"
+            continue
+        fi
+        printf -- '--set-string\n%s.%s=%s\n' "${prefix}" "${pair%%=*}" "${pair#*=}"
+    done < <(printf '%s\n' "${pairs}" | tr ',' '\n')
 }
 
 gentian_cluster_issuers_manifest() {
-    if [[ "${ACME_ENV:-production}" == "staging" ]]; then
-        echo "${SCRIPT_DIR}/kernel/manifests/cert-manager/cluster-issuers-staging.yaml"
-    else
-        echo "${SCRIPT_DIR}/kernel/manifests/cert-manager/cluster-issuers.yaml"
-    fi
+    case "${ACME_ENV:-production}" in
+        staging) echo "cluster-issuers-staging.yaml" ;;
+        # Both issuers in one apply — kernel services can stay on production
+        # while a dev-stage tenant profile points elsewhere (tenantDNS01ClusterIssuer)
+        # at the staging one, without a second install.sh run.
+        both)    printf '%s\n' "cluster-issuers.yaml" "cluster-issuers-staging.yaml" ;;
+        *)       echo "cluster-issuers.yaml" ;;
+    esac
 }
 
-# Apply (or refresh) kernel ClusterIssuers. Safe to re-run (update.sh --acme-issuers).
+# Apply (or refresh) kernel ClusterIssuers. Safe to re-run
+# (./install.sh --step A-06-cluster-issuers).
 apply_gentian_cluster_issuers() {
     if [[ -z "${KERNEL_DOMAIN:-}" ]]; then
         warn "KERNEL_DOMAIN unset: skipping ClusterIssuers."
@@ -107,12 +170,12 @@ apply_gentian_cluster_issuers() {
     fi
 
     : "${LETSENCRYPT_EMAIL:=admin@${KERNEL_DOMAIN}}"
-    : "${KERNEL_PUBLIC_GATEWAY_NAMESPACE:=${SERVICES_NS:-gentian-${ENV:-dev}}}"
+    : "${KERNEL_PUBLIC_GATEWAY_NAMESPACE:=$(gentian_services_namespace)}"
     : "${KERNEL_PUBLIC_GATEWAY_NAME:=kernel-public-gateway}"
     export LETSENCRYPT_EMAIL KERNEL_DOMAIN KERNEL_PUBLIC_GATEWAY_NAMESPACE KERNEL_PUBLIC_GATEWAY_NAME
 
-    if ! command -v envsubst &>/dev/null; then
-        error "envsubst not found (install gettext-base). Aborting."
+    if ! command -v helm &>/dev/null; then
+        error "helm not found. Aborting."
         exit 1
     fi
 
@@ -136,8 +199,26 @@ apply_gentian_cluster_issuers() {
         info "ACME_ENV=staging: using Let's Encrypt staging (untrusted certs, separate rate limits)."
     fi
 
-    envsubst "\${LETSENCRYPT_EMAIL} \${KERNEL_PUBLIC_GATEWAY_NAMESPACE} \${KERNEL_PUBLIC_GATEWAY_NAME}" \
-        < "$(gentian_cluster_issuers_manifest)" \
+    local dns_args=()
+    while IFS= read -r arg; do dns_args+=("${arg}"); done \
+        < <(gentian_set_args_from_pairs dnsParams "${DNS_PARAMS:-}")
+
+    # -s may be repeated: ACME_ENV=both selects both issuer templates, rendered
+    # (and applied) together in this one invocation.
+    local show_args=()
+    while IFS= read -r manifest; do
+        show_args+=(-s "templates/${manifest}")
+    done < <(gentian_cluster_issuers_manifest)
+
+    helm template gentian-cert-manager "${SCRIPT_DIR}/kernel/manifests/cert-manager/chart" \
+        -f "$(gentian_platforms_values)" \
+        "${show_args[@]}" \
+        --set-string letsencryptEmail="${LETSENCRYPT_EMAIL}" \
+        --set-string kernelDomain="${KERNEL_DOMAIN}" \
+        --set-string gatewayNamespace="${KERNEL_PUBLIC_GATEWAY_NAMESPACE}" \
+        --set-string gatewayName="${KERNEL_PUBLIC_GATEWAY_NAME}" \
+        --set-string dnsProvider="$(gentian_dns_provider)" \
+        "${dns_args[@]+"${dns_args[@]}"}" \
         | kubectl apply -f -
 }
 
@@ -154,7 +235,7 @@ apply_gentian_cluster_issuers() {
 #
 # Call this only once cloudflare-api-token is known to exist (right after
 # install_kernel_wildcard creates it, or any time as a day-2 fix via
-# update.sh --acme-issuers) — calling it before the Secret exists just
+# ./install.sh --step A-06-cluster-issuers) — calling it before the Secret exists just
 # re-confirms NotReady and wastes the wait.
 force_reconcile_dns01_cluster_issuer() {
     local issuer
@@ -192,7 +273,7 @@ install_kernel_cert_resources() {
         return
     fi
 
-    banner "Step 2b — Installing kernel cert-manager ClusterIssuers"
+    banner "Installing kernel cert-manager ClusterIssuers"
 
     if ! kubectl get deploy cert-manager-webhook -n "${CERT_MANAGER_NAMESPACE:-cert-manager}" &>/dev/null; then
         local detected_ns=""
@@ -220,10 +301,13 @@ install_kernel_cert_resources() {
         || warn "cert-manager-webhook not Ready within 180s (continuing)."
 
     apply_gentian_cluster_issuers
-    if [[ "${ACME_ENV:-production}" == "staging" ]]; then
-        success "ClusterIssuers letsencrypt-staging-http01 and letsencrypt-staging-dns01-cloudflare applied."
+    local http01_name="letsencrypt-http01"
+    [[ "${ACME_ENV:-production}" == "staging" ]] && http01_name="letsencrypt-staging-http01"
+    if [[ "$(gentian_dns_provider)" == "none" ]]; then
+        success "ClusterIssuer ${http01_name} applied."
+        info "  No DNS provider: this cluster issues per-host certificates, not wildcards."
     else
-        success "ClusterIssuers letsencrypt-http01 and letsencrypt-dns01-cloudflare applied."
+        success "ClusterIssuers ${http01_name} and $(gentian_dns01_cluster_issuer_name) applied."
     fi
 }
 
@@ -243,7 +327,7 @@ install_envoy_gateway() {
         exit 1
     fi
 
-    banner "Step 2c — Installing Envoy Gateway and Gateway API CRDs"
+    banner "Installing Envoy Gateway and Gateway API CRDs"
 
     local ns="${ENVOY_GATEWAY_NAMESPACE}"
     local chart_version="${ENVOY_GATEWAY_CHART_VERSION}"
@@ -256,7 +340,7 @@ install_envoy_gateway() {
         success "Envoy Gateway Helm release already present in ${ns}."
     else
         info "Installing Envoy Gateway ${chart_version} (service type ${svc_type})..."
-        helm upgrade --install eg oci://docker.io/envoyproxy/gateway-helm \
+        _helm_retry upgrade --install eg "$(gentian_pin envoy-gateway repo)" \
             --version "${chart_version}" \
             -n "${ns}" \
             --create-namespace \
@@ -293,16 +377,55 @@ install_envoy_gateway() {
     _pin_static_ip_edge_address
 }
 
-gentian_envoyproxy_static_ip_manifest() {
-    echo "${SCRIPT_DIR}/kernel/manifests/gateway/envoyproxy-static-ip.yaml.tmpl"
+
+# =============================================================================
+# Edge address, per provider
+#
+# Claiming a specific address for a LoadBalancer Service is not portable: every
+# provider spells it differently, and AWS NLBs refuse the portable field
+# outright. The presets live in kernel/manifests/gateway/chart, keyed on
+# lbProvider, with lbAnnotations as the free-form escape hatch — so a new
+# provider is a values entry rather than a code change.
+#
+# Only the detection is here, because it reads the cluster and a template
+# cannot. NETWORK_MODE=tunnel never reaches this: the Service stays ClusterIP.
+# =============================================================================
+
+# The platform this cluster runs on, when the operator has not said.
+#
+# PLATFORM decides which entry of kernel/platforms.yaml is applied, and it is
+# absent from most claims — so the common case is unset, no preset is emitted,
+# and an OpenStack cluster gets a LoadBalancer with no health monitor. That
+# failure is silent and intermittent (see the openstack entry), which is the
+# worst combination to leave behind a setting somebody has to know to write.
+#
+# Nodes carry the answer already: spec.providerID is "<cloud>://...". Detection
+# only fills a value the operator did not give, so an explicit PLATFORM always
+# wins — including PLATFORM="" to opt out deliberately.
+#
+# Infomaniak is not detectable: its Public Cloud is OpenStack and its nodes say
+# so, which is the right answer for the load balancer either way. A cluster that
+# wants the name on its claim writes it there.
+_detect_platform() {
+    local pid
+    pid="$(kubectl get nodes -o jsonpath='{.items[0].spec.providerID}' 2>/dev/null || true)"
+    case "${pid}" in
+        openstack://*) echo openstack ;;
+        aws://*)       echo aws ;;
+        gce://*)       echo gcp ;;
+        azure://*)     echo azure ;;
+        hcloud://*)    echo hetzner ;;
+        *)             echo "" ;;
+    esac
 }
+
 
 # Pin the Envoy data-plane LoadBalancer to NODE_IP (NETWORK_MODE=static-ip only).
 #
 # Without this the cloud controller allocates an arbitrary public IP for the
 # Envoy Service, so NODE_IP — which is what DNS and gentian-cluster-config point
 # at — never matches the address traffic actually arrives on. See
-# kernel/manifests/gateway/envoyproxy-static-ip.yaml.tmpl for the full rationale.
+# kernel/manifests/gateway/chart for the full rationale.
 #
 # Must run before the operator creates kernel-public-gateway: loadBalancerIP is
 # honoured at Service creation only, never on update.
@@ -313,32 +436,59 @@ _pin_static_ip_edge_address() {
     local gw_name="${KERNEL_PUBLIC_GATEWAY_NAME:-kernel-public-gateway}"
     local gw_class="${GENTIAN_GATEWAY_CLASS_NAME:-gentian-envoy}"
 
-    if [[ -z "${NODE_IP:-}" ]]; then
-        warn "NETWORK_MODE=static-ip but NODE_IP is empty; skipping edge address pin."
-        warn "  The cloud provider will allocate an arbitrary LoadBalancer IP."
-        return 0
+    # Detection first, and unconditionally.
+    #
+    # This used to return early when NODE_IP was empty, which read as "no
+    # address to pin, nothing to do" — but the EnvoyProxy it renders carries the
+    # whole platform profile, not only an address. Hetzner's load balancer has
+    # to be placed and stays Pending without its location annotation, and AWS
+    # needs its target-type and scheme whether or not an Elastic IP is attached.
+    # So a cluster that let its cloud allocate the address got no preset at all,
+    # and the failure surfaced as a Service that never gets one.
+    #
+    # Detection stays here — it reads the cluster, which a template cannot — and
+    # the answer is passed in. The presets themselves are in the chart, where
+    # the indentation is the template's problem rather than a shell function's
+    # guess about a context it cannot see.
+    if [[ -z "${PLATFORM+x}" ]]; then
+        PLATFORM="$(_detect_platform)"
+        [[ -n "${PLATFORM}" ]] &&
+            info "  Detected PLATFORM=${PLATFORM} from node providerID."
     fi
 
-    if ! command -v envsubst &>/dev/null; then
-        error "envsubst not found (install gettext-base). Aborting."
-        exit 1
+    if [[ -n "${NODE_IP:-}" || -n "${EDGE_ADDRESS_REF:-}" ]]; then
+        # loadBalancerIP is create-time only, so pinning an already-provisioned
+        # data plane silently does nothing. Say so rather than reporting success
+        # — the profile below is still applied, because annotations, unlike the
+        # address, are honoured on update.
+        if kubectl get svc -n "${ns}" \
+            -l "gateway.envoyproxy.io/owning-gateway-name=${gw_name}" \
+            -o name 2>/dev/null | grep -q .; then
+            warn "Envoy data-plane Service already exists; its address applies at creation only."
+            warn "  Its current address stands. To re-pin, delete Gateway ${gw_name}"
+            warn "  (and its Service) and re-run install.sh."
+        else
+            local _addr="${NODE_IP}"
+            [[ -n "${_addr}" ]] || _addr="${EDGE_ADDRESS_REF}"
+            info "Pinning Envoy data-plane LoadBalancer to ${_addr}..."
+        fi
+    else
+        info "No NODE_IP or addressRef; the platform will allocate an edge address."
     fi
 
-    # loadBalancerIP is create-time only, so pinning an already-provisioned data
-    # plane would silently do nothing. Say so rather than reporting success.
-    if kubectl get svc -n "${ns}" \
-        -l "gateway.envoyproxy.io/owning-gateway-name=${gw_name}" \
-        -o name 2>/dev/null | grep -q .; then
-        warn "Envoy data-plane Service already exists; loadBalancerIP applies at creation only."
-        warn "  Its current address stands. To re-pin to ${NODE_IP}, delete Gateway"
-        warn "  ${gw_name} (and its Service) and re-run install.sh."
-        return 0
-    fi
+    local extra=()
+    while IFS= read -r arg; do extra+=("${arg}"); done < <(
+        gentian_set_args_from_pairs extraAnnotations "${LB_ANNOTATIONS:-}"
+        gentian_set_args_from_pairs platformParams   "${PLATFORM_PARAMS:-}"
+    )
 
-    info "Pinning Envoy data-plane LoadBalancer to NODE_IP=${NODE_IP}..."
-    export ENVOY_GATEWAY_NAMESPACE NODE_IP
-    envsubst "\${ENVOY_GATEWAY_NAMESPACE} \${NODE_IP}" \
-        < "$(gentian_envoyproxy_static_ip_manifest)" \
+    helm template gentian-edge "${SCRIPT_DIR}/kernel/manifests/gateway/chart" \
+        -f "$(gentian_platforms_values)" \
+        --set "namespace=${ns}" \
+        --set-string "nodeIp=${NODE_IP:-}" \
+        --set-string "platform=${PLATFORM:-}" \
+        --set-string "addressRef=${EDGE_ADDRESS_REF:-}" \
+        "${extra[@]+"${extra[@]}"}" \
         | kubectl apply -f -
 
     # Create the GatewayClass here rather than waiting for the operator, so the
@@ -351,19 +501,6 @@ _pin_static_ip_edge_address() {
     success "Envoy data plane pinned to ${NODE_IP} (EnvoyProxy gentian-edge)."
     info "  The floating IP must already exist and be UNASSOCIATED for the"
     info "  cloud controller to adopt it."
-}
-
-# =============================================================================
-# apply_kernel_gateway_overlays — gateway-mode Helm value overlays
-# =============================================================================
-apply_kernel_gateway_overlays() {
-    if [[ "${ROUTING_MODE:-gateway}" != "gateway" ]]; then
-        error "ROUTING_MODE=${ROUTING_MODE} is no longer supported; use ROUTING_MODE=gateway."
-        exit 1
-    fi
-    info "Applying kernel gateway value overlays (ROUTING_MODE=gateway)..."
-    success "Kernel gateway overlays ready."
-    print_gateway_tunnel_hints || true
 }
 
 wait_for_gateway_platform() {
@@ -428,7 +565,7 @@ print_gateway_tunnel_hints() {
     if [[ "${ROUTING_MODE:-gateway}" != "gateway" ]]; then
         return 0
     fi
-    local ns="gentian-${ENV:-dev}"
+    local ns; ns="$(gentian_services_namespace)"
     local envoy_ns="${ENVOY_GATEWAY_NAMESPACE:-envoy-gateway-system}"
     info "Gateway API tunnel wiring (${NETWORK_MODE:-tunnel}):"
     info "  Point Cloudflare Tunnel (or your edge proxy) at the Envoy Gateway data plane Service"
@@ -446,7 +583,7 @@ _reconcile_kernel_https_coredns_hairpin() {
     [[ "${ROUTING_MODE:-gateway}" == "gateway" ]] || return 0
     [[ -n "${KERNEL_DOMAIN:-}" ]] || return 0
 
-    local services_ns="gentian-${ENV:-dev}"
+    local services_ns; services_ns="$(gentian_services_namespace)"
     local envoy_ns="${ENVOY_GATEWAY_NAMESPACE:-envoy-gateway-system}"
     local mail_domain="mail.${KERNEL_DOMAIN}"
     local edge_ip
@@ -529,13 +666,20 @@ install_kernel_wildcard() {
     if [[ -z "${KERNEL_DOMAIN:-}" ]]; then
         return
     fi
-    if [[ -z "${CF_API_TOKEN:-}" ]]; then
-        info "CF_API_TOKEN not set; skipping kernel wildcard Certificate."
-        info "  (Tenant app TLS still requires DNS-01 per-tenant wildcards; configure TENANT_DNS01_CLUSTER_ISSUER on the operator.)"
+    local dns_provider; dns_provider="$(gentian_dns_provider)"
+    if [[ "${dns_provider}" == "none" ]]; then
+        info "No DNS provider for this cluster; skipping the kernel wildcard Certificate."
+        info "  Wildcards need DNS-01. Kernel hostnames are served by per-host"
+        info "  certificates from the HTTP-01 issuer instead."
+        return
+    fi
+    if ! gentian_dns_credential_present; then
+        info "No credential for DNS provider ${dns_provider}; skipping the kernel wildcard Certificate."
+        info "  Supply it to the credential manager and re-run: ./install.sh --only C-01"
         return
     fi
 
-    banner "Step 10c — Installing kernel wildcard Certificate"
+    banner "Installing kernel wildcard Certificate"
 
     : "${LETSENCRYPT_EMAIL:=admin@${KERNEL_DOMAIN}}"
     DNS01_CLUSTER_ISSUER="$(gentian_dns01_cluster_issuer_name)"
@@ -549,21 +693,32 @@ install_kernel_wildcard() {
         info "ClusterSecretStore/openbao missing — applying directly."
         kubectl apply -f "${SCRIPT_DIR}/kernel/services/_globals/eso-cluster-secret-store.yaml"
     fi
-    kubectl apply -f "${SCRIPT_DIR}/kernel/manifests/cert-manager/cloudflare-api-token-externalsecret.yaml"
+    local dns_args=() secret_name
+    while IFS= read -r arg; do dns_args+=("${arg}"); done \
+        < <(gentian_set_args_from_pairs dnsParams "${DNS_PARAMS:-}")
+    secret_name="$(gentian_dns_credential_secret_name)"
+
+    helm template gentian-cert-manager "${SCRIPT_DIR}/kernel/manifests/cert-manager/chart" \
+        -f "$(gentian_platforms_values)" \
+        -s templates/dns-credentials-externalsecret.yaml \
+        --set-string kernelDomain="${KERNEL_DOMAIN}" \
+        --set-string dnsProvider="${dns_provider}" \
+        "${dns_args[@]+"${dns_args[@]}"}" \
+        | kubectl apply -f -
 
     # 2) Wait for the underlying Secret to materialize (ESO refresh).
-    info "Waiting for Secret cert-manager/cloudflare-api-token (max 120s)..."
+    info "Waiting for Secret cert-manager/${secret_name} (max 120s)..."
     local i
     for i in {1..60}; do
-        if kubectl get secret cloudflare-api-token -n cert-manager &>/dev/null; then
-            success "cloudflare-api-token materialized after ${i}x2s."
+        if kubectl get secret "${secret_name}" -n cert-manager &>/dev/null; then
+            success "${secret_name} materialized after ${i}x2s."
             break
         fi
         sleep 2
     done
-    if ! kubectl get secret cloudflare-api-token -n cert-manager &>/dev/null; then
-        warn "cloudflare-api-token did not materialize within 120s; check ExternalSecret status:"
-        warn "  kubectl describe externalsecret cloudflare-api-token -n cert-manager"
+    if ! kubectl get secret "${secret_name}" -n cert-manager &>/dev/null; then
+        warn "${secret_name} did not materialize within 120s; check ExternalSecret status:"
+        warn "  kubectl describe externalsecret ${secret_name} -n cert-manager"
         warn "Continuing — wildcard Certificate will issue once the Secret appears."
     fi
 
@@ -576,8 +731,28 @@ install_kernel_wildcard() {
         || warn "Continuing — wildcard Certificate will issue once the issuer recovers."
 
     # 3) Apply the wildcard Certificate (with domain name templating).
-    envsubst "\${KERNEL_DOMAIN} \${DNS01_CLUSTER_ISSUER}" \
-        < "${SCRIPT_DIR}/kernel/manifests/cert-manager/wildcard-kernel-cert.yaml" \
+    # The same platform values and DNS arguments every other render of this
+    # chart passes, even though this one only wants the wildcard Certificate.
+    #
+    # -s selects what is PRINTED, not what is evaluated: helm renders every
+    # template in the chart and then filters. So dns-credentials-externalsecret
+    # .yaml was evaluated here too, its gentian.dns01.profile guard found no
+    # dnsProviders table — the chart defaults dnsProvider to cloudflare, which
+    # is not "none", so the guard applies — and the render died on
+    # "dnsProviders table is empty: render this chart with -f
+    # kernel/platforms.yaml". Which is exactly what this call was not doing.
+    #
+    # That failure was total and silent: `helm template ... | kubectl apply -f -`
+    # printed its error, applied nothing, and the step went on to announce the
+    # Certificate as applied. So the kernel wildcard Certificate was never
+    # created by this path at all.
+    helm template gentian-cert-manager "${SCRIPT_DIR}/kernel/manifests/cert-manager/chart" \
+        -f "$(gentian_platforms_values)" \
+        -s templates/wildcard-kernel-cert.yaml \
+        --set-string kernelDomain="${KERNEL_DOMAIN}" \
+        --set-string dns01ClusterIssuer="${DNS01_CLUSTER_ISSUER}" \
+        --set-string dnsProvider="${dns_provider}" \
+        "${dns_args[@]+"${dns_args[@]}"}" \
         | kubectl apply -f -
     success "Kernel wildcard Certificate wildcard-kernel applied (cert-manager namespace)."
     info "Issuance status:  kubectl get certificate wildcard-kernel -n cert-manager"
@@ -607,7 +782,24 @@ install_kernel_wildcard() {
         success "Deleted fallback wildcard-dev-tls Certificate CR from ${app_ns}."
     fi
     # Propagate to all namespaces that reference wildcard-tls.
-    for _wc_ns in "${app_ns}" argocd; do
+    #
+    # platform-kernel is the important one and was missing: the kernel Gateway
+    # lives there (the operator creates it in servicesNamespace, whose chart
+    # default is "platform-kernel" — see charts/gentian-os/values.yaml), and its
+    # HTTPS listeners reference the wildcard-tls Secret by name. Without the copy
+    # both listeners sit at ResolvedRefs=False/InvalidCertificateRef, the Gateway
+    # never reaches Programmed, no address is assigned, Envoy never creates the
+    # data-plane LoadBalancer, and the cluster answers nothing at all.
+    #
+    # app_ns ("gentian-<env>") is kept because the shell half of the installer
+    # defaults SERVICES_NAMESPACE there — the two halves disagree about which
+    # namespace is "services", so copy to both rather than pick a side here.
+    local _wc_targets=("${app_ns}" "$(gentian_services_namespace)" argocd)
+    local _wc_seen=""
+    for _wc_ns in "${_wc_targets[@]}"; do
+        [[ " ${_wc_seen} " == *" ${_wc_ns} "* ]] && continue
+        _wc_seen+=" ${_wc_ns}"
+        kubectl get namespace "${_wc_ns}" >/dev/null 2>&1 || continue
         info "Propagating wildcard-tls into namespace ${_wc_ns}..."
         kubectl get secret wildcard-kernel-tls -n cert-manager -o json \
             | python3 -c "
@@ -625,10 +817,10 @@ print(json.dumps(s))
 
     # ACME staging: trust bundle for in-cluster OIDC clients.
     if [[ "${ACME_ENV:-production}" == "staging" ]]; then
-        local staging_ca_script="${SCRIPT_DIR}/scripts/create-staging-ca-secret.sh"
+        local staging_ca_script="${SCRIPT_DIR}/scripts/bootstrap/create-trust-anchor-secret.sh"
         if [[ -x "${staging_ca_script}" ]]; then
-            info "Creating gentian-staging-ca-tls in ${app_ns} (ACME staging)..."
-            "${staging_ca_script}" "${app_ns}" || warn "gentian-staging-ca-tls creation failed (tenant apps may not trust id.${KERNEL_DOMAIN})."
+            info "Creating gentian-trust-anchor-tls in ${app_ns} (ACME staging)..."
+            "${staging_ca_script}" "${app_ns}" || warn "gentian-trust-anchor-tls creation failed (tenant apps may not trust id.${KERNEL_DOMAIN})."
         fi
     fi
 }

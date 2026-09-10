@@ -126,6 +126,52 @@ flowchart TD
 | **Operator** | Seed secrets; drive manifest bridge; patch `XTenant`; wait; shared-kernel side-effects; aggregate `Tenant.status` | Duplicate shell resources or `App` claims (Crossplane creates those) |
 | **Crossplane** | Reconcile `XTenant` + `App` claims into MRs (Jobs, Objects, ESO, `provider-helm` Releases) | Sync Git; interpret `Tenant.spec.apps` without the operator bridge |
 
+**Where the imperative/declarative line falls.** The matrix above says who does what. The rule
+behind it is one question:
+
+> Can the answer be written down before it happens?
+
+If it can, it is a statement about what should exist and **Crossplane owns it** — namespace shell
+and policy via `provider-kubernetes`, realms, clients, users, groups, identity providers and
+authentication flows via `provider-keycloak`, policies via `provider-vault`, charts via
+`provider-helm`. An object already existing is not a reason to keep it imperative: Crossplane adopts
+by `crossplane.io/external-name`, verified against this platform's live Keycloak realm.
+
+If it cannot, **the operator owns it**, and only for four reasons:
+
+1. **Discovery** — enumerating external state and acting per item found. Keycloak's *current* users
+   are in no spec, so a credential minted per user cannot be rendered from one.
+2. **Computation** — producing a value rather than restating one (`rsa.GenerateKey`, `hmac.New`,
+   `argon2.IDKey`). Compositions template; they do not compute.
+3. **Adoption gaps** — where a provider cannot safely take over an object that already exists.
+   `provider-vault`'s jwt `AuthBackend` is the standing example; see
+   `scripts/steps/B-07-openbao-oidc-mount.sh`.
+4. **Change-triggered action** — "restart when this changes" is a moment, not a thing.
+
+Observing Crossplane's work and aggregating it into `Tenant.status` is not a fifth reason; it is the
+operator being a controller. Eighteen `ensure*` steps provision nothing and exist only to wait and
+report.
+
+This is a boundary, not a description of how far a migration got. Where the two disagree, the
+boundary is right and the code has not caught up — a Job that survives is only correct if one of
+the four reasons above names it.
+
+**The same rule applies to installer steps.** `scripts/steps/*` is the same question asked at
+bootstrap time instead of tenant-onboarding time: a step that only applies a manifest belongs in an
+ApplicationSet (Git is where the answer lives), a step that calls a running service's admin API is
+the operator's four reasons above, and a step that only guards or validates stays a step. Two named
+exceptions today:
+
+- The vLLM GPU chart install (`render_and_apply_vllm_gpu_manifest` in `scripts/lib/llm-lib.sh`)
+  reads live GPU device-plugin time-slicing state to decide `manageTimeSlicing` — reasons 1 and 2,
+  discovery and computation. The rule says this is operator territory, not a shell step; it stays
+  imperative because nothing yet reads that state and republishes it somewhere an ApplicationSet's
+  values could reference.
+- The LiteLLM model-registration Job (`ensure_litellm_vllm_model`, same file) POSTs to LiteLLM's
+  admin API to sync registered models with a Tenant's `llm.instances` — reason 4, change-triggered,
+  ArgoCD cannot POST. This one has a solved precedent: `litellm_team.go` does exactly this for
+  LiteLLM Teams. This is migration debt, not a boundary question.
+
 **Why two tools, not one:** ArgoCD's drift detection, UI, and rollback
 work for *every* Kubernetes resource, not just MRs. Crossplane's
 reconcile loop handles the slow, eventually-consistent external APIs
@@ -138,11 +184,11 @@ A full dependency-graph walk for a single `Tenant` claim is in
 ### 3.1 How provisioning works on the cluster today
 
 This section matches a running dev cluster (e.g. kernel domain
-`desk.gentian.org`, a provisioned tenant such as `demo` with Element). It is the
+`platform.example.com`, a provisioned tenant such as `demo` with Element). It is the
 authoritative “today” view; §3’s diagram is the stable mental model.
 
 Fresh installs leave **no tenants** in Git or on the cluster until a cluster
-admin deploys a definition from `clusters/<cluster>/definitions/` into `tenants/`.
+admin deploys a definition from `clusters/<cluster>/definitions/tenants/` into `tenants/`.
 
 **Two planes, one Git truth for tenants**
 
@@ -180,11 +226,11 @@ via `tenant-default`; app Compositions deploy charts via **`provider-helm`
 |---|---|---|
 | **Kernel / shared realm clients** (portal, static integrations) | **`provider-keycloak`** `Client` / scope MRs | `kernel/services/keycloak-config/` |
 | **Per-tenant realms and OIDC clients** | Crossplane **Object Jobs** via manifest bridge (operator wait-only) | `tenant-{name}-provisioning-jobs` → `tenant-default` |
-| **Kernel IdP broker refresh** | Crossplane Object Job via manifest bridge (`keycloak-broker-idp-{tenant}`) | `jobs.json` → `tenant-default` |
+| **Identity brokering** (kernel IdP, tenant IdP, their mappers) | **`provider-keycloak`** `IdentityProvider` / `IdentityProviderMapper` MRs | `tenant-default` |
 
 The platform ships **`app-default`** in `crossplane/compositions/`. Catalogue
 profiles with custom MR graphs set `spec.compositionRef` to a Composition bundled
-in `gentian-apps` or `gentian-pro` (e.g. `app-od-element`). Those compositions
+in their own catalogue repository (e.g. `app-element-pro`). Those compositions
 emit `openidclient.keycloak.crossplane.io/Client` MRs; the operator skips
 duplicate OIDC client Jobs for those apps.
 
@@ -192,6 +238,32 @@ For Keycloak consolidation and other follow-ups see [roadmap.md](roadmap.md).
 
 Placeholder semantics (`${TENANT_DOMAIN}` vs `${KERNEL_DOMAIN}`) are
 documented in [gentian-apps/docs/app-profile-guide.md](../../gentian-apps/docs/app-profile-guide.md) §2.
+
+### 3.2 Diffing: server-side
+
+Argo CD runs with **server-side diff** (`controller.diff.server.side`, set by
+`scripts/lib/argocd.sh`). It asks the API server what a manifest *would* become —
+a dry-run apply — and compares that against the live object, rather than
+comparing the YAML in Git against the live object directly.
+
+The question it answers is therefore "would syncing change anything", not "does
+the file match the object". Fields the platform never wrote are not differences:
+CRD defaults, and the mutations Kyverno applies, appear on both sides and cancel.
+
+This is not a preference. Without it a CRD's own defaults read as drift — an
+`ExternalSecret` declaring a key comes back with five more fields set, a CNPG
+`Cluster` declaring seven comes back with forty-three — and applications sit
+permanently OutOfSync while entirely healthy. The alternative, listing the
+defaulted paths per CRD, covers less after each upstream release without saying
+so.
+
+Two consequences worth knowing:
+
+- **A permanently OutOfSync application is a real finding.** That is the point of
+  removing the false ones.
+- **A mutating webhook rewriting a field is invisible here**, by design, because
+  the dry-run applies the same webhook. If that ever needs auditing, it is a
+  question for the admission side, not for the diff.
 
 ---
 
@@ -363,7 +435,7 @@ Gentian OS sidesteps most browser CORS restrictions by design:
   the app's server, not at a JS `fetch()`.
 - **Cross-origin API calls** that the Gentian shell will make on behalf of the
   browser may be declared in `spec.browserProxy` (see [roadmap.md](roadmap.md)
-  and [gentian-ui/gentian-ui-architecture.md](../../gentian-ui/gentian-ui-architecture.md)):
+  and [gentian-ui/docs/architecture.md](../../gentian-ui/docs/architecture.md)):
   proxy paths under `/api/apps/{name}/…` with forwarded bearer tokens. This is
   not required for apps whose UI only talks to its own origin.
 
@@ -373,16 +445,26 @@ permits it. The gentian-os controller injects this on every edge route it
 creates:
 
 - Envoy `BackendTrafficPolicy` / `HTTPRoute` `ResponseHeaderModifier` filters
-  (see [design/gateway.md](design/gateway.md)).
+  (see [design/routing.md](design/routing.md)).
 
 For standard AppProfile apps (Element, Jitsi, OpenProject, …) it clears upstream
 `X-Frame-Options` and `Content-Security-Policy`, then sets a single
-`frame-ancestors 'self' https://portal.<kernel_domain>` policy — many charts
-only emit `frame-ancestors 'self'`, and **appending** a second CSP header
-leaves both active so browsers still block the portal iframe. Per-tenant portal
-hostnames are not used; tenants authenticate via the kernel portal. Apps with
+`frame-ancestors 'self' https://portal.<kernel_domain>
+https://<tenant-effective-domain> https://*.<tenant-effective-domain>` policy —
+many charts only emit `frame-ancestors 'self'`, and **appending** a second CSP
+header leaves both active so browsers still block the portal iframe. The portal
+answers on the tenant apex as well as `portal.<kernel_domain>`, and the top frame
+is whichever of the two the user signed in on, so both are named. Apps with
 extra edge snippet needs keep those lines; frame-ancestors is still injected on
 each route according to its role.
+
+A route may narrow that list with the
+`gentianos.io/gateway-frame-ancestors` annotation, whose `portal` token resolves
+to the same routed portal hosts (`portalOrigins`) rather than its own list.
+Enumerating them per policy is how document editing broke once already: the
+annotation kept naming only `portal.<kernel_domain>` after the portal gained the
+tenant apex, and the server side gives no sign of it — the browser drops the
+frame after a `200`.
 
 **IdP (`id.<kernel_domain>`) is the inverse case.** Portal-embedded apps (e.g.
 `chat.<tenant>.<kernel>`) load Keycloak OIDC pages inside the app iframe. The
@@ -533,7 +615,7 @@ SASL credentials, per-domain DKIM keys, isolated mailbox paths).
 On the dev cluster today, Postfix (and Dovecot when enabled) run in
 **`gentian-dev`** as helm Releases `postfix-dev` /
 `dovecot-dev` — in-cluster SMTP is
-`postfix-dev.gentian-dev.svc.cluster.local:587`, not
+`postfix-dev.platform-kernel.svc.cluster.local:587`, not
 `postfix.platform-kernel.svc.cluster.local`.
 
 **Install-time vs per-tenant:** `MAIL_SERVICE_MODE` in
@@ -559,7 +641,7 @@ are in [design/mail.md](design/mail.md).
 ## 9b. Collabora (catalogue app)
 
 Collaborative document editing (Collabora) is a **catalogue app**, not a kernel
-service. Profiles in `gentian-apps` (e.g. `nextcloud`, `od-nextcloud`, Collabora
+service. Profiles in `gentian-apps` (e.g. `nextcloud`, `nextcloud-pro`, Collabora
 integration packs) declare the Helm charts and OIDC packs; Crossplane
 `app-default` deploys them into the tenant namespace when listed in
 `Tenant.spec.apps`.
@@ -602,9 +684,9 @@ The update chain is:
    GitHub Actions `docker` job, which builds and pushes a new image to
    `ghcr.io/gentian-org/gentian-os:<branch>` (and a short-SHA tag).
 2. `argocd-image-updater` polls GHCR every two minutes. The
-   **`ImageUpdater` CR** deployed as Source 4 of the `gentian-os`
-   Application tells it which Application to watch and which image to
-   track (`newest-build` strategy).
+   **`ImageUpdater` CR** and the `argocd-image-updater.argoproj.io/*`
+   annotations on the `gentian-os` Application tell it which Application
+   to watch and which image to track (`newest-build` strategy).
 3. When a new digest is detected, the updater patches the `image.tag`
    Helm parameter directly on the ArgoCD Application (`write-back-method:
    argocd`).
@@ -612,11 +694,24 @@ The update chain is:
    a rolling restart of the operator Deployment — no manual
    `kubectl rollout restart` needed.
 
-The `ImageUpdater` CR lives in
-`<gentian-deployments>/<env>/kernel/image-updater.yaml`. It is deployed
-into the cluster by ArgoCD as part of the `gentian-os` Application sync,
-**not** by a separate step in `install.sh`. This means it only exists
-once ArgoCD has synced the Application.
+The `ImageUpdater` CR is inlined in
+`kernel/bootstrap/chart/templates/gentian-os.yaml` and applied with the
+Application it refers to, by `install.sh` — it is not committed to
+`gentian-deployments` and Argo CD does not sync it. Its content never varies
+by cluster or stage, so a per-cluster copy in the deployments repository would
+be duplication that could drift. See [deployment.md](deployment.md) §3.1.
+
+**Why this Application is not itself managed by Argo CD.** The updater
+writes with `write-back-method: argocd`: it patches the `image.tag` Helm
+parameter onto the live `gentian-os` Application object. An Application
+owned by an ApplicationSet with `selfHeal` would have that patch reverted
+on the next reconcile, and every rollout would silently undo itself. So
+the bootstrap Applications the updater writes into — `gentian-os` and
+`gentian-portal` — are rendered from templates in this repository and
+applied directly. The `argocd-image-updater` *controller* is separate: it
+is installed by Helm at `A-10-argocd-image-updater`, immediately after
+Argo CD's own install at `A-09-argocd`, because both are the CD control
+plane and neither can be delivered by the thing it bootstraps.
 
 Environment policies:
 
@@ -642,8 +737,8 @@ The Gentian portal shell uses the same Image Updater pattern as the operator:
    Deployments — typically within 30–60 seconds of the CI push.
 
 Keycloak clients and `gentian-portal-secrets` are still created by
-`install.sh` Step 14 (`portal-login-bootstrap.sh`); Argo CD owns only the
-Helm release.
+`install.sh --step D-06-portal-login` (`scripts/lib/portal-login-bootstrap.sh`);
+Argo CD owns only the Helm release.
 
 For cluster-to-environment mapping, promotion workflows (with and without a
 staging tier), and `gentian-deployments` layout, see
@@ -651,7 +746,7 @@ staging tier), and `gentian-deployments` layout, see
 
 ### 11.2 Install-time bootstrap
 
-`install.sh Step 13` uses a **two-step** approach to avoid a
+`install.sh --step D-01-operator` uses a **two-step** approach to avoid a
 chicken-and-egg problem (ArgoCD can't sync the chart if the CRDs aren't
 established yet):
 
@@ -659,9 +754,9 @@ established yet):
   immediately via `helm upgrade --install`. Subsequent install steps that
   depend on CRDs or the webhook proceed without waiting for ArgoCD.
 - **ArgoCD handoff**: The `gentian-os` Application is rendered from
-  `kernel/bootstrap/gentian-os-application.yaml.tmpl` (using the active
-  `GENTIAN_DEPLOYMENTS_REPO`/`BRANCH`/`ENV` variables) and applied with
-  `kubectl apply`. ArgoCD adopts the already-running resources via
+  `kernel/bootstrap/chart/templates/gentian-os.yaml` (a Helm chart now, not the
+  `.tmpl` + `envsubst` this used to be — the values carry the deployments repo,
+  branch, cluster and stage) and applied with `kubectl apply`. ArgoCD adopts the already-running resources via
   `ServerSideApply` and deploys the `ImageUpdater` CR on the first sync. From
   this point, all future upgrades — including image rollouts — are git-driven
   and fully automatic.
@@ -746,6 +841,8 @@ are in [design/multi-tenancy.md](design/multi-tenancy.md#roles).
 | OIDC paths (catalogue apps) | [app-profile-guide.md](../../gentian-apps/docs/app-profile-guide.md) §8, [design/iam.md](design/iam.md) |
 | Mail kernel extension | [design/mail.md](design/mail.md) |
 | Backup, DR, observability, image updates | [design/operations.md](design/operations.md) |
+| Backing up and recovering a workspace (tenant admin) | [tenant-backup-guide.md](tenant-backup-guide.md) |
+| Recovering after a loss — cluster, tenant or key | [recovery-playbook.md](recovery-playbook.md) |
 | Agentic AI / MCP integration | [design/agentic-ai.md](design/agentic-ai.md) |
 | LLM serving architecture & Stage 1 plan | [design/llms.md](design/llms.md) |
 | AppProfile authoring (upstream charts) | [gentian-apps/docs/app-profile-guide.md](../../gentian-apps/docs/app-profile-guide.md) |

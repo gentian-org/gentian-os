@@ -46,6 +46,7 @@ func (h *HTTPServer) Start(ctx context.Context) error {
 	mux.HandleFunc("POST /v1/tenants/{tenant}/apps/{profile}", h.handleInstall)
 	mux.HandleFunc("DELETE /v1/tenants/{tenant}/apps/{profile}", h.handleUninstall)
 	mux.HandleFunc("PUT /v1/tenants/{tenant}/apps/{profile}/addons", h.handleSetAddons)
+	h.registerResourceRoutes(mux)
 
 	srv := &http.Server{Addr: h.Addr, Handler: mux, ReadHeaderTimeout: 10 * time.Second}
 	errCh := make(chan error, 1)
@@ -133,6 +134,14 @@ func (h *HTTPServer) handleSetAddons(w http.ResponseWriter, r *http.Request) {
 	// selection the activation script has to see.
 	var body struct {
 		Addons []string `json:"addons"`
+		// Provision mirrors the app-level flag: install and grant access to all
+		// existing tenant users, rather than install and leave access to group
+		// assignment. It applies to every addon in the request.
+		Provision bool `json:"provision"`
+		// ProvisionFor is the same choice made per addon, which is how the store
+		// asks it — Install and Provision are separate buttons on each row. Given
+		// both, this one decides; an addon it omits is installed and not granted.
+		ProvisionFor []string `json:"provisionFor"`
 	}
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 64<<10)).Decode(&body); err != nil {
 		writeErr(w, http.StatusBadRequest, fmt.Errorf("invalid request body: %w", err))
@@ -140,10 +149,12 @@ func (h *HTTPServer) handleSetAddons(w http.ResponseWriter, r *http.Request) {
 	}
 
 	result, err := h.Service.SetAddons(r.Context(), SetAddonsRequest{
-		Tenant:  tenant,
-		Profile: profile,
-		Addons:  body.Addons,
-		Actor:   actor,
+		Tenant:       tenant,
+		Profile:      profile,
+		Addons:       body.Addons,
+		Provision:    body.Provision,
+		ProvisionFor: body.ProvisionFor,
+		Actor:        actor,
 	})
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, err)

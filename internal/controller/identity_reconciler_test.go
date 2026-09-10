@@ -37,7 +37,7 @@ func newOIDCProfile(name string) *gentianov1alpha1.AppProfile {
 		ObjectMeta: metav1.ObjectMeta{Name: name},
 		Spec: gentianov1alpha1.AppProfileSpec{
 			DisplayName:      name,
-			DeploymentMethod: gentianov1alpha1.DeploymentMethodArgoCD,
+			DeploymentMethod: gentianov1alpha1.DeploymentMethodCrossplane,
 			Chart: gentianov1alpha1.ChartRef{
 				Repository: "https://charts.example.com",
 				Name:       name,
@@ -47,6 +47,13 @@ func newOIDCProfile(name string) *gentianov1alpha1.AppProfile {
 				Identity: &gentianov1alpha1.IdentityRequirement{OIDC: &gentianov1alpha1.OIDCClientSpec{
 					ClientID:     name,
 					RedirectURIs: []string{"https://${TENANT_DOMAIN}/oidc/callback"},
+					// A pack, because that is what makes the OPERATOR own the
+					// Keycloak client. Without one, a crossplane profile's Client
+					// MR comes from the Composition and no client Job is created —
+					// see TestIdentity_CrossplaneOwnsClientWithoutPack. These
+					// fixtures used deploymentMethod: argocd to get the same
+					// effect, a value no real profile ever carried.
+					OIDCPackRef: "catalogue-test-client",
 				}},
 			},
 		},
@@ -98,10 +105,10 @@ func markJobComplete(t *testing.T, jobName, namespace string) {
 // when KernelRealm is set (TestMain uses "kernel").
 func markKernelPortalIdentityJobsComplete(t *testing.T, tenantName string) {
 	t.Helper()
+	// No portal-public: that client and its openbao-audience mapper are
+	// Composition resources now, so no Job appears for this helper to wait on.
 	for _, suffix := range []string{
 		"kernel-tenant-broker",
-		"portal-bff",
-		"portal-public",
 	} {
 		jobName := "keycloak-" + suffix + "-" + tenantName
 		waitFor(t, jobAppearTimeout, func() bool {
@@ -165,7 +172,6 @@ func TestIdentity_NoOIDCApps(t *testing.T) {
 		Spec: gentianov1alpha1.TenantSpec{
 			DisplayName: "No OIDC Co",
 			Domain:      "noidc.example.com",
-			AdminEmail:  "admin@noidc.example.com",
 		},
 	}
 	if err := testClient.Create(context.Background(), tenant); err != nil {
@@ -190,12 +196,6 @@ func TestIdentity_NoOIDCApps(t *testing.T) {
 	})
 	markJobComplete(t, "keycloak-admin-noidc", "platform-kernel")
 
-	waitFor(t, jobAppearTimeout, func() bool {
-		j := &batchv1.Job{}
-		return testClient.Get(context.Background(),
-			types.NamespacedName{Name: "keycloak-broker-idp-noidc", Namespace: "platform-kernel"}, j) == nil
-	})
-	markJobComplete(t, "keycloak-broker-idp-noidc", "platform-kernel")
 	markKernelPortalIdentityJobsComplete(t, "noidc")
 
 	updated := waitForTenantConditionTrue(t, "noidc", "IdentityReady")
@@ -230,7 +230,6 @@ func TestIdentity_CreatesRealmJob(t *testing.T) {
 		Spec: gentianov1alpha1.TenantSpec{
 			DisplayName: "Realm Test Co",
 			Domain:      "realmtest.example.com",
-			AdminEmail:  "admin@realmtest.example.com",
 			Apps:        []gentianov1alpha1.TenantApp{{Profile: "oidc-app1"}},
 		},
 	}
@@ -275,7 +274,6 @@ func TestIdentity_CreatesClientJobAfterRealmComplete(t *testing.T) {
 		Spec: gentianov1alpha1.TenantSpec{
 			DisplayName: "Client Test Co",
 			Domain:      "clienttest.example.com",
-			AdminEmail:  "admin@clienttest.example.com",
 			Apps:        []gentianov1alpha1.TenantApp{{Profile: "oidc-app2"}},
 		},
 	}
@@ -301,21 +299,6 @@ func TestIdentity_CreatesClientJobAfterRealmComplete(t *testing.T) {
 	})
 	markJobComplete(t, "keycloak-admin-clienttest", "platform-kernel")
 
-	// OIDC browser-flow Job must complete before client Jobs are created.
-	waitFor(t, jobAppearTimeout, func() bool {
-		j := &batchv1.Job{}
-		return testClient.Get(context.Background(),
-			types.NamespacedName{Name: "keycloak-oidc-browser-clienttest", Namespace: "platform-kernel"}, j) == nil
-	})
-	markJobComplete(t, "keycloak-oidc-browser-clienttest", "platform-kernel")
-
-	waitFor(t, jobAppearTimeout, func() bool {
-		j := &batchv1.Job{}
-		return testClient.Get(context.Background(),
-			types.NamespacedName{Name: "keycloak-broker-first-login-clienttest", Namespace: "platform-kernel"}, j) == nil
-	})
-	markJobComplete(t, "keycloak-broker-first-login-clienttest", "platform-kernel")
-
 	// Client Job should be created after browser flow is complete.
 	clientJob := &batchv1.Job{}
 	waitFor(t, tenantReadyTimeout, func() bool {
@@ -328,6 +311,76 @@ func TestIdentity_CreatesClientJobAfterRealmComplete(t *testing.T) {
 	}
 	if clientJob.Labels["gentianos.io/tenant"] != "clienttest" {
 		t.Errorf("expected tenant label clienttest, got %q", clientJob.Labels["gentianos.io/tenant"])
+	}
+}
+
+// TestIdentity_CrossplaneOwnsClientWithoutPack asserts the other half of the
+// ownership split: a catalogue profile with no OIDC pack gets its Keycloak
+// Client from the app Composition (a provider-keycloak Client MR — see
+// crossplane/compositions/app-default.yaml), and the operator creates NO client
+// Job for it.
+//
+// Every other test here uses a profile WITH a pack, which is the configuration
+// the operator still owns. Before this, they all carried deploymentMethod:
+// argocd — a value no catalogue profile has ever set — and that value was the
+// only reason they saw client Jobs at all. The suite therefore proved the
+// operator creates client Jobs for a shape of profile that does not exist,
+// and proved nothing about the shape that does.
+func TestIdentity_CrossplaneOwnsClientWithoutPack(t *testing.T) {
+	t.Parallel()
+	profile := newOIDCProfile("oidc-nopack")
+	profile.Spec.KernelRequirements.Identity.OIDC.OIDCPackRef = ""
+	// The clientID must not match a pack either — ResolvePack falls back to it
+	// when oidcPackRef is empty.
+	profile.Spec.KernelRequirements.Identity.OIDC.ClientID = "oidc-nopack"
+	if err := testClient.Create(context.Background(), profile); err != nil {
+		t.Fatalf("create AppProfile: %v", err)
+	}
+	t.Cleanup(func() { _ = testClient.Delete(context.Background(), profile) })
+
+	tenant := &gentianov1alpha1.Tenant{
+		ObjectMeta: metav1.ObjectMeta{Name: "nopack"},
+		Spec: gentianov1alpha1.TenantSpec{
+			DisplayName: "No Pack Co",
+			Domain:      "nopack.example.com",
+			Apps:        []gentianov1alpha1.TenantApp{{Profile: "oidc-nopack"}},
+		},
+	}
+	if err := testClient.Create(context.Background(), tenant); err != nil {
+		t.Fatalf("create tenant: %v", err)
+	}
+	t.Cleanup(func() { _ = testClient.Delete(context.Background(), tenant) })
+
+	for _, job := range []string{
+		"keycloak-realm-nopack",
+		"keycloak-admin-nopack",
+	} {
+		waitFor(t, jobAppearTimeout, func() bool {
+			j := &batchv1.Job{}
+			return testClient.Get(context.Background(),
+				types.NamespacedName{Name: job, Namespace: "platform-kernel"}, j) == nil
+		})
+		markJobComplete(t, job, "platform-kernel")
+		if job == "keycloak-realm-nopack" {
+			markGentianGroupsComplete(t, "nopack")
+		}
+	}
+
+	markKernelPortalIdentityJobsComplete(t, "nopack")
+
+	// Reaching IdentityReady is what makes the negative assertion meaningful: the
+	// reconciler ran the whole identity phase to completion, so a client Job it
+	// intended to create would exist by now.
+	waitForTenantConditionTrue(t, "nopack", "IdentityReady")
+
+	clientJob := &batchv1.Job{}
+	err := testClient.Get(context.Background(),
+		types.NamespacedName{Name: "keycloak-client-nopack-oidc-nopack", Namespace: "platform-kernel"}, clientJob)
+	if err == nil {
+		t.Fatal("operator created a client Job for a profile whose Composition owns the Client MR")
+	}
+	if !k8serrors.IsNotFound(err) {
+		t.Fatalf("unexpected error checking for the client Job: %v", err)
 	}
 }
 
@@ -346,7 +399,6 @@ func TestIdentity_SetsReadyWhenAllJobsDone(t *testing.T) {
 		Spec: gentianov1alpha1.TenantSpec{
 			DisplayName: "All Ready Co",
 			Domain:      "allready.example.com",
-			AdminEmail:  "admin@allready.example.com",
 			Apps:        []gentianov1alpha1.TenantApp{{Profile: "oidc-app3"}},
 		},
 	}
@@ -372,20 +424,6 @@ func TestIdentity_SetsReadyWhenAllJobsDone(t *testing.T) {
 	})
 	markJobComplete(t, "keycloak-admin-allready", "platform-kernel")
 
-	waitFor(t, jobAppearTimeout, func() bool {
-		j := &batchv1.Job{}
-		return testClient.Get(context.Background(),
-			types.NamespacedName{Name: "keycloak-oidc-browser-allready", Namespace: "platform-kernel"}, j) == nil
-	})
-	markJobComplete(t, "keycloak-oidc-browser-allready", "platform-kernel")
-
-	waitFor(t, jobAppearTimeout, func() bool {
-		j := &batchv1.Job{}
-		return testClient.Get(context.Background(),
-			types.NamespacedName{Name: "keycloak-broker-first-login-allready", Namespace: "platform-kernel"}, j) == nil
-	})
-	markJobComplete(t, "keycloak-broker-first-login-allready", "platform-kernel")
-
 	// Wait for client Job, then mark it complete.
 	waitFor(t, tenantReadyTimeout, func() bool {
 		j := &batchv1.Job{}
@@ -394,12 +432,6 @@ func TestIdentity_SetsReadyWhenAllJobsDone(t *testing.T) {
 	})
 	markJobComplete(t, "keycloak-client-allready-oidc-app3", "platform-kernel")
 
-	waitFor(t, jobAppearTimeout, func() bool {
-		j := &batchv1.Job{}
-		return testClient.Get(context.Background(),
-			types.NamespacedName{Name: "keycloak-broker-idp-allready", Namespace: "platform-kernel"}, j) == nil
-	})
-	markJobComplete(t, "keycloak-broker-idp-allready", "platform-kernel")
 	markKernelPortalIdentityJobsComplete(t, "allready")
 
 	updated := waitForTenantConditionTrue(t, "allready", "IdentityReady")
@@ -440,7 +472,6 @@ func TestIdentity_CreatesAdminJobAfterRealm(t *testing.T) {
 		Spec: gentianov1alpha1.TenantSpec{
 			DisplayName: "Admin Test Co",
 			Domain:      "admintest.example.com",
-			AdminEmail:  "admin@admintest.example.com",
 			Apps:        []gentianov1alpha1.TenantApp{{Profile: "oidc-app-admin"}},
 		},
 	}
@@ -482,22 +513,9 @@ func TestIdentity_CreatesAdminJobAfterRealm(t *testing.T) {
 	}
 
 	markJobComplete(t, "keycloak-admin-admintest", "platform-kernel")
-	waitForTenantConditionReason(t, "admintest", "IdentityReady", "ProvisioningBrowserFlow")
-
-	waitFor(t, jobAppearTimeout, func() bool {
-		j := &batchv1.Job{}
-		return testClient.Get(context.Background(),
-			types.NamespacedName{Name: "keycloak-oidc-browser-admintest", Namespace: "platform-kernel"}, j) == nil
-	})
-	markJobComplete(t, "keycloak-oidc-browser-admintest", "platform-kernel")
-	waitForTenantConditionReason(t, "admintest", "IdentityReady", "ProvisioningBrokerFirstLogin")
-
-	waitFor(t, jobAppearTimeout, func() bool {
-		j := &batchv1.Job{}
-		return testClient.Get(context.Background(),
-			types.NamespacedName{Name: "keycloak-broker-first-login-admintest", Namespace: "platform-kernel"}, j) == nil
-	})
-	markJobComplete(t, "keycloak-broker-first-login-admintest", "platform-kernel")
+	// Straight from the admin Job to the client Jobs. The browser-flow and
+	// broker-first-login Jobs that used to sit between them are retired, so
+	// neither reason is reported any more.
 	waitForTenantConditionReason(t, "admintest", "IdentityReady", "ProvisioningClients")
 
 	clientJob := &batchv1.Job{}
@@ -522,7 +540,6 @@ func TestIdentity_DeleteDeletePolicy_CreatesCleanupJob(t *testing.T) {
 		Spec: gentianov1alpha1.TenantSpec{
 			DisplayName:    "Identity Delete Co",
 			Domain:         "identdelete.example.com",
-			AdminEmail:     "admin@identdelete.example.com",
 			DeletionPolicy: gentianov1alpha1.DeletionPolicyDelete,
 			Apps:           []gentianov1alpha1.TenantApp{{Profile: "oidc-app4"}},
 		},
@@ -567,7 +584,6 @@ func TestIdentity_RetainPolicy_DisablesRealm(t *testing.T) {
 		Spec: gentianov1alpha1.TenantSpec{
 			DisplayName:    "Identity Retain Co",
 			Domain:         "identretain.example.com",
-			AdminEmail:     "admin@identretain.example.com",
 			DeletionPolicy: gentianov1alpha1.DeletionPolicyRetain,
 			Apps:           []gentianov1alpha1.TenantApp{{Profile: "oidc-app5"}},
 		},

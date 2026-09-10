@@ -1,0 +1,113 @@
+---
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: gentian
+  namespace: argocd
+spec:
+  description: Gentian OS kernel and tenant deployments across all environments
+
+  # Source repositories
+  sourceRepos:
+  # Multi-source $values ref (bootstrap + ApplicationSets). Each entry
+  # defaults to the public gentian-org repo, so an unmirrored install (the
+  # common case) renders exactly these URLs; a mirrored or air-gapped install
+  # sets GENTIAN_{OS,APPS,DEPLOYMENTS,UI}_REPO in install.env and gets the
+  # mirror instead. Helm's own `default` is what makes this safe — unlike a
+  # shell substitution, a value Helm never received cannot render as a
+  # literal placeholder, it falls back. Without an entry here for whichever
+  # URL is actually configured, ArgoCD refuses an unlisted source with a
+  # permission error, not an authentication one.
+  {{- $osRepo := .Values.osRepo | default "https://github.com/gentian-org/gentian-os" }}
+  - {{ $osRepo | quote }}
+  - {{ printf "%s/*" $osRepo | quote }}                                                                  # Paths under gentian-os repo
+  - {{ printf "https://raw.githubusercontent.com/gentian-org/gentian-os/*" | quote }}                    # Vendored infra chart packages (postgres, mariadb)
+  - {{ .Values.appsRepo | default "https://github.com/gentian-org/gentian-apps" | quote }}                # App store catalogue (AppProfiles)
+  - {{ .Values.deploymentsRepo | default "https://github.com/gentian-org/gentian-deployments" | quote }} # Deployment configuration repository
+  - {{ .Values.uiRepo | default "https://github.com/gentian-org/gentian-ui" | quote }}                   # Gentian portal UI (branding + Helm chart)
+  #
+  # This list covers the platform's own repositories only.
+  #
+  # A private catalogue or an optional add-on deployed alongside the platform
+  # does not belong here: it declares its own AppProject naming its own
+  # sourceRepos, which keeps its existence — and its repository URL — out of
+  # gentian-os entirely. Adding it here instead would make the platform
+  # unable to install without a repository most clusters do not have.
+  - 'oci://registry-1.docker.io/*'                                                                      # Docker Hub OCI registry
+  - 'oci://registry-1.docker.io/bitnamicharts/*'                                                        # Bitnami charts specifically
+  - 'registry-1.docker.io/bitnamicharts'                                                                # Bitnami charts (without protocol)
+  - 'https://openbao.github.io/openbao-helm'                                                            # OpenBao Helm chart repo
+  - 'ghcr.io/stakater/charts'                                                                             # Stakater OCI charts registry (Reloader)
+  - 'ghcr.io/cloudnative-pg/charts'                                                                       # CloudNativePG OCI charts registry
+  - 'https://kyverno.github.io/kyverno/*'                                                                 # Kyverno admission controller
+  - 'https://kubernetes-sigs.github.io/external-dns/'                                                     # external-dns, upstream chart. Bitnami's was withdrawn in 2025.
+
+  # Destination clusters and namespaces
+  destinations:
+  - namespace: 'gentian-*'                   # All gentian namespaces
+    server: https://kubernetes.default.svc
+  - namespace: 'argocd'                      # ArgoCD namespace for ApplicationSets
+    server: https://kubernetes.default.svc
+  - namespace: 'openbao'                     # OpenBao secret backend
+    server: https://kubernetes.default.svc
+  - namespace: 'stakater-system'             # Stakater Reloader (cluster-wide controller)
+    server: https://kubernetes.default.svc
+  # external-dns deploys here. Without this destination the Application is
+  # rejected as InvalidSpecError rather than merely failing to sync.
+  - namespace: 'external-dns'               # external-dns (cluster-wide DNS controller)
+    server: https://kubernetes.default.svc
+  - namespace: 'gentian-system'              # Gentian OS orchestrator (CRD controllers)
+    server: https://kubernetes.default.svc
+  - namespace: 'cnpg-system'                 # CloudNativePG operator
+    server: https://kubernetes.default.svc
+  - namespace: 'platform-kernel'             # Shared CNPG Cluster + psql provisioner Jobs
+    server: https://kubernetes.default.svc
+  - namespace: 'crossplane-system'           # Crossplane managed resources (provider-http Requests, ESO)
+    server: https://kubernetes.default.svc
+  - namespace: 'kyverno'                     # Kyverno admission controller
+    server: https://kubernetes.default.svc
+
+  # Cluster-scoped resources (allowed at cluster level)
+  clusterResourceWhitelist:
+  - group: ''
+    kind: Namespace
+  - group: 'rbac.authorization.k8s.io'
+    kind: ClusterRole
+  - group: 'rbac.authorization.k8s.io'
+    kind: ClusterRoleBinding
+  - group: 'storage.k8s.io'
+    kind: StorageClass
+  - group: 'apiextensions.k8s.io'
+    kind: CustomResourceDefinition
+  - group: 'external-secrets.io'
+    kind: ClusterSecretStore
+  - group: 'gentianos.io'
+    kind: Tenant
+  - group: 'gentianos.io'
+    kind: AppProfile
+  - group: 'gentianos.io'
+    kind: IntegrationBinding
+  - group: 'postgresql.cnpg.io'
+    kind: '*'
+  - group: 'admissionregistration.k8s.io'
+    kind: ValidatingWebhookConfiguration
+  - group: 'admissionregistration.k8s.io'
+    kind: MutatingWebhookConfiguration
+  # Crossplane managed resources are cluster-scoped CRDs across many provider
+  # API groups. Rather than maintaining a per-group list, allow all cluster
+  # resources — source-repo restriction already limits what can be synced.
+  - group: '*'
+    kind: '*'
+
+  # Namespace-scoped resources (allow all)
+  namespaceResourceWhitelist:
+  - group: '*'
+    kind: '*'
+
+  # Orphaned resources handling
+  # warn: false — some resources are intentionally managed outside ArgoCD (e.g. init
+  # job outputs, Crossplane managed resources). Warnings would be permanently
+  # noisy and mask real health issues (e.g. the openbao ClusterSecretStore going
+  # Degraded after a reboot is hidden behind orphan warnings).
+  orphanedResources:
+    warn: false

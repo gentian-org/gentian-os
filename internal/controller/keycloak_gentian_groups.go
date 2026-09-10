@@ -38,6 +38,7 @@ func (r *TenantReconciler) ensureGentianGroupsJob(ctx context.Context, tenant *g
 
 func makeGentianGroupsJob(tenant *gentianov1alpha1.Tenant, realmName string, groupsJSON string) *batchv1.Job {
 	ttl := meta.ProvisioningJobTTLSeconds
+	deadline := meta.ProvisioningJobActiveDeadlineSeconds
 	backoff := meta.ProvisioningJobBackoffLimit
 	container := keycloakContainer("provision-gentian-groups", buildGentianGroupsScript(realmName))
 	container.Env = append(container.Env,
@@ -57,6 +58,7 @@ func makeGentianGroupsJob(tenant *gentianov1alpha1.Tenant, realmName string, gro
 		Spec: batchv1.JobSpec{
 			BackoffLimit:            &backoff,
 			TTLSecondsAfterFinished: &ttl,
+			ActiveDeadlineSeconds:   &deadline,
 			Template: corev1.PodTemplateSpec{
 				Spec: corev1.PodSpec{
 					RestartPolicy: corev1.RestartPolicyOnFailure,
@@ -124,11 +126,7 @@ func validAttrName(s string) bool {
 func buildGentianGroupsScript(realmName string) string {
 	return keycloak.ShellJSONIDExtractor() + fmt.Sprintf(`set -eu
 REALM=%q
-TOKEN=$(curl -sf \
-  -X POST "${KEYCLOAK_URL}/realms/master/protocol/openid-connect/token" \
-  -H "Content-Type: application/x-www-form-urlencoded" \
-  -d "client_id=admin-cli&username=${KEYCLOAK_ADMIN_USERNAME}&password=${KEYCLOAK_ADMIN_PASSWORD}&grant_type=password" \
-  | sed 's/.*"access_token":"\([^"]*\)".*/\1/')
+`+keycloak.ShellAdminToken()+`
 AUTH_HEADER="Authorization: Bearer ${TOKEN}"
 %s
 
@@ -141,10 +139,19 @@ echo "${GENTIAN_GROUPS_JSON}" | jq -c '.[]' | while read -r group; do
   keycloak_json_id_by_attr "${GROUP_LIST}" "name" "${GROUP_NAME}"
   
   if [ -n "${_kj_id}" ]; then
-    echo "group ${GROUP_NAME} already exists (id=${_kj_id}), updating attributes"
+    # Merge over what the group already carries. Keycloak's group update replaces
+    # the attribute map wholesale, and this Job is not its only writer: the App
+    # Store marks a group as granted-by-default, and an administrator sets Odoo
+    # roles by hand in the console. PUTting only the profile's own keys deleted
+    # both on every tenant reconcile.
+    echo "group ${GROUP_NAME} already exists (id=${_kj_id}), merging attributes"
+    EXISTING_ATTRS=$(curl -sf -H "${AUTH_HEADER}" \
+      "${KEYCLOAK_URL}/admin/realms/${REALM}/groups/${_kj_id}" \
+      | jq -c '.attributes // {}')
+    MERGED_ATTRS=$(jq -c -n --argjson a "${EXISTING_ATTRS}" --argjson b "${GROUP_ATTRS}" '$a * $b')
     curl -sf -X PUT -H "${AUTH_HEADER}" -H "Content-Type: application/json" \
       "${KEYCLOAK_URL}/admin/realms/${REALM}/groups/${_kj_id}" \
-      -d "{\"name\":\"${GROUP_NAME}\",\"attributes\":${GROUP_ATTRS}}"
+      -d "{\"name\":\"${GROUP_NAME}\",\"attributes\":${MERGED_ATTRS}}"
     continue
   fi
 
@@ -168,7 +175,7 @@ if [ -z "${GROUPS_SCOPE_ID}" ]; then
   GROUPS_SCOPE_ID="${_kj_id}"
   curl -sf -X POST -H "${AUTH_HEADER}" -H "Content-Type: application/json" \
     "${KEYCLOAK_URL}/admin/realms/${REALM}/client-scopes/${GROUPS_SCOPE_ID}/protocol-mappers/models" \
-    -d '{"name":"groups","protocol":"openid-connect","protocolMapper":"oidc-group-membership-mapper","consentRequired":false,"config":{"full.path":"false","id.token.claim":"true","access.token.claim":"true","userinfo.token.claim":"true","claim.name":"groups"}}'
+    -d '{"name":"groups","protocol":"openid-connect","protocolMapper":"oidc-group-membership-mapper","consentRequired":false,"config":{"full.path":"false","id.token.claim":"true","access.token.claim":"true","userinfo.token.claim":"true","claim.name":"groups","introspection.token.claim":"true","multivalued":"true"}}'
   curl -sf -X PUT -H "${AUTH_HEADER}" \
     "${KEYCLOAK_URL}/admin/realms/${REALM}/default-default-client-scopes/${GROUPS_SCOPE_ID}"
   echo "groups client scope created and configured"
@@ -180,10 +187,17 @@ MAPPERS=$(curl -sf -H "${AUTH_HEADER}" \
 # One aggregating mapper per declared group attribute. The names come from the
 # profiles' keycloak-group-attributes annotations, so an app introducing a new
 # attribute needs no change here.
+#
+# introspection.token.claim is named although Keycloak would default it, because
+# this PUT replaces the config wholesale. Leaving it out strips a key Keycloak
+# immediately writes back, and the Composition managing the same mapper then sees
+# drift and updates to match its own spec — each writer undoing the other on
+# every pass, at the cost of an admin password grant per attempt. Both sides name
+# it now, so both agree with what Keycloak stores.
 for ATTR_NAME in ${GENTIAN_GROUP_ATTR_NAMES:-}; do
   # Body without the surrounding braces, so the PUT can prepend an id without
   # having to splice a string that is already JSON.
-  MAPPER_BODY="\"name\":\"${ATTR_NAME}\",\"protocol\":\"openid-connect\",\"protocolMapper\":\"oidc-usermodel-attribute-mapper\",\"consentRequired\":false,\"config\":{\"user.attribute\":\"${ATTR_NAME}\",\"claim.name\":\"${ATTR_NAME}\",\"jsonType.label\":\"String\",\"multivalued\":\"true\",\"aggregate.attrs\":\"true\",\"id.token.claim\":\"true\",\"access.token.claim\":\"true\",\"userinfo.token.claim\":\"true\"}"
+  MAPPER_BODY="\"name\":\"${ATTR_NAME}\",\"protocol\":\"openid-connect\",\"protocolMapper\":\"oidc-usermodel-attribute-mapper\",\"consentRequired\":false,\"config\":{\"user.attribute\":\"${ATTR_NAME}\",\"claim.name\":\"${ATTR_NAME}\",\"jsonType.label\":\"String\",\"multivalued\":\"true\",\"aggregate.attrs\":\"true\",\"id.token.claim\":\"true\",\"access.token.claim\":\"true\",\"userinfo.token.claim\":\"true\",\"introspection.token.claim\":\"true\"}"
   keycloak_json_id_by_attr "${MAPPERS}" "name" "${ATTR_NAME}"
   MAPPER_ID="${_kj_id}"
   if [ -n "${MAPPER_ID}" ]; then

@@ -14,7 +14,6 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-
 package controller
 
 import (
@@ -25,7 +24,6 @@ import (
 	"testing"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
-	"github.com/gentian-org/gentian-os/internal/keycloak"
 	"github.com/gentian-org/gentian-os/internal/oidc"
 )
 
@@ -52,13 +50,13 @@ func TestBuildOIDCPackScript(t *testing.T) {
 		t.Fatalf("resolve pack: ok=%v err=%v", ok, err)
 	}
 	script := buildOIDCPackScript("demo", "catalogue-test-client", pack, templates,
-		[]string{"https://app.demo.desk.gentian.org/*"}, "", "gentian:tenant:demo:app:catalogue-test-client")
+		[]string{"https://app.demo.platform.example.test/*"}, "", "gentian:tenant:demo:app:catalogue-test-client")
 	for _, want := range []string{
 		"catalogue-test-client-scope",
 		"catalogue-test-client-access-control",
 		"gentian:tenant:demo:app:catalogue-test-client",
 		"PUBLIC_CLIENT=true",
-		"https://app.demo.desk.gentian.org/*",
+		"https://app.demo.platform.example.test/*",
 	} {
 		if !strings.Contains(script, want) {
 			t.Fatalf("script missing %q", want)
@@ -70,20 +68,28 @@ func TestBuildOIDCPackScript(t *testing.T) {
 	if !strings.Contains(script, "_kj_scope_id_from_list") {
 		t.Fatal("expected dedicated client-scope id lookup helper")
 	}
-	if strings.Contains(script, `\"name\":"gentian_useruuid"`) {
-		t.Fatal("mapper POST JSON must quote name field values")
+	// The Job no longer POSTs the scope's protocol mappers. app-default composes
+	// a ProtocolMapper per entry in pack.Mappers, and those adopted the live
+	// mappers by their Keycloak ids rather than creating new ones — verified on
+	// corp, where all three kept their ids and their config.
+	//
+	// The mapper name is what identifies one, so a POST body naming a mapper is
+	// the thing to assert is gone.
+	for _, gone := range []string{
+		`"name":"gentian_useruuid"`,
+		`"name":"full name"`,
+		`"protocolMapper":"oidc-usermodel-attribute-mapper"`,
+		`"consentRequired":false`,
+	} {
+		if strings.Contains(script, gone) {
+			t.Fatalf("oidc pack script still writes a protocol mapper: %s", gone)
+		}
 	}
-	if !strings.Contains(script, `"name":"gentian_useruuid"`) || !strings.Contains(script, `"protocolMapper":"oidc-usermodel-attribute-mapper"`) {
-		t.Fatal("mapper POST body must include gentian_useruuid name and usermodel protocolMapper")
-	}
-	if !strings.Contains(script, `"consentRequired":false`) {
-		t.Fatal("mapper POST body must set consentRequired false")
-	}
-	if !strings.Contains(script, `"multivalued":"false"`) {
-		t.Fatal("usermodel mappers must include multivalued false")
-	}
-	if !strings.Contains(script, `"name":"full name"`) {
-		t.Fatal("full_name template must map to Keycloak mapper name \"full name\"")
+	// The corrupt-mapper cleanup stays: it deletes mappers whose name is
+	// literally the protocolMapper type, left by a much older failed run, and
+	// nothing declarative covers that.
+	if !strings.Contains(script, "removed corrupt mapper") {
+		t.Fatal("the corrupt-mapper cleanup must stay")
 	}
 	if !strings.Contains(script, `keycloak_json_id_by_attr "${EXISTING}" "clientId"`) {
 		t.Fatal("client UUID lookup must quote EXISTING JSON")
@@ -100,51 +106,12 @@ func TestBuildOIDCPackScript(t *testing.T) {
 	}
 }
 
-func TestBuildFirstBrokerLoginFlowScript(t *testing.T) {
-	script := buildFirstBrokerLoginFlowScript("demo")
-	if path := os.Getenv("DUMP_FIRST_BROKER_LOGIN_SCRIPT"); path != "" {
-		if err := os.WriteFile(path, []byte(keycloak.ProvisionerBootstrap+script), 0o600); err != nil {
-			t.Fatal(err)
-		}
-	}
-	for _, want := range []string{
-		firstBrokerLoginFlowAlias,
-		`idp-detect-existing-broker-user`,
-		`first broker login flow ${FLOW_ALIAS} ready`,
-		`idp-confirm-link`,
-		`idp-email-verification`,
-		`requirement\":\"REQUIRED`,
-		`federated-identity/kernel`,
-		`kernel broker link purge finished`,
-	} {
-		if !strings.Contains(script, want) {
-			t.Fatalf("first broker login script missing %q", want)
-		}
-	}
-}
-
-func TestBuildOIDCBrowserFlowScript(t *testing.T) {
-	script := buildOIDCBrowserFlowScript("demo")
-	if !strings.Contains(script, "browser-kernel-idp") {
-		t.Fatal("expected browser-kernel-idp flow alias")
-	}
-	if !strings.Contains(script, "defaultProvider") {
-		t.Fatal("expected IdP redirector defaultProvider config")
-	}
-	if !strings.Contains(script, "requirement") || !strings.Contains(script, "ALTERNATIVE") {
-		t.Fatal("expected executions configured with ALTERNATIVE requirement")
-	}
-	if !strings.Contains(script, "configured with defaultProvider=kernel") {
-		t.Fatal("expected IdP redirector configuration log line")
-	}
-}
-
 func TestSubstituteTenantDomainInURIs(t *testing.T) {
 	tenant := &gentianov1alpha1.Tenant{}
-	tenant.Spec.Domain = "demo.desk.gentian.org"
+	tenant.Spec.Domain = "demo.platform.example.test"
 	uris := substituteTenantDomainInURIs(tenant,
-		[]string{"https://app.${TENANT_DOMAIN}/*"}, "desk.gentian.org", gentianov1alpha1.TenancyModeMulti)
-	if len(uris) != 1 || uris[0] != "https://app.demo.desk.gentian.org/*" {
+		[]string{"https://app.${TENANT_DOMAIN}/*"}, "platform.example.test", gentianov1alpha1.TenancyModeMulti)
+	if len(uris) != 1 || uris[0] != "https://app.demo.platform.example.test/*" {
 		t.Fatalf("redirects: %v", uris)
 	}
 }

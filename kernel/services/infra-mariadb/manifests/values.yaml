@@ -1,0 +1,6 @@
+# env is supplied by the ApplicationSet (helm.parameters). The default
+# only matters for `helm template` run by hand.
+env: dev
+# storageClass empty = use the cluster's default StorageClass. Set per
+# stage in values-<env>.yaml only where a stage genuinely differs.
+storageClass: ""

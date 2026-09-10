@@ -17,6 +17,7 @@ limitations under the License.
 package applifecycle
 
 import (
+	"context"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -47,7 +48,7 @@ spec:
 	}
 	gitCommitAll(t, root, "init tenant")
 
-	status, file, changed, err := g.Install("demo", "element", "tester")
+	status, file, changed, err := g.Install(context.Background(), "demo", "element", "tester")
 	if err != nil {
 		t.Fatalf("Install: %v", err)
 	}
@@ -95,7 +96,7 @@ spec:
 	}
 	gitCommitAll(t, root, "init tenant")
 
-	status, _, changed, err := g.Uninstall("demo", "element", "tester")
+	status, _, changed, err := g.Uninstall(context.Background(), "demo", "element", "tester")
 	if err != nil {
 		t.Fatalf("Uninstall: %v", err)
 	}

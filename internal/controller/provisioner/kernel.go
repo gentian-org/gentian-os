@@ -85,6 +85,7 @@ func NewKernelProvisioningJob(
 	container corev1.Container,
 ) *batchv1.Job {
 	ttl := meta.ProvisioningJobTTLSeconds
+	deadline := meta.ProvisioningJobActiveDeadlineSeconds
 	labels := map[string]string{
 		tenantLabelKey:    tenantName,
 		managedByLabelKey: managedByValue,
@@ -100,6 +101,7 @@ func NewKernelProvisioningJob(
 		},
 		Spec: batchv1.JobSpec{
 			TTLSecondsAfterFinished: &ttl,
+			ActiveDeadlineSeconds:   &deadline,
 			Template: corev1.PodTemplateSpec{
 				Spec: corev1.PodSpec{
 					RestartPolicy: corev1.RestartPolicyOnFailure,

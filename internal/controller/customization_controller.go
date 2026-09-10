@@ -49,6 +49,10 @@ const (
 	customizationResyncInterval = 12 * time.Hour
 )
 
+// +kubebuilder:rbac:groups=gentianos.io,resources=customizations,verbs=get;list;watch;update;patch
+// +kubebuilder:rbac:groups=gentianos.io,resources=customizations/status,verbs=get;update;patch
+// +kubebuilder:rbac:groups=gentianos.io,resources=appprofiles,verbs=get;list;watch
+
 // CustomizationReconciler computes the derived state behind the customization debt
 // report: whether a record is overdue for review, whether the app it targets has
 // moved underneath it, and whether a cheaper rung has since become available.
@@ -57,10 +61,6 @@ const (
 // the interesting signals — has the chart version drifted past what this record was
 // tested against, does the target still exist — are properties of the live cluster,
 // not of the file.
-//
-// +kubebuilder:rbac:groups=gentianos.io,resources=customizations,verbs=get;list;watch;update;patch
-// +kubebuilder:rbac:groups=gentianos.io,resources=customizations/status,verbs=get;update;patch
-// +kubebuilder:rbac:groups=gentianos.io,resources=appprofiles,verbs=get;list;watch
 type CustomizationReconciler struct {
 	client.Client
 	Scheme *runtime.Scheme
@@ -121,7 +121,7 @@ func (r *CustomizationReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 		return ctrl.Result{}, fmt.Errorf("resolve target profile: %w", err)
 	}
 
-	status := r.evaluate(&record, profile, profileFound)
+	status := r.evaluate(&record, profile, profileFound, r.ladderSurfaceFor(ctx, profile))
 	if statusUnchanged(record.Status, status) {
 		return ctrl.Result{RequeueAfter: customizationResyncInterval}, nil
 	}
@@ -155,11 +155,49 @@ func (r *CustomizationReconciler) resolveTargetProfile(
 	return &profile, true, nil
 }
 
+// ladderSurfaceFor returns the customization surface that governs this profile.
+//
+// An addon inherits its base's ladder. It is activation state inside the base —
+// same image, same drop-in directories, same plugin API — so grading it separately
+// would fork a mutable fact, which is why addon profiles deliberately carry only
+// spec.customization.addon and never restate grade or supportedRungs.
+//
+// Reading spec.customization directly therefore saw no supportedRungs on an addon
+// and fell back to the [L0, L4] default, so a record targeting one was rejected as
+// "target app does not declare support for rung L3" for an app whose base supports
+// exactly that. CI resolved the inheritance and the operator did not, so the two
+// disagreed about the same record.
+//
+// Editions are not addons and inherit nothing: nextcloud-base-ee shares a family
+// name with nextcloud-base-ce and no artifact, so it carries its own declaration.
+func (r *CustomizationReconciler) ladderSurfaceFor(
+	ctx context.Context,
+	profile *gentianov1alpha1.AppProfile,
+) *gentianov1alpha1.CustomizationSurface {
+	if profile == nil || profile.Spec.Customization == nil {
+		return nil
+	}
+	surface := profile.Spec.Customization
+	addon := surface.Addon
+	if addon == nil || addon.Of == "" {
+		return surface
+	}
+	base, found, err := r.resolveTargetProfile(ctx, addon.Of)
+	if err != nil || !found || base.Spec.Customization == nil {
+		// The base is missing or uncharacterised. Fall through to the addon's own
+		// surface rather than inventing one; the default applies as it would for
+		// any uncharacterised app.
+		return surface
+	}
+	return base.Spec.Customization
+}
+
 // evaluate computes the full derived status for a record.
 func (r *CustomizationReconciler) evaluate(
 	record *gentianov1alpha1.Customization,
 	profile *gentianov1alpha1.AppProfile,
 	profileFound bool,
+	surface *gentianov1alpha1.CustomizationSurface,
 ) gentianov1alpha1.CustomizationStatus {
 	status := gentianov1alpha1.CustomizationStatus{}
 
@@ -171,11 +209,6 @@ func (r *CustomizationReconciler) evaluate(
 			"TargetNotFound",
 			fmt.Sprintf("AppProfile %q does not exist", record.Spec.Target.Profile))
 		return status
-	}
-
-	var surface *gentianov1alpha1.CustomizationSurface
-	if profile != nil {
-		surface = profile.Spec.Customization
 	}
 
 	policyErrs := customization.ValidateRecord(record)

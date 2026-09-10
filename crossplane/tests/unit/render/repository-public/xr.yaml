@@ -1,0 +1,15 @@
+# A public Helm registry: no credential, and none to invent.
+#
+# Requiring spec.credential meant a vault path had to be named for a secret that
+# does not exist, which then appeared in the credential manager as a requirement
+# nobody could satisfy. This case exists so the no-credential path keeps
+# rendering a usable repository and nothing that waits on a secret.
+apiVersion: gentianos.io/v1alpha1
+kind: XRepository
+metadata:
+  name: ghcr-cloudnative-pg
+spec:
+  type: oci
+  role: apps
+  endpoints:
+    inCluster: ghcr.io/cloudnative-pg/charts

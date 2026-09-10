@@ -21,6 +21,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	goerrors "errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -28,6 +29,7 @@ import (
 	"strings"
 	"time"
 
+	"golang.org/x/time/rate"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
@@ -38,10 +40,13 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/util/workqueue"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/controller"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
+	"sigs.k8s.io/controller-runtime/pkg/event"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
@@ -49,37 +54,38 @@ import (
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 	"github.com/gentian-org/gentian-os/internal/catalogue"
-	"github.com/gentian-org/gentian-os/internal/customization"
 	"github.com/gentian-org/gentian-os/internal/controller/provisioner"
+	"github.com/gentian-org/gentian-os/internal/customization"
 	"github.com/gentian-org/gentian-os/internal/kernel/secrets"
-	"github.com/gentian-org/gentian-os/internal/kernel/stagingca"
+	"github.com/gentian-org/gentian-os/internal/kernel/trustanchor"
 	"github.com/gentian-org/gentian-os/internal/meta"
 )
 
 const (
-	tenantFinalizer = "gentianos.io/tenant-cleanup"
-	tenantLabel     = meta.TenantLabel
-	managedByLabel  = meta.ManagedByLabel
-	managedByValue  = meta.ManagedByValue
-	// portalRedirectComponentLabel marks Ingress objects owned by tenant portal redirect
-	// (shared kernel portal). They must not be deleted by app ingress stale cleanup.
-	portalRedirectComponentLabel = meta.PortalRedirectComponentLabel
-	portalRedirectComponentValue = meta.PortalRedirectComponentValue
-	kernelNamespace = meta.KernelNamespace
+	tenantFinalizer         = "gentianos.io/tenant-cleanup"
+	tenantLabel             = meta.TenantLabel
+	managedByLabel          = meta.ManagedByLabel
+	managedByValue          = meta.ManagedByValue
+	kernelNamespace         = meta.KernelNamespace
 	conditionNamespaceReady = "NamespaceReady"
 )
 
 // servicesNamespace is read from SERVICES_NAMESPACE at process startup.
-// When unset, derives gentian-{GENTIAN_STAGE|ENV} so the operator never hardcodes
-// a cluster-specific namespace name.
+//
+// The fallback is platform-kernel, which is what gentian_services_namespace in
+// scripts/lib/common.sh answers. Kernel services — the Gateway, Keycloak's
+// HTTPRoute, Postfix and Dovecot — are not stage-scoped, so deriving
+// gentian-{stage} pointed this operator at a namespace nothing creates and
+// nothing tears down. The chart sets SERVICES_NAMESPACE, so the fallback only
+// decides where an operator started without it writes, which is exactly the
+// case where being wrong is hardest to see.
 var servicesNamespace = defaultServicesNamespace()
 
 func defaultServicesNamespace() string {
 	if v := os.Getenv("SERVICES_NAMESPACE"); v != "" {
 		return v
 	}
-	stage := envOrDefault("GENTIAN_STAGE", envOrDefault("ENV", "dev"))
-	return "gentian-" + stage
+	return meta.KernelNamespace
 }
 
 // errDeleteJobPending is returned by delete helpers when a cleanup Job has been
@@ -129,8 +135,20 @@ var xTenantGVK = schema.GroupVersionKind{
 	Kind:    "XTenant",
 }
 
-// TenantReconciler reconciles Tenant objects.
+// DNSEndpoint carries a tenant's mail records — MX, SPF, DKIM, DMARC — for
+// external-dns to reconcile into the zone. The web records need no rule here:
+// external-dns reads those from the HTTPRoutes directly.
+// Nodes, read to find the address outbound mail leaves from and patched to
+// mark which node carries it. The read is the ExternalIP the cloud provider
+// reports for an attached floating IP; the write is one label,
+// gentianos.io/mail-egress, which the Postfix chart already selects on.
 //
+// patch on nodes is a cluster-scoped write and cannot be narrowed to one
+// label by RBAC, so it is worth knowing this grant exists and why. Without
+// it the label has no owner: a cluster that sets mail.egressHost renders a
+// nodeSelector matching nothing and Postfix sits Pending.
+// +kubebuilder:rbac:groups="",resources=nodes,verbs=get;list;watch;patch
+// +kubebuilder:rbac:groups=externaldns.k8s.io,resources=dnsendpoints,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=gentianos.io,resources=tenants,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=gentianos.io,resources=tenants/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=gentianos.io,resources=tenants/finalizers,verbs=update
@@ -143,18 +161,76 @@ var xTenantGVK = schema.GroupVersionKind{
 // +kubebuilder:rbac:groups=postgresql.cnpg.io,resources=databases,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups="",resources=configmaps,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups="",resources=services,verbs=get;list;watch;create;update;patch;delete
+// watch, because the manager's cache establishes an informer for every type read
+// through it, and an informer needs list AND watch. Without it the cache logs
+// "pods is forbidden ... Failed to watch" on a loop and never syncs, while a
+// direct get still works — so the permission looks sufficient right up until
+// something depends on the cache being current.
+// +kubebuilder:rbac:groups="",resources=pods,verbs=get;list;watch;create;delete
+// +kubebuilder:rbac:groups="",resources=events,verbs=create;patch
+// +kubebuilder:rbac:groups=networking.k8s.io,resources=ingresses,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=external-secrets.io,resources=externalsecrets,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=argoproj.io,resources=applications,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=coordination.k8s.io,resources=leases,verbs=get;list;watch;create;update;patch;delete
+//
+// EndpointSlices back loadKubeAPIEndpointSlice (tenant_network_policy.go): the
+// baseline tenant NetworkPolicy allows egress to KUBE_APISERVER_CIDR and then
+// adds a /32 per real kube-apiserver endpoint. When the apiserver sits OUTSIDE
+// that CIDR — any cluster reached through a public IP — those /32 rules are the
+// only thing letting tenant workloads reach the API at all.
+// +kubebuilder:rbac:groups=discovery.k8s.io,resources=endpointslices,verbs=get;list;watch
+//
+// cert-manager Certificates for tenant edge TLS (tenant_edge_tls.go).
+// +kubebuilder:rbac:groups=cert-manager.io,resources=certificates,verbs=get;list;watch;create;update;patch;delete
+//
+// Crossplane composites read by tenant_xr_status.go and applifecycle/service.go.
+// list+watch are required even though the code only calls Get: the manager's
+// client reads through the cache, so a Get starts an informer. xtenants needs
+// write verbs too — ensureTenantXR creates the composite when it is not found.
+// +kubebuilder:rbac:groups=gentianos.io,resources=xtenants,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=gentianos.io,resources=xapps,verbs=get;list;watch
+//
+// app_reconciler.go CREATES App claims, so read+delete alone is not enough.
+// +kubebuilder:rbac:groups=gentianos.io,resources=apps,verbs=get;list;watch;create;update;patch;delete
+//
+// OIDCPackCatalog is listed by internal/oidc from inside the tenant reconcile.
+// A missing grant does not surface as a permission error: the list goes through
+// the manager's cache, the informer cannot sync because the LIST is forbidden,
+// and the cached read blocks waiting for a sync that never comes — wedging
+// tenant reconciliation with no error at all.
+// +kubebuilder:rbac:groups=gentianos.io,resources=oidcpackcatalogs,verbs=get;list;watch
+//
+// tenant_cleanup lists Crossplane Releases to remove a tenant's Helm releases;
+// Object is read for composed-resource status.
+// +kubebuilder:rbac:groups=helm.crossplane.io,resources=releases,verbs=get;list;watch;delete
+// +kubebuilder:rbac:groups=kubernetes.crossplane.io,resources=objects,verbs=get;list;watch
+
+// Read-only, and read rather than written on purpose: the Keycloak clients the
+// Compositions own are waited on, never provisioned here. The mail reconcile
+// blocks on gentian-dovecot being Ready before configuring Dovecot to introspect
+// with it.
+//
+// envtest does not enforce RBAC, so the whole suite passed while the operator
+// could not read this on a real cluster.
+// +kubebuilder:rbac:groups=openidclient.keycloak.crossplane.io,resources=clients,verbs=get;list;watch
+
+// TenantReconciler reconciles Tenant objects.
 type TenantReconciler struct {
+	// Exec runs commands inside app pods (see AppExecer), so a profile's maintenance-mode and
+	// restore hooks can run. Optional: without it those fall back to scaling.
+	Exec AppExecer
 	client.Client
 	// APIReader is an optional uncached client for kernel Secret lookups. The
 	// default cached Client can lag behind direct API writes (e.g. envtest).
 	APIReader client.Reader
-	Scheme *runtime.Scheme
+	Scheme    *runtime.Scheme
 	// Seeder derives and persists per-tenant-per-app credentials into OpenBao.
 	// May be nil — in which case all reconcilers skip the seeding step and behave
 	// exactly as they did before Inc 21a. This keeps existing envtest suites
 	// passing without requiring an OpenBao test double.
 	Seeder *secrets.Seeder
-	// KernelDomain is the cluster-wide platform domain (e.g. `desk.gentian.org`)
+	// KernelDomain is the cluster-wide platform domain (e.g. `platform.example.com`)
 	// on which kernel UIs (Keycloak, Argo CD, portal) are served.
 	// Tenant app domains default from tenancy mode when Tenant.spec.domain is
 	// unset. Sourced from KERNEL_DOMAIN at startup.
@@ -163,6 +239,14 @@ type TenantReconciler struct {
 	// TenancyMode controls default app URL shape: multi → {sub}.{tenant}.{kernel};
 	// single → {sub}.{kernel}. Sourced from TENANCY_MODE (default multi).
 	TenancyMode string
+	// MailServiceMode is the CLUSTER's mail stack — kernel or external — from
+	// the Cluster claim's mail.serviceMode. Sourced from MAIL_SERVICE_MODE.
+	//
+	// Distinct from Tenant.spec.mail.mode, which says what one tenant wants;
+	// this says what the cluster actually runs. It gates Dovecot provisioning:
+	// with external there is no Dovecot, because the mailboxes are at the
+	// provider and the ApplicationSet does not deploy one.
+	MailServiceMode string
 	// TenantDNS01ClusterIssuer is the cert-manager ClusterIssuer used to issue
 	// per-tenant wildcard certificates (*.<effectiveDomain>). Defaults to
 	// letsencrypt-dns01-cloudflare when unset. Sourced from TENANT_DNS01_CLUSTER_ISSUER.
@@ -170,12 +254,13 @@ type TenantReconciler struct {
 	// KernelRealm is the name of the shared Keycloak realm for platform identity.
 	// Sourced from the KERNEL_REALM env var at startup.
 	KernelRealm string
-	// CloudflareDNS is an optional edge-DNS adapter: when set, the operator
-	// ensures a proxied CNAME *.<effectiveDomain> → tunnel so Cloudflare Total
-	// TLS can provision edge certs for tenant app hostnames (e.g.
-	// meet.demo.desk.gentian.org). Nil when CLOUDFLARE_* env vars are unset;
-	// use DNS-only (grey cloud) or passthrough to origin in that case.
-	CloudflareDNS *CloudflareDNSClient
+	// Ingress programs how a tenant's hostnames are REACHED — tunnel routes
+	// today. It writes no DNS: external-dns publishes every hostname from the
+	// HTTPRoutes this operator writes, pointed at the ingress by the
+	// annotations it puts on the kernel Gateway. Nil on a static-ip cluster,
+	// where the LoadBalancer already routes and the Gateway's own address is
+	// what external-dns reads.
+	Ingress EdgeIngress
 	// RoutingMode is always gateway (Gateway API + Envoy). Sourced from ROUTING_MODE.
 	RoutingMode string
 	// CrossplaneOnly skips shared-kernel side effects (mail, portal redirect)
@@ -183,14 +268,66 @@ type TenantReconciler struct {
 	CrossplaneOnly bool
 	// CommerceEnabled flags if licensing checks and metering reports are active.
 	CommerceEnabled bool
-	// CorpAPIURL is the backend commercial API base URL.
-	CorpAPIURL string
-	// OperatorToken is the bearer token used to authenticate with gentian-corp.
-	OperatorToken string
+	// CommerceAPIURL is the base URL of the commerce backend: the service that
+	// redeems install grants and accepts metering reports. Which service that is
+	// belongs to the deployment, not to this operator — anything implementing the
+	// two endpoints below will do, and with commerce disabled there is none.
+	CommerceAPIURL string
+	// CommerceAPIToken is the bearer token presented to that backend.
+	CommerceAPIToken string
+}
+
+// tenantRateLimiter replaces controller-runtime's default workqueue rate
+// limiter, which is sized for a single slow-moving workload and not for a
+// fleet of independent Tenants that can all become reconcilable at once.
+//
+// Two components, same shape as the default (client-go's
+// DefaultTypedControllerRateLimiter): a per-item exponential backoff for an
+// item that keeps failing, maxed against a shared token bucket that bounds
+// how fast the queue drains overall. Both are tuned down from the default:
+//
+//   - Per-item ceiling: 30s, not the default 1000s (16+ minutes). AddRateLimited
+//     is reached only on a returned error — every legitimate "not ready yet"
+//     path in this reconciler uses RequeueAfter instead, which bypasses the
+//     rate limiter entirely (see the MaxConcurrentReconciles comment above).
+//     So an item that lands here hit a real, usually-transient error — most
+//     often a resourceVersion conflict from a concurrent writer — and should
+//     get another attempt in seconds, not be capable of being backed off for
+//     a quarter of an hour by a run of bad luck.
+//
+//   - Bucket: 50 qps / burst 200, not the default 10 qps / burst 100. Observed
+//     directly in the envtest suite (149 Tenants reconciling in parallel,
+//     which is this reconciler's normal operating shape, not a corner case):
+//     a routine wave of concurrent Status().Update() calls produced 70+
+//     "the object has been modified" conflicts inside a two-second window —
+//     ordinary optimistic-concurrency contention when many independent
+//     objects are touched together, not a bug in any one of them. Each
+//     conflict is a return error, so each takes an AddRateLimited token. The
+//     default 100-token bucket refilling at only 10/s cannot absorb a burst
+//     that size without rationing the queue for the rest of it; captured
+//     controller logs showed every Tenant — not only the conflicted ones —
+//     go completely silent for the following 175 seconds, well past this
+//     package's 3-minute envtest wait ceiling (see envtestWaitTimeout in
+//     tenant_controller_test.go). A production cluster with a comparable
+//     tenant count hitting a synchronized event — a controller upgrade that
+//     touches every Tenant's status once, say — would face the identical
+//     cliff. Sized generously enough that the same burst drains in a couple
+//     of seconds rather than throttling the whole controller for minutes.
+func tenantRateLimiter() workqueue.TypedRateLimiter[reconcile.Request] {
+	return workqueue.NewTypedMaxOfRateLimiter(
+		workqueue.NewTypedItemExponentialFailureRateLimiter[reconcile.Request](5*time.Millisecond, 30*time.Second),
+		&workqueue.TypedBucketRateLimiter[reconcile.Request]{Limiter: rate.NewLimiter(rate.Limit(50), 200)},
+	)
 }
 
 // SetupWithManager registers the controller with the controller-manager.
 func (r *TenantReconciler) SetupWithManager(mgr ctrl.Manager) error {
+	// The Postfix inbound maps are derived from the tenant registry, so they
+	// need re-deriving on a cluster whose tenants are not currently changing.
+	if err := mgr.Add(postfixMapsBootstrap{reconciler: r}); err != nil {
+		return err
+	}
+
 	// mapToTenant maps any labelled object back to a reconcile request for the owning Tenant.
 	mapToTenant := func(_ context.Context, obj client.Object) []reconcile.Request {
 		tenantName := obj.GetLabels()[tenantLabel]
@@ -202,6 +339,13 @@ func (r *TenantReconciler) SetupWithManager(mgr ctrl.Manager) error {
 
 	// mapAppProfileToTenants maps an AppProfile change to reconcile requests for
 	// every Tenant that references the profile in its spec.apps list.
+	//
+	// Resolution has to match catalogue.ResolveTenantAppProfile, which accepts
+	// EITHER spec.apps[].profile or spec.apps[].profileRef. Comparing only the
+	// literal profile name meant a Tenant selecting its app by catalogue identity
+	// got no event when its AppProfile was created or changed — so the profile it
+	// was waiting for could appear and nothing would notice, leaving the Tenant
+	// Degraded until an unrelated event happened to wake it.
 	mapAppProfileToTenants := func(ctx context.Context, obj client.Object) []reconcile.Request {
 		profileName := obj.GetName()
 		tenantList := &gentianov1alpha1.TenantList{}
@@ -211,7 +355,14 @@ func (r *TenantReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		var requests []reconcile.Request
 		for _, t := range tenantList.Items {
 			for _, app := range t.Spec.Apps {
-				if app.Profile == profileName {
+				resolved, err := catalogue.ResolveTenantAppProfile(ctx, mgr.GetClient(), app)
+				if err != nil {
+					// An app that resolves to nothing cannot match. Skipped rather
+					// than dropping the whole Tenant, so one unresolvable entry does
+					// not hide the others.
+					continue
+				}
+				if resolved == profileName {
 					requests = append(requests, reconcile.Request{
 						NamespacedName: types.NamespacedName{Name: t.Name},
 					})
@@ -231,6 +382,46 @@ func (r *TenantReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Version: cnpgVersion,
 		Kind:    cnpgDatabaseKind,
 	})
+
+	// xTenantObj watches the Crossplane composite this controller creates per
+	// Tenant. Without it the composite reaching Ready was not an event at all:
+	// the Tenant re-read it only when some unrelated watched object happened to
+	// fire, so a tenant whose infrastructure had fully converged could sit in
+	// Provisioning with nothing left to wake it.
+	xTenantObj := &unstructured.Unstructured{}
+	xTenantObj.SetGroupVersionKind(xTenantGVK)
+
+	// Status changes only. ensureTenantXR patches the composite's spec on every
+	// reconcile, so watching the object unfiltered means the controller wakes
+	// itself: patch spec, observe the write, reconcile, patch spec again. That
+	// is a hot loop per tenant, and with a bounded worker pool the tenants stuck
+	// in it starve every other tenant — including one that has only just been
+	// created and is waiting for its first reconcile.
+	//
+	// Only the composite's status is worth waking for: it carries the Ready
+	// condition this controller mirrors onto the Tenant.
+	xTenantHasTenantLabel := func(obj client.Object) bool {
+		_, hasLabel := obj.GetLabels()[tenantLabel]
+		return hasLabel
+	}
+	xTenantStatusChanged := predicate.Funcs{
+		CreateFunc:  func(e event.CreateEvent) bool { return xTenantHasTenantLabel(e.Object) },
+		DeleteFunc:  func(e event.DeleteEvent) bool { return xTenantHasTenantLabel(e.Object) },
+		GenericFunc: func(e event.GenericEvent) bool { return xTenantHasTenantLabel(e.Object) },
+		UpdateFunc: func(e event.UpdateEvent) bool {
+			if !xTenantHasTenantLabel(e.ObjectNew) {
+				return false
+			}
+			oldXR, okOld := e.ObjectOld.(*unstructured.Unstructured)
+			newXR, okNew := e.ObjectNew.(*unstructured.Unstructured)
+			if !okOld || !okNew {
+				return true
+			}
+			oldStatus, _, _ := unstructured.NestedMap(oldXR.Object, "status")
+			newStatus, _, _ := unstructured.NestedMap(newXR.Object, "status")
+			return !equality.Semantic.DeepEqual(oldStatus, newStatus)
+		},
+	}
 
 	mapAllTenants := func(ctx context.Context, _ client.Object) []reconcile.Request {
 		tenantList := &gentianov1alpha1.TenantList{}
@@ -260,6 +451,23 @@ func (r *TenantReconciler) SetupWithManager(mgr ctrl.Manager) error {
 
 	ctrlBuilder := ctrl.NewControllerManagedBy(mgr).
 		For(&gentianov1alpha1.Tenant{}).
+		// One worker is controller-runtime's default, and it is the wrong one
+		// here. A tenant waiting on its provisioning Jobs requeues every two
+		// seconds (see the RequeueAfter below), so every tenant that has not
+		// finished converging occupies the queue continuously. With a single
+		// worker one tenant's provisioning delays every other tenant's
+		// reconcile — including a deletion, which is the one that must get
+		// through promptly.
+		//
+		// It showed up first in CI, where envtest has no kubelet: Jobs never
+		// complete, so every test tenant requeues forever, and a deletion
+		// reconcile was starved past a three-minute wait. Tenants are
+		// independent — the reconciler holds no state shared between them — so
+		// they can converge alongside each other.
+		WithOptions(controller.Options{
+			MaxConcurrentReconciles: 4,
+			RateLimiter:             tenantRateLimiter(),
+		}).
 		Owns(&corev1.Namespace{}).
 		Watches(
 			&batchv1.Job{},
@@ -280,6 +488,11 @@ func (r *TenantReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Watches(
 			&gentianov1alpha1.AppProfile{},
 			handler.EnqueueRequestsFromMapFunc(mapAppProfileToTenants),
+		).
+		Watches(
+			xTenantObj,
+			handler.EnqueueRequestsFromMapFunc(mapToTenant),
+			builder.WithPredicates(xTenantStatusChanged),
 		)
 
 	if isGatewayRoutingMode(r.RoutingMode) {
@@ -298,32 +511,10 @@ func (r *TenantReconciler) tenantEffectiveDomain(tenant *gentianov1alpha1.Tenant
 	return tenant.EffectiveDomain(r.KernelDomain, r.TenancyMode)
 }
 
-// validateTenancyConstraints enforces single-tenancy cluster rules.
-func (r *TenantReconciler) validateTenancyConstraints(ctx context.Context, tenant *gentianov1alpha1.Tenant) error {
-	if gentianov1alpha1.NormalizeTenancyMode(r.TenancyMode) != gentianov1alpha1.TenancyModeSingle {
-		return nil
-	}
-	if tenant.Name != gentianov1alpha1.SingleTenantName {
-		return fmt.Errorf(
-			"cluster TENANCY_MODE=single allows only Tenant %q (got %q)",
-			gentianov1alpha1.SingleTenantName, tenant.Name,
-		)
-	}
-	var others gentianov1alpha1.TenantList
-	if err := r.List(ctx, &others); err != nil {
-		return err
-	}
-	for i := range others.Items {
-		other := &others.Items[i]
-		if other.Name == tenant.Name || !other.DeletionTimestamp.IsZero() {
-			continue
-		}
-		return fmt.Errorf(
-			"cluster TENANCY_MODE=single allows only one Tenant CR (found %q and %q)",
-			tenant.Name, other.Name,
-		)
-	}
-	return nil
+// tenantAdminEmail resolves the tenant's contact address against this cluster's
+// domain and tenancy mode.
+func (r *TenantReconciler) tenantAdminEmail(tenant *gentianov1alpha1.Tenant) string {
+	return tenant.AdminEmailOrDefault(r.KernelDomain, r.TenancyMode)
 }
 
 // Reconcile is the main reconciliation loop for Tenant resources.
@@ -395,7 +586,7 @@ func (r *TenantReconciler) reconcileDelete(ctx context.Context, tenant *gentiano
 		if err == nil {
 			return false, ctrl.Result{}, nil
 		}
-		if err == errDeleteJobPending {
+		if goerrors.Is(err, errDeleteJobPending) {
 			return true, ctrl.Result{RequeueAfter: 2 * time.Second}, nil
 		}
 		return true, ctrl.Result{}, err
@@ -408,6 +599,11 @@ func (r *TenantReconciler) reconcileDelete(ctx context.Context, tenant *gentiano
 
 	// Clean up database resources before removing the namespace.
 	if err := r.deleteDatabase(ctx, tenant); err != nil {
+		return ctrl.Result{}, err
+	}
+
+	// The portal shell credential goes with the database it addresses.
+	if err := r.deletePortalShellSecret(ctx, tenant); err != nil {
 		return ctrl.Result{}, err
 	}
 
@@ -434,6 +630,17 @@ func (r *TenantReconciler) reconcileDelete(ctx context.Context, tenant *gentiano
 	// Clean up edge routing (Ingress or Gateway API), wildcard cert, and DNS.
 	if err := r.deleteEdgeRouting(ctx, tenant); err != nil {
 		return ctrl.Result{}, err
+	}
+
+	// The tenant's OpenBao auth mount goes whatever the DeletionPolicy says.
+	// Retain protects the tenant's *data*; a mount is not data. Left behind it
+	// trusts a realm that no longer exists, and realm names are reusable — so a
+	// later tenant of the same name would inherit these roles.
+	if err := r.removeTenantOpenBaoAuth(ctx, tenant); err != nil {
+		// Not fatal: OpenBao being unreachable must not strand the finalizer and
+		// with it the whole Tenant. Reported so the residue is known.
+		log.FromContext(ctx).Error(err, "could not remove the tenant's OpenBao auth mount",
+			"tenant", tenant.Name)
 	}
 
 	// Clean up IntegrationBinding CRs (always deleted regardless of DeletionPolicy).
@@ -712,7 +919,7 @@ type installExchangeResponse struct {
 }
 
 func (r *TenantReconciler) exchangeInstallGrant(ctx context.Context, jti, jwtToken string) (*installExchangeResponse, error) {
-	url := fmt.Sprintf("%s/api/v1/install-grants/%s/exchange", strings.TrimRight(r.CorpAPIURL, "/"), jti)
+	url := fmt.Sprintf("%s/api/v1/install-grants/%s/exchange", strings.TrimRight(r.CommerceAPIURL, "/"), jti)
 	reqBody, err := json.Marshal(installExchangeRequest{InstallGrantJwt: jwtToken})
 	if err != nil {
 		return nil, err
@@ -723,7 +930,7 @@ func (r *TenantReconciler) exchangeInstallGrant(ctx context.Context, jti, jwtTok
 		return nil, err
 	}
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+r.OperatorToken)
+	req.Header.Set("Authorization", "Bearer "+r.CommerceAPIToken)
 
 	client := &http.Client{Timeout: 10 * time.Second}
 	resp, err := client.Do(req)
@@ -797,13 +1004,13 @@ func buildDockerConfigJSON(host, username, password string) ([]byte, error) {
 	return json.Marshal(config)
 }
 
-// ensureStagingCaTrust bootstraps gentian-staging-ca-tls in the services namespace
+// ensureStagingCaTrust bootstraps gentian-trust-anchor-tls in the services namespace
 // and replicates it into the tenant namespace for in-cluster OIDC clients.
 func (r *TenantReconciler) ensureStagingCaTrust(ctx context.Context, tenant *gentianov1alpha1.Tenant, nsName string) error {
-	const secretName = stagingca.SecretName
+	const secretName = trustanchor.SecretName
 
-	if _, err := stagingca.EnsureStagingCASecret(ctx, r.Client, servicesNamespace,
-		stagingca.DefaultCertManagerNS, stagingca.DefaultLeafSecret); err != nil {
+	if _, err := trustanchor.EnsureTrustAnchorSecret(ctx, r.Client, servicesNamespace,
+		trustanchor.DefaultCertManagerNS, trustanchor.DefaultLeafSecret); err != nil {
 		return fmt.Errorf("bootstrap staging CA in %s: %w", servicesNamespace, err)
 	}
 
@@ -855,15 +1062,29 @@ func (r *TenantReconciler) setCondition(tenant *gentianov1alpha1.Tenant, condTyp
 	now := metav1.Now()
 	for i, c := range tenant.Status.Conditions {
 		if c.Type == condType {
-			if c.Status == status && c.Reason == reason {
-				return
+			// Message and observedGeneration are refreshed even when status and
+			// reason are unchanged. Returning early here froze the first
+			// failure's text in place for as long as the condition kept the same
+			// status/reason pair: an app whose sync first failed with
+			// "connection refused" and later failed with a connect timeout went
+			// on reporting the original error indefinitely, pointing whoever was
+			// debugging at a problem that had already been fixed.
+			//
+			// lastTransitionTime still marks a change of *status* only, per the
+			// Kubernetes API conventions — reason and message churn while a
+			// condition legitimately stays False, and treating that as a
+			// transition would destroy the "how long has this been broken"
+			// signal that makes the field worth having.
+			transition := c.LastTransitionTime
+			if c.Status != status {
+				transition = now
 			}
 			tenant.Status.Conditions[i] = metav1.Condition{
 				Type:               condType,
 				Status:             status,
 				Reason:             reason,
 				Message:            message,
-				LastTransitionTime: now,
+				LastTransitionTime: transition,
 				ObservedGeneration: tenant.Generation,
 			}
 			return
@@ -881,10 +1102,7 @@ func (r *TenantReconciler) setCondition(tenant *gentianov1alpha1.Tenant, condTyp
 
 // tenantNamespaceName returns the namespace name for the tenant.
 func tenantNamespaceName(tenant *gentianov1alpha1.Tenant) string {
-	if tenant.Spec.Isolation != nil && tenant.Spec.Isolation.Namespace != "" {
-		return tenant.Spec.Isolation.Namespace
-	}
-	return fmt.Sprintf("tenant-%s", tenant.Name)
+	return tenant.NamespaceName()
 }
 
 // ── XTenant helpers ───────────────────────────────────────────────────────────
@@ -950,6 +1168,51 @@ func (r *TenantReconciler) deleteXTenant(ctx context.Context, tenant *gentianov1
 	return client.IgnoreNotFound(r.Delete(ctx, xr))
 }
 
+// xtenantQuotas projects a Tenant's quotas onto the XTenant spec.
+//
+// Every field of TenantQuotas has to appear here AND in the quotas schema of
+// crossplane/xrds/tenant.yaml. An XRD is a structural schema, so a field this
+// function emits that the XRD does not declare is pruned on write — silently,
+// with no event and no condition. The Tenant keeps showing the quantity, the
+// XTenant never receives it, and the Composition's template for it never fires.
+//
+// That is not hypothetical. requestsCpu and requestsMemory reached the
+// Composition and the Go mirror in internal/kernel/tenantshell but neither this
+// mapping nor the XRD, so a tenant moved onto a ResourcePlan received the plan's
+// limits and none of its reserved capacity — and reserved capacity is the half a
+// plan is priced on (see TenantQuotas.RequestsCPU). Nothing failed; the tenant
+// was simply sold something the cluster was never told to enforce.
+//
+// xtenant_quotas_agreement_test.go holds the two ends together.
+func xtenantQuotas(q *gentianov1alpha1.TenantQuotas) map[string]interface{} {
+	if q == nil {
+		return nil
+	}
+	quotas := map[string]interface{}{}
+	if q.Storage != nil {
+		quotas["storage"] = q.Storage.String()
+	}
+	if q.CPU != nil {
+		quotas["cpu"] = q.CPU.String()
+	}
+	if q.Memory != nil {
+		quotas["memory"] = q.Memory.String()
+	}
+	if q.RequestsCPU != nil {
+		quotas["requestsCpu"] = q.RequestsCPU.String()
+	}
+	if q.RequestsMemory != nil {
+		quotas["requestsMemory"] = q.RequestsMemory.String()
+	}
+	if q.MaxApps > 0 {
+		quotas["maxApps"] = int64(q.MaxApps)
+	}
+	if q.MaxPods > 0 {
+		quotas["maxPods"] = int64(q.MaxPods)
+	}
+	return quotas
+}
+
 // buildXTenant constructs an XTenant composite object from a Tenant's spec.
 // The XTenant is cluster-scoped; its name matches the Tenant name.
 func (r *TenantReconciler) buildXTenant(ctx context.Context, tenant *gentianov1alpha1.Tenant) (*unstructured.Unstructured, error) {
@@ -962,8 +1225,10 @@ func (r *TenantReconciler) buildXTenant(ctx context.Context, tenant *gentianov1a
 	})
 
 	spec := map[string]interface{}{
-		"displayName":  tenant.Spec.DisplayName,
-		"adminEmail":   tenant.Spec.AdminEmail,
+		"displayName": tenant.Spec.DisplayName,
+		// Always derived — the Tenant CRD has no adminEmail field to read. The
+		// XTenant XRD still requires one, and this is where it comes from.
+		"adminEmail":   r.tenantAdminEmail(tenant),
 		"kernelDomain": r.KernelDomain,
 	}
 	if tenant.Spec.Domain != "" {
@@ -995,26 +1260,8 @@ func (r *TenantReconciler) buildXTenant(ctx context.Context, tenant *gentianov1a
 		}
 	}
 
-	if tenant.Spec.Quotas != nil {
-		quotas := map[string]interface{}{}
-		if tenant.Spec.Quotas.Storage != nil {
-			quotas["storage"] = tenant.Spec.Quotas.Storage.String()
-		}
-		if tenant.Spec.Quotas.CPU != nil {
-			quotas["cpu"] = tenant.Spec.Quotas.CPU.String()
-		}
-		if tenant.Spec.Quotas.Memory != nil {
-			quotas["memory"] = tenant.Spec.Quotas.Memory.String()
-		}
-		if tenant.Spec.Quotas.MaxApps > 0 {
-			quotas["maxApps"] = int64(tenant.Spec.Quotas.MaxApps)
-		}
-		if tenant.Spec.Quotas.MaxPods > 0 {
-			quotas["maxPods"] = int64(tenant.Spec.Quotas.MaxPods)
-		}
-		if len(quotas) > 0 {
-			spec["quotas"] = quotas
-		}
+	if quotas := xtenantQuotas(tenant.Spec.Quotas); len(quotas) > 0 {
+		spec["quotas"] = quotas
 	}
 
 	profileIndex, err := loadAppProfileIndex(ctx, r.Client)

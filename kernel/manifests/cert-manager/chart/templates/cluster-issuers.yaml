@@ -1,0 +1,11 @@
+# Kernel-level cert-manager ClusterIssuers — Let's Encrypt production.
+#
+# Applied by A-06-cluster-issuers as soon as cert-manager is up. Choose between
+# them with the cert-manager.io/cluster-issuer annotation on a Certificate.
+#
+# The HTTP-01 issuer is emitted always; the DNS-01 one only when the cluster
+# names a DNS provider, because DNS-01 is the only path to a wildcard and a
+# provider is the only way to solve it. Both bodies live in _issuers.tpl.
+#
+# For dev and reinstall loops use cluster-issuers-staging.yaml (ACME_ENV=staging).
+{{ include "gentian.clusterIssuers" (dict "root" $ "acmeServer" "https://acme-v02.api.letsencrypt.org/directory" "prefix" "letsencrypt") }}

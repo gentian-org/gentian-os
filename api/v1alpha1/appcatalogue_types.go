@@ -94,7 +94,8 @@ type CatalogueEntry struct {
 	// ChartVersion is the chart version declared in the AppProfile.
 	ChartVersion string `json:"chartVersion"`
 
-	// DeploymentMethod is the deployment pattern (argocd or crossplane).
+	// DeploymentMethod is the deployment pattern (crossplane, or api for an
+	// ApiProfile that runs no workload).
 	DeploymentMethod DeploymentMethod `json:"deploymentMethod"`
 
 	// KernelRequirements is a compact human-readable list of kernel services the

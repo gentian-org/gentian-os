@@ -1,0 +1,118 @@
+---
+# Bootstrap Application: deploys all ApplicationSet manifests from appsets/ to the cluster.
+# kernel/appsets is a tiny Helm chart (Chart.yaml + values.yaml + a single
+# template that passes raw/*.yaml through verbatim, only substituting the
+# "env: dev" generator element for the cluster's actual stage — see
+# kernel/appsets/templates/appsets.yaml). Adding a new app = add
+# appsets/raw/<app>.yaml. Removing one = delete the file.
+# {{ .Values.stage }} is substituted by install.sh (envsubst) —
+# this file is a .tmpl, not applied directly.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: gentian-appsets
+  namespace: argocd
+  finalizers:
+  - resources-finalizer.argocd.argoproj.io
+spec:
+  project: gentian
+  ignoreDifferences:
+  - group: argoproj.io
+    kind: ApplicationSet
+    jsonPointers:
+    - /metadata/annotations/argocd.argoproj.io~1tracking-id
+  # ArgoCD adds post-delete finalizers to a child Application whose chart has a
+  # PostDelete hook — kyverno's policyReportsCleanup is one. Git cannot declare
+  # them (ArgoCD owns them, and they appear only after the child first syncs), so
+  # with ServerSideApply + selfHeal the parent strips them, ArgoCD re-adds them,
+  # and the parent stays OutOfSync forever. They are runtime state, not desired
+  # config, so exclude them from the diff.
+  #
+  # This does not stop finalizers from being applied: ignoreDifferences affects
+  # only the diff, so a newly created child still gets the resources-finalizer
+  # declared in kernel/appsets/raw/.
+  - group: argoproj.io
+    kind: Application
+    jsonPointers:
+    - /metadata/finalizers
+  source:
+    repoURL: {{ .Values.osRepo | default "https://github.com/gentian-org/gentian-os" }}
+    targetRevision: {{ .Values.gentianOsBranch }}
+    path: kernel/appsets
+    helm:
+      parameters:
+      - name: stage
+        value: "{{ .Values.stage }}"
+      # Reaches the per-service charts through kernel/appsets, which rewrites
+      # the kernel.domain.placeholder literal in raw/*.yaml. Postfix needs it
+      # for ALLOWED_SENDER_DOMAINS; without a real value it rejects every
+      # recipient with 554 "Access denied".
+      - name: kernelDomain
+        value: "{{ .Values.kernelDomain }}"
+      # Reaches infra-postgresql/mariadb/redis/minio through the
+      # storage.class.placeholder literal (kernel/appsets/raw/08-infra-data.yaml).
+      # Left empty there, those charts render their PVC/volumeClaimTemplates with
+      # no storageClassName at all; the DefaultStorageClass admission plugin
+      # then stamps one onto the live object at creation, permanently ahead of
+      # what Helm believes it wrote. The next upgrade tries to patch that field
+      # back to nil, which the API server refuses — storageClassName is
+      # immutable once bound — and the release sticks in state: failed forever,
+      # with the pod or StatefulSet otherwise running fine on the revision that
+      # did apply. Threading the resolved default through keeps Helm's desired
+      # state equal to what admission already put there, so there is nothing
+      # left to patch.
+      - name: storageClass
+        value: "{{ .Values.storageClass }}"
+      # The outbound relay for MAIL_SERVICE_MODE=external. Unset in kernel mode,
+      # which renders an empty host and means direct delivery — so no mail-mode
+      # flag is threaded through, only the relay itself.
+      - name: externalSmtpHost
+        value: "{{ .Values.smtpHost }}"
+      - name: externalSmtpPort
+        value: "{{ .Values.smtpPort }}"
+      - name: externalSmtpSsl
+        value: "{{ .Values.smtpSsl }}"
+      - name: externalSmtpStarttls
+        value: "{{ .Values.smtpStarttls }}"
+      # Which mail stack to deploy. external runs Postfix as a relay and no
+      # Dovecot at all — there are no local mailboxes for it to serve.
+      - name: mailServiceMode
+        value: "{{ .Values.mailServiceMode }}"
+      # LLM serving, and whether the mock backend stands in for GPUs.
+      - name: llmEnabled
+        value: "{{ .Values.llmEnabled }}"
+      - name: llmGpuAcceleration
+        value: "{{ .Values.llmGpuAcceleration }}"
+      - name: mailEgressHost
+        value: "{{ .Values.mailEgressHost }}"
+      # Whether the MetalLB Kyverno exception (raw/05b-metallb-exception.yaml)
+      # is generated. From the Cluster claim's platformParams.metallb.
+      - name: metallbException
+        value: "{{ .Values.metallbException }}"
+      # Every child ApplicationSet points back at this repo. Without this the
+      # children would keep the literal branch baked into raw/*.yaml while the
+      # parent tracked another one, so a cluster pinned to a release tag would
+      # still pull its kernel services off develop.
+      - name: targetRevision
+        value: "{{ .Values.gentianOsBranch }}"
+      # Where gentian-os itself comes from. The children hardcoded this URL, so
+      # a mirrored or air-gapped install could pin the ref but not the origin.
+      - name: gentianOsRepo
+        value: "{{ .Values.osRepo }}"
+      # The deployments repository and which cluster's directory holds its
+      # claims. Claims are per-cluster configuration and live there, not here.
+      - name: deploymentsRepo
+        value: "{{ .Values.deploymentsRepo }}"
+      - name: deploymentsRevision
+        value: "{{ .Values.deploymentsBranch }}"
+      - name: deploymentsCluster
+        value: "{{ required "deploymentsCluster is empty: every generated Application would point at clusters//kernel and never sync" .Values.cluster }}"
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: argocd
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+    - ServerSideApply=true

@@ -1,0 +1,64 @@
+# OpenFGA — plain Helm values (merged by Suze Crossplane composition).
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: openfga-base-values
+  namespace: platform-kernel
+  annotations:
+    argocd.argoproj.io/sync-wave: "-1"
+data:
+  values.yaml: |
+    replicaCount: 1
+    postgresql:
+      enabled: false
+    mysql:
+      enabled: false
+    datastore:
+      engine: postgres
+      maxOpenConns: 30
+      maxIdleConns: 10
+      connMaxIdleTime: 30s
+      connMaxLifetime: 60s
+      applyMigrations: true
+      # initContainer runs `openfga migrate` before the server starts. waitForMigrations
+      # must stay true — the chart only renders initContainers when it is true (job
+      # waiter is gated separately on migrationType=job).
+      migrationType: initContainer
+      waitForMigrations: true
+    grpc:
+      enabled: true
+    telemetry:
+      trace:
+        enabled: false
+      metrics:
+        enabled: false
+    authn:
+      method: preshared
+    # Chart 0.3.x enables playground by default; v1.18+ panics if authn != none.
+    playground:
+      enabled: false
+    ingress:
+      enabled: false
+    # AuthZEN evaluation API (experimental) — required when portal BFF uses OPENFGA_AUTHZEN_ENABLED.
+    # Helm chart values.schema.json does not yet allow experimentals: [authzen]; use env instead.
+    extraEnvVars:
+      - name: OPENFGA_EXPERIMENTALS
+        value: authzen
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: openfga-{{ .Values.env }}-values
+  namespace: platform-kernel
+  annotations:
+    argocd.argoproj.io/sync-wave: "-1"
+data:
+  values.yaml: |
+    resources:
+      requests:
+        cpu: 50m
+        memory: 128Mi
+      limits:
+        cpu: "1"
+        memory: 512Mi

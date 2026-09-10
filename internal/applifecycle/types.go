@@ -28,6 +28,10 @@ type Options struct {
 	DeploymentsRepo    string
 	DeploymentsCluster string
 	WaitTimeout        time.Duration
+	// MetricsEnabled turns on the live-consumption series read from
+	// metrics.k8s.io. Off in a cluster without metrics-server, where the
+	// resources API still reports the ceiling and what is committed under it.
+	MetricsEnabled bool
 }
 
 // InstallRequest installs an app profile on a tenant.
@@ -69,5 +73,38 @@ type SetAddonsRequest struct {
 	// Addons holds AppProfile names. An empty slice is a real selection meaning
 	// "none" and clears the list.
 	Addons []string
-	Actor  string
+	// Provision grants access to every addon in this request, as it does for an
+	// app: every existing tenant user is added to each addon's access group.
+	// Installing without it leaves access to be granted by assigning users to
+	// that group.
+	//
+	// Kept for callers that mean "all of them", and because it is what the field
+	// has always meant on the wire. ProvisionFor is the finer answer and wins
+	// where it is given.
+	Provision bool
+	// ProvisionFor names the addons to grant access to, for callers that choose
+	// per addon — which the App Store does, offering Install and Provision as
+	// separate buttons on each row. Names not in Addons are ignored; the
+	// selection is what decides what is installed.
+	//
+	// When this is non-empty it is the whole answer: an addon absent from it is
+	// installed without being granted, even if another addon in the same request
+	// is granted. Collapsing the two into one bool is how installing CRM without
+	// provisioning it left its group empty while its profile declared the Sales
+	// role, so Odoo refused access to crm.lead.
+	ProvisionFor []string
+	Actor        string
+}
+
+// provisions reports whether this request grants access to one addon.
+func (r SetAddonsRequest) provisions(profile string) bool {
+	if len(r.ProvisionFor) == 0 {
+		return r.Provision
+	}
+	for _, name := range r.ProvisionFor {
+		if name == profile {
+			return true
+		}
+	}
+	return false
 }

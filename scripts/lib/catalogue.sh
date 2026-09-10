@@ -9,82 +9,105 @@
 # 16. AppCatalogue CRD + kubectl-gentian plugin
 # =============================================================================
 install_app_catalogue() {
-    banner "Step 16 — AppCatalogue CRD + kubectl-gentian plugin"
+    banner "AppCatalogue CRD"
 
-    kubectl apply -f "${SCRIPT_DIR}/config/crd/gentianos.io_appcatalogues.yaml"
-    success "AppCatalogue CRD applied."
-
-    local plugin_src="${SCRIPT_DIR}/scripts/kubectl-gentian"
-    local plugin_dst="/usr/local/bin/kubectl-gentian"
-    local gtnctl_dst="/usr/local/bin/gtnctl"
-
-    # Idempotency: skip if destination is identical to source (no sudo needed).
-    if [[ -f "$plugin_dst" ]] && cmp -s "$plugin_src" "$plugin_dst"; then
-        success "kubectl-gentian already up-to-date at ${plugin_dst}."
-    elif [[ -w /usr/local/bin ]]; then
-        install -m 755 "$plugin_src" "$plugin_dst"
-        success "kubectl-gentian installed to ${plugin_dst}."
-    else
-        info "Installing kubectl-gentian to ${plugin_dst} (sudo required)..."
-        if sudo install -m 755 "$plugin_src" "$plugin_dst"; then
-            success "kubectl-gentian installed to ${plugin_dst}."
-        else
-            warn "Failed to install kubectl-gentian — install manually:"
-            warn "  sudo install -m 755 ${plugin_src} ${plugin_dst}"
+    # The CRD is not applied here.
+    #
+    # It used to be, from config/crd/ in this checkout — a file byte-identical to
+    # charts/gentian-os/crds/gentianos.io_appcatalogues.yaml, which the
+    # gentian-os Argo CD Application delivers with the operator chart at
+    # sync-wave 0. Two writers, one of them whatever tree the installer happened
+    # to run from.
+    #
+    # Nothing local populates the catalogue either: AppProfiles arrive from
+    # gentian-apps through the gentian-catalogue ApplicationSet, and the
+    # operator's appstore controller creates the AppCatalogue singleton and
+    # rebuilds its status from them. So this step waits for what Argo brings.
+    local deadline=$((SECONDS + 120))
+    until kubectl get crd appcatalogues.gentianos.io >/dev/null 2>&1; do
+        if (( SECONDS > deadline )); then
+            warn "AppCatalogue CRD not present after 2m — check the gentian-os Application in Argo CD."
+            return 0
         fi
-    fi
+        sleep 5
+    done
+    success "AppCatalogue CRD is present (delivered by the operator chart)."
 
-    if [[ ! -x "${plugin_dst}" ]]; then
-        warn "Skipping gtnctl symlink — kubectl-gentian is not installed."
+    # The host CLI is NOT installed from here. Installing it meant a cluster
+    # installer asking for root on the machine it was run from, and an uninstall
+    # deleting the binary that drives every other cluster the operator manages.
+    # It is a host operation, so it has a host command.
+    report_gentian_cli_state
+}
+
+# report_gentian_cli_state — is the CLI present, and is it THIS checkout's?
+#
+# Presence alone was the whole check, and presence is the easy half. The plugin
+# is a script copied into place, so a machine accumulates copies: one in
+# ~/.local/bin from `make install-plugin`, an older root-owned one in
+# /usr/local/bin from when the installer still put it there, and the checkout's
+# own. PATH order decides which answers, nothing announces the others, and a
+# `gtnctl tenants deploy` can therefore run a build that predates the cluster it
+# is talking to — silently, because an out-of-date CLI does not fail, it just
+# does something slightly different.
+#
+# Compared by content rather than by version string: two copies can declare the
+# same version and differ, which is exactly what a copied script does between
+# releases.
+report_gentian_cli_state() {
+    local repo="${SCRIPT_DIR}/scripts/kubectl-gentian"
+    local installed
+    installed="$(command -v kubectl-gentian 2>/dev/null || true)"
+
+    if [[ -z "${installed}" ]]; then
+        info "The gentian CLI is not on PATH. Install it with:"
+        info "  make -C ${SCRIPT_DIR} install-plugin"
         return 0
     fi
 
-    if [[ -w /usr/local/bin ]]; then
-        ln -sf kubectl-gentian "${gtnctl_dst}"
-    else
-        sudo ln -sf kubectl-gentian "${gtnctl_dst}" || warn "Failed to link gtnctl -> kubectl-gentian at ${gtnctl_dst}"
+    [[ -r "${repo}" ]] || return 0
+    if cmp -s "${repo}" "${installed}"; then
+        return 0
     fi
 
-    # Mirror to ~/.local/bin when present — it often precedes /usr/local/bin in PATH.
-    local user_bin="${HOME}/.local/bin"
-    local user_plugin_dst="${user_bin}/kubectl-gentian"
-    local user_gtnctl_dst="${user_bin}/gtnctl"
-    if [[ -d "${user_bin}" ]]; then
-        if [[ -w "${user_bin}" ]]; then
-            install -m 755 "$plugin_src" "$user_plugin_dst"
-            ln -sf kubectl-gentian "${user_gtnctl_dst}"
-            success "kubectl-gentian and gtnctl (-> kubectl-gentian) installed to ${user_bin}."
-        else
-            warn "${user_bin} is not writable — run: make -C ${SCRIPT_DIR} install-plugin"
-        fi
-    fi
+    warn "The gentian CLI on PATH is not this checkout's copy:"
+    warn "    on PATH : ${installed}"
+    warn "    checkout: ${repo}"
+    warn "  Refresh it with:  make -C ${SCRIPT_DIR} install-plugin"
+
+    # Every other copy, because the stale one is only a PATH change away from
+    # being the one that runs.
+    local other seen=0
+    while IFS= read -r other; do
+        [[ -n "${other}" && "${other}" != "${installed}" ]] || continue
+        (( seen++ == 0 )) && warn "  Other copies on PATH, any of which could take over:"
+        warn "    ${other}"
+    done < <(type -aP kubectl-gentian 2>/dev/null || true)
 }
 
-# =============================================================================
-# 15. Install Argo CD ApplicationSet syncing catalogue bundles from gentian-apps
-# =============================================================================
-# Renders kernel/bootstrap/catalogue-applicationset.yaml.tmpl. Once synced, each
-# profiles/<name>/ kustomization becomes an Application (catalogue-<name>) that
-# applies AppProfile, optional composition.yaml, and optional cluster assets.
-install_catalogue_sync() {
-    banner "Step 15 — Argo CD catalogue sync (gentian-apps profile bundles)"
+# Every host path install_app_catalogue writes: the plugin and its gtnctl
+# symlink, in /usr/local/bin and in the ~/.local/bin mirror.
+#
+# Both destinations are real. ~/.local/bin usually precedes /usr/local/bin in
+# PATH, so removing only the system copy leaves `gtnctl` still resolving to a
+# plugin for a cluster that no longer exists.
 
-    local tmpl="${SCRIPT_DIR}/kernel/bootstrap/catalogue-applicationset.yaml.tmpl"
-    local rendered
-    rendered="$(mktemp)"
-    sed -e "s|%REPO_URL%|${GENTIAN_APPS_REPO}|g" \
-        -e "s|%BRANCH%|${GENTIAN_APPS_BRANCH}|g" \
-        "$tmpl" >"$rendered"
-
-    info "Applying gentian-catalogue ApplicationSet:"
-    info "  repo:   ${GENTIAN_APPS_REPO}"
-    info "  branch: ${GENTIAN_APPS_BRANCH}"
-    kubectl apply -f "$rendered"
-    rm -f "$rendered"
-    success "Catalogue sync configured. Argo CD will sync profiles/<name>/ bundles."
-    info "After sync, list available app profiles with:"
-    info "  kubectl gentian apps list"
-}
+# =============================================================================
+# 15. Repository claim for the default app catalogue (gentian-apps)
+# =============================================================================
+# The Repository claim itself is B-12-apps-repository.sh's job now (it needs
+# to run in the secrets phase, before D, to carry the OpenBao/ESO credential
+# for a private repo — this file's install_catalogue_sync used to apply a
+# second, credential-less Repository/gentian-apps here, which duplicated it:
+# any role: apps, type: git repository composes its own catalogue-sync
+# ApplicationSet (crossplane/compositions/repository-default.yaml) named after
+# the claim, so two claims for the same repo meant two ApplicationSets
+# fighting over the same Applications. D-08-appprofiles.sh just verifies
+# B-12's claim exists now.
+#
+# Once synced, each profiles/<name>/ bundle becomes an Application
+# (catalogue-<name>) that applies AppProfile, optional composition.yaml, and
+# optional cluster assets.
 
 # =============================================================================
 # 15. Install gentian-os orchestrator (Helm chart + ArgoCD Application)
@@ -100,7 +123,7 @@ install_catalogue_sync() {
 #     subsequent install steps can use them without waiting for ArgoCD.
 #   ArgoCD Application handoff:
 #     The gentian-os ArgoCD Application (rendered from
-#     kernel/bootstrap/gentian-os-application.yaml.tmpl) is applied.
+#     kernel/bootstrap/chart/templates/gentian-os.yaml) is applied.
 #     ArgoCD takes ownership of the resources via ServerSideApply and from
 #     this point drives all future chart upgrades.  Critically, Source 4 of
 #     the Application deploys the ImageUpdater CR into the cluster, which
@@ -120,57 +143,75 @@ release_gentian_os_helm_bootstrap() {
     fi
 }
 
-# =============================================================================
-# Create git credentials Secret for operator app lifecycle (gentian-deployments push)
-# =============================================================================
-_deployments_git_host() {
-    local repo="${GENTIAN_DEPLOYMENTS_REPO:-https://git.example.domain/gentian-deployments}"
-    if [[ "${repo}" =~ ^https?://([^/]+) ]]; then
-        echo "${BASH_REMATCH[1]}"
-    elif [[ "${repo}" =~ ^git@([^:]+): ]]; then
-        echo "${BASH_REMATCH[1]}"
-    else
-        echo "github.com"
-    fi
-}
-
-create_deployments_git_credentials() {
-    local ns="${1:-gentian-system}"
-    if [[ -z "${GENTIAN_DEPLOYMENTS_GIT_TOKEN:-}" ]]; then
-        warn "GENTIAN_DEPLOYMENTS_GIT_TOKEN not set — skipping deployments git credentials Secret."
-        warn "  In-cluster App Store install/uninstall will fail at git push until configured."
-        return 0
-    fi
-
-    banner "Deployments git credentials (operator app lifecycle)"
-    local host username
-    host="$(_deployments_git_host)"
-    username="${GENTIAN_DEPLOYMENTS_GIT_USERNAME:-x-access-token}"
-    bash "${SCRIPT_DIR}/scripts/create-deployments-git-credentials.sh" \
-        "${ns}" \
-        "${GENTIAN_DEPLOYMENTS_GIT_TOKEN}" \
-        "${username}" \
-        "${host}"
-    success "Deployments git credentials Secret ready in ${ns}."
-}
-
-# =============================================================================
-# Upload CI_BOT_PAT (and optional ArgoCD sync secrets) to gentian-os GitHub repo
-# =============================================================================
-configure_github_actions_secrets() {
-    if [[ -z "${CI_BOT_PAT:-}" ]]; then
-        warn "CI_BOT_PAT not set — skipping GitHub Actions secret upload for image-pin workflows."
-        warn "  CI_BOT_PAT not configured — gentian-os git automation from Actions may fail."
-        warn "  See GETTING-STARTED.md"
-        return 0
-    fi
-
-    banner "GitHub Actions secrets (gentian-os image pin)"
-    bash "${SCRIPT_DIR}/scripts/configure-github-actions-secrets.sh"
-}
+# The operator's .git-credentials used to be created here with `kubectl create
+# secret`, alongside the one the XRepository Composition emits through ESO —
+# two writers of one credential, and the values file decided which the operator
+# mounted. The composed one is the credential: it is backed by an
+# ExternalSecret, so rotating the value in OpenBao reaches the pod, which the
+# imperative Secret could never do.
+#
+# It survived this long because the Composition named it from the composite
+# (deployments-m288c-git-credentials), and a chart value cannot be written
+# against a generated suffix. The Composition now names it from the claim, so
+# `deployments-git-credentials` is stable and referenceable.
 
 # Adopt cluster-scoped chart resources left from a prior ArgoCD or manual install so
 # helm upgrade --install gentian-os can proceed (missing meta.helm.sh/release-*).
+# =============================================================================
+# ensure_kernel_services_configmap — break the Step 12 / Step 13 deadlock
+#
+# The Keycloak pod created by the Suze XR (Step 12) reads KERNEL_DOMAIN from the
+# gentian-kernel-services ConfigMap in platform-kernel. That ConfigMap is
+# rendered by the gentian-os operator chart — Step 13. So on a first install the
+# pod fails with
+#
+#   Error: configmap "gentian-kernel-services" not found
+#
+# and Step 12 waits out its full 1200s timeout for a pod that cannot start,
+# while the thing it needs is scheduled to arrive one step later. Re-runs of an
+# already-bootstrapped cluster hide this, because the ConfigMap is left over
+# from the previous run — which is why it survived until the first prod install.
+#
+# Seed it before Step 12 with the keys that are unambiguous this early
+# (KERNEL_DOMAIN, TENANCY_MODE — the only ones any Step 12 workload reads), and
+# tag it so Helm adopts rather than collides at Step 13, using the same
+# annotation/label pair as adopt_gentian_os_helm_preflight below. Step 13 then
+# re-renders it with the full key set (SMTP_HOST, S3_ENDPOINT, MYSQL_HOST, …),
+# which is deliberately NOT guessed here: those hostnames come from chart
+# defaults that this function has no business duplicating.
+# =============================================================================
+ensure_kernel_services_configmap() {
+    local ns="platform-kernel"
+
+    if [[ -z "${KERNEL_DOMAIN:-}" ]]; then
+        warn "KERNEL_DOMAIN unset; skipping gentian-kernel-services pre-seed."
+        return 0
+    fi
+
+    kubectl get namespace "${ns}" >/dev/null 2>&1 || kubectl create namespace "${ns}" >/dev/null
+
+    if kubectl get configmap gentian-kernel-services -n "${ns}" >/dev/null 2>&1; then
+        success "gentian-kernel-services already present in ${ns}."
+        return 0
+    fi
+
+    info "Pre-seeding gentian-kernel-services in ${ns} (needed by Keycloak in Step 12)..."
+    kubectl create configmap gentian-kernel-services -n "${ns}" \
+        --from-literal=KERNEL_DOMAIN="${KERNEL_DOMAIN}" \
+        --from-literal=TENANCY_MODE="${TENANCY_MODE:-multi}" >/dev/null
+
+    # Same adoption contract as adopt_gentian_os_helm_preflight: without these,
+    # Step 13's `helm upgrade --install` aborts with "invalid ownership metadata".
+    kubectl annotate configmap gentian-kernel-services -n "${ns}" \
+        "meta.helm.sh/release-name=gentian-os" \
+        "meta.helm.sh/release-namespace=gentian-system" --overwrite >/dev/null
+    kubectl label configmap gentian-kernel-services -n "${ns}" \
+        "app.kubernetes.io/managed-by=Helm" \
+        "gentianos.io/config-type=kernel-services" --overwrite >/dev/null
+
+    success "gentian-kernel-services seeded (Helm will adopt it in Step 13)."
+}
+
 adopt_gentian_os_helm_preflight() {
     local ns="${1:-gentian-system}"
     local vwc chart_ns
@@ -194,6 +235,73 @@ adopt_gentian_os_helm_preflight() {
                  --no-headers -o custom-columns=NAME:.metadata.name 2>/dev/null \
              | grep "^gentian-os-" || true)
 
+    # The cluster-scoped RBAC, for the same reason and by the same mechanism.
+    #
+    # Once Argo CD has reconciled a cluster, the gentian-os Application renders
+    # THIS chart and applies its output directly. Argo's copies therefore carry
+    # the chart's app.kubernetes.io/managed-by=Helm label — which looks like
+    # ownership and is not — but none of the meta.helm.sh/release-*
+    # annotations, which is what Helm actually checks. So a local
+    # `helm upgrade --install` refuses them:
+    #
+    #   ClusterRole "gentian-os" in namespace "" exists and cannot be imported
+    #   into the current release: invalid ownership metadata
+    #
+    # and D-01 stops on a cluster where nothing is wrong except which client
+    # applied the object last. The webhook above had already been given this
+    # treatment; the RBAC had not, so an install after any Argo sync hit it.
+    #
+    # Namespaced objects do not need this: they are recreated in a namespace
+    # the chart owns. Cluster-scoped ones outlive it.
+    #
+    # Every cluster-scoped kind the chart can render, not a list of names.
+    # Fixing these one at a time is a losing game — the RBAC was found first,
+    # then OIDCPackCatalog on the next run, then PlatformSecurityPolicy would
+    # have been after that. The core kinds are fixed; the gentianos.io ones are
+    # discovered, so a cluster-scoped CR added to the chart later is covered
+    # without touching this.
+    #
+    # Selected by app.kubernetes.io/instance=gentian-os, which the chart stamps
+    # on what it renders. That is what keeps this from adopting objects it has
+    # no business claiming: a Tenant is cluster-scoped too, and carries no such
+    # label because nothing in this chart renders it.
+    local kinds=(clusterrole clusterrolebinding validatingwebhookconfiguration)
+    local crd
+    while IFS= read -r crd; do
+        [[ -n "${crd}" ]] && kinds+=("${crd}")
+    done < <(kubectl get crd -o json 2>/dev/null | python3 -c '
+import json, sys
+try:
+    doc = json.load(sys.stdin)
+except Exception:
+    sys.exit(0)
+for c in doc.get("items", []):
+    spec = c.get("spec", {})
+    if spec.get("group") == "gentianos.io" and spec.get("scope") == "Cluster":
+        print(spec["names"]["plural"] + ".gentianos.io")
+' || true)
+
+    local kind obj existing
+    for kind in "${kinds[@]}"; do
+        while IFS= read -r obj; do
+            [[ -n "${obj}" ]] || continue
+            existing="$(kubectl get "${obj}" \
+                -o jsonpath='{.metadata.annotations.meta\.helm\.sh/release-name}' \
+                2>/dev/null || true)"
+            [[ -n "${existing}" ]] && continue
+            kubectl annotate "${obj}" \
+                "meta.helm.sh/release-name=gentian-os" \
+                "meta.helm.sh/release-namespace=${ns}" \
+                --overwrite >/dev/null
+            kubectl label "${obj}" \
+                "app.kubernetes.io/managed-by=Helm" \
+                --overwrite >/dev/null
+            info "Adopted pre-existing ${obj} into Helm release."
+        done < <(kubectl get "${kind}" \
+                     -l app.kubernetes.io/instance=gentian-os \
+                     -o name 2>/dev/null || true)
+    done
+
     chart_ns="shared-apps"
     if kubectl get namespace "${chart_ns}" >/dev/null 2>&1; then
         if ! kubectl get namespace "${chart_ns}" \
@@ -213,7 +321,7 @@ adopt_gentian_os_helm_preflight() {
 
 _gentian_os_deployments_kernel_dir() {
     : "${GENTIAN_DEPLOYMENTS_PATH:=${HOME}/.gentian/gentian-deployments}"
-    local cluster="${GENTIAN_DEPLOYMENTS_CLUSTER:-default-cluster}"
+    local cluster="${GENTIAN_DEPLOYMENTS_CLUSTER_ID:-default-cluster}"
     echo "${GENTIAN_DEPLOYMENTS_PATH}/clusters/${cluster}/kernel"
 }
 
@@ -225,7 +333,7 @@ _gentian_os_collect_operator_value_files() {
     deploy_dir="${GENTIAN_DEPLOYMENTS_PATH:-${HOME}/.gentian/gentian-deployments}"
     _files=()
     # Mirrors the layered valueFiles ArgoCD uses once it takes over this
-    # Application (kernel/bootstrap/gentian-os-application.yaml.tmpl):
+    # Application (kernel/bootstrap/chart/templates/gentian-os.yaml):
     # profiles/_base.yaml -> profiles/<stage>.yaml -> clusters/<cluster>/kernel/values.yaml
     if [[ -f "${deploy_dir}/profiles/_base.yaml" ]]; then
         _files+=(-f "${deploy_dir}/profiles/_base.yaml")
@@ -254,7 +362,8 @@ _gentian_os_services_namespace() {
         echo "$ns"
         return
     fi
-    echo "gentian-${ENV:-dev}"
+    # Fallback must match the chart default, not the old gentian-<env> guess.
+    gentian_services_namespace
 }
 
 wait_for_operator_cloudflare_token() {
@@ -280,45 +389,75 @@ wait_for_operator_cloudflare_token() {
 }
 
 handoff_gentian_os_to_argocd() {
-    local openfga_token="${1:-}"
-    local gentian_os_branch
-    gentian_os_branch=$(git -C "${SCRIPT_DIR}" rev-parse --abbrev-ref HEAD 2>/dev/null || echo "develop")
+    resolve_gentian_os_branch
     local stage="${GENTIAN_DEPLOYMENTS_STAGE:-${ENV:-dev}}"
-    local cluster="${GENTIAN_DEPLOYMENTS_CLUSTER:-default-cluster}"
-    local tmpl="${SCRIPT_DIR}/kernel/bootstrap/gentian-os-application.yaml.tmpl"
+    local cluster="${GENTIAN_DEPLOYMENTS_CLUSTER_ID:-default-cluster}"
+    # Provenance defaults to the public origin, so an install that says nothing
+    # behaves as before; a mirrored install sets these in install.env (§2).
+    local os_repo="${GENTIAN_OS_REPO:-https://github.com/gentian-org/gentian-os}"
+    local os_image="${GENTIAN_OS_IMAGE_REPOSITORY:-ghcr.io/gentian-org/gentian-os}"
     local rendered
     rendered="$(mktemp)"
-    sed -e "s|%GENTIAN_OS_BRANCH%|${gentian_os_branch}|g" \
-        -e "s|%DEPLOYMENTS_REPO%|${GENTIAN_DEPLOYMENTS_REPO}|g" \
-        -e "s|%DEPLOYMENTS_BRANCH%|${GENTIAN_DEPLOYMENTS_BRANCH}|g" \
-        -e "s|%CLUSTER%|${cluster}|g" \
-        -e "s|%STAGE%|${stage}|g" \
-        "$tmpl" >"$rendered"
+    # The ApplicationSet in this manifest carries Argo's own {{ .path.path }},
+    # which the chart wraps in a raw string so Helm hands it through untouched.
+    helm template gentian-bootstrap "${SCRIPT_DIR}/kernel/bootstrap/chart" \
+        -s templates/gentian-os.yaml \
+        --set-string "gentianOsBranch=${GENTIAN_OS_BRANCH}" \
+        --set-string "osRepo=${os_repo}" \
+        --set-string "osImageRepository=${os_image}" \
+        --set-string "deploymentsRepo=${GENTIAN_DEPLOYMENTS_REPO}" \
+        --set-string "deploymentsBranch=${GENTIAN_DEPLOYMENTS_BRANCH}" \
+        --set-string "cluster=${cluster}" \
+        --set-string "stage=${stage}" >"$rendered"
 
     info "Registering gentian-os Application + gentian-tenants ApplicationSet..."
-    info "  operator branch:    ${gentian_os_branch}"
+    info "  operator branch:    ${GENTIAN_OS_BRANCH}"
     info "  deployments repo:   ${GENTIAN_DEPLOYMENTS_REPO}"
     info "  deployments branch: ${GENTIAN_DEPLOYMENTS_BRANCH}"
+    info "  operator repo:      ${os_repo}"
+    info "  operator image:     ${os_image}"
     info "  deployments cluster:${cluster}"
     info "  deployments stage:  ${stage}"
     kubectl apply -f "$rendered"
     rm -f "$rendered"
 
-    if [[ -n "${openfga_token}" ]]; then
-        info "Pinning Stage 1 authz bridge settings on Argo CD Application gentian-os..."
-        kubectl patch application gentian-os -n argocd --type=json -p "$(jq -nc \
-            --arg token "${openfga_token}" \
-            '[{"op":"add","path":"/spec/sources/0/helm/parameters","value":[
-                {"name":"authzBridge.enabled","value":"true"},
-                {"name":"authzBridge.openfgaToken","value":$token}
-            ]}]')" 2>/dev/null \
-        || kubectl patch application gentian-os -n argocd --type=json -p "$(jq -nc \
-            --arg token "${openfga_token}" \
-            '[{"op":"replace","path":"/spec/sources/0/helm/parameters","value":[
-                {"name":"authzBridge.enabled","value":"true"},
-                {"name":"authzBridge.openfgaToken","value":$token}
-            ]}]')"
-    fi
+    # Pin only non-sensitive bridge settings. The OpenFGA token deliberately does
+    # NOT go here: helm.parameters are stored verbatim in the Application spec,
+    # so writing it pinned the credential in cleartext where every reader of
+    # Applications — and every backup or git mirror of them — could see it. The
+    # chart now resolves the token through secretKeyRef, so the Application only
+    # needs to say which Secret to read.
+    local -a app_params=('{"name":"authzBridge.enabled","value":"true"}')
+
+    # The trust anchor, when a public CA did not sign this cluster's
+    # certificates. Read from the claim rather than asked for again: issuerMode
+    # already decides whether an anchor exists, and a second setting would be
+    # free to disagree with the mode that produced it. Non-sensitive — a CA
+    # certificate is the thing you hand to strangers — so pinning the NAME here
+    # is safe in a way the OpenFGA token above is not.
+    local _issuer_mode _anchor_secret
+    _issuer_mode="$(kubectl get clusters.gentianos.io \
+        -o jsonpath='{.items[0].spec.certificates.issuerMode}' 2>/dev/null || true)"
+    case "${_issuer_mode}" in
+        self-signed|private-ca)
+            _anchor_secret="$(kubectl get clusters.gentianos.io \
+                -o jsonpath='{.items[0].spec.certificates.caBundleSecretRef.name}' 2>/dev/null || true)"
+            _anchor_secret="${_anchor_secret:-gentian-root-ca-tls}"
+            app_params+=("{\"name\":\"trustAnchorSecret\",\"value\":\"${_anchor_secret}\"}")
+            info "  trust anchor:       ${_anchor_secret} (issuerMode=${_issuer_mode})"
+            ;;
+    esac
+    app_params+=('{"name":"authzBridge.openfgaTokenSecretRef.name","value":"gentian-os-openfga-token"}')
+
+    info "Pinning Stage 1 authz bridge settings on Argo CD Application gentian-os..."
+    local params_json
+    params_json=$(printf '%s\n' "${app_params[@]}" | jq -sc .)
+    kubectl patch application gentian-os -n argocd --type=json -p \
+        "$(jq -nc --argjson v "${params_json}" \
+            '[{"op":"add","path":"/spec/sources/0/helm/parameters","value":$v}]')" 2>/dev/null \
+    || kubectl patch application gentian-os -n argocd --type=json -p \
+        "$(jq -nc --argjson v "${params_json}" \
+            '[{"op":"replace","path":"/spec/sources/0/helm/parameters","value":$v}]')"
 
     release_gentian_os_helm_bootstrap "gentian-system"
     kubectl annotate application gentian-os -n argocd \
@@ -331,7 +470,7 @@ handoff_gentian_os_to_argocd() {
 }
 
 install_gentian_os_operator() {
-    banner "Step 13 — gentian-os operator (Stage 1 authz bridge + Cloudflare tunnel)"
+    banner "gentian-os operator (Stage 1 authz bridge + Cloudflare tunnel)"
 
     local chart_dir="${SCRIPT_DIR}/charts/gentian-os"
     local crd_dir="${chart_dir}/crds"
@@ -341,17 +480,38 @@ install_gentian_os_operator() {
         kubectl create namespace "$ns"
     fi
 
-    create_deployments_git_credentials "$ns"
-
-    local openfga_token=""
-    if kubectl get secret openfga-sensitive-values -n platform-kernel >/dev/null 2>&1; then
-        openfga_token=$(kubectl get secret openfga-sensitive-values -n platform-kernel \
-            -o jsonpath='{.data.sensitive-values\.yaml}' 2>/dev/null | base64 -d 2>/dev/null \
-            | grep -A1 'keys:' | tail -1 | sed 's/.*"\([^"]*\)".*/\1/' || true)
-    fi
+    # The OpenFGA token is not written here. B-06 derives it and writes
+    # gentian-os/kernel/authz/openfga with the field `preshared_key`, which is
+    # the name OpenFGA's own ExternalSecret reads, and the chart's ExternalSecret
+    # now reads the same field. Writing it again from this side re-derived the
+    # value out of a Kubernetes Secret by grepping a YAML blob, and stored it
+    # under a second field name — and because a KV v2 write replaces the whole
+    # secret version rather than merging, the later of the two writers silently
+    # removed the other's field. Whichever ran last decided whether the operator
+    # or OpenFGA itself lost its token.
+    # Nothing token-shaped crosses the Helm boundary. The chart resolves the
+    # credential through secretKeyRef and the ExternalSecret behind it, so all
+    # this has to say is which Secret to read.
+    local -a authz_token_args=(--set "authzBridge.openfgaTokenSecretRef.name=gentian-os-openfga-token")
 
     local value_files=()
     _gentian_os_collect_operator_value_files value_files
+
+    # Cluster-supplied kernel-service passthrough. Any GENTIAN_KERNEL_SERVICE_<KEY>
+    # in the environment is published as <KEY> in the gentian-kernel-services
+    # ConfigMap, so an app profile that needs a cluster-provided value (a licence
+    # token, a third-party endpoint) can get one without the installer or the
+    # chart carrying a field named after that app.
+    local -a kernel_service_extra_args=()
+    local _ks_var _ks_key
+    for _ks_var in "${!GENTIAN_KERNEL_SERVICE_@}"; do
+        _ks_key="${_ks_var#GENTIAN_KERNEL_SERVICE_}"
+        [[ -z "${_ks_key}" || -z "${!_ks_var}" ]] && continue
+        # --set-string, and the key escaped: Helm reads "." and "," inside a --set
+        # path as structure, so an unescaped key with either would silently create
+        # nested maps instead of one ConfigMap entry.
+        kernel_service_extra_args+=(--set-string "kernelServices.extra.${_ks_key//./\\.}=${!_ks_var}")
+    done
 
     if [[ ! -d "$crd_dir" ]]; then
         error "CRD directory not found: ${crd_dir}"
@@ -360,7 +520,11 @@ install_gentian_os_operator() {
     kubectl apply -f "$crd_dir"
     adopt_gentian_os_helm_preflight "$ns"
 
-    local operator_tag="${GENTIAN_OS_IMAGE_TAG:-develop}"
+    # Derived from GENTIAN_OS_BRANCH, not a fixed "develop": this helm install
+    # is what the cluster runs until the image updater has anything to say, and
+    # on a release-pinned cluster the updater deliberately never speaks.
+    resolve_gentian_os_image_tag
+    local operator_tag="${GENTIAN_OS_IMAGE_TAG}"
     local _infra_ns="${INFRA_NAMESPACE:-gentian-infra-${ENV:-dev}}"
     info "Using gentian-os operator image ghcr.io/gentian-org/gentian-os:${operator_tag} (CI)."
 
@@ -374,17 +538,17 @@ install_gentian_os_operator() {
         --set kernelRealm="${KERNEL_REALM:-kernel}" \
         --set authzBridge.enabled=true \
         --set authzBridge.openfgaURL="http://gentian-openfga.platform-kernel.svc.cluster.local:8080" \
-        --set "authzBridge.openfgaToken=${openfga_token}" \
+        "${authz_token_args[@]}" \
         --set infraNamespace="${_infra_ns}" \
         --set "kernelServices.keycloakInternalURL=http://gentian-idp-keycloak-keycloakx-http.platform-kernel.svc.cluster.local:8080/auth" \
-        ${OPENPROJECT_ENTERPRISE_TOKEN:+--set "kernelServices.openprojectEnterpriseToken=${OPENPROJECT_ENTERPRISE_TOKEN}"} \
+        "${kernel_service_extra_args[@]}" \
         --set "image.tag=${operator_tag}" \
         --set "image.pullPolicy=${GENTIAN_OS_IMAGE_PULL_POLICY:-Always}" \
         --wait --timeout 5m
 
     wait_for_operator_cloudflare_token "$ns" || true
 
-    handoff_gentian_os_to_argocd "${openfga_token}"
+    handoff_gentian_os_to_argocd
 
     success "gentian-os operator installed with AUTHZ_BRIDGE_ENABLED and Cloudflare tunnel wiring."
     info "OpenFGA runtime secret: kubectl get secret openfga-runtime -n platform-kernel"

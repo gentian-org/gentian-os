@@ -1,0 +1,5 @@
+apiVersion: v2
+name: gentian-cert-manager
+description: ClusterIssuers and the kernel wildcard Certificate
+type: application
+version: 0.1.0

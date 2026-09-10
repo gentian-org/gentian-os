@@ -1,0 +1,37 @@
+{{- /*
+  Kernel OIDC packs — clients the platform itself needs, as opposed to the
+  per-app packs that arrive with the app catalogue.
+
+  Shipped unconditionally rather than behind a mail toggle. A pack is inert until
+  something resolves it, and only a tenant with selfhosted mail does, so a flag
+  here would be a knob whose only effect is to break mail when it disagrees with
+  the per-tenant spec.mail.mode that actually decides.
+
+  This one exists because kernel Dovecot authenticates IMAP with XOAUTH2: it
+  validates access tokens by calling the realm's introspection endpoint, and that
+  endpoint authenticates the caller, so Dovecot needs a confidential client in
+  every realm whose users have mailboxes.
+
+  serviceClient is what keeps it from being an app pack. Dovecot is never
+  redirected to and nobody is entitled TO it, so it has no client scope, no client
+  role and no entitlement group — see the field docs on OIDCPackSpec.
+*/}}
+apiVersion: gentianos.io/v1alpha1
+kind: OIDCPackCatalog
+metadata:
+  name: gentian-kernel
+  labels:
+    {{- include "gentian-os.labels" . | nindent 4 }}
+    gentianos.io/catalogue: kernel
+spec:
+  packs:
+    # Keyed by client ID: ResolvePack looks packs up by the clientID the caller
+    # asks for, so this key and the Keycloak clientId are the same string.
+    #
+    # This pack replaces the hand-rolled script that used to live in
+    # internal/controller/keycloak_dovecot_tenant_client.go, which built exactly
+    # this client shape by hand — confidential, no redirect URIs, no standard
+    # flow, no scope and no role — in parallel with the pack mechanism that
+    # already existed for every other client in the platform.
+    gentian-dovecot:
+      serviceClient: true

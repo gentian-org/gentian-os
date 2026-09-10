@@ -1,0 +1,59 @@
+# The three values the bootstrap Applications are parameterised on.
+#
+# They were substituted by an allowlisted envsubst, allowlisted because these
+# manifests also carry Argo CD's $values expressions and a substitute-everything
+# run would silently blank them. Helm has no such hazard: $values is not its
+# syntax, so nothing needs listing and nothing can be blanked by omission.
+gentianOsBranch: develop
+storageClass: ""
+stage: dev
+
+# The operator and portal Applications carry more provenance than the six above:
+# where the code comes from, where the deployments live, and which cluster and
+# stage this is.
+osRepo: https://github.com/gentian-org/gentian-os
+osImageRepository: ghcr.io/gentian-org/gentian-os
+appsRepo: https://github.com/gentian-org/gentian-apps
+deploymentsRepo: ""
+deploymentsBranch: main
+uiRepo: https://github.com/gentian-org/gentian-ui
+uiBranch: develop
+portalImageTag: develop
+cluster: ""
+
+# Who hosts the zone, for external-dns. An entry in kernel/platforms.yaml,
+# which is also where cert-manager's DNS-01 solver comes from — one answer, two
+# consumers. "none" emits no external-dns Application at all.
+dnsProvider: none
+
+# Merged in from kernel/platforms.yaml, which is the single definition.
+dnsProviders: {}
+
+# The root ApplicationSet's own parameters.
+kernelDomain: ""
+smtpHost: ""
+smtpPort: "587"
+smtpSsl: "false"
+smtpStarttls: "true"
+
+# Which mail stack this cluster runs, from the Cluster claim's
+# mail.serviceMode. Not inferred from smtpHost: a relay host says only that
+# outbound goes through a smarthost, and a cluster can host its own mailboxes
+# AND relay outbound — the common arrangement when port 25 is blocked
+# outbound but reachable inbound. Inferring would take Dovecot away from it.
+mailServiceMode: external
+
+# How traffic reaches this cluster, from the Cluster claim's networkMode.
+# external-dns's source list branches on it — see its template for why a
+# tunnel cluster must not run the gateway-httproute source.
+networkMode: tunnel
+
+# Whether this cluster serves LLMs, and whether it has GPUs — from the Cluster
+# claim's llm.enabled and llm.gpuAcceleration. The first decides whether the LLM
+# ApplicationSet is generated at all; the second whether the mock inference
+# backend is deployed alongside LiteLLM.
+llmEnabled: "false"
+llmGpuAcceleration: "false"
+# The hostname outbound mail leaves from, from spec.mail.egressHost on the
+# Cluster claim. Empty means the shared egress address or a smarthost relay.
+mailEgressHost: ""

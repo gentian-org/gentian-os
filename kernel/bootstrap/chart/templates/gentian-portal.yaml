@@ -1,0 +1,128 @@
+---
+# Gentian portal shell (React + FastAPI) — ArgoCD-managed Helm release.
+#
+# Keycloak bootstrap + gentian-portal-secrets are created by install.sh Step 14
+# (portal-login-bootstrap.sh) before this Application is applied.
+#
+# Image updates: argocd-image-updater watches GHCR :{{ .Values.portalImageTag }} digests
+# and patches api/web image tags on this Application (write-back: argocd).
+#
+# Placeholders filled by portal-login-bootstrap.sh:
+#   {{ .Values.gentianOsBranch }}   — gentian-os branch for Helm values ref
+#   {{ .Values.uiBranch }}   — gentian-ui branch for chart source
+#   {{ .Values.portalImageTag }}    — floating image tag (e.g. develop)
+#   {{ .Values.deploymentsRepo }}    — gentian-deployments repo URL
+#   {{ .Values.deploymentsBranch }}  — gentian-deployments branch
+#   {{ .Values.cluster }}             — cluster identifier in deployments repo
+#   {{ .Values.stage }}               — stage name (dev / staging / prod)
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: gentian-portal
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
+    # The image-list deliberately carries NO tag, and allow-tags does the
+    # selecting instead — the same shape as gentian-os.yaml beside this file.
+    #
+    # Pinning image-list to the moving {{ .Values.portalImageTag }} tag makes the candidate
+    # set a single entry whose name never changes, so newest-build re-picks it
+    # every cycle, api.image.tag / web.image.tag never move, and no build
+    # reaches the cluster while the controller reports images_updated=0 and
+    # looks perfectly healthy.
+    #
+    # allow-tags restricts candidates to the branch-scoped immutable tags the
+    # portal CI publishes ({{ .Values.portalImageTag }}-abc1234, see the build job in
+    # gentian-ui/.github/workflows/gentian-portal.yaml). The bare short-sha tag
+    # published beside them must NOT be tracked: every branch publishes into
+    # that namespace, so a main build would be a valid candidate for a develop
+    # cluster. When {{ .Values.portalImageTag }} is a release tag rather than a branch, no
+    # candidate matches and the pinned images are left alone — which is what a
+    # pinned release should do.
+    argocd-image-updater.argoproj.io/image-list: >-
+      api=ghcr.io/gentian-org/gentian-portal-api,
+      web=ghcr.io/gentian-org/gentian-portal-web
+    argocd-image-updater.argoproj.io/api.allow-tags: regexp:^{{ .Values.portalImageTag }}-[0-9a-f]{7,}$
+    argocd-image-updater.argoproj.io/web.allow-tags: regexp:^{{ .Values.portalImageTag }}-[0-9a-f]{7,}$
+    argocd-image-updater.argoproj.io/api.update-strategy: newest-build
+    argocd-image-updater.argoproj.io/web.update-strategy: newest-build
+    argocd-image-updater.argoproj.io/api.helm.image-name: api.image.repository
+    argocd-image-updater.argoproj.io/api.helm.image-tag: api.image.tag
+    argocd-image-updater.argoproj.io/web.helm.image-name: web.image.repository
+    argocd-image-updater.argoproj.io/web.helm.image-tag: web.image.tag
+    argocd-image-updater.argoproj.io/write-back-method: argocd
+  finalizers:
+  - resources-finalizer.argocd.argoproj.io
+spec:
+  project: gentian
+  ignoreDifferences:
+  - group: gateway.networking.k8s.io
+    kind: HTTPRoute
+    namespace: platform-kernel
+    jqPathExpressions:
+    - .status
+    - .metadata.annotations
+    - .spec.parentRefs[].group
+    - .spec.parentRefs[].kind
+    - .spec.rules[].backendRefs[].group
+    - .spec.rules[].backendRefs[].kind
+    - .spec.rules[].backendRefs[].weight
+  - group: apps
+    kind: Deployment
+    namespace: platform-kernel
+    jqPathExpressions:
+    - .metadata.annotations
+    - .spec.progressDeadlineSeconds
+    - .spec.revisionHistoryLimit
+    - .spec.strategy
+    - .spec.template.metadata.creationTimestamp
+    - .spec.template.spec.dnsPolicy
+    - .spec.template.spec.restartPolicy
+    - .spec.template.spec.schedulerName
+    - .spec.template.spec.terminationGracePeriodSeconds
+    - .spec.template.spec.containers[].imagePullPolicy
+    - .spec.template.spec.containers[].resources
+    - .spec.template.spec.containers[].terminationMessagePath
+    - .spec.template.spec.containers[].terminationMessagePolicy
+    - .spec.template.spec.containers[].livenessProbe.failureThreshold
+    - .spec.template.spec.containers[].livenessProbe.successThreshold
+    - .spec.template.spec.containers[].livenessProbe.timeoutSeconds
+    - .spec.template.spec.containers[].livenessProbe.httpGet.scheme
+    - .spec.template.spec.containers[].readinessProbe.failureThreshold
+    - .spec.template.spec.containers[].readinessProbe.successThreshold
+    - .spec.template.spec.containers[].readinessProbe.timeoutSeconds
+    - .spec.template.spec.containers[].readinessProbe.httpGet.scheme
+    - .spec.template.spec.containers[].env[].valueFrom.fieldRef.apiVersion
+  sources:
+  - repoURL: {{ .Values.osRepo | default "https://github.com/gentian-org/gentian-os" }}
+    targetRevision: {{ .Values.gentianOsBranch }}
+    ref: values
+  - repoURL: {{ .Values.deploymentsRepo }}
+    targetRevision: {{ .Values.deploymentsBranch }}
+    ref: deploy
+  - repoURL: {{ .Values.uiRepo | default "https://github.com/gentian-org/gentian-ui" }}
+    targetRevision: {{ .Values.uiBranch }}
+    path: chart
+    helm:
+      releaseName: gentian-portal
+      valueFiles:
+      - $values/kernel/services/gentian-portal-web/values/_base.yaml
+      # kernelDomain + api.env.BACKEND_CORS_ORIGINS — cluster-specific
+      # (see docs/deployment.md §1).
+      - $deploy/clusters/{{ .Values.cluster }}/kernel/values.yaml
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: platform-kernel
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    retry:
+      limit: 10
+      backoff:
+        duration: 15s
+        factor: 2
+        maxDuration: 2m
+    syncOptions:
+    - CreateNamespace=false
+    - ServerSideApply=true

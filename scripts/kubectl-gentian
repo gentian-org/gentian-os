@@ -11,6 +11,7 @@
 #   kubectl gentian apps install <app> --tenant <tenant>
 #   kubectl gentian apps uninstall <app> --tenant <tenant>
 #   kubectl gentian tenants list
+#   kubectl gentian tenants credentials <instance>
 #   kubectl gentian tenants deploy <instance>
 #   kubectl gentian tenants undeploy <instance> [--purge|-f]
 #
@@ -36,6 +37,50 @@ _gentian_err_trap() {
 trap '_gentian_err_trap $LINENO' ERR
 
 # ---------------------------------------------------------------------------
+# Portable file editing
+# ---------------------------------------------------------------------------
+# This plugin is installed as a single file (catalogue.sh copies it to
+# ~/.local/bin or /usr/local/bin), so it cannot source scripts/lib/compat.sh —
+# the repository need not exist on the machine that runs it. The helpers it
+# needs are therefore inlined rather than shared.
+#
+# GNU `sed -i` takes no argument and BSD `sed -i` requires a backup suffix, so
+# no single `sed -i` invocation works on both. Writing to a temporary file and
+# copying it back sidesteps the flag entirely.
+_sed_inplace() {
+  local expr="$1" file="$2" tmp
+  tmp="$(mktemp "${TMPDIR:-/tmp}/gentian-sed.XXXXXX")" || return 1
+  if ! sed "${expr}" "${file}" > "${tmp}"; then rm -f "${tmp}"; return 1; fi
+  cat "${tmp}" > "${file}"
+  rm -f "${tmp}"
+}
+
+# _insert_before / _insert_after <match-regex> <text> <file>
+#
+# `sed` insert and append (`i\`, `a\`) need their text on a continuation line
+# under BSD and accept it inline under GNU — a divergence _sed_inplace cannot
+# paper over, because it is in the expression rather than the flag. awk parses
+# identically on both, so the insert moves there.
+_insert_before() {
+  local match="$1" text="$2" file="$3" tmp
+  tmp="$(mktemp "${TMPDIR:-/tmp}/gentian-awk.XXXXXX")" || return 1
+  if ! awk -v m="${match}" -v t="${text}" '$0 ~ m { print t } { print }' "${file}" > "${tmp}"; then
+    rm -f "${tmp}"; return 1
+  fi
+  cat "${tmp}" > "${file}"
+  rm -f "${tmp}"
+}
+_insert_after() {
+  local match="$1" text="$2" file="$3" tmp
+  tmp="$(mktemp "${TMPDIR:-/tmp}/gentian-awk.XXXXXX")" || return 1
+  if ! awk -v m="${match}" -v t="${text}" '{ print } $0 ~ m { print t }' "${file}" > "${tmp}"; then
+    rm -f "${tmp}"; return 1
+  fi
+  cat "${tmp}" > "${file}"
+  rm -f "${tmp}"
+}
+
+# ---------------------------------------------------------------------------
 # Config resolution
 # ---------------------------------------------------------------------------
 CONFIG_FILE="${HOME}/.gentian/config"
@@ -46,8 +91,81 @@ fi
 
 DEPLOYMENTS_PATH="${GENTIAN_DEPLOYMENTS_PATH:-}"
 DEPLOYMENTS_REPO="${GENTIAN_DEPLOYMENTS_REPO:-}"
-DEPLOYMENTS_CLUSTER="${GENTIAN_DEPLOYMENTS_CLUSTER:-default-cluster}"
+DEPLOYMENTS_CLUSTER="${GENTIAN_DEPLOYMENTS_CLUSTER_ID:-default-cluster}"
+# The ONLY place "dev" may be defaulted. Nine functions used to carry their own
+# `${2:-dev}` fallback, which silently won every time a stage argument was
+# omitted — so on this prod cluster `gtnctl tenant undeploy gtn` announced
+# "undeployed in 'dev'" and committed "undeploy tenant instance from dev" to the
+# deployments repo. Paths are cluster-scoped (tenant_stage_dir ignores the stage
+# entirely), so nothing was deleted from the wrong place, but the git history —
+# the audit trail this tool exists to produce — recorded prod changes as dev.
+# Any new stage parameter must default to ${DEPLOYMENTS_STAGE}, never a literal.
 DEPLOYMENTS_STAGE="${GENTIAN_DEPLOYMENTS_STAGE:-dev}"
+
+# When a deploy fails, the tenant is torn down and deactivated in Git by default,
+# which is right for an operator who wants a clean cluster back. It is wrong for
+# anyone diagnosing WHY it failed: the teardown removes the Tenant, the XTenant,
+# the namespace and the Jobs, so the evidence is gone before it can be looked at.
+# --no-rollback leaves everything standing and prints where to look instead.
+TENANT_NO_ROLLBACK="${GENTIAN_TENANT_NO_ROLLBACK:-0}"
+
+# The plugin's own version, and a fingerprint of the file it is running from.
+#
+# The declared version answers "which release is this", and the fingerprint
+# answers the question that actually bites: whether the copy on PATH is the one
+# in the checkout. This is a script copied into place, not a built artefact, so
+# two installs can carry the same version string and different content — a
+# machine can easily end up with ~/.local/bin ahead of /usr/local/bin, or both
+# behind the repo, and nothing said so.
+#
+# Bump alongside charts/gentian-os/Chart.yaml.
+GENTIAN_PLUGIN_VERSION="0.4.0"
+
+# gentian_plugin_fingerprint — sha256 of this file, short form, or "unknown".
+#
+# BASH_SOURCE[0] rather than $0, so it fingerprints the plugin itself when it is
+# invoked through the gtnctl symlink or as `kubectl gentian`.
+gentian_plugin_fingerprint() {
+    local self="${BASH_SOURCE[0]}"
+    local sum=""
+    if command -v sha256sum >/dev/null 2>&1; then
+        sum="$(sha256sum "${self}" 2>/dev/null | cut -c1-12)"
+    elif command -v shasum >/dev/null 2>&1; then
+        sum="$(shasum -a 256 "${self}" 2>/dev/null | cut -c1-12)"
+    fi
+    echo "${sum:-unknown}"
+}
+
+cmd_version() {
+    local self="${BASH_SOURCE[0]}"
+    echo "kubectl-gentian ${GENTIAN_PLUGIN_VERSION}"
+    echo "  fingerprint : $(gentian_plugin_fingerprint)"
+    echo "  path        : ${self}"
+    # Every OTHER copy on PATH, because the one that runs is decided by PATH
+    # order and a stale second copy is invisible until it is the one that
+    # answers.
+    #
+    # Compared after resolving symlinks, and de-duplicated. gtnctl is installed
+    # as a link beside kubectl-gentian, so the running copy reaches this loop
+    # under a name that does not match ${self} and reported itself as a rival;
+    # and a PATH that names a directory more than once - which is ordinary once
+    # a shell profile and a tool like conda have both prepended it - listed that
+    # same file once per mention.
+    local self_real found found_real others="" seen=""
+    self_real="$(readlink -f "${self}" 2>/dev/null || echo "${self}")"
+    while IFS= read -r found; do
+        [[ -n "${found}" ]] || continue
+        found_real="$(readlink -f "${found}" 2>/dev/null || echo "${found}")"
+        [[ "${found_real}" == "${self_real}" ]] && continue
+        case "${seen}" in
+            *"|${found_real}|"*) continue ;;
+        esac
+        seen+="|${found_real}|"
+        others+="    also on PATH: ${found}"$'\n'
+    done < <(type -aP kubectl-gentian gtnctl 2>/dev/null || true)
+    [[ -n "${others}" ]] && printf '%s' "${others}"
+    return 0
+}
 
 usage() {
   cat <<EOF
@@ -70,15 +188,23 @@ Usage:
       persistent state (Postgres/MariaDB, S3, Redis ACL, OpenBao secrets,
       kernel provisioning Jobs) so reinstall starts from a clean slate.
 
+    kubectl gentian tenants credentials <instance>
+      The tenant admin's username and password, read from OpenBao.
+      'deploy' prints these once; this is how to get them afterwards.
+      The password goes to stdout alone so it can be piped; everything else
+      goes to stderr.
+
     kubectl gentian tenants list
-      List tenant definitions for clusters/<cluster> (definitions/ and tenants/).
+      List tenant definitions for clusters/<cluster> (definitions/tenants/ and tenants/).
       ACTIVE=yes when deployed under tenants/<name>/ (GitOps sync path).
-      ACTIVE=no when defined only under definitions/<name>/.
+      ACTIVE=no when defined only under definitions/tenants/<name>/.
       LIVE=yes when the Tenant CR exists on the cluster.
 
-    kubectl gentian tenants deploy <instance>
+    kubectl gentian tenants deploy <instance> [--no-rollback]
       Deploy a tenant by applying clusters/<cluster>/tenants/<instance>/.
-      If not yet deployed, copies the definition from definitions/<instance>/.
+      If not yet deployed, copies the definition from definitions/tenants/<instance>/.
+      A failed deploy is rolled back and deactivated in Git; --no-rollback leaves
+      it standing so the failure can be inspected.
 
     kubectl gentian tenants undeploy <instance> [--purge|-f]
       Undeploy a tenant instance by removing clusters/<cluster>/tenants/<instance>/
@@ -86,21 +212,47 @@ Usage:
       which permanently deletes tenant data (Keycloak realm, databases, storage,
       mail secrets, and other orchestrator-owned artifacts).
 
+    kubectl gentian resources plans [--tenant <tenant>]
+      List the priced resource plans, marking the tenant's current one and
+      saying why any plan is not selectable for them.
+
+    kubectl gentian resources show <tenant>
+      Show the tenant's plan, enforced ceiling and what is committed under it.
+
+    kubectl gentian resources set <tenant> --plan <plan> [--force]
+      Move the tenant to a plan by committing to gentian-deployments. Refused
+      when the plan is smaller than what the tenant is currently using, unless
+      --force says to shrink it anyway.
+
+    kubectl gentian resources report <tenant> [--from <RFC3339>] [--to <RFC3339>]
+      Print the plan intervals the window resolves to, with the SKU in effect
+      over each — the record a month is invoiced from.
+
 Environment / ~/.gentian/config:
+  GENTIAN_OPERATOR_NAMESPACE  where gentian-os runs (default: gentian-system)
   GENTIAN_DEPLOYMENTS_PATH   local path to gentian-deployments checkout
   GENTIAN_DEPLOYMENTS_REPO   remote Git URL (used if path does not exist)
-  GENTIAN_DEPLOYMENTS_CLUSTER  cluster selector (default: default-cluster)
+  GENTIAN_DEPLOYMENTS_CLUSTER_ID  cluster selector (default: default-cluster)
 
 Examples:
   kubectl gentian apps list
   kubectl gentian apps install demo-app --tenant gtn-demo
   kubectl gentian apps uninstall demo-app --tenant gtn-demo
   kubectl gentian apps uninstall demo-app --tenant gtn-demo --purge   # wipe DB, S3, secrets
+  kubectl gentian resources plans --tenant gtn-demo
+  kubectl gentian resources set gtn-demo --plan nodes-2
   kubectl gentian apps uninstall element --tenant demo --purge   # or -f: full Matrix data wipe
   kubectl gentian tenants list
+  kubectl gentian tenants credentials demo
   kubectl gentian tenants deploy demo
   kubectl gentian tenants undeploy demo
   kubectl gentian tenants undeploy demo --purge   # or -f
+
+  kubectl gentian version
+  gtnctl version
+      This plugin's version, the fingerprint of the file running, and any
+      other copy on PATH. Compare the fingerprint with the checkout's
+      scripts/kubectl-gentian when a command behaves unlike the repo does.
 EOF
 }
 
@@ -224,9 +376,9 @@ set_tenant_deletion_policy() {
   local policy="${2}"
 
   if grep -q '^  deletionPolicy:' "${file}"; then
-    sed -i "s/^  deletionPolicy:.*/  deletionPolicy: ${policy}/" "${file}"
+    _sed_inplace "s/^  deletionPolicy:.*/  deletionPolicy: ${policy}/" "${file}"
   elif grep -q '^  apps:' "${file}"; then
-    sed -i "/^  apps:/i\\  deletionPolicy: ${policy}" "${file}"
+    _insert_before '^  apps:' "  deletionPolicy: ${policy}" "${file}"
   else
     printf '\n  deletionPolicy: %s\n' "${policy}" >> "${file}"
   fi
@@ -632,13 +784,42 @@ tenant_tenants_root() {
   echo "${DEPLOYMENTS_PATH}/clusters/${DEPLOYMENTS_CLUSTER}/tenants"
 }
 
+# definitions/ holds two unrelated things, so each has its own subdirectory.
+#
+# Tenant definitions used to sit directly under definitions/, beside the shared
+# components/ directory — which meant every listing had to know that one entry
+# in a directory of tenants was not a tenant, and skip it by name. Anything else
+# added there later would have been read as a tenant with a missing tenant.yaml.
 tenant_definitions_root() {
+  echo "${DEPLOYMENTS_PATH}/clusters/${DEPLOYMENTS_CLUSTER}/definitions/tenants"
+}
+
+tenant_components_root() {
+  echo "${DEPLOYMENTS_PATH}/clusters/${DEPLOYMENTS_CLUSTER}/definitions/components"
+}
+
+# The pre-move location, read only so a checkout that has not been migrated
+# still works. Everything WRITES to the new one.
+tenant_legacy_definitions_root() {
   echo "${DEPLOYMENTS_PATH}/clusters/${DEPLOYMENTS_CLUSTER}/definitions"
 }
 
 tenant_definition_dir() {
   local instance="${1}"
-  echo "$(tenant_definitions_root)/${instance}"
+  local current legacy
+  current="$(tenant_definitions_root)/${instance}"
+  [[ -f "${current}/tenant.yaml" ]] && { echo "${current}"; return 0; }
+
+  legacy="$(tenant_legacy_definitions_root)/${instance}"
+  if [[ -f "${legacy}/tenant.yaml" ]]; then
+    echo "NOTE: tenant '${instance}' is defined at the old path definitions/${instance}/." >&2
+    echo "      Move it to definitions/tenants/${instance}/ — that is where new ones are written." >&2
+    echo "${legacy}"
+    return 0
+  fi
+  # Neither exists: name the new one, so the error a caller prints points at
+  # the path they should create rather than the one being retired.
+  echo "${current}"
 }
 
 write_tenant_stage_kustomization() {
@@ -653,9 +834,89 @@ components:
 EOF
 }
 
+# The kustomization written above references a shared Component that carries
+# tenant-wide defaults. Nothing else creates it, so on a cluster that has never
+# deployed a tenant the build fails with
+#
+#   accumulating components: ... evalsymlink failure on
+#   '.../definitions/components/tenant-defaults': no such file or directory
+#
+# and the deploy rolls back — after already pushing the activation commit. Create
+# it on demand so a first tenant deploy works on a freshly bootstrapped cluster.
+#
+# mail.domain is NOT written here, and that is the point.
+#
+# It used to be the cluster's kernelDomain, which gave every tenant the same
+# mail domain. Postfix then accepted mail for gtn.host and refused
+# corp.gtn.host, while the platform derives the administrator's address as
+# admin@corp.gtn.host — an address its own mail stack would not receive. The
+# registry held one entry per tenant, all naming the same domain.
+#
+# Absent, the operator derives it from the tenant: mailDomain() falls back to
+# EffectiveDomain, so corp.gtn.host under TENANCY_MODE=multi — the same domain
+# the address is derived in. Set spec.mail.domain per tenant only where a
+# tenant genuinely owns a different one.
+ensure_tenant_defaults_component() {
+  local comp_dir
+  comp_dir="$(tenant_components_root)/tenant-defaults"
+
+  [[ -f "${comp_dir}/kustomization.yaml" ]] && return 0
+
+  # The cluster's domain is deliberately not read: nothing in this component
+  # names a domain any more, because each tenant's is derived from its own name.
+  mkdir -p "${comp_dir}"
+  cat > "${comp_dir}/kustomization.yaml" <<'KEOF'
+apiVersion: kustomize.config.k8s.io/v1alpha1
+kind: Component
+patches:
+- path: defaults.yaml
+  target:
+    group: gentianos.io
+    version: v1alpha1
+    kind: Tenant
+KEOF
+
+  {
+    cat <<'DEOF'
+apiVersion: gentianos.io/v1alpha1
+kind: Tenant
+metadata:
+  name: placeholder  # matched via the target selector in kustomization.yaml
+  annotations:
+    argocd.argoproj.io/sync-wave: "2"
+spec:
+  # deletionPolicy is set per instance in tenant.yaml (Retain default).
+  isolation:
+    mode: namespace
+DEOF
+    cat <<'DEOF'
+  mail:
+    # No domain: each tenant's is its own. See the note above.
+    mode: selfhosted
+    quotaPerUser: 5Gi
+    rateLimit: 100/h
+DEOF
+    cat <<'DEOF'
+  quotas:
+    # The `base` plan's capacity, so a freshly deployed tenant starts on a
+    # priced plan instead of a ceiling that matches none. maxApps is a policy
+    # limit rather than part of the plan, so it is set here and in no plan.
+    requestsCpu: "2"
+    requestsMemory: 4Gi
+    cpu: "8"
+    memory: 8Gi
+    storage: 50Gi
+    maxApps: 20
+DEOF
+  } > "${comp_dir}/defaults.yaml"
+
+  echo "Created shared tenant defaults component at ${comp_dir}"
+  return 0
+}
+
 scaffold_tenant_from_definition() {
   local instance="${1}"
-  local env_name="${2:-dev}"
+  local env_name="${2:-${DEPLOYMENTS_STAGE}}"
   local definition_dir
   local target_dir
 
@@ -664,7 +925,7 @@ scaffold_tenant_from_definition() {
 
   if [[ ! -d "${definition_dir}" ]]; then
     echo "ERROR: tenant '${instance}' is not defined at ${definition_dir}." >&2
-    echo "Expected: clusters/${DEPLOYMENTS_CLUSTER}/definitions/${instance}/tenant.yaml" >&2
+    echo "Expected: clusters/${DEPLOYMENTS_CLUSTER}/definitions/tenants/${instance}/tenant.yaml" >&2
     echo "Or an active deploy path: clusters/${DEPLOYMENTS_CLUSTER}/tenants/${instance}/" >&2
     exit 1
   fi
@@ -673,6 +934,8 @@ scaffold_tenant_from_definition() {
     echo "ERROR: tenant definition at ${definition_dir} is missing tenant.yaml." >&2
     exit 1
   fi
+
+  ensure_tenant_defaults_component
 
   mkdir -p "${target_dir}"
   cp "${definition_dir}/tenant.yaml" "${target_dir}/tenant.yaml"
@@ -683,12 +946,12 @@ scaffold_tenant_from_definition() {
     git add "clusters/${DEPLOYMENTS_CLUSTER}/tenants/${instance}"
   )
   git_commit_push "feat(${instance}): deploy tenant definition for ${env_name}"
-  echo "Activated tenant '${instance}' from definitions/${instance}/."
+  echo "Activated tenant '${instance}' from definitions/tenants/${instance}/."
 }
 
 ensure_tenant_instance_dir() {
   local instance="${1}"
-  local env_name="${2:-dev}"
+  local env_name="${2:-${DEPLOYMENTS_STAGE}}"
   local dir
 
   dir="$(tenant_stage_dir "${instance}" "${env_name}")"
@@ -729,7 +992,7 @@ tenant_instance_kustomization() {
 
 tenant_instance_patch_file() {
   local instance="${1}"
-  local env_name="${2:-dev}"
+  local env_name="${2:-${DEPLOYMENTS_STAGE}}"
   local dir
   dir="$(tenant_instance_dir "${instance}" "${env_name}")"
   if [[ -f "${dir}/patch.yaml" ]]; then
@@ -752,7 +1015,7 @@ tenant_instance_patch_file() {
 # that only have a single YAML file.
 tenant_instance_resource_file() {
   local instance="${1}"
-  local env_name="${2:-dev}"
+  local env_name="${2:-${DEPLOYMENTS_STAGE}}"
   local dir
   dir="$(tenant_instance_dir "${instance}" "${env_name}")"
   if [[ -f "${dir}/tenant.yaml" ]]; then
@@ -802,10 +1065,22 @@ print_tenant_admin_login_instructions() {
   local username="${3}"
   local password="${4}"
 
+  # status.adminEmail, then spec. The status carries the RESOLVED address, which
+  # is the one Keycloak was given; the spec is empty whenever the address is
+  # derived, which is the normal case.
+  #
+  # There is no constructed fallback. This printed "${username}@gentian.org" —
+  # a domain belonging to no cluster, for an account that exists in no realm —
+  # and told the operator to sign in with it. An address this cannot read is an
+  # address it must not invent: the username below is real and sufficient to log
+  # in with.
   local login_email
-  login_email="$(kubectl --request-timeout=5s get tenant "${tenant_name}" -o jsonpath='{.spec.adminEmail}' 2>/dev/null || true)"
+  login_email="$(kubectl --request-timeout=5s get tenant "${tenant_name}" -o jsonpath='{.status.adminEmail}' 2>/dev/null || true)"
   if [[ -z "${login_email}" ]]; then
-    login_email="${username}@gentian.org"
+    login_email="$(kubectl --request-timeout=5s get tenant "${tenant_name}" -o jsonpath='{.spec.adminEmail}' 2>/dev/null || true)"
+  fi
+  if [[ -z "${login_email}" ]]; then
+    login_email="<not yet published — use the username>"
   fi
 
   local kernel_domain_name
@@ -1263,6 +1538,59 @@ try_retrieve_tenant_admin_credentials() {
   return 1
 }
 
+# `tenants credentials <name>` — what OpenBao holds for a tenant's admin.
+#
+# These were printed once, by `tenants deploy`, and never again. An operator who
+# closed that terminal had no supported way back: the values are in OpenBao under
+# a path the operator role can read, and nothing exposed them. Recovering a
+# tenant admin login meant exec-ing into the OpenBao pod by hand.
+#
+# It reads once and reports, rather than reusing the deploy-time wait loop. A
+# tenant that exists has these already; polling for five minutes would only turn
+# "this tenant has no credentials" into a long pause ending in the same answer.
+#
+# The password goes to stdout on its own line so it can be piped. Everything
+# else goes to stderr, so `... credentials demo | tr -d '\n' | wl-copy` gets the
+# password and not a banner.
+cmd_tenant_credentials() {
+  local tenant_name="${1:-}"
+  if [[ -z "${tenant_name}" ]]; then
+    echo "ERROR: tenant name required: kubectl gentian tenants credentials <name>" >&2
+    return 1
+  fi
+
+  if ! kubectl --request-timeout=10s get tenant "${tenant_name}" >/dev/null 2>&1; then
+    echo "ERROR: no tenant '${tenant_name}' in this cluster." >&2
+    echo "  kubectl gentian tenants list" >&2
+    return 1
+  fi
+
+  TENANT_ADMIN_USERNAME=""
+  TENANT_ADMIN_PASSWORD=""
+  if ! try_retrieve_tenant_admin_credentials "${tenant_name}"; then
+    echo "ERROR: could not read the tenant-admin credentials for '${tenant_name}'." >&2
+    echo "  They are written by the tenant's Keycloak admin Job. If it has not run," >&2
+    echo "  there is nothing to read yet:" >&2
+    echo "    kubectl get jobs -n platform-kernel -l gentianos.io/tenant=${tenant_name}" >&2
+    return 1
+  fi
+
+  echo "Tenant admin for '${tenant_name}':" >&2
+  echo "  username : ${TENANT_ADMIN_USERNAME}" >&2
+  # The address the Tenant CR advertises, which is not always the username
+  # OpenBao holds: the seed is write-once, so a tenant provisioned before the
+  # username became an address keeps the older form. Showing both is the only
+  # way to tell which one the login page wants.
+  local advertised
+  advertised="$(kubectl --request-timeout=10s get tenant "${tenant_name}" \
+    -o jsonpath='{.status.adminEmail}' 2>/dev/null || true)"
+  if [[ -n "${advertised}" && "${advertised}" != "${TENANT_ADMIN_USERNAME}" ]]; then
+    echo "  address  : ${advertised}  (the Tenant reports this; OpenBao holds the username above)" >&2
+  fi
+  echo "  password : (stdout)" >&2
+  printf '%s\n' "${TENANT_ADMIN_PASSWORD}"
+}
+
 fetch_tenant_admin_credentials() {
   local tenant_name="${1}"
   local timeout_secs="${2:-300}"
@@ -1314,6 +1642,20 @@ fetch_tenant_admin_credentials() {
   done
 }
 
+# Reads the tenant admin credentials OpenBao holds, using the operator's
+# Kubernetes auth role from inside the OpenBao pod.
+#
+# Every step here swallows its own failure and returns 0, so the caller falls
+# through to "credentials unavailable" with no reason given. That hid a plain
+# mistake for as long as this has existed: the address was http:// against a
+# listener that has only ever been https, so the connection was reset, the
+# login produced nothing, and a tenant's admin credentials were simply never
+# printed. Nothing said so.
+#
+# Addressed by service DNS rather than 127.0.0.1 because the certificate has no
+# IP SAN — verifying against the CA the pod already mounts fails on the address,
+# not the trust. Skipping verification would have worked and taught the next
+# reader that this endpoint cannot be verified.
 fetch_tenant_admin_credentials_via_k8s_auth() {
   local tenant_name="${1}"
 
@@ -1330,7 +1672,7 @@ fetch_tenant_admin_credentials_via_k8s_auth() {
   fi
 
   local login_token
-  login_token="$(kubectl --request-timeout=10s exec -n openbao "${bao_pod}" -- sh -lc "BAO_ADDR=http://127.0.0.1:8200 bao write -field=token auth/kubernetes/login role=gentian-os-operator jwt='${jwt}'" 2>/dev/null || true)"
+  login_token="$(kubectl --request-timeout=10s exec -n openbao "${bao_pod}" -- sh -lc "BAO_ADDR=https://openbao.openbao.svc.cluster.local:8200 BAO_CACERT=/openbao/tls/ca.crt bao write -field=token auth/kubernetes/login role=gentian-os-operator jwt='${jwt}'" 2>/dev/null || true)"
   if [[ -z "${login_token}" ]]; then
     return 0
   fi
@@ -1338,8 +1680,8 @@ fetch_tenant_admin_credentials_via_k8s_auth() {
   local username
   local password
 
-  username="$(kubectl --request-timeout=10s exec -n openbao "${bao_pod}" -- sh -lc "BAO_ADDR=http://127.0.0.1:8200 BAO_TOKEN='${login_token}' bao kv get -mount=secret -field=username gentian-os/tenants/${tenant_name}/admin" 2>/dev/null || true)"
-  password="$(kubectl --request-timeout=10s exec -n openbao "${bao_pod}" -- sh -lc "BAO_ADDR=http://127.0.0.1:8200 BAO_TOKEN='${login_token}' bao kv get -mount=secret -field=password gentian-os/tenants/${tenant_name}/admin" 2>/dev/null || true)"
+  username="$(kubectl --request-timeout=10s exec -n openbao "${bao_pod}" -- sh -lc "BAO_ADDR=https://openbao.openbao.svc.cluster.local:8200 BAO_CACERT=/openbao/tls/ca.crt BAO_TOKEN='${login_token}' bao kv get -mount=secret -field=username gentian-os/tenants/${tenant_name}/admin" 2>/dev/null || true)"
+  password="$(kubectl --request-timeout=10s exec -n openbao "${bao_pod}" -- sh -lc "BAO_ADDR=https://openbao.openbao.svc.cluster.local:8200 BAO_CACERT=/openbao/tls/ca.crt BAO_TOKEN='${login_token}' bao kv get -mount=secret -field=password gentian-os/tenants/${tenant_name}/admin" 2>/dev/null || true)"
 
   if [[ -n "${password}" ]]; then
     if [[ -z "${username}" ]]; then
@@ -1355,6 +1697,25 @@ rollback_deploy() {
   local env_name="${3}"
   local _kustom_file="${4:-}"
   local ns_name="tenant-${tenant_name}"
+
+  if [[ "${TENANT_NO_ROLLBACK}" == "1" ]]; then
+    echo "" >&2
+    echo "failed to provision tenant — leaving it in place (--no-rollback)" >&2
+    echo "" >&2
+    echo "  Nothing has been torn down and nothing has been deactivated in Git." >&2
+    echo "  Inspect the state that failed:" >&2
+    echo "" >&2
+    echo "    kubectl get tenant ${tenant_name} -o yaml" >&2
+    echo "    kubectl get xtenant ${tenant_name} -o yaml" >&2
+    echo "    kubectl get managed | grep ${tenant_name}" >&2
+    echo "    kubectl logs -n gentian-system deploy/gentian-os --tail=200" >&2
+    echo "" >&2
+    echo "  Clean up when you are done:" >&2
+    echo "" >&2
+    echo "    gtnctl tenants undeploy ${instance} --env ${env_name}" >&2
+    echo "" >&2
+    exit 1
+  fi
 
   echo "failed to provision tenant, rolling back" >&2
 
@@ -1372,7 +1733,16 @@ rollback_deploy() {
       ns_name="tenant-${tenant_name}"
     fi
     echo "Deleting Tenant CR '${tenant_name}' and waiting for operator cleanup..."
-    kubectl delete tenant "${tenant_name}" --ignore-not-found=true
+    # --wait=false is essential. `kubectl delete` defaults to waiting with NO
+    # timeout, and the Tenant carries a gentianos.io/tenant-cleanup finalizer
+    # that only the operator can remove. If the operator cannot finish cleanup —
+    # missing RBAC, a wedged reconcile, or simply being down — this blocks
+    # forever and the only way out is Ctrl-C, after which the rollback never
+    # completes its remaining steps.
+    #
+    # wait_for_tenant_delete below already waits with a 300s bound and prints
+    # progress, so the blocking delete added nothing except the hang.
+    kubectl delete tenant "${tenant_name}" --ignore-not-found=true --wait=false
     if ! wait_for_tenant_delete "${tenant_name}" "${ns_name}" false "" "${instance}" "${env_name}"; then
       echo "rollback failed: tenant resource '${tenant_name}' still exists in the cluster" >&2
       return 1
@@ -1384,26 +1754,38 @@ rollback_deploy() {
     return 1
   fi
 
-  echo "Rollback completed: tenant '${tenant_name}' removed from cluster and deactivated in Git (definition preserved under definitions/)." >&2
+  echo "Rollback completed: tenant '${tenant_name}' removed from cluster and deactivated in Git (definition preserved under definitions/tenants/)." >&2
   return 1
 }
 
 is_instance_deployed() {
   local instance="${1}"
-  local env_name="${2:-dev}"
+  local env_name="${2:-${DEPLOYMENTS_STAGE}}"
   [[ -f "$(tenant_stage_dir "${instance}" "${env_name}")/tenant.yaml" ]]
 }
 
 ensure_env_layout() {
-  local _env_name="${1:-dev}"
-  local root
+  local _env_name="${1:-${DEPLOYMENTS_STAGE}}"
+  local root cluster_root
   root="$(tenant_tenants_root)"
+  cluster_root="${DEPLOYMENTS_PATH}/clusters/${DEPLOYMENTS_CLUSTER}"
 
-  if [[ ! -d "${root}" ]]; then
-    echo "ERROR: tenant path not found: ${root}" >&2
-    echo "Set GENTIAN_DEPLOYMENTS_CLUSTER (currently '${DEPLOYMENTS_CLUSTER}') in ${CONFIG_FILE}." >&2
+  # A cluster directory that does not exist means the cluster name really is
+  # wrong — that is worth stopping for.
+  if [[ ! -d "${cluster_root}" ]]; then
+    echo "ERROR: cluster path not found: ${cluster_root}" >&2
+    echo "Set GENTIAN_DEPLOYMENTS_CLUSTER_ID (currently '${DEPLOYMENTS_CLUSTER}') in ${CONFIG_FILE}." >&2
     exit 1
   fi
+
+  # A missing tenants/ directory does NOT. It is the active GitOps path and only
+  # comes into being when the first tenant is deployed, so on a freshly
+  # bootstrapped cluster it is legitimately absent. Erroring here meant
+  # `tenants deploy` refused to run because the directory it would itself create
+  # was not there yet, and blamed GENTIAN_DEPLOYMENTS_CLUSTER_ID for it — sending
+  # the operator to look for a config problem that does not exist. The function
+  # is called ensure_env_layout; ensure it.
+  mkdir -p "${root}"
 }
 
 append_instance_resource() {
@@ -1464,7 +1846,7 @@ remove_instance_resource() {
   local kustom_file="${1}"
   local instance="${2}"
 
-  sed -i "/^[[:space:]]*-[[:space:]]*instances\/${instance}[[:space:]]*$/d" "${kustom_file}"
+  _sed_inplace "/^[[:space:]]*-[[:space:]]*instances\/${instance}[[:space:]]*$/d" "${kustom_file}"
 
   # Keep a valid empty list when no instances remain.
   if grep -Eq "^[[:space:]]*resources:[[:space:]]*$" "${kustom_file}"; then
@@ -1478,7 +1860,7 @@ remove_instance_resource() {
     ' "${kustom_file}")"
 
     if [[ "${resource_count}" == "0" ]]; then
-      sed -i 's/^resources:[[:space:]]*$/resources: []/' "${kustom_file}"
+      _sed_inplace 's/^resources:[[:space:]]*$/resources: []/' "${kustom_file}"
     fi
   fi
 }
@@ -1554,7 +1936,7 @@ argocd_refresh_await_prune() {
 
 apply_tenant_instance() {
   local instance="${1}"
-  local env_name="${2:-dev}"
+  local env_name="${2:-${DEPLOYMENTS_STAGE}}"
   local stage_dir
   local output
 
@@ -1583,21 +1965,26 @@ tenant_collect_instance_names() {
   tenants_root="$(tenant_tenants_root)"
   definitions_root="$(tenant_definitions_root)"
 
-  declare -A instances=()
+  # A plain list, deduplicated by `sort -u` at the end. bash 3.2 on macOS has no
+  # associative arrays, and this one was only ever used as a set of names.
+  local instances=()
 
-  for tenant_dir in "${tenants_root}"/* "${definitions_root}"/*; do
+  # definitions/* as well as definitions/tenants/*: a checkout that has not
+  # been migrated still lists its tenants. The tenant.yaml test is what keeps
+  # components/ out of the result now, rather than a name it had to know.
+  for tenant_dir in "${tenants_root}"/* "${definitions_root}"/* \
+                    "$(tenant_legacy_definitions_root)"/*; do
     [[ -d "${tenant_dir}" ]] || continue
     instance="$(basename "${tenant_dir}")"
-    [[ "${instance}" == "components" ]] && continue
     [[ -f "${tenant_dir}/tenant.yaml" ]] || continue
-    instances["${instance}"]=1
+    instances+=("${instance}")
   done
 
   if [[ ${#instances[@]} -eq 0 ]]; then
     return 0
   fi
 
-  printf '%s\n' "${!instances[@]}" | sort
+  printf '%s\n' "${instances[@]}" | sort -u
 }
 
 cmd_tenant_list() {
@@ -1625,7 +2012,7 @@ cmd_tenant_list() {
       active="yes"
     else
       active="no"
-      tenant_file="${definitions_root}/${instance_name}/tenant.yaml"
+      tenant_file="$(tenant_definition_dir "${instance_name}")/tenant.yaml"
     fi
 
     tenant_name="$(tenant_instance_name_from_patch "${tenant_file}")"
@@ -1643,16 +2030,16 @@ cmd_tenant_list() {
   done < <(tenant_collect_instance_names)
 
   if [[ "${found}" -eq 0 ]]; then
-    echo "No tenant definitions found under clusters/${DEPLOYMENTS_CLUSTER}/definitions/* or tenants/*."
+    echo "No tenant definitions found under clusters/${DEPLOYMENTS_CLUSTER}/definitions/tenants/* or tenants/*."
   fi
 }
 
 cmd_tenant_deploy() {
   local instance="${1:-}"
-  local env_name="${2:-dev}"
+  local env_name="${2:-${DEPLOYMENTS_STAGE}}"
 
   if [[ -z "${instance}" ]]; then
-    echo "ERROR: usage: kubectl gentian tenants deploy <instance> [--env <env>]" >&2
+    echo "ERROR: usage: kubectl gentian tenants deploy <instance> [--env <env>] [--no-rollback]" >&2
     exit 1
   fi
 
@@ -1702,7 +2089,7 @@ cmd_tenant_deploy() {
 
 cmd_tenant_undeploy() {
   local instance="${1:-}"
-  local env_name="${2:-dev}"
+  local env_name="${2:-${DEPLOYMENTS_STAGE}}"
   local purge="${3:-false}"
 
   if [[ -z "${instance}" ]]; then
@@ -1989,7 +2376,7 @@ _openbao_operator_token() {
     return 1
   fi
   login_token="$(kubectl --request-timeout=10s exec -n openbao "${bao_pod}" -- sh -lc \
-    "BAO_ADDR=http://127.0.0.1:8200 bao write -field=token auth/kubernetes/login role=gentian-os-operator jwt='${jwt}'" \
+    "BAO_ADDR=https://openbao.openbao.svc.cluster.local:8200 BAO_CACERT=/openbao/tls/ca.crt bao write -field=token auth/kubernetes/login role=gentian-os-operator jwt='${jwt}'" \
     2>/dev/null || true)"
   if [[ -z "${login_token}" ]]; then
     return 1
@@ -2055,7 +2442,7 @@ purge_app_openbao_path() {
   echo "Purging OpenBao secrets at ${base_path}..."
   kubectl --request-timeout=60s exec -n openbao "${bao_pod}" -- sh -lc "
     set -eu
-    BAO_ADDR=http://127.0.0.1:8200
+    BAO_ADDR=https://openbao.openbao.svc.cluster.local:8200 BAO_CACERT=/openbao/tls/ca.crt
     BAO_TOKEN='${token}'
     BASE='${base_path}'
     purge_kv_tree() {
@@ -2437,7 +2824,7 @@ cmd_install() {
     # The apps: key is always at 2-space indent; entries are "  - profile: <name>".
     # Insert immediately after the "  apps:" line (order within the list is irrelevant).
     if grep -q '^  apps:' "${file}"; then
-      sed -i "/^  apps:/a\\  - profile: ${app}" "${file}"
+      _insert_after '^  apps:' "  - profile: ${app}" "${file}"
     else
       # No apps key yet — append the block at the end of the file.
       printf '  apps:\n  - profile: %s\n' "${app}" >> "${file}"
@@ -2470,6 +2857,346 @@ cmd_install() {
 }
 
 # ---------------------------------------------------------------------------
+# resources — tenant resource plans and usage
+# ---------------------------------------------------------------------------
+# These call the operator's lifecycle API rather than editing git directly, as
+# `apps install` does. The difference is deliberate: a plan change is refused
+# when the plan is smaller than what the tenant is already using, is checked
+# against the tenant's entitlement, and is recorded as a billing event — and all
+# three live in the operator. Reimplementing them here in bash would put the
+# rules in two places, and the copy that drifted would be the one writing to git.
+#
+# The API is a ClusterIP Service, so reaching it from a workstation needs a
+# port-forward. One is established per invocation and torn down on exit.
+GENTIAN_OPERATOR_NAMESPACE="${GENTIAN_OPERATOR_NAMESPACE:-gentian-system}"
+
+# Set by _lifecycle_connect, read by _lifecycle_call.
+#
+# Both live in the PARENT shell on purpose. _lifecycle_call is always invoked
+# through command substitution, and a port-forward started inside one dies with
+# the subshell — the first version set its cleanup trap in there too, so the
+# forward was killed the instant the function returned and every call failed
+# with "Failed to connect after 0 ms". scripts/lib/portforward.sh documents this
+# exact hazard at length; connecting in the parent avoids it rather than working
+# around it.
+_LIFECYCLE_BASE=""
+_LIFECYCLE_PF_PID=""
+
+_lifecycle_cleanup() {
+  if [[ -n "${_LIFECYCLE_PF_PID}" ]]; then
+    kill "${_LIFECYCLE_PF_PID}" 2>/dev/null || true
+    wait "${_LIFECYCLE_PF_PID}" 2>/dev/null || true
+    _LIFECYCLE_PF_PID=""
+  fi
+}
+
+# _lifecycle_connect — make the lifecycle API reachable, in THIS shell.
+#
+# Call it directly, never through $( ). It sets _LIFECYCLE_BASE and, when it
+# started one, owns the port-forward until the script exits.
+_lifecycle_connect() {
+  [[ -n "${_LIFECYCLE_BASE}" ]] && return 0
+
+  if [[ -n "${GENTIAN_LIFECYCLE_URL:-}" ]]; then
+    _LIFECYCLE_BASE="${GENTIAN_LIFECYCLE_URL%/}"
+    return 0
+  fi
+
+  local svc port
+  svc="$(kubectl get svc -n "${GENTIAN_OPERATOR_NAMESPACE}" \
+    -l app.kubernetes.io/name=gentian-os -o name 2>/dev/null |
+    grep -- '-lifecycle$' | head -1)"
+  if [[ -z "${svc}" ]]; then
+    echo "ERROR: no gentian-os lifecycle Service in namespace ${GENTIAN_OPERATOR_NAMESPACE}." >&2
+    echo "  Set GENTIAN_OPERATOR_NAMESPACE, or GENTIAN_LIFECYCLE_URL to reach it directly." >&2
+    exit 1
+  fi
+  port="$(kubectl get "${svc}" -n "${GENTIAN_OPERATOR_NAMESPACE}" \
+    -o jsonpath='{.spec.ports[0].port}' 2>/dev/null || echo 8082)"
+
+  # Port 0 asks the kernel for a free local port. A fixed one collides with a
+  # second terminal doing the same thing, and the collision surfaces as a
+  # connection refused against a forward somebody else owns.
+  local out
+  out="$(mktemp "${TMPDIR:-/tmp}/gentian-lifecycle-pf.XXXXXX")"
+  kubectl port-forward -n "${GENTIAN_OPERATOR_NAMESPACE}" "${svc}" ":${port}" >"${out}" 2>&1 &
+  _LIFECYCLE_PF_PID=$!
+  trap _lifecycle_cleanup EXIT
+
+  local local_port="" i
+  for i in $(seq 1 50); do
+    local_port="$(sed -n 's/^Forwarding from 127\.0\.0\.1:\([0-9]*\).*/\1/p' "${out}" | head -1)"
+    [[ -n "${local_port}" ]] && break
+    kill -0 "${_LIFECYCLE_PF_PID}" 2>/dev/null || break
+    sleep 0.2
+  done
+  if [[ -z "${local_port}" ]]; then
+    echo "ERROR: could not port-forward to the lifecycle API." >&2
+    sed 's/^/  /' "${out}" >&2
+    rm -f "${out}"
+    exit 1
+  fi
+  rm -f "${out}"
+
+  # "Forwarding from" is printed once the local listener is bound, which is not
+  # the same as the tunnel being able to carry a request. Waiting for /healthz
+  # to answer turns a race into a wait.
+  for i in $(seq 1 50); do
+    if curl -sS -o /dev/null --max-time 2 "http://127.0.0.1:${local_port}/healthz" 2>/dev/null; then
+      _LIFECYCLE_BASE="http://127.0.0.1:${local_port}"
+      return 0
+    fi
+    kill -0 "${_LIFECYCLE_PF_PID}" 2>/dev/null || break
+    sleep 0.2
+  done
+  echo "ERROR: the lifecycle API did not answer through the port-forward." >&2
+  exit 1
+}
+
+# _actor_name — who the change is attributed to in git and in the billing record.
+#
+# The git identity, because it is what the commit carries anyway: the plan event
+# and the commit then name the same person.
+_actor_name() {
+  local name
+  name="$(git config --get user.email 2>/dev/null || true)"
+  [[ -z "${name}" ]] && name="$(git config --get user.name 2>/dev/null || true)"
+  [[ -z "${name}" ]] && name="${USER:-kubectl-gentian}"
+  echo "${name}"
+}
+
+# _lifecycle_call <method> <path> [json-body] — call the API and echo the body.
+#
+# _lifecycle_connect must have run in the parent shell first.
+#
+# On refusal the server's own `detail` is printed verbatim, because it is the
+# only place the reason lives: "limits.cpu: using 34, plan allows 32" is the
+# whole answer, and replacing it with a generic failure would send the operator
+# to the logs for something the response already said. That is also why this
+# uses curl rather than `kubectl --raw`, which reaches the same Service through
+# the API server but renders every refusal as a bare status name.
+_lifecycle_call() {
+  local method="$1" path="$2" body="${3:-}"
+  local status out
+  out="$(mktemp "${TMPDIR:-/tmp}/gentian-lifecycle.XXXXXX")"
+
+  if [[ -n "${body}" ]]; then
+    status="$(curl -sS -o "${out}" -w '%{http_code}' -X "${method}" \
+      -H 'Content-Type: application/json' \
+      -H "X-Gentian-Actor: $(_actor_name)" \
+      --max-time 180 \
+      -d "${body}" "${_LIFECYCLE_BASE}${path}" 2>/dev/null)" || true
+  else
+    status="$(curl -sS -o "${out}" -w '%{http_code}' -X "${method}" \
+      -H "X-Gentian-Actor: $(_actor_name)" \
+      --max-time 60 \
+      "${_LIFECYCLE_BASE}${path}" 2>/dev/null)" || true
+  fi
+  # curl already writes its own 000 into %{http_code} on a transport failure.
+  # Appending a second one is what produced the "HTTP 000000" the first version
+  # reported, which read like a status code and was not one.
+  [[ -z "${status}" ]] && status="000"
+
+  if [[ "${status}" != "200" ]]; then
+    echo "ERROR: the lifecycle API refused the request (HTTP ${status})." >&2
+    _lifecycle_print_detail "${out}" >&2
+    rm -f "${out}"
+    exit 1
+  fi
+  cat "${out}"
+  rm -f "${out}"
+}
+
+# _lifecycle_print_detail <file> — print the server's `detail`, if it sent one.
+#
+# Split out of _lifecycle_call so the JSON heredoc is not nested inside another
+# one, which is how the first version of this file failed to parse.
+_lifecycle_print_detail() {
+  python3 - "$1" <<'PYDETAIL' || true
+import json, sys
+try:
+    with open(sys.argv[1]) as fh:
+        detail = json.load(fh).get("detail", "")
+    if detail:
+        print("  " + detail)
+except Exception:
+    pass
+PYDETAIL
+}
+
+cmd_resources_plans() {
+  local tenant="${1:-}"
+  if [[ -z "${tenant}" ]]; then
+    # Without a tenant there is nothing to mark as current and no consumption to
+    # check a downgrade against, so the catalogue is read straight from the
+    # cluster and no port-forward is needed.
+    kubectl get resourceplans --sort-by=.spec.tier -o custom-columns='NAME:.metadata.name,DISPLAY:.spec.displayName,TIER:.spec.tier,CPU:.spec.quotas.requestsCpu,MEMORY:.spec.quotas.requestsMemory,STORAGE:.spec.quotas.storage,SKU:.spec.productSku'
+    return
+  fi
+
+  local payload
+  _lifecycle_connect
+  payload="$(_lifecycle_call GET "/v1/tenants/${tenant}/resources/plans")"
+  python3 - "${payload}" <<'PY'
+import json, sys
+
+plans = json.loads(sys.argv[1]).get("plans") or []
+if not plans:
+    print("No resource plans are defined on this cluster.")
+    raise SystemExit(0)
+
+# Reserved capacity leads, because that is what a plan sells: it is the
+# figure that maps onto purchased nodes. The burst ceiling is shown beside
+# it so nobody reads the reserved column as the whole story, but it is not
+# the number being bought.
+print(f"{'':2} {'PLAN':<12} {'CPU':>5} {'MEMORY':>8} {'BURST':>12} {'STORAGE':>8}  SKU")
+for plan in plans:
+    q = plan.get("quotas") or {}
+    mark = "*" if plan.get("current") else ("x" if not plan.get("selectable") else " ")
+    burst = f"{q.get('cpu', '-')}/{q.get('memory', '-')}"
+    print(f"{mark:2} {plan['name']:<12} {q.get('requestsCpu', '-'):>5} "
+          f"{q.get('requestsMemory', '-'):>8} {burst:>12} "
+          f"{q.get('storage', '-'):>8}  {plan.get('productSku', '')}")
+    if plan.get("blocked"):
+        print(f"   {plan['blocked']}")
+print()
+print("* current plan   x not selectable")
+print("CPU/MEMORY are reserved capacity — what the plan sells. BURST is the limits ceiling.")
+PY
+}
+
+cmd_resources_show() {
+  local tenant="${1:-}"
+  if [[ -z "${tenant}" ]]; then
+    echo "ERROR: usage: kubectl gentian resources show <tenant>" >&2
+    exit 1
+  fi
+
+  local payload
+  _lifecycle_connect
+  payload="$(_lifecycle_call GET "/v1/tenants/${tenant}/resources")"
+  python3 - "${payload}" <<'PY'
+import json, sys
+
+s = json.loads(sys.argv[1])
+print(f"Tenant:         {s['tenant']}")
+print(f"Plan:           {s.get('plan') or '(matches no plan)'}")
+if s.get("annotatedPlan") and s.get("annotatedPlan") != s.get("plan"):
+    print(f"Recorded plan:  {s['annotatedPlan']}")
+if s.get("drifted"):
+    print("  ! the enforced ceiling is not the one the recorded plan describes")
+if s.get("custom"):
+    print("  ! this ceiling was set by hand and matches no priced plan")
+print(f"Installed apps: {s.get('installedApps', 0)}")
+print()
+
+if not s.get("hasQuota"):
+    print("No ResourceQuota: this tenant runs without a ceiling.")
+else:
+    print(f"{'RESOURCE':<22} {'USED':>12} {'LIMIT':>12}     %")
+    for row in s.get("quota") or []:
+        ratio = row.get("usedRatio")
+        pct = f"{ratio * 100:.0f}%" if ratio is not None else "-"
+        print(f"{row['resource']:<22} {row.get('used', '-'):>12} {row.get('hard', '-'):>12}  {pct:>6}")
+
+print()
+
+
+def readable(key, value):
+    """Bytes as MiB/GiB; everything else as the cluster states it."""
+    if "memory" not in key and "storage" not in key:
+        return value
+    import re
+    m = re.fullmatch(r"(\d+(?:\.\d+)?)([A-Za-z]*)", value)
+    if not m:
+        return value
+    n = float(m.group(1))
+    n *= {"Ki": 1024, "Mi": 1024 ** 2, "Gi": 1024 ** 3, "Ti": 1024 ** 4,
+          "k": 1e3, "M": 1e6, "G": 1e9, "T": 1e12, "": 1}.get(m.group(2), 1)
+    for unit in ("B", "KiB", "MiB", "GiB", "TiB"):
+        if n < 1024 or unit == "TiB":
+            return f"{n:.1f} {unit}".replace(".0 ", " ")
+        n /= 1024
+    return value
+
+
+actual = s.get("actual")
+if actual:
+    print(f"Live consumption ({s.get('actualSource')}):")
+    for key in sorted(actual):
+        print(f"  {key:<20} {readable(key, actual[key])}")
+else:
+    print(f"Live consumption: {s.get('actualSource') or 'unavailable'}")
+PY
+}
+
+cmd_resources_set() {
+  local tenant="${1:-}" plan="${2:-}" force="${3:-false}"
+  if [[ -z "${tenant}" || -z "${plan}" ]]; then
+    echo "ERROR: usage: kubectl gentian resources set <tenant> --plan <plan> [--force]" >&2
+    exit 1
+  fi
+
+  local body payload
+  body="$(python3 - "${plan}" "${force}" <<'PY'
+import json, sys
+print(json.dumps({"plan": sys.argv[1], "force": sys.argv[2] == "true"}))
+PY
+)"
+  _lifecycle_connect
+  payload="$(_lifecycle_call PUT "/v1/tenants/${tenant}/resources" "${body}")"
+  python3 - "${payload}" <<'PY'
+import json, sys
+
+r = json.loads(sys.argv[1])
+print(f"{r['status']}: tenant {r['tenant']} -> plan {r['plan']}")
+if r.get("previousPlan"):
+    print(f"  previously: {r['previousPlan']}")
+if r.get("file"):
+    print(f"  wrote: {r['file']}")
+if r.get("message"):
+    print(f"  {r['message']}")
+PY
+}
+
+cmd_resources_report() {
+  local tenant="${1:-}" from="${2:-}" to="${3:-}"
+  if [[ -z "${tenant}" ]]; then
+    echo "ERROR: usage: kubectl gentian resources report <tenant> [--from <RFC3339>] [--to <RFC3339>]" >&2
+    exit 1
+  fi
+
+  local query="" payload
+  [[ -n "${from}" ]] && query="?from=${from}"
+  if [[ -n "${to}" ]]; then
+    if [[ -n "${query}" ]]; then query="${query}&to=${to}"; else query="?to=${to}"; fi
+  fi
+
+  _lifecycle_connect
+  payload="$(_lifecycle_call GET "/v1/tenants/${tenant}/resources/report${query}")"
+  python3 - "${payload}" <<'PY'
+import json, sys
+
+r = json.loads(sys.argv[1])
+print(f"Tenant {r['tenant']}: {r['from']} -> {r['to']}")
+print()
+if r.get("incomplete"):
+    print("Nothing is known about the plan in force when this window opened;")
+    print("what follows covers only the changes recorded inside it.")
+    print()
+intervals = r.get("intervals") or []
+if not intervals:
+    print("No plan intervals in this window.")
+    raise SystemExit(0)
+print(f"{'PLAN':<18} {'DAYS':>7}  {'FROM':<20} {'TO':<20} SKU")
+for iv in intervals:
+    days = iv["seconds"] / 86400
+    print(f"{iv['plan']:<18} {days:>7.2f}  {iv['from'][:19]:<20} {iv['to'][:19]:<20} "
+          f"{iv.get('productSku', '')}")
+PY
+}
+
+# ---------------------------------------------------------------------------
 # apps uninstall
 # ---------------------------------------------------------------------------
 cmd_uninstall() {
@@ -2494,7 +3221,7 @@ cmd_uninstall() {
   fi
 
   # Remove the '- profile: <app>' line from spec.apps using sed.
-  sed -i "/^  - profile: ${app}$/d" "${file}"
+  _sed_inplace "/^  - profile: ${app}$/d" "${file}"
   echo "Removed '${app}' from spec.apps."
 
   # Commit and push.
@@ -2579,11 +3306,110 @@ case "${SUBCOMMAND}" in
         ;;
     esac
     ;;
+  resource|resources)
+    RESOURCES_CMD="${1:-}"
+    shift || true
+    case "${RESOURCES_CMD}" in
+      plans)
+        RES_TENANT=""
+        while [[ $# -gt 0 ]]; do
+          case "${1}" in
+            --tenant|-t)
+              RES_TENANT="${2:-}"
+              shift 2
+              ;;
+            *)
+              echo "ERROR: unknown flag: ${1}" >&2
+              exit 1
+              ;;
+          esac
+        done
+        cmd_resources_plans "${RES_TENANT}"
+        ;;
+      show)
+        RES_TENANT="${1:-}"
+        shift || true
+        if [[ $# -gt 0 ]]; then
+          echo "ERROR: unknown flag: ${1}" >&2
+          exit 1
+        fi
+        cmd_resources_show "${RES_TENANT}"
+        ;;
+      set)
+        RES_TENANT="${1:-}"
+        shift || true
+        RES_PLAN=""
+        RES_FORCE=false
+        while [[ $# -gt 0 ]]; do
+          case "${1}" in
+            --plan|-p)
+              RES_PLAN="${2:-}"
+              shift 2
+              ;;
+            --force)
+              RES_FORCE=true
+              shift
+              ;;
+            *)
+              echo "ERROR: unknown flag: ${1}" >&2
+              exit 1
+              ;;
+          esac
+        done
+        cmd_resources_set "${RES_TENANT}" "${RES_PLAN}" "${RES_FORCE}"
+        ;;
+      report)
+        RES_TENANT="${1:-}"
+        shift || true
+        RES_FROM=""
+        RES_TO=""
+        while [[ $# -gt 0 ]]; do
+          case "${1}" in
+            --from)
+              RES_FROM="${2:-}"
+              shift 2
+              ;;
+            --to)
+              RES_TO="${2:-}"
+              shift 2
+              ;;
+            *)
+              echo "ERROR: unknown flag: ${1}" >&2
+              exit 1
+              ;;
+          esac
+        done
+        cmd_resources_report "${RES_TENANT}" "${RES_FROM}" "${RES_TO}"
+        ;;
+      *)
+        echo "ERROR: unknown resources subcommand: ${RESOURCES_CMD}" >&2
+        usage
+        exit 1
+        ;;
+    esac
+    ;;
   tenant|tenants)
     TENANT_CMD="${1:-}"
     shift || true
-    TENANT_ENV="dev"
+    # The stage the tenant subcommands report and commit, overridden by --env.
+    #
+    # This was a bare `TENANT_ENV="dev"`, and because the dispatcher passes it
+    # positionally (cmd_tenant_deploy "$TENANT_INSTANCE" "$TENANT_ENV") it always
+    # won over the ${2:-${DEPLOYMENTS_STAGE}} defaults inside those functions —
+    # so fixing them alone changed nothing visible. A prod cluster still logged
+    # "Applying tenant desired state for 'dev'" and committed "undeploy tenant
+    # instance from dev" to the deployments repo, which is the audit trail.
+    TENANT_ENV="${DEPLOYMENTS_STAGE}"
     case "${TENANT_CMD}" in
+      credentials|creds)
+        TENANT_INSTANCE="${1:-}"
+        shift || true
+        if [[ $# -gt 0 ]]; then
+          echo "ERROR: unknown flag: ${1}" >&2
+          exit 1
+        fi
+        cmd_tenant_credentials "${TENANT_INSTANCE}"
+        ;;
       list)
         while [[ $# -gt 0 ]]; do
           case "${1}" in
@@ -2607,6 +3433,10 @@ case "${SUBCOMMAND}" in
             --env|-e)
               TENANT_ENV="${2:-}"
               shift 2
+              ;;
+            --no-rollback)
+              TENANT_NO_ROLLBACK=1
+              shift
               ;;
             *)
               echo "ERROR: unknown flag: ${1}" >&2
@@ -2644,6 +3474,9 @@ case "${SUBCOMMAND}" in
         exit 1
         ;;
     esac
+    ;;
+  version|--version|-v)
+    cmd_version
     ;;
   help|--help|-h)
     usage

@@ -51,6 +51,50 @@ Research that informed the design is in §10; open questions in §11.
 | P6 | **Configuration layers, it does not fork.** Drop-in precedence is fixed and documented (image → chart → profile → tenant), like `/usr` → `/run` → `/etc`. | systemd drop-in precedence |
 | P7 | **Extension APIs are versioned contracts.** An app that offers L3 owes plugin authors a stability policy, a deprecation window, and a "proposed API" lane for the unstable parts. | VS Code proposed API; Eclipse API freeze |
 | P8 | **Customization inherits the trust model.** A customization can never raise its target's `trustTier` or bypass Kyverno, MAC waivers, licensing, or tenant isolation. | existing catalogue tiers, MAC waivers |
+| P9 | **An app declares needs, never endpoints.** A profile says *that* it sends mail, uses a database, needs object storage — never where those are or what credentials reach them. Hosts, ports, users and passwords arrive through `valueMapping`, as references the app does not resolve. | this section |
+
+---
+
+### 1.1 Declaring a need — P9 in practice
+
+Two fields, and neither names the cluster:
+
+```yaml
+spec:
+  kernelRequirements:
+    mail:
+      smtp: {}                      # the need. It carries nothing.
+  valueMapping:
+    smtp:
+      hostKey: mail.smtp.host       # what THIS chart calls these values
+      portKey: mail.smtp.port
+      userKey: mail.smtp.name
+      passwordKey: mail.smtp.password
+```
+
+The requirement is empty on purpose. It once carried `auth` and `port`, which
+asked the wrong party: the mechanism a server accepts and the port it listens on
+belong to the platform, and an app asserting `587, plain` asserts something it
+cannot verify and would be wrong about the moment the cluster changed.
+
+`valueMapping` is not cluster knowledge either — it is the app describing its
+own chart. Nextcloud calls it `nextcloud.mail.smtp.host`, OpenProject
+`environment.OPENPROJECT_SMTP__ADDRESS`. Only the packager knows that, and it is
+the whole of what they must supply. The values then reach the chart as
+`secretKeyRef` entries into a Secret the app never names, so a cluster can move
+from in-cluster Postfix to a relay and no profile changes.
+
+The same shape covers `database`, `cache`, `s3`, `identity` and `imap`.
+
+**Never substitute an endpoint into `extraValues`.** `${SMTP_HOST}`,
+`${S3_ENDPOINT}`, `${MYSQL_HOST}` and `${REDIS_HOST}` handed the app a literal
+hostname and no credential — an app wired that way can only attempt
+unauthenticated access, and it hard-codes an assumption about where the service
+lives. They no longer exist: the compositions stopped substituting them and no
+profile uses them, so a placeholder written today reaches the cluster verbatim.
+The identity placeholders (`${TENANT_ID}`, `${TENANT_DOMAIN}`,
+`${TENANT_NAMESPACE}`, `${KERNEL_DOMAIN}`, `${NODE_IP}`) remain — those describe
+who the tenant is, not where a service lives.
 
 ---
 
@@ -498,9 +542,9 @@ answer to "the way to do it depends on the app".
 
 | Grade | Meaning | Reachable rungs | Examples |
 |---|---|---|---|
-| **A** | Documented, versioned plugin API + declared drop-in dirs + published API for companions | L0–L3 | Odoo, Nextcloud, XWiki, Keycloak, Activepieces |
-| **B** | Config + drop-ins, published API, **no** plugin system | L0–L2, then L4 | Element/Synapse, most SPAs |
-| **C** | Config only; monolithic; no documented extension surface | L0, then L2 or L4 | Collabora, many appliance images |
+| **A** | Plugin API that is **documented and versioned**, plus declared drop-in dirs and a published API for companions | L0–L3 | Odoo, Nextcloud, XWiki, Keycloak, Activepieces |
+| **B** | A plugin system exists, but it is **undocumented, unversioned, or ABI-unstable**. Config, drop-ins and a published API as well. | L0–L3, at the risk `extension.apiStability` records | Element/Synapse (`synapse-module`), OpenProject (`openproject-plugin`), LiteLLM (`litellm-callback`) |
+| **C** | Config only; monolithic; **no** extension surface at all | L0, then L2 or L4 | Collabora, many appliance images |
 | **D** | Anything beyond a value change requires touching source | L0, then L5/L6 | unmaintained or hostile upstreams |
 | **?** | Not yet characterised | L0, L4 | new catalogue entries |
 
@@ -508,6 +552,19 @@ answer to "the way to do it depends on the app".
 reference · declared drop-in directories · documented plugin/addon API · plugin API versioned with
 a deprecation policy · published HTTP API with a spec · upstream accepts patches (PR turnaround
 < 90d) · plugin ABI survives minor releases · a test harness plugin authors can use.
+
+**A and B differ in the quality of the plugin system, not its existence.** Three of the eight
+criteria are about the plugin API — documented, versioned, ABI-stable — so an app with a real but
+poorly-kept extension system loses those points and lands in B while still being extensible.
+Reading B as "no plugin system" contradicts its own rubric, and would have forced Element,
+OpenProject and LiteLLM to either be misgraded or to hide working extension mechanisms.
+
+L3 therefore remains reachable at grade B. What changes is the warranty, and that is what
+`extension.apiStability` is for: `stable` at grade A, `evolving` or `undocumented` at B. An agent
+choosing L3 against an `undocumented` API is choosing to re-test it on every upstream bump, which
+is a decision the record must justify — not something the grade should silently forbid.
+
+Only at **C** is L3 genuinely unreachable, because there is nothing to extend.
 
 **Assignment is manual for v0.4.** The catalogue maintainer scores the rubric by hand, records the
 score in `customization.md`, and sets `spec.customization.grade`. Several criteria — "upstream
@@ -518,6 +575,48 @@ checks that a grade is *present* and that the recorded score matches the banding
 Publishing the grade does two things: it sets expectations *before* a customization is requested,
 and it creates pressure on the catalogue to prefer Grade A apps — the same pressure Debian applies
 by making well-behaved upstreams cheap to package.
+
+
+### 4.2 Bases, addons, editions and packages
+
+The catalogue shape L3 is delivered through. Referenced by the `AppProfile`,
+`AppPackage` and `Tenant` CRD field documentation.
+
+```text
+profiles/<family>/
+  base/       <family>-base-<name>      # deployable
+  addons/     <family>-<addon>-<name>   # activated inside a base, never installed alone
+  packages/   <family>-<package>        # not deployable — a UI preset
+```
+
+An **addon** declares `spec.customization.addon.{id,of}` and is selected into an
+installed base, arriving in `Tenant.spec.apps[].addons`. It inherits the base's
+ladder — same image, same drop-in dirs, same plugin API — so it never restates
+`grade`, `rubricScore` or `supportedRungs`.
+
+**Editions** are `ce · me · ee`, and say *how the entry is licensed*, not who
+publishes it: `ce` is upstream's community edition, `me` is that plus active
+Gentian maintenance, `ee` is commercially licensed and entitlement-gated. `ee` is
+deliberately not "the upstream's enterprise build" — a third party's proprietary
+distribution is equally an `ee`, and `spec.author` is what names the supplier. A
+supplier's name is never an edition. Editions are technically compatible with one
+another; what gates an `ee` addon is **entitlement**, and what constrains
+addon↔base compatibility is **version**. There is therefore one addon set per
+family and no per-edition compatibility matrix.
+
+An **edition shares a family name and nothing else** — `nextcloud-base-ee` may
+deploy a supplier's all-in-one chart from a credentialed registry where
+`nextcloud-base-ce` deploys the community chart — so it inherits no ladder and must
+be characterised on its own.
+
+**Naming is a hint, not a contract.** Two profiles may both be edition `ee` from
+different authors under unrelated names. `spec.edition` and `spec.author` are the
+authoritative pair; never infer either from a profile name.
+
+A **package** is an `AppPackage`: cluster-scoped, no status, no reconciler, no
+workload. It names a family and a set of addons, and pre-selects them in the
+install window. The user may still adjust the selection, which is why a curated
+bundle stays a preset rather than becoming an artifact.
 
 ---
 
@@ -538,10 +637,12 @@ other catalogue object. Being a cluster object buys three things a file cannot:
   the debt report is computed by the operator, not by a script guessing from YAML.
 
 `AppProfile` and `Composition` are cluster-scoped — there is no per-profile namespace. Profile-scoped
-records therefore land in the **fixed system namespace the `gentian-catalogue` ApplicationSet syncs
-every profile's namespaced objects into** (`gentian-system` on this deployment layout — check the
-ApplicationSet's `template.spec.destination.namespace`, since it is a cluster-wide constant, not
-derived from the profile name). Tenant-scoped records land in `tenant-<name>`.
+records therefore land in the **fixed system namespace the catalogue-sync ApplicationSet syncs every
+profile's namespaced objects into** (`gentian-system` on this deployment layout — check
+`crossplane/compositions/repository-default.yaml`'s `template.spec.destination.namespace`, since it
+is a cluster-wide constant, not derived from the profile name). Every `role: apps`, `type: git`
+`Repository` claim composes its own such ApplicationSet — `gentian-apps` is the default one, not a
+special case. Tenant-scoped records land in `tenant-<name>`.
 
 ```yaml
 apiVersion: gentianos.io/v1alpha1
@@ -714,7 +815,8 @@ specific things low. That was rejected: it makes a directory's location depend o
 *how many things currently use it*, so a second consumer forces a physical move.
 The customization ladder has the same property and resolves it the same way:
 `scope` (tenant/profile/platform) is a **field on the record**, not a directory
-level, exactly as `spec.tier` is a field rather than a `free/`–`pro/` split.
+level, exactly as `spec.trustTier` is a field rather than a `certified/`–
+`experimental/` split.
 Anything that changes over time belongs in a field, where it can be queried and
 validated; only stable identity belongs in a path.
 
@@ -961,6 +1063,6 @@ Decided 2026-08-06. Each decision is implemented in the step named in §12.
 | 8 | L5 discipline retrofitted to `ocb` (DEP-3 headers, `series`, CI bump gate) | `ocb` | **done** |
 | 9 | Debt report surfaced in Admin Console | `gentian-ui` | **done** |
 | 10 | Tenant drop-in reconciler + Admin Console editor (§2.2.1) | `gentian-os`, `gentian-ui` | **done** |
-| 11 | L3 unified on one addon model: `addon-profile` delivery, addon resolver, activation, selection window (`gentian-apps/docs/L3-cleanup.md`) | `gentian-os`, `gentian-apps` | **done** |
+| 11 | L3 unified on one addon model: `addon-profile` delivery, addon resolver, activation, selection window (§4.2) | `gentian-os`, `gentian-apps` | **done** |
 | — | Automated grade rubric in CI | `gentian-apps` | roadmap 2.13 |
 | — | Third-party delegation process (signing, entitlement, review SLAs) | — | deferred, §2.9 |

@@ -8,11 +8,35 @@ kind: Deployment
 {{- $lifecycleDeployments := .Values.appLifecycle.deployments | default dict }}
 {{- $lifecycleDeploymentsEnabled := $lifecycleDeployments.enabled | default false }}
 {{- $lifecycleGitCredsSecret := $lifecycleDeployments.gitCredentialsSecret | default "" }}
+{{- /* basic is username+password via a mounted .git-credentials file
+     (credential.helper=store); bearer is a single token, which
+     repository-default.yaml's ExternalSecret stores under a "token" key
+     instead — no userinfo form exists for a bearer token, so it is read as a
+     secretKeyRef env var and injected as an http.extraHeader instead of a
+     mounted file. See repository-default.yaml's $isBearer branch for the
+     Secret shape this is reading. */}}
+{{- $lifecycleAuthType := $lifecycleDeployments.authType | default "basic" }}
+{{- $lifecycleBearer := eq $lifecycleAuthType "bearer" }}
+{{- $lifecycleGitCredsFile := and $lifecycleGitCredsSecret (not $lifecycleBearer) }}
+{{- $usage := .Values.usage | default dict }}
+{{- $usageSampler := $usage.sampler | default dict }}
+{{- $metricsServer := $usage.metricsServer | default dict }}
 metadata:
   name: {{ include "gentian-os.fullname" . }}
   namespace: {{ .Release.Namespace }}
   labels:
     {{- include "gentian-os.labels" . | nindent 4 }}
+  annotations:
+    # Restart when the tokens below change. They reach the container as
+    # secretKeyRef env vars, which Kubernetes resolves once at pod start: a
+    # Secret that changes afterwards never reaches a running pod. The authz
+    # bridge read an empty OpenFGA token for an hour after ESO had populated
+    # its Secret, retrying 401 bearer_token_missing against a value that was
+    # by then sitting right beside it.
+    secret.reloader.stakater.com/reload: >-
+      {{ .Values.authzBridge.openfgaTokenSecretRef.name | default "gentian-os-openfga-token" }}
+      {{- with .Values.cloudflare.apiTokenSecretRef }}{{- if .name }},{{ .name }}{{- end }}{{- end }}
+      {{- if $lifecycleGitCredsSecret }},{{ $lifecycleGitCredsSecret }}{{- end }}
 spec:
   replicas: {{ .Values.replicaCount }}
   selector:
@@ -58,32 +82,123 @@ spec:
             - configMapRef:
                 name: {{ include "gentian-os.fullname" . }}-config
           env:
+            {{- with .Values.trustAnchorSecret }}
+            # Outside every feature guard on purpose: the operator talks to
+            # Keycloak and OpenBao over kernel hostnames whatever else is
+            # enabled, so tying its trust store to another flag would make TLS
+            # succeed or fail depending on an unrelated setting. Go's
+            # crypto/x509 reads SSL_CERT_FILE when it builds the system pool, so
+            # no custom transport is needed.
+            - name: SSL_CERT_FILE
+              value: /opt/gentian-trust-anchor/ca.crt
+            {{- end }}
             - name: BAO_ADDR
               value: {{ .Values.openbao.address | quote }}
             - name: BAO_ROLE
               value: {{ .Values.openbao.role | quote }}
+            {{- /* Only when there is nothing to verify against.
+
+                 This used to be an unconditional "true", which meant the
+                 trust anchor above could never take effect for OpenBao:
+                 NewKVClient installs an InsecureSkipVerify transport whenever
+                 this is set, overriding SSL_CERT_FILE. So configuring
+                 trustAnchorSecret bought TLS verification everywhere except the
+                 one connection that carries the master password.
+
+                 Left true when no anchor is configured, because OpenBao serves
+                 a self-signed certificate and the operator could not reach it
+                 at all otherwise — this is the honest default for that case,
+                 not a hidden one. */}}
+            {{- if not .Values.trustAnchorSecret }}
             - name: VAULT_SKIP_VERIFY
               value: "true"
+            {{- end }}
             - name: KERNEL_DOMAIN
               value: {{ .Values.kernelDomain | quote }}
+            {{- with .Values.mailEgressHost }}
+            # The hostname outbound mail leaves from. The mail reconciler uses it
+            # for the SPF record it publishes, which must name the sending
+            # address rather than the MX.
+            - name: MAIL_EGRESS_HOST
+              value: {{ . | quote }}
+            {{- end }}
             - name: TENANCY_MODE
               value: {{ .Values.tenancyMode | default "multi" | quote }}
+            {{- /*
+            The cluster's mail stack, from the Cluster claim's mail.serviceMode.
+            Gates Dovecot provisioning: with external there is no Dovecot to
+            configure, and the operator was creating a Keycloak client per realm
+            and a Job per reconcile for one that does not exist.
+            */}}
+            - name: MAIL_SERVICE_MODE
+              value: {{ .Values.mailServiceMode | default "external" | quote }}
             - name: ROUTING_MODE
               value: {{ .Values.routingMode | default "gateway" | quote }}
+            {{- /*
+            hasKey, not `default true`: Helm's default treats false as empty, so
+            `gateTenants: false | default true` renders true and the switch
+            silently does nothing. A boolean that cannot be turned off is worse
+            than no switch, because the operator believes it is off.
+            */}}
+            {{- /*
+            OpenBao serves a self-signed certificate, so the credential manager
+            has to be told what signs it or every token exchange fails at TLS —
+            and used to report that as "not authorised".
+            Read from the Secret rather than mounted: a Pod cannot mount a
+            Secret from another namespace, which is why ESO's ClusterSecretStore
+            uses a caProvider for the same certificate.
+            */}}
+            - name: BAO_CA_SECRET
+              value: {{ (.Values.credentialManager).caSecret | default "openbao-tls" | quote }}
+            - name: BAO_CA_SECRET_NAMESPACE
+              value: {{ (.Values.credentialManager).caSecretNamespace | default "openbao" | quote }}
+            {{- if (.Values.credentialManager).tlsSkipVerify }}
+            - name: BAO_TLS_SKIP_VERIFY
+              value: "true"
+            {{- end }}
+            - name: HANDOVER_GATE_TENANTS
+              value: {{ if hasKey (.Values.handover | default dict) "gateTenants" }}{{ .Values.handover.gateTenants | quote }}{{ else }}"true"{{ end }}
             - name: TENANT_DNS01_CLUSTER_ISSUER
-              value: {{ .Values.tenantDNS01ClusterIssuer | default "letsencrypt-dns01-cloudflare" | quote }}
+              value: {{ include "gentian.tenantDNS01ClusterIssuer" . | quote }}
             - name: KERNEL_REALM
               value: {{ .Values.kernelRealm | default "kernel" | quote }}
+            {{- if .Values.backupRecipients }}
+            - name: BACKUP_AGE_RECIPIENTS
+              value: {{ join "," .Values.backupRecipients | quote }}
+            {{- end }}
             {{- if .Values.authzBridge.enabled }}
             - name: AUTHZ_BRIDGE_ENABLED
               value: "true"
             - name: OPENFGA_API_URL
               value: {{ .Values.authzBridge.openfgaURL | quote }}
-            {{- if .Values.authzBridge.openfgaToken }}
+            {{- /*
+              optional: true so the operator still starts while the
+              ExternalSecret is syncing; the bridge picks the token up on a
+              later reconcile rather than CrashLooping the whole operator. The
+              Secret is on this Deployment's reloader annotation, so its arrival
+              restarts the pod rather than waiting for one.
+
+              That tolerance is why D-01's check() asserts the Secret exists and
+              carries the key: without it, "still syncing" and "will never sync"
+              look identical from here, and the bridge would run tokenless with
+              nothing saying so.
+            */}}
+            {{- if .Values.authzBridge.openfgaTokenSecretRef.name }}
             - name: OPENFGA_API_TOKEN
-              value: {{ .Values.authzBridge.openfgaToken | quote }}
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.authzBridge.openfgaTokenSecretRef.name | quote }}
+                  key: {{ .Values.authzBridge.openfgaTokenSecretRef.key | default "api-token" | quote }}
+                  optional: true
             {{- end }}
             {{- end }}
+            # Which EdgeIngress this cluster runs, by the name
+            # kernel/platforms.yaml uses. Empty follows networkMode, so an
+            # existing cluster needs no new value to keep behaving as it does.
+            - name: EDGE_INGRESS
+              value: {{ .Values.edgeIngress | default "" | quote }}
+            - name: NETWORK_MODE
+              value: {{ .Values.networkMode | default "" | quote }}
             - name: CLOUDFLARE_ZONE_ID
               {{- if .Values.cloudflare.zoneID }}
               value: {{ .Values.cloudflare.zoneID | quote }}
@@ -92,6 +207,22 @@ spec:
                 secretKeyRef:
                   name: {{ .Values.cloudflare.apiTokenSecretRef.name | quote }}
                   key: "zone-id"
+                  optional: true
+              {{- else }}
+              value: ""
+              {{- end }}
+            # Optional. Supplied, the tunnel ingress addresses the account
+            # directly and never reads the zone — so its token needs only the
+            # account permission, not Zone:Read. See internal/controller/
+            # edge_cloudflare_tunnel.go.
+            - name: CLOUDFLARE_ACCOUNT_ID
+              {{- if .Values.cloudflare.accountID }}
+              value: {{ .Values.cloudflare.accountID | quote }}
+              {{- else if .Values.cloudflare.apiTokenSecretRef.name }}
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.cloudflare.apiTokenSecretRef.name | quote }}
+                  key: "account-id"
                   optional: true
               {{- else }}
               value: ""
@@ -117,11 +248,17 @@ spec:
                   optional: true
             {{- end }}
             {{- if .Values.cloudflare.tunnelAPITokenSecretRef.name }}
-            - name: CLOUDFLARE_TUNNEL_API_TOKEN
+            # CF_TUNNEL_TOKEN, matching what the operator reads and what the
+            # installer collects. optional: a cluster whose OpenBao has no
+            # edge/cf-tunnel path yet must still start -- the operator falls
+            # back to the DNS token, which is every cluster installed before
+            # this credential existed.
+            - name: CF_TUNNEL_TOKEN
               valueFrom:
                 secretKeyRef:
                   name: {{ .Values.cloudflare.tunnelAPITokenSecretRef.name | quote }}
                   key: {{ .Values.cloudflare.tunnelAPITokenSecretRef.key | default "api-token" | quote }}
+                  optional: true
             {{- end }}
             - name: INFRA_NAMESPACE
               value: {{ .Values.infraNamespace | quote }}
@@ -131,14 +268,39 @@ spec:
               value: {{ .Values.stage | default "dev" | quote }}
             - name: LLM_SUPPORT
               value: {{ .Values.llmSupport | default false | quote }}
+            {{- if .Values.credentialManager.enabled }}
+            - name: CREDENTIAL_MANAGER_ENABLED
+              value: "true"
+            - name: CREDENTIAL_MANAGER_ADDR
+              value: ":{{ .Values.credentialManager.port }}"
+            - name: CREDENTIAL_PROBE_NAMESPACE
+              value: {{ .Values.credentialManager.probeNamespace | quote }}
+            - name: BAO_AUTH_MOUNT
+              value: {{ .Values.credentialManager.authMount | quote }}
+            - name: BAO_OIDC_ROLES
+              value: {{ join "," .Values.credentialManager.oidcRoles | quote }}
+            - name: CREDENTIAL_CLUSTER_ADMIN_POLICY
+              value: {{ .Values.credentialManager.clusterAdminPolicy | quote }}
+            - name: CREDENTIAL_TENANT_CLAIM
+              value: {{ .Values.credentialManager.tenantClaim | quote }}
+            {{- end }}
+            {{- /* Renamed keys: a cluster overlay still setting the old ones would
+                   otherwise render a commerce block pointing at nothing, and the
+                   operator would fail every install-grant exchange at runtime. */}}
+            {{- if .Values.commerce.corpAPIURL }}
+            {{- fail "commerce.corpAPIURL was renamed to commerce.apiURL" }}
+            {{- end }}
+            {{- if .Values.commerce.operatorToken }}
+            {{- fail "commerce.operatorToken was renamed to commerce.apiToken" }}
+            {{- end }}
             {{- if .Values.commerce.enabled }}
             - name: GENTIAN_COMMERCE_ENABLED
               value: "true"
-            - name: GENTIAN_CORP_API_URL
-              value: {{ .Values.commerce.corpAPIURL | quote }}
-            {{- if .Values.commerce.operatorToken }}
-            - name: GENTIAN_CORP_OPERATOR_TOKEN
-              value: {{ .Values.commerce.operatorToken | quote }}
+            - name: GENTIAN_COMMERCE_API_URL
+              value: {{ .Values.commerce.apiURL | quote }}
+            {{- if .Values.commerce.apiToken }}
+            - name: GENTIAN_COMMERCE_API_TOKEN
+              value: {{ .Values.commerce.apiToken | quote }}
             {{- end }}
             {{- if .Values.commerce.meteringInterval }}
             - name: METERING_INTERVAL
@@ -171,23 +333,58 @@ spec:
               value: {{ $lifecycleDeployments.path | default "/data/gentian-deployments" | quote }}
             - name: GENTIAN_DEPLOYMENTS_REPO
               value: {{ $lifecycleDeployments.repo | default "https://git.example.domain/gentian-deployments" | quote }}
-            - name: GENTIAN_DEPLOYMENTS_CLUSTER
+            - name: GENTIAN_DEPLOYMENTS_CLUSTER_ID
               value: {{ $lifecycleDeployments.cluster | default "default-cluster" | quote }}
             - name: GENTIAN_DEPLOYMENTS_STAGE
               value: {{ $lifecycleDeployments.stage | default (.Values.stage | default "dev") | quote }}
+            - name: USAGE_SAMPLER_ENABLED
+              value: {{ $usageSampler.enabled | default false | quote }}
+            - name: USAGE_SAMPLE_INTERVAL
+              value: {{ $usageSampler.interval | default "15m" | quote }}
+            - name: USAGE_RETENTION
+              value: {{ $usageSampler.retention | default "9600h" | quote }}
+            - name: METRICS_SERVER_ENABLED
+              value: {{ $metricsServer.enabled | default false | quote }}
             {{- if $lifecycleGitCredsSecret }}
             - name: HOME
               value: /tmp
+            {{- if $lifecycleBearer }}
             - name: GIT_CONFIG_COUNT
               value: "2"
             - name: GIT_CONFIG_KEY_0
-              value: credential.helper
-            - name: GIT_CONFIG_VALUE_0
-              value: store --file=/etc/git/credentials
-            - name: GIT_CONFIG_KEY_1
               value: safe.directory
-            - name: GIT_CONFIG_VALUE_1
+            - name: GIT_CONFIG_VALUE_0
               value: {{ $lifecycleDeployments.path | default "/data/gentian-deployments" | quote }}
+            # Dependent env var: GIT_CONFIG_VALUE_1's $(GIT_BEARER_TOKEN) is
+            # resolved by Kubernetes from the entry defined immediately above
+            # it, not by a shell — this container never sees the raw token as
+            # its own named variable, only composed into the header.
+            - name: GIT_BEARER_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $lifecycleGitCredsSecret }}
+                  key: token
+                  optional: true
+            - name: GIT_CONFIG_KEY_1
+              value: http.extraHeader
+            - name: GIT_CONFIG_VALUE_1
+              value: "Authorization: Bearer $(GIT_BEARER_TOKEN)"
+            {{- else }}
+            # No credential.helper: it needs a lock file beside --file even
+            # for a plain read, which is fatal against a read-only mounted
+            # Secret ("unable to get credential storage lock ... Permission
+            # denied"). The init container's clone URL already carries
+            # user:pass (see git-clone-deployments below), so it lands in
+            # this checkout's origin remote and every push/fetch against
+            # origin reads it straight from there — no credential lookup, no
+            # lock, nothing for this container to mount at all.
+            - name: GIT_CONFIG_COUNT
+              value: "1"
+            - name: GIT_CONFIG_KEY_0
+              value: safe.directory
+            - name: GIT_CONFIG_VALUE_0
+              value: {{ $lifecycleDeployments.path | default "/data/gentian-deployments" | quote }}
+            {{- end }}
             - name: GIT_AUTHOR_NAME
               value: gentian-os
             - name: GIT_AUTHOR_EMAIL
@@ -215,6 +412,11 @@ spec:
             - name: lifecycle
               containerPort: {{ .Values.appLifecycle.port }}
               protocol: TCP
+            {{- if .Values.credentialManager.enabled }}
+            - name: credentials
+              containerPort: {{ .Values.credentialManager.port }}
+              protocol: TCP
+            {{- end }}
             {{- if $webhookEnabled }}
             - name: webhook
               containerPort: {{ $webhookPort }}
@@ -245,6 +447,11 @@ spec:
             {{- end }}
           {{- if or $webhookEnabled $lifecycleDeploymentsEnabled $lifecycleGitCredsSecret }}
           volumeMounts:
+            {{- with .Values.trustAnchorSecret }}
+            - name: kernel-trust-anchor
+              mountPath: /opt/gentian-trust-anchor
+              readOnly: true
+            {{- end }}
             {{- if $webhookEnabled }}
             - name: webhook-certs
               mountPath: /tmp/k8s-webhook-server/serving-certs
@@ -254,12 +461,12 @@ spec:
             - name: deployments-checkout
               mountPath: {{ $lifecycleDeployments.path | default "/data/gentian-deployments" }}
             {{- end }}
-            {{- if $lifecycleGitCredsSecret }}
-            - name: git-credentials
-              mountPath: /etc/git/credentials
-              subPath: .git-credentials
-              readOnly: true
-            {{- end }}
+            {{- /* No git-credentials mount here for basic auth: the init
+                 container's clone URL already carries user:pass, so it is
+                 in this checkout's origin remote and this container never
+                 needs to read the credential itself. Bearer's token comes
+                 through GIT_BEARER_TOKEN (secretKeyRef) above, not a mount
+                 either. */}}
           {{- end }}
       {{- with .Values.nodeSelector }}
       nodeSelector:
@@ -275,6 +482,11 @@ spec:
       {{- end }}
       {{- if or $webhookEnabled $lifecycleDeploymentsEnabled $lifecycleGitCredsSecret }}
       volumes:
+        {{- with .Values.trustAnchorSecret }}
+        - name: kernel-trust-anchor
+          secret:
+            secretName: {{ . }}
+        {{- end }}
         {{- if $webhookEnabled }}
         - name: webhook-certs
           secret:
@@ -284,7 +496,7 @@ spec:
         - name: deployments-checkout
           emptyDir: {}
         {{- end }}
-        {{- if $lifecycleGitCredsSecret }}
+        {{- if $lifecycleGitCredsFile }}
         - name: git-credentials
           secret:
             secretName: {{ $lifecycleGitCredsSecret | quote }}
@@ -300,11 +512,33 @@ spec:
             - -c
             - |
               set -e
+              # credential.helper 'store' needs a lock file beside its --file
+              # target even for a plain read, which fails outright against a
+              # read-only mounted Secret ("unable to get credential storage
+              # lock ... Permission denied") — not a silent no-op. The
+              # mounted file already IS a complete scheme://user:pass@host/path
+              # URL (crossplane/compositions/repository-default.yaml), so
+              # clone from that directly and skip credential.helper entirely.
+              # It then lands in this checkout's origin remote, so the
+              # gentian-os container's own later pushes read it straight from
+              # there too — see GIT_CONFIG_COUNT below in this Deployment.
+              CLONE_URL="${GENTIAN_DEPLOYMENTS_REPO}"
+              {{- if $lifecycleGitCredsFile }}
+              # git-credentials is an OPTIONAL Secret volume subPath-mounted
+              # here: when the Secret doesn't exist yet (ESO/OpenBao not
+              # satisfied yet), Kubernetes falls back to an empty DIRECTORY
+              # at this path instead of failing the mount — and `-s` alone
+              # reports true for a directory too (nonzero size on most
+              # filesystems), so `cat` on it fails with "Is a directory". -f
+              # rules the directory case out; retry picks this up once the
+              # Secret exists.
+              [ -f /etc/git/credentials ] && [ -s /etc/git/credentials ] && CLONE_URL="$(cat /etc/git/credentials)"
+              {{- end }}
               for attempt in 1 2 3 4 5; do
                 if [ -d {{ $lifecycleDeployments.path | default "/data/gentian-deployments" }}/.git ]; then
                   exit 0
                 fi
-                if git clone "${GENTIAN_DEPLOYMENTS_REPO}" {{ $lifecycleDeployments.path | default "/data/gentian-deployments" }}; then
+                if git clone "${CLONE_URL}" {{ $lifecycleDeployments.path | default "/data/gentian-deployments" }}; then
                   exit 0
                 fi
                 echo "git clone attempt ${attempt} failed; retrying..."
@@ -314,6 +548,22 @@ spec:
           env:
             - name: GENTIAN_DEPLOYMENTS_REPO
               value: {{ $lifecycleDeployments.repo | default "https://git.example.domain/gentian-deployments" | quote }}
+            {{- if $lifecycleBearer }}
+            - name: HOME
+              value: /tmp
+            - name: GIT_CONFIG_COUNT
+              value: "1"
+            - name: GIT_BEARER_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $lifecycleGitCredsSecret }}
+                  key: token
+                  optional: true
+            - name: GIT_CONFIG_KEY_0
+              value: http.extraHeader
+            - name: GIT_CONFIG_VALUE_0
+              value: "Authorization: Bearer $(GIT_BEARER_TOKEN)"
+            {{- end }}
           securityContext:
             runAsUser: 65532
             runAsNonRoot: true
@@ -324,5 +574,11 @@ spec:
           volumeMounts:
             - name: deployments-checkout
               mountPath: {{ $lifecycleDeployments.path | default "/data/gentian-deployments" }}
+            {{- if $lifecycleGitCredsFile }}
+            - name: git-credentials
+              mountPath: /etc/git/credentials
+              subPath: .git-credentials
+              readOnly: true
+            {{- end }}
       {{- end }}
       terminationGracePeriodSeconds: 10

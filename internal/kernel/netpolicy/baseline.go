@@ -78,6 +78,13 @@ func BaselineNetworkPolicy(tenantName, nsName string, cfg Config, kubeAPIEndpts 
 	ingress := []networkingv1.NetworkPolicyIngressRule{
 		namespaceIngress(meta.EnvoyGatewayInstallNamespace),
 		namespaceIngress(meta.KernelNamespace),
+		// The operator itself provisions *into* running tenant apps over their
+		// own admin APIs — AppProfile.spec.provisioning.privilegedRole is the
+		// first such case (see app_privilege_reconciler.go). It runs in
+		// OperatorNamespace, not KernelNamespace, so without this it cannot
+		// reach the very workloads it reconciles. This grants no new authority:
+		// the operator already has API-level control over these namespaces.
+		namespaceIngress(meta.OperatorNamespace),
 	}
 
 	return &networkingv1.NetworkPolicy{
@@ -98,30 +105,31 @@ func BaselineNetworkPolicy(tenantName, nsName string, cfg Config, kubeAPIEndpts 
 	}
 }
 
-func namespaceIngress(ns string) networkingv1.NetworkPolicyIngressRule {
-	return networkingv1.NetworkPolicyIngressRule{
-		From: []networkingv1.NetworkPolicyPeer{
-			{NamespaceSelector: &metav1.LabelSelector{
-				MatchLabels: map[string]string{"kubernetes.io/metadata.name": ns},
-			}},
-		},
+// namespacePeer selects a namespace by its immutable metadata.name label.
+//
+// The ingress and egress rules below are separate types with differently named
+// fields, so they cannot be one function — but the peer they both carry can be,
+// and it is the part that would be wrong in only one of them.
+func namespacePeer(ns string) []networkingv1.NetworkPolicyPeer {
+	return []networkingv1.NetworkPolicyPeer{
+		{NamespaceSelector: &metav1.LabelSelector{
+			MatchLabels: map[string]string{"kubernetes.io/metadata.name": ns},
+		}},
 	}
 }
 
+func namespaceIngress(ns string) networkingv1.NetworkPolicyIngressRule {
+	return networkingv1.NetworkPolicyIngressRule{From: namespacePeer(ns)}
+}
+
 func namespaceEgress(ns string) networkingv1.NetworkPolicyEgressRule {
-	return networkingv1.NetworkPolicyEgressRule{
-		To: []networkingv1.NetworkPolicyPeer{
-			{NamespaceSelector: &metav1.LabelSelector{
-				MatchLabels: map[string]string{"kubernetes.io/metadata.name": ns},
-			}},
-		},
-	}
+	return networkingv1.NetworkPolicyEgressRule{To: namespacePeer(ns)}
 }
 
 func policyLabels(tenantName, policyType string) map[string]string {
 	return map[string]string{
-		meta.TenantLabel:       tenantName,
-		meta.ManagedByLabel:      meta.ManagedByValue,
-		meta.NetPolicyTypeLabel:  policyType,
+		meta.TenantLabel:        tenantName,
+		meta.ManagedByLabel:     meta.ManagedByValue,
+		meta.NetPolicyTypeLabel: policyType,
 	}
 }

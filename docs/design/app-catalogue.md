@@ -244,7 +244,6 @@ metadata:
 spec:
   displayName: "Demo"
   domain: acme.com              # optional; falls back to <name>.<KERNEL_DOMAIN>
-  adminEmail: admin-demo@gentian.org
 
   isolation:
     mode: namespace
@@ -255,8 +254,6 @@ spec:
   mail:
     mode: selfhosted            # selfhosted | external | transport-only | disabled
     domain: demo.example.com
-    quotaPerUser: 5Gi
-    rateLimit: 100/h
 
   quotas:
     maxApps: 20
@@ -349,7 +346,7 @@ gentian-apps/
 │   ├── ox-appsuite.yaml
 │   ├── element.yaml          # includes Jitsi sidecar (spec.sidecars)
 │   ├── xwiki.yaml
-│   ├── od-nextcloud.yaml     # Gentian-packaged Nextcloud profile
+│   ├── nextcloud-pro.yaml    # vendor-packaged Nextcloud profile
 ├── contracts/
 │   ├── file-store.yaml
 │   ├── filepicker.yaml

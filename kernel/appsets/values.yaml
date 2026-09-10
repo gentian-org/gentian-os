@@ -2,3 +2,71 @@
 # raw/*.yaml ApplicationSet gets rewritten to. Set via --set stage=<value>
 # (root-applicationset.yaml.tmpl passes it from ${GENTIAN_DEPLOYMENTS_STAGE}).
 stage: dev
+
+# targetRevision is the git ref every child ApplicationSet tracks back to
+# gentian-os, replacing the "targetRevision: develop" literal in raw/*.yaml.
+# Passed by root-applicationset.yaml.tmpl from ${GENTIAN_OS_BRANCH}, so the
+# children follow whatever branch or release tag the parent was installed from.
+targetRevision: develop
+
+# kernelDomain replaces the "kernel.domain.placeholder" literal carried by
+# raw/*.yaml, so per-service charts can render values that depend on the
+# cluster domain. Passed by root-applicationset.yaml.tmpl from KERNEL_DOMAIN.
+kernelDomain: ""
+
+# storageClass replaces the "storage.class.placeholder" literal carried by
+# raw/08-infra-data.yaml, so the shared PostgreSQL/MariaDB/Redis/MinIO charts
+# render an explicit storageClassName instead of leaving it for the
+# DefaultStorageClass admission plugin to stamp in after the fact — see the
+# comment beside this value in root-applicationset.yaml for what leaving it
+# implicit costs. Passed from STORAGE_CLASS, resolved once by
+# resolve_storage_class() (explicit override, or the cluster's own default).
+storageClass: ""
+
+# The outbound SMTP relay for MAIL_SERVICE_MODE=external, replacing the
+# "external.smtp.host.placeholder" / "external.smtp.port.placeholder" literals in
+# raw/09-infra-helm.yaml. Passed by root-applicationset.yaml.tmpl from
+# EXTERNAL_SMTP_HOST / EXTERNAL_SMTP_PORT.
+#
+# Empty host is kernel mode: Postfix delivers directly and needs no upstream. The
+# mail mode is therefore not a value here — only whether a relay host exists.
+externalSmtpHost: ""
+externalSmtpPort: "587"
+externalSmtpSsl: "false"
+externalSmtpStarttls: "true"
+
+# kernel  — Postfix delivers locally and Dovecot serves the mailboxes.
+# external — Postfix relays to a smarthost; mailboxes live at the provider, so
+#            Dovecot is not deployed and neither is its volume.
+#
+# A separate value from externalSmtpHost on purpose. "Has a relay" and "hosts
+# its own mailboxes" are independent: a kernel-mode cluster commonly relays
+# outbound because port 25 is blocked outbound while still receiving on it.
+mailServiceMode: external
+
+# Whether the LLM ApplicationSet is generated, and whether the mock inference
+# backend goes with it. From the Cluster claim's llm.enabled and
+# llm.gpuAcceleration.
+llmEnabled: "false"
+llmGpuAcceleration: "false"
+
+# Whether the Kyverno host-namespace exception MetalLB's speaker DaemonSet
+# needs (raw/05b-metallb-exception.yaml) is generated at all. From the Cluster
+# claim's platformParams.metallb — off by default, since a self-hosted cluster
+# not running MetalLB should never get it.
+metallbException: "false"
+
+# Where gentian-os itself comes from. The children hardcoded this URL, so a
+# mirrored or forked install could pin the ref but not the origin (§9, platform
+# provenance). Passed by root-applicationset.yaml.tmpl from GENTIAN_OS_REPO.
+gentianOsRepo: https://github.com/gentian-org/gentian-os
+
+# The deployments repository and which cluster's directory to read. Claims live
+# there, not here, because they are per-cluster configuration (§2, surface 2).
+deploymentsRepo: ""
+deploymentsRevision: main
+deploymentsCluster: ""
+
+# The hostname outbound mail leaves from, from spec.mail.egressHost on the
+# Cluster claim. Empty means the shared egress address or a smarthost relay.
+mailEgressHost: ""

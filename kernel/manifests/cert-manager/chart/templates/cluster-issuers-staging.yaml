@@ -1,0 +1,9 @@
+# Kernel-level cert-manager ClusterIssuers — Let's Encrypt staging.
+#
+# Same ACME flow as production with separate rate limits, so a reinstall loop
+# does not burn the production quota. Certificates are NOT browser-trusted
+# (Fake LE Intermediate X1).
+#
+# Pair with ACME_ENV=staging. The issuer names carry the staging prefix, so
+# tenantDNS01ClusterIssuer on the operator has to name the staging issuer too.
+{{ include "gentian.clusterIssuers" (dict "root" $ "acmeServer" "https://acme-staging-v02.api.letsencrypt.org/directory" "prefix" "letsencrypt-staging") }}

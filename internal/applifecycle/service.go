@@ -21,6 +21,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
@@ -35,6 +36,8 @@ import (
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 	"github.com/gentian-org/gentian-os/internal/authz"
 	"github.com/gentian-org/gentian-os/internal/customization"
+	"github.com/gentian-org/gentian-os/internal/keycloak"
+	"github.com/gentian-org/gentian-os/internal/usage"
 )
 
 const platformAppAnnotation = "gentianos.io/platform-app"
@@ -45,12 +48,48 @@ var appClaimGVK = schema.GroupVersionKind{
 	Kind:    "App",
 }
 
+// xAppGVK is the composite behind an App claim. Teardown is only finished once
+// this is gone too — see waitForAppUninstalled.
+var xAppGVK = schema.GroupVersionKind{
+	Group:   "gentianos.io",
+	Version: "v1alpha1",
+	Kind:    "XApp",
+}
+
 // Service implements tenant app install/uninstall/purge via GitOps.
 type Service struct {
 	client    client.Client
 	clientset kubernetes.Interface
 	opts      Options
 	git       *GitOps
+	// actualSource reads live consumption for the resources API. Nil when the
+	// cluster has no metrics source, which is a supported configuration: the
+	// ceiling and the committed usage under it come from the API server, and
+	// those are the figures a plan is chosen and billed on.
+	actualSource usage.ActualSource
+	// appLocks serializes lifecycle operations per (tenant, profile) — see lockApp.
+	appLocks sync.Map
+}
+
+// lockApp blocks until no other lifecycle operation is running for this app,
+// and returns the release function.
+//
+// Install, Uninstall and SetAddons each read the tenant manifest, rewrite it,
+// and then wait on the cluster to catch up; purge then deletes state on the
+// assumption that nothing is putting it back. Run two of them against the same
+// app at once and they interleave badly: a reinstall issued while a purge is
+// still deleting gets its freshly provisioned volumes and secrets removed by
+// the tail of the teardown, and the result looks like an install that half
+// worked. Serializing per app costs nothing when they are for different apps,
+// which is the normal case.
+//
+// In-process is sufficient: the operator runs a single replica, and with
+// leader election on only one manager is active.
+func (s *Service) lockApp(tenant, profile string) func() {
+	v, _ := s.appLocks.LoadOrStore(tenant+"/"+profile, &sync.Mutex{})
+	mu := v.(*sync.Mutex)
+	mu.Lock()
+	return mu.Unlock
 }
 
 // NewService constructs a lifecycle service.
@@ -74,21 +113,35 @@ func NewService(c client.Client, cfg *rest.Config, opts Options) (*Service, erro
 	if err != nil {
 		return nil, err
 	}
-	return &Service{
+	svc := &Service{
 		client:    c,
 		clientset: cs,
 		opts:      opts,
 		git:       NewGitOps(opts.DeploymentsPath, opts.DeploymentsRepo, opts.DeploymentsCluster),
-	}, nil
+	}
+	// Constructed rather than probed: metrics.k8s.io may be absent, and
+	// discovering that at start-up would make the operator's readiness depend
+	// on an optional add-on. A source that cannot answer reports so per call,
+	// where the caller can be told which series is missing and why.
+	if opts.MetricsEnabled {
+		src, err := usage.NewMetricsAPISource(cfg)
+		if err != nil {
+			return nil, fmt.Errorf("build metrics source: %w", err)
+		}
+		svc.actualSource = src
+	}
+	return svc, nil
 }
 
 // Install commits the profile to gentian-deployments, reconciles, and waits until Ready.
 func (s *Service) Install(ctx context.Context, req InstallRequest) (*Result, error) {
+	defer s.lockApp(req.Tenant, req.Profile)()
+
 	if err := s.validateProfile(ctx, req.Profile); err != nil {
 		return nil, err
 	}
 
-	status, file, _, err := s.git.Install(req.Tenant, req.Profile, req.Actor)
+	status, file, _, err := s.git.Install(ctx, req.Tenant, req.Profile, req.Actor)
 	if err != nil {
 		return nil, err
 	}
@@ -97,12 +150,26 @@ func (s *Service) Install(ctx context.Context, req InstallRequest) (*Result, err
 			if err := s.provisionAppGroupUsers(ctx, req.Tenant, req.Profile); err != nil {
 				return nil, fmt.Errorf("failed to provision users: %w", err)
 			}
+			// Readiness is the app's, not this call's. Granting group access
+			// says nothing about whether the workload is running, and reporting
+			// Ready unconditionally here told the user "X is ready" while the
+			// app list — correctly — still showed it installing.
+			ready, msg, err := s.appReadyState(ctx, req.Tenant, req.Profile)
+			if err != nil {
+				return nil, err
+			}
+			if !ready && msg == "" {
+				msg = "Access granted — the application is still starting"
+			}
+			if ready {
+				msg = "All existing users successfully added to the application access group."
+			}
 			return &Result{
 				Status:  "provisioned",
 				Tenant:  req.Tenant,
 				Profile: req.Profile,
-				Ready:   true,
-				Message: "All existing users successfully added to the application access group.",
+				Ready:   ready,
+				Message: msg,
 			}, nil
 		}
 		ready, msg, err := s.appReadyState(ctx, req.Tenant, req.Profile)
@@ -169,6 +236,8 @@ func (s *Service) Install(ctx context.Context, req InstallRequest) (*Result, err
 
 // Uninstall removes the profile from git, reconciles, waits for removal, and optionally purges.
 func (s *Service) Uninstall(ctx context.Context, req UninstallRequest) (*Result, error) {
+	defer s.lockApp(req.Tenant, req.Profile)()
+
 	tenant := &gentianov1alpha1.Tenant{}
 	if err := s.client.Get(ctx, client.ObjectKey{Name: req.Tenant}, tenant); err != nil {
 		return nil, fmt.Errorf("get tenant %q: %w", req.Tenant, err)
@@ -183,7 +252,7 @@ func (s *Service) Uninstall(ctx context.Context, req UninstallRequest) (*Result,
 		}
 	}
 
-	status, file, changed, err := s.git.Uninstall(req.Tenant, req.Profile, req.Actor)
+	status, file, changed, err := s.git.Uninstall(ctx, req.Tenant, req.Profile, req.Actor)
 	if err != nil {
 		return nil, err
 	}
@@ -203,6 +272,14 @@ func (s *Service) Uninstall(ctx context.Context, req UninstallRequest) (*Result,
 	var warnings []string
 	if req.Purge {
 		warnings = s.purge(ctx, tenant, profileCR, req.Profile)
+		// A purge that leaves state behind must not report success. The app is gone
+		// from the tenant either way — that part already happened — but the caller
+		// needs to know the teardown is incomplete, because the residue is what
+		// blocks the next install rather than anything visible at the time.
+		if len(warnings) > 0 {
+			return nil, fmt.Errorf(
+				"purge of %s did not complete: %s", req.Profile, strings.Join(warnings, "; "))
+		}
 	}
 
 	return &Result{
@@ -358,6 +435,16 @@ func (s *Service) provisionAppGroupUsers(ctx context.Context, tenantName, profil
 	kc := authz.NewKeycloakAdminClient(kcURL, kcUser, kcPass)
 	fullGroupName := fmt.Sprintf("gentian:tenant:%s:app:%s", tenantName, profileName)
 
+	// Provisioning is what separates Install from Provision, and the difference
+	// outlives this call: the tenant admin adding a user later should find this
+	// app already ticked, while one that was merely installed starts unticked.
+	// Recorded on the group because that is what the admin console reads, and
+	// because it is per app and per tenant exactly as the grant is.
+	if attrs == nil {
+		attrs = map[string][]string{}
+	}
+	attrs[keycloak.DefaultGrantAttribute] = []string{"true"}
+
 	groupID, err := kc.EnsureGroup(ctx, tenantName, fullGroupName, attrs)
 	if err != nil {
 		return fmt.Errorf("ensure keycloak group %s: %w", fullGroupName, err)
@@ -387,6 +474,8 @@ func (s *Service) provisionAppGroupUsers(ctx context.Context, tenantName, profil
 // operator will later reject. Entitlement is checked here too: a commercial addon
 // needs a grant, and technical compatibility is never the gate.
 func (s *Service) SetAddons(ctx context.Context, req SetAddonsRequest) (*Result, error) {
+	defer s.lockApp(req.Tenant, req.Profile)()
+
 	base := &gentianov1alpha1.AppProfile{}
 	if err := s.client.Get(ctx, client.ObjectKey{Name: req.Profile}, base); err != nil {
 		return nil, fmt.Errorf("get appprofile %q: %w", req.Profile, err)
@@ -418,7 +507,7 @@ func (s *Service) SetAddons(ctx context.Context, req SetAddonsRequest) (*Result,
 			"these addons require a commercial subscription: %s", strings.Join(names, ", "))
 	}
 
-	status, file, changed, err := s.git.SetAddons(req.Tenant, req.Profile, req.Addons, req.Actor)
+	status, file, changed, err := s.git.SetAddons(ctx, req.Tenant, req.Profile, req.Addons, req.Actor)
 	if err != nil {
 		return nil, err
 	}
@@ -427,5 +516,32 @@ func (s *Service) SetAddons(ctx context.Context, req SetAddonsRequest) (*Result,
 			return nil, fmt.Errorf("reconcile tenant manifest: %w", err)
 		}
 	}
-	return &Result{Status: status, Tenant: req.Tenant, Profile: req.Profile}, nil
+
+	// Installing an addon activates it; it does not decide who may see it. Access
+	// comes from membership of the addon's own group, which carries the grant
+	// attributes declared on its profile. Provisioning is the same shortcut it is
+	// for an app: put every existing tenant user in that group now, rather than
+	// leaving the admin to assign them.
+	//
+	// Per addon, because that is the choice the caller actually makes — the store
+	// offers Install and Provision as separate buttons on each row. This used to
+	// be one bool for the whole request, and the store sent it as "did you
+	// provision anything at all", so the two ways of being wrong were symmetric:
+	// provisioning one addon quietly provisioned every addon in the same save,
+	// and installing one without provisioning left every addon in that save with
+	// a group that has the right role attribute on it and no members. The second
+	// is how an installed Odoo CRM answered "You are not allowed to access
+	// 'Lead'" — the role was declared, granted to a group, and the group was
+	// empty.
+	var warnings []string
+	for _, addon := range resolved {
+		if !req.provisions(addon.Profile) {
+			continue
+		}
+		if err := s.provisionAppGroupUsers(ctx, req.Tenant, addon.Profile); err != nil {
+			warnings = append(warnings,
+				fmt.Sprintf("provision access for %s: %v", addon.Profile, err))
+		}
+	}
+	return &Result{Status: status, Tenant: req.Tenant, Profile: req.Profile, Warnings: warnings}, nil
 }

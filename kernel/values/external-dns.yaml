@@ -1,0 +1,88 @@
+# external-dns values.
+#
+# The safety settings here are the point of the file; read them before widening
+# anything. external-dns is a controller with write access to a production DNS
+# zone, and a misconfigured one removes records it did not create.
+# provider, domainFilters and the credential are NOT here.
+#
+# They are per-cluster and per-DNS-provider, and this file is read straight from
+# git by Argo CD — so a value written here would be the same for every cluster
+# that syncs it. That is how domainFilters came to name one cluster's zone in a
+# file every cluster reads. They are injected by the Application instead, from
+# kernel/platforms.yaml and the cluster's own claim; what stays here is what is
+# true for every cluster regardless of who hosts its zone.
+
+# Never delete. external-dns decides a record is "unused" from cluster state
+# alone, so anything managed outside the cluster — the apex, an MX added by
+# hand, a verification TXT — looks orphaned to it.
+#
+# upsert-only creates and updates but never removes -- except it does not update
+# either, and that is why this is now sync.
+#
+# Three records went stale in one afternoon and each needed deleting by hand
+# before external-dns would republish it: both DKIM keys, left over from a
+# tenant that had been undeployed and rebuilt with new keys, and the tenant SPF
+# record after mail.egressHost was set. In every case the DNSEndpoint asked for
+# the new value, external-dns owned the record, and it logged "All records are
+# already up to date" while serving the old one. A signature nobody can verify
+# and an SPF record that authorises the wrong address both fail silently, and
+# the only signal was a bounce from Gmail.
+#
+# The condition this comment previously set for moving to sync has been met and
+# checked, not assumed. The TXT registry owns exactly the fifteen records the
+# platform creates -- the tenant app hosts, the kernel hosts, and the mail MX,
+# SPF, DMARC and DKIM. The two records in the zone it does NOT own are the apex
+# A record and mail-egress, which is manual because the floating IP it names is
+# not something the cluster allocates. sync leaves both alone: ownership is
+# recorded in the TXT registry below, and external-dns only ever touches names
+# it registered itself.
+#
+# sync WILL delete a record it owns once nothing asks for it. That is the point
+# -- a tenant that is removed should take its records with it -- but it is also
+# the reason the registry check above must be repeated before widening the
+# domain filter or pointing this at a zone with records the cluster does not
+# manage.
+policy: sync
+
+# Ownership is recorded in TXT records, so external-dns only ever touches names
+# it registered itself. Without a registry it assumes ownership of everything
+# matching the domain filter, which is how unrelated records get removed.
+registry: txt
+txtPrefix: _extdns.
+
+# No txtOwnerId here. It is per-cluster, and the bootstrap template sets it —
+# see the note there. A shared value would make every Gentian cluster claim
+# ownership under the same name, and "mine" would mean "some Gentian cluster's".
+
+# No sources: here. Which sources run depends on the cluster's networkMode —
+# a tunnelled Gateway deadlocks the gateway-httproute source, see the
+# bootstrap template — so the per-cluster inline values set them, and a list
+# here would be dead weight that Helm always overrides and a reader always
+# trusts.
+
+policyOptions: {}
+interval: 1m
+logLevel: info
+
+serviceAccount:
+  create: true
+  name: external-dns
+
+rbac:
+  create: true
+
+# Which record types external-dns is allowed to manage.
+#
+# The default is A, AAAA and CNAME — so TXT and MX endpoints are silently
+# ignored, and a DNSEndpoint carrying SPF, DKIM, DMARC or an MX reconciles to
+# "All records are already up to date" while publishing none of them. Nothing
+# errors, which is what makes it hard to spot.
+#
+# Mail records are precisely the ones with no HTTP object behind them, so a mail
+# platform that cannot manage TXT and MX can manage nothing that matters.
+managedRecordTypes:
+  - A
+  - AAAA
+  - CNAME
+  - TXT
+  - MX

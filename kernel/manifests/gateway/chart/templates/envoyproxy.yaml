@@ -1,0 +1,78 @@
+{{- /*
+Provider variation is data, not branches.
+
+The annotations were once built by _edge_lb_annotations as an indented YAML
+fragment appended to a .tmpl by envsubst — a string whose correctness depended on
+the function getting the indentation right for a context it could not see. Then
+they were an if/else chain here, which owned its own shape but grew a limb per
+provider and made "add a cloud" a code change in a file about Envoy.
+
+Now they are a lookup in kernel/platforms.yaml. Each value is itself a template,
+rendered against these values, and an annotation that renders empty is dropped —
+which is what lets one entry express both "pin this address" and "let the cloud
+allocate one" without a second field saying which.
+*/ -}}
+{{- $platform := .Values.platform | default "" -}}
+{{- $profile := dict -}}
+{{- if $platform -}}
+  {{- if not .Values.platforms -}}
+    {{- fail "platforms table is empty: render this chart with -f kernel/platforms.yaml" -}}
+  {{- end -}}
+  {{- $profile = index .Values.platforms $platform | default dict -}}
+  {{- if not $profile -}}
+    {{- fail (printf "unknown platform %q — add an entry to kernel/platforms.yaml, or use extraAnnotations" $platform) -}}
+  {{- end -}}
+  {{- range $p := (index $profile "requiredParams" | default list) -}}
+    {{- if not (index $.Values.platformParams $p) -}}
+      {{- fail (printf "platform %q requires platformParams.%s (see kernel/platforms.yaml)" $platform $p) -}}
+    {{- end -}}
+  {{- end -}}
+{{- end -}}
+{{- $ann := dict -}}
+{{- range $key, $value := (index $profile "lbAnnotations" | default dict) -}}
+  {{- $rendered := tpl (toString $value) $ | trim -}}
+  {{- if $rendered -}}
+    {{- $_ := set $ann $key $rendered -}}
+  {{- end -}}
+{{- end -}}
+{{- $ann = merge $ann .Values.extraAnnotations -}}
+{{- $pinIP := and .Values.nodeIp (index $profile "supportsLoadBalancerIP" | default false) -}}
+apiVersion: gateway.envoyproxy.io/v1alpha1
+kind: EnvoyProxy
+metadata:
+  name: gentian-edge
+  namespace: {{ .Values.namespace }}
+  labels:
+    app.kubernetes.io/managed-by: gentian-os
+spec:
+  provider:
+    type: Kubernetes
+    kubernetes:
+      envoyDeployment:
+        replicas: {{ .Values.envoy.replicas }}
+        pod:
+          topologySpreadConstraints:
+            # ScheduleAnyway: a hard constraint on a one-node or cordoned
+            # cluster leaves the second replica Pending and availability no
+            # better than with one. Spreading is the preference, running is the
+            # requirement.
+            - maxSkew: 1
+              topologyKey: kubernetes.io/hostname
+              whenUnsatisfiable: ScheduleAnyway
+              labelSelector:
+                matchLabels:
+                  app.kubernetes.io/name: envoy
+      envoyService:
+        type: LoadBalancer
+        {{- if $pinIP }}
+        # Only where the platform accepts an address by IP. AWS NLBs and Azure
+        # standard load balancers do not, so they carry the address in an
+        # annotation instead and this field would be a lie.
+        loadBalancerIP: {{ .Values.nodeIp | quote }}
+        {{- end }}
+        {{- with $ann }}
+        annotations:
+          {{- range $k, $v := . }}
+          {{ $k }}: {{ $v | quote }}
+          {{- end }}
+        {{- end }}

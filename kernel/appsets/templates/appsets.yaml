@@ -3,10 +3,55 @@
   their content as a Helm template — critical, since those files use their
   own Go-template syntax ({{.app}}, {{.env}}) that ArgoCD's ApplicationSet
   controller evaluates at its own sync time, not at Helm render time).
-  The only thing this chart does is swap the literal "env: dev" generator
-  element for the actual stage.
+  The only thing this chart does is swap literals: the "env: dev" generator
+  element for the actual stage, the domain placeholder, and the git ref the
+  children track back to this repo.
+
+  The revision swap matches "targetRevision: develop" exactly, so the pinned
+  third-party chart versions in the same files ("2.2.9", "3.3.7", …) are left
+  alone — only sources that point at gentian-os carry the branch literal.
+
+  The gentian-os repoURL is swapped too, so a mirrored or air-gapped install can
+  redirect the origin and not just the ref. The deployments placeholders carry
+  the per-cluster claim location, which lives in the other repository.
 */ -}}
 {{- range $path, $_ := .Files.Glob "raw/*.yaml" }}
+{{- /*
+  Dovecot only where there are mailboxes to serve.
+  
+  It holds and serves them; with mail.serviceMode external they are at the
+  provider, so it ran with a 5Gi volume and nothing in it. Skipped by filename
+  because raw/*.yaml is copied verbatim — the files carry ApplicationSet
+  templating that Argo evaluates later, so a Helm conditional cannot live
+  inside one.
+  
+  Postfix is not conditional. It is the submission endpoint apps address in
+  both modes, and keeping it in the path is what keeps the relay credential in
+  one place rather than copied to every app that sends.
+*/ -}}
+{{- if and (hasSuffix "-llm.yaml" $path) (ne (toString $.Values.llmEnabled) "true") }}
+{{- /* skipped: this cluster does not serve LLMs */ -}}
+{{- else if and (hasSuffix "-dovecot.yaml" $path) (ne $.Values.mailServiceMode "kernel") }}
+{{- /* skipped: mail.serviceMode is {{ $.Values.mailServiceMode }} */ -}}
+{{- else if and (hasSuffix "-metallb-exception.yaml" $path) (ne (toString $.Values.metallbException) "true") }}
+{{- /* skipped: platformParams.metallb is not "true" on this cluster's claim */ -}}
+{{- else }}
 ---
-{{ $.Files.Get $path | replace "env: dev" (printf "env: %s" $.Values.stage) }}
+{{ $.Files.Get $path
+     | replace "env: dev" (printf "env: %s" $.Values.stage)
+     | replace "targetRevision: develop" (printf "targetRevision: %s" $.Values.targetRevision)
+     | replace "kernel.domain.placeholder" $.Values.kernelDomain
+     | replace "storage.class.placeholder" (toString $.Values.storageClass)
+     | replace "external.smtp.host.placeholder" (toString $.Values.externalSmtpHost)
+     | replace "external.smtp.port.placeholder" (toString $.Values.externalSmtpPort)
+     | replace "external.smtp.ssl.placeholder" (toString $.Values.externalSmtpSsl)
+     | replace "external.smtp.starttls.placeholder" (toString $.Values.externalSmtpStarttls)
+     | replace "mail.egress.host.placeholder" (toString $.Values.mailEgressHost)
+     | replace "https://github.com/gentian-org/gentian-os" $.Values.gentianOsRepo
+     | replace "deployments.repo.placeholder" $.Values.deploymentsRepo
+     | replace "deployments.revision.placeholder" $.Values.deploymentsRevision
+     | replace "deployments.cluster.placeholder" $.Values.deploymentsCluster
+     | replace "mail.service.mode.placeholder" $.Values.mailServiceMode
+     | replace "llm.mock.backend.placeholder" (ternary "false" "true" (eq (toString $.Values.llmGpuAcceleration) "true")) }}
+{{- end }}
 {{- end }}

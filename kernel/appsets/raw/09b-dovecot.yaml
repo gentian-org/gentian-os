@@ -1,0 +1,66 @@
+# Dovecot — the IMAP server that holds tenant mailboxes.
+#
+# Its own file because it is CONDITIONAL: kernel/appsets/templates/appsets.yaml
+# skips this one unless mail.serviceMode is kernel. Dovecot stores and serves
+# mailboxes, so in external mode — where the mailboxes are at Gmail or wherever
+# the tenant already has them — it has nothing to hold and nothing to serve.
+# It was deployed regardless, with a 5Gi volume, doing neither.
+#
+# The raw/*.yaml files are copied through verbatim, so the condition cannot be
+# written inside this file; it is applied by filename when the chart globs them.
+#
+# Postfix stays in both modes. It is the submission endpoint apps talk to, and
+# keeping it in the path is what keeps the relay credential in one place
+# instead of distributed to every app.
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: gentian-infra-dovecot
+  namespace: argocd
+spec:
+  syncPolicy:
+    preserveResourcesOnDeletion: true
+  goTemplate: true
+  goTemplateOptions: ["missingkey=error"]
+  generators:
+  - matrix:
+      generators:
+      - list:
+          elements:
+          - env: dev
+      - list:
+          elements:
+          - app: dovecot
+  template:
+    metadata:
+      name: '{{.app}}-{{.env}}'
+      annotations:
+        argocd.argoproj.io/sync-wave: "9"
+    spec:
+      project: gentian
+      source:
+        repoURL: https://github.com/gentian-org/gentian-os
+        targetRevision: develop
+        path: kernel/services/{{.app}}/manifests
+        helm:
+          parameters:
+            - name: env
+              value: '{{.env}}'
+            - name: kernelDomain
+              value: 'kernel.domain.placeholder'
+      destination:
+        server: https://kubernetes.default.svc
+        namespace: platform-kernel
+      syncPolicy:
+        automated:
+          prune: true
+          selfHeal: true
+        syncOptions:
+        - CreateNamespace=false
+        - ServerSideApply=true
+        retry:
+          backoff:
+            duration: 15s
+            factor: 2
+            maxDuration: 2m
+          limit: 10

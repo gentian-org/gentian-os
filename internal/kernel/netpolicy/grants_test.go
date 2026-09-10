@@ -14,7 +14,6 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-
 package netpolicy_test
 
 import (
@@ -76,9 +75,9 @@ func TestBuildDesired_GrantIntersectionSkipsContractNP(t *testing.T) {
 	binding.Name = "demo--consumer--file-store"
 	binding.Namespace = "tenant-demo"
 	binding.Spec = gentianov1alpha1.IntegrationBindingSpec{
-		Contract: "file-store",
-		Consumer: gentianov1alpha1.AppEndpoint{App: "consumer-app"},
-		Provider: gentianov1alpha1.AppEndpoint{App: "provider-app"},
+		Contract:     "file-store",
+		Consumer:     gentianov1alpha1.AppEndpoint{App: "consumer-app"},
+		Provider:     gentianov1alpha1.AppEndpoint{App: "provider-app"},
 		Capabilities: []string{"webdav:read"},
 	}
 	grant := &gentianov1alpha1.AppGrant{}

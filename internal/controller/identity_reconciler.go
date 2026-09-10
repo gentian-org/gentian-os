@@ -31,17 +31,17 @@ import (
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 	"github.com/gentian-org/gentian-os/internal/authz"
-	"github.com/gentian-org/gentian-os/internal/keycloak"
 	"github.com/gentian-org/gentian-os/internal/kernel"
 	"github.com/gentian-org/gentian-os/internal/kernel/secrets"
+	"github.com/gentian-org/gentian-os/internal/keycloak"
 	"github.com/gentian-org/gentian-os/internal/meta"
 )
 
 const (
 	conditionIdentityReady = "IdentityReady"
 	keycloakAdminSecret    = "keycloak-admin"
-	appLabel                 = "gentianos.io/app"
-	identityRequeueAfter     = 2 * time.Second
+	appLabel               = "gentianos.io/app"
+	identityRequeueAfter   = 2 * time.Second
 )
 
 // realmBrokerParams holds SSO identity brokering parameters for the realm provisioning job.
@@ -50,7 +50,7 @@ const (
 // tenant realm so users logged into the portal don't need a second login for tenant apps.
 type realmBrokerParams struct {
 	kernelRealm       string // Keycloak realm name for the shared SSO realm, e.g. "kernel"
-	kernelExternalURL string // External base URL of Keycloak, e.g. "https://id.desk.gentian.org"
+	kernelExternalURL string // External base URL of Keycloak, e.g. "https://id.platform.example.com"
 }
 
 // ensureIdentity provisions a Keycloak realm and OIDC/SAML clients for the tenant.
@@ -107,26 +107,13 @@ func (r *TenantReconciler) ensureIdentity(ctx context.Context, tenant *gentianov
 		return r.requeueForPendingJob(ctx, tenant.Name, adminJobName(tenant.Name)), nil
 	}
 
-	if len(oidcConfigs) > 0 {
-		browserDone, err := r.ensureOIDCBrowserFlowJob(ctx, tenant, realmName)
-		if err != nil {
-			return ctrl.Result{}, fmt.Errorf("ensure OIDC browser flow Job: %w", err)
-		}
-		if !browserDone {
-			r.setCondition(tenant, conditionIdentityReady, metav1.ConditionFalse,
-				"ProvisioningBrowserFlow", "Waiting for OIDC browser flow Job to complete")
-			return r.requeueForPendingJob(ctx, tenant.Name, oidcBrowserFlowJobName(tenant.Name)), nil
-		}
-		firstLoginDone, err := r.ensureBrokerFirstLoginFlowJob(ctx, tenant, realmName)
-		if err != nil {
-			return ctrl.Result{}, fmt.Errorf("ensure broker first-login flow Job: %w", err)
-		}
-		if !firstLoginDone {
-			r.setCondition(tenant, conditionIdentityReady, metav1.ConditionFalse,
-				"ProvisioningBrokerFirstLogin", "Waiting for broker first-login flow Job to complete")
-			return r.requeueForPendingJob(ctx, tenant.Name, brokerFirstLoginFlowJobName(tenant.Name)), nil
-		}
-	}
+	// Two Jobs used to run here and no longer exist; what they leave behind is
+	// swept. Both had already lost the object they were named for — the browser
+	// flow and the first-broker-login flow are the Composition's — and what
+	// remained of each was a repair for a state that no longer occurs.
+	r.deleteRetiredJobs(ctx,
+		oidcBrowserFlowJobName(tenant.Name),
+		brokerFirstLoginFlowJobName(tenant.Name))
 
 	// OIDC packs require Gentian entitlement groups (provisioned above).
 	allDone := true
@@ -170,15 +157,10 @@ func (r *TenantReconciler) ensureIdentity(ctx context.Context, tenant *gentianov
 	}
 
 	if r.KernelRealm != "" {
-		brokerIdPDone, err := r.ensureBrokerIdentityProviderJob(ctx, tenant)
-		if err != nil {
-			return ctrl.Result{}, fmt.Errorf("ensure broker IdP Job: %w", err)
-		}
-		if !brokerIdPDone {
-			r.setCondition(tenant, conditionIdentityReady, metav1.ConditionFalse,
-				"ProvisioningBrokerIdP", "Waiting for broker IdP Job to complete")
-			return r.requeueForPendingJob(ctx, tenant.Name, tenantBrokerIdPJobName(tenant.Name)), nil
-		}
+		// No broker IdP Job to wait for. Its last two writes — the mappers that
+		// carry gentian_username across the realm boundary — are tenant-default's
+		// now, so the Job is gone and what it left behind is swept.
+		r.deleteRetiredJobs(ctx, tenantBrokerIdPJobName(tenant.Name))
 
 		kernelBrokerDone, err := r.ensureKernelTenantBrokerJob(ctx, tenant)
 		if err != nil {
@@ -190,24 +172,19 @@ func (r *TenantReconciler) ensureIdentity(ctx context.Context, tenant *gentianov
 			return r.requeueForPendingJob(ctx, tenant.Name, tenantKernelBrokerJobName(tenant.Name)), nil
 		}
 
-		portalBFFDone, err := r.ensurePortalBFFClientJob(ctx, tenant)
-		if err != nil {
-			return ctrl.Result{}, fmt.Errorf("ensure portal BFF client Job: %w", err)
-		}
-		if !portalBFFDone {
-			r.setCondition(tenant, conditionIdentityReady, metav1.ConditionFalse,
-				"ProvisioningPortalBFF", "Waiting for portal BFF client Job to complete")
-			return r.requeueForPendingJob(ctx, tenant.Name, tenantPortalBFFClientJobName(tenant.Name)), nil
-		}
+		// The portal BFF client is a Composition resource now; its readiness is
+		// reported through CrossplaneReady rather than watched here.
 
-		portalClientDone, err := r.ensurePortalPublicClientJob(ctx, tenant)
-		if err != nil {
-			return ctrl.Result{}, fmt.Errorf("ensure portal public client Job: %w", err)
-		}
-		if !portalClientDone {
-			r.setCondition(tenant, conditionIdentityReady, metav1.ConditionFalse,
-				"ProvisioningPortalPublicClient", "Waiting for portal public OIDC client Job to complete")
-			return r.requeueForPendingJob(ctx, tenant.Name, tenantPortalPublicClientJobName(tenant.Name)), nil
+		// The portal public client is not waited on here any more. It is a
+		// Composition resource, so its readiness belongs to CrossplaneReady
+		// rather than to a Job this loop watches.
+
+		// The tenant's own OpenBao auth mount. Reconciled before SMTP because it
+		// is cheap, in-process, and its absence is what makes the Credentials
+		// view unusable for every tenant administrator — a failure that reads as
+		// a permissions problem and is not one.
+		if err := r.ensureTenantOpenBaoAuth(ctx, tenant); err != nil {
+			return ctrl.Result{}, fmt.Errorf("ensure tenant OpenBao auth: %w", err)
 		}
 
 		smtpDone, err := r.ensureTenantSMTPJob(ctx, tenant)
@@ -287,7 +264,6 @@ func (r *TenantReconciler) deleteIdentity(ctx context.Context, tenant *gentianov
 			// Delete provisioning jobs so they are re-created on the next deploy.
 			provNames := []string{
 				realmJobName(tenant.Name), gentianGroupsJobName(tenant.Name), adminJobName(tenant.Name),
-				oidcBrowserFlowJobName(tenant.Name),
 			}
 			for _, app := range tenant.Spec.Apps {
 				provNames = append(provNames, clientJobName(tenant.Name, app.Profile))
@@ -317,6 +293,7 @@ func (r *TenantReconciler) deleteIdentity(ctx context.Context, tenant *gentianov
 
 func makeRealmJob(tenant *gentianov1alpha1.Tenant, realmName, kernelDomain string, broker *realmBrokerParams) *batchv1.Job {
 	ttl := meta.ProvisioningJobTTLSeconds
+	deadline := meta.ProvisioningJobActiveDeadlineSeconds
 	c := keycloakContainer("provision-realm", buildRealmScript(realmName, tenant.Spec.DisplayName))
 	// Inject realm name as a shell variable so the IdP brokering section can
 	// reference it without additional fmt.Sprintf substitutions.
@@ -338,6 +315,7 @@ func makeRealmJob(tenant *gentianov1alpha1.Tenant, realmName, kernelDomain strin
 		},
 		Spec: batchv1.JobSpec{
 			TTLSecondsAfterFinished: &ttl,
+			ActiveDeadlineSeconds:   &deadline,
 			Template: corev1.PodTemplateSpec{
 				Spec: corev1.PodSpec{
 					RestartPolicy: corev1.RestartPolicyOnFailure,
@@ -350,6 +328,7 @@ func makeRealmJob(tenant *gentianov1alpha1.Tenant, realmName, kernelDomain strin
 
 func makeClientJob(tenant *gentianov1alpha1.Tenant, realmName, appName, clientID string, redirectURIs []string, clientSecret string) *batchv1.Job {
 	ttl := meta.ProvisioningJobTTLSeconds
+	deadline := meta.ProvisioningJobActiveDeadlineSeconds
 	redirectURI := redirectURIs[0]
 	container := keycloakContainer("provision-client", buildClientScript(realmName, clientID, redirectURI))
 	if clientSecret != "" {
@@ -370,6 +349,7 @@ func makeClientJob(tenant *gentianov1alpha1.Tenant, realmName, appName, clientID
 		},
 		Spec: batchv1.JobSpec{
 			TTLSecondsAfterFinished: &ttl,
+			ActiveDeadlineSeconds:   &deadline,
 			Template: corev1.PodTemplateSpec{
 				Spec: corev1.PodSpec{
 					RestartPolicy: corev1.RestartPolicyOnFailure,
@@ -382,6 +362,7 @@ func makeClientJob(tenant *gentianov1alpha1.Tenant, realmName, appName, clientID
 
 func makeSAMLClientJob(tenant *gentianov1alpha1.Tenant, realmName, appName, entityID, acsURL string) *batchv1.Job {
 	ttl := meta.ProvisioningJobTTLSeconds
+	deadline := meta.ProvisioningJobActiveDeadlineSeconds
 	container := keycloakContainer("provision-saml-client", buildSAMLClientScript(realmName, entityID, acsURL))
 	return &batchv1.Job{
 		ObjectMeta: metav1.ObjectMeta{
@@ -395,6 +376,7 @@ func makeSAMLClientJob(tenant *gentianov1alpha1.Tenant, realmName, appName, enti
 		},
 		Spec: batchv1.JobSpec{
 			TTLSecondsAfterFinished: &ttl,
+			ActiveDeadlineSeconds:   &deadline,
 			Template: corev1.PodTemplateSpec{
 				Spec: corev1.PodSpec{
 					RestartPolicy: corev1.RestartPolicyOnFailure,
@@ -405,13 +387,13 @@ func makeSAMLClientJob(tenant *gentianov1alpha1.Tenant, realmName, appName, enti
 	}
 }
 
-func makeAdminJob(tenant *gentianov1alpha1.Tenant, realmName string, creds secrets.TenantAdminCreds) *batchv1.Job {
+// makeAdminJob builds the tenant-admin provisioning Job. adminEmail is already
+// resolved by the caller through Tenant.AdminEmailOrDefault, so this and the
+// XTenant that carries the same address cannot disagree about it.
+func makeAdminJob(tenant *gentianov1alpha1.Tenant, realmName, adminEmail string, creds secrets.TenantAdminCreds) *batchv1.Job {
 	ttl := meta.ProvisioningJobTTLSeconds
+	deadline := meta.ProvisioningJobActiveDeadlineSeconds
 	container := keycloakContainer("provision-tenant-admin", buildAdminScript(realmName))
-	adminEmail := tenant.Spec.AdminEmail
-	if adminEmail == "" {
-		adminEmail = creds.Username + "@gentian.org"
-	}
 	container.Env = append(container.Env,
 		corev1.EnvVar{Name: "TENANT_NAME", Value: tenant.Name},
 		corev1.EnvVar{Name: "TENANT_ADMIN_USERNAME", Value: creds.Username},
@@ -430,6 +412,7 @@ func makeAdminJob(tenant *gentianov1alpha1.Tenant, realmName string, creds secre
 		},
 		Spec: batchv1.JobSpec{
 			TTLSecondsAfterFinished: &ttl,
+			ActiveDeadlineSeconds:   &deadline,
 			Template: corev1.PodTemplateSpec{
 				Spec: corev1.PodSpec{
 					RestartPolicy: corev1.RestartPolicyOnFailure,
@@ -442,6 +425,7 @@ func makeAdminJob(tenant *gentianov1alpha1.Tenant, realmName string, creds secre
 
 func makeRealmDisableJob(tenant *gentianov1alpha1.Tenant, realmName, kernelRealm string) *batchv1.Job {
 	ttl := meta.ProvisioningJobTTLSeconds
+	deadline := meta.ProvisioningJobActiveDeadlineSeconds
 	return &batchv1.Job{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      realmDisableJobName(tenant.Name),
@@ -453,6 +437,7 @@ func makeRealmDisableJob(tenant *gentianov1alpha1.Tenant, realmName, kernelRealm
 		},
 		Spec: batchv1.JobSpec{
 			TTLSecondsAfterFinished: &ttl,
+			ActiveDeadlineSeconds:   &deadline,
 			Template: corev1.PodTemplateSpec{
 				Spec: corev1.PodSpec{
 					RestartPolicy: corev1.RestartPolicyOnFailure,
@@ -467,6 +452,7 @@ func makeRealmDisableJob(tenant *gentianov1alpha1.Tenant, realmName, kernelRealm
 
 func makeRealmDeleteJob(tenant *gentianov1alpha1.Tenant, realmName string) *batchv1.Job {
 	ttl := meta.ProvisioningJobTTLSeconds
+	deadline := meta.ProvisioningJobActiveDeadlineSeconds
 	return &batchv1.Job{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      realmDeleteJobName(tenant.Name),
@@ -478,6 +464,7 @@ func makeRealmDeleteJob(tenant *gentianov1alpha1.Tenant, realmName string) *batc
 		},
 		Spec: batchv1.JobSpec{
 			TTLSecondsAfterFinished: &ttl,
+			ActiveDeadlineSeconds:   &deadline,
 			Template: corev1.PodTemplateSpec{
 				Spec: corev1.PodSpec{
 					RestartPolicy: corev1.RestartPolicyOnFailure,
@@ -547,11 +534,7 @@ fi`
 
 	script := fmt.Sprintf(`set -eu
 
-TOKEN=$(curl -sf \
-  -X POST "${KEYCLOAK_URL}/realms/master/protocol/openid-connect/token" \
-  -H "Content-Type: application/x-www-form-urlencoded" \
-  -d "client_id=admin-cli&username=${KEYCLOAK_ADMIN_USERNAME}&password=${KEYCLOAK_ADMIN_PASSWORD}&grant_type=password" \
-  | sed 's/.*"access_token":"\([^"]*\)".*/\1/')
+`+keycloak.ShellAdminToken()+`
 HTTP=$(curl -s -o /dev/null -w "%%{http_code}" \
   -H "Authorization: Bearer ${TOKEN}" \
   "${KEYCLOAK_URL}/admin/realms/%s")
@@ -563,12 +546,16 @@ if [ "${HTTP}" = "404" ]; then
     -d '{"realm":"%s","enabled":true,"displayName":"%s","registrationAllowed":false,"browserSecurityHeaders":`+authz.BrowserSecurityHeadersJSON()+`}'
   echo "realm %s created"
 else
-  curl -sf \
-    -X PUT "${KEYCLOAK_URL}/admin/realms/%s" \
-    -H "Authorization: Bearer ${TOKEN}" \
-    -H "Content-Type: application/json" \
-    -d '{"realm":"%s","enabled":true,"browserSecurityHeaders":`+authz.BrowserSecurityHeadersJSON()+`}'
-  echo "realm %s already exists, ensured enabled=true and browserSecurityHeaders (was HTTP ${HTTP})"
+  # The realm is NOT restated here. tenant-default composes a Realm that
+  # declares enabled, displayName, registrationAllowed and the browser security
+  # headers, and this Job writing them too made it a second writer of the realm
+  # root — the shape that had the kernel IdP on the wrong login flow for two
+  # minutes of every reconcile.
+  #
+  # The create above stays, as a bootstrap: the Composition needs the realm to
+  # exist before it can adopt it, and everything else in the realm needs the
+  # realm.
+  echo "realm %s already exists (HTTP ${HTTP}); its settings are the Composition's"
 fi
 
 # ── SSO Identity Brokering: register kernel realm as Identity Provider ───────
@@ -576,11 +563,7 @@ if [ -n "${KERNEL_REALM:-}" ] && [ -n "${KERNEL_EXTERNAL_URL:-}" ]; then
   BROKER_CLIENT_ID="broker-${REALM_NAME}"
   BROKER_REDIRECT="${KERNEL_EXTERNAL_URL}/realms/${REALM_NAME}/broker/kernel/endpoint"
 
-  TOKEN=$(curl -sf --max-time 30 \
-    -X POST "${KEYCLOAK_URL}/realms/master/protocol/openid-connect/token" \
-    -H "Content-Type: application/x-www-form-urlencoded" \
-    -d "client_id=admin-cli&username=${KEYCLOAK_ADMIN_USERNAME}&password=${KEYCLOAK_ADMIN_PASSWORD}&grant_type=password" \
-    | sed 's/.*"access_token":"\([^"]*\)".*/\1/')
+`+keycloak.ShellAdminToken()+`
 
   BROKER_RESP=$(curl -sf --max-time 30 -H "Authorization: Bearer ${TOKEN}" \
     "${KEYCLOAK_URL}/admin/realms/${KERNEL_REALM}/clients?clientId=${BROKER_CLIENT_ID}")
@@ -601,28 +584,68 @@ if [ -n "${KERNEL_REALM:-}" ] && [ -n "${KERNEL_EXTERNAL_URL:-}" ]; then
 `+realmScriptBrokerIDPlaceholder+`
     echo "broker client ${BROKER_CLIENT_ID} created in ${KERNEL_REALM} realm"
   fi
-  BROKER_SECRET=$(curl -sf --max-time 30 -H "Authorization: Bearer ${TOKEN}" \
-    "${KEYCLOAK_URL}/admin/realms/${KERNEL_REALM}/clients/${BROKER_KC_ID}/client-secret" \
-    | sed 's/.*"value":"\([^"]*\)".*/\1/')
+  # The IdP is NOT written here. tenant-default composes it, fully managed, and
+  # declares more than this script ever could: the sixteen provider defaults the
+  # live object was missing, useJwksUrl and updateProfileFirstLoginMode through
+  # extraConfig, and the client id and secret taken from the broker Client's
+  # connection Secret rather than read back from the admin API.
+  #
+  # This was the last object with two writers. They agreed only because the
+  # script had been taught to carry forward whichever first-broker-login alias it
+  # observed instead of restating one — which is a truce, not a resolution, and
+  # the same truce held right up until the two disagreed about that field.
+  #
+  # The broker client above stays, and has to. It is Observe-only in the
+  # Composition by design: writeConnectionSecretToRef republishes its secret
+  # without rotating it, which is what lets the IdP take credentials from a
+  # Secret. Something has to create it first, and on a realm that does not exist
+  # yet that something cannot be the Composition.
 
-  IDP_HTTP=$(curl -s --max-time 30 -o /dev/null -w "%%{http_code}" -H "Authorization: Bearer ${TOKEN}" \
-    "${KEYCLOAK_URL}/admin/realms/${REALM_NAME}/identity-provider/instances/kernel")
-  IDP_BODY="{\"alias\":\"kernel\",\"displayName\":\"Gentian SSO\",\"providerId\":\"oidc\",\"enabled\":true,\"trustEmail\":true,\"storeToken\":true,\"firstBrokerLoginFlowAlias\":\"first broker login\",\"config\":{\"issuer\":\"${KERNEL_EXTERNAL_URL}/realms/${KERNEL_REALM}\",\"authorizationUrl\":\"${KERNEL_EXTERNAL_URL}/realms/${KERNEL_REALM}/protocol/openid-connect/auth\",\"tokenUrl\":\"${KEYCLOAK_URL}/realms/${KERNEL_REALM}/protocol/openid-connect/token\",\"jwksUrl\":\"${KEYCLOAK_URL}/realms/${KERNEL_REALM}/protocol/openid-connect/certs\",\"userInfoUrl\":\"${KEYCLOAK_URL}/realms/${KERNEL_REALM}/protocol/openid-connect/userinfo\",\"logoutUrl\":\"${KERNEL_EXTERNAL_URL}/realms/${KERNEL_REALM}/protocol/openid-connect/logout\",\"backchannelSupported\":\"true\",\"clientId\":\"${BROKER_CLIENT_ID}\",\"clientSecret\":\"${BROKER_SECRET}\",\"syncMode\":\"IMPORT\",\"useJwksUrl\":\"true\",\"validateSignature\":\"true\",\"defaultScope\":\"openid profile email\",\"hideOnLoginPage\":\"true\"}}"
-  if [ "${IDP_HTTP}" = "200" ]; then
-    curl -sf --max-time 30 -X PUT "${KEYCLOAK_URL}/admin/realms/${REALM_NAME}/identity-provider/instances/kernel" \
-      -H "Authorization: Bearer ${TOKEN}" -H "Content-Type: application/json" \
-      -d "${IDP_BODY}" >/dev/null
-    echo "IdP kernel updated in realm ${REALM_NAME}"
+  # ── The reverse direction: the kernel realm brokering INTO this tenant ──────
+  #
+  # The mirror of the client above, and for exactly the same reason. That one
+  # lets a tenant user log in through the kernel realm; this one lets the kernel
+  # portal reach a tenant's own users. The client lives in the TENANT realm and
+  # the IdP that consumes it lives in the kernel realm, aliased by the tenant —
+  # tenant-default composes that IdP and observes this client, taking its
+  # credentials from the connection Secret.
+  #
+  # It had no creator. The Composition observes it, by the same design as above,
+  # and nothing wrote it — so every tenant sat at "observe failed: external
+  # resource does not exist" on this client and never reached Ready, while the
+  # apps underneath it came up fine.
+  #
+  # publicClient false is what makes the secret exist at all: a public client
+  # has none, and the IdP authenticates with one. The redirect URI is the kernel
+  # realm's broker endpoint for this tenant's alias, which is the tenant name.
+  REVERSE_CLIENT_ID="broker-kernel-portal"
+  REVERSE_REDIRECT="${KERNEL_EXTERNAL_URL}/realms/${KERNEL_REALM}/broker/${REALM_NAME}/endpoint"
+
+  REVERSE_RESP=$(curl -sf --max-time 30 -H "Authorization: Bearer ${TOKEN}" \
+    "${KEYCLOAK_URL}/admin/realms/${REALM_NAME}/clients?clientId=${REVERSE_CLIENT_ID}")
+  if echo "${REVERSE_RESP}" | grep -q "\"clientId\":\"${REVERSE_CLIENT_ID}\""; then
+    echo "reverse broker client ${REVERSE_CLIENT_ID} already exists in ${REALM_NAME} realm"
   else
-    curl -sf --max-time 30 -X POST "${KEYCLOAK_URL}/admin/realms/${REALM_NAME}/identity-provider/instances" \
-      -H "Authorization: Bearer ${TOKEN}" -H "Content-Type: application/json" \
-      -d "${IDP_BODY}"
-    echo "IdP kernel registered in realm ${REALM_NAME}"
+    curl -sf --max-time 30 -X POST "${KEYCLOAK_URL}/admin/realms/${REALM_NAME}/clients" \
+      -H "Authorization: Bearer ${TOKEN}" \
+      -H "Content-Type: application/json" \
+      -d "{\"clientId\":\"${REVERSE_CLIENT_ID}\",\"redirectUris\":[\"${REVERSE_REDIRECT}\"],\"protocol\":\"openid-connect\",\"standardFlowEnabled\":true,\"publicClient\":false}"
+    echo "reverse broker client ${REVERSE_CLIENT_ID} created in ${REALM_NAME} realm"
   fi
-`+brokerKernelClientUsernameMapperShell+brokerIdPUsernameImporterShell+`
-fi`, realmName, realmName, displayName, realmName, realmName, realmName, realmName)
+  # Created, never updated. The secret is the Composition's to republish and the
+  # IdP's to consume; rewriting it here on every reconcile is the rotation that
+  # would break portal login until the IdP caught up.
+
+# No gentian_username mappers here. This script wrote both — the one that makes
+# the kernel broker client emit the claim, and the one that imports it back into
+# the tenant user's uid — and so did the broker-idp Job, of three writers for two
+# objects. tenant-default composes them.
+fi`, realmName, realmName, displayName, realmName, realmName)
 	script = strings.ReplaceAll(script, realmScriptBrokerIDPlaceholder, brokerResolveID)
-	return keycloak.ShellJSONIDExtractor() + script + keycloak.ShellEnsureInviteEmailUserProfile(realmName) + keycloak.ShellDisableProfilePromptRequiredActions(realmName)
+	// No user-profile writes. tenant-default composes a UserProfile that declares
+	// all six attributes whole, where this appended one patch to add uid and
+	// gentian.inviteEmail and a second to strip `required` off the name fields.
+	return keycloak.ShellJSONIDExtractor() + script
 }
 
 func buildClientScript(realmName, clientID, redirectURI string) string {
@@ -631,11 +654,7 @@ func buildClientScript(realmName, clientID, redirectURI string) string {
 	// in sync with what the controller generates (redirect URI may change when
 	// the app type determines a different callback pattern, e.g. Synapse).
 	return fmt.Sprintf(`set -eu
-TOKEN=$(curl -sf \
-  -X POST "${KEYCLOAK_URL}/realms/master/protocol/openid-connect/token" \
-  -H "Content-Type: application/x-www-form-urlencoded" \
-  -d "client_id=admin-cli&username=${KEYCLOAK_ADMIN_USERNAME}&password=${KEYCLOAK_ADMIN_PASSWORD}&grant_type=password" \
-  | sed 's/.*"access_token":"\([^"]*\)".*/\1/')
+`+keycloak.ShellAdminToken()+`
 SECRET_FIELD=""
 if [ -n "${OIDC_CLIENT_SECRET:-}" ]; then
   SECRET_FIELD=",\"secret\":\"${OIDC_CLIENT_SECRET}\""
@@ -664,11 +683,7 @@ fi`, realmName, clientID, clientID, realmName, realmName, clientID, redirectURI,
 
 func buildSAMLClientScript(realmName, entityID, acsURL string) string {
 	return fmt.Sprintf(`set -eu
-TOKEN=$(curl -sf \
-  -X POST "${KEYCLOAK_URL}/realms/master/protocol/openid-connect/token" \
-  -H "Content-Type: application/x-www-form-urlencoded" \
-  -d "client_id=admin-cli&username=${KEYCLOAK_ADMIN_USERNAME}&password=${KEYCLOAK_ADMIN_PASSWORD}&grant_type=password" \
-  | sed 's/.*"access_token":"\([^"]*\)".*/\1/')
+`+keycloak.ShellAdminToken()+`
 EXISTING=$(curl -sf \
   -H "Authorization: Bearer ${TOKEN}" \
   "${KEYCLOAK_URL}/admin/realms/%s/clients?clientId=%s")
@@ -702,11 +717,7 @@ func buildAdminScript(realmName string) string {
 	// All steps are idempotent: users/roles are checked for existence before
 	// POST so re-running the Job is safe.
 	return keycloak.ShellJSONIDExtractor() + fmt.Sprintf(`set -eu
-TOKEN=$(curl -sf \
-  -X POST "${KEYCLOAK_URL}/realms/master/protocol/openid-connect/token" \
-  -H "Content-Type: application/x-www-form-urlencoded" \
-  -d "client_id=admin-cli&username=${KEYCLOAK_ADMIN_USERNAME}&password=${KEYCLOAK_ADMIN_PASSWORD}&grant_type=password" \
-  | sed 's/.*"access_token":"\([^"]*\)".*/\1/')
+`+keycloak.ShellAdminToken()+`
 AUTH_HEADER="Authorization: Bearer ${TOKEN}"
 CREATED=0
 
@@ -796,11 +807,7 @@ fi`,
 
 func buildRealmDeleteScript(realmName string) string {
 	return fmt.Sprintf(`set -eu
-TOKEN=$(curl -sf \
-  -X POST "${KEYCLOAK_URL}/realms/master/protocol/openid-connect/token" \
-  -H "Content-Type: application/x-www-form-urlencoded" \
-  -d "client_id=admin-cli&username=${KEYCLOAK_ADMIN_USERNAME}&password=${KEYCLOAK_ADMIN_PASSWORD}&grant_type=password" \
-  | sed 's/.*"access_token":"\([^"]*\)".*/\1/')
+`+keycloak.ShellAdminToken()+`
 HTTP=$(curl -s -o /dev/null -w "%%{http_code}" \
   -X DELETE \
   -H "Authorization: Bearer ${TOKEN}" \
@@ -812,11 +819,7 @@ echo "realm %s deletion requested (HTTP ${HTTP})"`, realmName, realmName)
 // invalidating all active sessions.
 func buildRealmDisableScript(realmName, adminUsername, kernelRealm string) string {
 	return fmt.Sprintf(`set -eu
-TOKEN=$(curl -sf \
-  -X POST "${KEYCLOAK_URL}/realms/master/protocol/openid-connect/token" \
-  -H "Content-Type: application/x-www-form-urlencoded" \
-  -d "client_id=admin-cli&username=${KEYCLOAK_ADMIN_USERNAME}&password=${KEYCLOAK_ADMIN_PASSWORD}&grant_type=password" \
-  | sed 's/.*"access_token":"\([^"]*\)".*/\1/')
+`+keycloak.ShellAdminToken()+`
 HTTP=$(curl -s -o /dev/null -w "%%{http_code}" \
   -H "Authorization: Bearer ${TOKEN}" \
   "${KEYCLOAK_URL}/admin/realms/%s")
@@ -882,13 +885,18 @@ func oidcClientID(tenantName, appName string) string {
 
 // --- Job status helpers ------------------------------------------------------
 
-func jobIsComplete(job *batchv1.Job) bool {
+// jobHasCondition reports whether the Job carries condType as True.
+func jobHasCondition(job *batchv1.Job, condType batchv1.JobConditionType) bool {
 	for _, c := range job.Status.Conditions {
-		if c.Type == batchv1.JobComplete && c.Status == corev1.ConditionTrue {
+		if c.Type == condType && c.Status == corev1.ConditionTrue {
 			return true
 		}
 	}
 	return false
+}
+
+func jobIsComplete(job *batchv1.Job) bool {
+	return jobHasCondition(job, batchv1.JobComplete)
 }
 
 func jobCompletionTime(job *batchv1.Job) *metav1.Time {
@@ -913,10 +921,5 @@ func jobCompletedAfter(sync, source *batchv1.Job) bool {
 }
 
 func jobIsFailed(job *batchv1.Job) bool {
-	for _, c := range job.Status.Conditions {
-		if c.Type == batchv1.JobFailed && c.Status == corev1.ConditionTrue {
-			return true
-		}
-	}
-	return false
+	return jobHasCondition(job, batchv1.JobFailed)
 }

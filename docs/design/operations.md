@@ -37,8 +37,12 @@ Restoring tenant `demo` means:
 4. Re-import the Keycloak realm `demo` from JSON export.
 5. Restore namespace `tenant-demo` via Velero.
 
-This sequence will be automated by a `RestoreTenant` CR in a future
-release.
+This sequence is being automated by the namespaced `TenantExport` /
+`TenantRestore` CRs, which also back self-service export and restore in the
+Admin Console. Restore is **data-only** — the tenant's shape is re-composed
+from its claim, never restored — and quiesces one app at a time, since the
+consistency boundary that matters is an app's database plus its bucket plus
+its PVC, not the tenant as a whole.
 
 ## 3. Tenant Migration Between Clusters
 
@@ -48,6 +52,13 @@ migrated or re-provisioned. Re-provisioning is the natural path —
 applying the Tenant CR on the target cluster triggers the full
 Crossplane Composition, which picks up the existing data from the
 restored databases and buckets.
+
+### 3.1 Node Flavour Migration
+
+Replacing a cluster's worker nodes with a different flavour — sizing from usable
+rather than purchased memory, the drain order the kernel singletons require, and the
+CNPG and RWO cases that need manual steps — is covered in
+[node-pool-migration.md](../node-pool-migration.md).
 
 ## 4. Disaster Recovery
 
@@ -108,6 +119,24 @@ Prometheus metrics exposed by Crossplane and the kernel:
 | `argocd_app_health_status` | ArgoCD | Kernel Application health |
 | `gentian_os_credentials_age_seconds` | Custom | Age of oldest credential per tenant |
 | `gentian_os_integration_bindings_status` | Custom | Binding health by contract |
+
+### 6.1 Usage sampling
+
+The operator runs a leader-elected worker that records each tenant's enforced
+ceiling and what is committed under it into that tenant's own `{tenant}_shell`
+database, every `usage.sampler.interval` (15 minutes by default). It is what the
+Admin Console's Resources tab and `kubectl gentian resources report` read — see
+[resource-plans.md](resource-plans.md).
+
+```bash
+# Is it running, and is any tenant being skipped?
+kubectl logs -n gentian-system deployment/gentian-os | grep usage-sampler
+```
+
+A tenant without a `portal-shell-<tenant>` Secret in `platform-kernel` is skipped
+and logged; the others are unaffected. One tenant's database being unreachable
+never stops the pass, because a single broken tenant must not become a
+cluster-wide gap in the billing record.
 
 ## 7. Image Updates via ArgoCD Image Updater
 

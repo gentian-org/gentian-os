@@ -201,6 +201,7 @@ func (r *TenantReconciler) deleteCache(ctx context.Context, tenant *gentianov1al
 // The script is idempotent: ACL SETUSER creates or overwrites the user entry.
 func makeRedisACLJob(tenant *gentianov1alpha1.Tenant, appName, userPassword string) *batchv1.Job {
 	ttl := meta.ProvisioningJobTTLSeconds
+	deadline := meta.ProvisioningJobActiveDeadlineSeconds
 	username := redisACLUsername(tenant.Name, appName)
 	keyPrefix := redisKeyPrefix(tenant.Name, appName)
 	c := redisContainer("set-acl-user", username, keyPrefix, redisSetUserScript(username, keyPrefix))
@@ -219,6 +220,7 @@ func makeRedisACLJob(tenant *gentianov1alpha1.Tenant, appName, userPassword stri
 		},
 		Spec: batchv1.JobSpec{
 			TTLSecondsAfterFinished: &ttl,
+			ActiveDeadlineSeconds:   &deadline,
 			Template: corev1.PodTemplateSpec{
 				Spec: corev1.PodSpec{
 					RestartPolicy: corev1.RestartPolicyOnFailure,
@@ -232,6 +234,7 @@ func makeRedisACLJob(tenant *gentianov1alpha1.Tenant, appName, userPassword stri
 // makeRedisACLDeleteJob creates a redis-cli Job that removes the per-app Redis ACL user.
 func makeRedisACLDeleteJob(tenant *gentianov1alpha1.Tenant, appName string) *batchv1.Job {
 	ttl := meta.ProvisioningJobTTLSeconds
+	deadline := meta.ProvisioningJobActiveDeadlineSeconds
 	username := redisACLUsername(tenant.Name, appName)
 	keyPrefix := redisKeyPrefix(tenant.Name, appName)
 	return &batchv1.Job{
@@ -246,6 +249,7 @@ func makeRedisACLDeleteJob(tenant *gentianov1alpha1.Tenant, appName string) *bat
 		},
 		Spec: batchv1.JobSpec{
 			TTLSecondsAfterFinished: &ttl,
+			ActiveDeadlineSeconds:   &deadline,
 			Template: corev1.PodTemplateSpec{
 				Spec: corev1.PodSpec{
 					RestartPolicy: corev1.RestartPolicyOnFailure,

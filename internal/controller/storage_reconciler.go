@@ -28,6 +28,7 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
+	"github.com/gentian-org/gentian-os/internal/backup"
 	"github.com/gentian-org/gentian-os/internal/meta"
 )
 
@@ -105,6 +106,7 @@ func (r *TenantReconciler) deleteStorage(ctx context.Context, tenant *gentianov1
 // to provision storage (SEC-1).
 func makeS3BucketJob(tenant *gentianov1alpha1.Tenant, appName, accessKey, secretKey string) *batchv1.Job {
 	ttl := meta.ProvisioningJobTTLSeconds
+	deadline := meta.ProvisioningJobActiveDeadlineSeconds
 	bucket := s3BucketName(tenant, appName)
 	container := minioContainer("create-bucket", bucket, minioSetupScript(bucket))
 	if accessKey != "" && secretKey != "" {
@@ -125,6 +127,7 @@ func makeS3BucketJob(tenant *gentianov1alpha1.Tenant, appName, accessKey, secret
 		},
 		Spec: batchv1.JobSpec{
 			TTLSecondsAfterFinished: &ttl,
+			ActiveDeadlineSeconds:   &deadline,
 			Template: corev1.PodTemplateSpec{
 				Spec: corev1.PodSpec{
 					RestartPolicy: corev1.RestartPolicyOnFailure,
@@ -148,6 +151,7 @@ func (r *TenantReconciler) minioEndpoint(ctx context.Context) string {
 
 func makeS3BucketDeleteJob(tenant *gentianov1alpha1.Tenant, appName string) *batchv1.Job {
 	ttl := meta.ProvisioningJobTTLSeconds
+	deadline := meta.ProvisioningJobActiveDeadlineSeconds
 	bucket := s3BucketName(tenant, appName)
 	return &batchv1.Job{
 		ObjectMeta: metav1.ObjectMeta{
@@ -161,6 +165,7 @@ func makeS3BucketDeleteJob(tenant *gentianov1alpha1.Tenant, appName string) *bat
 		},
 		Spec: batchv1.JobSpec{
 			TTLSecondsAfterFinished: &ttl,
+			ActiveDeadlineSeconds:   &deadline,
 			Template: corev1.PodTemplateSpec{
 				Spec: corev1.PodSpec{
 					RestartPolicy: corev1.RestartPolicyOnFailure,
@@ -236,25 +241,7 @@ echo "bucket %s removed"`, bucket, bucket, bucket)
 }
 
 func s3BucketName(tenant *gentianov1alpha1.Tenant, appName string) string {
-	prefix := tenant.Name + "-"
-	if tenant.Spec.Isolation != nil && tenant.Spec.Isolation.S3Prefix != "" {
-		prefix = tenant.Spec.Isolation.S3Prefix
-	}
-	safe := func(s string) string {
-		b := make([]byte, len(s))
-		for i := 0; i < len(s); i++ {
-			ch := s[i]
-			if (ch >= 'a' && ch <= 'z') || (ch >= '0' && ch <= '9') || ch == '-' {
-				b[i] = ch
-			} else if ch >= 'A' && ch <= 'Z' {
-				b[i] = ch + 32
-			} else {
-				b[i] = '-'
-			}
-		}
-		return string(b)
-	}
-	return safe(prefix) + safe(appName)
+	return backup.S3Bucket(tenant, appName)
 }
 
 func s3BucketJobName(tenantName, appName string) string {

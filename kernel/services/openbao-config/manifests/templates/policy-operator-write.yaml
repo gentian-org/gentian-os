@@ -1,0 +1,55 @@
+---
+# provider-vault Policy MR: operator-write
+#
+# Grants the gentian-os operator ServiceAccount full read/write access to
+# gentian-os KV secrets and token operations.
+#
+# Managed by Crossplane provider-vault (vault.vault.upbound.io/v1alpha1).
+# Wave 2: applied after the ProviderConfig (wave 1) so provider-vault can
+#         authenticate to OpenBao before reconciling policy resources.
+apiVersion: vault.vault.upbound.io/v1alpha1
+kind: Policy
+metadata:
+  name: openbao-policy-operator-write
+  namespace: crossplane-system
+  annotations:
+    argocd.argoproj.io/sync-wave: "2"
+spec:
+  providerConfigRef:
+    name: openbao
+  forProvider:
+    name: operator-write
+    policy: |
+      path "secret/data/gentian-os/*"     { capabilities = ["create","read","update","patch","delete"] }
+      path "secret/metadata/gentian-os/*" { capabilities = ["list","read","delete"] }
+      path "auth/token/create"            { capabilities = ["update"] }
+      path "auth/token/lookup-self"       { capabilities = ["read"] }
+
+      # Per-tenant JWT auth mounts. A tenant member authenticates in their own
+      # Keycloak realm — that is where their apps' OIDC clients live — so their
+      # portal token is signed by that realm and the kernel realm's mount cannot
+      # verify it. One mount per realm is what makes the exchange possible.
+      #
+      # Deliberately NOT one mount trusting many keys, which would be fewer
+      # objects and a privilege escalation: a tenant administrator holds
+      # realm-admin in their own realm, so they can mint a token carrying any
+      # groups claim, the cluster admin group included. Isolation belongs at the
+      # mount boundary, because claim values are precisely what they control.
+      #
+      # Scoped to the oidc- prefix: the operator creates the mounts it needs and
+      # cannot touch auth/kubernetes, the kernel's own auth/oidc, or any other
+      # backend. OpenBao requires sudo for sys/auth whatever the path.
+      #
+      # Glob, not the + segment wildcard. OpenBao's + matches one WHOLE path
+      # segment, so "oidc-+" — a literal prefix with + glued to it — matches
+      # nothing at all: sys/auth/oidc-corp evaluated to deny, and every tenant
+      # reconcile failed at "configure auth mount oidc-<tenant>: HTTP 403".
+      # The policy read as though it granted exactly the right paths.
+      #
+      # * matches the remainder of the path and only works at the end, so the
+      # config and role sub-paths cannot be granted separately. They are the same
+      # actor managing the same mount, so one entry covers both; the boundary that
+      # matters is the oidc- prefix, and that still holds — auth/kubernetes and
+      # every other mount stay denied.
+      path "sys/auth/oidc-*"              { capabilities = ["create","read","update","delete","sudo"] }
+      path "auth/oidc-*"                  { capabilities = ["create","read","update","delete","list"] }

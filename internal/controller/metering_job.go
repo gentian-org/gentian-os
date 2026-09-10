@@ -278,7 +278,7 @@ func (w *MeteringWorker) submitReport(ctx context.Context, tenantDomain, product
 		ReportSignature: sig,
 	}
 
-	url := fmt.Sprintf("%s/api/v1/metering/report", strings.TrimRight(w.Reconciler.CorpAPIURL, "/"))
+	url := fmt.Sprintf("%s/api/v1/metering/report", strings.TrimRight(w.Reconciler.CommerceAPIURL, "/"))
 	body, err := json.Marshal(payload)
 	if err != nil {
 		return err
@@ -289,7 +289,7 @@ func (w *MeteringWorker) submitReport(ctx context.Context, tenantDomain, product
 		return err
 	}
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+w.Reconciler.OperatorToken)
+	req.Header.Set("Authorization", "Bearer "+w.Reconciler.CommerceAPIToken)
 
 	client := &http.Client{Timeout: 10 * time.Second}
 	resp, err := client.Do(req)

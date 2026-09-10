@@ -68,7 +68,7 @@ spec:
                   Entries are a starting point, not a constraint: the user may untick any of
                   them, and may add addons the preset does not list. A preset that names an
                   addon the tenant is not entitled to still renders — with a Buy button rather
-                  than a tick — so a package can advertise a pro addon without gating install.
+                  than a tick — so a package can advertise an ee addon without gating install.
                 items:
                   type: string
                 minItems: 1
@@ -109,7 +109,8 @@ spec:
                   image:
                     description: |-
                       Image is a profile-relative SVG path used in git only (e.g. assets/tile.svg).
-                      Run scripts/sync-profile-tile.py to inline into tile.logo before commit.
+                      Run gentian-apps' scripts/sync-profile-tile.py to inline into tile.logo
+                      before commit — profiles live in that repository, and so does the script.
                     type: string
                   logo:
                     description: Logo is a custom tile as a data URI (path 1). Mutually

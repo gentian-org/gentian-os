@@ -14,7 +14,6 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-
 package controller_test
 
 import (
@@ -35,7 +34,7 @@ func newProviderProfile(name, contract string) *gentianov1alpha1.AppProfile {
 		ObjectMeta: metav1.ObjectMeta{Name: name},
 		Spec: gentianov1alpha1.AppProfileSpec{
 			DisplayName:      name,
-			DeploymentMethod: gentianov1alpha1.DeploymentMethodArgoCD,
+			DeploymentMethod: gentianov1alpha1.DeploymentMethodCrossplane,
 			Chart: gentianov1alpha1.ChartRef{
 				Repository: "oci://charts.example.com",
 				Name:       name,
@@ -54,7 +53,7 @@ func newConsumerProfile(name, contract, provider string) *gentianov1alpha1.AppPr
 		ObjectMeta: metav1.ObjectMeta{Name: name},
 		Spec: gentianov1alpha1.AppProfileSpec{
 			DisplayName:      name,
-			DeploymentMethod: gentianov1alpha1.DeploymentMethodArgoCD,
+			DeploymentMethod: gentianov1alpha1.DeploymentMethodCrossplane,
 			Chart: gentianov1alpha1.ChartRef{
 				Repository: "oci://charts.example.com",
 				Name:       name,
@@ -74,7 +73,7 @@ func TestBindings_NoIntegrations(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: "bind-profile-none"},
 		Spec: gentianov1alpha1.AppProfileSpec{
 			DisplayName:      "bind-profile-none",
-			DeploymentMethod: gentianov1alpha1.DeploymentMethodArgoCD,
+			DeploymentMethod: gentianov1alpha1.DeploymentMethodCrossplane,
 			Chart: gentianov1alpha1.ChartRef{
 				Repository: "oci://charts.example.com",
 				Name:       "bind-profile-none",
@@ -92,7 +91,6 @@ func TestBindings_NoIntegrations(t *testing.T) {
 		Spec: gentianov1alpha1.TenantSpec{
 			DisplayName: "Bind None Co",
 			Domain:      "bind-none.example.com",
-			AdminEmail:  "admin@bind-none.example.com",
 			Apps:        []gentianov1alpha1.TenantApp{{Profile: "bind-profile-none"}},
 		},
 	}
@@ -146,7 +144,6 @@ func TestBindings_ProviderPresent(t *testing.T) {
 		Spec: gentianov1alpha1.TenantSpec{
 			DisplayName: "Bind Both Co",
 			Domain:      "bind-both.example.com",
-			AdminEmail:  "admin@bind-both.example.com",
 			Apps: []gentianov1alpha1.TenantApp{
 				{Profile: "bind-provider-app"},
 				{Profile: "bind-consumer-app"},
@@ -196,7 +193,6 @@ func TestBindings_ProviderAbsent(t *testing.T) {
 		Spec: gentianov1alpha1.TenantSpec{
 			DisplayName: "No Provider Co",
 			Domain:      "bind-no-provider.example.com",
-			AdminEmail:  "admin@bind-no-provider.example.com",
 			Apps:        []gentianov1alpha1.TenantApp{{Profile: "bind-consumer-only"}},
 		},
 	}
@@ -252,7 +248,6 @@ func TestBindings_GarbageCollectOnProviderRemoval(t *testing.T) {
 		Spec: gentianov1alpha1.TenantSpec{
 			DisplayName: "GC Bind Co",
 			Domain:      "bind-gc.example.com",
-			AdminEmail:  "admin@bind-gc.example.com",
 			Apps: []gentianov1alpha1.TenantApp{
 				{Profile: "bind-gc-provider"},
 				{Profile: "bind-gc-consumer"},

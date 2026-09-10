@@ -1,0 +1,26 @@
+# Storage for the DKIM signing keys.
+#
+# Small and long-lived: a handful of 2048-bit keys that must outlive every
+# restart, because the public half is published in DNS and a regenerated key
+# silently invalidates it.
+#
+# Retained deliberately. Deleting this volume does not lose mail, but it does
+# lose every published DKIM record's private half at once — and the failure
+# appears as recipients rejecting signatures, not as missing storage.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: postfix-{{ .Values.env }}-dkim-keys
+  namespace: {{ .Values.servicesNamespace }}
+  annotations:
+    argocd.argoproj.io/sync-wave: "8"
+    helm.sh/resource-policy: keep
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: {{ .Values.dkimKeyStorageSize | default "128Mi" }}
+  {{- if .Values.storageClass }}
+  storageClassName: {{ .Values.storageClass }}
+  {{- end }}

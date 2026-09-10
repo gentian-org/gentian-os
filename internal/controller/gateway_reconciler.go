@@ -14,7 +14,6 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-
 package controller
 
 import (
@@ -70,7 +69,12 @@ func (r *TenantReconciler) ensureGateway(ctx context.Context, tenant *gentianov1
 	if err := r.deleteLegacyKernelWildcardSecret(ctx, nsName); err != nil {
 		return ctrl.Result{}, err
 	}
-	r.ensureTenantWildcardEdgeDNS(ctx, tenant, effectiveDomain)
+	// Tenant hostnames are served by the kernel Gateway; the tenant namespace
+	// holds no Gateway of its own.
+	if err := r.deleteTenantGateway(ctx, nsName, tenant.Name); err != nil {
+		return ctrl.Result{}, err
+	}
+	r.ensureTenantEdgeRoutes(ctx, tenant, effectiveDomain)
 
 	expectedRoutes := make(map[string]struct{}, len(intents))
 	expectedPolicies := make(map[string]struct{})
@@ -82,9 +86,6 @@ func (r *TenantReconciler) ensureGateway(ctx context.Context, tenant *gentianov1
 		if btp := buildAppBackendTrafficPolicyObject(tenant, nsName, intent.appProfile, intent.ingress); btp != nil {
 			expectedPolicies[btp.GetName()] = struct{}{}
 		}
-	}
-	if anyIntentNeedsEscapedSlashesKeepUnchanged(intents) {
-		expectedClientPolicies[tenantEscapedSlashesClientTrafficPolicyName(tenant.Name)] = struct{}{}
 	}
 
 	if err := r.deleteStaleHTTPRoutesForTenant(ctx, tenant, nsName, expectedRoutes); err != nil {

@@ -1,0 +1,104 @@
+# env is supplied by the ApplicationSet (helm.parameters). The default
+# only matters for `helm template` run by hand.
+env: dev
+
+# The namespace the kernel mail stack runs in.
+#
+# This MUST match the operator's SERVICES_NAMESPACE (charts/gentian-os/values.yaml
+# servicesNamespace, default platform-kernel). The operator writes
+# postfix-kernel-virtual-mailbox-maps there and hands every tenant app
+# postfix-<env>.<servicesNamespace>.svc.cluster.local as its SMTP host, and a Pod
+# can only mount a ConfigMap from its own namespace — so Postfix has to live where
+# the operator writes, not the other way round. Running here previously as
+# gentian-<env> meant the operator's tenant-domain updates landed in a namespace
+# Postfix never read: mail worked for whatever tenants existed at install and
+# every later tenant was rejected with "554 Recipient address rejected", with
+# nothing logged, because the domain simply was not one of Postfix's own.
+servicesNamespace: platform-kernel
+# storageClass empty = use the cluster's default StorageClass. Set per
+# stage in values-<env>.yaml only where a stage genuinely differs.
+storageClass: ""
+
+# Supplied by the ApplicationSet (helm.parameters), which receives it from the
+# root ApplicationSet. Empty falls back to the upstream placeholder, which
+# rejects all mail — deliberately visible rather than silently accepting
+# from an unintended domain.
+kernelDomain: ""
+
+# Outbound relay host and port, supplied by the ApplicationSet from
+# EXTERNAL_SMTP_HOST / EXTERNAL_SMTP_PORT.
+#
+# Empty host means deliver directly, which is what MAIL_SERVICE_MODE=kernel wants:
+# it runs its own Postfix and needs no upstream. Because kernel mode leaves
+# EXTERNAL_SMTP_HOST unset, the mode needs no switch here — an unset host IS
+# direct delivery.
+#
+# Set for MAIL_SERVICE_MODE=external, together with relay credentials in OpenBao
+# (gentian-os/kernel/mail/postfix); a relay host without credentials bounces every
+# message with 530 Authentication Required, after Keycloak has already reported the
+# invite as sent.
+#
+# The host is bare (no brackets) and the chart composes Postfix's "[host]:port"
+# form in externalsecret.yaml. This used to be one pre-bracketed string that only
+# scripts/lib/mail-lib.sh ever wrote — imperatively, into the live ConfigMap the
+# bokysan chart renders, so provider-helm reverted it and external relay stopped
+# working on the next sync.
+relayHost: ""
+relayPort: "587"
+
+# The public MX endpoint on port 25.
+#
+# Enabled by default: a cluster running kernel mail that cannot receive is only
+# half a mail system, and 25 is the only port the internet delivers to. It
+# provisions a cloud load balancer, which costs money on most providers — set
+# enabled: false on clusters that use kernel mail for outbound notifications
+# only and publish no MX record.
+#
+# Publishing an MX record before this exists is what makes mail "disappear":
+# senders resolve the record, fail to connect, and retry for days before
+# bouncing.
+smtpIngress:
+  enabled: true
+  # Pin the address when the MX record already names one, so a rebuild does not
+  # hand out a different IP and silently break inbound mail.
+  loadBalancerIP: ""
+  annotations:
+    # Without a health monitor Octavia treats every node as a valid member and
+    # round-robins across all of them — but externalTrafficPolicy: Local means
+    # only the node running Postfix can serve, so most connections are dropped
+    # and port 25 looks firewalled rather than unbalanced.
+    #
+    # With it, Octavia probes healthCheckNodePort and pools only the node that
+    # actually has the Pod. The kernel gateway Service carries the same
+    # annotation, which is why it works and this did not.
+    loadbalancer.openstack.org/enable-health-monitor: "true"
+    # Keep the floating IP across a Service rebuild. An MX record names an
+    # address, and a new one silently breaks inbound mail — senders retry for
+    # days, then bounce.
+    loadbalancer.openstack.org/keep-floatingip: "true"
+
+# The hostname mail LEAVES from, when this cluster sends from an address it owns.
+#
+# Supplied per cluster from the Cluster claim (spec.mail.egressHost). Setting it
+# does two things at once, because they are one decision: Postfix greets remote
+# servers with this name, and it is pinned to the node carrying that floating IP
+# so the sending address cannot move.
+#
+# It must resolve to the sending address, and that address's PTR must resolve
+# back to this name — receivers check both directions. It is NOT the MX name:
+# mail arrives on the load balancer and leaves via the node.
+#
+# Empty means the shared egress address, or a smarthost relay. Then myhostname
+# falls back to mail.<kernelDomain> and scheduling stays free.
+egressHost: ""
+
+# kernel or external, from the Cluster claim. external makes this a relay: no
+# DKIM signing, because the smarthost signs. Passed by the ApplicationSet.
+mailServiceMode: external
+# The node label the pin uses. A platform convention rather than a per-cluster
+# value — label the node holding the floating IP with it set to "true".
+egressNodeLabel: gentianos.io/mail-egress
+
+# Storage for the DKIM keys. A handful of 2048-bit keys; the size is almost
+# irrelevant, the persistence is not.
+dkimKeyStorageSize: 128Mi

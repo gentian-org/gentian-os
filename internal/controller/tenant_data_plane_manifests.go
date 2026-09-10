@@ -62,7 +62,8 @@ func (r *TenantReconciler) buildDataPlaneJobs(ctx context.Context, tenant *genti
 			}
 			rolePassword = creds.Password
 		}
-		jobs = append(jobs, *makeRoleJob(tenant, nsName, dbName, appName, rolePassword, schemaPreferenceFor(profile)))
+		jobs = append(jobs, *makeRoleJob(tenant, nsName, dbName, appName, rolePassword,
+			schemaPreferenceFor(profile), allowsDynamicDatabaseCreation(profile)))
 	}
 
 	mariaApps, err := r.collectMariaDBApps(ctx, tenant, CollectForProvision)
@@ -128,6 +129,7 @@ func (r *TenantReconciler) buildDataPlaneJobs(ctx context.Context, tenant *genti
 			creds, seedErr := r.Seeder.SeedCache(ctx, tenant.Name, appName, secrets.CacheCreds{
 				Host: redisHost,
 				Port: redisPort,
+				User: redisACLUsername(tenant.Name, appName),
 			})
 			if seedErr != nil {
 				return nil, fmt.Errorf("seed redis for %s: %w", appName, seedErr)
@@ -227,9 +229,9 @@ func (r *TenantReconciler) appendPortalShellRoleJob(
 		rolePassword = creds.Password
 	}
 	// The portal shell is not a catalogue app and has no profile to declare a
-	// preference, so it takes the default.
+	// preference, so it takes the defaults — and never creates databases.
 	*jobs = append(*jobs, *makeRoleJob(tenant, nsName, dbName, appName, rolePassword,
-		gentianov1alpha1.SchemaPreferenceAppSchema))
+		gentianov1alpha1.SchemaPreferenceAppSchema, false))
 	return nil
 }
 

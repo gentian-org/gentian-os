@@ -222,3 +222,55 @@ func TestDeriverSaltDiversifiesOutput(t *testing.T) {
 		t.Fatalf("per-cluster salt did not diversify output")
 	}
 }
+
+func TestSeederSeedCacheRecordsUser(t *testing.T) {
+	srv := newFakeBao()
+	defer srv.Close()
+	s := secrets.NewSeeder(newClient(t, srv.URL), secrets.NewDeriver("unit-test-master"))
+
+	ctx := context.Background()
+	first, err := s.SeedCache(ctx, "demo", "test-app", secrets.CacheCreds{
+		Host: "redis.kernel.svc", Port: "6379", User: "demo-test-app",
+	})
+	if err != nil {
+		t.Fatalf("first seed: %v", err)
+	}
+	if first.User != "demo-test-app" {
+		t.Fatalf("user not recorded: %q", first.User)
+	}
+	if first.Password == "" {
+		t.Fatal("password not derived")
+	}
+
+	// A reconcile that does not supply the user must not erase the stored one,
+	// and must keep returning the same derived password.
+	second, err := s.SeedCache(ctx, "demo", "test-app", secrets.CacheCreds{
+		Host: "redis.kernel.svc", Port: "6379",
+	})
+	if err != nil {
+		t.Fatalf("second seed: %v", err)
+	}
+	if second.User != "demo-test-app" {
+		t.Fatalf("stored user clobbered: %q", second.User)
+	}
+	if second.Password != first.Password {
+		t.Fatalf("password changed: %q → %q", first.Password, second.Password)
+	}
+}
+
+func TestSeederSeedCacheOmitsUserWhenEngineHasNone(t *testing.T) {
+	srv := newFakeBao()
+	defer srv.Close()
+	s := secrets.NewSeeder(newClient(t, srv.URL), secrets.NewDeriver("unit-test-master"))
+
+	// memcached has no per-app ACL user; the record must not carry an empty one.
+	got, err := s.SeedCache(context.Background(), "demo", "memcached-app", secrets.CacheCreds{
+		Host: "memcached.kernel.svc", Port: "11211",
+	})
+	if err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	if got.User != "" {
+		t.Fatalf("unexpected user: %q", got.User)
+	}
+}

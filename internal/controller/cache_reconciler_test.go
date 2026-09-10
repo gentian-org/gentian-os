@@ -79,7 +79,6 @@ func TestCache_NoCacheApps(t *testing.T) {
 		Spec: gentianov1alpha1.TenantSpec{
 			DisplayName: "No Cache Co",
 			Domain:      "nocache.example.com",
-			AdminEmail:  "admin@nocache.example.com",
 		},
 	}
 	if err := testClient.Create(context.Background(), tenant); err != nil {
@@ -119,7 +118,6 @@ func TestCache_CreatesRedisACLJob(t *testing.T) {
 		Spec: gentianov1alpha1.TenantSpec{
 			DisplayName: "Redis Create Co",
 			Domain:      "rediscreate.example.com",
-			AdminEmail:  "admin@rediscreate.example.com",
 			Apps:        []gentianov1alpha1.TenantApp{{Profile: "redis-app1"}},
 		},
 	}
@@ -177,7 +175,6 @@ func TestCache_CreatesMemcachedWorkload(t *testing.T) {
 		Spec: gentianov1alpha1.TenantSpec{
 			DisplayName: "MC Create Co",
 			Domain:      "mccreate.example.com",
-			AdminEmail:  "admin@mccreate.example.com",
 			Apps:        []gentianov1alpha1.TenantApp{{Profile: "mc-app1"}},
 		},
 	}
@@ -223,7 +220,6 @@ func TestCache_SetsReadyWhenRedisJobsDone(t *testing.T) {
 		Spec: gentianov1alpha1.TenantSpec{
 			DisplayName: "Cache Ready Co",
 			Domain:      "cacheready.example.com",
-			AdminEmail:  "admin@cacheready.example.com",
 			Apps:        []gentianov1alpha1.TenantApp{{Profile: "redis-app2"}},
 		},
 	}
@@ -287,7 +283,6 @@ func TestCache_DeleteDeletePolicy_CreatesDeleteJobsAndDeletesApplication(t *test
 		Spec: gentianov1alpha1.TenantSpec{
 			DisplayName:    "Cache Delete Co",
 			Domain:         "cachedelete.example.com",
-			AdminEmail:     "admin@cachedelete.example.com",
 			DeletionPolicy: gentianov1alpha1.DeletionPolicyDelete,
 			Apps: []gentianov1alpha1.TenantApp{
 				{Profile: "redis-app3"},

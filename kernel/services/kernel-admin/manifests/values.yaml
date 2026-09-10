@@ -1,0 +1,24 @@
+# env is supplied by the Application (helm.parameters) from the cluster's stage.
+# The default only matters for `helm template` run by hand.
+env: dev
+
+# kernelDomain is supplied by the Application (helm.parameters) from
+# {{ .Values.kernelDomain }} in kernel-admin.yaml. Names the console's own
+# portal-shell Secret (portal-shell-database.yaml), which is keyed by the
+# kernel domain because a platform operator carries no tenant claim. Absent
+# here, `helm template` run by hand renders that Secret's name as
+# "portal-shell-" — a real failure this default exists to make obvious rather
+# than something a re-run needs to rediscover, the way B-03 rendering the
+# Application before this parameter existed did on a live cluster: the object
+# name is rejected by the API server, every sync, until the Application is
+# explicitly re-applied with `--force` (B-03's check() only asks whether the
+# Application object exists, not whether its parameters match the template).
+kernelDomain: ""
+
+# The in-cluster Keycloak HTTP Service, which the operator's admin client dials.
+#
+# A value rather than a literal because the release name is configurable
+# (GENTIAN_IDP_KEYCLOAK_RELEASE). When it does not match, ensure_keycloak_admin_
+# secret_url in the installer detects the mismatch and can only report it — the
+# ExternalSecret has no way to discover the Service for itself.
+keycloakRelease: gentian-idp-keycloak

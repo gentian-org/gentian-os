@@ -14,7 +14,6 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-
 package controller
 
 import (
@@ -65,7 +64,31 @@ func buildTenantWildcardCertificate(
 		tenantLabel:    tenant.Name,
 		managedByLabel: managedByValue,
 	})
-	_ = unstructured.SetNestedStringSlice(obj.Object, []string{"*." + domain, domain}, "spec", "dnsNames")
+	// Wildcard only. The bare domain is deliberately absent, and that is what
+	// keeps the tenant apex reachable.
+	//
+	// This certificate is served by the tenant listener, whose hostname is
+	// "*.<domain>" -- Gateway API requires listeners sharing :443 to be
+	// distinguishable, and the kernel listener is the one that gets to leave its
+	// hostname unset (4eb6235d). A listener's hostname also gates route
+	// attachment, so no route for the bare apex can ever attach here.
+	//
+	// Listing the apex in this certificate therefore advertises a name this
+	// listener cannot route. A browser reads the certificate, sees the apex
+	// covered, and coalesces apex requests onto an open <sub>.<domain>
+	// connection under HTTP/2; Envoy picks the filter chain by SNI, lands on this
+	// listener, finds no matching route and answers 404 route_not_found. It looks
+	// random because it depends on which connection happens to be open, and it
+	// hits the portal that the apex serves (kernel_gateway_routes.go), which is a
+	// critical path, not the redirect the design once assumed.
+	//
+	// Omitting it means the apex cannot be coalesced here at all: it opens its own
+	// connection with its own SNI and is served by the hostname-less kernel
+	// listener, whose certificate covers <tenant>.<kernelDomain> already.
+	//
+	// The invariant, the same one 4eb6235d established for listeners: a
+	// certificate must cover exactly what its listener can route.
+	_ = unstructured.SetNestedStringSlice(obj.Object, []string{"*." + domain}, "spec", "dnsNames")
 	_ = unstructured.SetNestedField(obj.Object, secretName, "spec", "secretName")
 	_ = unstructured.SetNestedField(obj.Object, map[string]interface{}{
 		"name": clusterIssuer,
@@ -87,29 +110,39 @@ func (r *TenantReconciler) deleteLegacyKernelWildcardSecret(ctx context.Context,
 	return nil
 }
 
-func (r *TenantReconciler) ensureTenantWildcardEdgeDNS(ctx context.Context, tenant *gentianov1alpha1.Tenant, effectiveDomain string) {
-	if r.CloudflareDNS == nil {
+// ensureTenantEdgeRoutes programs how a tenant's hostnames are reached.
+//
+// No DNS here, and none needed: the tenant's HTTPRoutes attach to the kernel
+// Gateway, and external-dns publishes them from there — pointed at this
+// ingress by the annotations the Gateway carries, or at the Gateway's own
+// address on a cluster that has one. Records for eight providers, written by
+// the component that already does that for mail.
+func (r *TenantReconciler) ensureTenantEdgeRoutes(ctx context.Context, tenant *gentianov1alpha1.Tenant, effectiveDomain string) {
+	if r.Ingress == nil {
 		return
 	}
 	logger := ctrl.LoggerFrom(ctx)
 	wildcard := "*." + effectiveDomain
-	if err := r.CloudflareDNS.ensureCNAME(ctx, wildcard, r.CloudflareDNS.tunnelCNAME); err != nil {
-		logger.Error(err, "ensure Cloudflare wildcard DNS CNAME", "host", wildcard)
-	}
-	if err := r.CloudflareDNS.ensureCNAME(ctx, effectiveDomain, r.CloudflareDNS.tunnelCNAME); err != nil {
-		logger.Error(err, "ensure Cloudflare apex DNS CNAME", "host", effectiveDomain)
-	}
 	origin, err := kernelGatewayTunnelOrigin(ctx, r.Client)
 	if err != nil {
 		logger.Error(err, "resolve kernel gateway tunnel origin")
 		r.setCondition(tenant, conditionTunnelIngressReady, metav1.ConditionFalse, "OriginLookupFailed", err.Error())
 		return
 	}
+	// The wildcard as a record, alongside the routes. The kernel DNSEndpoint
+	// carries every explicitly-routed hostname; the per-tenant one carries the
+	// wildcard, which only a tenant has — one object per owner, so removing a
+	// tenant removes exactly its records. No-op without a tunnel target, which
+	// keeps the static-ip path exactly as it is.
+	if err := syncTenantEdgeDNSEndpoint(ctx, r.Client, r.Ingress, tenant.Name,
+		[]string{wildcard, effectiveDomain}); err != nil {
+		logger.Error(err, "sync tenant edge DNSEndpoint")
+	}
 	tunnelOK := true
 	var tunnelMsg string
 	for _, host := range []string{wildcard, effectiveDomain} {
-		if err := r.CloudflareDNS.ensureTunnelIngress(ctx, host, origin); err != nil {
-			logger.Error(err, "ensure Cloudflare tunnel ingress", "host", host, "origin", origin)
+		if err := edgeEnsureRoute(ctx, r.Ingress, host, origin); err != nil {
+			logger.Error(err, "ensure tenant edge route", "host", host, "origin", origin)
 			tunnelOK = false
 			tunnelMsg = err.Error()
 		}
@@ -145,14 +178,13 @@ func (r *TenantReconciler) deleteEdgeRouting(ctx context.Context, tenant *gentia
 		return fmt.Errorf("delete tenant wildcard Certificate: %w", err)
 	}
 
-	if effectiveDomain != "" && r.CloudflareDNS != nil {
+	if effectiveDomain != "" {
+		// Routes only. The records go with the HTTPRoutes: external-dns
+		// removes what it published once the route it published from is gone.
 		wildcard := "*." + effectiveDomain
-		if err := r.CloudflareDNS.deleteCNAME(ctx, wildcard); err != nil {
-			logger.Error(err, "delete Cloudflare wildcard DNS CNAME", "host", wildcard)
-		}
 		for _, host := range []string{wildcard, effectiveDomain} {
-			if err := r.CloudflareDNS.deleteTunnelIngress(ctx, host); err != nil {
-				logger.Error(err, "delete Cloudflare tunnel ingress", "host", host)
+			if err := edgeDeleteRoute(ctx, r.Ingress, host); err != nil {
+				logger.Error(err, "delete tenant edge route", "host", host)
 			}
 		}
 	}

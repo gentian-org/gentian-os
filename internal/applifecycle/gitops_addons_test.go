@@ -175,3 +175,81 @@ func TestRewriteAddonsDoesNotPartiallyMatchProfileName(t *testing.T) {
 		t.Fatal("nextcloud-base-ce must not match nextcloud-base-ce-extra")
 	}
 }
+
+// Uninstall must take the whole entry. Leaving nested keys behind produced YAML
+// that did not parse, and every reconcile after the uninstall failed with
+// "did not find expected key" until the file was repaired by hand.
+
+func TestRemoveAppEntryTakesNestedKeysWithIt(t *testing.T) {
+	t.Parallel()
+	src := `apiVersion: gentianos.io/v1alpha1
+kind: Tenant
+metadata:
+  name: demo
+spec:
+  apps:
+  - profile: odoo-base-ce
+    addons:
+    - odoo-crm-ce
+    - odoo-accounting-ce
+  - profile: nextcloud-base-ce
+    addons:
+    - nextcloud-mail-ce
+`
+	out, ok := removeAppEntry(src, "odoo-base-ce")
+	if !ok {
+		t.Fatal("expected the entry to be found")
+	}
+	if strings.Contains(out, "odoo-crm-ce") {
+		t.Fatalf("orphaned addon survived:\n%s", out)
+	}
+	doc := parseTenant(t, out) // fails the test if the result does not parse
+	if len(doc.Spec.Apps) != 1 || doc.Spec.Apps[0].Profile != "nextcloud-base-ce" {
+		t.Fatalf("apps: %+v", doc.Spec.Apps)
+	}
+	if len(doc.Spec.Apps[0].Addons) != 1 {
+		t.Fatalf("sibling addons damaged: %+v", doc.Spec.Apps[0])
+	}
+}
+
+func TestRemoveAppEntryHandlesOtherNestedKeys(t *testing.T) {
+	t.Parallel()
+	src := `spec:
+  apps:
+  - profile: a-ce
+    config:
+      replicas: 2
+    addons:
+    - x-ce
+  - profile: b-ce
+  quotas:
+    storage: 10Gi
+`
+	out, _ := removeAppEntry(src, "a-ce")
+	doc := parseTenant(t, out)
+	if len(doc.Spec.Apps) != 1 || doc.Spec.Apps[0].Profile != "b-ce" {
+		t.Fatalf("apps: %+v", doc.Spec.Apps)
+	}
+	if doc.Spec.Quotas["storage"] != "10Gi" {
+		t.Fatalf("following section damaged: %+v", doc.Spec.Quotas)
+	}
+}
+
+func TestRemoveAppEntryBareEntryAndLastEntry(t *testing.T) {
+	t.Parallel()
+	out, ok := removeAppEntry(baseTenant, "xwiki-ce") // bare, and last in the file
+	if !ok {
+		t.Fatal("expected the entry to be found")
+	}
+	doc := parseTenant(t, out)
+	if len(doc.Spec.Apps) != 1 || doc.Spec.Apps[0].Profile != "nextcloud-base-ce" {
+		t.Fatalf("apps: %+v", doc.Spec.Apps)
+	}
+}
+
+func TestRemoveAppEntryUnknownProfile(t *testing.T) {
+	t.Parallel()
+	if _, ok := removeAppEntry(baseTenant, "not-installed-ce"); ok {
+		t.Fatal("expected not-found for an uninstalled profile")
+	}
+}

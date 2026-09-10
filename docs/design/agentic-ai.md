@@ -382,10 +382,11 @@ are a different feature (`enable_jwt_auth`, for authenticating
 see the licensing caveat in
 [llm-integration-research.md](../research/llm-integration-research.md).
 
-**Teams:** one free/OSS LiteLLM Team is created per `Tenant` CR by
-`ensure_litellm_teams()` (`scripts/llm-lib.sh`), run as part of
-`install_llm_serving` and `update.sh --llm`. Re-run
-`./update.sh --llm` after adding a tenant to sync its Team.
+**Teams:** one free/OSS LiteLLM Team is created per `Tenant` CR by the
+`TenantReconciler` (`internal/controller/litellm_team.go`), during the
+shared-kernel stage of the tenant's reconcile. Nothing has to be re-run after
+adding a tenant, and a cluster without LiteLLM simply has no team to create —
+the step is non-fatal and retries on the next reconcile.
 
 **Re-enabling tenant-level access:** the app-catalogue `litellm` tile
 (reverse-proxied through `gentian-portal-api` at
@@ -433,11 +434,14 @@ guide in
 | `--enable-chunked-prefill` | Better latency/throughput mixing for concurrent long+short requests |
 | `--enable-auto-tool-choice` / `--tool-call-parser <parser>` | Required for `tool_choice="auto"` (Open WebUI's native tool support, agentic clients) — omitted by default, so tool-calling requests 400 clearly instead of silently misparsing. `<parser>` is model-family-specific (`hermes` for Qwen2/Qwen2.5/Hermes-family, `mistral` for Mistral, `llama3_json` for Llama 3) — set via `VLLM_<ID>_TOOL_CALL_PARSER` |
 
-**In gentian-os today:** `kernel/services/llm/manifests/<env>/` has two
-kinds of backend, selected by `GPU_ACCELERATION` in
-`install.env`/cluster-settings — `vllm-mock.yaml` (a single fake
-OpenAI-compatible server, `GPU_ACCELERATION=false`, the default) and
-`vllm-gpu.yaml.tmpl` (real vLLM, `GPU_ACCELERATION=true`). Unlike the
+**In gentian-os today:** there are two kinds of backend, selected by
+`GPU_ACCELERATION` in `install.env`/cluster-settings —
+`kernel/services/llm/manifests/templates/vllm-mock.yaml` (a single fake
+OpenAI-compatible server, `GPU_ACCELERATION=false`, the default), synced by the
+`gentian-infra-llm` ApplicationSet, and
+`kernel/services/llm/chart/templates/vllm.yaml` (real vLLM,
+`GPU_ACCELERATION=true`), which is a Helm chart rendered from the Cluster claim
+by the installer because Argo CD cannot project a claim into Helm values. Unlike the
 mock, the real backend is a **template rendered once per instance**:
 one gentian-os cluster can run several named vLLM instances
 concurrently (e.g. a small always-on chat model plus a larger
@@ -447,11 +451,12 @@ underscores turned into hyphens) so they never collide — and one
 shared LiteLLM proxy sits in front of however many instances exist
 (`llm-services.yaml`; see below). Each instance requests one
 `nvidia.com/gpu` (a time-sliced share, see §10.1's sibling note on
-`gpu-sharing.yaml.tmpl`) — see the utilization-budget note at the end
+`kernel/services/llm/chart/templates/gpu-sharing.yaml`) — see the
+utilization-budget note at the end
 of this section for what running several concurrently actually costs.
 
 Which model(s) to serve is cluster instance data, not a gentian-os
-default — `render_and_apply_vllm_gpu_manifest()` (`scripts/llm-lib.sh`)
+default — `render_and_apply_vllm_gpu_manifest()` (`scripts/lib/llm-lib.sh`)
 reads `VLLM_INSTANCES` (a space-separated list of instance IDs) from
 the cluster's `cluster-settings.env` in `gentian-deployments`, and for
 each one renders the `.tmpl` from that instance's own
@@ -487,7 +492,7 @@ against real cluster GPU resources by `validate_config`, see
    creating even for ungated ones too — unauthenticated HF Hub requests
    are rate-limited, which can turn a multi-GB first download into a
    race against the `startupProbe` deadline below).
-3. `./update.sh --llm` — applies the manifests; first startup pulls
+3. `./install.sh --step D-05-llm-serving` — applies the release; first startup pulls
    weights into the PVC, which can take several minutes
    (`startupProbe` allows up to ~20 min before giving up). If it's a
    large model on a slow/unauthenticated HuggingFace connection, the
@@ -499,8 +504,8 @@ against real cluster GPU resources by `validate_config`, see
    then `kubectl logs -n platform-kernel deploy/vllm-<id>-inference -f`
    for download/load progress.
 5. That's it — no separate LiteLLM registration step. The same
-   `./update.sh --llm` run also calls `ensure_litellm_vllm_model()`
-   (`scripts/llm-lib.sh`), which registers/updates every
+   `./install.sh --step D-05-llm-serving` run also calls `ensure_litellm_vllm_model()`
+   (`scripts/lib/llm-lib.sh`), which registers/updates every
    `VLLM_INSTANCES` entry as a LiteLLM model, each keyed on its own
    `api_base` (one Service per instance, never shared): a swap to a
    different `VLLM_<ID>_MODEL_ID` deletes that instance's stale LiteLLM
@@ -512,7 +517,7 @@ against real cluster GPU resources by `validate_config`, see
    to check one instance directly).
 
 **Adding a second (or third) instance** is just adding another ID to
-`VLLM_INSTANCES` plus its own `VLLM_<ID>_*` block, then `./update.sh
+`VLLM_INSTANCES` plus its own `VLLM_<ID>_*` block, then `./install.sh --update
 --llm` — no manifest changes, no separate registration. The real
 constraint is GPU memory, not configuration: `--gpu-memory-utilization`
 is a fraction of *one physical card's* VRAM, and every instance
@@ -523,12 +528,13 @@ each independently approach it. A single 24GB card comfortably fits one
 7B-class model at `0.85`; a second concurrent 7B-class instance
 realistically needs both models quantized (AWQ/FP8) to fit. On a
 multi-GPU-node cluster the scheduler can place different instances on
-entirely different physical cards — nothing in `vllm-gpu.yaml.tmpl`
+entirely different physical cards — nothing in the vLLM chart
 pins an instance to a specific node beyond `nvidia.com/gpu.present`.
 
 There is no separate "vLLM CLI" for the admin to run against a live
-cluster beyond this — configuration changes are GitOps (edit the
-manifest, `update.sh --llm`), and *operational* checks against a running
+cluster beyond this — configuration changes are GitOps (edit
+`spec.llm.instances` on the Cluster claim, then
+`./install.sh --step D-05-llm-serving`), and *operational* checks against a running
 instance are plain HTTP: `GET /health`, `GET /v1/models`, `GET /metrics`
 (Prometheus), `GET /version`, or via the LiteLLM proxy sitting in front
 of it (`litellm --health`, or any OpenAI SDK pointed at

@@ -1,0 +1,149 @@
+{{- /*
+One PVC, Deployment and Service per entry in .Values.instances.
+
+The loop is the point. This was a .tmpl rendered once per instance by sed, in a
+bash loop, followed by prune_stale_vllm_instances to delete what the loop no
+longer produced — because `kubectl apply` cannot remove what it was not given.
+Helm tracks the release, so removing an instance from values removes its
+objects, and the prune has no work left to do.
+*/ -}}
+{{- range $i := .Values.instances }}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: vllm-{{ $i.name }}-model-cache
+  namespace: platform-kernel
+  annotations:
+    # Kept when an instance is removed. A cached model is tens of GB and many
+    # minutes to redownload, so re-adding the same instance id picks the cache
+    # back up. Delete by hand to reclaim the disk:
+    #   kubectl delete pvc -n platform-kernel -l gentianos.io/vllm-instance=<id>
+    helm.sh/resource-policy: keep
+  labels:
+    app.kubernetes.io/component: vllm-instance
+    gentianos.io/vllm-instance: "{{ $i.name }}"
+spec:
+  accessModes: ["ReadWriteOnce"]
+  resources:
+    requests:
+      # HF model caches run 15-40GB per 7-8B model; bump (VLLM_<INSTANCE>_MODEL_CACHE_SIZE)
+      # for a larger model.
+      storage: {{ $i.modelCacheSize | default "60Gi" }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: vllm-{{ $i.name }}-inference
+  namespace: platform-kernel
+  labels:
+    app.kubernetes.io/component: vllm-instance
+    gentianos.io/vllm-instance: "{{ $i.name }}"
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate # only one GPU slice budget is planned per replica; avoid two pods racing for it mid-rollout
+  selector:
+    matchLabels:
+      app: vllm-{{ $i.name }}-inference
+  template:
+    metadata:
+      labels:
+        app: vllm-{{ $i.name }}-inference
+        app.kubernetes.io/component: vllm-instance
+        gentianos.io/vllm-instance: "{{ $i.name }}"
+    spec:
+      nodeSelector:
+        nvidia.com/gpu.present: "true"
+      containers:
+      - name: vllm-server
+        image: vllm/vllm-openai:{{ $i.imageTag | default "latest" }}
+        command: ["/bin/sh", "-c"]
+        args:
+          - |
+            TOOL_CALL_ARGS=""
+            if [ -n "${VLLM_TOOL_CALL_PARSER}" ]; then
+              TOOL_CALL_ARGS="--enable-auto-tool-choice --tool-call-parser ${VLLM_TOOL_CALL_PARSER}"
+            fi
+            exec vllm serve "${VLLM_MODEL_ID}" \
+              --host 0.0.0.0 --port 8000 \
+              --gpu-memory-utilization "${VLLM_GPU_MEMORY_UTILIZATION}" \
+              --max-model-len "${VLLM_MAX_MODEL_LEN}" \
+              --enable-prefix-caching \
+              ${TOOL_CALL_ARGS}
+        env:
+        # Which model to swap in is cluster instance data (cluster-settings.env),
+        # not a gentian-os default — see the header comment above. Gated models
+        # (e.g. Llama) additionally need HUGGING_FACE_HUB_TOKEN below (create the
+        # vllm-hf-token Secret first — see agentic-ai.md §10.2; shared across
+        # every instance — one HF account token covers whatever it's licensed for).
+        - name: VLLM_MODEL_ID
+          value: "{{ $i.modelId }}"
+        # Depends on this cluster's GPU/sharing config (see gpu-sharing.yaml.tmpl)
+        # and how many OTHER instances/workloads share the same card(s) — stay
+        # well under 1.0, and under what's left after every other instance's
+        # own budget, so this pod doesn't starve/OOM its neighbors.
+        - name: VLLM_GPU_MEMORY_UTILIZATION
+          value: "{{ $i.gpuMemoryUtilization | default "0.85" }}"
+        - name: VLLM_MAX_MODEL_LEN
+          value: "{{ $i.maxModelLen | default "8192" }}"
+        # Empty (default) disables tool calling entirely -- matches vLLM's
+        # own default and today's behaviour for every existing instance.
+        # The correct value is model-family-specific (e.g. "hermes" for
+        # Qwen2/Qwen2.5/Hermes-family models, "mistral" for Mistral,
+        # "llama3_json" for Llama 3) -- see vLLM's tool-calling docs for
+        # the model you're actually serving before setting this.
+        - name: VLLM_TOOL_CALL_PARSER
+          value: "{{ $i.toolCallParser | default "" }}"
+        - name: HUGGING_FACE_HUB_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: vllm-hf-token
+              key: token
+              optional: true
+        ports:
+        - containerPort: 8000
+          name: http
+        resources:
+          limits:
+            nvidia.com/gpu: "1"
+          requests:
+            nvidia.com/gpu: "1"
+            cpu: "2"
+            memory: 8Gi
+        volumeMounts:
+        - name: model-cache
+          mountPath: /root/.cache/huggingface
+        # Model download + weight load can take minutes on first pull.
+        startupProbe:
+          httpGet:
+            path: /health
+            port: 8000
+          periodSeconds: 15
+          failureThreshold: 80 # ~20 minutes
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 8000
+          periodSeconds: 15
+          failureThreshold: 3
+      volumes:
+      - name: model-cache
+        persistentVolumeClaim:
+          claimName: vllm-{{ $i.name }}-model-cache
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: vllm-{{ $i.name }}-inference
+  namespace: platform-kernel
+  labels:
+    app.kubernetes.io/component: vllm-instance
+    gentianos.io/vllm-instance: "{{ $i.name }}"
+spec:
+  ports:
+  - port: 8000
+    targetPort: 8000
+  selector:
+    app: vllm-{{ $i.name }}-inference
+{{- end }}

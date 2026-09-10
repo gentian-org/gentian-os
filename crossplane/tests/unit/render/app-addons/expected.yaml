@@ -1,0 +1,336 @@
+---
+apiVersion: gentianos.io/v1alpha1
+kind: XApp
+metadata:
+  name: render-demo-app-fixture
+status:
+  conditions:
+  - lastTransitionTime: "2024-01-01T00:00:00Z"
+    message: 'Unready resources: demo-app-client-role, demo-app-entitlement-group,
+      demo-app-externalsecret, and 6 more'
+    reason: Creating
+    status: "False"
+    type: Ready
+---
+apiVersion: role.keycloak.crossplane.io/v1alpha1
+kind: Role
+metadata:
+  annotations:
+    crossplane.io/composition-resource-name: demo-app-client-role
+  labels:
+    crossplane.io/composite: render-demo-app-fixture
+  name: demo-demo-app-client-role
+  ownerReferences:
+  - apiVersion: gentianos.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XApp
+    name: render-demo-app-fixture
+    uid: ""
+spec:
+  deletionPolicy: Orphan
+  forProvider:
+    clientIdRef:
+      name: demo-demo-app-keycloak-client
+      policy:
+        resolve: Always
+    name: catalogue-test-client-access-control
+    realmId: demo
+  providerConfigRef:
+    name: keycloak
+---
+apiVersion: group.keycloak.crossplane.io/v1alpha1
+kind: Group
+metadata:
+  annotations:
+    crossplane.io/composition-resource-name: demo-app-entitlement-group
+  labels:
+    crossplane.io/composite: render-demo-app-fixture
+  name: gentian-tenant-demo-app-demo-app
+  ownerReferences:
+  - apiVersion: gentianos.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XApp
+    name: render-demo-app-fixture
+    uid: ""
+spec:
+  deletionPolicy: Orphan
+  forProvider:
+    name: gentian:tenant:demo:app:demo-app
+    realmId: demo
+  providerConfigRef:
+    name: keycloak
+---
+apiVersion: kubernetes.crossplane.io/v1alpha2
+kind: Object
+metadata:
+  annotations:
+    crossplane.io/composition-resource-name: demo-app-externalsecret
+  labels:
+    crossplane.io/composite: render-demo-app-fixture
+  name: render-demo-app-fixture-es
+  ownerReferences:
+  - apiVersion: gentianos.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XApp
+    name: render-demo-app-fixture
+    uid: ""
+spec:
+  forProvider:
+    manifest:
+      apiVersion: external-secrets.io/v1
+      kind: ExternalSecret
+      metadata:
+        name: demo-app-sensitive-values
+        namespace: tenant-demo
+      spec:
+        data:
+        - remoteRef:
+            key: gentian-os/tenants/demo/apps/demo-app/oidc
+            property: client-secret
+          secretKey: oidc-client-secret
+        refreshInterval: 1h
+        secretStoreRef:
+          kind: ClusterSecretStore
+          name: openbao
+        target:
+          creationPolicy: Owner
+          deletionPolicy: Retain
+          name: demo-app-sensitive-values
+  providerConfigRef:
+    name: kubernetes
+---
+apiVersion: group.keycloak.crossplane.io/v1alpha1
+kind: Roles
+metadata:
+  annotations:
+    crossplane.io/composition-resource-name: demo-app-group-roles
+  labels:
+    crossplane.io/composite: render-demo-app-fixture
+  name: demo-demo-app-group-roles
+  ownerReferences:
+  - apiVersion: gentianos.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XApp
+    name: render-demo-app-fixture
+    uid: ""
+spec:
+  deletionPolicy: Orphan
+  forProvider:
+    exhaustive: false
+    groupIdRef:
+      name: gentian-tenant-demo-app-demo-app
+    realmId: demo
+    roleIdsRefs:
+    - name: demo-demo-app-client-role
+  providerConfigRef:
+    name: keycloak
+---
+apiVersion: openidclient.keycloak.crossplane.io/v1alpha1
+kind: Client
+metadata:
+  annotations:
+    crossplane.io/composition-resource-name: demo-app-keycloak-client
+  labels:
+    crossplane.io/composite: render-demo-app-fixture
+  name: demo-demo-app-keycloak-client
+  ownerReferences:
+  - apiVersion: gentianos.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XApp
+    name: render-demo-app-fixture
+    uid: ""
+spec:
+  deletionPolicy: Delete
+  forProvider:
+    accessType: CONFIDENTIAL
+    clientId: catalogue-test-client
+    clientSecretSecretRef:
+      key: client-secret
+      name: render-demo-app-fixture-oidc-client-creds
+      namespace: crossplane-system
+    directAccessGrantsEnabled: false
+    fullScopeAllowed: false
+    name: Demo App
+    realmId: demo
+    serviceAccountsEnabled: false
+    standardFlowEnabled: true
+    validPostLogoutRedirectUris:
+    - https://demo.demo.platform.example.test/
+    validRedirectUris:
+    - https://demo.demo.platform.example.test/oidc/callback
+    webOrigins:
+    - +
+  managementPolicies:
+  - Observe
+  - Create
+  - Update
+  - Delete
+  providerConfigRef:
+    name: keycloak
+---
+apiVersion: openidclient.keycloak.crossplane.io/v1alpha1
+kind: ClientScope
+metadata:
+  annotations:
+    crossplane.io/composition-resource-name: demo-app-keycloak-client-scope
+    crossplane.io/external-name: catalogue-test-client-scope
+  labels:
+    crossplane.io/composite: render-demo-app-fixture
+  name: demo-demo-app-keycloak-client-scope
+  ownerReferences:
+  - apiVersion: gentianos.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XApp
+    name: render-demo-app-fixture
+    uid: ""
+spec:
+  deletionPolicy: Orphan
+  forProvider:
+    description: ""
+    name: catalogue-test-client-scope
+    realmId: demo
+  managementPolicies:
+  - Observe
+  providerConfigRef:
+    name: keycloak
+---
+apiVersion: openidclient.keycloak.crossplane.io/v1alpha1
+kind: ClientDefaultScopes
+metadata:
+  annotations:
+    crossplane.io/composition-resource-name: demo-app-keycloak-default-scopes
+  labels:
+    crossplane.io/composite: render-demo-app-fixture
+  name: demo-demo-app-keycloak-default-scopes
+  ownerReferences:
+  - apiVersion: gentianos.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XApp
+    name: render-demo-app-fixture
+    uid: ""
+spec:
+  deletionPolicy: Orphan
+  forProvider:
+    clientIdRef:
+      name: demo-demo-app-keycloak-client
+      policy:
+        resolve: Always
+    defaultScopes:
+    - profile
+    - email
+    - roles
+    - web-origins
+    - acr
+    - catalogue-test-client-scope
+    realmId: demo
+  providerConfigRef:
+    name: keycloak
+---
+apiVersion: kubernetes.crossplane.io/v1alpha2
+kind: Object
+metadata:
+  annotations:
+    crossplane.io/composition-resource-name: demo-app-oidc-client-creds-es
+  labels:
+    crossplane.io/composite: render-demo-app-fixture
+  name: render-demo-app-fixture-oidc-client-creds-es
+  ownerReferences:
+  - apiVersion: gentianos.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XApp
+    name: render-demo-app-fixture
+    uid: ""
+spec:
+  forProvider:
+    manifest:
+      apiVersion: external-secrets.io/v1
+      kind: ExternalSecret
+      metadata:
+        name: render-demo-app-fixture-oidc-client-creds
+        namespace: crossplane-system
+      spec:
+        data:
+        - remoteRef:
+            key: gentian-os/tenants/demo/apps/demo-app/oidc
+            property: client-secret
+          secretKey: client-secret
+        refreshInterval: 1h
+        secretStoreRef:
+          kind: ClusterSecretStore
+          name: openbao
+        target:
+          creationPolicy: Owner
+          name: render-demo-app-fixture-oidc-client-creds
+  providerConfigRef:
+    name: kubernetes
+---
+apiVersion: helm.crossplane.io/v1beta1
+kind: Release
+metadata:
+  annotations:
+    crossplane.io/composition-resource-name: demo-app-release
+  labels:
+    crossplane.io/composite: render-demo-app-fixture
+  name: render-demo-app-fixture-release
+  ownerReferences:
+  - apiVersion: gentianos.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XApp
+    name: render-demo-app-fixture
+    uid: ""
+spec:
+  forProvider:
+    chart:
+      name: demo-app
+      repository: oci://example.invalid/demo-app
+      version: 1.0.0
+    namespace: tenant-demo
+    set:
+    - name: demo-app.oidc.secret
+      valueFrom:
+        secretKeyRef:
+          key: oidc-client-secret
+          name: demo-app-sensitive-values
+          namespace: tenant-demo
+    skipCRDs: true
+    values:
+      demoApp:
+        hooks:
+          before-starting: |
+            #!/bin/bash
+            echo "app's own setup: install portal bridge, hide header"
+
+
+            # --- appended by Gentian: addon activation ---
+            #!/bin/sh
+            set -eu
+            SELECTED="calendar mail"
+            COMPANION="http://demo-app-companion.tenant-demo.svc.cluster.local:9980"
+            PUBLIC="https://companion.demo.platform.example.test"
+            for id in $SELECTED; do
+              demo-app-cli addon:enable "$id" || true
+            done
+      demoSubchart:
+        enabled: true
+      global:
+        imagePullSecrets:
+        - registry-credentials
+      imagePullSecrets:
+      - registry-credentials
+      podLabels:
+        gentianos.io/app: demo-app
+        gentianos.io/tenant: demo
+    wait: true
+    waitTimeout: 10m
+  providerConfigRef:
+    name: kubernetes
+  rollbackLimit: 3

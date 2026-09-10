@@ -42,6 +42,13 @@ func TenantAppGroup(tenant, profile string) string {
 	return tenantPrefix(tenant) + "app:" + profile
 }
 
+// DefaultGrantAttribute marks an app entitlement group that the tenant chose to
+// provision rather than merely install. It is what makes the App Store's two
+// verbs outlive the click: the admin console pre-selects a group carrying it
+// when adding a user, so a provisioned app is opt-out for new people and an
+// installed one is opt-in.
+const DefaultGrantAttribute = "gentianDefaultGrant"
+
 // TenantAppAdminsGroup is the Keycloak group for app administrators.
 func TenantAppAdminsGroup(tenant string) string {
 	return tenantPrefix(tenant) + "app-admins"

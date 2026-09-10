@@ -14,7 +14,6 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-
 package controller
 
 import (
@@ -23,6 +22,7 @@ import (
 	"strings"
 	"time"
 
+	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -39,13 +39,16 @@ import (
 const (
 	conditionAppPrivilegesReady = "AppPrivilegesReady"
 	appPrivilegeRequeueAfter    = 5 * time.Minute
+	// Cadence while an app's sync Job is still running, as opposed to the idle
+	// re-check above.
+	appPrivilegeJobPollAfter = 10 * time.Second
 
 	// appPrivilegeRequestedAtAnnotation is set by the Admin Console BFF when
 	// gentian:tenant:<t>:app-admins membership changes. The operator clears
 	// per-app sync fingerprints while requested != processed.
-	appPrivilegeRequestedAtAnnotation  = "gentianos.io/app-privilege-requested-at"
-	appPrivilegeProcessedAtAnnotation  = "gentianos.io/app-privilege-processed-at"
-	appPrivilegeSyncAnnotationPrefix   = "gentianos.io/app-privilege-sync-"
+	appPrivilegeRequestedAtAnnotation = "gentianos.io/app-privilege-requested-at"
+	appPrivilegeProcessedAtAnnotation = "gentianos.io/app-privilege-processed-at"
+	appPrivilegeSyncAnnotationPrefix  = "gentianos.io/app-privilege-sync-"
 )
 
 // ensureAppPrivileges maps gentian:tenant:<t>:app-admins members into each
@@ -69,7 +72,7 @@ func (r *TenantReconciler) ensureAppPrivileges(ctx context.Context, tenant *gent
 		return ctrl.Result{}, fmt.Errorf("apply app privilege reconcile request: %w", err)
 	}
 
-	kcURL, kcUser, kcPass, err := r.loadKeycloakAdmin(ctx)
+	kcURL, kcUser, kcPass, err := loadKeycloakAdmin(ctx, r.Client)
 	if err != nil {
 		return ctrl.Result{}, fmt.Errorf("load keycloak admin: %w", err)
 	}
@@ -82,6 +85,7 @@ func (r *TenantReconciler) ensureAppPrivileges(ctx context.Context, tenant *gent
 
 	var privilegedApps []string
 	syncFailed := false
+	syncPending := false
 	for _, app := range tenant.Spec.Apps {
 		profileName, err := catalogue.ResolveTenantAppProfile(ctx, r.Client, app)
 		if err != nil {
@@ -114,15 +118,33 @@ func (r *TenantReconciler) ensureAppPrivileges(ctx context.Context, tenant *gent
 			continue
 		}
 
-		if err := r.syncAppPrivilegedRole(ctx, tenant, profileName, profile, role, members); err != nil {
+		done, err := r.syncAppPrivilegedRole(ctx, tenant, profileName, profile, role, members, fingerprint)
+		if err != nil {
 			syncFailed = true
 			r.setCondition(tenant, conditionAppPrivilegesReady, metav1.ConditionFalse,
 				"SyncFailed", fmt.Sprintf("%s: %s", profileName, err.Error()))
 			continue
 		}
+		if !done {
+			// The Job is still running. Only a completed run may record the
+			// fingerprint, or a crashed sync would be remembered as applied.
+			syncPending = true
+			r.setCondition(tenant, conditionAppPrivilegesReady, metav1.ConditionFalse,
+				"Syncing", fmt.Sprintf("Applying app administrators to %s", profileName))
+			continue
+		}
 		if err := r.persistAppPrivilegeFingerprint(ctx, tenant, profileName, fingerprint); err != nil {
 			return ctrl.Result{}, err
 		}
+	}
+
+	// Forget apps that are no longer installed. A fingerprint left behind by an
+	// uninstalled app still matches unchanged membership, so reinstalling it
+	// would look already-synced and silently come back with no administrators.
+	// Done here rather than in the uninstall path so it self-heals however the
+	// app left — CLI, App Store, or a hand-edited tenant manifest.
+	if err := r.pruneAppPrivilegeFingerprints(ctx, tenant, privilegedApps); err != nil {
+		return ctrl.Result{}, err
 	}
 
 	if len(privilegedApps) == 0 {
@@ -135,6 +157,11 @@ func (r *TenantReconciler) ensureAppPrivileges(ctx context.Context, tenant *gent
 	}
 	if syncFailed {
 		return ctrl.Result{RequeueAfter: appPrivilegeRequeueAfter}, nil
+	}
+	if syncPending {
+		// Come back sooner than the idle cadence: a Job that takes seconds
+		// should not leave the tenant reporting "Syncing" for five minutes.
+		return ctrl.Result{RequeueAfter: appPrivilegeJobPollAfter}, nil
 	}
 	if err := r.markAppPrivilegeRequestProcessed(ctx, tenant); err != nil {
 		return ctrl.Result{}, err
@@ -196,23 +223,14 @@ func profilePrivilegedRole(profile *gentianov1alpha1.AppProfile) *gentianov1alph
 	return profile.Spec.Provisioning.PrivilegedRole
 }
 
-func (r *TenantReconciler) loadKeycloakAdmin(ctx context.Context) (url, user, pass string, err error) {
-	secret := &corev1.Secret{}
-	if err := r.Get(ctx, types.NamespacedName{Name: keycloakAdminSecret, Namespace: kernelNamespace}, secret); err != nil {
-		return "", "", "", err
-	}
-	url = string(secret.Data["url"])
-	user = string(secret.Data["username"])
-	if user == "" {
-		user = "admin"
-	}
-	pass = string(secret.Data["password"])
-	if url == "" || pass == "" {
-		return "", "", "", fmt.Errorf("keycloak-admin secret missing url or password")
-	}
-	return url, user, pass, nil
-}
-
+// syncAppPrivilegedRole applies app-admins membership to one app by running
+// the Job that app supplied. The operator resolves and publishes the
+// membership; the script decides what that means for its own application.
+//
+// Nothing here may branch on a profile name, family or protocol: an app the
+// kernel has to recognise by name is an app the kernel would have to be
+// modified to support, which is precisely what the platform boundary in
+// gentian-apps/docs/app-profile-guide.md forbids.
 func (r *TenantReconciler) syncAppPrivilegedRole(
 	ctx context.Context,
 	tenant *gentianov1alpha1.Tenant,
@@ -220,13 +238,112 @@ func (r *TenantReconciler) syncAppPrivilegedRole(
 	profile *gentianov1alpha1.AppProfile,
 	role *gentianov1alpha1.PrivilegedRoleSpec,
 	members []authz.KeycloakUser,
-) error {
+	fingerprint string,
+) (done bool, err error) {
 	switch role.Kind {
 	case gentianov1alpha1.PrivilegedRoleKindGroup:
 	default:
-		return fmt.Errorf("unsupported privileged role kind %q", role.Kind)
+		return false, fmt.Errorf("unsupported privileged role kind %q", role.Kind)
 	}
-	return fmt.Errorf("privileged role sync is not implemented for profile %q", profileName)
+	jobSpec := profile.Spec.Provisioning.SyncJob
+	if jobSpec == nil {
+		return false, fmt.Errorf(
+			"profile %q declares provisioning.privilegedRole but no provisioning.syncJob, "+
+				"so the platform has no way to apply it", profileName)
+	}
+
+	ns := tenantNamespaceName(tenant)
+	membersJSON, err := privilege.MembersJSON(members)
+	if err != nil {
+		return false, fmt.Errorf("encode app-admins members: %w", err)
+	}
+
+	// Script and member list travel in one Secret so they are always mounted as
+	// a matched pair; a Job cannot end up running last reconcile's script
+	// against this reconcile's membership.
+	secret := privilege.MembersSecret(tenant.Name, profileName, ns, membersJSON)
+	secret.StringData = map[string]string{"run.sh": jobSpec.Script}
+	if err := r.applySecret(ctx, secret); err != nil {
+		return false, fmt.Errorf("publish app-admins members: %w", err)
+	}
+
+	existing := &batchv1.Job{}
+	err = r.Get(ctx, types.NamespacedName{Name: privilege.JobName(profileName), Namespace: ns}, existing)
+	switch {
+	case errors.IsNotFound(err):
+		job := privilege.SyncJob(tenant.Name, profileName, ns, fingerprint, role, jobSpec)
+		if err := r.Create(ctx, job); err != nil {
+			return false, fmt.Errorf("create privilege sync job: %w", err)
+		}
+		return false, nil
+	case err != nil:
+		return false, err
+	}
+
+	// A Job built for different membership is stale whatever its result: a
+	// success only ever proves the membership it was given was applied.
+	if existing.Annotations[privilege.FingerprintAnnotation] != fingerprint {
+		policy := metav1.DeletePropagationBackground
+		if err := r.Delete(ctx, existing, &client.DeleteOptions{PropagationPolicy: &policy}); err != nil && !errors.IsNotFound(err) {
+			return false, fmt.Errorf("replace stale privilege sync job: %w", err)
+		}
+		return false, nil
+	}
+
+	switch privilege.StateOf(existing) {
+	case privilege.JobSucceeded:
+		return true, nil
+	case privilege.JobFailed:
+		return false, fmt.Errorf("privilege sync job failed: %s", privilege.FailureMessage(existing))
+	default:
+		return false, nil
+	}
+}
+
+// applySecret creates or updates a Secret the operator owns.
+func (r *TenantReconciler) applySecret(ctx context.Context, desired *corev1.Secret) error {
+	existing := &corev1.Secret{}
+	err := r.Get(ctx, types.NamespacedName{Name: desired.Name, Namespace: desired.Namespace}, existing)
+	if errors.IsNotFound(err) {
+		return r.Create(ctx, desired)
+	}
+	if err != nil {
+		return err
+	}
+	patch := client.MergeFrom(existing.DeepCopy())
+	existing.Labels = desired.Labels
+	existing.Type = desired.Type
+	existing.Data = desired.Data
+	existing.StringData = desired.StringData
+	return r.Patch(ctx, existing, patch)
+}
+
+// pruneAppPrivilegeFingerprints drops the recorded fingerprint of every app
+// that is no longer installed on this tenant.
+func (r *TenantReconciler) pruneAppPrivilegeFingerprints(ctx context.Context, tenant *gentianov1alpha1.Tenant, installed []string) error {
+	if len(tenant.Annotations) == 0 {
+		return nil
+	}
+	keep := make(map[string]bool, len(installed))
+	for _, name := range installed {
+		keep[name] = true
+	}
+	orig := tenant.DeepCopy()
+	changed := false
+	for key := range tenant.Annotations {
+		if !strings.HasPrefix(key, appPrivilegeSyncAnnotationPrefix) {
+			continue
+		}
+		if keep[strings.TrimPrefix(key, appPrivilegeSyncAnnotationPrefix)] {
+			continue
+		}
+		delete(tenant.Annotations, key)
+		changed = true
+	}
+	if !changed {
+		return nil
+	}
+	return r.Patch(ctx, tenant, client.MergeFrom(orig))
 }
 
 func (r *TenantReconciler) appPrivilegeSynced(tenant *gentianov1alpha1.Tenant, profileName, fingerprint string) bool {

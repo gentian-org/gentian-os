@@ -56,6 +56,7 @@ spec:
         inline:
           template: |
             {{- $xr     := .observed.composite.resource }}
+            {{- $observed := .observed }}
             {{- $spec   := $xr.spec }}
             {{- $tenant := $xr.metadata.name }}
             {{- $ns     := default (printf "tenant-%s" $tenant) (dig "isolation" "namespace" "" $spec) }}
@@ -66,22 +67,36 @@ spec:
             {{- $ccList   := dig "clusterConfig" list $extraRes }}
             {{- $cc       := ternary (index $ccList 0) dict (gt (len $ccList) 0) }}
             {{- $ccData   := dig "data" dict $cc }}
+            {{- /* The kernel realm and Keycloak's in-cluster URL, published by the
+                 Cluster claim. Both empty means the cluster predates them, and the
+                 broker resources below stay unrendered rather than half-configured
+                 — the same rule oidc.discoveryUrl follows. */}}
+            {{- $kernelRealm := dig "identity.kernelRealm" "" $ccData }}
+            {{- $kcInternal  := dig "identity.internalUrl" "" $ccData }}
             {{- $provList  := dig "provisioningJobs" list $extraRes }}
             {{- $provCM    := ternary (index $provList 0) dict (gt (len $provList) 0) }}
             {{- $jobsJSON  := dig "data" "jobs.json" "[]" $provCM }}
             {{- $jobs      := fromJson $jobsJSON }}
             {{- $objectsJSON := dig "data" "objects.json" "[]" $provCM }}
             {{- $objects     := fromJson $objectsJSON }}
-            {{- $routingMode := default "gateway" (dig "network.routingMode" "" $ccData) }}
-            {{- $kubeApiCIDR := dig "network.kubeApiServerCidr" "" $ccData }}
-            {{- $kubeApiEndpointIP := dig "network.kubeApiServerEndpointIp" "" $ccData }}
-            {{- $kubeApiEndpointPort := dig "network.kubeApiServerEndpointPort" "" $ccData }}
+            {{- /*
+              network.routingMode and the three network.kubeApiServer* keys used
+              to be read here and were never referenced again — assigned, then
+              discarded. Removed rather than left as documentation of an intent
+              that moved: the tenant NetworkPolicy is built by the operator, from
+              KUBE_APISERVER_CIDR and loadKubeAPIEndpointSlice in
+              tenant_network_policy.go, not from this ConfigMap.
+
+              They mattered because they were the only apparent consumer of the
+              three values the installer discovers from the live cluster, which
+              made those look like they had to be observed through Crossplane
+              before the ConfigMap could be composed. No Composition reads them.
+            */}}
             {{- $quotas      := default dict (dig "quotas" dict $spec) }}
             {{- $lrDefaultCPU := dig "tenant.limitRange.default.cpu" "500m" $ccData }}
             {{- $lrDefaultMem := dig "tenant.limitRange.default.memory" "512Mi" $ccData }}
             {{- $lrRequestCPU := dig "tenant.limitRange.defaultRequest.cpu" "100m" $ccData }}
             {{- $lrRequestMem := dig "tenant.limitRange.defaultRequest.memory" "128Mi" $ccData }}
-            {{- $llmEnabled := eq "true" (dig "llm.enabled" "false" $ccData) }}
 
             ---
             apiVersion: kubernetes.crossplane.io/v1alpha2
@@ -163,6 +178,12 @@ spec:
                       {{- if $quotas.storage }}
                       requests.storage: {{ $quotas.storage | quote }}
                       {{- end }}
+                      {{- if $quotas.requestsCpu }}
+                      requests.cpu: {{ $quotas.requestsCpu | quote }}
+                      {{- end }}
+                      {{- if $quotas.requestsMemory }}
+                      requests.memory: {{ $quotas.requestsMemory | quote }}
+                      {{- end }}
                       {{- if $quotas.cpu }}
                       limits.cpu: {{ $quotas.cpu | quote }}
                       {{- end }}
@@ -229,6 +250,1200 @@ spec:
                   {{- $obj | toYaml | nindent 18 }}
             {{- end }}
 
+            {{- /*
+            The portal's public OIDC client, declared rather than provisioned by a
+            Job.
+
+            external-name is the clientId, not Keycloak's internal UUID, which is
+            what lets one template serve both cases: on a tenant whose client
+            already exists the provider adopts it, and on a new tenant it creates
+            it under that name. Verified by adopting the live gentian-portal
+            client read-only — Ready, 45 fields observed — and confirming the
+            client survived the probe's removal.
+
+            The field values reproduce what the Job wrote. That matters more than
+            it looks: an adopted resource is reconciled toward this spec, so a
+            field omitted here is not left alone, it is reset. The redirect and
+            origin lists below were read back from the live client rather than
+            reconstructed from the Job's script.
+            */}}
+            ---
+            apiVersion: openidclient.keycloak.crossplane.io/v1alpha1
+            kind: Client
+            metadata:
+              name: {{ $tenant }}-portal-public-client
+              annotations:
+                crossplane.io/external-name: gentian-portal
+                gotemplating.fn.crossplane.io/composition-resource-name: keycloak-portal-public-client
+            spec:
+              deletionPolicy: Orphan
+              forProvider:
+                clientId: gentian-portal
+                name: Gentian Portal
+                realmId: {{ $tenant }}
+                accessType: PUBLIC
+                enabled: true
+                standardFlowEnabled: true
+                implicitFlowEnabled: false
+                directAccessGrantsEnabled: false
+                serviceAccountsEnabled: false
+                fullScopeAllowed: true
+                rootUrl: https://portal.{{ $kd }}
+                baseUrl: /
+                adminUrl: https://portal.{{ $kd }}
+                validRedirectUris:
+                  - https://{{ $domain }}/
+                  - https://{{ $domain }}/*
+                  - https://portal.{{ $kd }}/*
+                  - https://portal.{{ $kd }}/login
+                  - https://portal.{{ $kd }}/login/*
+                webOrigins:
+                  - "+"
+                  - https://{{ $domain }}
+                  - https://portal.{{ $kd }}
+                validPostLogoutRedirectUris:
+                  - https://{{ $domain }}/
+                  - https://{{ $domain }}/*
+                  - https://portal.{{ $kd }}/*
+                  - https://portal.{{ $kd }}/login
+              providerConfigRef:
+                name: keycloak
+
+            {{- /*
+            The audience OpenBao's role binds on.
+
+            A Keycloak access token does not carry the requesting client in aud —
+            azp names the client, and aud holds only what an audience mapper puts
+            there — so without this the tenant's auth mount refuses every exchange
+            on the audience whoever the caller is.
+
+            All five config keys are set, not the three that define the intent.
+            Keycloak adds introspection.token.claim and userinfo.token.claim on
+            create, and this map is replaced wholesale on reconcile: omitting them
+            would strip them from a mapper that already has them, and introspection
+            is what Dovecot's XOAUTH2 and OpenBao read.
+
+            clientIdRef rather than the client's UUID, so this follows the Client
+            above instead of pinning an id that differs per tenant.
+
+            resolve: Always because the default, IfNotPresent, resolves once and
+            caches the id in spec.forProvider.clientId forever. A Keycloak client
+            that is recreated comes back under a new id, and a cached reference
+            then names one that no longer exists: every reconcile 404s, the
+            resource never goes Ready, and nothing in the loop can recover it.
+            Re-resolving each pass costs a lookup and keeps the mapper following
+            the Client it names.
+
+            No external-name, as the two mappers further down already do and as
+            app-default does throughout. A protocol mapper is identified by its
+            UUID; seeding the annotation with the mapper's NAME does not give
+            the provider a natural key to adopt by, it gives it an id that will
+            never match. The create then succeeds once and is never recognised
+            again: Observe looks for a mapper whose id is the literal string,
+            finds none, and Create is rejected because the mapper it made last
+            time is still there. Left unset, the provider records the id
+            Keycloak returns, which is what makes the mappers below work.
+            */}}
+            ---
+            apiVersion: client.keycloak.crossplane.io/v1alpha1
+            kind: ProtocolMapper
+            metadata:
+              name: {{ $tenant }}-portal-openbao-audience
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: keycloak-portal-openbao-audience
+            spec:
+              deletionPolicy: Orphan
+              forProvider:
+                realmId: {{ $tenant }}
+                clientIdRef:
+                  name: {{ $tenant }}-portal-public-client
+                  policy:
+                    resolve: Always
+                name: openbao-audience
+                protocol: openid-connect
+                protocolMapper: oidc-audience-mapper
+                config:
+                  included.client.audience: openbao
+                  id.token.claim: "false"
+                  access.token.claim: "true"
+                  introspection.token.claim: "true"
+                  userinfo.token.claim: "false"
+              providerConfigRef:
+                name: keycloak
+
+            {{- /*
+            The portal's BFF client. Confidential, unlike the public one above.
+
+            clientSecretSecretRef is not optional here. The schema says an omitted
+            secret "will be generated by Keycloak", and this client's secret is not
+            Keycloak's to choose: it is held in the gentian-portal-bff Secret and
+            pushed in, and the portal authenticates with that value. Leaving it out
+            would mint a new one and break portal login until the Secret caught up.
+            */}}
+            ---
+            apiVersion: openidclient.keycloak.crossplane.io/v1alpha1
+            kind: Client
+            metadata:
+              name: {{ $tenant }}-portal-bff-client
+              annotations:
+                crossplane.io/external-name: gentian-portal-bff
+                gotemplating.fn.crossplane.io/composition-resource-name: keycloak-portal-bff-client
+            spec:
+              deletionPolicy: Orphan
+              # Create and Observe, and deliberately not Update or
+              # LateInitialize. See the forProvider comment below for why the
+              # update path is the one that cannot be taken here.
+              #
+              # Observe alone left nothing to observe. The Job that used to
+              # create this client was retired on the understanding that the
+              # Composition had taken it over, and the Composition only read it
+              # — so in a tenant realm the client was never created by anything,
+              # this resource sat at "observe failed: external resource does not
+              # exist", and every tenant hung in Provisioning until it timed
+              # out. The kernel realm has one because portal-login-bootstrap.sh
+              # creates it there; no tenant realm did.
+              #
+              # Create is safe precisely where Update is not. The update fails
+              # because the LIVE object holds redirectUris alongside a disabled
+              # standard flow, and any write re-validates that combination. A
+              # create writes only what is declared below, which does not
+              # include those fields, so there is nothing illegal to re-validate
+              # — and a tenant realm has no pre-existing client to inherit the
+              # problem from.
+              managementPolicies: ["Observe", "Create"]
+              forProvider:
+                clientId: gentian-portal-bff
+                name: Gentian Portal BFF
+                realmId: {{ $tenant }}
+                accessType: CONFIDENTIAL
+                enabled: true
+                standardFlowEnabled: false
+                implicitFlowEnabled: false
+                directAccessGrantsEnabled: true
+                serviceAccountsEnabled: false
+                fullScopeAllowed: true
+                # No redirect URIs, web origins or post-logout URIs, even though the
+                # live client carries them.
+                #
+                # This client has standardFlowEnabled and implicitFlowEnabled both
+                # false — it authenticates by direct access grant, and is never
+                # redirected to. Keycloak stores redirect URIs on such a client
+                # anyway, so they were read off the live object and declared here,
+                # and the provider then refused every update with
+                #   valid_redirect_uris cannot be set when standard or implicit
+                #   flow is not enabled
+                # leaving the resource Synced=False and this manifest inert.
+                #
+                # Observing a state does not mean it can be declared. The fields
+                # are unused here, so dropping them is what makes the manifest
+                # expressible at all.
+                #
+                # Dropping them from this template is necessary but not
+                # sufficient. Two further layers resurrect the rejected state:
+                #
+                #  1. Upjet late-initialisation copies unset optional fields out
+                #     of the live object back into spec.forProvider, so the
+                #     provider re-adds the redirect URIs it just refused to
+                #     write. Omitting LateInitialize from managementPolicies
+                #     stops that, and the spec then stays clean.
+                #  2. The update still fails, because the plan is built from the
+                #     OBSERVED object, and the live client itself holds the
+                #     illegal combination. Any write re-validates it and is
+                #     rejected. No spec can fix that from this side.
+                #
+                # So the client is Observe-only until the two inert fields are
+                # cleared on the live object (redirectUris and webOrigins; the
+                # post-logout URIs are only Keycloak's derived default and are
+                # not stored). Once cleared, restore
+                #   managementPolicies: ["Observe", "Create", "Update", "Delete"]
+                # and this becomes a fully managed client like the others.
+                # Tracked in the roadmap.
+                clientSecretSecretRef:
+                  name: gentian-portal-bff
+                  namespace: platform-kernel
+                  key: client_secret
+              providerConfigRef:
+                name: keycloak
+            {{- /*
+            All seven default scopes, not the one the Job attaches.
+
+            The Job only ever adds "groups", because the other six are Keycloak's
+            own defaults and were already there. This list is replaced wholesale on
+            reconcile, so declaring the one that expresses the intent would remove
+            acr, basic, email, profile, roles and web-origins from the client —
+            every portal token would lose its profile, email and role claims. Read
+            off the live client rather than off the Job.
+            */}}
+            ---
+            apiVersion: openidclient.keycloak.crossplane.io/v1alpha1
+            kind: ClientDefaultScopes
+            metadata:
+              name: {{ $tenant }}-portal-bff-default-scopes
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: keycloak-portal-bff-default-scopes
+            spec:
+              deletionPolicy: Orphan
+              forProvider:
+                realmId: {{ $tenant }}
+                clientIdRef:
+                  name: {{ $tenant }}-portal-bff-client
+                  policy:
+                    resolve: Always
+                defaultScopes:
+                  - acr
+                  - basic
+                  - email
+                  - groups
+                  - profile
+                  - roles
+                  - web-origins
+              providerConfigRef:
+                name: keycloak
+
+            {{- /* ── The tenant claim ──────────────────────────────────────────
+                 A tenant realm has no notion of which tenant it serves, and everything
+                 downstream is keyed by that: the JWT role on this tenant's OpenBao mount
+                 maps this claim into token metadata, the credential manager reads it to
+                 decide scope, and the tenant policy templates its paths from it.
+
+                 Without it a tenant administrator authenticates successfully and carries
+                 no tenant at all — which is not a refusal but something worse. Their
+                 first repository was created CLUSTER-owned, at a kernel path, because an
+                 empty tenant read as "no tenant scope" rather than as an error.
+
+                 The tenant NAME, not the realm. They are the same by default, but
+                 isolation.keycloakRealm may differ and every path is keyed by name.
+
+                 No external-name, for the reason given at the openbao-audience
+                 mapper above: the annotation holds a mapper's UUID, and seeding
+                 it with the name strands the mapper the first create makes.
+              */}}
+            ---
+            apiVersion: client.keycloak.crossplane.io/v1alpha1
+            kind: ProtocolMapper
+            metadata:
+              name: {{ $tenant }}-portal-tenant-claim
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: keycloak-portal-tenant-claim
+            spec:
+              deletionPolicy: Orphan
+              forProvider:
+                realmId: {{ $tenant }}
+                clientIdRef:
+                  name: {{ $tenant }}-portal-public-client
+                  policy:
+                    resolve: Always
+                name: tenant
+                protocol: openid-connect
+                protocolMapper: oidc-hardcoded-claim-mapper
+                config:
+                  claim.name: tenant
+                  claim.value: {{ $tenant | quote }}
+                  jsonType.label: String
+                  id.token.claim: "false"
+                  access.token.claim: "true"
+                  introspection.token.claim: "true"
+                  userinfo.token.claim: "false"
+              providerConfigRef:
+                name: keycloak
+
+
+            {{- /*
+            Dovecot's OIDC client, on clusters that run Dovecot.
+
+            Gated on mail.serviceMode the same way the operator gates Dovecot
+            provisioning: on a cluster relaying through a smarthost there is no
+            IMAP server, and a client nothing authenticates as would sit in every
+            tenant realm suggesting otherwise.
+
+            It exists only to call the realm's token introspection endpoint and
+            validate XOAUTH2 tokens other clients issued. Nothing is redirected to
+            it and nobody is entitled to it, so there are no redirect URIs, no web
+            origins, no client scope and no roles — and fullScopeAllowed is false,
+            read off the live client rather than assumed.
+
+            Confidential, and the secret is not Keycloak's to choose: Dovecot
+            authenticates to introspection with the value in dovecot-admin. An
+            omitted clientSecretSecretRef would have Keycloak generate a new one
+            and IMAP would stop validating tokens.
+            */}}
+            {{- if eq (dig "mail.serviceMode" "" $ccData) "kernel" }}
+            ---
+            apiVersion: openidclient.keycloak.crossplane.io/v1alpha1
+            kind: Client
+            metadata:
+              name: {{ $tenant }}-dovecot-oidc-client
+              annotations:
+                crossplane.io/external-name: gentian-dovecot
+                gotemplating.fn.crossplane.io/composition-resource-name: keycloak-dovecot-oidc-client
+            spec:
+              deletionPolicy: Orphan
+              # Everything except LateInitialize. This client has a second writer —
+              # the Dovecot OIDC Job still provisions the same clientId in this realm
+              # — and late-init copies fields the provider observes but this template
+              # does not set out of the live object into spec.forProvider, making the
+              # Job's values this resource's declared intent. The portal BFF client is
+              # what that looks like when the two disagree: Synced=False, unable to
+              # reconcile, while reading Ready=True.
+              #
+              # The Job's tenant-realm half is written and verified but blocked on
+              # roadmap 1.29; until it lands, this is what keeps the two apart.
+              managementPolicies: ["Observe", "Create", "Update", "Delete"]
+              forProvider:
+                clientId: gentian-dovecot
+                realmId: {{ $tenant }}
+                accessType: CONFIDENTIAL
+                enabled: true
+                standardFlowEnabled: false
+                implicitFlowEnabled: false
+                directAccessGrantsEnabled: false
+                serviceAccountsEnabled: false
+                fullScopeAllowed: false
+                clientSecretSecretRef:
+                  name: dovecot-admin
+                  namespace: platform-kernel
+                  key: oidc_client_secret
+              providerConfigRef:
+                name: keycloak
+            {{- end }}
+
+            {{- if and $kernelRealm $kcInternal }}
+            {{- /* ── the tenant's entitlement groups ─────────────────────────
+                 Three fixed, one per app. The names are internal/keycloak/groups.go's
+                 contract — members, admins, app-admins, and app:<profile> — and
+                 they carry no attributes, checked against the live realm.
+
+                 No external-name. A group is identified by its UUID, so it cannot
+                 be adopted from its name; given the realm and the name, the
+                 provider resolves the existing one instead, which is how the pack's
+                 mappers and client role adopted without being recreated. Keycloak
+                 refuses a second top-level group of the same name, so the failure
+                 mode if it does not resolve is a conflict rather than a duplicate.
+
+                 The gentian-groups Job still makes these. It also covers profiles
+                 that are not on spec.apps, which this cannot see — CollectTenantGroupNames
+                 takes an additionalProfiles argument for exactly that — so the Job
+                 goes only once that gap is closed.
+              */}}
+            {{- /* Only the three that belong to the tenant itself. The per-app
+                 group is app-default's, because its name follows the resolved
+                 profile and its attributes come from that profile's
+                 gentianos.io/keycloak-group-attributes annotation — nine of the
+                 catalogue's profiles carry one, and the Odoo ones drive module
+                 and role provisioning. This Composition cannot see an AppProfile;
+                 app-default already fetches it. */}}
+            {{- $groupNames := list (printf "gentian:tenant:%s:members" $tenant) (printf "gentian:tenant:%s:admins" $tenant) (printf "gentian:tenant:%s:app-admins" $tenant) }}
+            {{- range $g := $groupNames }}
+            {{- $gslug := $g | lower | replace ":" "-" | replace "_" "-" | replace "." "-" }}
+            ---
+            apiVersion: group.keycloak.crossplane.io/v1alpha1
+            kind: Group
+            metadata:
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: keycloak-group-{{ $gslug }}
+              name: {{ $gslug }}
+            spec:
+              deletionPolicy: Orphan
+              forProvider:
+                realmId: {{ $tenant }}
+                name: {{ $g | quote }}
+              providerConfigRef:
+                name: keycloak
+            {{- end }}
+
+            {{- /* ── the reverse broker: kernel realm → this tenant ────────────
+                 The mirror of the kernel IdP above. That one lets a tenant user
+                 log in through the kernel realm; this one lets the kernel realm
+                 broker INTO the tenant, which is how portal login reaches a
+                 tenant's own users.
+
+                 Two objects in two realms: the client lives in the tenant realm
+                 and the IdP that consumes it lives in the kernel realm, aliased by
+                 the tenant's name. Both are per tenant, so composing them here is
+                 right — unlike the kernel-realm first-broker-login-kernel-portal
+                 flow they reference, which is ONE object shared by every tenant.
+                 Composing that per tenant would mean a resource per tenant all
+                 managing the same flow, so it stays with the Job.
+              */}}
+            ---
+            apiVersion: openidclient.keycloak.crossplane.io/v1alpha1
+            kind: Client
+            metadata:
+              name: {{ $tenant }}-kernel-portal-broker-client
+              annotations:
+                crossplane.io/external-name: broker-kernel-portal
+                gotemplating.fn.crossplane.io/composition-resource-name: keycloak-kernel-portal-broker-client
+            spec:
+              deletionPolicy: Orphan
+              {{- /* Observed, like the other broker client: this republishes the
+                   existing secret without rotating it, which is what lets the IdP
+                   below take credentials from a Secret. Managing it would put that
+                   secret under the provider's control and a rotation would break
+                   portal login until the IdP caught up. */}}
+              managementPolicies: ["Observe"]
+              forProvider:
+                clientId: broker-kernel-portal
+                realmId: {{ $tenant }}
+              writeConnectionSecretToRef:
+                name: {{ $tenant }}-kernel-portal-broker-client
+                namespace: platform-kernel
+              providerConfigRef:
+                name: keycloak
+            ---
+            apiVersion: kubernetes.crossplane.io/v1alpha2
+            kind: Object
+            metadata:
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: keycloak-kernel-portal-broker-client-id
+              name: {{ $tenant }}-kernel-portal-broker-client-id
+            spec:
+              forProvider:
+                manifest:
+                  apiVersion: v1
+                  kind: Secret
+                  metadata:
+                    name: {{ $tenant }}-kernel-portal-broker-client-id
+                    namespace: platform-kernel
+                    labels:
+                      app.kubernetes.io/managed-by: crossplane
+                  stringData:
+                    client_id: broker-kernel-portal
+              providerConfigRef:
+                name: kubernetes
+            {{- if and $kernelRealm $kcInternal }}
+            ---
+            apiVersion: oidc.keycloak.crossplane.io/v1alpha1
+            kind: IdentityProvider
+            metadata:
+              name: {{ $tenant }}-kernel-portal-idp
+              annotations:
+                crossplane.io/external-name: {{ $tenant }}
+                gotemplating.fn.crossplane.io/composition-resource-name: keycloak-kernel-portal-idp
+            spec:
+              deletionPolicy: Orphan
+              # Everything except LateInitialize, for the reason the portal BFF
+              # client demonstrated.
+              managementPolicies: ["Observe", "Create", "Update", "Delete"]
+              forProvider:
+                {{- /* In the KERNEL realm, aliased by this tenant. */}}
+                realm: {{ $kernelRealm }}
+                alias: {{ $tenant }}
+                displayName: {{ $tenant }}
+                providerId: oidc
+                enabled: true
+                {{- /* trustEmail and storeToken are false here where the kernel IdP
+                     has them true: an address vouched for by a tenant realm is not
+                     grounds to trust it in the kernel. */}}
+                trustEmail: false
+                storeToken: false
+                hideOnLoginPage: true
+                linkOnly: false
+                authenticateByDefault: false
+                addReadTokenRoleOnCreate: false
+                syncMode: IMPORT
+                validateSignature: true
+                defaultScopes: openid profile email groups
+                firstBrokerLoginFlowAlias: first-broker-login-kernel-portal
+                {{- /* Browser-facing endpoints go to the public URL; the
+                     server-to-server half stays inside the cluster. */}}
+                issuer: https://id.{{ $kd }}/auth/realms/{{ $tenant }}
+                authorizationUrl: https://id.{{ $kd }}/auth/realms/{{ $tenant }}/protocol/openid-connect/auth
+                tokenUrl: {{ $kcInternal }}/realms/{{ $tenant }}/protocol/openid-connect/token
+                jwksUrl: {{ $kcInternal }}/realms/{{ $tenant }}/protocol/openid-connect/certs
+                userInfoUrl: {{ $kcInternal }}/realms/{{ $tenant }}/protocol/openid-connect/userinfo
+                {{- /* updateProfileFirstLoginMode has no field on the provider and
+                     is read back, so it belongs here.
+
+                     useJwksUrl does not, and used to be listed alongside it on the
+                     understanding that it would otherwise be lost. It is not: the
+                     provider sets it from the jwksUrl field above, and the live
+                     object carries useJwksUrl=true and validateSignature=true
+                     without it being asked for — checked against the Admin API on
+                     both brokers. What declaring it did instead was make the two
+                     permanently disagree, because the provider writes the key and
+                     then does not read it back into extraConfig. That is a diff
+                     that can never close, and the provider answered it by updating
+                     forever: roughly twenty requests a second, each carrying an
+                     admin password grant, for about a CPU core between Keycloak
+                     and the provider. */}}
+                extraConfig:
+                  updateProfileFirstLoginMode: "on"
+                clientIdSecretRef:
+                  name: {{ $tenant }}-kernel-portal-broker-client-id
+                  namespace: platform-kernel
+                  key: client_id
+                clientSecretSecretRef:
+                  name: {{ $tenant }}-kernel-portal-broker-client
+                  namespace: platform-kernel
+                  key: attribute.client_secret
+              providerConfigRef:
+                name: keycloak
+            {{- end }}
+
+            {{- /* ── the profile prompts a tenant user must not meet ───────────
+                 A tenant user arrives through the kernel IdP with their profile
+                 already filled in. Left enabled, these two stop them on a form
+                 asking for details the kernel realm has already vouched for.
+
+                 name and priority are Keycloak's own for these built-ins and are
+                 declared because the resource carries them: omitting a field the
+                 provider writes means writing its zero value.
+              */}}
+            {{- range $ra := (list (dict "alias" "VERIFY_PROFILE" "name" "Verify Profile" "priority" 90) (dict "alias" "UPDATE_PROFILE" "name" "Update Profile" "priority" 40)) }}
+            {{- /* Keycloak's aliases carry underscores, which a Kubernetes object
+                 name may not. Only the object name is slugged; alias stays what
+                 Keycloak calls it, because that is what identifies the action. */}}
+            {{- $raSlug := $ra.alias | lower | replace "_" "-" }}
+            ---
+            apiVersion: realm.keycloak.crossplane.io/v1alpha1
+            kind: RequiredAction
+            metadata:
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: keycloak-required-action-{{ $raSlug }}
+              name: {{ $tenant }}-required-action-{{ $raSlug }}
+            spec:
+              deletionPolicy: Orphan
+              forProvider:
+                realmId: {{ $tenant }}
+                alias: {{ $ra.alias }}
+                name: {{ $ra.name | quote }}
+                enabled: false
+                defaultAction: false
+                priority: {{ $ra.priority }}
+              providerConfigRef:
+                name: keycloak
+            {{- end }}
+
+            {{- /* ── what a user record is allowed to hold ────────────────────
+                 The realm's user profile: six attributes and the group they
+                 display under. Two of them are Gentian's — uid, which the broker
+                 mappers fill and Synapse reads for its localpart, and
+                 gentian.inviteEmail, the recovery address an admin sets when the
+                 account's own email is still a transient invite address.
+
+                 Declared whole, not patched. The realm script wrote this object
+                 twice per run: once to append the two Gentian attributes, once to
+                 strip `required` off firstName and lastName. Neither patch could
+                 see what the other had done, and both re-read and rewrote the
+                 same six-attribute document to change one field of it.
+
+                 The cost of declaring it is that every validation is now ours to
+                 restate, and one dropped by omission does not fail loudly — it
+                 surfaces as a user who cannot save their name. So each is written
+                 out as Keycloak returns it, including the built-in validators on
+                 attributes Gentian never touches.
+
+                 firstName and lastName carry no requiredForRoles, which is the
+                 declarative spelling of the second patch: admin delivery swaps in
+                 a transient email for action-token links, and a required name
+                 field turns that into a profile form the user did not ask for.
+                 email keeps requiredForRoles [user] — that one is Keycloak's
+                 default and wanted.
+
+                 Validator config values are strings: the provider passes them to
+                 Keycloak as written, and 255 unquoted is a YAML integer.
+              */}}
+            ---
+            apiVersion: realm.keycloak.crossplane.io/v1alpha1
+            kind: UserProfile
+            metadata:
+              annotations:
+                {{- /* The user profile is a singleton keyed by its realm, not a
+                     UUID, so unlike the mappers it adopts from its name. */}}
+                crossplane.io/external-name: {{ $tenant }}
+                gotemplating.fn.crossplane.io/composition-resource-name: keycloak-user-profile
+              name: {{ $tenant }}-user-profile
+            spec:
+              deletionPolicy: Orphan
+              forProvider:
+                realmId: {{ $tenant }}
+                group:
+                  - name: user-metadata
+                    displayHeader: User metadata
+                    displayDescription: Attributes, which refer to user metadata
+                attribute:
+                  - name: username
+                    displayName: ${username}
+                    multiValued: false
+                    permissions:
+                      - view: [admin, user]
+                        edit: [admin, user]
+                    validator:
+                      - name: length
+                        config:
+                          min: "3"
+                          max: "255"
+                      - name: username-prohibited-characters
+                      - name: up-username-not-idn-homograph
+                  - name: email
+                    displayName: ${email}
+                    multiValued: false
+                    requiredForRoles: [user]
+                    permissions:
+                      - view: [admin, user]
+                        edit: [admin, user]
+                    validator:
+                      - name: email
+                      - name: length
+                        config:
+                          max: "255"
+                  - name: firstName
+                    displayName: ${firstName}
+                    multiValued: false
+                    permissions:
+                      - view: [admin, user]
+                        edit: [admin, user]
+                    validator:
+                      - name: length
+                        config:
+                          max: "255"
+                      - name: person-name-prohibited-characters
+                  - name: lastName
+                    displayName: ${lastName}
+                    multiValued: false
+                    permissions:
+                      - view: [admin, user]
+                        edit: [admin, user]
+                    validator:
+                      - name: length
+                        config:
+                          max: "255"
+                      - name: person-name-prohibited-characters
+                  - name: gentian.inviteEmail
+                    displayName: Recovery email
+                    multiValued: false
+                    permissions:
+                      - view: [admin]
+                        edit: [admin]
+                    validator:
+                      - name: email
+                      - name: length
+                        config:
+                          max: "255"
+                  - name: uid
+                    displayName: User ID
+                    multiValued: false
+                    permissions:
+                      - view: [admin, user]
+                        edit: [admin]
+                    validator:
+                      - name: length
+                        config:
+                          max: "255"
+              providerConfigRef:
+                name: keycloak
+
+            {{- /* ── the claims that carry a user across a realm boundary ──────
+                 A brokered login copies a user from one realm into another, and
+                 these four decide what survives the crossing. Without them the
+                 tenant realm's scope mappers see an empty uid, so anything keyed
+                 on the username — Synapse localparts among them — breaks quietly.
+
+                 gentian_username travels twice: the kernel broker client must
+                 EMIT it in the token, and the tenant realm's IdP must IMPORT it
+                 back into the user's uid attribute. One claim, two objects, two
+                 realms.
+              */}}
+            {{- /* The broker client's id, read off the observed Client. A ref would
+                 give its external-name, which is the client's NAME because that
+                 client is adopted by name and Observe-only — and the API path
+                 needs a UUID. */}}
+            {{- $brokerClientID := dig "resources" "keycloak-broker-client" "resource" "status" "atProvider" "id" "" $observed }}
+            {{- if $brokerClientID }}
+            ---
+            apiVersion: client.keycloak.crossplane.io/v1alpha1
+            kind: ProtocolMapper
+            metadata:
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: keycloak-broker-client-username-mapper
+              name: {{ $tenant }}-broker-client-username-mapper
+            spec:
+              deletionPolicy: Orphan
+              forProvider:
+                realmId: {{ $kernelRealm }}
+                name: gentian_username
+                protocol: openid-connect
+                protocolMapper: oidc-usermodel-attribute-mapper
+                clientId: {{ $brokerClientID }}
+                config:
+                  user.attribute: uid
+                  claim.name: gentian_username
+                  jsonType.label: String
+                  multivalued: "false"
+                  id.token.claim: "true"
+                  access.token.claim: "true"
+                  userinfo.token.claim: "true"
+                  introspection.token.claim: "true"
+              providerConfigRef:
+                name: keycloak
+            {{- end }}
+            ---
+            {{- /* The other half: import that claim into the tenant user's uid. */}}
+            apiVersion: identityprovider.keycloak.crossplane.io/v1alpha1
+            kind: IdentityProviderMapper
+            metadata:
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: keycloak-kernel-idp-username-mapper
+              name: {{ $tenant }}-kernel-idp-username-mapper
+            spec:
+              deletionPolicy: Orphan
+              forProvider:
+                realm: {{ $tenant }}
+                identityProviderAlias: kernel
+                name: gentian_username
+                identityProviderMapper: oidc-user-attribute-idp-mapper
+                {{- /* extraConfig, not config: the CRD has no config field and
+                     carries the mapper's settings here instead. */}}
+                extraConfig:
+                  syncMode: IMPORT
+                  claim: gentian_username
+                  user.attribute: uid
+              providerConfigRef:
+                name: keycloak
+            {{- if $kernelRealm }}
+            ---
+            {{- /* On the reverse broker: which tenant a kernel user came from, and
+                 the group claim that carries their entitlements with them.
+
+                 tenant is FORCE, not IMPORT — the value is a fact about where the
+                 user came from, so it is reasserted on every login rather than
+                 recorded once and left to drift if they move. */}}
+            apiVersion: identityprovider.keycloak.crossplane.io/v1alpha1
+            kind: IdentityProviderMapper
+            metadata:
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: keycloak-kernel-portal-idp-tenant-mapper
+              name: {{ $tenant }}-kernel-portal-idp-tenant-mapper
+            spec:
+              deletionPolicy: Orphan
+              forProvider:
+                realm: {{ $kernelRealm }}
+                identityProviderAlias: {{ $tenant }}
+                name: tenant
+                identityProviderMapper: hardcoded-attribute-idp-mapper
+                extraConfig:
+                  syncMode: FORCE
+                  attribute: tenant
+                  attribute.value: {{ $tenant }}
+              providerConfigRef:
+                name: keycloak
+            ---
+            apiVersion: identityprovider.keycloak.crossplane.io/v1alpha1
+            kind: IdentityProviderMapper
+            metadata:
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: keycloak-kernel-portal-idp-groups-mapper
+              name: {{ $tenant }}-kernel-portal-idp-groups-mapper
+            spec:
+              deletionPolicy: Orphan
+              forProvider:
+                realm: {{ $kernelRealm }}
+                identityProviderAlias: {{ $tenant }}
+                name: groups
+                identityProviderMapper: oidc-advanced-group-idp-mapper
+                extraConfig:
+                  syncMode: IMPORT
+                  {{- /* A JSON document inside a config value, quoted as Keycloak
+                       stores it. */}}
+                  claims: '[{"key":"groups","value":"groups"}]'
+              providerConfigRef:
+                name: keycloak
+            {{- end }}
+
+            {{- /* ── the first-broker-login flow ──────────────────────────────
+                 What a tenant user meets the first time they arrive through the
+                 kernel IdP. Its three executions match a returning user to the
+                 account already provisioned for them by email; the built-in flow
+                 stops and asks them to confirm the link instead.
+
+                 The IdP above names this flow by alias, so the alias is the
+                 contract — recreating the flow under a new id is fine, losing the
+                 alias is not.
+
+                 The flow only. Its executions are NOT declared yet: Keycloak does
+                 not require an execution to be uniquely named within a flow, so a
+                 create that failed to resolve the existing ones would add a second
+                 set rather than conflict, and a first login would run every step
+                 twice. That wants proving on the adopted flow first.
+              */}}
+            ---
+            apiVersion: authenticationflow.keycloak.crossplane.io/v1alpha1
+            kind: Flow
+            metadata:
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: keycloak-first-broker-login-flow
+              name: {{ $tenant }}-first-broker-login-flow
+            spec:
+              deletionPolicy: Orphan
+              forProvider:
+                realmId: {{ $tenant }}
+                alias: first-broker-login-gentian
+                description: Confirm/verify link kernel IdP to tenant users by email
+                providerId: basic-flow
+              providerConfigRef:
+                name: keycloak
+
+            {{- /* The flow's three executions, in order.
+
+                 They adopt. That was not a given: every other adoption here works
+                 because a duplicate is impossible — a mapper, a role, a group all
+                 collide on name — while Keycloak lets a flow hold two executions
+                 of the same authenticator, and provider-keycloak documents no
+                 import identity for the kind. Proven with one execution first,
+                 which took the existing id and left the flow at three.
+
+                 Together they match a returning user to the account already
+                 provisioned for them by email. The built-in first broker login
+                 stops and asks them to confirm the link instead, which is what
+                 this flow exists to avoid.
+              */}}
+            {{- range $i, $auth := (list "idp-detect-existing-broker-user" "idp-confirm-link" "idp-email-verification") }}
+            ---
+            apiVersion: authenticationflow.keycloak.crossplane.io/v1alpha1
+            kind: Execution
+            metadata:
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: keycloak-fbl-exec-{{ $auth }}
+              name: {{ $tenant }}-fbl-exec-{{ $auth }}
+            spec:
+              deletionPolicy: Orphan
+              forProvider:
+                realmId: {{ $tenant }}
+                parentFlowAlias: first-broker-login-gentian
+                authenticator: {{ $auth }}
+                requirement: REQUIRED
+              providerConfigRef:
+                name: keycloak
+            {{- end }}
+
+            {{- /* ── the realm's "groups" client scope ────────────────────────
+                 What puts a user's group membership into their tokens. Every
+                 client in the realm gets it, because the groups Job adds it to
+                 default-default-client-scopes.
+
+                 That PUT stays with the Job. The realm currently defaults nine
+                 scopes, mostly Keycloak's own — acr, basic, email, profile,
+                 role_list, roles, saml_organization, web-origins — and declaring
+                 the list here would mean owning all nine and silently dropping
+                 whichever built-in a future Keycloak adds. The Job only ever adds
+                 "groups", which is additive and cannot subtract.
+              */}}
+            ---
+            apiVersion: openidclient.keycloak.crossplane.io/v1alpha1
+            kind: ClientScope
+            metadata:
+              annotations:
+                crossplane.io/external-name: groups
+                gotemplating.fn.crossplane.io/composition-resource-name: keycloak-groups-scope
+              name: {{ $tenant }}-groups-scope
+            spec:
+              deletionPolicy: Orphan
+              managementPolicies: ["Observe"]
+              forProvider:
+                realmId: {{ $tenant }}
+                name: groups
+              providerConfigRef:
+                name: keycloak
+            {{- /* The membership mapper on it. Takes the scope's observed id
+                 rather than a ref, because the scope above is adopted by name and
+                 Observe-only, so a ref would yield "groups" where the API path
+                 needs a UUID. */}}
+            {{- $groupsScopeID := dig "resources" "keycloak-groups-scope" "resource" "status" "atProvider" "id" "" $observed }}
+            {{- if $groupsScopeID }}
+            ---
+            apiVersion: client.keycloak.crossplane.io/v1alpha1
+            kind: ProtocolMapper
+            metadata:
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: keycloak-groups-scope-mapper
+              name: {{ $tenant }}-groups-scope-mapper
+            spec:
+              deletionPolicy: Orphan
+              forProvider:
+                realmId: {{ $tenant }}
+                name: groups
+                protocol: openid-connect
+                protocolMapper: oidc-group-membership-mapper
+                clientScopeId: {{ $groupsScopeID }}
+                config:
+                  full.path: "false"
+                  id.token.claim: "true"
+                  access.token.claim: "true"
+                  userinfo.token.claim: "true"
+                  claim.name: groups
+                  {{- /* Keycloak's own defaults for this mapper type, written
+                       back on every read. Omitting them left the Composition
+                       permanently out of step with what the provider observed,
+                       which it answered by updating forever. */}}
+                  introspection.token.claim: "true"
+                  multivalued: "true"
+              providerConfigRef:
+                name: keycloak
+            {{- end }}
+
+            {{- /* ── the tenant realm, observed ──────────────────────────────
+                 The realm every other Keycloak object here lives in. The realm
+                 script creates it and keeps it enabled, sets its display name and
+                 its browser security headers; the tenant SMTP Job sets its mail
+                 server. All of that is realm state, and this resource can hold it.
+
+                 Observed first, and with almost nothing declared, because reading
+                 the object back is how the field mapping gets established rather
+                 than guessed: sixty fields, and the ones that matter here are
+                 nested under securityDefenses and smtpServer. What the provider
+                 reports is what the manifest will then say.
+
+                 A realm is identified by its name, so unlike the pack's mappers
+                 it can be adopted. That is the whole reason this can be taken in
+                 steps at all.
+              */}}
+            ---
+            apiVersion: realm.keycloak.crossplane.io/v1alpha1
+            kind: Realm
+            metadata:
+              name: {{ $tenant }}-realm
+              annotations:
+                crossplane.io/external-name: {{ $tenant }}
+                gotemplating.fn.crossplane.io/composition-resource-name: keycloak-realm
+            spec:
+              deletionPolicy: Orphan
+              forProvider:
+                realm: {{ $tenant }}
+                enabled: true
+                displayName: {{ $spec.displayName | quote }}
+                {{- if $kd }}
+                {{- /* The URL this realm advertises for itself, independent of
+                     how it was asked.
+
+                     Keycloak runs without KC_HOSTNAME and with
+                     KC_PROXY_HEADERS=xforwarded, so it derives the endpoints in
+                     its discovery document from the incoming request. A browser
+                     arriving through the gateway gets external URLs; a service
+                     fetching .well-known over the cluster Service sends no
+                     forwarded headers and gets back the in-cluster address as
+                     authorization_endpoint.
+
+                     An app that reads discovery in-cluster — the ordinary way
+                     for a backend to do it — then redirects the browser to
+                     http://<service>.<ns>.svc.cluster.local:8080, which the
+                     browser cannot resolve. The visible failure is a login that
+                     never leaves the loading screen, with nothing logged
+                     anywhere: the app did what discovery told it to.
+
+                     frontendUrl pins the answer to the address a browser can
+                     actually reach, so both callers get the same one. It is set
+                     as an attribute because that is where Keycloak keeps it;
+                     the provider exposes no dedicated field. */}}
+                attributes:
+                  frontendUrl: https://id.{{ $kd }}/auth
+                {{- end }}
+                # Nobody self-registers into a tenant realm; membership comes from
+                # the kernel realm through the broker.
+                registrationAllowed: false
+                {{- /* These four were written by UpdateRealmBrowserSecurityHeaders
+                     on every authz-bridge sync, which made it a third writer of
+                     realm state beside the realm Job and the SMTP Job. They are
+                     declared because they are NOT the provider's defaults —
+                     Keycloak ships 5m access tokens and a 30m idle timeout, so a
+                     managed realm that did not name them would quietly cut every
+                     tenant session from twelve hours to thirty minutes. */}}
+                accessTokenLifespan: 12h0m0s
+                ssoSessionIdleTimeout: 12h0m0s
+                ssoSessionMaxLifespan: 12h0m0s
+                loginTheme: gentian
+                {{- /* Keycloak's built-in browser flow, named explicitly.
+
+                     A custom "browser-kernel-idp" flow used to be bound here —
+                     Cookie then identity-provider-redirector with
+                     defaultProvider=kernel — which left the tenant realm with no
+                     credential form at all, so every interactive login in the
+                     system rendered the kernel realm's. Tenant members live in
+                     the tenant realm and every per-app OIDC client is registered
+                     there, so the session belongs here and the stock flow already
+                     does it: Cookie first, then forms, with the
+                     identity-provider-redirector inert without a default
+                     provider. */}}
+                browserFlow: browser
+                {{- /* The provider does not observe these: status.atProvider reports
+                     securityDefenses as null while the realm plainly carries the
+                     headers. So they cannot be confirmed by reading the resource
+                     back, only against the Admin API.
+
+                     Unlike the broker IdPs' useJwksUrl, which had the same blind
+                     spot, these cannot simply be dropped: nothing else sets them.
+                     They are declared and unverifiable, which is a diff the
+                     provider re-applies — the cost of managing a field the
+                     provider writes but cannot read.
+
+                     Empty strings are deliberate. contentSecurityPolicy and
+                     xFrameOptions are cleared so the portal can frame Keycloak;
+                     Keycloak's own defaults would refuse it. */}}
+                securityDefenses:
+                  - headers:
+                      - contentSecurityPolicy: ""
+                        contentSecurityPolicyReportOnly: ""
+                        strictTransportSecurity: "max-age=31536000; includeSubDomains"
+                        xContentTypeOptions: "nosniff"
+                        xFrameOptions: ""
+                        xRobotsTag: "none"
+                        xXssProtection: "1; mode=block"
+                        referrerPolicy: "no-referrer"
+                {{- /* No smtpServer yet. The tenant SMTP Job reads its host, port
+                     and from address out of a Secret, and a Composition cannot read
+                     Secrets — the same wall the broker IdP hit. It moves once the
+                     host is published the way identity.internalUrl was. */}}
+              providerConfigRef:
+                name: keycloak
+
+            {{- /* ── kernel broker client, observed ────────────────────────────
+                 The tenant realm brokers to the kernel realm, and broker-<tenant>
+                 in the KERNEL realm is the client it authenticates as. The realm
+                 Job creates it, so this does not.
+
+                 Observe-only, and here for one reason: writeConnectionSecretToRef
+                 republishes the client's existing secret into Kubernetes without
+                 rotating it. That is what lets the IdP below take its credentials
+                 from a Secret instead of a Job curling the admin API for them —
+                 the step that kept the broker imperative.
+
+                 Not fully managed on purpose. Managing it would put the secret
+                 under the provider's control, and a rotation would break brokered
+                 login for as long as the IdP still held the old value.
+              */}}
+            ---
+            apiVersion: openidclient.keycloak.crossplane.io/v1alpha1
+            kind: Client
+            metadata:
+              name: {{ $tenant }}-broker-client
+              annotations:
+                crossplane.io/external-name: broker-{{ $tenant }}
+                gotemplating.fn.crossplane.io/composition-resource-name: keycloak-broker-client
+            spec:
+              deletionPolicy: Orphan
+              managementPolicies: ["Observe"]
+              forProvider:
+                clientId: broker-{{ $tenant }}
+                realmId: {{ $kernelRealm }}
+              writeConnectionSecretToRef:
+                name: {{ $tenant }}-broker-client
+                namespace: platform-kernel
+              providerConfigRef:
+                name: keycloak
+            {{- /* ── kernel IdP in the tenant realm ──────────────────────────────
+                 What tenant login actually runs on: the tenant realm delegates
+                 to the kernel realm through this.
+
+                 Managed, and every field is declared, because two Jobs also write
+                 this object and they disagreed about firstBrokerLoginFlowAlias.
+                 The realm script in identity_reconciler.go sets the built-in
+                 "first broker login"; the broker-idp Job sets the gentian flow.
+                 Both ran on 2026-08-21 — the realm job at 07:02:56, the broker-idp
+                 job at 07:04:37 — leaving roughly two minutes of that reconcile in
+                 which a first-time login was sent to a flow that stops to ask the
+                 user to confirm the link, instead of matching them to the account
+                 already provisioned for them by email.
+
+                 It was adopted Observe-only first and read back against the Admin
+                 API before anything was declared. That is the check the portal BFF
+                 client did not get: a Job writes through the Admin API, which
+                 enforces less than the schema the provider validates against, so
+                 anything a Job created may hold a state the provider cannot
+                 express.
+              */}}
+            {{- /* The broker client's id. Not a secret, but clientIdSecretRef is the
+                 only way the provider will take it, so it needs somewhere to live.
+                 The client_secret beside it is the one the observed Client above
+                 republishes. */}}
+            ---
+            apiVersion: kubernetes.crossplane.io/v1alpha2
+            kind: Object
+            metadata:
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: keycloak-broker-client-id
+              name: {{ $tenant }}-broker-client-id
+            spec:
+              forProvider:
+                manifest:
+                  apiVersion: v1
+                  kind: Secret
+                  metadata:
+                    name: {{ $tenant }}-broker-client-id
+                    namespace: platform-kernel
+                    labels:
+                      app.kubernetes.io/managed-by: crossplane
+                  stringData:
+                    client_id: broker-{{ $tenant }}
+              providerConfigRef:
+                name: kubernetes
+            ---
+            apiVersion: oidc.keycloak.crossplane.io/v1alpha1
+            kind: IdentityProvider
+            metadata:
+              name: {{ $tenant }}-kernel-idp
+              annotations:
+                crossplane.io/external-name: kernel
+                gotemplating.fn.crossplane.io/composition-resource-name: keycloak-kernel-idp
+            spec:
+              deletionPolicy: Orphan
+              # Everything except LateInitialize. Late-init copies the live object's
+              # values back over this spec for every field it does read, which is how
+              # the portal BFF client ended up unable to reconcile at all.
+              managementPolicies: ["Observe", "Create", "Update", "Delete"]
+              forProvider:
+                realm: {{ $tenant }}
+                alias: kernel
+                displayName: Gentian SSO
+                providerId: oidc
+                enabled: true
+                trustEmail: true
+                storeToken: true
+                hideOnLoginPage: true
+                linkOnly: false
+                authenticateByDefault: false
+                addReadTokenRoleOnCreate: false
+                syncMode: IMPORT
+                validateSignature: true
+                backchannelSupported: true
+                # openid alone is the provider's default, and it is not enough:
+                # dropping profile and email costs every brokered login the user's
+                # name and address.
+                defaultScopes: openid profile email
+                {{- /* Browser-facing endpoints go to the public URL; the
+                     server-to-server half stays inside the cluster, so Keycloak does
+                     not hairpin out through the ingress and back to reach itself
+                     during the broker code exchange. */}}
+                issuer: https://id.{{ $kd }}/auth/realms/{{ $kernelRealm }}
+                authorizationUrl: https://id.{{ $kd }}/auth/realms/{{ $kernelRealm }}/protocol/openid-connect/auth
+                logoutUrl: https://id.{{ $kd }}/auth/realms/{{ $kernelRealm }}/protocol/openid-connect/logout
+                tokenUrl: {{ $kcInternal }}/realms/{{ $kernelRealm }}/protocol/openid-connect/token
+                jwksUrl: {{ $kcInternal }}/realms/{{ $kernelRealm }}/protocol/openid-connect/certs
+                userInfoUrl: {{ $kcInternal }}/realms/{{ $kernelRealm }}/protocol/openid-connect/userinfo
+                # Matches a returning user to the account already provisioned for
+                # them by email.
+                firstBrokerLoginFlowAlias: first-broker-login-gentian
+                {{- /* updateProfileFirstLoginMode has no field on the provider and is
+                     read back, so it is carried here rather than left to a default.
+
+                     useJwksUrl is not, and no longer appears: the provider sets it
+                     from the jwksUrl field above. Verified against the Admin API —
+                     this broker carries useJwksUrl=true and validateSignature=true
+                     with nothing declaring them. Declaring it anyway left a key the
+                     provider writes but never reads back into extraConfig, so the
+                     resource could not converge and was updated on every pass. */}}
+                extraConfig:
+                  updateProfileFirstLoginMode: "on"
+                clientIdSecretRef:
+                  name: {{ $tenant }}-broker-client-id
+                  namespace: platform-kernel
+                  key: client_id
+                clientSecretSecretRef:
+                  name: {{ $tenant }}-broker-client
+                  namespace: platform-kernel
+                  key: attribute.client_secret
+              providerConfigRef:
+                name: keycloak
+            {{- end }}
+
             {{- range $app := dig "apps" list $spec }}
             ---
             apiVersion: gentianos.io/v1alpha1
@@ -272,27 +1487,13 @@ spec:
               {{- end }}
             {{- end }}
 
-            {{- if $llmEnabled }}
-            ---
-            apiVersion: gentianos.io/v1alpha1
-            kind: App
-            metadata:
-              name: open-webui
-              namespace: {{ $ns }}
-              annotations:
-                gotemplating.fn.crossplane.io/composition-resource-name: app-open-webui
-              labels:
-                gentianos.io/tenant: {{ $tenant }}
-                gentianos.io/app: open-webui
-                gentianos.io/managed-by: crossplane
-                app.kubernetes.io/managed-by: gentian-os
-            spec:
-              compositionUpdatePolicy: Automatic
-              profileRef:
-                name: open-webui
-              tenantNamespace: {{ $ns }}
-              domain: {{ $domain }}
-            {{- end }}
+            {{- /* No implicit apps. open-webui used to be injected here whenever the
+                 cluster served LLM — but an app the composition invents is an app
+                 the tenant operator cannot see: it seeds OIDC credentials (and
+                 builds identity Jobs and groups) from tenant.spec.apps alone, so
+                 the injected app's ExternalSecrets waited forever on an OpenBao
+                 path nothing would ever write. Tenant scaffolding lists open-webui
+                 in spec.apps when the claim serves LLM; one list, every reader. */}}
 
     - step: automatically-detect-ready-composed-resources
       functionRef:
@@ -307,10 +1508,19 @@ spec:
         resetCompositeReadiness: true
         rules:
           # Tenant shell before kernel Jobs or app claims.
+          #
+          # Every name here must be a resource this Composition renders. The
+          # sequencer waits for one that is absent rather than skipping it, and
+          # reports that as a normal delay — so a name left behind by a resource
+          # that moved elsewhere stops everything after it, silently and
+          # forever, on a composite that still reads Synced=True Ready=True.
+          # networkpolicy sat here for seven weeks after the tenant NetworkPolicy
+          # became the operator's (tenant_network_policy.go), holding vault-policy
+          # back the whole time: no tenant had the OpenBao policy its admin's
+          # token names, so every tenant-scoped credential write answered 403.
           - sequence:
             - namespace
             - limitrange
-            - networkpolicy
             - vault-policy
           # Keycloak realm before other identity Jobs; identity before App Compositions.
           # job-keycloak-(admin|…)-.* deliberately excludes job-keycloak-realm-* —

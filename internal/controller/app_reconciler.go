@@ -25,7 +25,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"os"
+	"strings"
 	"time"
 
 	batchv1 "k8s.io/api/batch/v1"
@@ -45,11 +45,14 @@ import (
 const (
 	conditionAppsReady = "AppsReady"
 
-	litellmProxyBaseURL    = "http://litellm-proxy.platform-kernel.svc.cluster.local:4000"
 	litellmMasterKeySecret = "llm-sensitive-values"
 	litellmMasterKeyNS     = "platform-kernel"
 	litellmMasterKeySecKey = "litellm_master_key" //nolint:gosec // Secret key name, not a credential.
 )
+
+// litellmProxyBaseURL is a var rather than a const only so tests can point it at
+// an httptest server. Nothing at run time reassigns it.
+var litellmProxyBaseURL = "http://litellm-proxy.platform-kernel.svc.cluster.local:4000"
 
 // appClaimGVK is the GVK for namespace-scoped App claims reconciled by Crossplane.
 var appClaimGVK = schema.GroupVersionKind{
@@ -58,9 +61,29 @@ var appClaimGVK = schema.GroupVersionKind{
 	Kind:    "App",
 }
 
-// ensureAppDeployment seeds OpenBao app secrets and watches Crossplane-owned App
-// claims for readiness. Claim creation is owned by tenant-default Composition.
-func (r *TenantReconciler) ensureAppDeployment(ctx context.Context, tenant *gentianov1alpha1.Tenant) (ctrl.Result, error) {
+// reconcileTenantApps reports whether a tenant's apps are up, and writes the two
+// things the Composition cannot write for itself.
+//
+// It does NOT deploy anything, despite what it was called for a long time. App
+// claims are created by the tenant-default Composition, each claim drives the
+// app Composition, and that emits the ExternalSecret and the provider-helm
+// Release. The operator once created a per-app Argo CD Application here; that
+// path is gone, and the name outlived it.
+//
+// What is left splits in two, and they are kept visibly apart because only one
+// of them is meant to stay:
+//
+//   - seedAppPrerequisites — the operator's remaining WRITES. OpenBao app
+//     secrets and the LiteLLM virtual key. Both exist because a Composition
+//     cannot mint a credential and store it; both belong in the Composition, or
+//     behind a Managed Resource, once there is a mechanism for it. Until then
+//     the claim's ExternalSecret has nothing to resolve unless this runs first.
+//   - the loop below — pure status AGGREGATION. Claim readiness, then workload
+//     health, then one condition on the Tenant.
+//
+// When the writes move, what remains is the aggregation, and this becomes a
+// read-only reconciler.
+func (r *TenantReconciler) reconcileTenantApps(ctx context.Context, tenant *gentianov1alpha1.Tenant) (ctrl.Result, error) {
 	if err := r.cleanupOrphanedAppWorkload(ctx, tenant); err != nil {
 		return ctrl.Result{}, fmt.Errorf("cleanup orphaned app workload: %w", err)
 	}
@@ -94,12 +117,8 @@ func (r *TenantReconciler) ensureAppDeployment(ctx context.Context, tenant *gent
 			continue
 		}
 
-		if err := r.seedAppSecrets(ctx, tenant, profileName, profile); err != nil {
-			return ctrl.Result{}, fmt.Errorf("seed app-secrets for %s: %w", profileName, err)
-		}
-
-		if err := r.injectLLMCredentials(ctx, tenant, profileName, profile); err != nil {
-			return ctrl.Result{}, fmt.Errorf("inject llm credentials for %s: %w", profileName, err)
+		if err := r.seedAppPrerequisites(ctx, tenant, profileName, profile); err != nil {
+			return ctrl.Result{}, err
 		}
 
 		ready, err := r.waitForAppClaimReady(ctx, tenant, profileName)
@@ -116,8 +135,41 @@ func (r *TenantReconciler) ensureAppDeployment(ctx context.Context, tenant *gent
 		return ctrl.Result{RequeueAfter: 15 * time.Second}, nil
 	}
 
+	// Every claim is Ready, which is a statement about Helm, not about the
+	// app. Ask the workloads before repeating it — see app_workload_health.go
+	// for what a Ready claim is worth on its own.
+	stuck, err := r.reconcileAppWorkloadHealth(ctx, tenantNamespaceName(tenant))
+	if err != nil {
+		return ctrl.Result{}, fmt.Errorf("check app workload health: %w", err)
+	}
+	if len(stuck) > 0 {
+		r.setCondition(tenant, conditionAppsReady, metav1.ConditionFalse, "WorkloadCannotStart",
+			fmt.Sprintf("Installed, but cannot create pods: %s", strings.Join(stuck, "; ")))
+		return ctrl.Result{RequeueAfter: 60 * time.Second}, nil
+	}
+
 	r.setCondition(tenant, conditionAppsReady, metav1.ConditionTrue, "Provisioned", "All App claims are Ready")
 	return ctrl.Result{}, nil
+}
+
+// seedAppPrerequisites writes what the app Composition needs to already exist.
+//
+// One seam, deliberately, for the two remaining writes: the OpenBao entries the
+// claim's ExternalSecret resolves, and the LiteLLM virtual key an LLM-consuming
+// app authenticates with. Neither is something a Composition can do today —
+// both mint or register a credential — so both are still the operator's.
+//
+// Grouped rather than left inline so the extraction is mechanical when there is
+// somewhere to move them to, and so the loop that calls it reads as what it
+// otherwise is: status aggregation.
+func (r *TenantReconciler) seedAppPrerequisites(ctx context.Context, tenant *gentianov1alpha1.Tenant, appName string, profile *gentianov1alpha1.AppProfile) error {
+	if err := r.seedAppSecrets(ctx, tenant, appName, profile); err != nil {
+		return fmt.Errorf("seed app-secrets for %s: %w", appName, err)
+	}
+	if err := r.injectLLMCredentials(ctx, tenant, appName, profile); err != nil {
+		return fmt.Errorf("inject llm credentials for %s: %w", appName, err)
+	}
+	return nil
 }
 
 // seedAppSecrets writes each AppProfile.spec.appSecrets entry into OpenBao at
@@ -181,7 +233,7 @@ func (r *TenantReconciler) waitForAppClaimReady(ctx context.Context, tenant *gen
 // with LiteLLM itself (idempotent — see ensureLiteLLMVirtualKey) so it is actually usable
 // rather than a string the proxy has never heard of.
 func (r *TenantReconciler) injectLLMCredentials(ctx context.Context, tenant *gentianov1alpha1.Tenant, appName string, profile *gentianov1alpha1.AppProfile) error {
-	if os.Getenv("LLM_SUPPORT") != "true" {
+	if !clusterLLMEnabled(ctx, r.Client) {
 		return nil
 	}
 
@@ -242,7 +294,7 @@ func (r *TenantReconciler) injectLLMCredentials(ctx context.Context, tenant *gen
 }
 
 // getLiteLLMMasterKey reads the admin key LiteLLM itself was seeded with
-// (scripts/seed-openbao.sh → ExternalSecret llm-sensitive-values in
+// (scripts/bootstrap/seed-openbao.sh → ExternalSecret llm-sensitive-values in
 // platform-kernel), needed to call its key-management API as an admin.
 func (r *TenantReconciler) getLiteLLMMasterKey(ctx context.Context) (string, error) {
 	secret := &corev1.Secret{}

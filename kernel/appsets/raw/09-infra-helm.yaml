@@ -5,13 +5,21 @@
 # Each Application syncs kernel/services/<app>/manifests/<env>/:
 #   configmap.yaml, externalsecret.yaml, release.yaml (and/or deployment.yaml)
 #
-# Deployed namespace: gentian-{env} (e.g. gentian-dev) — see manifests.
+# Deployed namespace: platform-kernel — the operator's SERVICES_NAMESPACE.
 # Service DNS expected by the operator:
-#   postfix-dev.gentian-dev.svc.cluster.local:587
-#   dovecot-dev.gentian-dev.svc.cluster.local:24 (LMTP)
+#   postfix-dev.platform-kernel.svc.cluster.local:587
+#   dovecot-dev.platform-kernel.svc.cluster.local:24 (LMTP)
 #
-# NOTE: Charts/images are public placeholders marked UNTESTED in service READMEs.
-# Wire-up with MAIL_SERVICE_MODE=kernel + install.sh step 15b / update.sh --mail.
+# Not gentian-<env>. mailSharedPostfixHost() in internal/controller/mail_reconciler.go
+# hands every tenant app postfix-<stage>.<servicesNamespace>, the operator writes
+# postfix-kernel-virtual-mailbox-maps into that namespace, and a Pod can only mount
+# a ConfigMap from its own namespace — so the mail stack has to run where the
+# operator already addresses it. The tenant NetworkPolicy baseline also already
+# permits egress to platform-kernel and never did to gentian-<env>.
+#
+# Postfix only. Dovecot is in 09b-dovecot.yaml, which the appsets chart skips
+# unless mail.serviceMode is kernel: it serves mailboxes, and in external mode
+# the mailboxes are at the provider.
 apiVersion: argoproj.io/v1alpha1
 kind: ApplicationSet
 metadata:
@@ -33,7 +41,6 @@ spec:
       - list:
           elements:
           - app: postfix
-          - app: dovecot
   template:
     metadata:
       name: '{{.app}}-{{.env}}'
@@ -44,10 +51,45 @@ spec:
       source:
         repoURL: https://github.com/gentian-org/gentian-os
         targetRevision: develop
-        path: kernel/services/{{.app}}/manifests/{{.env}}
+        path: kernel/services/{{.app}}/manifests
+        helm:
+          # env drives every stage-specific string in the chart, so adding a
+          # stage needs no new directory — the old manifests/<env> layout meant
+          # a missing directory failed as "app path does not exist" with the
+          # Application stuck Unknown and no values ConfigMaps created.
+          parameters:
+            - name: env
+              value: '{{.env}}'
+            # Postfix renders ALLOWED_SENDER_DOMAINS from this. It is rewritten
+            # from the literal below by kernel/appsets/templates/appsets.yaml,
+            # the same mechanism that rewrites "env: dev".
+            - name: kernelDomain
+              value: 'kernel.domain.placeholder'
+            # Outbound relay for MAIL_SERVICE_MODE=external, rewritten from these
+            # literals by kernel/appsets/templates/appsets.yaml. Empty in kernel
+            # mode, which is direct delivery — so the mail mode needs no switch
+            # here, only the presence or absence of a host.
+            #
+            # Declared here because the relay used to be set by patching the live
+            # ConfigMap the bokysan chart renders, which provider-helm reverted.
+            - name: relayHost
+              value: 'external.smtp.host.placeholder'
+            - name: relayPort
+              value: 'external.smtp.port.placeholder'
+            # kernel or external. Decides whether Postfix signs with DKIM and
+            # delivers locally, or is purely a relay.
+            - name: mailServiceMode
+              value: 'mail.service.mode.placeholder'
+            - name: egressHost
+              value: 'mail.egress.host.placeholder'
+          # Only stages that genuinely differ carry a values file; the rest
+          # inherit the chart defaults.
+          valueFiles:
+            - values-{{.env}}.yaml
+          ignoreMissingValueFiles: true
       destination:
         server: https://kubernetes.default.svc
-        namespace: gentian-{{.env}}
+        namespace: platform-kernel
       syncPolicy:
         automated:
           prune: true
@@ -62,6 +104,16 @@ spec:
         - CreateNamespace=false
         - ServerSideApply=true
       ignoreDifferences:
+      # The operator stamps a hash of the Dovecot realm set on the Pod template to
+      # restart it when a realm is added — Dovecot reads its passdb blocks only at
+      # startup. Git cannot declare the value (it depends on which tenants exist),
+      # so without this exclusion Argo CD reverts the stamp, the operator writes it
+      # again, and the two fight indefinitely while Dovecot never picks up the new
+      # realm. It is runtime state, not desired config.
+      - group: apps
+        kind: Deployment
+        jqPathExpressions:
+        - '.spec.template.metadata.annotations["gentianos.io/realm-auth-hash"]'
       - group: external-secrets.io
         kind: ExternalSecret
         jqPathExpressions:

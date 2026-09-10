@@ -3,7 +3,7 @@
 **Status:** Draft v0.1  
 **Scope:** User and group administration, tenant-scoped notifications, member onboarding, and the identity/provisioning contracts for the Suze (`keycloak-native`) path.
 
-**Companion docs:** [architecture.md](../architecture.md), [iam.md](iam.md), [security.md](security.md), [multi-tenancy.md](multi-tenancy.md), [tenant-identity-composition.md](tenant-identity-composition.md), [app-catalogue.md](app-catalogue.md).
+**Companion docs:** [architecture.md](../architecture.md), [iam.md](iam.md), [security.md](security.md), [multi-tenancy.md](multi-tenancy.md), [tenant-identity-composition.md](tenant-identity-composition.md), [app-catalogue.md](app-catalogue.md), [resource-plans.md](resource-plans.md).
 
 ---
 
@@ -43,6 +43,7 @@ in [iam.md](iam.md) and [multi-tenancy.md §8](multi-tenancy.md#81-admin--user-s
 | **Sessions** | Active login inventory and revocation | P5 — list sessions, sign-out everywhere |
 | **Audit** | Sign-in and admin-action history | P6 — read-only event log, export |
 | **Notifications** | Scoped broadcasts | P7 — `admin-notifications` contract (**done**) |
+| **Resources** | Resource plans, ceilings, usage history | P10 — see [§4.8](#48-resources-p10) and [resource-plans.md](resource-plans.md) (**done**) |
 | **App Store** | Catalogue installs | **Stage 2** — see [§9](#9-stage-2--authorization-and-governance) |
 
 Implementation: Gentian BFF + React UI (`gentian-ui`, `ui_kits/console` aesthetic)
@@ -73,38 +74,52 @@ Authorization inside the console uses **RBAC groups in Keycloak** (ergonomic) ba
 | Realm | Purpose | Human users |
 |---|---|---|
 | `master` | Keycloak operator CLI only | No |
-| `kernel` | Shared portal OIDC (`gentian-portal`), **platform admins**, identity-first login router | Platform admins only |
-| `<tenant>` | **Authoritative store** for tenant members, groups, app OIDC clients | All tenant members and tenant admins |
+| `kernel` | Shared portal's own clients, platform admins | Platform admins only |
+| `<tenant>` | **Authoritative store** for tenant members, groups, app OIDC clients, **and where tenant members authenticate** | All tenant members and tenant admins |
 
-Users are **managed in the tenant realm**. The shared portal login flow uses the **kernel realm**, which **brokers** to the correct tenant realm by email / tenant resolution.
+Users are **managed and authenticated in the tenant realm** — each tenant realm
+has its own `Cookie → forms` browser flow, so tenant members sign in directly
+there rather than being brokered through `kernel`. `kernel` keeps its own job:
+platform operators, Argo CD, and the portal's own clients.
 
 ```mermaid
 flowchart TD
-    Login["portal.&lt;kernel&gt;/login"]
-    
-    KernelRealm["kernel realm<br>identity-first<br>gentian-portal client, platform admins"]
-    
-    Login --> KernelRealm
-    
-    KernelRealm -->|"OIDC broker (per tenant)"| Tenants
-    
-    subgraph Tenants ["(users live here)"]
+    TenantHost["&lt;tenant&gt;.&lt;kernel&gt;/login<br>(bookmarkable, canonical)"]
+    Apex["&lt;kernel&gt;/login<br>(email prompt only)"]
+
+    TenantHost -->|"email + password, one stage"| TenantRealm
+    Apex -->|"hands off to the tenant host,<br>carrying the email"| TenantHost
+
+    subgraph TenantRealm ["tenant realm — Cookie → forms"]
         direction LR
         TenantDemo["tenant:demo"]
         TenantAcme["tenant:acme"]
         TenantOthers["…"]
     end
+
+    Ops["platform operator"] -->|"Cookie → forms"| KernelRealm["kernel realm"]
 ```
 
-Tenant apps (Jitsi, Nextcloud, …) continue to use the **tenant realm** for OIDC. The tenant realm **brokers to the kernel IdP** so a user with an active portal session is not prompted again (`browser-kernel-idp` / `first-broker-login-gentian` flows).
+Every OIDC app (Jitsi, Nextcloud, Odoo, …) also uses the tenant realm as its
+IdP, which is why this matters: the session an app's redirect needs already
+lives in the same realm the portal just authenticated against, so it's reused
+silently — no broker hop, no second login screen.
+
+A realm is an isolated user store and a login page belongs to exactly one
+realm, so a single password form in front of users from several realms isn't
+possible — which is why the tenant host, not the apex, is what's meant to be
+bookmarked: it's the only entry point that knows the realm before rendering
+the form, so it can ask for both email and password in one stage. The apex
+only asks for an email, then hands the browser to that tenant's own host with
+the address attached so Keycloak can pre-fill it.
 
 ### 3.2 Login identifiers
 
 | Field | Rule |
 |---|---|
-| **Primary login (`username` / `email`)** | Email address — global uniqueness across the cluster (`user@demo.desk.gentian.org`) |
+| **Primary login (`username` / `email`)** | Email address — global uniqueness across the cluster (`user@demo.platform.example.com`) |
 | **`inviteEmail`** | Optional secondary address for **invite**, **password reset**, and **account recovery** only |
-| **Tenant admin bootstrap** | Username `admin-<tenant>`; login email from `Tenant.spec.adminEmail`; password from OpenBao `gentian-os/tenants/<tenant>/admin` |
+| **Tenant admin bootstrap** | Username and address are the same string, `admin@<tenant-domain>`, derived not configured; password from OpenBao `gentian-os/tenants/<tenant>/admin` |
 | **Platform admin bootstrap** | `administrator@<KERNEL_DOMAIN>`; password derived from install `MASTER_PASSWORD` |
 
 ### 3.3 Group taxonomy
@@ -154,6 +169,7 @@ One web app embedded in the Gentian shell (builtin desktop apps). Menu items sho
 | Sessions | All tenants (initially) | Own tenant members only |
 | Audit | Platform + all tenants | Own tenant only |
 | Notifications | Platform-wide publish | Tenant-scoped publish |
+| Resources | All tenants; may force a downgrade | Own tenant; held to its entitlement |
 | Tenants | Yes | Hidden |
 | App Store | Stage 2 | Stage 2 |
 
@@ -165,14 +181,14 @@ One web app embedded in the Gentian shell (builtin desktop apps). Menu items sho
 
 1. `install.sh` seeds Suze + kernel realm.
 2. Job or bootstrap script creates `administrator@<KERNEL_DOMAIN>` in **kernel realm** with `gentian:platform:superadmin`.
-3. Admin signs in at `https://portal.<kernel>/login` → kernel broker not needed → Admin Console desktop.
+3. Admin signs in at `https://<kernel>/login` (kernel realm, `Cookie → forms`) → Admin Console desktop.
 
 **B) Tenant admin (`kubectl gentian tenants deploy demo`)**
 
 1. Operator seeds OpenBao `gentian-os/tenants/demo/admin`.
 2. Provisioning creates **tenant realm** `demo`, groups, tenant admin user, `gentian:tenant:demo:admins` membership.
 3. CLI prints login email + password (after Keycloak user is ready).
-4. Tenant admin signs in at shared portal → kernel brokers to tenant realm → Admin Console.
+4. Tenant admin signs in directly at `demo.<kernel>/login` (tenant realm, `Cookie → forms`) → Admin Console.
 
 **C) Tenant admin invites members**
 
@@ -255,6 +271,44 @@ All admin **mutations** through the BFF include actor, tenant, target, and
 correlation id. Platform operators use the same module with broader scope during
 bootstrap; `platformAdminMode: constrained` limits routine cross-tenant visibility
 (§7).
+
+### 4.8 Resources (P10)
+
+Maps to the OS question *"how much of this machine may this account use, and how
+much is it using?"* — with the part a desktop OS has no answer for: **what that
+came to over a month**.
+
+Full design in [resource-plans.md](resource-plans.md); what matters to the
+console is the shape.
+
+| Capability | Tenant admin | Platform admin |
+|---|---|---|
+| **Current ceiling** | Own tenant: enforced limits paired with committed use, and live consumption where a metrics source exists | Any tenant, plus an all-tenants headroom table |
+| **Plan catalogue** | Plans they may select, each blocked one carrying its reason | The whole catalogue, including plans withheld from self-service |
+| **Change plan** | Self-service, held to the tenant's entitlement ceiling | Any plan; may **force** a shrink below current use |
+| **Usage history** | Own tenant, per resource, over 7d–12m | Any tenant |
+| **Billed intervals** | The stretches the window resolves to, with the SKU in effect over each | Same |
+
+Three properties make this different from an editable quota field:
+
+**The API takes a plan name, never a quantity.** A ceiling that can be any number
+can be any number that was never sold, so every ceiling reachable through the
+console is one the platform has priced — which is what makes a month resolve to
+SKUs rather than to numbers somebody downstream has to interpret.
+
+**The write is a commit, not a patch.** Selecting a plan edits
+`gentian-deployments` through the same app lifecycle API an App Store install
+uses, so the console and the GitOps repository cannot disagree about a tenant's
+ceiling. `kubectl gentian resources` calls the same endpoints.
+
+**A downgrade below current use is refused.** Kubernetes does not evict pods to
+fit a shrunken quota — it refuses the *next* create — so shrinking a tenant too
+far fails silently, hours later, at the next restart. The console names the
+resource and both numbers instead.
+
+Plan changes are audited (§4.7), **including refusals**: a refused downgrade is
+a decision someone made, and the attempt is the interesting half when a tenant
+later asks why nothing changed.
 
 ---
 
@@ -385,6 +439,7 @@ Aligned with [roadmap.md § Gentian Admin Console](../roadmap.md#gentian-admin-c
 | **P7** | `admin-notifications` gateway + publish UI | **Done** (`gentian-ui`) — see [§8.7](#87-p7-status) |
 | **P8** | Provisioning controller + CloudEvents/SCIM bus; per-member sync status | Planned |
 | **P9** | OpenFGA `can_launch` for admin modules (shell tile shipped in P1) | Planned |
+| **P10** | **Resources** — plan catalogue, ceilings, usage history, billed intervals (§4.8) | **Done** — see [§8.8](#88-p10-status) |
 | **Later** | `platformAdminMode: constrained`; WebAuthn in Security policies | Planned |
 
 **Explicitly not in P0–P7:** tenant app install (GitOps / `kubectl gentian apps`), app-side provisioner execution, Stage 2 authorization surfaces (§9).
@@ -400,9 +455,9 @@ Keycloak-native (Suze) is the only path.
 | Item | Status | Notes |
 |---|---|---|
 | Suze Keycloak + OpenFGA install | **Done** | `install.sh` Steps 14–15 |
-| Kernel realm + `gentian-portal` client | **Done** | `scripts/portal-login-bootstrap.sh` Job + optional Crossplane `gentian-portal` Client MR |
+| Kernel realm + `gentian-portal` client | **Done** | `scripts/lib/portal-login-bootstrap.sh` Job + optional Crossplane `gentian-portal` Client MR |
 | Platform admin bootstrap | **Done** | `administrator@<KERNEL_DOMAIN>` + `gentian:platform:superadmin`; password `MASTER_PASSWORD`-derived; `groups` scope on `gentian-portal` |
-| Tenant realm Jobs | **Done** | `keycloak-realm-*`, `keycloak-gentian-groups-*`, `keycloak-admin-*`, `keycloak-broker-idp-*` (`tenant_identity_manifests.go`) |
+| Tenant realm Jobs | **Done** | `keycloak-realm-*`, `keycloak-gentian-groups-*`, `keycloak-admin-*` (`tenant_identity_manifests.go`); brokering is `tenant-default`'s |
 | **`gentian:tenant:<t>:*` group taxonomy** | **Done** | `makeGentianGroupsJob` — `members`, `admins`, `app:<profile>` per tenant apps |
 | Tenant admin in `gentian:tenant:<t>:admins` | **Done** | `keycloak-admin-*` Job joins admin user to admins group (+ `realm-admin` for Keycloak Admin API) |
 | OIDC pack entitlement groups | **Done** | Packs map `gentian:tenant:<t>:app:<profile>` entitlement groups |
@@ -518,6 +573,33 @@ Last reviewed against `gentian-ui` (`develop`).
 
 **P7 caveats:** v1 stores notifications and serves the portal inbox only — no Postfix or Element fan-out yet. Platform-wide publishes require platform administrator privileges. Dismissals are per-user and stored in `admin_notification_dismissals`.
 
+### 8.8 P10 status
+
+Last reviewed against `gentian-os` and `gentian-ui` (`develop`).
+
+| Item | Status | Location |
+|---|---|---|
+| **`ResourcePlan` CRD** | **Done** | `gentian-os/api/v1alpha1/resourceplan_types.go`; default catalogue in the operator chart under `usage.plans.catalogue` |
+| **Plan resolution + downgrade guard** | **Done** | `gentian-os/internal/resourceplan/` |
+| **Usage sampler + history store** | **Done** | `gentian-os/internal/usage/` — samples into each tenant's `{tenant}_shell` database |
+| **Resources API** | **Done** | `GET/PUT /v1/tenants/{t}/resources`, `…/plans`, `…/usage`, `…/report` on the app lifecycle API |
+| **GitOps write path** | **Done** | Per-tenant `resource-plan.yaml` patch, listed after the `tenant-defaults` component so it is the last word on the ceiling |
+| **Entitlement ceiling** | **Done** | `gentianos.io/max-resource-tier` on the Tenant, resolved server-side |
+| **CLI** | **Done** | `kubectl gentian resources plans\|show\|set\|report` |
+| **Console Resources tab** | **Done** | `gentian-ui/frontend/src/admin/ResourcesSection.tsx`, `UsageChart.tsx` |
+| **BFF routes + audit** | **Done** | `GET/PUT /api/v1/admin/resources…`; `resources.plan_changed` and `resources.plan_change_refused` |
+| **metrics-server** | **Optional** | `scripts/steps/A-11-metrics-server.sh`; `usage.metricsServer.enabled` |
+
+**P10 caveats:** the billing series is the enforced ceiling and what is committed
+under it, both from the API server — live consumption is advisory and needs
+metrics-server, which is optional and, having no history of its own, is a
+swappable source behind `usage.ActualSource` rather than the record itself.
+History begins when sampling is switched on; there is no backfill, because
+nothing observed the past. A cluster-wide roll-up opens one database connection
+per tenant, which is the price of keeping each tenant's consumption in its own
+database. The portal needs `appLifecycle.url` set, or the tab reports itself
+unconfigured.
+
 ---
 
 ## 9. Stage 2 — authorization and governance
@@ -607,7 +689,7 @@ These stay outside the Admin Console — cluster admin, GitOps, or dedicated too
 
 | Topic | Notes |
 |---|---|
-| **Email-domain → tenant routing** | Kernel login broker must handle `multi` tenancy (`user@demo.desk.gentian.org`) and `single` tenancy (`user@desk.gentian.org`). Reuse `Tenant.EffectiveDomain()` logic. |
+| **Email-domain → tenant routing** | Kernel login broker must handle `multi` tenancy (`user@demo.platform.example.com`) and `single` tenancy (`user@platform.example.com`). Reuse `Tenant.EffectiveDomain()` logic. |
 | **Authz bridge** | Currently syncs users; group/entitlement sync needed for accurate portal tiles (P6). |
 | **OIDC pack field names** | Catalogue uses `entitlementGroup` to map packs to `gentian:tenant:<t>:app:<profile>` groups. |
 | **Platform vs tenant admin UI** | Single console with scoped menus; BFF enforces tenant boundary on every mutation. |
@@ -629,4 +711,5 @@ These stay outside the Admin Console — cluster admin, GitOps, or dedicated too
 | Tenant provisioning Jobs | [tenant-identity-composition.md](tenant-identity-composition.md) |
 | App contracts | [app-catalogue.md](app-catalogue.md) |
 | UI shell | `gentian-ui/legacy/design-system/ui_kits/console/` |
+| Resource plans and usage | [resource-plans.md](resource-plans.md) |
 | Stage 2 authorization | [security.md](security.md) |

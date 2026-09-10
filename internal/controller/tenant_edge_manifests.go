@@ -54,9 +54,10 @@ func (r *TenantReconciler) buildTenantEdgeObjects(ctx context.Context, tenant *g
 	objects = append(objects,
 		buildTenantWildcardCertificate(tenant, nsName, wildcardCertName, tlsSecret, effectiveDomain, r.tenantDNS01ClusterIssuer()),
 	)
-	gw := buildTenantGateway(tenant, nsName, effectiveDomain, tlsSecret)
-	gw.SetGroupVersionKind(gatewayv1.SchemeGroupVersion.WithKind("Gateway"))
-	objects = append(objects, gw)
+	// Tenant app hostnames are served by the kernel Gateway. The tenant's
+	// certificate stays in the tenant namespace and is referenced across
+	// namespaces by the ReferenceGrants below, so certificate ownership follows
+	// the tenant without a Gateway of its own.
 	objects = append(objects, buildTenantReferenceGrantObjects(tenant)...)
 
 	for _, route := range appHTTPRoutesForIntents(tenant, nsName, intents, effectiveDomain, r.KernelDomain) {
@@ -68,9 +69,9 @@ func (r *TenantReconciler) buildTenantEdgeObjects(ctx context.Context, tenant *g
 			objects = append(objects, btp)
 		}
 	}
-	if anyIntentNeedsEscapedSlashesKeepUnchanged(intents) {
-		objects = append(objects, buildTenantEscapedSlashesClientTrafficPolicyObject(tenant, nsName))
-	}
+	// The escaped-slashes ClientTrafficPolicy for this tenant's listener is
+	// created alongside the kernel Gateway, since an Envoy Gateway policy must
+	// live in the same namespace as the Gateway it targets.
 
 	return objects, nil
 }
@@ -96,9 +97,12 @@ func (r *TenantReconciler) waitForTenantEdgeResources(ctx context.Context, tenan
 		return false, "NoDomain", nil
 	}
 
-	tlsSecret := tenantWildcardSecretName(tenant.Name)
-	desiredGW := buildTenantGateway(tenant, nsName, effectiveDomain, tlsSecret)
-	if programmed, reason := gatewayProgrammed(ctx, r.Client, desiredGW); !programmed {
+	// Edge readiness is the kernel Gateway's: it terminates TLS and carries the
+	// tenant listener for this tenant's subdomains.
+	kernelGW := &gatewayv1.Gateway{}
+	kernelGW.Name = KernelPublicGatewayName
+	kernelGW.Namespace = servicesNamespace
+	if programmed, reason := gatewayProgrammed(ctx, r.Client, kernelGW); !programmed {
 		return false, reason, nil
 	}
 

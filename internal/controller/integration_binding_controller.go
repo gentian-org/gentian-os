@@ -37,6 +37,7 @@ type IntegrationBindingReconciler struct {
 
 // +kubebuilder:rbac:groups=gentianos.io,resources=integrationbindings,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=gentianos.io,resources=integrationbindings/status,verbs=get;update;patch
+// +kubebuilder:rbac:groups=gentianos.io,resources=integrationbindings/finalizers,verbs=update
 // +kubebuilder:rbac:groups=gentianos.io,resources=tenants,verbs=get;list;watch
 // +kubebuilder:rbac:groups=gentianos.io,resources=appprofiles,verbs=get;list;watch
 
@@ -72,9 +73,9 @@ func (r *IntegrationBindingReconciler) Reconcile(ctx context.Context, req ctrl.R
 			if providerProfile.Spec.Ingress.SubDomain != "" {
 				// We don't have KERNEL_DOMAIN here so we can't fully construct the URL if TenantDomain is empty
 				// But we can just use the internal service URL!
-				endpoint = fmt.Sprintf("http://%s.%s.svc.cluster.local:%d/remote.php/dav/", 
-					providerProfile.Spec.Ingress.ServiceName, 
-					ib.Namespace, 
+				endpoint = fmt.Sprintf("http://%s.%s.svc.cluster.local:%d/remote.php/dav/",
+					providerProfile.Spec.Ingress.ServiceName,
+					ib.Namespace,
 					providerProfile.Spec.Ingress.ServicePort)
 			}
 		}

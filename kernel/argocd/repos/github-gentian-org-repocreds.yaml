@@ -1,0 +1,49 @@
+# Credential template for every github.com/gentian-org repository at once.
+#
+# Argo CD resolves credentials for a repository with none of its own by
+# longest-prefix match against secrets labelled repo-creds. Without this,
+# every gentian-org source except the deployments repository — gentian-os,
+# which backs most Applications on the cluster, gentian-ui, gentian-apps —
+# was fetched anonymously, each on its own ~3-minute refresh, around the
+# clock. GitHub's anonymous abuse limiting eventually put the cluster's
+# egress IP in a penalty box where anonymous git intermittently answers 401
+# — observed as public repos that fetch fine authenticated and flap
+# anonymously, and as odoo's git-sync (also anonymous, also this IP)
+# crash-looping on a public repository. Argo CD itself limps through on
+# caching and retries, which is why nothing named it.
+#
+# The credential is the deployments repository's token, read from the same
+# OpenBao entry its own ExternalSecret uses: one PAT the operator already
+# supplies, valid for every repository it can read. A repository that later
+# gets its own repository-type Secret with credentials still wins over this
+# template.
+apiVersion: external-secrets.io/v1
+kind: ExternalSecret
+metadata:
+  name: github-gentian-org-repocreds
+  namespace: argocd
+spec:
+  refreshInterval: 1h
+  secretStoreRef:
+    kind: ClusterSecretStore
+    name: openbao
+  data:
+    - secretKey: username
+      remoteRef:
+        key: gentian-os/kernel/repositories/deployments
+        property: username
+    - secretKey: password
+      remoteRef:
+        key: gentian-os/kernel/repositories/deployments
+        property: password
+  target:
+    name: github-gentian-org-repocreds
+    template:
+      metadata:
+        labels:
+          argocd.argoproj.io/secret-type: repo-creds
+      data:
+        type: git
+        url: https://github.com/gentian-org
+        username: "{{ .username }}"
+        password: "{{ .password }}"

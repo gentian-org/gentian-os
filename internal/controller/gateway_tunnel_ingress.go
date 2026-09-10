@@ -14,7 +14,6 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-
 package controller
 
 import (
@@ -30,15 +29,15 @@ import (
 
 // ensureKernelGatewayTunnelIngress programs explicit kernel and tenant apex hostnames
 // on the Cloudflare tunnel to reach kernel-public-gateway. Wildcard tunnel hostname
-// rules such as *.desk.gentian.org are unreliable for multi-label kernel domains;
-// tenant app wildcards (*.demo.desk.gentian.org) are handled per-tenant separately.
+// rules such as *.platform.example.com are unreliable for multi-label kernel domains;
+// tenant app wildcards (*.demo.platform.example.com) are handled per-tenant separately.
 func ensureKernelGatewayTunnelIngress(
 	ctx context.Context,
 	c client.Client,
-	cf *CloudflareDNSClient,
+	ing EdgeIngress,
 	kernelDomain, tenancyMode string,
 ) error {
-	if cf == nil || kernelDomain == "" {
+	if ing == nil || kernelDomain == "" {
 		return nil
 	}
 	origin, err := kernelGatewayTunnelOrigin(ctx, c)
@@ -67,11 +66,12 @@ func ensureKernelGatewayTunnelIngress(
 	}
 
 	hosts := map[string]struct{}{
-		kernelDomain:                      {},
-		kernelPortalHost(kernelDomain):    {},
-		"corp." + kernelDomain:            {},
+		kernelDomain:                   {},
+		kernelPortalHost(kernelDomain): {},
+		"corp." + kernelDomain:         {},
 	}
-	for _, spec := range kernelHTTPRouteSpecs(kernelDomain, effectiveDomains, oidcSubs, tenantNames) {
+	for _, spec := range kernelHTTPRouteSpecs(kernelDomain, effectiveDomains, oidcSubs, tenantNames,
+		clusterLLMEnabled(ctx, c)) {
 		if spec.host != "" {
 			hosts[spec.host] = struct{}{}
 		}
@@ -87,13 +87,32 @@ func ensureKernelGatewayTunnelIngress(
 	}
 	sort.Strings(sorted)
 	for _, host := range sorted {
-		if err := cf.ensureTunnelIngress(ctx, host, origin); err != nil {
-			logger.Error(err, "ensure Cloudflare kernel tunnel ingress", "host", host, "origin", origin)
+		// Routes only. What these hostnames RESOLVE to is external-dns's job,
+		// from the annotations this ingress puts on the kernel Gateway — the
+		// same path a static-ip cluster uses, where the Gateway's own address
+		// answers instead. The operator writing records itself is what made a
+		// Route 53 cluster have no DNS writer at all.
+		if err := edgeEnsureRoute(ctx, ing, host, origin); err != nil {
+			logger.Error(err, "ensure kernel edge route", "host", host, "origin", origin)
 			return err
 		}
 	}
-	if err := cf.deleteTunnelIngress(ctx, "*."+kernelDomain); err != nil {
-		logger.Error(err, "delete Cloudflare kernel wildcard tunnel ingress", "host", "*."+kernelDomain)
+	// A stale wildcard RULE, retired in favour of the explicit per-host rules
+	// above. Nothing to undo in DNS: the wildcard record is still wanted.
+	if err := edgeDeleteRoute(ctx, ing, "*."+kernelDomain); err != nil {
+		logger.Error(err, "delete kernel wildcard tunnel route", "host", "*."+kernelDomain)
+		return err
+	}
+
+	// The same hostnames, as records — through a DNSEndpoint the crd source
+	// reads, not the gateway-httproute source. That source takes its target
+	// from the Gateway's status addresses, which a tunnelled Gateway never
+	// has; see edge_dnsendpoint.go for the deadlock that surfaced this. A
+	// no-op when the ingress supplies no target, which is the static-ip
+	// cluster — its records keep coming from gateway-httproute exactly as
+	// they do today.
+	if err := syncEdgeDNSEndpoint(ctx, c, ing, defaultServicesNamespace(), sorted); err != nil {
+		logger.Error(err, "sync edge DNSEndpoint")
 		return err
 	}
 	return nil

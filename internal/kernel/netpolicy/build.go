@@ -39,6 +39,7 @@ type BuildInput struct {
 func BuildDesired(in BuildInput) []*networkingv1.NetworkPolicy {
 	out := []*networkingv1.NetworkPolicy{
 		BaselineNetworkPolicy(in.TenantName, in.Namespace, in.Config, in.KubeAPIEndpts),
+		ExportJobNetworkPolicy(in.TenantName, in.Namespace, in.Config),
 	}
 
 	for _, app := range in.Apps {
@@ -96,11 +97,12 @@ func cacheAppNames(in BuildInput) []string {
 func ManagedPolicyNames(in BuildInput) map[string]struct{} {
 	names := map[string]struct{}{
 		baselinePolicyName: {},
+		exportPolicyName(): {},
 	}
 	for _, app := range in.Apps {
 		names[kernelPolicyName(app.Profile)] = struct{}{}
 		names[appInternalPolicyName(app.Profile)] = struct{}{}
-		
+
 		profile := in.Profiles[app.Profile]
 		if profile != nil && profile.Spec.Security != nil && len(profile.Spec.Security.Egress) > 0 {
 			names[appEgressPolicyName(app.Profile)] = struct{}{}

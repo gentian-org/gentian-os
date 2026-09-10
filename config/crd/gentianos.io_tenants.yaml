@@ -27,8 +27,8 @@ spec:
     - jsonPath: .status.readyApps
       name: READY
       type: integer
-    - jsonPath: .spec.adminEmail
-      name: MAIL
+    - jsonPath: .status.adminEmail
+      name: ADMIN
       type: string
     - jsonPath: .metadata.creationTimestamp
       name: AGE
@@ -64,10 +64,6 @@ spec:
           spec:
             description: TenantSpec defines the desired state of a Tenant.
             properties:
-              adminEmail:
-                description: AdminEmail is the contact address for platform notifications.
-                pattern: ^[^@\s]+@[^@\s]+\.[^@\s]+$
-                type: string
               apps:
                 description: Apps lists the applications to install for this tenant.
                 items:
@@ -87,8 +83,8 @@ spec:
 
                         The App Store writes this list — pre-filled from an AppPackage preset when
                         one is chosen, then editable afterwards. Entries the tenant is not entitled
-                        to are rejected; entitlement is what gates a pro addon, not compatibility.
-                        See gentian-apps/docs/L3-cleanup.md.
+                        to are rejected; entitlement is what gates an ee addon, not compatibility.
+                        See gentian-os/docs/app-customization.md §4.2.
                       items:
                         type: string
                       type: array
@@ -173,11 +169,11 @@ spec:
                               type: string
                             edition:
                               default: ce
-                              description: Edition selects the edition (ce, me, pro).
+                              description: Edition selects the edition (ce, me, ee).
                               enum:
                               - ce
                               - me
-                              - pro
+                              - ee
                               type: string
                             family:
                               description: Family is the stable logical application
@@ -276,18 +272,6 @@ spec:
                     - transport-only
                     - disabled
                     type: string
-                  quotaPerUser:
-                    anyOf:
-                    - type: integer
-                    - type: string
-                    description: QuotaPerUser is the per-user mailbox storage quota.
-                    pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
-                    x-kubernetes-int-or-string: true
-                  rateLimit:
-                    description: RateLimit is the outbound email rate limit (e.g.,
-                      "100/h").
-                    pattern: ^[0-9]+/(s|m|h|d)$
-                    type: string
                   smtpCredentialsSecret:
                     description: |-
                       SmtpCredentialsSecret is the name of an existing Kubernetes Secret in the
@@ -303,8 +287,16 @@ spec:
                     anyOf:
                     - type: integer
                     - type: string
-                    description: CPU is the total CPU request limit across all tenant
-                      pods.
+                    description: |-
+                      CPU caps the sum of container CPU **limits** in the namespace.
+
+                      A limit is a burst ceiling, not a reservation: it is what a container may
+                      spike to, and the scheduler does not set anything aside for it. Chart
+                      defaults are generous with limits — one tenant running Nextcloud, an
+                      office suite and the App Store sums to roughly six cores of limits while
+                      reserving one — so this number does not correspond to hardware and must
+                      not be the one a plan is sold on. It exists to bound the blast radius of
+                      a runaway container. Sell RequestsCPU.
                     pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
                     x-kubernetes-int-or-string: true
                   maxApps:
@@ -323,8 +315,35 @@ spec:
                     anyOf:
                     - type: integer
                     - type: string
-                    description: Memory is the total memory request limit across all
-                      tenant pods.
+                    description: |-
+                      Memory caps the sum of container memory **limits** in the namespace.
+                      The burst ceiling, for the same reason as CPU. Sell RequestsMemory.
+                    pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                    x-kubernetes-int-or-string: true
+                  requestsCpu:
+                    anyOf:
+                    - type: integer
+                    - type: string
+                    description: |-
+                      RequestsCPU caps the sum of container CPU **requests** in the namespace.
+
+                      Requests are what the scheduler actually reserves, so this is the number
+                      that maps one-to-one onto purchased capacity: two cores of requests is
+                      two cores of a node that nothing else can schedule into. It is therefore
+                      the quantity a ResourcePlan is priced on.
+
+                      Safe to impose on a namespace that already has pods: the tenant
+                      LimitRange sets defaultRequest (100m / 128Mi), so a container that
+                      declares no request still has one and the quota cannot reject it.
+                    pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                    x-kubernetes-int-or-string: true
+                  requestsMemory:
+                    anyOf:
+                    - type: integer
+                    - type: string
+                    description: |-
+                      RequestsMemory caps the sum of container memory **requests** in the
+                      namespace — reserved capacity, priced, as RequestsCPU is.
                     pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
                     x-kubernetes-int-or-string: true
                   storage:
@@ -336,12 +355,20 @@ spec:
                     x-kubernetes-int-or-string: true
                 type: object
             required:
-            - adminEmail
             - displayName
             type: object
           status:
             description: TenantStatus holds the observed state of a Tenant.
             properties:
+              adminEmail:
+                description: |-
+                  AdminEmail is the resolved contact address for this tenant, and the
+                  administrator's login: admin@<effectiveDomain>.
+
+                  Reported here because it is derived — there is no spec field to read it
+                  back from — so a consumer that needs the address reads status, and a
+                  tenant whose domain changes shows the new one here once reconciled.
+                type: string
               appCount:
                 description: AppCount is the total number of apps requested in spec.
                 type: integer

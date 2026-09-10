@@ -138,50 +138,34 @@ echo "resolved client scope ${SCOPE_NAME} id=${SCOPE_UUID}"
 `
 }
 
-// ShellEnsureInviteEmailUserProfile registers gentian.inviteEmail and uid on the realm
-// user profile so Admin API can persist recovery addresses for invite/reset delivery.
-func ShellEnsureInviteEmailUserProfile(realmExpr string) string {
-	return fmt.Sprintf(`
-# Ensure gentian.inviteEmail and uid are managed user-profile attributes.
-PROFILE=$(curl -sf -H "Authorization: Bearer ${TOKEN}" "${KEYCLOAK_URL}/admin/realms/%s/users/profile")
-UPDATED="${PROFILE}"
-if ! echo "${PROFILE}" | jq -e '.attributes[] | select(.name=="gentian.inviteEmail")' >/dev/null 2>&1; then
-  UPDATED=$(echo "${UPDATED}" | jq '.attributes += [{"name":"gentian.inviteEmail","displayName":"Recovery email","validations":{"email":{},"length":{"max":255}},"permissions":{"view":["admin"],"edit":["admin"]},"multivalued":false}]')
-  echo "user profile gentian.inviteEmail added to update"
+// ShellAdminToken emits the master-realm admin token fetch every provisioning
+// script begins with, into ${TOKEN}.
+//
+// It was written thirteen times across seven files, in four variants that
+// differed in ways nobody chose: some passed --max-time and some did not, some
+// parsed the response with sed and one with jq, and the indentation drifted.
+//
+// The --max-time is the reason this is one function rather than a convention.
+// No provisioning Job sets activeDeadlineSeconds, and the pods run with
+// RestartPolicy: OnFailure, so a Keycloak that accepts the connection and never
+// answers gives a curl that blocks forever, a Job that never completes, and a
+// tenant reconcile that waits on that Job with nothing to time it out. Nine of
+// the thirteen call sites had no timeout.
+//
+// Emits no %% verb, so it is safe to concatenate into a fmt.Sprintf format
+// string, which is how every caller builds its script.
+func ShellAdminToken() string {
+	return `
+TOKEN=$(curl -sf --max-time 30 \
+  -X POST "${KEYCLOAK_URL}/realms/master/protocol/openid-connect/token" \
+  -H "Content-Type: application/x-www-form-urlencoded" \
+  -d "client_id=admin-cli&username=${KEYCLOAK_ADMIN_USERNAME}&password=${KEYCLOAK_ADMIN_PASSWORD}&grant_type=password" \
+  | sed 's/.*"access_token":"\([^"]*\)".*/\1/')
+if [ -z "${TOKEN}" ]; then
+  echo "ERROR: could not obtain a Keycloak admin token" >&2
+  exit 1
 fi
-if ! echo "${PROFILE}" | jq -e '.attributes[] | select(.name=="uid")' >/dev/null 2>&1; then
-  UPDATED=$(echo "${UPDATED}" | jq '.attributes += [{"name":"uid","displayName":"User ID","validations":{"length":{"max":255}},"permissions":{"view":["admin","user"],"edit":["admin"]},"multivalued":false}]')
-  echo "user profile uid added to update"
-fi
-if [ "${UPDATED}" != "${PROFILE}" ]; then
-  curl -sf -X PUT -H "Authorization: Bearer ${TOKEN}" -H "Content-Type: application/json" \
-    "${KEYCLOAK_URL}/admin/realms/%s/users/profile" -d "${UPDATED}"
-  echo "user profile updated for realm %s"
-else
-  echo "user profile attributes already present for realm %s"
-fi
-`, realmExpr, realmExpr, realmExpr, realmExpr)
-}
-
-// ShellDisableProfilePromptRequiredActions stops post-password profile forms
-// when admin delivery swaps the transient email used for action-token links.
-func ShellDisableProfilePromptRequiredActions(realmExpr string) string {
-	return fmt.Sprintf(`
-for ACTION in VERIFY_PROFILE UPDATE_PROFILE; do
-  RA=$(curl -sf -H "Authorization: Bearer ${TOKEN}" "${KEYCLOAK_URL}/admin/realms/%s/authentication/required-actions/${ACTION}" 2>/dev/null || true)
-  if [ -n "${RA}" ]; then
-    UPDATED=$(echo "${RA}" | jq '.enabled = false')
-    curl -sf -X PUT -H "Authorization: Bearer ${TOKEN}" -H "Content-Type: application/json" \
-      "${KEYCLOAK_URL}/admin/realms/%s/authentication/required-actions/${ACTION}" -d "${UPDATED}" >/dev/null
-    echo "required action ${ACTION} disabled for realm %s"
-  fi
-done
-PROFILE=$(curl -sf -H "Authorization: Bearer ${TOKEN}" "${KEYCLOAK_URL}/admin/realms/%s/users/profile")
-RELAXED=$(echo "${PROFILE}" | jq '.attributes = [.attributes[] | if .name == "firstName" or .name == "lastName" then del(.required) else . end]')
-curl -sf -X PUT -H "Authorization: Bearer ${TOKEN}" -H "Content-Type: application/json" \
-  "${KEYCLOAK_URL}/admin/realms/%s/users/profile" -d "${RELAXED}" >/dev/null
-echo "user profile firstName/lastName optional for realm %s"
-`, realmExpr, realmExpr, realmExpr, realmExpr, realmExpr, realmExpr)
+`
 }
 
 // ExtractJSONIDByAttr mirrors the shell logic for unit tests (jq when available).

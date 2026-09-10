@@ -14,7 +14,6 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-
 package controller
 
 import (
@@ -24,27 +23,34 @@ import (
 
 func TestBuildKernelTenantBrokerScript(t *testing.T) {
 	script := buildKernelTenantBrokerScript()
-	for _, want := range []string{
-		kernelPortalBrokerClientID,
-		kernelPortalFirstBrokerLoginFlowAlias,
-		`_resolve_external_oidc_base`,
-		`"${KEYCLOAK_URL}/admin/realms/${KERNEL_REALM}/identity-provider/instances/${TENANT_REALM}"`,
-		`tokenUrl\":\"${KEYCLOAK_URL}/realms/${TENANT_REALM}/protocol/openid-connect/token`,
-		`oidc-advanced-group-idp-mapper`,
+
+	// One object is left here: the kernel realm's own first-broker-login flow.
+	// The broker client, the kernel-realm IdP, and the two mappers that hang off
+	// it — which tenant a brokered user came from, and the groups that carry
+	// their entitlements — are all tenant-default's, adopted with no drift.
+	//
+	// The flow cannot follow them. No XTenant covers the kernel realm, so no
+	// Composition reaches it; it is one flow shared by every tenant, and this Job
+	// is per-tenant only because that is where the reconcile loop lives.
+	for _, gone := range []string{
 		`hideOnLoginPage\":\"true`,
+		`"${KEYCLOAK_URL}/admin/realms/${TENANT_REALM}/clients"`,
+		`oidc-advanced-group-idp-mapper`,
+		`hardcoded-attribute-idp-mapper`,
+		`/identity-provider/instances/`,
 	} {
-		if !strings.Contains(script, want) {
-			t.Fatalf("kernel tenant broker script missing %q", want)
+		if strings.Contains(script, gone) {
+			t.Fatalf("kernel tenant broker script still writes what the Composition owns: %s", gone)
 		}
 	}
-	if strings.Contains(script, `${KERNEL_EXTERNAL_URL}/realms/${TENANT_REALM}/protocol/openid-connect/token`) {
-		t.Fatal("kernel tenant broker script must not use external URL for token exchange")
+	if !strings.Contains(script, kernelPortalFirstBrokerLoginFlowAlias) {
+		t.Fatalf("kernel tenant broker script missing %q", kernelPortalFirstBrokerLoginFlowAlias)
 	}
 }
 
 func TestKernelExternalURLIncludesAuthPath(t *testing.T) {
-	got := kernelExternalURL("desk.gentian.org")
-	want := "https://id.desk.gentian.org/auth"
+	got := kernelExternalURL("platform.example.test")
+	want := "https://id.platform.example.test/auth"
 	if got != want {
 		t.Fatalf("kernelExternalURL = %q, want %q", got, want)
 	}

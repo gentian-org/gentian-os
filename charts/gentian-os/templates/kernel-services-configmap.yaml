@@ -12,11 +12,22 @@
   case a cluster genuinely needs a different endpoint.
 */ -}}
 {{- $infraNS := .Values.infraNamespace | default (printf "gentian-infra-%s" $stage) -}}
-{{- $mysqlHost := $ks.mysqlHost | default (printf "mariadb-%s.%s.svc.cluster.local" $stage $infraNS) -}}
+{{- /* The InfraData composition names this release gentian-mariadb-<stage>
+       (crossplane/compositions/infra-data.yaml), same as gentian-postgresql-<stage>.
+       The default here used to omit the "gentian-" prefix, so MYSQL_HOST pointed at
+       a Service that does not exist — silently, since nothing resolves it until an
+       app tries to connect. minio-<stage> and redis-<stage>-master below carry no
+       prefix, which is why the inconsistency was easy to miss. */ -}}
+{{- $mysqlHost := $ks.mysqlHost | default (printf "gentian-mariadb-%s.%s.svc.cluster.local" $stage $infraNS) -}}
 {{- $redisHost := $ks.redisHost | default (printf "redis-%s-master.%s.svc.cluster.local" $stage $infraNS) -}}
 {{- $s3Endpoint := $ks.s3Endpoint | default (printf "http://minio-%s.%s.svc.cluster.local:9000" $stage $infraNS) -}}
-{{- $smtpHost := $ks.smtpHost | default (printf "postfix-%s.gentian-%s.svc.cluster.local" $stage $stage) -}}
-{{- if or .Values.kernelDomain .Values.tenancyMode $ks.s3Endpoint $ks.mysqlHost $ks.redisHost $ks.smtpHost $ks.turnHost $ks.turnCredentials $keycloakInternal }}
+{{- /* The kernel mail stack runs in servicesNamespace (platform-kernel), not
+       gentian-<stage>. mailSharedPostfixHost() in the mail reconciler reads
+       MAIL_SMTP_HOST — this value — BEFORE falling back to servicesNamespace, so a
+       gentian-<stage> default here silently overrides the correct location and
+       every tenant app is handed an SMTP host that does not resolve. */ -}}
+{{- $smtpHost := $ks.smtpHost | default (printf "postfix-%s.%s.svc.cluster.local" $stage .Values.servicesNamespace) -}}
+{{- if or .Values.kernelDomain .Values.tenancyMode $ks.s3Endpoint $ks.mysqlHost $ks.redisHost $ks.smtpHost $keycloakInternal }}
 {{- /*
   Pod env configMapKeyRef only resolves same-namespace — a plain Kubernetes
   restriction, not something a namespace field on the ref can work around.
@@ -40,7 +51,7 @@ data:
   KERNEL_DOMAIN: {{ . | quote }}
   {{- end }}
   TENANCY_MODE: {{ $.Values.tenancyMode | default "multi" | quote }}
-  {{- $issuer := $.Values.tenantDNS01ClusterIssuer | default "letsencrypt-dns01-cloudflare" }}
+  {{- $issuer := include "gentian.tenantDNS01ClusterIssuer" $ }}
   ACME_STAGING: {{ if contains "staging" $issuer }}"true"{{ else }}"false"{{ end }}
   KEYCLOAK_INTERNAL_URL: {{ $keycloakInternal | quote }}
   {{- with $smtpHost }}
@@ -55,26 +66,11 @@ data:
   {{- with $redisHost }}
   REDIS_HOST: {{ . | quote }}
   {{- end }}
-  {{- with $ks.turnHost }}
-  TURN_HOST: {{ . | quote }}
-  {{- end }}
-  {{- with $ks.turnPort }}
-  TURN_PORT: {{ . | quote }}
-  {{- end }}
-  {{- with $ks.turnTLSHost }}
-  TURN_TLS_HOST: {{ . | quote }}
-  {{- end }}
-  {{- with $ks.turnTLSPort }}
-  TURN_TLS_PORT: {{ . | quote }}
-  {{- end }}
-  {{- with $ks.turnTransport }}
-  TURN_TRANSPORT: {{ . | quote }}
-  {{- end }}
-  {{- with $ks.turnCredentials }}
-  TURN_CREDENTIALS: {{ . | quote }}
-  {{- end }}
-  {{- with $ks.openprojectEnterpriseToken }}
-  OPENPROJECT_ENTERPRISE_TOKEN: {{ . | quote }}
+  {{- /* Cluster-supplied passthrough entries. Kept last and rendered verbatim so
+         a cluster can publish a value an app profile needs without gentian-os
+         carrying a field named after that app. */ -}}
+  {{- range $key, $value := $ks.extra }}
+  {{ $key }}: {{ $value | quote }}
   {{- end }}
 {{- end }}
 {{- end }}

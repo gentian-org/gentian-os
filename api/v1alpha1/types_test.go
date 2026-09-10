@@ -36,7 +36,7 @@ func TestAppProfile_DeepCopy(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: "catalogue-app"},
 		Spec: v1alpha1.AppProfileSpec{
 			DisplayName:      "Catalogue App",
-			DeploymentMethod: v1alpha1.DeploymentMethodArgoCD,
+			DeploymentMethod: v1alpha1.DeploymentMethodCrossplane,
 			Chart: v1alpha1.ChartRef{
 				Repository: "oci://charts.example.com",
 				Name:       "catalogue-app",
@@ -55,7 +55,9 @@ func TestAppProfile_DeepCopy(t *testing.T) {
 				},
 				Cache: &v1alpha1.CacheRequirement{Engine: v1alpha1.CacheEngineMemcached},
 				Mail: &v1alpha1.MailRequirement{
-					SMTP: &v1alpha1.SMTPRequirement{Auth: "cram-md5", Port: 587},
+					// Carries nothing: an app declares that it sends mail, and
+					// the platform decides the host, port and mechanism.
+					SMTP: &v1alpha1.SMTPRequirement{},
 				},
 				MCP: &v1alpha1.MCPRequirement{Enabled: true, Endpoint: "/mcp", Auth: "oidc"},
 			},
@@ -104,14 +106,30 @@ func TestAppProfile_DeepCopy(t *testing.T) {
 	}
 }
 
-func TestAppProfile_DefaultDeploymentMethod(t *testing.T) {
-	ap := &v1alpha1.AppProfile{
-		Spec: v1alpha1.AppProfileSpec{
-			DeploymentMethod: v1alpha1.DeploymentMethodArgoCD,
-		},
+// An unset deploymentMethod must behave as crossplane, not as "no method".
+//
+// The API server defaults the field (+kubebuilder:default=crossplane), so a
+// profile read back from the cluster always carries a value — but a profile
+// constructed in Go, or one from a fixture, does not, and every reader has to
+// treat the empty string as crossplane.
+//
+// This replaces a test that set the field and then asserted the field equalled
+// what it had just been set to, while its failure message claimed the default
+// was argocd. It asserted nothing and documented something untrue.
+func TestAppProfile_UnsetDeploymentMethodDeploysWorkload(t *testing.T) {
+	unset := &v1alpha1.AppProfile{}
+	if v1alpha1.ProfileIsAPI(unset) {
+		t.Error("an unset deploymentMethod must not read as an ApiProfile")
 	}
-	if ap.Spec.DeploymentMethod != v1alpha1.DeploymentMethodArgoCD {
-		t.Errorf("expected default argocd, got %q", ap.Spec.DeploymentMethod)
+	if !v1alpha1.ProfileDeploysWorkload(unset) {
+		t.Error("an unset deploymentMethod must deploy a workload")
+	}
+
+	api := &v1alpha1.AppProfile{
+		Spec: v1alpha1.AppProfileSpec{DeploymentMethod: v1alpha1.DeploymentMethodAPI},
+	}
+	if v1alpha1.ProfileDeploysWorkload(api) {
+		t.Error("an ApiProfile must not deploy a workload")
 	}
 }
 
@@ -151,14 +169,12 @@ func TestTenant_DeepCopy(t *testing.T) {
 	storage := resource.MustParse("100Gi")
 	cpu := resource.MustParse("8")
 	memory := resource.MustParse("16Gi")
-	quotaPerUser := resource.MustParse("5Gi")
 
 	original := &v1alpha1.Tenant{
 		ObjectMeta: metav1.ObjectMeta{Name: "gtn-demo"},
 		Spec: v1alpha1.TenantSpec{
 			DisplayName:    "GTN Demo",
 			Domain:         "gtn-demo.example.com",
-			AdminEmail:     "admin@gtn-demo.example.com",
 			DeletionPolicy: v1alpha1.DeletionPolicyRetain,
 			Isolation: &v1alpha1.TenantIsolation{
 				Mode:           v1alpha1.IsolationModeNamespace,
@@ -167,10 +183,8 @@ func TestTenant_DeepCopy(t *testing.T) {
 				S3Prefix:       "gtn-demo-",
 			},
 			Mail: &v1alpha1.TenantMail{
-				Mode:         v1alpha1.MailModeSelfhosted,
-				Domain:       "gtn-demo.example.com",
-				QuotaPerUser: &quotaPerUser,
-				RateLimit:    "100/h",
+				Mode:   v1alpha1.MailModeSelfhosted,
+				Domain: "gtn-demo.example.com",
 			},
 			Quotas: &v1alpha1.TenantQuotas{
 				MaxApps: 20,
@@ -225,7 +239,6 @@ func TestTenant_DeletionPolicyValues(t *testing.T) {
 				Spec: v1alpha1.TenantSpec{
 					DisplayName:    "T",
 					Domain:         "t.example.com",
-					AdminEmail:     "a@t.example.com",
 					DeletionPolicy: tc.policy,
 				},
 			}

@@ -40,11 +40,6 @@ type TenantSpec struct {
 	// +kubebuilder:validation:Pattern=`^([a-z0-9]([a-z0-9\-\.]*[a-z0-9])?)?$`
 	Domain string `json:"domain,omitempty"`
 
-	// AdminEmail is the contact address for platform notifications.
-	// +kubebuilder:validation:Required
-	// +kubebuilder:validation:Pattern=`^[^@\s]+@[^@\s]+\.[^@\s]+$`
-	AdminEmail string `json:"adminEmail"`
-
 	// Isolation describes the workload isolation boundaries for this tenant.
 	// +optional
 	Isolation *TenantIsolation `json:"isolation,omitempty"`
@@ -110,15 +105,6 @@ type TenantMail struct {
 	// +optional
 	Domain string `json:"domain,omitempty"`
 
-	// QuotaPerUser is the per-user mailbox storage quota.
-	// +optional
-	QuotaPerUser *resource.Quantity `json:"quotaPerUser,omitempty"`
-
-	// RateLimit is the outbound email rate limit (e.g., "100/h").
-	// +optional
-	// +kubebuilder:validation:Pattern=`^[0-9]+/(s|m|h|d)$`
-	RateLimit string `json:"rateLimit,omitempty"`
-
 	// SmtpCredentialsSecret is the name of an existing Kubernetes Secret in the
 	// kernel namespace that contains SMTP relay credentials for external mail
 	// delivery. Required when mode=external.
@@ -138,13 +124,40 @@ type TenantQuotas struct {
 	// +optional
 	Storage *resource.Quantity `json:"storage,omitempty"`
 
-	// CPU is the total CPU request limit across all tenant pods.
+	// CPU caps the sum of container CPU **limits** in the namespace.
+	//
+	// A limit is a burst ceiling, not a reservation: it is what a container may
+	// spike to, and the scheduler does not set anything aside for it. Chart
+	// defaults are generous with limits — one tenant running Nextcloud, an
+	// office suite and the App Store sums to roughly six cores of limits while
+	// reserving one — so this number does not correspond to hardware and must
+	// not be the one a plan is sold on. It exists to bound the blast radius of
+	// a runaway container. Sell RequestsCPU.
 	// +optional
 	CPU *resource.Quantity `json:"cpu,omitempty"`
 
-	// Memory is the total memory request limit across all tenant pods.
+	// Memory caps the sum of container memory **limits** in the namespace.
+	// The burst ceiling, for the same reason as CPU. Sell RequestsMemory.
 	// +optional
 	Memory *resource.Quantity `json:"memory,omitempty"`
+
+	// RequestsCPU caps the sum of container CPU **requests** in the namespace.
+	//
+	// Requests are what the scheduler actually reserves, so this is the number
+	// that maps one-to-one onto purchased capacity: two cores of requests is
+	// two cores of a node that nothing else can schedule into. It is therefore
+	// the quantity a ResourcePlan is priced on.
+	//
+	// Safe to impose on a namespace that already has pods: the tenant
+	// LimitRange sets defaultRequest (100m / 128Mi), so a container that
+	// declares no request still has one and the quota cannot reject it.
+	// +optional
+	RequestsCPU *resource.Quantity `json:"requestsCpu,omitempty"`
+
+	// RequestsMemory caps the sum of container memory **requests** in the
+	// namespace — reserved capacity, priced, as RequestsCPU is.
+	// +optional
+	RequestsMemory *resource.Quantity `json:"requestsMemory,omitempty"`
 
 	// MaxPods caps the number of pods in the tenant namespace (init Jobs + app workloads).
 	// +optional
@@ -184,8 +197,8 @@ type TenantApp struct {
 	//
 	// The App Store writes this list — pre-filled from an AppPackage preset when
 	// one is chosen, then editable afterwards. Entries the tenant is not entitled
-	// to are rejected; entitlement is what gates a pro addon, not compatibility.
-	// See gentian-apps/docs/L3-cleanup.md.
+	// to are rejected; entitlement is what gates an ee addon, not compatibility.
+	// See gentian-os/docs/app-customization.md §4.2.
 	// +optional
 	// +listType=set
 	Addons []string `json:"addons,omitempty"`
@@ -264,6 +277,15 @@ type TenantStatus struct {
 	// Namespace is the resolved tenant namespace name.
 	// +optional
 	Namespace string `json:"namespace,omitempty"`
+
+	// AdminEmail is the resolved contact address for this tenant, and the
+	// administrator's login: admin@<effectiveDomain>.
+	//
+	// Reported here because it is derived — there is no spec field to read it
+	// back from — so a consumer that needs the address reads status, and a
+	// tenant whose domain changes shows the new one here once reconciled.
+	// +optional
+	AdminEmail string `json:"adminEmail,omitempty"`
 	// ObservedGeneration is the last processed generation of the spec.
 	// +optional
 	ObservedGeneration int64 `json:"observedGeneration,omitempty"`
@@ -305,7 +327,7 @@ type TenantMailStatus struct {
 // +kubebuilder:printcolumn:name="STATUS",type=string,JSONPath=`.status.phase`
 // +kubebuilder:printcolumn:name="APPS",type=integer,JSONPath=`.status.appCount`
 // +kubebuilder:printcolumn:name="READY",type=integer,JSONPath=`.status.readyApps`
-// +kubebuilder:printcolumn:name="MAIL",type=string,JSONPath=`.spec.adminEmail`
+// +kubebuilder:printcolumn:name="ADMIN",type=string,JSONPath=`.status.adminEmail`
 // +kubebuilder:printcolumn:name="AGE",type=date,JSONPath=`.metadata.creationTimestamp`
 type Tenant struct {
 	metav1.TypeMeta   `json:",inline"`
@@ -321,6 +343,60 @@ type TenantList struct {
 	metav1.TypeMeta `json:",inline"`
 	metav1.ListMeta `json:"metadata,omitempty"`
 	Items           []Tenant `json:"items"`
+}
+
+// AdminEmailOrDefault returns the tenant's contact address: spec.adminEmail
+// when set, otherwise `admin@<effectiveDomain>`.
+//
+// One rule, here rather than at each call site: the address goes into the
+// provisioning Job and into the XTenant, whose XRD requires it, and two copies
+// of a derivation are two things to keep in step.
+//
+// The local part is `admin`, not the generated login. The login carries the
+// tenant name so it stays unique across realms (admin-corp); inside the
+// tenant's own domain that reads as admin-corp@corp.example, naming the tenant
+// twice. The mailbox belongs to the domain, so the domain says whose it is.
+// TenantAdminLocalPart is the local part of every tenant administrator's
+// address, and of the Keycloak username, which are the same string.
+const TenantAdminLocalPart = "admin"
+
+// AdminEmailOrDefault is the tenant administrator's address — and its login.
+//
+// admin@<tenant-domain>: admin@corp.gtn.host in multi mode, admin@<kernelDomain>
+// in single, spec.domain when a tenant has a vanity one. The tenant's own
+// domain is what makes `admin` unambiguous, so no tenant name appears in the
+// local part; it would name the tenant twice.
+//
+// Derived, never configured. spec.adminEmail is gone: an address an operator
+// could type is an address pointing outside the tenant, and this account is
+// recovered by the cluster administrator rather than by mail to a third party.
+// Every tenant definition that carried one carried a hand-written value that
+// had to be kept in step with the domain, and none of them were.
+//
+// The address IS the username — see TenantAdminUsername — so there is one
+// identifier here, not two that can disagree.
+func (t *Tenant) AdminEmailOrDefault(kernelDomain, tenancyMode string) string {
+	domain := t.EffectiveDomain(kernelDomain, tenancyMode)
+	if domain == "" {
+		// No domain configured at all: .invalid is reserved by RFC 2606 and can
+		// never resolve, which is the honest representation of "unknown".
+		domain = t.Name + ".invalid"
+	}
+	return TenantAdminLocalPart + "@" + domain
+}
+
+// TenantAdminUsername is the Keycloak login for that account.
+//
+// The same string as the address, deliberately. It was admin-<tenant>, which
+// made the login and the contact address two identifiers for one account that
+// had to be derived in two places and could disagree — and did: the login
+// carried the tenant name while the address did not.
+//
+// One string also states the recovery model. A login that is an address the
+// tenant's own mail stack delivers to is an account whose password reset goes
+// to the tenant, not to whoever typed a contact address into a definition once.
+func (t *Tenant) TenantAdminUsername(kernelDomain, tenancyMode string) string {
+	return t.AdminEmailOrDefault(kernelDomain, tenancyMode)
 }
 
 // EffectiveDomain returns the domain to use for ingress and mail routing

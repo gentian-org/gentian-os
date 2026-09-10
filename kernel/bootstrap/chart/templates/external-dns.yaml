@@ -1,0 +1,251 @@
+{{- /*
+external-dns — DNS records follow the cluster, rather than being kept by hand.
+
+Two sources, for two kinds of record:
+
+  gateway-httproute — every tenant hostname already lives on an HTTPRoute the
+  operator writes, so an app's DNS record appears as a side effect of installing
+  it. Nothing new to declare.
+
+  crd — DNSEndpoint objects for records with no HTTP object behind them: MX,
+  SPF, DKIM, DMARC. The operator emits these per tenant.
+
+This also removes a whole class of outage. A wildcard only covers names that
+have no records of their own, so the moment a tenant gained an MX record it
+stopped inheriting *.<kernel-domain> and its web addresses stopped resolving.
+Explicit records for every name means nothing depends on wildcard coverage.
+
+Everything provider-specific comes from kernel/platforms.yaml — the same entry
+that gives cert-manager its DNS-01 solver, so the two cannot end up pointed at
+different zones or reading different Secrets.
+*/ -}}
+{{- $provider := .Values.dnsProvider | default "none" -}}
+{{- $profile := dict -}}
+{{- if ne $provider "none" -}}
+  {{- if not .Values.dnsProviders -}}
+    {{- fail "dnsProviders table is empty: render this chart with -f kernel/platforms.yaml" -}}
+  {{- end -}}
+  {{- $profile = index .Values.dnsProviders $provider | default dict -}}
+  {{- if not $profile -}}
+    {{- fail (printf "unknown dnsProvider %q — add an entry to kernel/platforms.yaml" $provider) -}}
+  {{- end -}}
+{{- end -}}
+{{- $extdns := index $profile "externalDNS" | default dict -}}
+{{- $cred := index $profile "credential" | default dict -}}
+{{- if index $extdns "enabled" | default false }}
+# The namespace and credential, ahead of the Application.
+#
+# Both are applied by the installer rather than left to Argo: the ExternalSecret
+# must exist before the chart's Pod starts, and CreateNamespace only runs at
+# sync time, so a token arriving second means a controller that starts, fails to
+# authenticate, and backs off.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: external-dns
+{{- if $cred }}
+---
+# The same credential cert-manager uses for DNS-01, from the same OpenBao path.
+# One credential with one writer of record, rather than a second token to rotate
+# separately and forget.
+apiVersion: external-secrets.io/v1
+kind: ExternalSecret
+metadata:
+  name: {{ $cred.secretName }}
+  namespace: external-dns
+  labels:
+    gentianos.io/dns-provider: {{ $provider }}
+spec:
+  refreshInterval: 1h
+  secretStoreRef:
+    kind: ClusterSecretStore
+    name: openbao
+  target:
+    name: {{ $cred.secretName }}
+    creationPolicy: Owner
+    deletionPolicy: Retain
+    template:
+      engineVersion: v2
+      data:
+        {{- /*
+        The key names the external-dns chart reads, which are not the key names
+        the provider's own API uses — hence the mapping in platforms.yaml rather
+        than a straight copy.
+
+        index, not a dotted field: a remote property with a hyphen or a dot in
+        it parses as an expression in a Go template, so `.api-token` fails to
+        render.
+        */}}
+        {{- range $chartKey, $field := (index $extdns "secretKeys" | default dict) }}
+        {{ $chartKey }}: '{{ "{{" }} index . {{ $field | quote }} }}'
+        {{- end }}
+  data:
+    {{- range $field := ($cred.fields | default list) }}
+    - secretKey: {{ $field.key }}
+      remoteRef:
+        key: {{ $cred.vaultPath }}
+        property: {{ $field.key }}
+    {{- end }}
+{{- end }}
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: external-dns
+  namespace: argocd
+  finalizers: []   # intentionally empty — never cascade-delete the controller
+spec:
+  project: gentian
+  sources:
+  # The upstream chart, not Bitnami's. Bitnami withdrew their free Docker Hub
+  # images in 2025, so that chart syncs cleanly, renders correct arguments, and
+  # then sits in ImagePullBackOff on docker.io/bitnami/external-dns: a
+  # controller that never starts and publishes nothing, while the Application
+  # reports Synced.
+  - repoURL: https://kubernetes-sigs.github.io/external-dns/
+    chart: external-dns
+    # 1.21.1 (external-dns v0.21.0) at the earliest for MX.
+    #
+    # Cloudflare's API takes an MX record's priority as its own field, and the
+    # provider did not split it out before v0.18: it sent "10 mail.gtn.host" as
+    # the content and the API answered "priority is a required field". That one
+    # rejection failed the whole zone batch and exited the process, so a single
+    # unpublishable MX cost every other record too — the DKIM, SPF and DMARC
+    # records here included — and external-dns sat in CrashLoopBackOff while the
+    # zone silently kept whatever it had.
+    targetRevision: "1.21.1"
+    helm:
+      valueFiles:
+      - $values/kernel/values/external-dns.yaml
+      # Inline, and therefore last: the file above is read by every cluster from
+      # git and holds only what is true for all of them. Which provider, which
+      # zone and which Secret are this cluster's, so they are set here.
+      values: |
+        # The upstream chart takes the provider as an object and the credential
+        # through the environment, rather than nesting each provider's settings
+        # under a key named after it, as Bitnami's did.
+        provider:
+          name: {{ $extdns.provider }}
+        # Which sources run depends on how traffic arrives, not on preference.
+        #
+        # static-ip: gateway-httproute + crd, exactly as today. The Gateway has
+        # a LoadBalancer address, the source publishes every routed hostname
+        # from it, and this cluster shape is the one where DNS already works —
+        # nothing about it changes.
+        #
+        # tunnel: crd only. A tunnelled Gateway never gets an address, and
+        # external-dns v0.21.0's gateway-httproute source does not skip such a
+        # Gateway — it deadlocks on it. Observed directly: the controller
+        # stopped syncing fourteen seconds after the kernel Gateway appeared
+        # and never completed another loop, which also silenced the crd source
+        # and with it mail's records. The operator publishes every routed
+        # hostname as a DNSEndpoint on tunnel clusters instead
+        # (internal/controller/edge_dnsendpoint.go), so crd is the one source
+        # that carries everything — and the one that cannot be starved by a
+        # Gateway that will never be Programmed.
+        sources:
+        {{- if ne .Values.networkMode "tunnel" }}
+          - gateway-httproute
+        {{- end }}
+          - crd
+        {{- /*
+        The kernel domain AND every suffix of it down to the registrable
+        domain, because external-dns matches domainFilters against ZONES as
+        well as records. The kernel domain is a HOSTNAME; the zone it lives in
+        is a registrable domain — the same distinction the cert-manager solver
+        walk exists for. Filtering on the hostname alone rejected the zone
+        itself, and every record then logged "no hosted zone matching record
+        DNS Name" at debug and was silently skipped: a filter meant to scope
+        records instead turned the publisher off, invisibly, on any cluster
+        whose kernel domain is not the zone apex.
+
+        The walk is lexical, so it costs no provider call and holds for all
+        eight providers. Suffixes that are not zones match nothing and do
+        nothing; the one that is a zone is the one that makes every record
+        publishable. Two labels is the floor, same as the solver walk: the
+        next strip would be a public suffix.
+        */}}
+        {{- /*
+        Ownership, scoped to THIS cluster.
+
+        external-dns runs policy: sync, and the TXT registry is the only thing
+        standing between that and a zone it shares with anyone. Before deleting
+        a record it checks for a companion TXT naming the owner — so a
+        hand-made record, having none, is safe.
+
+        The owner name has to identify the cluster, not the product. Shared,
+        the companion says "some Gentian cluster owns this", and a second
+        cluster whose domain filter reaches the same zone reads its neighbour's
+        records as its own, finds no source producing them, and deletes them.
+        Reproduced deliberately against a live zone: a record with a
+        matching ownership TXT and no source was planned for DELETE on the next
+        sync.
+
+        Two clusters need not share a zone for this — one kernel domain deep
+        enough for the zone walk to widen a filter onto a zone another cluster
+        writes to is enough.
+        */}}
+        txtOwnerId: {{ required "cluster is required: external-dns ownership must identify this cluster, not the product" .Values.cluster | quote }}
+        {{- $kd := required "kernelDomain is required for external-dns domainFilters" .Values.kernelDomain }}
+        {{- $labels := splitList "." $kd }}
+        domainFilters:
+        {{- range $i, $_ := $labels }}
+        {{- $suffix := join "." (slice $labels $i) }}
+        {{- if ge (len (splitList "." $suffix)) 2 }}
+          - {{ $suffix }}
+        {{- end }}
+        {{- end }}
+        {{- if $cred }}
+        env:
+          {{- range $var, $key := (or $extdns.env $extdns.secretKeys) }}
+          - name: {{ if $extdns.env }}{{ $var }}{{ else }}{{ $var | upper }}{{ end }}
+            valueFrom:
+              secretKeyRef:
+                name: {{ $cred.secretName }}
+                key: {{ if $extdns.env }}{{ $key }}{{ else }}{{ $var }}{{ end }}
+          {{- end }}
+        {{- end }}
+        {{- if eq $provider "cloudflare" }}
+        # DNS-only by default, and it must stay that way: proxying sends
+        # traffic through Cloudflare's HTTP edge, which does not carry SMTP, so
+        # an orange-clouded MX target breaks mail delivery silently.
+        #
+        # This is the DEFAULT, not a ban. A tunnel cluster's web records must
+        # be proxied — cfargotunnel.com resolves to nothing a client could
+        # connect to — and they opt in per record through the
+        # external-dns.alpha.kubernetes.io/cloudflare-proxied annotation the
+        # kernel Gateway carries, put there by the edge ingress
+        # (internal/controller/edge_cloudflare_tunnel.go). Flipping this global
+        # to true to "fix" a tunnel cluster would take mail down with it.
+        cloudflare:
+          proxied: false
+        {{- end }}
+        # No crd: key here — this chart has none. The DNSEndpoint CRD the crd
+        # source consumes ships in the chart's own crds/ directory, which Argo CD
+        # applies because it renders with CRDs included. This file used to set
+        # crd.create, which the chart's schema allows through as an unknown key:
+        # it read as deliberate configuration while doing nothing at all.
+        #
+        # It matters because without that CRD the crd source logs a watch error
+        # rather than failing, so records with no HTTP object behind them — MX,
+        # SPF, DKIM, DMARC — silently never appear.
+  - repoURL: {{ .Values.osRepo | default "https://github.com/gentian-org/gentian-os" }}
+    targetRevision: {{ .Values.gentianOsBranch }}
+    ref: values
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: external-dns
+  syncPolicy:
+    automated:
+      prune: false
+      selfHeal: true
+    syncOptions:
+    - CreateNamespace=true
+    - ServerSideApply=true
+{{- else }}
+{{- /*
+No DNS provider, or one whose records are not managed from the cluster. Emitting
+an external-dns with no provider would start a controller that logs an
+authentication failure every interval and never writes a record.
+*/ -}}
+{{- end }}

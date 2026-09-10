@@ -23,7 +23,6 @@ import (
 	"strings"
 
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
-	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 )
@@ -57,30 +56,6 @@ func buildAppBackendTrafficPolicyObject(
 	return obj
 }
 
-func buildTenantEscapedSlashesClientTrafficPolicyObject(tenant *gentianov1alpha1.Tenant, nsName string) *unstructured.Unstructured {
-	policySpec := escapedSlashesKeepUnchangedClientTrafficPolicySpec()
-	policySpec["targetRefs"] = []interface{}{
-		map[string]interface{}{
-			"group":       gatewayv1.GroupName,
-			"kind":        "Gateway",
-			"name":        tenantGatewayName(tenant.Name),
-			"sectionName": "https-wildcard",
-		},
-	}
-
-	obj := &unstructured.Unstructured{}
-	obj.SetGroupVersionKind(clientTrafficPolicyGVK)
-	obj.SetName(tenantEscapedSlashesClientTrafficPolicyName(tenant.Name))
-	obj.SetNamespace(nsName)
-	obj.SetLabels(map[string]string{
-		tenantLabel:           tenant.Name,
-		managedByLabel:        managedByValue,
-		gatewayComponentLabel: gatewayComponentApp,
-	})
-	_ = unstructured.SetNestedField(obj.Object, policySpec, "spec")
-	return obj
-}
-
 func backendTrafficPolicySpecFromIngressAnnotations(annotations map[string]string) map[string]interface{} {
 	if len(annotations) == 0 {
 		return nil
@@ -96,17 +71,6 @@ func backendTrafficPolicySpecFromIngressAnnotations(annotations map[string]strin
 	var timeout map[string]interface{}
 	if d := gatewayDurationAnnotation(annotations, gentianov1alpha1.AnnotationIngressGatewayRequestTimeout); d != "" {
 		timeout = map[string]interface{}{"http": map[string]interface{}{"requestTimeout": d}}
-	}
-	if d := gatewayDurationAnnotation(annotations, gentianov1alpha1.AnnotationIngressGatewayResponseTimeout); d != "" {
-		if timeout == nil {
-			timeout = map[string]interface{}{}
-		}
-		http, _ := timeout["http"].(map[string]interface{})
-		if http == nil {
-			http = map[string]interface{}{}
-			timeout["http"] = http
-		}
-		http["responseTimeout"] = d
 	}
 	if timeout != nil {
 		spec["timeout"] = timeout

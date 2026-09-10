@@ -1,0 +1,477 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.17.3
+  name: tenantexports.gentianos.io
+spec:
+  group: gentianos.io
+  names:
+    kind: TenantExport
+    listKind: TenantExportList
+    plural: tenantexports
+    shortNames:
+    - texp
+    - export
+    singular: tenantexport
+  scope: Namespaced
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .status.phase
+      name: Phase
+      type: string
+    - jsonPath: .status.bundle.prefix
+      name: Bundle
+      type: string
+    - jsonPath: .status.quiesced
+      name: Paused
+      priority: 1
+      type: string
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: TenantExport captures one tenant's data into an encrypted bundle.
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: |-
+              TenantExportSpec requests a point-in-time capture of one tenant's data.
+
+              The resource lives in the tenant's own namespace, so a tenant's exports stay
+              inside its blast radius the way its App claims do. What gets captured is
+              derived from the tenant and its profiles, never listed here: an export that
+              could be told which stores to read would drift from the stores that exist.
+            properties:
+              apps:
+                description: |-
+                  Apps limits the export to these installed profile names. Empty — the
+                  normal case — captures every app the tenant has installed, plus the
+                  tenant-wide state (identity realm, portal shell database) that belongs to
+                  no single app.
+                items:
+                  type: string
+                type: array
+              destination:
+                description: |-
+                  Destination overrides where this one bundle is written. Omitting it
+                  follows the tenant's BackupPolicy, which is what scheduled exports do
+                  and what keeps a manual backup beside the nightly ones.
+                properties:
+                  bucket:
+                    description: |-
+                      Bucket holds the bundle. Empty keeps the tenant's default bucket name,
+                      which is the right answer for mode: platform and usually wrong for a
+                      bucket someone else created.
+                    maxLength: 63
+                    pattern: ^$|^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$
+                    type: string
+                  credentialSecretRef:
+                    description: |-
+                      CredentialSecretRef names a Secret in the tenant's namespace holding
+                      accessKey and secretKey for this endpoint. Required by, and only by,
+                      credentialSource: transient.
+
+                      A reference rather than the keys themselves, for the reason the
+                      passphrase is a reference: a spec is readable by anyone who can read the
+                      resource, and object storage keys in a manifest are keys in every
+                      backup of etcd.
+                    maxLength: 253
+                    type: string
+                  credentialSource:
+                    default: managed
+                    description: |-
+                      CredentialSource decides where mode: custom gets its keys.
+
+                      managed reuses what the Credential Manager already holds for this
+                      workspace's backups — the same keys the nightly schedule authenticates
+                      with — so a one-off backup to a different bucket on the same provider
+                      needs nobody to retype a secret. Nothing is copied: those keys are
+                      already materialised beside the capture Jobs.
+
+                      transient is for keys that exist for this export only. They are supplied
+                      in a Secret, staged beside the Jobs, and removed when the export ends.
+                    enum:
+                    - managed
+                    - transient
+                    type: string
+                  endpoint:
+                    description: |-
+                      Endpoint is the S3 API URL for mode: custom, e.g.
+                      https://sos-ch-dk-2.exo.io. A scheme is required: "s3.example.org" is
+                      ambiguous about TLS, and a backup silently sent in plaintext is worse
+                      than one that fails.
+                    maxLength: 2048
+                    pattern: ^$|^https?://[^\s/]+(/.*)?$
+                    type: string
+                  mode:
+                    default: policy
+                    description: |-
+                      Mode selects between the policy's answer, the platform's own storage,
+                      and an endpoint named here.
+                    enum:
+                    - policy
+                    - platform
+                    - custom
+                    type: string
+                  region:
+                    description: |-
+                      Region, for providers that require one — Exoscale SOS and AWS do,
+                      MinIO does not.
+                    maxLength: 64
+                    type: string
+                type: object
+                x-kubernetes-validations:
+                - message: 'mode: custom requires an endpoint'
+                  rule: self.mode != 'custom' || (has(self.endpoint) && size(self.endpoint)
+                    > 0)
+                - message: 'credentialSource: transient requires credentialSecretRef'
+                  rule: self.mode != 'custom' || self.credentialSource != 'transient'
+                    || (has(self.credentialSecretRef) && size(self.credentialSecretRef)
+                    > 0)
+                - message: 'credentialSource: managed takes the workspace credential;
+                    credentialSecretRef belongs to transient'
+                  rule: self.mode != 'custom' || self.credentialSource != 'managed'
+                    || !has(self.credentialSecretRef) || size(self.credentialSecretRef)
+                    == 0
+                - message: 'endpoint, region and credentialSecretRef belong to mode:
+                    custom only'
+                  rule: self.mode == 'custom' || ((!has(self.endpoint) || size(self.endpoint)
+                    == 0) && (!has(self.credentialSecretRef) || size(self.credentialSecretRef)
+                    == 0) && (!has(self.region) || size(self.region) == 0))
+              encryption:
+                description: |-
+                  Encryption selects how the bundle is protected. Omitting it uses the
+                  cluster's configured recipients, which is what an unattended export
+                  wants; there is no way to ask for no encryption at all.
+                properties:
+                  mode:
+                    default: recipient
+                    description: Mode selects the protection. Defaults to recipient.
+                    enum:
+                    - recipient
+                    - passphrase
+                    type: string
+                  passphraseSecretRef:
+                    description: |-
+                      PassphraseSecretRef names a Secret in this tenant's namespace holding the
+                      passphrase, used with mode: passphrase.
+
+                      A reference rather than a literal: a passphrase written into the spec
+                      would be readable by anyone who can get the resource, would sit in
+                      etcd, and would be echoed back by every kubectl get. The controller
+                      copies the Secret next to the capture Job and removes the copy when the
+                      export finishes.
+                    properties:
+                      key:
+                        description: Key defaults to "passphrase".
+                        type: string
+                      name:
+                        minLength: 1
+                        type: string
+                    required:
+                    - name
+                    type: object
+                  recipients:
+                    description: |-
+                      Recipients are age public keys (age1…) to encrypt to, used with
+                      mode: recipient. When empty the cluster's configured recipients are
+                      used; naming them here instead lets an admin encrypt to a key the
+                      platform has no identity for, so the bundle is readable only by them.
+
+                      Every listed recipient can decrypt independently, so this is also how an
+                      export is made readable both by its requester and by platform escrow.
+                    items:
+                      type: string
+                    type: array
+                type: object
+              ttlSeconds:
+                description: |-
+                  TTLSeconds is how long the bundle should be kept before it may be
+                  collected. Zero or unset means keep it until something else removes it;
+                  retention policy itself is a Phase 6 concern.
+                format: int64
+                minimum: 0
+                type: integer
+            type: object
+          status:
+            description: |-
+              TenantExportStatus reports progress, and carries the state needed to undo a
+              half-finished export after a controller restart.
+            properties:
+              apps:
+                description: |-
+                  Apps reports per-app progress, including the window each app was paused
+                  for. The skew between apps is recorded rather than hidden: an export is
+                  consistent within an app, not across them.
+                items:
+                  description: AppExportStatus reports the capture of one app.
+                  properties:
+                    attempts:
+                      description: |-
+                        Attempts counts capture Jobs run for this app. Bounded, because the
+                        shared Job waiter deletes a failed Job so it gets recreated — right for
+                        provisioning, an infinite loop for an export.
+                      format: int32
+                      type: integer
+                    chartVersion:
+                      description: |-
+                        ChartVersion records the chart the app was running when captured.
+                        Restoring a bundle into an older app than produced it corrupts silently,
+                        so the restore path refuses it — which it can only do if this is here.
+                      type: string
+                    completedUnits:
+                      description: |-
+                        CompletedUnits records each capture Job that finished, by Job name.
+
+                        This is the durable completion record; the Job object is not one. A
+                        finished Job can be TTL-collected or swept by the kernel Job GC while a
+                        sibling unit is still running, and inferring completion from the Job's
+                        existence made the controller re-run a dump it had already uploaded.
+                      items:
+                        type: string
+                      type: array
+                      x-kubernetes-list-type: atomic
+                    lastFailure:
+                      description: |-
+                        LastFailure is what the capture container actually said, from the last
+                        attempt that failed.
+
+                        Without it a capture failure reads "did not succeed after 3 attempts",
+                        names a Job, and stops — while the reason sits in a pod that was deleted
+                        the moment the failure was counted. Three separate faults were reported
+                        that way in one evening: an object storage key with no permissions, a key
+                        that had been deleted at the provider, and a source bucket read aimed at
+                        the wrong system. Each named an app that was working, and each needed the
+                        request reproduced by hand to find out anything at all.
+
+                        Captured before the Job is deleted, because after that there is nothing
+                        left to read.
+                      type: string
+                    message:
+                      description: Message explains a non-terminal or failed state.
+                      type: string
+                    name:
+                      description: Name is the installed profile name.
+                      type: string
+                    phase:
+                      description: Phase is this app's own phase, using the same vocabulary
+                        as the export.
+                      enum:
+                      - Pending
+                      - Running
+                      - Ready
+                      - Failed
+                      type: string
+                    quiesceEnd:
+                      format: date-time
+                      type: string
+                    quiesceMode:
+                      description: |-
+                        QuiesceMode records how this app was actually paused — command
+                        (maintenance hook) or scale-down. Resume must match it: an app paused
+                        by its maintenance hook has to be taken out of maintenance, not merely
+                        scaled, or it comes back serving its maintenance page forever. A
+                        dedicated field because the status message it used to be parsed from
+                        is overwritten while the capture runs.
+                      type: string
+                    quiesceStart:
+                      description: |-
+                        QuiesceStart and QuiesceEnd bound the window this app was paused for.
+                        Published rather than merely logged: it is the honest measure of what an
+                        export costs a tenant, and the evidence that the pause is per app.
+                      format: date-time
+                      type: string
+                    stores:
+                      description: |-
+                        Stores lists the kinds captured for this app (postgres, mariadb, s3,
+                        volumes), derived from the profile's kernelRequirements.
+                      items:
+                        type: string
+                      type: array
+                  type: object
+                type: array
+              bundle:
+                description: |-
+                  Bundle locates the output. It is set as soon as the destination is known,
+                  before any data lands, so a failed export can still be found and removed.
+                properties:
+                  bucket:
+                    description: |-
+                      Bucket holds the tenant's bundles. It is provisioned per tenant and is
+                      deliberately not one of the app buckets, so exports never capture
+                      previous exports.
+                    type: string
+                  credentialSecret:
+                    description: |-
+                      CredentialSecret names the Secret whose keys open this endpoint. Also
+                      recorded, and for the same reason: a bundle written to a destination the
+                      tenant has since changed still needs the credential it was written with.
+                    type: string
+                  endpoint:
+                    description: |-
+                      Endpoint records the storage this bundle was actually written to, empty
+                      for the platform's own. Recorded rather than resolved again at restore
+                      time: changing a BackupPolicy does not move bundles already written, so
+                      a bundle that does not carry its own address becomes unfindable the
+                      moment the policy that produced it changes.
+                    type: string
+                  prefix:
+                    description: |-
+                      Prefix is the directory-like key prefix this bundle occupies. The bundle
+                      is a prefix rather than a single object so a capture can stream, a
+                      restore can be partial, and no tenant-sized scratch space is needed.
+                    type: string
+                  region:
+                    description: Region accompanies Endpoint for tooling that needs
+                      it.
+                    type: string
+                type: object
+              completedAt:
+                description: CompletedAt is when the export reached a terminal phase.
+                format: date-time
+                type: string
+              conditions:
+                description: |-
+                  Conditions carry the usual per-concern detail. Accepted reports whether
+                  the export was admitted (it is False while another export or restore
+                  holds the tenant), and Complete reports the terminal outcome.
+                items:
+                  description: Condition contains details for one aspect of the current
+                    state of this API Resource.
+                  properties:
+                    lastTransitionTime:
+                      description: |-
+                        lastTransitionTime is the last time the condition transitioned from one status to another.
+                        This should be when the underlying condition changed.  If that is not known, then using the time when the API field changed is acceptable.
+                      format: date-time
+                      type: string
+                    message:
+                      description: |-
+                        message is a human readable message indicating details about the transition.
+                        This may be an empty string.
+                      maxLength: 32768
+                      type: string
+                    observedGeneration:
+                      description: |-
+                        observedGeneration represents the .metadata.generation that the condition was set based upon.
+                        For instance, if .metadata.generation is currently 12, but the .status.conditions[x].observedGeneration is 9, the condition is out of date
+                        with respect to the current state of the instance.
+                      format: int64
+                      minimum: 0
+                      type: integer
+                    reason:
+                      description: |-
+                        reason contains a programmatic identifier indicating the reason for the condition's last transition.
+                        Producers of specific condition types may define expected values and meanings for this field,
+                        and whether the values are considered a guaranteed API.
+                        The value should be a CamelCase string.
+                        This field may not be empty.
+                      maxLength: 1024
+                      minLength: 1
+                      pattern: ^[A-Za-z]([A-Za-z0-9_,:]*[A-Za-z0-9_])?$
+                      type: string
+                    status:
+                      description: status of the condition, one of True, False, Unknown.
+                      enum:
+                      - "True"
+                      - "False"
+                      - Unknown
+                      type: string
+                    type:
+                      description: type of condition in CamelCase or in foo.example.com/CamelCase.
+                      maxLength: 316
+                      pattern: ^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])$
+                      type: string
+                  required:
+                  - lastTransitionTime
+                  - message
+                  - reason
+                  - status
+                  - type
+                  type: object
+                type: array
+                x-kubernetes-list-map-keys:
+                - type
+                x-kubernetes-list-type: map
+              encryption:
+                description: |-
+                  Encryption records how the bundle was protected, so a restore knows what
+                  it needs before it starts and an operator can tell at a glance whether a
+                  bundle is one the platform can still read.
+                properties:
+                  mode:
+                    description: Mode is the protection used.
+                    enum:
+                    - recipient
+                    - passphrase
+                    type: string
+                  platformReadable:
+                    description: |-
+                      PlatformReadable states plainly whether any platform-held identity can
+                      decrypt this bundle. False means the requester's key is the only way in,
+                      and no amount of cluster access will substitute for it.
+                    type: boolean
+                  recipients:
+                    description: |-
+                      Recipients are the public keys the bundle was encrypted to. Public keys
+                      only — they are not secret, and recording them is what lets an operator
+                      work out which escrowed identity opens a given bundle.
+                    items:
+                      type: string
+                    type: array
+                type: object
+              observedGeneration:
+                description: ObservedGeneration is the spec generation this status
+                  was computed from.
+                format: int64
+                type: integer
+              phase:
+                description: Phase is the overall lifecycle phase.
+                enum:
+                - Pending
+                - Running
+                - Ready
+                - Failed
+                type: string
+              quiesced:
+                description: |-
+                  Quiesced names the apps currently paused for writes.
+
+                  This exists so a resume survives a crash. If the operator restarts
+                  between pausing an app and capturing it, nothing else records that the
+                  app is down, and it would stay down until someone noticed. The controller
+                  reads this on every reconcile and resumes anything listed that it is not
+                  actively capturing.
+                items:
+                  type: string
+                type: array
+              startedAt:
+                description: StartedAt is when the first app began capturing.
+                format: date-time
+                type: string
+            type: object
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}

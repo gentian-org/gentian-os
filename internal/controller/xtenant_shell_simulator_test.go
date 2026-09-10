@@ -231,17 +231,27 @@ func tenantSpecFromXR(spec map[string]interface{}) gentianov1alpha1.TenantSpec {
 	}
 	if raw, ok := spec["quotas"].(map[string]interface{}); ok {
 		q := &gentianov1alpha1.TenantQuotas{}
-		if v, ok := raw["storage"].(string); ok && v != "" {
-			parsed := resource.MustParse(v)
-			q.Storage = &parsed
+		// Every key xtenantQuotas emits is read back here. The simulator stands
+		// in for the Composition, so a key it drops is a key the test suite
+		// cannot see enforced — which is how requests.cpu and requests.memory
+		// went missing from a real tenant while the suite stayed green.
+		for key, target := range map[string]**resource.Quantity{
+			"storage":        &q.Storage,
+			"cpu":            &q.CPU,
+			"memory":         &q.Memory,
+			"requestsCpu":    &q.RequestsCPU,
+			"requestsMemory": &q.RequestsMemory,
+		} {
+			if v, ok := raw[key].(string); ok && v != "" {
+				parsed := resource.MustParse(v)
+				*target = &parsed
+			}
 		}
-		if v, ok := raw["cpu"].(string); ok && v != "" {
-			parsed := resource.MustParse(v)
-			q.CPU = &parsed
+		if v, ok := raw["maxApps"].(int64); ok {
+			q.MaxApps = int32(v)
 		}
-		if v, ok := raw["memory"].(string); ok && v != "" {
-			parsed := resource.MustParse(v)
-			q.Memory = &parsed
+		if v, ok := raw["maxPods"].(int64); ok {
+			q.MaxPods = int32(v)
 		}
 		ts.Quotas = q
 	}

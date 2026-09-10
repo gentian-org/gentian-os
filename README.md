@@ -14,8 +14,10 @@ needs regardless of which apps run on it. It does **not** contain:
 - App or sidecar implementations/catalogues — see [gentian-apps](https://github.com/gentian-org/gentian-apps)
   (OSS AppProfiles) and [gentian-sidecars](https://github.com/gentian-org/gentian-sidecars)
   (sidecar templates).
-- Commercial/proprietary AppProfiles — see [gentian-pro](https://github.com/gentian-org/gentian-pro).
-- The commercial checkout/entitlement portal — see [gentian-corp](https://github.com/gentian-org/gentian-corp).
+- Proprietary AppProfiles, or any private catalogue: supplied by whoever operates
+  the cluster, as an additional catalogue repository.
+- A commerce backend for redeeming entitlements and receiving metering reports.
+  gentian-os calls one when `commerce.enabled` is set and ships none itself.
 - Cluster-specific GitOps manifests (tenant instances, per-cluster config) — see
   [gentian-deployments](https://github.com/gentian-org/gentian-deployments).
 - The kernel shell UI (login hub, app launcher) — see [gentian-ui](https://github.com/gentian-org/gentian-ui).
@@ -31,6 +33,7 @@ bootstrap via `install.sh`.
 - [docs/architecture.md](docs/architecture.md) — system architecture overview
 - [docs/commands.md](docs/commands.md) — `kubectl gentian` / operator commands
 - [docs/deployment.md](docs/deployment.md) — deployment model
+- [docs/node-pool-migration.md](docs/node-pool-migration.md) — migrating a cluster to a new node flavour
 - [docs/faq.md](docs/faq.md) — frequently asked questions
 - [docs/roadmap.md](docs/roadmap.md) — roadmap
 - [docs/design/](docs/design/) — architecture deep-dives (kernel, IAM, gateway, multi-tenancy, security, ...)

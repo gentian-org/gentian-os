@@ -14,7 +14,6 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-
 package secrets
 
 import (
@@ -54,6 +53,14 @@ type Seeder struct {
 // generated with crypto/rand instead of derived.
 func NewSeeder(w Writer, d *Deriver) *Seeder {
 	return &Seeder{w: w, d: d}
+}
+
+// KV returns the KV client backing this Seeder, or nil when the Writer is
+// something else (a fake, in tests). Per-tenant auth mounts reuse this
+// session rather than opening a second one and holding a second identity.
+func (s *Seeder) KV() *KVClient {
+	kv, _ := s.w.(*KVClient)
+	return kv
 }
 
 // gen returns n hex characters: HKDF-derived from (salt, info) when a master
@@ -243,11 +250,17 @@ func (s *Seeder) SeedS3(ctx context.Context, tenant, app string, base S3Creds) (
 type CacheCreds struct {
 	Host     string
 	Port     string
+	User     string
 	Password string
 }
 
 // SeedCache derives the cache password from the master. Host and port are refreshed
 // on reconcile so infrastructure moves (e.g. shared Redis in gentian-infra-dev) propagate.
+//
+// User is the per-app ACL user the cache reconciler provisions. It is derived from
+// the tenant and app names rather than generated, but it is recorded here so apps can
+// consume it through valueMapping.cache.userKey instead of reconstructing the naming
+// rule in every profile. Engines without per-app users (memcached) leave it empty.
 func (s *Seeder) SeedCache(ctx context.Context, tenant, app string, base CacheCreds) (CacheCreds, error) {
 	salt := CategoryPath(tenant, app, "cache")
 	existing, _ := s.w.Get(ctx, salt)
@@ -264,6 +277,13 @@ func (s *Seeder) SeedCache(ctx context.Context, tenant, app string, base CacheCr
 		"port":     base.Port,
 		"password": password,
 	}
+	// Only record a user for engines that have one; never clobber a stored value
+	// with an empty string when the caller does not supply it.
+	if base.User != "" {
+		want["user"] = base.User
+	} else if existing != nil && existing["user"] != "" {
+		want["user"] = existing["user"]
+	}
 	var err error
 	if existing == nil {
 		err = s.w.PutOnce(ctx, salt, want)
@@ -278,9 +298,13 @@ func (s *Seeder) SeedCache(ctx context.Context, tenant, app string, base CacheCr
 	}
 	got, err := s.w.Get(ctx, salt)
 	if err != nil {
-		return CacheCreds{Host: want["host"], Port: want["port"], Password: want["password"]}, nil //nolint:nilerr
+		return CacheCreds{
+			Host: want["host"], Port: want["port"], User: want["user"], Password: want["password"],
+		}, nil //nolint:nilerr
 	}
-	return CacheCreds{Host: got["host"], Port: got["port"], Password: got["password"]}, nil
+	return CacheCreds{
+		Host: got["host"], Port: got["port"], User: got["user"], Password: got["password"],
+	}, nil
 }
 
 // --- SMTP --------------------------------------------------------------------
@@ -335,12 +359,20 @@ type TenantAdminCreds struct {
 
 // SeedTenantAdmin derives the tenant admin password from the master and
 // persists it write-once under gentian-os/tenants/<tenant>/admin.
-// Username defaults to "admin-<tenant>". Operators can override it by writing
-// a different value to OpenBao before first reconcile.
-func (s *Seeder) SeedTenantAdmin(ctx context.Context, tenant string) (TenantAdminCreds, error) {
+//
+// The username is passed in rather than derived here. It is the tenant's admin
+// ADDRESS — Tenant.TenantAdminUsername — and this package cannot compute it: it
+// needs the cluster's domain and tenancy mode, which are the caller's. Deriving
+// a second form of the same identifier here is what left the login as
+// admin-<tenant> while the address had no tenant name in it at all.
+//
+// Write-once, so an existing tenant keeps the username it was provisioned with.
+// Operators can override it by writing a different value to OpenBao before the
+// first reconcile.
+func (s *Seeder) SeedTenantAdmin(ctx context.Context, tenant, username string) (TenantAdminCreds, error) {
 	salt := TenantAdminPath(tenant)
 	want := map[string]string{
-		"username": "admin-" + tenant,
+		"username": username,
 		"password": s.genTenantAdminPassword(salt),
 	}
 	got, err := s.seedAndRead(ctx, salt, want)
