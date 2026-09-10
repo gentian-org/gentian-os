@@ -125,7 +125,10 @@ func main() {
 	}
 
 	tenantReconciler := &controller.TenantReconciler{
-		Client:                   mgr.GetClient(),
+		Client: mgr.GetClient(),
+		// Needed by the deletion path, which has to tell "gone" apart from "not
+		// in the cache yet" before it acts on a Tenant being deleted.
+		APIReader:                mgr.GetAPIReader(),
 		Exec:                     appExecer,
 		Scheme:                   mgr.GetScheme(),
 		Seeder:                   buildSeeder(),
