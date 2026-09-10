@@ -532,6 +532,24 @@ func (r *TenantReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 
 	// Handle deletion
 	if !tenant.DeletionTimestamp.IsZero() {
+		if r.tenantGoneFromAPI(ctx, req.NamespacedName) {
+			// The cache is still serving a Tenant the API server no longer has:
+			// its finalizer came off, the object was removed, and this reconcile
+			// was already queued. reconcileDelete would then run the whole
+			// cleanup chain for something that does not exist, and that chain
+			// creates as well as deletes — a cleanup Job for a purged step is
+			// re-created, and nothing will ever complete or purge it, because
+			// the Tenant that would have driven it is gone. The Job is left
+			// behind on the cluster.
+			//
+			// Re-entry after removal is not rare: an uncached probe saw it on
+			// every tenant deletion, several times each, since the requeue from
+			// an earlier pass and the watch events from the purge both land
+			// after the object is already gone. What is rare is the cache being
+			// stale for the Tenant while current for the Jobs, which is what
+			// turns a harmless re-entry into an orphan.
+			return ctrl.Result{}, nil
+		}
 		return r.reconcileDelete(ctx, tenant)
 	}
 
@@ -574,6 +592,23 @@ func (r *TenantReconciler) validateTenantPrerequisites(ctx context.Context, tena
 	}
 
 	return missing, nil
+}
+
+// tenantGoneFromAPI reports whether the Tenant is absent from the API server,
+// as opposed to absent from the cache the reconciler normally reads.
+//
+// Only a NotFound counts. A transient error says nothing about whether the
+// object exists, so the caller carries on and reconciles from the cached copy
+// exactly as it did before — this guard removes work, and it must never be the
+// reason a live tenant stops being cleaned up.
+//
+// Answers false when no uncached reader is configured, which keeps the
+// behaviour of a reconciler built without one unchanged.
+func (r *TenantReconciler) tenantGoneFromAPI(ctx context.Context, name types.NamespacedName) bool {
+	if r.APIReader == nil {
+		return false
+	}
+	return errors.IsNotFound(r.APIReader.Get(ctx, name, &gentianov1alpha1.Tenant{}))
 }
 
 // reconcileDelete handles Tenant deletion based on deletionPolicy.
