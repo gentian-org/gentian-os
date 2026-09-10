@@ -141,7 +141,7 @@ Running part of it. A step is named by its number or its full id, so
 Other options:
   --prepare-deployment  write clusters/<id>/kernel in gentian-deployments from
                         install.env, then stop — nothing is committed or applied
-  --prepare-tenant NAME write clusters/<id>/definitions/NAME the same way,
+  --prepare-tenant NAME write clusters/<id>/definitions/tenants/NAME the same way,
                         then stop. Deploy it with `kubectl gentian tenants
                         deploy NAME`. Needs the cluster's files to exist already
   --validate            validate config and step contracts, no cluster changes

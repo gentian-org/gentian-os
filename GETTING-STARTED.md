@@ -357,6 +357,10 @@ Scaffold the definition:
 ./install.sh --prepare-tenant acme
 ```
 
+It asks for a display name, then writes
+`clusters/<cluster-id>/definitions/tenants/acme/tenant.yaml`. Nothing is deployed,
+committed or applied.
+
 Any name but `default`. A tenant's own `BackupPolicy` has to be named after the
 tenant, and `default` is reserved for the cluster-wide one — so a tenant called
 `default` could never have a backup policy of its own.
@@ -368,11 +372,6 @@ matters:
   edit.
 - `tenants/<name>/` — what Argo CD syncs. Written by the deploy command, and
   written again by the operator every time an app is installed from the store.
-
-
-It asks for a display name, then writes
-`clusters/<cluster-id>/definitions/tenants/acme/tenant.yaml`. Nothing is deployed,
-committed or applied.
 
 To install apps for the tenant, log in as tenant admin and open the app store or:
 
