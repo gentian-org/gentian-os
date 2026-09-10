@@ -313,10 +313,7 @@ func TestDeletion_EndToEnd_WithApps(t *testing.T) {
 		"redis-acl-delete-del-full-del-pgapp",
 	}
 	for _, jobName := range cleanupJobs {
-		waitFor(t, jobAppearTimeout, func() bool {
-			job := &batchv1.Job{}
-			return testClient.Get(ctx, types.NamespacedName{Name: jobName, Namespace: "platform-kernel"}, job) == nil
-		})
+		waitForKernelJob(t, jobName, "del-full")
 		markJobComplete(t, jobName, "platform-kernel")
 	}
 
