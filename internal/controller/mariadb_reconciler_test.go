@@ -255,11 +255,7 @@ func TestMariaDB_DeleteDeletePolicy_CreatesDeleteJob(t *testing.T) {
 	go markJobCompleteWhenReady("keycloak-realm-delete-mariadelete", "platform-kernel")
 
 	// A delete Job should be created in the kernel namespace.
-	deleteJob := &batchv1.Job{}
-	waitFor(t, jobAppearTimeout, func() bool {
-		return testClient.Get(context.Background(),
-			types.NamespacedName{Name: "mariadb-delete-mariadelete-maria-app3", Namespace: "platform-kernel"}, deleteJob) == nil
-	})
+	deleteJob := waitForKernelJob(t, "mariadb-delete-mariadelete-maria-app3", "mariadelete")
 
 	if deleteJob.Labels["gentianos.io/tenant"] != "mariadelete" {
 		t.Errorf("expected tenant label 'mariadelete', got %q", deleteJob.Labels["gentianos.io/tenant"])

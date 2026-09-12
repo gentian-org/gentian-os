@@ -18,6 +18,7 @@ package controller_test
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -45,6 +46,7 @@ import (
 	"sigs.k8s.io/yaml"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
+	"github.com/gentian-org/gentian-os/internal/meta"
 	"github.com/gentian-org/gentian-os/internal/controller"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -85,6 +87,12 @@ var dataPlaneManualTestTenants = map[string]struct{}{
 	"dbready":      {},
 	"dbdelete":     {},
 }
+
+// deleteCleanupSettleWindow is how long a delete-cleanup Job is left alone
+// before the auto-completer marks it succeeded, so a test polling for it can
+// actually see it. Comfortably more than the 200ms poll in waitFor, and small
+// enough to stay far inside the three-minute envtest ceiling.
+const deleteCleanupSettleWindow = 1500 * time.Millisecond
 
 // deleteCleanupManualTestTenants lists tenants whose delete-cleanup Jobs must not be
 // auto-completed so tests can observe Job creation.
@@ -245,7 +253,27 @@ func startFakeKeycloak() *httptest.Server {
 // TestMain sets up a single envtest environment and controller manager shared
 // across all tests. Each test creates its own Tenant with a unique name.
 func TestMain(m *testing.M) {
-	ctrl.SetLogger(zap.New(zap.UseDevMode(true), zap.WriteTo(io.Discard)))
+	// Controller logs are discarded by default: 158 parallel tests share this
+	// manager, so the combined output runs to megabytes and buries the test
+	// output that matters.
+	//
+	// They are also the only record of why a tenant did not converge, and the
+	// failures worth diagnosing here are the intermittent ones — a wait that
+	// times out once and passes on a rerun, leaving nothing behind to read.
+	// GENTIAN_TEST_LOG names a file to keep this run's logs in, so a loop
+	// reproducing a flake can hold on to the log of whichever run failed:
+	//
+	//	GENTIAN_TEST_LOG=/tmp/ctrl.log go test ./internal/controller/
+	logSink := io.Discard
+	if path := os.Getenv("GENTIAN_TEST_LOG"); path != "" {
+		fh, err := os.Create(path)
+		if err != nil {
+			panic(fmt.Sprintf("GENTIAN_TEST_LOG=%s: %v", path, err))
+		}
+		defer func() { _ = fh.Close() }()
+		logSink = fh
+	}
+	ctrl.SetLogger(zap.New(zap.UseDevMode(true), zap.WriteTo(logSink)))
 
 	binDir := "/tmp/envtest-bins/k8s/1.32.0-linux-amd64"
 	if v := os.Getenv("KUBEBUILDER_ASSETS"); v != "" {
@@ -423,6 +451,29 @@ func TestMain(m *testing.M) {
 						continue
 					}
 					name := j.Name
+					// A test that asserts "deleting the Tenant creates this
+					// cleanup Job" is otherwise racing this loop. The reconciler
+					// creates the Job, this marks it succeeded within 50ms, the
+					// reconciler advances the deletion chain on its next pass,
+					// and purgeTenantKernelResources removes the finished Job
+					// when the chain ends — all of which fits between two of the
+					// test's 200ms polls, leaving the Job it waited for created
+					// and destroyed unseen. It surfaced as a three-minute
+					// timeout in whichever deletion test lost the race that run,
+					// which is why it read as flaky infrastructure.
+					//
+					// Holding a delete-cleanup Job for a moment before
+					// completing it keeps it observable for several polls. The
+					// Job is still completed, so the chain still advances on its
+					// own and every downstream assertion — Memcached teardown,
+					// the Tenant disappearing, Jobs being purged, and the
+					// orphaned Job a post-purge reconcile can re-create — still
+					// happens without a test having to drive it.
+					if _, isCleanup := deleteCleanupJobTenant(name); isCleanup {
+						if time.Since(j.CreationTimestamp.Time) < deleteCleanupSettleWindow {
+							continue
+						}
+					}
 					autoKeycloak := strings.HasPrefix(name, "keycloak-")
 					autoProv := shouldAutoCompleteProvisioningJob(name)
 					autoDeleteCleanup := shouldAutoCompleteDeleteCleanupJob(name)
@@ -490,6 +541,47 @@ func TestMain(m *testing.M) {
 
 // waitFor polls cond every 200ms until it returns true or timeout elapses.
 // It logs progress every 5s so CI output shows the test is alive.
+// waitForKernelJob waits for a Job to appear in the kernel namespace and, on
+// timeout, reports what was actually there rather than "timed out waiting for
+// condition".
+//
+// Every cleanup-Job wait here used the bare condition form, so each time one
+// flaked the output said only that a condition never came true. The
+// explanations need different fixes and the run keeps none of the evidence that
+// separates them: the Job was never created, or it was created and already
+// purged, or the Tenant finished deleting without getting that far. Reporting
+// the tenant's surviving kernel Jobs and whether the Tenant outlived the wait
+// tells them apart from a single failed run.
+func waitForKernelJob(t *testing.T, jobName, tenantName string) *batchv1.Job {
+	t.Helper()
+	ctx := context.Background()
+	deadline := time.Now().Add(jobAppearTimeout)
+	for {
+		job := &batchv1.Job{}
+		if testClient.Get(ctx, types.NamespacedName{Name: jobName, Namespace: meta.KernelNamespace}, job) == nil {
+			return job
+		}
+		if time.Now().After(deadline) {
+			break
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+
+	list := &batchv1.JobList{}
+	_ = testClient.List(ctx, list, client.InNamespace(meta.KernelNamespace))
+	present := make([]string, 0, len(list.Items))
+	for i := range list.Items {
+		if list.Items[i].Labels[meta.TenantLabel] == tenantName {
+			present = append(present, list.Items[i].Name)
+		}
+	}
+	tenantAlive := testClient.Get(ctx, types.NamespacedName{Name: tenantName}, &gentianov1alpha1.Tenant{}) == nil
+
+	t.Fatalf("Job %q never appeared in %s within %s\n\tkernel Jobs still labelled for tenant %q: %v\n\tTenant object still present: %v",
+		jobName, meta.KernelNamespace, jobAppearTimeout, tenantName, present, tenantAlive)
+	return nil
+}
+
 func waitFor(t *testing.T, timeout time.Duration, cond func() bool) {
 	t.Helper()
 	deadline := time.Now().Add(timeout)

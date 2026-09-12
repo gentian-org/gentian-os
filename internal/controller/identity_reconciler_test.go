@@ -561,11 +561,7 @@ func TestIdentity_DeleteDeletePolicy_CreatesCleanupJob(t *testing.T) {
 	}
 
 	// Expect a realm-deletion cleanup Job.
-	waitFor(t, jobAppearTimeout, func() bool {
-		j := &batchv1.Job{}
-		return testClient.Get(context.Background(),
-			types.NamespacedName{Name: "keycloak-realm-delete-identdelete", Namespace: "platform-kernel"}, j) == nil
-	})
+	waitForKernelJob(t, "keycloak-realm-delete-identdelete", "identdelete")
 }
 
 // TestIdentity_RetainPolicy_DisablesRealm verifies that deleting a Tenant with

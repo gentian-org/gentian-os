@@ -314,11 +314,7 @@ func TestCache_DeleteDeletePolicy_CreatesDeleteJobsAndDeletesApplication(t *test
 	go markJobCompleteWhenReady("keycloak-realm-delete-cachedelete", "platform-kernel")
 
 	// Redis delete Job should appear.
-	deleteJob := &batchv1.Job{}
-	waitFor(t, jobAppearTimeout, func() bool {
-		return testClient.Get(context.Background(),
-			types.NamespacedName{Name: "redis-acl-delete-cachedelete-redis-app3", Namespace: "platform-kernel"}, deleteJob) == nil
-	})
+	deleteJob := waitForKernelJob(t, "redis-acl-delete-cachedelete-redis-app3", "cachedelete")
 	if deleteJob.Labels["gentianos.io/tenant"] != "cachedelete" {
 		t.Errorf("expected tenant label 'cachedelete', got %q", deleteJob.Labels["gentianos.io/tenant"])
 	}

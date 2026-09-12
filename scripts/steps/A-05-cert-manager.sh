@@ -3,7 +3,7 @@
 # phase: control-plane
 # requires: A-03-namespaces
 # provides: cert-manager controller and its CRDs
-# mutates: namespace cert-manager, cert-manager CRDs
+# mutates: namespace cert-manager, cert-manager CRDs, the release's DNS-01 extraArgs
 # pins: cert-manager
 
 check() {
@@ -11,7 +11,11 @@ check() {
     # absence is not this installer's verdict to give.
     [[ "${INSTALL_CLUSTER_INFRA:-1}" == "1" ]] || return "${CHECK_UNDEFINED}"
     kubectl get deployment cert-manager -n cert-manager >/dev/null 2>&1 &&
-        kubectl get crd certificates.cert-manager.io >/dev/null 2>&1
+        kubectl get crd certificates.cert-manager.io >/dev/null 2>&1 &&
+        # Present is not enough: a release that checks DNS-01 propagation
+        # through the cluster's DNS never sees a challenge record under the
+        # hairpinned kernel domain. See cert_manager_dns01_args.
+        cert_manager_dns01_converged
 }
 
 apply() {
