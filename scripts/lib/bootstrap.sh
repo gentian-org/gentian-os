@@ -1140,6 +1140,152 @@ seed_repository_credentials() {
 }
 
 # =============================================================================
+# resync_credential_consumers — release the consumers that latched while the
+# credentials they read did not exist yet.
+#
+# The DNS credential is seeded HERE, at B-10, but the two things that read it
+# are created well before: the external-dns ExternalSecret arrives with the
+# bootstrap chart at B-03, and the DNS-01 ClusterIssuer at A-06. Neither can
+# simply be moved later — the ClusterIssuer has to exist before anything
+# requests a certificate against it — and the credential cannot be seeded
+# earlier, because the KV mount it goes into is B-04's and the policy that
+# makes it readable is B-05's. So both consumers necessarily spend several
+# steps pointed at a path that answers 403, and both record that failure.
+#
+# What turns that from a slow install into a stuck one is that neither retries
+# on a schedule the install can wait out, once the value does arrive:
+#
+#   ESO backs off exponentially, per ExternalSecret. Observed on a fresh
+#   cluster: retries 128s and then 256s apart, against a refreshInterval of 1h.
+#   An ExternalSecret that failed through the B-03 → B-10 window can sit
+#   unsynced for a quarter of an hour after its path became readable.
+#
+#   cert-manager does not re-reconcile an Issuer when the Secret its solver
+#   names finally appears. Same cluster, same run: the ClusterIssuer latched
+#   `failed to get secret "cloudflare-api-token": not found` at 17:13:15 and
+#   was still reporting it at 17:44:03 — seventeen minutes after ESO had
+#   materialised that exact Secret in that exact namespace at 17:27:21.
+#
+# The second one does not clear on its own within any patience the installer
+# has, and everything downstream of it fails while naming something else. No
+# ready issuer means the kernel wildcard Certificate never issues; the gateway
+# goes on serving whatever it already had; and D-07 dies on OpenBao refusing
+# the discovery document's TLS — three layers away from the credential that was
+# late, and describing a certificate problem rather than a seeding one.
+#
+# A nudge, not a repair. An annotation is exactly what both controllers watch
+# for, neither is asked to do anything it would not eventually have done by
+# itself, and a cluster where nothing latched sees no change at all.
+# =============================================================================
+
+# The ExternalSecrets that have no Ready=True condition — failed, or never yet
+# synced. Both want the same nudge, and distinguishing them here would only
+# narrow what the fix covers.
+_not_ready_external_secrets() {
+    kubectl get externalsecrets.external-secrets.io -A -o json 2>/dev/null |
+        jq -r '.items[]
+               | select([(.status.conditions // [])[]
+                         | select(.type == "Ready" and .status == "True")] | length == 0)
+               | "\(.metadata.namespace) \(.metadata.name)"' 2>/dev/null || true
+}
+
+# ClusterIssuers only. A-06 creates no namespaced Issuers, and the failure this
+# exists for is specifically a cluster-scoped solver reading a Secret out of
+# cert-manager's own namespace.
+_not_ready_cluster_issuers() {
+    kubectl get clusterissuers.cert-manager.io -o json 2>/dev/null |
+        jq -r '.items[]
+               | select([(.status.conditions // [])[]
+                         | select(.type == "Ready" and .status == "True")] | length == 0)
+               | .metadata.name' 2>/dev/null || true
+}
+
+resync_credential_consumers() {
+    local stamp ns name count=0
+    stamp="$(date +%s)"
+
+    # ExternalSecrets first, and then a wait: these PRODUCE the Secrets the
+    # issuers read, so nudging an issuer before its Secret exists would only
+    # latch it a second time — the same ordering fault this function is here to
+    # undo, reproduced inside the undoing.
+    while read -r ns name; do
+        [[ -n "${ns}" && -n "${name}" ]] || continue
+        # force-sync is ESO's own trigger: any changed value makes it reconcile
+        # now rather than at the end of its backoff.
+        if kubectl annotate externalsecret "${name}" -n "${ns}" \
+            force-sync="${stamp}" --overwrite >/dev/null 2>&1; then
+            count=$(( count + 1 ))
+        fi
+    done <<< "$(_not_ready_external_secrets)"
+
+    if (( count > 0 )); then
+        info "Re-syncing ${count} ExternalSecret(s) that failed before their paths were seeded..."
+        # Waited out by PROGRESS, not by emptiness. Emptiness never arrives: the
+        # credential catalogue declares a CredentialRequirement for every DNS
+        # provider it supports, so a cluster on Cloudflare carries permanently
+        # unsynced ExternalSecrets for azuredns, clouddns, hetzner, route53 and
+        # the rest — twelve of them on the cluster this was written against.
+        # They are not failures, they are providers this cluster does not use,
+        # and a wait for "all Ready" would burn its whole budget on every
+        # install and then report a timeout for the normal state of affairs.
+        #
+        # So: stop as soon as a poll produces no further change. What this
+        # waits for is the ones that CAN come good doing so, which is all the
+        # ClusterIssuer nudge below needs.
+        local deadline=$(( SECONDS + 120 )) prev="" now=""
+        prev="$(_not_ready_external_secrets)"
+        while (( SECONDS < deadline )); do
+            sleep 5
+            now="$(_not_ready_external_secrets)"
+            # `if`, not `[[ ... ]] && break`: these scripts run under
+            # `set -euo pipefail`, where a bare test that comes out false is an
+            # unguarded non-zero command and takes the whole install with it.
+            if [[ "${now}" == "${prev}" ]]; then
+                break
+            fi
+            prev="${now}"
+        done
+    fi
+
+    count=0
+    while read -r name; do
+        [[ -n "${name}" ]] || continue
+        # cert-manager has no documented force annotation; it watches the
+        # Issuer, so any metadata change is the trigger. The annotation is
+        # namespaced under gentianos.io rather than cert-manager.io so it can
+        # never be mistaken for something the controller itself set.
+        if kubectl annotate clusterissuer "${name}" \
+            gentianos.io/resynced-at="${stamp}" --overwrite >/dev/null 2>&1; then
+            count=$(( count + 1 ))
+        fi
+    done <<< "$(_not_ready_cluster_issuers)"
+
+    if (( count > 0 )); then
+        info "Re-reconciling ${count} ClusterIssuer(s) that latched on an absent credential..."
+        # Worth waiting for by name: a ClusterIssuer that is not Ready issues
+        # nothing, and the certificate that does not get issued is the kernel
+        # wildcard every later step's TLS depends on.
+        local deadline=$(( SECONDS + 120 )) stuck
+        while (( SECONDS < deadline )); do
+            stuck="$(_not_ready_cluster_issuers)"
+            if [[ -z "${stuck}" ]]; then
+                break
+            fi
+            sleep 5
+        done
+        stuck="$(_not_ready_cluster_issuers)"
+        if [[ -n "${stuck}" ]]; then
+            warn "ClusterIssuer(s) still not Ready after the nudge:"
+            printf '%s\n' "${stuck}" | sed 's/^/    /' >&2
+            warn "  Certificates naming them stay Pending until they are, and the"
+            warn "  gateway keeps serving whatever it already had."
+        else
+            success "Credential consumers re-synced."
+        fi
+    fi
+}
+
+# =============================================================================
 # Apply root ArgoCD ApplicationSet
 #
 # gentian-appsets is the "app of apps" that syncs kernel/appsets/ into the
