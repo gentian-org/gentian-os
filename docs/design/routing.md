@@ -432,3 +432,13 @@ The gateway-platform controller updates the hairpin block when the Envoy
 Service or routing mode changes and rolls CoreDNS. Tenant NetworkPolicies are
 refreshed when the edge Service changes so egress to `envoy-gateway-system`
 stays allowed.
+
+The block holds `<kernelDomain>` itself, and a CoreDNS `hosts` entry answers
+every query type for its name. In-cluster lookups of the zone apex's SOA and NS
+records therefore return empty, so nothing in the cluster can discover the zone's
+authoritative nameservers through cluster DNS. cert-manager needs exactly that
+to confirm a DNS-01 challenge record has propagated. The installer therefore
+runs it with `--dns01-recursive-nameservers-only` against the resolvers in the
+Cluster claim's `certificates.dns01RecursiveNameservers` (public resolvers by
+default; `cluster` keeps cluster DNS for zones only an internal server knows).
+A-05 reconciles those flags on an existing Helm release as well as a new one.
