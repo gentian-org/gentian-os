@@ -513,6 +513,27 @@ spec:
                         - production
                         - both
                       default: production
+                    dns01RecursiveNameservers:
+                      type: string
+                      description: >
+                        Where cert-manager checks that a DNS-01 challenge record
+                        has propagated, as comma-separated host:port resolvers,
+                        or "cluster" for the cluster's own DNS.
+
+                        Public resolvers by default, because the cluster's own
+                        DNS cannot answer for the zone: the CoreDNS hairpin
+                        (docs/design/routing.md) serves the kernel domain from a
+                        hosts block, and a hosts entry answers every query type
+                        for its name — the zone apex's SOA and NS come back
+                        empty, cert-manager finds no authoritative nameservers,
+                        and every challenge waits on "not yet propagated"
+                        forever. Set "cluster" only for a zone public resolvers
+                        cannot see, such as an internal rfc2136 server.
+
+                        Read by the installer at A-05, which passes it to the
+                        cert-manager release it manages.
+                      pattern: '^(cluster|[^,\s]+(,[^,\s]+)*)$'
+                      default: "1.1.1.1:53,8.8.8.8:53"
                     dnsProvider:
                       type: string
                       description: >

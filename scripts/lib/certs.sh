@@ -20,7 +20,11 @@ install_cert_manager() {
         # Existing Helm release may have been created by a previous install.sh run.
         : "${GENTIAN_MANAGED_CERT_MANAGER:=1}"
         save_install_state
-        success "cert-manager already installed (Helm release present). Skipping."
+        if cert_manager_dns01_converged; then
+            success "cert-manager already installed (Helm release present). Skipping."
+            return
+        fi
+        _reconcile_cert_manager_dns01_args
         return
     fi
 
@@ -45,6 +49,11 @@ install_cert_manager() {
         save_install_state
         warn "cert-manager already present but not managed by Helm (e.g. distro addon)."
         info "Detected cert-manager webhook in namespace ${CERT_MANAGER_NAMESPACE}; using that installation as-is."
+        if [[ -n "$(cert_manager_dns01_args)" ]]; then
+            warn "  Its DNS-01 propagation check is not this installer's to configure. If"
+            warn "  challenges wait on \"not yet propagated\", give it the flags"
+            warn "  $(cert_manager_dns01_args | tr '\n' ' ')"
+        fi
         return
     fi
 
@@ -67,6 +76,7 @@ install_cert_manager() {
             --version "$(gentian_pin cert-manager chart)" \
             --create-namespace \
             --set crds.enabled=false \
+            --set-json "extraArgs=$(_cert_manager_extra_args_json '[]')" \
             --wait --timeout 5m
     else
         _helm_retry upgrade --install cert-manager jetstack/cert-manager \
@@ -74,6 +84,7 @@ install_cert_manager() {
             --version "$(gentian_pin cert-manager chart)" \
             --create-namespace \
             --set crds.enabled=true \
+            --set-json "extraArgs=$(_cert_manager_extra_args_json '[]')" \
             --wait --timeout 5m
     fi
     CERT_MANAGER_NAMESPACE="cert-manager"
@@ -81,6 +92,85 @@ install_cert_manager() {
     GENTIAN_MANAGED_CERT_MANAGER="1"
     save_install_state
     success "cert-manager installed."
+}
+
+# =============================================================================
+# cert-manager's DNS-01 propagation check
+#
+# Before it asks Let's Encrypt to validate, cert-manager checks the challenge
+# TXT record itself: it finds the zone by SOA, the zone's nameservers by NS, and
+# asks those. By default it resolves both through the cluster's DNS — which here
+# cannot answer for the zone. The CoreDNS hairpin serves the kernel domain from
+# a hosts block, and a hosts entry answers EVERY query type for its name, so the
+# apex's SOA and NS come back NOERROR and empty. cert-manager finds no
+# nameservers, and the challenge reports "not yet propagated" while the record
+# sits in the zone — for a new tenant's wildcard and for every renewal alike.
+#
+# So the release is told to resolve through public resolvers instead. Which ones
+# is certificates.dns01RecursiveNameservers on the claim; "cluster" leaves
+# cert-manager on the cluster's DNS, for a zone only an internal server knows.
+# =============================================================================
+
+# cert_manager_dns01_args — the controller flags the claim asks for, one per
+# line; nothing for "cluster".
+cert_manager_dns01_args() {
+    local ns="${DNS01_RECURSIVE_NAMESERVERS:-$(xrd_default certificates.dns01RecursiveNameservers)}"
+    if [[ -z "${ns}" || "${ns}" == "cluster" ]]; then
+        return 0
+    fi
+    printf '%s\n' "--dns01-recursive-nameservers-only" \
+        "--dns01-recursive-nameservers=${ns}"
+}
+
+# _cert_manager_extra_args_json <current-json-array> — the release's extraArgs
+# with this installer's DNS-01 flags replaced by the ones the claim asks for.
+# Every other flag is kept: an operator who added one meant it.
+_cert_manager_extra_args_json() {
+    local current="${1:-[]}"
+    cert_manager_dns01_args | jq -R . | jq -cs --argjson current "${current}" \
+        '[$current[] | select(startswith("--dns01-recursive-nameservers") | not)] + .'
+}
+
+# _cert_manager_release_extra_args — extraArgs as the release holds them.
+_cert_manager_release_extra_args() {
+    helm get values cert-manager -n cert-manager -o json 2>/dev/null |
+        jq -c '.extraArgs // []' 2>/dev/null || echo '[]'
+}
+
+# cert_manager_dns01_converged — whether the Helm-managed release already runs
+# with exactly the DNS-01 flags the claim asks for. Read from the release, not
+# the Deployment, because the release is what an upgrade would change.
+cert_manager_dns01_converged() {
+    helm status cert-manager -n cert-manager >/dev/null 2>&1 || return 0
+    local current desired
+    current="$(_cert_manager_release_extra_args)"
+    desired="$(_cert_manager_extra_args_json "${current}")"
+    [[ "$(jq -cS . <<< "${current}")" == "$(jq -cS . <<< "${desired}")" ]]
+}
+
+# _reconcile_cert_manager_dns01_args — upgrade the existing release to the flags
+# the claim asks for, and nothing else. The chart version is the one already
+# deployed, not the pin: this step does not upgrade cert-manager behind an
+# operator's back, it only corrects how the running one checks propagation.
+_reconcile_cert_manager_dns01_args() {
+    local version extra
+    version="$(helm list -n cert-manager -o json 2>/dev/null |
+        jq -r '.[] | select(.name == "cert-manager") | .chart' | sed 's/^cert-manager-//')"
+    if [[ -z "${version}" ]]; then
+        warn "cert-manager release has no readable chart version; leaving its DNS-01 flags as they are."
+        return 0
+    fi
+    extra="$(_cert_manager_extra_args_json "$(_cert_manager_release_extra_args)")"
+    info "Reconciling cert-manager's DNS-01 propagation check → ${extra}"
+    helm repo add jetstack "$(gentian_pin cert-manager repo)" --force-update
+    helm repo update jetstack
+    _helm_retry upgrade cert-manager jetstack/cert-manager \
+        -n cert-manager \
+        --version "${version}" \
+        --reuse-values \
+        --set-json "extraArgs=${extra}" \
+        --wait --timeout 5m
+    success "cert-manager DNS-01 propagation check reconciled."
 }
 
 # The zone's host. Cloudflare stays the default so a cluster that never named
