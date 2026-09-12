@@ -1,0 +1,139 @@
+name: Sync test-cb
+
+# test-cb follows develop, so the test cluster always runs what develop has.
+#
+# Why workflow_run and not `on: push: branches: [develop]`
+# ------------------------------------------------------------------
+# test-cb drives a real cluster. Moving it to a commit whose CI has not
+# finished points argocd-image-updater at a tag that does not exist yet, and
+# a build that then fails leaves the branch on a commit with no image at all.
+# Gating on conclusion == success costs one CI cycle of latency and removes
+# both.
+#
+# IMPORTANT — this file must be on the DEFAULT branch (main) to do anything.
+# GitHub only fires workflow_run for workflow files on the default branch, so
+# a copy that lives on develop alone never runs, silently. See §"Landing this"
+# in the pull request.
+#
+# Why a PAT and not GITHUB_TOKEN
+# ------------------------------------------------------------------
+# A push made with the default GITHUB_TOKEN does not trigger workflows —
+# GitHub suppresses it to stop workflows recursing. That matters here because
+# the cluster does not track a moving `test-cb` tag; it tracks the immutable
+# branch-scoped one:
+#
+#   argocd-image-updater.argoproj.io/gentianos.allow-tags:
+#     regexp:^test-cb-[0-9a-f]{7,}$
+#
+# and ci.yaml publishes test-cb-<sha> only from a `push` event on
+# refs/heads/test-cb. Pushed with GITHUB_TOKEN, the branch would move, CI
+# would never run on it, that tag would never be published, and the cluster
+# would go on running its previous image without reporting anything wrong —
+# the exact failure ci.yaml's own docker-job comment warns about.
+#
+# So the push must come from a credential GitHub treats as a person:
+# TEST_CB_SYNC_TOKEN, a fine-grained PAT with contents: write on this repo.
+# If that secret is missing the job fails loudly rather than moving the
+# branch and leaving the cluster stuck on a stale image.
+
+on:
+  workflow_run:
+    workflows: [CI]
+    branches: [develop]
+    types: [completed]
+  # Manual re-sync, for when test-cb has been parked on a feature branch and
+  # you want it back on develop without waiting for the next commit.
+  workflow_dispatch:
+
+# GITHUB_TOKEN stays read-only: it is deliberately not the credential that
+# writes here, and leaving it write would only obscure that.
+permissions:
+  contents: read
+
+# One at a time. Two develop commits in quick succession would otherwise race
+# to force-push the same branch, and the loser could land the older SHA.
+# cancel-in-progress: the newest develop commit is the one test-cb should end
+# on, so an in-flight sync for an older one has nothing to contribute.
+concurrency:
+  group: sync-test-cb
+  cancel-in-progress: true
+
+jobs:
+  sync:
+    name: Move test-cb to develop
+    runs-on: ubuntu-latest
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      github.event.workflow_run.conclusion == 'success'
+    steps:
+      - name: Require the sync token
+        # Checked before the checkout, so a missing secret reads as "the secret
+        # is missing" rather than as an authentication failure against a URL.
+        env:
+          TOKEN: ${{ secrets.TEST_CB_SYNC_TOKEN }}
+        run: |
+          if [[ -z "${TOKEN}" ]]; then
+            echo "::error::TEST_CB_SYNC_TOKEN is not set."
+            echo "::error::Create a fine-grained PAT with contents: write on this"
+            echo "::error::repository and save it as the TEST_CB_SYNC_TOKEN secret."
+            echo "::error::Pushing with GITHUB_TOKEN instead would move the branch"
+            echo "::error::without triggering CI, so no test-cb-<sha> image would be"
+            echo "::error::published and the cluster would keep its previous image."
+            exit 1
+          fi
+
+      - uses: actions/checkout@v6
+        with:
+          token: ${{ secrets.TEST_CB_SYNC_TOKEN }}
+          # Full history: the push below names a commit by SHA, which a shallow
+          # clone need not contain.
+          fetch-depth: 0
+          ref: develop
+
+      - name: Move test-cb to develop
+        env:
+          # The commit CI actually passed on, not whatever develop points at by
+          # the time this runs. develop can move while CI is still going, and
+          # syncing its newer tip would publish a branch nothing has built.
+          # On a manual dispatch there is no prior run, so develop's tip is the
+          # only sensible answer.
+          SHA: ${{ github.event_name == 'workflow_dispatch' && github.sha || github.event.workflow_run.head_sha }}
+        run: |
+          set -euo pipefail
+
+          if ! git cat-file -e "${SHA}^{commit}" 2>/dev/null; then
+            echo "::error::${SHA} is not in this checkout of develop."
+            echo "::error::It was probably force-pushed away after CI ran."
+            exit 1
+          fi
+
+          before="$(git ls-remote origin refs/heads/test-cb | cut -f1)"
+          if [[ "${before}" == "${SHA}" ]]; then
+            echo "test-cb is already at ${SHA} — nothing to do."
+            {
+              echo "### test-cb already current"
+              echo
+              echo "Already at \`${SHA}\`."
+            } >> "${GITHUB_STEP_SUMMARY}"
+            exit 0
+          fi
+
+          # --force, deliberately. test-cb is a pointer branch: it gets parked
+          # on a feature branch under test, which leaves it with commits
+          # develop does not have, and a plain push would be rejected from
+          # then until someone intervened by hand. Overwriting is the agreed
+          # behaviour -- test-cb always ends up equal to develop -- so parking
+          # it now lasts only until the next develop commit.
+          git push --force origin "${SHA}:refs/heads/test-cb"
+
+          {
+            echo "### test-cb moved to develop"
+            echo
+            echo "| | commit |"
+            echo "|---|---|"
+            echo "| before | \`${before:-(none)}\` |"
+            echo "| after  | \`${SHA}\` |"
+            echo
+            echo "CI now runs on \`test-cb\` and publishes \`test-cb-${SHA:0:7}\`,"
+            echo "which is what argocd-image-updater's allow-tags regexp matches."
+          } >> "${GITHUB_STEP_SUMMARY}"
