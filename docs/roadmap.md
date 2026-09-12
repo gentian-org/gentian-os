@@ -945,6 +945,19 @@ does not exist yet that something cannot be the Composition.
   the diff, because the dry-run applies the same webhook. Auditing that belongs on
   the admission side. See [architecture.md](architecture.md) §3.2.
 
+### 2.23 Headlamp as an Optional Cluster Console (*)
+* **Target Domain**: Platform, Infrastructure & Lifecycle
+* **Context**: An operator inspecting a cluster has `kubectl` and the Admin Console, and nothing between them: the console shows tenants and apps, not Deployments, events or logs. Headlamp is the obvious fill, it takes Gentian-specific plugins (sidebar entries, details-view sections on our CRDs), and nothing in the installer offers it today.
+* **Proposed Solution**: Ship it as an opt-in, off by default, in a namespace of its own — **not** `platform-kernel`, which is where the kernel services an operator would use it to debug live. Authentication stays the viewer's own kube token; the chart's default `cluster-admin` ClusterRoleBinding for Headlamp's own ServiceAccount is not created.
+* **Open decisions**:
+  - Which namespace. A dedicated `headlamp` (cert-manager-shaped) or `gentian-system` alongside the operator. Whichever it is, it is not a kernel namespace and not in `gentian_kernel_namespaces()`.
+  - Who installs it: an installer step from the working tree, or a conditional ApplicationSet like `09c-llm.yaml` with the flag writing the Cluster claim. Argo delivery keeps it under drift detection and still leaves the console running when Argo CD is not.
+* **Backlog Items**:
+  - `[ ]` Decide namespace and delivery path; pin the chart in `versions.yaml` and add `--with-headlamp` to `install.sh`.
+  - `[ ]` Expose it at `headlamp.<kernel-domain>` on the public gateway — the wildcard certificate already covers the host.
+  - `[ ]` Gentian plugins (Tenants/Apps/AppProfiles/IntegrationBindings, tenant ownership on a Namespace, branding), built and published from gentian-ui and mounted by an init container.
+  - `[ ]` Per-admin kube identity via OIDC, so the console authorises the person rather than a pasted ServiceAccount token. Needs API server OIDC configuration, which the installer does not do today — the same door as §1.28.
+
 ## 3. User Management & Shell UI
 
 ### 3.1 SCIM & Provisioning Bus Integration (*)
