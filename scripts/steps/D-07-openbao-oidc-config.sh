@@ -131,6 +131,49 @@ _oidc_gateway_ca_file() {
     return 1
 }
 
+# _oidc_cert_covers_host <pem-file> <host> — does the chain the gateway serves
+# actually carry this name?
+#
+# The distinction the step could not previously make, and the reason a failure
+# here read as the wrong fault entirely. oidc_discovery_ca_pem fixes a chain no
+# trust store knows. It cannot fix a certificate that does not carry the NAME —
+# so on a name mismatch both attempts fail with the same bare "error checking
+# oidc discovery URL", and the pinned retry's identical refusal is what makes it
+# look like a trust problem.
+#
+# Answers "no" only when it is certain: no openssl, or no SAN extension to read,
+# returns success, because a diagnosis this step cannot substantiate is worse
+# than none. The caller only ever ADDS a message on a definite mismatch.
+_oidc_cert_covers_host() {
+    local pem="$1" host="$2" names name base
+    command -v openssl >/dev/null 2>&1 || return 0
+    names="$(openssl x509 -in "${pem}" -noout -ext subjectAltName 2>/dev/null |
+        tr ',' '\n' | sed -n 's/.*DNS://p' | tr -d ' []')"
+    [[ -n "${names}" ]] || return 0
+    while IFS= read -r name; do
+        [[ -n "${name}" ]] || continue
+        if [[ "${name}" == "${host}" ]]; then
+            return 0
+        fi
+        if [[ "${name}" == '*.'* ]]; then
+            # One label only, per RFC 6125: *.example.org covers a.example.org
+            # and not a.b.example.org. Matching the suffix alone would call a
+            # deep kernel domain covered by a wildcard that does not cover it.
+            base="${name#\*.}"
+            if [[ "${host}" == *".${base}" && "${host%%.*}.${base}" == "${host}" ]]; then
+                return 0
+            fi
+        fi
+    done <<< "${names}"
+    return 1
+}
+
+# _oidc_cert_names <pem-file> — subject and SANs, for the report.
+_oidc_cert_names() {
+    command -v openssl >/dev/null 2>&1 || return 1
+    openssl x509 -in "$1" -noout -subject -issuer -ext subjectAltName 2>/dev/null
+}
+
 check() {
     _oidc_values
     # No OIDC configured for this cluster: nothing to configure, and nothing to
@@ -456,16 +499,27 @@ _dd_tls_ok() {
     fi
 
     ca_file="$(_oidc_gateway_ca_file)"
+    local covers_host=1
     if [[ -n "${ca_file}" ]]; then
-        info "  OpenBao does not trust the certificate the cluster serves for"
-        info "  ${OIDC_DISCOVERY_URL%%/auth*} — a private or staging chain, which"
-        info "  is normal. Pinning the discovery fetch to the gateway's CA."
+        if _oidc_cert_covers_host "${ca_file}" "${_dd_host}"; then
+            covers_host=0
+            info "  OpenBao does not trust the certificate the cluster serves for"
+            info "  ${OIDC_DISCOVERY_URL%%/auth*} — a private or staging chain, which"
+            info "  is normal. Pinning the discovery fetch to the gateway's CA."
+        else
+            # Said before the retry rather than after it, because the retry is
+            # going to fail and an operator watching should know why it was run
+            # at all. It IS still run: its refusal belongs in the report below,
+            # and a cert this step misread would otherwise go unattempted.
+            warn "  The certificate the cluster serves does not carry ${_dd_host}."
+            warn "  Pinning its CA cannot fix a name mismatch; retrying anyway so"
+            warn "  that OpenBao's own answer is on the record."
+        fi
         if pinned_err="$(_oidc_write_config "${secret}" "${ca_file}" 2>&1)"; then
             rm -f "${ca_file}"
             success "OIDC auth mount configured (client ${OIDC_CLIENT_ID}, discovery pinned to the gateway CA)."
             return 0
         fi
-        rm -f "${ca_file}"
     fi
 
     # Only now is any of this an error, so only now is any of it printed.
@@ -474,6 +528,41 @@ _dd_tls_ok() {
     error "  verifies its TLS. Check that the name resolves in-cluster and that"
     error "  what answers serves a chain the gateway's CA covers."
     error ""
+
+    # The specific fault, when it can be named. A name mismatch is not a trust
+    # problem and must not be reported as one: the certificate is a symptom and
+    # the issuer behind it is the fault.
+    #
+    # What leaves one behind is a kernel domain CHANGE. The old wildcard stays
+    # in wildcard-kernel-tls, the gateway goes on serving it, and every name
+    # under the new domain gets a certificate for the old one. Seen on a cluster
+    # moved from test.gentian-os.org to gentian-os.org: the leaf was
+    # CN=test.gentian-os.org with SAN *.test.gentian-os.org, while the DNS-01
+    # ClusterIssuer that would have re-issued it was itself stuck on a
+    # credential seeded after it had already given up — see
+    # resync_credential_consumers in scripts/lib/bootstrap.sh.
+    #
+    # Note which side sees this. The pre-check above reads the PUBLIC edge,
+    # which on a tunnelled cluster is Cloudflare terminating TLS with its own
+    # valid certificate, so it passes. OpenBao resolves the same name to the
+    # in-cluster gateway and sees the stale leaf. Two different certificates for
+    # one hostname, and only one of them is the one that matters here.
+    if (( covers_host != 0 )) && [[ -n "${ca_file}" ]]; then
+        error "  The certificate the gateway serves does not cover ${_dd_host}:"
+        # `|| true`: pipefail makes an openssl that cannot parse the file fail
+        # the whole pipeline, and this is the diagnosis — it must not become a
+        # second failure on top of the one being explained.
+        { _oidc_cert_names "${ca_file}" || true; } | sed 's/^/      /' >&2
+        error ""
+        error "  That is a certificate that was never re-issued, not a trust gap,"
+        error "  and no CA bundle will fix it. Check the Certificate and the"
+        error "  ClusterIssuer it names:"
+        error "    kubectl get certificate -A"
+        error "    kubectl get clusterissuers"
+        error "  A ClusterIssuer that is not Ready issues nothing, and the wildcard"
+        error "  stays at whatever it last held."
+        error ""
+    fi
     error "  Using the system trust store, OpenBao said:"
     printf '%s\n' "${plain_err}" | sed 's/^/      /' >&2
     if [[ -n "${ca_file}" || -n "${pinned_err}" ]]; then
@@ -483,6 +572,12 @@ _dd_tls_ok() {
         error "  No gateway CA bundle was available to retry with: looked for"
         error "  wildcard-tls in $(gentian_services_namespace) and"
         error "  wildcard-kernel-tls in cert-manager, and neither had a certificate."
+    fi
+    # Held until here so the diagnosis above could read it; the success paths
+    # remove it on their own way out. An `if` rather than `[[ ... ]] && rm`,
+    # because under `set -e` a false test here is a non-zero command.
+    if [[ -n "${ca_file}" ]]; then
+        rm -f "${ca_file}"
     fi
     return 1
 }
