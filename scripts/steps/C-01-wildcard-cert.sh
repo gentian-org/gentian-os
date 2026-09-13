@@ -18,8 +18,16 @@ check() {
         # issued certificate; the Gateway reads the copy in the services
         # namespace, and a certificate issued but never distributed leaves the
         # edge serving nothing while the issuing half looks complete.
-        kubectl get secret wildcard-tls -n "$(gentian_services_namespace)" >/dev/null 2>&1 ||
-            return "${CHECK_MISSING}"
+        #
+        # The same CERTIFICATE, not merely a Secret of the same name. Existence
+        # is true of a copy made for a domain this cluster has since left, and
+        # that is not a hypothetical: after the kernel domain moved, cert-manager
+        # re-issued for the new one while every copy still held the old
+        # certificate. This check said satisfied, --force was the only way to
+        # reach apply(), and the symptom appeared three steps away as OpenBao
+        # refusing an OIDC discovery document whose TLS it could not verify --
+        # a name mismatch, reported as a trust problem.
+        kernel_wildcard_propagated || return "${CHECK_MISSING}"
         return 0
     fi
 

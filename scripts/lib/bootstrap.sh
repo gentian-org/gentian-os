@@ -1237,9 +1237,11 @@ resync_credential_consumers() {
         while (( SECONDS < deadline )); do
             sleep 5
             now="$(_not_ready_external_secrets)"
-            # `if`, not `[[ ... ]] && break`: these scripts run under
-            # `set -euo pipefail`, where a bare test that comes out false is an
-            # unguarded non-zero command and takes the whole install with it.
+            # `if` for legibility, not for safety: `[[ ... ]] && break` is
+            # also correct under `set -e`, because a failing command before the
+            # final && of a list is exempt from errexit. The form that does bite
+            # is one as the LAST statement of a function, where the function
+            # then returns non-zero to a bare caller.
             if [[ "${now}" == "${prev}" ]]; then
                 break
             fi
