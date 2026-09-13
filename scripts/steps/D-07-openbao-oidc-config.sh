@@ -574,8 +574,7 @@ _dd_tls_ok() {
         error "  wildcard-kernel-tls in cert-manager, and neither had a certificate."
     fi
     # Held until here so the diagnosis above could read it; the success paths
-    # remove it on their own way out. An `if` rather than `[[ ... ]] && rm`,
-    # because under `set -e` a false test here is a non-zero command.
+    # remove it on their own way out.
     if [[ -n "${ca_file}" ]]; then
         rm -f "${ca_file}"
     fi
