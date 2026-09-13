@@ -892,9 +892,20 @@ DEOF
     cat <<'DEOF'
   mail:
     # No domain: each tenant's is its own. See the note above.
+    #
+    # mode is the whole of it. quotaPerUser and rateLimit used to be written
+    # here and are not fields: TenantMail has mode, domain,
+    # smtpCredentialsSecret, dkimPublicKey, spfRecord and dmarcRecord, and
+    # nothing else. The CRD rejects an unknown field outright, so every first
+    # `gtnctl tenants deploy` on a fresh cluster died at admission -- naming
+    # two fields no operator had ever read -- and rolled the tenant back.
+    #
+    # Per-tenant mail quotas and rate limits may well be worth having. They
+    # are operator work when they are: fields on TenantMail and something in
+    # the mail reconciler that enforces them. A plausible-looking value in a
+    # scaffold enforces nothing, and this pair enforced nothing for as long
+    # as it existed.
     mode: selfhosted
-    quotaPerUser: 5Gi
-    rateLimit: 100/h
 DEOF
     cat <<'DEOF'
   quotas:
