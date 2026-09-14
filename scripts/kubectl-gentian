@@ -915,10 +915,16 @@ DEOF
     # The `base` plan's capacity, so a freshly deployed tenant starts on a
     # priced plan instead of a ceiling that matches none. maxApps is a policy
     # limit rather than part of the plan, so it is set here and in no plan.
-    requestsCpu: "2"
-    requestsMemory: 4Gi
-    cpu: "8"
-    memory: 8Gi
+    #
+    # These MUST equal usage.plans.catalogue.base.quotas in
+    # charts/gentian-os/values.yaml. lint-plan-defaults asserts it: the two
+    # were documented as identical and nothing checked, so a tenant could be
+    # scaffolded onto a ceiling matching no plan at all -- which is the state
+    # this comment used to describe as impossible.
+    requestsCpu: "4"
+    requestsMemory: 16Gi
+    cpu: "16"
+    memory: 32Gi
     storage: 50Gi
     maxApps: 20
 DEOF
