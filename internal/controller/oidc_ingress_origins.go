@@ -46,23 +46,31 @@ func collectOIDCIngressSubdomainsByTenant(
 			continue
 		}
 		seen := make(map[string]struct{})
+		// Addons alongside apps, for the same reason the ingress collector walks
+		// both: an addon may declare a hostname, and a host absent from this
+		// list is an origin the app's own OIDC client will refuse. No addon in
+		// the catalogue declares one today, so this changes nothing yet -- it
+		// keeps the two walks agreeing, rather than leaving one of them to be
+		// discovered later by a login that fails on a host nobody allowed.
 		for _, app := range tenant.Spec.Apps {
-			profile, err := cachedAppProfile(ctx, c, profileCache, app.Profile)
-			if err != nil {
-				return nil, err
-			}
-			if profile == nil {
-				continue
-			}
-			for _, sub := range oidcIngressSubdomainsFromProfile(profile) {
-				if sub == "" {
+			for _, profileName := range append([]string{app.Profile}, app.Addons...) {
+				profile, err := cachedAppProfile(ctx, c, profileCache, profileName)
+				if err != nil {
+					return nil, err
+				}
+				if profile == nil {
 					continue
 				}
-				if _, ok := seen[sub]; ok {
-					continue
+				for _, sub := range oidcIngressSubdomainsFromProfile(profile) {
+					if sub == "" {
+						continue
+					}
+					if _, ok := seen[sub]; ok {
+						continue
+					}
+					seen[sub] = struct{}{}
+					result[tenant.Name] = append(result[tenant.Name], sub)
 				}
-				seen[sub] = struct{}{}
-				result[tenant.Name] = append(result[tenant.Name], sub)
 			}
 		}
 		if subs, ok := result[tenant.Name]; ok {
