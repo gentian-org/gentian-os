@@ -139,10 +139,34 @@ func (r *TenantReconciler) dovecotDeployed(ctx context.Context) bool {
 	return clusterMailServiceMode(ctx, r.Client, r.MailServiceMode) == "kernel"
 }
 
+// defaultTenantMailMode — what a tenant gets when it does not say.
+//
+// selfhosted unconditionally, before: it means "register in the shared kernel
+// Postfix and Dovecot", and a cluster running mail.serviceMode external has no
+// Dovecot to register in. The default therefore named a stack that did not
+// exist on every cluster that relays through a provider, which is the common
+// deployment rather than an edge case.
+//
+// transport-only is what such a cluster can actually honour: the shared Postfix
+// relay IS deployed in external mode, so the tenant's domain is registered for
+// outbound and its apps get SMTP credentials -- no mailbox, no IMAP, and no MX
+// claiming this cluster accepts inbound mail for the domain.
+//
+// Only the DEFAULT. A tenant that asks for selfhosted still gets it, because a
+// cluster administrator may be about to deploy the kernel stack and a silently
+// overridden spec is worse than one that does nothing yet. What it will not do
+// any more is publish DNS for it -- see syncTenantMailDNS.
+func (r *TenantReconciler) defaultTenantMailMode(ctx context.Context) gentianov1alpha1.MailMode {
+	if r.dovecotDeployed(ctx) {
+		return gentianov1alpha1.MailModeSelfhosted
+	}
+	return gentianov1alpha1.MailModeTransportOnly
+}
+
 // ensureMail provisions the mail stack for the tenant according to spec.mail.mode.
 // It dispatches to one of four mode-specific handlers and sets the MailReady condition.
 func (r *TenantReconciler) ensureMail(ctx context.Context, tenant *gentianov1alpha1.Tenant) (ctrl.Result, error) {
-	mode := gentianov1alpha1.MailModeSelfhosted
+	mode := r.defaultTenantMailMode(ctx)
 	if tenant.Spec.Mail != nil && tenant.Spec.Mail.Mode != "" {
 		mode = tenant.Spec.Mail.Mode
 	}
