@@ -124,7 +124,7 @@ lint-yaml:
 ## The file list and flags must match CI exactly: -x follows sourced files, and no
 ## -S filter means info/style findings fail the build too. Hand-rolling a narrower
 ## invocation is how an SC2153 reached develop green-looking.
-lint-shell: validate-steps lint-step-contracts lint-resolvable lint-bootstrap-apps lint-credential-fields lint-credential-validators lint-credential-catalogue lint-claim-defaults lint-live-identifiers lint-cluster-config-keys lint-template-placeholders lint-provider-rbac lint-password-schemes lint-rbac-coverage lint-composed-resource-names lint-sequencer-targets lint-eso-readable-paths lint-marker-ascii lint-scaffold-schemas test-e04-token-classification test-a05-cert-manager-dns01-args
+lint-shell: validate-steps lint-step-contracts lint-resolvable lint-bootstrap-apps lint-credential-fields lint-credential-validators lint-credential-catalogue lint-claim-defaults lint-live-identifiers lint-cluster-config-keys lint-template-placeholders lint-provider-rbac lint-password-schemes lint-rbac-coverage lint-composed-resource-names lint-sequencer-targets lint-eso-readable-paths lint-marker-ascii lint-scaffold-schemas lint-plan-defaults test-e04-token-classification test-a05-cert-manager-dns01-args
 	@git ls-files -z -- '*.sh' | xargs -0 shellcheck -x scripts/kubectl-gentian
 
 ## Round-trip the recovery kit: export one, load it back, prove every value
@@ -225,6 +225,15 @@ lint-rbac-coverage:
 ## deploy on a fresh cluster died at admission and rolled back. It fails on
 ## someone else's cluster, never where it was written -- which is what makes it
 ## a lint rather than a review.
+## Assert a scaffolded tenant lands exactly on the `base` plan.
+##
+## resourceplans.yaml calls the two sets of quotas "deliberately identical" and
+## nothing checked. Identical-by-comment holds until someone edits one of them,
+## and the result is not a failure: the tenant runs, reporting a custom ceiling
+## that matches no plan and bills against no SKU. Wrong quietly, about money.
+lint-plan-defaults:
+	@python3 scripts/lint/lint-plan-defaults.py
+
 lint-scaffold-schemas:
 	@python3 scripts/lint/lint-scaffold-schemas.py
 
