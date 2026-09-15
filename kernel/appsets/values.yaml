@@ -50,6 +50,16 @@ mailServiceMode: external
 llmEnabled: "false"
 llmGpuAcceleration: "false"
 
+# Whether the claim lists any spec.llm.providers. Gates the ExternalSecret that
+# carries their API keys into platform-kernel.
+#
+# Declared here with a default even though the parent always passes it, because
+# the failure when it is absent is silent and misleading: the template does
+# `toString $.Values.llmExternalProviders`, an unset value renders the literal
+# "<nil>", and "<nil>" is not "true" — so the gate reads as off rather than as
+# unconfigured, and the only symptom is providers reporting a missing key.
+llmExternalProviders: "false"
+
 # Whether the Kyverno host-namespace exception MetalLB's speaker DaemonSet
 # needs (raw/05b-metallb-exception.yaml) is generated at all. From the Cluster
 # claim's platformParams.metallb — off by default, since a self-hosted cluster

@@ -505,7 +505,18 @@ metadata:
     app.kubernetes.io/name: litellm-provider-model-sync
 spec:
   ttlSecondsAfterFinished: 3600
-  backoffLimit: 2
+  # 0, unlike the vLLM sync's 2, because this Job's characteristic failure is
+  # not transient. A provider whose API key is not stored yet, whose token is
+  # refused, or whose apiBase is wrong fails identically on every attempt --
+  # only a human changing something can alter the outcome. Retrying produced
+  # three Error pods and a Failed Job for one operator-fixable condition,
+  # which reads as a broken install rather than as "supply the credential".
+  #
+  # Nothing is lost by not retrying: waiting for a booting proxy is handled
+  # inside the script, which polls for ten minutes before it does anything, so
+  # retries were never what carried a cold start. E-02 runs every pass, so the
+  # next install run is the retry.
+  backoffLimit: 0
   template:
     spec:
       restartPolicy: Never
