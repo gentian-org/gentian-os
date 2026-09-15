@@ -53,7 +53,7 @@ The split has to account for every writer, not only the operator. Inventory:
 ### 2.1 Writers to `gentian-deployments`
 
 | Writer | Path | Identity | Authorised by |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | Operator lifecycle API | [internal/applifecycle](../../internal/applifecycle/) — `Install`, `Uninstall`, `SetAddons`, `SetResourcePlan` commit and push | operator's push token, `Actor` from an `X-Gentian-Actor` header the caller sets | nobody — the header is trusted |
 | `kubectl gentian` | [scripts/kubectl-gentian](../../scripts/kubectl-gentian) `git_commit_push`, 11 call sites: `tenants deploy/undeploy`, `apps install/uninstall`, deletionPolicy flips around purge | the human's own git credential on their workstation | git host permissions only |
 | `kubectl gentian` fallback | `apply_tenant_manifest_from_git` → `kubectl apply -f` when no Argo app exists | the human's kubeconfig | Kubernetes RBAC only — bypasses git entirely |
@@ -70,7 +70,7 @@ The admin console (gentian-ui BFF) writes these directly to the API server
 with its own ServiceAccount:
 
 | Object | Console module | Nature |
-|---|---|---|
+| --- | --- | --- |
 | `BackupPolicy` (cluster), `TenantBackupPolicy` | `k8s_backup_policy.py` | desired state — belongs in git |
 | `PlatformSecurityPolicy` | `k8s_authorization.py` | desired state — belongs in git |
 | `AppGrant` | `k8s_authorization.py` | desired state — belongs in git |
@@ -181,7 +181,9 @@ DELETE /v1/tenants/{t}/apps/{p}                 → 202
 PUT    /v1/tenants/{t}/apps/{p}/addons
 GET    /v1/tenants/{t}/resources | /plans | /usage | /report
 PUT    /v1/tenants/{t}/resources
-PUT    /v1/tenants/{t}/policies/{kind}/{name}   backup, security, grants, export schedules (§2.2)
+PUT    /v1/tenants/{t}/policies/{kind}/{name}   backup, grants, export schedules (§2.2)
+PUT    /v1/clusters/{c}/security/{kind}/{name}  PlatformSecurityPolicy, PolicyException, overlays (§7.1)
+PUT    /v1/clusters/{c}/network | /v1/tenants/{t}/network   egress intent (§7.2)
 POST   /v1/tenants/{t}/requests/{kind}          export / restore — creates the request CR, secrets via ESO reference only
 GET    /v1/operations/{id}                      status of a 202
 PUT    /v1/files/{path}                         break-glass raw edit; FGA relation `can_edit_raw`, always audited
@@ -251,7 +253,7 @@ The question is real only for the writes that happen before the director can
 authenticate anyone. Enumerating them shows there are fewer than expected:
 
 | Moment | Write | Who | How it stays secure |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | `--prepare-deployment` | `clusters/<id>/kernel/{claims,values.yaml}` | human, local files, then their own commit | already the design: install.sh never writes the repo; the human reviews and commits with their own git identity and branch-protection rights |
 | `--prepare-tenant` | `definitions/<t>/tenant.yaml` | same | same |
 | Install steps A–E | none to git | — | install.sh reads git; the only imperative writes are cluster objects (the tier-0 `Repository/deployments` claim in B-09, the bootstrap Applications) |
@@ -292,7 +294,7 @@ catastrophic on one with tenants.
 "Copy" during §6 B; the operator-side original is deleted in §6 D.
 
 | Today (operator) | Fate | Destination |
-|---|---|---|
+| --- | --- | --- |
 | `applifecycle/gitops.go`, `gitops_addons.go`, `gitops_resources.go`, `names.go`, `types.go` | copy | `internal/director/gitops` |
 | `applifecycle/http.go`, `http_resources.go`, `resources.go` (plan selection, entitlement ceiling) | copy, drop `Actor`, add auth middleware | `internal/director/api` |
 | `applifecycle/service.go` — `validateProfile` | copy → `ensureProfile` (§3.6) | director |
@@ -367,7 +369,128 @@ Delete the operator-side copies from §5, the init container, the values, the
 case. Remove `pods/exec` from nothing — purge still needs it — but confirm the
 ClusterRole no longer lists `argoproj.io` write verbs.
 
-## 7. Open decisions
+## 7. Adjacent scope the split pulls in
+
+Three things that are not git writers today but become the director's
+business once "intent goes through git, authenticated" is the rule.
+
+### 7.1 Kyverno
+
+**Today.** The baseline `ClusterPolicy` objects live in this repository
+([kernel/security/kyverno/policies/](../../kernel/security/kyverno/policies/))
+and Argo syncs them from `gentian-os` itself
+([05-admission.yaml](../../kernel/appsets/raw/05-admission.yaml)). They are
+release content: changing one is a PR to gentian-os, already authenticated by
+the git host and reviewed. The per-cluster *decision* is the
+`PlatformSecurityPolicy` MAC-waiver allowlist, which the console writes
+directly to the API server; the operator turns an approval into namespace
+labels that the policies' exclusions match
+([mac_waiver_reconciler.go](../../internal/controller/mac_waiver_reconciler.go)).
+Nothing writes `PolicyException`s dynamically.
+
+**Target.** Two layers, each in the repository that owns it:
+
+- Baseline policies stay in gentian-os. Their trust comes from the release
+  pipeline, the same as the operator image.
+- Per-cluster policy is a directory in gentian-deployments,
+  `clusters/<c>/kernel/security/`, synced by one more Application in the
+  claims ApplicationSet. It holds the `PlatformSecurityPolicy` (moved out of
+  the console's direct write, §2.2) and any cluster-specific
+  `PolicyException` or policy overlay an operator adds. Written only through
+  the director: `PUT /v1/clusters/{c}/security/{kind}/{name}`, FGA relation
+  `can_set_policy` on `cluster`.
+
+The webhook that admits a `PlatformSecurityPolicy` does not change; it only
+stops seeing writes from the console SA.
+
+### 7.2 Network policies
+
+**Today.** No NetworkPolicy is hand-authored anywhere — not in `kernel/`, the
+compositions, or gentian-deployments. Every one is derived by
+[internal/kernel/netpolicy](../../internal/kernel/netpolicy/) from
+`AppProfile.kernelRequirements` and `security.egress`, the Tenant's apps, and
+cluster config (namespaces, routing mode, API-server CIDR). The inputs are
+already in git; the outputs are computed. There is no authored knob: no
+`Tenant.spec.network`, no cluster egress allowlist.
+
+**Target.** Keep the derivation — committing the derived objects would make a
+second source of truth that drifts from the first and cannot be edited
+meaningfully. What goes to git through the director is the **intent** that is
+missing today:
+
+- `Cluster.spec.network.egressAllow[]` — cluster-wide CIDRs/FQDNs every
+  tenant may reach (a corporate proxy, a license server).
+- `Tenant.spec.network.egressAllow[]` and `denyKernel[]` — per-tenant
+  additions and withdrawals, bounded by the cluster list (a tenant cannot
+  widen past what the cluster allows; the webhook enforces the subset).
+
+The operator merges these into `BuildDesired` alongside the profile-derived
+rules. Both fields land in the claims the director already edits, so no new
+endpoint is needed beyond §3.5's `PUT /v1/files` semantics applied to a
+schema'd field. If an auditor wants the effective policy set, it is a
+read-only rendering (`GET /v1/tenants/{t}/network/effective`) served from the
+cluster, not a commit.
+
+### 7.3 Credential requirements
+
+**Today.** [credentials.yaml](../../credentials.yaml) generates sixteen
+`CredentialRequirement` CRs and
+[C-06](../../scripts/steps/C-06-credential-catalogue.sh) applies every one
+of them to every cluster. The applicability logic exists, but only on the
+installer side and only in shell:
+[`_requirement_applies()`](../../scripts/lib/credentials.sh) gates on
+repository auth type, `INFRA_CHART_PRIVATE`, the DNS and edge-ingress
+provider tables and `CERT_ISSUER_MODE`. The console reads the CRs and so
+shows all sixteen. The `Repository` claims are the one place this is already
+right: their requirement is composed only when the claim declares a
+credential.
+
+**Target.** The rule moves from shell into the catalogue and is evaluated
+against the Cluster claim, which already carries every axis the shell reads:
+
+```yaml
+# credentials.yaml
+- name: smtp-relay
+  appliesWhen:
+    cluster.mail.serviceMode: external
+- name: acme-dns-cloudflare
+  appliesWhen:
+    cluster.certificates.issuerMode: acme-dns01
+    cluster.certificates.dnsProvider: cloudflare
+- name: infra-chart-registry
+  appliesWhen:
+    repository.infra.credential: present
+```
+
+Two steps, in this order:
+
+1. **List-time filtering.** `appliesWhen` is generated into the CR spec; the
+   credential manager evaluates it against the Cluster claim when it lists,
+   and the installer's `_requirement_applies()` is regenerated from the same
+   field so the two carriers cannot disagree (`make verify-gen` already
+   asserts this for the rest of the content). The console shows only what
+   applies. No new controller; matches the "no controller" design of the
+   catalogue.
+2. **Emit only what applies.** C-06 stops applying the file. The Cluster
+   composition reads the catalogue (shipped as a ConfigMap by the chart) and
+   composes the applicable `CredentialRequirement`s, the way the Repository
+   composition already does for its own. Requirements then appear and
+   disappear with the claim, and a mode change in git retires the
+   requirement it made obsolete.
+
+The declaration of *which* credentials a cluster expects is therefore the
+Cluster claim — in git, written through the director. The values never are.
+
+### 7.4 Where these land in the cutover
+
+| Item | Cutover step |
+| --- | --- |
+| `PlatformSecurityPolicy` via director; `clusters/<c>/kernel/security/` Application | B, step 4 (console desired-state writes) |
+| `Cluster.spec.network`, `Tenant.spec.network`, merge in `BuildDesired` | after B — a CRD change, independent of the split, sequenced here so the new fields never get a console direct-write path |
+| `appliesWhen`, list-time filtering | A — the credential manager is the first consumer of the Cluster claim the director reads anyway |
+| Composition-emitted requirements, C-06 retired | C, with the credential split (§3.3) |
+
+## 8. Open decisions
 
 - **Signing key format.** GPG is what Argo verifies today; SSH signing is
   simpler to hold in OpenBao. Pick GPG unless Argo's SSH verification lands
