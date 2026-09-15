@@ -1337,6 +1337,7 @@ bootstrap_root_appset() {
         --set-string "mailServiceMode=$(gentian_mail_service_mode)" \
         --set-string "llmEnabled=${LLM_SUPPORT:-false}" \
         --set-string "llmGpuAcceleration=${GPU_ACCELERATION:-false}" \
+        --set-string "llmExternalProviders=${LLM_EXTERNAL_PROVIDERS:-false}" \
         --set-string "mailEgressHost=${MAIL_EGRESS_HOST:-}" \
         --set-string "metallbException=${METALLB_EXCEPTION:-false}" \
         | kubectl apply -f -

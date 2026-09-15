@@ -10,3 +10,11 @@ env: dev
 # with. With GPUs the real vLLM instances come from the cluster's own claim —
 # see the note in the ApplicationSet.
 mockBackend: true
+
+# Whether this cluster's claim lists any spec.llm.providers.
+#
+# Only gates the ExternalSecret for their API keys. The model registrations
+# themselves are reconciled from the claim by scripts/lib/llm-lib.sh against
+# LiteLLM's API, because a model list is not something Argo CD can project from
+# a claim into Helm values — the same reason the vLLM release is not here.
+externalProviders: false
