@@ -1558,8 +1558,23 @@ apply_gentian_portal_argocd_application() {
         return 1
     fi
 
+    # llmEnabled is in this list because THIS is the render that applies the
+    # portal Application. It is the third --set-string list for the same chart:
+    # the two in common.sh (the drift check and apply_bootstrap_application)
+    # were unified into _bootstrap_chart_values, and neither is on this path, so
+    # the value was added to both of them and still never reached the cluster.
+    #
+    # The list is legitimately different rather than duplicated — this template
+    # needs uiBranch, portalImageTag and deploymentsBranch, which the shared
+    # list does not carry — so it cannot simply defer to the shared one.
+    #
+    # The chain it feeds: claim llm.enabled -> LLM_SUPPORT -> this flag ->
+    # valuesObject.llm.enabled -> GENTIAN_CAPABILITIES -> whether the portal
+    # offers the LLM tile. Every hop is a restatement, and a dropped value at
+    # any of them presents as an absent tile rather than an error.
     helm template gentian-bootstrap "${SCRIPT_DIR}/kernel/bootstrap/chart" \
         -s templates/gentian-portal.yaml \
+        --set-string "llmEnabled=${LLM_SUPPORT:-false}" \
         --set-string "gentianOsBranch=${GENTIAN_OS_BRANCH}" \
         --set-string "osRepo=${GENTIAN_OS_REPO:-}" \
         --set-string "uiBranch=${gentian_ui_branch}" \
