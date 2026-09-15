@@ -178,12 +178,26 @@ are left alone rather than swept up.
 
 ### The API key is a credential, the product id is not
 
-The token is a property of the `llm-provider-api-keys` credential at
-`gentian-os/kernel/llm-providers` (see [`credentials.yaml`](../../credentials.yaml)),
-and `apiKeyProperty` names which property to read. Adding a provider is two edits
-in git — a field there and an entry here — and they are checked against each
-other, so a provider whose property is missing is reported rather than registered
-as a model that answers 401.
+Each provider has its own `llm-provider-<name>` credential declaring one field,
+and they all share the OpenBao path `gentian-os/kernel/llm-providers` (see
+[`credentials.yaml`](../../credentials.yaml)); `apiKeyProperty` on the claim names
+which property to read. Supply the token in the portal's **Admin Console** under
+that credential — the write happens as your own OpenBao token, merge-patches the
+path so it cannot clobber another provider's key, and tells the ExternalSecret to
+resync immediately rather than at the end of its refresh interval.
+
+One requirement per provider rather than one with a field each, because
+`checkFields` requires every declared field in a single write: a combined
+credential would make the console demand every provider's token at once and
+refuse a single rotation. Adding a provider is two edits in git — a requirement
+there and an entry here — and they are checked against each other, so a provider
+whose property is missing is reported rather than registered as a model that
+answers 401.
+
+> These credentials declare `validate: noop`, so the console stores the token
+> without probing it — the validator enum has no generic bearer-token check. A
+> wrong or unscoped token is caught by the reconcile's own per-provider probe at
+> install time, not by the form.
 
 The product id in `apiBase` is not secret: it selects which product is billed and
 it is part of the endpoint, so it belongs on the claim where it can be reviewed.

@@ -560,7 +560,7 @@ spec:
                 keyfile="/etc/llm-providers/\${pprop}"
                 if [ ! -s "\${keyfile}" ]; then
                   echo "PROVIDER \${pname}: no API key — '\${pprop}' is not a property of ${secret_name}."
-                  echo "  Store it at gentian-os/kernel/llm-providers (see credentials.yaml: llm-provider-api-keys)."
+                  echo "  Supply it in the Admin Console under 'llm-provider-\${pname}', or see credentials.yaml."
                   echo "\${pname}" >>/tmp/degraded; echo 1 >>/tmp/failed
                   continue
                 fi
