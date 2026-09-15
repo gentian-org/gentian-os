@@ -52,6 +52,7 @@ flowchart TB
 
 ## Drawbacks / discussion points
 
+- Proposal shifts a lot of responsibility to the apps and sidecars. If the app requires more authentication methods than OICD, kernel level measures are only supportive and cannot replace apps as the main policy enforcing point. This may be solved by different having app classes, good ones that only do OIDC (enforcable at the gateway) and lower ones that require additional methods.
 - **`can_use` must stay reducible to group membership.** Apps and sidecars hold no OpenFGA credential, so they decide from the token's entitlement group instead of asking. That only agrees with OpenFGA while every grant path is expressible as one group. Paths that are not — a shared app reached through a per-tenant tuple, a direct grant to a single user or service principal — are invisible to the app, and the two views drift apart silently.
 - **Logout basically means token expiration and password revocation**: not a severe drawback if life time of tokens is kept short, i.e., 10 minutes.
 
