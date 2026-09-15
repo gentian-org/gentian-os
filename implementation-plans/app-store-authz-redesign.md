@@ -1,6 +1,6 @@
 # App store — proving who asked for an install
 
-Companion to [`authz-redesign.md`](authz-redesign.md). The app store acts on a user's token and asks the OS operator, which is privileged, to install, modify or remove apps. The operator must be able to attribute each request to a real user, and the app store must not be able to invent one. The app store is trusted only to have attached the correct app profile to the user's request — nothing more.
+Companion to [`authz-redesign-kernel-openfga-keycloak.md`](authz-redesign-kernel-openfga-keycloak.md). The app store acts on a user's token and asks the OS operator, which is privileged, to install, modify or remove apps. The operator must be able to attribute each request to a real user, and the app store must not be able to invent one. The app store is trusted only to have attached the correct app profile to the user's request — nothing more.
 
 ## Requirements
 
