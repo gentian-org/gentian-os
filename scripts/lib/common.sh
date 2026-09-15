@@ -2466,6 +2466,40 @@ resolve_gentian_os_image_tag() {
 # (STORAGE_CLASS) reach them at all: they are the objects that install the agent
 # that will read everything else from Git.
 # =============================================================================
+# _bootstrap_chart_values — the --set-string flags every bootstrap render passes.
+#
+# One list with two callers, because there were two lists with two callers and
+# they drifted. render_bootstrap_application (the drift check) and
+# apply_bootstrap_application (the apply) each carried their own copy of eleven
+# identical flags; llmEnabled was added to the first and not the second, so the
+# check compared against a render carrying the claim's llm.enabled while the
+# apply wrote one carrying the chart default. The portal was applied with
+# llm.enabled false on a cluster whose claim says true, GENTIAN_CAPABILITIES
+# came out empty, and the LLM tile it gates could not appear.
+#
+# render_bootstrap_application's own comment already said why this must not
+# happen: "a check that renders differently from the apply is worse than no
+# check: it would report drift that applying cannot fix, or miss drift that it
+# could." It managed both.
+#
+# Emitted one argument per line and read back with mapfile, so a value
+# containing spaces stays a single argument.
+_bootstrap_chart_values() {
+    printf '%s\n' \
+        --set-string "gentianOsBranch=${GENTIAN_OS_BRANCH}" \
+        --set-string "osRepo=${GENTIAN_OS_REPO:-}" \
+        --set-string "appsRepo=${GENTIAN_APPS_REPO:-}" \
+        --set-string "deploymentsRepo=${GENTIAN_DEPLOYMENTS_REPO:-}" \
+        --set-string "uiRepo=${GENTIAN_UI_REPO:-}" \
+        --set-string "storageClass=${STORAGE_CLASS}" \
+        --set-string "stage=${GENTIAN_DEPLOYMENTS_STAGE}" \
+        --set-string "kernelDomain=${KERNEL_DOMAIN:-}" \
+        --set-string "dnsProvider=${DNS_PROVIDER:-cloudflare}" \
+        --set-string "networkMode=${NETWORK_MODE:-tunnel}" \
+        --set-string "llmEnabled=${LLM_SUPPORT:-false}" \
+        --set-string "cluster=${GENTIAN_DEPLOYMENTS_CLUSTER_ID}"
+}
+
 # render_bootstrap_application <name> <outfile>
 #
 # The render half of apply_bootstrap_application, split out so the drift check
@@ -2487,20 +2521,13 @@ render_bootstrap_application() {
     [[ -n "${GENTIAN_DEPLOYMENTS_CLUSTER_ID:-}" ]] || return 1
     resolve_gentian_os_branch || return 1
 
+    local -a values=(); local _val
+    # read loop, not mapfile: macOS ships bash 3.2, which has neither mapfile
+    # nor readarray (scripts/lint/lint-portability.sh enforces this).
+    while IFS= read -r _val; do values+=("${_val}"); done < <(_bootstrap_chart_values)
     helm template gentian-bootstrap "${chart}" -s "templates/${name}.yaml" \
         -f "${SCRIPT_DIR}/kernel/platforms.yaml" \
-        --set-string "gentianOsBranch=${GENTIAN_OS_BRANCH}" \
-        --set-string "osRepo=${GENTIAN_OS_REPO:-}" \
-        --set-string "appsRepo=${GENTIAN_APPS_REPO:-}" \
-        --set-string "deploymentsRepo=${GENTIAN_DEPLOYMENTS_REPO:-}" \
-        --set-string "uiRepo=${GENTIAN_UI_REPO:-}" \
-        --set-string "storageClass=${STORAGE_CLASS}" \
-        --set-string "stage=${GENTIAN_DEPLOYMENTS_STAGE}" \
-        --set-string "kernelDomain=${KERNEL_DOMAIN:-}" \
-        --set-string "dnsProvider=${DNS_PROVIDER:-cloudflare}" \
-        --set-string "networkMode=${NETWORK_MODE:-tunnel}" \
-        --set-string "llmEnabled=${LLM_SUPPORT:-false}" \
-        --set-string "cluster=${GENTIAN_DEPLOYMENTS_CLUSTER_ID}" >"${out}" 2>/dev/null || return 1
+        "${values[@]}" >"${out}" 2>/dev/null || return 1
 
     [[ -s "${out}" ]] || return 2
     return 0
@@ -2599,19 +2626,13 @@ apply_bootstrap_application() {
     # status of kubectl, so a failed render reached it as empty input and
     # was announced as a successful apply.
     local rendered; rendered="$(mktemp)"
+    local -a values=(); local _val
+    # read loop, not mapfile: macOS ships bash 3.2, which has neither mapfile
+    # nor readarray (scripts/lint/lint-portability.sh enforces this).
+    while IFS= read -r _val; do values+=("${_val}"); done < <(_bootstrap_chart_values)
     if ! helm template gentian-bootstrap "${chart}" -s "templates/${name}.yaml" \
             -f "${SCRIPT_DIR}/kernel/platforms.yaml" \
-            --set-string "gentianOsBranch=${GENTIAN_OS_BRANCH}" \
-            --set-string "osRepo=${GENTIAN_OS_REPO:-}" \
-            --set-string "appsRepo=${GENTIAN_APPS_REPO:-}" \
-            --set-string "deploymentsRepo=${GENTIAN_DEPLOYMENTS_REPO:-}" \
-            --set-string "uiRepo=${GENTIAN_UI_REPO:-}" \
-            --set-string "storageClass=${STORAGE_CLASS}" \
-            --set-string "stage=${GENTIAN_DEPLOYMENTS_STAGE}" \
-            --set-string "kernelDomain=${KERNEL_DOMAIN:-}" \
-            --set-string "dnsProvider=${DNS_PROVIDER:-cloudflare}" \
-            --set-string "networkMode=${NETWORK_MODE:-tunnel}" \
-            --set-string "cluster=${GENTIAN_DEPLOYMENTS_CLUSTER_ID}" >"${rendered}"; then
+            "${values[@]}" >"${rendered}"; then
         rm -f "${rendered}"
         error "Rendering ${name} failed; nothing was applied."
         exit 1
