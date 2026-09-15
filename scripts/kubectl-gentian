@@ -109,6 +109,25 @@ DEPLOYMENTS_STAGE="${GENTIAN_DEPLOYMENTS_STAGE:-dev}"
 # --no-rollback leaves everything standing and prints where to look instead.
 TENANT_NO_ROLLBACK="${GENTIAN_TENANT_NO_ROLLBACK:-0}"
 
+# Whether this deploy found the tenant ALREADY RUNNING, set by cmd_tenant_deploy.
+#
+# The rollback below is right for a first deploy: nothing existed beforehand, so
+# removing what was just created returns the cluster to where it started. On an
+# update it is not a rollback at all -- it deletes a tenant that was serving
+# before the command ran.
+#
+# That is not theoretical. A tenant live for 25 hours had its quota raised; two
+# of its five apps could not converge, the readiness wait expired, and the
+# teardown took the tenant with it -- including app-store-me, open-webui and
+# docmost-ce, all Ready at the moment they were deleted. The namespace went,
+# and with it every PersistentVolume, because the storage class reclaims on
+# delete whatever the tenant's own deletionPolicy says.
+#
+# A slow or stuck app is not grounds for deleting a running tenant. On this
+# path the command reports what did not become ready and leaves everything
+# standing, which is also what makes the deploy safe to simply run again.
+TENANT_WAS_LIVE=0
+
 # The plugin's own version, and a fingerprint of the file it is running from.
 #
 # The declared version answers "which release is this", and the fingerprint
@@ -890,21 +909,41 @@ spec:
     mode: namespace
 DEOF
     cat <<'DEOF'
-  mail:
-    # No domain: each tenant's is its own. See the note above.
-    mode: selfhosted
-    quotaPerUser: 5Gi
-    rateLimit: 100/h
+  # No mail block, deliberately.
+  #
+  # The operator picks the mode from what this CLUSTER runs: selfhosted where
+  # the kernel Postfix and Dovecot are deployed, transport-only where mail
+  # relays through a provider and there is no mailbox to register in. A
+  # scaffold cannot know which, and this one used to assert `mode: selfhosted`
+  # on every cluster regardless -- naming a stack that does not exist wherever
+  # mail.serviceMode is external, which is the common deployment.
+  #
+  # That was not merely inert. It made the operator publish
+  # `MX 0 mail.<kernelDomain>` for a host with no address, and on a tunnel
+  # cluster those records collide with the tenant's own web CNAME at the same
+  # name -- RFC 1034 forbids a CNAME beside another type -- so external-dns
+  # dropped the CNAME and the tenant's site stopped resolving. Mail that could
+  # not work took down a website that otherwise would.
+  #
+  # Set spec.mail here only to override that judgement for one tenant: a
+  # domain of their own, or mode: external with smtpCredentialsSecret pointing
+  # at their provider's credentials.
 DEOF
     cat <<'DEOF'
   quotas:
     # The `base` plan's capacity, so a freshly deployed tenant starts on a
     # priced plan instead of a ceiling that matches none. maxApps is a policy
     # limit rather than part of the plan, so it is set here and in no plan.
-    requestsCpu: "2"
-    requestsMemory: 4Gi
-    cpu: "8"
-    memory: 8Gi
+    #
+    # These MUST equal usage.plans.catalogue.base.quotas in
+    # charts/gentian-os/values.yaml. lint-plan-defaults asserts it: the two
+    # were documented as identical and nothing checked, so a tenant could be
+    # scaffolded onto a ceiling matching no plan at all -- which is the state
+    # this comment used to describe as impossible.
+    requestsCpu: "4"
+    requestsMemory: 16Gi
+    cpu: "16"
+    memory: 32Gi
     storage: 50Gi
     maxApps: 20
 DEOF
@@ -1698,6 +1737,32 @@ rollback_deploy() {
   local _kustom_file="${4:-}"
   local ns_name="tenant-${tenant_name}"
 
+  # An update that failed leaves the tenant exactly as it was found. Checked
+  # before --no-rollback so the reason reported is the accurate one: this is not
+  # a flag someone set, it is a tenant that predates the command.
+  if [[ "${TENANT_WAS_LIVE}" == "1" ]]; then
+    echo "" >&2
+    echo "failed to apply spec changes — tenant '${tenant_name}' left running" >&2
+    echo "" >&2
+    echo "  This tenant was already live before this command ran, so there is no" >&2
+    echo "  deploy to undo. Nothing has been torn down and nothing has been" >&2
+    echo "  deactivated in Git; whatever was serving before is still serving." >&2
+    echo "" >&2
+    echo "  What did not become ready:" >&2
+    echo "" >&2
+    _tenant_crossplane_diagnostics "${tenant_name}" 2>/dev/null >&2 || true
+    echo "" >&2
+    echo "  Re-running the deploy is safe and picks up where this left off:" >&2
+    echo "" >&2
+    echo "    gtnctl tenants deploy ${instance} --env ${env_name}" >&2
+    echo "" >&2
+    echo "  To remove it deliberately:" >&2
+    echo "" >&2
+    echo "    gtnctl tenants undeploy ${instance} --env ${env_name}" >&2
+    echo "" >&2
+    exit 1
+  fi
+
   if [[ "${TENANT_NO_ROLLBACK}" == "1" ]]; then
     echo "" >&2
     echo "failed to provision tenant — leaving it in place (--no-rollback)" >&2
@@ -2063,6 +2128,10 @@ cmd_tenant_deploy() {
   fi
 
   if kubectl get tenant "${tenant_name}" --no-headers &>/dev/null 2>&1; then
+    # Recorded, not merely announced. This distinction already existed in the
+    # output and nowhere else, so every failure below took the create path's
+    # teardown regardless of whether there was anything to un-create.
+    TENANT_WAS_LIVE=1
     echo "Tenant instance '${instance}' is already live in '${env_name}' — applying spec changes..."
   else
     echo "Tenant instance '${instance}' manifest found — applying to cluster..."

@@ -1237,9 +1237,11 @@ resync_credential_consumers() {
         while (( SECONDS < deadline )); do
             sleep 5
             now="$(_not_ready_external_secrets)"
-            # `if`, not `[[ ... ]] && break`: these scripts run under
-            # `set -euo pipefail`, where a bare test that comes out false is an
-            # unguarded non-zero command and takes the whole install with it.
+            # `if` for legibility, not for safety: `[[ ... ]] && break` is
+            # also correct under `set -e`, because a failing command before the
+            # final && of a list is exempt from errexit. The form that does bite
+            # is one as the LAST statement of a function, where the function
+            # then returns non-zero to a bare caller.
             if [[ "${now}" == "${prev}" ]]; then
                 break
             fi
@@ -1335,6 +1337,7 @@ bootstrap_root_appset() {
         --set-string "mailServiceMode=$(gentian_mail_service_mode)" \
         --set-string "llmEnabled=${LLM_SUPPORT:-false}" \
         --set-string "llmGpuAcceleration=${GPU_ACCELERATION:-false}" \
+        --set-string "llmExternalProviders=${LLM_EXTERNAL_PROVIDERS:-false}" \
         --set-string "mailEgressHost=${MAIL_EGRESS_HOST:-}" \
         --set-string "metallbException=${METALLB_EXCEPTION:-false}" \
         | kubectl apply -f -
@@ -1875,6 +1878,19 @@ install_llm_serving() {
         warn "LiteLLM vLLM model sync failed — retry with ./install.sh --step D-05-llm-serving."
     fi
 
+    # External providers, after the vLLM sync rather than beside it: they are
+    # independent of gpuAcceleration, so this runs on a CPU-only cluster where
+    # the sync above had nothing to do. Never fatal — a provider whose token is
+    # wrong is an operator's fix, not a failed install, and the Job's log says
+    # which provider and why.
+    if ensure_litellm_provider_models; then :; elif [[ $? -eq 2 ]]; then
+        info "LiteLLM provider sync continues in-cluster — the Job retries until the proxy"
+        info "  finishes its cold start, and E-02 verifies the result. No action needed."
+    else
+        warn "LiteLLM provider sync reported problems — see the log above, then retry with"
+        warn "  ./install.sh --step D-05-llm-serving once the provider credential is right."
+    fi
+
     success "LLM serving stack deployment complete."
 }
 
@@ -2124,6 +2140,24 @@ _claim_cluster_fields() {
         printf '    #    modelCacheSize: 60Gi           PVC for the weights\n'
         printf '    #    imageTag: latest               vLLM image tag\n'
         printf '    #    toolCallParser: hermes         empty disables tool calling\n'
+        printf '    # External OpenAI-compatible providers, routed through the same\n'
+        printf '    # gateway. Independent of gpuAcceleration -- a cluster with no GPU\n'
+        printf '    # and no instances serves these and nothing else. Adding an entry\n'
+        printf '    # registers its models; removing one deregisters them.\n'
+        printf '    providers: []\n'
+        printf '    #  - name: infomaniak\n'
+        printf '    #    displayName: Infomaniak AI Services\n'
+        printf '    #    # Up to and including the version segment. The number is the\n'
+        printf '    #    # AI product id (GET /1/ai returns it), not an account id.\n'
+        printf '    #    apiBase: https://api.infomaniak.com/2/ai/<product-id>/openai/v1\n'
+        printf '    #    # A property of the llm-provider-<name> credential, supplied\n'
+        printf '    #    # in the Admin Console. Never the token itself.\n'
+        printf '    #    apiKeyProperty: infomaniak_api_key\n'
+        printf '    #    models:\n'
+        printf '    #      - name: gemma-4-31b              offered as infomaniak/gemma-4-31b\n'
+        printf '    #        model: google/gemma-4-31B-it   the id the provider expects\n'
+        printf '    #        maxTokens: 8192                omitted leaves LiteLLM guessing\n'
+        printf '    #        mode: chat                     embedding models must say so\n'
     else
         printf '  # llm:\n'
         printf '  #   enabled: false            set true on a cluster that serves models\n'

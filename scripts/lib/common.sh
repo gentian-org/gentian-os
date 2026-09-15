@@ -1230,6 +1230,17 @@ load_deployments_cluster_settings() {
         claim_setting LLM_SUPPORT             llm.enabled              "${claim_file}"
         claim_setting GPU_ACCELERATION        llm.gpuAcceleration      "${claim_file}"
         claim_setting GPU_TIME_SLICE_REPLICAS llm.gpuTimeSliceReplicas "${claim_file}"
+        # Whether this cluster routes to any external provider. A count, not a
+        # switch on the claim: the provider list is the declaration, and a second
+        # boolean beside it could disagree with it. What needs the boolean is the
+        # appset template, which substitutes literals and cannot project a list.
+        if [[ -z "${LLM_EXTERNAL_PROVIDERS:-}" ]]; then
+            if [[ "$(yq_get '.spec.llm.providers | length' "${claim_file}" 2>/dev/null || echo 0)" -gt 0 ]]; then
+                export LLM_EXTERNAL_PROVIDERS=true
+            else
+                export LLM_EXTERNAL_PROVIDERS=false
+            fi
+        fi
         # Where this cluster runs, and who hosts its zone. Two dimensions, kept
         # apart on purpose: a Hetzner cluster on a Cloudflare zone is ordinary,
         # and one field could not describe it. Both name an entry in
@@ -2488,6 +2499,7 @@ render_bootstrap_application() {
         --set-string "kernelDomain=${KERNEL_DOMAIN:-}" \
         --set-string "dnsProvider=${DNS_PROVIDER:-cloudflare}" \
         --set-string "networkMode=${NETWORK_MODE:-tunnel}" \
+        --set-string "llmEnabled=${LLM_SUPPORT:-false}" \
         --set-string "cluster=${GENTIAN_DEPLOYMENTS_CLUSTER_ID}" >"${out}" 2>/dev/null || return 1
 
     [[ -s "${out}" ]] || return 2

@@ -48,6 +48,11 @@ apply() {
     else
         warn "LiteLLM vLLM model sync failed."
     fi
+    if ensure_litellm_provider_models; then :; elif [[ $? -eq 2 ]]; then
+        info "LiteLLM provider sync continues in-cluster; the Job retries until the proxy answers."
+    else
+        warn "LiteLLM provider sync reported problems — see the Job log for which provider."
+    fi
 }
 
 # No destroy(): LiteLLM's database goes when the LiteLLM release goes, and that

@@ -63,15 +63,44 @@ func dnsEndpointRecord(name, recordType string, targets ...string) map[string]in
 // syncTenantMailDNS writes one DNSEndpoint holding every mail record a tenant
 // domain needs.
 //
-// Skipped entirely when the tenant is not on kernel mail: publishing an MX for
-// a domain this cluster does not accept mail for points senders at a server
+// Skipped entirely when the CLUSTER does not run kernel mail: publishing an MX
+// for a domain this cluster does not accept mail for points senders at a server
 // that will refuse them, which is worse than no record at all.
+//
+// That sentence was the contract long before anything enforced it. The records
+// were published for any tenant whose own spec.mail.mode said selfhosted, which
+// is a statement about what the TENANT wants and not about what exists: on a
+// cluster with mail.serviceMode external there is no Dovecot, no mailbox, and
+// no mail.<kernelDomain> to point an MX at. Every tenant on such a cluster
+// published `MX 0 mail.<kernelDomain>` naming a host with no address, and
+// `v=spf1 mx ~all` authorising that same absent MX. Inbound mail was
+// undeliverable and the SPF record authorised nothing.
+//
+// The gate is the same one Dovecot uses, for the same reason and read from the
+// same place — see dovecotDeployed. Steps 4 to 6 of ensureMailSelfhosted were
+// given it after they were found "provisioning into a void"; this step does the
+// same thing to a public DNS zone and was missed.
+//
+// On a tunnel cluster it is worse than waste. The tenant's web address is a
+// CNAME to the tunnel at exactly the name these records claim, and RFC 1034
+// §3.6.2 forbids a CNAME beside any other type — so external-dns discards the
+// CNAME, logs "conflicting record type candidates" once a minute, and the
+// tenant's site stops resolving entirely. Mail that cannot work takes down a
+// website that otherwise would.
+//
+// Records already published are removed rather than left: a cluster that
+// switches to external, or a tenant that moves off kernel mail, must not keep
+// an MX pointing at a server that no longer accepts for it.
 func (r *TenantReconciler) syncTenantMailDNS(ctx context.Context, tenant *gentianov1alpha1.Tenant) error {
 	domain := mailDomain(tenant, r.KernelDomain, r.TenancyMode)
 	if domain == "" || tenant.Status.Mail == nil {
 		return nil
 	}
 	ns := defaultServicesNamespace()
+
+	if !r.dovecotDeployed(ctx) {
+		return r.deleteTenantMailDNS(ctx, tenant, ns)
+	}
 
 	// The MX target is the kernel's mail host, not the tenant's own domain: one
 	// Postfix serves every tenant, so they all point at the same name. That name
@@ -138,6 +167,31 @@ func (r *TenantReconciler) syncTenantMailDNS(ctx context.Context, tenant *gentia
 	}
 	obj.SetResourceVersion(existing.GetResourceVersion())
 	return r.Update(ctx, obj)
+}
+
+// deleteTenantMailDNS removes the tenant's mail DNSEndpoint, if one is there.
+//
+// Not a no-op on a cluster that never had kernel mail: a cluster whose
+// serviceMode CHANGED, or a tenant moved to transport-only, still holds records
+// published under the old answer, and external-dns keeps serving them until
+// something withdraws the desired state. Leaving them is how a tenant's website
+// stays down after the fault that took it down has been fixed.
+//
+// Absent CRD and absent object are both success: a cluster without external-dns
+// keeps its records by hand, which is a missing convenience rather than a
+// broken tenant -- the same reasoning the create path uses.
+func (r *TenantReconciler) deleteTenantMailDNS(ctx context.Context, tenant *gentianov1alpha1.Tenant, ns string) error {
+	obj := &unstructured.Unstructured{}
+	obj.SetGroupVersionKind(dnsEndpointGVK)
+	obj.SetName("mail-" + tenant.Name)
+	obj.SetNamespace(ns)
+	if err := r.Delete(ctx, obj); err != nil {
+		if runtimeMeta.IsNoMatchError(err) || client.IgnoreNotFound(err) == nil {
+			return nil
+		}
+		return err
+	}
+	return nil
 }
 
 // syncKernelMailDNS publishes the DKIM record for the kernel domain itself.

@@ -130,18 +130,48 @@ func (r *TenantReconciler) reconcileTenantApps(ctx context.Context, tenant *gent
 		}
 	}
 
-	if !allReady {
-		r.setCondition(tenant, conditionAppsReady, metav1.ConditionFalse, "Provisioning", "Waiting for App claims to become Ready")
-		return ctrl.Result{RequeueAfter: 15 * time.Second}, nil
-	}
-
-	// Every claim is Ready, which is a statement about Helm, not about the
-	// app. Ask the workloads before repeating it — see app_workload_health.go
-	// for what a Ready claim is worth on its own.
+	// Asked BEFORE allReady is acted on, not after.
+	//
+	// This used to sit below the `if !allReady` return, so the retry only ran
+	// once every App claim was already Ready — and a claim is not Ready while
+	// its Helm release is not, and a release is not ready while its Deployment
+	// cannot create pods. The one thing that restarts such a Deployment was
+	// therefore unreachable in exactly the state it exists to clear:
+	//
+	//   quota refuses the pod
+	//     → Deployment exhausts progressDeadlineSeconds and stops trying
+	//       → Helm release never becomes ready
+	//         → App claim never becomes Ready
+	//           → allReady is false, so the retry never runs
+	//
+	// Raising the quota then appeared to do nothing, because nothing was
+	// watching. A tenant sat like that until a deploy timed out and took the
+	// whole tenant down with it.
+	//
+	// Running it unconditionally costs one List per reconcile and is otherwise
+	// inert: the nudge is still bounded by the quota fingerprint, so a workload
+	// is retried once per distinct ceiling and never in a loop.
 	stuck, err := r.reconcileAppWorkloadHealth(ctx, tenantNamespaceName(tenant))
 	if err != nil {
 		return ctrl.Result{}, fmt.Errorf("check app workload health: %w", err)
 	}
+
+	if !allReady {
+		// Which workloads cannot start, when any cannot. "Waiting for App
+		// claims" is true and says nothing an operator can act on; a claim
+		// pending because a pod was refused reads identically to one pending
+		// because Helm is still installing, and they need different responses.
+		msg := "Waiting for App claims to become Ready"
+		if len(stuck) > 0 {
+			msg = fmt.Sprintf("%s; cannot create pods: %s", msg, strings.Join(stuck, "; "))
+		}
+		r.setCondition(tenant, conditionAppsReady, metav1.ConditionFalse, "Provisioning", msg)
+		return ctrl.Result{RequeueAfter: 15 * time.Second}, nil
+	}
+
+	// Every claim is Ready, which is a statement about Helm, not about the
+	// app. The workloads were asked above — see app_workload_health.go for
+	// what a Ready claim is worth on its own.
 	if len(stuck) > 0 {
 		r.setCondition(tenant, conditionAppsReady, metav1.ConditionFalse, "WorkloadCannotStart",
 			fmt.Sprintf("Installed, but cannot create pods: %s", strings.Join(stuck, "; ")))

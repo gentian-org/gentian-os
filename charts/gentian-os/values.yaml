@@ -458,33 +458,45 @@ usage:
   # unpriced choice.
   plans:
     enabled: true
-    # One node unit is 2 vCPU / 4 GB / 50 GB, and every plan is a whole number
-    # of them, so a plan is a quantity the platform can actually go and buy.
+    # One node unit is 4 CPU / 16 GB / 50 GB — the machine actually ordered —
+    # and every plan is a whole number of them, so a plan is a quantity the
+    # platform can go and buy.
+    #
+    # It was 2 vCPU / 4 GB, which no longer described anything bought. `base`
+    # therefore sold one node while capping the tenant at a quarter of one, and
+    # the ceiling bit long before the hardware did: a workspace running the App
+    # Store, Open WebUI, Docmost and Nextcloud commits 5550m and 5056Mi of
+    # limits, so adding Odoo was refused for want of 50 millicores while the
+    # node sat at 10% CPU.
     #
     # requestsCpu / requestsMemory are what is sold: requests are what the
-    # scheduler reserves, so two cores of requests is two cores of a node that
+    # scheduler reserves, so four cores of requests is four cores of a node that
     # nothing else can schedule into. cpu / memory are the *limits* ceiling and
     # are not sold — they bound a runaway container, nothing more.
     #
-    # The limits multiples (4x CPU, 2x memory) are measured, not guessed. A
-    # tenant running Nextcloud with Collabora, the App Store and Open WebUI
-    # reserves 1.0 core and 2.5Gi while its container limits sum to 5.95 cores
-    # and 5.5Gi — chart defaults are generous with limits. A tighter ceiling
-    # would refuse pods on a plan whose reserved capacity is barely touched.
-    # That app set fits `base` with room, which is what a one-node plan should
-    # mean.
+    # The limits multiples (4x CPU, 2x memory) are measured, not guessed, and
+    # carry over unchanged. A tenant running Nextcloud with Collabora, the App
+    # Store and Open WebUI reserves 1.0 core and 2.5Gi while its container
+    # limits sum to 5.95 cores and 5.5Gi — chart defaults are generous with
+    # limits. A tighter ceiling would refuse pods on a plan whose reserved
+    # capacity is barely touched.
+    #
+    # 2x on memory means `base` permits 32Gi of limits against 16 GB reserved.
+    # That is burst headroom and not a promise: limits are not scheduled, so
+    # nothing is over-committed until containers actually claim it. The figure
+    # to watch when tightening this is requestsMemory, which is.
     catalogue:
       base:
         displayName: Base · 1 node
-        description: One node — enough for a workspace with Nextcloud and the App Store.
+        description: One node — a workspace running Nextcloud, Odoo and the App Store together.
         tier: 0
         default: true
         productSku: gentian-resources-nodes-1
         quotas:
-          requestsCpu: "2"
-          requestsMemory: 4Gi
-          cpu: "8"
-          memory: 8Gi
+          requestsCpu: "4"
+          requestsMemory: 16Gi
+          cpu: "16"
+          memory: 32Gi
           storage: 50Gi
       nodes-2:
         displayName: 2 nodes
@@ -492,30 +504,30 @@ usage:
         tier: 10
         productSku: gentian-resources-nodes-2
         quotas:
-          requestsCpu: "4"
-          requestsMemory: 8Gi
-          cpu: "16"
-          memory: 16Gi
+          requestsCpu: "8"
+          requestsMemory: 32Gi
+          cpu: "32"
+          memory: 64Gi
           storage: 100Gi
       nodes-4:
         displayName: 4 nodes
         tier: 20
         productSku: gentian-resources-nodes-4
         quotas:
-          requestsCpu: "8"
-          requestsMemory: 16Gi
-          cpu: "32"
-          memory: 32Gi
+          requestsCpu: "16"
+          requestsMemory: 64Gi
+          cpu: "64"
+          memory: 128Gi
           storage: 200Gi
       nodes-8:
         displayName: 8 nodes
         tier: 30
         productSku: gentian-resources-nodes-8
         quotas:
-          requestsCpu: "16"
-          requestsMemory: 32Gi
-          cpu: "64"
-          memory: 64Gi
+          requestsCpu: "32"
+          requestsMemory: 128Gi
+          cpu: "128"
+          memory: 256Gi
           storage: 400Gi
       nodes-16:
         displayName: 16 nodes
@@ -523,10 +535,10 @@ usage:
         tier: 40
         productSku: gentian-resources-nodes-16
         quotas:
-          requestsCpu: "32"
-          requestsMemory: 64Gi
-          cpu: "128"
-          memory: 128Gi
+          requestsCpu: "64"
+          requestsMemory: 256Gi
+          cpu: "256"
+          memory: 512Gi
           storage: 800Gi
 
 appLifecycle:
