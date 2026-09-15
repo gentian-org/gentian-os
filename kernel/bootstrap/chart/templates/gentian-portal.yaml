@@ -110,6 +110,22 @@ spec:
       # kernelDomain + api.env.BACKEND_CORS_ORIGINS — cluster-specific
       # (see docs/deployment.md §1).
       - $deploy/clusters/{{ .Values.cluster }}/kernel/values.yaml
+      # Whether this cluster serves LLM, from the Cluster claim's llm.enabled.
+      #
+      # The portal chart has always documented this as "supplied by the portal
+      # Application's Helm parameters" and nothing supplied it, so it kept its
+      # default of false on every cluster. The portal derives
+      # GENTIAN_CAPABILITIES from it, and a platform app annotated
+      # requires-capability: llm gets a desktop tile only when that capability
+      # is listed — so with llm.enabled: true on the claim and this unset, the
+      # LLM Admin Panel tile could not appear for anyone, on any cluster.
+      #
+      # A parameter rather than a value file: it is per-cluster and already
+      # known here, and the two value files above are the shared base and the
+      # deployments repo's own file.
+      parameters:
+      - name: llm.enabled
+        value: {{ ternary "true" "false" (eq (toString .Values.llmEnabled) "true") | quote }}
   destination:
     server: https://kubernetes.default.svc
     namespace: platform-kernel
