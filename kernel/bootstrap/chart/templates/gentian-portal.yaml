@@ -112,20 +112,31 @@ spec:
       - $deploy/clusters/{{ .Values.cluster }}/kernel/values.yaml
       # Whether this cluster serves LLM, from the Cluster claim's llm.enabled.
       #
-      # The portal chart has always documented this as "supplied by the portal
-      # Application's Helm parameters" and nothing supplied it, so it kept its
-      # default of false on every cluster. The portal derives
-      # GENTIAN_CAPABILITIES from it, and a platform app annotated
-      # requires-capability: llm gets a desktop tile only when that capability
-      # is listed — so with llm.enabled: true on the claim and this unset, the
-      # LLM Admin Panel tile could not appear for anyone, on any cluster.
+      # The portal chart has always documented this as supplied by the portal
+      # Application and nothing supplied it, so it kept its default of false on
+      # every cluster. The portal derives GENTIAN_CAPABILITIES from it, and a
+      # platform app annotated requires-capability: llm gets a desktop tile only
+      # when that capability is listed — so with llm.enabled: true on the claim
+      # and this unset, the LLM Admin Panel tile could not appear for anyone, on
+      # any cluster.
       #
-      # A parameter rather than a value file: it is per-cluster and already
-      # known here, and the two value files above are the shared base and the
-      # deployments repo's own file.
-      parameters:
-      - name: llm.enabled
-        value: {{ ternary "true" "false" (eq (toString .Values.llmEnabled) "true") | quote }}
+      # valuesObject, NOT parameters, and that is not a style choice.
+      # argocd-image-updater is annotated write-back-method: argocd on this
+      # Application, which means it writes the resolved image tags INTO
+      # spec.sources[].helm.parameters on the live object. A template that also
+      # declares parameters fights it for the same field: the render carries one
+      # entry, kubectl apply replaces the list, and the four image parameters
+      # the updater wrote are gone until its next poll — the portal reverting to
+      # the chart's default tag in between. valuesObject is a separate field
+      # nothing else writes, so the two coexist.
+      #
+      # It also keeps the drift check honest. bootstrap-app-drift.py compares
+      # lists by length and position, so a one-entry parameters list against the
+      # live four reads as permanent drift, and every step that renders this
+      # template would re-apply it forever.
+      valuesObject:
+        llm:
+          enabled: {{ ternary "true" "false" (eq (toString .Values.llmEnabled) "true") }}
   destination:
     server: https://kubernetes.default.svc
     namespace: platform-kernel
