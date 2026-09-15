@@ -1878,6 +1878,19 @@ install_llm_serving() {
         warn "LiteLLM vLLM model sync failed — retry with ./install.sh --step D-05-llm-serving."
     fi
 
+    # External providers, after the vLLM sync rather than beside it: they are
+    # independent of gpuAcceleration, so this runs on a CPU-only cluster where
+    # the sync above had nothing to do. Never fatal — a provider whose token is
+    # wrong is an operator's fix, not a failed install, and the Job's log says
+    # which provider and why.
+    if ensure_litellm_provider_models; then :; elif [[ $? -eq 2 ]]; then
+        info "LiteLLM provider sync continues in-cluster — the Job retries until the proxy"
+        info "  finishes its cold start, and E-02 verifies the result. No action needed."
+    else
+        warn "LiteLLM provider sync reported problems — see the log above, then retry with"
+        warn "  ./install.sh --step D-05-llm-serving once the provider credential is right."
+    fi
+
     success "LLM serving stack deployment complete."
 }
 
