@@ -70,8 +70,8 @@ render_and_apply_vllm_gpu_manifest() {
     printf 'gpuTimeSliceReplicas: %s\n' "${GPU_TIME_SLICE_REPLICAS:-1}" > "${values}"
 
     # No instances when GPU acceleration is off: the release still applies, so
-    # GPU time-slicing stays configured and any instance from a previous run is
-    # removed by the upgrade rather than by a separate sweep.
+    # any instance from a previous run is removed by the upgrade rather than by
+    # a separate sweep.
     if [[ "${GPU_ACCELERATION:-false}" != "true" ]]; then
         printf 'instances: []\n' >> "${values}"
     elif [[ -r "${claim_file}" ]]; then
@@ -104,10 +104,17 @@ yaml.safe_dump({"instances": items}, sys.stdout, default_flow_style=False, sort_
         info "Serving ${count} vLLM instance(s) from the claim."
     fi
 
+    # Time slicing only where the claim says there are GPUs. The ConfigMap lives
+    # in gpu-operator-resources, which only the GPU Operator creates, so on a
+    # CPU-only cluster — one routing to external providers alone — rendering it
+    # fails the whole release on a namespace that will never exist.
+    #
     # GPU sharing is the node's, not this release's, when something else already
     # configured it.
     local manage_slicing="true" existing
-    if existing="$(_time_slicing_is_foreign)"; then
+    if [[ "${GPU_ACCELERATION:-false}" != "true" ]]; then
+        manage_slicing="false"
+    elif existing="$(_time_slicing_is_foreign)"; then
         manage_slicing="false"
         info "GPU time-slicing is already configured on this cluster — leaving it alone."
         info "  ${existing}"
