@@ -2499,6 +2499,7 @@ render_bootstrap_application() {
         --set-string "kernelDomain=${KERNEL_DOMAIN:-}" \
         --set-string "dnsProvider=${DNS_PROVIDER:-cloudflare}" \
         --set-string "networkMode=${NETWORK_MODE:-tunnel}" \
+        --set-string "llmEnabled=${LLM_SUPPORT:-false}" \
         --set-string "cluster=${GENTIAN_DEPLOYMENTS_CLUSTER_ID}" >"${out}" 2>/dev/null || return 1
 
     [[ -s "${out}" ]] || return 2
