@@ -1,7 +1,5 @@
 # Portal redesign — one login path for embedded and direct access
 
-**Under construction — not ready for review.**
-
 Companion to [`authz-redesign-kernel-openfga-keycloak.md`](authz-redesign-kernel-openfga-keycloak.md). Today an app opened from the portal and the same app opened by direct link authenticate differently, and the portal holds a secret that can mint a session as any user. The aim is one path for both, with nothing forgeable left in the portal.
 
 ## Target topology
@@ -189,6 +187,24 @@ What the bridge actually is, is a hand-rolled authorization-code flow:
 | Bound to | **Nothing** | `client_id`, `redirect_uri`, PKCE verifier |
 
 The swap of trusted issuer — Keycloak to portal — is exactly why the portal ends up holding something that can forge sessions.
+
+## Driving development questions
+
+| Question | Current state | Caveat |
+|---|---|---|
+| Does the portal run on all modern browsers — Safari, Firefox and Chrome? | Unverified for the target design. The pieces it relies on are standard: same-site cookies in iframes, silent OIDC redirects, WebCrypto with a non-extractable key in IndexedDB. All three browsers support them. | Safari is the one to test first, on iOS as well as macOS. Its tracking prevention is the strictest, it evicts IndexedDB after roughly a week of inactivity, and the only evidence in the repo against embedded OIDC comes from mobile Safari. Firefox's Total Cookie Protection partitions by site, which same-site hostnames should satisfy — should, not verified. |
+
+## What is left to test
+
+The design rests on a handful of empirical claims. None is expensive to check, and the first two decide whether the direction holds at all.
+
+- **Silent OIDC inside an embedded iframe, on a same-site tenant.** The core premise: an app's redirect to Keycloak returns without rendering anything, because the SSO cookie is not third-party. `nextcloud-base-od` suggests this already works; confirm it, and confirm the desktop's window state survives.
+- **The same, in Safari on iOS.** This is the claim in `odoo/base/base-ce/backlog.md` that contradicts the direction. If it reproduces on a same-site tenant, the plan needs rethinking; if it does not, a subsystem can be deleted.
+- **Nextcloud's own OIDC path end to end.** `user_oidc` must do everything the bridge did — provision the account, set display name and email, create the user directory, map groups — or the gap has to be closed before the bridge goes.
+- **What happens when an interactive step is required** — expired SSO session, a Keycloak required action, a step-up. Whether the app sends `prompt=none` at all, and whether the IdP renders inside the tile rather than failing back to the shell.
+- **Deep links survive the redirect.** Today's bridge is known to drop app URL parameters such as Odoo's `#action=…`; a fragment is not sent to the server, so the OIDC round trip can lose it too.
+- **Several tiles opening at once** — N concurrent authorization-code flows against Keycloak on a single desktop load.
+- **A custom-domain tenant fails as predicted.** It should be cross-site and break silent SSO. Worth confirming, so the exception is known rather than discovered later.
 
 ## Open risks
 
