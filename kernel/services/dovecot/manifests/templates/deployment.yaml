@@ -245,6 +245,30 @@ data:
       }
     }
 
+    # The SASL server Postfix authenticates submissions against.
+    #
+    # Postfix and Dovecot are separate Pods here, so the usual pairing — Postfix
+    # reading a UNIX socket inside Dovecot's runtime directory — is not available:
+    # there is no shared filesystem. Dovecot's auth service also speaks its
+    # protocol over TCP, which is what smtpd_sasl_path = inet:... expects, and that
+    # is the only reason authenticated submission can work at all in this layout.
+    #
+    # Why authenticate a sender that is already inside the cluster: trusting a
+    # client because of WHERE it connects from is not portable. mynetworks has to
+    # name the Pod range, the load balancer proxies inbound mail from an address
+    # outside that range on one CSP and inside it on the next, and the difference
+    # between "our Keycloak" and "the internet" then depends on the provider's
+    # address plan. A credential does not move when the cluster does.
+    #
+    # Identical userdb/passdb to IMAP, deliberately: the per-app passwd-files below
+    # already hold one credential per (user, app), so submission is just another
+    # app. No second identity source to keep in step.
+    service auth {
+      inet_listener {
+        port = 12345
+      }
+    }
+
     service imap-login {
       inet_listener imap {
         port = 143
@@ -452,6 +476,8 @@ spec:
             {{- end }}
             - name: lmtp
               containerPort: 24
+            - name: sasl
+              containerPort: 12345
           # Both probe LMTP, not IMAP: LMTP is the port that has to work for mail
           # to be delivered at all, and it is the one Postfix depends on. Without
           # a probe the Pod reports Ready the moment the container starts, so
@@ -498,6 +524,11 @@ spec:
     - name: imap
       port: 143
       targetPort: imap
+    # Reachable only inside the cluster, like every other port here: the Service
+    # is ClusterIP and nothing in the Gateway forwards to it.
+    - name: sasl
+      port: 12345
+      targetPort: sasl
     {{- if .Values.tls.enabled }}
     - name: imaps
       port: 993

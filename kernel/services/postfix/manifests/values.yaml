@@ -119,12 +119,18 @@ egressNodeLabel: gentianos.io/mail-egress
 # other two ranges. Trusting the node network cannot be distinguished from
 # trusting the internet, because inbound mail is proxied from it.
 #
-# A cluster whose pod CIDR is NOT inside 10.0.0.0/8 must set its own range here,
-# or Keycloak invite and password-reset mail is refused with
+# This is now the FALLBACK, not the mechanism. The operator derives the Pod CIDRs
+# from the cluster's own Nodes and writes them to the postfix-kernel-virtual-mailbox-maps
+# ConfigMap, which overrides this value wherever it can be derived — see
+# internal/controller/mail_trustednetworks.go. The value here applies only on a
+# cluster whose CNI leaves spec.podCIDR unset, and a cluster whose Pod CIDR is
+# outside 10.0.0.0/8 AND whose CNI does not populate it must set its own range,
+# or in-cluster mail that does not authenticate is refused with
 #   554 5.7.1 <user@domain>: Relay access denied
-# Tenant SMTP depends on this: the operator points every tenant realm at this
-# Postfix with no SASL credentials (internal/controller/keycloak_tenant_smtp.go),
-# so being in mynetworks is the only thing that lets a tenant realm send.
+#
+# Senders that authenticate need none of this: Keycloak realms present a
+# credential Dovecot verifies (internal/controller/keycloak_tenant_smtp.go), and
+# that is the grant intended to replace this one entirely.
 trustedNetworks: "127.0.0.0/8,10.0.0.0/8"
 
 # Storage for the DKIM keys. A handful of 2048-bit keys; the size is almost

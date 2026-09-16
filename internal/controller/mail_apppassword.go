@@ -17,6 +17,7 @@ limitations under the License.
 package controller
 
 import (
+	"crypto/subtle"
 	"context"
 	"crypto/hmac"
 	"crypto/rand"
@@ -56,6 +57,26 @@ const (
 	mailAppPasswordApp       = "nextcloud-mail"
 	mailAppPasswordSeedName  = "mail-apppw-seed"
 	mailAppPasswordTenantSec = "mail-app-passwords"
+	// The identity a tenant's Keycloak realm authenticates as when it submits
+	// mail. It is an app like any other, so it reuses the machinery above rather
+	// than introducing a second kind of credential — the realm is simply a mail
+	// client that happens not to be operated by a person.
+	mailSubmissionApp = "keycloak-smtp"
+	// Local part of that identity. It never receives: Dovecot's static userdb
+	// accepts any address in a registered domain, so a mailbox appears only if
+	// something delivers to it, and nothing does.
+	mailSubmissionLocalPart = "noreply"
+	// Where the plaintext waits for the SMTP configuration Job, which runs in the
+	// kernel namespace beside Keycloak rather than in the tenant's namespace.
+	mailSubmissionSecretPrefix = "mail-submission-"
+	// The tenant's apps share one submission identity, smtp-<tenant>, because
+	// they share one Secret: that is what the app reconciler seeds into OpenBao
+	// and injects as Helm values. Naming it as an app here only registers what
+	// already exists.
+	mailAppSubmissionApp = "tenant-apps"
+	// The kernel realm's own identity, written by the installer rather than by
+	// the operator, and registered from whatever that Secret holds.
+	mailKernelRealmSubmissionApp = "kernel-realm"
 )
 
 // Derived, not random. A random password per user would have to be stored to
@@ -65,9 +86,13 @@ const (
 //
 // The seed is per tenant, so the derivation cannot be replayed across tenants
 // even by something holding one tenant's seed.
-func deriveMailPassword(seed []byte, address string) string {
+// The app is part of the derivation, not decoration: without it a user's IMAP
+// password and their realm's submission password would be the same string, so
+// one credential would open both and "a credential per (user, app)" would be a
+// claim the code does not keep.
+func deriveMailPassword(seed []byte, app, address string) string {
 	mac := hmac.New(sha256.New, seed)
-	mac.Write([]byte(mailAppPasswordApp + ":" + address))
+	mac.Write([]byte(app + ":" + address))
 	return base64.RawURLEncoding.EncodeToString(mac.Sum(nil))[:32]
 }
 
@@ -236,6 +261,25 @@ func (r *TenantReconciler) syncMailAppPasswords(ctx context.Context, tenant *gen
 		return err
 	}
 
+	// The lines already stored, so an unchanged user keeps its line instead of
+	// being re-hashed with a new salt. Without this every reconcile rewrote the
+	// whole file, and every rewrite scheduled the reconcile that rewrote it next.
+	existing := map[string]string{}
+	{
+		sec := &corev1.Secret{}
+		if err := r.Get(ctx, types.NamespacedName{
+			Name: "dovecot-app-passwords", Namespace: defaultServicesNamespace(),
+		}, sec); err == nil {
+			for _, l := range strings.Split(string(sec.Data[mailAppPasswordFile(mailAppPasswordApp, name)+".users"]), "\n") {
+				if addr, _, ok := strings.Cut(strings.TrimSpace(l), ":"); ok {
+					existing[addr] = strings.TrimSpace(l)
+				}
+			}
+		} else if !errors.IsNotFound(err) {
+			return err
+		}
+	}
+
 	var lines strings.Builder
 	plain := map[string][]byte{}
 	for _, u := range users {
@@ -248,10 +292,13 @@ func (r *TenantReconciler) syncMailAppPasswords(ctx context.Context, tenant *gen
 		if !strings.Contains(addr, "@") {
 			addr = u + "@" + domain
 		}
-		pw := deriveMailPassword(seed, addr)
-		line, err := argon2idPasswdLine(addr, pw)
-		if err != nil {
-			return err
+		pw := deriveMailPassword(seed, mailAppPasswordApp, addr)
+		line := existing[addr]
+		if !argon2idLineMatches(line, addr, pw) {
+			var err error
+			if line, err = argon2idPasswdLine(addr, pw); err != nil {
+				return err
+			}
 		}
 		lines.WriteString(line + "\n")
 		// Secret keys allow only [-._a-zA-Z0-9], and a Keycloak username is
@@ -264,13 +311,68 @@ func (r *TenantReconciler) syncMailAppPasswords(ctx context.Context, tenant *gen
 	if err := r.upsertSecret(ctx, mailAppPasswordTenantSec, tenantNamespaceName(tenant), plain); err != nil {
 		return err
 	}
-	// The hashes, in the kernel namespace, for Dovecot.
-	return r.upsertSecret(ctx, "dovecot-app-passwords", defaultServicesNamespace(), map[string][]byte{
-		mailAppPasswordApp + ".users": []byte(lines.String()),
-		mailAppPasswordApp + ".conf": []byte(fmt.Sprintf(
-			"passdb {\n  driver = passwd-file\n  args = /etc/dovecot/apppw/%s.users\n"+
-				"  result_failure = continue\n  result_internalfail = continue\n}\n",
-			mailAppPasswordApp)),
+	// The hashes, in the kernel namespace, for Dovecot — one pair of files per
+	// tenant, NOT one pair shared by all of them.
+	//
+	// The shared key this replaces held only the lines of whichever tenant
+	// reconciled last, because each reconcile rebuilds the value from one
+	// realm's users and writes it whole. Two tenants therefore took turns: corp
+	// reconciled and finnor's users could no longer authenticate, finnor
+	// reconciled and corp's could not, each failing as a wrong password with
+	// nothing logged beyond an auth failure. Dovecot includes the directory by
+	// glob and the passdbs chain with result_failure = continue, so a file per
+	// tenant needs no configuration change and cannot overwrite another's.
+	if err := r.upsertSecret(ctx, "dovecot-app-passwords", defaultServicesNamespace(), map[string][]byte{
+		mailAppPasswordFile(mailAppPasswordApp, name) + ".users": []byte(lines.String()),
+		mailAppPasswordFile(mailAppPasswordApp, name) + ".conf":  passdbInclude(mailAppPasswordFile(mailAppPasswordApp, name)),
+	}); err != nil {
+		return err
+	}
+	// The pre-split files, whose entries would otherwise keep authenticating
+	// from a glob nobody looks at again.
+	if err := r.deleteSecretKeys(ctx, "dovecot-app-passwords", defaultServicesNamespace(),
+		mailAppPasswordApp+".users", mailAppPasswordApp+".conf"); err != nil {
+		return err
+	}
+	return r.syncMailSubmissionCredential(ctx, tenant, domain, seed)
+}
+
+// mailAppPasswordFile names one tenant's passwd-file for one app.
+func mailAppPasswordFile(app, tenant string) string {
+	return app + "-" + tenant
+}
+
+// passdbInclude renders the Dovecot passdb block that reads one such file.
+//
+// result_failure = continue so a user present in one app's file and absent from
+// another's is not rejected by the first file that lacks them; the empty
+// passwd-file Dovecot includes last is still the final deny.
+func passdbInclude(file string) []byte {
+	return []byte(fmt.Sprintf(
+		"passdb {\n  driver = passwd-file\n  args = /etc/dovecot/apppw/%s.users\n"+
+			"  result_failure = continue\n  result_internalfail = continue\n}\n",
+		file))
+}
+
+// syncMailSubmissionCredential mints the credential a tenant realm authenticates
+// with, so that relaying stops depending on where the sender connects from.
+//
+// Both halves again, and for the same reason as the app passwords: the hash
+// where Dovecot verifies it, the plaintext where the consumer reads it. The
+// consumer here is the SMTP configuration Job, which runs in the kernel
+// namespace, so the plaintext goes there rather than into the tenant's.
+func (r *TenantReconciler) syncMailSubmissionCredential(ctx context.Context, tenant *gentianov1alpha1.Tenant, domain string, seed []byte) error {
+	addr := mailSubmissionLocalPart + "@" + domain
+	pw := deriveMailPassword(seed, mailSubmissionApp, addr)
+	// Same verify-before-write as every other identity: a random salt makes an
+	// unchanged credential render differently each time, and writing that turns
+	// each reconcile into the cause of the next one.
+	if err := r.registerSubmissionIdentity(ctx, mailSubmissionApp, tenant.Name, addr, pw); err != nil {
+		return err
+	}
+	return r.upsertSecret(ctx, mailSubmissionSecretPrefix+tenant.Name, defaultServicesNamespace(), map[string][]byte{
+		"smtp_user":     []byte(addr),
+		"smtp_password": []byte(pw),
 	})
 }
 
@@ -286,6 +388,73 @@ func secretKeySafe(s string) string {
 		}
 	}
 	return string(out)
+}
+
+// argon2idLineMatches reports whether an existing passwd-file line already
+// verifies this password.
+//
+// Needed because the salt is random, so re-rendering a line for an unchanged
+// password produces a DIFFERENT string every time. Writing that unconditionally
+// makes each reconcile an Update, every Update wakes every watcher, and the
+// reconcile that follows writes again — a loop that never converges and shows up
+// as unrelated timeouts long before anyone suspects the mail code. Comparing the
+// rendered bytes cannot work here; verifying the password is the only way to ask
+// "is this already correct?".
+//
+// A line that cannot be parsed reports false, so a malformed or foreign entry is
+// replaced rather than trusted.
+func argon2idLineMatches(line, address, password string) bool {
+	_, encoded, ok := strings.Cut(strings.TrimSpace(line), ":")
+	if !ok || !strings.HasPrefix(encoded, "{ARGON2ID}$argon2id$v=19$") {
+		return false
+	}
+	parts := strings.Split(strings.TrimPrefix(encoded, "{ARGON2ID}$argon2id$v=19$"), "$")
+	if len(parts) != 3 {
+		return false
+	}
+	var m, t uint32
+	var par uint8
+	if _, err := fmt.Sscanf(parts[0], "m=%d,t=%d,p=%d", &m, &t, &par); err != nil {
+		return false
+	}
+	salt, err := base64.RawStdEncoding.DecodeString(parts[1])
+	if err != nil {
+		return false
+	}
+	want, err := base64.RawStdEncoding.DecodeString(parts[2])
+	if err != nil {
+		return false
+	}
+	got := argon2.IDKey([]byte(password), salt, t, m, par, uint32(len(want)))
+	return subtle.ConstantTimeCompare(got, want) == 1
+}
+
+// deleteSecretKeys removes keys that are no longer written, leaving the Secret
+// and every other key in place.
+//
+// Needed because upsertSecret merges: a key that stops being produced is not
+// overwritten by its absence, it simply stays. For a passwd-file mounted by
+// glob that means the credentials in it keep working, which is the opposite of
+// what removing them was for.
+func (r *TenantReconciler) deleteSecretKeys(ctx context.Context, name, ns string, keys ...string) error {
+	sec := &corev1.Secret{}
+	if err := r.Get(ctx, types.NamespacedName{Name: name, Namespace: ns}, sec); err != nil {
+		if errors.IsNotFound(err) {
+			return nil
+		}
+		return err
+	}
+	changed := false
+	for _, k := range keys {
+		if _, ok := sec.Data[k]; ok {
+			delete(sec.Data, k)
+			changed = true
+		}
+	}
+	if !changed {
+		return nil
+	}
+	return r.Update(ctx, sec)
 }
 
 func (r *TenantReconciler) upsertSecret(ctx context.Context, name, ns string, data map[string][]byte) error {
