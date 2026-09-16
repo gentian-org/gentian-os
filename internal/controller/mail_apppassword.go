@@ -328,13 +328,67 @@ func (r *TenantReconciler) syncMailAppPasswords(ctx context.Context, tenant *gen
 	}); err != nil {
 		return err
 	}
-	// The pre-split files, whose entries would otherwise keep authenticating
-	// from a glob nobody looks at again.
-	if err := r.deleteSecretKeys(ctx, "dovecot-app-passwords", defaultServicesNamespace(),
-		mailAppPasswordApp+".users", mailAppPasswordApp+".conf"); err != nil {
+	// The pre-split shared file — but ONLY once every tenant has its own.
+	//
+	// Removing it as soon as the first tenant reconciled is what broke this in
+	// production: the shared file held the users of whichever tenant wrote it
+	// last, so deleting it took away the credentials of every tenant that had not
+	// yet reconciled under the new scheme. Their logins failed as wrong passwords
+	// until their own reconcile happened to come round, which for a Tenant that
+	// reconciles on a timer can be a long time to be unable to read mail.
+	//
+	// Checking first costs one List and makes the migration order-independent:
+	// whichever tenant reconciles last is the one that clears it away.
+	migrated, err := r.allTenantsHaveOwnPasswdFile(ctx)
+	if err != nil {
 		return err
 	}
+	if migrated {
+		if err := r.deleteSecretKeys(ctx, "dovecot-app-passwords", defaultServicesNamespace(),
+			mailAppPasswordApp+".users", mailAppPasswordApp+".conf"); err != nil {
+			return err
+		}
+	}
 	return r.syncMailSubmissionCredential(ctx, tenant, domain, seed)
+}
+
+// allTenantsHaveOwnPasswdFile reports whether every Tenant now has its own
+// per-tenant passwd-file, which is the condition for retiring the shared one.
+func (r *TenantReconciler) allTenantsHaveOwnPasswdFile(ctx context.Context) (bool, error) {
+	sec := &corev1.Secret{}
+	if err := r.Get(ctx, types.NamespacedName{
+		Name: "dovecot-app-passwords", Namespace: defaultServicesNamespace(),
+	}, sec); err != nil {
+		if errors.IsNotFound(err) {
+			return false, nil
+		}
+		return false, err
+	}
+	tenants := &gentianov1alpha1.TenantList{}
+	if err := r.List(ctx, tenants); err != nil {
+		return false, err
+	}
+	for i := range tenants.Items {
+		if _, ok := sec.Data[mailAppPasswordFile(mailAppPasswordApp, tenants.Items[i].Name)+".users"]; !ok {
+			return false, nil
+		}
+	}
+	return true, nil
+}
+
+// mailPasswdFileKeys lists every passdb key one tenant owns, across apps.
+//
+// One place to enumerate them, so that deleting a tenant cannot leave a
+// credential behind because a later app was added to the writer and not to the
+// remover.
+func mailPasswdFileKeys(tenant string) []string {
+	var keys []string
+	for _, app := range []string{mailAppPasswordApp, mailSubmissionApp, mailAppSubmissionApp} {
+		keys = append(keys,
+			mailAppPasswordFile(app, tenant)+".users",
+			mailAppPasswordFile(app, tenant)+".conf")
+	}
+	return keys
 }
 
 // mailAppPasswordFile names one tenant's passwd-file for one app.

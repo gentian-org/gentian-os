@@ -1312,6 +1312,21 @@ func (r *TenantReconciler) deleteMail(ctx context.Context, tenant *gentianov1alp
 		}
 	}
 
+	// The tenant's SASL credentials, removed whatever the deletion policy says.
+	//
+	// DeletionPolicy governs whether the tenant's DATA is kept — a mailbox one
+	// might still want to read is a different question from a login that should
+	// still work. Leaving the passwd-files behind means the deleted tenant's users
+	// and its apps can go on authenticating to submission and IMAP, which is the
+	// one thing deleting a tenant has to stop.
+	//
+	// Domain routing above is already gone by this point, so what is left is
+	// exactly a credential with nothing to reach.
+	if err := r.deleteSecretKeys(ctx, "dovecot-app-passwords", defaultServicesNamespace(),
+		mailPasswdFileKeys(tenant.Name)...); err != nil {
+		return fmt.Errorf("remove mail passdb entries for tenant %s: %w", tenant.Name, err)
+	}
+
 	if tenant.Spec.DeletionPolicy != gentianov1alpha1.DeletionPolicyDelete {
 		return nil
 	}
