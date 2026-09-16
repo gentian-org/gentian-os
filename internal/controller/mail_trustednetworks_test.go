@@ -113,3 +113,40 @@ func TestPodNetworksReadsDualStackList(t *testing.T) {
 		t.Fatalf("podNetworks() = %q, missing the IPv6 range", got)
 	}
 }
+
+// The kernel domain published a DKIM key and nothing else: mail was signed as
+// it, no receiver was told which hosts may send as it, and no policy said what
+// to do about the ones that are not. It is also the domain the open-relay spam
+// forged, so the absence was not theoretical.
+func TestMailSPFRecordNamesTheSendingHostNotTheMX(t *testing.T) {
+	got := mailSPFRecord("mail-egress.gentian.cloud")
+	if got != "v=spf1 a:mail-egress.gentian.cloud -all" {
+		t.Fatalf("mailSPFRecord() = %q", got)
+	}
+	// "mx" would name the inbound load balancer, which never sends, so the
+	// record would fail by construction while looking plausible.
+	if strings.Contains(got, "mx") {
+		t.Fatalf("mailSPFRecord() = %q, must not authorise the MX as a sender", got)
+	}
+}
+
+// Without a dedicated egress the record is a guess, and a guess must not tell
+// receivers to reject.
+func TestMailSPFRecordSoftFailsWhenEgressUnknown(t *testing.T) {
+	if got := mailSPFRecord(""); !strings.HasSuffix(got, "~all") {
+		t.Fatalf("mailSPFRecord(\"\") = %q, want a soft fail", got)
+	}
+}
+
+// p=none because the reports are what say whether a stricter policy would
+// bounce real mail. Publishing reject first is how a domain silences its own
+// invites.
+func TestMailDMARCRecordReportsBeforeItRejects(t *testing.T) {
+	got := mailDMARCRecord("gentian.cloud")
+	if !strings.Contains(got, "p=none") {
+		t.Fatalf("mailDMARCRecord() = %q, want p=none until reports say otherwise", got)
+	}
+	if !strings.Contains(got, "rua=mailto:dmarc@gentian.cloud") {
+		t.Fatalf("mailDMARCRecord() = %q, missing the reporting address", got)
+	}
+}
