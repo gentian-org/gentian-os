@@ -185,6 +185,28 @@ spec:
         enough for the zone walk to widen a filter onto a zone another cluster
         writes to is enough.
         */}}
+        {{- /*
+        CHANGING THIS VALUE ON A LIVE CLUSTER NEEDS A MIGRATION.
+
+        The ownership TXT beside each managed record keeps the owner id it was
+        written with; nothing rewrites them when this changes. The mismatch is
+        never reported, and it does not merely stop updates — in
+        appendTakenDNSNameChanges() external-dns "only add[s] creates if the
+        external dns has ownership claim on the domain", so once a NAME holds a
+        record this owner does not own, every create at that name is dropped in
+        silence while the log keeps saying "All records are already up to date".
+
+        That is how the kernel domain came to have a DKIM record but no SPF and
+        no MX: gentian.cloud already carried an A record created before
+        external-dns existed here, with no ownership TXT at all, so the SPF, the
+        MX and even the apex A the HTTPRoute asks for were skipped on every cycle
+        for as long as anyone looked. _dmarc.<kernelDomain> published normally,
+        because that name was still free.
+
+        scripts/tools/extdns-reown.sh performs both halves — rewriting the old
+        owner id and adopting records external-dns wants but did not create — and
+        defaults to a dry run.
+        */}}
         txtOwnerId: {{ required "cluster is required: external-dns ownership must identify this cluster, not the product" .Values.cluster | quote }}
         {{- $kd := required "kernelDomain is required for external-dns domainFilters" .Values.kernelDomain }}
         {{- $labels := splitList "." $kd }}
