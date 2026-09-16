@@ -199,6 +199,26 @@ spec:
         # anything on requests reads REQUESTS_CA_BUNDLE. Setting one and not the
         # other fixes whichever call happens to be on that client and leaves the
         # rest failing identically.
+        # Shared router state. Without these the proxy answered
+        # "No Redis configured ... rate limits, budgets, router state and cache
+        # invalidation are per worker, so limits are enforced once per worker
+        # and spend can overshoot" — with replicas: 2 above, that is every
+        # tenant budget enforced twice and spend able to run to double what the
+        # claim allows. Redis was deployed and its password generated from the
+        # beginning; only these three lines were missing.
+        #
+        # litellm/_redis.py takes REDIS_URL, or REDIS_HOST and REDIS_PORT with
+        # an optional REDIS_PASSWORD, and builds redis://<password>@host:port
+        # from them.
+        - name: REDIS_HOST
+          value: redis-llm.platform-kernel.svc.cluster.local
+        - name: REDIS_PORT
+          value: "6379"
+        - name: REDIS_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: llm-sensitive-values
+              key: litellm_redis_password
         - name: SSL_CERT_FILE
           value: /trust/ca-bundle.pem
         - name: REQUESTS_CA_BUNDLE
@@ -249,6 +269,20 @@ spec:
       containers:
       - name: redis
         image: redis:alpine
+        # requirepass, from the credential that has existed since this file was
+        # written and was never used. redis:alpine with no arguments listens
+        # unauthenticated, and platform-kernel has no NetworkPolicy, so every
+        # pod in the kernel namespace could read and write the proxy's rate
+        # limit and budget state.
+        #
+        # Through env rather than inline, so the value is not in the manifest.
+        args: ["--requirepass", "$(REDIS_PASSWORD)"]
+        env:
+        - name: REDIS_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: llm-sensitive-values
+              key: litellm_redis_password
         ports:
         - containerPort: 6379
           name: redis
