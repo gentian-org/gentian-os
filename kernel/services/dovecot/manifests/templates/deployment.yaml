@@ -326,6 +326,29 @@ metadata:
   namespace: {{ .Values.servicesNamespace }}
   annotations:
     argocd.argoproj.io/sync-wave: "9"
+    # Restart when the credential files change, because Dovecot only reads which
+    # ones exist at startup.
+    #
+    # The passdb blocks come from !include_try /etc/dovecot/apppw/*.conf, and that
+    # glob is expanded ONCE, when the process starts. The kubelet keeps the mounted
+    # files current, so an existing passwd-file picks up a changed password with no
+    # restart — but a passwd-file that did not exist when Dovecot started is not in
+    # the configuration at all, however present it is on disk.
+    #
+    # The operator writes one pair of files per tenant per app, so every new tenant
+    # produces a new .conf. Without this annotation that tenant's users authenticate
+    # against a passdb Dovecot has never read: every login fails as a wrong
+    # password, with nothing in the log but "auth failed", while the file sits in
+    # the mount looking correct. It happened here the first time the files were
+    # split per tenant — one tenant's users could not log in until Dovecot was
+    # restarted by hand, and the Nextcloud Mail UI showed it as an endless spinner.
+    #
+    # Cheap in practice: the operator rewrites this Secret only when a credential
+    # actually changes (the hashes are verified before they are rewritten), so this
+    # is not a restart per reconcile. A restart drops IMAP connections, which
+    # clients reopen, and interrupts LMTP, which Postfix retries — no mail is lost
+    # either way.
+    secret.reloader.stakater.com/reload: dovecot-app-passwords
   labels:
     app.kubernetes.io/name: dovecot
     app.kubernetes.io/instance: dovecot-{{ .Values.env }}
