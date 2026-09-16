@@ -60,6 +60,14 @@ data:
     {{- end }}
     persistence:
       enabled: false
+    # The chart mounts this Secret at /var/run/certs and runs its own
+    # _enable_tls.sh, which points smtpd_tls_cert_file and smtpd_tls_key_file at
+    # the tls.crt and tls.key inside it — exactly the layout cert-manager writes,
+    # so the Certificate needs no conversion step.
+    {{- if .Values.tls.secretName }}
+    certs:
+      existingSecret: {{ .Values.tls.secretName }}
+    {{- end }}
     service:
       type: ClusterIP
       port: 587
@@ -177,6 +185,31 @@ data:
         broken_sasl_auth_clients: "yes"
         smtpd_client_restrictions: "permit_sasl_authenticated, permit_mynetworks, permit"
         smtpd_sender_restrictions: "permit_sasl_authenticated, permit_mynetworks, reject_non_fqdn_sender, reject_unknown_sender_domain, permit"
+        # Never offer AUTH before TLS.
+        #
+        # Submission is published on the internet, so without this a password
+        # crosses in clear to anyone who asks for it — and the client cannot tell,
+        # because Postfix would advertise AUTH on a plaintext connection exactly
+        # as it does on an encrypted one. With it, AUTH does not appear in the
+        # EHLO response until STARTTLS has succeeded, so a client that cannot do
+        # TLS fails to authenticate instead of succeeding insecurely.
+        #
+        # Inbound mail on 25 is untouched: remote MTAs do not authenticate, and
+        # smtpd_tls_security_level stays "may" so a sender without TLS still
+        # delivers. This governs credentials, not mail.
+        smtpd_tls_auth_only: "yes"
+        # What a published submission port needs that an internal one does not.
+        #
+        # Failed logins get slower and connections are capped per client, so a
+        # credential-stuffing run costs the attacker time instead of costing us a
+        # reputation. anvil keeps the counters; the limits are per client address
+        # per anvil_rate_time_unit (60s by default), and are generous enough that
+        # a real mail client never meets them.
+        smtpd_client_auth_rate_limit: "10"
+        smtpd_client_connection_rate_limit: "30"
+        smtpd_error_sleep_time: "5s"
+        smtpd_soft_error_limit: "3"
+        smtpd_hard_error_limit: "10"
         # Cap the number of forked processes. The default is 100, and a queue that
         # deep forks 100 smtp clients at once on start — which is what exceeded the
         # memory limit and crash-looped the container. This cluster sends

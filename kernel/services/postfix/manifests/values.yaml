@@ -57,6 +57,19 @@ relayPort: "587"
 # Publishing an MX record before this exists is what makes mail "disappear":
 # senders resolve the record, fail to connect, and retry for days before
 # bouncing.
+# Whether submission (587) is published alongside the MX on the same load
+# balancer, so that mail clients outside the cluster can send.
+#
+# It shares the MX's Service and therefore its address — no second load balancer
+# and no second bill. It is safe to publish only because submission now requires
+# a credential AND requires TLS before offering to take one
+# (smtpd_tls_auth_only), so what reaches the internet is an authenticated
+# endpoint rather than the open relay this stack started with.
+#
+# Turn it off on a cluster whose users only ever send through in-cluster apps.
+submissionIngress:
+  enabled: true
+
 smtpIngress:
   enabled: true
   # Pin the address when the MX record already names one, so a rebuild does not
@@ -132,6 +145,28 @@ egressNodeLabel: gentianos.io/mail-egress
 # credential Dovecot verifies (internal/controller/keycloak_tenant_smtp.go), and
 # that is the grant intended to replace this one entirely.
 trustedNetworks: "127.0.0.0/8,10.0.0.0/8"
+
+# TLS.
+#
+# The certificate is NOT issued here. It is the cluster's existing wildcard —
+# the same publicly-trusted certificate the gateway serves — because every name
+# that matters for mail is a public one: mail.<kernelDomain> for the MX and for
+# submission, imap.<kernelDomain> for retrieval. A wildcard already covers them.
+#
+# Issuing an internal one instead was the first design and it was wrong twice
+# over: the gentian-ca ClusterIssuer it needed is defined in this repo but
+# applied on no cluster (issuerMode defaults to acme-dns01), so the Certificate
+# would never become Ready and the Pod would wait in ContainerCreating with mail
+# down; and a privately-signed certificate has to be distributed to every client
+# before any of them will speak to it — Keycloak's Java truststore, Nextcloud's
+# PHP openssl.cafile, and each app added later. A publicly-trusted certificate
+# needs none of that, on any cluster, for any client.
+#
+# Empty disables TLS. The Secret must exist in servicesNamespace before the
+# Release syncs, because the chart mounts it and a missing Secret holds the Pod
+# rather than failing it.
+tls:
+  secretName: wildcard-tls
 
 # Storage for the DKIM keys. A handful of 2048-bit keys; the size is almost
 # irrelevant, the persistence is not.

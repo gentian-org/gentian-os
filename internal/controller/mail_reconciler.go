@@ -1259,9 +1259,21 @@ func (r *TenantReconciler) seedPerAppMailSecrets(ctx context.Context, tenant *ge
 			}
 		}
 		if n.imap {
+			// imap.<kernelDomain>:993, not the in-cluster Service name.
+			//
+			// The old value named a Service that does not exist — the Service is
+			// dovecot-<env>, never plain "dovecot" — so it resolved to nothing
+			// wherever anything tried to use it. Correcting it to the real
+			// in-cluster name would have broken differently once TLS was on: no
+			// public CA signs .svc.cluster.local, so the certificate could not
+			// match and the client would refuse.
+			//
+			// The public name is covered by the cluster wildcard, resolves both
+			// inside and outside, and is the same address a user types into a
+			// mail client on their phone.
 			if err := r.Seeder.SeedIMAP(ctx, effectiveTenant, appName, secrets.IMAPCreds{
-				Host: "dovecot.platform-kernel.svc.cluster.local",
-				Port: "143",
+				Host: "imap." + r.KernelDomain,
+				Port: "993",
 			}); err != nil {
 				return fmt.Errorf("seed imap for %s: %w", appName, err)
 			}

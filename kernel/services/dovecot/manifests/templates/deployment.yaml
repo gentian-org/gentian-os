@@ -5,11 +5,15 @@
 # domain to LMTP on 24, and it is written to the maildir on the PersistentVolume
 # below as /var/mail/<domain>/<local-part>.
 #
-# Retrieval does not. The Service is ClusterIP and the kernel Gateway listens on
-# 80 and 443 only, so nothing outside the cluster can reach IMAP on 143 — the
-# per-realm oauth2 passdb the operator writes is configured but has never
-# authenticated a client. Exposing it needs a decision this chart does not
-# record: a TCP listener on the gateway, and whether IMAP is offered at all.
+# Retrieval works too, now that the decision this chart used to defer has been
+# made: IMAPS on 993 is published on its own load balancer (imapIngress), with
+# the cluster's publicly-trusted wildcard certificate, and clients authenticate
+# with the per-user app passwords the operator mints. A mail client reaches it at
+# imap.<kernelDomain>.
+#
+# Plaintext IMAP on 143 remains for in-cluster clients and refuses to
+# authenticate outside TLS (disable_plaintext_auth), so the only way to present a
+# password is inside one.
 ---
 apiVersion: v1
 kind: ConfigMap
@@ -93,7 +97,7 @@ data:
     log_path = /dev/stderr
     info_log_path = /dev/stderr
 
-    {{- if .Values.tls.enabled }}
+    {{- if .Values.tls.secretName }}
     # IMAP passwords are password-equivalent and must not cross the network in
     # the clear, even a pod network: anything able to observe it — a sidecar, a
     # CNI plugin, a node-level capture — sees a live mail credential.
@@ -274,7 +278,7 @@ data:
         port = 143
       }
       inet_listener imaps {
-        {{- if .Values.tls.enabled }}
+        {{- if .Values.tls.secretName }}
         port = 993
         ssl = yes
         {{- else }}
@@ -295,29 +299,6 @@ data:
   # Deliberately empty — see the passdb comment above. Provisioning tenant
   # identities replaces this file with a real credential source.
   users: ""
-{{- if .Values.tls.enabled }}
----
-# The serving certificate, for the name clients actually dial. Let's Encrypt
-# cannot issue this — .svc.cluster.local is not publicly resolvable — so it comes
-# from the cluster's own CA.
-apiVersion: cert-manager.io/v1
-kind: Certificate
-metadata:
-  name: dovecot-{{ .Values.env }}-tls
-  namespace: {{ .Values.servicesNamespace }}
-  annotations:
-    argocd.argoproj.io/sync-wave: "7"
-spec:
-  secretName: dovecot-{{ .Values.env }}-tls
-  issuerRef:
-    name: {{ .Values.tls.issuerRef.name }}
-    kind: {{ .Values.tls.issuerRef.kind }}
-  dnsNames:
-    - dovecot-{{ .Values.env }}
-    - dovecot-{{ .Values.env }}.{{ .Values.servicesNamespace }}
-    - dovecot-{{ .Values.env }}.{{ .Values.servicesNamespace }}.svc
-    - dovecot-{{ .Values.env }}.{{ .Values.servicesNamespace }}.svc.cluster.local
-{{- end }}
 ---
 # All tenant mail. Without this, maildirs are written into the container
 # filesystem and vanish on the next restart.
@@ -414,14 +395,16 @@ spec:
             # nothing else, so "other" is Dovecot's own processes. The passdb
             # holds ARGON2ID hashes rather than passwords in any case.
             defaultMode: 0444
-        {{- if .Values.tls.enabled }}
+        {{- if .Values.tls.secretName }}
         # NOT optional: ssl = yes is already rendered above, and Dovecot exits
         # rather than start without the files. Holding the Pod in
-        # ContainerCreating until cert-manager has issued is the better failure —
-        # it is visible, and it does not crashloop LMTP alongside IMAP.
+        # ContainerCreating is the better failure — it is visible, and it does not
+        # crashloop LMTP alongside IMAP. The Secret is the cluster wildcard, which
+        # exists in this namespace before this chart syncs; set tls.secretName
+        # empty on a cluster that has no such certificate.
         - name: tls
           secret:
-            secretName: dovecot-{{ .Values.env }}-tls
+            secretName: {{ .Values.tls.secretName }}
             defaultMode: 0400
         {{- end }}
       containers:
@@ -446,7 +429,7 @@ spec:
             - name: app-passwords
               mountPath: /etc/dovecot/apppw
               readOnly: true
-            {{- if .Values.tls.enabled }}
+            {{- if .Values.tls.secretName }}
             - name: tls
               mountPath: /etc/dovecot/tls
               readOnly: true
@@ -470,7 +453,7 @@ spec:
           ports:
             - name: imap
               containerPort: 143
-            {{- if .Values.tls.enabled }}
+            {{- if .Values.tls.secretName }}
             - name: imaps
               containerPort: 993
             {{- end }}
@@ -529,8 +512,49 @@ spec:
     - name: sasl
       port: 12345
       targetPort: sasl
-    {{- if .Values.tls.enabled }}
+    {{- if .Values.tls.secretName }}
     - name: imaps
       port: 993
       targetPort: imaps
     {{- end }}
+{{- if and .Values.tls.secretName .Values.imapIngress.enabled }}
+---
+# The public IMAPS endpoint.
+#
+# Separate from the ClusterIP Service above rather than a second port on it,
+# because a LoadBalancer Service publishes EVERY port it declares: adding 993 to
+# that one would have put LMTP on 24 and the SASL socket on 12345 on the
+# internet as well. LMTP accepts mail for any hosted domain without
+# authenticating — it is the delivery path, and Postfix is supposed to be the
+# only thing that can reach it.
+apiVersion: v1
+kind: Service
+metadata:
+  name: dovecot-{{ .Values.env }}-imaps
+  namespace: {{ .Values.servicesNamespace }}
+  annotations:
+    argocd.argoproj.io/sync-wave: "9"
+    {{- with .Values.imapIngress.annotations }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+  labels:
+    app.kubernetes.io/name: dovecot
+    app.kubernetes.io/instance: dovecot-{{ .Values.env }}
+    gentianos.io/component: kernel-mail
+spec:
+  type: LoadBalancer
+  # Preserves the client address, which is what Dovecot logs on a failed login
+  # and therefore the only way to tell a locked-out user from a password spray.
+  externalTrafficPolicy: Local
+  {{- with .Values.imapIngress.loadBalancerIP }}
+  loadBalancerIP: {{ . | quote }}
+  {{- end }}
+  selector:
+    app.kubernetes.io/name: dovecot
+    app.kubernetes.io/instance: dovecot-{{ .Values.env }}
+  ports:
+    - name: imaps
+      port: 993
+      targetPort: imaps
+      protocol: TCP
+{{- end }}
