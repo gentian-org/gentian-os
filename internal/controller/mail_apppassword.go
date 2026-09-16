@@ -17,11 +17,11 @@ limitations under the License.
 package controller
 
 import (
-	"crypto/subtle"
 	"context"
 	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha256"
+	"crypto/subtle"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
