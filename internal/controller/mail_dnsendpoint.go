@@ -194,12 +194,22 @@ func (r *TenantReconciler) deleteTenantMailDNS(ctx context.Context, tenant *gent
 	return nil
 }
 
-// syncKernelMailDNS publishes the DKIM record for the kernel domain itself.
+// syncKernelMailDNS publishes the mail records for the kernel domain itself.
 //
 // Separate from the per-tenant endpoint because the kernel domain has no Tenant
-// to hang off, and narrower: only the DKIM record. The kernel domain's MX, SPF
-// and web records come from elsewhere, and republishing them here would let two
-// owners write the same names.
+// to hang off. It used to publish only DKIM, on the stated grounds that "the MX,
+// SPF and web records come from elsewhere" — and for MX and SPF, nowhere was
+// elsewhere. Every tenant domain had all three while the kernel domain had a
+// DKIM key and nothing else, which is the worst of the available states: mail
+// was signed as the kernel domain, no receiver was told which hosts may send as
+// it, and no policy said what to do about the ones that are not. That is the
+// domain the open-relay spam forged its senders in.
+//
+// Its MX was missing too, so mail addressed to the kernel domain fell back to
+// the A record — the HTTP gateway, which is not a mail server. Postfix accepts
+// the domain and Dovecot holds a maildir for it, so the mailbox existed and was
+// merely unreachable. The DMARC record below names rua=dmarc@<kernelDomain>, so
+// the MX is what makes those reports arrive rather than bounce.
 func (r *TenantReconciler) syncKernelMailDNS(ctx context.Context, dkimPublicKey string) error {
 	if r.KernelDomain == "" {
 		return nil
@@ -214,6 +224,22 @@ func (r *TenantReconciler) syncKernelMailDNS(ctx context.Context, dkimPublicKey 
 		records = append(records, dnsEndpointRecord(
 			postfixDKIMSelector+"._domainkey."+r.KernelDomain, "TXT",
 			fmt.Sprintf("v=DKIM1; h=sha256; k=rsa; s=email; p=%s", dkimPublicKey)))
+	}
+
+	// SPF and DMARC for the kernel domain, on the same terms as every tenant's.
+	//
+	// Skipped when a Tenant already owns the domain — single-tenant clusters give
+	// the tenant the kernel domain itself, and two endpoints writing one name is
+	// how external-dns ends up flapping between two owners' ideas of it.
+	ownedByTenant, err := r.kernelDomainOwnedByTenant(ctx)
+	if err != nil {
+		return err
+	}
+	if !ownedByTenant {
+		records = append(records,
+			dnsEndpointRecord(r.KernelDomain, "TXT", mailSPFRecord(
+				clusterMailEgressHost(ctx, r.Client, envOrDefault("MAIL_EGRESS_HOST", "")))),
+			dnsEndpointRecord("_dmarc."+r.KernelDomain, "TXT", mailDMARCRecord(r.KernelDomain)))
 	}
 
 	// The address the MX points at.
@@ -233,6 +259,15 @@ func (r *TenantReconciler) syncKernelMailDNS(ctx context.Context, dkimPublicKey 
 	// the internet's mail at something that is not a mail server.
 	if addr := r.kernelMailAddress(ctx); addr != "" {
 		records = append(records, dnsEndpointRecord("mail."+r.KernelDomain, "A", addr))
+		// The kernel domain's own MX, gated on the same address for the same
+		// reason the tenants' is: an MX naming a host with no address is worse
+		// than no MX, because a sender keeps retrying instead of failing fast.
+		//
+		// Preference 0 — see syncTenantMailDNS for why anything else makes
+		// external-dns delete and recreate the record once a minute.
+		if !ownedByTenant {
+			records = append(records, dnsEndpointRecord(r.KernelDomain, "MX", "0 mail."+r.KernelDomain))
+		}
 	}
 
 	// Where a mail client fetches mail, published for the same reason as the MX
@@ -286,7 +321,7 @@ func (r *TenantReconciler) syncKernelMailDNS(ctx context.Context, dkimPublicKey 
 
 	existing := &unstructured.Unstructured{}
 	existing.SetGroupVersionKind(dnsEndpointGVK)
-	err := r.Get(ctx, types.NamespacedName{Name: obj.GetName(), Namespace: ns}, existing)
+	err = r.Get(ctx, types.NamespacedName{Name: obj.GetName(), Namespace: ns}, existing)
 	if err != nil {
 		// No external-dns on this cluster: the record stays manual rather than
 		// failing the reconcile.
@@ -327,6 +362,25 @@ func (r *TenantReconciler) kernelMailAddress(ctx context.Context) string {
 		}
 	}
 	return ""
+}
+
+// kernelDomainOwnedByTenant reports whether some Tenant's mail domain IS the
+// kernel domain, which is the normal arrangement on a single-tenant cluster.
+//
+// The per-tenant endpoint then already publishes the MX, SPF and DMARC for that
+// name, and publishing them here as well would give one name two owners with no
+// mechanism to agree — each reconcile overwriting the other's version.
+func (r *TenantReconciler) kernelDomainOwnedByTenant(ctx context.Context) (bool, error) {
+	tenants := &gentianov1alpha1.TenantList{}
+	if err := r.List(ctx, tenants); err != nil {
+		return false, err
+	}
+	for i := range tenants.Items {
+		if mailDomain(&tenants.Items[i], r.KernelDomain, r.TenancyMode) == r.KernelDomain {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 // kernelIMAPAddress is the address mail clients fetch from: the external address

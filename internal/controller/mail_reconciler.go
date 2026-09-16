@@ -272,14 +272,9 @@ func (r *TenantReconciler) ensureMailSelfhosted(ctx context.Context, tenant *gen
 	// a:<egressHost> rather than an ip4: literal, so the record follows the
 	// egress A record instead of having to be edited in two places whenever the
 	// address changes; the one that gets forgotten fails closed and silently.
-	if egress := clusterMailEgressHost(ctx, r.Client, envOrDefault("MAIL_EGRESS_HOST", "")); egress != "" {
-		tenant.Status.Mail.SPFRecord = "v=spf1 a:" + egress + " -all"
-	} else {
-		// No dedicated egress: the cluster sends from a shared address or relays
-		// through a smarthost, and mx is the best guess available here.
-		tenant.Status.Mail.SPFRecord = "v=spf1 mx ~all"
-	}
-	tenant.Status.Mail.DMARCRecord = fmt.Sprintf("v=DMARC1; p=none; rua=mailto:dmarc@%s", domain)
+	tenant.Status.Mail.SPFRecord = mailSPFRecord(
+		clusterMailEgressHost(ctx, r.Client, envOrDefault("MAIL_EGRESS_HOST", "")))
+	tenant.Status.Mail.DMARCRecord = mailDMARCRecord(domain)
 
 	// 2. Register the tenant domain in the shared Postfix virtual-domains ConfigMap.
 	if err := r.ensurePostfixVirtualDomain(ctx, tenant); err != nil {
@@ -1468,6 +1463,39 @@ func mailDomain(tenant *gentianov1alpha1.Tenant, kernelDomain, tenancyMode strin
 		return tenant.Spec.Mail.Domain
 	}
 	return tenant.EffectiveDomain(kernelDomain, tenancyMode)
+}
+
+// mailSPFRecord is the SPF policy for a domain this cluster sends as.
+//
+// Shared by tenants and by the kernel domain, which had none at all: every
+// tenant domain published one while gentian.cloud itself did not, so the one
+// domain the platform signs its own mail as was also the one no receiver could
+// check. That is the domain the relay spam forged its senders in.
+//
+// a:<egressHost> rather than an ip4: literal, so the record follows the egress A
+// record instead of having to be edited in two places whenever the address
+// changes; the one that gets forgotten fails closed and silently.
+func mailSPFRecord(egressHost string) string {
+	if egressHost != "" {
+		return "v=spf1 a:" + egressHost + " -all"
+	}
+	// No dedicated egress: the cluster sends from a shared address or relays
+	// through a smarthost, and mx is the best guess available here. ~all rather
+	// than -all, because a guess should not tell receivers to reject.
+	return "v=spf1 mx ~all"
+}
+
+// mailDMARCRecord is the DMARC policy for a domain this cluster sends as.
+//
+// p=none: report, do not reject. The reports are what say whether a stricter
+// policy would bounce legitimate mail, and publishing quarantine or reject
+// before reading any is how a domain silences its own invites. Tighten it once
+// rua has been arriving for a while and shows only sources you recognise.
+//
+// rua needs a mailbox that can actually receive, which is why the kernel
+// domain's MX is published alongside this rather than left to chance.
+func mailDMARCRecord(domain string) string {
+	return fmt.Sprintf("v=DMARC1; p=none; rua=mailto:dmarc@%s", domain)
 }
 
 func dkimSecretName(tenantName string) string {
