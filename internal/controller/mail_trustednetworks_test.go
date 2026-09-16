@@ -150,3 +150,24 @@ func TestMailDMARCRecordReportsBeforeItRejects(t *testing.T) {
 		t.Fatalf("mailDMARCRecord() = %q, missing the reporting address", got)
 	}
 }
+
+// A deleted tenant must not keep a working login. The keys are enumerated in one
+// place precisely so that adding an app to the writer cannot leave the remover
+// behind — this asserts that every app the writer knows about is listed.
+func TestMailPasswdFileKeysCoverEveryApp(t *testing.T) {
+	keys := mailPasswdFileKeys("corp")
+	for _, app := range []string{mailAppPasswordApp, mailSubmissionApp, mailAppSubmissionApp} {
+		var foundUsers, foundConf bool
+		for _, k := range keys {
+			if k == app+"-corp.users" {
+				foundUsers = true
+			}
+			if k == app+"-corp.conf" {
+				foundConf = true
+			}
+		}
+		if !foundUsers || !foundConf {
+			t.Fatalf("mailPasswdFileKeys() = %v, missing %s files", keys, app)
+		}
+	}
+}
