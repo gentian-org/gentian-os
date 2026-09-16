@@ -235,6 +235,20 @@ func (r *TenantReconciler) syncKernelMailDNS(ctx context.Context, dkimPublicKey 
 		records = append(records, dnsEndpointRecord("mail."+r.KernelDomain, "A", addr))
 	}
 
+	// Where a mail client fetches mail, published for the same reason as the MX
+	// and taken from the same place — the Service the cloud assigned.
+	//
+	// It is a distinct name from mail.<domain> because it is a distinct load
+	// balancer in front of a distinct workload: Dovecot serves IMAPS, Postfix
+	// serves the MX, and a single name could only ever point at one of them.
+	//
+	// The name also has to be one the certificate covers, since a mail client
+	// verifies it — which is why clients are told to use imap.<domain> rather
+	// than the in-cluster Service name no public CA can sign for.
+	if addr := r.kernelIMAPAddress(ctx); addr != "" {
+		records = append(records, dnsEndpointRecord("imap."+r.KernelDomain, "A", addr))
+	}
+
 	// The forward half of forward-confirmed reverse DNS.
 	//
 	// A receiver checks that the sending address has a PTR naming a host, and
@@ -302,6 +316,30 @@ func (r *TenantReconciler) kernelMailAddress(ctx context.Context) string {
 	svc := &corev1.Service{}
 	name := types.NamespacedName{
 		Name:      envOrDefault("MAIL_SMTP_SERVICE", "postfix-"+envOrDefault("GENTIAN_STAGE", envOrDefault("ENV", "dev"))+"-smtp"),
+		Namespace: defaultServicesNamespace(),
+	}
+	if err := r.Get(ctx, name, svc); err != nil {
+		return ""
+	}
+	for _, ing := range svc.Status.LoadBalancer.Ingress {
+		if ing.IP != "" {
+			return ing.IP
+		}
+	}
+	return ""
+}
+
+// kernelIMAPAddress is the address mail clients fetch from: the external address
+// of the Dovecot IMAPS Service.
+//
+// Empty when IMAPS is not published — imapIngress disabled, or the address not
+// assigned yet — and the caller then publishes no record, which is the honest
+// answer. A name that resolves to nothing tells a mail client to keep retrying;
+// a name that resolves to the wrong host tells it to send credentials there.
+func (r *TenantReconciler) kernelIMAPAddress(ctx context.Context) string {
+	svc := &corev1.Service{}
+	name := types.NamespacedName{
+		Name:      envOrDefault("MAIL_IMAP_SERVICE", "dovecot-"+envOrDefault("GENTIAN_STAGE", envOrDefault("ENV", "dev"))+"-imaps"),
 		Namespace: defaultServicesNamespace(),
 	}
 	if err := r.Get(ctx, name, svc); err != nil {
