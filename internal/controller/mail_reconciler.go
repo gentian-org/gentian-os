@@ -297,6 +297,12 @@ func (r *TenantReconciler) ensureMailSelfhosted(ctx context.Context, tenant *gen
 	// Logged rather than returned: Keycloak being briefly unreachable should not
 	// fail the whole tenant reconcile, and a user without a password yet sees a
 	// mail client that cannot sign in — not a tenant that fails to provision.
+	// The kernel realm is not a tenant and has no reconcile of its own, so its
+	// identity is registered alongside the tenants'. Idempotent and cheap: it
+	// reads one Secret and rewrites a passwd-file only when the hash changes.
+	if err := r.syncKernelRealmSubmissionIdentity(ctx); err != nil {
+		log.FromContext(ctx).Error(err, "sync kernel realm submission identity")
+	}
 	if err := r.syncMailAppPasswords(ctx, tenant); err != nil {
 		log.FromContext(ctx).Error(err, "sync mail app passwords", "tenant", tenant.Name)
 	}
@@ -550,6 +556,22 @@ func (r *TenantReconciler) syncPostfixVirtualMailboxMaps(ctx context.Context) er
 		postfixAllowedSenderDomainsKey:  desiredAllowed,
 	}
 
+	// Who may relay without authenticating, derived from the cluster rather than
+	// configured per cluster — see mail_trustednetworks.go for why a configured
+	// range is a guess about the cloud provider that eventually trusts the load
+	// balancer, and with it the whole internet.
+	//
+	// Absent, not empty, when nothing can be derived: the key is left out so the
+	// chart's configured value still applies. Writing an empty value here would
+	// override it and stop every in-cluster sender relaying at once.
+	nodes := &corev1.NodeList{}
+	if err := r.List(ctx, nodes); err != nil {
+		return err
+	}
+	if nets := podNetworks(ctx, nodes); nets != "" {
+		desired[postfixMyNetworksKey] = nets
+	}
+
 	maps := &corev1.ConfigMap{}
 	err := r.Get(ctx, types.NamespacedName{
 		Name: postfixVirtualMailboxMapsConfigMap, Namespace: servicesNamespace,
@@ -567,19 +589,22 @@ func (r *TenantReconciler) syncPostfixVirtualMailboxMaps(ctx context.Context) er
 	if err != nil {
 		return err
 	}
-	if maps.Data[postfixVirtualMailboxDomainsKey] == desiredDomains &&
-		maps.Data[postfixVirtualMailboxMapsKey] == desiredMaps &&
-		maps.Data[postfixSenderAccessKey] == desiredDomains &&
-		maps.Data[postfixAllowedSenderDomainsKey] == desiredAllowed {
+	unchanged := true
+	for k, v := range desired {
+		if maps.Data[k] != v {
+			unchanged = false
+			break
+		}
+	}
+	if unchanged {
 		return nil
 	}
 	if maps.Data == nil {
 		maps.Data = make(map[string]string)
 	}
-	maps.Data[postfixVirtualMailboxDomainsKey] = desiredDomains
-	maps.Data[postfixVirtualMailboxMapsKey] = desiredMaps
-	maps.Data[postfixSenderAccessKey] = desiredDomains
-	maps.Data[postfixAllowedSenderDomainsKey] = desiredAllowed
+	for k, v := range desired {
+		maps.Data[k] = v
+	}
 	return r.Update(ctx, maps)
 }
 
@@ -1056,7 +1081,13 @@ func (r *TenantReconciler) ensureSmtpCredentialsSecret(ctx context.Context, tena
 	existing := &corev1.Secret{}
 	err := r.Get(ctx, types.NamespacedName{Name: secretName, Namespace: nsName}, existing)
 	if err == nil {
-		return nil // already exists
+		// The credential is not regenerated, but it IS re-registered: a tenant
+		// whose Secret predates SASL has a username and password its apps already
+		// send and Dovecot has never heard of, so registering only at creation
+		// would authenticate new tenants and leave every existing one relaying
+		// anonymously.
+		return r.registerSubmissionIdentity(ctx, mailAppSubmissionApp, tenant.Name,
+			string(existing.Data["username"]), string(existing.Data["password"]))
 	}
 	if !errors.IsNotFound(err) {
 		return err
@@ -1068,6 +1099,7 @@ func (r *TenantReconciler) ensureSmtpCredentialsSecret(ctx context.Context, tena
 		return fmt.Errorf("generate SMTP password for tenant %s: %w", tenant.Name, randErr)
 	}
 	password := base64.RawURLEncoding.EncodeToString(passBytes)
+	username := fmt.Sprintf("smtp-%s", tenant.Name)
 
 	secret := &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{
@@ -1081,11 +1113,88 @@ func (r *TenantReconciler) ensureSmtpCredentialsSecret(ctx context.Context, tena
 		StringData: map[string]string{
 			"host":     mailSharedPostfixHost(),
 			"port":     mailSharedPostfixPort,
-			"username": fmt.Sprintf("smtp-%s", tenant.Name),
+			"username": username,
 			"password": password,
 		},
 	}
-	return r.Create(ctx, secret)
+	if err := r.Create(ctx, secret); err != nil {
+		return err
+	}
+	return r.registerSubmissionIdentity(ctx, mailAppSubmissionApp, tenant.Name, username, password)
+}
+
+// registerSubmissionIdentity teaches Dovecot a credential the platform already
+// hands out, so that presenting it actually proves something.
+//
+// Every one of these identities existed before SASL did — the per-tenant app
+// user smtp-<tenant>, the kernel realm's gentian-system@<domain> — and each was
+// injected into the sender's configuration complete with a password. None was
+// ever registered anywhere, because relaying was granted by IP: the sender
+// offered credentials, Postfix advertised no AUTH, and the mail went out
+// regardless. The configuration therefore described an authentication that was
+// not happening, which is the kind of gap that survives review.
+//
+// Empty user or password is not an error. A tenant whose Secret was written by
+// an older operator may carry neither, and refusing to reconcile it would take
+// the tenant down over a credential nothing has asked for yet.
+func (r *TenantReconciler) registerSubmissionIdentity(ctx context.Context, app, tenant, user, password string) error {
+	if user == "" || password == "" {
+		return nil
+	}
+	file := mailAppPasswordFile(app, tenant)
+	// Rewritten only when it does not already verify. The salt is random, so
+	// rendering a fresh line for an unchanged password differs every time, and
+	// writing it would make every reconcile an Update that wakes every watcher
+	// and schedules the next one.
+	sec := &corev1.Secret{}
+	err := r.Get(ctx, types.NamespacedName{
+		Name: "dovecot-app-passwords", Namespace: defaultServicesNamespace(),
+	}, sec)
+	if err != nil && !errors.IsNotFound(err) {
+		return err
+	}
+	if argon2idLineMatches(string(sec.Data[file+".users"]), user, password) &&
+		string(sec.Data[file+".conf"]) == string(passdbInclude(file)) {
+		return nil
+	}
+	line, err := argon2idPasswdLine(user, password)
+	if err != nil {
+		return err
+	}
+	return r.upsertSecret(ctx, "dovecot-app-passwords", defaultServicesNamespace(), map[string][]byte{
+		file + ".users": []byte(line + "\n"),
+		file + ".conf":  passdbInclude(file),
+	})
+}
+
+// syncKernelRealmSubmissionIdentity registers whatever credential the installer
+// gave the kernel realm.
+//
+// The password is not derived here and must not be: portal-login-bootstrap.sh
+// derives it from the master password and writes it into
+// keycloak-smtp-credentials, so deriving a second one would produce a hash that
+// verifies a password nobody sends. Reading what is there and hashing THAT keeps
+// one source of truth, whichever side chose it.
+//
+// Kernel mode only. In external mode that Secret holds the upstream relay's
+// credentials, which belong to somebody else's server — registering them here
+// would create a local login with a third party's password.
+func (r *TenantReconciler) syncKernelRealmSubmissionIdentity(ctx context.Context) error {
+	if !r.dovecotDeployed(ctx) {
+		return nil
+	}
+	sec := &corev1.Secret{}
+	err := r.Get(ctx, types.NamespacedName{
+		Name: keycloakSMTPCredentialsSecret, Namespace: defaultServicesNamespace(),
+	}, sec)
+	if errors.IsNotFound(err) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	return r.registerSubmissionIdentity(ctx, mailKernelRealmSubmissionApp, "kernel",
+		string(sec.Data["smtp_user"]), string(sec.Data["smtp_password"]))
 }
 
 // seedPerAppMailSecrets writes each app's SMTP/IMAP KV record into OpenBao so

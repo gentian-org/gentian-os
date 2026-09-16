@@ -23,15 +23,15 @@ import (
 
 func TestDeriveAndHash(t *testing.T) {
 	seed := []byte("0123456789abcdef0123456789abcdef")
-	a := deriveMailPassword(seed, "christian@corp.gtn.host")
-	b := deriveMailPassword(seed, "christian@corp.gtn.host")
+	a := deriveMailPassword(seed, mailAppPasswordApp, "christian@corp.gtn.host")
+	b := deriveMailPassword(seed, mailAppPasswordApp, "christian@corp.gtn.host")
 	if a != b {
 		t.Fatal("derivation not deterministic")
 	}
-	if c := deriveMailPassword(seed, "other@corp.gtn.host"); c == a {
+	if c := deriveMailPassword(seed, mailAppPasswordApp, "other@corp.gtn.host"); c == a {
 		t.Fatal("different users share a password")
 	}
-	if d := deriveMailPassword([]byte("ffffffffffffffffffffffffffffffff"), "christian@corp.gtn.host"); d == a {
+	if d := deriveMailPassword([]byte("ffffffffffffffffffffffffffffffff"), mailAppPasswordApp, "christian@corp.gtn.host"); d == a {
 		t.Fatal("different tenants share a password")
 	}
 	if len(a) != 32 {
