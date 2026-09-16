@@ -103,6 +103,28 @@ spec:
           value: "email"
         - name: GENERIC_USER_ROLE_ATTRIBUTE
           value: "litellm_role"
+        # Send /ui straight to SSO instead of rendering a login form.
+        #
+        # LiteLLM stopped auto-redirecting when SSO is configured, so the
+        # console opened on its own username/password page — which tells the
+        # operator the credentials are "admin" and the proxy MASTER_KEY, on a
+        # cluster where that key is a derived secret in OpenBao and nobody is
+        # expected to type it. The portal tile leads here, so it has to behave
+        # like every other tile: click, arrive signed in.
+        #
+        # The cost, stated plainly: with this on, the username/password form is
+        # unreachable in a browser. LiteLLM's login page redirects to
+        # /sso/key/generate in an effect before the form is usable, and there is
+        # no query parameter to skip it. Break-glass is therefore the API, not
+        # the UI — the master key from OpenBao still authenticates every
+        # endpoint, which is how the installer's own sync Jobs talk to it.
+        #
+        # That trade is acceptable here because the UI is reached through the
+        # portal, and a Keycloak outage takes the portal with it — so the form
+        # would not be reachable in that failure anyway. Set this to "false" to
+        # get the form back.
+        - name: AUTO_REDIRECT_UI_LOGIN_TO_SSO
+          value: "true"
 ---
 apiVersion: v1
 kind: Service
