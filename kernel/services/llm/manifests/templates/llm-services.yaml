@@ -19,9 +19,78 @@ spec:
       labels:
         app: litellm-proxy
     spec:
+      volumes:
+      # The cluster's own serving chain, so the proxy can verify kernel
+      # endpoints it calls back-channel. tls.crt only — the private key has no
+      # business in this pod.
+      #
+      # optional: a cluster that has not issued its wildcard yet still starts;
+      # the init container below tolerates the file being absent.
+      - name: kernel-serving-chain
+        secret:
+          secretName: wildcard-tls
+          optional: true
+          items:
+          - key: tls.crt
+            path: tls.crt
+      - name: ca-trust
+        emptyDir: {}
+      initContainers:
+      # Why this exists: the SSO callback failed with
+      # "[SSL: CERTIFICATE_VERIFY_FAILED] unable to get local issuer
+      # certificate" and surfaced to the browser as a bare 500. The browser half
+      # of the login works — Keycloak issues a code and the callback lands — and
+      # then the proxy's own back-channel token exchange to
+      # https://id.<kernelDomain>/.../token cannot verify the certificate.
+      #
+      # On a cluster with certificates.acmeEnv: staging the chain is complete
+      # but terminates at a Let's Encrypt STAGING anchor, which is in no trust
+      # store anywhere. The same applies to issuerMode: private-ca. Browsers let
+      # a human click through; httpx does not.
+      #
+      # Built from the cluster rather than from a vendored PEM: whatever issued
+      # the wildcard is by definition what these endpoints present, so this is
+      # correct for staging, for a private CA, and a harmless superset for
+      # production — no third-party root to carry in git and keep current.
+      #
+      # Appended to certifi rather than replacing it. SSL_CERT_FILE REPLACES the
+      # trust set for httpx (see create_ssl_context in httpx 0.28), so a bundle
+      # holding only the cluster CA would make the proxy unable to verify the
+      # external providers it routes to — api.infomaniak.com and the rest.
+      - name: ca-trust
+        image: ghcr.io/berriai/litellm:latest
+        command:
+        - /bin/sh
+        - -ec
+        - |
+          # certifi's path is asked for rather than hardcoded: it moves with the
+          # image's Python version, and a stale literal would silently fall back
+          # to a 119-cert system bundle instead of failing.
+          base="$(python3 -c 'import certifi; print(certifi.where())' 2>/dev/null || echo /etc/ssl/certs/ca-certificates.crt)"
+          cp "${base}" /trust/ca-bundle.pem
+          if [ -s /kernel-tls/tls.crt ]; then
+            # Every certificate after the first: the leaf is this cluster's
+            # server certificate, not an issuer, and a trust store is for
+            # anchors. Trusting the intermediate is what lets the chain
+            # terminate; the leaf would only ever vouch for itself.
+            awk '/BEGIN CERT/{n++} n>1' /kernel-tls/tls.crt >>/trust/ca-bundle.pem
+            echo "ca-trust: certifi ($(grep -c 'BEGIN CERT' "${base}") certs) + cluster chain -> $(grep -c 'BEGIN CERT' /trust/ca-bundle.pem) certs"
+          else
+            echo "ca-trust: no wildcard-tls on this cluster; using certifi unchanged"
+          fi
+        volumeMounts:
+        - name: kernel-serving-chain
+          mountPath: /kernel-tls
+          readOnly: true
+        - name: ca-trust
+          mountPath: /trust
       containers:
       - name: litellm
         image: ghcr.io/berriai/litellm:latest
+        volumeMounts:
+        - name: ca-trust
+          mountPath: /trust
+          readOnly: true
         ports:
         - containerPort: 4000
           name: http
@@ -125,6 +194,15 @@ spec:
         # get the form back.
         - name: AUTO_REDIRECT_UI_LOGIN_TO_SSO
           value: "true"
+        # Both names, because the proxy's HTTP clients are not all the same
+        # library: httpx reads SSL_CERT_FILE (create_ssl_context, 0.28), and
+        # anything on requests reads REQUESTS_CA_BUNDLE. Setting one and not the
+        # other fixes whichever call happens to be on that client and leaves the
+        # rest failing identically.
+        - name: SSL_CERT_FILE
+          value: /trust/ca-bundle.pem
+        - name: REQUESTS_CA_BUNDLE
+          value: /trust/ca-bundle.pem
 ---
 apiVersion: v1
 kind: Service
