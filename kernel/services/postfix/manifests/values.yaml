@@ -99,6 +99,34 @@ mailServiceMode: external
 # value — label the node holding the floating IP with it set to "true".
 egressNodeLabel: gentianos.io/mail-egress
 
+# The networks Postfix treats as trusted, i.e. whose clients may relay to any
+# destination. Rendered into POSTFIX_mynetworks.
+#
+# It MUST cover the cluster pod range and NOTHING else. The image's default is
+#   127.0.0.0/8,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16
+# and that default made this an open relay the moment smtpIngress published port
+# 25: the Octavia load balancer connects to the Pod from its own address on the
+# node network (172.21.1.188 here), which falls inside 172.16.0.0/12 — so EVERY
+# client on the internet arrived pre-trusted, and permit_mynetworks in
+# smtpd_relay_restrictions let them relay anywhere. The smtpd_recipient_restrictions
+# below do not save it: relay restrictions are evaluated first, and a PERMIT there
+# ends the check. Spammers found it, sent DKIM-signed mail as the kernel domain,
+# and got the egress IP listed on the Spamhaus SBL.
+#
+# Excluding 172.16.0.0/12 and 192.168.0.0/16 is the whole point: pods live in
+# 10.0.0.0/8 (kubeadm's podSubnet and serviceSubnet defaults, 10.64.0.0/12 and
+# 10.96.0.0/12 on Infomaniak), while node and load-balancer networks live in the
+# other two ranges. Trusting the node network cannot be distinguished from
+# trusting the internet, because inbound mail is proxied from it.
+#
+# A cluster whose pod CIDR is NOT inside 10.0.0.0/8 must set its own range here,
+# or Keycloak invite and password-reset mail is refused with
+#   554 5.7.1 <user@domain>: Relay access denied
+# Tenant SMTP depends on this: the operator points every tenant realm at this
+# Postfix with no SASL credentials (internal/controller/keycloak_tenant_smtp.go),
+# so being in mynetworks is the only thing that lets a tenant realm send.
+trustedNetworks: "127.0.0.0/8,10.0.0.0/8"
+
 # Storage for the DKIM keys. A handful of 2048-bit keys; the size is almost
 # irrelevant, the persistence is not.
 dkimKeyStorageSize: 128Mi

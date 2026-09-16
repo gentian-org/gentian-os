@@ -123,6 +123,34 @@ data:
         # of the sending IP names a host, and that host resolves back to the same IP
         # — so this name, its A record and the PTR must all agree.
         myhostname: {{ .Values.egressHost | default (printf "mail.%s" .Values.kernelDomain) }}
+        # Cap the number of forked processes. The default is 100, and a queue that
+        # deep forks 100 smtp clients at once on start — which is what exceeded the
+        # memory limit and crash-looped the container. This cluster sends
+        # notification mail, not campaigns; 20 concurrent deliveries is ample and
+        # makes the worst-case memory a property of the config rather than of
+        # however much mail happens to be queued.
+        default_process_limit: "20"
+        # Who may relay, and who is merely allowed to deliver to our own tenants.
+        #
+        # Rendered from .Values.trustedNetworks, which documents why the image's
+        # default is unusable once port 25 is published: the load balancer proxies
+        # inbound connections from the node network, which the default trusts, so
+        # every internet client could relay. This is the ONLY thing separating a
+        # tenant realm sending an invite from a spammer sending a campaign, because
+        # both arrive without credentials.
+        mynetworks: "{{ .Values.trustedNetworks }}"
+        # Stated explicitly rather than left to the default
+        #   permit_mynetworks permit_sasl_authenticated defer_unauth_destination
+        # for the last term. defer_unauth_destination answers an unauthorised relay
+        # attempt with 450 (try again later), which is correct for a temporary
+        # problem and wrong here: nothing about "you may not relay through me" is
+        # temporary, and a rejected spam run that is merely deferred comes back.
+        # reject_unauth_destination answers 554 and ends it.
+        #
+        # permit_sasl_authenticated is dropped because no client authenticates —
+        # the operator configures tenant realms with smtpSASLAuthEnable "no" and
+        # relies on mynetworks — so listing it only widens what has to hold.
+        smtpd_relay_restrictions: "permit_mynetworks, reject_unauth_destination"
         # Inbound tenant mail: hand every message for a registered tenant domain
         # to Dovecot over LMTP, which files it into /var/mail/<domain>/<user>.
         virtual_transport: "lmtp:[dovecot-{{ .Values.env }}.{{ .Values.servicesNamespace }}.svc.cluster.local]:24"
@@ -328,7 +356,15 @@ data:
     resources:
       limits:
         cpu: 500m
-        memory: 256Mi
+        # 256Mi was not enough to survive a full queue. Postfix forks one smtp
+        # process per concurrent delivery, so the memory a restart needs is set by
+        # how much mail is queued, not by how much it normally sends: a queue of
+        # ~100 messages OOM-killed the container ~17s into every start, which
+        # crash-looped it and took Keycloak invites down with it
+        # ("No route to host" to postfix:587, because no Pod was ever ready).
+        # Raised together with default_process_limit below, which is what actually
+        # bounds the fork count.
+        memory: 512Mi
       requests:
         cpu: 50m
         memory: 64Mi
