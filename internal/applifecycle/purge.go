@@ -253,7 +253,7 @@ mc alias set gentian "${MINIO_ENDPOINT}" "${MINIO_ACCESS_KEY}" "${MINIO_SECRET_K
 mc rb --force "gentian/%s" 2>/dev/null || echo "bucket %s already gone"
 echo "bucket %s removed"`, bucket, bucket, bucket)
 	job := kernelDeleteJob(s.opts.KernelNamespace, s3DeleteJobName(tenant.Name, app), tenant.Name, app,
-		"minio/mc:RELEASE.2025-04-03T17-07-56Z", "delete-bucket", script, minioAdminEnv())
+		"quay.io/minio/mc:RELEASE.2025-08-13T08-35-41Z", "delete-bucket", script, minioAdminEnv())
 	return s.runKernelJob(ctx, job)
 }
 
