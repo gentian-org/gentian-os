@@ -136,15 +136,37 @@ egressNodeLabel: gentianos.io/mail-egress
 # from the cluster's own Nodes and writes them to the postfix-kernel-virtual-mailbox-maps
 # ConfigMap, which overrides this value wherever it can be derived — see
 # internal/controller/mail_trustednetworks.go. The value here applies only on a
-# cluster whose CNI leaves spec.podCIDR unset, and a cluster whose Pod CIDR is
-# outside 10.0.0.0/8 AND whose CNI does not populate it must set its own range,
-# or in-cluster mail that does not authenticate is refused with
+# cluster whose CNI leaves spec.podCIDR unset (Calico with its own IPAM is the
+# usual case).
+#
+# It FAILS CLOSED: loopback only. It used to be 10.0.0.0/8, chosen to be wide
+# enough to cover any cluster's Pods — which on a provider that also puts nodes
+# and load balancers inside 10.0.0.0/8 trusts the load balancer, and through it
+# every client on the internet. That is the open relay this chart already had
+# once. A value that cannot be derived should cost unauthenticated in-cluster
+# senders their relay, loudly, rather than risk handing it to strangers quietly:
 #   554 5.7.1 <user@domain>: Relay access denied
+# Such a cluster sets its real Pod range here, or has its senders authenticate.
 #
 # Senders that authenticate need none of this: Keycloak realms present a
 # credential Dovecot verifies (internal/controller/keycloak_tenant_smtp.go), and
 # that is the grant intended to replace this one entirely.
-trustedNetworks: "127.0.0.0/8,10.0.0.0/8"
+trustedNetworks: "127.0.0.0/8"
+
+# Require authentication to relay. See smtpd_relay_restrictions in
+# templates/configmap.yaml for what each setting does and how to tell when it is
+# safe to turn on.
+#
+# Off by default, not because on is wrong but because not every catalogue app
+# authenticates yet. At the time this was written: Nextcloud and Docmost send
+# credentials but STARTTLS to the in-cluster Service name, which the public
+# certificate does not cover; Nextcloud Mail's per-user provisioning sends none;
+# OpenProject offers CRAM-MD5, which Dovecot does not; Element uses a hardcoded
+# identity and hostname. Turning this on before those are fixed takes their
+# outbound mail down. The reject_warning log names every one still relying on
+# the address it connects from.
+submission:
+  requireAuthentication: false
 
 # TLS.
 #
