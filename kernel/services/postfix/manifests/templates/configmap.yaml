@@ -131,6 +131,13 @@ data:
         # of the sending IP names a host, and that host resolves back to the same IP
         # — so this name, its A record and the PTR must all agree.
         myhostname: {{ .Values.egressHost | default (printf "mail.%s" .Values.kernelDomain) }}
+        {{- if .Values.kernelDomain }}
+        # Keep in-cluster hostnames out of mail that leaves the cluster. See the
+        # postfix-internal-headers ConfigMap below for what each rule removes and
+        # why the two live in different lookups.
+        header_checks: "pcre:/etc/postfix/gentian/header_checks.pcre"
+        smtp_header_checks: "pcre:/etc/postfix/gentian/smtp_header_checks.pcre"
+        {{- end }}
         # An MX must accept connections from strangers. The image does not, because
         # it ships as an outbound relay:
         #   smtpd_client_restrictions = permit_mynetworks,permit_sasl_authenticated,reject
@@ -394,6 +401,11 @@ data:
             mountPath: /tenant-keys
             readOnly: true
     extraVolumes:
+      {{- if .Values.kernelDomain }}
+      - name: internal-headers
+        configMap:
+          name: postfix-{{ .Values.env }}-internal-headers
+      {{- end }}
       # The DKIM signing keys.
       #
       # The image generates a key per domain at start and writes it under
@@ -423,6 +435,11 @@ data:
           secretName: postfix-dkim-tenants
           defaultMode: 0400
     extraVolumeMounts:
+      {{- if .Values.kernelDomain }}
+      - name: internal-headers
+        mountPath: /etc/postfix/gentian
+        readOnly: true
+      {{- end }}
       - name: dkim-keys
         mountPath: /etc/opendkim/keys
       # Postfix warns about this mount on every start:
@@ -476,3 +493,49 @@ data:
       requests:
         cpu: 50m
         memory: 64Mi
+{{- if .Values.kernelDomain }}
+---
+# Header rewrites that keep in-cluster hostnames out of mail leaving the cluster.
+#
+# Mail submitted from inside the cluster carried two traces of it. Keycloak's
+# Message-ID ended in its Pod's DNS name,
+#   <2138900765.11.1789634446988@gentian-idp-keycloak-keycloakx-0.…svc.cluster.local>
+# because Jakarta Mail builds it from the local hostname, and the Received header
+# Postfix adds named the same host and its Pod address. A Message-ID whose domain
+# does not resolve is a spam signal in its own right, and both disclose the
+# internal layout to every recipient. Neither mattered until invitations started
+# going to Microsoft-hosted tenants, where they were accepted and then filtered.
+#
+# The two rules sit in DIFFERENT lookups, and that is load-bearing:
+#
+# * Message-ID is covered by the DKIM signature (it is in h=), so it must be
+#   rewritten BEFORE OpenDKIM signs. header_checks runs in cleanup(8), ahead of
+#   the milter. Rewriting it later would break every signature.
+#
+# * Received is not signed, but Postfix does not pass the Received header it
+#   generates itself through header_checks at all. smtp_header_checks runs in
+#   smtp(8) at delivery, after signing, which is also the only place it can
+#   safely be dropped. Mail delivered locally over LMTP keeps it, which only our
+#   own users see.
+#
+# Postfix pcre flags TOGGLE their defaults, and both case-insensitivity and
+# dot-matches-newline are on by default — so neither rule carries a flag. A
+# trailing /s turned DOTALL off and silently stopped the Received rule matching
+# across the header's folded lines.
+#
+# Verified end to end in boky/postfix:5.1.0 with OpenDKIM signing: the rewritten
+# Message-ID verifies (and a tampered copy does not), and no .svc.cluster.local
+# name survives in the delivered headers.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: postfix-{{ .Values.env }}-internal-headers
+  namespace: {{ .Values.servicesNamespace }}
+  annotations:
+    argocd.argoproj.io/sync-wave: "-1"
+data:
+  header_checks.pcre: |
+    /^Message-ID:\s*<([^@>]+)@[^>]*\.svc\.cluster\.local>\s*$/ REPLACE Message-ID: <$1@{{ .Values.kernelDomain }}>
+  smtp_header_checks.pcre: |
+    /^Received:\s+from\s.*\.svc\.cluster\.local.*\bby {{ .Values.egressHost | default (printf "mail.%s" .Values.kernelDomain) | regexQuoteMeta }} \(Postfix\)/ IGNORE
+{{- end }}
