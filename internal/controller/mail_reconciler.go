@@ -107,11 +107,29 @@ const (
 	smtpPasswordLength = 24
 )
 
-// mailSharedPostfixHost returns the in-cluster Postfix submission hostname.
-// Override with MAIL_SMTP_HOST; otherwise postfix-{stage}.{servicesNamespace}.
-func mailSharedPostfixHost() string {
+// mailSharedPostfixHost returns the submission hostname handed to tenant apps.
+//
+// mail.<kernelDomain> when the cluster has a kernel domain, rather than the
+// in-cluster Service name. Apps that authenticate have to STARTTLS first
+// (smtpd_tls_auth_only), and a client that verifies the certificate checks it
+// against the name it dialled: the certificate is the public wildcard for the
+// kernel domain, which covers mail.<domain> and cannot cover
+// postfix-<env>.<ns>.svc.cluster.local, because no public CA signs that name.
+// Nextcloud and Docmost both verify by default, so the Service name made
+// authenticated submission fail its TLS handshake before AUTH was ever offered.
+//
+// Written once per tenant — the credential Secret and the OpenBao record are not
+// rewritten — so this reaches tenants created from here on; existing ones keep
+// the host they were given until migrated.
+//
+// Override with MAIL_SMTP_HOST. Without a kernel domain there is no public name
+// to use, and the Service name remains the only option.
+func mailSharedPostfixHost(kernelDomain string) string {
 	if v := envOrDefault("MAIL_SMTP_HOST", ""); v != "" {
 		return v
+	}
+	if kernelDomain != "" {
+		return "mail." + kernelDomain
 	}
 	stage := envOrDefault("GENTIAN_STAGE", envOrDefault("ENV", "dev"))
 	return fmt.Sprintf("postfix-%s.%s.svc.cluster.local", stage, servicesNamespace)
@@ -1106,7 +1124,7 @@ func (r *TenantReconciler) ensureSmtpCredentialsSecret(ctx context.Context, tena
 			},
 		},
 		StringData: map[string]string{
-			"host":     mailSharedPostfixHost(),
+			"host":     mailSharedPostfixHost(r.KernelDomain),
 			"port":     mailSharedPostfixPort,
 			"username": username,
 			"password": password,

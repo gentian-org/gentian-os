@@ -239,7 +239,31 @@ data:
         # on every cluster. permit_mynetworks behind it is the migration path for
         # senders that do not authenticate yet, and the line this platform should
         # eventually be able to delete.
-        smtpd_relay_restrictions: "permit_sasl_authenticated, permit_mynetworks, reject_unauth_destination"
+        #
+        # Whether relaying still accepts an unauthenticated in-cluster client.
+        #
+        # requireAuthentication: true removes permit_mynetworks, so the only way to
+        # relay to a domain this cluster does not host is to authenticate — and,
+        # with smtpd_tls_auth_only, to do so inside TLS. Trust then no longer
+        # depends on an address plan at all, which is the property that makes this
+        # portable: the open relay this stack started with came from exactly that
+        # dependency. Mail TO hosted domains is unaffected either way, because
+        # reject_unauth_destination permits authorised destinations.
+        #
+        # false keeps permit_mynetworks for senders that do not authenticate yet,
+        # and puts warn_if_reject in front of it. warn_if_reject turns the next
+        # restriction into a log line instead of a rejection, so every relay that
+        # WOULD be refused once this is true is logged as
+        #   reject_warning: RCPT from <client>: 554 5.7.1 ...: Relay access denied
+        # while still being delivered. That log is the migration list: when no
+        # in-cluster client appears in it, this can be switched on. Lines from the
+        # load balancer's address are internet clients being refused a relay, which
+        # happens regardless and can be ignored.
+        {{- if .Values.submission.requireAuthentication }}
+        smtpd_relay_restrictions: "permit_sasl_authenticated, reject_unauth_destination"
+        {{- else }}
+        smtpd_relay_restrictions: "permit_sasl_authenticated, warn_if_reject reject_unauth_destination, permit_mynetworks, reject_unauth_destination"
+        {{- end }}
         # Inbound tenant mail: hand every message for a registered tenant domain
         # to Dovecot over LMTP, which files it into /var/mail/<domain>/<user>.
         virtual_transport: "lmtp:[dovecot-{{ .Values.env }}.{{ .Values.servicesNamespace }}.svc.cluster.local]:24"

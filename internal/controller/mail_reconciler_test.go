@@ -150,8 +150,10 @@ func TestMail_Selfhosted_ProvisionsTenantInSharedInfra(t *testing.T) {
 		return testClient.Get(context.Background(),
 			types.NamespacedName{Name: "smtp-credentials-mailself", Namespace: "tenant-mailself"}, smtpSecret) == nil
 	})
-	if string(smtpSecret.Data["host"]) != "postfix-dev.platform-kernel.svc.cluster.local" {
-		t.Errorf("expected SMTP host=postfix-dev.platform-kernel.svc.cluster.local, got %q",
+	// The public name, not the in-cluster Service: apps STARTTLS before they can
+	// authenticate, and the certificate covers mail.<kernelDomain> only.
+	if string(smtpSecret.Data["host"]) != "mail.platform.example.test" {
+		t.Errorf("expected SMTP host=mail.platform.example.test, got %q",
 			string(smtpSecret.Data["host"]))
 	}
 	if string(smtpSecret.Data["username"]) != "smtp-mailself" {

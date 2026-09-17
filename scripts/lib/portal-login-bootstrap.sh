@@ -310,16 +310,21 @@ _keycloak_smtp_settings() {
             if ! declare -F _derive >/dev/null 2>&1; then
                 return 1
             fi
-            # platform-kernel, matching the operator's SERVICES_NAMESPACE and the
-            # namespace 09-infra-helm deploys Postfix into — not gentian-<env>.
-            KC_SMTP_HOST="postfix-${env}.${SERVICES_NAMESPACE:-platform-kernel}.svc.cluster.local"
+            # The PUBLIC name, with STARTTLS. Postfix offers AUTH only after
+            # STARTTLS (smtpd_tls_auth_only), so a realm that does not upgrade
+            # cannot present the credential below at all and relays only while
+            # the cluster still trusts its address. Java then checks the
+            # certificate against the name it dialled, and the certificate is the
+            # public wildcard for the kernel domain, which covers mail.<domain> and
+            # not postfix-<env>.<ns>.svc.cluster.local — the name this used before,
+            # together with STARTTLS off, when Postfix presented a self-signed
+            # certificate no client trusted.
+            KC_SMTP_HOST="mail.${kernel_domain}"
             KC_SMTP_PORT="587"
             KC_SMTP_USER="gentian-system@${kernel_domain}"
             KC_SMTP_PASSWORD="$(_derive smtp password)"
             KC_SMTP_SSL="false"
-            # In-cluster Postfix advertises STARTTLS with a self-signed cert that Keycloak
-            # does not trust; submission stays on the cluster network without TLS upgrade.
-            KC_SMTP_STARTTLS="false"
+            KC_SMTP_STARTTLS="true"
             KC_SMTP_FROM="noreply@${kernel_domain}"
             ;;
         *)

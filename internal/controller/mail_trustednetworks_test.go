@@ -171,3 +171,23 @@ func TestMailPasswdFileKeysCoverEveryApp(t *testing.T) {
 		}
 	}
 }
+
+// Apps authenticate only after STARTTLS, and verify the certificate against the
+// name they dialled. The certificate is the public wildcard for the kernel
+// domain, so the Service name — which no public CA can sign — fails the
+// handshake before AUTH is offered.
+func TestMailSharedPostfixHostIsCoveredByThePublicCertificate(t *testing.T) {
+	t.Setenv("MAIL_SMTP_HOST", "")
+	if got := mailSharedPostfixHost("gentian.cloud"); got != "mail.gentian.cloud" {
+		t.Fatalf("mailSharedPostfixHost() = %q, want mail.gentian.cloud", got)
+	}
+	// With no kernel domain there is no public name, and the Service name is the
+	// only thing left to hand out.
+	if got := mailSharedPostfixHost(""); !strings.HasSuffix(got, ".svc.cluster.local") {
+		t.Fatalf("mailSharedPostfixHost(\"\") = %q, want the in-cluster Service name", got)
+	}
+	t.Setenv("MAIL_SMTP_HOST", "relay.example.test")
+	if got := mailSharedPostfixHost("gentian.cloud"); got != "relay.example.test" {
+		t.Fatalf("an explicit MAIL_SMTP_HOST must win, got %q", got)
+	}
+}
