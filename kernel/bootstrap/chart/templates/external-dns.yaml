@@ -185,6 +185,23 @@ spec:
         enough for the zone walk to widen a filter onto a zone another cluster
         writes to is enough.
         */}}
+        {{- /*
+        CHANGING THIS VALUE ON A LIVE CLUSTER NEEDS A MIGRATION.
+
+        The ownership TXT beside each managed record keeps the owner id it was
+        written with; nothing rewrites them when this changes. The mismatch is
+        never reported, and it does not merely stop updates — in
+        appendTakenDNSNameChanges() external-dns "only add[s] creates if the
+        external dns has ownership claim on the domain", so once a NAME holds a
+        record this owner does not own, every create at that name is dropped in
+        silence while the log keeps saying "All records are already up to date".
+        15 of this cluster's 30 ownership records still carried the product name
+        when that was found.
+
+        scripts/tools/extdns-reown.sh reown rewrites them, dry-run by default.
+        See txtPrefix in kernel/values/external-dns.yaml for the other half of
+        why the kernel domain's apex had DKIM but no SPF and no MX.
+        */}}
         txtOwnerId: {{ required "cluster is required: external-dns ownership must identify this cluster, not the product" .Values.cluster | quote }}
         {{- $kd := required "kernelDomain is required for external-dns domainFilters" .Values.kernelDomain }}
         {{- $labels := splitList "." $kd }}
