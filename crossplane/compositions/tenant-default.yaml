@@ -1237,6 +1237,38 @@ spec:
                 attributes:
                   frontendUrl: https://id.{{ $kd }}/auth
                 {{- end }}
+                {{- /* ── Self-service password reset ──────────────────────────
+                     Keycloak's reset mail goes to the user's email FIELD, and
+                     nothing can point it at an attribute instead. So the field
+                     holds the address a locked-out human can still read — their
+                     recovery address — and the workspace address lives in the
+                     username, which is what it already is:
+                     christian@corp.example is the username AND the mailbox.
+
+                     Without this, enabling reset would send the link to the
+                     mailbox the user needs the link to reach. With it, the reset
+                     a user starts themselves arrives somewhere they can open
+                     while locked out, which is the only way it is worth offering.
+
+                     The email CLAIM is decoupled from the field by the groups Job,
+                     which repoints the built-in email mapper at the username — so
+                     applications keep receiving the workspace address they
+                     receive today. Both halves are required: enabling reset
+                     without the mapper would hand apps a recovery address as the
+                     user's identity.
+                  */}}
+                resetPasswordAllowed: true
+                {{- /* Two people may share a recovery address — a couple, or an
+                     admin who owns the domain and recovers several accounts. That
+                     is a normal arrangement and must not fail account creation
+                     with "Email already exists".
+
+                     Safe because the address is not an identity here:
+                     loginWithEmailAllowed stays false (the provider writes false
+                     for the unset field), so nobody authenticates with it, and
+                     Keycloak only rejects duplicates when they could be used to
+                     log in. */}}
+                duplicateEmailsAllowed: true
                 # Nobody self-registers into a tenant realm; membership comes from
                 # the kernel realm through the broker.
                 registrationAllowed: false

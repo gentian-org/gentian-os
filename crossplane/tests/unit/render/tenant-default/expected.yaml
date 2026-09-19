@@ -883,10 +883,12 @@ spec:
       frontendUrl: https://id.platform.example.test/auth
     browserFlow: browser
     displayName: Render Fixture
+    duplicateEmailsAllowed: true
     enabled: true
     loginTheme: gentian
     realm: render-fixture
     registrationAllowed: false
+    resetPasswordAllowed: true
     securityDefenses:
     - headers:
       - contentSecurityPolicy: ""
