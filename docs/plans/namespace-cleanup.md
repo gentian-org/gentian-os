@@ -17,7 +17,7 @@ profile until that rename lands.
 | `system-<function>` | instances with `tenancy: system`, fulfilling `requires.contracts` of other components | kernel services, from the Cluster claim | platform admin through the director | other system functions; every tenant boundary |
 | `shared-<app>` | one instance with `tenancy: shared`, serving several tenants | director, from a Component whose profile certifies `shared` | platform admin through the director | only what the app's own code enforces |
 | `tenant-<t>` | the tenant's instances with `tenancy: tenant`, including its desktop BFF | operator, from `Tenant.spec.apps` | tenant admin through the director | every other tenant; the kernel; system services beyond declared contracts |
-| `tenant-<t>-dmz` | the tenant's perimeter: publishing proxies that terminate anonymous and protocol traffic | operator, from `expose[]` entries with `surface: perimeter` in the tenant's instances | tenant admin through the director | the tenant's own apps — one least-privilege credential per surface |
+| `tenant-<t>-dmz` | the tenant's perimeter: publishing proxies that terminate anonymous and protocol traffic | operator, from the `surface: perimeter` entries the tenant admin has enabled for this tenant | tenant admin through the director | the tenant's own apps — one least-privilege credential per surface |
 
 A new namespace inside a category needs a different exposure, credential
 set, upgrade owner or quota than its neighbour. None of the four → same
@@ -46,7 +46,7 @@ and `gentianos.io/function: <function>` (tenant namespaces:
 | D13 | Stateful kernel components — OpenBao, Keycloak, CNPG clusters — are never renamed in place; the taxonomy applies to fresh installs, existing clusters rebuild or keep names and adopt labels | a namespace move is delete-and-recreate; re-initialising OpenBao on a cluster with tenants regenerates every derived credential |
 | D14 | System data services are one namespace per engine, named by the function apps declare: `system-postgresql`, `system-mariadb`, `system-cache`, `system-s3` | `kernelRequirements` select per engine; quotas and backup policies differ per engine; an engine may later be backed by a managed service on its own claim; separating stateful services later is a data migration, separating now is a name. These namespaces are the fulfillers a `requires.contracts` entry resolves to; the default per contract is a Cluster-claim setting (component-profile.md §9.1) |
 | D15 | vLLM moves into the Cluster composition when it moves to `system-llm`; installer step D-05 is retired | its input is `Cluster.spec.llm.instances`, which only a composition can read |
-| D16 | The perimeter namespace is `tenant-<t>-dmz`, built from the tenant's instances' `expose[]` entries with `surface: perimeter` — one publishing proxy per entry, each with its own least-privilege credential and the entry's mandatory `authMode`. Tenant prefix first, qualifier last | the prefix groups a tenant's namespaces for listing, sorting and glob-based tooling, the way `kube-` and `kube-public` do; `dmz` names the function (a mediated perimeter) rather than an exposure property, and avoids colliding with `kube-public`'s meaning of "readable by all". Sourcing the perimeter from `expose[]` rather than a separate list means every perimeter surface carries an `authMode` by construction — the perimeter is where an exposure without declared auth is least acceptable. Budget: namespace names are 63 characters, so a tenant name is at most 52 |
+| D16 | The perimeter namespace is `tenant-<t>-dmz`. A profile's `expose[]` entries with `surface: perimeter` declare which surfaces *may* be published and with which `authMode`; a proxy exists only for an entry the tenant admin has enabled for that tenant, within what cluster policy allows, and it carries that tenant's least-privilege credential. Where the component runs — `tenant`, `shared`, or a granted contract — does not enter into it. Tenant prefix first, qualifier last | the prefix groups a tenant's namespaces for listing, sorting and glob-based tooling, the way `kube-` and `kube-public` do; `dmz` names the function (a mediated perimeter) rather than an exposure property, and avoids colliding with `kube-public`'s meaning of "readable by all". Sourcing the perimeter from `expose[]` rather than a separate list means every perimeter surface carries an `authMode` by construction — the perimeter is where an exposure without declared auth is least acceptable. Budget: namespace names are 63 characters, so a tenant name is at most 52 |
 
 ## 3. Inventory: today → target
 
@@ -123,10 +123,12 @@ gentian-subscriptions (API profile). All tenant-scoped.
 
 ### 3.6 Tenant DMZ
 
-`tenant-<t>-dmz` holds one publishing proxy per `expose[]` entry with
-`surface: perimeter` across the tenant's instances (D16). A `shared`
-instance's perimeter entries are published in each granted tenant's DMZ
-with that tenant's credential; a `system` instance has none (D8).
+`tenant-<t>-dmz` holds one publishing proxy per perimeter surface the
+tenant admin has enabled (D16). The profile declares the surface and its
+`authMode`; the tenant's enablement, constrained by cluster policy, creates
+the proxy; nothing is published by default. Shared and public are
+independent: a `shared` instance is published through a tenant's DMZ only
+where that tenant enabled it, with that tenant's credential.
 
 The column *authMode* is the field's enum — `oidc | jwt | bearer | basic |
 signature | none` — so this table and the schema cannot drift. Entries
