@@ -327,8 +327,12 @@ Today `lockApp` is an in-process mutex justified by the operator running a
 single replica, while the lifecycle `Runnable` opts *out* of leader election
 "so any replica can serve" — two comments that contradict each other, kept
 true only by `replicaCount: 1`. The director uses git itself: push, and treat
-a non-fast-forward rejection as the optimistic-concurrency signal — fetch,
-rebase the one-file change, retry, bounded. Correct across N replicas and
+a non-fast-forward rejection as the optimistic-concurrency signal — reset to
+the remote, apply the edit again to what is there now, retry, bounded and with
+jitter. Every write is therefore a function of the manifest's current text,
+never a commit to be rebased: two installs into one tenant insert at the same
+line, which git cannot merge, and re-applying also keeps the answer honest
+when the other writer made the same change. Correct across N replicas and
 across the side-by-side period of §6 B when two processes push to one repo.
 
 ### 3.8 Entitlements: granted and revoked by the same path

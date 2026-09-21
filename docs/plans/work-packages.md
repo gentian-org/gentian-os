@@ -44,22 +44,30 @@ Specified in [operator-split-plan.md](operator-split-plan.md) §3, §5, §6.
       credentials at `~/.config/gentian/credentials` mode 0600 keyed by
       cluster; refresh on expiry; `logout` revokes and deletes
       (operator-split-plan §3.9). The Keycloak client ships with it.
-- [ ] `cmd/director`, `internal/director/{api,authn,authz,gitops}`; plain
-      Deployment, N replicas, no controller-runtime.
-- [ ] Authentication: JWKS verification for kernel and tenant realms.
-      **Sender-constrained tokens (DPoP, RFC 9449) for non-browser callers
+- [x] `cmd/director`, `internal/director/{api,authn,authz,gitops}`; no
+      controller-runtime. Contract tests: `go test ./internal/director/...`
+      (decisions from a table) and `make test-director-contract` (the same
+      tests, a real OpenFGA with model v1 deciding).
+- [ ] Chart: plain Deployment, N replicas, rendered but not enabled.
+- [x] Authentication: JWKS verification for kernel and tenant realms —
+      any realm under the one configured issuer base, per-realm key cache,
+      asymmetric algorithms only, audience required, access tokens only.
+- [ ] **Sender-constrained tokens (DPoP, RFC 9449) for non-browser callers
       only** — the CLI, the App Store's install call, agent tokens — where a
       credential is held over time by something that can keep a key. Browser
       traffic is out of scope: the edge cookie never reaches JavaScript and
       the token stops at the gateway (AD-13). Scope before committing:
       Keycloak DPoP support, client configuration, and proof generation in
       the CLI and the store.
-- [ ] Authorization: OpenFGA `Check` per verb against model v1 (WP-3);
-      decision log entry per check with the request id.
-- [ ] Git backend: copy of `applifecycle/gitops*.go`; commits authored as
-      the human, committed by the director, **signed** with a key held in
-      OpenBao transit (artefacts/roadmap-additions.md); trailer with the
-      decision and request id; non-fast-forward retry as concurrency control.
+- [x] Authorization: OpenFGA `Check` per verb against a pinned model v1
+      (WP-3); decision log entry per check with the request id; an
+      unreachable OpenFGA denies; one id mapping for users and groups.
+- [x] Git backend: copy of `applifecycle/gitops*.go`; commits authored as
+      the human, committed by the director; trailer with the decision and
+      request id; a rejected push re-applies the edit to the new remote state
+      (operator-split-plan §3.7); a failed push leaves nothing behind.
+- [ ] Commits **signed** with a key held in OpenBao transit
+      (artefacts/roadmap-additions.md). Needs OpenBao; lands with cutover C.
 - [ ] Write API `/v1/tenants/{t}/…`, `/v1/clusters/{c}/…`: apps, addons,
       plans, policies, exposure enablements, shared-app installs, tenant
       deploy/undeploy, raw edit (break-glass); every write returns 202 with
