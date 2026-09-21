@@ -75,12 +75,12 @@ The principles name ABAC "conditioning"; no plan supplies a mechanism.
 step-up with `acr`, or a re-login within N minutes) checked by the
 director from the token's `auth_time`/`acr` claims.
 
-## New — Reverse authorization queries
+## Done in the plans — Reverse authorization queries
 
-Membership as contextual tuples (AD-12, R7) means "who can use app A" is a
-join of OpenFGA structure with Keycloak groups. If access reviews or a
-"members with access" screen become a product need, store `group#member`
-tuples fed by Keycloak admin events — a change to R7 only.
+This asked for stored `group#member` tuples so "who can use app A" is a
+native query. R7 now requires exactly that, and `app#entitled` makes the
+answer the app's own group rather than tenant membership. Kept as a record
+of why the shape was chosen.
 
 ## Decided — realm per tenant stays; Organizations only inside a tenant
 
@@ -139,3 +139,75 @@ collaboration stays federation or public links (networking.md §5).
 - `[ ]` State portability as a product property where the isolation model
   is described (design/multi-tenancy.md): a tenant can leave with its
   users, their passwords and their MFA.
+
+## New — Separation of duties inside the director
+
+The director verifies the token, makes the OpenFGA check, writes the tuples
+that check reads, signs the commit, holds a Keycloak identity that can manage
+users, and drives the credential manager. Decision point, tuple writer and
+enforcement point are one process, so a compromised director can grant itself
+a relation and then sign a commit Argo applies — cluster-wide execution
+through provider-helm. AD-2 makes git the audited source, and AD-12 has the
+store rebuilt from git on start, but between restarts the store is
+authoritative and nothing compares the two.
+
+- `[ ]` Reconcile store against git **continuously**, not only on start;
+  divergence is an alert, not a silent correction.
+- `[ ]` Role-assignment tuples derive from git content Argo has applied,
+  so authority always trails a reviewable artefact rather than being written
+  at request time.
+- `[ ]` Consider a second signer for the commits that change authorization
+  itself (role assignments, `PlatformSecurityPolicy`), so the director alone
+  cannot widen its own powers.
+
+## New — Audit integrity against the holder of break-glass
+
+Break-glass holds kubeconfig and, by the WP-10 decision, the director's
+signing key material, so it can act on the cluster and produce commits
+attributed to the director. The stated mitigations are custody and audit —
+but an audit log in a store the same holder can reach is not evidence about
+them.
+
+- `[ ]` Ship the decision log, the API-server audit stream and the issuer
+  events to an **append-only** sink the cluster cannot rewrite; off-cluster
+  where the deployment allows it.
+- `[ ]` Two-person custody of the recovery kit.
+- `[ ]` Rotate the director's signing key after any recovery in which the kit
+  was opened, and record the rotation as the event that closes the window.
+
+## New — Rollback protection on profile digests
+
+The App Store names the digest the director materialises. A compromised store
+can name an older digest of a legitimate, reviewed profile: valid entitlement
+signature, valid digest, downgrade to a known-vulnerable version through
+entirely correct machinery. Nothing refuses it.
+
+- `[ ]` Refuse a digest older than the one installed unless a human confirms
+  a rollback, and record that confirmation.
+- `[ ]` Carry a minimum version per catalogue entry, so a withdrawn release
+  cannot be reinstalled by naming its digest.
+
+## New — A compensating control for shared instances
+
+AD-4 is honest that a shared instance's guarantee is the app's own code, and
+`trustTier: platform` is a review rather than a control. One insecure direct
+object reference crosses every bound tenant at once, and none of the
+platform's isolation — namespace, NetworkPolicy, per-tenant credentials —
+applies inside that process.
+
+- `[ ]` Decide what certification actually requires beyond a tier name:
+  a tenant-scoped data path, per-tenant encryption keys the platform holds,
+  or per-tenant sub-instances behind one namespace.
+- `[ ]` Until then, keep the shared list short and name each entry
+  explicitly rather than allowing a tier to imply it.
+
+## New — Multi-factor on the kernel realm
+
+Everything rests on Keycloak and the platform-admin path has no stated second
+factor anywhere in the plans. It is the cheapest high-value control on the
+list and it is simply absent. Pairs with the step-up item above: step-up
+protects individual high-impact verbs, this protects the account itself.
+
+- `[ ]` Require MFA for every account in the kernel realm, hardware-backed
+  for `gentian:platform:admin` and `gentian:platform:break-glass`.
+- `[ ]` Decide the tenant-realm default and leave it to the tenant's policy.

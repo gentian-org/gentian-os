@@ -288,7 +288,8 @@ behind it returns 404 at the listener.
   session; offline tokens are disabled, because they would survive it.
 - **Platform rights follow the store; app rights follow the token.**
   Membership reaches OpenFGA from Keycloak's events through the director
-  within milliseconds (AD-12), and the shim evicts its cached decisions on the
+  sub-second on the normal path, and within one rolling sweep in the worst
+  case (AD-12; the bound is in authorization-model.md §2), and the shim evicts its cached decisions on the
   `ReadChanges` poll, so a revoked platform right is gone within one poll
   interval without any token being touched. Apps, however, read groups from
   their own tokens, so for *their* rights the rule stays: **a membership

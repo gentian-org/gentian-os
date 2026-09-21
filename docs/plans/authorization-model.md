@@ -40,6 +40,34 @@ projection honest, and security principle 2 intact:
 - **Contextual tuples never carry a person's memberships.** A request may
   add a task's TTL, an `acting_for`, a device posture — facts that exist
   only for that request.
+- **Staleness is bounded, and the bound is published.** The event path is
+  sub-second and that is the normal case. What needs a number is the failure
+  case, because a lost event is not symmetric: a dropped *addition* fails
+  closed and someone complains, a dropped *removal* leaves the tuple in place
+  and access quietly persists.
+
+  | | Bound |
+  | --- | --- |
+  | Event applied, normal path | sub-second |
+  | Failed event → targeted re-read of that subject | seconds |
+  | Rolling sweep, every realm, cluster complete | **15 minutes** |
+  | Shim evicts its cached decision (`ReadChanges` poll) | 10 seconds |
+  | **Worst case for an authorization change to take effect** | **~16 minutes** |
+  | Projection declared stale → alert | no sweep completed in 30 minutes |
+
+  The director records the last accepted event and the last completed sweep;
+  those two timestamps are the projection's freshness and are what the alert
+  watches. A stale projection does **not** fail checks closed: an identity
+  provider hiccup should not become a platform outage, and the sweep will
+  correct it. It fails loudly instead.
+
+  Fifteen minutes is tolerable only because it bounds *authorization*
+  changes, not lockout. Shutting someone out does not wait for the
+  projection: revoking their Keycloak sessions ends the edge session and the
+  shim denies the revoked `sid` on the next request (networking.md §4), and
+  disabling the user stops new tokens at the issuer. Those are immediate and
+  independent of any tuple. The bound covers "this person should no longer
+  reach that app", not "this person should be out".
 
 What it buys over a contextual-only design: reverse queries and access
 reviews are native (`ListUsers("who can use app A")` is complete, which
@@ -47,8 +75,9 @@ roadmap 1.12's SOC 2 evidence needs); checks are indexed lookups with no
 per-request tuple cost and no 100-tuple cap; OpenFGA's check cache works;
 and no group has to travel in the edge token, so the session cookie stays
 small. What it costs: an event path and a reconcile job in the director,
-and a projection that lags Keycloak by the event latency — milliseconds,
-with the reconcile as the backstop.
+and a projection that lags Keycloak by the event latency — sub-second on the
+normal path, with the sweep as the backstop and ~16 minutes as the published
+worst case for an authorization change (§2).
 
 ## 3. Object naming and who writes each tuple
 

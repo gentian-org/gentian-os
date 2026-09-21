@@ -198,8 +198,16 @@ Specified in [authorization-model.md](authorization-model.md) and
       replay protection by event id; the director is its only receiver; it
       holds no credential beyond the signing key. Inventory row in
       namespace-cleanup §2.1.
-- [ ] Reconcile: periodic and on start, `view-users` client only, corrects
-      toward Keycloak, reports drift; flags admin+member accounts.
+- [ ] Reconcile: on start, on a failed event as a targeted re-read of that
+      subject, and as a rolling per-realm sweep completing cluster-wide within
+      **15 minutes** — `view-users` client only, corrects toward Keycloak,
+      reports drift, flags admin+member accounts. A lost *removal* is the
+      asymmetric failure: it leaves access in place silently, and the sweep is
+      what bounds it (authorization-model §2).
+- [ ] Freshness: the director records the last accepted event and the last
+      completed sweep; no sweep in 30 minutes raises an alert. A stale
+      projection does not fail checks closed — an issuer hiccup must not
+      become a platform outage — it fails loudly.
 - [ ] Ext-auth shim polls OpenFGA's `ReadChanges` changelog and evicts
       cached decisions (WP-4).
 - [ ] OpenFGA on its own CNPG cluster or pooled database with a reserved
