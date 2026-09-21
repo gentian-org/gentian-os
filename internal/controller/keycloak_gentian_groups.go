@@ -181,6 +181,57 @@ if [ -z "${GROUPS_SCOPE_ID}" ]; then
   echo "groups client scope created and configured"
 fi
 
+# ── The email claim must follow the USERNAME, not the email field ────────────
+#
+# Keycloak's own password reset mails whatever is in the user's email field, and
+# no setting points it at an attribute instead. So the field has to hold the
+# address a locked-out human can still read — their recovery address — which
+# means it can no longer be the value applications read as the user's identity.
+#
+# The username already IS the workspace address (christian@corp.example is both
+# the login and the mailbox), so repointing the built-in email mapper at it keeps
+# every token and userinfo response exactly as it was. For every user that exists
+# when this first runs the two are the same string, so the claim does not change
+# at all; afterwards it stays the workspace address while the field becomes the
+# recovery address.
+#
+# Without this, enabling resetPasswordAllowed would either mail the link to the
+# mailbox the user is locked out of, or hand applications a personal recovery
+# address as the user's identity. Neither is acceptable, and they are the same
+# decision, so both live here and in the Realm that enables reset.
+#
+# The mapper is patched field-by-field through jq rather than rebuilt, because a
+# PUT replaces the config wholesale: naming only what changes leaves Keycloak's
+# own keys (id.token.claim, jsonType.label, aggregate.attrs …) exactly as it
+# wrote them, so nothing here and nothing in the Composition sees drift.
+keycloak_json_id_by_attr "${SCOPE_LIST}" "name" "email"
+EMAIL_SCOPE_ID="${_kj_id}"
+if [ -n "${EMAIL_SCOPE_ID}" ]; then
+  EMAIL_MAPPERS=$(curl -sf -H "${AUTH_HEADER}" \
+    "${KEYCLOAK_URL}/admin/realms/${REALM}/client-scopes/${EMAIL_SCOPE_ID}/protocol-mappers/models" || echo "[]")
+  EMAIL_MAPPER=$(printf '%s' "${EMAIL_MAPPERS}" | jq -c '[.[] | select(.name == "email")][0] // empty')
+  if [ -n "${EMAIL_MAPPER}" ]; then
+    EMAIL_MAPPER_ID=$(printf '%s' "${EMAIL_MAPPER}" | jq -r '.id')
+    EMAIL_MAPPER_SOURCE=$(printf '%s' "${EMAIL_MAPPER}" | jq -r '.config["user.attribute"] // ""')
+    if [ "${EMAIL_MAPPER_SOURCE}" = "username" ]; then
+      echo "email claim already follows the username"
+    else
+      UPDATED_MAPPER=$(printf '%s' "${EMAIL_MAPPER}" | jq -c '.config["user.attribute"] = "username"')
+      curl -sf -X PUT -H "${AUTH_HEADER}" -H "Content-Type: application/json" \
+        "${KEYCLOAK_URL}/admin/realms/${REALM}/client-scopes/${EMAIL_SCOPE_ID}/protocol-mappers/models/${EMAIL_MAPPER_ID}" \
+        -d "${UPDATED_MAPPER}"
+      echo "email claim repointed from ${EMAIL_MAPPER_SOURCE:-<unset>} to the username"
+    fi
+  else
+    # Nothing to repoint. Reported rather than passed over: the email claim then
+    # comes from somewhere this does not control, and the reset address and the
+    # application identity are no longer known to be separate.
+    echo "WARNING: the email client scope has no mapper named email; the email claim is not managed" >&2
+  fi
+else
+  echo "WARNING: realm ${REALM} has no email client scope; the email claim is not managed" >&2
+fi
+
 echo "groups client scope present (id=${GROUPS_SCOPE_ID})"
 MAPPERS=$(curl -sf -H "${AUTH_HEADER}" \
   "${KEYCLOAK_URL}/admin/realms/${REALM}/client-scopes/${GROUPS_SCOPE_ID}/protocol-mappers/models" || echo "[]")
