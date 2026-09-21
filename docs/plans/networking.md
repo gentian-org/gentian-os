@@ -57,35 +57,35 @@ flowchart TB
     end
 
     subgraph KAUTH["kernel-authentication / -authorization"]
-        KC["Keycloak<br/>id.kernel — the issuer"]
+        KC["Keycloak<br/>id.&lt;kernel&gt; — the issuer"]
         FGA[("OpenFGA")]
     end
 
     subgraph KCTL["kernel-control"]
-        DIR["director API<br/>api.kernel"]
-        CON["platform console BFF<br/>console.kernel"]
+        DIR["director API<br/>api.&lt;kernel&gt;"]
+        CON["platform console BFF<br/>console.&lt;kernel&gt;"]
     end
 
-    subgraph TEN["tenant-t"]
+    subgraph TEN["tenant-&lt;t&gt;"]
         DESK["desktop BFF"]
         APP["app"]
     end
 
-    subgraph TDMZ["tenant-t-dmz"]
+    subgraph TDMZ["tenant-&lt;t&gt;-dmz"]
         PX["publishing proxy<br/>one per enabled surface,<br/>one credential"]
     end
 
-    subgraph SHR["shared-app"]
+    subgraph SHR["shared-&lt;app&gt;"]
         SAPP["shared instance"]
     end
 
-    subgraph SYS["system-function"]
+    subgraph SYS["system-&lt;function&gt;"]
         DB[("postgresql / cache / s3")]
         LLM["llm"]
         STORE["mail store, DKIM signer"]
     end
 
-    subgraph SDMZ["system-function-dmz"]
+    subgraph SDMZ["system-&lt;function&gt;-dmz"]
         MTA["Postfix :25 :587<br/>Dovecot proxy :993"]
         TURN["TURN / SFU (UDP)"]
     end
