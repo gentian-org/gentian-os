@@ -47,6 +47,13 @@ backend.
 
 ```mermaid
 flowchart TB
+    subgraph LEGEND[" "]
+        direction LR
+        LA["authenticated domain"]
+        LP["perimeter domain"]
+        LE["east-west, no edge"]
+    end
+
     NET(("Internet"))
 
     subgraph EDGE["kernel-edge — one address, one Envoy fleet"]
@@ -125,30 +132,24 @@ flowchart TB
     APP -->|"integrations, L5"| PEER
     SAPP -->|"contracts, L5"| DB
 
-    subgraph LEGEND["legend"]
-        LA["authenticated domain"]
-        LP["perimeter domain"]
-        LE["east-west, no edge"]
-    end
-
-    classDef auth fill:#e6efff,stroke:#1f5fbf,color:#0b2a5b
-    classDef perim fill:#fff1e0,stroke:#d9731a,color:#5a2d00
-    classDef ew fill:#f2f2f2,stroke:#7a7a7a,color:#333
+    classDef auth fill:#1f5fbf33,stroke:#3b82f6,stroke-width:1.5px
+    classDef perim fill:#d9731a33,stroke:#f0883e,stroke-width:1.5px
+    classDef ew fill:#80808026,stroke:#9a9a9a
     class AG,SHIM,DESK,APP,PEER,SAPP,CON,DIR,LA auth
     class PG,PX,MTA,TURN,ACME,LP perim
     class KC,FGA,DB,LLM,STORE,LE ew
-    style TEN fill:#f3f7ff,stroke:#1f5fbf
-    style SHR fill:#f3f7ff,stroke:#1f5fbf
-    style KCTL fill:#f3f7ff,stroke:#1f5fbf
-    style TDMZ fill:#fff8ef,stroke:#d9731a
-    style SDMZ fill:#fff8ef,stroke:#d9731a
-    style EDGE fill:#fafafa,stroke:#7a7a7a
-    style KAUTH fill:#fafafa,stroke:#7a7a7a
-    style SYS fill:#fafafa,stroke:#7a7a7a
-    style LEGEND fill:#ffffff,stroke:#bbbbbb
-    linkStyle 0,5,6,7,8,9,10,11,12,19,20,21 stroke:#1f5fbf,stroke-width:2px
-    linkStyle 1,2,4,13,14,15,16,17,18 stroke:#d9731a,stroke-width:2px
-    linkStyle 3,22,23,24,25,26 stroke:#7a7a7a,stroke-width:1.5px
+    style TEN fill:#1f5fbf14,stroke:#3b82f6
+    style SHR fill:#1f5fbf14,stroke:#3b82f6
+    style KCTL fill:#1f5fbf14,stroke:#3b82f6
+    style TDMZ fill:#d9731a14,stroke:#f0883e
+    style SDMZ fill:#d9731a14,stroke:#f0883e
+    style EDGE fill:#80808012,stroke:#9a9a9a
+    style KAUTH fill:#80808012,stroke:#9a9a9a
+    style SYS fill:#80808012,stroke:#9a9a9a
+    style LEGEND fill:none,stroke:none
+    linkStyle 0,5,6,7,8,9,10,11,12,19,20,21 stroke:#3b82f6,stroke-width:2px
+    linkStyle 1,2,4,13,14,15,16,17,18 stroke:#f0883e,stroke-width:2px
+    linkStyle 3,22,23,24,25,26 stroke:#9a9a9a,stroke-width:1.5px
 ```
 
 Tunnel mode changes nothing above: cloudflared publishes hostnames to the
