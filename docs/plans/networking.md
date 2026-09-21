@@ -96,14 +96,29 @@ behind it returns 404 at the listener.
   silent whenever the Keycloak SSO session exists. Its lifetime is the
   shorter one; app sessions may live longer and it does not matter, because
   no request reaches an app without passing L1.
-- **L2 caches its decision** per `(sub, route)` for min(token lifetime, a
-  few minutes). Load on OpenFGA is logins × apps. A revocation lands within
-  the cache window; where it must be immediate, the shim subscribes to
-  OpenFGA's changes stream and evicts.
+- **L2 caches its decision** per `(token, route)` — keyed on the token's
+  `jti`, not only on `sub` — for min(token lifetime, a few minutes). Load on
+  OpenFGA is logins × apps. A new token is a cache miss by construction, so
+  a refresh that carries different groups is re-evaluated; where a
+  structural change (a grant deleted) must be immediate, the shim subscribes
+  to OpenFGA's changes stream and evicts.
 - **Logout is one back-channel client per zone.** Keycloak's logout token
   reaches the `authenticated` Gateway's client for that zone; the session
   dies; every app in the zone becomes unreachable whatever its own cookie
   says. Which of thirty apps implement back-channel logout stops mattering.
+  Refresh tokens are session-bound and die with it; offline tokens are
+  disabled, because they would survive it.
+- **Rights live in the token, so a rights change mints a new token.**
+  Membership arrives as contextual tuples (AD-12), which means a grant or
+  revocation is invisible until Keycloak issues a token that reflects it.
+  The rule: **a membership change revokes the user's Keycloak sessions.**
+  The operator, on applying a group change, calls the admin API's logout for
+  that user; back-channel logout ends every edge session; the next request
+  is a silent re-login with the new groups. A removed administrator loses
+  the role within one request, not one token lifetime. Grants ride the same
+  path, or the next refresh — Keycloak recomputes the groups claim at every
+  issuance. The hard bound is the access-token lifetime, which is why it
+  stays short (five minutes) regardless of how long the session may live.
 - **Fail closed, cached allows carry.** If OpenFGA is unreachable, decisions
   already cached stay valid until they expire; new logins wait. Nothing not
   previously allowed gets through.
