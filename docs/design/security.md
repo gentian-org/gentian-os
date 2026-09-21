@@ -331,7 +331,7 @@ spec:
 contract:demo/project-management#consumer@app:crm-app
 ```
 
-"May CRM read OpenProject tasks?" is then a single OpenFGA `Check`; the tenant controls the edge; revocation is one tuple delete.
+"May CRM read OpenProject tasks?" is then a single OpenFGA `Check`; the tenant controls the edge. **Revocation is not one tuple delete, and saying so overstates it.** Nothing sits on an app-to-app call until workloads carry identity (§2.4, G8), and by the time a grant exists its credential is in OpenBao and injected into the consumer's values. Revoking therefore means the director deletes the binding's OpenBao path and re-rolls the consumer; the tuple delete stops the *next* bind. The `contract` type exists so the consent is recorded and bounded, not so that traffic is intercepted.
 
 #### 4. Runtime authorization — computed at the PEP (per request)
 

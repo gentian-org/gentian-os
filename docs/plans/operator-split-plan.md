@@ -192,6 +192,8 @@ Keycloak token ──► director verifies JWKS/iss/aud
              ──► signed commit, authored as the human, trailer with decision
              ──► git host branch protection: only the director's identity may push main
              ──► Argo AppProject sourceIntegrity (GnuPG, head): only director- or break-glass-signed commits sync
+                 (the recovery kit carries the director's key material by decision — work-packages WP-10 —
+                  so a kit holder can sign as the director; custody and audit carry that link, not the signature)
              ──► operator reconciles what Argo applied
 ```
 

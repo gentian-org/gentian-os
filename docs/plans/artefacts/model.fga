@@ -95,7 +95,11 @@ type catalogue_entry
 type app
   relations
     define tenant: [tenant]
-    define admin: [group#member]                  # gentian:tenant:<t>:app-admins — inside the app only
+    # Administration INSIDE one app, and only for profiles that declare a
+    # privilegedRole to map onto — no role, no group. Per app, not per tenant:
+    # a cross-app group made a Nextcloud administrator an Odoo administrator,
+    # which is not what a tenant delegating one app intends.
+    define admin: [group#member]                  # gentian:tenant:<t>:app:<p>:admins
 
     # Per-app entitlement. This is NOT new behaviour — it is the rule
     # gentian-ui already enforces in shell_apps.py ("entitlement is membership
@@ -125,6 +129,22 @@ type app
     # before OpenBao sees the request: OpenBao's policy then bounds the PATH,
     # it does not make the decision (principle 2).
     define can_write_credential: admin from tenant
+
+type contract
+  relations
+    define tenant: [tenant]
+    # The app that declared this contract in `provides`.
+    define provider: [app]
+    # Apps the tenant has allowed to consume it, from AppGrant.
+    define consumer: [app]
+    define can_consume: consumer
+
+    # No enforcement point asks this yet. Until workloads carry identity
+    # (G8) there is nothing sitting on an app-to-app call, so the tuple
+    # records the tenant's consent and bounds what the director will bind —
+    # it does not intercept traffic. What revoking therefore costs today is
+    # in authorization-model.md §3 and design/security.md §3.4; the one thing
+    # it is not is free.
 
 type shared_instance
   relations

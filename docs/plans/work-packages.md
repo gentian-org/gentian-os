@@ -168,6 +168,12 @@ Specified in [authorization-model.md](authorization-model.md) and
       any OpenBao write; OpenBao policy bounds the path, not the decision.
 - [ ] `shared_instance` with `offered_to`/`can_bind`, so a shared install is
       offered to a tenant and still invisible until that tenant installs it.
+- [ ] `contract` type with `provider`/`consumer`/`can_consume`, written from
+      `AppGrant`. No PEP asks it until G8; the documents stop claiming that
+      deleting the tuple revokes a delivered credential.
+- [ ] App-admin groups become per app — `gentian:tenant:<t>:app:<p>:admins` —
+      and are created only for profiles declaring a `privilegedRole`. The
+      cross-app group made a Nextcloud administrator an Odoo administrator.
 - [ ] `tenant#can_administer` for admin tiles, and `tenant#can_enter` widened
       with `can_audit from cluster` and `can_approve from cluster`. Without
       both, `app#can_use`'s deliberate exclusion of admin accounts makes every
@@ -423,8 +429,20 @@ From [security-gap-closing.md](security-gap-closing.md).
       default fulfiller per contract, identity/secrets/database provider
       selectors for the modular kernel, and the `compliance` block of WP-13.
 - [ ] Namespace label step (WP-8 step 1) and the fresh-install layout.
-- [ ] Recovery kit carries the director's signing key material or its
-      transit reference.
+- [ ] **API-server audit logging**: an audit policy shipped by the installer,
+      flowing to the same store as the decision log. Without it break-glass is
+      unaudited — a kubeconfig session raises no Keycloak event and touches no
+      director verb, so none of principle 7's three logs sees it, and
+      "time-boxed, every action logged" is a claim with no mechanism.
+- [ ] Recovery kit carries the director's signing key **material**, decided
+      deliberately (2026-09-21) so that recovery works when OpenBao itself is
+      gone, which a transit reference cannot survive. The cost is accepted and
+      recorded rather than discovered: a kit holder can produce commits Argo
+      accepts as the director's, so signature alone no longer distinguishes a
+      recovery-time commit from a real one. What still does: kit custody, the
+      fact that recovery is an announced event, and API-server audit logging
+      covering what break-glass touches. Rotate the director's key after any
+      recovery in which the kit was opened.
 - [ ] Challenge tests for cutover C and every wave under
       `crossplane/tests/e2e` and `scripts/tools`.
 
