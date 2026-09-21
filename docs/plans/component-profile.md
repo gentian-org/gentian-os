@@ -110,6 +110,25 @@ type ComponentProfileSpec struct {
 }
 ```
 
+The types are [componentprofile_types.go](../../api/v1alpha1/componentprofile_types.go)
+and [component_types.go](../../api/v1alpha1/component_types.go). Where they
+differ from the sketch above, the code is what holds:
+
+- `requires.contracts` reuses `KernelRequirements` as it stands, so the
+  provisioning path reads the same struct from a new place.
+- `secrets` is `{generated, derived}`, not one list — the two have different
+  failure modes (§4) and a reviewer should see which is which.
+- Every privilege request carries a `name`; a `PrivilegeGrant` refers to it as
+  `<kind>/<name>`. Egress requests wrap the rule so they can carry a name and
+  a reason like the others.
+- `backup` and `customization` stay on the profile: they are what the
+  component is, not how it is presented.
+- `package.chart` is optional, because an addon rides on its base and has no
+  package of its own; a profile that is neither an addon nor a chart, a
+  composition or an API integration is refused.
+- `expose[]` gains `subDomain` and `stripPrefix`, which is what lets it absorb
+  `ingress`, `additionalIngresses` and `browserProxy`.
+
 No presentation fields. They are reference data outside the cluster (AD-3), and
 an optional field would invite partial population and two sources of truth for
 one string.

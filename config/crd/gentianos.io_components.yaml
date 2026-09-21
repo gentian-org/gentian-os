@@ -1,0 +1,306 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.17.3
+  name: components.gentianos.io
+spec:
+  group: gentianos.io
+  names:
+    kind: Component
+    listKind: ComponentList
+    plural: components
+    shortNames:
+    - comp
+    singular: component
+  scope: Namespaced
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .spec.profileRef.name
+      name: Profile
+      type: string
+    - jsonPath: .spec.tenancy
+      name: Tenancy
+      type: string
+    - jsonPath: .status.fulfilment
+      name: Fulfilment
+      type: string
+    - jsonPath: .status.conditions[?(@.type=="Ready")].status
+      name: Ready
+      type: string
+    name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: Component is an installed instance of a ComponentProfile.
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: |-
+              ComponentSpec is one installed instance of a ComponentProfile. The profile
+              says what may be asked for; this object records what was answered, by whom
+              and until when. Enablements and grants are written only by the director,
+              from the token of the person who approved.
+            properties:
+              addons:
+                description: Addons enabled on this instance, by the profile's own
+                  names.
+                items:
+                  type: string
+                type: array
+                x-kubernetes-list-type: set
+              exposures:
+                description: |-
+                  Exposures are the perimeter entries of the profile that are switched on.
+                  Gateway entries need none: they carry the session and are always on.
+                items:
+                  description: |-
+                    ExposureEnablement switches on one perimeter entry of the profile.
+
+                    authMode is not repeated here: the profile's entry is the one source, and an
+                    enablement cannot weaken it.
+                  properties:
+                    expiresAt:
+                      description: |-
+                        ExpiresAt bounds the exposure, and is always set: a public surface with
+                        no end is not something anybody decided. At expiry the operator treats
+                        the enablement as absent; the entry stays in git as history.
+                      format: date-time
+                      type: string
+                    exposureName:
+                      description: |-
+                        ExposureName names an entry of the profile's expose list whose surface is
+                        "perimeter".
+                      pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
+                      type: string
+                    host:
+                      description: |-
+                        Host is the public hostname. Empty means the entry's default host in the
+                        tenant's zone. A vanity host is admitted only if the tenant's approved
+                        domains include it.
+                      pattern: ^([a-z0-9]([-a-z0-9]*[a-z0-9])?\.)+[a-z]{2,}$
+                      type: string
+                    owner:
+                      description: |-
+                        Owner is the Keycloak subject that enabled the surface, set by the
+                        director from the caller's token.
+                      minLength: 1
+                      type: string
+                    reviewAt:
+                      description: |-
+                        ReviewAt is when the owner and the perimeter approver are asked to renew
+                        or revoke.
+                      format: date-time
+                      type: string
+                  required:
+                  - expiresAt
+                  - exposureName
+                  - owner
+                  type: object
+                  x-kubernetes-validations:
+                  - message: 'owner is immutable: a renewal by someone else is a new
+                      enablement'
+                    rule: self.owner == oldSelf.owner
+                  - message: reviewAt must not be later than expiresAt
+                    rule: '!has(self.reviewAt) || self.reviewAt <= self.expiresAt'
+                type: array
+                x-kubernetes-list-map-keys:
+                - exposureName
+                x-kubernetes-list-type: map
+              fulfilment:
+                default: auto
+                description: Fulfilment pins how a tenant install is backed.
+                enum:
+                - auto
+                - dedicated
+                type: string
+              privileges:
+                description: |-
+                  Privileges are the profile's privilege requests that a person granted.
+                  An install with an ungranted request waits; it is neither rejected nor
+                  silently run without it.
+                items:
+                  description: PrivilegeGrant answers one entry of the profile's privilege
+                    request.
+                  properties:
+                    approvedAt:
+                      format: date-time
+                      type: string
+                    approver:
+                      description: |-
+                        Approver is the Keycloak subject who said yes, set by the director from
+                        the caller's token.
+                      minLength: 1
+                      type: string
+                    expiresAt:
+                      description: |-
+                        ExpiresAt bounds the grant. A waiver with no expiry is a waiver nobody
+                        reviews.
+                      format: date-time
+                      type: string
+                    privilege:
+                      description: |-
+                        Privilege names one entry of the profile's request, as <kind>/<name>,
+                        where kind is podSecurity, egress or clusterRoles.
+                      pattern: ^(podSecurity|egress|clusterRoles)/[a-z0-9]([-a-z0-9]*[a-z0-9])?$
+                      type: string
+                    reason:
+                      description: Reason in the approver's words, not the profile's.
+                      minLength: 10
+                      type: string
+                  required:
+                  - approvedAt
+                  - approver
+                  - privilege
+                  - reason
+                  type: object
+                  x-kubernetes-validations:
+                  - message: 'approver and approvedAt are immutable: a new approval
+                      is a new grant'
+                    rule: self.approver == oldSelf.approver && self.approvedAt ==
+                      oldSelf.approvedAt
+                type: array
+                x-kubernetes-list-map-keys:
+                - privilege
+                x-kubernetes-list-type: map
+              profileRef:
+                description: ProfileRef names the catalogue entry this is an instance
+                  of.
+                properties:
+                  digest:
+                    description: Digest pins the profile bundle this instance was
+                      installed from.
+                    pattern: ^sha256:[a-f0-9]{64}$
+                    type: string
+                  name:
+                    minLength: 1
+                    type: string
+                required:
+                - name
+                type: object
+              tenancy:
+                description: |-
+                  Tenancy is the one mode this instance runs under. It must be a member of
+                  the profile's list, and the namespace must be of the matching tier; both
+                  are admission checks, because neither is visible from here.
+                enum:
+                - system
+                - shared
+                - tenant
+                type: string
+            required:
+            - profileRef
+            - tenancy
+            type: object
+            x-kubernetes-validations:
+            - message: 'tenancy is immutable: reinstall to change it'
+              rule: self.tenancy == oldSelf.tenancy
+            - message: profileRef.name is immutable
+              rule: self.profileRef.name == oldSelf.profileRef.name
+            - message: fulfilment is a tenant's choice and applies to tenancy tenant
+                only
+              rule: self.tenancy == 'tenant' || !has(self.fulfilment) || self.fulfilment
+                == 'auto'
+            - message: system components have no exposure
+              rule: self.tenancy != 'system' || !has(self.exposures) || self.exposures.size()
+                == 0
+          status:
+            description: ComponentStatus is the observed state of a Component.
+            properties:
+              conditions:
+                items:
+                  description: Condition contains details for one aspect of the current
+                    state of this API Resource.
+                  properties:
+                    lastTransitionTime:
+                      description: |-
+                        lastTransitionTime is the last time the condition transitioned from one status to another.
+                        This should be when the underlying condition changed.  If that is not known, then using the time when the API field changed is acceptable.
+                      format: date-time
+                      type: string
+                    message:
+                      description: |-
+                        message is a human readable message indicating details about the transition.
+                        This may be an empty string.
+                      maxLength: 32768
+                      type: string
+                    observedGeneration:
+                      description: |-
+                        observedGeneration represents the .metadata.generation that the condition was set based upon.
+                        For instance, if .metadata.generation is currently 12, but the .status.conditions[x].observedGeneration is 9, the condition is out of date
+                        with respect to the current state of the instance.
+                      format: int64
+                      minimum: 0
+                      type: integer
+                    reason:
+                      description: |-
+                        reason contains a programmatic identifier indicating the reason for the condition's last transition.
+                        Producers of specific condition types may define expected values and meanings for this field,
+                        and whether the values are considered a guaranteed API.
+                        The value should be a CamelCase string.
+                        This field may not be empty.
+                      maxLength: 1024
+                      minLength: 1
+                      pattern: ^[A-Za-z]([A-Za-z0-9_,:]*[A-Za-z0-9_])?$
+                      type: string
+                    status:
+                      description: status of the condition, one of True, False, Unknown.
+                      enum:
+                      - "True"
+                      - "False"
+                      - Unknown
+                      type: string
+                    type:
+                      description: type of condition in CamelCase or in foo.example.com/CamelCase.
+                      maxLength: 316
+                      pattern: ^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])$
+                      type: string
+                  required:
+                  - lastTransitionTime
+                  - message
+                  - reason
+                  - status
+                  - type
+                  type: object
+                type: array
+              fulfilment:
+                description: |-
+                  Fulfilment is "dedicated" or "shared". Availability decided it at install
+                  and a later offer does not move a running instance.
+                enum:
+                - dedicated
+                - shared
+                type: string
+              pendingPrivileges:
+                description: |-
+                  PendingPrivileges are requests of the profile that nobody has granted
+                  yet, as <kind>/<name>. While any is listed the install waits.
+                items:
+                  type: string
+                type: array
+                x-kubernetes-list-type: set
+              sharedInstance:
+                description: SharedInstance names the backend when Fulfilment is "shared".
+                type: string
+            type: object
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}

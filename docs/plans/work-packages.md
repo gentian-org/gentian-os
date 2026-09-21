@@ -320,9 +320,15 @@ Specified in [networking.md](networking.md).
 
 Specified in [component-profile.md](component-profile.md).
 
-- [ ] CRDs `ComponentProfile` and `Component`; CEL rules (§7); admission
-      policies for who may create which tenancy where.
-- [ ] Two-level tenancy; `trustTier` in spec; `requires` absorbing
+- [x] CRDs `ComponentProfile` and `Component` with their CEL rules (§7, and
+      the ones the instance needs: immutable owner, approver and tenancy; an
+      exposure always ends; `forwardToken` only at platform tier and never on
+      the perimeter). `component_schema_test.go` runs the generated CRDs'
+      OpenAPI schema and CEL the way the API server does — it caught three
+      rules that would have refused every valid profile.
+- [ ] Admission policies for who may create which tenancy where (needs the
+      cluster's namespace tiers: lands with WP-8).
+- [x] Two-level tenancy; `trustTier` in spec; `requires` absorbing
       `kernelRequirements`, `optionalIntegrations`, `security`;
       `integrations`; `provides`; `secrets`; `expose[]` with mandatory
       `authMode` and `surface`; `extensions`; `hooks`.
@@ -335,9 +341,15 @@ Specified in [component-profile.md](component-profile.md).
       Cluster claim (§5.1); `exposure-policy` contract (§5.2).
 - [ ] Fulfiller selection: default per contract on the Cluster claim,
       mapping to the per-engine `system-*` namespaces (§9.1, AD-9).
-- [ ] Conversion of the 31 `AppProfile`s in `apps/profiles/` to
-      `ComponentProfile`; presentation fields move to the store; `apps`
-      profiles gain `tenancy: [tenant]` and `expose[]` entries.
+- [x] Conversion tooling: `scripts/tools/convert-appprofiles.sh <profiles> <out>`
+      writes a `ComponentProfile` and a store listing per `AppProfile`, proves
+      every result against the CRD, and lists what a person must decide in
+      `REVIEW.md`. Against the catalogue today: 34 profiles, all admitted, 45
+      review items (egress and waiver reasons, routes that forwarded the
+      user's token, apps with no login of their own, dropped ingress
+      annotations).
+- [ ] Run the conversion in `apps`, settle the review items, commit the
+      profiles and hand the listings to the store.
 - [ ] Bundle digests; profile bundles in the mirror target of roadmap 1.9;
       `make lint-image-digests` covers them.
 - [ ] `Repository` claim: read credential (Argo) split from push credential

@@ -1,0 +1,2301 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.17.3
+  name: componentprofiles.gentianos.io
+spec:
+  group: gentianos.io
+  names:
+    kind: ComponentProfile
+    listKind: ComponentProfileList
+    plural: componentprofiles
+    shortNames:
+    - cprof
+    singular: componentprofile
+  scope: Cluster
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .spec.tenancy
+      name: Tenancy
+      type: string
+    - jsonPath: .spec.trustTier
+      name: Tier
+      type: string
+    - jsonPath: .spec.version
+      name: Version
+      type: string
+    name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: |-
+          ComponentProfile is a catalogue entry for a system service, an app or an
+          agent. The cluster holds only the profiles something installed refers to.
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: |-
+              ComponentProfileSpec is one catalogue entry: what a component is, what it
+              needs from the platform, and what it may expose. It carries no presentation
+              fields — names, descriptions, icons and tiles are the store's, outside the
+              cluster — and nothing in it grants anything: every permissive statement here
+              is a request that a named person answers on the Component.
+            properties:
+              backup:
+                description: Backup declares what a consistent copy of this component
+                  consists of.
+                properties:
+                  boundSecrets:
+                    description: |-
+                      BoundSecrets lists secrets this app's data is welded to: not derived, held
+                      outside the app's own captured data, and required to make sense of that
+                      data again. They travel inside the encrypted bundle.
+
+                      Most apps need none. Values under spec.appSecrets are HMAC-derived from
+                      the master password and reproduce byte-identically, and a secret an app
+                      writes into its own config file on a captured volume already travels with
+                      that volume.
+                    items:
+                      description: |-
+                        BackupBoundSecret references a secret in the tenant's OpenBao tree that must
+                        travel with the app's data.
+                      properties:
+                        keys:
+                          description: |-
+                            Keys selects individual keys at that path. When empty, every key there is
+                            captured.
+                          items:
+                            type: string
+                          type: array
+                        openBaoPath:
+                          description: |-
+                            OpenBaoPath is relative to this tenant's own prefix
+                            (gentian-os/tenants/{tenant}/), so a profile can only ever name secrets
+                            belonging to the tenant being captured.
+
+                            The pattern enforces that containment: it accepts slash-separated segments
+                            that each begin with an alphanumeric, which rejects a leading slash and
+                            any ".." segment — the only forms that escape the prefix. Expressing it as
+                            a pattern rather than a CEL rule is deliberate. CEL here costs more than
+                            it is worth: Kubernetes bounds the estimated cost of every rule in a CRD,
+                            and one rule over an unbounded string inside an unbounded list put the
+                            whole AppProfile schema over budget, so the API server refused to install
+                            it at all. The pattern is also the more precise statement, since a name
+                            like "my..app" traverses nothing and should be allowed.
+                          maxLength: 253
+                          minLength: 1
+                          pattern: ^[a-zA-Z0-9][a-zA-Z0-9._-]*(/[a-zA-Z0-9][a-zA-Z0-9._-]*)*$
+                          type: string
+                      required:
+                      - openBaoPath
+                      type: object
+                    type: array
+                  consistency:
+                    default: app
+                    description: |-
+                      Consistency selects whether all of this app's stores must be captured
+                      inside one quiesce window. Defaults to app.
+                    enum:
+                    - app
+                    - perStore
+                    type: string
+                  minRestoreVersion:
+                    description: |-
+                      MinRestoreVersion refuses to restore a bundle into an app older than this
+                      version, expressed as the app version the profile's chart deploys.
+                      Restoring older data into a newer app is allowed — that just runs the
+                      app's own migrations — but the reverse silently corrupts.
+                    type: string
+                  quiesce:
+                    description: Quiesce controls how writes are paused while the
+                      app is captured.
+                    properties:
+                      container:
+                        description: |-
+                          Container names the container to run Pre and Post in. Defaults to the
+                          first container in the app's pod.
+                        type: string
+                      mode:
+                        default: scaleDown
+                        description: |-
+                          Mode selects how writes are paused. Defaults to scaleDown, which works
+                          for every app; command is better where the app has a real maintenance
+                          mode, because it keeps the app reachable while it is captured.
+                        enum:
+                        - none
+                        - scaleDown
+                        - command
+                        type: string
+                      post:
+                        description: |-
+                          Post is the command that resumes writes. It must be safe to run when Pre
+                          never ran or already resumed — it also runs on the failure path, and an
+                          app left paused is an outage.
+                        items:
+                          type: string
+                        type: array
+                      pre:
+                        description: |-
+                          Pre is the command that pauses writes, required when mode is command.
+                          This is an argv, not a shell line: the first element is the binary and
+                          the rest are its arguments, so nothing is word-split or glob-expanded.
+                        items:
+                          type: string
+                        type: array
+                    type: object
+                    x-kubernetes-validations:
+                    - message: quiesce.pre is required when mode is command
+                      rule: self.mode != 'command' || (has(self.pre) && size(self.pre)
+                        > 0)
+                  restore:
+                    description: |-
+                      Restore declares what must run after this app's data is loaded and before
+                      it is resumed.
+                    properties:
+                      post:
+                        description: |-
+                          Post lists commands run in order once the app's data is loaded and before
+                          it is resumed — cache invalidation, re-indexing, fingerprinting. Each
+                          entry is an argv, for the same reason as BackupQuiesce.Pre.
+                        items:
+                          items:
+                            type: string
+                          type: array
+                        type: array
+                      verify:
+                        description: |-
+                          Verify is a single command that must exit zero before the restore is
+                          reported successful. Without one, a restore can only report that the data
+                          was written, not that the app can read it.
+                        items:
+                          type: string
+                        type: array
+                    type: object
+                  volumes:
+                    description: Volumes narrows what is captured from the app's PersistentVolumeClaims.
+                    properties:
+                      excludePaths:
+                        description: |-
+                          ExcludePaths drops matching paths from the captured archive, as glob
+                          patterns relative to each volume root. Use it for data the app rebuilds
+                          by itself — thumbnails, search indexes, caches — which is often most of
+                          an app's disk.
+
+                          Never exclude a path holding app configuration. An app that keeps the key
+                          its data was encrypted with in its own config file becomes unrestorable
+                          the moment that file is excluded, and nothing detects it until a restore.
+                        items:
+                          type: string
+                        type: array
+                      include:
+                        description: |-
+                          Include names the PersistentVolumeClaims to capture. When empty, every
+                          claim the app's Helm release owns is captured.
+                        items:
+                          type: string
+                        type: array
+                    type: object
+                type: object
+              customization:
+                description: Customization declares what a tenant may change about
+                  this component.
+                properties:
+                  addon:
+                    description: |-
+                      Addon declares that *this* profile is an addon rather than a deployable app,
+                      and how the base activates it. Set on profiles carrying
+                      gentianos.io/deployment-role: addon; Extension above is its counterpart on the
+                      base, describing the addon system this plugs into.
+                    properties:
+                      id:
+                        description: |-
+                          ID is what the hosting app's own addon system calls this addon: an Odoo
+                          module name, a Nextcloud app id, an Activepieces piece name. The operator
+                          passes it to the composition, which renders the app-native activation.
+                        maxLength: 128
+                        minLength: 1
+                        pattern: ^[a-zA-Z0-9][a-zA-Z0-9_.-]*$
+                        type: string
+                      of:
+                        description: |-
+                          Of is the AppProfile name of the base this addon activates into. It must be
+                          in the same family. Replaces the gentianos.io/requires-profile annotation,
+                          which pointed the same way but existed to auto-install a base when an addon
+                          was installed standalone — the relationship the L3 cleanup inverts.
+                        minLength: 1
+                        type: string
+                    required:
+                    - id
+                    - of
+                    type: object
+                  addonActivation:
+                    description: |-
+                      AddonActivation tells the platform how to turn a tenant's addon selection into
+                      Helm values for this base. Set on the base profile, not on the addons.
+                    properties:
+                      script:
+                        description: |-
+                          Script is written to ValuesPath with the token __GENTIAN_ADDON_IDS__ replaced
+                          by the space-separated addon ids. A literal token rather than a template
+                          placeholder: the composition is itself a Go template, so `{{ }}` here would be
+                          consumed as data and never re-rendered.
+
+                          It must be idempotent — it re-runs on every pod start, which is precisely what
+                          makes a changed selection converge without a migration step.
+                        maxLength: 8192
+                        minLength: 1
+                        type: string
+                      valuesPath:
+                        description: |-
+                          ValuesPath is the dot-separated Helm values path the rendered Script is
+                          written to, e.g. "nextcloud.hooks.before-starting". Path segments may not
+                          themselves contain a dot.
+                        maxLength: 253
+                        minLength: 1
+                        pattern: ^[a-zA-Z0-9][a-zA-Z0-9_-]*(\.[a-zA-Z0-9][a-zA-Z0-9_-]*)*$
+                        type: string
+                    required:
+                    - script
+                    - valuesPath
+                    type: object
+                  addonValues:
+                    description: |-
+                      AddonValues overlays extra Helm values onto this app's release when a given
+                      addon is selected. Set on the base profile, not on the addons.
+                    items:
+                      description: |-
+                        CustomizationAddonValues turns on part of a base's chart when an addon is
+                        selected.
+
+                        Some addons need more than a flag flipped inside the running app: Nextcloud's
+                        richdocuments is useless without a Collabora server, which the upstream chart
+                        ships as a subchart gated on collabora.enabled. Deploying it unconditionally
+                        costs every tenant ~1Gi of memory whether or not anyone opens a document.
+
+                        This lives on the base rather than on the addon on purpose. The base already
+                        owns that infrastructure — its tuning, its MAC waivers (allow-listed per
+                        profile, naming the base), and the in-app wiring that configures it. Splitting
+                        the trigger away from all of that would put one feature in two profiles.
+                      properties:
+                        values:
+                          description: |-
+                            Values are merged into the release values when that addon is selected, and
+                            omitted entirely when it is not.
+                          type: object
+                          x-kubernetes-preserve-unknown-fields: true
+                        whenAddon:
+                          description: |-
+                            WhenAddon is the app-side addon id — the value of spec.customization.addon.id
+                            on the addon's profile, e.g. "richdocuments", not the profile name.
+                          maxLength: 128
+                          minLength: 1
+                          pattern: ^[a-zA-Z0-9][a-zA-Z0-9_.-]*$
+                          type: string
+                      required:
+                      - values
+                      - whenAddon
+                      type: object
+                    type: array
+                  configure:
+                    description: Configure describes the L0 surface.
+                    properties:
+                      hotReload:
+                        description: HotReload reports whether a values change applies
+                          without a restart.
+                        type: boolean
+                      valuesSchema:
+                        description: |-
+                          ValuesSchema is the repo-relative path to the chart's values.schema.json.
+                          Its presence is what makes L0 machine-checkable.
+                        type: string
+                    type: object
+                  dropIns:
+                    description: 'DropIns declares the L1 surface: directories the
+                      app treats as extension points.'
+                    items:
+                      description: CustomizationDropIn declares one L1 drop-in directory.
+                      properties:
+                        format:
+                          description: |-
+                            Format is the content format expected in this directory. Content is parsed
+                            at admission so a malformed fragment fails there rather than at pod boot.
+                          enum:
+                          - ini
+                          - yaml
+                          - json
+                          - toml
+                          - xml
+                          - properties
+                          - files
+                          type: string
+                        maxBytes:
+                          description: |-
+                            MaxBytes caps the total tenant-supplied content for this drop-in. Zero
+                            means unset; consumers apply customization.DefaultDropInMaxBytes rather
+                            than the schema defaulting it — see the Grade field comment above for why.
+                          format: int32
+                          maximum: 1048576
+                          minimum: 1
+                          type: integer
+                        name:
+                          description: Name identifies the drop-in. Tenant drop-ins
+                            reference it by this name.
+                          maxLength: 63
+                          pattern: ^[a-z][a-z0-9-]*$
+                          type: string
+                        path:
+                          description: Path is the absolute in-container directory
+                            the files are mounted at.
+                          pattern: ^/.*
+                          type: string
+                        source:
+                          description: Source is the Kubernetes object the content
+                            is delivered through.
+                          enum:
+                          - configMap
+                          - secret
+                          type: string
+                        tenantEditable:
+                          description: |-
+                            TenantEditable allows tenant admins to supply files here through
+                            Tenant.spec.apps[].config.dropIns. Not every drop-in directory is safe to
+                            expose — a policy file usually is not.
+                          type: boolean
+                        upstreamDocumented:
+                          description: |-
+                            UpstreamDocumented reports whether upstream documents this path as an
+                            extension point. When false the mount is really L4, not L1: upstream has
+                            made no promise about the path surviving a reorganisation.
+                          type: boolean
+                      required:
+                      - format
+                      - name
+                      - path
+                      type: object
+                    type: array
+                    x-kubernetes-list-map-keys:
+                    - name
+                    x-kubernetes-list-type: map
+                  extension:
+                    description: 'Extension describes the L3 surface: the app''s own
+                      addon system.'
+                    properties:
+                      addonPath:
+                        description: |-
+                          AddonPath is the in-container directory addons are loaded from (Odoo's
+                          custom-addons, Nextcloud's custom_apps).
+                        pattern: ^/.*
+                        type: string
+                      apiDocs:
+                        description: APIDocs links to the extension API documentation.
+                        type: string
+                      apiStability:
+                        description: |-
+                          APIStability rates the extension API. When this is not "stable", the L2/L3
+                          tie-break in the decision procedure defaults to L2.
+                        enum:
+                        - stable
+                        - evolving
+                        - undocumented
+                        - none
+                        type: string
+                      delivery:
+                        description: Delivery lists the supported ways an addon reaches
+                          the running app.
+                        items:
+                          description: CustomizationDelivery is how an L3 addon reaches
+                            the running app.
+                          enum:
+                          - git-sidecar
+                          - image-layer
+                          - addon-profile
+                          - app-store-api
+                          type: string
+                        type: array
+                        x-kubernetes-list-type: set
+                      mechanism:
+                        description: |-
+                          Mechanism names the app's extension system (for example "odoo-addon",
+                          "nextcloud-app", "xwiki-extension", "activepieces-piece").
+                        pattern: ^[a-z][a-z0-9-]*$
+                        type: string
+                      perTenantAddons:
+                        description: |-
+                          PerTenantAddons reports whether tenants may have divergent addon sets.
+                          Only valid when the app runs in the tenant's own namespace — a shared
+                          runtime with per-tenant code is a cross-tenant data leak waiting to happen.
+                        type: boolean
+                      registry:
+                        description: Registry is the repository or index addons are
+                          sourced from.
+                        type: string
+                      testMatrix:
+                        description: TestMatrix lists the upstream app versions addons
+                          are tested against.
+                        items:
+                          type: string
+                        type: array
+                        x-kubernetes-list-type: set
+                    required:
+                    - mechanism
+                    type: object
+                  fork:
+                    description: 'Fork describes the L6 surface: whether a fork is
+                      permitted, and who owns it.'
+                    properties:
+                      allowed:
+                        description: Allowed gates whether a fork is a permitted outcome
+                          for this app.
+                        type: boolean
+                      cveWatch:
+                        description: |-
+                          CVEWatch reports whether the fork has active vulnerability monitoring.
+                          A fork without it is an unowned liability.
+                        type: boolean
+                      owner:
+                        description: |-
+                          Owner is the team or organisation accountable for the fork, including its
+                          CVE response. Free-form so an external maintainer can hold it later.
+                        type: string
+                      repo:
+                        description: Repo is the Gentian-owned fork.
+                        type: string
+                      upstream:
+                        description: Upstream is the project the fork diverged from.
+                        type: string
+                    type: object
+                  grade:
+                    description: |-
+                      Grade rates customization readiness (see CustomizationGrade). It summarises
+                      the rubric score recorded in the profile's customization.md. Empty is
+                      equivalent to GradeUnknown — treat it that way rather than defaulting it
+                      in the schema, which would make every profile that omits it permanently
+                      diff against its own git manifest under GitOps tooling that applies CRD
+                      defaults server-side (as this one did, live, before this comment existed).
+                    enum:
+                    - A
+                    - B
+                    - C
+                    - D
+                    - unknown
+                    type: string
+                  ladderDocs:
+                    description: LadderDocs links to human documentation of this app's
+                      ladder.
+                    type: string
+                  patch:
+                    description: 'Patch describes the L5 surface: whether a patch
+                      series is permitted.'
+                    properties:
+                      allowed:
+                        description: Allowed gates whether a patch series may be carried
+                          for this app at all.
+                        type: boolean
+                      buildRepo:
+                        description: BuildRepo is the repository holding the pinned
+                          upstream and the series.
+                        type: string
+                      requiresApproval:
+                        description: RequiresApproval names the role that must approve
+                          a new patch.
+                        type: string
+                      seriesPath:
+                        description: SeriesPath is the repo-relative path to the quilt-style
+                          series file.
+                        type: string
+                    type: object
+                  publishes:
+                    description: |-
+                      Publishes describes what this app offers so that *another* app can be built
+                      at L2 against it. It is not a rung of this app.
+                    properties:
+                      apis:
+                        description: APIs lists the published interfaces a companion
+                          app can build against.
+                        items:
+                          description: CustomizationPublishedAPI is one interface
+                            offered to companion apps.
+                          properties:
+                            auth:
+                              description: Auth is the authentication method companions
+                                must use.
+                              type: string
+                            contract:
+                              description: Contract is the Gentian contract name this
+                                API satisfies.
+                              pattern: ^[a-z][a-z0-9-]*$
+                              type: string
+                            path:
+                              description: Path is the base path the API is served
+                                at.
+                              type: string
+                            protocol:
+                              description: Protocol is the wire protocol (for example
+                                "http-json", "webdav", "matrix").
+                              type: string
+                            spec:
+                              description: Spec names the interface description format
+                                (for example "openapi", "graphql").
+                              type: string
+                          required:
+                          - contract
+                          type: object
+                        type: array
+                        x-kubernetes-list-map-keys:
+                        - contract
+                        x-kubernetes-list-type: map
+                    type: object
+                  repackage:
+                    description: 'Repackage describes the L4 surface: who owns the
+                      packaging.'
+                    properties:
+                      chartOwnership:
+                        description: |-
+                          ChartOwnership records whether the chart is upstream's, Gentian-authored, or
+                          a vendored copy. A vendored chart is a fork of the packaging and needs an
+                          UPSTREAM.md.
+                        enum:
+                        - upstream
+                        - patched
+                        - gentian-owned
+                        - vendored
+                        type: string
+                      compositionRef:
+                        description: |-
+                          CompositionRef names the profile-scoped Crossplane composition, when the app
+                          needs a custom managed-resource graph.
+                        type: string
+                    type: object
+                  rubricScore:
+                    description: |-
+                      RubricScore is the §4.1 rubric total backing Grade (0-8). CI checks that the
+                      score and the grade agree: A>=7, B 5-6, C 3-4, D<=2.
+                    format: int32
+                    maximum: 8
+                    minimum: 0
+                    type: integer
+                  supportedRungs:
+                    description: |-
+                      SupportedRungs lists the rungs at which this app can be customized.
+                      L2 must not be listed: a companion app is always buildable, so L2 is a
+                      property of the customization rather than of the target.
+                    items:
+                      description: |-
+                        CustomizationRung identifies a rung of the customization ladder.
+                        Rungs are ordered by how much of the app's own delivery artifact Gentian owns,
+                        which is what determines upgrade cost.
+                      enum:
+                      - L0
+                      - L1
+                      - L2
+                      - L3
+                      - L4
+                      - L5
+                      - L6
+                      type: string
+                    type: array
+                    x-kubernetes-list-type: set
+                type: object
+              expose:
+                description: |-
+                  Expose declares entry points. Forbidden for system tenancy. Every entry
+                  states its authMode; there is no default.
+                items:
+                  description: ExposureSpec declares one entry point.
+                  properties:
+                    authMode:
+                      description: AuthMode is mandatory and has no default.
+                      enum:
+                      - oidc
+                      - jwt
+                      - bearer
+                      - basic
+                      - signature
+                      - none
+                      type: string
+                    backend:
+                      description: Backend is the Service the entry routes to.
+                      properties:
+                        port:
+                          format: int32
+                          maximum: 65535
+                          minimum: 1
+                          type: integer
+                        service:
+                          minLength: 1
+                          type: string
+                      required:
+                      - port
+                      - service
+                      type: object
+                    denyPaths:
+                      description: |-
+                        DenyPaths are refused even where Paths admits them. Deny wins regardless
+                        of specificity, so a broad allow with narrow denials stays readable.
+                      items:
+                        type: string
+                      type: array
+                      x-kubernetes-list-type: set
+                    forwardToken:
+                      description: |-
+                        ForwardToken asks the gateway to pass the edge access token to this
+                        backend. A backend otherwise gets identity headers, not a bearer that is
+                        also valid at the director and at every sibling.
+                      type: boolean
+                    name:
+                      maxLength: 40
+                      pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
+                      type: string
+                    paths:
+                      description: Paths this entry serves. Empty means the whole
+                        host.
+                      items:
+                        type: string
+                      type: array
+                      x-kubernetes-list-type: set
+                    source:
+                      description: Source restricts who may call this entry, before
+                        authMode is considered.
+                      properties:
+                        cidrs:
+                          description: CIDRs admitted, after the real client IP is
+                            resolved at the edge.
+                          items:
+                            type: string
+                          type: array
+                          x-kubernetes-list-type: set
+                        component:
+                          description: |-
+                            Component names another installed component whose pods may call this
+                            entry. Preferred over CIDRs, which age badly.
+                          type: string
+                      type: object
+                      x-kubernetes-validations:
+                      - message: exactly one of cidrs or component
+                        rule: (has(self.cidrs) && self.cidrs.size() > 0) != (has(self.component)
+                          && self.component.size() > 0)
+                    stripPrefix:
+                      description: |-
+                        StripPrefix removes the matched path prefix before the request reaches
+                        the backend.
+                      type: boolean
+                    subDomain:
+                      description: |-
+                        SubDomain is the host label of this entry in the tenant's zone. Empty
+                        means the component's own name.
+                      pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
+                      type: string
+                    surface:
+                      description: Surface selects where this entry is published.
+                      enum:
+                      - gateway
+                      - perimeter
+                      type: string
+                  required:
+                  - authMode
+                  - backend
+                  - name
+                  - surface
+                  type: object
+                  x-kubernetes-validations:
+                  - message: 'forwardToken is meaningless on a perimeter entry: it
+                      has no session'
+                    rule: '!(self.surface == ''perimeter'' && has(self.forwardToken)
+                      && self.forwardToken)'
+                  - message: 'a perimeter entry cannot use authMode oidc: the session
+                      lives on the gateway'
+                    rule: self.surface != 'perimeter' || self.authMode != 'oidc'
+                type: array
+                x-kubernetes-list-map-keys:
+                - name
+                x-kubernetes-list-type: map
+              extensions:
+                description: |-
+                  Extensions are containers shipped inside the component's own pod: the
+                  only escape hatch, and one that cannot create a cluster-scoped object.
+                items:
+                  description: |-
+                    AppSidecarSpec declares a companion service deployed alongside the primary
+                    app by a purpose-built composition (for example a sidecar with its own ingress).
+                  properties:
+                    appSecrets:
+                      description: |-
+                        AppSecrets are sidecar-internal secrets stored at
+                        gentian-os/tenants/{tenant}/apps/{parent}-{name}/internal/{secret}.
+                      items:
+                        description: |-
+                          AppSecret declares an app-internal secret the orchestrator must generate
+                          and inject. These are credentials the app needs (admin passwords, session
+                          signing keys, cluster tokens) that are not provided by any kernel service.
+                        properties:
+                          name:
+                            description: |-
+                              Name is the logical identifier for this secret (e.g., "admin_password").
+                              Used as the suffix in the OpenBao path:
+                              gentian-os/tenants/{tenant}/apps/{app}/internal/{name}
+                            maxLength: 64
+                            minLength: 1
+                            pattern: ^[a-z0-9_]+$
+                            type: string
+                          valuePath:
+                            description: |-
+                              ValuePath is the dot-notation (or bracket-notation) Helm value key that
+                              should receive the generated secret value.
+                            minLength: 1
+                            type: string
+                        required:
+                        - name
+                        - valuePath
+                        type: object
+                      type: array
+                    chart:
+                      description: Chart references the sidecar Helm chart.
+                      properties:
+                        name:
+                          description: Name is the chart name within the repository.
+                          minLength: 1
+                          type: string
+                        repository:
+                          description: Repository is the OCI repository URL (e.g.,
+                            oci://registry.example.com/charts).
+                          minLength: 1
+                          type: string
+                        version:
+                          description: Version is the chart version to deploy.
+                          minLength: 1
+                          type: string
+                      required:
+                      - name
+                      - repository
+                      - version
+                      type: object
+                    extraValues:
+                      description: ExtraValues are merged into the sidecar Helm release
+                        values.
+                      type: object
+                      x-kubernetes-preserve-unknown-fields: true
+                    kernelRequirements:
+                      description: KernelRequirements declares kernel services the
+                        sidecar needs.
+                      properties:
+                        cache:
+                          description: Cache specifies a caching backend requirement.
+                          properties:
+                            engine:
+                              default: redis
+                              description: Engine selects the caching backend. Defaults
+                                to redis.
+                              enum:
+                              - redis
+                              - memcached
+                              type: string
+                          type: object
+                        database:
+                          description: Database specifies a relational database requirement.
+                          properties:
+                            allowDynamicDatabaseCreation:
+                              description: |-
+                                AllowDynamicDatabaseCreation lets the app create databases of its own at
+                                runtime — mariadb via GRANT ALL PRIVILEGES ON *.*, postgresql via role
+                                CREATEDB. Ask for it only when creating databases is what the app is for
+                                (a data explorer, say); an app that merely stores its own state must not.
+
+                                Databases created this way are still purged with the app: they are owned
+                                by the app role, and uninstall --purge drops everything that role owns.
+                                They are not otherwise governed — the tenant chooses the names, and they
+                                do not appear in the catalogue's provisioning model.
+
+                                Omitted is equivalent to false, which is also Go's zero value for bool —
+                                left undefaulted at the schema level so profiles that omit it don't
+                                permanently diff against GitOps tooling that applies CRD defaults
+                                server-side.
+                              type: boolean
+                            databasePerTenant:
+                              default: true
+                              description: |-
+                                DatabasePerTenant creates a separate database for each tenant (default true).
+                                Set to false only for shared-schema apps.
+                              type: boolean
+                            engine:
+                              default: postgresql
+                              description: Engine selects the database engine. Defaults
+                                to postgresql.
+                              enum:
+                              - postgresql
+                              - mariadb
+                              type: string
+                            schemaPreference:
+                              description: |-
+                                SchemaPreference decides which schema the app's role resolves unqualified
+                                table names against first.
+
+                                Default (app-schema) puts the per-tenant schema ahead of public, which is
+                                what an app doing its own schema isolation expects. Apps whose migrations
+                                create everything in public — and then look it up unqualified — need
+                                public first, or the migration writes to one schema and the query reads
+                                the other.
+
+                                This is declared rather than inferred: the platform cannot know an app's
+                                migration behaviour from its name, and matching on the name is how a
+                                second app with the same need silently gets the wrong search_path.
+                              enum:
+                              - app-schema
+                              - public
+                              type: string
+                          type: object
+                        identity:
+                          description: Identity specifies OIDC requirements.
+                          properties:
+                            oidc:
+                              description: |-
+                                OIDC describes the OIDC client to register in the tenant's Keycloak realm.
+                                When set, the composition emits a Client CR so every newly deployed tenant
+                                automatically gets the correct Keycloak client without manual setup.
+                                Leave unset for apps whose Keycloak client is managed externally
+                                (e.g. kernel-realm clients managed via keycloak-config).
+                              properties:
+                                accessType:
+                                  default: PUBLIC
+                                  description: |-
+                                    AccessType controls whether the client requires a shared secret
+                                    (CONFIDENTIAL, for server-side apps) or relies on PKCE without a secret
+                                    (PUBLIC, for SPAs and mobile apps). Defaults to PUBLIC.
+                                  enum:
+                                  - PUBLIC
+                                  - CONFIDENTIAL
+                                  type: string
+                                backchannelLogoutUrl:
+                                  description: |-
+                                    BackchannelLogoutURL is the endpoint Keycloak calls for backchannel logout
+                                    notifications (RFC 7009). Supports ${TENANT_DOMAIN} substitution.
+                                  type: string
+                                clientId:
+                                  description: ClientID is the OIDC client identifier
+                                    registered in Keycloak.
+                                  minLength: 1
+                                  type: string
+                                directAccessGrantsEnabled:
+                                  description: |-
+                                    DirectAccessGrantsEnabled enables the Resource Owner Password Credentials
+                                    grant (legacy / CLI apps). Defaults to false.
+                                  type: boolean
+                                name:
+                                  description: |-
+                                    Name is the human-readable display name shown in the Keycloak admin UI.
+                                    Defaults to ClientID when empty.
+                                  type: string
+                                oidcPackRef:
+                                  description: |-
+                                    OIDCPackRef selects a pack entry from an OIDCPackCatalog CR when the
+                                    pack key differs from clientId. When empty, clientId is used as the pack key.
+                                  type: string
+                                postLogoutRedirectUris:
+                                  description: |-
+                                    PostLogoutRedirectURIs lists the allowed post-logout redirect URIs.
+                                    Supports ${TENANT_DOMAIN} substitution.
+                                  items:
+                                    type: string
+                                  type: array
+                                redirectUris:
+                                  description: |-
+                                    RedirectURIs lists the valid OAuth2 redirect URIs for the authorization
+                                    code flow. Supports ${TENANT_DOMAIN} substitution.
+                                  items:
+                                    type: string
+                                  type: array
+                              required:
+                              - clientId
+                              type: object
+                            saml:
+                              description: SAML describes the SAML client to register
+                                in the tenant's Keycloak realm.
+                              properties:
+                                acsUrl:
+                                  description: ACSURL is the SAML Assertion Consumer
+                                    Service URL for the auth callback.
+                                  minLength: 1
+                                  type: string
+                                entityId:
+                                  description: EntityID is the SAML Service Provider
+                                    Entity ID registered in Keycloak.
+                                  minLength: 1
+                                  type: string
+                              required:
+                              - acsUrl
+                              - entityId
+                              type: object
+                          type: object
+                        mail:
+                          description: Mail specifies SMTP and/or IMAP requirements.
+                          properties:
+                            imap:
+                              description: IMAP requests inbound mail (IMAP) credentials.
+                              type: object
+                            smtp:
+                              description: SMTP requests outbound mail (SMTP submission)
+                                credentials.
+                              type: object
+                          type: object
+                        mcp:
+                          description: |-
+                            MCP specifies a Model Context Protocol server requirement.
+                            When enabled, the orchestrator registers the app's MCP endpoint in the
+                            kernel MCP registry and wires OIDC authentication.
+                          properties:
+                            auth:
+                              default: oidc
+                              description: Auth is the authentication method for MCP
+                                calls.
+                              enum:
+                              - oidc
+                              - none
+                              type: string
+                            enabled:
+                              default: true
+                              description: Enabled activates MCP endpoint registration.
+                              type: boolean
+                            endpoint:
+                              default: /mcp
+                              description: Endpoint is the HTTP path where the app
+                                exposes its MCP server.
+                              pattern: ^/.*
+                              type: string
+                          required:
+                          - enabled
+                          type: object
+                        storage:
+                          description: Storage specifies object storage (S3) and/or
+                            filesystem (WebDAV) requirements.
+                          properties:
+                            files:
+                              description: Files requests WebDAV access to the tenant's
+                                file-storage service.
+                              properties:
+                                capabilities:
+                                  description: Capabilities lists the required access
+                                    capabilities.
+                                  items:
+                                    type: string
+                                  type: array
+                                protocol:
+                                  default: webdav
+                                  description: Protocol is the access protocol. Currently
+                                    only webdav is supported.
+                                  enum:
+                                  - webdav
+                                  type: string
+                              type: object
+                            s3:
+                              description: S3 requests a per-tenant S3 bucket via
+                                the MinIO kernel service.
+                              properties:
+                                bucketPerTenant:
+                                  default: true
+                                  description: BucketPerTenant creates a dedicated
+                                    bucket for each tenant. Defaults to true.
+                                  type: boolean
+                              type: object
+                          type: object
+                      type: object
+                    name:
+                      description: |-
+                        Name identifies the sidecar (e.g. "sidecar-meet"). OpenBao paths and OIDC jobs
+                        use the synthetic app key {parentProfile}-{name} (e.g. "catalogue-test-app-sidecar-meet").
+                      minLength: 1
+                      pattern: ^[a-z0-9-]+$
+                      type: string
+                    stableServiceName:
+                      description: |-
+                        StableServiceName is the Kubernetes Service name the tenant ingress
+                        reconciler routes to (e.g. "sidecar-web"). When set, the composition emits
+                        a stable ClusterIP alias pointing at the sidecar release.
+                      type: string
+                    stableServicePort:
+                      description: |-
+                        StableServicePort is the port on StableServiceName. Consumers (e.g. the
+                        odoo-cb-base composition template) already apply their own `default 80`
+                        fallback when this is omitted — left undefaulted at the schema level so
+                        profiles that omit it don't permanently diff against GitOps tooling that
+                        applies CRD defaults server-side.
+                      format: int32
+                      type: integer
+                  required:
+                  - chart
+                  - name
+                  type: object
+                type: array
+              hooks:
+                description: Hooks are lifecycle actions at install, upgrade and resync.
+                properties:
+                  postInstall:
+                    description: PostInstall runs once after the component is first
+                      ready.
+                    properties:
+                      envFrom:
+                        description: |-
+                          EnvFrom names Secrets already present in the tenant namespace to
+                          inject wholesale (matches how this app's own secrets already land —
+                          e.g. llm-credentials-{app}, {app}-sensitive-values).
+                        items:
+                          type: string
+                        type: array
+                      image:
+                        description: Image is the container image the Job runs.
+                        type: string
+                      readOnlyPVC:
+                        description: |-
+                          ReadOnlyPVC optionally mounts an existing PersistentVolumeClaim
+                          read-only, for the rare case a bootstrap script needs information only
+                          available in the app's own persisted data and not obtainable over the
+                          network. Requires a storage class that supports concurrent multi-pod
+                          mounts even for RWO-labeled claims (e.g. NFS-backed) — most profiles
+                          won't need this.
+                        properties:
+                          claimName:
+                            description: ClaimName is the PersistentVolumeClaim name
+                              in the tenant namespace.
+                            type: string
+                          mountPath:
+                            description: MountPath is where the claim is mounted read-only
+                              in the Job container.
+                            type: string
+                        required:
+                        - claimName
+                        - mountPath
+                        type: object
+                      script:
+                        description: Script is the shell script body, run via `/bin/sh
+                          -c`.
+                        type: string
+                      serviceAccountName:
+                        description: |-
+                          ServiceAccountName runs the Job under an existing ServiceAccount in
+                          the tenant namespace (e.g. one already granted an OpenBao Kubernetes-
+                          auth role by another part of this app's composition), instead of the
+                          namespace default. The composition does not create this account or
+                          its RBAC — the profile/composition that needs it is responsible for
+                          both, same as any other Kubernetes-native RBAC setup.
+                        type: string
+                    required:
+                    - image
+                    - script
+                    type: object
+                  provisioning:
+                    description: |-
+                      Provisioning configures the component through its own API after install
+                      and on resync.
+                    properties:
+                      privilegedRole:
+                        description: |-
+                          PrivilegedRole maps gentian:tenant:<t>:app-admins members to an in-app
+                          administrator role (for example the Nextcloud "admin" group).
+                        properties:
+                          kind:
+                            allOf:
+                            - enum:
+                              - group
+                            - enum:
+                              - group
+                            description: Kind is the application's native role type.
+                              Only "group" is supported today.
+                            type: string
+                          name:
+                            description: |-
+                              Name is the in-app role identifier (for example Nextcloud group "admin").
+                              It is passed to the sync Job as GENTIAN_PRIVILEGED_ROLE. Apps whose
+                              privilege model is a flag rather than a named role may ignore it; set a
+                              descriptive value anyway so the declaration reads honestly.
+                            maxLength: 64
+                            minLength: 1
+                            type: string
+                        required:
+                        - kind
+                        - name
+                        type: object
+                      syncJob:
+                        description: |-
+                          SyncJob is how this app applies PrivilegedRole. The operator resolves
+                          app-admins membership, publishes it, and runs this Job; the script inside
+                          speaks whatever protocol the application happens to expose.
+
+                          The division is deliberate and load-bearing: resolving a Keycloak group,
+                          detecting membership changes and running a Job to completion are platform
+                          concerns, so they live here. Knowing that one app wants a JSON-RPC call
+                          and another an OCS POST is not, so it lives in the catalogue entry that
+                          owns that app. No application's protocol, endpoint or account model may
+                          be encoded in the kernel — see the platform boundary in
+                          gentian-apps/docs/app-profile-guide.md.
+                        properties:
+                          env:
+                            description: |-
+                              Env binds individual Secret keys to environment variables. Prefer this
+                              over EnvFrom for platform-managed credentials: the keys of an app's
+                              sensitive-values Secret are hyphenated (db-host, internal-admin_password),
+                              and Kubernetes silently drops any envFrom key that is not a valid
+                              identifier — the variable simply never appears and the script fails on
+                              something unrelated.
+                            items:
+                              description: |-
+                                ProvisioningEnvVar binds one key of a Secret in the tenant namespace to an
+                                environment variable in the Job.
+                              properties:
+                                name:
+                                  description: Name of the environment variable.
+                                  pattern: ^[A-Za-z_][A-Za-z0-9_]*$
+                                  type: string
+                                secretKeyRef:
+                                  description: SecretKeyRef is the Secret key to read
+                                    it from.
+                                  properties:
+                                    key:
+                                      minLength: 1
+                                      type: string
+                                    name:
+                                      minLength: 1
+                                      type: string
+                                  required:
+                                  - key
+                                  - name
+                                  type: object
+                              required:
+                              - name
+                              - secretKeyRef
+                              type: object
+                            type: array
+                          envFrom:
+                            description: |-
+                              EnvFrom names Secrets in the tenant namespace whose keys become
+                              environment variables. Only useful when every key is already a valid
+                              environment variable name; see Env above.
+                            items:
+                              type: string
+                            type: array
+                          image:
+                            description: |-
+                              Image the script runs in. Usually the application's own image, which
+                              already has whatever client library its API needs.
+                            minLength: 1
+                            type: string
+                          script:
+                            description: |-
+                              Script executed with /bin/sh. It is re-run whenever membership changes,
+                              so it must be idempotent: converge the app to exactly the membership it
+                              is given rather than applying a delta.
+
+                              The operator provides:
+                                GENTIAN_APP_ADMINS_FILE  path to a JSON array of the privileged
+                                                         members, each {"id","username","email"}
+                                GENTIAN_PRIVILEGED_ROLE  spec.provisioning.privilegedRole.name
+                                GENTIAN_TENANT           tenant name
+                                GENTIAN_APP              this profile's name
+                              plus every key of envFrom below.
+                            minLength: 1
+                            type: string
+                          serviceAccountName:
+                            description: ServiceAccountName runs the Job under an
+                              existing ServiceAccount.
+                            type: string
+                        required:
+                        - image
+                        - script
+                        type: object
+                    type: object
+                type: object
+              integrations:
+                description: |-
+                  Integrations are opportunistic relationships with peer components. An
+                  absent peer is normal. Each binding is subject to the tenant's grant.
+                items:
+                  description: IntegrationRef identifies an optional integration contract
+                    this app can consume.
+                  properties:
+                    capabilities:
+                      description: Capabilities lists the specific capabilities required
+                        from the contract.
+                      items:
+                        type: string
+                      type: array
+                    contract:
+                      description: Contract is the name of the contract to consume.
+                      minLength: 1
+                      type: string
+                    provider:
+                      description: Provider is the expected provider app by profile
+                        name.
+                      type: string
+                  required:
+                  - contract
+                  type: object
+                type: array
+              package:
+                description: Package is how the component is deployed.
+                properties:
+                  apiIntegration:
+                    description: |-
+                      APIIntegration describes a component that is an API client rather than a
+                      workload.
+                    properties:
+                      baseUrl:
+                        description: BaseURL is the external service origin (e.g.
+                          https://corp.gentian.org).
+                        minLength: 1
+                        pattern: ^https?://.+
+                        type: string
+                      runtime:
+                        allOf:
+                        - enum:
+                          - redirect
+                          - proxy
+                          - portal-proxy
+                        - enum:
+                          - redirect
+                          - proxy
+                          - portal-proxy
+                        default: redirect
+                        description: |-
+                          Runtime selects how the tenant reaches the external service.
+                          redirect sends the browser to baseUrl (default).
+                          proxy routes through a kernel API proxy (reserved for a later phase).
+                          portal-proxy reverse-proxies requests through the portal BFF same-origin.
+                        type: string
+                      tenantBinding:
+                        allOf:
+                        - enum:
+                          - tenant-domain
+                          - none
+                        - enum:
+                          - tenant-domain
+                          - none
+                        default: tenant-domain
+                        description: |-
+                          TenantBinding declares how the tenant is identified to the external
+                          service. tenant-domain appends the tenant effective domain as a query
+                          parameter (default). none passes no tenant hint.
+                        type: string
+                    required:
+                    - baseUrl
+                    type: object
+                  chart:
+                    description: Chart is the Helm chart or OCI artifact.
+                    properties:
+                      name:
+                        description: Name is the chart name within the repository.
+                        minLength: 1
+                        type: string
+                      repository:
+                        description: Repository is the OCI repository URL (e.g., oci://registry.example.com/charts).
+                        minLength: 1
+                        type: string
+                      version:
+                        description: Version is the chart version to deploy.
+                        minLength: 1
+                        type: string
+                    required:
+                    - name
+                    - repository
+                    - version
+                    type: object
+                  compositionRef:
+                    description: |-
+                      CompositionRef names a Crossplane composition for components that are
+                      not a single chart.
+                    type: string
+                  deploymentMethod:
+                    description: DeploymentMethod selects how the component is rolled
+                      out.
+                    enum:
+                    - crossplane
+                    - api
+                    type: string
+                  extraValues:
+                    description: ExtraValues are static chart values.
+                    type: object
+                    x-kubernetes-preserve-unknown-fields: true
+                  valueMapping:
+                    description: ValueMapping places what the platform granted into
+                      the chart's values.
+                    properties:
+                      cache:
+                        description: Cache maps caching backend values to Helm keys.
+                        properties:
+                          hostKey:
+                            description: HostKey is the Helm value key for the cache
+                              host.
+                            type: string
+                          passwordKey:
+                            description: PasswordKey is the Helm value key for the
+                              cache password/ACL token.
+                            type: string
+                          portKey:
+                            description: PortKey is the Helm value key for the cache
+                              port.
+                            type: string
+                          userKey:
+                            description: |-
+                              UserKey is the Helm value key for the cache ACL username. The kernel
+                              provisions a per-app user and records it alongside the password, so profiles
+                              should map this key rather than reconstructing the naming rule themselves.
+                              Engines without per-app users (memcached) leave it unset.
+                            type: string
+                        type: object
+                      database:
+                        description: Database maps database connection values to Helm
+                          keys.
+                        properties:
+                          hostKey:
+                            description: HostKey is the Helm value key for the database
+                              host.
+                            type: string
+                          nameKey:
+                            description: NameKey is the Helm value key for the database
+                              name.
+                            type: string
+                          passwordKey:
+                            description: PasswordKey is the Helm value key for the
+                              database password.
+                            type: string
+                          portKey:
+                            description: PortKey is the Helm value key for the database
+                              port.
+                            type: string
+                          readNameKey:
+                            description: |-
+                              ReadNameKey is the Helm value key for the read-replica database name.
+                              Useful for charts that expose separate read and write connection endpoints
+                              (e.g. OX App Suite's global.mysql.readDatabase).
+                            type: string
+                          readUserKey:
+                            description: |-
+                              ReadUserKey is the Helm value key for the read-replica database user.
+                              Useful for charts that expose separate read and write connection endpoints
+                              (e.g. OX App Suite's global.mysql.auth.readUser).
+                            type: string
+                          userKey:
+                            description: UserKey is the Helm value key for the database
+                              user.
+                            type: string
+                        type: object
+                      imap:
+                        description: IMAP maps mail access values to Helm keys.
+                        properties:
+                          hostKey:
+                            description: HostKey is the Helm value key for the IMAP
+                              host.
+                            type: string
+                          portKey:
+                            description: PortKey is the Helm value key for the IMAP
+                              port.
+                            type: string
+                        type: object
+                      integrations:
+                        additionalProperties:
+                          description: IntegrationValueMapping maps integration credentials
+                            to Helm chart keys.
+                          properties:
+                            endpointKey:
+                              description: EndpointKey is the Helm value key for the
+                                integration's service endpoint URL.
+                              type: string
+                            passwordKey:
+                              description: PasswordKey is the Helm value key for the
+                                integration password.
+                              type: string
+                            userKey:
+                              description: UserKey is the Helm value key for the integration
+                                username.
+                              type: string
+                          type: object
+                        description: |-
+                          Integrations maps optional integration credentials to Helm keys,
+                          keyed by the contract name.
+                        type: object
+                      oidc:
+                        description: OIDC maps OIDC provider values to Helm keys.
+                        properties:
+                          clientIdKey:
+                            description: ClientIDKey is the Helm value key for the
+                              OIDC client ID.
+                            type: string
+                          clientSecretKey:
+                            description: ClientSecretKey is the Helm value key for
+                              the OIDC client secret.
+                            type: string
+                          clientSecretOpenbaoPath:
+                            description: |-
+                              ClientSecretOpenbaoPath overrides the default per-tenant OpenBao secret
+                              path (gentian-os/tenants/{tenant}/apps/{app}/oidc) for reading the OIDC
+                              client secret. Use this for apps that share a kernel-realm OIDC client
+                              whose secret is stored at a fixed, non-per-tenant location.
+                              Example: "gentian-os/kernel/apps/ox"
+                            type: string
+                          clientSecretOpenbaoProperty:
+                            description: |-
+                              ClientSecretOpenbaoProperty overrides the property name within the
+                              OpenBao secret (default: "client-secret"). Only used together with
+                              ClientSecretOpenbaoPath.
+                            type: string
+                          issuerKey:
+                            description: IssuerKey is the Helm value key for the OIDC
+                              issuer URL.
+                            type: string
+                        type: object
+                      s3:
+                        description: S3 maps object storage values to Helm keys.
+                        properties:
+                          accessKeyKey:
+                            description: AccessKeyKey is the Helm value key for the
+                              S3 access key ID.
+                            type: string
+                          bucketKey:
+                            description: BucketKey is the Helm value key for the bucket
+                              name.
+                            type: string
+                          endpointKey:
+                            description: EndpointKey is the Helm value key for the
+                              S3 endpoint URL.
+                            type: string
+                          regionKey:
+                            description: RegionKey is the Helm value key for the S3
+                              region.
+                            type: string
+                          secretKeyKey:
+                            description: SecretKeyKey is the Helm value key for the
+                              S3 secret access key.
+                            type: string
+                        type: object
+                      smtp:
+                        description: SMTP maps mail submission values to Helm keys.
+                        properties:
+                          hostKey:
+                            description: HostKey is the Helm value key for the SMTP
+                              host.
+                            type: string
+                          passwordKey:
+                            description: PasswordKey is the Helm value key for the
+                              SMTP password.
+                            type: string
+                          portKey:
+                            description: PortKey is the Helm value key for the SMTP
+                              port.
+                            type: string
+                          userKey:
+                            description: UserKey is the Helm value key for the SMTP
+                              username.
+                            type: string
+                        type: object
+                      volumes:
+                        description: |-
+                          Volumes names where this chart takes extra pod volumes and mounts, for
+                          charts that do not use the conventional extraVolumes/extraVolumeMounts.
+                          Used when the platform has to mount something into the app itself, such as
+                          the staging CA trust bundle.
+                        properties:
+                          volumeMountsPath:
+                            description: |-
+                              VolumeMountsPath is the dot-separated values path holding a list of
+                              container volume mounts (e.g. "volumeMounts.container").
+                            maxLength: 253
+                            pattern: ^[a-zA-Z0-9][a-zA-Z0-9_-]*(\.[a-zA-Z0-9][a-zA-Z0-9_-]*)*$
+                            type: string
+                          volumesPath:
+                            description: |-
+                              VolumesPath is the dot-separated values path holding a list of pod volumes
+                              (e.g. "volumes").
+                            maxLength: 253
+                            pattern: ^[a-zA-Z0-9][a-zA-Z0-9_-]*(\.[a-zA-Z0-9][a-zA-Z0-9_-]*)*$
+                            type: string
+                        type: object
+                    type: object
+                type: object
+              provides:
+                description: |-
+                  Provides lists the contracts this component supplies. Tenancy decides the
+                  audience: cluster-wide for system and shared, within the tenant otherwise.
+                items:
+                  description: ContractRef identifies an integration contract this
+                    app provides.
+                  properties:
+                    name:
+                      description: Name is the contract name (e.g., "file-store",
+                        "project-management").
+                      minLength: 1
+                      pattern: ^[a-z0-9-]+$
+                      type: string
+                    protocol:
+                      description: Protocol is the technical protocol used (e.g.,
+                        "http-json", "webdav").
+                      type: string
+                  required:
+                  - name
+                  type: object
+                type: array
+              requires:
+                description: |-
+                  Requires is what the platform is obliged to provide before this component
+                  may run. Unmet means it does not start, and the platform is at fault.
+                properties:
+                  contracts:
+                    description: |-
+                      Contracts are platform capabilities: identity, database, object storage,
+                      cache, mail, LLM, MCP.
+                    properties:
+                      cache:
+                        description: Cache specifies a caching backend requirement.
+                        properties:
+                          engine:
+                            default: redis
+                            description: Engine selects the caching backend. Defaults
+                              to redis.
+                            enum:
+                            - redis
+                            - memcached
+                            type: string
+                        type: object
+                      database:
+                        description: Database specifies a relational database requirement.
+                        properties:
+                          allowDynamicDatabaseCreation:
+                            description: |-
+                              AllowDynamicDatabaseCreation lets the app create databases of its own at
+                              runtime — mariadb via GRANT ALL PRIVILEGES ON *.*, postgresql via role
+                              CREATEDB. Ask for it only when creating databases is what the app is for
+                              (a data explorer, say); an app that merely stores its own state must not.
+
+                              Databases created this way are still purged with the app: they are owned
+                              by the app role, and uninstall --purge drops everything that role owns.
+                              They are not otherwise governed — the tenant chooses the names, and they
+                              do not appear in the catalogue's provisioning model.
+
+                              Omitted is equivalent to false, which is also Go's zero value for bool —
+                              left undefaulted at the schema level so profiles that omit it don't
+                              permanently diff against GitOps tooling that applies CRD defaults
+                              server-side.
+                            type: boolean
+                          databasePerTenant:
+                            default: true
+                            description: |-
+                              DatabasePerTenant creates a separate database for each tenant (default true).
+                              Set to false only for shared-schema apps.
+                            type: boolean
+                          engine:
+                            default: postgresql
+                            description: Engine selects the database engine. Defaults
+                              to postgresql.
+                            enum:
+                            - postgresql
+                            - mariadb
+                            type: string
+                          schemaPreference:
+                            description: |-
+                              SchemaPreference decides which schema the app's role resolves unqualified
+                              table names against first.
+
+                              Default (app-schema) puts the per-tenant schema ahead of public, which is
+                              what an app doing its own schema isolation expects. Apps whose migrations
+                              create everything in public — and then look it up unqualified — need
+                              public first, or the migration writes to one schema and the query reads
+                              the other.
+
+                              This is declared rather than inferred: the platform cannot know an app's
+                              migration behaviour from its name, and matching on the name is how a
+                              second app with the same need silently gets the wrong search_path.
+                            enum:
+                            - app-schema
+                            - public
+                            type: string
+                        type: object
+                      identity:
+                        description: Identity specifies OIDC requirements.
+                        properties:
+                          oidc:
+                            description: |-
+                              OIDC describes the OIDC client to register in the tenant's Keycloak realm.
+                              When set, the composition emits a Client CR so every newly deployed tenant
+                              automatically gets the correct Keycloak client without manual setup.
+                              Leave unset for apps whose Keycloak client is managed externally
+                              (e.g. kernel-realm clients managed via keycloak-config).
+                            properties:
+                              accessType:
+                                default: PUBLIC
+                                description: |-
+                                  AccessType controls whether the client requires a shared secret
+                                  (CONFIDENTIAL, for server-side apps) or relies on PKCE without a secret
+                                  (PUBLIC, for SPAs and mobile apps). Defaults to PUBLIC.
+                                enum:
+                                - PUBLIC
+                                - CONFIDENTIAL
+                                type: string
+                              backchannelLogoutUrl:
+                                description: |-
+                                  BackchannelLogoutURL is the endpoint Keycloak calls for backchannel logout
+                                  notifications (RFC 7009). Supports ${TENANT_DOMAIN} substitution.
+                                type: string
+                              clientId:
+                                description: ClientID is the OIDC client identifier
+                                  registered in Keycloak.
+                                minLength: 1
+                                type: string
+                              directAccessGrantsEnabled:
+                                description: |-
+                                  DirectAccessGrantsEnabled enables the Resource Owner Password Credentials
+                                  grant (legacy / CLI apps). Defaults to false.
+                                type: boolean
+                              name:
+                                description: |-
+                                  Name is the human-readable display name shown in the Keycloak admin UI.
+                                  Defaults to ClientID when empty.
+                                type: string
+                              oidcPackRef:
+                                description: |-
+                                  OIDCPackRef selects a pack entry from an OIDCPackCatalog CR when the
+                                  pack key differs from clientId. When empty, clientId is used as the pack key.
+                                type: string
+                              postLogoutRedirectUris:
+                                description: |-
+                                  PostLogoutRedirectURIs lists the allowed post-logout redirect URIs.
+                                  Supports ${TENANT_DOMAIN} substitution.
+                                items:
+                                  type: string
+                                type: array
+                              redirectUris:
+                                description: |-
+                                  RedirectURIs lists the valid OAuth2 redirect URIs for the authorization
+                                  code flow. Supports ${TENANT_DOMAIN} substitution.
+                                items:
+                                  type: string
+                                type: array
+                            required:
+                            - clientId
+                            type: object
+                          saml:
+                            description: SAML describes the SAML client to register
+                              in the tenant's Keycloak realm.
+                            properties:
+                              acsUrl:
+                                description: ACSURL is the SAML Assertion Consumer
+                                  Service URL for the auth callback.
+                                minLength: 1
+                                type: string
+                              entityId:
+                                description: EntityID is the SAML Service Provider
+                                  Entity ID registered in Keycloak.
+                                minLength: 1
+                                type: string
+                            required:
+                            - acsUrl
+                            - entityId
+                            type: object
+                        type: object
+                      mail:
+                        description: Mail specifies SMTP and/or IMAP requirements.
+                        properties:
+                          imap:
+                            description: IMAP requests inbound mail (IMAP) credentials.
+                            type: object
+                          smtp:
+                            description: SMTP requests outbound mail (SMTP submission)
+                              credentials.
+                            type: object
+                        type: object
+                      mcp:
+                        description: |-
+                          MCP specifies a Model Context Protocol server requirement.
+                          When enabled, the orchestrator registers the app's MCP endpoint in the
+                          kernel MCP registry and wires OIDC authentication.
+                        properties:
+                          auth:
+                            default: oidc
+                            description: Auth is the authentication method for MCP
+                              calls.
+                            enum:
+                            - oidc
+                            - none
+                            type: string
+                          enabled:
+                            default: true
+                            description: Enabled activates MCP endpoint registration.
+                            type: boolean
+                          endpoint:
+                            default: /mcp
+                            description: Endpoint is the HTTP path where the app exposes
+                              its MCP server.
+                            pattern: ^/.*
+                            type: string
+                        required:
+                        - enabled
+                        type: object
+                      storage:
+                        description: Storage specifies object storage (S3) and/or
+                          filesystem (WebDAV) requirements.
+                        properties:
+                          files:
+                            description: Files requests WebDAV access to the tenant's
+                              file-storage service.
+                            properties:
+                              capabilities:
+                                description: Capabilities lists the required access
+                                  capabilities.
+                                items:
+                                  type: string
+                                type: array
+                              protocol:
+                                default: webdav
+                                description: Protocol is the access protocol. Currently
+                                  only webdav is supported.
+                                enum:
+                                - webdav
+                                type: string
+                            type: object
+                          s3:
+                            description: S3 requests a per-tenant S3 bucket via the
+                              MinIO kernel service.
+                            properties:
+                              bucketPerTenant:
+                                default: true
+                                description: BucketPerTenant creates a dedicated bucket
+                                  for each tenant. Defaults to true.
+                                type: boolean
+                            type: object
+                        type: object
+                    type: object
+                  privileges:
+                    description: |-
+                      Privileges escape the default posture. Declaring one is asking, never
+                      receiving: each is granted per install, by a named person, and recorded
+                      on the Component.
+                    properties:
+                      clusterRoles:
+                        description: |-
+                          ClusterRoles the component's ServiceAccount needs. Cluster scope, and the
+                          rarest: an app that needs the Kubernetes API is most of the way to being
+                          a controller.
+                        items:
+                          description: ClusterRoleRequest asks for Kubernetes API
+                            access.
+                          properties:
+                            name:
+                              description: Name is what a PrivilegeGrant refers to.
+                                Unique within the profile.
+                              pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
+                              type: string
+                            reason:
+                              description: Reason is what the approver reads.
+                              minLength: 10
+                              type: string
+                            rules:
+                              items:
+                                description: |-
+                                  PolicyRule holds information that describes a policy rule, but does not contain information
+                                  about who the rule applies to or which namespace the rule applies to.
+                                properties:
+                                  apiGroups:
+                                    description: |-
+                                      APIGroups is the name of the APIGroup that contains the resources.  If multiple API groups are specified, any action requested against one of
+                                      the enumerated resources in any API group will be allowed. "" represents the core API group and "*" represents all API groups.
+                                    items:
+                                      type: string
+                                    type: array
+                                    x-kubernetes-list-type: atomic
+                                  nonResourceURLs:
+                                    description: |-
+                                      NonResourceURLs is a set of partial urls that a user should have access to.  *s are allowed, but only as the full, final step in the path
+                                      Since non-resource URLs are not namespaced, this field is only applicable for ClusterRoles referenced from a ClusterRoleBinding.
+                                      Rules can either apply to API resources (such as "pods" or "secrets") or non-resource URL paths (such as "/api"),  but not both.
+                                    items:
+                                      type: string
+                                    type: array
+                                    x-kubernetes-list-type: atomic
+                                  resourceNames:
+                                    description: ResourceNames is an optional white
+                                      list of names that the rule applies to.  An
+                                      empty set means that everything is allowed.
+                                    items:
+                                      type: string
+                                    type: array
+                                    x-kubernetes-list-type: atomic
+                                  resources:
+                                    description: Resources is a list of resources
+                                      this rule applies to. '*' represents all resources.
+                                    items:
+                                      type: string
+                                    type: array
+                                    x-kubernetes-list-type: atomic
+                                  verbs:
+                                    description: Verbs is a list of Verbs that apply
+                                      to ALL the ResourceKinds contained in this rule.
+                                      '*' represents all verbs.
+                                    items:
+                                      type: string
+                                    type: array
+                                    x-kubernetes-list-type: atomic
+                                required:
+                                - verbs
+                                type: object
+                              minItems: 1
+                              type: array
+                          required:
+                          - name
+                          - reason
+                          - rules
+                          type: object
+                        type: array
+                        x-kubernetes-list-map-keys:
+                        - name
+                        x-kubernetes-list-type: map
+                      egress:
+                        description: |-
+                          Egress opens outbound network beyond the tenant baseline. Tenant scope:
+                          the traffic leaves the tenant's own namespace.
+                        items:
+                          description: EgressRequest asks for outbound network beyond
+                            the tenant baseline.
+                          properties:
+                            name:
+                              description: Name is what a PrivilegeGrant refers to.
+                                Unique within the profile.
+                              pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
+                              type: string
+                            reason:
+                              description: Reason is what the approver reads.
+                              minLength: 10
+                              type: string
+                            rule:
+                              description: Rule is the egress to allow.
+                              properties:
+                                ports:
+                                  description: |-
+                                    ports is a list of destination ports for outgoing traffic.
+                                    Each item in this list is combined using a logical OR. If this field is
+                                    empty or missing, this rule matches all ports (traffic not restricted by port).
+                                    If this field is present and contains at least one item, then this rule allows
+                                    traffic only if the traffic matches at least one port in the list.
+                                  items:
+                                    description: NetworkPolicyPort describes a port
+                                      to allow traffic on
+                                    properties:
+                                      endPort:
+                                        description: |-
+                                          endPort indicates that the range of ports from port to endPort if set, inclusive,
+                                          should be allowed by the policy. This field cannot be defined if the port field
+                                          is not defined or if the port field is defined as a named (string) port.
+                                          The endPort must be equal or greater than port.
+                                        format: int32
+                                        type: integer
+                                      port:
+                                        anyOf:
+                                        - type: integer
+                                        - type: string
+                                        description: |-
+                                          port represents the port on the given protocol. This can either be a numerical or named
+                                          port on a pod. If this field is not provided, this matches all port names and
+                                          numbers.
+                                          If present, only traffic on the specified protocol AND port will be matched.
+                                        x-kubernetes-int-or-string: true
+                                      protocol:
+                                        description: |-
+                                          protocol represents the protocol (TCP, UDP, or SCTP) which traffic must match.
+                                          If not specified, this field defaults to TCP.
+                                        type: string
+                                    type: object
+                                  type: array
+                                  x-kubernetes-list-type: atomic
+                                to:
+                                  description: |-
+                                    to is a list of destinations for outgoing traffic of pods selected for this rule.
+                                    Items in this list are combined using a logical OR operation. If this field is
+                                    empty or missing, this rule matches all destinations (traffic not restricted by
+                                    destination). If this field is present and contains at least one item, this rule
+                                    allows traffic only if the traffic matches at least one item in the to list.
+                                  items:
+                                    description: |-
+                                      NetworkPolicyPeer describes a peer to allow traffic to/from. Only certain combinations of
+                                      fields are allowed
+                                    properties:
+                                      ipBlock:
+                                        description: |-
+                                          ipBlock defines policy on a particular IPBlock. If this field is set then
+                                          neither of the other fields can be.
+                                        properties:
+                                          cidr:
+                                            description: |-
+                                              cidr is a string representing the IPBlock
+                                              Valid examples are "192.168.1.0/24" or "2001:db8::/64"
+                                            type: string
+                                          except:
+                                            description: |-
+                                              except is a slice of CIDRs that should not be included within an IPBlock
+                                              Valid examples are "192.168.1.0/24" or "2001:db8::/64"
+                                              Except values will be rejected if they are outside the cidr range
+                                            items:
+                                              type: string
+                                            type: array
+                                            x-kubernetes-list-type: atomic
+                                        required:
+                                        - cidr
+                                        type: object
+                                      namespaceSelector:
+                                        description: |-
+                                          namespaceSelector selects namespaces using cluster-scoped labels. This field follows
+                                          standard label selector semantics; if present but empty, it selects all namespaces.
+
+                                          If podSelector is also set, then the NetworkPolicyPeer as a whole selects
+                                          the pods matching podSelector in the namespaces selected by namespaceSelector.
+                                          Otherwise it selects all pods in the namespaces selected by namespaceSelector.
+                                        properties:
+                                          matchExpressions:
+                                            description: matchExpressions is a list
+                                              of label selector requirements. The
+                                              requirements are ANDed.
+                                            items:
+                                              description: |-
+                                                A label selector requirement is a selector that contains values, a key, and an operator that
+                                                relates the key and values.
+                                              properties:
+                                                key:
+                                                  description: key is the label key
+                                                    that the selector applies to.
+                                                  type: string
+                                                operator:
+                                                  description: |-
+                                                    operator represents a key's relationship to a set of values.
+                                                    Valid operators are In, NotIn, Exists and DoesNotExist.
+                                                  type: string
+                                                values:
+                                                  description: |-
+                                                    values is an array of string values. If the operator is In or NotIn,
+                                                    the values array must be non-empty. If the operator is Exists or DoesNotExist,
+                                                    the values array must be empty. This array is replaced during a strategic
+                                                    merge patch.
+                                                  items:
+                                                    type: string
+                                                  type: array
+                                                  x-kubernetes-list-type: atomic
+                                              required:
+                                              - key
+                                              - operator
+                                              type: object
+                                            type: array
+                                            x-kubernetes-list-type: atomic
+                                          matchLabels:
+                                            additionalProperties:
+                                              type: string
+                                            description: |-
+                                              matchLabels is a map of {key,value} pairs. A single {key,value} in the matchLabels
+                                              map is equivalent to an element of matchExpressions, whose key field is "key", the
+                                              operator is "In", and the values array contains only "value". The requirements are ANDed.
+                                            type: object
+                                        type: object
+                                        x-kubernetes-map-type: atomic
+                                      podSelector:
+                                        description: |-
+                                          podSelector is a label selector which selects pods. This field follows standard label
+                                          selector semantics; if present but empty, it selects all pods.
+
+                                          If namespaceSelector is also set, then the NetworkPolicyPeer as a whole selects
+                                          the pods matching podSelector in the Namespaces selected by NamespaceSelector.
+                                          Otherwise it selects the pods matching podSelector in the policy's own namespace.
+                                        properties:
+                                          matchExpressions:
+                                            description: matchExpressions is a list
+                                              of label selector requirements. The
+                                              requirements are ANDed.
+                                            items:
+                                              description: |-
+                                                A label selector requirement is a selector that contains values, a key, and an operator that
+                                                relates the key and values.
+                                              properties:
+                                                key:
+                                                  description: key is the label key
+                                                    that the selector applies to.
+                                                  type: string
+                                                operator:
+                                                  description: |-
+                                                    operator represents a key's relationship to a set of values.
+                                                    Valid operators are In, NotIn, Exists and DoesNotExist.
+                                                  type: string
+                                                values:
+                                                  description: |-
+                                                    values is an array of string values. If the operator is In or NotIn,
+                                                    the values array must be non-empty. If the operator is Exists or DoesNotExist,
+                                                    the values array must be empty. This array is replaced during a strategic
+                                                    merge patch.
+                                                  items:
+                                                    type: string
+                                                  type: array
+                                                  x-kubernetes-list-type: atomic
+                                              required:
+                                              - key
+                                              - operator
+                                              type: object
+                                            type: array
+                                            x-kubernetes-list-type: atomic
+                                          matchLabels:
+                                            additionalProperties:
+                                              type: string
+                                            description: |-
+                                              matchLabels is a map of {key,value} pairs. A single {key,value} in the matchLabels
+                                              map is equivalent to an element of matchExpressions, whose key field is "key", the
+                                              operator is "In", and the values array contains only "value". The requirements are ANDed.
+                                            type: object
+                                        type: object
+                                        x-kubernetes-map-type: atomic
+                                    type: object
+                                  type: array
+                                  x-kubernetes-list-type: atomic
+                              type: object
+                          required:
+                          - name
+                          - reason
+                          - rule
+                          type: object
+                        type: array
+                        x-kubernetes-list-map-keys:
+                        - name
+                        x-kubernetes-list-type: map
+                      podSecurity:
+                        description: |-
+                          PodSecurity waives a named admission policy for a named part of the
+                          component. Cluster scope: it weakens a rule that protects the node.
+                        items:
+                          description: PodSecurityWaiver asks for one admission policy
+                            to be waived.
+                          properties:
+                            name:
+                              description: Name is what a PrivilegeGrant refers to.
+                                Unique within the profile.
+                              pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
+                              type: string
+                            policy:
+                              description: Policy is the ClusterPolicy this waives.
+                              minLength: 1
+                              type: string
+                            reason:
+                              description: Reason is what the approver reads.
+                              minLength: 10
+                              type: string
+                            scope:
+                              description: Scope is the container or composition part
+                                it is waived for.
+                              minLength: 1
+                              type: string
+                          required:
+                          - name
+                          - policy
+                          - reason
+                          - scope
+                          type: object
+                        type: array
+                        x-kubernetes-list-map-keys:
+                        - name
+                        x-kubernetes-list-type: map
+                    type: object
+                type: object
+              secrets:
+                description: |-
+                  Secrets are values the platform generates and holds that have no external
+                  counterparty. Credentials that arrive with a granted requirement are not
+                  declared here; they come with the grant.
+                properties:
+                  derived:
+                    description: |-
+                      Derived secrets are recomputed from the tenant and component name. Their
+                      formula and inputs are load-bearing forever: a change to either silently
+                      rotates the value for every existing tenant. Prefer Generated.
+                    items:
+                      description: |-
+                        DerivedSecretKey names one deterministic value the platform adds to the
+                        credentials Secret it manages for an app.
+
+                        The derivation is deliberately frozen: the value is a function of the tenant
+                        and app name only, so it survives reinstalls. Changing how it is computed
+                        rotates the value for every existing tenant, which for a session-signing key
+                        means logging everyone out — so the formula must not be "improved" in place.
+                        A genuinely better derivation belongs in appSecrets under a new key name.
+                      properties:
+                        key:
+                          description: |-
+                            Key is the Secret key, and therefore the environment variable name when
+                            the app consumes the Secret with envFrom (e.g. "WEBUI_SECRET_KEY").
+                          maxLength: 64
+                          minLength: 1
+                          pattern: ^[A-Za-z_][A-Za-z0-9_]*$
+                          type: string
+                      required:
+                      - key
+                      type: object
+                    type: array
+                  generated:
+                    description: |-
+                      Generated secrets are random, created once and held in the vault. The
+                      robust default.
+                    items:
+                      description: |-
+                        AppSecret declares an app-internal secret the orchestrator must generate
+                        and inject. These are credentials the app needs (admin passwords, session
+                        signing keys, cluster tokens) that are not provided by any kernel service.
+                      properties:
+                        name:
+                          description: |-
+                            Name is the logical identifier for this secret (e.g., "admin_password").
+                            Used as the suffix in the OpenBao path:
+                            gentian-os/tenants/{tenant}/apps/{app}/internal/{name}
+                          maxLength: 64
+                          minLength: 1
+                          pattern: ^[a-z0-9_]+$
+                          type: string
+                        valuePath:
+                          description: |-
+                            ValuePath is the dot-notation (or bracket-notation) Helm value key that
+                            should receive the generated secret value.
+                          minLength: 1
+                          type: string
+                      required:
+                      - name
+                      - valuePath
+                      type: object
+                    type: array
+                type: object
+              sessionMaxAge:
+                description: |-
+                  SessionMaxAge caps the app's own session, for apps that run their own
+                  login. The edge bounds reachability; it does not refresh the groups an
+                  app captured at its own login, so this — not the access-token lifetime —
+                  bounds what a user may still do inside the app after their rights change.
+                type: string
+              tenancy:
+                description: |-
+                  Tenancy lists the modes this component may be deployed under. It is a
+                  certification claim, not a choice. "system" is exclusive.
+                items:
+                  description: ComponentTenancy is a mode a component may be deployed
+                    under.
+                  enum:
+                  - system
+                  - shared
+                  - tenant
+                  type: string
+                maxItems: 2
+                minItems: 1
+                type: array
+                x-kubernetes-list-type: set
+              trustTier:
+                description: |-
+                  TrustTier is the review level of this entry. "platform" is required
+                  before "shared" may appear in Tenancy. Required, with no default: the
+                  tier is a statement a reviewer made, not an absence.
+                enum:
+                - platform
+                - certified
+                - experimental
+                type: string
+              version:
+                description: Version is the catalogue entry's version, not the upstream
+                  project's.
+                minLength: 1
+                type: string
+            required:
+            - package
+            - tenancy
+            - trustTier
+            - version
+            type: object
+            x-kubernetes-validations:
+            - message: 'system is exclusive: a component serving contracts does not
+                also serve humans'
+              rule: '!(''system'' in self.tenancy) || self.tenancy.size() == 1'
+            - message: system components have no exposure
+              rule: '!(''system'' in self.tenancy) || !has(self.expose) || self.expose.size()
+                == 0'
+            - message: shared tenancy requires trustTier platform
+              rule: '!(''shared'' in self.tenancy) || self.trustTier == ''platform'''
+            - message: 'forwardToken requires trustTier platform: the edge token is
+                valid at the director and at every sibling'
+              rule: '!has(self.expose) || self.expose.all(e, !(has(e.forwardToken)
+                && e.forwardToken) || self.trustTier == ''platform'')'
+            - message: a package is a chart, a composition or an API integration;
+                only an addon, which rides on its base, has none
+              rule: has(self.package.chart) || (has(self.package.compositionRef) &&
+                self.package.compositionRef.size() > 0) || has(self.package.apiIntegration)
+                || (has(self.customization) && has(self.customization.addon))
+          status:
+            description: ComponentProfileStatus is the observed state of a ComponentProfile.
+            properties:
+              conditions:
+                items:
+                  description: Condition contains details for one aspect of the current
+                    state of this API Resource.
+                  properties:
+                    lastTransitionTime:
+                      description: |-
+                        lastTransitionTime is the last time the condition transitioned from one status to another.
+                        This should be when the underlying condition changed.  If that is not known, then using the time when the API field changed is acceptable.
+                      format: date-time
+                      type: string
+                    message:
+                      description: |-
+                        message is a human readable message indicating details about the transition.
+                        This may be an empty string.
+                      maxLength: 32768
+                      type: string
+                    observedGeneration:
+                      description: |-
+                        observedGeneration represents the .metadata.generation that the condition was set based upon.
+                        For instance, if .metadata.generation is currently 12, but the .status.conditions[x].observedGeneration is 9, the condition is out of date
+                        with respect to the current state of the instance.
+                      format: int64
+                      minimum: 0
+                      type: integer
+                    reason:
+                      description: |-
+                        reason contains a programmatic identifier indicating the reason for the condition's last transition.
+                        Producers of specific condition types may define expected values and meanings for this field,
+                        and whether the values are considered a guaranteed API.
+                        The value should be a CamelCase string.
+                        This field may not be empty.
+                      maxLength: 1024
+                      minLength: 1
+                      pattern: ^[A-Za-z]([A-Za-z0-9_,:]*[A-Za-z0-9_])?$
+                      type: string
+                    status:
+                      description: status of the condition, one of True, False, Unknown.
+                      enum:
+                      - "True"
+                      - "False"
+                      - Unknown
+                      type: string
+                    type:
+                      description: type of condition in CamelCase or in foo.example.com/CamelCase.
+                      maxLength: 316
+                      pattern: ^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])$
+                      type: string
+                  required:
+                  - lastTransitionTime
+                  - message
+                  - reason
+                  - status
+                  - type
+                  type: object
+                type: array
+            type: object
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}
