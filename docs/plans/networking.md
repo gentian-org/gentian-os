@@ -17,7 +17,7 @@ fleets:
 | Edge | Serves | Policy | Backends |
 | --- | --- | --- | --- |
 | **Authenticated edge** | every `expose[]` entry with `surface: gateway` | a Keycloak session per tenant zone, JWT for bearer clients, ext-auth for *may this user reach this app* | services in `tenant-<t>`, `shared-<app>`, `kernel-control` |
-| **Perimeter edge** | every `surface: perimeter` entry a tenant enabled; non-HTTP listeners | no session; the entry's `authMode`; rate limit, body limits, WAF rules | publishing proxies in `tenant-<t>-dmz`; `system-mail` listeners |
+| **Perimeter edge** | every `surface: perimeter` entry a tenant enabled; non-HTTP listeners | no session; the entry's `authMode`; rate limit, body limits, WAF rules | publishing proxies in `tenant-<t>-dmz`; system edges in `system-<function>-dmz` |
 
 In Gateway API terms: two `Gateway` objects, `authenticated` and
 `perimeter`, both in `kernel-edge`, with Envoy Gateway's `mergeGateways`
@@ -83,7 +83,7 @@ word someone wrote.
 | Director API | `api.<kernel>` | `bearer` | JWT, any realm; the director verifies again | its own OpenFGA check | director |
 | Identity provider | `id.<kernel>` | `none` — it *is* the issuer | — | — | Keycloak in `kernel-authentication`; brute-force and rate limits at L0 |
 | Perimeter, HTTP | app host (paths) or own host | per entry | — | — | proxy in `tenant-<t>-dmz` |
-| Perimeter, TCP/UDP | own port | protocol-native | — | — | `system-mail`, `system-turn` |
+| Perimeter, TCP/UDP | own port | protocol-native | — | — | `system-mail-dmz` (edge MTA, Dovecot proxy), `system-turn` |
 | ACME HTTP-01 | any host, `/.well-known/acme-challenge/*`, port 80 | `none` | — | — | cert-manager solver in `kernel-edge`; the one kernel-owned perimeter path |
 
 Nothing is routable without a class. A hostname with no `expose[]` entry
@@ -124,7 +124,7 @@ design cannot do for it.
 | **Password-protected share** | same path; the password prompt is the app's | the app | same |
 | **Public WebDAV of a share** | `/public.php/webdav` → DMZ (`none`) | the app | same |
 | **Desktop and mobile sync, calendars, contacts** | `/remote.php/dav/*` → DMZ (`basic`) with an app password from the broker; the proxy validates before forwarding | the broker issued the credential; the app scopes it | a bearer secret outside the session model; expiry and revocation through the broker are its only controls |
-| **Conference call, members only** (Talk, Element Call, Jitsi) | signalling: the app host over the authenticated edge, WebSocket upgrade under L1–L2. Media: WebRTC over UDP to TURN/SFU — a **system service** with its own perimeter `UDPRoute`, TURN credentials minted per session with a short HMAC lifetime | L1–L2 for signalling; the app for who is in the room; TURN checks only the time-limited credential | media never passes the gateway. The system service is perimeter by protocol, like mail; its only defence is the credential's lifetime and the app's room membership |
+| **Conference call, members only** (Talk, Element Call, Jitsi) | signalling: the app host over the authenticated edge, WebSocket upgrade under L1–L2. Media: WebRTC over UDP to TURN/SFU in `system-turn` — a DMZ-tier service with its own `UDPRoute`, TURN credentials minted per session with a short HMAC lifetime | L1–L2 for signalling; the app for who is in the room; TURN checks only the time-limited credential | media never passes the gateway; TURN is all edge and holds no data, so its only defence is the credential's lifetime and the app's room membership |
 | **Conference call with an external guest** | a guest link is a perimeter surface (`none`) for the app's guest signalling paths; the app issues a guest identity for that room; TURN as above | the app: room, guest name, host approval | the guest is unidentified to the platform by design; rate limits and the app's lobby are the controls |
 | **Matrix federation** | `matrix.<t>.<kernel>:8448` on the `perimeter` Gateway, `authMode: signature`; `/.well-known/matrix/*` on the app host as a DMZ path (`none`) | Synapse verifies the peer server's signature | federation is a trust decision inside the app; the edge only rate-limits |
 | **Inbound webhook** (payment provider, git host) | a perimeter path with `authMode: signature`; the proxy verifies the HMAC before the app sees the body | the proxy, then the app | replay protection is the app's unless the proxy keeps nonces |
@@ -134,8 +134,9 @@ design cannot do for it.
 | **Platform admin** | `console.<kernel>`, kernel-realm session; writes through the director | same | kernel and tenant realms are different sessions by design; a platform admin acting inside a tenant does so through the director, never through that tenant's zone |
 | **App-to-app inside a tenant** (Nextcloud ↔ Collabora, OpenProject ↔ Nextcloud) | never through the edge: Service-to-Service under NetworkPolicy from `integrations`, credentials from the binding | L5 and the binding | none |
 | **App to system service** (database, S3, LLM) | Service-to-Service on the contract port | L5; the granted credential | none |
-| **Outbound mail from an app** | app → `system-mail` relay on the contract port; `system-mail` → internet on `:25` | the tenant's SMTP credential from the requirement | outbound reputation is shared per cluster address |
-| **User's mail client** | IMAP `:993` and submission `:587` `TCPRoute`s on the `perimeter` Gateway → Dovecot / Postfix | the broker's per-user credential | not HTTP: no L1–L2; the credential's lifetime is the control |
+| **Outbound mail from an app** | app → `system-mail` relay on the contract port → `system-mail-dmz` edge MTA → internet on `:25` | the tenant's SMTP credential from the requirement | outbound reputation is shared per cluster address |
+| **Inbound mail** | `:25` `TCPRoute` → edge MTA in `system-mail-dmz` (spam filter, policy) → store in `system-mail` | the edge MTA | a Postfix CVE lands on a stateless edge, not on the mailboxes |
+| **User's mail client** | IMAP `:993` and submission `:587` `TCPRoute`s → Dovecot proxy / edge MTA in `system-mail-dmz`, which authenticate and relay to `system-mail` with one master credential | the broker's per-user credential, checked at the edge | not HTTP: no L1–L2; the credential's lifetime is the control; the store never has a public port |
 | **Vanity domain, direct link** | `cloud.example.org`, its own listener and certificate; its own edge session, silent via `id.<kernel>` | L1–L2 as usual | one extra silent redirect per host |
 | **Vanity domain, embedded in the desktop** | works only if the desktop is on the same site — `desktop.example.org` — because the edge cookie is per site | same | a desktop on `<kernel>` cannot embed an app on `example.org` (third-party cookie); serve the desktop on the vanity host |
 | **Logout from the desktop** | RP-initiated logout at Keycloak → back-channel to the zone's edge client → session gone | L1 | app cookies live on, unreachable |
@@ -150,9 +151,10 @@ design cannot do for it.
 - **Real-time media is outside the model.** WebRTC goes to TURN or an SFU
   over UDP; no gateway sees it. The controls are short-lived TURN
   credentials and the app's room membership. `system-turn` (coturn, or
-  LiveKit for Element Call) is a system service with a perimeter `UDPRoute`,
-  the way mail is a system service with `TCPRoute`s — the third protocol
-  exception to AD-9, and it should be written into AD-9.
+  LiveKit for Element Call) is all edge: it holds no data, so it lives
+  entirely in the DMZ tier, the way the mail edge does in `system-mail-dmz`.
+  AD-9 has no exception list; a system service with an internet protocol has
+  a DMZ namespace instead.
 - **Cross-tenant collaboration is federation or public links, never a
   shared session.** That is correct, and it means the catalogue should say
   which apps federate (Nextcloud, Matrix) and which only share by link.
@@ -193,6 +195,7 @@ design cannot do for it.
   [security-gap-closing.md](security-gap-closing.md) G3; the per-zone edge
   OIDC clients are created by the operator alongside the app clients it
   already provisions, each with a back-channel logout URI.
-- `system-turn` joins the system inventory in
-  [namespace-cleanup.md](namespace-cleanup.md) §2.2 when the first
-  conferencing profile declares it as a requirement.
+- Mail splits into `system-mail` (internal relay, Dovecot store, DKIM) and
+  `system-mail-dmz` (edge MTA, Dovecot proxy, spam filter); the store loses
+  its public ports. `system-turn` is added when the first conferencing
+  profile declares it as a requirement.

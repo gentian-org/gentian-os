@@ -15,6 +15,7 @@ profile until that rename lands. The decisions behind the layout are
 | --- | --- | --- | --- | --- |
 | `kernel-<function>` | services the OS is made of, including the tier-0 operators | `install.sh`, then Argo CD | break-glass platform admin only | none — this is the trust root |
 | `system-<function>` | instances with `tenancy: system`, fulfilling `requires.contracts` of other components; no public route | kernel services, from the Cluster claim | platform admin through the director | other system functions; every tenant boundary |
+| `system-<function>-dmz` | the internet-facing edge of a system service whose protocol needs one: a stateless listener holding one credential to its backend, no data | kernel services, from the Cluster claim | platform admin through the director | the service's backend; every tenant |
 | `shared-<app>` | one instance with `tenancy: shared`, serving several tenants; the profile must certify `shared` and carry `trustTier: platform` | director, from a Component whose profile certifies `shared` | platform admin through the director | only what the component's own code enforces |
 | `tenant-<t>` | the tenant's instances with `tenancy: tenant`, including its desktop (frontend and BFF) | operator, from `Tenant.spec.apps` | tenant admin through the director | every other tenant; the kernel; system services beyond declared contracts |
 | `tenant-<t>-dmz` | the tenant's perimeter: one publishing proxy per `surface: perimeter` entry the tenant admin has enabled, each with its own least-privilege credential and the entry's mandatory `authMode` | operator, from the tenant's enabled perimeter entries | tenant admin through the director, within cluster policy | the tenant's own instances |
@@ -27,7 +28,7 @@ Names are `<tier>-<qualifier>`; for tenants the tenant name is the qualifier
 and `-dmz` a suffix, so a tenant's namespaces list and sort together.
 Namespace names are 63 characters, so a tenant name is at most 52.
 
-Every namespace carries `gentianos.io/tier: kernel|system|shared|tenant|tenant-dmz`
+Every namespace carries `gentianos.io/tier: kernel|system|system-dmz|shared|tenant|tenant-dmz`
 and `gentianos.io/function: <function>` (tenant namespaces:
 `gentianos.io/tenant: <t>`). Policies select on labels, never on names.
 
@@ -77,8 +78,9 @@ the catalogue.
 | `infra-mariadb` | `gentian-infra-<stage>` | `system-mariadb` | |
 | `infra-redis` | `gentian-infra-<stage>` | `system-cache` | |
 | `infra-minio` | `gentian-infra-<stage>` | `system-s3` | |
-| Postfix | `platform-kernel` | `system-mail` | `mail.serviceMode: kernel` only; SMTP/IMAP listeners are the protocol exception to "no public route" |
-| Dovecot | `platform-kernel` | `system-mail` | conditional ApplicationSet |
+| Postfix (internal relay), Dovecot (mailbox store), DKIM keys | `platform-kernel` | `system-mail` | `mail.serviceMode: kernel` only; no public port |
+| Postfix edge MTA (`:25`, `:587`), Dovecot proxy (`:993`), spam filter | `platform-kernel`, as part of the same Postfix/Dovecot | `system-mail-dmz` | stateless edge; authenticates and relays to `system-mail` with one credential |
+| TURN / SFU for conferencing | — | `system-turn` (tier `system-dmz`) | all edge, no inner part; short-lived HMAC credentials issued to apps over a contract |
 | LiteLLM proxy, `litellm-db` (CNPG), `redis-llm` | `platform-kernel` | `system-llm` | public route removed |
 | vLLM instances, mock backend | `platform-kernel` via installer step D-05 | `system-llm`, composed by the Cluster claim | D-05 retired; its input is `Cluster.spec.llm.instances` |
 

@@ -86,7 +86,8 @@ function of the namespace tier and the profile:
 
 | Tier | OpenBao prefix | Reach |
 | --- | --- | --- |
-| `system-<function>` | `gentian-os/kernel/<function>/*` | ingress from tenant and shared namespaces on the contract port; egress only to declared upstreams (mail relay, LLM providers) |
+| `system-<function>` | `gentian-os/kernel/<function>/*` | ingress from tenant and shared namespaces on the contract port, and from its own `-dmz`; egress only to declared upstreams (LLM providers) |
+| `system-<function>-dmz` | one credential: the backend relay or proxy credential | ingress from the internet on the protocol's ports; egress to its backend in `system-<function>` and, for mail, to the internet on `:25` |
 | `shared-<app>` | `gentian-os/shared/<app>/*`; per-tenant credentials issued by the kernel, never a shared secret | system services over granted contracts; granted tenants' gateways |
 | `tenant-<t>` | `gentian-os/tenants/<t>/apps/<app>/*` — per app; today per tenant | `requires.contracts` and granted integrations, nothing else |
 | `tenant-<t>-dmz` | one credential: the surface's app password or scoped token | ingress on the surface's paths; egress to one backend service and port |
