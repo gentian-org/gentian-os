@@ -55,6 +55,8 @@ flowchart TB
     end
 
     NET(("Internet"))
+    S2[" "]
+    S3[" "]
 
     subgraph EDGE["kernel-edge — one address, one Envoy fleet"]
         PG["perimeter Gateway<br/>L0 only<br/>per-route authMode, WAF, body limits<br/>TCP/UDP listeners"]
@@ -133,9 +135,19 @@ flowchart TB
     APP -->|"integrations, L5"| PEER
     SAPP -->|"contracts, L5"| DB
 
+    %% invisible spacers: put every grey box on the same row (rank 4)
+    PG ~~~ S2
+    S2 ~~~ S3
+    S3 ~~~ STORE
+    S3 ~~~ KC
+    PEER ~~~ DB
+    PEER ~~~ LLM
+
     classDef auth fill:#1f5fbf33,stroke:#3b82f6,stroke-width:1.5px
     classDef perim fill:#d9731a33,stroke:#f0883e,stroke-width:1.5px
     classDef ew fill:#80808026,stroke:#9a9a9a
+    classDef spacer fill:none,stroke:none
+    class S2,S3 spacer
     class AG,SHIM,DESK,APP,PEER,SAPP,CON,DIR,LA auth
     class PG,PX,MTA,TURN,ACME,LP perim
     class KC,FGA,DB,LLM,STORE,LE ew
