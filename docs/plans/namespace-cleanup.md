@@ -78,8 +78,8 @@ the catalogue.
 | `infra-mariadb` | `gentian-infra-<stage>` | `system-mariadb` | |
 | `infra-redis` | `gentian-infra-<stage>` | `system-cache` | |
 | `infra-minio` | `gentian-infra-<stage>` | `system-s3` | |
-| Postfix (internal relay), Dovecot (mailbox store), DKIM keys | `platform-kernel` | `system-mail` | `mail.serviceMode: kernel` only; no public port |
-| Postfix edge MTA (`:25`, `:587`), Dovecot proxy (`:993`), spam filter | `platform-kernel`, as part of the same Postfix/Dovecot | `system-mail-dmz` | stateless edge; authenticates and relays to `system-mail` with one credential |
+| Dovecot (mailbox store); DKIM signer (milter) holding the per-tenant keys | `platform-kernel` | `system-mail` | `mail.serviceMode: kernel` only; nothing listens publicly |
+| Postfix — `:25` inbound, `:587` submission, the relay port apps send to; spam filter; Dovecot proxy on `:993` only while a tenant has IMAP exposure enabled | `platform-kernel`, with the public ports on the store | `system-mail-dmz` | one MTA, no mailboxes, no keys: DKIM is signed by calling the milter in `system-mail`. External IMAP and submission are a perimeter surface of the mail function, default off |
 | TURN / SFU for conferencing | — | `system-turn` (tier `system-dmz`) | all edge, no inner part; short-lived HMAC credentials issued to apps over a contract |
 | LiteLLM proxy, `litellm-db` (CNPG), `redis-llm` | `platform-kernel` | `system-llm` | public route removed |
 | vLLM instances, mock backend | `platform-kernel` via installer step D-05 | `system-llm`, composed by the Cluster claim | D-05 retired; its input is `Cluster.spec.llm.instances` |

@@ -134,9 +134,9 @@ design cannot do for it.
 | **Platform admin** | `console.<kernel>`, kernel-realm session; writes through the director | same | kernel and tenant realms are different sessions by design; a platform admin acting inside a tenant does so through the director, never through that tenant's zone |
 | **App-to-app inside a tenant** (Nextcloud ↔ Collabora, OpenProject ↔ Nextcloud) | never through the edge: Service-to-Service under NetworkPolicy from `integrations`, credentials from the binding | L5 and the binding | none |
 | **App to system service** (database, S3, LLM) | Service-to-Service on the contract port | L5; the granted credential | none |
-| **Outbound mail from an app** | app → `system-mail` relay on the contract port → `system-mail-dmz` edge MTA → internet on `:25` | the tenant's SMTP credential from the requirement | outbound reputation is shared per cluster address |
-| **Inbound mail** | `:25` `TCPRoute` → edge MTA in `system-mail-dmz` (spam filter, policy) → store in `system-mail` | the edge MTA | a Postfix CVE lands on a stateless edge, not on the mailboxes |
-| **User's mail client** | IMAP `:993` and submission `:587` `TCPRoute`s → Dovecot proxy / edge MTA in `system-mail-dmz`, which authenticate and relay to `system-mail` with one master credential | the broker's per-user credential, checked at the edge | not HTTP: no L1–L2; the credential's lifetime is the control; the store never has a public port |
+| **Outbound mail from an app** | app → Postfix in `system-mail-dmz` on the relay port; DKIM signed by the milter in `system-mail` (keys stay there); out on `:25` | the tenant's SMTP credential from the requirement | outbound reputation is shared per cluster address |
+| **Inbound mail** | `:25` `TCPRoute` → Postfix in `system-mail-dmz` (spam filter, policy) → LMTP to the Dovecot store in `system-mail` | Postfix | a Postfix CVE lands on an MTA with no mailboxes and no keys |
+| **User's external mail client** | only if the tenant enabled the surface: IMAP `:993` → Dovecot proxy, submission `:587` → Postfix, both in `system-mail-dmz`, verifying the broker's credential and relaying inward with one master credential | the broker's per-user credential, checked at the edge | not HTTP: no L1–L2; default off — webmail apps reach Dovecot internally over the contract, and most tenants never need the public ports |
 | **Vanity domain, direct link** | `cloud.example.org`, its own listener and certificate; its own edge session, silent via `id.<kernel>` | L1–L2 as usual | one extra silent redirect per host |
 | **Vanity domain, embedded in the desktop** | works only if the desktop is on the same site — `desktop.example.org` — because the edge cookie is per site | same | a desktop on `<kernel>` cannot embed an app on `example.org` (third-party cookie); serve the desktop on the vanity host |
 | **Logout from the desktop** | RP-initiated logout at Keycloak → back-channel to the zone's edge client → session gone | L1 | app cookies live on, unreachable |
@@ -195,7 +195,8 @@ design cannot do for it.
   [security-gap-closing.md](security-gap-closing.md) G3; the per-zone edge
   OIDC clients are created by the operator alongside the app clients it
   already provisions, each with a back-channel logout URI.
-- Mail splits into `system-mail` (internal relay, Dovecot store, DKIM) and
-  `system-mail-dmz` (edge MTA, Dovecot proxy, spam filter); the store loses
-  its public ports. `system-turn` is added when the first conferencing
-  profile declares it as a requirement.
+- Mail splits into `system-mail` (Dovecot store, DKIM signer with the keys)
+  and `system-mail-dmz` (the one Postfix, spam filter, and a Dovecot proxy
+  only while IMAP exposure is enabled). Postfix stays a single instance;
+  DKIM moves from the MTA to a milter inside. `system-turn` is added when
+  the first conferencing profile declares it as a requirement.
