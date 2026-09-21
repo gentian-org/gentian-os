@@ -58,6 +58,7 @@ with the reconcile as the backstop.
 | `tenant:<t>#cluster@cluster:<c>` | director | tenant deploy |
 | `tenant:<t>#<role>@group:gentian:tenant:<t>:<g>#member` | director | tenant deploy (groups are conventional per tenant) |
 | `tenant:platform#admin@group:gentian:platform:admin#member` | director | bootstrap — the platform tenant's admins are the platform admins (AD-10) |
+| `tenant:<t>#perimeter_approver@group:gentian:tenant:<t>:admins#member` | director | tenant deploy — the default: publishing is its own grant, but most tenants do not staff the role separately. A tenant that wants the separation removes this tuple and adds its own `:perimeter` group |
 | `app:<t>/<p>#tenant@tenant:<t>` | director | app install |
 | `app:<t>/<p>#admin@group:gentian:tenant:<t>:app-admins#member` | director | app install |
 | `catalogue_entry:<catalogue>/<app>#entitled@tenant:<t>` with `expires_at` | director | signed grant received (ui-restructure §3) |
@@ -67,11 +68,11 @@ with the reconcile as the backstop.
 
 | PEP | Object | Relations |
 |---|---|---|
-| Gateway ext-auth shim | `tenant:<t>` for the desktop host; `app:<t>/<p>` for an app host | `can_enter`; `can_use` |
+| Gateway ext-auth shim | `tenant:<t>` for the desktop host; `app:<t>/<p>` for an app host; `cluster:<c>` for a kernel tool host | `can_enter`; `can_use`; `can_configure`, `can_audit` |
 | Director, tenant verbs | `tenant:<t>` | `can_install_app`, `can_set_plan`, `can_set_policy`, `can_grant`, `can_manage_users`, `can_expose`, `can_view` |
 | Director, install | `catalogue_entry:<cat>/<app>` with user `tenant:<t>` | `can_install` |
 | Director, cluster verbs | `cluster:<c>` | `can_configure`, `can_deploy_tenant`, `can_operate_system`, `can_install_shared`, `can_grant_shared`, `can_approve`, `can_set_admission`, `can_edit_raw`, `can_audit` |
-| Desktop tiles (via the director's read API) | `app:<t>/<p>` per installed app | `can_launch` |
+| Desktop tiles (via the director's read API) | `app:<t>/<p>` per installed app; `tenant:<t>` for admin tiles | `can_launch`; `can_administer` |
 | MCP gateway (wave 2) | `agent:<id>` | `can_act` |
 
 ## 5. Keeping the plans honest

@@ -18,7 +18,7 @@ profile until that rename lands. The decisions behind the layout are
 | `system-<function>-dmz` | the internet-facing edge of a system service whose protocol needs one: a stateless listener holding one credential to its backend, no data | kernel services, from the Cluster claim | platform admin through the director | the service's backend; every tenant |
 | `shared-<app>` | one instance with `tenancy: shared`, serving several tenants; the profile must certify `shared` and carry `trustTier: platform` | director, from a Component whose profile certifies `shared` | platform admin through the director | only what the component's own code enforces |
 | `tenant-<t>` | the tenant's instances with `tenancy: tenant`, including its desktop (frontend and BFF) | operator, from `Tenant.spec.apps` | tenant admin through the director | every other tenant; the kernel; system services beyond declared contracts |
-| `tenant-<t>-dmz` | the tenant's perimeter: one publishing proxy per `surface: perimeter` entry the tenant admin has enabled, each with its own least-privilege credential and the entry's mandatory `authMode` | operator, from the tenant's enabled perimeter entries | tenant admin through the director, within cluster policy | the tenant's own instances |
+| `tenant-<t>-dmz` | the tenant's perimeter: one publishing proxy per `surface: perimeter` entry a perimeter approver has enabled, each with its own least-privilege credential and the entry's mandatory `authMode` | operator, from the tenant's enabled perimeter entries | perimeter approver through the director, within cluster policy — held by the tenant's admins by default (roles §1) | the tenant's own instances |
 
 A new namespace inside a category needs a different exposure, credential
 set, upgrade owner or quota than its neighbour. None of the four → same
@@ -135,7 +135,8 @@ gentian-subscriptions (API profile). All tenant-scoped.
 ### 2.6 Tenant DMZ
 
 `tenant-<t>-dmz` holds one publishing proxy per perimeter surface the
-tenant admin has enabled. The profile declares the surface and its
+perimeter approver has enabled — a role the tenant's admins hold by
+default (roles-and-authorizations.md §1). The profile declares the surface and its
 `authMode`; the tenant's enablement, constrained by cluster policy, creates
 the proxy; nothing is published by default. Shared and public are
 independent: a `shared` instance is published through a tenant's DMZ only

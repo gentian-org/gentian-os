@@ -41,10 +41,15 @@ Separations that are load-bearing, whatever one person happens to hold:
   removed after, each use visible in the issuer log because the group
   itself is the trigger. The platform administrator does not have it by
   default.
-- **Tenant administrator ≠ perimeter approver.** Publishing to the internet
-  is the one tenant decision that changes the blast radius of the platform,
-  so it is its own grant and its own audit line. Small tenants will give
-  both to the same person; the record still shows two decisions.
+- **Tenant administrator ≠ perimeter approver**, as relations. Publishing to
+  the internet is the one tenant decision that changes the blast radius of
+  the platform, so it is its own grant and its own audit line. Most tenants
+  will not staff it separately, so the **default is that they are the same
+  people**: at tenant deploy the director writes the admins group into
+  `tenant:<t>#perimeter_approver` (authorization-model.md §3). A tenant that
+  wants the separation removes that one tuple and populates its own
+  `:perimeter` group. Either way the record shows two decisions, because the
+  relation asked is `can_expose`, never `admin`.
 - **App administrator is not a platform role.** It exists so that a tenant
   can make someone an Odoo or Nextcloud admin without making them a tenant
   administrator. It confers nothing outside the app.

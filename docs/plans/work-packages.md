@@ -24,11 +24,11 @@ to be tested against, and each package then brings its own step.
 
 | Phase | Packages | Needs | Gate |
 | --- | --- | --- | --- |
-| 0 — no cluster | WP-1 cutover A (director against a bare repo, static JWKS, OpenFGA in a container); WP-3 model v1, tests, vocabulary check; WP-5 CRD schemas, CEL rules, profile conversion tooling; WP-6 store contract and grant format; WP-7 desktop and console against a mocked director | nothing | contract tests green |
+| 0 — no cluster | WP-1 cutover A (director against a bare repo, static JWKS, OpenFGA in a container); WP-3 model v1, tests, vocabulary check; WP-5 CRD schemas, CEL rules, profile conversion tooling; WP-6 store contract and grant format; WP-7 desktop and console against a mocked director; WP-3 the event listener provider, the director's ingestion endpoint and the membership tuple writer (code only — no Keycloak needed to build or unit-test them) | nothing | contract tests green |
 | 1 — installer skeleton | the parts of WP-8 and WP-10 that produce an *empty* cluster in the target shape: labelled `kernel-*` namespaces, tier-0 operators, `kernel-data` with `kernel-postgres`, Keycloak and OpenFGA in their namespaces, OpenBao and the seal, the two Gateways; the step framework kept, step contents rewritten; ACME staging issuers while iterating | the purged cluster | `install.sh` stands up the empty layout repeatably; `--dry-run` and `--status` true |
-| 2 — packages on the fresh cluster | WP-1 deployed (no side-by-side), WP-2, WP-4, WP-5 on-cluster parts, WP-9 wave 0 and signing, WP-8 remaining namespaces — each adding its installer step as it lands | phase 1 | each package's tests; the step's `check()` honest |
+| 2 — packages on the fresh cluster | WP-1 deployed (no side-by-side), WP-2, WP-4, WP-5 on-cluster parts, WP-9 wave 0 and signing, WP-8 remaining namespaces — each adding its installer step as it lands; **WP-3's event listener deployed and wired**, because the director starts checking here and an empty membership projection denies every write, including phase 3's handover commit | phase 1 | each package's tests; the step's `check()` honest |
 | 3 — handover and challenge | WP-10 `E-05`, credential split, challenge lists; WP-11 deployments layout; WP-13 toggles verified off and on | phase 2 | the challenge list passes as scripted tests on a fresh install |
-| 4 — identities, audit, depth | WP-3 event feed and reconcile, WP-9 identities and agents, WP-4 log store and exposure view, WP-9 data-plane depth (gap-plan waves 2–4) | phase 3 | audit joins on one request id |
+| 4 — identities, audit, depth | WP-3 reconcile hardening and drift reporting (the feed itself landed in phase 2), WP-9 identities and agents, WP-4 log store and exposure view, WP-9 data-plane depth (gap-plan waves 2–4) | phase 3 | audit joins on one request id |
 | existing clusters | operator-split-plan.md §6 B and D, or a rebuild from the recovery kit (AD-11) | a passing fresh install | per cluster |
 
 ## WP-1 Director — new binary (`os`)
@@ -109,7 +109,11 @@ Specified in [operator-split-plan.md](operator-split-plan.md) §3, §5, §6.
       identity reconciler adopts rather than creates it; undeletable
       (ui-restructure §2).
 - [ ] Retire: `AppCatalogue` singleton and the catalogue ApplicationSet
-      (catalogue leaves the cluster, AD-3); `authz_bridge_reconciler`;
+      (catalogue leaves the cluster, AD-3); `authz_bridge_reconciler` — safe
+      because WP-3's event feed lands in the same phase, not two later; also
+      `app_grant_reconciler`'s tuple writes, since the director is the store's
+      only writer and rebuilds from git on start, which would otherwise delete
+      AppGrant tuples it did not write;
       `app-privilege-requested` annotation kick.
 - [ ] RBAC: no `argoproj.io` write verbs; `pods/exec` stays for purge.
 
@@ -123,6 +127,16 @@ Specified in [authorization-model.md](authorization-model.md) and
       member`), conditions for time.
 - [ ] `tests.fga.yaml`: three cases per relation (grant, neighbouring
       denial, derivation through the parent).
+- [ ] `tenant#can_administer` for admin tiles, and `tenant#can_enter` widened
+      with `can_audit from cluster` and `can_approve from cluster`. Without
+      both, `app#can_use`'s deliberate exclusion of admin accounts makes every
+      tile in `tenant-platform` unreachable for the platform admins it is
+      built for, and the security officer and auditor cannot enter the console
+      at all.
+- [ ] Default perimeter approver: the director writes
+      `tenant:<t>#perimeter_approver@group:gentian:tenant:<t>:admins#member`
+      at tenant deploy. Publishing stays its own relation and its own audit
+      line; a tenant that staffs the role separately removes that tuple.
 - [ ] `make verify-authz-vocabulary`: every `can_*` and role noun in
       `docs/plans/*.md` exists in the model, and vice versa.
 - [ ] Keycloak groups: `gentian:platform:{security,auditor,service-operator,shared-apps}`,
@@ -287,6 +301,14 @@ From [security-gap-closing.md](security-gap-closing.md).
 - [ ] Wave 0: G4 random LiteLLM keys from OpenBao behind the gateway; G5
       Redis ACL key and channel prefixes via `valueMapping.cache`; G6
       MariaDB wildcard grant on the tenant prefix, no `GRANT OPTION`.
+- [ ] **Master password out of the app-install path** (design/security.md §6):
+      Composition init Jobs stop reading
+      `gentian-os/kernel/internal/master-password` and ask the credential
+      manager for the one credential they need. Today any init Job in any
+      tenant can derive every credential on the cluster, kernel identity
+      included, and no OpenBao policy contains it because the derivation is
+      client-side. After this the master password has one reader and can move
+      to a KMS without touching the install path.
 - [ ] G8 workload identity: projected SA tokens with audiences; SPIRE and
       mTLS when a contract needs it.
 - [ ] G9 agents: RFC 8693 exchange with `act`; MCP gateway as PEP.

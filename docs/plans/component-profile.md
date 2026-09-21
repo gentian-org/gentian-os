@@ -235,11 +235,13 @@ type ExposureEnablement struct {
     // Owner is the Keycloak subject that enabled the surface. Set by the
     // director from the caller's token; immutable.
     Owner     string       `json:"owner"`
-    // ExpiresAt bounds the exposure. Required when the cluster policy sets a
-    // defaultLifetime; never later than its maxLifetime. At expiry the
-    // operator removes the proxy, route and listener.
-    // +optional
-    ExpiresAt *metav1.Time `json:"expiresAt,omitempty"`
+    // ExpiresAt bounds the exposure. Always set: the cluster policy's
+    // defaultLifetime is required, so the director fills this in when the
+    // approver does not, and it is never later than maxLifetime. At expiry the
+    // operator treats the enablement as absent when building desired state and
+    // removes the proxy, route and listener — which also makes Argo CD's next
+    // sync idempotent, since the enablement stays in git as history.
+    ExpiresAt *metav1.Time `json:"expiresAt"`
     // ReviewAt is when the owner and the perimeter approver are asked to
     // renew or revoke. Renewal is a new commit.
     // +optional
@@ -253,18 +255,27 @@ domains; `expiresAt` must respect the cluster policy. Who may write one is
 `can_expose` on the tenant, checked by the director.
 
 The cluster half lives on the Cluster claim and is written by the security
-officer:
+officer. It is a **ceiling, not a permission list**: no component is ever
+published by default, at any trust tier, so this block has nothing to grant.
+It bounds what an approver may choose.
+
+An earlier draft gated `authMode: none` on `trustTier: platform`. That
+conflated two unrelated risks — platform tier certifies that one instance can
+safely serve several tenants, which says nothing about whether an anonymous
+request may reach it — and it would have refused the first Nextcloud share
+link, since those are ordinary tenant-tier apps.
 
 ```yaml
 exposure:
-  allowed:                       # per trust tier: which modes a tenant may enable
-    - trustTier: platform
-      authModes: [none, basic, bearer, signature]
-    - trustTier: certified
-      authModes: [basic, bearer, signature]
-    - trustTier: experimental
-      authModes: []
-  defaultLifetime: 2160h         # 90 days; absent means no expiry
+  # Modes this cluster refuses outright, whatever a profile declares or an
+  # approver chooses. Usually empty: the control is the enablement, not the mode.
+  denyAuthModes: []
+  # A `none` surface must provide the exposure-policy contract (§5.2), so the
+  # platform can read and bound the app's public objects.
+  requireExposurePolicyContract: true
+  # Required, with no "absent" case: two optional fields whose joint default is
+  # a permanent public surface is not a safe default (principle 8).
+  defaultLifetime: 2160h         # 90 days
   maxLifetime: 8760h
   reviewInterval: 720h
 ```
@@ -272,7 +283,8 @@ exposure:
 ### 5.2 The `exposure-policy` contract
 
 A profile with any `authMode: none` entry should declare
-`provides: [{name: exposure-policy}]`; at `trustTier: platform` it must.
+`provides: [{name: exposure-policy}]`, and must wherever the cluster sets
+`requireExposurePolicyContract` (the default).
 The contract gives the platform, with the tenant's credential from the
 binding, `policy.read`/`policy.write` — the app's public-sharing policy:
 default and maximum object expiry, password required, groups allowed to

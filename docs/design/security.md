@@ -474,6 +474,17 @@ The master password itself is written to
 so that Composition init Jobs can derive per-app credentials at
 app-install time without requiring the operator to be present.
 
+> **Target — this path is being removed.** A secret that every app-install
+> Job can read is the shared God credential §2.4 forbids: any init Job, in any
+> tenant, can derive *every* credential on the cluster, kernel identity
+> included, and the per-tenant OpenBao policies in §5 cannot contain it
+> because the derivation happens client-side from one input. Deriving is also
+> not a Job's business. **The credential manager derives and returns.** It is
+> already a named enforcement point (principle 3), it already holds the write
+> path for secrets, and a Job asking it for the one credential it needs gets
+> exactly that and nothing else. The master password then has one reader, and
+> can move to a KMS or HSM as §6 wants without rewriting the install path.
+
 > **Security note:** the `sha1sum` pipe that appeared in earlier
 > versions of `seed-openbao.sh` has been removed. Piping HKDF-SHA256
 > binary output through SHA-1 weakened the construction: an attacker

@@ -54,8 +54,10 @@ type tenant
     define perimeter_approver: [group#member]  # gentian:tenant:<t>:perimeter
     define member: [group#member]              # gentian:tenant:<t>:members
 
-    # reach — the desktop host at L2; an admin account must get in to administer
-    define can_enter: member or admin or admin from cluster
+    # reach — the desktop host at L2. An admin account must get in to
+    # administer, and in tenant-platform the console's own users are the
+    # security officer and the auditor, who are members of no tenant.
+    define can_enter: member or admin or admin from cluster or can_audit from cluster or can_approve from cluster
 
     # permissions — the director's tenant-level verbs
     define can_install_app: admin or admin from cluster
@@ -63,8 +65,17 @@ type tenant
     define can_set_policy: admin or admin from cluster   # backup, grants, export schedules, tenant network intent
     define can_grant: admin                              # AppGrant: integration consent
     define can_manage_users: admin or admin from cluster
+    # Publishing to the internet is its own grant. The roles stay distinct,
+    # but most tenants do not staff them separately: at tenant creation the
+    # director writes the admins group into perimeter_approver, and a tenant
+    # that wants the separation removes that one tuple.
     define can_expose: perimeter_approver
     define can_view: member or admin or can_audit from cluster
+
+    # Admin tiles on the desktop. Not an app permission: app#can_use excludes
+    # admin accounts by design, so an admin account can reach no app object —
+    # which in tenant-platform would be every tile the console has.
+    define can_administer: admin or admin from cluster
 
 type catalogue_entry
   relations
@@ -78,7 +89,8 @@ type app
 
     # least privilege per account: an admin account launches nothing
     define can_use: member from tenant but not admin from tenant
-    define can_launch: can_use                    # tiles; also L2 on the app's own route
+    define can_launch: can_use                    # app tiles; also L2 on the app's own route
+                                                  # admin tiles are tenant#can_administer
     define can_administer: admin
 
 condition grant_valid(current_time: timestamp, expires_at: timestamp) {
