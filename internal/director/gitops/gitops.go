@@ -94,9 +94,15 @@ type Meta struct {
 	// Decision is the authorization that allowed the change, as
 	// "<relation> <object>" — what was asked, of what.
 	Decision string
+	// Principal replaces "user:<Subject>" in the trailer when what authorised
+	// the change was not a person — a fact signed by the store, say.
+	Principal string
 }
 
 func (m Meta) actor() string {
+	if m.Principal != "" {
+		return m.Principal
+	}
 	if m.Author.Email != "" {
 		return identClean(m.Author.Email)
 	}
@@ -107,14 +113,16 @@ func (m Meta) actor() string {
 // request id. One line, so `git log --grep` answers "who did this and why was
 // it allowed" without joining anything.
 func (m Meta) trailers() []string {
-	if m.Subject == "" && m.Decision == "" {
+	if m.Subject == "" && m.Decision == "" && m.Principal == "" {
 		return nil
 	}
 	parts := []string{}
 	if m.RequestID != "" {
 		parts = append(parts, "req="+m.RequestID)
 	}
-	if m.Subject != "" {
+	if m.Principal != "" {
+		parts = append(parts, m.Principal)
+	} else if m.Subject != "" {
 		parts = append(parts, "user:"+m.Subject)
 	}
 	if m.Decision != "" {
@@ -274,6 +282,13 @@ type edit func(text string) (newText, status string, changed bool, err error)
 // answer honest: if the other writer made the same change, the retry reports
 // that the state already holds rather than committing it twice.
 func (g *GitOps) apply(ctx context.Context, tenant, message string, meta Meta, fn edit) (Result, error) {
+	return g.applyTo(ctx, tenant, "", message, meta, fn)
+}
+
+// applyTo is apply for a file beside the tenant's manifest. sibling is a bare
+// file name, "" for the manifest itself; a sibling that does not exist yet is
+// edited from empty text.
+func (g *GitOps) applyTo(ctx context.Context, tenant, sibling, message string, meta Meta, fn edit) (Result, error) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	for attempt := 1; attempt <= maxPushAttempts; attempt++ {
@@ -281,8 +296,11 @@ func (g *GitOps) apply(ctx context.Context, tenant, message string, meta Meta, f
 		if err != nil {
 			return Result{}, err
 		}
+		if sibling != "" {
+			file = filepath.Join(filepath.Dir(file), sibling)
+		}
 		content, err := os.ReadFile(file)
-		if err != nil {
+		if err != nil && !(sibling != "" && errors.Is(err, os.ErrNotExist)) {
 			return Result{}, err
 		}
 		text, status, changed, err := fn(string(content))

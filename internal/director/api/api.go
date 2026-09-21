@@ -36,6 +36,7 @@ import (
 
 	"github.com/gentian-org/gentian-os/internal/director/authn"
 	"github.com/gentian-org/gentian-os/internal/director/authz"
+	"github.com/gentian-org/gentian-os/internal/director/entitlement"
 	"github.com/gentian-org/gentian-os/internal/director/gitops"
 )
 
@@ -50,6 +51,7 @@ type Repository interface {
 	Uninstall(ctx context.Context, tenant, profile string, meta gitops.Meta) (gitops.Result, error)
 	SetAddons(ctx context.Context, tenant, profile string, addons []string, meta gitops.Meta) (gitops.Result, error)
 	Apps(ctx context.Context, tenant string) ([]gitops.App, error)
+	Entitlements(ctx context.Context, tenant string) ([]gitops.Entitlement, error)
 }
 
 // Config assembles a Server.
@@ -67,6 +69,15 @@ type Config struct {
 	// caller by signature, not by token: the listener is not a user and holds
 	// no identity a token could carry. Nil leaves the endpoint unregistered.
 	Events http.Handler
+	// Store verifies and applies what the App Store signed. Nil leaves the
+	// write unregistered: a cluster with no pinned store key believes no store.
+	Store *StoreConfig
+}
+
+// StoreConfig is what the entitlement write needs.
+type StoreConfig struct {
+	Verifier *entitlement.Verifier
+	Applier  *entitlement.Applier
 }
 
 // Server is the director's API.
@@ -136,48 +147,57 @@ func tenantObject(r *http.Request) (string, error) {
 	return authz.Tenant(t), nil
 }
 
+// authorize runs the steps every user-callable route shares: who is calling,
+// may they do relation to the route's object. On refusal it has already
+// answered, and ok is false.
+func (s *Server) authorize(w http.ResponseWriter, r *http.Request, pattern, relation string, obj object) (c call, ok bool) {
+	ctx := r.Context()
+	ident, err := s.cfg.Authn.FromRequest(r)
+	if err != nil {
+		s.cfg.Log.WarnContext(ctx, "authentication failed", "request_id", reqID(ctx), "reason", err.Error(), "route", pattern)
+		w.Header().Set("WWW-Authenticate", `Bearer realm="gentian-director"`)
+		s.fail(w, r, http.StatusUnauthorized, "unauthenticated")
+		return call{}, false
+	}
+	user, err := authz.User(ident.Subject)
+	if err != nil {
+		s.fail(w, r, http.StatusUnauthorized, "unauthenticated")
+		return call{}, false
+	}
+	target, err := obj(r)
+	if err != nil {
+		s.fail(w, r, http.StatusBadRequest, "invalid name")
+		return call{}, false
+	}
+	allowed, err := s.cfg.Authz.Check(ctx, reqID(ctx), user, relation, target)
+	if err != nil {
+		// The decision point is unreachable: refuse, and say it is us.
+		s.fail(w, r, http.StatusServiceUnavailable, "authorization unavailable")
+		return call{}, false
+	}
+	if !allowed {
+		s.fail(w, r, http.StatusForbidden, "forbidden")
+		return call{}, false
+	}
+	return call{
+		id:   ident,
+		user: user,
+		meta: gitops.Meta{
+			Author:    gitops.Person{Name: ident.Name, Email: ident.Email},
+			Subject:   user[len("user:"):],
+			RequestID: reqID(ctx),
+			Decision:  relation + " " + target,
+		},
+	}, true
+}
+
 // guarded registers a route with the relation it requires. There is no other
 // way to register a route a user can call.
 func (s *Server) guarded(pattern, relation string, obj object, h func(http.ResponseWriter, *http.Request, call)) {
 	s.mux.HandleFunc(pattern, func(w http.ResponseWriter, r *http.Request) {
-		ctx := r.Context()
-		ident, err := s.cfg.Authn.FromRequest(r)
-		if err != nil {
-			s.cfg.Log.WarnContext(ctx, "authentication failed", "request_id", reqID(ctx), "reason", err.Error(), "route", pattern)
-			w.Header().Set("WWW-Authenticate", `Bearer realm="gentian-director"`)
-			s.fail(w, r, http.StatusUnauthorized, "unauthenticated")
-			return
+		if c, ok := s.authorize(w, r, pattern, relation, obj); ok {
+			h(w, r, c)
 		}
-		user, err := authz.User(ident.Subject)
-		if err != nil {
-			s.fail(w, r, http.StatusUnauthorized, "unauthenticated")
-			return
-		}
-		target, err := obj(r)
-		if err != nil {
-			s.fail(w, r, http.StatusBadRequest, "invalid name")
-			return
-		}
-		allowed, err := s.cfg.Authz.Check(ctx, reqID(ctx), user, relation, target)
-		if err != nil {
-			// The decision point is unreachable: refuse, and say it is us.
-			s.fail(w, r, http.StatusServiceUnavailable, "authorization unavailable")
-			return
-		}
-		if !allowed {
-			s.fail(w, r, http.StatusForbidden, "forbidden")
-			return
-		}
-		h(w, r, call{
-			id:   ident,
-			user: user,
-			meta: gitops.Meta{
-				Author:    gitops.Person{Name: ident.Name, Email: ident.Email},
-				Subject:   user[len("user:"):],
-				RequestID: reqID(ctx),
-				Decision:  relation + " " + target,
-			},
-		})
 	})
 }
 
@@ -195,6 +215,11 @@ func (s *Server) routes() {
 	// change it.
 	s.guarded("GET /v1/tenants/{t}/apps", "can_view", tenantObject, s.listApps)
 	s.guarded("GET /v1/tenants/{t}/apps/{p}/addons", "can_view", tenantObject, s.getAddons)
+
+	s.guarded("GET /v1/tenants/{t}/entitlements", "can_view", tenantObject, s.listEntitlements)
+	if s.cfg.Store != nil {
+		s.mux.HandleFunc("POST /v1/tenants/{t}/entitlements", s.entitle)
+	}
 
 	s.guarded("POST /v1/tenants/{t}/apps/{p}", "can_install_app", tenantObject, s.install)
 	s.guarded("DELETE /v1/tenants/{t}/apps/{p}", "can_install_app", tenantObject, s.uninstall)
@@ -227,6 +252,72 @@ func (s *Server) getAddons(w http.ResponseWriter, r *http.Request, _ call) {
 		}
 	}
 	s.fail(w, r, http.StatusNotFound, "app not installed")
+}
+
+func (s *Server) listEntitlements(w http.ResponseWriter, r *http.Request, _ call) {
+	facts, err := s.cfg.Repo.Entitlements(r.Context(), r.PathValue("t"))
+	if err != nil {
+		s.repoError(w, r, err)
+		return
+	}
+	s.json(w, http.StatusOK, map[string]any{"tenant": r.PathValue("t"), "entitlements": facts})
+}
+
+type entitleRequest struct {
+	// Grant is the store's statement, a compact JWS.
+	Grant string `json:"grant"`
+}
+
+// entitle takes a statement the store signed. The signature is what is
+// believed, so it is checked first, before anything is asked of the caller.
+//
+// A grant adds access, so it also needs a person who may install in this
+// tenant to be the one delivering it: the store may trigger, it may not decide
+// for the tenant. A revocation only removes access and the store's signature is
+// all the authority it needs — requiring the tenant's own administrator to
+// deliver it would let them decline to.
+func (s *Server) entitle(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	tenant := r.PathValue("t")
+	if !gitops.ValidName(tenant) {
+		s.fail(w, r, http.StatusBadRequest, "invalid name")
+		return
+	}
+	var body entitleRequest
+	if err := decode(r, &body); err != nil || body.Grant == "" {
+		s.fail(w, r, http.StatusBadRequest, `body must be {"grant": "<compact JWS>"}`)
+		return
+	}
+	claims, kid, err := s.cfg.Store.Verifier.Verify(body.Grant, tenant)
+	switch {
+	case errors.Is(err, entitlement.ErrNotBelieved):
+		s.cfg.Log.WarnContext(ctx, "entitlement statement refused", "request_id", reqID(ctx), "tenant", tenant, "reason", err.Error())
+		s.fail(w, r, http.StatusUnauthorized, "statement is not verifiably the store's")
+		return
+	case errors.Is(err, entitlement.ErrNotForHere):
+		s.fail(w, r, http.StatusForbidden, "statement is not for this cluster and tenant")
+		return
+	case err != nil:
+		s.fail(w, r, http.StatusBadRequest, "statement is incomplete")
+		return
+	}
+
+	meta := gitops.Meta{RequestID: reqID(ctx), Principal: "store:" + kid, Decision: "signed " + claims.ID}
+	if claims.Granted {
+		c, ok := s.authorize(w, r, "POST /v1/tenants/{t}/entitlements", "can_install_app", tenantObject)
+		if !ok {
+			return
+		}
+		// The person delivered it; the store decided it. Both are recorded.
+		meta = c.meta
+		meta.Decision += "; store:" + kid + " signed " + claims.ID
+	}
+	res, err := s.cfg.Store.Applier.Apply(ctx, tenant, claims, kid, meta)
+	if errors.Is(err, gitops.ErrStaleFact) {
+		s.fail(w, r, http.StatusConflict, "a newer statement about this entry is already recorded")
+		return
+	}
+	s.written(w, r, res, err)
 }
 
 type installRequest struct {

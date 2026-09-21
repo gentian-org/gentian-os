@@ -34,6 +34,7 @@ import (
 	"github.com/gentian-org/gentian-os/internal/director/api"
 	"github.com/gentian-org/gentian-os/internal/director/authn"
 	"github.com/gentian-org/gentian-os/internal/director/authz"
+	"github.com/gentian-org/gentian-os/internal/director/entitlement"
 	"github.com/gentian-org/gentian-os/internal/director/gitops"
 	"github.com/gentian-org/gentian-os/internal/director/membership"
 )
@@ -133,7 +134,25 @@ func run(log *slog.Logger) error {
 			return err
 		}
 	}
-	handler, err := api.New(api.Config{Authn: verifier, Authz: checker, Repo: repo, Log: log, EnforceEntitlements: enforce, Events: events})
+	// The store is believed only through keys pinned here, from the Cluster
+	// claim. No key, no store: statements are refused because the endpoint does
+	// not exist, not because a lookup failed.
+	var store *api.StoreConfig
+	if raw := os.Getenv("DIRECTOR_STORE_KEYS"); raw == "" {
+		log.Warn("no store signing key pinned: entitlement statements are not accepted", "setting", "DIRECTOR_STORE_KEYS")
+	} else {
+		keys, err := membership.ParseKeys(raw)
+		if err != nil {
+			return fmt.Errorf("DIRECTOR_STORE_KEYS: %w", err)
+		}
+		sv, err := entitlement.NewVerifier(keys, cluster)
+		if err != nil {
+			return err
+		}
+		store = &api.StoreConfig{Verifier: sv, Applier: &entitlement.Applier{Repo: repo, Store: checker}}
+	}
+	handler, err := api.New(api.Config{Authn: verifier, Authz: checker, Repo: repo, Log: log,
+		EnforceEntitlements: enforce, Events: events, Store: store})
 	if err != nil {
 		return err
 	}

@@ -19,6 +19,7 @@ limitations under the License.
 package directortest
 
 import (
+	"crypto/ed25519"
 	"crypto/rand"
 	"crypto/rsa"
 	"encoding/json"
@@ -203,4 +204,28 @@ func OtherKey(t testing.TB) *rsa.PrivateKey {
 		t.Fatal(err)
 	}
 	return k
+}
+
+// Statement signs payload as the store would: a compact JWS, EdDSA, with the
+// key id in the protected header.
+func Statement(t testing.TB, key ed25519.PrivateKey, kid string, payload any) string {
+	t.Helper()
+	signer, err := jose.NewSigner(jose.SigningKey{Algorithm: jose.EdDSA, Key: key},
+		(&jose.SignerOptions{}).WithHeader("kid", kid))
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	jws, err := signer.Sign(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, err := jws.CompactSerialize()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return out
 }

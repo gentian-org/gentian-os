@@ -232,6 +232,15 @@ type Tuple struct {
 	User     string `json:"user"`
 	Relation string `json:"relation"`
 	Object   string `json:"object"`
+	// Condition makes the tuple hold only while a model condition does.
+	Condition *Condition `json:"condition,omitempty"`
+}
+
+// Condition names a model condition and the part of its context that is stored
+// with the tuple; the rest arrives with each Check.
+type Condition struct {
+	Name    string         `json:"name"`
+	Context map[string]any `json:"context,omitempty"`
 }
 
 // Read returns the stored tuples matching a filter. Any field may be empty,
@@ -295,7 +304,11 @@ func (c *OpenFGA) Write(ctx context.Context, writes, deletes []Tuple) error {
 		}
 		return nil
 	}
-	if err := send("deletes", deletes); err != nil {
+	bare := make([]Tuple, len(deletes))
+	for i, t := range deletes {
+		bare[i] = Tuple{User: t.User, Relation: t.Relation, Object: t.Object}
+	}
+	if err := send("deletes", bare); err != nil {
 		return err
 	}
 	return send("writes", writes)

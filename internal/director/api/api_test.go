@@ -18,6 +18,8 @@ package api_test
 import (
 	"bytes"
 	"context"
+	"crypto/ed25519"
+	"crypto/rand"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -29,6 +31,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"sigs.k8s.io/yaml"
 
@@ -36,6 +39,7 @@ import (
 	"github.com/gentian-org/gentian-os/internal/director/authn"
 	"github.com/gentian-org/gentian-os/internal/director/authz"
 	dt "github.com/gentian-org/gentian-os/internal/director/directortest"
+	"github.com/gentian-org/gentian-os/internal/director/entitlement"
 	"github.com/gentian-org/gentian-os/internal/director/gitops"
 )
 
@@ -56,8 +60,9 @@ const audience = "gentian-director"
 
 type harness struct {
 	*httptest.Server
-	issuer *dt.Issuer
-	remote string
+	issuer   *dt.Issuer
+	remote   string
+	storeKey ed25519.PrivateKey
 }
 
 func start(t *testing.T, entitlements bool) *harness {
@@ -69,14 +74,21 @@ func start(t *testing.T, entitlements bool) *harness {
 	}
 	remote := dt.Remote(t, "demo", "solo", "other")
 	repo := gitops.NewGitOps(dt.Clone(t, remote), remote, dt.Cluster, gitops.Person{})
+	decisions, tuples := checker(t)
+	pub, priv, _ := ed25519.GenerateKey(rand.Reader)
+	verifier, err := entitlement.NewVerifier(map[string]ed25519.PublicKey{"store-1": pub}, dt.Cluster)
+	if err != nil {
+		t.Fatal(err)
+	}
 	srv, err := api.New(api.Config{
-		Authn: v, Authz: checker(t), Repo: repo, EnforceEntitlements: entitlements,
-		Log: slog.New(slog.NewTextHandler(io.Discard, nil)),
+		Authn: v, Authz: decisions, Repo: repo, EnforceEntitlements: entitlements,
+		Store: &api.StoreConfig{Verifier: verifier, Applier: &entitlement.Applier{Repo: repo, Store: tuples}},
+		Log:   slog.New(slog.NewTextHandler(io.Discard, nil)),
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	h := &harness{Server: httptest.NewServer(srv), issuer: is, remote: remote}
+	h := &harness{Server: httptest.NewServer(srv), issuer: is, remote: remote, storeKey: priv}
 	t.Cleanup(h.Close)
 	return h
 }
@@ -274,6 +286,140 @@ func TestInstallRequiresAnEntitlementThatHasNotExpired(t *testing.T) {
 	}
 }
 
+// ---- entitlements -----------------------------------------------------------
+
+func (h *harness) statement(t *testing.T, c entitlement.Claims) string {
+	t.Helper()
+	if c.Audience == "" {
+		c.Audience = "cluster:" + dt.Cluster
+	}
+	if c.Subject == "" {
+		c.Subject = "tenant:demo"
+	}
+	if c.IssuedAt == 0 {
+		c.IssuedAt = time.Now().Add(-time.Minute).Unix()
+	}
+	if c.Granted && c.Expiry == 0 {
+		c.Expiry = time.Now().Add(24 * time.Hour).Unix()
+	}
+	raw, _ := json.Marshal(map[string]string{"grant": dt.Statement(t, h.storeKey, "store-1", c)})
+	return string(raw)
+}
+
+// The store says yes, a person who may install delivers it, and only then does
+// the install go through. Later the store says no, by itself, and it stops.
+func TestAnEntitlementIsGrantedAndRevokedOnTheSamePath(t *testing.T) {
+	h := start(t, true)
+	tom, mia := h.token(t, "tenant-demo", "tom"), h.token(t, "tenant-demo", "mia")
+	install := func() int {
+		code, _ := h.do(t, "POST", "/v1/tenants/demo/apps/wiki", tom, `{"coordinate":"main/wiki"}`)
+		return code
+	}
+	if code := install(); code != http.StatusForbidden {
+		t.Fatalf("install before any grant: %d", code)
+	}
+
+	grant := h.statement(t, entitlement.Claims{ID: "grant-0001", Coordinate: "main/wiki", Granted: true})
+	if code, _ := h.do(t, "POST", "/v1/tenants/demo/entitlements", "", grant); code != http.StatusUnauthorized {
+		t.Fatalf("a grant nobody delivered: %d", code)
+	}
+	if code, _ := h.do(t, "POST", "/v1/tenants/demo/entitlements", mia, grant); code != http.StatusForbidden {
+		t.Fatalf("a grant delivered by a member: %d", code)
+	}
+	code, body := h.do(t, "POST", "/v1/tenants/demo/entitlements", tom, grant)
+	if code != http.StatusAccepted || body["status"] != "recorded" {
+		t.Fatalf("grant: %d %v", code, body)
+	}
+	if code, body := h.do(t, "POST", "/v1/tenants/demo/entitlements", tom, grant); code != http.StatusOK || body["status"] != "unchanged" {
+		t.Fatalf("the same grant again: %d %v", code, body)
+	}
+	trailer := dt.Git(t, "", "--git-dir", h.remote, "log", "-1", "--format=%(trailers:key=Gentian-Authz,valueonly)", "main")
+	if !strings.Contains(trailer, "user:tom can_install_app tenant:demo; store:store-1 signed grant-0001 allowed") {
+		t.Fatalf("trailer = %q", trailer)
+	}
+	code, body = h.do(t, "GET", "/v1/tenants/demo/entitlements", mia, "")
+	if code != http.StatusOK || !strings.Contains(fmt.Sprint(body["entitlements"]), "coordinate:main/wiki") {
+		t.Fatalf("read: %d %v", code, body)
+	}
+	if code := install(); code != http.StatusAccepted {
+		t.Fatalf("install under the grant: %d", code)
+	}
+
+	// The revocation needs no one's consent.
+	revoke := h.statement(t, entitlement.Claims{ID: "grant-0002", Coordinate: "main/wiki", Reason: "refund",
+		IssuedAt: time.Now().Unix()})
+	if code, body := h.do(t, "POST", "/v1/tenants/demo/entitlements", "", revoke); code != http.StatusAccepted {
+		t.Fatalf("revocation: %d %v", code, body)
+	}
+	if code, _ := h.do(t, "POST", "/v1/tenants/demo/apps/wiki2", tom, `{"coordinate":"main/wiki"}`); code != http.StatusForbidden {
+		t.Fatalf("install after the revocation: %d", code)
+	}
+	// Nor does delivering the old grant again bring it back.
+	if code, _ := h.do(t, "POST", "/v1/tenants/demo/entitlements", tom, grant); code != http.StatusConflict {
+		t.Fatalf("the old grant replayed: %d", code)
+	}
+	if code, _ := h.do(t, "POST", "/v1/tenants/demo/apps/wiki2", tom, `{"coordinate":"main/wiki"}`); code != http.StatusForbidden {
+		t.Fatalf("install after the replay: %d", code)
+	}
+	if got := dt.RemoteFile(t, h.remote, "clusters/"+dt.Cluster+"/tenants/demo/entitlements.yaml"); !strings.Contains(got, "granted: false") || !strings.Contains(got, "reason: refund") {
+		t.Fatalf("entitlements.yaml =\n%s", got)
+	}
+}
+
+func TestOnlyTheStoresOwnStatementsAboutThisTenantAreBelieved(t *testing.T) {
+	h := start(t, true)
+	tom := h.token(t, "tenant-demo", "tom")
+	before := h.tip(t)
+	_, stranger, _ := ed25519.GenerateKey(rand.Reader)
+	wrap := func(jws string) string {
+		raw, _ := json.Marshal(map[string]string{"grant": jws})
+		return string(raw)
+	}
+	ok := entitlement.Claims{Audience: "cluster:" + dt.Cluster, Subject: "tenant:demo", ID: "grant-0009", Coordinate: "main/wiki",
+		Granted: true, IssuedAt: time.Now().Add(-time.Minute).Unix(), Expiry: time.Now().Add(time.Hour).Unix()}
+	with := func(f func(*entitlement.Claims)) entitlement.Claims { c := ok; f(&c); return c }
+
+	cases := map[string]struct {
+		body string
+		want int
+	}{
+		"signed by someone else":      {wrap(dt.Statement(t, stranger, "store-1", ok)), http.StatusUnauthorized},
+		"a key id nobody pinned":      {wrap(dt.Statement(t, h.storeKey, "store-9", ok)), http.StatusUnauthorized},
+		"not a statement":             {wrap("a.b.c"), http.StatusUnauthorized},
+		"for another cluster":         {h.statement(t, with(func(c *entitlement.Claims) { c.Audience = "cluster:elsewhere" })), http.StatusForbidden},
+		"for another tenant":          {h.statement(t, with(func(c *entitlement.Claims) { c.Subject = "tenant:solo" })), http.StatusForbidden},
+		"a grant with no end":         {wrap(dt.Statement(t, h.storeKey, "store-1", with(func(c *entitlement.Claims) { c.Expiry = 0 }))), http.StatusBadRequest},
+		"a revocation with no reason": {wrap(dt.Statement(t, h.storeKey, "store-1", with(func(c *entitlement.Claims) { c.Granted = false }))), http.StatusBadRequest},
+		"dated tomorrow": {h.statement(t, with(func(c *entitlement.Claims) {
+			c.IssuedAt = time.Now().Add(24 * time.Hour).Unix()
+			c.Expiry = time.Now().Add(48 * time.Hour).Unix()
+		})), http.StatusBadRequest},
+		"an entry that is not one": {h.statement(t, with(func(c *entitlement.Claims) { c.Coordinate = "wiki#can_install" })), http.StatusBadRequest},
+	}
+	for name, c := range cases {
+		if code, body := h.do(t, "POST", "/v1/tenants/demo/entitlements", tom, c.body); code != c.want {
+			t.Errorf("%s: %d %v, want %d", name, code, body, c.want)
+		}
+	}
+	if h.tip(t) != before {
+		t.Fatal("a refused statement moved the repository")
+	}
+}
+
+// A grant that has run out is recorded like any other and entitles to nothing.
+func TestAnExpiredGrantEntitlesToNothing(t *testing.T) {
+	h := start(t, true)
+	tom := h.token(t, "tenant-demo", "tom")
+	old := h.statement(t, entitlement.Claims{ID: "grant-0003", Coordinate: "main/old", Granted: true,
+		IssuedAt: time.Now().Add(-48 * time.Hour).Unix(), Expiry: time.Now().Add(-24 * time.Hour).Unix()})
+	if code, body := h.do(t, "POST", "/v1/tenants/demo/entitlements", tom, old); code != http.StatusAccepted {
+		t.Fatalf("recording: %d %v", code, body)
+	}
+	if code, _ := h.do(t, "POST", "/v1/tenants/demo/apps/old", tom, `{"coordinate":"main/old"}`); code != http.StatusForbidden {
+		t.Fatalf("install under an expired grant: %d", code)
+	}
+}
+
 func TestAddonsRoundTrip(t *testing.T) {
 	h := start(t, false)
 	tom := h.token(t, "tenant-demo", "tom")
@@ -383,11 +529,15 @@ var facts = table{
 	"tenant:demo can_install catalogue_entry:main/element": true,
 }
 
-func checker(t *testing.T) authz.Checker {
+// checker returns what decides and what holds tuples. With OpenFGA they are
+// the same thing. Without it, the table answers for people and a small tuple
+// store answers for entitlements, evaluating grant_valid the way the model does.
+func checker(t *testing.T) (authz.Checker, entitlement.Store) {
 	t.Helper()
 	base := os.Getenv("DIRECTOR_TEST_OPENFGA_URL")
 	if base == "" {
-		return facts
+		mem := &tupleStore{tuples: map[string]authz.Tuple{}}
+		return withEntitlements{table: facts, store: mem}, mem
 	}
 	storeID, modelID := loadOpenFGA(t, base)
 	c, err := authz.NewOpenFGA(authz.Options{
@@ -397,7 +547,55 @@ func checker(t *testing.T) authz.Checker {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return c
+	return c, c
+}
+
+type tupleStore struct {
+	mu     sync.Mutex
+	tuples map[string]authz.Tuple
+}
+
+func tupleKey(t authz.Tuple) string { return t.User + " " + t.Relation + " " + t.Object }
+
+func (m *tupleStore) Read(_ context.Context, f authz.Tuple) ([]authz.Tuple, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if t, ok := m.tuples[tupleKey(f)]; ok {
+		return []authz.Tuple{t}, nil
+	}
+	return nil, nil
+}
+
+func (m *tupleStore) Write(_ context.Context, writes, deletes []authz.Tuple) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, t := range deletes {
+		delete(m.tuples, tupleKey(t))
+	}
+	for _, t := range writes {
+		m.tuples[tupleKey(t)] = t
+	}
+	return nil
+}
+
+type withEntitlements struct {
+	table
+	store *tupleStore
+}
+
+func (w withEntitlements) Check(ctx context.Context, id, user, relation, object string) (bool, error) {
+	if relation != "can_install" {
+		return w.table.Check(ctx, id, user, relation, object)
+	}
+	if ok, _ := w.table.Check(ctx, id, user, relation, object); ok {
+		return true, nil
+	}
+	got, _ := w.store.Read(ctx, authz.Tuple{User: user, Relation: "entitled", Object: object})
+	if len(got) == 0 || got[0].Condition == nil {
+		return false, nil
+	}
+	until, err := time.Parse(time.RFC3339, fmt.Sprint(got[0].Condition.Context["expires_at"]))
+	return err == nil && time.Now().Before(until), nil
 }
 
 // loadOpenFGA creates a store holding model v1 and the shared fixture, plus

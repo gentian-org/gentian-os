@@ -371,10 +371,18 @@ Specified in [ui-restructure.md](ui-restructure.md) §3 and
       cluster, cluster registration with a public key.
 - [ ] Ingest from the catalogue repository; reject entries not deployable
       as `tenant`.
-- [ ] Signed entitlement grants (`entitlement_grant`, `signing_key`);
-      delivery to the director; single-use fetch token; pull credential
-      handed to the credential manager as the tenant admin.
-- [ ] **Revocation on the same path**: a signed record with `granted: false`
+- [x] **The contract and the cluster's half of it**
+      ([store-contract.md](../design/store-contract.md)): statements are
+      compact JWS, EdDSA, bound to cluster and tenant, ordered by `iat`, keys
+      pinned; `POST`/`GET /v1/tenants/{t}/entitlements` in the director; the
+      fact committed to `entitlements.yaml`, the conditional tuple written or
+      removed in the order that fails towards less access. Contract-tested
+      with OpenFGA evaluating `grant_valid`.
+- [ ] Store side: signing (`entitlement_grant`, `signing_key`); single-use
+      fetch token; pull credential handed to the credential manager as the
+      tenant admin.
+- [x] **Revocation on the same path** (cluster side; the pull credential's
+      removal waits for the credential manager): a signed record with `granted: false`
       to `POST /v1/tenants/{t}/entitlements`. The director verifies, commits
       the fact and deletes the tuple in one operation, so a later commit
       overrides an earlier `expires_at` (operator-split-plan §3.8). The pull
