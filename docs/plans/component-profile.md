@@ -203,6 +203,78 @@ type ExposureSpec struct {
 `surface: perimeter` is what the operator reads to build the DMZ namespace, and
 it replaces a separate `publicSurfaces` list. One concept, one place.
 
+### 5.1 Enablement: the tenant's half
+
+The profile declares what *may* be published. What *is* published is the
+tenant's decision, recorded on the instance, never on the profile
+([networking.md](networking.md) §8.1). Gateway entries need no enablement:
+they carry the session and are always on. Perimeter entries are off until a
+perimeter approver enables them.
+
+```go
+// On the Component (the instance). Written only by the director.
+type ExposureEnablement struct {
+    // Surface names an ExposureSpec entry of the profile whose surface is
+    // "perimeter". authMode is not repeated here: the profile's entry is the
+    // one source, and the enablement cannot weaken it.
+    Surface   string       `json:"surface"`
+    // Host is the public hostname. Empty means the entry's default host in
+    // the tenant's zone. A vanity host is admitted only if the tenant's
+    // approved domains include it; the certificate is obtained by HTTP-01.
+    // +optional
+    Host      string       `json:"host,omitempty"`
+    // Owner is the Keycloak subject that enabled the surface. Set by the
+    // director from the caller's token; immutable.
+    Owner     string       `json:"owner"`
+    // ExpiresAt bounds the exposure. Required when the cluster policy sets a
+    // defaultLifetime; never later than its maxLifetime. At expiry the
+    // operator removes the proxy, route and listener.
+    // +optional
+    ExpiresAt *metav1.Time `json:"expiresAt,omitempty"`
+    // ReviewAt is when the owner and the perimeter approver are asked to
+    // renew or revoke. Renewal is a new commit.
+    // +optional
+    ReviewAt  *metav1.Time `json:"reviewAt,omitempty"`
+}
+```
+
+Admission: `surface` must name a `perimeter` entry of the referenced
+profile; `host` must be in the tenant's zone or in the tenant's approved
+domains; `expiresAt` must respect the cluster policy. Who may write one is
+`can_expose` on the tenant, checked by the director.
+
+The cluster half lives on the Cluster claim and is written by the security
+officer:
+
+```yaml
+exposure:
+  allowed:                       # per trust tier: which modes a tenant may enable
+    - trustTier: platform
+      authModes: [none, basic, bearer, signature]
+    - trustTier: certified
+      authModes: [basic, bearer, signature]
+    - trustTier: experimental
+      authModes: []
+  defaultLifetime: 2160h         # 90 days; absent means no expiry
+  maxLifetime: 8760h
+  reviewInterval: 720h
+```
+
+### 5.2 The `exposure-policy` contract
+
+A profile with any `authMode: none` entry should declare
+`provides: [{name: exposure-policy}]`; at `trustTier: platform` it must.
+The contract gives the platform, with the tenant's credential from the
+binding, `policy.read`/`policy.write` — the app's public-sharing policy:
+default and maximum object expiry, password required, groups allowed to
+share publicly, anonymous upload — and `objects.list`/`objects.revoke` —
+the app's public objects with owner, created, expiry and a hashed token.
+The platform writes the tenant's policy into the app whenever the cluster
+policy or the enablement changes. A `none` entry without the contract is
+admitted but its surface is **opaque** in the inventory
+([networking.md](networking.md) §8.3), bounded only by the enablement's
+expiry.
+
 ## 6. What tenancy derives
 
 | | system | shared | tenant |
