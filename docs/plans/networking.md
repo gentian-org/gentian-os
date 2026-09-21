@@ -61,7 +61,7 @@ flowchart TB
     S5[" "]
 
     subgraph EDGE["kernel-edge — one address, one Envoy fleet"]
-        AG["authenticated Gateway<br/>L0 TLS, rate limit<br/>L1 session per tenant zone (OIDC), JWT for bearer —<br/>both verified against Keycloak's JWKS<br/>L2 ext-auth: can_use"]
+        AG["authenticated Gateway<br/>L0 TLS, rate limit<br/>L1 session per tenant zone (OIDC) / JWT for bearer<br/>L2 ext-auth: can_use"]
         SHIM["ext-auth shim"]
         ACME["ACME HTTP-01 solver"]
         PG["perimeter Gateway<br/>L0 only<br/>per-route authMode, WAF, body limits<br/>TCP/UDP listeners"]
@@ -139,6 +139,7 @@ flowchart TB
     PG -->|"TCPRoute"| MTA
     PG -->|"UDPRoute"| TURN
     PG -->|"/realms/* only — admin, master, metrics internal"| KC
+    AG -. "verify JWT" .-> KC
     MTA -->|"LMTP / master credential"| STORE
     MTA -. "DKIM via milter" .-> STORE
     PX -->|"one backend, one port"| APP
@@ -181,8 +182,8 @@ flowchart TB
     style SYS fill:#80808012,stroke:#9a9a9a
     style SMAIL fill:#80808012,stroke:#9a9a9a
     style LEGEND fill:none,stroke:none
-    linkStyle 14,15,16,17,18,19,20,21,22,23,24 stroke:#f0883e,stroke-width:2px
-    linkStyle 0,1,2,3,4,5,6,7,8,9,25 stroke:#3b82f6,stroke-width:2px
+    linkStyle 14,15,16,17,18,19,20,21,23,24,25 stroke:#f0883e,stroke-width:2px
+    linkStyle 0,1,2,3,4,5,6,7,8,9,22,26 stroke:#3b82f6,stroke-width:2px
     linkStyle 10,11,12,13 stroke:#9a9a9a,stroke-width:1.5px
 ```
 
