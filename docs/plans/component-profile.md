@@ -260,8 +260,9 @@ type ExposureEnablement struct {
     // the tenant's zone, which the zone's DNS-01 wildcard already covers. A
     // vanity host is admitted only if the tenant's approved domains include
     // it, and its certificate is obtained by HTTP-01 — the platform holds no
-    // credential to a customer's DNS zone and does not want one
-    // (networking.md §7).
+    // credential to a customer's DNS zone and does not want one. A host in the
+    // tenant's own zone needs no certificate work at all: the tenant's
+    // DNS-01 wildcard already covers it (networking.md §7).
     // +optional
     Host      string       `json:"host,omitempty"`
     // Owner is the Keycloak subject that enabled the surface. Set by the

@@ -383,17 +383,35 @@ design cannot do for it.
   Gateways are kernel resources reconciled by the operator from the Cluster
   claim — a tenant owns `HTTPRoute`s, never a `Gateway`, because listener
   uniqueness is class-wide once gateways are merged.
-- **Certificates: two cases, two challenges.** A `*.<t>.<kernel>` zone
-  wildcard is issued by **DNS-01** against the kernel domain's provider
-  credential, which `kernel-edge` already holds for external-dns — ACME
-  issues wildcards by DNS-01 only, so HTTP-01 cannot serve this case at all.
-  external-dns creates one `*.<t>.<kernel>` record per tenant at deploy, since
-  a DNS wildcard matches a single label and the kernel domain's own wildcard
-  does not cover a two-label tenant zone. **HTTP-01** is for vanity hosts the
-  *tenant* owns: there the platform deliberately holds no credential to the
-  customer's zone, which is the reason for the restriction and the only place
-  it applies. It was previously stated as a blanket "no DNS delegation", which
-  is not what was meant and would have made the zone wildcard unobtainable.
+- **Certificates: two cases, two challenges — and this is what already
+  happens.** The per-tenant `*.<domain>` certificate is issued by **DNS-01**
+  today: `tenant_edge_tls.go` writes a `Certificate` with that single
+  `dnsName` against a DNS-01 `ClusterIssuer`, defaulting to
+  `letsencrypt-dns01-cloudflare`, and the chart ships both
+  `letsencrypt[-staging]-http01` and `letsencrypt[-staging]-dns01-<provider>`.
+  ACME issues wildcards by DNS-01 only, so nothing else could work. **HTTP-01**
+  is for vanity hosts the *tenant* owns, where the platform deliberately holds
+  no credential to the customer's zone. That is the whole of the restriction,
+  and the only place it applies. It was previously written as a blanket "no
+  DNS delegation", which described neither the intent nor the code, and would
+  have made the zone wildcard unobtainable.
+
+  Two different things travel under the word "wildcard" and should not be
+  confused. The certificate's DNS-01 challenge is a **TXT** record at
+  `_acme-challenge.<domain>`, written and removed by cert-manager. A wildcard
+  **address** record is separate and generally unnecessary: external-dns
+  publishes one record per routed hostname, so every host resolves without
+  one. Only a deployment that chooses to rely on a wildcard address record has
+  to care that a DNS wildcard matches a single label.
+
+- **DNS ownership does not change.** external-dns owns records; the operator
+  does not write them. On a static-ip cluster its gateway-httproute source
+  reads hostnames off `HTTPRoute`s and takes the target from the Gateway's
+  status address, and the operator publishes nothing at all. On a tunnelled
+  cluster the Gateway never gets an address, so the operator publishes a
+  `DNSEndpoint` naming the hostnames and the tunnel CNAME and external-dns
+  reconciles that. As `edge_dnsendpoint.go` puts it: not the operator writing
+  DNS, the operator declaring intent for the component that owns it.
 - `expose[]` in the profile ([component-profile.md](component-profile.md)
   §5) is the single source for every `HTTPRoute`, `TCPRoute`, `UDPRoute`
   and `SecurityPolicy`; `browserProxy` and `additionalIngresses` retire

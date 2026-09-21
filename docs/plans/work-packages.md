@@ -193,11 +193,12 @@ Specified in [networking.md](networking.md).
 - [ ] Vanity hosts: listener and **HTTP-01** certificate per enabled host —
       the platform holds no credential to a customer's zone; DNS guidance;
       cloudflared hostnames from the same enablement.
-- [ ] Zone certificates: one `*.<t>.<kernel>` wildcard per tenant by
-      **DNS-01** on the kernel domain's existing external-dns credential, and
-      the matching wildcard DNS record at tenant deploy — a DNS wildcard
-      matches one label, so the kernel domain's own record does not cover a
-      two-label tenant zone.
+- [ ] Zone certificates: **no change** — the per-tenant `*.<domain>`
+      certificate is already issued by DNS-01 against
+      `letsencrypt-dns01-<provider>` (`tenant_edge_tls.go`), and DNS records
+      stay external-dns's, from HTTPRoutes on a static-ip cluster and from the
+      operator's `DNSEndpoint` on a tunnelled one. Carried here only so the
+      package does not silently re-litigate it.
 - [ ] `system-mail` split: Postfix, spam filter and an optional Dovecot
       proxy in `system-mail-dmz`; store and DKIM milter in `system-mail`;
       `TCPRoute`s on the perimeter Gateway; external IMAP/submission a
