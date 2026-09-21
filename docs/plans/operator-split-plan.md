@@ -224,8 +224,10 @@ edit is signed and attributed like any other.
 
 ### 3.6 Authorisation model
 
-Additions to [authz/model/v0/model.fga](../../authz/model/v0/model.fga), as
-v1:
+The full v1 model, one type per CRD kind and one relation per role, is
+[roles-and-authorizations.md](roles-and-authorizations.md) §3.1; shown here
+are only the relations the director checks. Additions to
+[authz/model/v0/model.fga](../../authz/model/v0/model.fga):
 
 ```
 type cluster

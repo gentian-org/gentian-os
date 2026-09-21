@@ -23,7 +23,7 @@ manager (3, 9); authority is derived downward, never granted sideways (5).
 | kernel | **Auditor** | `gentian:platform:auditor` | reading the issuer, decision and change logs across all tenants; nothing else | read-only routes on the director; OpenFGA read; git read |
 | system | **Service operator** | `gentian:platform:service-operator` | running the system services: capacity, backups and restores, upgrades and engine versions of `system-postgresql`, `system-mariadb`, `system-cache`, `system-s3`, `system-mail`, `system-llm`; the default fulfiller per contract | director (Cluster claim `system` section), credential manager for service admin credentials |
 | shared | **Shared-app operator** | `gentian:platform:shared-apps` | installing, upgrading and removing `tenancy: shared` instances; granting and revoking tenants' access to each | director (`/v1/clusters/{c}/shared-apps/…`) |
-| tenant | **Tenant administrator** | `gentian:tenant:<t>:admins` | one tenant: installing apps within entitlements, addons, resource plan within the ceiling, backup policies and export schedules, integration grants (`AppGrant`), users and groups in the tenant realm | director (`/v1/tenants/{t}/…`), tenant desktop console |
+| tenant | **Tenant administrator** | `gentian:tenant:<t>:admins` | one tenant: installing apps within entitlements, addons, resource plan within the ceiling, backup policies and export schedules, integration grants (`AppGrant`), users and groups in the tenant realm. A dedicated account: holds no `members` or `app:*` group, launches no app | director (`/v1/tenants/{t}/…`), the tenant desktop showing admin tiles only |
 | tenant-dmz | **Perimeter approver** | `gentian:tenant:<t>:perimeter` | enabling and disabling a public surface for the tenant, within cluster policy; the credentials the DMZ proxies hold | director (`/v1/tenants/{t}/exposure/…`) |
 | tenant, one app | **App administrator** | `gentian:tenant:<t>:app-admins` | administration *inside* one installed app — the app's own admin role, reconciled from `privilegedRole`; no platform rights | the app |
 | tenant | **Member** | `gentian:tenant:<t>:members`, `gentian:tenant:<t>:app:<profile>` | using the apps they are entitled to | tenant desktop, the apps |
@@ -51,6 +51,21 @@ Separations that are load-bearing, whatever one person happens to hold:
 - **Members are never administrators by group inheritance.** Today's model
   reads `admin: [user] or member`; the target model has `admin` as an
   explicit assignment only.
+- **Administrators are never members — least privilege per account, not
+  per person.** An account that installs apps and sets privileges does not
+  also write e-mail. A tenant administrator's account holds the `admins`
+  group and nothing else: no `members`, no `app:*`, no app tiles, no OIDC
+  scope on any app client; a person who needs both has two accounts, and
+  the desktop shows each account only what its relations grant
+  ([iam.md §1.3](../design/iam.md) already states this; today's model
+  contradicts it with `can_launch: … or admin from parent`). Enforced in
+  three places, none of them the UI: the target model derives `can_launch`
+  from `member` alone (§3.1); the authz bridge refuses to sync an account
+  that is in both `gentian:tenant:<t>:admins` and `:members` and raises it
+  in the decision log; and app OIDC clients are granted to member groups
+  only, so an admin token is not accepted by any app even if presented.
+  The same holds one layer up: a platform-role account (`gentian:platform:*`)
+  is a member of no tenant, `tenant-platform` included.
 
 ## 2. Machine identities
 
@@ -94,9 +109,12 @@ function of the namespace tier and the profile:
 
 The UI backends are ordinary workloads: the tenant desktop BFF is a
 `tenancy: tenant` component holding its realm's OIDC client secret and a
-granted database; the platform-admin console BFF is the same shape in the
-kernel realm. Neither has a line in the enforcement-point table because
-neither decides anything — they relay to the director.
+granted database; the platform-admin console is the same component in
+`tenant-platform`, the platform tenant whose realm is the kernel realm
+(AD-10). Neither has a line in the enforcement-point table because neither
+decides anything — they relay to the director, and what a desktop shows is
+what the director returned for that account's relations: admin tiles for an
+admin account, app tiles for a member account, never both.
 
 **Bootstrap** is the one identity outside the classes: the installer, with
 the human's kubeconfig and a bootstrap OpenBao token, until `E-04` revokes
@@ -152,7 +170,7 @@ type tenant
     define can_set_plan:       admin or operator from cluster
     define can_grant:          admin
     define can_expose:         perimeter_approver
-    define can_launch:         member or admin
+    define can_launch:         member            # never admin: admin accounts have no app tiles
 
 type app
   relations

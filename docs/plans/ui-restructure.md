@@ -82,10 +82,17 @@ token to the credential manager rather than holding an OpenBao token
 **Target.** Two deployments, one behaviour.
 
 - **One console, deployed per tenant.** The admin screens are part of the
-  desktop: a tenant admin is a tenant user with more tiles, not a different
-  application, and which screens exist is what the director's read API
-  returns for the caller's relations — a tenant admin never sees "deploy
-  tenant" because no relation grants it, not because a flag hides it.
+  desktop image, not a different application — but an admin account sees
+  **only** admin tiles, and a member account only app tiles. Least privilege
+  is per account, not per person: the account that installs apps and sets
+  privileges holds no `members` or `app:*` group and cannot launch or sign
+  in to any app; someone who needs both has two accounts
+  ([roles-and-authorizations.md](roles-and-authorizations.md) §1,
+  [iam.md §1.3](../design/iam.md)). The desktop enforces none of this — it
+  renders what the director's read API returns for the account's relations,
+  and `can_launch` derives from `member` alone. A tenant admin never sees
+  "deploy tenant" because no relation grants it, not because a flag hides
+  it; a member never sees "install app" for the same reason.
 - **The platform is a tenant** (AD-10). `Tenant/platform` adopts the kernel
   realm (`isolation.keycloakRealm: kernel`), and the platform-admin console
   is that tenant's desktop in `tenant-platform`: the same image and profile,
