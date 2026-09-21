@@ -98,7 +98,9 @@ changes only when the code does.
 | Keycloak per-tenant realms, kernel realm, OIDC for portal and apps | Implemented | Suze composition, `identity_reconciler.go` |
 | Keycloak group → OpenFGA tuple sync; `AppGrant` → tuples | Implemented | `authz_bridge_reconciler.go`, `app_grant_reconciler.go` |
 | Any PEP calling OpenFGA `Check` | **Target** | console client exists, no caller; no gateway ext-auth |
-| Tenant namespace + NetworkPolicy default-deny egress | Implemented | `internal/kernel/netpolicy/` |
+| Tenant namespace + NetworkPolicy default-deny egress | Implemented | `internal/kernel/netpolicy/` — tenant namespaces only |
+| NetworkPolicy in kernel, system and shared namespaces | **Target** | every builder is tenant-scoped; the only policies in the tree are two vendored Bitnami templates (gap G28) |
+| Approval path for profile-declared egress | **Target** | `security.egress` reaches the NetworkPolicy uninspected; `PlatformSecurityPolicy` allowlists MAC waivers only (gap G27) |
 | Pod-security admission (privileged, host ns, non-root, hostPath, caps, priv-esc) | Implemented | `kernel/security/kyverno/policies/` |
 | Gateway JWT / ext-auth / rate limit | **Target** | `BackendTrafficPolicy` carries timeouts only |
 | Service mesh, SPIFFE/SPIRE, workload identity | **Target** | — |
@@ -120,7 +122,7 @@ changes only when the code does.
 | **Keycloak** | Authentication authority + token issuer (*who you are*). **Per-tenant realms** (not Organizations-as-isolation); kernel realm brokers login; service accounts for agents; RFC 8693 Token Exchange; SAML/OIDC brokering. See [iam.md](iam.md), [admin-console.md](admin-console.md). | Apache 2.0 |
 | **OpenFGA** | ReBAC authorization PDP (*what you may do*). Relationship tuples for humans/agents/apps/assets; Conditions + contextual tuples for ABAC; the derived-ceiling schema. | Apache 2.0 |
 | **Provisioning bridge** | Syncs Keycloak identity/group/role/agent events and SCIM into OpenFGA tuples; reconciles `IntegrationBinding` credentials and `AppGrant` into the graph. | **Done** (periodic sync; event-driven SCIM deferred) |
-| **MAC backbone** | K8s namespaces per tenant, NetworkPolicy default-deny egress, Kyverno pod-security admission (implemented); service mesh + SPIFFE/SPIRE (target). | Apache 2.0 / OSS |
+| **MAC backbone** | K8s namespaces per tenant, NetworkPolicy default-deny egress in those namespaces, Kyverno pod-security admission (implemented); the same default-deny in the platform tiers, service mesh + SPIFFE/SPIRE (target). | Apache 2.0 / OSS |
 | **PEP** | Named enforcement points — Envoy Gateway ext-auth, the director, the credential manager, the MCP gateway — calling OpenFGA `Check`, ideally over the OpenID **AuthZEN** Authorization API so PDPs stay swappable. Target: no PEP calls `Check` today (§3.0). | OSS |
 | **ITAM source of truth (optional)** | NetBox (best license fit) / GLPI / Snipe-IT feeding device & asset objects into the graph. | Apache 2.0 / GPL / AGPL |
 

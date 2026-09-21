@@ -15,9 +15,9 @@ made while closing gaps are recorded in
 | --- | --- | --- | --- | --- | --- |
 | G1 | App lifecycle API is unauthenticated and holds git-push authority | `internal/applifecycle/http.go` — no auth middleware; caller sets `X-Gentian-Actor` | 1, 3 | Director (see [operator-split-plan.md](operator-split-plan.md)); token verified, FGA checked, header removed | 0 |
 | G2 | No policy-enforcement point calls OpenFGA. Tuples are written (bridge, `app_grant_reconciler`) and never read | BFF: `app/core/openfga_client.py` has `check()`, no route calls it; operator: `Check` exists in `internal/authz/openfga_client.go`, one caller in tests | 3, 4 | Director checks on every write (wave 1); gateway ext-auth checks on every route (wave 1). The console checks nothing: it renders what the director returns for the caller's relations ([ui-restructure.md](ui-restructure.md)) | 1 |
-| G3 | No gateway authentication. Every app authenticates itself or not at all; `llm.<domain>` is public | no `SecurityPolicy` in `kernel/`, `crossplane/`, `internal/`; `BackendTrafficPolicy` carries timeouts only | 3, 6 | Envoy Gateway `SecurityPolicy` per HTTPRoute: JWT (Keycloak JWKS) + ext-auth to an AuthZEN shim over OpenFGA; `authMode` on every route, `none` explicit (roadmap 1.15) | 1 |
+| G3 | No gateway authentication. Every app authenticates itself or not at all; `llm.<domain>` is public. The only `authMode` in the tree is on `BrowserProxyRoute`, a shell-proxy field with two values and a default | no `SecurityPolicy` in `kernel/`, `crossplane/`, `internal/`; `BackendTrafficPolicy` carries timeouts only; `AppProfile.spec.ingress` (`IngressSpec`) has no `authMode` field; `appprofile_types.go` `BrowserProxyRoute.AuthMode` is `+kubebuilder:default=forward-bearer` | 3, 6 | Envoy Gateway `SecurityPolicy` per HTTPRoute: JWT (Keycloak JWKS) + ext-auth to an AuthZEN shim over OpenFGA (roadmap 1.15). The field is `ComponentProfile.spec.expose[].authMode`, mandatory and defaultless, on **both** surfaces (AD-6): a `gateway` entry gets the `SecurityPolicy`, a `perimeter` entry carries its `authMode` into the DMZ proxy, which is where `none`, `basic` and `signature` actually live ([namespace-cleanup.md](namespace-cleanup.md) §2.6). A fix scoped to `ingress` would reach neither | 1 |
 | G4 | LiteLLM virtual keys are predictable and unauthenticated at the edge | `app_reconciler.go:242` — `sk-gentian-<tenant>-<app>` | 1, 8 | Random keys from OpenBao; route behind G3; per-key budgets (roadmap 2.15 decides ownership) | 0 |
-| G5 | Redis ACL grants every tenant app every key and channel | `cache_reconciler.go:402` — `allkeys allchannels` | 6, 8 | `~<tenant>:<app>:*` key pattern + `&<tenant>:<app>:*` channels; prefix injected through `valueMapping.cache`; apps that cannot prefix get a dedicated instance | 0 |
+| G5 | Redis ACL grants every tenant app every key and channel | `cache_reconciler.go:405` — `allkeys allchannels` | 6, 8 | `~<tenant>:<app>:*` key pattern + `&<tenant>:<app>:*` channels; prefix injected through `valueMapping.cache`; apps that cannot prefix get a dedicated instance | 0 |
 | G6 | MariaDB dynamic-creation grant is root | `mariadb_reconciler.go:200` — `GRANT ALL ON *.* … WITH GRANT OPTION` | 8 | wildcard grant on the tenant prefix: ``GRANT ALL ON `<prefix>\_%`.*``; no `GRANT OPTION` | 0 |
 | G7 | The console acts as one ServiceAccount for every tenant; separation lives in Python | roadmap 1.28; `k8s_*` services use `load_incluster_config()` with no impersonation | 1, 3 | The console has no Kubernetes identity at all: reads and writes are director calls with the user's token, filtered by the caller's relations; its `rbac.yaml` has zero rules ([ui-restructure.md](ui-restructure.md) §2). No impersonation — roadmap 1.28 is superseded | 1 |
 | G8 | Workloads have no identity; east-west traffic is unauthenticated | no SPIFFE, no mesh, no audience-bound tokens except the OpenBao Kubernetes-auth path | 1, 6 | Projected SA tokens with per-consumer audiences first; SPIRE + mTLS when an app-to-app contract needs it (roadmap 1.2) | 2 |
@@ -25,17 +25,22 @@ made while closing gaps are recorded in
 | G10 | No decision log; audit covers console actions only | BFF `audit_log.py` records admin actions to SQL; nothing records FGA decisions; operator has no audit output | 7 | FGA check wrapper logs `(request id, subject, relation, object, decision)` in director, gateway shim and console; Keycloak event export; one request id propagated as a header | 3 |
 | G11 | Nothing in the supply chain is signed or verified | no `signatureKeys` on the AppProject, no cosign in `.github/workflows/ci.yaml`, provider-helm pulls whatever chart an AppProfile names with cluster-admin (roadmap 1.16) | 7, 9 | Director-signed commits + Argo `AppProject.spec.sourceIntegrity` (GnuPG, mode `head`; `signatureKeys` is deprecated upstream — limits in [artefacts/roadmap-additions.md](artefacts/roadmap-additions.md)); image signing in CI + admission verification; provider-helm scoped per tenant namespace | 3 |
 | G12 | OpenBao policies are per tenant, not per app | `tenant-default.yaml` composes one `<tenant>-tenant-policy`; `app-default.yaml` composes none. `security.md §5` says per (tenant, app) | 6, 8 | Per-app policy on `tenants/<t>/apps/<app>/*`, bound to the app's ServiceAccount via Kubernetes auth roles | 4 |
-| G13 | Rotation does not reach app workloads | `reloader.stakater.com` annotation only on the operator Deployment; compositions do not add it | 8 | `app-default` annotates every Release; document the opt-out | 4 |
+| G13 | Rotation does not reach app workloads | `reloader.stakater.com` carried by the operator Deployment and a few kernel services (`keycloak-idp`, `infra-redis`); no composition adds it, so no tenant app is rolled | 8 | `app-default` annotates every Release; document the opt-out | 4 |
 | G14 | No admission guard against literal secrets in `Release.set` | `security.md §8` claims one; `kernel/security/kyverno/policies/` has pod-security rules only | 8 | Kyverno rule: deny `helm.crossplane.io/Release` with `spec.forProvider.set[].value` matching a secret key pattern | 4 |
 | G15 | No rate limiting at the edge | `BackendTrafficPolicy` builder emits timeouts only | 6 | Default per-route limits in `BackendTrafficPolicy`; override is an ingress annotation (a diff, per principle 8) | 4 |
 | G16 | Keycloak sessions lack refresh-token rotation and revocation | roadmap 1.7; nothing in `kernel/services/keycloak-config` sets it | 1 | Realm defaults: rotation on, offline tokens off, idle/max timeouts set in the realm script | 2 |
 | G17 | Secrets are not encrypted at rest in etcd | roadmap 1.18 | 8 | KMS provider or `EncryptionConfiguration`; installer step with a check() | 4 |
+| G27 | Profile-declared egress has no approval path. A profile grants itself outbound network by writing a field; a pod-security exception needs an administrator | `netpolicy/internal.go:85` assigns `profile.Spec.Security.Egress` into the NetworkPolicy spec verbatim, gated only on `len(...) > 0` (`build.go:54`). `PlatformSecurityPolicySpec` carries `allowedMacWaivers` and nothing else, and no caller intersects egress against it — compare `mac_waiver_reconciler.go:135` | 8, 9 | Both become `requires.privileges` with one approval path against the cluster policy (AD-5, [component-profile.md](component-profile.md) §3); `PlatformSecurityPolicy` grows the egress half of the allowlist. Until then the asymmetry inverts principle 8: the weaker control is the one with no diff to refuse | 1 |
+| G28 | Kernel, system and shared namespaces have no platform-authored NetworkPolicy. Default-deny stops at the tenant boundary | every builder in `internal/kernel/netpolicy/` writes into the tenant namespace (`nsName`) or `binding.Namespace` — `KernelAccessNetworkPolicy` despite its name is the tenant-side egress allow. The only `kind: NetworkPolicy` in the tree are vendored Bitnami templates: `charts/infra/minio` (`networkPolicy.enabled: true`) and `charts/infra/redis` (`false`). Nothing under `kernel/` or `crossplane/` | 6 | A default-deny baseline per `gentianos.io/tier`, opened by the same `requires`/`integrations` derivation that L5 already describes ([networking.md](networking.md) §2); the vendored per-chart policies retire into it rather than being enabled one at a time. Kernel is the trust root, not an exempt layer | 4 |
 
-Not gaps, verified present: per-tenant NetworkPolicy default-deny egress
-(`internal/kernel/netpolicy/baseline.go`); pod-security admission
-(`gentian-baseline.yaml`: privileged, host namespaces, non-root, hostPath,
-capabilities, privilege escalation); the credential manager's token exchange
-(the reference implementation of principle 1); console admin-action audit.
+Not gaps, verified present: NetworkPolicy default-deny egress — a
+namespace-wide ingress+egress object with an empty `podSelector`
+(`internal/kernel/netpolicy/baseline.go`) — **in tenant namespaces only**,
+and with the holes G18 names; every other tier is G28. Pod-security
+admission, which is cluster-wide (`gentian-baseline.yaml`: privileged, host
+namespaces, non-root, hostPath, capabilities, privilege escalation); the
+credential manager's token exchange (the reference implementation of
+principle 1); console admin-action audit.
 The Keycloak-group → OpenFGA sync is present but not carried forward: AD-12
 retires it in favour of contextual tuples.
 
@@ -62,7 +67,10 @@ Director with FGA `Check` on every write (G1, G2); gateway `SecurityPolicy`
 with JWT + ext-auth on every tenant route, `authMode` mandatory on every
 `expose[]` entry with `none` as an explicit value (G3); console with no
 Kubernetes identity — reads and writes through the director (G7). Model v1
-as [artefacts/model.fga](artefacts/model.fga) with its tests.
+as [artefacts/model.fga](artefacts/model.fga) with its tests. Privileges —
+egress and MAC waivers both — become `requires.privileges`, approved against
+the cluster policy by the same director write (G27): an enforcement point
+that only covers one of two escape hatches is not one.
 
 *Challenge:* tenant-A admin token on tenant-B route → 403 at the gateway,
 never reaching the pod; a route with `authMode: none` appears in `kubectl
@@ -70,7 +78,9 @@ gentian audit routes`; removing a user from a group revokes their Keycloak
 sessions and the next request re-authenticates without the role
 (networking.md §4); deleting a stored tuple (a grant, an entitlement)
 changes the next `Check`; the console's ServiceAccount is bound to no Role
-or ClusterRole (roles-and-authorizations.md §2, invariant 1).
+or ClusterRole (roles-and-authorizations.md §2, invariant 1); a profile
+declaring egress the cluster policy does not allow is refused, exactly as an
+unapproved MAC waiver already is.
 
 ### Wave 2 — every principal has an identity (principles 1, 5)
 
@@ -97,19 +107,22 @@ image does not admit; an AppProfile naming a chart that creates a
 
 Per-app OpenBao policies (G12), rotation reaching workloads (G13), the
 literal-secret admission guard (G14), edge rate limits (G15), etcd
-encryption (G17).
+encryption (G17), and default-deny carried into the kernel, system and
+shared tiers (G28) — the layer principle 6 currently skips.
 
 *Challenge:* app X's ServiceAccount token cannot read app Y's OpenBao path in
 the same tenant; a `Release` with `set: [{name: password, value: …}]` is
 refused; rotating a credential in OpenBao rolls the consuming pod without a
-human; `etcdctl get` on a Secret shows ciphertext.
+human; `etcdctl get` on a Secret shows ciphertext; a pod in `kernel-gitops`
+cannot open a connection to `kernel-secrets`, and every namespace carrying
+`gentianos.io/tier` has a baseline policy.
 
 ## 3. Rules for the work
 
 - A wave's tests live in `crossplane/tests/e2e` or `scripts/tools` and run
   against a real cluster; a gap without a failing test first is not started.
 - A design doc that describes a control marks it *implemented*, *partial* or
-  *target* — `design/security.md §3` carries that table; keep it true when a
+  *target* — `design/security.md §3.0` carries that table; keep it true when a
   wave lands.
 - New CRD kinds, routes and endpoints added during the work follow
   [security-principles.md](../security-principles.md)'s closing checklist in

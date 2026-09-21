@@ -5,7 +5,9 @@ as tenants, users, apps and agents multiply. They are normative: a change that
 breaks one needs a written reason, not a workaround. The models behind them
 (MAC / ReBAC / ABAC layering, the principal chain, the derived ceiling) are in
 [design/security.md §2](design/security.md#2-security-principles); what each
-one still lacks in code is tracked in [the roadmap](roadmap.md) §1.
+one still lacks in code is tracked, with its evidence, in
+[plans/security-gap-closing.md](plans/security-gap-closing.md), and the
+longer-dated items in [the roadmap](roadmap.md) §1.
 
 The goal they serve: **safe by default, easy to control, easy to audit, without
 limiting what can be done.** Every rule below is a way of getting the fourth
@@ -34,6 +36,13 @@ the credential manager (secret writes), the MCP gateway (agent tool calls).
 A request that reaches a workload without passing a named PEP is a bug.
 Apps never decide platform questions; they receive the decision as identity
 headers or an exchanged token.
+
+A header is identity only where the path to the app cannot be bypassed: the
+PEP is the single route to the workload, and it strips any inbound copy of
+the header it sets. Where that cannot be shown, principle 1 applies and the
+app needs a token. The clause is the whole difference between the two rules
+— without it, principle 1 reads as a ban on the proxied-app pattern and
+principle 3 as a licence for a bypassable one.
 
 ## 4. The authorization vocabulary grows with the API, not with use cases
 

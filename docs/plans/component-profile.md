@@ -142,13 +142,14 @@ type RequirementSpec struct {
 }
 ```
 
-This closes a live asymmetry. MAC waivers are intersected against the cluster
-`PlatformSecurityPolicy` allowlist, so an administrator approves them, while
-`security.egress` is copied straight into a NetworkPolicy with no equivalent
-check. A profile can currently grant itself outbound network access but not a
-pod-security exception. One requirement block with one approval path removes
-that by construction, and satisfies principle 8: every permissive setting is a
-field admission can refuse and audit can grep.
+This closes the live asymmetry recorded as
+[security-gap-closing.md](security-gap-closing.md) G27: MAC waivers are
+intersected against the cluster `PlatformSecurityPolicy` allowlist, so an
+administrator approves them, while `security.egress` is copied straight into a
+NetworkPolicy with no equivalent check. A profile can currently grant itself
+outbound network access but not a pod-security exception. One requirement block
+with one approval path removes that by construction, and satisfies principle 8:
+every permissive setting is a field admission can refuse and audit can grep.
 
 ## 4. Three kinds of secret, two declared
 
@@ -169,11 +170,13 @@ salt. Generated and stored is the more robust default.
 
 ## 5. Exposure: `authMode` mandatory, perimeter explicit
 
-Two corrections against the security work.
+Two things the schema has to get right, both carried by
+[security-gap-closing.md](security-gap-closing.md) G3.
 
 **`authMode` is required on every entry, with no default.** G3 and principle 6
 both require that `none` be a word someone wrote and a reviewer can find. A
-default would defeat exactly that.
+default would defeat exactly that — as today's `BrowserProxyRoute.authMode`
+does, defaulting to `forward-bearer`.
 
 **A gateway route and a perimeter surface are different objects.** The taxonomy
 puts publishing proxies in `tenant-<t>-dmz` (AD-6) with one least-privilege
