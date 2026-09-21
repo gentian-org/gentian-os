@@ -81,10 +81,27 @@ token to the credential manager rather than holding an OpenBao token
 
 **Target.** Two deployments, one behaviour.
 
-- The **platform-admin console** is a kernel service in `kernel-control`,
-  authenticating against the kernel realm (AD-10). The **tenant admin
-  screens** are part of the tenant desktop BFF — a tenant admin is a tenant
-  user with more tiles, not a different application.
+- **One console, deployed per tenant.** The admin screens are part of the
+  desktop: a tenant admin is a tenant user with more tiles, not a different
+  application, and which screens exist is what the director's read API
+  returns for the caller's relations — a tenant admin never sees "deploy
+  tenant" because no relation grants it, not because a flag hides it.
+- **The platform is a tenant** (AD-10). `Tenant/platform` adopts the kernel
+  realm (`isolation.keycloakRealm: kernel`), and the platform-admin console
+  is that tenant's desktop in `tenant-platform`: the same image and profile,
+  with the platform screens unlocked by `operator from cluster`. A UI with
+  no authority does not belong in `kernel-control`; what stays there is what
+  has authority — the operator, the director, the credential manager. The
+  platform tenant is undeletable and its realm is adopted, never created or
+  disabled, which is the one change the identity reconciler needs.
+- **Per tenant, not shared, until certified.** The BFF holds a realm's OIDC
+  client secret and its users' sessions — per-tenant state in one instance
+  is exactly what AD-4 refuses for `tenancy: shared`. The profile certifies
+  `[tenant]` today; when the BFF is stateless-per-request or verifies the
+  tenant natively, `shared` is added to the list and the platform admin may
+  choose it per instance (component-profile.md §1) — a deployment decision,
+  no schema change. The static bundle needs no such wait but gains nothing
+  from sharing either (AD-10).
 - Every write is a director call with the user's token
   ([operator-split-plan.md](operator-split-plan.md) §3.5): policies, grants,
   plans, backup settings and export/restore requests. Every read is a

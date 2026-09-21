@@ -115,8 +115,8 @@ manager). Built from `cmd/director`. It has:
   Keycloak `kernel` realm or a tenant realm — the same JWKS verification the
   BFF does in `gentian-ui/backend/app/core/auth.py`. No `X-Gentian-Actor`
   header, ever; identity is the token's verdict (principle 1). Its callers
-  are the platform-admin console (`kernel-control`), each tenant's desktop
-  BFF (`tenant-<t>`, AD-10), the CLI, and the **external App Store** (AD-3) —
+  are each tenant's desktop BFF (`tenant-<t>`, AD-10 — the platform's own in
+  `tenant-platform`), the CLI, and the **external App Store** (AD-3) —
   which never holds authority of its own: it calls with the tenant admin's
   token, or with an RFC 8693 exchanged token carrying `act` (principle 5),
   and the FGA check is on the human either way. The route is on the kernel

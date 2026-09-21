@@ -57,14 +57,14 @@ the catalogue.
 | Director API endpoint (called by the external App Store) | — | `kernel-control`, route on the kernel gateway, bearer only | the App Store runs outside the cluster, operated by Gentian Technologies |
 | `kernel-admin` admin credentials | `platform-kernel` | `kernel-control` | |
 | `kernel-admin` `portal-shell` database | `platform-kernel` | `kernel-data` | |
-| CNPG `kernel-postgres` for Keycloak, Keycloak extensions, OpenFGA, admin console | — (Bitnami `infra-postgresql` in `gentian-infra-<stage>`) | `kernel-data` | kernel identity does not share a data plane with tenants |
+| CNPG `kernel-postgres` for Keycloak, Keycloak extensions, OpenFGA | — (Bitnami `infra-postgresql` in `gentian-infra-<stage>`) | `kernel-data` | kernel identity does not share a data plane with tenants |
 | CNPG operator | `cnpg-system` | `kernel-data` | |
 | cert-manager, self-signed ClusterIssuers | `cert-manager` | `kernel-edge` | |
 | Envoy Gateway, GatewayClass | `envoy-gateway-system` | `kernel-edge` | tenant Gateways stay in `tenant-<t>` |
 | external-dns | `external-dns` | `kernel-edge` | |
 | cloudflared (tunnel mode), `cf-tunnel` ExternalSecret | operator chart, `gentian-system` | `kernel-edge` | |
 | Kyverno, baseline policies | `kyverno` | `kernel-admission` | |
-| Platform-admin console | part of `gentian-portal`, `platform-kernel` | `kernel-control` | kernel realm; a separate deployment from the tenant desktop, which moves to `tenant-<t>` (§2.5) |
+| Platform-admin console | part of `gentian-portal`, `platform-kernel` | `tenant-platform` — see §2.5 | a UI with no authority is not kernel (AD-10); the platform is a tenant whose realm is the kernel realm |
 | metrics-server | `kube-system` | stays, labelled | API-aggregation convention |
 | MetalLB, Kyverno exception for it | `metallb-system` | stays, labelled | platform-provided, not installed by gentian-os |
 
@@ -109,6 +109,17 @@ api containers, one image); every app in
 creates around them — Namespace, ResourceQuota, NetworkPolicies, Services,
 ConfigMaps, ExternalSecrets, provisioning and export Jobs, the tenant
 Gateway and HTTPRoutes.
+
+**`tenant-platform` is one of these.** The platform is a tenant whose realm
+is the kernel realm (`Tenant/platform`, `isolation.keycloakRealm: kernel`,
+AD-10): its desktop is the platform-admin console, its tiles are the admin
+apps (console, credential-manager UI, Headlamp when opted in), its members
+are the platform admins. It runs under the same quota, policy and authority
+model as any tenant and holds nothing the others do not — a compromised
+platform desktop yields platform-admin *sessions*, bounded by OpenFGA and
+the director, not kernel credentials. Two exceptions, both in the operator:
+the realm is adopted rather than created, and the tenant cannot be deleted
+(a realm-disable Job against the kernel realm would lock every admin out).
 
 Catalogue apps today, by family: activepieces, docmost, element (with
 Matrix), mathesar, nextcloud (base-ce, base-od, nine addons), odoo (base,
