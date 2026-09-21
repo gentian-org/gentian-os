@@ -82,10 +82,60 @@ join of OpenFGA structure with Keycloak groups. If access reviews or a
 "members with access" screen become a product need, store `group#member`
 tuples fed by Keycloak admin events — a change to R7 only.
 
-## Evaluate — Keycloak Organizations for cross-tenant users
+## Decided — realm per tenant stays; Organizations only inside a tenant
 
-Realm per tenant gives the strongest isolation and forecloses a shared
-session across tenants. The widely adopted alternative is one realm with
-tenants as Organizations (Keycloak 26+, the same shape as Auth0 and Okta
-organizations). Not proposed as a change; recorded so the trade is chosen
-rather than inherited.
+Keycloak Organizations (26+) are built for the B2B shape — one realm, each
+organization a customer with its own IdP federation and email-domain
+discovery — and they buy cross-tenant SSO by making the tenant boundary a
+membership check inside one directory: one user table, one client list,
+one password and MFA policy, one admin scope, one event stream. That is the
+shared-app guarantee (AD-4) applied to identity, and the one place the
+taxonomy's promise — a tenant compromise stops at the tenant — would
+silently weaken. Realm per tenant is kept, for three reasons, in this order:
+
+1. **Sovereignty.** A tenant's realm is *the tenant's* identity: its users,
+   credentials, policies, flows and federation are one object that belongs
+   to it and to no one else. Under Organizations they are rows in a
+   directory the provider owns and every other customer shares. A customer
+   who must be able to answer "where is our identity data and who else is
+   in that store" gets a clean answer only from a realm.
+2. **Portability.** Keycloak exports per realm — users with password hashes
+   and MFA credentials, groups, roles, clients, flows, identity providers —
+   and nothing that belongs to anyone else. `TenantExport` already captures
+   the realm as one artefact (`identity/realm.tar.gz`,
+   `tenantexport_controller.go`). Migrating a tenant to another provider is
+   therefore an export and an import. Under Organizations there is no
+   per-organization export: migration is a filter over the whole customer
+   base to extract one customer — reconstructing memberships, picking the
+   tenant's clients out of a realm-wide list, resolving users who belong to
+   two organizations, and risking another customer's users in the file. A
+   multi-customer platform should never have to perform that operation.
+3. **Isolation.** A realm is a wall; an organization is a policy.
+
+Not a flag. A single-realm mode would replace "which realm" with "which
+organization claim" in the identity reconciler, `app-default`'s OIDC
+clients, the OpenBao JWT auth roles (bound to an issuer), Dovecot's
+per-realm passdbs, the portal's host→realm login and the gateway's per-zone
+session (networking.md L1) — six components with two code paths and a
+doubled identity test matrix. It is a second deployment profile, to be
+considered only if realm count becomes Keycloak's scaling limit.
+
+Organizations do have a place: **inside a tenant's realm**, for a customer
+with subsidiaries or departments. That is a per-tenant feature the tenant
+admin turns on and it branches nothing in the platform. Cross-customer
+collaboration stays federation or public links (networking.md §5).
+
+- `[ ]` Restore on another cluster *is* the migration: `TenantRestore` must
+  accept a bundle from a different kernel domain and rewrite the
+  issuer-bound references (app clients, the OpenBao role, the Dovecot
+  passdb, the edge client) rather than assume them unchanged. Test: export
+  on cluster A, restore on B, first login succeeds with the old password
+  and the old second factor.
+- `[ ]` Entitlements move with the tenant: a signed grant names
+  `(tenant, app)` for one cluster; the migration procedure asks the store
+  to re-issue for the new one.
+- `[ ]` Offer Organizations within a tenant realm as a tenant-level
+  setting, with the tenant admin as organization admin.
+- `[ ]` State portability as a product property where the isolation model
+  is described (design/multi-tenancy.md): a tenant can leave with its
+  users, their passwords and their MFA.
