@@ -14,6 +14,15 @@ source of truth for cluster configuration. The **operator** never holds a git
 credential: it converges the cluster on what Argo CD hands it, and its trust
 in that input comes from the chain in §3.4, not from a shared secret.
 
+The director is the configuration-write PEP of
+[security-principles.md](../security-principles.md) §3 and the change log of
+§7. It closes G1, G2 (its half), G7 (writes) and G11 (its half) in
+[security-gap-closing.md](security-gap-closing.md): cutover steps A–B are
+that plan's wave 1, step C spans waves 1 and 3. It runs in `kernel-control`
+per [namespace-cleanup.md](namespace-cleanup.md) D2; this document uses
+today's namespace names when it describes today's code and the taxonomy's
+when it describes the target.
+
 ## 1. Decision
 
 Two binaries, one repository, shared `internal/` packages. Not one binary with
@@ -104,7 +113,14 @@ manager). Built from `cmd/director`. It has:
 - An HTTPS API (§3.5) that accepts **only** bearer tokens issued by the
   Keycloak `kernel` realm or a tenant realm — the same JWKS verification the
   BFF does in `gentian-ui/backend/app/core/auth.py`. No `X-Gentian-Actor`
-  header, ever; identity is the token's verdict.
+  header, ever; identity is the token's verdict (principle 1). Its callers
+  are the platform-admin console (`kernel-control`), each tenant's desktop
+  BFF (`tenant-<t>`, D10), the CLI, and the **external App Store** (D11) —
+  which never holds authority of its own: it calls with the tenant admin's
+  token, or with an RFC 8693 exchanged token carrying `act` (principle 5),
+  and the FGA check is on the human either way. The route is on the kernel
+  gateway, bearer only, behind the gateway `SecurityPolicy` of G3; the
+  director verifies again rather than trusting the hop.
 - An OpenFGA client for `Check` (already in
   [openfga_client.go](../../internal/authz/openfga_client.go)) against the
   store the authz bridge publishes in the `openfga-runtime` Secret.
@@ -112,14 +128,19 @@ manager). Built from `cmd/director`. It has:
   credential. Commits are authored as the human (`Name <email>` from the
   token), committed by the director, and **signed** with a key only the
   director holds. The commit message carries a trailer with the OpenFGA
-  decision (`Gentian-Authz: user:<sub> can_install_app tenant:<t> allowed`).
+  decision and the request id
+  (`Gentian-Authz: req=<id> user:<sub> can_install_app tenant:<t> allowed`),
+  so one id joins the Keycloak event, the decision log and the commit
+  (principle 7, G10).
 - A **read-only** Kubernetes client for `Tenant`, `App`, `AppProfile` status
   and the `openfga-runtime` Secret — enough to answer status queries and
   validate requests. Plus exactly one narrow write grant, `appprofiles`
   create/update, for materialise-on-reference (§3.6). No `pods/exec`, no
   `secrets` beyond the one named Secret, no Argo objects.
-- A rate limiter and a request log that records subject, tenant, operation,
-  decision, commit SHA.
+- A rate limiter and a decision log: every `Check` it makes is written as
+  `(request id, subject, relation, object, decision)`, plus the commit SHA
+  when one results. The request id arrives as a header from the gateway or
+  is minted here, and is returned in every response.
 
 It does **not**: wait for readiness, purge, exec, touch Keycloak groups, or
 annotate Argo. The commit is the completed action; every write returns `202`
@@ -133,7 +154,8 @@ listener, no `GENTIAN_DEPLOYMENTS_*` env. It keeps `pods/exec` because purge
 needs it — but purge becomes a reconcile of desired state (app absent from
 `Tenant.spec.apps` and the App claim gone → teardown converges), which also
 fixes the current failure mode where a request that dies mid-purge leaves
-half-deleted state with nothing to resume it.
+half-deleted state with nothing to resume it. After D14 its exec targets are
+the `system-<engine>` namespaces, never `kernel-data`.
 
 ### 3.3 Argo CD
 
@@ -145,7 +167,9 @@ changes:
   field `credential.push` alongside `credential`).
 - The `gentian` AppProject gets `spec.signatureKeys` set to the director's
   signing key, so Argo refuses to sync a commit it did not sign. This is what
-  lets the operator trust git without trusting the git host. Known caveat:
+  lets the operator trust git without trusting the git host. It lands with
+  G11 in wave 3, after the director is the sole pusher; until then the Argo
+  link of §3.4 is branch protection alone. Known caveat:
   Argo's signature verification applies to Applications, not to the
   ApplicationSet git generator's own fetch — the generated `Application`s are
   still verified, which is where the manifests are applied.
@@ -162,9 +186,12 @@ Keycloak token ──► director verifies JWKS/iss/aud
 ```
 
 Each link is independently enforced. Compromise of the git host cannot inject
-config (signature check); compromise of the director's push token without its
-signing key cannot either; a stolen token from realm A cannot act on tenant B
-(FGA); and the operator SA holds nothing that writes git.
+config (signature check, once wave 3 lands); compromise of the director's push
+token without its signing key cannot either; a stolen token from realm A cannot
+act on tenant B (FGA); and the operator SA holds nothing that writes git. This
+is principle 2 in one line: Keycloak answers *who*, OpenFGA answers *may*, and
+admission plus the Tenant webhook answer *is this shape allowed* — the
+director consumes all three verdicts and issues none.
 
 ### 3.5 API
 
@@ -182,6 +209,7 @@ PUT    /v1/tenants/{t}/apps/{p}/addons
 GET    /v1/tenants/{t}/resources | /plans | /usage | /report
 PUT    /v1/tenants/{t}/resources
 PUT    /v1/tenants/{t}/policies/{kind}/{name}   backup, grants, export schedules (§2.2)
+POST   /v1/clusters/{c}/shared-apps/{p}         install a `tenancy: shared` profile into `shared-<app>` (D12); `can_install_shared`
 PUT    /v1/clusters/{c}/security/{kind}/{name}  PlatformSecurityPolicy, PolicyException, overlays (§7.1)
 PUT    /v1/clusters/{c}/network | /v1/tenants/{t}/network   egress intent (§7.2)
 POST   /v1/tenants/{t}/requests/{kind}          export / restore — creates the request CR, secrets via ESO reference only
@@ -204,6 +232,9 @@ type cluster
     define operator: [user, group#member]        # gentian:platform:superadmin / :operator
     define break_glass: [user, group#member]     # gentian:platform:break-glass
     define can_deploy_tenant: operator
+    define can_install_shared: operator          # D12: shared-<app> instances
+    define can_set_policy: operator              # PlatformSecurityPolicy, network intent (system tier)
+    define can_set_admission: break_glass        # PolicyException, policy overlays (kernel tier)
     define can_edit_raw: break_glass
 
 type tenant
@@ -231,11 +262,16 @@ should surface "not yet synced" distinctly from "denied".
 
 Each relation gets a case in `tests.fga.yaml` before the director calls it.
 
-Materialise-on-reference: the director resolves the profile from the
-catalogue, applies the `AppProfile` CR (label `gentianos.io/profile-name`,
-digest annotation), **then** commits. Apply-then-commit is the only ordering
-that fails safe: a failed commit leaves an inert, unreferenced CR; commit-then-
-apply leaves git asserting a state the Tenant webhook rejects on every sync.
+Materialise-on-reference: the director fetches the profile bundle at the
+requested digest from the catalogue repository (`Repository/gentian-apps`,
+read credential — never from the App Store's own database, which is
+reference data outside the cluster, D11), applies the `AppProfile` CR (label
+`gentianos.io/profile-name`, digest annotation), **then** commits.
+Apply-then-commit is the only ordering that fails safe: a failed commit
+leaves an inert, unreferenced CR; commit-then-apply leaves git asserting a
+state the Tenant webhook rejects on every sync. The `catalogue-<repo>`
+ApplicationSet that syncs every profile today is retired with this: the
+cluster holds only the profiles a tenant installed (namespace-cleanup §3.4).
 
 ### 3.7 Concurrency
 
@@ -277,13 +313,14 @@ and proven by [internal/handover](../../internal/handover/handover.go):
    the credential-manager handover already requires) — a no-op "handover"
    commit. That commit *is* the proof the write path works, recorded in the
    `gentian-handover` ConfigMap as `configWritePathProven`.
-2. `AppProject/gentian.spec.signatureKeys` is set to the director's key.
-   Because Argo verifies the commit at the sync revision, step 1 must precede
-   this or every Application goes OutOfSync on the last human commit.
-3. The git host is configured so only the director's identity may push
+2. The git host is configured so only the director's identity may push
    `main`; the installer prints what it could not verify remotely.
-4. The Argo credential is rotated to the read-only token (§3.3); the push
+3. The Argo credential is rotated to the read-only token (§3.3); the push
    token exists in exactly one Secret, mounted in exactly one Deployment.
+4. *(wave 3, G11 — a later step, not part of the handover gate)*
+   `AppProject/gentian.spec.signatureKeys` is set to the director's key.
+   Because Argo verifies the commit at the sync revision, step 1 must have
+   happened or every Application goes OutOfSync on the last human commit.
 
 Until step 1 succeeds, `E-01-tenants` stays gated, for the same reason the
 credential handover gates it: recovery is cheap on an empty cluster and
@@ -304,14 +341,25 @@ catastrophic on one with tenants.
 | `applifecycle/service.go` — `provisionAppGroupUsers` | stays; becomes desired-state reconcile of `Tenant.spec.apps` → Keycloak group | operator (`app_privilege_reconciler` already exists) |
 | `credentialmgr/` | later, optional: same class of human-identified write, holds no token of its own, needs no controller-runtime | director, after D |
 | `kubectl-gentian` `git_commit_push` + `kubectl apply` fallback | replaced by director API calls with the user's token (`kubectl gentian login` via device flow) | CLI |
-| Console direct writes (§2.2, desired-state rows) | replaced by director calls with the user's token, as `credential_manager.py` already forwards it | BFF |
-| Console direct writes (§2.2, request rows) | director creates the request CR; secrets stay ESO/OpenBao references | director, narrow RBAC on those kinds |
+| Console direct writes (§2.2, desired-state rows) | replaced by director calls with the user's token, as `credential_manager.py` already forwards it; console *reads* stay in the console under `Impersonate-User` (G7) | platform console (`kernel-control`) and tenant desktop BFF (`tenant-<t>`), D10 |
+| Console direct writes (§2.2, request rows) | director creates the request CR; secrets stay ESO/OpenBao references — settled by G7: all writes move | director, narrow RBAC on those kinds |
+| `catalogue-<repo>` ApplicationSet (every AppProfile synced to every cluster) | retired; the director materialises on reference (§3.6) | — |
+| App Store (`app-store-me` profile, per tenant) | leaves the cluster (D11); the director is its ingestion endpoint | external |
 | `chart: initContainers.git-clone-deployments`, `git-credentials` volume, `appLifecycle.*` values | delete | — |
 | `Repository/deployments` composition | split read credential from push credential | Crossplane |
 
 ## 6. Cutover
 
 The order you proposed is right. Refinements are marked.
+
+### 0. Authenticate the existing endpoint now (wave 0, G1)
+
+Before any of A–D: bearer verification on `internal/applifecycle/http.go`
+against the kernel and tenant realms, the `X-Gentian-Actor` header ignored,
+the BFF and CLI sending the user's token (the BFF already holds it for the
+credential manager). No FGA check yet — that waits for the director — but
+"anyone on the network can push config" ends here, in one change to a live
+endpoint, independent of everything below.
 
 ### A. Director standalone, no cluster
 
@@ -333,8 +381,11 @@ Switch callers by URL: `APP_LIFECYCLE_URL` in the BFF, a `DIRECTOR_URL` in
 the CLI. Order, smallest and most API-shaped first:
 
 1. Resources plan (`PUT …/resources`) — already API-only, one file patch.
-2. Apps install/uninstall/addons — the BFF has no install path today, so this
-   is the CLI plus whatever calls the operator API.
+2. Apps install/uninstall/addons — the console has no install path today, so
+   this is the CLI plus the App Store, which becomes the external caller of
+   D11 in the same step: the per-tenant `app-store-me` profile is replaced by
+   the external service calling `POST /v1/tenants/{t}/apps/{p}` with the
+   user's token.
 3. Tenant deploy/undeploy — CLI-only today; gains authentication for the
    first time.
 4. Console desired-state writes (§2.2).
@@ -397,8 +448,12 @@ Nothing writes `PolicyException`s dynamically.
   claims ApplicationSet. It holds the `PlatformSecurityPolicy` (moved out of
   the console's direct write, §2.2) and any cluster-specific
   `PolicyException` or policy overlay an operator adds. Written only through
-  the director: `PUT /v1/clusters/{c}/security/{kind}/{name}`, FGA relation
-  `can_set_policy` on `cluster`.
+  the director: `PUT /v1/clusters/{c}/security/{kind}/{name}`. Two
+  relations, because the namespace taxonomy gives the two kinds different
+  authority: the `PlatformSecurityPolicy` allowlist is a decision about
+  tenant workloads (system tier — platform admin, `can_set_policy`);
+  a `PolicyException` or overlay changes what `kernel-admission` enforces
+  (kernel tier — break-glass only, `can_set_admission`).
 
 The webhook that admits a `PlatformSecurityPolicy` does not change; it only
 stops seeing writes from the console SA.
@@ -498,9 +553,11 @@ Cluster claim — in git, written through the director. The values never are.
 - **Credential split shape.** Second `Repository` claim (`deployments-push`)
   vs. a `credential.push` field on the existing one. The field keeps one
   object per repository, which the XRD's own rationale prefers.
-- **Where the request CRs (`TenantExport`, `TenantRestore`) are created.**
-  Director with a narrow write grant, or the console keeps its SA for exactly
-  those kinds. The former keeps one human-facing write API; the latter keeps
-  the director's RBAC purer.
+- **How the external App Store presents the human.** The user's own token
+  (the store is a pure client; the token's `aud` must include the director)
+  or an exchanged token with `act` (the store is an agent in the principle 5
+  chain, and its tuples must exist). The first is simpler and keeps the
+  store out of the FGA model; the second is what an autonomous store action
+  — a scheduled upgrade — will need. Start with the first.
 - **Whether `credentialmgr` moves in the same milestone.** Recommended no —
   it is correct today and the move is mechanical once the director exists.
