@@ -72,13 +72,16 @@ flowchart TB
         PX["publishing proxy<br/>one per enabled surface,<br/>one credential"]
     end
 
+    subgraph SMAIL["system-mail"]
+        STORE["mail store, DKIM signer"]
+    end
+
     subgraph KAUTH["kernel-authentication / -authorization"]
         KC["Keycloak<br/>id.&lt;kernel&gt;<br/>realm endpoints public, path-allowlisted;<br/>/admin, master realm, metrics internal"]
         FGA[("OpenFGA")]
     end
 
     subgraph SYS["system-&lt;function&gt;"]
-        STORE["mail store, DKIM signer"]
         DB[("postgresql / cache / s3")]
         LLM["llm"]
     end
@@ -108,7 +111,7 @@ flowchart TB
     PG -->|"/realms/* only — admin, master, metrics internal"| KC
     MTA -->|"LMTP / master credential"| STORE
     MTA -. "DKIM via milter" .-> STORE
-    PX -->|"one backend, one port"| APP
+    PX -->|"one backend, one port;<br/>proxy authenticated to the app (L5, mTLS later);<br/>the app validates the surface credential (L3)"| APP
     NET -->|"https, surface: gateway"| AG
     AG -. "verify JWT" .-> KC
     AG -->|"headers or token"| SHIM
@@ -141,6 +144,7 @@ flowchart TB
     style EDGE fill:#80808012,stroke:#9a9a9a
     style KAUTH fill:#80808012,stroke:#9a9a9a
     style SYS fill:#80808012,stroke:#9a9a9a
+    style SMAIL fill:#80808012,stroke:#9a9a9a
     style LEGEND fill:none,stroke:none
     linkStyle 0,1,2,3,4,5,6,7,8,9,10 stroke:#f0883e,stroke-width:2px
     linkStyle 11,12,13,14,15,16,17,18,19,20,21,22 stroke:#3b82f6,stroke-width:2px
