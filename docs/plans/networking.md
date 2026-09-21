@@ -49,48 +49,18 @@ backend.
 flowchart TB
     subgraph LEGEND[" "]
         direction LR
-        LA["authenticated domain"]
         LP["perimeter domain"]
         LE["east-west, no edge"]
+        LA["authenticated domain"]
     end
 
     NET(("Internet"))
 
     subgraph EDGE["kernel-edge — one address, one Envoy fleet"]
-        AG["authenticated Gateway<br/>L0 TLS, rate limit<br/>L1 session per tenant zone (OIDC) / JWT for bearer<br/>L2 ext-auth: can_use"]
         PG["perimeter Gateway<br/>L0 only<br/>per-route authMode, WAF, body limits<br/>TCP/UDP listeners"]
-        SHIM["ext-auth shim"]
         ACME["ACME HTTP-01 solver"]
-    end
-
-    subgraph KAUTH["kernel-authentication / -authorization"]
-        KC["Keycloak<br/>id.&lt;kernel&gt;<br/>realm endpoints public, path-allowlisted;<br/>/admin, master realm, metrics internal"]
-        FGA[("OpenFGA")]
-    end
-
-    subgraph KCTL["kernel-control"]
-        DIR["director API<br/>api.&lt;kernel&gt;"]
-        CON["platform console BFF<br/>console.&lt;kernel&gt;"]
-    end
-
-    subgraph TEN["tenant-&lt;t&gt;"]
-        DESK["desktop BFF"]
-        APP["app"]
-        PEER["peer app"]
-    end
-
-    subgraph TDMZ["tenant-&lt;t&gt;-dmz"]
-        PX["publishing proxy<br/>one per enabled surface,<br/>one credential"]
-    end
-
-    subgraph SHR["shared-&lt;app&gt;"]
-        SAPP["shared instance"]
-    end
-
-    subgraph SYS["system-&lt;function&gt;"]
-        DB[("postgresql / cache / s3")]
-        LLM["llm"]
-        STORE["mail store, DKIM signer"]
+        AG["authenticated Gateway<br/>L0 TLS, rate limit<br/>L1 session per tenant zone (OIDC) / JWT for bearer<br/>L2 ext-auth: can_use"]
+        SHIM["ext-auth shim"]
     end
 
     subgraph SDMZ["system-&lt;function&gt;-dmz"]
@@ -98,40 +68,64 @@ flowchart TB
         TURN["TURN / SFU (UDP)"]
     end
 
-    NET -->|"https, surface: gateway"| AG
+    subgraph TDMZ["tenant-&lt;t&gt;-dmz"]
+        PX["publishing proxy<br/>one per enabled surface,<br/>one credential"]
+    end
+
+    subgraph KAUTH["kernel-authentication / -authorization"]
+        KC["Keycloak<br/>id.&lt;kernel&gt;<br/>realm endpoints public, path-allowlisted;<br/>/admin, master realm, metrics internal"]
+        FGA[("OpenFGA")]
+    end
+
+    subgraph SYS["system-&lt;function&gt;"]
+        STORE["mail store, DKIM signer"]
+        DB[("postgresql / cache / s3")]
+        LLM["llm"]
+    end
+
+    subgraph TEN["tenant-&lt;t&gt;"]
+        APP["app"]
+        PEER["peer app"]
+        DESK["desktop BFF"]
+    end
+
+    subgraph SHR["shared-&lt;app&gt;"]
+        SAPP["shared instance"]
+    end
+
+    subgraph KCTL["kernel-control"]
+        CON["platform console BFF<br/>console.&lt;kernel&gt;"]
+        DIR["director API<br/>api.&lt;kernel&gt;"]
+    end
+
     NET -->|"https, surface: perimeter<br/>own host or app-host paths"| PG
     NET -->|"smtp / imap / turn"| PG
-    NET -->|"login, token, JWKS"| PG
     NET -->|"port 80 /.well-known/acme-challenge"| ACME
-
+    NET -->|"login, token, JWKS"| PG
+    PG --> PX
+    PG -->|"TCPRoute"| MTA
+    PG -->|"UDPRoute"| TURN
+    PG -->|"/realms/* only — admin, master, metrics internal"| KC
+    MTA -->|"LMTP / master credential"| STORE
+    MTA -. "DKIM via milter" .-> STORE
+    PX -->|"one backend, one port"| APP
+    NET -->|"https, surface: gateway"| AG
     AG -. "verify JWT" .-> KC
     AG -->|"headers or token"| SHIM
     SHIM -->|"Check with contextual tuples"| FGA
-
     AG --> DESK
     AG --> APP
     AG --> SAPP
     AG --> CON
     AG -->|"bearer"| DIR
-
-    PG --> PX
-    PG -->|"TCPRoute"| MTA
-    PG -->|"UDPRoute"| TURN
-
-    PX -->|"one backend, one port"| APP
-    MTA -->|"LMTP / master credential"| STORE
-    MTA -. "DKIM via milter" .-> STORE
-
     DESK -->|"user's token"| DIR
     CON -->|"user's token"| DIR
     DIR --> FGA
-
     APP -->|"contracts, L5"| DB
     APP -->|"contracts, L5"| LLM
     APP -->|"relay port"| MTA
     APP -->|"integrations, L5"| PEER
     SAPP -->|"contracts, L5"| DB
-    PG -->|"/realms/* only — admin, master, metrics internal"| KC
 
     classDef auth fill:#1f5fbf33,stroke:#3b82f6,stroke-width:1.5px
     classDef perim fill:#d9731a33,stroke:#f0883e,stroke-width:1.5px
@@ -148,9 +142,9 @@ flowchart TB
     style KAUTH fill:#80808012,stroke:#9a9a9a
     style SYS fill:#80808012,stroke:#9a9a9a
     style LEGEND fill:none,stroke:none
-    linkStyle 0,5,6,7,8,9,10,11,12,19,20,21 stroke:#3b82f6,stroke-width:2px
-    linkStyle 1,2,3,4,13,14,15,16,17,18,27 stroke:#f0883e,stroke-width:2px
-    linkStyle 22,23,24,25,26 stroke:#9a9a9a,stroke-width:1.5px
+    linkStyle 0,1,2,3,4,5,6,7,8,9,10 stroke:#f0883e,stroke-width:2px
+    linkStyle 11,12,13,14,15,16,17,18,19,20,21,22 stroke:#3b82f6,stroke-width:2px
+    linkStyle 23,24,25,26,27 stroke:#9a9a9a,stroke-width:1.5px
 ```
 
 Tunnel mode changes nothing above: cloudflared publishes hostnames to the
