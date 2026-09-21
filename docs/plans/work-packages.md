@@ -145,8 +145,11 @@ Specified in [authorization-model.md](authorization-model.md) and
       line; a tenant that staffs the role separately removes that tuple.
 - [ ] `make verify-authz-vocabulary`: every `can_*` and role noun in
       `docs/plans/*.md` exists in the model, and vice versa.
-- [ ] Keycloak groups: `gentian:platform:{security,auditor,service-operator,shared-apps}`,
-      `gentian:tenant:<t>:perimeter`; realm script and console.
+- [ ] Keycloak groups, exactly as `artefacts/model.fga` names them — the
+      vocabulary check fails otherwise:
+      `gentian:platform:{admin,security,auditor,service-admin,shared-apps-admin,break-glass}`
+      and `gentian:tenant:<t>:{admins,members,app-admins,perimeter}`; realm
+      script and console.
 - [ ] **Keycloak event listener** — a new kernel component in
       `kernel-authentication`: an event-listener SPI provider (or the
       community webhook listener, pinned and reviewed) that pushes signed

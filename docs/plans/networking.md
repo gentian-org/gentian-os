@@ -443,8 +443,8 @@ keeping them apart is what makes self-service and control compatible.
 
 | Level | Object | Declared by | How many | Lives |
 | --- | --- | --- | --- | --- |
-| **Cluster policy** | which surface kinds and `authMode`s a tenant may enable, per trust tier; default and maximum lifetime; whether enabling needs review | security officer, through the director | one per cluster | permanent |
-| **Tenant enablement** | *this* surface of *this* instance is on: host, `authMode` (must equal the profile's entry), owner, `expiresAt`, `reviewAt` | perimeter approver, through the director | a handful per tenant | months, bounded by policy |
+| **Cluster ceiling** (`Cluster.spec.exposure`) | modes the cluster refuses outright, whether a `none` surface must provide the exposure-policy contract, default and maximum lifetime, review interval. A ceiling, not a permission list: nothing is published by default at any trust tier, so it has nothing to grant | security officer, through the director | one per cluster | permanent |
+| **Tenant enablement** | *this* surface of *this* instance is on: `exposureName`, host, owner, `expiresAt`, `reviewAt`. The `authMode` is **not** restated — it is the profile entry's and the enablement cannot weaken it (component-profile.md §5.1); the view joins it for display | perimeter approver, through the director | a handful per tenant | months, bounded by policy |
 | **App-level object** | a share link, a guest meeting, a public form | any app user, inside the app | thousands | days; expiry set by the app's policy, which the platform writes (§8.5) |
 
 A share never needs an administrator: the perimeter approver enabled
@@ -534,8 +534,11 @@ exportable; capped by retention the security officer sets.
 API: `GET /v1/tenants/{t}/exposure` (summary),
 `GET /v1/tenants/{t}/exposure/log?window=&order=requests|recent|bytes`,
 `GET /v1/tenants/{t}/exposure/objects`, and the cluster-wide equivalents
-under `/v1/clusters/{c}/exposure`. Authorization: `can_expose` on the
-tenant for the tenant views, `can_audit` on the cluster for the rest.
+under `/v1/clusters/{c}/exposure`. Authorization: `can_view` on the
+tenant for the tenant views and `can_audit` on the cluster for the rest —
+reads never use the write verb, or a tenant administrator could not see an
+inventory they are not the one to change (operator-split-plan.md §3.5).
+`can_expose` gates the write that creates or removes an enablement.
 
 ### 8.5 Optional contract: `exposure-policy`
 

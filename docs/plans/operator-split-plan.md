@@ -314,6 +314,16 @@ state the Tenant webhook rejects on every sync. The `catalogue-<repo>`
 ApplicationSet that syncs every profile today is retired with this: the
 cluster holds only the profiles a tenant installed (namespace-cleanup §3.4).
 
+### 3.7 Concurrency
+
+Today `lockApp` is an in-process mutex justified by the operator running a
+single replica, while the lifecycle `Runnable` opts *out* of leader election
+"so any replica can serve" — two comments that contradict each other, kept
+true only by `replicaCount: 1`. The director uses git itself: push, and treat
+a non-fast-forward rejection as the optimistic-concurrency signal — fetch,
+rebase the one-file change, retry, bounded. Correct across N replicas and
+across the side-by-side period of §6 B when two processes push to one repo.
+
 ### 3.8 Entitlements: granted and revoked by the same path
 
 An entitlement arrives as a signed fact from the App Store and becomes a
@@ -344,16 +354,6 @@ data offline — and it is the behaviour to state rather than discover.
 `revoked_at` in the store's schema is therefore a record of something
 delivered, never something the cluster polls for: the cluster holds no
 identity toward the store and never calls it.
-
-### 3.7 Concurrency
-
-Today `lockApp` is an in-process mutex justified by the operator running a
-single replica, while the lifecycle `Runnable` opts *out* of leader election
-"so any replica can serve" — two comments that contradict each other, kept
-true only by `replicaCount: 1`. The director uses git itself: push, and treat
-a non-fast-forward rejection as the optimistic-concurrency signal — fetch,
-rebase the one-file change, retry, bounded. Correct across N replicas and
-across the side-by-side period of §6 B when two processes push to one repo.
 
 ## 4. Bootstrap: writing configuration before Keycloak exists
 
