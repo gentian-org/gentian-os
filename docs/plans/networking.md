@@ -69,6 +69,7 @@ flowchart TB
     subgraph TEN["tenant-&lt;t&gt;"]
         DESK["desktop BFF"]
         APP["app"]
+        PEER["peer app"]
     end
 
     subgraph TDMZ["tenant-&lt;t&gt;-dmz"]
@@ -121,7 +122,7 @@ flowchart TB
     APP -->|"contracts, L5"| DB
     APP -->|"contracts, L5"| LLM
     APP -->|"relay port"| MTA
-    APP <-->|"integrations, L5"| APP
+    APP -->|"integrations, L5"| PEER
     SAPP -->|"contracts, L5"| DB
 ```
 
