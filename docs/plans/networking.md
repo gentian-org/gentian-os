@@ -118,7 +118,6 @@ flowchart TB
 
 
     NET -->|"https, surface: gateway"| AG
-    AG -. "verify JWT" .-> KC
     AG -->|"headers or token"| SHIM
     SHIM -->|"Check with contextual tuples"| FGA
     AG --> DESK
@@ -144,6 +143,7 @@ flowchart TB
     MTA -->|"LMTP / master credential"| STORE
     MTA -. "DKIM via milter" .-> STORE
     PX -->|"one backend, one port;<br/>proxy authenticated to the app (L5, mTLS later);<br/>the app validates the surface credential (L3)"| APP
+    AG -. "verify JWT" .-> KC
 
     %% invisible edges fix the rows: 3 = both DMZs, 4 = tenant / shared / kernel-control, 5 = the grey boxes.
     %% Declaration order (authenticated first) is what keeps the perimeter on the left after dagre's reordering.
@@ -151,6 +151,7 @@ flowchart TB
     S2 ~~~ MTA
     S2 ~~~ TURN
     S2 ~~~ PX
+    PX ~~~ S4
     SHIM ~~~ S3
     S3 ~~~ DESK
     S3 ~~~ SAPP
@@ -181,9 +182,9 @@ flowchart TB
     style SYS fill:#80808012,stroke:#9a9a9a
     style SMAIL fill:#80808012,stroke:#9a9a9a
     style LEGEND fill:none,stroke:none
-    linkStyle 16,17,18,19,20,21,22,23,24,25,26 stroke:#f0883e,stroke-width:2px
-    linkStyle 0,1,2,3,4,5,6,7,8,9,10,11 stroke:#3b82f6,stroke-width:2px
-    linkStyle 12,13,14,15 stroke:#9a9a9a,stroke-width:1.5px
+    linkStyle 15,16,17,18,19,20,21,22,23,24,25 stroke:#f0883e,stroke-width:2px
+    linkStyle 0,1,2,3,4,5,6,7,8,9,10,26 stroke:#3b82f6,stroke-width:2px
+    linkStyle 11,12,13,14 stroke:#9a9a9a,stroke-width:1.5px
 ```
 
 Tunnel mode changes nothing above: cloudflared publishes hostnames to the
