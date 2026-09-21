@@ -204,8 +204,14 @@ flowchart TB
     linkStyle 10,11,12,13 stroke:#9a9a9a,stroke-width:1.5px
 ```
 
-Tunnel mode changes nothing above: cloudflared publishes hostnames to the
-same Envoy Service. Vanity domains (custom `Tenant.spec.domain`) add
+Tunnel mode changes almost nothing above: cloudflared publishes hostnames to
+the same Envoy Service. The exception is the non-HTTP perimeter — inbound
+mail on `:25`/`:587`, IMAP on `:993`, Matrix federation on `:8448` and TURN's
+UDP — which a tunnel cannot publish, because it carries HTTP origins and the
+senders are external MTAs and WebRTC clients that will never run a tunnel
+client. Those surfaces need `networkMode: static-ip`, and the director
+refuses their enablement in tunnel mode rather than creating a listener
+nothing can reach. Vanity domains (custom `Tenant.spec.domain`) add
 listeners to the same Gateways with per-host certificates; see §6.
 
 ## 2. Layers

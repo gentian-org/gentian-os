@@ -14,8 +14,15 @@ model
 #   hierarchy       one parent relation per type (cluster, tenant), derived
 #                   with "<relation> from <parent>"
 #   exclusion       "but not" only for least-privilege invariants
-#   membership      arrives per request as contextual tuples
-#                   group:<g>#member@user:<sub>, taken from the token's groups
+#   membership      STORED, like everything else. group:<g>#member@user:<sub>
+#                   is written by the director from Keycloak's event stream and
+#                   reconciled with a read-only client (AD-12, R7). It is never
+#                   taken from a token's groups and never edited in place: the
+#                   store is a projection of Keycloak, so an access review is
+#                   a ListUsers against stored tuples rather than a guess about
+#                   who might present which claim.
+#   contextual      runtime facts only — task TTL, acting_for, device posture.
+#                   Never identity, never membership.
 #   structure       everything else is stored, written only by the director
 
 type user
@@ -49,22 +56,25 @@ type tenant
   relations
     define cluster: [cluster]
 
-    # roles
-    define admin: [group#member]               # gentian:tenant:<t>:admins
+    # roles. A platform administrator acts inside a tenant through the
+    # derivation, never by holding the tenant's group: authority comes down the
+    # chain (R4, principle 5), so there is no tuple to forget to remove.
+    define admin: [group#member] or admin from cluster   # gentian:tenant:<t>:admins
     define perimeter_approver: [group#member]  # gentian:tenant:<t>:perimeter
     define member: [group#member]              # gentian:tenant:<t>:members
 
     # reach — the desktop host at L2. An admin account must get in to
     # administer, and in tenant-platform the console's own users are the
     # security officer and the auditor, who are members of no tenant.
-    define can_enter: member or admin or admin from cluster or can_audit from cluster or can_approve from cluster
+    define can_enter: member or admin or can_audit from cluster or can_approve from cluster
 
     # permissions — the director's tenant-level verbs
-    define can_install_app: admin or admin from cluster
-    define can_set_plan: admin or admin from cluster
-    define can_set_policy: admin or admin from cluster   # backup, grants, export schedules, tenant network intent
-    define can_grant: admin                              # AppGrant: integration consent
-    define can_manage_users: admin or admin from cluster
+    define can_install_app: admin
+    define can_set_plan: admin
+    define can_set_policy: admin          # backup, grants, export schedules, tenant network intent
+    define can_grant: admin               # AppGrant: integration consent
+    define can_manage_users: admin
+    define can_approve_privilege: admin   # tenant-scope privilege requests (§ component-profile 3.1)
     # Publishing to the internet is its own grant. The roles stay distinct,
     # but most tenants do not staff them separately: at tenant creation the
     # director writes the admins group into perimeter_approver, and a tenant
@@ -75,7 +85,7 @@ type tenant
     # Admin tiles on the desktop. Not an app permission: app#can_use excludes
     # admin accounts by design, so an admin account can reach no app object —
     # which in tenant-platform would be every tile the console has.
-    define can_administer: admin or admin from cluster
+    define can_administer: admin
 
 type catalogue_entry
   relations

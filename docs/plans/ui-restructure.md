@@ -127,6 +127,15 @@ token to the credential manager rather than holding an OpenBao token
   on `tenant`). The console never sees a Keycloak admin credential. Whether
   identity writes deserve their own named PEP rather than the director is
   open (§4); either way the answer is not "the UI".
+- **The privilege queue.** An install whose profile asks for a privilege
+  nobody has granted waits rather than failing, so the console shows it:
+  pending requests with what is asked, the profile's stated reason, and who
+  can say yes. A tenant administrator resolves the tenant-scope ones
+  (`can_approve_privilege`); cluster-scope ones appear in the security
+  officer's queue on the platform desktop (`can_approve`), which is the same
+  screen across tenants. Approving writes a `PrivilegeGrant` through the
+  director carrying the approver, the reason in their own words and an
+  expiry — the console records nothing itself (component-profile.md §3.1).
 - Credentials keep going to the credential manager, as today.
 - Audit is not a console feature. An admin action is a Keycloak event, an
   FGA decision and a commit joined by one request id (principle 7); the

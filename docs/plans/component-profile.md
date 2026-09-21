@@ -145,11 +145,94 @@ type RequirementSpec struct {
     // storage, cache, mail, LLM, MCP.
     Contracts []ContractRequirement `json:"contracts,omitempty"`
 
-    // Privileges escape the default posture: pod-security waivers, egress
-    // beyond the baseline, elevated roles. Every one needs approval.
+    // Privileges escape the default posture. Declaring one is asking, never
+    // receiving: each is granted per install, by a named person, and recorded
+    // (§3.1).
     Privileges *PrivilegeRequest `json:"privileges,omitempty"`
 }
 ```
+
+### 3.1 Privileges: asking, and being granted
+
+Two different things have been wearing one word. A cluster's
+`PlatformSecurityPolicy` is a standing list of what may be **asked for** here
+at all. Granting is the separate act of saying *this* component, in *this*
+tenant, may have *this* privilege — with a person, a time and a reason.
+
+Only the first exists today. The operator intersects a profile's waivers with
+the allowlist and applies whatever survives; egress is not even filtered. An
+intersection is a filter, so there is no approver, no timestamp and nothing in
+the decision log principle 7 requires. That is why "every one needs approval"
+was not true, and why `PrivilegeRequest` was a name with nothing behind it.
+
+**What the profile asks for:**
+
+```go
+type PrivilegeRequest struct {
+    // PodSecurity waives a named admission policy for a named part of the
+    // component. Cluster scope: it weakens a rule that protects the node.
+    // +optional
+    PodSecurity []PodSecurityWaiver `json:"podSecurity,omitempty"`
+
+    // Egress opens outbound network beyond the tenant baseline. Tenant scope:
+    // the traffic leaves the tenant's own namespace and the tenant carries the
+    // consequence.
+    // +optional
+    Egress []networkingv1.NetworkPolicyEgressRule `json:"egress,omitempty"`
+
+    // ClusterRoles the component's ServiceAccount needs. Cluster scope, and
+    // the rarest: an app that needs the Kubernetes API is most of the way to
+    // being a controller.
+    // +optional
+    ClusterRoles []ClusterRoleRequest `json:"clusterRoles,omitempty"`
+}
+
+type PodSecurityWaiver struct {
+    Policy string `json:"policy"`   // the ClusterPolicy this waives
+    Scope  string `json:"scope"`    // which container or composition part
+    Reason string `json:"reason"`   // required — the approver reads this
+}
+
+type ClusterRoleRequest struct {
+    Rules  []rbacv1.PolicyRule `json:"rules"`
+    Reason string              `json:"reason"`
+}
+```
+
+**Who approves is the kind, not a field.** Scope is a property of what is
+being asked for, never something the profile states, or an app could ask for
+the cheaper approver:
+
+| Kind | Scope | Approver | Relation |
+| --- | --- | --- | --- |
+| Pod-security waiver | cluster — weakens an admission rule protecting the node | security officer | `cluster#can_approve` |
+| Cluster role | cluster — reaches the Kubernetes API | security officer | `cluster#can_approve` |
+| Egress beyond baseline | tenant — leaves the tenant's own namespace | tenant administrator | `tenant#can_approve_privilege` |
+
+**What the grant is**, on the Component instance, written only by the
+director — the same shape as an exposure enablement, for the same reason:
+
+```go
+type PrivilegeGrant struct {
+    // Privilege names one entry of the profile's request.
+    Privilege  string       `json:"privilege"`
+    // Approver is the Keycloak subject who said yes. Set by the director from
+    // the caller's token; immutable.
+    Approver   string       `json:"approver"`
+    ApprovedAt metav1.Time  `json:"approvedAt"`
+    // Reason in the approver's words, not the profile's.
+    Reason     string       `json:"reason"`
+    // ExpiresAt bounds it. A waiver with no expiry is a waiver nobody reviews.
+    // +optional
+    ExpiresAt  *metav1.Time `json:"expiresAt,omitempty"`
+}
+```
+
+An install with an ungranted privilege does not proceed. It is not rejected
+either: it waits, visible in the console as a pending request, which is the
+state the tenant administrator can act on or escalate. That is the difference
+between a queue and a failure, and it is why the request has to be an object
+rather than a field the operator silently drops.
 
 This closes the live asymmetry recorded as
 [security-gap-closing.md](security-gap-closing.md) G27: MAC waivers are

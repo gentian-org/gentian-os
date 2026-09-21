@@ -235,6 +235,9 @@ POST   /v1/tenants/{t}/users | /groups          identity writes; `can_manage_use
 PUT    /v1/tenants/{t}/users/{u} | DELETE       (§4 open: whether identity deserves its own PEP)
 PUT    /v1/tenants/{t}/exposure/{inst}/{name}   enable a perimeter surface; `can_expose`
 DELETE /v1/tenants/{t}/exposure/{inst}/{name}   disable it; `can_expose`
+PUT    /v1/tenants/{t}/privileges/{inst}/{name} grant a tenant-scope privilege; `can_approve_privilege`
+DELETE /v1/tenants/{t}/privileges/{inst}/{name} revoke it
+PUT    /v1/clusters/{c}/privileges/{t}/{inst}/{name}  grant a cluster-scope privilege; `can_approve`
 POST   /v1/tenants/{t}/entitlements             a signed grant or revocation from the App Store (§3.8)
 POST   /v1/tenants/{t}/requests/{kind}          export / restore — creates the request CR, secrets via ESO reference only
 POST   /v1/clusters/{c}/shared-apps/{p}         install a `tenancy: shared` profile into `shared-<app>` (AD-4); `can_install_shared`
@@ -256,6 +259,8 @@ GET    /v1/tenants/{t}/users | /groups          for the console's user administr
 GET    /v1/tenants/{t}/exposure                 surfaces declared, enabled, owner, expiry, review
 GET    /v1/tenants/{t}/exposure/log | /objects  condensed proxy log; public objects via the contract
 GET    /v1/tenants/{t}/network
+GET    /v1/tenants/{t}/privileges               requested, granted, pending, with approver and expiry
+GET    /v1/clusters/{c}/privileges               the security officer's queue across tenants
 GET    /v1/tenants/{t}/entitlements             what this tenant may install, and until when
 GET    /v1/tenants/{t}/requests/{kind}[/{id}]
 GET    /v1/clusters/{c}/shared-apps
@@ -354,6 +359,50 @@ data offline — and it is the behaviour to state rather than discover.
 `revoked_at` in the store's schema is therefore a record of something
 delivered, never something the cluster polls for: the cluster holds no
 identity toward the store and never calls it.
+
+### 3.9 How a caller gets a token
+
+Every write above is authenticated by a Keycloak token. A browser gets one
+from the edge session (AD-13). The two callers that are not browsers need
+their own path, and neither has one today: the CLI sends
+`X-Gentian-Actor` over a port-forward, which step 0 removes.
+
+**The CLI: the device authorization grant (RFC 8628).** A public client
+`gentian-cli` in the kernel realm, no secret, device grant enabled, audience
+including the director.
+
+```
+kubectl gentian login --cluster <c>
+  1. POST <issuer>/protocol/openid-connect/auth/device   client_id=gentian-cli
+     → device_code, user_code, verification_uri_complete, interval
+  2. print the URL and the short code; open a browser if there is one
+  3. the human authenticates in the browser — password, MFA, whatever the
+     realm requires; the CLI never sees a credential
+  4. poll the token endpoint with device_code at `interval`, honouring
+     authorization_pending and slow_down, until tokens or expiry
+  5. store in ~/.config/gentian/credentials, mode 0600, keyed by cluster:
+     refresh token, access token, expiry
+```
+
+The device grant rather than a loopback redirect because the common case is
+an operator on a remote shell, where the browser is on a different machine
+and a callback to `localhost` cannot arrive. The same flow works when there
+is a local browser.
+
+Afterwards each command sends `Authorization: Bearer`, refreshing when the
+access token has expired and re-prompting only when the refresh fails.
+`kubectl gentian logout` calls the revocation endpoint and deletes the file.
+
+Two properties worth stating. The CLI holds a refresh token, so it is a
+non-browser credential held over time — which is where sender-constrained
+tokens earn their place (WP-1), and not on the browser path. And because the
+token is the human's, a CLI write is attributed to the human in the commit
+and in the decision log, exactly like a console write; the CLI is not an
+identity.
+
+**The App Store** authenticates the same way as any other client of the read
+API and carries the signed-in administrator's token on an install, so it too
+needs no identity of its own (§3.8, AD-3).
 
 ## 4. Bootstrap: writing configuration before Keycloak exists
 

@@ -38,6 +38,12 @@ Specified in [operator-split-plan.md](operator-split-plan.md) §3, §5, §6.
 - [ ] **Step 0 (wave 0, G1):** bearer verification on the existing
       `internal/applifecycle/http.go` against kernel and tenant realms;
       `X-Gentian-Actor` ignored; BFF and CLI send the user's token.
+- [ ] **`kubectl gentian login`** ships with step 0, or the CLI has no token
+      to send: device authorization grant (RFC 8628) against a `gentian-cli`
+      public client in the kernel realm, audience including the director;
+      credentials at `~/.config/gentian/credentials` mode 0600 keyed by
+      cluster; refresh on expiry; `logout` revokes and deletes
+      (operator-split-plan §3.9). The Keycloak client ships with it.
 - [ ] `cmd/director`, `internal/director/{api,authn,authz,gitops}`; plain
       Deployment, N replicas, no controller-runtime.
 - [ ] Authentication: JWKS verification for kernel and tenant realms.
@@ -133,6 +139,13 @@ Specified in [authorization-model.md](authorization-model.md) and
       member`), conditions for time.
 - [ ] `tests.fga.yaml`: three cases per relation (grant, neighbouring
       denial, derivation through the parent).
+- [ ] Membership is **stored**, not contextual: `model.fga`'s header said it
+      arrived from the token's groups, which R7, AD-12 and principle 4 each
+      forbid and which would leave no tuple writer for membership at all.
+- [ ] `tenant#admin` derives `or admin from cluster`, so the platform-tenant
+      bootstrap tuple goes: a copied tuple is what R4 exists to prevent, and
+      it is one nobody has to remember to remove.
+- [ ] `tenant#can_approve_privilege` for tenant-scope privilege grants.
 - [ ] `tenant#can_administer` for admin tiles, and `tenant#can_enter` widened
       with `can_audit from cluster` and `can_approve from cluster`. Without
       both, `app#can_use`'s deliberate exclusion of admin accounts makes every
@@ -333,6 +346,12 @@ From [security-gap-closing.md](security-gap-closing.md).
 - [ ] Wave 0: G4 random LiteLLM keys from OpenBao behind the gateway; G5
       Redis ACL key and channel prefixes via `valueMapping.cache`; G6
       MariaDB wildcard grant on the tenant prefix, no `GRANT OPTION`.
+- [ ] **Privileges are granted, not filtered** (component-profile §3.1):
+      `PrivilegeRequest` defined, `PrivilegeGrant` written by the director
+      with approver, reason and expiry; scope decided by the kind, never by
+      the profile; an ungranted request queues the install instead of being
+      dropped. `PlatformSecurityPolicy` keeps its meaning as the ceiling of
+      what may be asked for, and stops being mistaken for the approval.
 - [ ] **Master password out of the app-install path** (design/security.md §6):
       Composition init Jobs stop reading
       `gentian-os/kernel/internal/master-password` and ask the credential
