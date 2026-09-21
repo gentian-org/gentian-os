@@ -38,9 +38,9 @@ and `gentianos.io/function: <function>` (tenant namespaces:
 | D10 | The portal splits: shell bundle → `shared-shell`; tenant desktop BFF → `tenant-<t>`; platform-admin console → `kernel-control` | holds no state / holds one tenant's credentials / holds the kernel realm |
 | D11 | The App Store does not run in the cluster. It is a service operated by Gentian Technologies; the cluster ingests it through the director's API | the catalogue is reference data, not a workload; the cluster holds only what a tenant installs |
 | D12 | `tenancy: shared` requires `trustTier: platform` and either stateless-per-request or a natively verifiable tenant model; per-tenant state in one instance is refused | the compromise guarantee of a shared app is only the app's own code |
+| D13 | Stateful kernel components — OpenBao, Keycloak, CNPG clusters — are never renamed in place; the taxonomy applies to fresh installs, existing clusters rebuild or keep names and adopt labels | a namespace move is delete-and-recreate; re-initialising OpenBao on a cluster with tenants regenerates every derived credential |
 | D14 | System data services are one namespace per engine, named by the function apps declare: `system-postgresql`, `system-mariadb`, `system-cache`, `system-s3` | `kernelRequirements` select per engine; quotas and backup policies differ per engine; an engine may later be backed by a managed service on its own claim; separating stateful services later is a data migration, separating now is a name |
 | D15 | vLLM moves into the Cluster composition when it moves to `system-llm`; installer step D-05 is retired | its input is `Cluster.spec.llm.instances`, which only a composition can read |
-| D13 | Stateful kernel components — OpenBao, Keycloak, CNPG clusters — are never renamed in place; the taxonomy applies to fresh installs, existing clusters rebuild or keep names and adopt labels | a namespace move is delete-and-recreate; re-initialising OpenBao on a cluster with tenants regenerates every derived credential |
 
 ## 3. Inventory: today → target
 
