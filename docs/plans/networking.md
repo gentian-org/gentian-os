@@ -45,6 +45,86 @@ is bounded by Envoy's own model: a policy attaches to a route, and the
 route to a DMZ proxy has no session, no ext-auth and no reach beyond one
 backend.
 
+```mermaid
+flowchart TB
+    NET(("Internet"))
+
+    subgraph EDGE["kernel-edge — one address, one Envoy fleet"]
+        AG["authenticated Gateway<br/>L0 TLS, rate limit<br/>L1 session per tenant zone (OIDC) / JWT for bearer<br/>L2 ext-auth: can_use"]
+        PG["perimeter Gateway<br/>L0 only<br/>per-route authMode, WAF, body limits<br/>TCP/UDP listeners"]
+        SHIM["ext-auth shim"]
+        ACME["ACME HTTP-01 solver"]
+    end
+
+    subgraph KAUTH["kernel-authentication / -authorization"]
+        KC["Keycloak<br/>id.kernel — the issuer"]
+        FGA[("OpenFGA")]
+    end
+
+    subgraph KCTL["kernel-control"]
+        DIR["director API<br/>api.kernel"]
+        CON["platform console BFF<br/>console.kernel"]
+    end
+
+    subgraph TEN["tenant-t"]
+        DESK["desktop BFF"]
+        APP["app"]
+    end
+
+    subgraph TDMZ["tenant-t-dmz"]
+        PX["publishing proxy<br/>one per enabled surface,<br/>one credential"]
+    end
+
+    subgraph SHR["shared-app"]
+        SAPP["shared instance"]
+    end
+
+    subgraph SYS["system-function"]
+        DB[("postgresql / cache / s3")]
+        LLM["llm"]
+        STORE["mail store, DKIM signer"]
+    end
+
+    subgraph SDMZ["system-function-dmz"]
+        MTA["Postfix :25 :587<br/>Dovecot proxy :993"]
+        TURN["TURN / SFU (UDP)"]
+    end
+
+    NET -->|"https, surface: gateway"| AG
+    NET -->|"https, surface: perimeter<br/>own host or app-host paths"| PG
+    NET -->|"smtp / imap / turn"| PG
+    NET -->|"login, JWKS"| KC
+    NET -->|"port 80 /.well-known/acme-challenge"| ACME
+
+    AG -. "verify JWT" .-> KC
+    AG -->|"headers or token"| SHIM
+    SHIM -->|"Check with contextual tuples"| FGA
+
+    AG --> DESK
+    AG --> APP
+    AG --> SAPP
+    AG --> CON
+    AG -->|"bearer"| DIR
+
+    PG --> PX
+    PG -->|"TCPRoute"| MTA
+    PG -->|"UDPRoute"| TURN
+
+    PX -->|"one backend, one port"| APP
+    MTA -->|"LMTP / master credential"| STORE
+    MTA -. "DKIM via milter" .-> STORE
+
+    DESK -->|"user's token"| DIR
+    CON -->|"user's token"| DIR
+    DIR --> FGA
+
+    APP -->|"contracts, L5"| DB
+    APP -->|"contracts, L5"| LLM
+    APP -->|"relay port"| MTA
+    APP <-->|"integrations, L5"| APP
+    SAPP -->|"contracts, L5"| DB
+```
+
 Tunnel mode changes nothing above: cloudflared publishes hostnames to the
 same Envoy Service. Vanity domains (custom `Tenant.spec.domain`) add
 listeners to the same Gateways with per-host certificates; see §6.
