@@ -63,6 +63,10 @@ type Config struct {
 	// a deployment turns it off explicitly, which a cluster without a store
 	// has to do — and which is then visible as a setting, not as an absence.
 	EnforceEntitlements bool
+	// Events receives Keycloak's membership events. It authenticates its one
+	// caller by signature, not by token: the listener is not a user and holds
+	// no identity a token could carry. Nil leaves the endpoint unregistered.
+	Events http.Handler
 }
 
 // Server is the director's API.
@@ -133,7 +137,7 @@ func tenantObject(r *http.Request) (string, error) {
 }
 
 // guarded registers a route with the relation it requires. There is no other
-// way to register an authenticated route.
+// way to register a route a user can call.
 func (s *Server) guarded(pattern, relation string, obj object, h func(http.ResponseWriter, *http.Request, call)) {
 	s.mux.HandleFunc(pattern, func(w http.ResponseWriter, r *http.Request) {
 		ctx := r.Context()
@@ -181,6 +185,10 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusNoContent)
 	})
+
+	if s.cfg.Events != nil {
+		s.mux.Handle("POST /v1/events/keycloak", s.cfg.Events)
+	}
 
 	// Reads are authorised by can_view, never by the write relation: whoever
 	// may see a tenant may see what it has installed, whether or not they may

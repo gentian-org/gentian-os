@@ -226,3 +226,105 @@ func (c *OpenFGA) Check(ctx context.Context, requestID, user, relation, object s
 	}
 	return out.Allowed, nil
 }
+
+// Tuple is one stored relationship.
+type Tuple struct {
+	User     string `json:"user"`
+	Relation string `json:"relation"`
+	Object   string `json:"object"`
+}
+
+// Read returns the stored tuples matching a filter. Any field may be empty,
+// within what OpenFGA accepts: an object may be a bare type ("group:") when a
+// user is given. Pages are followed to the end.
+func (c *OpenFGA) Read(ctx context.Context, filter Tuple) ([]Tuple, error) {
+	var out []Tuple
+	token := ""
+	for {
+		body := map[string]any{"page_size": 100}
+		key := map[string]string{}
+		if filter.User != "" {
+			key["user"] = filter.User
+		}
+		if filter.Relation != "" {
+			key["relation"] = filter.Relation
+		}
+		if filter.Object != "" {
+			key["object"] = filter.Object
+		}
+		body["tuple_key"] = key
+		if token != "" {
+			body["continuation_token"] = token
+		}
+		var page struct {
+			Tuples []struct {
+				Key Tuple `json:"key"`
+			} `json:"tuples"`
+			ContinuationToken string `json:"continuation_token"`
+		}
+		if err := c.post(ctx, "/read", body, &page); err != nil {
+			return nil, err
+		}
+		for _, t := range page.Tuples {
+			out = append(out, t.Key)
+		}
+		if token = page.ContinuationToken; token == "" {
+			return out, nil
+		}
+	}
+}
+
+// maxWrite is OpenFGA's default limit on tuples per write request.
+const maxWrite = 100
+
+// Write adds and removes tuples. Each request is atomic; a change larger than
+// one request is split, deletes first, so that an interruption leaves less
+// access rather than more.
+func (c *OpenFGA) Write(ctx context.Context, writes, deletes []Tuple) error {
+	send := func(field string, tuples []Tuple) error {
+		for len(tuples) > 0 {
+			n := min(len(tuples), maxWrite)
+			body := map[string]any{
+				"authorization_model_id": c.modelID,
+				field:                    map[string]any{"tuple_keys": tuples[:n]},
+			}
+			if err := c.post(ctx, "/write", body, nil); err != nil {
+				return err
+			}
+			tuples = tuples[n:]
+		}
+		return nil
+	}
+	if err := send("deletes", deletes); err != nil {
+		return err
+	}
+	return send("writes", writes)
+}
+
+func (c *OpenFGA) post(ctx context.Context, path string, body, out any) error {
+	payload, err := json.Marshal(body)
+	if err != nil {
+		return err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/stores/"+c.storeID+path, bytes.NewReader(payload))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	if c.token != "" {
+		req.Header.Set("Authorization", "Bearer "+c.token)
+	}
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return fmt.Errorf("openfga %s: %w", path, err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode/100 != 2 {
+		b, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		return fmt.Errorf("openfga %s: status %d: %s", path, resp.StatusCode, strings.TrimSpace(string(b)))
+	}
+	if out == nil {
+		return nil
+	}
+	return json.NewDecoder(resp.Body).Decode(out)
+}

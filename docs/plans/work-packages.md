@@ -206,6 +206,14 @@ Specified in [authorization-model.md](authorization-model.md) and
       `…:app:<p>` and, where the profile declares a `privilegedRole`,
       `…:app:<p>:admins`; realm
       script and console.
+- [x] Director ingestion endpoint and membership tuple writer
+      (`internal/director/membership`, `POST /v1/events/keycloak`): Ed25519
+      signature over timestamp and body, five-minute window, replay dropped by
+      event id and by per-user event time; events state a user's complete
+      group set, so applying one is a comparison and a lost event is repaired
+      by the next; **a realm speaks only for its own tenant** — a tenant realm
+      naming `gentian:platform:*` or another tenant's group is refused and
+      logged; a failed apply answers 503 and the retry is accepted.
 - [ ] **Keycloak event listener** — a new kernel component in
       `kernel-authentication`: an event-listener SPI provider (or the
       community webhook listener, pinned and reviewed) that pushes signed

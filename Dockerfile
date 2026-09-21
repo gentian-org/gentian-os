@@ -19,6 +19,11 @@ COPY cmd/ cmd/
 # Build the manager binary
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=${TARGETARCH} go build -a -o manager ./cmd
 
+# The director ships in the same image and runs as its own Deployment with its
+# own identity: one image to build, scan and pin, two processes that share no
+# credential. Which binary runs is the Deployment's command.
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=${TARGETARCH} go build -o director ./cmd/director
+
 # ── Runtime stage ──────────────────────────────────────────────────────────────
 FROM debian:bookworm-slim
 
@@ -27,6 +32,7 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/*
 
 COPY --from=builder /workspace/manager /manager
+COPY --from=builder /workspace/director /director
 
 USER 65532:65532
 

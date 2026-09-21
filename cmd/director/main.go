@@ -35,6 +35,7 @@ import (
 	"github.com/gentian-org/gentian-os/internal/director/authn"
 	"github.com/gentian-org/gentian-os/internal/director/authz"
 	"github.com/gentian-org/gentian-os/internal/director/gitops"
+	"github.com/gentian-org/gentian-os/internal/director/membership"
 )
 
 func main() {
@@ -110,7 +111,29 @@ func run(log *slog.Logger) error {
 		Name:  envOr("DIRECTOR_COMMITTER_NAME", "gentian-director"),
 		Email: os.Getenv("DIRECTOR_COMMITTER_EMAIL"),
 	})
-	handler, err := api.New(api.Config{Authn: verifier, Authz: checker, Repo: repo, Log: log, EnforceEntitlements: enforce})
+	// Membership reaches OpenFGA only through this endpoint. Without a listener
+	// key nothing can be believed, so the endpoint does not exist — and no
+	// membership changes until it does, which is worth saying at start.
+	var events http.Handler
+	if raw := os.Getenv("DIRECTOR_LISTENER_KEYS"); raw == "" {
+		log.Warn("no Keycloak listener key configured: membership events are not accepted", "setting", "DIRECTOR_LISTENER_KEYS")
+	} else {
+		keys, err := membership.ParseKeys(raw)
+		if err != nil {
+			return err
+		}
+		proj, err := membership.NewProjector(checker, membership.Scope{
+			PlatformRealm:  envOr("DIRECTOR_PLATFORM_REALM", "kernel"),
+			PlatformTenant: envOr("DIRECTOR_PLATFORM_TENANT", "platform"),
+		}, log)
+		if err != nil {
+			return err
+		}
+		if events, err = membership.NewReceiver(keys, proj, log); err != nil {
+			return err
+		}
+	}
+	handler, err := api.New(api.Config{Authn: verifier, Authz: checker, Repo: repo, Log: log, EnforceEntitlements: enforce, Events: events})
 	if err != nil {
 		return err
 	}
