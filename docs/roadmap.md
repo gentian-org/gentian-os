@@ -1047,3 +1047,47 @@ does not exist yet that something cannot be the Composition.
   - `[ ]` Deploy an event listener that executes workflow scripts on NATS message triggers.
   - `[ ]` Implement the AppProfile code generation tool.
   - `[ ]` Integrate the agentic engine with the tenant provisioning API.
+
+## 5. Certification
+
+What SOC 2, ISO 27001, ISAE 3402 and ISO 9001 readiness needs beyond the
+controls the architecture cleanup produces on the components it already
+touches (work-packages.md WP-13). Everything here needs a component the
+platform does not run today.
+
+### 5.1 Immutable, Retained Audit Logs (**)
+* **Target Domain**: Audit & Assurance
+* **Context**: The three logs of the security principles — issuer events, decision log, change log — are the evidence populations every framework samples from. A Type II period is six to twelve months; logs that can be altered or that expire earlier restart the period.
+* **Proposed Solution**: When the log store lands (security-gap-closing G10), run it append-only — object lock on the bucket or a hash chain — with retention of at least twelve months, and export the proxy access logs and Keycloak events into it.
+* **Backlog Items**:
+  - `[ ]` Choose the log store and its immutability mechanism; set retention ≥ 12 months.
+  - `[ ]` Ship Keycloak events, OpenFGA decisions, director commits and DMZ proxy logs into it with the request id.
+  - `[ ]` Test: a log entry cannot be altered or deleted inside the retention window by any cluster role, break-glass included.
+
+### 5.2 Backups That Prove Themselves (**)
+* **Target Domain**: Availability
+* **Context**: Availability is the one SOC 2 criterion the platform is behind on: backups are design-only (roadmap 2.x, Velero/pgBackRest), and an untested backup is not a control.
+* **Proposed Solution**: Once backups exist, a scheduled restore drill restores a tenant into a scratch namespace, verifies it, and records the result as evidence.
+* **Backlog Items**:
+  - `[ ]` Implement backups for the kernel Postgres, the tenant data engines and OpenBao.
+  - `[ ]` Scheduled restore drill per cluster with a signed result record.
+  - `[ ]` Recovery time and recovery point objectives stated per cluster and measured by the drill.
+
+### 5.3 Vulnerability Scanning and SBOMs (**)
+* **Target Domain**: Supply Chain
+* **Context**: Signed bundles and images (security-gap-closing G11) prove provenance, not absence of known vulnerabilities; ISO 27001 A.8.8 and A.8.29 want both.
+* **Proposed Solution**: Scan every image and chart in CI and in-cluster, generate an SBOM per bundle, and let admission refuse unsigned or unscanned images.
+* **Backlog Items**:
+  - `[ ]` Trivy (or equivalent) in CI for gentian-os, gentian-ui and every catalogue bundle; findings gate the release.
+  - `[ ]` SBOM per bundle, stored beside the digest in the mirror.
+  - `[ ]` In-cluster scanning of running images with findings in the security officer's view.
+  - `[ ]` Admission refuses images without a signature and a scan record.
+
+### 5.4 Assurance Programme (**)
+* **Target Domain**: Audit & Assurance
+* **Context**: The certifications assess the organisation; the platform supplies controls and evidence. The timing of the technical work decides when an assurance period can start.
+* **Proposed Solution**: Start the ISAE 3402 / SOC 2 Type II clock the day the director and the immutable log store are live; do a Type I readiness assessment after wave 1 of the gap plan; treat the roles document as the complementary user-entity controls and `docs/compliance/controls.md` as the system description.
+* **Backlog Items**:
+  - `[ ]` Type I readiness after wave 1; Type II period after the log store.
+  - `[ ]` ISO 27001 Statement of Applicability mapped to `docs/compliance/controls.md`.
+  - `[ ]` ISO 9001: measurable objectives the platform produces — availability, mean time to recover, patch latency — reported from the same logs.

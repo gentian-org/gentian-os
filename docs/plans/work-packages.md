@@ -303,7 +303,7 @@ From [security-gap-closing.md](security-gap-closing.md).
       keeps the credential for materialisation only.
 - [ ] Cluster claim fields: `exposure` policy, `network.egressAllow`,
       default fulfiller per contract, identity/secrets/database provider
-      selectors for the modular kernel.
+      selectors for the modular kernel, and the `compliance` block of WP-13.
 - [ ] Namespace label step (WP-8 step 1) and the fresh-install layout.
 - [ ] Recovery kit carries the director's signing key material or its
       transit reference.
@@ -328,3 +328,66 @@ From [security-gap-closing.md](security-gap-closing.md).
       `architecture.md` for the director.
 - [ ] Threat model re-run against code after wave 1 and wave 3.
 - [ ] `make verify-authz-vocabulary` and the challenge lists wired into CI.
+
+## WP-13 Certification readiness — on components already being changed (`os`)
+
+Controls and evidence for SOC 2, ISO 27001, ISAE 3402 and ISO 9001 that fall
+out of the director, the realm configuration, the Cluster claim and the
+purge reconciler with little extra code. Nothing here adds a component;
+what needs one is on [roadmap.md](../roadmap.md) under *Certification*.
+
+Every behaviour is switchable from one block on the Cluster claim, so a
+single-node, single-tenant or single-person cluster is not asked to
+approve its own changes or attest its own access. Defaults are the
+non-intrusive setting; the certifying operator turns them on.
+
+```yaml
+compliance:
+  fourEyes: false            # a privilege or exposure approval must come from a subject other than the requester
+  adminMfa: optional         # optional | required — MFA or passkey for every platform and tenant-admin role
+  breakGlass:
+    maxDuration: 0h          # 0 = membership does not expire; >0 = auto-removed by the director, reason required
+  accessReview:
+    interval: 0h             # 0 = off; >0 = the director generates the report and asks for sign-off
+  evidence:
+    enabled: true            # read-only exports; harmless on any cluster
+  records:
+    deletion: true           # purge and tenant export write a signed record
+  residency: ""              # jurisdiction/region shown to tenants; empty = unstated
+```
+
+- [ ] **Evidence exports** on the director's read API (`evidence.enabled`):
+      access review per tenant and cluster (holder, role, granted when and by
+      whom, from the projection and the change log); configuration changes
+      over a period with approver and request id; privileged-access uses
+      (break-glass additions and removals); exposure inventory over a period;
+      key rotation dates from the credential catalogue. Each is a query over
+      the three logs; auditors sample from populations and these are the
+      populations.
+- [ ] **Four-eyes on approvals** (`fourEyes`): the director refuses a
+      privilege or exposure approval whose approver is the requester; the
+      trailer records both subjects. Segregation of duties as a test.
+- [ ] **Break-glass as a workflow** (`breakGlass.maxDuration`): joining
+      `gentian:platform:break-glass` requires a reason, receives an expiry,
+      is removed by the director at expiry, and leaves a review item; both
+      events are Keycloak events and appear in the exports.
+- [ ] **MFA for administrators** (`adminMfa`): realm configuration for the
+      kernel realm and every tenant realm's `admins` and `perimeter` groups;
+      passkeys offered first. Step-up for high-impact verbs stays a roadmap
+      item.
+- [ ] **Access-review attestation** (`accessReview.interval`): the director
+      generates the review, notifies the tenant administrator and the
+      security officer, and records the sign-off as an FGA-checked commit;
+      overdue reviews appear in the console and the exports.
+- [ ] **Deletion and export records** (`records.deletion`): the purge
+      reconciler and tenant export write a signed record — subject, object,
+      when, verified gone or verified delivered — to git through the
+      director, joined to the request id.
+- [ ] **Residency** (`residency`): a Cluster claim field shown in the tenant
+      desktop and the exports.
+- [ ] **Control catalogue** — `docs/compliance/controls.md`: one row per
+      control objective → principle → mechanism → evidence query. The
+      auditor's first document and ISAE 3402's system description; the
+      roles document is the list of complementary user-entity controls.
+- [ ] **Request id everywhere**: the director, the shim, the console and
+      the Keycloak listener propagate one id; the exports join on it.
