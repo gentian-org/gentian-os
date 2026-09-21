@@ -6,7 +6,8 @@ and the target namespace of every workload running today.
 Terms: a *profile* is a `ComponentProfile` catalogue entry and an *instance*
 is a `Component` deployed from it, as defined in
 [component-profile.md](component-profile.md). Today's `AppProfile` is the
-profile until that rename lands.
+profile until that rename lands. The decisions behind the layout are
+[architectural-decisions.md](architectural-decisions.md) AD-7 to AD-11.
 
 ## 1. Categories
 

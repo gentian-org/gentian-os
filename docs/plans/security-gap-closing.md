@@ -5,7 +5,9 @@ code does not yet do, found by reading `internal/`, `crossplane/`, `kernel/`
 and the console's BFF rather than the design docs — which describe several
 controls as present that are not. Each gap names its evidence, the principle
 it violates, the fix, and the wave it belongs to. Roadmap §1 numbers are
-given where the gap is already tracked there.
+given where the gap is already tracked there. Direction-setting decisions
+made while closing gaps are recorded in
+[architectural-decisions.md](architectural-decisions.md).
 
 ## 1. Gaps, from code
 

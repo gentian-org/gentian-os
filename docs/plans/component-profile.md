@@ -2,7 +2,8 @@
 
 Companion to [namespace-cleanup.md](namespace-cleanup.md) (which namespace each
 tier lands in) and [operator-split-plan.md](operator-split-plan.md) (who writes
-the CR). This document covers only the schema: what a catalogue entry declares,
+the CR); the decisions behind all three are in
+[architectural-decisions.md](architectural-decisions.md). This document covers only the schema: what a catalogue entry declares,
 and what the platform derives from it.
 
 Kernel components are out of scope. They are installed by `install.sh` and then
@@ -11,7 +12,7 @@ the operator depends on them existing first.
 
 ## 1. Two levels, one word
 
-D12 reads `tenancy: shared` as a property of a profile. That loses a
+A single `tenancy` value on the profile would lose a
 distinction worth keeping: whether an app *can* serve several tenants safely is
 a claim the catalogue certifies, while *running* it shared is a decision the
 platform admin makes. Collapsing them means a profile that could go either way
@@ -34,9 +35,9 @@ So: same word, two levels.
 `system` is exclusive. A component that supplies contracts to other components
 does not also serve humans; if it appears to, it is two components.
 
-`trustTier` stays in the spec. D12 validates shared tenancy against it, and CRD
+`trustTier` stays in the spec. AD-4 validates shared tenancy against it, and CRD
 validation rules cannot read labels or annotations — only `name` and
-`generateName` are exposed on metadata. Outside the spec, D12 could only be an
+`generateName` are exposed on metadata. Outside the spec, AD-4 could only be an
 admission policy. Keeping it in the spec makes the rule a schema invariant that
 fails at write time regardless of who is writing.
 
@@ -49,7 +50,7 @@ type ComponentProfileSpec struct {
     // +kubebuilder:validation:MinItems=1
     Tenancy []TenancyMode `json:"tenancy"`
 
-    // TrustTier is the review level of this entry. D12 requires "platform"
+    // TrustTier is the review level of this entry. AD-4 requires "platform"
     // before "shared" may appear in Tenancy.
     TrustTier TrustTier `json:"trustTier"`
 
@@ -83,7 +84,7 @@ type ComponentProfileSpec struct {
     // +optional
     Secrets []SecretSpec `json:"secrets,omitempty"`
 
-    // Expose declares entry points. Absent for system tenancy (D8), enforced
+    // Expose declares entry points. Absent for system tenancy (AD-9), enforced
     // rather than assumed. See §5 — every entry carries a mandatory authMode.
     // +optional
     Expose []ExposureSpec `json:"expose,omitempty"`
@@ -100,7 +101,7 @@ type ComponentProfileSpec struct {
 }
 ```
 
-No presentation fields. They are reference data outside the cluster (D11), and
+No presentation fields. They are reference data outside the cluster (AD-3), and
 an optional field would invite partial population and two sources of truth for
 one string.
 
@@ -175,7 +176,7 @@ both require that `none` be a word someone wrote and a reviewer can find. A
 default would defeat exactly that.
 
 **A gateway route and a perimeter surface are different objects.** The taxonomy
-puts publishing proxies in `tenant-<t>-dmz` (D16) with one least-privilege
+puts publishing proxies in `tenant-<t>-dmz` (AD-6) with one least-privilege
 credential per surface, separate from routes on the authenticated gateway.
 They differ in namespace, credential, policy and blast radius, so the schema
 has to tell them apart:
@@ -204,7 +205,7 @@ it replaces a separate `publicSurfaces` list. One concept, one place.
 | | system | shared | tenant |
 | --- | --- | --- | --- |
 | Namespace | `system-<function>` | `shared-<app>` | `tenant-<t>` (+ `-dmz`) |
-| Public route | none (D8) | per granted tenant | tenant gateway |
+| Public route | none (AD-9) | per granted tenant | tenant gateway |
 | OIDC client | none | per granted tenant realm | tenant realm |
 | Scope of `provides` | cluster-wide | cluster-wide | within the tenant |
 | Tenant binding | none | grant per tenant | implicit |
@@ -222,9 +223,9 @@ x-kubernetes-validations:
   - rule: "!('system' in self.tenancy) || self.tenancy.size() == 1"
     message: "system is exclusive: a component serving contracts does not also serve humans"
   - rule: "!('system' in self.tenancy) || !has(self.expose)"
-    message: "system components have no exposure (D8)"
+    message: "system components have no exposure (AD-9)"
   - rule: "!('shared' in self.tenancy) || self.trustTier == 'platform'"
-    message: "shared tenancy requires trustTier platform (D12)"
+    message: "shared tenancy requires trustTier platform (AD-4)"
 ```
 
 Admission policy for who may say it, because these depend on the writer or the

@@ -19,7 +19,7 @@ The director is the configuration-write PEP of
 §7. It closes G1, G2 (its half), G7 (writes) and G11 (its half) in
 [security-gap-closing.md](security-gap-closing.md): cutover steps A–B are
 that plan's wave 1, step C spans waves 1 and 3. It runs in `kernel-control`
-per [namespace-cleanup.md](namespace-cleanup.md) D2; this document uses
+per [architectural-decisions.md](architectural-decisions.md) AD-7; this document uses
 today's namespace names when it describes today's code and the taxonomy's
 when it describes the target.
 
@@ -115,7 +115,7 @@ manager). Built from `cmd/director`. It has:
   BFF does in `gentian-ui/backend/app/core/auth.py`. No `X-Gentian-Actor`
   header, ever; identity is the token's verdict (principle 1). Its callers
   are the platform-admin console (`kernel-control`), each tenant's desktop
-  BFF (`tenant-<t>`, D10), the CLI, and the **external App Store** (D11) —
+  BFF (`tenant-<t>`, AD-10), the CLI, and the **external App Store** (AD-3) —
   which never holds authority of its own: it calls with the tenant admin's
   token, or with an RFC 8693 exchanged token carrying `act` (principle 5),
   and the FGA check is on the human either way. The route is on the kernel
@@ -154,7 +154,7 @@ listener, no `GENTIAN_DEPLOYMENTS_*` env. It keeps `pods/exec` because purge
 needs it — but purge becomes a reconcile of desired state (app absent from
 `Tenant.spec.apps` and the App claim gone → teardown converges), which also
 fixes the current failure mode where a request that dies mid-purge leaves
-half-deleted state with nothing to resume it. After D14 its exec targets are
+half-deleted state with nothing to resume it. After AD-9 its exec targets are
 the `system-<engine>` namespaces, never `kernel-data`.
 
 ### 3.3 Argo CD
@@ -209,7 +209,7 @@ PUT    /v1/tenants/{t}/apps/{p}/addons
 GET    /v1/tenants/{t}/resources | /plans | /usage | /report
 PUT    /v1/tenants/{t}/resources
 PUT    /v1/tenants/{t}/policies/{kind}/{name}   backup, grants, export schedules (§2.2)
-POST   /v1/clusters/{c}/shared-apps/{p}         install a `tenancy: shared` profile into `shared-<app>` (D12); `can_install_shared`
+POST   /v1/clusters/{c}/shared-apps/{p}         install a `tenancy: shared` profile into `shared-<app>` (AD-4); `can_install_shared`
 PUT    /v1/clusters/{c}/security/{kind}/{name}  PlatformSecurityPolicy, PolicyException, overlays (§7.1)
 PUT    /v1/clusters/{c}/network | /v1/tenants/{t}/network   egress intent (§7.2)
 POST   /v1/tenants/{t}/requests/{kind}          export / restore — creates the request CR, secrets via ESO reference only
@@ -232,7 +232,7 @@ type cluster
     define operator: [user, group#member]        # gentian:platform:superadmin / :operator
     define break_glass: [user, group#member]     # gentian:platform:break-glass
     define can_deploy_tenant: operator
-    define can_install_shared: operator          # D12: shared-<app> instances
+    define can_install_shared: operator          # AD-4: shared-<app> instances
     define can_set_policy: operator              # PlatformSecurityPolicy, network intent (system tier)
     define can_set_admission: break_glass        # PolicyException, policy overlays (kernel tier)
     define can_edit_raw: break_glass
@@ -265,7 +265,7 @@ Each relation gets a case in `tests.fga.yaml` before the director calls it.
 Materialise-on-reference: the director fetches the profile bundle at the
 requested digest from the catalogue repository (`Repository/gentian-apps`,
 read credential — never from the App Store's own database, which is
-reference data outside the cluster, D11), applies the `AppProfile` CR (label
+reference data outside the cluster, AD-3), applies the `AppProfile` CR (label
 `gentianos.io/profile-name`, digest annotation), **then** commits.
 Apply-then-commit is the only ordering that fails safe: a failed commit
 leaves an inert, unreferenced CR; commit-then-apply leaves git asserting a
@@ -341,10 +341,10 @@ catastrophic on one with tenants.
 | `applifecycle/service.go` — `provisionAppGroupUsers` | stays; becomes desired-state reconcile of `Tenant.spec.apps` → Keycloak group | operator (`app_privilege_reconciler` already exists) |
 | `credentialmgr/` | later, optional: same class of human-identified write, holds no token of its own, needs no controller-runtime | director, after D |
 | `kubectl-gentian` `git_commit_push` + `kubectl apply` fallback | replaced by director API calls with the user's token (`kubectl gentian login` via device flow) | CLI |
-| Console direct writes (§2.2, desired-state rows) | replaced by director calls with the user's token, as `credential_manager.py` already forwards it; console *reads* stay in the console under `Impersonate-User` (G7) | platform console (`kernel-control`) and tenant desktop BFF (`tenant-<t>`), D10 |
+| Console direct writes (§2.2, desired-state rows) | replaced by director calls with the user's token, as `credential_manager.py` already forwards it; console *reads* stay in the console under `Impersonate-User` (G7) | platform console (`kernel-control`) and tenant desktop BFF (`tenant-<t>`), AD-10 |
 | Console direct writes (§2.2, request rows) | director creates the request CR; secrets stay ESO/OpenBao references — settled by G7: all writes move | director, narrow RBAC on those kinds |
 | `catalogue-<repo>` ApplicationSet (every AppProfile synced to every cluster) | retired; the director materialises on reference (§3.6) | — |
-| App Store (`app-store-me` profile, per tenant) | leaves the cluster (D11); the director is its ingestion endpoint | external |
+| App Store (`app-store-me` profile, per tenant) | leaves the cluster (AD-3); the director is its ingestion endpoint | external |
 | `chart: initContainers.git-clone-deployments`, `git-credentials` volume, `appLifecycle.*` values | delete | — |
 | `Repository/deployments` composition | split read credential from push credential | Crossplane |
 
@@ -383,7 +383,7 @@ the CLI. Order, smallest and most API-shaped first:
 1. Resources plan (`PUT …/resources`) — already API-only, one file patch.
 2. Apps install/uninstall/addons — the console has no install path today, so
    this is the CLI plus the App Store, which becomes the external caller of
-   D11 in the same step: the per-tenant `app-store-me` profile is replaced by
+   AD-3 in the same step: the per-tenant `app-store-me` profile is replaced by
    the external service calling `POST /v1/tenants/{t}/apps/{p}` with the
    user's token.
 3. Tenant deploy/undeploy — CLI-only today; gains authentication for the
