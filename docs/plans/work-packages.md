@@ -214,13 +214,19 @@ Specified in [authorization-model.md](authorization-model.md) and
       by the next; **a realm speaks only for its own tenant** — a tenant realm
       naming `gentian:platform:*` or another tenant's group is refused and
       logged; a failed apply answers 503 and the retry is accepted.
-- [ ] **Keycloak event listener** — a new kernel component in
-      `kernel-authentication`: an event-listener SPI provider (or the
-      community webhook listener, pinned and reviewed) that pushes signed
-      membership and user events to the director's ingestion endpoint;
-      replay protection by event id; the director is its only receiver; it
-      holds no credential beyond the signing key. Inventory row in
-      namespace-cleanup §2.1.
+- [x] **Keycloak event listener** — source, tests and image build in
+      `kernel/extensions/keycloak-event-listener`: an event-listener SPI
+      provider that states a user's complete top-level group set, signed
+      (Ed25519), after commit, on membership and user admin events, on group
+      rename, on login and registration, and on the model's group- and
+      user-removal events; one background sender, bounded queue, retried for
+      a minute. It holds no credential beyond the signing key.
+- [ ] Listener deployed: CI image job, init container on the Keycloak pod in
+      `kernel-authentication`, key pair in OpenBao with the public half in the
+      director's configuration, `eventsListeners` and admin events enabled on
+      every realm (kernel realm and the tenant realm template). Inventory row
+      in namespace-cleanup §2.1. `keycloak.version` in its `pom.xml` pinned to
+      the deployed Keycloak.
 - [ ] Reconcile: on start, on a failed event as a targeted re-read of that
       subject, and as a rolling per-realm sweep completing cluster-wide within
       **15 minutes** — `view-users` client only, corrects toward Keycloak,
