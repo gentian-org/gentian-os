@@ -2,9 +2,8 @@
 # Validate every authorization model version under authz/model/: the DSL parses,
 # its tests pass, and the committed model.json is what the DSL transforms to.
 #
-# v0 is what the running operator embeds; v1 is the target the director checks
-# against (docs/plans/authorization-model.md). Both are verified until v0 is
-# deleted with the code that embeds it.
+# v0 is what the running operator embeds; v1 is what the director checks
+# against. Both are verified until v0 is deleted with the code that embeds it.
 #
 # Tooling, first match wins: an `fga` on PATH; `go install` of the pinned CLI;
 # the pinned CLI image under docker. The last exists so that a machine with no

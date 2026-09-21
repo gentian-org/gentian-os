@@ -156,13 +156,14 @@ Specified in [authorization-model.md](authorization-model.md) and
       `make test-policy-authz` for every model version, under docker where
       there is no Go; extend to three cases per relation (grant, neighbouring
       denial, derivation through the parent).
-- [ ] Membership is **stored**, not contextual: `model.fga`'s header said it
+- [x] Membership is **stored**, not contextual: `model.fga`'s header said it
       arrived from the token's groups, which R7, AD-12 and principle 4 each
       forbid and which would leave no tuple writer for membership at all.
-- [ ] `tenant#admin` derives `or admin from cluster`, so the platform-tenant
-      bootstrap tuple goes: a copied tuple is what R4 exists to prevent, and
-      it is one nobody has to remember to remove.
-- [ ] `tenant#can_approve_privilege` for tenant-scope privilege grants.
+- [x] `tenant#admin` derives `or admin from operated_by` (the consent tuple
+      below), so the platform-tenant bootstrap tuple goes: a copied tuple is
+      what R4 exists to prevent, and it is one nobody has to remember to
+      remove.
+- [x] `tenant#can_approve_privilege` for tenant-scope privilege grants.
 - [ ] `app#entitled` — **move the existing rule, do not change it.** The
       groups and the rule are already in place: the operator creates
       `gentian:tenant:<t>:app:<profile>` and gentian-ui's `shell_apps.py`
@@ -174,20 +175,20 @@ Specified in [authorization-model.md](authorization-model.md) and
       *addon* groups and not its own, and an admin account sees admin tiles
       only. The access review becomes honest as a consequence, not as the
       goal.
-- [ ] `app#can_write_credential` and the credential manager's `Check` before
+- [ ] `app#can_write_credential` (modelled and tested) and the credential manager's `Check` before
       any OpenBao write; OpenBao policy bounds the path, not the decision.
-- [ ] `shared_instance` with `offered_to`/`can_bind`, so a shared install is
+- [x] `shared_instance` with `offered_to`/`can_bind`, so a shared install is
       offered to a tenant and still invisible until that tenant installs it.
-- [ ] `contract` type with `provider`/`consumer`/`can_consume`, written from
+- [x] `contract` type with `provider`/`consumer`/`can_consume`, written from
       `AppGrant`. No PEP asks it until G8; the documents stop claiming that
       deleting the tuple revokes a delivered credential.
-- [ ] `tenant#operated_by`: platform administration of a tenant is a
+- [ ] `tenant#operated_by` (modelled and tested; the writers are open): platform administration of a tenant is a
       removable consent tuple, written at deploy; `session#revoked` written
       by the director on back-channel logout and read by the shim.
 - [ ] App-admin groups become per app — `gentian:tenant:<t>:app:<p>:admins` —
       and are created only for profiles declaring a `privilegedRole`. The
       cross-app group made a Nextcloud administrator an Odoo administrator.
-- [ ] `tenant#can_administer` for admin tiles, and `tenant#can_enter` widened
+- [x] `tenant#can_administer` for admin tiles, and `tenant#can_enter` widened
       with `can_audit from cluster` and `can_approve from cluster`. Without
       both, `app#can_use`'s deliberate exclusion of admin accounts makes every
       tile in `tenant-platform` unreachable for the platform admins it is
@@ -197,8 +198,11 @@ Specified in [authorization-model.md](authorization-model.md) and
       `tenant:<t>#perimeter_approver@group:gentian/tenant/<t>/admins#member`
       at tenant deploy. Publishing stays its own relation and its own audit
       line; a tenant that staffs the role separately removes that tuple.
-- [ ] `make verify-authz-vocabulary`: every `can_*` and role noun in
-      `docs/plans/*.md` exists in the model, and vice versa.
+- [x] `make verify-authz-vocabulary` (also run by `make test-policy-authz`):
+      every `can_*` in `docs/plans/*.md` and the security principles exists in
+      the model, every `can_*` in the model is in authorization-model.md, and
+      every relation the director names exists in the model; planned relations
+      are listed with their reason in `authz/model/v1/planned.txt`.
 - [ ] Keycloak groups, exactly as `authz/model/v1/model.fga` names them — the
       vocabulary check fails otherwise:
       `gentian:platform:{admin,security,auditor,service-admin,shared-apps-admin,break-glass}`

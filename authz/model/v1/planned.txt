@@ -1,0 +1,6 @@
+# Relations the documents describe and the model deliberately does not have yet.
+# verify-authz-vocabulary accepts these in documents and fails if one of them
+# turns up in the model, so an entry cannot outlive its reason.
+#
+# relation   why it is not in the model
+can_act      agent and task types arrive with the MCP gateway
