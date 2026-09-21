@@ -67,6 +67,7 @@ The split has to account for every writer, not only the operator. Inventory:
 | `kubectl gentian` | [scripts/kubectl-gentian](../../scripts/kubectl-gentian) `git_commit_push`, 11 call sites: `tenants deploy/undeploy`, `apps install/uninstall`, deletionPolicy flips around purge | the human's own git credential on their workstation | git host permissions only |
 | `kubectl gentian` fallback | `apply_tenant_manifest_from_git` → `kubectl apply -f` when no Argo app exists | the human's kubeconfig | Kubernetes RBAC only — bypasses git entirely |
 | `install.sh --prepare-deployment` / `--prepare-tenant` | writes local files and **stops**; the human commits ([deployment.md §3](../deployment.md)) | the human | review before commit |
+| App Store backend (`gentian-apps/apps/app-store`) | `services/gitops.py` — commit and push, behind `INSTALL_MODE=gitops`; dormant (no route calls it) but shipped with the repo credential config. Also a dormant direct `patch` of `Tenant.spec.apps` ([ui-restructure.md](ui-restructure.md) §3) | store pod's push token, `actor` from the request | nobody |
 | Humans | direct commits | their git identity | git host permissions |
 
 Not a writer: argocd-image-updater uses `write-back-method: argocd`
