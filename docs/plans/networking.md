@@ -124,6 +124,31 @@ flowchart TB
     APP -->|"relay port"| MTA
     APP -->|"integrations, L5"| PEER
     SAPP -->|"contracts, L5"| DB
+
+    subgraph LEGEND["legend"]
+        LA["authenticated domain"]
+        LP["perimeter domain"]
+        LE["east-west, no edge"]
+    end
+
+    classDef auth fill:#e6efff,stroke:#1f5fbf,color:#0b2a5b
+    classDef perim fill:#fff1e0,stroke:#d9731a,color:#5a2d00
+    classDef ew fill:#f2f2f2,stroke:#7a7a7a,color:#333
+    class AG,SHIM,DESK,APP,PEER,SAPP,CON,DIR,LA auth
+    class PG,PX,MTA,TURN,ACME,LP perim
+    class KC,FGA,DB,LLM,STORE,LE ew
+    style TEN fill:#f3f7ff,stroke:#1f5fbf
+    style SHR fill:#f3f7ff,stroke:#1f5fbf
+    style KCTL fill:#f3f7ff,stroke:#1f5fbf
+    style TDMZ fill:#fff8ef,stroke:#d9731a
+    style SDMZ fill:#fff8ef,stroke:#d9731a
+    style EDGE fill:#fafafa,stroke:#7a7a7a
+    style KAUTH fill:#fafafa,stroke:#7a7a7a
+    style SYS fill:#fafafa,stroke:#7a7a7a
+    style LEGEND fill:#ffffff,stroke:#bbbbbb
+    linkStyle 0,5,6,7,8,9,10,11,12,19,20,21 stroke:#1f5fbf,stroke-width:2px
+    linkStyle 1,2,4,13,14,15,16,17,18 stroke:#d9731a,stroke-width:2px
+    linkStyle 3,22,23,24,25,26 stroke:#7a7a7a,stroke-width:1.5px
 ```
 
 Tunnel mode changes nothing above: cloudflared publishes hostnames to the
