@@ -36,7 +36,9 @@ BFF in `backend/app`.
 
 **Target (AD-10).**
 
-- The **shell** is a static bundle in `shared-shell`: no backend, no state.
+- The **shell** is the static frontend bundle, served by the tenant desktop
+  BFF from the same image on the tenant's own origin: no separate
+  deployment, no state of its own.
 - The **tenant desktop BFF** runs in `tenant-<t>` as a `tenancy: tenant`
   component of that tenant. It holds: the OIDC client secret for that
   tenant's realm, the session cookie ↔ bearer exchange, per-viewer

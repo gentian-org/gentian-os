@@ -16,7 +16,7 @@ profile until that rename lands. The decisions behind the layout are
 | `kernel-<function>` | services the OS is made of, including the tier-0 operators | `install.sh`, then Argo CD | break-glass platform admin only | none — this is the trust root |
 | `system-<function>` | instances with `tenancy: system`, fulfilling `requires.contracts` of other components; no public route | kernel services, from the Cluster claim | platform admin through the director | other system functions; every tenant boundary |
 | `shared-<app>` | one instance with `tenancy: shared`, serving several tenants; the profile must certify `shared` and carry `trustTier: platform` | director, from a Component whose profile certifies `shared` | platform admin through the director | only what the component's own code enforces |
-| `tenant-<t>` | the tenant's instances with `tenancy: tenant`, including its desktop BFF | operator, from `Tenant.spec.apps` | tenant admin through the director | every other tenant; the kernel; system services beyond declared contracts |
+| `tenant-<t>` | the tenant's instances with `tenancy: tenant`, including its desktop (frontend and BFF) | operator, from `Tenant.spec.apps` | tenant admin through the director | every other tenant; the kernel; system services beyond declared contracts |
 | `tenant-<t>-dmz` | the tenant's perimeter: one publishing proxy per `surface: perimeter` entry the tenant admin has enabled, each with its own least-privilege credential and the entry's mandatory `authMode` | operator, from the tenant's enabled perimeter entries | tenant admin through the director, within cluster policy | the tenant's own instances |
 
 A new namespace inside a category needs a different exposure, credential
@@ -64,7 +64,7 @@ the catalogue.
 | external-dns | `external-dns` | `kernel-edge` | |
 | cloudflared (tunnel mode), `cf-tunnel` ExternalSecret | operator chart, `gentian-system` | `kernel-edge` | |
 | Kyverno, baseline policies | `kyverno` | `kernel-admission` | |
-| Platform-admin console | part of `gentian-portal`, `platform-kernel` | `kernel-control` | kernel realm; a separate deployment from the tenant desktop |
+| Platform-admin console | part of `gentian-portal`, `platform-kernel` | `kernel-control` | kernel realm; a separate deployment from the tenant desktop, which moves to `tenant-<t>` (§2.5) |
 | metrics-server | `kube-system` | stays, labelled | API-aggregation convention |
 | MetalLB, Kyverno exception for it | `metallb-system` | stays, labelled | platform-provided, not installed by gentian-os |
 
@@ -89,9 +89,10 @@ migration. The stage suffix is dropped: a cluster has one stage.
 
 ### 2.3 Shared
 
+None today. The first candidate:
+
 | Workload | Today | Target | Note |
 | --- | --- | --- | --- |
-| Shell static bundle (`gentian-portal` web) | `platform-kernel` | `shared-shell` | no state |
 | Collabora | sidecar and extra ingress of `nextcloud-base-ce`, per tenant | `shared-collabora` once a platform admin chooses `shared` | the profile certifies `tenancy: [tenant, shared]` once the WOPI source is verified per tenant; the instance stays `tenant` until then |
 
 ### 2.4 Not in the cluster
@@ -102,7 +103,8 @@ migration. The stage suffix is dropped: a cluster has one stage.
 
 ### 2.5 Tenant
 
-`tenant-<t>` holds, per tenant: the desktop BFF; every app in
+`tenant-<t>` holds, per tenant: the desktop (`gentian-portal` web and
+api containers, one image); every app in
 `Tenant.spec.apps` as a provider-helm Release; and what the operator
 creates around them — Namespace, ResourceQuota, NetworkPolicies, Services,
 ConfigMaps, ExternalSecrets, provisioning and export Jobs, the tenant
