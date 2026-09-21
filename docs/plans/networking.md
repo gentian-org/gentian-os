@@ -76,8 +76,11 @@ flowchart TB
         STORE["mail store, DKIM signer"]
     end
 
-    subgraph KAUTH["kernel-authentication / -authorization"]
+    subgraph KAUTHN["kernel-authentication"]
         KC["Keycloak<br/>id.&lt;kernel&gt;<br/>realm endpoints public, path-allowlisted;<br/>/admin, master realm, metrics internal"]
+    end
+
+    subgraph KAUTHZ["kernel-authorization"]
         FGA[("OpenFGA")]
     end
 
@@ -142,7 +145,8 @@ flowchart TB
     style TDMZ fill:#d9731a14,stroke:#f0883e
     style SDMZ fill:#d9731a14,stroke:#f0883e
     style EDGE fill:#80808012,stroke:#9a9a9a
-    style KAUTH fill:#80808012,stroke:#9a9a9a
+    style KAUTHN fill:#80808012,stroke:#9a9a9a
+    style KAUTHZ fill:#80808012,stroke:#9a9a9a
     style SYS fill:#80808012,stroke:#9a9a9a
     style SMAIL fill:#80808012,stroke:#9a9a9a
     style LEGEND fill:none,stroke:none
