@@ -141,10 +141,12 @@ Specified in [operator-split-plan.md](operator-split-plan.md) §3, §5, §6.
 Specified in [authorization-model.md](authorization-model.md) and
 [roles-and-authorizations.md](roles-and-authorizations.md).
 
-- [ ] Model v1 in `artefacts/model.fga`: types per CRD kind, roles via
+- [x] Model v1 in `authz/model/v1/model.fga` (with `model.json`): types per CRD kind, roles via
       `group#member` only, `can_*` per verb, `admin` explicit (no `or
       member`), conditions for time.
-- [ ] `tests.fga.yaml`: three cases per relation (grant, neighbouring
+- [x] `authz/model/v1/tests.fga.yaml` — 14 tests, 98 checks, run by
+      `make test-policy-authz` for every model version, under docker where
+      there is no Go; extend to three cases per relation (grant, neighbouring
       denial, derivation through the parent).
 - [ ] Membership is **stored**, not contextual: `model.fga`'s header said it
       arrived from the token's groups, which R7, AD-12 and principle 4 each
@@ -184,12 +186,12 @@ Specified in [authorization-model.md](authorization-model.md) and
       built for, and the security officer and auditor cannot enter the console
       at all.
 - [ ] Default perimeter approver: the director writes
-      `tenant:<t>#perimeter_approver@group:gentian:tenant:<t>:admins#member`
+      `tenant:<t>#perimeter_approver@group:gentian/tenant/<t>/admins#member`
       at tenant deploy. Publishing stays its own relation and its own audit
       line; a tenant that staffs the role separately removes that tuple.
 - [ ] `make verify-authz-vocabulary`: every `can_*` and role noun in
       `docs/plans/*.md` exists in the model, and vice versa.
-- [ ] Keycloak groups, exactly as `artefacts/model.fga` names them — the
+- [ ] Keycloak groups, exactly as `authz/model/v1/model.fga` names them — the
       vocabulary check fails otherwise:
       `gentian:platform:{admin,security,auditor,service-admin,shared-apps-admin,break-glass}`
       and `gentian:tenant:<t>:{admins,members,perimeter}`, plus per app

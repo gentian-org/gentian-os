@@ -286,7 +286,7 @@ edit is signed and attributed like any other.
 
 ### 3.6 Authorisation model
 
-The model is [artefacts/model.fga](artefacts/model.fga); the rules and the
+The model is [authz/model/v1/model.fga](../../authz/model/v1/model.fga); the rules and the
 per-PEP relation table are in
 [authorization-model.md](authorization-model.md). The director checks
 `can_*` relations only — on `tenant:<t>` for tenant verbs, on `cluster:<c>`

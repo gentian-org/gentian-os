@@ -161,7 +161,7 @@ Three invariants, one per class, each a scripted test:
 
 ### 3.1 The authorization model these roles need
 
-The model is [artefacts/model.fga](artefacts/model.fga), with the rules
+The model is [authz/model/v1/model.fga](../../authz/model/v1/model.fga), with the rules
 behind it in [authorization-model.md](authorization-model.md). It is not
 restated here: the roles above map onto it as `cluster#admin`,
 `cluster#security_officer`, `cluster#auditor`, `cluster#service_admin`,

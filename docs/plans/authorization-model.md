@@ -1,7 +1,7 @@
 # Authorization model
 
 One vocabulary for every plan. The model itself is
-[artefacts/model.fga](artefacts/model.fga) — the file `fga model validate`
+[authz/model/v1/model.fga](../../authz/model/v1/model.fga) — the file `fga model validate`
 and `fga model test` run against, and the file every relation named in
 [roles-and-authorizations.md](roles-and-authorizations.md),
 [operator-split-plan.md](operator-split-plan.md),
@@ -16,6 +16,7 @@ Zanzibar family; each rule names what it prevents.
 | # | Rule | Prevents |
 |---|---|---|
 | R1 | **One type per CRD kind**; object id = the CR's name, namespaced kinds as `<tenant>/<name>` (`app:demo/nextcloud`). | a second naming scheme that has to be mapped |
+| R1a | **Ids contain neither `:` nor `#`** — OpenFGA rejects them. A Keycloak group keeps its name in Keycloak (`gentian:tenant:demo:admins`) and is the object `group:gentian/tenant/demo/admins`: `:` becomes `/`, nothing else changes. Reversible because tenant and profile names are DNS labels. One function does the mapping, in the director; nothing else constructs a group id. | tuples the server refuses — found by running the tests, not by reading |
 | R2 | **Roles are nouns, assigned only through `group#member`** — one Keycloak group per role, never `[user]` directly. | tuples that name people; a role that can be held without the IdP knowing |
 | R3 | **Permissions are `can_<verb>`**, one per verb an enforcement point exposes, computed from roles. **PEPs check permissions, never roles.** | a PEP encoding "admin may…" in code; a new verb without a relation |
 | R4 | **One parent relation per type** (`cluster`, `tenant`); derivation is `<relation> from <parent>`, never a copied tuple. | authority granted sideways (principle 5) |
@@ -86,14 +87,14 @@ worst case for an authorization change (§2).
 |---|---|---|
 | `cluster:<c>#<role>@group:<g>#member` | director | from the Cluster claim's role assignments, on commit |
 | `tenant:<t>#cluster@cluster:<c>` | director | tenant deploy |
-| `tenant:<t>#<role>@group:gentian:tenant:<t>:<g>#member` | director | tenant deploy (groups are conventional per tenant) |
+| `tenant:<t>#<role>@group:gentian/tenant/<t>/<g>#member` | director | tenant deploy (groups are conventional per tenant) |
 | `tenant:<t>#operated_by@cluster:<c>` | director | tenant deploy, and always for `tenant:platform`. **Consent, not structure**: it is what lets `admin from cluster` reach into the tenant — user management and secret writes included. A tenant that administers itself has it removed (`can_configure` on the cluster, at the tenant's request) and loses nothing else: `cluster` stays, so audit and cluster-scope approval still derive |
 | `session:<sid>#revoked@user:<sub>` | director | a zone client's back-channel logout arrives; removed when that session's longest token has expired. What lets several shim replicas enforce one logout without state of their own |
 | *(no bootstrap tuple for the platform tenant)* | — | `tenant#admin` derives `or admin from operated_by`, so a platform administrator is an administrator of `tenant:platform` — and of any tenant that has not withdrawn the consent — through the chain. Writing the platform group into a tenant relation would be the copied tuple R4 forbids, and a tuple somebody has to remember to remove |
-| `tenant:<t>#perimeter_approver@group:gentian:tenant:<t>:admins#member` | director | tenant deploy — the default: publishing is its own grant, but most tenants do not staff the role separately. A tenant that wants the separation removes this tuple and adds its own `:perimeter` group |
+| `tenant:<t>#perimeter_approver@group:gentian/tenant/<t>/admins#member` | director | tenant deploy — the default: publishing is its own grant, but most tenants do not staff the role separately. A tenant that wants the separation removes this tuple and adds its own `:perimeter` group |
 | `app:<t>/<p>#tenant@tenant:<t>` | director | app install |
-| `app:<t>/<p>#admin@group:gentian:tenant:<t>:app:<p>:admins#member` | director | app install, **only when the profile declares a `privilegedRole`** — no internal admin role, no group to create. Per app: one cross-app group made every app administrator an administrator of every other |
-| `app:<t>/<p>#entitled@group:…:app:<p>#member`, **or** one per activated addon | director | app install. The groups already exist (`internal/keycloak/groups.go`) and the rule already runs in the portal; the tuple is what lets a second PEP apply it. Which groups entitle follows the portal exactly: a base with activated addons is entitled by *those* groups, not its own, since a base is entered for the addons inside it. The `gentianDefaultGrant` attribute stays a Keycloak concern — it decides whether the console pre-selects the group when adding a user, not who may enter |
+| `app:<t>/<p>#admin@group:gentian/tenant/<t>/app/<p>/admins#member` | director | app install, **only when the profile declares a `privilegedRole`** — no internal admin role, no group to create. Per app: one cross-app group made every app administrator an administrator of every other |
+| `app:<t>/<p>#entitled@group:…/app/<p>#member`, **or** one per activated addon | director | app install. The groups already exist (`internal/keycloak/groups.go`) and the rule already runs in the portal; the tuple is what lets a second PEP apply it. Which groups entitle follows the portal exactly: a base with activated addons is entitled by *those* groups, not its own, since a base is entered for the addons inside it. The `gentianDefaultGrant` attribute stays a Keycloak concern — it decides whether the console pre-selects the group when adding a user, not who may enter |
 | `contract:<t>/<name>#provider@app:<t>/<p>` and `#consumer@app:<t>/<q>` | director | on the commit that creates the `AppGrant`. **Deleting the consumer tuple does not revoke access today**: no enforcement point sits on an app-to-app call, and the credential is already in OpenBao and injected into the consumer's values. Revoking means the director deletes the binding's OpenBao path and re-rolls the consumer. That stays true until workloads carry identity (G8) |
 | `shared_instance:<p>#offered_to@tenant:<t>` | director | the platform administrator makes a shared instance available to a tenant (`can_grant_shared`). The tenant still sees nothing until its own administrator installs it |
 | `catalogue_entry:<catalogue>/<app>#entitled@tenant:<t>` with `expires_at` | director | signed grant received (ui-restructure §3) |

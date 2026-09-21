@@ -7,6 +7,11 @@ model
 # Conventions
 #   type            one per CRD kind; object id = the CR's name, namespaced
 #                   kinds as <tenant>/<name>
+#   ids             OpenFGA ids may contain neither ':' nor '#'. A Keycloak group
+#                   gentian:tenant:demo:admins is therefore the object
+#                   group:gentian/tenant/demo/admins — ':' becomes '/', nothing
+#                   else changes, and the mapping is reversible because tenant
+#                   and profile names are DNS labels and contain no '/'.
 #   role            a noun, assigned only through group#member — one Keycloak
 #                   group per role, never a user directly
 #   permission      can_<verb>, one per verb an enforcement point exposes;

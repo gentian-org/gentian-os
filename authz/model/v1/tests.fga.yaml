@@ -1,0 +1,161 @@
+name: Gentian authorization model v1
+model_file: model.fga
+
+# One fixture for every test. Ids follow the model's rule: a Keycloak group
+# gentian:tenant:demo:admins is group:gentian/tenant/demo/admins.
+tuples:
+  # --- people, as the director projects them from Keycloak events
+  - {user: user:alice,  relation: member, object: group:gentian/platform/admin}
+  - {user: user:sam,    relation: member, object: group:gentian/platform/security}
+  - {user: user:audrey, relation: member, object: group:gentian/platform/auditor}
+  - {user: user:serge,  relation: member, object: group:gentian/platform/service-admin}
+  - {user: user:shari,  relation: member, object: group:gentian/platform/shared-apps-admin}
+  - {user: user:bea,    relation: member, object: group:gentian/platform/break-glass}
+  - {user: user:tom,    relation: member, object: group:gentian/tenant/demo/admins}
+  - {user: user:tom,    relation: member, object: group:gentian/tenant/demo/app/nextcloud}   # an admin account wrongly entitled
+  - {user: user:mia,    relation: member, object: group:gentian/tenant/demo/members}
+  - {user: user:mia,    relation: member, object: group:gentian/tenant/demo/app/nextcloud}
+  - {user: user:max,    relation: member, object: group:gentian/tenant/demo/members}
+  - {user: user:pat,    relation: member, object: group:gentian/tenant/demo/perimeter}
+  - {user: user:nina,   relation: member, object: group:gentian/tenant/demo/app/nextcloud/admins}
+  - {user: user:tina,   relation: member, object: group:gentian/tenant/solo/admins}
+  - {user: user:olaf,   relation: member, object: group:gentian/tenant/other/members}
+
+  # --- cluster roles, from the Cluster claim
+  - {user: group:gentian/platform/admin#member,             relation: admin,             object: cluster:main}
+  - {user: group:gentian/platform/security#member,          relation: security_officer,  object: cluster:main}
+  - {user: group:gentian/platform/auditor#member,           relation: auditor,           object: cluster:main}
+  - {user: group:gentian/platform/service-admin#member,     relation: service_admin,     object: cluster:main}
+  - {user: group:gentian/platform/shared-apps-admin#member, relation: shared_apps_admin, object: cluster:main}
+  - {user: group:gentian/platform/break-glass#member,       relation: break_glass,       object: cluster:main}
+
+  # --- tenant demo: operated by the platform, perimeter held by its admins (the default) and a dedicated group
+  - {user: cluster:main, relation: cluster,     object: tenant:demo}
+  - {user: cluster:main, relation: operated_by, object: tenant:demo}
+  - {user: group:gentian/tenant/demo/admins#member,    relation: admin,              object: tenant:demo}
+  - {user: group:gentian/tenant/demo/members#member,   relation: member,             object: tenant:demo}
+  - {user: group:gentian/tenant/demo/admins#member,    relation: perimeter_approver, object: tenant:demo}
+  - {user: group:gentian/tenant/demo/perimeter#member, relation: perimeter_approver, object: tenant:demo}
+
+  # --- tenant solo administers itself: cluster stays, operated_by was removed
+  - {user: cluster:main, relation: cluster, object: tenant:solo}
+  - {user: group:gentian/tenant/solo/admins#member, relation: admin, object: tenant:solo}
+
+  # --- one installed app
+  - {user: tenant:demo, relation: tenant, object: app:demo/nextcloud}
+  - {user: group:gentian/tenant/demo/app/nextcloud#member,        relation: entitled, object: app:demo/nextcloud}
+  - {user: group:gentian/tenant/demo/app/nextcloud/admins#member, relation: admin,    object: app:demo/nextcloud}
+  - {user: tenant:solo, relation: tenant, object: app:solo/wiki}
+
+  # --- contracts, shared instances, sessions
+  - {user: tenant:demo,        relation: tenant,   object: contract:demo/file-store}
+  - {user: app:demo/nextcloud, relation: provider, object: contract:demo/file-store}
+  - {user: app:demo/openproject, relation: consumer, object: contract:demo/file-store}
+  - {user: cluster:main, relation: cluster,    object: shared_instance:collabora}
+  - {user: tenant:demo,  relation: offered_to, object: shared_instance:collabora}
+  - {user: user:mia, relation: revoked, object: session:sid-ended}
+
+tests:
+  - name: cluster roles grant exactly their own verbs
+    check:
+      - {user: user:alice,  object: cluster:main, assertions: {can_configure: true,  can_deploy_tenant: true,  can_approve: false, can_edit_raw: false, can_audit: true,  can_operate_system: false, can_install_shared: false}}
+      - {user: user:sam,    object: cluster:main, assertions: {can_approve: true,    can_configure: false,     can_audit: true,    can_set_admission: false}}
+      - {user: user:audrey, object: cluster:main, assertions: {can_audit: true,      can_approve: false,       can_configure: false}}
+      - {user: user:serge,  object: cluster:main, assertions: {can_operate_system: true, can_configure: false,  can_install_shared: false}}
+      - {user: user:shari,  object: cluster:main, assertions: {can_install_shared: true, can_grant_shared: true, can_operate_system: false}}
+      - {user: user:bea,    object: cluster:main, assertions: {can_edit_raw: true,   can_set_admission: true,  can_configure: false, can_audit: false}}
+      - {user: user:mia,    object: cluster:main, assertions: {can_configure: false, can_audit: false, can_approve: false}}
+
+  - name: the one who installs is not the one who approves
+    check:
+      - {user: user:alice, object: cluster:main, assertions: {can_approve: false}}
+      - {user: user:sam,   object: cluster:main, assertions: {can_deploy_tenant: false}}
+
+  - name: tenant admin holds the tenant verbs, members hold none
+    check:
+      - {user: user:tom, object: tenant:demo, assertions: {can_install_app: true, can_set_plan: true, can_set_policy: true, can_grant: true, can_manage_users: true, can_approve_privilege: true, can_view: true, can_enter: true, can_administer: true}}
+      - {user: user:mia, object: tenant:demo, assertions: {can_install_app: false, can_manage_users: false, can_grant: false, can_administer: false, can_view: true, can_enter: true}}
+      - {user: user:olaf, object: tenant:demo, assertions: {can_view: false, can_enter: false, can_install_app: false}}
+
+  - name: platform admin reaches a tenant only through operated_by
+    check:
+      - {user: user:alice, object: tenant:demo, assertions: {can_install_app: true, can_manage_users: true, can_administer: true}}
+      - {user: user:alice, object: tenant:solo, assertions: {can_install_app: false, can_manage_users: false, can_administer: false, can_view: true}}
+      - {user: user:tina,  object: tenant:solo, assertions: {can_install_app: true}}
+      - {user: user:tina,  object: tenant:demo, assertions: {can_install_app: false, can_view: false}}
+
+  - name: audit and approval derive through cluster, which cannot be withdrawn
+    check:
+      - {user: user:audrey, object: tenant:solo, assertions: {can_view: true, can_enter: true, can_install_app: false}}
+      - {user: user:sam,    object: tenant:solo, assertions: {can_enter: true, can_view: true, can_approve_privilege: false}}
+
+  - name: publishing is its own relation, held by admins by default and by the perimeter group
+    check:
+      - {user: user:tom, object: tenant:demo, assertions: {can_expose: true}}
+      - {user: user:pat, object: tenant:demo, assertions: {can_expose: true, can_install_app: false, can_view: false}}
+      - {user: user:mia, object: tenant:demo, assertions: {can_expose: false}}
+      - {user: user:alice, object: tenant:demo, assertions: {can_expose: false}}
+
+  - name: entitlement is the app's own group, not tenant membership
+    check:
+      - {user: user:mia, object: app:demo/nextcloud, assertions: {can_use: true, can_launch: true}}
+      - {user: user:max, object: app:demo/nextcloud, assertions: {can_use: false, can_launch: false}}
+      - {user: user:olaf, object: app:demo/nextcloud, assertions: {can_use: false}}
+
+  - name: an admin account launches nothing, even when wrongly entitled
+    check:
+      - {user: user:tom,   object: app:demo/nextcloud, assertions: {can_use: false, can_launch: false}}
+      - {user: user:alice, object: app:demo/nextcloud, assertions: {can_use: false}}
+
+  - name: app administration is per app and confers nothing else
+    check:
+      - {user: user:nina, object: app:demo/nextcloud, assertions: {can_administer: true, can_use: false, can_write_credential: false}}
+      - {user: user:nina, object: tenant:demo,        assertions: {can_install_app: false, can_view: false}}
+      - {user: user:mia,  object: app:demo/nextcloud, assertions: {can_administer: false}}
+
+  - name: secret writes for a component follow tenant administration
+    check:
+      - {user: user:tom,   object: app:demo/nextcloud, assertions: {can_write_credential: true}}
+      - {user: user:alice, object: app:demo/nextcloud, assertions: {can_write_credential: true}}
+      - {user: user:alice, object: app:solo/wiki,      assertions: {can_write_credential: false}}
+      - {user: user:mia,   object: app:demo/nextcloud, assertions: {can_write_credential: false}}
+
+  - name: an entitlement is valid until it expires
+    tuples:
+      - user: tenant:demo
+        relation: entitled
+        object: catalogue_entry:main/nextcloud
+        condition:
+          name: grant_valid
+          context:
+            expires_at: "2030-01-01T00:00:00Z"
+    check:
+      - user: tenant:demo
+        object: catalogue_entry:main/nextcloud
+        context: {current_time: "2029-12-31T00:00:00Z"}
+        assertions: {can_install: true}
+      - user: tenant:demo
+        object: catalogue_entry:main/nextcloud
+        context: {current_time: "2030-01-02T00:00:00Z"}
+        assertions: {can_install: false}
+      - user: tenant:solo
+        object: catalogue_entry:main/nextcloud
+        context: {current_time: "2029-12-31T00:00:00Z"}
+        assertions: {can_install: false}
+
+  - name: a contract is consumed only by the apps the tenant allowed
+    check:
+      - {user: app:demo/openproject, object: contract:demo/file-store, assertions: {can_consume: true}}
+      - {user: app:demo/odoo,        object: contract:demo/file-store, assertions: {can_consume: false}}
+      - {user: app:demo/nextcloud,   object: contract:demo/file-store, assertions: {can_consume: false}}
+
+  - name: a shared instance binds only tenants it was offered to
+    check:
+      - {user: tenant:demo, object: shared_instance:collabora, assertions: {can_bind: true}}
+      - {user: tenant:solo, object: shared_instance:collabora, assertions: {can_bind: false}}
+
+  - name: a revoked session is denied, others are not
+    check:
+      - {user: user:mia, object: session:sid-ended, assertions: {revoked: true}}
+      - {user: user:mia, object: session:sid-live,  assertions: {revoked: false}}
+      - {user: user:max, object: session:sid-ended, assertions: {revoked: false}}

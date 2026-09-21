@@ -67,7 +67,7 @@ Director with FGA `Check` on every write (G1, G2); gateway `SecurityPolicy`
 with JWT + ext-auth on every tenant route, `authMode` mandatory on every
 `expose[]` entry with `none` as an explicit value (G3); console with no
 Kubernetes identity — reads and writes through the director (G7). Model v1
-as [artefacts/model.fga](artefacts/model.fga) with its tests. Privileges —
+as [authz/model/v1/model.fga](../../authz/model/v1/model.fga) with its tests. Privileges —
 egress and MAC waivers both — become `requires.privileges`, approved against
 the cluster policy by the same director write (G27): an enforcement point
 that only covers one of two escape hatches is not one.
