@@ -12,13 +12,13 @@ today into its target namespace.
 | `system-<function>` | services that satisfy app `kernelRequirements` | kernel services, from the Cluster claim | platform admin through the director | other system functions; every tenant boundary |
 | `shared-<app>` | one app instance serving several tenants | director, from a profile with `tenancy: shared` | platform admin through the director | only what the app's own code enforces |
 | `tenant-<t>` | the tenant's apps and its desktop BFF | operator, from `Tenant.spec.apps` | tenant admin through the director | every other tenant; the kernel; system services beyond declared contracts |
-| `tenant-<t>-public` | the tenant's DMZ: publishing proxies for anonymous and protocol traffic | operator, from `publicSurfaces` in the profiles | tenant admin through the director | the tenant's own apps — one least-privilege credential per surface |
+| `tenant-<t>-dmz` | the tenant's perimeter: publishing proxies that terminate anonymous and protocol traffic | operator, from `publicSurfaces` in the profiles | tenant admin through the director | the tenant's own apps — one least-privilege credential per surface |
 
 A new namespace inside a category needs a different exposure, credential
 set, upgrade owner or quota than its neighbour. None of the four → same
 namespace.
 
-Every namespace carries `gentianos.io/tier: kernel|system|shared|tenant|tenant-public`
+Every namespace carries `gentianos.io/tier: kernel|system|shared|tenant|tenant-dmz`
 and `gentianos.io/function: <function>` (tenant namespaces:
 `gentianos.io/tenant: <t>`). Policies select on labels, never on names.
 
@@ -29,7 +29,7 @@ and `gentianos.io/function: <function>` (tenant namespaces:
 | D1 | `kernel-authentication` (Keycloak) and `kernel-authorization` (OpenFGA) are separate | exposure differs (public route vs. PEP-only); credential holders differ; security principle 2 |
 | D2 | Tier-0 operators are kernel and are named by function, grouped by function not by upstream chart | installed by `install.sh` under break-glass authority; isolation between cluster-admin components guarantees nothing, grouping is for ownership and policy |
 | D3 | Crossplane and its providers live in `kernel-provisioning` | the namespace names the function so the software performing it can be replaced |
-| D4 | The OpenBao transit seal lives in `kernel-seal`, apart from `kernel-secrets` | its purpose is a separate trust domain; one namespace would give one ServiceAccount the vault and its unseal key |
+| D4 | The OpenBao transit seal lives in `kernel-seal`, apart from `kernel-secrets` | the transit's own unseal key is a Secret in the cluster (`openbao-transit-unseal`, written by B-02) beside the vault's storage, so one namespace lets one read-Secrets grant or one namespace-scoped backup unseal the seal and take the vault; separate namespaces put the key and the storage in different RBAC and backup domains. Target for clusters with a KMS: the key leaves the cluster and the transit is unsealed by the KMS |
 | D5 | Kernel services use a dedicated CNPG cluster in `kernel-data`; the Bitnami `infra-postgresql` release is retired | kernel identity must not share a data plane with tenants; today that release hosts only kernel databases |
 | D6 | The CNPG operator lives in `kernel-data` | the data function's operator |
 | D7 | metrics-server stays in `kube-system`, MetalLB in `metallb-system`; both labelled | API-aggregation convention; MetalLB is platform-provided, not installed by gentian-os |
@@ -41,6 +41,7 @@ and `gentianos.io/function: <function>` (tenant namespaces:
 | D13 | Stateful kernel components — OpenBao, Keycloak, CNPG clusters — are never renamed in place; the taxonomy applies to fresh installs, existing clusters rebuild or keep names and adopt labels | a namespace move is delete-and-recreate; re-initialising OpenBao on a cluster with tenants regenerates every derived credential |
 | D14 | System data services are one namespace per engine, named by the function apps declare: `system-postgresql`, `system-mariadb`, `system-cache`, `system-s3` | `kernelRequirements` select per engine; quotas and backup policies differ per engine; an engine may later be backed by a managed service on its own claim; separating stateful services later is a data migration, separating now is a name |
 | D15 | vLLM moves into the Cluster composition when it moves to `system-llm`; installer step D-05 is retired | its input is `Cluster.spec.llm.instances`, which only a composition can read |
+| D16 | The perimeter namespace is `tenant-<t>-dmz`: tenant prefix first, qualifier last | the prefix groups a tenant's namespaces for listing, sorting and glob-based tooling, the way `kube-` and `kube-public` do; `dmz` names the function (a mediated perimeter) rather than an exposure property, and avoids colliding with `kube-public`'s meaning of "readable by all". Budget: namespace names are 63 characters, so a tenant name is at most 52 |
 
 ## 3. Inventory: today → target
 
@@ -117,7 +118,7 @@ gentian-subscriptions (API profile). All tenant-scoped.
 
 ### 3.6 Tenant DMZ
 
-`tenant-<t>-public` holds one publishing proxy per declared public surface.
+`tenant-<t>-dmz` holds one publishing proxy per declared public surface.
 Surfaces present in today's profiles, each to be confirmed against the app
 before its `publicSurfaces` entry is written:
 
