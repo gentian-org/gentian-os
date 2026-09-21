@@ -370,3 +370,146 @@ design cannot do for it.
   only while IMAP exposure is enabled). Postfix stays a single instance;
   DKIM moves from the MTA to a milter inside. `system-turn` is added when
   the first conferencing profile declares it as a requirement.
+
+## 8. Exposure management
+
+Nobody writes a route. People declare *exposures* at three levels; the
+operator derives listeners, certificates, routes and DMZ proxies from them.
+The three levels have different owners, cardinalities and lifetimes, and
+keeping them apart is what makes self-service and control compatible.
+
+### 8.1 Three levels
+
+| Level | Object | Declared by | How many | Lives |
+| --- | --- | --- | --- | --- |
+| **Cluster policy** | which surface kinds and `authMode`s a tenant may enable, per trust tier; default and maximum lifetime; whether enabling needs review | security officer, through the director | one per cluster | permanent |
+| **Tenant enablement** | *this* surface of *this* instance is on: host, `authMode` (must equal the profile's entry), owner, `expiresAt`, `reviewAt` | perimeter approver, through the director | a handful per tenant | months, bounded by policy |
+| **App-level object** | a share link, a guest meeting, a public form | any app user, inside the app | thousands | days; expiry set by the app's policy, which the platform writes (§8.5) |
+
+A share never needs an administrator: the perimeter approver enabled
+*share links* once; the app issues them under a policy the platform set.
+What the platform never does is learn about individual shares by routing
+— they are capabilities inside a declared surface, not routes.
+
+The enablement is the unit of record. Written through the director it
+carries who, when and the OpenFGA decision in its commit; the operator
+creates the proxy from it and removes the proxy when `expiresAt` passes.
+Field shapes belong to [component-profile.md](component-profile.md).
+
+### 8.2 Worked example: a vanity public website
+
+Tenant `gentian` on a cluster at `gentian.cloud` wants Odoo's website
+module to serve `www.gentian.org`.
+
+| Piece | What is declared | What the operator derives |
+| --- | --- | --- |
+| Public site | enablement: surface `website` of the Odoo instance, host `www.gentian.org`, `authMode: none`, owner, expiry per policy | a listener on the `perimeter` Gateway; a certificate by HTTP-01 through the kernel-owned ACME path (no DNS delegation); a DMZ proxy with the profile's path allowlist — `/`, `/shop/*`, `/blog/*`, `/web/image/*`, `/web/content/*`, `/website/*` — and its deny list — `/web`, `/odoo`, `/web/login`, `/xmlrpc`, `/jsonrpc`; the Odoo website record mapped to the domain |
+| DNS | the tenant creates `www CNAME gentian.gentian.cloud`; the apex needs an `A`/ALIAS to the cluster address, since an apex cannot be a CNAME | in tunnel mode, cloudflared publishes the hostname from the same enablement |
+| Editing | nothing new: editors use the backend host `erp.gentian.gentian.cloud` — `surface: gateway`, `authMode: oidc`, L1–L2 — and switch to the `gentian.org` website in Odoo's editor | no backend path is reachable anonymously on either host |
+| Customer portal, checkout | a second, separate enablement if wanted: `/web/login`, `/my/*`, `/shop/checkout/*` as app-validated (L3) paths under `authMode: none` — a declared choice, off by default | the same proxy, a wider allowlist |
+| Mail from the site | a mail-domain enablement on the mail function: MX, DKIM key, SPF for `gentian.org` | not a routing object; listed so it is not forgotten |
+
+Under the old structure this touched `Tenant.spec.domain`, the portal
+ticket bridge, the wildcard certificate, Keycloak redirect URIs and a
+hand-written HTTPRoute. Under the new one it is one enablement object.
+
+### 8.3 Three inventories
+
+An auditor asks three different questions, and only the first is answered
+by declarations.
+
+| Question | Source | Complete |
+| --- | --- | --- |
+| What **can** be reached anonymously — hosts, path prefixes, modes? | the enablements, and the routes derived from them | yes, by construction: nothing is routed without one |
+| What **is** being reached, by whom, how often? | the DMZ proxies' access logs — every anonymous request crosses exactly one | yes for traffic; silent about an exposed but unvisited object |
+| Which **objects** are public right now — this document, that meeting? | the app, through the `exposure-policy` contract (§8.5) | only for apps that provide it; otherwise **opaque**, bounded by expiry (§8.6) |
+
+**Proxy logs are structured**: tenant, surface, host, normalised path
+template, `authMode`, client address, status, bytes, latency, request id
+— and any share token or capability in the path is **hashed**, otherwise
+the log is a list of valid public links. They go to the cluster log store
+(the audit stack of [security-gap-closing.md](security-gap-closing.md)
+G10; the DMZ is the strongest argument for building it).
+
+**A WAF is protection, not inventory.** Coraza with the OWASP core rules
+runs in-cluster inside the proxy image for every `authMode: none` surface:
+request-shape rejection, bot handling, per-surface rate and body limits.
+It does not depend on Cloudflare and adds nothing to the inventory.
+
+**A drift job** reconciles what is actually routed — listeners, DMZ
+`HTTPRoute`s, DNS records, certificates — against the enablements, and
+alerts on anything unaccounted for. In a declarative platform,
+attack-surface management is a diff.
+
+### 8.4 Console: the exposure view
+
+A tenant view for the perimeter approver and a cluster-wide view for the
+security officer and auditor, both read through the director's read API
+so the console holds no log credential of its own.
+
+**Surface summary** — every enablement: instance, surface, host, paths,
+`authMode`, owner, created, `expiresAt`, `reviewAt`, and whether the
+app's objects are enumerable or opaque. Expiring within 30 days sorted to
+the top; opaque surfaces flagged.
+
+**Condensed log** — over a selectable window (1h, 24h, 7d, 30d), per
+surface and per path template:
+
+- most requests;
+- most recent activity, including "first seen" for a path template that
+  has never appeared before — the signal that matters most;
+- most traffic by bytes;
+- error and rejection rates: 4xx, WAF blocks, rate-limit hits, token
+  enumeration (many distinct hashed tokens from one client).
+
+**Public objects** — for apps that provide the contract: every public
+object with owner, created, expiry, and the count of hits it received in
+the window, joined from the log by hashed token. One click revokes it
+through the contract.
+
+**Complete log** — filterable by surface, path, status, client, time;
+exportable; capped by retention the security officer sets.
+
+API: `GET /v1/tenants/{t}/exposure` (summary),
+`GET /v1/tenants/{t}/exposure/log?window=&order=requests|recent|bytes`,
+`GET /v1/tenants/{t}/exposure/objects`, and the cluster-wide equivalents
+under `/v1/clusters/{c}/exposure`. Authorization: `can_expose` on the
+tenant for the tenant views, `can_audit` on the cluster for the rest.
+
+### 8.5 Optional contract: `exposure-policy`
+
+A profile may declare `provides: exposure-policy`. It is optional for
+admission and **required for certification at `trustTier: platform` of any
+profile with an `authMode: none` surface**. It gives the platform two
+capabilities against the app, called with the tenant's credential from the
+binding:
+
+| Capability | Direction | Content |
+| --- | --- | --- |
+| `policy.read` / `policy.write` | platform → app | the app's public-sharing policy: default expiry, maximum expiry, password required, which groups may share publicly, whether anonymous upload is allowed |
+| `objects.list` / `objects.revoke` | platform → app | the app's current public objects: id, kind, owner, created, expiry, hashed token; revoke one by id |
+
+The platform writes the tenant's policy into the app through the contract
+whenever the cluster policy or the tenant's enablement changes — so the
+knobs Nextcloud, Docmost or a meeting app already have are set by the
+platform, not by an administrator in thirty admin panels. Apps without the
+contract still get their policy through profile values where the app
+supports it, and their surfaces are opaque in the inventory.
+
+### 8.6 Optional expiry policy
+
+Expiry is optional at every level and, where present, enforced by the
+platform rather than remembered by a person.
+
+| Level | Field | Default | At expiry |
+| --- | --- | --- | --- |
+| Cluster policy | `defaultLifetime`, `maxLifetime` per surface kind; `reviewInterval` | none — a cluster that sets nothing behaves as today | enablements above `maxLifetime` are refused at the director |
+| Tenant enablement | `expiresAt` (≤ policy maximum), `reviewAt` | from `defaultLifetime` when the policy sets one | the operator removes the proxy, route and listener; the certificate is not renewed; the enablement stays in git as history |
+| App objects | via `exposure-policy`: default and maximum object expiry | from the tenant's enablement, capped by cluster policy | the app expires the object; for opaque apps the enablement's own expiry is the only bound |
+
+The director notifies the owner and the perimeter approver ahead of
+`reviewAt` and `expiresAt`; a renewal is a new signed commit, so the
+history of who kept a surface open is as complete as the history of who
+opened it. A cluster with no expiry policy loses nothing but this bound —
+an opaque surface is then exposed for as long as someone remembers to turn
+it off, which is the state every platform without the policy is in today.
