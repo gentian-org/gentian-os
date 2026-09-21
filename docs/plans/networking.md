@@ -57,29 +57,38 @@ flowchart TB
     NET(("Internet"))
     S2[" "]
     S3[" "]
+    S4[" "]
+    S5[" "]
 
     subgraph EDGE["kernel-edge — one address, one Envoy fleet"]
-        PG["perimeter Gateway<br/>L0 only<br/>per-route authMode, WAF, body limits<br/>TCP/UDP listeners"]
-        ACME["ACME HTTP-01 solver"]
         AG["authenticated Gateway<br/>L0 TLS, rate limit<br/>L1 session per tenant zone (OIDC) / JWT for bearer<br/>L2 ext-auth: can_use"]
         SHIM["ext-auth shim"]
+        ACME["ACME HTTP-01 solver"]
+        PG["perimeter Gateway<br/>L0 only<br/>per-route authMode, WAF, body limits<br/>TCP/UDP listeners"]
     end
 
-    subgraph SDMZ["system-&lt;function&gt;-dmz"]
-        MTA["Postfix :25 :587<br/>Dovecot proxy :993"]
-        TURN["TURN / SFU (UDP)"]
+    subgraph KCTL["kernel-control"]
+        CON["platform console BFF<br/>console.&lt;kernel&gt;"]
+        DIR["director API<br/>api.&lt;kernel&gt;"]
+    end
+
+    subgraph SHR["shared-&lt;app&gt;"]
+        SAPP["shared instance"]
+    end
+
+    subgraph TEN["tenant-&lt;t&gt;"]
+        APP["app"]
+        PEER["peer app"]
+        DESK["desktop BFF"]
     end
 
     subgraph TDMZ["tenant-&lt;t&gt;-dmz"]
         PX["publishing proxy<br/>one per enabled surface,<br/>one credential"]
     end
 
-    subgraph SMAIL["system-mail"]
-        STORE["mail store, DKIM signer"]
-    end
-
-    subgraph KAUTHN["kernel-authentication"]
-        KC["Keycloak<br/>id.&lt;kernel&gt;<br/>realm endpoints public, path-allowlisted;<br/>/admin, master realm, metrics internal"]
+    subgraph SDMZ["system-&lt;function&gt;-dmz"]
+        MTA["Postfix :25 :587<br/>relay port for apps (east-west, L5)<br/>Dovecot proxy :993"]
+        TURN["TURN / SFU (UDP)"]
     end
 
     subgraph KAUTHZ["kernel-authorization"]
@@ -91,32 +100,23 @@ flowchart TB
         LLM["llm"]
     end
 
-    subgraph TEN["tenant-&lt;t&gt;"]
-        APP["app"]
-        PEER["peer app"]
-        DESK["desktop BFF"]
+    subgraph KAUTHN["kernel-authentication"]
+        KC["Keycloak<br/>id.&lt;kernel&gt;<br/>realm endpoints public, path-allowlisted;<br/>/admin, master realm, metrics internal"]
     end
 
-    subgraph SHR["shared-&lt;app&gt;"]
-        SAPP["shared instance"]
+    subgraph SMAIL["system-mail"]
+        STORE["mail store, DKIM signer"]
     end
 
-    subgraph KCTL["kernel-control"]
-        CON["platform console BFF<br/>console.&lt;kernel&gt;"]
-        DIR["director API<br/>api.&lt;kernel&gt;"]
-    end
 
-    NET -->|"https, surface: perimeter<br/>own host or app-host paths"| PG
-    NET -->|"smtp / imap / turn"| PG
-    NET -->|"port 80 /.well-known/acme-challenge"| ACME
-    NET -->|"login, token, JWKS"| PG
-    PG --> PX
-    PG -->|"TCPRoute"| MTA
-    PG -->|"UDPRoute"| TURN
-    PG -->|"/realms/* only — admin, master, metrics internal"| KC
-    MTA -->|"LMTP / master credential"| STORE
-    MTA -. "DKIM via milter" .-> STORE
-    PX -->|"one backend, one port;<br/>proxy authenticated to the app (L5, mTLS later);<br/>the app validates the surface credential (L3)"| APP
+
+
+
+
+
+
+
+
     NET -->|"https, surface: gateway"| AG
     AG -. "verify JWT" .-> KC
     AG -->|"headers or token"| SHIM
@@ -131,15 +131,34 @@ flowchart TB
     DIR --> FGA
     APP -->|"contracts, L5"| DB
     APP -->|"contracts, L5"| LLM
-    APP -->|"relay port"| MTA
     APP -->|"integrations, L5"| PEER
     SAPP -->|"contracts, L5"| DB
+    NET -->|"https, surface: perimeter<br/>own host or app-host paths"| PG
+    NET -->|"smtp / imap / turn"| PG
+    NET -->|"port 80 /.well-known/acme-challenge"| ACME
+    NET -->|"login, token, JWKS"| PG
+    PG --> PX
+    PG -->|"TCPRoute"| MTA
+    PG -->|"UDPRoute"| TURN
+    PG -->|"/realms/* only — admin, master, metrics internal"| KC
+    MTA -->|"LMTP / master credential"| STORE
+    MTA -. "DKIM via milter" .-> STORE
+    PX -->|"one backend, one port;<br/>proxy authenticated to the app (L5, mTLS later);<br/>the app validates the surface credential (L3)"| APP
 
-    %% invisible spacers: put every grey box on the same row (rank 4)
+    %% invisible edges fix the rows: 3 = both DMZs, 4 = tenant / shared / kernel-control, 5 = the grey boxes.
+    %% Declaration order (authenticated first) is what keeps the perimeter on the left after dagre's reordering.
     PG ~~~ S2
-    S2 ~~~ S3
-    S3 ~~~ STORE
-    S3 ~~~ KC
+    S2 ~~~ MTA
+    S2 ~~~ TURN
+    S2 ~~~ PX
+    SHIM ~~~ S3
+    S3 ~~~ DESK
+    S3 ~~~ SAPP
+    S3 ~~~ CON
+    MTA ~~~ S4
+    S4 ~~~ S5
+    S5 ~~~ STORE
+    S5 ~~~ KC
     PEER ~~~ DB
     PEER ~~~ LLM
 
@@ -147,10 +166,10 @@ flowchart TB
     classDef perim fill:#d9731a33,stroke:#f0883e,stroke-width:1.5px
     classDef ew fill:#80808026,stroke:#9a9a9a
     classDef spacer fill:none,stroke:none
-    class S2,S3 spacer
     class AG,SHIM,DESK,APP,PEER,SAPP,CON,DIR,LA auth
     class PG,PX,MTA,TURN,ACME,LP perim
     class KC,FGA,DB,LLM,STORE,LE ew
+    class S2,S3,S4,S5 spacer
     style TEN fill:#1f5fbf14,stroke:#3b82f6
     style SHR fill:#1f5fbf14,stroke:#3b82f6
     style KCTL fill:#1f5fbf14,stroke:#3b82f6
@@ -162,9 +181,9 @@ flowchart TB
     style SYS fill:#80808012,stroke:#9a9a9a
     style SMAIL fill:#80808012,stroke:#9a9a9a
     style LEGEND fill:none,stroke:none
-    linkStyle 0,1,2,3,4,5,6,7,8,9,10 stroke:#f0883e,stroke-width:2px
-    linkStyle 11,12,13,14,15,16,17,18,19,20,21,22 stroke:#3b82f6,stroke-width:2px
-    linkStyle 23,24,25,26,27 stroke:#9a9a9a,stroke-width:1.5px
+    linkStyle 16,17,18,19,20,21,22,23,24,25,26 stroke:#f0883e,stroke-width:2px
+    linkStyle 0,1,2,3,4,5,6,7,8,9,10,11 stroke:#3b82f6,stroke-width:2px
+    linkStyle 12,13,14,15 stroke:#9a9a9a,stroke-width:1.5px
 ```
 
 Tunnel mode changes nothing above: cloudflared publishes hostnames to the
