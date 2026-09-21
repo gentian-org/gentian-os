@@ -54,29 +54,60 @@ Separations that are load-bearing, whatever one person happens to hold:
 
 ## 2. Machine identities
 
-Listed by the layer they run in. "K8s RBAC" is what the ServiceAccount may
-do against the API server; "OpenBao" is the path prefix its Kubernetes-auth
-role may read; "reach" is what NetworkPolicy lets it talk to.
+Three classes. What class an identity is in follows from one question —
+does it write the cluster? — and the class fixes everything else: what it
+may hold, where it runs, and what confines it.
 
-| Layer | Identity | Namespace | K8s RBAC | OpenBao | Reach |
-| --- | --- | --- | --- | --- | --- |
-| kernel | Tier-0 operators — Crossplane and providers, Argo CD, ESO, cert-manager, Kyverno, CNPG, Envoy Gateway | `kernel-provisioning`, `kernel-gitops`, `kernel-secrets`, `kernel-edge`, `kernel-admission`, `kernel-data` | cluster-admin-equivalent by nature; providers scoped per role (roadmap 1.16) | ESO: `gentian-os/kernel/*` and every tenant path it must materialise; Crossplane: its own role | unrestricted within the cluster; never reachable from `tenant-*` |
-| kernel | **Operator** | `kernel-control` | create/update/delete on tenant namespaces and everything the compositions and reconcilers manage; `pods/exec` for purge and provisioning Jobs; **no** git credential | `gentian-os/kernel/*` via its own role (`openbao-config`) | every namespace |
-| kernel | **Director** | `kernel-control` | read-only on `Tenant`, `App`, `AppProfile`; create/update on `appprofiles` only; **no** `pods/exec`, no `secrets` | the git push credential, and nothing else | git host, OpenFGA, Keycloak JWKS |
-| kernel | **Credential manager** | `kernel-control` | read on `CredentialRequirement`, write on the handover record | none of its own: exchanges the caller's token per request | OpenBao |
-| kernel | **Authz bridge** | `kernel-control` | read on `Tenant`, `AppGrant` | Keycloak admin credential | Keycloak admin API, OpenFGA write |
-| kernel | **Platform-admin console BFF** | `kernel-control` | **none** — an OIDC client secret for the kernel realm, nothing else | none | director, Keycloak |
-| kernel | **Gateway ext-auth shim** | `kernel-edge` | none | none | OpenFGA read, Keycloak JWKS |
-| system | Service pods — Postgres, MariaDB, Redis, MinIO, Postfix, Dovecot, LiteLLM, vLLM | `system-<function>` | **none** | their own admin credential under `gentian-os/kernel/<function>/*`, in their namespace only | ingress from tenant and shared namespaces over the declared contract port; no egress except mail relay and LLM providers |
-| shared | One ServiceAccount per instance | `shared-<app>` | none | `gentian-os/shared/<app>/*`; per-tenant credentials issued by the kernel, never a shared secret | system services over granted contracts; granted tenants' gateways |
-| tenant | **Tenant desktop BFF** | `tenant-<t>` | **none** — OIDC client secret for the tenant realm, the `{t}_shell` database credential as a granted requirement | `gentian-os/tenants/<t>/apps/desktop/*` | director, the tenant's apps it embeds, its LLM contract |
-| tenant | One ServiceAccount per app instance | `tenant-<t>` | none | `gentian-os/tenants/<t>/apps/<app>/*` (per app — today per tenant) | derived from `requires.contracts` and granted integrations; nothing else |
-| tenant-dmz | One ServiceAccount per publishing proxy | `tenant-<t>-dmz` | none | exactly one credential: the surface's app password or scoped token | ingress from the internet on the surface's paths; egress to one backend service and port |
-| bootstrap | **The installer** | — | the human's kubeconfig | a bootstrap token, revoked at `E-04` | everything, until the handover records that the human write path works |
+| Class | Writes the cluster | Holds | Runs in | Confined by |
+| --- | --- | --- | --- | --- |
+| **Controllers** | yes — that is their job | Kubernetes RBAC, up to cluster-admin-equivalent; OpenBao `kernel/*` | `kernel-*` only | unreachable from any `system-*`, `shared-*` or `tenant-*` namespace |
+| **Enforcement points** | no (one exception, below) | exactly **one** credential each, and never `pods/exec` or `secrets` | `kernel-control`, `kernel-edge` | the credential is the only thing they can misuse |
+| **Workloads** | never — **zero** Kubernetes RBAC | their own OpenBao prefix; the credentials granted to them as requirements | the tier their `tenancy` puts them in | the namespace: NetworkPolicy from the profile, quota, Kyverno |
 
-The two invariants worth testing rather than trusting: no identity in a
-`tenant-*`, `shared-*` or `system-*` namespace has any Kubernetes RBAC, and
-no identity outside `kernel-control` holds a git credential.
+**Controllers** — Crossplane and its providers, Argo CD, ESO, cert-manager,
+Kyverno, CNPG, Envoy Gateway, and the **operator**. They are the cluster's
+hands; there is no least privilege to design here, only containment, which
+is why they live in `kernel-*` and nothing outside it can reach them. The
+one open item is scoping Crossplane's providers per role (roadmap 1.16).
+
+**Enforcement points** — each holds one credential and answers one question:
+
+| Identity | The one credential | Cluster access |
+| --- | --- | --- |
+| **Director** | the git push key | read-only, plus create/update on `appprofiles` — the single write, for materialise-on-reference |
+| **Credential manager** | none of its own — it exchanges the caller's token | read on `CredentialRequirement`, write on the handover record |
+| **Authz bridge** | Keycloak admin, to sync groups into OpenFGA | read on `Tenant`, `AppGrant` |
+| **Gateway ext-auth shim** | none — verifies the caller's token, asks OpenFGA | none |
+
+**Workloads** — everything else: system services, shared instances, tenant
+apps, both UI backends, DMZ proxies, agents. None has a ServiceAccount with
+any RBAC. What each may read and reach is not decided per identity; it is a
+function of the namespace tier and the profile:
+
+| Tier | OpenBao prefix | Reach |
+| --- | --- | --- |
+| `system-<function>` | `gentian-os/kernel/<function>/*` | ingress from tenant and shared namespaces on the contract port; egress only to declared upstreams (mail relay, LLM providers) |
+| `shared-<app>` | `gentian-os/shared/<app>/*`; per-tenant credentials issued by the kernel, never a shared secret | system services over granted contracts; granted tenants' gateways |
+| `tenant-<t>` | `gentian-os/tenants/<t>/apps/<app>/*` — per app; today per tenant | `requires.contracts` and granted integrations, nothing else |
+| `tenant-<t>-dmz` | one credential: the surface's app password or scoped token | ingress on the surface's paths; egress to one backend service and port |
+
+The UI backends are ordinary workloads: the tenant desktop BFF is a
+`tenancy: tenant` component holding its realm's OIDC client secret and a
+granted database; the platform-admin console BFF is the same shape in the
+kernel realm. Neither has a line in the enforcement-point table because
+neither decides anything — they relay to the director.
+
+**Bootstrap** is the one identity outside the classes: the installer, with
+the human's kubeconfig and a bootstrap OpenBao token, until `E-04` revokes
+the token and the handover record shows the human write path works.
+
+Three invariants, one per class, each a scripted test:
+
+1. No pod in a `system-*`, `shared-*` or `tenant-*` namespace has a
+   ServiceAccount bound to any Role or ClusterRole.
+2. No identity outside `kernel-control` holds a git credential, and no
+   enforcement point can `exec`.
+3. No controller Service is reachable from outside `kernel-*`.
 
 ## 3. Where each decision is enforced
 
