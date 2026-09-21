@@ -4,15 +4,20 @@ Five categories of namespace, each with one authority and one policy set.
 Section 2 records the decisions; section 3 places every workload running
 today into its target namespace.
 
+Terms: a *profile* is a `ComponentProfile` catalogue entry and an *instance*
+is a `Component` deployed from it, as defined in
+[component-profile.md](component-profile.md). Today's `AppProfile` is the
+profile until that rename lands.
+
 ## 1. Categories
 
 | Category | Contains | Installed by | Authority | Compromise guarantee |
 | --- | --- | --- | --- | --- |
 | `kernel-<function>` | services the OS is made of, including the tier-0 operators | `install.sh`, then Argo CD | break-glass platform admin only | none — this is the trust root |
-| `system-<function>` | services that satisfy app `kernelRequirements` | kernel services, from the Cluster claim | platform admin through the director | other system functions; every tenant boundary |
-| `shared-<app>` | one app instance serving several tenants | director, from a profile with `tenancy: shared` | platform admin through the director | only what the app's own code enforces |
-| `tenant-<t>` | the tenant's apps and its desktop BFF | operator, from `Tenant.spec.apps` | tenant admin through the director | every other tenant; the kernel; system services beyond declared contracts |
-| `tenant-<t>-dmz` | the tenant's perimeter: publishing proxies that terminate anonymous and protocol traffic | operator, from `publicSurfaces` in the profiles | tenant admin through the director | the tenant's own apps — one least-privilege credential per surface |
+| `system-<function>` | instances with `tenancy: system`, fulfilling `requires.contracts` of other components | kernel services, from the Cluster claim | platform admin through the director | other system functions; every tenant boundary |
+| `shared-<app>` | one instance with `tenancy: shared`, serving several tenants | director, from a Component whose profile certifies `shared` | platform admin through the director | only what the app's own code enforces |
+| `tenant-<t>` | the tenant's instances with `tenancy: tenant`, including its desktop BFF | operator, from `Tenant.spec.apps` | tenant admin through the director | every other tenant; the kernel; system services beyond declared contracts |
+| `tenant-<t>-dmz` | the tenant's perimeter: publishing proxies that terminate anonymous and protocol traffic | operator, from `expose[]` entries with `surface: perimeter` in the tenant's instances | tenant admin through the director | the tenant's own apps — one least-privilege credential per surface |
 
 A new namespace inside a category needs a different exposure, credential
 set, upgrade owner or quota than its neighbour. None of the four → same
@@ -33,15 +38,15 @@ and `gentianos.io/function: <function>` (tenant namespaces:
 | D5 | Kernel services use a dedicated CNPG cluster in `kernel-data`; the Bitnami `infra-postgresql` release is retired | kernel identity must not share a data plane with tenants; today that release hosts only kernel databases |
 | D6 | The CNPG operator lives in `kernel-data` | the data function's operator |
 | D7 | metrics-server stays in `kube-system`, MetalLB in `metallb-system`; both labelled | API-aggregation convention; MetalLB is platform-provided, not installed by gentian-os |
-| D8 | System namespaces have no public route; outside access to a system service goes through a tenant's DMZ with that tenant's credential. SMTP/IMAP listeners on `system-mail` are the protocol exception | a system service is reached over declared contracts; "who calls this from outside" is a per-tenant question |
+| D8 | System namespaces have no public route; outside access to a system service goes through a tenant's DMZ with that tenant's credential. SMTP/IMAP listeners on `system-mail` are the protocol exception | a system service is reached over declared contracts; "who calls this from outside" is a per-tenant question. Schema invariant: `system` in `tenancy` forbids `expose` (component-profile.md §7) |
 | D9 | The stage suffix on infrastructure namespaces is dropped | a cluster has exactly one stage for its lifetime |
 | D10 | The portal splits: shell bundle → `shared-shell`; tenant desktop BFF → `tenant-<t>`; platform-admin console → `kernel-control` | holds no state / holds one tenant's credentials / holds the kernel realm |
 | D11 | The App Store does not run in the cluster. It is a service operated by Gentian Technologies; the cluster ingests it through the director's API | the catalogue is reference data, not a workload; the cluster holds only what a tenant installs |
-| D12 | `tenancy: shared` requires `trustTier: platform` and either stateless-per-request or a natively verifiable tenant model; per-tenant state in one instance is refused | the compromise guarantee of a shared app is only the app's own code |
+| D12 | Tenancy is declared at two levels. The profile's `spec.tenancy` is a list of the modes the entry is certified for; the instance's `spec.tenancy` is the one mode the responsible admin chose and must be a member of that list. `shared` may appear in a profile's list only with `spec.trustTier: platform` and only for a component that is stateless per request or has a natively verifiable tenant model; per-tenant state in one instance is refused. `trustTier` stays in the spec | the certification claim and the deployment decision are different facts made by different people; a component that may run either way must be able to say so. The trust-tier rule is a CRD validation rule, which can read spec fields and not labels or annotations — outside the spec it would silently degrade to an admission policy. The compromise guarantee of a shared instance is only the component's own code |
 | D13 | Stateful kernel components — OpenBao, Keycloak, CNPG clusters — are never renamed in place; the taxonomy applies to fresh installs, existing clusters rebuild or keep names and adopt labels | a namespace move is delete-and-recreate; re-initialising OpenBao on a cluster with tenants regenerates every derived credential |
-| D14 | System data services are one namespace per engine, named by the function apps declare: `system-postgresql`, `system-mariadb`, `system-cache`, `system-s3` | `kernelRequirements` select per engine; quotas and backup policies differ per engine; an engine may later be backed by a managed service on its own claim; separating stateful services later is a data migration, separating now is a name |
+| D14 | System data services are one namespace per engine, named by the function apps declare: `system-postgresql`, `system-mariadb`, `system-cache`, `system-s3` | `kernelRequirements` select per engine; quotas and backup policies differ per engine; an engine may later be backed by a managed service on its own claim; separating stateful services later is a data migration, separating now is a name. These namespaces are the fulfillers a `requires.contracts` entry resolves to; the default per contract is a Cluster-claim setting (component-profile.md §9.1) |
 | D15 | vLLM moves into the Cluster composition when it moves to `system-llm`; installer step D-05 is retired | its input is `Cluster.spec.llm.instances`, which only a composition can read |
-| D16 | The perimeter namespace is `tenant-<t>-dmz`: tenant prefix first, qualifier last | the prefix groups a tenant's namespaces for listing, sorting and glob-based tooling, the way `kube-` and `kube-public` do; `dmz` names the function (a mediated perimeter) rather than an exposure property, and avoids colliding with `kube-public`'s meaning of "readable by all". Budget: namespace names are 63 characters, so a tenant name is at most 52 |
+| D16 | The perimeter namespace is `tenant-<t>-dmz`, built from the tenant's instances' `expose[]` entries with `surface: perimeter` — one publishing proxy per entry, each with its own least-privilege credential and the entry's mandatory `authMode`. Tenant prefix first, qualifier last | the prefix groups a tenant's namespaces for listing, sorting and glob-based tooling, the way `kube-` and `kube-public` do; `dmz` names the function (a mediated perimeter) rather than an exposure property, and avoids colliding with `kube-public`'s meaning of "readable by all". Sourcing the perimeter from `expose[]` rather than a separate list means every perimeter surface carries an `authMode` by construction — the perimeter is where an exposure without declared auth is least acceptable. Budget: namespace names are 63 characters, so a tenant name is at most 52 |
 
 ## 3. Inventory: today → target
 
@@ -95,7 +100,7 @@ the catalogue.
 | Workload | Today | Target | Decision |
 | --- | --- | --- | --- |
 | Shell static bundle (`gentian-portal` web) | `platform-kernel` | `shared-shell` | D10 |
-| Collabora | sidecar and extra ingress of `nextcloud-base-ce`, per tenant | `shared-collabora` once the WOPI source is verified per tenant; per tenant until then | D12 |
+| Collabora | sidecar and extra ingress of `nextcloud-base-ce`, per tenant | profile certifies `tenancy: [tenant, shared]` once the WOPI source is verified per tenant; the instance stays `tenant` until a platform admin chooses `shared` → `shared-collabora` | D12 |
 
 ### 3.4 Not in the cluster
 
@@ -118,19 +123,27 @@ gentian-subscriptions (API profile). All tenant-scoped.
 
 ### 3.6 Tenant DMZ
 
-`tenant-<t>-dmz` holds one publishing proxy per declared public surface.
-Surfaces present in today's profiles, each to be confirmed against the app
-before its `publicSurfaces` entry is written:
+`tenant-<t>-dmz` holds one publishing proxy per `expose[]` entry with
+`surface: perimeter` across the tenant's instances (D16). A `shared`
+instance's perimeter entries are published in each granted tenant's DMZ
+with that tenant's credential; a `system` instance has none (D8).
 
-| App | Surface | Auth at the proxy |
+The column *authMode* is the field's enum — `oidc | jwt | bearer | basic |
+signature | none` — so this table and the schema cannot drift. Entries
+present in today's profiles, each to be confirmed against the app before it
+is written as an `expose[]` entry:
+
+| Component | Paths | authMode |
 | --- | --- | --- |
-| nextcloud | `/s/*` share links, `/public.php/*`, `/.well-known/*` | none — capability in the URL |
-| nextcloud | `/remote.php/dav/*` (WebDAV, CalDAV, CardDAV) | basic — app passwords from the broker |
-| nextcloud | Collabora WOPI callbacks | none, source-restricted |
-| element | Matrix client API (`browserProxy` `forward-bearer`), `/.well-known/matrix/*`, federation | bearer / none / federation signature |
-| openproject | API (`browserProxy` `forward-bearer`) | bearer |
-| odoo-website | public website pages | none |
-| docmost | public sharing | none |
-| any app | LiteLLM from outside the cluster | bearer, tenant key → `system-llm` (D8) |
+| nextcloud | `/s/*` share links, `/public.php/*`, `/.well-known/*` | `none` — capability in the URL |
+| nextcloud | `/remote.php/dav/*` (WebDAV, CalDAV, CardDAV) | `basic` — app passwords from the broker |
+| nextcloud | Collabora WOPI callbacks | `none`, source-restricted to the Collabora instance |
+| element | Matrix client API (today `browserProxy` `forward-bearer`) | `bearer` |
+| element | `/.well-known/matrix/*` | `none` |
+| element | Matrix federation | `signature` |
+| openproject | API (today `browserProxy` `forward-bearer`) | `bearer` |
+| odoo-website | public website pages | `none` |
+| docmost | public sharing | `none` |
 
-Everything not listed stays on the authenticated gateway with no bypass.
+Everything not listed is `surface: gateway` and stays on the authenticated
+gateway with no bypass.
