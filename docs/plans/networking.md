@@ -68,8 +68,11 @@ flowchart TB
     end
 
     subgraph KCTL["kernel-control"]
-        CON["platform console BFF<br/>console.&lt;kernel&gt;"]
         DIR["director API<br/>api.&lt;kernel&gt;"]
+    end
+
+    subgraph TPLAT["tenant-platform — the platform is a tenant (AD-10)"]
+        CON["platform desktop BFF<br/>console.&lt;kernel&gt;, kernel-realm session"]
     end
 
     subgraph SHR["shared-&lt;app&gt;"]
@@ -174,6 +177,7 @@ flowchart TB
     style TEN fill:#1f5fbf14,stroke:#3b82f6
     style SHR fill:#1f5fbf14,stroke:#3b82f6
     style KCTL fill:#1f5fbf14,stroke:#3b82f6
+    style TPLAT fill:#1f5fbf14,stroke:#3b82f6
     style TDMZ fill:#d9731a14,stroke:#f0883e
     style SDMZ fill:#d9731a14,stroke:#f0883e
     style EDGE fill:#80808012,stroke:#9a9a9a
@@ -219,10 +223,11 @@ word someone wrote.
 | --- | --- | --- | --- | --- | --- |
 | Tenant app, browser | `<app>.<t>.<kernel>` or vanity | `oidc` | tenant-realm session | `can_use` | app in `tenant-<t>` |
 | Tenant app, API | same host, API paths, or an `api.` host | `bearer` / `jwt` | JWT verified, no redirect | `can_use` | app |
-| Tenant desktop | `desktop.<t>.<kernel>` or vanity | `oidc` | tenant-realm session | `can_launch` | desktop BFF in `tenant-<t>` |
+| Tenant desktop | `desktop.<t>.<kernel>` or vanity | `oidc` | tenant-realm session | `can_enter` on `tenant:<t>` — members and admins both reach the desktop; which tiles they see is `can_launch` per app, answered by the director | desktop BFF in `tenant-<t>` |
 | Shared app | `<app>.<t>.<kernel>` per granted tenant | `oidc` | tenant-realm session | `can_use` via the tenant's grant | instance in `shared-<app>` |
-| Platform console | `console.<kernel>` | `oidc` | **kernel**-realm session | `can_configure` / `can_audit` | console BFF in `kernel-control` |
+| Platform desktop (console) | `console.<kernel>` | `oidc` | **kernel**-realm session | `can_enter` on `tenant:platform` | desktop BFF in `tenant-platform` (AD-10) — a tenant desktop whose realm is the kernel realm |
 | Director API | `api.<kernel>` | `bearer` | JWT, any realm; the director verifies again | its own OpenFGA check | director |
+| Kernel UI | `argocd.<kernel>`, `headlamp.<kernel>`, Keycloak `/admin/*` on `id-admin.<kernel>` | `oidc` | **kernel**-realm session | `can_configure`, or `can_audit` for read-only tools | the tool in its `kernel-*` namespace. "Hidden" means behind a session with a platform role, not an internal hostname: the tool's own login is the second factor, not the first |
 | Identity provider | `id.<kernel>` | `none` — it *is* the issuer; a kernel-owned perimeter surface on the `perimeter` Gateway with a **path allowlist**: `/realms/<r>/protocol/openid-connect/*`, `/realms/<r>/login-actions/*`, theme assets. `/admin/*`, the `master` realm, metrics and health are served on an internal hostname only (roadmap 1.6) | — | — | Keycloak in `kernel-authentication`; brute-force detection per realm, per-IP and per-username rate limits, body limits at L0 |
 | Perimeter, HTTP | app host (paths) or own host | per entry | — | — | proxy in `tenant-<t>-dmz` |
 | Perimeter, TCP/UDP | own port | protocol-native | — | — | `system-mail-dmz` (edge MTA, Dovecot proxy), `system-turn` |
@@ -288,7 +293,7 @@ design cannot do for it.
 | **Automation or agent calling an app API** | `authMode: bearer` on the authenticated edge: JWT verified, no redirect; ext-auth `can_use`; the token is an exchanged one carrying `act` | L2 for reach, L4 for the ceiling | none new |
 | **Agent using tools over MCP** | the MCP gateway, itself an authenticated-edge route with `bearer` | L4 per tool call | none new |
 | **Tenant admin in the console** | `desktop.<t>.<kernel>` → desktop BFF → director with the user's token | L1 the session, the director its own check | the BFF is a relay; it decides nothing |
-| **Platform admin** | `console.<kernel>`, kernel-realm session; writes through the director | same | kernel and tenant realms are different sessions by design; a platform admin acting inside a tenant does so through the director, never through that tenant's zone |
+| **Platform admin** | `console.<kernel>` → the platform tenant's desktop BFF in `tenant-platform`, kernel-realm session; writes through the director | same | kernel and tenant realms are different sessions by design; a platform admin acting inside a tenant does so through the director, never through that tenant's zone |
 | **App-to-app inside a tenant** (Nextcloud ↔ Collabora, OpenProject ↔ Nextcloud) | never through the edge: Service-to-Service under NetworkPolicy from `integrations`, credentials from the binding | L5 and the binding | none |
 | **App to system service** (database, S3, LLM) | Service-to-Service on the contract port | L5; the granted credential | none |
 | **Outbound mail from an app** | app → Postfix in `system-mail-dmz` on the relay port; DKIM signed by the milter in `system-mail` (keys stay there); out on `:25` | the tenant's SMTP credential from the requirement | outbound reputation is shared per cluster address |

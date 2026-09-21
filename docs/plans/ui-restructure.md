@@ -96,7 +96,7 @@ token to the credential manager rather than holding an OpenBao token
 - **The platform is a tenant** (AD-10). `Tenant/platform` adopts the kernel
   realm (`isolation.keycloakRealm: kernel`), and the platform-admin console
   is that tenant's desktop in `tenant-platform`: the same image and profile,
-  with the platform screens unlocked by `operator from cluster`. A UI with
+  with the platform screens unlocked by `admin from cluster`. A UI with
   no authority does not belong in `kernel-control`; what stays there is what
   has authority — the operator, the director, the credential manager. The
   platform tenant is undeletable and its realm is adopted, never created or
@@ -154,9 +154,10 @@ What the store is:
 - **An entitlement issuer.** When a subscription makes tenant T entitled to
   app A, the store issues a **signed grant** (`entitlement_grant`,
   `signing_key`) and delivers it to the director. The director verifies the
-  signature, commits the fact, and the operator turns it into the
-  `catalogue_entry#entitled@tenant` tuple with `expires_at` as its TTL
-  (principle 5, AD-12, schema lines 315–332). Install is then an ordinary
+  signature, commits the fact, and writes the
+  `catalogue_entry#entitled@tenant` tuple with `expires_at` as its TTL in
+  the same operation — only the director writes the store, the operator
+  reads (principle 5, AD-12, schema lines 315–332). Install is then an ordinary
   OpenFGA check on stored structure — the cluster never asks the store at
   install time and holds no identity toward it. The grant is two things
   with two lifetimes, split at the boundary:
@@ -210,11 +211,13 @@ director:
   6. materialise ComponentProfile A@digest in the cluster
      (the only profiles the cluster holds are the installed ones)
   7. commit the grant record and tenants/{t}/tenant.yaml with A added — signed,
-     trailer with the decision and the request id; no secret in either
+     trailer with the decision and the request id; no secret in either —
+     and write the OpenFGA tuples the commit implies: entitled (TTL = expires_at),
+     app → tenant, app admin group (the director is the store's only writer)
   8. 202 + /v1/operations/{id}
 
-Argo CD syncs the commit ─► operator: grant record → entitled tuple (TTL = expires_at),
-   ExternalSecret → pull Secret in tenant-{t}; reconciles Tenant.spec.apps ─► Crossplane provisions
+Argo CD syncs the commit ─► operator: ExternalSecret → pull Secret in tenant-{t};
+   reconciles Tenant.spec.apps ─► Crossplane provisions (the operator reads the store, never writes it)
 App Store UI polls /v1/operations/{id} with the user's token and renders progress
 Expiry: tuple and ExternalSecret go; the next pod start cannot pull; running pods are unaffected
 ```

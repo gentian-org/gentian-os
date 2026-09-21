@@ -122,9 +122,15 @@ manager). Built from `cmd/director`. It has:
   and the FGA check is on the human either way. The route is on the kernel
   gateway, bearer only, behind the gateway `SecurityPolicy` of G3; the
   director verifies again rather than trusting the hop.
-- An OpenFGA client for `Check` (already in
-  [openfga_client.go](../../internal/authz/openfga_client.go)) against the
-  store whose id the operator's bootstrap Job publishes in the `openfga-runtime` Secret.
+- An OpenFGA client (already in
+  [openfga_client.go](../../internal/authz/openfga_client.go)). The director
+  is the **store's only writer** (AD-12): it creates the store and the model
+  on first start, writes every structure tuple in the same operation as the
+  commit it reflects, and rebuilds the tuples from git on start — the store
+  is a projection of the change log. The operator reads. It authenticates
+  to OpenFGA with its projected ServiceAccount token (`authn.method: oidc`),
+  so the push credential stays its only stored secret. The vocabulary is
+  [authorization-model.md](authorization-model.md).
 - A working checkout of `gentian-deployments` and the **only** push
   credential. Commits are authored as the human (`Name <email>` from the
   token), committed by the director, and **signed** with a key only the
@@ -166,14 +172,17 @@ changes:
 - It gets its **own, read-only** repository token, distinct from the
   director's push token (§2.3 is dissolved: two vault paths, or one claim
   field `credential.push` alongside `credential`).
-- The `gentian` AppProject gets `spec.signatureKeys` set to the director's
-  signing key, so Argo refuses to sync a commit it did not sign. This is what
-  lets the operator trust git without trusting the git host. It lands with
-  G11 in wave 3, after the director is the sole pusher; until then the Argo
-  link of §3.4 is branch protection alone. Known caveat:
-  Argo's signature verification applies to Applications, not to the
-  ApplicationSet git generator's own fetch — the generated `Application`s are
-  still verified, which is where the manifests are applied.
+- The `gentian` AppProject gets a `spec.sourceIntegrity` policy for the
+  deployments repository (GnuPG, mode `head`, keys: the director's and the
+  break-glass key), so Argo refuses to sync a commit neither signed. This is
+  what lets the operator trust git without trusting the git host. It lands
+  with G11 in wave 3, after the director is the sole pusher; until then the
+  Argo link of §3.4 is branch protection alone. `signatureKeys` is
+  deprecated upstream and is not used. Verified limits: git sources only
+  (the deployments repository is git); an ApplicationSet with a templated
+  `project` is not verified (ours are literal); `argocd app sync --local`
+  stops working; GnuPG only. `head` verifies the target commit, not its
+  ancestry — `strict` would fail on the human bootstrap commits.
 
 ### 3.4 Trust chain
 
@@ -182,7 +191,7 @@ Keycloak token ──► director verifies JWKS/iss/aud
              ──► OpenFGA Check(user, relation, object)
              ──► signed commit, authored as the human, trailer with decision
              ──► git host branch protection: only the director's identity may push main
-             ──► Argo AppProject signatureKeys: only director-signed commits sync
+             ──► Argo AppProject sourceIntegrity (GnuPG, head): only director- or break-glass-signed commits sync
              ──► operator reconciles what Argo applied
 ```
 
@@ -224,45 +233,21 @@ edit is signed and attributed like any other.
 
 ### 3.6 Authorisation model
 
-The full v1 model, one type per CRD kind and one relation per role, is
-[roles-and-authorizations.md](roles-and-authorizations.md) §3.1; shown here
-are only the relations the director checks. Additions to
-[authz/model/v0/model.fga](../../authz/model/v0/model.fga):
-
-```
-type cluster
-  relations
-    define operator: [user, group#member]        # gentian:platform:superadmin / :operator
-    define break_glass: [user, group#member]     # gentian:platform:break-glass
-    define can_deploy_tenant: operator
-    define can_install_shared: operator          # AD-4: shared-<app> instances
-    define can_set_policy: operator              # PlatformSecurityPolicy, network intent (system tier)
-    define can_set_admission: break_glass        # PolicyException, policy overlays (kernel tier)
-    define can_edit_raw: break_glass
-
-type tenant
-  relations
-    define cluster: [cluster]
-    define member: [user]
-    define admin: [user]
-    define can_install_app: admin or operator from cluster
-    define can_set_plan: admin or operator from cluster
-    define can_set_policy: admin or operator from cluster
-
-type catalogue_entry
-  relations
-    define entitled: [tenant]
-    define can_install: entitled            # checked with tenant as user: tenant:<t>
-```
-
-Two things to settle while touching the model. First, v0 defines
-`admin: [user] or member`, which makes every member an admin; the director
-must not inherit that. Second, memberships are not synced: the director passes the token's groups
-to OpenFGA as contextual tuples on every `Check` (AD-12), so a freshly
-granted role is effective from the caller's next token and there is no
-"not yet synced" state to surface. The 5-minute bridge
+The model is [artefacts/model.fga](artefacts/model.fga); the rules and the
+per-PEP relation table are in
+[authorization-model.md](authorization-model.md). The director checks
+`can_*` relations only — on `tenant:<t>` for tenant verbs, on `cluster:<c>`
+for cluster verbs, on `catalogue_entry:<cat>/<app>` with user `tenant:<t>`
+for entitlement — and writes the structure tuples listed in
+authorization-model.md §3. It replaces
+[authz/model/v0/model.fga](../../authz/model/v0/model.fga), whose
+`admin: [user] or member` makes every member an admin; nothing of v0 is
+inherited. Memberships are not synced: the director passes the token's
+groups to OpenFGA as contextual tuples on every `Check` (AD-12), so a
+freshly granted role is effective from the caller's next token and there is
+no "not yet synced" state to surface. The 5-minute bridge
 ([authz_bridge_reconciler.go](../../internal/controller/authz_bridge_reconciler.go))
-is retired with the split; its store bootstrap becomes an operator Job.
+is retired with the split; the director creates the store and model itself.
 
 Each relation gets a case in `tests.fga.yaml` before the director calls it.
 
@@ -326,9 +311,11 @@ and proven by [internal/handover](../../internal/handover/handover.go):
 3. The Argo credential is rotated to the read-only token (§3.3); the push
    token exists in exactly one Secret, mounted in exactly one Deployment.
 4. *(wave 3, G11 — a later step, not part of the handover gate)*
-   `AppProject/gentian.spec.signatureKeys` is set to the director's key.
-   Because Argo verifies the commit at the sync revision, step 1 must have
-   happened or every Application goes OutOfSync on the last human commit.
+   `AppProject/gentian.spec.sourceIntegrity` gets the GnuPG policy for the
+   deployments repository (mode `head`, keys: the director's and the
+   break-glass key from the recovery kit). Because `head` verifies the
+   commit at the sync revision, step 1 must have happened or every
+   Application goes OutOfSync on the last human commit.
 
 Until step 1 succeeds, `E-01-tenants` stays gated, for the same reason the
 credential handover gates it: recovery is cheap on an empty cluster and
@@ -349,7 +336,7 @@ catastrophic on one with tenants.
 | `applifecycle/service.go` — `provisionAppGroupUsers` | stays; becomes desired-state reconcile of `Tenant.spec.apps` → Keycloak group | operator (`app_privilege_reconciler` already exists) |
 | `credentialmgr/` | later, optional: same class of human-identified write, holds no token of its own, needs no controller-runtime | director, after D |
 | `kubectl-gentian` `git_commit_push` + `kubectl apply` fallback | replaced by director API calls with the user's token (`kubectl gentian login` via device flow) | CLI |
-| Console direct writes (§2.2, desired-state rows) | replaced by director calls with the user's token, as `credential_manager.py` already forwards it; console *reads* stay in the console under `Impersonate-User` (G7) | platform console (`kernel-control`) and tenant desktop BFF (`tenant-<t>`), AD-10 |
+| Console direct writes (§2.2, desired-state rows) | replaced by director calls with the user's token, as `credential_manager.py` already forwards it; reads become director reads too — the console keeps no Kubernetes identity (G7, [ui-restructure.md](ui-restructure.md) §2) | tenant desktop BFF (`tenant-<t>`) and the platform tenant's in `tenant-platform`, AD-10 |
 | Console direct writes (§2.2, request rows) | director creates the request CR; secrets stay ESO/OpenBao references — settled by G7: all writes move | director, narrow RBAC on those kinds |
 | `catalogue-<repo>` ApplicationSet (every AppProfile synced to every cluster) | retired; the director materialises on reference (§3.6) | — |
 | App Store (`app-store-me` profile, per tenant) | leaves the cluster (AD-3); the director is its ingestion endpoint | external |
@@ -457,11 +444,12 @@ Nothing writes `PolicyException`s dynamically.
   the console's direct write, §2.2) and any cluster-specific
   `PolicyException` or policy overlay an operator adds. Written only through
   the director: `PUT /v1/clusters/{c}/security/{kind}/{name}`. Two
-  relations, because the namespace taxonomy gives the two kinds different
-  authority: the `PlatformSecurityPolicy` allowlist is a decision about
-  tenant workloads (system tier — platform admin, `can_set_policy`);
-  a `PolicyException` or overlay changes what `kernel-admission` enforces
-  (kernel tier — break-glass only, `can_set_admission`).
+  relations, following the role definitions: the `PlatformSecurityPolicy`
+  allowlist approves what escapes the default posture, which is the
+  **security officer's** (`cluster#can_approve` — the one who installs is not
+  the one who approves exceptions, roles-and-authorizations §1); a
+  `PolicyException` or overlay changes what `kernel-admission` enforces,
+  which is break-glass only (`cluster#can_set_admission`).
 
 The webhook that admits a `PlatformSecurityPolicy` does not change; it only
 stops seeing writes from the console SA.

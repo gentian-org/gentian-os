@@ -18,11 +18,11 @@ manager (3, 9); authority is derived downward, never granted sideways (5).
 | Layer | Role | Keycloak group | Responsible for | Acts through |
 | --- | --- | --- | --- | --- |
 | kernel | **Break-glass** | `gentian:platform:break-glass` | recovery when the normal path is down: OpenBao unseal and root, git host administration, direct `kubectl` on `kernel-*`; time-boxed, every action logged out-of-band | kubeconfig and the recovery kit — the only role that bypasses the director |
-| kernel | **Platform administrator** | `gentian:platform:operator` | installing and upgrading the OS (`install.sh`, the Cluster claim, kernel versions); granting every role below; the cluster-level policies that bound them — which `authMode`s and surfaces tenants may enable, the `PlatformSecurityPolicy` allowlist, resource-plan ceilings, entitlements | director (`/v1/clusters/{c}/…`), credential manager for kernel-scoped credentials |
+| kernel | **Platform administrator** | `gentian:platform:admin` | installing and upgrading the OS (`install.sh`, the Cluster claim, kernel versions); granting every role below; the cluster-level policies that bound them — which `authMode`s and surfaces tenants may enable, the `PlatformSecurityPolicy` allowlist, resource-plan ceilings, entitlements | director (`/v1/clusters/{c}/…`), credential manager for kernel-scoped credentials |
 | kernel | **Security officer** | `gentian:platform:security` | approving what escapes the default posture: privilege requests (MAC waivers, egress beyond baseline, elevated roles), cluster exposure policy, catalogue entries at `trustTier: platform`; reviewing the decision and change logs | director (approval endpoints), read access to the three audit logs |
 | kernel | **Auditor** | `gentian:platform:auditor` | reading the issuer, decision and change logs across all tenants; nothing else | read-only routes on the director; OpenFGA read; git read |
-| system | **Service operator** | `gentian:platform:service-operator` | running the system services: capacity, backups and restores, upgrades and engine versions of `system-postgresql`, `system-mariadb`, `system-cache`, `system-s3`, `system-mail`, `system-llm`; the default fulfiller per contract | director (Cluster claim `system` section), credential manager for service admin credentials |
-| shared | **Shared-app operator** | `gentian:platform:shared-apps` | installing, upgrading and removing `tenancy: shared` instances; granting and revoking tenants' access to each | director (`/v1/clusters/{c}/shared-apps/…`) |
+| system | **Service admin** | `gentian:platform:service-admin` | running the system services: capacity, backups and restores, upgrades and engine versions of `system-postgresql`, `system-mariadb`, `system-cache`, `system-s3`, `system-mail`, `system-llm`; the default fulfiller per contract | director (Cluster claim `system` section), credential manager for service admin credentials |
+| shared | **Shared-apps admin** | `gentian:platform:shared-apps-admin` | installing, upgrading and removing `tenancy: shared` instances; granting and revoking tenants' access to each | director (`/v1/clusters/{c}/shared-apps/…`) |
 | tenant | **Tenant administrator** | `gentian:tenant:<t>:admins` | one tenant: installing apps within entitlements, addons, resource plan within the ceiling, backup policies and export schedules, integration grants (`AppGrant`), users and groups in the tenant realm. A dedicated account: holds no `members` or `app:*` group, launches no app | director (`/v1/tenants/{t}/…`), the tenant desktop showing admin tiles only |
 | tenant-dmz | **Perimeter approver** | `gentian:tenant:<t>:perimeter` | enabling and disabling a public surface for the tenant, within cluster policy; the credentials the DMZ proxies hold | director (`/v1/tenants/{t}/exposure/…`) |
 | tenant, one app | **App administrator** | `gentian:tenant:<t>:app-admins` | administration *inside* one installed app — the app's own admin role, reconciled from `privilegedRole`; no platform rights | the app |
@@ -89,16 +89,20 @@ one open item is scoping Crossplane's providers per role (roadmap 1.16).
 
 | Identity | The one credential | Cluster access |
 | --- | --- | --- |
-| **Director** | the git push key | read-only, plus create/update on `appprofiles` — the single write, for materialise-on-reference |
+| **Director** | the git push key (signing through OpenBao transit, so the key never leaves the vault); to OpenFGA it authenticates with its projected ServiceAccount token (`authn.method: oidc`), not a stored secret | read-only, plus create/update on `appprofiles` — the single write, for materialise-on-reference. Writes OpenFGA: the store's only writer |
 | **Credential manager** | none of its own — it exchanges the caller's token | read on `CredentialRequirement`, write on the handover record |
 | **Gateway ext-auth shim** | none — verifies the caller's token, asks OpenFGA | none |
 
 There is no bridge between Keycloak and OpenFGA (AD-12). Membership is read
 from the token by whichever enforcement point is asked, and passed to
-OpenFGA as contextual tuples; the store holds only structure, written by
-the operator (installs, grants, the role-to-group assignments from the
-Cluster claim) and the director (entitlements). Creating the store and
-writing the model is a one-time operator Job, not a running identity.
+OpenFGA as contextual tuples; the store holds only structure, and **only
+the director writes it** — installs, grants, entitlements and the
+role-to-group assignments from the Cluster claim, each tuple written in the
+same operation as the commit it reflects. The store is a projection of git:
+the director creates it and the model on first start and rebuilds the
+tuples from the repository, so nothing is lost if it is dropped. The
+operator reads. The vocabulary is
+[authorization-model.md](authorization-model.md).
 
 **Workloads** — everything else: system services, shared instances, tenant
 apps, both UI backends, DMZ proxies, agents. None has a ServiceAccount with
@@ -139,7 +143,7 @@ Three invariants, one per class, each a scripted test:
 | Question | Answered by | Fed by |
 | --- | --- | --- |
 | Who is this? | Keycloak — realm `kernel` for platform roles, realm `<t>` for tenant roles | groups in the token |
-| May they configure this? | OpenFGA, asked by the **director** | the token's groups as contextual tuples; structure (installs, grants, entitlements) written by controllers |
+| May they configure this? | OpenFGA, asked by the **director** | the token's groups as contextual tuples; structure (installs, grants, entitlements, role assignments) written by the director |
 | May they write this secret? | OpenBao's role bound claims, asked by the **credential manager** | the token's groups |
 | May they reach this app? | OpenFGA, asked by the **gateway ext-auth shim** | the token; a session decision cached per user and route |
 | May this agent do this on their behalf? | OpenFGA, asked by the **MCP gateway** | `acting_for` and the task's TTL |
@@ -147,44 +151,18 @@ Three invariants, one per class, each a scripted test:
 
 ### 3.1 The authorization model these roles need
 
-Relations on the CRD kinds, in the `type per kind` discipline of principle
-4. Membership arrives per request as contextual tuples; only the assignment
-of a role to a group, and structure, is stored.
-
-```
-type cluster
-  relations
-    define break_glass:       [group#member]
-    define operator:          [group#member]
-    define security_officer:  [group#member]
-    define auditor:           [group#member]
-    define service_operator:  [group#member]
-    define shared_app_operator: [group#member]
-    define can_configure:     operator
-    define can_approve:       security_officer
-    define can_audit:         auditor or security_officer
-    define can_operate_system: service_operator
-    define can_operate_shared: shared_app_operator
-
-type tenant
-  relations
-    define cluster:            [cluster]
-    define admin:              [group#member]
-    define perimeter_approver: [group#member]
-    define member:             [group#member]
-    define can_install_app:    admin or operator from cluster
-    define can_set_plan:       admin or operator from cluster
-    define can_grant:          admin
-    define can_expose:         perimeter_approver
-    define can_launch:         member            # never admin: admin accounts have no app tiles
-
-type app
-  relations
-    define tenant:   [tenant]
-    define admin:    [group#member]
-    define can_use:  member from tenant
-    define can_administer: admin
-```
+The model is [artefacts/model.fga](artefacts/model.fga), with the rules
+behind it in [authorization-model.md](authorization-model.md). It is not
+restated here: the roles above map onto it as `cluster#admin`,
+`cluster#security_officer`, `cluster#auditor`, `cluster#service_admin`,
+`cluster#shared_apps_admin`, `cluster#break_glass`, `tenant#admin`,
+`tenant#perimeter_approver`, `tenant#member` and `app#admin`, one Keycloak
+group each; every verb a PEP exposes is a `can_*` relation computed from
+them. Two invariants the model carries for this document: an admin account
+reaches the desktop (`tenant#can_enter`) but launches no app
+(`app#can_use: member … but not admin`), and a platform administrator acts
+inside a tenant only through `admin from cluster` — never by holding a
+tenant group.
 
 Every relation ships with a case in `authz/model/*/tests.fga.yaml`
 covering the grant, the denial for the neighbouring role, and the
@@ -196,10 +174,10 @@ derivation through `cluster`.
   approves exceptions, the auditor reads, break-glass recovers. Nothing in
   this layer is created by a tenant, and nothing in it decides on a
   tenant's behalf without a tuple that says so.
-- **System** — the service operator keeps the fulfillers running and backed
+- **System** — the service admin keeps the fulfillers running and backed
   up. They see every tenant's data engine; they hold no tenant's
   credentials.
-- **Shared** — the shared-app operator runs the instance and decides which
+- **Shared** — the shared-apps admin runs the instance and decides which
   tenants may use it; the instance's own code is the only isolation between
   those tenants, which is why the profile needed `trustTier: platform`.
 - **Tenant** — the tenant administrator decides what runs and who uses it,

@@ -1,0 +1,99 @@
+model
+  schema 1.1
+
+# Target authorization model, v1. The single vocabulary every plan is
+# checked against — see ../authorization-model.md for the rules behind it.
+#
+# Conventions
+#   type            one per CRD kind; object id = the CR's name, namespaced
+#                   kinds as <tenant>/<name>
+#   role            a noun, assigned only through group#member — one Keycloak
+#                   group per role, never a user directly
+#   permission      can_<verb>, one per verb an enforcement point exposes;
+#                   PEPs check permissions, never roles
+#   hierarchy       one parent relation per type (cluster, tenant), derived
+#                   with "<relation> from <parent>"
+#   exclusion       "but not" only for least-privilege invariants
+#   membership      arrives per request as contextual tuples
+#                   group:<g>#member@user:<sub>, taken from the token's groups
+#   structure       everything else is stored, written only by the director
+
+type user
+
+type group
+  relations
+    define member: [user]
+
+type cluster
+  relations
+    # roles — from the Cluster claim's role-to-group assignments
+    define admin: [group#member]              # gentian:platform:admin
+    define security_officer: [group#member]   # gentian:platform:security
+    define auditor: [group#member]            # gentian:platform:auditor
+    define service_admin: [group#member]      # gentian:platform:service-admin
+    define shared_apps_admin: [group#member]  # gentian:platform:shared-apps-admin
+    define break_glass: [group#member]        # gentian:platform:break-glass — no standing membership
+
+    # permissions — the director's cluster-level verbs
+    define can_configure: admin               # Cluster claim, plans, ceilings, network intent
+    define can_deploy_tenant: admin
+    define can_operate_system: service_admin  # the claim's system section
+    define can_install_shared: shared_apps_admin
+    define can_grant_shared: shared_apps_admin
+    define can_approve: security_officer      # waivers, egress beyond baseline, exposure policy, trustTier platform
+    define can_set_admission: break_glass     # PolicyException, admission overlays (kernel tier)
+    define can_edit_raw: break_glass          # /v1/files
+    define can_audit: auditor or security_officer or admin
+
+type tenant
+  relations
+    define cluster: [cluster]
+
+    # roles
+    define admin: [group#member]               # gentian:tenant:<t>:admins
+    define perimeter_approver: [group#member]  # gentian:tenant:<t>:perimeter
+    define member: [group#member]              # gentian:tenant:<t>:members
+
+    # reach — the desktop host at L2; an admin account must get in to administer
+    define can_enter: member or admin or admin from cluster
+
+    # permissions — the director's tenant-level verbs
+    define can_install_app: admin or admin from cluster
+    define can_set_plan: admin or admin from cluster
+    define can_set_policy: admin or admin from cluster   # backup, grants, export schedules, tenant network intent
+    define can_grant: admin                              # AppGrant: integration consent
+    define can_manage_users: admin or admin from cluster
+    define can_expose: perimeter_approver
+    define can_view: member or admin or can_audit from cluster
+
+type catalogue_entry
+  relations
+    define entitled: [tenant with grant_valid]   # written by the director from a signed grant
+    define can_install: entitled                  # checked with user = tenant:<t>
+
+type app
+  relations
+    define tenant: [tenant]
+    define admin: [group#member]                  # gentian:tenant:<t>:app-admins — inside the app only
+
+    # least privilege per account: an admin account launches nothing
+    define can_use: member from tenant but not admin from tenant
+    define can_launch: can_use                    # tiles; also L2 on the app's own route
+    define can_administer: admin
+
+condition grant_valid(current_time: timestamp, expires_at: timestamp) {
+  current_time < expires_at
+}
+
+# Wave 2 (security-gap-closing G9) adds, without changing anything above:
+#
+#   type task
+#     relations
+#       define valid: [agent with task_live]
+#   type agent
+#     relations
+#       define acting_for: [user]
+#       define can_act: acting_for and valid from task
+#
+# and every app permission gains "or can_act from agent" bounded by the
+# delegating human's own permission (principle 5).
