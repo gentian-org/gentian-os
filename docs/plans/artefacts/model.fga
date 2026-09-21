@@ -97,11 +97,32 @@ type app
     define tenant: [tenant]
     define admin: [group#member]                  # gentian:tenant:<t>:app-admins — inside the app only
 
+    # Per-app entitlement. Being a member of the tenant is not enough: a user
+    # reaches an app only through its own group, written at install and
+    # populated by the tenant administrator. This is what makes
+    # ListUsers("who can use app A") answer the question it is asked.
+    define entitled: [group#member]               # gentian:tenant:<t>:app:<profile>
+
     # least privilege per account: an admin account launches nothing
-    define can_use: member from tenant but not admin from tenant
+    define can_use: entitled but not admin from tenant
     define can_launch: can_use                    # app tiles; also L2 on the app's own route
                                                   # admin tiles are tenant#can_administer
     define can_administer: admin
+
+    # Secret writes for this component, checked by the credential manager
+    # before OpenBao sees the request: OpenBao's policy then bounds the PATH,
+    # it does not make the decision (principle 2).
+    define can_write_credential: admin from tenant
+
+type shared_instance
+  relations
+    define cluster: [cluster]
+    # Tenants the platform administrator has made this instance available to.
+    # Availability is not visibility: a tenant sees the app only once its own
+    # administrator installs it, which creates the tenant's own app object
+    # bound to this backend (component-profile.md §6.1).
+    define offered_to: [tenant]
+    define can_bind: offered_to
 
 condition grant_valid(current_time: timestamp, expires_at: timestamp) {
   current_time < expires_at

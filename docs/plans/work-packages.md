@@ -99,6 +99,13 @@ Specified in [operator-split-plan.md](operator-split-plan.md) §3, §5, §6.
 
 ## WP-2 Operator — what changes (`os`)
 
+- [ ] **Shared-instance binding in the reconcile loop** (component-profile
+      §6.1): when a tenant's `spec.apps` names a profile, check for a
+      `shared_instance` offered to that tenant. Bind if there is one — tenant
+      objects only, route backend in `shared-<app>`, one NetworkPolicy hop —
+      otherwise install a dedicated release, which stays the default.
+      `status.fulfilment` records which, and a later offer never moves a
+      running app.
 - [ ] Purge moves out of the request path into a reconciler driven by
       desired state (app absent from `Tenant.spec.apps`).
 - [ ] `provisionAppGroupUsers` becomes a reconcile of `Tenant.spec.apps` →
@@ -146,6 +153,16 @@ Specified in [authorization-model.md](authorization-model.md) and
       bootstrap tuple goes: a copied tuple is what R4 exists to prevent, and
       it is one nobody has to remember to remove.
 - [ ] `tenant#can_approve_privilege` for tenant-scope privilege grants.
+- [ ] `app#entitled` — per-app groups gate tiles and routes. Tenant
+      membership alone reaches no app. The group
+      `gentian:tenant:<t>:app:<profile>` is created in the tenant realm at
+      install and the tuple written with it; the tenant administrator decides
+      who goes in. This is also what makes the access review answer the
+      question it is asked.
+- [ ] `app#can_write_credential` and the credential manager's `Check` before
+      any OpenBao write; OpenBao policy bounds the path, not the decision.
+- [ ] `shared_instance` with `offered_to`/`can_bind`, so a shared install is
+      offered to a tenant and still invisible until that tenant installs it.
 - [ ] `tenant#can_administer` for admin tiles, and `tenant#can_enter` widened
       with `can_audit from cluster` and `can_approve from cluster`. Without
       both, `app#can_use`'s deliberate exclusion of admin accounts makes every
@@ -230,6 +247,12 @@ Specified in [networking.md](networking.md).
 - [ ] Exposure API and console view: summary, condensed log (most requests,
       most recent incl. first-seen, most bytes, rejections), public objects
       via the contract, complete log (networking §8.4).
+- [ ] **Publishing proxy as a named enforcement point** (principle 3): it
+      verifies `none`, `basic` and `signature`, applies any declared source
+      restriction, and **strips every inbound identity header** before
+      forwarding, setting only its own. Without the strip, an app-host
+      perimeter path is a header-spoofing route to the same pod the
+      authenticated Gateway serves.
 - [ ] Both `Gateway` objects are kernel resources in `kernel-edge`,
       reconciled by the operator from the Cluster claim. Tenants get listeners
       and own `HTTPRoute`s only — under `mergeGateways` listener uniqueness is

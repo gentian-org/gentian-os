@@ -153,8 +153,9 @@ Three invariants, one per class, each a scripted test:
 | --- | --- | --- |
 | Who is this? | Keycloak — realm `kernel` for platform roles, realm `<t>` for tenant roles | groups in the token |
 | May they configure this? | OpenFGA, asked by the **director** | the membership projection fed by Keycloak's events; structure (installs, grants, entitlements, role assignments) written by the director |
-| May they write this secret? | OpenBao's role bound claims, asked by the **credential manager** | the token's groups |
-| May they reach this app? | OpenFGA, asked by the **gateway ext-auth shim** | the token; a session decision cached per user and route |
+| May they write this secret? | OpenFGA, asked by the **credential manager** — `can_write_credential` on `app:<t>/<p>`, `can_configure` on `cluster:<c>` for kernel and system secrets. OpenBao's policy then bounds the *path* the request may touch; it does not make the decision (principle 2). Deciding in OpenBao policy from token groups put secret-write authority outside `ListUsers` and left it un-revoked by a tuple delete | the membership projection |
+| May they reach this app? | OpenFGA, asked by the **gateway ext-auth shim** — `can_use`, which is the app's own entitlement group, not tenant membership | the token; a decision cached per session and route |
+| Is this anonymous request valid? | the **publishing proxy** in the DMZ — the entry's `authMode`, and a source restriction where one is declared. It strips every inbound identity header and sets only its own | the credential presented, or none |
 | May this agent do this on their behalf? | OpenFGA, asked by the **MCP gateway** | `acting_for` and the task's TTL |
 | May this pod do this? | the API server (RBAC), NetworkPolicy, Kyverno | the ServiceAccount, the namespace labels |
 

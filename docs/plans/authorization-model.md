@@ -61,6 +61,8 @@ with the reconcile as the backstop.
 | `tenant:<t>#perimeter_approver@group:gentian:tenant:<t>:admins#member` | director | tenant deploy — the default: publishing is its own grant, but most tenants do not staff the role separately. A tenant that wants the separation removes this tuple and adds its own `:perimeter` group |
 | `app:<t>/<p>#tenant@tenant:<t>` | director | app install |
 | `app:<t>/<p>#admin@group:gentian:tenant:<t>:app-admins#member` | director | app install |
+| `app:<t>/<p>#entitled@group:gentian:tenant:<t>:app:<p>#member` | director | app install — the group is created in the tenant's realm at the same moment; the tenant administrator decides who goes in it. Tenant membership alone reaches no app |
+| `shared_instance:<p>#offered_to@tenant:<t>` | director | the platform administrator makes a shared instance available to a tenant (`can_grant_shared`). The tenant still sees nothing until its own administrator installs it |
 | `catalogue_entry:<catalogue>/<app>#entitled@tenant:<t>` with `expires_at` | director | signed grant received (ui-restructure §3) |
 | the same tuple, **deleted** | director | signed revocation received — same endpoint, same signature check, committed as a fact; a later commit overrides an earlier `expires_at` (operator-split-plan §3.8) |
 | `group:<g>#member@user:<sub>` | director, from Keycloak's event stream; reconciled with a read-only client | on each membership event; reconcile on an interval and on start |
@@ -70,6 +72,7 @@ with the reconcile as the backstop.
 | PEP | Object | Relations |
 |---|---|---|
 | Gateway ext-auth shim | `tenant:<t>` for the desktop host; `app:<t>/<p>` for an app host; `cluster:<c>` for a kernel tool host | `can_enter`; `can_use`; `can_configure`, `can_audit` |
+| Credential manager | `app:<t>/<p>` for a component's secrets; `cluster:<c>` for kernel and system ones | `can_write_credential`; `can_configure` |
 | Director, tenant verbs | `tenant:<t>` | `can_install_app`, `can_set_plan`, `can_set_policy`, `can_grant`, `can_manage_users`, `can_expose`, `can_approve_privilege`, `can_view` |
 | Director, install | `catalogue_entry:<cat>/<app>` with user `tenant:<t>` | `can_install` |
 | Director, cluster verbs | `cluster:<c>` | `can_configure`, `can_deploy_tenant`, `can_operate_system`, `can_install_shared`, `can_grant_shared`, `can_approve`, `can_set_admission`, `can_edit_raw`, `can_audit` |

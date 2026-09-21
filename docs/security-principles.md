@@ -37,8 +37,15 @@ separates is authority, not copies.
 
 ## 3. Few, named policy-enforcement points; everything else consumes a verdict
 
-The gateway (browser and API traffic), the director (configuration writes),
-the credential manager (secret writes), the MCP gateway (agent tool calls).
+The gateway (browser and API traffic), the **publishing proxy** (everything
+anonymous or protocol-authenticated, in a DMZ namespace), the director
+(configuration writes), the credential manager (secret writes), the MCP
+gateway (agent tool calls). The proxy is one of these because it decides:
+`none`, `basic` and `signature` are verified there and nowhere else, and it
+is the only component both kinds of perimeter entry pass through. Being a PEP
+obliges it: it **strips every inbound identity header** before forwarding and
+sets only its own, which is the condition rule 1 attaches to trusting a
+header at all.
 A request that reaches a workload without passing a named PEP is a bug.
 Apps never decide platform questions; they receive the decision as identity
 headers or an exchanged token.

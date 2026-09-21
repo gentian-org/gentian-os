@@ -429,6 +429,55 @@ expiry.
 Nothing here is a new field. Tenancy reinterprets the scope of declarations the
 profile already makes. One schema, three readings.
 
+### 6.1 Shared instances: offered, then installed
+
+A shared instance existing is not the same as a tenant having the app.
+Installing one is the platform administrator's act; putting it in front of a
+tenant's users is still the tenant administrator's, through the App Store,
+exactly as for a dedicated install. Two steps, two people:
+
+1. The platform administrator installs the component with `tenancy: shared`
+   into `shared-<app>`, and **offers** it to tenants — one
+   `shared_instance:<p>#offered_to@tenant:<t>` tuple per tenant, written under
+   `can_grant_shared`. Nothing is visible to anyone yet.
+2. The tenant administrator installs the app. The tenant gets its own `app`
+   object, its own per-app group, its own OIDC client in its own realm, its
+   own route and tile. Only the backend is shared.
+
+**The reconciler chooses, and the default is unchanged.** When a tenant's
+`spec.apps` names profile P:
+
+```
+is there a shared_instance of P with offered_to = this tenant?
+  no  → install a dedicated release in tenant-<t>        (today's behaviour)
+  yes → bind: create the tenant-side objects only, with the route's backend
+        in shared-<app> and a NetworkPolicy allowing that one hop
+```
+
+Binding creates no Release. Everything a user meets is still per tenant —
+identity, entitlement group, hostname, tile, exposure — so from inside the
+tenant a bound app and a dedicated one are indistinguishable, which is what
+lets the choice be an operational one rather than a product one.
+
+```go
+// On the Component status. The tenant does not ask for shared or dedicated;
+// availability decides, so a later offer does not silently move a running
+// app — a bound instance stays bound, a dedicated one stays dedicated until
+// someone reinstalls it.
+type ComponentStatus struct {
+    // Fulfilment is "dedicated" or "shared".
+    Fulfilment string `json:"fulfilment"`
+    // SharedInstance names the backend when Fulfilment is "shared".
+    // +optional
+    SharedInstance string `json:"sharedInstance,omitempty"`
+}
+```
+
+Withdrawing an offer does not uninstall anything: it stops new tenants
+binding. Removing a bound tenant is an uninstall in that tenant, which is the
+tenant administrator's action or an explicit platform one, never a side effect
+of a tuple delete.
+
 ## 7. Where enforcement goes
 
 CRD validation rules for what the object may say:
