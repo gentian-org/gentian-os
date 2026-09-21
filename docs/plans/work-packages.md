@@ -58,9 +58,15 @@ Specified in [operator-split-plan.md](operator-split-plan.md) §3, §5, §6.
       plans, policies, exposure enablements, shared-app installs, tenant
       deploy/undeploy, raw edit (break-glass); every write returns 202 with
       an operation URL.
-- [ ] Read API: tenants, apps, tiles filtered by `can_launch`, operations,
-      exposure summary/log/objects (networking §8.4), audit views joining
-      issuer log, decision log and git by request id.
+- [ ] Read API — **one read per write, no exceptions** (operator-split-plan
+      §3.5). Tenants, installed apps with version, digest, config and addons,
+      integrations in force, users and groups, policies, exposure surfaces and
+      their enablements, entitlements, plans and usage, cluster security and
+      exposure ceilings, operations, tiles filtered by `can_launch`, and audit
+      views joining issuer log, decision log and git by request id. Reads are
+      authorised by `can_view`/`can_audit`, never by the write relation. Both
+      UIs and the App Store render from these: a store that cannot see what is
+      installed offers choices the cluster has already made.
 - [ ] Materialise-on-reference: `ensureProfile` fetches the bundle at its
       digest from the catalogue repository and applies the profile CR
       **before** the commit; the only cluster write the director has.
@@ -201,6 +207,13 @@ Specified in [networking.md](networking.md).
 - [ ] Exposure API and console view: summary, condensed log (most requests,
       most recent incl. first-seen, most bytes, rejections), public objects
       via the contract, complete log (networking §8.4).
+- [ ] Both `Gateway` objects are kernel resources in `kernel-edge`,
+      reconciled by the operator from the Cluster claim. Tenants get listeners
+      and own `HTTPRoute`s only — under `mergeGateways` listener uniqueness is
+      class-wide, so a tenant-owned Gateway could claim another tenant's
+      hostname. Zone wildcards by DNS-01 on the kernel domain's existing
+      provider credential; HTTP-01 only for tenant-owned vanity hosts
+      (networking §7).
 - [ ] Retire `browserProxy`, `additionalIngresses`, the portal session
       bridges' routes.
 
@@ -245,6 +258,15 @@ Specified in [ui-restructure.md](ui-restructure.md) §3 and
 - [ ] Signed entitlement grants (`entitlement_grant`, `signing_key`);
       delivery to the director; single-use fetch token; pull credential
       handed to the credential manager as the tenant admin.
+- [ ] **Revocation on the same path**: a signed record with `granted: false`
+      to `POST /v1/tenants/{t}/entitlements`. The director verifies, commits
+      the fact and deletes the tuple in one operation, so a later commit
+      overrides an earlier `expires_at` (operator-split-plan §3.8). The pull
+      credential and its `ExternalSecret` go with it; running pods are
+      untouched and the next pod start cannot pull.
+- [ ] Store reads cluster state through the director's read API with the
+      signed-in admin's token, to render installed apps, enabled addons and
+      published surfaces (AD-3: it may trigger and read, never supply).
 - [ ] Install trigger: `POST /v1/tenants/{t}/apps/{p}` with the user's
       token or an exchanged token carrying `act`.
 - [ ] Cluster side: the director's ingestion endpoint on the kernel gateway,

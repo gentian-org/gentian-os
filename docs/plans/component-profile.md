@@ -204,8 +204,35 @@ type ExposureSpec struct {
     // AuthMode is mandatory. "none" is explicit and greppable.
     // +kubebuilder:validation:Enum=oidc;jwt;bearer;basic;signature;none
     AuthMode AuthMode     `json:"authMode"`
+    // Paths this entry serves. Empty means the whole host.
     Paths    []string     `json:"paths,omitempty"`
+    // DenyPaths are refused even where Paths admits them. Deny wins over
+    // allow regardless of specificity, so a broad allow with narrow denials
+    // is readable rather than a precedence puzzle. Needed for apps whose
+    // public surface is "the site except its admin", e.g. an Odoo website.
+    // +optional
+    DenyPaths []string    `json:"denyPaths,omitempty"`
+    // Source restricts who may call this entry, before authMode is even
+    // considered. The case it exists for is a callback that must come from
+    // one known peer — Collabora's WOPI callbacks are `authMode: none` and
+    // safe only because the caller is pinned. Without a field the restriction
+    // lives in prose and nothing enforces it.
+    // +optional
+    Source   *SourceRestriction `json:"source,omitempty"`
     Backend  BackendRef   `json:"backend"`
+}
+
+// SourceRestriction pins the caller. Exactly one form; both are evaluated at
+// the proxy, not the app.
+type SourceRestriction struct {
+    // CIDRs admitted, after the real client IP is resolved at the edge.
+    // +optional
+    CIDRs []string `json:"cidrs,omitempty"`
+    // Component names another installed component whose pods may call this
+    // entry; the operator resolves it to the peer's identity and, at L5, to a
+    // NetworkPolicy. Preferred over CIDRs, which age badly.
+    // +optional
+    Component string `json:"component,omitempty"`
 }
 ```
 
@@ -223,10 +250,12 @@ perimeter approver enables them.
 ```go
 // On the Component (the instance). Written only by the director.
 type ExposureEnablement struct {
-    // Surface names an ExposureSpec entry of the profile whose surface is
-    // "perimeter". authMode is not repeated here: the profile's entry is the
-    // one source, and the enablement cannot weaken it.
-    Surface   string       `json:"surface"`
+    // ExposureName names an ExposureSpec entry of the profile whose surface
+    // is "perimeter". Not called `surface`: that is the enum on the profile's
+    // entry, and one field name meaning two things in adjacent structs is how
+    // a schema starts drifting. authMode is not repeated here either — the
+    // profile's entry is the one source and the enablement cannot weaken it.
+    ExposureName string    `json:"exposureName"`
     // Host is the public hostname. Empty means the entry's default host in
     // the tenant's zone. A vanity host is admitted only if the tenant's
     // approved domains include it; the certificate is obtained by HTTP-01.
@@ -249,7 +278,7 @@ type ExposureEnablement struct {
 }
 ```
 
-Admission: `surface` must name a `perimeter` entry of the referenced
+Admission: `exposureName` must name a `perimeter` entry of the referenced
 profile; `host` must be in the tenant's zone or in the tenant's approved
 domains; `expiresAt` must respect the cluster policy. Who may write one is
 `can_expose` on the tenant, checked by the director.
@@ -284,7 +313,10 @@ exposure:
 
 A profile with any `authMode: none` entry should declare
 `provides: [{name: exposure-policy}]`, and must wherever the cluster sets
-`requireExposurePolicyContract` (the default).
+`requireExposurePolicyContract` (the default). That is an admission check, not
+a CRD validation rule: the requirement lives on the Cluster claim and CRD
+rules cannot read another object. It is refused when the enablement is
+written, which is also the only moment it matters.
 The contract gives the platform, with the tenant's credential from the
 binding, `policy.read`/`policy.write` — the app's public-sharing policy:
 default and maximum object expiry, password required, groups allowed to

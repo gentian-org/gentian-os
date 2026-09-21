@@ -4,12 +4,12 @@
 -- Scope: tenant apps only. System services and shared apps are provisioned by
 -- the cluster administrator through the Director and never appear here, so the
 -- store has no notion of a component class. Ingest rejects any catalogue entry
--- whose ComponentProfile cannot be deployed as class "tenant".
+-- whose ComponentProfile does not list `tenant` in its `tenancy`.
 --
 -- Holds what was removed from ComponentProfile, plus the commercial data that
 -- never belonged in a cluster.
 --
--- Boundary (D11, operator-split-plan §3.6): the store may TRIGGER, it may not
+-- Boundary (AD-3, operator-split-plan §3.6): the store may TRIGGER, it may not
 -- SUPPLY. It calls the director's ingestion endpoint on the kernel gateway,
 -- bearer only. The director then materialises the profile bundle at the
 -- requested digest from the catalogue git repository — never from this
@@ -336,6 +336,13 @@ create index on subscription (plan_id);
 -- be public, and the credentials land in OpenBao through the credential
 -- manager, written as the tenant admin (ui-restructure.md §3). This table
 -- therefore stores no credential either; it records that one was issued.
+--
+-- Revocation travels the same path as the grant and overrides it: the store
+-- POSTs a signed record with granted = false, the director commits it and
+-- deletes the tuple in the same operation, and because git is what the
+-- authorization store is rebuilt from, a later commit beats an earlier
+-- expires_at (operator-split-plan.md §3.8). revoked_at below is therefore a
+-- record of something DELIVERED, never something the cluster polls for.
 --
 -- Provisional, pending this flow: cluster.public_key and entitlement_check
 -- describe a cluster-asks-store protocol that the flow above makes

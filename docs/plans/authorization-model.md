@@ -62,6 +62,7 @@ with the reconcile as the backstop.
 | `app:<t>/<p>#tenant@tenant:<t>` | director | app install |
 | `app:<t>/<p>#admin@group:gentian:tenant:<t>:app-admins#member` | director | app install |
 | `catalogue_entry:<catalogue>/<app>#entitled@tenant:<t>` with `expires_at` | director | signed grant received (ui-restructure §3) |
+| the same tuple, **deleted** | director | signed revocation received — same endpoint, same signature check, committed as a fact; a later commit overrides an earlier `expires_at` (operator-split-plan §3.8) |
 | `group:<g>#member@user:<sub>` | director, from Keycloak's event stream; reconciled with a read-only client | on each membership event; reconcile on an interval and on start |
 
 ## 4. What each enforcement point asks

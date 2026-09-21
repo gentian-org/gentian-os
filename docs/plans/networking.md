@@ -31,12 +31,23 @@ which gives the split its shape:
   budgets, no session code in the path.
 - **Perimeter surfaces on the app's own hostname** — Nextcloud's `/s/*`
   share links, `/remote.php/dav/*`, `/.well-known/*` — cannot leave that
-  hostname, because the app mints the URLs. They are `HTTPRoute`s in
-  `tenant-<t>-dmz` attached to the tenant's listener on the `authenticated`
-  Gateway with a `ReferenceGrant`, carrying their own `SecurityPolicy`
-  (no OIDC) and winning by path precedence. The route's *backend* is still
-  the DMZ proxy, never the app, so the DMZ namespace remains the only thing
-  that receives anonymous traffic.
+  hostname, because the app mints the URLs. A hostname is served by exactly
+  one Gateway — under `mergeGateways` listener uniqueness is class-wide — so
+  these stay on the **`authenticated` Gateway**, where the rest of that
+  hostname already lives. They are `HTTPRoute`s in `tenant-<t>-dmz` admitted
+  by the tenant listener's `allowedRoutes.namespaces.selector`, which selects
+  both `tenant-<t>` and `tenant-<t>-dmz`. (Not a `ReferenceGrant`: that
+  governs cross-namespace backend and secret references, not route
+  attachment, and here route and backend share a namespace anyway.) Each
+  carries its own `SecurityPolicy` with no `oidc` block, which replaces the
+  listener's rather than merging with it, and wins by path precedence. The
+  route's *backend* is still the DMZ proxy, never the app, so the DMZ
+  namespace remains the only thing that receives anonymous traffic.
+
+  The consequence to hold on to: the `perimeter` Gateway serves surfaces on
+  **their own hostname** and the non-HTTP listeners, nothing else. An
+  app-host perimeter path never touches it, which is why the WAF belongs in
+  the DMZ proxy image (§7) and not on a Gateway.
 
 The first kind is a genuine second edge. The second kind is a second policy
 on the first edge, which is as far as the split can go while share links
@@ -134,7 +145,8 @@ flowchart TB
     APP -->|"contracts, L5"| DB
     APP -->|"contracts, L5"| LLM
     APP -->|"integrations, L5"| PEER
-    NET -->|"https, surface: perimeter<br/>own host or app-host paths"| PG
+    NET -->|"https, surface: perimeter<br/>own hostname"| PG
+    NET -->|"https, surface: perimeter<br/>paths on an app's own host"| AG
     NET -->|"smtp / imap / turn"| PG
     NET -->|"port 80 /.well-known/acme-challenge"| ACME
     NET -->|"login, token, JWKS"| PG
@@ -366,7 +378,21 @@ design cannot do for it.
 ## 7. What this changes in the tree
 
 - One `Gateway` becomes two (`authenticated`, `perimeter`) in `kernel-edge`
-  under `mergeGateways`; tenant listeners stay per-zone wildcards.
+  under `mergeGateways`; tenant listeners stay per-zone wildcards. Both
+  Gateways are kernel resources reconciled by the operator from the Cluster
+  claim — a tenant owns `HTTPRoute`s, never a `Gateway`, because listener
+  uniqueness is class-wide once gateways are merged.
+- **Certificates: two cases, two challenges.** A `*.<t>.<kernel>` zone
+  wildcard is issued by **DNS-01** against the kernel domain's provider
+  credential, which `kernel-edge` already holds for external-dns — ACME
+  issues wildcards by DNS-01 only, so HTTP-01 cannot serve this case at all.
+  external-dns creates one `*.<t>.<kernel>` record per tenant at deploy, since
+  a DNS wildcard matches a single label and the kernel domain's own wildcard
+  does not cover a two-label tenant zone. **HTTP-01** is for vanity hosts the
+  *tenant* owns: there the platform deliberately holds no credential to the
+  customer's zone, which is the reason for the restriction and the only place
+  it applies. It was previously stated as a blanket "no DNS delegation", which
+  is not what was meant and would have made the zone wildcard unobtainable.
 - `expose[]` in the profile ([component-profile.md](component-profile.md)
   §5) is the single source for every `HTTPRoute`, `TCPRoute`, `UDPRoute`
   and `SecurityPolicy`; `browserProxy` and `additionalIngresses` retire
@@ -419,7 +445,7 @@ module to serve `www.gentian.org`.
 
 | Piece | What is declared | What the operator derives |
 | --- | --- | --- |
-| Public site | enablement: surface `website` of the Odoo instance, host `www.gentian.org`, `authMode: none`, owner, expiry per policy | a listener on the `perimeter` Gateway; a certificate by HTTP-01 through the kernel-owned ACME path (no DNS delegation); a DMZ proxy with the profile's path allowlist — `/`, `/shop/*`, `/blog/*`, `/web/image/*`, `/web/content/*`, `/website/*` — and its deny list — `/web`, `/odoo`, `/web/login`, `/xmlrpc`, `/jsonrpc`; the Odoo website record mapped to the domain |
+| Public site | enablement: surface `website` of the Odoo instance, host `www.gentian.org`, `authMode: none`, owner, expiry per policy | a listener on the `perimeter` Gateway; a certificate by HTTP-01 through the kernel-owned ACME path — HTTP-01 because this is a domain the *tenant* owns and the platform deliberately holds no credential to their zone; wildcards under the kernel domain are a different case (§7); a DMZ proxy with the profile's path allowlist — `/`, `/shop/*`, `/blog/*`, `/web/image/*`, `/web/content/*`, `/website/*` — and its deny list — `/web`, `/odoo`, `/web/login`, `/xmlrpc`, `/jsonrpc`; the Odoo website record mapped to the domain |
 | DNS | the tenant creates `www CNAME gentian.gentian.cloud`; the apex needs an `A`/ALIAS to the cluster address, since an apex cannot be a CNAME | in tunnel mode, cloudflared publishes the hostname from the same enablement |
 | Editing | nothing new: editors use the backend host `erp.gentian.gentian.cloud` — `surface: gateway`, `authMode: oidc`, L1–L2 — and switch to the `gentian.org` website in Odoo's editor | no backend path is reachable anonymously on either host |
 | Customer portal, checkout | a second, separate enablement if wanted: `/web/login`, `/my/*`, `/shop/checkout/*` as app-validated (L3) paths under `authMode: none` — a declared choice, off by default | the same proxy, a wider allowlist |
@@ -520,7 +546,7 @@ platform rather than remembered by a person.
 | Level | Field | Default | At expiry |
 | --- | --- | --- | --- |
 | Cluster policy | `defaultLifetime`, `maxLifetime` per surface kind; `reviewInterval` | none — a cluster that sets nothing behaves as today | enablements above `maxLifetime` are refused at the director |
-| Tenant enablement | `expiresAt` (≤ policy maximum), `reviewAt` | from `defaultLifetime` when the policy sets one | the operator removes the proxy, route and listener; the certificate is not renewed; the enablement stays in git as history |
+| Tenant enablement | `expiresAt` (≤ policy maximum), `reviewAt` | always set, from `defaultLifetime`, which the cluster policy is required to carry | the operator removes the proxy, route and listener; the certificate is not renewed; the enablement stays in git as history |
 | App objects | via `exposure-policy`: default and maximum object expiry | from the tenant's enablement, capped by cluster policy | the app expires the object; for opaque apps the enablement's own expiry is the only bound |
 
 The director notifies the owner and the perimeter approver ahead of

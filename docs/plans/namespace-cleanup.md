@@ -62,7 +62,7 @@ the catalogue.
 | CNPG `kernel-postgres` for Keycloak, Keycloak extensions, OpenFGA | — (Bitnami `infra-postgresql` in `gentian-infra-<stage>`) | `kernel-data` | kernel identity does not share a data plane with tenants |
 | CNPG operator | `cnpg-system` | `kernel-data` | |
 | cert-manager, self-signed ClusterIssuers | `cert-manager` | `kernel-edge` | |
-| Envoy Gateway, GatewayClass | `envoy-gateway-system` | `kernel-edge` | tenant Gateways stay in `tenant-<t>` |
+| Envoy Gateway, GatewayClass, both `Gateway` objects | `envoy-gateway-system` | `kernel-edge` | a Gateway is a **kernel resource**: created and reconciled by the operator, configured from the Cluster claim, controlled by the cluster administrator. A tenant gets *listeners* on it and owns `HTTPRoute`s only. Under `mergeGateways` listener uniqueness is class-wide, so a tenant that could create a Gateway could claim another tenant's hostname or collide with the ACME listener |
 | external-dns | `external-dns` | `kernel-edge` | |
 | cloudflared (tunnel mode), `cf-tunnel` ExternalSecret | operator chart, `gentian-system` | `kernel-edge` | |
 | Kyverno, baseline policies | `kyverno` | `kernel-admission` | |
@@ -110,8 +110,9 @@ None today. The first candidate:
 api containers, one image); every app in
 `Tenant.spec.apps` as a provider-helm Release; and what the operator
 creates around them — Namespace, ResourceQuota, NetworkPolicies, Services,
-ConfigMaps, ExternalSecrets, provisioning and export Jobs, the tenant
-Gateway and HTTPRoutes.
+ConfigMaps, ExternalSecrets, provisioning and export Jobs, its HTTPRoutes. The
+Gateways themselves are kernel resources in `kernel-edge`; the tenant's
+listener on them is created by the operator, not by the tenant.
 
 **`tenant-platform` is one of these.** The platform is a tenant whose realm
 is the kernel realm (`Tenant/platform`, `isolation.keycloakRealm: kernel`,

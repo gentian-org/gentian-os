@@ -205,27 +205,73 @@ director consumes all three verdicts and issues none.
 
 ### 3.5 API
 
-The existing contract is kept so callers switch by URL, not by rewrite:
+The existing contract is kept so callers switch by URL, not by rewrite.
+
+**Every write has a read.** The director is the only writer, so it is also the
+only place that knows the current state, and a UI that cannot read it has to
+guess. The App Store must show which apps a tenant already has, at which
+version, with which addons and integrations enabled; the console must show
+which users, groups, policies and surfaces exist before it can offer a
+sensible change. Both render from these reads, with the signed-in human's
+token, filtered by that account's relations. No endpoint below exists as a
+write without its matching read, and a new write verb ships with one.
+
+Reads are authorised by `can_view` on a tenant and by `can_configure` or
+`can_audit` on a cluster, never by the write relation: a tenant administrator
+must be able to see the exposure inventory they cannot change.
 
 ```
-GET    /v1/tenants                              (list, filtered by what the caller may see)
-GET    /v1/tenants/{t}
+Writes
 POST   /v1/tenants/{t}                          deploy a definition (today: kubectl gentian tenants deploy)
 DELETE /v1/tenants/{t}                          undeploy
-GET    /v1/tenants/{t}/apps
 POST   /v1/tenants/{t}/apps/{p}                 → 202 + Location
 DELETE /v1/tenants/{t}/apps/{p}                 → 202
 PUT    /v1/tenants/{t}/apps/{p}/addons
-GET    /v1/tenants/{t}/resources | /plans | /usage | /report
+PUT    /v1/tenants/{t}/apps/{p}/config          per-install overrides
 PUT    /v1/tenants/{t}/resources
 PUT    /v1/tenants/{t}/policies/{kind}/{name}   backup, grants, export schedules (§2.2)
+PUT    /v1/tenants/{t}/integrations/{contract}  AppGrant: integration consent; `can_grant`
+POST   /v1/tenants/{t}/users | /groups          identity writes; `can_manage_users`
+PUT    /v1/tenants/{t}/users/{u} | DELETE       (§4 open: whether identity deserves its own PEP)
+PUT    /v1/tenants/{t}/exposure/{inst}/{name}   enable a perimeter surface; `can_expose`
+DELETE /v1/tenants/{t}/exposure/{inst}/{name}   disable it; `can_expose`
+POST   /v1/tenants/{t}/entitlements             a signed grant or revocation from the App Store (§3.8)
+POST   /v1/tenants/{t}/requests/{kind}          export / restore — creates the request CR, secrets via ESO reference only
 POST   /v1/clusters/{c}/shared-apps/{p}         install a `tenancy: shared` profile into `shared-<app>` (AD-4); `can_install_shared`
 PUT    /v1/clusters/{c}/security/{kind}/{name}  PlatformSecurityPolicy, PolicyException, overlays (§7.1)
+PUT    /v1/clusters/{c}/exposure                the cluster exposure ceiling; `can_approve`
 PUT    /v1/clusters/{c}/network | /v1/tenants/{t}/network   egress intent (§7.2)
-POST   /v1/tenants/{t}/requests/{kind}          export / restore — creates the request CR, secrets via ESO reference only
-GET    /v1/operations/{id}                      status of a 202
 PUT    /v1/files/{path}                         break-glass raw edit; FGA relation `can_edit_raw`, always audited
+
+Reads
+GET    /v1/tenants                              list, filtered by what the caller may see
+GET    /v1/tenants/{t}
+GET    /v1/tenants/{t}/apps                     installed, with version, digest and health
+GET    /v1/tenants/{t}/apps/{p}                 config, addons, granted requirements, integrations, surfaces
+GET    /v1/tenants/{t}/apps/{p}/addons          what is enabled now — what the store renders as checked
+GET    /v1/tenants/{t}/resources | /plans | /usage | /report
+GET    /v1/tenants/{t}/policies/{kind}[/{name}]
+GET    /v1/tenants/{t}/integrations             grants in force, and what each profile could consume
+GET    /v1/tenants/{t}/users | /groups          for the console's user administration
+GET    /v1/tenants/{t}/exposure                 surfaces declared, enabled, owner, expiry, review
+GET    /v1/tenants/{t}/exposure/log | /objects  condensed proxy log; public objects via the contract
+GET    /v1/tenants/{t}/network
+GET    /v1/tenants/{t}/entitlements             what this tenant may install, and until when
+GET    /v1/tenants/{t}/requests/{kind}[/{id}]
+GET    /v1/clusters/{c}/shared-apps
+GET    /v1/clusters/{c}/security/{kind}[/{name}]
+GET    /v1/clusters/{c}/exposure                the ceiling, for rendering what an approver may choose
+GET    /v1/clusters/{c}/network
+GET    /v1/operations/{id}                      status of a 202
 ```
+
+The App Store is an ordinary caller of the reads. It holds no cluster state of
+its own and no identity toward the cluster: it renders what the director
+returns for the signed-in tenant administrator, which is what lets it show an
+app as installed, an addon as enabled, or a surface as published, instead of
+offering a choice the cluster has already made. That is a read direction AD-3
+did not originally have; it does not weaken "may trigger, may not supply",
+because reading state is not supplying an artefact.
 
 `/v1/files` exists so "sole writer" survives real operations: a platform
 operator who needs to hand-edit a claim does it through the director, and the
@@ -267,6 +313,37 @@ leaves an inert, unreferenced CR; commit-then-apply leaves git asserting a
 state the Tenant webhook rejects on every sync. The `catalogue-<repo>`
 ApplicationSet that syncs every profile today is retired with this: the
 cluster holds only the profiles a tenant installed (namespace-cleanup §3.4).
+
+### 3.8 Entitlements: granted and revoked by the same path
+
+An entitlement arrives as a signed fact from the App Store and becomes a
+`catalogue_entry#entitled@tenant:<t>` tuple with `expires_at` as its condition.
+Expiry alone is not enough: a refund, a downgrade or an abuse takedown has to
+take effect when it happens, not when the grant would have lapsed.
+
+So **revocation travels the same path as the grant**, and overrides it:
+
+```
+POST /v1/tenants/{t}/entitlements
+  { coordinate, granted: false, reason, issued_at, key_id, signature }
+```
+
+The director verifies the signature against the store's published key, commits
+the revocation as a fact in `gentian-deployments`, and deletes the tuple in the
+same operation as the commit. Because the record in git is what the store is
+rebuilt from on start (AD-12), **a later commit wins over an earlier
+`expires_at`**: a revocation committed today ends the entitlement today, and a
+rebuild replays the revocation rather than the grant it supersedes.
+
+What revocation does *not* do is stop a running app. The tuple governs
+install and upgrade; the pull credential in OpenBao and its `ExternalSecret`
+are removed with it, so the next pod start cannot pull, while running pods are
+unaffected. That is deliberate — a billing event should not take a tenant's
+data offline — and it is the behaviour to state rather than discover.
+
+`revoked_at` in the store's schema is therefore a record of something
+delivered, never something the cluster polls for: the cluster holds no
+identity toward the store and never calls it.
 
 ### 3.7 Concurrency
 
