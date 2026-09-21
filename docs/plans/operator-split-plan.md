@@ -124,7 +124,7 @@ manager). Built from `cmd/director`. It has:
   director verifies again rather than trusting the hop.
 - An OpenFGA client for `Check` (already in
   [openfga_client.go](../../internal/authz/openfga_client.go)) against the
-  store the authz bridge publishes in the `openfga-runtime` Secret.
+  store whose id the operator's bootstrap Job publishes in the `openfga-runtime` Secret.
 - A working checkout of `gentian-deployments` and the **only** push
   credential. Commits are authored as the human (`Name <email>` from the
   token), committed by the director, and **signed** with a key only the
@@ -257,11 +257,12 @@ type catalogue_entry
 
 Two things to settle while touching the model. First, v0 defines
 `admin: [user] or member`, which makes every member an admin; the director
-must not inherit that. Second, the authz bridge syncs Keycloak groups into
-tuples on a 5-minute requeue
-([authz_bridge_reconciler.go](../../internal/controller/authz_bridge_reconciler.go));
-a freshly granted admin waits up to that long. Acceptable, but the director
-should surface "not yet synced" distinctly from "denied".
+must not inherit that. Second, memberships are not synced: the director passes the token's groups
+to OpenFGA as contextual tuples on every `Check` (AD-12), so a freshly
+granted role is effective from the caller's next token and there is no
+"not yet synced" state to surface. The 5-minute bridge
+([authz_bridge_reconciler.go](../../internal/controller/authz_bridge_reconciler.go))
+is retired with the split; its store bootstrap becomes an operator Job.
 
 Each relation gets a case in `tests.fga.yaml` before the director calls it.
 

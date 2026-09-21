@@ -60,9 +60,9 @@ Separations that are load-bearing, whatever one person happens to hold:
   ([iam.md §1.3](../design/iam.md) already states this; today's model
   contradicts it with `can_launch: … or admin from parent`). Enforced in
   three places, none of them the UI: the target model derives `can_launch`
-  from `member` alone (§3.1); the authz bridge refuses to sync an account
-  that is in both `gentian:tenant:<t>:admins` and `:members` and raises it
-  in the decision log; and app OIDC clients are granted to member groups
+  from `member` alone (§3.1); every enforcement point refuses a token whose
+  groups include both `gentian:tenant:<t>:admins` and `:members` when it
+  builds the contextual tuples, and records the refusal in the decision log; and app OIDC clients are granted to member groups
   only, so an admin token is not accepted by any app even if presented.
   The same holds one layer up: a platform-role account (`gentian:platform:*`)
   is a member of no tenant, `tenant-platform` included.
@@ -91,8 +91,14 @@ one open item is scoping Crossplane's providers per role (roadmap 1.16).
 | --- | --- | --- |
 | **Director** | the git push key | read-only, plus create/update on `appprofiles` — the single write, for materialise-on-reference |
 | **Credential manager** | none of its own — it exchanges the caller's token | read on `CredentialRequirement`, write on the handover record |
-| **Authz bridge** | Keycloak admin, to sync groups into OpenFGA | read on `Tenant`, `AppGrant` |
 | **Gateway ext-auth shim** | none — verifies the caller's token, asks OpenFGA | none |
+
+There is no bridge between Keycloak and OpenFGA (AD-12). Membership is read
+from the token by whichever enforcement point is asked, and passed to
+OpenFGA as contextual tuples; the store holds only structure, written by
+the operator (installs, grants, the role-to-group assignments from the
+Cluster claim) and the director (entitlements). Creating the store and
+writing the model is a one-time operator Job, not a running identity.
 
 **Workloads** — everything else: system services, shared instances, tenant
 apps, both UI backends, DMZ proxies, agents. None has a ServiceAccount with

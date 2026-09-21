@@ -39,9 +39,11 @@ headers or an exchanged token.
 
 One OpenFGA type per CRD kind (`cluster`, `tenant`, `app`, `catalogue_entry`,
 `document`, …), one relation per verb a PEP exposes. A new kind ships with its
-type and a case in `authz/model/*/tests.fga.yaml`, or it does not ship. RBAC
-exists only as the Keycloak-group → tuple bridge — never as a second decision
-path.
+type and a case in `authz/model/*/tests.fga.yaml`, or it does not ship. Group
+membership is never stored in the authorization graph: it arrives with each
+request as contextual tuples from the caller's token, so there is one source
+of identity and no copy to drift. RBAC is only the assignment of a role to a
+group — never a second decision path.
 
 ## 5. Authority is derived, never granted sideways
 
