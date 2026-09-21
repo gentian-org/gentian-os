@@ -31,7 +31,7 @@ BFF in `backend/app`.
 
 | Held | Where | Why it is authority |
 | --- | --- | --- |
-| Tile visibility computed in Python from group names | `backend/app/core/shell_apps.py` — `is_admin`, `user_is_platform_admin`, `is_tenant_admin` | an authorization decision; `can_launch` tuples exist in OpenFGA and nothing reads them (G2) |
+| Tile visibility decided in Python | `backend/app/core/shell_apps.py` — `is_admin`, `user_is_platform_admin`, `is_tenant_admin` | The **rule** is right and stays: entitlement is membership of the app's own group and nothing else, a base with activated addons is entitled by those addons' groups, and an admin account sees admin tiles only. What is wrong is that it is decided here and nowhere else, so an app's hostname goes around it (G3), and that the admin flags are computed from group names rather than received as a verdict. The rule moves into `app#entitled` and the answer comes from the director |
 | The LiteLLM **master key**, read from `llm-sensitive-values` in `platform-kernel` and used to proxy chat | `backend/app/api/routes/llm.py` | the portal pod can spend every tenant's LLM budget; a kernel secret in a tenant-facing process |
 | `patch` on `tenants` (the `app-privilege-requested` annotation) | `chart/templates/rbac.yaml` | a cluster write from a UI, used as a reconcile kick |
 | A ServiceAccount that lists `appprofiles`, `tenants`, `apppackages` cluster-wide | same | reads for every tenant, filtered in Python |

@@ -153,12 +153,17 @@ Specified in [authorization-model.md](authorization-model.md) and
       bootstrap tuple goes: a copied tuple is what R4 exists to prevent, and
       it is one nobody has to remember to remove.
 - [ ] `tenant#can_approve_privilege` for tenant-scope privilege grants.
-- [ ] `app#entitled` — per-app groups gate tiles and routes. Tenant
-      membership alone reaches no app. The group
-      `gentian:tenant:<t>:app:<profile>` is created in the tenant realm at
-      install and the tuple written with it; the tenant administrator decides
-      who goes in. This is also what makes the access review answer the
-      question it is asked.
+- [ ] `app#entitled` — **move the existing rule, do not change it.** The
+      groups and the rule are already in place: the operator creates
+      `gentian:tenant:<t>:app:<profile>` and gentian-ui's `shell_apps.py`
+      already says "entitlement is membership of the app's own group, and
+      nothing else". What is missing is that only the tile list applies it, so
+      an app's hostname bypasses it. Write the tuple at install and have the
+      gateway check `can_use`. Two behaviours to preserve verbatim, both
+      currently in Python: a base with activated addons is entitled by the
+      *addon* groups and not its own, and an admin account sees admin tiles
+      only. The access review becomes honest as a consequence, not as the
+      goal.
 - [ ] `app#can_write_credential` and the credential manager's `Check` before
       any OpenBao write; OpenBao policy bounds the path, not the decision.
 - [ ] `shared_instance` with `offered_to`/`can_bind`, so a shared install is

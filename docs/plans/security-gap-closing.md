@@ -148,6 +148,6 @@ each lands.
 
 Not folded in, decided elsewhere: 1.28 (superseded by G7 as rewritten),
 1.26 (the per-tenant desktop replaces the BFF client), 2.4 and 2.8
-(superseded by AD-3). The per-app `can_use` relation is no longer out of scope: `app#entitled` is in model.fga, so tenant membership alone reaches no app. Additions the
+(superseded by AD-3). The per-app `can_use` relation is no longer out of scope: `app#entitled` is in model.fga. It encodes a rule the portal already enforces; what it adds is a second enforcement point, since today only the tile list applies it and an app's hostname goes around it. Additions the
 cleanup creates for the roadmap itself are in
 [artefacts/roadmap-additions.md](artefacts/roadmap-additions.md).

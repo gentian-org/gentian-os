@@ -97,10 +97,22 @@ type app
     define tenant: [tenant]
     define admin: [group#member]                  # gentian:tenant:<t>:app-admins — inside the app only
 
-    # Per-app entitlement. Being a member of the tenant is not enough: a user
-    # reaches an app only through its own group, written at install and
-    # populated by the tenant administrator. This is what makes
-    # ListUsers("who can use app A") answer the question it is asked.
+    # Per-app entitlement. This is NOT new behaviour — it is the rule
+    # gentian-ui already enforces in shell_apps.py ("entitlement is membership
+    # of the app's own group, and nothing else"), expressed where a second
+    # enforcement point can read it. Today the tile list is the only thing
+    # applying it, so knowing an app's hostname bypasses it (G3).
+    #
+    # Which groups entitle is the director's to compute, exactly as the portal
+    # computes it from the catalogue:
+    #   base with no activated addons → its own group
+    #   base with activated addons    → the activated addons' groups, and NOT
+    #                                   the base's own: a base is entered for
+    #                                   the addons inside it, so someone
+    #                                   entitled to none of them has nothing to
+    #                                   do there
+    # Writing the base group in the second case would widen access past what
+    # the portal grants today.
     define entitled: [group#member]               # gentian:tenant:<t>:app:<profile>
 
     # least privilege per account: an admin account launches nothing
