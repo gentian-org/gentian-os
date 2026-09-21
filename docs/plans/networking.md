@@ -241,7 +241,7 @@ word someone wrote.
 
 | Class | Hostname | `authMode` | L1 | L2 | Backend |
 | --- | --- | --- | --- | --- | --- |
-| Tenant app, browser | `<app>.<t>.<kernel>` or vanity | `oidc` | tenant-realm session | `can_use` | app in `tenant-<t>` |
+| Tenant app, browser | `<app>.<t>.<kernel>` or vanity | `oidc` | tenant-realm session | `can_use` — the app's own entitlement group, the same relation the desktop's tiles resolve, so the route cannot be more open than the tile | app in `tenant-<t>` |
 | Tenant app, API | same host, API paths, or an `api.` host | `bearer` / `jwt` | JWT verified, no redirect | `can_use` | app |
 | Tenant desktop | `desktop.<t>.<kernel>` or vanity | `oidc` | tenant-realm session | `can_enter` on `tenant:<t>` — members and admins both reach the desktop; which tiles they see is `can_launch` per app, answered by the director | desktop BFF in `tenant-<t>` |
 | Shared app | `<app>.<t>.<kernel>` per granted tenant | `oidc` | tenant-realm session | `can_use` via the tenant's grant | instance in `shared-<app>` |

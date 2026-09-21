@@ -95,7 +95,9 @@ token to the credential manager rather than holding an OpenBao token
   ([roles-and-authorizations.md](roles-and-authorizations.md) §1,
   [iam.md §1.3](../design/iam.md)). The desktop enforces none of this — it
   renders what the director's read API returns for the account's relations,
-  and `can_launch` derives from `member` alone. A tenant admin never sees
+  and `can_launch` derives from the app's **own entitlement group**, not from
+  tenant membership — the rule `shell_apps.py` enforces today, answered by the
+  director instead of recomputed here. A tenant admin never sees
   "deploy tenant" because no relation grants it, not because a flag hides
   it; a member never sees "install app" for the same reason.
 - **The platform is a tenant** (AD-10). `Tenant/platform` adopts the kernel

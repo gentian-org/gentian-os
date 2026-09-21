@@ -72,6 +72,7 @@ with the reconcile as the backstop.
 | PEP | Object | Relations |
 |---|---|---|
 | Gateway ext-auth shim | `tenant:<t>` for the desktop host; `app:<t>/<p>` for an app host; `cluster:<c>` for a kernel tool host | `can_enter`; `can_use`; `can_configure`, `can_audit` |
+| — | — | *The gateway and the desktop resolve the **same** relation on the **same** object: `can_use`, and `can_launch` which derives from it. One rule, two enforcement points, no second implementation to drift. The portal stops computing entitlement in Python when the director answers it; keeping both is how the tile list and the route come to disagree.* |
 | Credential manager | `app:<t>/<p>` for a component's secrets; `cluster:<c>` for kernel and system ones | `can_write_credential`; `can_configure` |
 | Director, tenant verbs | `tenant:<t>` | `can_install_app`, `can_set_plan`, `can_set_policy`, `can_grant`, `can_manage_users`, `can_expose`, `can_approve_privilege`, `can_view` |
 | Director, install | `catalogue_entry:<cat>/<app>` with user `tenant:<t>` | `can_install` |
