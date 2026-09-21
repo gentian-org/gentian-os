@@ -1,6 +1,6 @@
 # Gentian Cloud OS — Security Architecture
 
-**Status:** Draft v0.3 · Architecture reference. The normative one-page rules are [security-principles.md](../security-principles.md); what is implemented versus target is §3.0, with the closing work in [roadmap.md](../roadmap.md) §1.
+**Status:** Draft v0.3 · Architecture reference. The normative one-page rules are [security-principles.md](../security-principles.md); what is implemented versus target is §3.0, with the closing work in [plans/security-gap-closing.md](../plans/security-gap-closing.md) and the longer-dated items in [roadmap.md](../roadmap.md) §1.
 **Scope:** Identity, authorization, and isolation for a fully cloud-based, Kubernetes-native sovereign cloud OS.
 
 ---
@@ -9,7 +9,7 @@
 
 Gentian needs an identity and access layer that is (a) simpler and more modern than traditional directory-centric stacks, (b) fully open-source and sovereignty-friendly, (c) first-class for **four principal types** — humans, AI agents, applications/workloads, and assets — and (d) designed so that a *compromised principal of any type does the least possible damage*.
 
-This document explains the models behind the principles, the concrete Keycloak + OpenFGA architecture, and how application permissions are modeled (AppProfile declaration, IntegrationBinding wiring, and AppGrant ReBAC layer). Where a section describes a control, §3.0 says whether the code has it.
+This document explains the models behind the principles, the concrete Keycloak + OpenFGA architecture, and how application permissions are modeled (profile declaration, IntegrationBinding wiring, and AppGrant ReBAC layer). Where a section describes a control, §3.0 says whether the code has it.
 
 The guiding idea, borrowed from Android's sandbox model: **least privilege is not a single access-control model — it is the intersection of several independent layers, each enforcing a different concern, so that breaching one layer does not collapse the others.**
 
@@ -96,8 +96,8 @@ changes only when the code does.
 | Control | Status | Where |
 | --- | --- | --- |
 | Keycloak per-tenant realms, kernel realm, OIDC for portal and apps | Implemented | Suze composition, `identity_reconciler.go` |
-| Keycloak group → OpenFGA tuple sync | Implemented, **retired by AD-12** | `authz_bridge_reconciler.go`; membership becomes contextual tuples taken from the caller's token on each `Check`, and is never stored |
-| `AppGrant` → tuples | Implemented | `app_grant_reconciler.go`; grants are structure and stay stored, but AD-12 moves the write to the director |
+| Keycloak group → OpenFGA tuple sync | Implemented as a poll; **the poll is retired by AD-12** | `authz_bridge_reconciler.go` polls on a timer with an admin credential. Membership stays stored as `group#member` tuples, but as a projection the director writes from Keycloak's event-listener feed, reconciled by a read-only client (R7) |
+| `AppGrant` → tuples | Implemented | `app_grant_reconciler.go`; grants are structure and stay stored, but AD-12 makes the director the store's only writer |
 | Any PEP calling OpenFGA `Check` | **Target** | console client exists, no caller; no gateway ext-auth |
 | Tenant namespace + NetworkPolicy default-deny egress | Implemented | `internal/kernel/netpolicy/` — tenant namespaces only |
 | NetworkPolicy in kernel, system and shared namespaces | **Target** | every builder is tenant-scoped; the only policies in the tree are two vendored Bitnami templates (gap G28) |
@@ -113,7 +113,7 @@ changes only when the code does.
 | Console admin-action audit | Implemented | BFF `audit_log.py` |
 | Decision log, request-id correlation | **Target** | — |
 | Commit / image signing and verification | **Target** | — |
-| Rotation rolling app workloads (Reloader) | Partial | annotation on the operator only |
+| Rotation rolling app workloads (Reloader) | Partial | annotation on the operator Deployment and a few kernel services; no composition adds it, so no tenant app is rolled (gap G13) |
 | Admission guard against literal secrets in `Release.set` | **Target** | — |
 
 ### 3.1 Component roles
@@ -122,7 +122,8 @@ changes only when the code does.
 |---|---|---|
 | **Keycloak** | Authentication authority + token issuer (*who you are*). **Per-tenant realms** (not Organizations-as-isolation); kernel realm brokers login; service accounts for agents; RFC 8693 Token Exchange; SAML/OIDC brokering. See [iam.md](iam.md), [admin-console.md](admin-console.md). | Apache 2.0 |
 | **OpenFGA** | ReBAC authorization PDP (*what you may do*). Relationship tuples for humans/agents/apps/assets; Conditions + contextual tuples for ABAC; the derived-ceiling schema. | Apache 2.0 |
-| **Provisioning bridge** | Reconciles `IntegrationBinding` credentials and `AppGrant` into the graph. The identity half — Keycloak group/role/agent events and SCIM synced into tuples — is **retired by AD-12**, not pending: identity is never copied into the authorization store, and only the director writes the structure that is stored. | **Partial** (bindings and grants done; identity sync retired rather than finished) |
+| **Director** | The store's only writer (AD-2, AD-12). Membership arrives on Keycloak's event-listener feed and is written as `group#member` tuples, a projection reconciled toward Keycloak by a read-only client and never edited in place; structure — role-to-group assignments, installs, grants, entitlements — is written from the CRs in the same operation as the commit it reflects. Keycloak decides no permission; OpenFGA changes no identity. | **Target** (the director does not exist yet) |
+| **Provisioning bridge** | What does this today: reconciles `IntegrationBinding` credentials and `AppGrant` into the graph, and polls Keycloak on a timer with an admin credential for group membership. The poll is **retired by AD-12** in favour of the event feed; the credential is why. | **Partial**, and superseded |
 | **MAC backbone** | K8s namespaces per tenant, NetworkPolicy default-deny egress in those namespaces, Kyverno pod-security admission (implemented); the same default-deny in the platform tiers, service mesh + SPIFFE/SPIRE (target). | Apache 2.0 / OSS |
 | **PEP** | Named enforcement points — Envoy Gateway ext-auth, the director, the credential manager, the MCP gateway — calling OpenFGA `Check`, ideally over the OpenID **AuthZEN** Authorization API so PDPs stay swappable. Target: no PEP calls `Check` today (§3.0). | OSS |
 | **ITAM source of truth (optional)** | NetBox (best license fit) / GLPI / Snipe-IT feeding device & asset objects into the graph. | Apache 2.0 / GPL / AGPL |
@@ -131,7 +132,7 @@ changes only when the code does.
 
 For a greenfield, cloud-only sovereign OS:
 
-- **Keycloak-native identity.** Keycloak owns identities per tenant realm, backed by its own Postgres. Provisioning is event/SCIM-based.
+- **Keycloak-native identity.** Keycloak owns identities per tenant realm, backed by its own Postgres, and is the only place membership is changed. OpenFGA holds a projection of it, fed by Keycloak's event listener, to compute *may* — authority is separated, not copies (principle 2).
 - **OpenFGA ReBAC** replaces coarse group-only RBAC. One relationship graph models humans, agents, apps, and assets — no role explosion.
 - **Layered isolation** (§2) — MAC backbone, identity, and authorization are independent enforcement planes.
 
@@ -139,7 +140,7 @@ For a greenfield, cloud-only sovereign OS:
 
 ```mermaid
 flowchart TD
-    Shell["Gentian shell<br>portal + Admin Console"]
+    Shell["Gentian desktops<br>tenant desktop per tenant · platform console<br>= tenant-platform's desktop (AD-10)"]
     
     Users(("Humans /<br>Agents login"))
     
@@ -147,7 +148,7 @@ flowchart TD
         Keycloak["KEYCLOAK (IdP / AuthN)<br>realms/orgs, clients, service accounts"]
     end
     
-    Bridge["Provisioning bridge:<br>Integration Binding + AppGrant + ITAM conn.<br>(structure only; the write moves to the director, AD-12)"]
+    Director["DIRECTOR (the store's only writer)<br>membership projection from Keycloak events<br>+ structure: installs, grants, entitlements<br>+ Integration Binding + ITAM conn."]
     
     AgentsWorkloads["Agents / Workloads"]
     Apps["Apps / API Gateway<br>(Kong/Envoy/app) ◄── PEP"]
@@ -158,28 +159,39 @@ flowchart TD
     
     MAC["MAC BACKBONE (peer to all of the above, not inside it):<br>K8s namespaces/tenant · NetworkPolicy default-deny<br>egress · service mesh + SPIFFE · Kyverno/OPA admission"]
     
-    Shell -->|"Admin BFF, Tenant.spec.apps,<br>IntegrationBindings"| Keycloak
+    Shell -->|"user and group administration"| Keycloak
     Users --> Keycloak
     Keycloak -.->|"OIDC / OAuth2 / SAML brokering<br>RFC 8693 Token Exchange → tokens"| Apps
     
+    Keycloak -->|"event-listener feed: membership changes<br>(read-only client reconciles the projection)"| Director
     Keycloak -->|"(optional) SPIFFE/SPIRE → SVIDs (mTLS)<br>for autonomous workload agents"| AgentsWorkloads
     
     AgentsWorkloads -->|"acts via OBO token (≤ user)"| Apps
     
-    Shell -->|"installs, grants, entitlements<br>(written through the director, AD-12)"| Bridge
-    Bridge -->|"writes tuples (structure only)"| OpenFGA
-    Apps -->|"AuthZEN Check<br>+ the token's groups as contextual tuples"| OpenFGA
+    Shell -->|"installs, grants, entitlements<br>(every write goes through the director)"| Director
+    Director -->|"writes every tuple"| OpenFGA
+    Apps -->|"AuthZEN Check<br>+ contextual tuples: task TTL, acting_for,<br>device posture — never memberships"| OpenFGA
     
     ITAM -.->|"device/asset + contract-consumer edges"| OpenFGA
 ```
 
-**Decision flow (target):** (1) principal authenticates to Keycloak → OIDC token (agents via client-credentials or Token Exchange carrying `act`). (2) Identity/role/group/agent events + SCIM flow through the bridge → relationship tuples in OpenFGA; `IntegrationBinding` reconciles cross-app credentials; `AppGrant` reconciles tenant-approved ReBAC edges. (3) PEP receives request + token, calls OpenFGA `Check` (over AuthZEN), passing token claims as contextual tuples for session context. (4) OpenFGA traverses the graph (principal → group/org → resource/device, plus task-scoped delegation with TTL Conditions, plus derived-ceiling) → allow/deny. (5) Independently, the MAC backbone enforces tenant isolation and egress *regardless* of the authZ result. (6) Sensitive ops use consistent reads; the Watch API streams tuple changes to an audit log. Today steps (1), (2) and (5) run; (3), (4) and (6) are target.
+**Decision flow (target):** (1) principal authenticates to Keycloak → OIDC token (agents via client-credentials or Token Exchange carrying `act`). (2) Keycloak's event listener pushes membership changes to the director, which writes them as `group#member` tuples — a projection it reconciles toward Keycloak with a read-only client, never edits in place (AD-12); the director writes structure (installs, grants, entitlements) from the CRs in the same operation as the commit; `IntegrationBinding` reconciles cross-app credentials. (3) PEP receives request + token, calls OpenFGA `Check` (over AuthZEN), passing runtime facts — a task's TTL, `acting_for`, device posture — as contextual tuples. Memberships are already in the graph and no group travels in a token for a platform decision. (4) OpenFGA traverses the graph (principal → group/org → resource/device, plus task-scoped delegation with TTL Conditions, plus derived-ceiling) → allow/deny. (5) Independently, the MAC backbone enforces tenant isolation and egress *regardless* of the authZ result. (6) Sensitive ops use consistent reads; the Watch API streams tuple changes to an audit log. Today steps (1) and (5) run; (2) runs only in its superseded form — the polling bridge with an admin credential, not the event feed, and no director; (3), (4) and (6) are target.
 
 ### 3.4 Application permissions — catalogue contracts and grants
 
 Cross-app and kernel access in Gentian is declared in **`AppProfile`**, wired by **`IntegrationBinding`**, and constrained by **`AppGrant`** (tenant-approved ReBAC subset). This mirrors Android's manifest (`<uses-permission>` = intent) vs. the separate platform/user grant — **the app declares; it never grants itself access to another tenant or app.**
 
 Full CRD field reference and deployment flow: [app-catalogue.md](app-catalogue.md).
+
+This section describes the CRDs as implemented. The cleanup replaces them:
+one kind, `ComponentProfile`, for system services, apps and agents (AD-4);
+`kernelRequirements`, `optionalIntegrations` and `security` folded into
+`requires` and `integrations`, so a profile cannot grant itself egress any
+more than it can grant itself a pod-security waiver (AD-5); `ingress`,
+`browserProxy` and the public surfaces folded into `expose[]`, each entry
+carrying a mandatory `authMode` and a `gateway` or `perimeter` surface
+(AD-6). The shape below is what the code has today, not the target —
+[component-profile.md](../plans/component-profile.md) is the target.
 
 #### Terminology — manifest language vs CRD fields
 
@@ -349,7 +361,7 @@ The most restrictive layer wins (§2.1).
 
 ### 3.6 Physical assets & ITAM
 
-Model devices as plain **resource objects** now: `type device` with relations `owner`, `assigned_user`, `operator`, `maintainer`, inheriting org scope (`device:printer-3f#can_print@user:alice`; agents the same way via `#operator@agent:print-bot`). Evolve toward full ITAM only when inventory grows: add **NetBox** (Apache 2.0, best license fit) / **GLPI** / **Snipe-IT** as the asset source of truth, projected into OpenFGA tuples by the same provisioning bridge. Keep this layer thin.
+Model devices as plain **resource objects** now: `type device` with relations `owner`, `assigned_user`, `operator`, `maintainer`, inheriting org scope (`device:printer-3f#can_print@user:alice`; agents the same way via `#operator@agent:print-bot`). Evolve toward full ITAM only when inventory grows: add **NetBox** (Apache 2.0, best license fit) / **GLPI** / **Snipe-IT** as the asset source of truth, projected into OpenFGA tuples by the director, on the same path as every other write. Keep this layer thin.
 
 ### 3.7 Automation (n8n-like workflows)
 
