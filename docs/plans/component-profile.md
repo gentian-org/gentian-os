@@ -257,8 +257,11 @@ type ExposureEnablement struct {
     // profile's entry is the one source and the enablement cannot weaken it.
     ExposureName string    `json:"exposureName"`
     // Host is the public hostname. Empty means the entry's default host in
-    // the tenant's zone. A vanity host is admitted only if the tenant's
-    // approved domains include it; the certificate is obtained by HTTP-01.
+    // the tenant's zone, which the zone's DNS-01 wildcard already covers. A
+    // vanity host is admitted only if the tenant's approved domains include
+    // it, and its certificate is obtained by HTTP-01 — the platform holds no
+    // credential to a customer's DNS zone and does not want one
+    // (networking.md §7).
     // +optional
     Host      string       `json:"host,omitempty"`
     // Owner is the Keycloak subject that enabled the surface. Set by the

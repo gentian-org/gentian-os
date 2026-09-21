@@ -17,7 +17,7 @@ fleets:
 | Edge | Serves | Policy | Backends |
 | --- | --- | --- | --- |
 | **Authenticated edge** | every `expose[]` entry with `surface: gateway` | a Keycloak session per tenant zone, JWT for bearer clients, ext-auth for *may this user reach this app* | services in `tenant-<t>`, `shared-<app>`, `kernel-control` |
-| **Perimeter edge** | every `surface: perimeter` entry a tenant enabled; non-HTTP listeners | no session; the entry's `authMode`; rate limit, body limits, WAF rules | publishing proxies in `tenant-<t>-dmz`; system edges in `system-<function>-dmz` |
+| **Perimeter edge** | perimeter entries on **their own hostname**, and the non-HTTP listeners. Perimeter *paths on an app's own host* stay on the authenticated edge, because a hostname is served by one Gateway | no session; the entry's `authMode`; rate limit and body limits at the listener. The WAF is not here: it runs in the publishing-proxy image, which is the one component both kinds of perimeter entry pass through | publishing proxies in `tenant-<t>-dmz`; system edges in `system-<function>-dmz` |
 
 In Gateway API terms: two `Gateway` objects, `authenticated` and
 `perimeter`, both in `kernel-edge`, with Envoy Gateway's `mergeGateways`
@@ -75,7 +75,7 @@ flowchart TB
         AG["authenticated Gateway<br/>L0 TLS, rate limit<br/>L1 session per tenant zone (OIDC) / JWT for bearer<br/>L2 ext-auth: can_use"]
         SHIM["ext-auth shim"]
         ACME["ACME HTTP-01 solver"]
-        PG["perimeter Gateway<br/>L0 only<br/>per-route authMode, WAF, body limits<br/>TCP/UDP listeners"]
+        PG["perimeter Gateway<br/>L0 only<br/>own-hostname surfaces<br/>rate and body limits<br/>TCP/UDP listeners"]
     end
 
     subgraph KCTL["kernel-control"]
@@ -325,7 +325,7 @@ design cannot do for it.
 | **App to system service** (database, S3, LLM) | Service-to-Service on the contract port | L5; the granted credential | none |
 | **Outbound mail from an app** | app → Postfix in `system-mail-dmz` on the relay port; DKIM signed by the milter in `system-mail` (keys stay there); out on `:25` | the tenant's SMTP credential from the requirement | outbound reputation is shared per cluster address |
 | **Inbound mail** | `:25` `TCPRoute` → Postfix in `system-mail-dmz` (spam filter, policy) → LMTP to the Dovecot store in `system-mail` | Postfix | a Postfix CVE lands on an MTA with no mailboxes and no keys |
-| **User's external mail client** | only if the tenant enabled the surface: IMAP `:993` → Dovecot proxy, submission `:587` → Postfix, both in `system-mail-dmz`, verifying the broker's credential and relaying inward with one master credential | the broker's per-user credential, checked at the edge | not HTTP: no L1–L2; default off — webmail apps reach Dovecot internally over the contract, and most tenants never need the public ports |
+| **User's external mail client** | only if a perimeter approver enabled the surface: IMAP `:993` → Dovecot proxy, submission `:587` → Postfix, both in `system-mail-dmz`, verifying the broker's credential and relaying inward with one master credential | the broker's per-user credential, checked at the edge | not HTTP: no L1–L2; default off — webmail apps reach Dovecot internally over the contract, and most tenants never need the public ports |
 | **Vanity domain, direct link** | `cloud.example.org`, its own listener and certificate; its own edge session, silent via `id.<kernel>` | L1–L2 as usual | one extra silent redirect per host |
 | **Vanity domain, embedded in the desktop** | works only if the desktop is on the same site — `desktop.example.org` — because the edge cookie is per site | same | a desktop on `<kernel>` cannot embed an app on `example.org` (third-party cookie); serve the desktop on the vanity host |
 | **Logout from the desktop** | RP-initiated logout at Keycloak → back-channel to the zone's edge client → session gone | L1 | app cookies live on, unreachable |
