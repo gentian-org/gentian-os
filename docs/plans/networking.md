@@ -122,7 +122,7 @@ flowchart TB
 
     NET -->|"https, surface: gateway"| AG
     AG -->|"headers or token"| SHIM
-    SHIM -->|"Check with contextual tuples"| FGA
+    SHIM -->|"Check"| FGA
     AG --> DESK
     AG --> SAPP
     AG --> CON
@@ -205,7 +205,7 @@ higher one.
 | --- | --- | --- | --- | --- |
 | L0 | TLS, DNS, rate limit | is this traffic well-formed and within budget? | Envoy listener, `BackendTrafficPolicy` | none |
 | L1 | Edge session | who is this, in which realm? | Envoy `SecurityPolicy.oidc` (one confidential client per tenant zone in that tenant's realm; the kernel realm for `console.<kernel>`) and `SecurityPolicy.jwt` for bearer clients | Keycloak token: `sub`, realm, groups |
-| L2 | Reachability | may this person reach this component at all? | ext-auth shim → OpenFGA `can_use` on `app`, with the token's groups as contextual tuples; cached per `(sub, route)` for the session | the same token |
+| L2 | Reachability | may this person reach this component at all? | ext-auth shim → OpenFGA `can_use` on `app` over the stored membership projection (AD-12); cached per `(token, route)` for the session | the same token |
 | L3 | App session and authorization | what may they do inside? | the app: its own OIDC login (silent, SSO), its own session cookie, its own model from the token's groups | the app's own session |
 | L4 | Delegated access | may this agent or peer act, and for whom? | MCP gateway and contract bindings: RFC 8693 exchanged tokens carrying `act`; per-tenant contract credentials | agent identity + delegating human |
 | L5 | Network | may these two pods talk at all? | NetworkPolicy derived from `requires` and `integrations`; Kyverno | ServiceAccount, namespace labels |
@@ -255,17 +255,17 @@ behind it returns 404 at the listener.
   says. Which of thirty apps implement back-channel logout stops mattering.
   Refresh tokens are session-bound and die with it; offline tokens are
   disabled, because they would survive it.
-- **Rights live in the token, so a rights change mints a new token.**
-  Membership arrives as contextual tuples (AD-12), which means a grant or
-  revocation is invisible until Keycloak issues a token that reflects it.
-  The rule: **a membership change revokes the user's Keycloak sessions.**
-  The operator, on applying a group change, calls the admin API's logout for
-  that user; back-channel logout ends every edge session; the next request
-  is a silent re-login with the new groups. A removed administrator loses
-  the role within one request, not one token lifetime. Grants ride the same
-  path, or the next refresh — Keycloak recomputes the groups claim at every
-  issuance. The hard bound is the access-token lifetime, which is why it
-  stays short (five minutes) regardless of how long the session may live.
+- **Platform rights follow the store; app rights follow the token.**
+  Membership reaches OpenFGA from Keycloak's events through the director
+  within milliseconds (AD-12), and the shim evicts its cached decisions on
+  OpenFGA's changes stream, so a revoked platform right is gone on the next
+  request without any token being touched. Apps, however, read groups from
+  their own tokens, so for *their* rights the rule stays: **a membership
+  change revokes the user's Keycloak sessions.** The operator, on applying
+  a group change, calls the admin API's logout for that user; back-channel
+  logout ends every edge session; the next request is a silent re-login
+  with the new groups. The hard bound for app-level rights is the
+  access-token lifetime, which is why it stays short (five minutes).
 - **Fail closed, cached allows carry.** If OpenFGA is unreachable, decisions
   already cached stay valid until they expire; new logins wait. Nothing not
   previously allowed gets through.
@@ -320,13 +320,12 @@ design cannot do for it.
 - **Cross-tenant collaboration is federation or public links, never a
   shared session.** That is correct, and it means the catalogue should say
   which apps federate (Nextcloud, Matrix) and which only share by link.
-- **Group claims size the edge cookie.** With memberships as contextual
-  tuples, the edge session's token must carry groups, and Envoy stores the
-  session in cookies. A user in many `gentian:tenant:<t>:app:*` groups can
-  exceed header limits. Mitigation: the edge client's scope maps only the
-  `gentian:` groups for that realm; if that is not enough, the shim
-  resolves groups from Keycloak by `sub` and caches them, and the cookie
-  carries the id token only. Decide before wave 1 of the gap plan.
+- **The edge token carries no groups.** Platform decisions are answered
+  from the membership projection in OpenFGA (AD-12), so the edge client's
+  scope omits the groups claim and Envoy's session cookie stays small
+  whatever the number of `gentian:tenant:<t>:app:*` groups a user holds.
+  Apps' own clients keep receiving groups; that token never passes through
+  the edge session.
 - **Bearer routes and browser routes on one hostname need one policy each.**
   A `SecurityPolicy` attaches per `HTTPRoute`, so an app's API paths are a
   separate route from its browser paths — which the profile already

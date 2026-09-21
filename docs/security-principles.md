@@ -29,6 +29,12 @@ it, lets the issuer's verdict stand.
 admission policy, NetworkPolicy, CRD validation. A component that answers two
 of these is where the framework forks.
 
+*Who* includes which groups the person belongs to: membership is an identity
+fact, and Keycloak is the only place it is changed. OpenFGA holds a
+**projection** of it, written only from Keycloak's events, to compute *may*;
+it never alters it, and Keycloak never decides a permission. What the rule
+separates is authority, not copies.
+
 ## 3. Few, named policy-enforcement points; everything else consumes a verdict
 
 The gateway (browser and API traffic), the director (configuration writes),
@@ -49,10 +55,11 @@ principle 3 as a licence for a bypassable one.
 One OpenFGA type per CRD kind (`cluster`, `tenant`, `app`, `catalogue_entry`,
 `document`, …), one relation per verb a PEP exposes. A new kind ships with its
 type and a case in `authz/model/*/tests.fga.yaml`, or it does not ship. Group
-membership is never stored in the authorization graph: it arrives with each
-request as contextual tuples from the caller's token, so there is one source
-of identity and no copy to drift. RBAC is only the assignment of a role to a
-group — never a second decision path.
+membership is in the graph only as a projection of Keycloak, written by the
+director from Keycloak's events and reconciled toward Keycloak, never edited
+in place; contextual tuples carry runtime facts — a task's TTL, `acting_for`,
+device posture — never a person's memberships. RBAC is only the assignment of
+a role to a group — never a second decision path.
 
 ## 5. Authority is derived, never granted sideways
 

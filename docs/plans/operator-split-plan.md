@@ -242,12 +242,14 @@ for entitlement — and writes the structure tuples listed in
 authorization-model.md §3. It replaces
 [authz/model/v0/model.fga](../../authz/model/v0/model.fga), whose
 `admin: [user] or member` makes every member an admin; nothing of v0 is
-inherited. Memberships are not synced: the director passes the token's
-groups to OpenFGA as contextual tuples on every `Check` (AD-12), so a
-freshly granted role is effective from the caller's next token and there is
-no "not yet synced" state to surface. The 5-minute bridge
+inherited. Memberships reach the store from Keycloak's event
+stream through the director (AD-12), so a freshly granted role is effective
+on the next check within milliseconds and the only "not yet synced" state
+is the reconcile's, which it reports. The 5-minute bridge
 ([authz_bridge_reconciler.go](../../internal/controller/authz_bridge_reconciler.go))
-is retired with the split; the director creates the store and model itself.
+is retired with the split; the director receives Keycloak's events, runs
+the reconcile with a read-only client, and creates the store and model
+itself.
 
 Each relation gets a case in `tests.fga.yaml` before the director calls it.
 

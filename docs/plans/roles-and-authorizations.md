@@ -60,9 +60,10 @@ Separations that are load-bearing, whatever one person happens to hold:
   ([iam.md §1.3](../design/iam.md) already states this; today's model
   contradicts it with `can_launch: … or admin from parent`). Enforced in
   three places, none of them the UI: the target model derives `can_launch`
-  from `member` alone (§3.1); every enforcement point refuses a token whose
-  groups include both `gentian:tenant:<t>:admins` and `:members` when it
-  builds the contextual tuples, and records the refusal in the decision log; and app OIDC clients are granted to member groups
+  from `member` alone (§3.1); the director refuses a membership event that
+  would put an account in both `gentian:tenant:<t>:admins` and `:members`,
+  the reconcile flags any such account, and both are recorded in the
+  decision log; and app OIDC clients are granted to member groups
   only, so an admin token is not accepted by any app even if presented.
   The same holds one layer up: a platform-role account (`gentian:platform:*`)
   is a member of no tenant, `tenant-platform` included.
@@ -93,15 +94,17 @@ one open item is scoping Crossplane's providers per role (roadmap 1.16).
 | **Credential manager** | none of its own — it exchanges the caller's token | read on `CredentialRequirement`, write on the handover record |
 | **Gateway ext-auth shim** | none — verifies the caller's token, asks OpenFGA | none |
 
-There is no bridge between Keycloak and OpenFGA (AD-12). Membership is read
-from the token by whichever enforcement point is asked, and passed to
-OpenFGA as contextual tuples; the store holds only structure, and **only
-the director writes it** — installs, grants, entitlements and the
-role-to-group assignments from the Cluster claim, each tuple written in the
-same operation as the commit it reflects. The store is a projection of git:
-the director creates it and the model on first start and rebuilds the
-tuples from the repository, so nothing is lost if it is dropped. The
-operator reads. The vocabulary is
+The polling bridge is gone (AD-12); what replaces it is an event path.
+Keycloak's event listener pushes membership changes to the director, which
+writes them as `group#member` tuples; a reconcile with a **read-only**
+Keycloak client corrects the projection toward Keycloak — never the other
+way. Everything else in the store is structure, and **only the director
+writes any of it** — installs, grants, entitlements and the role-to-group
+assignments from the Cluster claim, each tuple written in the same
+operation as the commit it reflects. The store is a projection of Keycloak
+and git: the director creates it and the model on first start and rebuilds
+the tuples from both, so nothing is lost if it is dropped. The operator
+reads. The vocabulary is
 [authorization-model.md](authorization-model.md).
 
 **Workloads** — everything else: system services, shared instances, tenant
@@ -143,7 +146,7 @@ Three invariants, one per class, each a scripted test:
 | Question | Answered by | Fed by |
 | --- | --- | --- |
 | Who is this? | Keycloak — realm `kernel` for platform roles, realm `<t>` for tenant roles | groups in the token |
-| May they configure this? | OpenFGA, asked by the **director** | the token's groups as contextual tuples; structure (installs, grants, entitlements, role assignments) written by the director |
+| May they configure this? | OpenFGA, asked by the **director** | the membership projection fed by Keycloak's events; structure (installs, grants, entitlements, role assignments) written by the director |
 | May they write this secret? | OpenBao's role bound claims, asked by the **credential manager** | the token's groups |
 | May they reach this app? | OpenFGA, asked by the **gateway ext-auth shim** | the token; a session decision cached per user and route |
 | May this agent do this on their behalf? | OpenFGA, asked by the **MCP gateway** | `acting_for` and the task's TTL |

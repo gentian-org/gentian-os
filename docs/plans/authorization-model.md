@@ -21,31 +21,34 @@ Zanzibar family; each rule names what it prevents.
 | R4 | **One parent relation per type** (`cluster`, `tenant`); derivation is `<relation> from <parent>`, never a copied tuple. | authority granted sideways (principle 5) |
 | R5 | **`but not` only for least-privilege invariants** (`can_use: member … but not admin`). | exclusion logic scattered through permissions |
 | R6 | **Time is a condition** (`with grant_valid`), never a field a caller compares. | expiry checks that some caller forgets |
-| R7 | **Membership is contextual, structure is stored.** A request carries `group:<g>#member@user:<sub>` for the token's `gentian:` groups of that realm; everything else — role-to-group assignments, tenant→cluster, app→tenant, entitlements — is a stored tuple written by the director (AD-12). | a bridge; stale membership |
+| R7 | **Membership is a stored projection of Keycloak; contextual tuples carry runtime facts only.** `group:<g>#member@user:<sub>` is written by the director from Keycloak's event stream and reconciled toward Keycloak with a read-only client; it is never edited in place. Everything else — role-to-group assignments, tenant→cluster, app→tenant, entitlements — is a stored tuple written by the director from CRs (AD-12). Contextual tuples are for a task's TTL, `acting_for`, device posture. | a polling bridge with an admin credential; a second place membership can be changed; groups in every token |
 | R8 | **Every relation ships with three tests**: the grant, the denial for the neighbouring role, the derivation through the parent. | a relation nobody exercised |
 | R9 | The **director is the store's only writer**; the store is a projection of git and is rebuilt from it on start. The operator reads. | two writers; a store that cannot be reconstructed |
 
-## 2. Limits R7 imposes, and where they bite
+## 2. What R7 requires, and what it buys
 
-- OpenFGA caps contextual tuples at **100 per request**. A token with more
-  than ~100 `gentian:` groups cannot be checked; the edge client's scope
-  therefore emits only the groups of the realm it serves, and the shim
-  resolves groups by `sub` if a token still exceeds the cap
-  (networking.md §6).
-- **Reverse queries need a join.** `ListUsers("who can use app A")` answers
-  only from stored tuples plus the contextual ones in the request — it
-  cannot enumerate people it never stored. An access review is therefore
-  OpenFGA (which groups → which role) joined with Keycloak (who is in those
-  groups). SOC 2 evidence (roadmap 1.12) is produced by that join, and the
-  auditor role has read access to both.
-- OpenFGA's own guidance says relying solely on contextual tuples forgoes
-  Zanzibar's main benefit (no lookups at check time) and names a hybrid —
-  stored memberships for persistent facts, contextual for runtime ones —
-  as the usual shape. R7 is a deliberate trade: no sync, no staleness, no
-  bridge holding a Keycloak admin credential; the cost is the join above and
-  the cap. If `ListUsers` over people ever becomes a product need, the
-  change is to store `group#member` tuples fed by Keycloak events (not
-  polling) — a change to R7 only, not to the model.
+R7 is OpenFGA's own hybrid guidance and the Zanzibar shape: persistent
+facts stored, runtime facts contextual. Three invariants keep the
+projection honest, and security principle 2 intact:
+
+- **Only Keycloak's events write membership**, through the director. No
+  admin API, no console, no hand edit ever creates a `group#member` tuple.
+  The feed is Keycloak's event listener SPI pushing signed events; the
+  reconcile uses a client with `view-users` only.
+- **Reconciliation corrects toward Keycloak, never away from it.** Drift is
+  bounded and reported, not trusted.
+- **Contextual tuples never carry a person's memberships.** A request may
+  add a task's TTL, an `acting_for`, a device posture — facts that exist
+  only for that request.
+
+What it buys over a contextual-only design: reverse queries and access
+reviews are native (`ListUsers("who can use app A")` is complete, which
+roadmap 1.12's SOC 2 evidence needs); checks are indexed lookups with no
+per-request tuple cost and no 100-tuple cap; OpenFGA's check cache works;
+and no group has to travel in the edge token, so the session cookie stays
+small. What it costs: an event path and a reconcile job in the director,
+and a projection that lags Keycloak by the event latency — milliseconds,
+with the reconcile as the backstop.
 
 ## 3. Object naming and who writes each tuple
 
@@ -58,7 +61,7 @@ Zanzibar family; each rule names what it prevents.
 | `app:<t>/<p>#tenant@tenant:<t>` | director | app install |
 | `app:<t>/<p>#admin@group:gentian:tenant:<t>:app-admins#member` | director | app install |
 | `catalogue_entry:<catalogue>/<app>#entitled@tenant:<t>` with `expires_at` | director | signed grant received (ui-restructure §3) |
-| `group:<g>#member@user:<sub>` | **nobody** — contextual, per request | — |
+| `group:<g>#member@user:<sub>` | director, from Keycloak's event stream; reconciled with a read-only client | on each membership event; reconcile on an interval and on start |
 
 ## 4. What each enforcement point asks
 
