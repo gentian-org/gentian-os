@@ -25,7 +25,7 @@ manager (3, 9); authority is derived downward, never granted sideways (5).
 | shared | **Shared-apps admin** | `gentian:platform:shared-apps-admin` | installing, upgrading and removing `tenancy: shared` instances; granting and revoking tenants' access to each | director (`/v1/clusters/{c}/shared-apps/…`) |
 | tenant | **Tenant administrator** | `gentian:tenant:<t>:admins` | one tenant: installing apps within entitlements, addons, resource plan within the ceiling, backup policies and export schedules, integration grants (`AppGrant`), approving **tenant-scope** privilege requests — egress beyond the baseline, which leaves the tenant's own namespace (component-profile.md §3.1) — users and groups in the tenant realm. A dedicated account: holds no `members` or `app:*` group, launches no app | director (`/v1/tenants/{t}/…`), the tenant desktop showing admin tiles only |
 | tenant-dmz | **Perimeter approver** | `gentian:tenant:<t>:perimeter` | enabling and disabling a public surface for the tenant, within cluster policy; setting its host, owner and expiry; renewing or revoking at review; the credentials the DMZ proxies hold; reading the tenant's exposure view — surfaces, condensed proxy log, public objects — and revoking an object through the `exposure-policy` contract | director (`/v1/tenants/{t}/exposure/…`) |
-| tenant, one app | **App administrator** | `gentian:tenant:<t>:app-admins` | administration *inside* one installed app — the app's own admin role, reconciled from `privilegedRole`; no platform rights | the app |
+| tenant, one app | **App administrator** | `gentian:tenant:<t>:app:<p>:admins` — per app, and only for a profile that declares a `privilegedRole` | administration *inside* one installed app — the app's own admin role, reconciled from `privilegedRole`; no platform rights | the app |
 | tenant | **Member** | `gentian:tenant:<t>:members`, `gentian:tenant:<t>:app:<profile>` | using the apps they are entitled to | tenant desktop, the apps |
 | any | **Agent** | a Keycloak client per agent, token exchanged with `act` | acting for one human within that human's rights and one task's TTL | MCP gateway, apps |
 | outside the cluster | **Catalogue maintainer** | git host and App Store identity | authoring `ComponentProfile`s; certifying `tenancy` modes and `trustTier` through reviewed pull requests | catalogue repository; the store |
@@ -127,8 +127,8 @@ function of the namespace tier and the profile:
 
 The UI backends are ordinary workloads: the tenant desktop BFF is a
 `tenancy: tenant` component holding a granted database and no credential at
-all — the edge holds the zone's OIDC client and forwards the token
-(networking.md §4, ui-restructure.md §1); the platform-admin console is the same component in
+all — the edge holds the zone's OIDC client and forwards the token to the
+desktop route only (networking.md §4, ui-restructure.md §1); the platform-admin console is the same component in
 `tenant-platform`, the platform tenant whose realm is the kernel realm
 (AD-10). Neither has a line in the enforcement-point table because neither
 decides anything — they relay to the director, and what a desktop shows is

@@ -59,7 +59,15 @@ type tenant
     # roles. A platform administrator acts inside a tenant through the
     # derivation, never by holding the tenant's group: authority comes down the
     # chain (R4, principle 5), so there is no tuple to forget to remove.
-    define admin: [group#member] or admin from cluster   # gentian:tenant:<t>:admins
+    #
+    # operated_by is CONSENT, not structure: this tenant lets the cluster's
+    # administrators act inside it. The director writes it at tenant deploy
+    # and always for tenant:platform; a tenant that administers itself removes
+    # that one tuple, and every platform-admin verb in it — users, secrets,
+    # installs — goes with it. `cluster` above stays: it is what audit and
+    # approval derive through, and it is not removable.
+    define operated_by: [cluster]
+    define admin: [group#member] or admin from operated_by   # gentian:tenant:<t>:admins
     define perimeter_approver: [group#member]  # gentian:tenant:<t>:perimeter
     define member: [group#member]              # gentian:tenant:<t>:members
 
@@ -155,6 +163,15 @@ type shared_instance
     # bound to this backend (component-profile.md §6.1).
     define offered_to: [tenant]
     define can_bind: offered_to
+
+type session
+  relations
+    # A Keycloak session the issuer has ended. Written by the director when a
+    # zone client's back-channel logout arrives, removed once that session's
+    # longest token has expired. The shim asks it at L2; because it is a stored
+    # tuple, every shim replica sees it on the ReadChanges poll it already
+    # runs, and nothing is lost when a replica restarts (AD-13).
+    define revoked: [user]
 
 condition grant_valid(current_time: timestamp, expires_at: timestamp) {
   current_time < expires_at

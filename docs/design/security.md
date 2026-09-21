@@ -479,10 +479,15 @@ app-install time without requiring the operator to be present.
 > tenant, can derive *every* credential on the cluster, kernel identity
 > included, and the per-tenant OpenBao policies in §5 cannot contain it
 > because the derivation happens client-side from one input. Deriving is also
-> not a Job's business. **The credential manager derives and returns.** It is
-> already a named enforcement point (principle 3), it already holds the write
-> path for secrets, and a Job asking it for the one credential it needs gets
-> exactly that and nothing else. The master password then has one reader, and
+> not a Job's business. **The operator derives and writes.** It is already the
+> master password's one reader — it loads it at start and owns the deriver —
+> and it already provisions every requirement. It derives the one credential
+> an install needs, writes it to that app's own OpenBao path, and the Job
+> receives it through its own `ExternalSecret` like any other secret: exactly
+> that credential and nothing else. The credential manager is deliberately
+> *not* the place: its defining property is that it holds no credential of its
+> own and only exchanges a human caller's token, and serving workloads from the
+> master password would end that. The master password keeps one reader, and
 > can move to a KMS or HSM as §6 wants without rewriting the install path.
 
 > **Security note:** the `sha1sum` pipe that appeared in earlier

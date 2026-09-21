@@ -199,8 +199,8 @@ flowchart TB
     style SYS fill:#80808012,stroke:#9a9a9a
     style SMAIL fill:#80808012,stroke:#9a9a9a
     style LEGEND fill:none,stroke:none
-    linkStyle 14,15,16,17,18,19,20,21,22,24,25,28 stroke:#f0883e,stroke-width:2px
-    linkStyle 0,1,2,3,4,5,6,7,8,9,23,26,27 stroke:#3b82f6,stroke-width:2px
+    linkStyle 14,15,16,17,18,19,20,21,22,24,25,26,28 stroke:#f0883e,stroke-width:2px
+    linkStyle 0,1,2,3,4,5,6,7,8,9,23,27 stroke:#3b82f6,stroke-width:2px
     linkStyle 10,11,12,13 stroke:#9a9a9a,stroke-width:1.5px
 ```
 
@@ -226,7 +226,7 @@ higher one.
 | L1 | Edge session | who is this, in which realm? | Envoy `SecurityPolicy.oidc` (one confidential client per tenant zone in that tenant's realm; the kernel realm for `console.<kernel>`) and `SecurityPolicy.jwt` for bearer clients | Keycloak token: `sub`, realm, groups |
 | L1′ | Perimeter authentication | is this credential, signature or source valid? | the **publishing proxy** in the DMZ — a named enforcement point (principle 3): `none`, `basic` and `signature` are verified here and nowhere else. It strips every inbound identity header before forwarding and sets only its own, which is what lets the app trust one at all | the entry's `authMode` credential, or none |
 | L2 | Reachability | may this person reach this component at all? | ext-auth shim → OpenFGA `can_use` on `app` over the stored membership projection (AD-12); cached per `(sub, sid, route)`; a token whose `sid` the shim has seen revoked is denied here | the same token |
-| L3 | App session and authorization | what may they do inside? | the app: the forwarded token where it can consume one, otherwise its own silent SSO login and its own cookie, capped by the profile's `sessionMaxAge` | the forwarded token, or the app's own session |
+| L3 | App session and authorization | what may they do inside? | the app: identity headers set by the gateway, or its own silent SSO login with **its own client and audience** and its own cookie, capped by the profile's `sessionMaxAge`. The edge token itself is forwarded only on a route that declares `forwardToken` — the desktop | identity headers, or the app's own session |
 | L4 | Delegated access | may this agent or peer act, and for whom? | MCP gateway and contract bindings: RFC 8693 exchanged tokens carrying `act`; per-tenant contract credentials | agent identity + delegating human |
 | L5 | Network | may these two pods talk at all? | NetworkPolicy derived from `requires` and `integrations`; Kyverno | ServiceAccount, namespace labels |
 
@@ -261,8 +261,15 @@ behind it returns 404 at the listener.
 - **The edge is the only session authority** (AD-13). One confidential client per
   tenant zone, one cookie on `.<t>.<kernel>` (or the vanity zone),
   established by the code flow against `id.<kernel>` and silent whenever the
-  Keycloak SSO session exists. Everything downstream consumes the forwarded
-  token; nothing downstream runs a code flow of its own. The desktop BFF in
+  Keycloak SSO session exists. No platform component downstream runs a code
+  flow of its own. **The edge token is not handed to every backend**: it
+  carries the director in its audience, so an app that received it could call
+  the director, or a sibling, as the user. The gateway forwards it only on a
+  route whose exposure entry sets `forwardToken` — the desktop, which relays
+  to the director — and gives every other backend identity headers it sets
+  after stripping inbound ones. An app that needs a session of its own runs a
+  silent login with its own client and audience, exactly as it would on a
+  direct link. The desktop BFF in
   particular holds no OIDC client secret: a second confidential client in the
   same realm is a second session with its own lifetime and its own logout,
   and in `tenant-platform` it would put a kernel-realm client secret inside a
@@ -275,14 +282,21 @@ behind it returns 404 at the listener.
   `ReadChanges` changelog on an interval and evicts by subject. OpenFGA has no
   push stream, so that interval is the stated bound on how long a revoked
   right survives.
-- **Logout is a revocation list on the shim.** Envoy Gateway's OIDC filter
-  implements only the local `logoutPath`: there is no back-channel endpoint,
-  and the edge session is a signed cookie in the browser, so there is no
-  server-side session for a logout token to end. The shim is the only
-  component in every request path, so it is where revocation lives. Keycloak's
-  back-channel logout URI for each zone client points at the shim; the shim
-  records the revoked `sid` for the remainder of the token lifetime and denies
-  it at L2. Every app in the zone becomes unreachable whatever its own cookie
+- **Logout is enforced at the shim and recorded by the director.** Envoy
+  Gateway's OIDC filter implements only the local `logoutPath`: there is no
+  back-channel endpoint, and the edge session is a signed cookie in the
+  browser, so there is no server-side session for a logout token to end. The
+  shim is the only component in every request path, so it is where revocation
+  is *enforced* — but it runs as several replicas and must not keep state of
+  its own, or a logout delivered to one replica is unknown to the others and
+  lost on restart. So Keycloak's back-channel logout URI for each zone client
+  points at the **director**, which already receives Keycloak's events and is
+  the store's only writer: it writes `session:<sid>#revoked` and removes the
+  tuple once that session's longest token has expired. Every shim replica
+  sees it on the `ReadChanges` poll it already runs, evicts the session's
+  cached decisions, and denies the `sid` at L2. The poll interval, kept to a
+  second or two, is the stated bound on how long a logged-out session
+  survives. Every app in the zone becomes unreachable whatever its own cookie
   says, and which of thirty apps implement back-channel logout stops
   mattering. Refresh tokens are session-bound and die with the Keycloak
   session; offline tokens are disabled, because they would survive it.
@@ -295,7 +309,7 @@ behind it returns 404 at the listener.
   their own tokens, so for *their* rights the rule stays: **a membership
   change revokes the user's Keycloak sessions.** The operator, on applying
   a group change, calls the admin API's logout for that user; the back-channel
-  logout reaches the shim, which denies the revoked `sid` at L2; the next
+  logout reaches the director, the shim denies the revoked `sid` at L2; the next
   request is a silent re-login with the new groups. The hard bound for
   app-level rights is the **app's own session**, not the access token: L1
   governs whether a request arrives, and does not refresh the group model an
@@ -431,7 +445,7 @@ design cannot do for it.
 - The ext-auth shim is the new enforcement point of
   [security-gap-closing.md](security-gap-closing.md) G3; the per-zone edge
   OIDC clients are created alongside the app clients, each with its
-  back-channel logout URI pointing at the shim, not at the Gateway (§4).
+  back-channel logout URI pointing at the director, not at the Gateway (§4).
   Which component performs that Keycloak write is open: AD-12 retires the
   operator's admin credential, which makes the director the candidate.
 - Mail splits into `system-mail` (Dovecot store, DKIM signer with the keys)

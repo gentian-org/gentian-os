@@ -90,7 +90,7 @@ type ComponentProfileSpec struct {
     Expose []ExposureSpec `json:"expose,omitempty"`
 
     // SessionMaxAge caps the app's OWN session, for apps that establish one
-    // instead of consuming the forwarded token. The edge bounds reachability;
+    // through their own client rather than relying on the gateway's headers. The edge bounds reachability;
     // it does not refresh the group model an app captured at its own login, so
     // this value — not the access-token lifetime — is the bound on what a user
     // may still do inside the app after their rights change (AD-13).
@@ -302,6 +302,14 @@ type ExposureSpec struct {
     // lives in prose and nothing enforces it.
     // +optional
     Source   *SourceRestriction `json:"source,omitempty"`
+    // ForwardToken asks the gateway to pass the edge access token to this
+    // backend. Default false: a backend gets identity headers, not a bearer
+    // that is also valid at the director and at every sibling. Only a
+    // platform-tier component that calls the director on the user's behalf —
+    // the desktop — sets it, and admission refuses it anywhere else (AD-13).
+    // Meaningless on a perimeter entry, which has no session.
+    // +optional
+    ForwardToken bool     `json:"forwardToken,omitempty"`
     Backend  BackendRef   `json:"backend"`
 }
 
@@ -387,7 +395,10 @@ exposure:
   # approver chooses. Usually empty: the control is the enablement, not the mode.
   denyAuthModes: []
   # A `none` surface must provide the exposure-policy contract (§5.2), so the
-  # platform can read and bound the app's public objects.
+  # platform can read and bound the app's public objects. Until a profile
+  # ships its adapter its `none` surfaces cannot be enabled, and the director
+  # says so by name. A cluster in bring-up sets this false explicitly — a
+  # diff someone wrote, per principle 8 — rather than the default being open.
   requireExposurePolicyContract: true
   # Required, with no "absent" case: two optional fields whose joint default is
   # a permanent public surface is not a safe default (principle 8).
@@ -472,6 +483,24 @@ type ComponentStatus struct {
     SharedInstance string `json:"sharedInstance,omitempty"`
 }
 ```
+
+**Availability decides by default, but never silently.** Where the data
+lives is something a tenant is entitled to know before installing and to
+refuse. The director's read of an installable app says which fulfilment an
+install would get, the store and the console show it, and the tenant's app
+entry may pin it:
+
+```yaml
+apps:
+  - profile: collabora
+    fulfilment: auto        # auto (default) | dedicated — never bind to a shared backend
+```
+
+`auto` keeps today's behaviour and the operational freedom above;
+`dedicated` is the tenant saying its data does not go on a backend other
+tenants use, and the reconciler honours it even where an offer exists. There
+is no `shared` value: a tenant cannot demand a backend the platform has not
+offered.
 
 Withdrawing an offer does not uninstall anything: it stops new tenants
 binding. Removing a bound tenant is an uninstall in that tenant, which is the

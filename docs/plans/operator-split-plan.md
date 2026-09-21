@@ -345,7 +345,10 @@ POST /v1/tenants/{t}/entitlements
   { coordinate, granted: false, reason, issued_at, key_id, signature }
 ```
 
-The director verifies the signature against the store's published key, commits
+The director verifies the signature against the store signing keys **pinned
+on the Cluster claim** (`store.signingKeys`, changed only under
+`can_configure`) — never a key fetched at verification time, or whoever
+controls that fetch issues entitlements — commits
 the revocation as a fact in `gentian-deployments`, and deletes the tuple in the
 same operation as the commit. Because the record in git is what the store is
 rebuilt from on start (AD-12), **a later commit wins over an earlier
@@ -404,7 +407,15 @@ identity.
 
 **The App Store** authenticates the same way as any other client of the read
 API and carries the signed-in administrator's token on an install, so it too
-needs no identity of its own (§3.8, AD-3).
+needs no identity of its own (§3.8, AD-3). What that does and does not buy
+should be plain: a sender-constrained token bound to the *store's* key makes
+a stolen token useless, but it does not stop the store itself from issuing a
+request the human never made — the store holds the key. That is accepted:
+the store is operated by Gentian Technologies, every install is still an
+OpenFGA check on the human and a signed commit naming them, and an
+entitlement it could not also forge is required. A store that must be
+unable to forge needs the browser to sign the intent with a key the store
+never sees; that is recorded as the stronger option, not built.
 
 ## 4. Bootstrap: writing configuration before Keycloak exists
 

@@ -11,7 +11,8 @@ evaluated.
 A single-page app cannot keep a confidential client secret or a refresh token
 safely, so something server-side has to hold the session. In this architecture
 that something is the **edge**: the gateway runs the code flow for the whole
-tenant zone and forwards the token inward (networking.md §4). A
+tenant zone and forwards the token to the desktop — and to nothing else
+(networking.md §4). A
 *backend-for-frontend* therefore exists only for same-origin relaying and for
 the small amount of UI state a desktop keeps. It runs no code flow, holds no
 OIDC client secret, and has no Kubernetes RBAC — it is identity **relay**, and
@@ -217,7 +218,8 @@ App Store API ─► director  POST /v1/tenants/{t}/apps/{A}
 
 director:
   1. verify the token (kernel or tenant realm, JWKS)
-  2. verify the grant's signature against the store's published key;
+  2. verify the grant's signature against the store signing keys pinned on
+     the Cluster claim (`store.signingKeys`), never one fetched at the time;
      a denial carries a reason and is logged with the request id
   3. OpenFGA Check: user can_install_app tenant:{t}
      (the entitled tuple exists from a grant committed earlier, or from this one)

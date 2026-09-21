@@ -171,6 +171,9 @@ Specified in [authorization-model.md](authorization-model.md) and
 - [ ] `contract` type with `provider`/`consumer`/`can_consume`, written from
       `AppGrant`. No PEP asks it until G8; the documents stop claiming that
       deleting the tuple revokes a delivered credential.
+- [ ] `tenant#operated_by`: platform administration of a tenant is a
+      removable consent tuple, written at deploy; `session#revoked` written
+      by the director on back-channel logout and read by the shim.
 - [ ] App-admin groups become per app — `gentian:tenant:<t>:app:<p>:admins` —
       and are created only for profiles declaring a `privilegedRole`. The
       cross-app group made a Nextcloud administrator an Odoo administrator.
@@ -189,7 +192,9 @@ Specified in [authorization-model.md](authorization-model.md) and
 - [ ] Keycloak groups, exactly as `artefacts/model.fga` names them — the
       vocabulary check fails otherwise:
       `gentian:platform:{admin,security,auditor,service-admin,shared-apps-admin,break-glass}`
-      and `gentian:tenant:<t>:{admins,members,app-admins,perimeter}`; realm
+      and `gentian:tenant:<t>:{admins,members,perimeter}`, plus per app
+      `…:app:<p>` and, where the profile declares a `privilegedRole`,
+      `…:app:<p>:admins`; realm
       script and console.
 - [ ] **Keycloak event listener** — a new kernel component in
       `kernel-authentication`: an event-listener SPI provider (or the
@@ -230,9 +235,10 @@ Specified in [networking.md](networking.md).
       token, asks `can_use`/`can_enter`, caches per `(sub, sid, route)`,
       evicts by subject on a `ReadChanges` poll (OpenFGA has no push stream),
       denies on a `Check` transport error while previously cached allows
-      carry until they expire; **receives Keycloak's back-channel logout** for
-      every zone client and denies a revoked `sid` at L2 (AD-13);
-      stateless, gRPC, topology-aware.
+      carry until they expire; denies a `sid` the director has recorded as
+      `session:<sid>#revoked`, which every replica reads on the same poll
+      (AD-13) — the back-channel logout itself goes to the director, so the
+      shim stays stateless; gRPC, topology-aware.
 - [ ] DMZ publishing proxy image: generic Envoy/nginx with config rendered
       per surface — path allow/deny, `authMode` adapter (basic via the
       broker's passdb, bearer via JWKS, signature via HMAC from OpenBao),
@@ -292,6 +298,11 @@ Specified in [component-profile.md](component-profile.md).
       `kernelRequirements`, `optionalIntegrations`, `security`;
       `integrations`; `provides`; `secrets`; `expose[]` with mandatory
       `authMode` and `surface`; `extensions`; `hooks`.
+- [ ] **`exposure-policy` adapter for Nextcloud** as an extension container
+      — the first one, because with `requireExposurePolicyContract` on no
+      `none` surface can be enabled without it; Docmost and the meeting apps
+      follow. `forwardToken` on `expose[]`, refused by admission outside the
+      desktop profile; `fulfilment: auto|dedicated` on the tenant's app entry.
 - [ ] `ExposureEnablement` on the instance; cluster exposure policy on the
       Cluster claim (§5.1); `exposure-policy` contract (§5.2).
 - [ ] Fulfiller selection: default per contract on the Cluster claim,
