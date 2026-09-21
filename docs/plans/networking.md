@@ -64,7 +64,7 @@ flowchart TB
     end
 
     subgraph KAUTH["kernel-authentication / -authorization"]
-        KC["Keycloak<br/>id.&lt;kernel&gt; — the issuer"]
+        KC["Keycloak<br/>id.&lt;kernel&gt;<br/>realm endpoints public, path-allowlisted;<br/>/admin, master realm, metrics internal"]
         FGA[("OpenFGA")]
     end
 
@@ -101,7 +101,7 @@ flowchart TB
     NET -->|"https, surface: gateway"| AG
     NET -->|"https, surface: perimeter<br/>own host or app-host paths"| PG
     NET -->|"smtp / imap / turn"| PG
-    NET -->|"login, JWKS"| KC
+    NET -->|"login, token, JWKS"| PG
     NET -->|"port 80 /.well-known/acme-challenge"| ACME
 
     AG -. "verify JWT" .-> KC
@@ -131,6 +131,7 @@ flowchart TB
     APP -->|"relay port"| MTA
     APP -->|"integrations, L5"| PEER
     SAPP -->|"contracts, L5"| DB
+    PG -->|"/realms/* only — admin, master, metrics internal"| KC
 
     classDef auth fill:#1f5fbf33,stroke:#3b82f6,stroke-width:1.5px
     classDef perim fill:#d9731a33,stroke:#f0883e,stroke-width:1.5px
@@ -148,8 +149,8 @@ flowchart TB
     style SYS fill:#80808012,stroke:#9a9a9a
     style LEGEND fill:none,stroke:none
     linkStyle 0,5,6,7,8,9,10,11,12,19,20,21 stroke:#3b82f6,stroke-width:2px
-    linkStyle 1,2,4,13,14,15,16,17,18 stroke:#f0883e,stroke-width:2px
-    linkStyle 3,22,23,24,25,26 stroke:#9a9a9a,stroke-width:1.5px
+    linkStyle 1,2,3,4,13,14,15,16,17,18,27 stroke:#f0883e,stroke-width:2px
+    linkStyle 22,23,24,25,26 stroke:#9a9a9a,stroke-width:1.5px
 ```
 
 Tunnel mode changes nothing above: cloudflared publishes hostnames to the
@@ -188,10 +189,10 @@ word someone wrote.
 | Shared app | `<app>.<t>.<kernel>` per granted tenant | `oidc` | tenant-realm session | `can_use` via the tenant's grant | instance in `shared-<app>` |
 | Platform console | `console.<kernel>` | `oidc` | **kernel**-realm session | `can_configure` / `can_audit` | console BFF in `kernel-control` |
 | Director API | `api.<kernel>` | `bearer` | JWT, any realm; the director verifies again | its own OpenFGA check | director |
-| Identity provider | `id.<kernel>` | `none` — it *is* the issuer | — | — | Keycloak in `kernel-authentication`; brute-force and rate limits at L0 |
+| Identity provider | `id.<kernel>` | `none` — it *is* the issuer; a kernel-owned perimeter surface on the `perimeter` Gateway with a **path allowlist**: `/realms/<r>/protocol/openid-connect/*`, `/realms/<r>/login-actions/*`, theme assets. `/admin/*`, the `master` realm, metrics and health are served on an internal hostname only (roadmap 1.6) | — | — | Keycloak in `kernel-authentication`; brute-force detection per realm, per-IP and per-username rate limits, body limits at L0 |
 | Perimeter, HTTP | app host (paths) or own host | per entry | — | — | proxy in `tenant-<t>-dmz` |
 | Perimeter, TCP/UDP | own port | protocol-native | — | — | `system-mail-dmz` (edge MTA, Dovecot proxy), `system-turn` |
-| ACME HTTP-01 | any host, `/.well-known/acme-challenge/*`, port 80 | `none` | — | — | cert-manager solver in `kernel-edge`; the one kernel-owned perimeter path |
+| ACME HTTP-01 | any host, `/.well-known/acme-challenge/*`, port 80 | `none` | — | — | cert-manager solver in `kernel-edge`; with the realm endpoints, one of exactly two kernel-owned perimeter surfaces |
 
 Nothing is routable without a class. A hostname with no `expose[]` entry
 behind it returns 404 at the listener.
@@ -291,10 +292,18 @@ design cannot do for it.
   A `SecurityPolicy` attaches per `HTTPRoute`, so an app's API paths are a
   separate route from its browser paths — which the profile already
   expresses as two `expose[]` entries with different `authMode`s.
-- **`id.<kernel>` and the ACME path are perimeter by nature** and belong to
-  the kernel. They are the only kernel-owned entries with `authMode: none`,
-  and both need L0 protection: brute-force detection on Keycloak, a tight
-  rate limit on the ACME path.
+- **The issuer is the kernel's largest public surface, and it cannot be
+  otherwise.** Browsers authenticate by redirect, so `/realms/*` is public
+  by the nature of OIDC — the same for every identity provider. What is
+  avoidable is exposing the rest of Keycloak: `/admin/*`, the `master`
+  realm, metrics and health go on an internal hostname, and the public
+  route is a path allowlist. With the ACME path these are the only
+  kernel-owned `authMode: none` entries, and both carry L0 controls:
+  brute-force detection per realm, per-IP and per-username rate limits, a
+  tight limit on the ACME path. A closed enterprise tenant can go further by
+  requiring client certificates on `/realms/<t>/*` — a per-realm policy that
+  does not touch public tenants. Passkeys for administrators remove the
+  password from the most-attacked form on the platform.
 - **App-issued credentials remain the weakest link** — app passwords for
   DAV and IMAP, TURN credentials, share tokens. Their lifetime is their only
   control. The broker's job is to make issuance, listing and revocation
