@@ -120,7 +120,10 @@ apps (console, credential-manager UI, Headlamp when opted in), its members
 are the platform admins. It runs under the same quota, policy and authority
 model as any tenant and holds nothing the others do not — a compromised
 platform desktop yields platform-admin *sessions*, bounded by OpenFGA and
-the director, not kernel credentials. Two exceptions, both in the operator:
+the director, not kernel credentials. That holds only because the desktop
+holds no OIDC client secret: the edge is the session authority (AD-13), so
+the kernel realm's confidential client lives on the `authenticated` Gateway
+in `kernel-edge`, never in a tenant namespace. Two exceptions, both in the operator:
 the realm is adopted rather than created, and the tenant cannot be deleted
 (a realm-disable Job against the kernel realm would lock every admin out).
 

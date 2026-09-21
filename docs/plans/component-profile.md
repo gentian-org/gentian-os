@@ -89,6 +89,15 @@ type ComponentProfileSpec struct {
     // +optional
     Expose []ExposureSpec `json:"expose,omitempty"`
 
+    // SessionMaxAge caps the app's OWN session, for apps that establish one
+    // instead of consuming the forwarded token. The edge bounds reachability;
+    // it does not refresh the group model an app captured at its own login, so
+    // this value — not the access-token lifetime — is the bound on what a user
+    // may still do inside the app after their rights change (AD-13).
+    // Required when the app runs its own login; meaningless otherwise.
+    // +optional
+    SessionMaxAge *metav1.Duration `json:"sessionMaxAge,omitempty"`
+
     // Extensions are containers shipped inside the component's own pod. The
     // only escape hatch, and deliberately one that cannot create a
     // cluster-scoped object.

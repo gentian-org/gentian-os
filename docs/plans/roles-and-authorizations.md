@@ -121,8 +121,9 @@ function of the namespace tier and the profile:
 | `tenant-<t>-dmz` | one credential: the surface's app password or scoped token | ingress on the surface's paths; egress to one backend service and port |
 
 The UI backends are ordinary workloads: the tenant desktop BFF is a
-`tenancy: tenant` component holding its realm's OIDC client secret and a
-granted database; the platform-admin console is the same component in
+`tenancy: tenant` component holding a granted database and no credential at
+all — the edge holds the zone's OIDC client and forwards the token
+(networking.md §4, ui-restructure.md §1); the platform-admin console is the same component in
 `tenant-platform`, the platform tenant whose realm is the kernel realm
 (AD-10). Neither has a line in the enforcement-point table because neither
 decides anything — they relay to the director, and what a desktop shows is

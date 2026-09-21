@@ -8,12 +8,14 @@ see or do X" is a verdict it received from a named enforcement point (AD-1,
 [security-principles.md](../security-principles.md) §3), never a branch it
 evaluated.
 
-The one thing a browser UI cannot do without a server is hold its own OIDC
-session: a single-page app cannot keep a confidential client secret or a
-refresh token safely. So each UI may have a *backend-for-frontend* whose whole
-job is token custody — cookie in, bearer out — plus same-origin relaying where
-a browser needs it. That backend is identity **relay**, not authority: it has
-no Kubernetes RBAC and no credential of its own beyond the OIDC client secret.
+A single-page app cannot keep a confidential client secret or a refresh token
+safely, so something server-side has to hold the session. In this architecture
+that something is the **edge**: the gateway runs the code flow for the whole
+tenant zone and forwards the token inward (networking.md §4). A
+*backend-for-frontend* therefore exists only for same-origin relaying and for
+the small amount of UI state a desktop keeps. It runs no code flow, holds no
+OIDC client secret, and has no Kubernetes RBAC — it is identity **relay**, and
+after the edge terminates OIDC it is not even that.
 
 Where each UI runs is [architectural-decisions.md](architectural-decisions.md)
 AD-10 and AD-3; this document is about what each one is allowed to be.
@@ -40,11 +42,14 @@ BFF in `backend/app`.
   BFF from the same image on the tenant's own origin: no separate
   deployment, no state of its own.
 - The **tenant desktop BFF** runs in `tenant-<t>` as a `tenancy: tenant`
-  component of that tenant. It holds: the OIDC client secret for that
-  tenant's realm, the session cookie ↔ bearer exchange, per-viewer
-  preferences and the notification inbox (UI state, SQL in the tenant's own
-  database, granted as a requirement), and the same-origin reverse proxy
-  that embedded windows need. Nothing else.
+  component of that tenant. It holds: per-viewer preferences and the
+  notification inbox (UI state, SQL in the tenant's own database, granted as
+  a requirement), and the same-origin reverse proxy that embedded windows
+  need. Nothing else. In particular **no OIDC client secret and no session of
+  its own** — the edge holds the zone's one confidential client and forwards
+  the token, so the desktop consumes an identity rather than establishing
+  one. That is what keeps a kernel-realm client secret out of
+  `tenant-platform`.
 - Tiles are `GET /v1/tenants/{t}/apps?viewer=me` on the director's read API:
   the list comes back already filtered by `can_launch` for the caller. The
   BFF does not know what an admin is.
@@ -101,9 +106,10 @@ token to the credential manager rather than holding an OpenBao token
   has authority — the operator, the director, the credential manager. The
   platform tenant is undeletable and its realm is adopted, never created or
   disabled, which is the one change the identity reconciler needs.
-- **Per tenant, not shared, until certified.** The BFF holds a realm's OIDC
-  client secret and its users' sessions — per-tenant state in one instance
-  is exactly what AD-4 refuses for `tenancy: shared`. The profile certifies
+- **Per tenant, not shared, until certified.** The BFF holds one tenant's UI
+  state and relays on one tenant's origin — per-tenant state in one instance
+  is exactly what AD-4 refuses for `tenancy: shared`. (It no longer holds a
+  client secret; the edge does.) The profile certifies
   `[tenant]` today; when the BFF is stateless-per-request or verifies the
   tenant natively, `shared` is added to the list and the platform admin may
   choose it per instance (component-profile.md §1) — a deployment decision,

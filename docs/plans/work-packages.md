@@ -40,9 +40,14 @@ Specified in [operator-split-plan.md](operator-split-plan.md) §3, §5, §6.
       `X-Gentian-Actor` ignored; BFF and CLI send the user's token.
 - [ ] `cmd/director`, `internal/director/{api,authn,authz,gitops}`; plain
       Deployment, N replicas, no controller-runtime.
-- [ ] Authentication: JWKS verification for kernel and tenant realms;
-      DPoP-bound tokens and signed intents for privileged writes
-      (ui-restructure §3, the relay cannot replay).
+- [ ] Authentication: JWKS verification for kernel and tenant realms.
+      **Sender-constrained tokens (DPoP, RFC 9449) for non-browser callers
+      only** — the CLI, the App Store's install call, agent tokens — where a
+      credential is held over time by something that can keep a key. Browser
+      traffic is out of scope: the edge cookie never reaches JavaScript and
+      the token stops at the gateway (AD-13). Scope before committing:
+      Keycloak DPoP support, client configuration, and proof generation in
+      the CLI and the store.
 - [ ] Authorization: OpenFGA `Check` per verb against model v1 (WP-3);
       decision log entry per check with the request id.
 - [ ] Git backend: copy of `applifecycle/gitops*.go`; commits authored as
@@ -131,7 +136,7 @@ Specified in [authorization-model.md](authorization-model.md) and
       namespace-cleanup §2.1.
 - [ ] Reconcile: periodic and on start, `view-users` client only, corrects
       toward Keycloak, reports drift; flags admin+member accounts.
-- [ ] Ext-auth shim subscribes to OpenFGA's changes stream and evicts
+- [ ] Ext-auth shim polls OpenFGA's `ReadChanges` changelog and evicts
       cached decisions (WP-4).
 - [ ] OpenFGA on its own CNPG cluster or pooled database with a reserved
       connection limit, isolated from Keycloak's login load (AD-8).
@@ -150,8 +155,11 @@ Specified in [networking.md](networking.md).
       clients from WP-2), JWT for bearer routes, ext-auth for reachability;
       the edge client's scope emits no groups.
 - [ ] **Ext-auth shim** — new component in `kernel-edge`: verifies the
-      token, asks `can_use`/`can_enter`, caches per `(token, route)`, evicts
-      on the changes stream, fails closed with cached allows carrying;
+      token, asks `can_use`/`can_enter`, caches per `(sub, sid, route)`,
+      evicts by subject on a `ReadChanges` poll (OpenFGA has no push stream),
+      denies on a `Check` transport error while previously cached allows
+      carry until they expire; **receives Keycloak's back-channel logout** for
+      every zone client and denies a revoked `sid` at L2 (AD-13);
       stateless, gRPC, topology-aware.
 - [ ] DMZ publishing proxy image: generic Envoy/nginx with config rendered
       per surface — path allow/deny, `authMode` adapter (basic via the
@@ -233,8 +241,9 @@ Specified in [ui-restructure.md](ui-restructure.md) §3 and
 Specified in [ui-restructure.md](ui-restructure.md) §1–§2.
 
 - [ ] Desktop per tenant from one image (frontend + BFF), served on the
-      tenant's host or vanity host; BFF holds only the realm client secret
-      and the granted `{t}_shell` database; Kubernetes RBAC: none.
+      tenant's host or vanity host; BFF holds **no OIDC client secret and no
+      session** — it consumes the token the edge forwards (AD-13) — only the
+      granted `{t}_shell` database; Kubernetes RBAC: none.
 - [ ] Tiles from `GET /v1/tenants/{t}/apps?viewer=me`; admin screens shown
       by relation, never by flag.
 - [ ] All writes through the director with the user's token; all reads
