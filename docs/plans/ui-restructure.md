@@ -151,11 +151,29 @@ What the store is:
   locale, media, categories, keywords, tiles, editions, plans, prices,
   subscriptions. Everything that was removed from the profile because it is
   reference data, not a deployment contract (component-profile.md §2).
-- **An entitlement authority.** It answers "may tenant T run app A" with a
-  **signed grant** (`entitlement_grant`, `signing_key`) that a cluster
-  verifies offline, and logs every check (`entitlement_check`). Clusters
-  register with the store and authenticate to it with a key pair
-  (`cluster.public_key`).
+- **An entitlement issuer.** When a subscription makes tenant T entitled to
+  app A, the store issues a **signed grant** (`entitlement_grant`,
+  `signing_key`) and delivers it to the director. The director verifies the
+  signature, commits the fact, and the operator turns it into the
+  `catalogue_entry#entitled@tenant` tuple with `expires_at` as its TTL
+  (principle 5, AD-12, schema lines 315–332). Install is then an ordinary
+  OpenFGA check on stored structure — the cluster never asks the store at
+  install time and holds no identity toward it. The grant is two things
+  with two lifetimes, split at the boundary:
+
+  | Part | Nature | Where it lives |
+  | --- | --- | --- |
+  | `(tenant, app, version, digest, expires_at, key_id, signature)` | a fact | git, committed by the director; the tuple |
+  | fetch token for the bundle | a single-use secret | the director's memory during one request; never written |
+  | pull credential for chart and images | a durable secret | OpenBao under `gentian-os/tenants/{t}/apps/{A}/pull`, written **as the tenant admin** through the credential manager; ESO materialises the pull Secret in `tenant-{t}` while the tuple lives |
+
+  The signature covers the fact only, so the record in git verifies without
+  any secret, and no secret ever enters git — public or private. That is
+  what makes a private (proprietary) catalogue source work: the bundle and
+  the images are reachable only with credentials that arrive with an
+  entitlement, so a cluster holds no standing credential to any vendor's
+  catalogue, and "available only after payment" is literally true. An OSS
+  catalogue is the same flow with empty credentials.
 - **A trigger.** It may ask the director to install. It never supplies the
   artefact.
 
@@ -173,26 +191,32 @@ tenant admin ─(browser, Keycloak session)─► App Store UI
 
 App Store UI ─► App Store API                       lists; nothing decided here
 App Store API ─► director  POST /v1/tenants/{t}/apps/{A}
-                           body: {catalogue, app, version, digest}   ◆ a reference, not the profile
+                           body: {catalogue, app, version, digest,   ◆ a reference, not the profile
+                                  grant (signed fact),
+                                  fetch token, pull credential}      secrets ride alongside, TLS, never stored by the store
                            Authorization: the tenant admin's token   ◆ the human's identity, not the store's
                            (or an RFC 8693 exchanged token with act — principle 5)
 
 director:
   1. verify the token (kernel or tenant realm, JWKS)
-  2. OpenFGA Check: user can_install_app tenant:{t}
-  3. entitlement: ask the store for a grant for (t, A) — cluster key pair —
-     verify its signature against the store's published signing key;
+  2. verify the grant's signature against the store's published key;
      a denial carries a reason and is logged with the request id
-  4. fetch the profile bundle for A@V from the catalogue git repository
-     (Repository/gentian-apps, read credential) and check it matches digest
-  5. materialise ComponentProfile A@digest in the cluster
+  3. OpenFGA Check: user can_install_app tenant:{t}
+     (the entitled tuple exists from a grant committed earlier, or from this one)
+  4. fetch the profile bundle A@digest from the catalogue source — with the
+     fetch token if the source is private — check the digest, discard the token
+  5. credential manager ──► OpenBao  gentian-os/tenants/{t}/apps/{A}/pull
+     written as the tenant admin (the caller's token, exchanged); nothing in git
+  6. materialise ComponentProfile A@digest in the cluster
      (the only profiles the cluster holds are the installed ones)
-  6. commit tenants/{t}/tenant.yaml with A added, signed, trailer with the
-     decision and the request id
-  7. 202 + /v1/operations/{id}
+  7. commit the grant record and tenants/{t}/tenant.yaml with A added — signed,
+     trailer with the decision and the request id; no secret in either
+  8. 202 + /v1/operations/{id}
 
-Argo CD syncs the commit ─► operator reconciles Tenant.spec.apps ─► Crossplane provisions
+Argo CD syncs the commit ─► operator: grant record → entitled tuple (TTL = expires_at),
+   ExternalSecret → pull Secret in tenant-{t}; reconciles Tenant.spec.apps ─► Crossplane provisions
 App Store UI polls /v1/operations/{id} with the user's token and renders progress
+Expiry: tuple and ExternalSecret go; the next pod start cannot pull; running pods are unaffected
 ```
 
 ◆ **Reference, not profile.** "The component profile is forwarded from the
@@ -207,11 +231,22 @@ the bundle from the catalogue repository and verifies the digest. The
 technical spec never crosses the store boundary in either direction.
 
 ◆ **Whose identity.** The install call carries the human's token, so the FGA
-check is on the human and the commit is authored as the human. The store's
-own identity (the cluster key pair) is used only in the *other* direction —
-the director asking the store for an entitlement grant. A store that could
+check is on the human, the commit is authored as the human, and the pull
+credential is written to OpenBao as the human through the credential
+manager. The store needs **no identity of its own** toward the cluster: the
+signature on the grant authenticates the fact, the human's token authorises
+the install, and the secrets ride in the same request. A store that could
 install with its own credential would be a component with power, which is
-what this document exists to remove.
+what this document exists to remove. (`cluster.public_key` and
+`entitlement_check` in the schema describe a cluster-asks-store protocol the
+schema's own entitlement section rules out; they are provisional.)
+
+◆ **No secret in git, so no private repo for the sake of it.** A credential
+committed to git — however private the repo — is readable by Argo CD, every
+clone, CI, break-glass and the history after rotation: a credential with no
+revocation. The deployments repository stays public-capable; whether it is
+private is decided by whether the *facts* in it (tenant names, plans,
+entitlements) are sensitive, never by the need to hold a secret.
 
 "Added to the catalogue" then means step 5: a `ComponentProfile` CR appears
 in the cluster for this app at this digest, because a tenant installed it —

@@ -328,6 +328,19 @@ create index on subscription (plan_id);
 -- on that tuple (principle 5), not an offline signature check at install time.
 -- The signature exists so the director can trust the store, not so a cluster
 -- can decide without one.
+--
+-- The signature covers the FACT only — (tenant, app, version, digest,
+-- issued_at, expires_at). A private catalogue's fetch token and the pull
+-- credential for chart and images travel in the same request to the director
+-- but are never part of the signed record: the record lands in git, which may
+-- be public, and the credentials land in OpenBao through the credential
+-- manager, written as the tenant admin (ui-restructure.md §3). This table
+-- therefore stores no credential either; it records that one was issued.
+--
+-- Provisional, pending this flow: cluster.public_key and entitlement_check
+-- describe a cluster-asks-store protocol that the flow above makes
+-- unnecessary. They stay only if a cluster ever has to CALL the store — seat
+-- or usage reporting — which entitlement does not need.
 -- -----------------------------------------------------------------------------
 
 create table signing_key (

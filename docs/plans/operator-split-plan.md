@@ -267,10 +267,14 @@ is retired with the split; its store bootstrap becomes an operator Job.
 Each relation gets a case in `tests.fga.yaml` before the director calls it.
 
 Materialise-on-reference: the director fetches the profile bundle at the
-requested digest from the catalogue repository (`Repository/gentian-apps`,
-read credential — never from the App Store's own database, which is
-reference data outside the cluster, AD-3), applies the `AppProfile` CR (label
-`gentianos.io/profile-name`, digest annotation), **then** commits.
+requested digest from the catalogue source named by the store row — a public
+repository with the cluster's read credential, or a private one with the
+single-use fetch token that arrived with the entitlement grant, discarded
+after the fetch; never from the App Store's own database, which is
+reference data outside the cluster (AD-3) — hands any pull credential to the
+credential manager to be written as the caller (no secret enters git;
+[ui-restructure.md](ui-restructure.md) §3), applies the `AppProfile` CR
+(label `gentianos.io/profile-name`, digest annotation), **then** commits.
 Apply-then-commit is the only ordering that fails safe: a failed commit
 leaves an inert, unreferenced CR; commit-then-apply leaves git asserting a
 state the Tenant webhook rejects on every sync. The `catalogue-<repo>`
