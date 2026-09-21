@@ -13,15 +13,23 @@ these repositories; listed because the cluster side depends on it).
 
 ## Sequence at a glance
 
-| Order | Packages | Gate |
-| --- | --- | --- |
-| Wave 0 | WP-9 items marked wave 0; WP-1 step 0 | four live findings closed; no architecture change |
-| Cutover A | WP-1 (standalone), WP-3 (model v1, tests), WP-5 (schema, no cluster) | director contract tests green with no cluster |
-| Cutover B / wave 1 | WP-1 side by side, WP-4 gateway policies and shim, WP-7 console writes, WP-6 store calls the director | each function flipped and tested; operator endpoints answer 405 |
-| Cutover C / wave 1–3 | WP-10 bootstrap, WP-8 namespaces (fresh installs), WP-12 deployments layout, WP-9 signing | challenge list passes as scripted tests |
-| Wave 2 | WP-3 event feed, WP-9 identities and agents | every principal has an identity |
-| Wave 3–4 | WP-4 log store and exposure view, WP-9 data-plane depth | audit joins on one request id |
-| Cutover D | decommission items in every package | operator has no git, no listener, no `X-Gentian-Actor` |
+The dev cluster is purged and rebuilt in the target layout; release 4.1
+preserves the old installer for any cluster that has not been rebuilt.
+That removes the migration choreography from the critical path: the
+side-by-side cutover (operator-split-plan.md §6 B) and the decommission
+step (§6 D) apply to existing clusters only, and a fresh cluster goes
+straight to the target. The installer is not rebuilt last — its skeleton
+comes first, because every cluster-dependent package needs the new layout
+to be tested against, and each package then brings its own step.
+
+| Phase | Packages | Needs | Gate |
+| --- | --- | --- | --- |
+| 0 — no cluster | WP-1 cutover A (director against a bare repo, static JWKS, OpenFGA in a container); WP-3 model v1, tests, vocabulary check; WP-5 CRD schemas, CEL rules, profile conversion tooling; WP-6 store contract and grant format; WP-7 desktop and console against a mocked director | nothing | contract tests green |
+| 1 — installer skeleton | the parts of WP-8 and WP-10 that produce an *empty* cluster in the target shape: labelled `kernel-*` namespaces, tier-0 operators, `kernel-data` with `kernel-postgres`, Keycloak and OpenFGA in their namespaces, OpenBao and the seal, the two Gateways; the step framework kept, step contents rewritten; ACME staging issuers while iterating | the purged cluster | `install.sh` stands up the empty layout repeatably; `--dry-run` and `--status` true |
+| 2 — packages on the fresh cluster | WP-1 deployed (no side-by-side), WP-2, WP-4, WP-5 on-cluster parts, WP-9 wave 0 and signing, WP-8 remaining namespaces — each adding its installer step as it lands | phase 1 | each package's tests; the step's `check()` honest |
+| 3 — handover and challenge | WP-10 `E-05`, credential split, challenge lists; WP-11 deployments layout; WP-13 toggles verified off and on | phase 2 | the challenge list passes as scripted tests on a fresh install |
+| 4 — identities, audit, depth | WP-3 event feed and reconcile, WP-9 identities and agents, WP-4 log store and exposure view, WP-9 data-plane depth (gap-plan waves 2–4) | phase 3 | audit joins on one request id |
+| existing clusters | operator-split-plan.md §6 B and D, or a rebuild from the recovery kit (AD-11) | a passing fresh install | per cluster |
 
 ## WP-1 Director — new binary (`os`)
 
