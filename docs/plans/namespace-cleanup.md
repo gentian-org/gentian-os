@@ -53,6 +53,7 @@ the catalogue.
 | External Secrets Operator | `external-secrets` | `kernel-secrets` | |
 | Reloader | `stakater-system` | `kernel-secrets` | part of the rotation path |
 | Keycloak, `keycloak-idp` config (theme, SMTP ExternalSecret), realm script | `platform-kernel` | `kernel-authentication` | Suze claim `idpNamespace`; apart from OpenFGA because it has a public route and different credential holders |
+| Keycloak event listener (SPI provider pushing signed membership events to the director) | — | `kernel-authentication` | new; the director is its only receiver; holds only its signing key |
 | OpenFGA | `platform-kernel` | `kernel-authorization` | reachable from enforcement points only |
 | gentian-os operator, credential manager, `job-gc` CronJob | `gentian-system` | `kernel-control` | the director joins here |
 | Director API endpoint (called by the external App Store) | — | `kernel-control`, route on the kernel gateway, bearer only | the App Store runs outside the cluster, operated by Gentian Technologies |
