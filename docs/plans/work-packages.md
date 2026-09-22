@@ -406,9 +406,16 @@ Specified in [ui-restructure.md](ui-restructure.md) §1–§2.
       granted `{t}_shell` database; Kubernetes RBAC: none.
 - [ ] Tiles from `GET /v1/tenants/{t}/apps?viewer=me`; admin screens shown
       by relation, never by flag.
+- [x] First slice, against a mocked director: `app/services/director.py`
+      and `/api/v1/director/...` in the BFF forward the person's own token and
+      repeat the director's answer, status and request id; no actor header,
+      no role test. `docker-compose.dev.yaml` points at `director-dev`
+      (`make run-director-dev` in `os`), proven end to end: list, install,
+      refusal with request id, attributed commit.
 - [ ] All writes through the director with the user's token; all reads
       through the director's read API; `rbac.yaml` empty; `k8s_*` services
-      removed.
+      removed; the apps screens switched from `k8s_catalogue` to the routes
+      above.
 - [ ] Remove: the three session bridges (`portal_`, `openproject_`,
       `matrix_session_bridge.py`), the LiteLLM master key path
       (`routes/llm.py`), Keycloak admin credentials, the `tenants` patch, the
