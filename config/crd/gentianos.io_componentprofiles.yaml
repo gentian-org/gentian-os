@@ -2243,8 +2243,8 @@ spec:
                 && e.forwardToken) || self.trustTier == ''platform'')'
             - message: a package is a chart, a composition or an API integration;
                 only an addon, which rides on its base, has none
-              rule: has(self.package.chart) || (has(self.package.compositionRef) &&
-                self.package.compositionRef.size() > 0) || has(self.package.apiIntegration)
+              rule: has(self.__package__.chart) || (has(self.__package__.compositionRef)
+                && self.__package__.compositionRef.size() > 0) || has(self.__package__.apiIntegration)
                 || (has(self.customization) && has(self.customization.addon))
           status:
             description: ComponentProfileStatus is the observed state of a ComponentProfile.

@@ -19,6 +19,8 @@ package v1alpha1_test
 import (
 	"context"
 	"os"
+	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -111,6 +113,41 @@ func (v *crdValidator) check(t *testing.T, objYAML, oldYAML string) string {
 		msgs = append(msgs, e.Error())
 	}
 	return strings.Join(msgs, "\n")
+}
+
+// celReserved are the words CEL cannot read as a field name. Kubernetes
+// escapes them as __word__, and an API server before 1.32 refuses a rule that
+// does not — while 1.32 (and this package's own validator) accept it, so
+// neither envtest nor the rule tests above can catch one. This does.
+var celReserved = []string{
+	"as", "break", "const", "continue", "else", "false", "for", "function", "if",
+	"import", "in", "let", "loop", "namespace", "null", "package", "return",
+	"true", "var", "void", "while",
+}
+
+// TestNoRuleReadsAReservedWordUnescaped walks every generated CRD's validation
+// rules and refuses self.<reserved>.
+func TestNoRuleReadsAReservedWordUnescaped(t *testing.T) {
+	files, err := filepath.Glob("../../config/crd/*.yaml")
+	if err != nil || len(files) == 0 {
+		t.Fatalf("no CRDs: %v", err)
+	}
+	bad := regexp.MustCompile(`self\.(` + strings.Join(celReserved, "|") + `)\b`)
+	for _, f := range files {
+		raw, err := os.ReadFile(f)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, line := range strings.Split(string(raw), "\n") {
+			if !strings.Contains(line, "rule:") && !bad.MatchString(line) {
+				continue
+			}
+			if m := bad.FindStringSubmatch(line); m != nil {
+				t.Errorf("%s: a rule reads self.%s, which CEL cannot: write self.__%s__\n  %s",
+					filepath.Base(f), m[1], m[1], strings.TrimSpace(line))
+			}
+		}
+	}
 }
 
 func expect(t *testing.T, name, got, want string) {

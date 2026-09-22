@@ -48,7 +48,7 @@ const (
 // +kubebuilder:validation:XValidation:rule="!('system' in self.tenancy) || !has(self.expose) || self.expose.size() == 0",message="system components have no exposure"
 // +kubebuilder:validation:XValidation:rule="!('shared' in self.tenancy) || self.trustTier == 'platform'",message="shared tenancy requires trustTier platform"
 // +kubebuilder:validation:XValidation:rule="!has(self.expose) || self.expose.all(e, !(has(e.forwardToken) && e.forwardToken) || self.trustTier == 'platform')",message="forwardToken requires trustTier platform: the edge token is valid at the director and at every sibling"
-// +kubebuilder:validation:XValidation:rule="has(self.package.chart) || (has(self.package.compositionRef) && self.package.compositionRef.size() > 0) || has(self.package.apiIntegration) || (has(self.customization) && has(self.customization.addon))",message="a package is a chart, a composition or an API integration; only an addon, which rides on its base, has none"
+// +kubebuilder:validation:XValidation:rule="has(self.__package__.chart) || (has(self.__package__.compositionRef) && self.__package__.compositionRef.size() > 0) || has(self.__package__.apiIntegration) || (has(self.customization) && has(self.customization.addon))",message="a package is a chart, a composition or an API integration; only an addon, which rides on its base, has none"
 type ComponentProfileSpec struct {
 	// Tenancy lists the modes this component may be deployed under. It is a
 	// certification claim, not a choice. "system" is exclusive.
