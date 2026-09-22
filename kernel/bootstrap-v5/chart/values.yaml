@@ -11,6 +11,12 @@ storageClass: ""
 dnsProvider: none
 dnsProviders: {}
 kernelDomain: ""
+# The cluster's id in gentian-deployments: what external-dns owns records as,
+# so two clusters never fight over one zone.
+cluster: ""
+# How traffic reaches this cluster (the Cluster claim's networkMode):
+# static-ip, or tunnel.
+networkMode: static-ip
 
 # Filled by the installer from kernel/namespaces.yaml. Never set by hand.
 namespaces: {}

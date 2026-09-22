@@ -50,3 +50,10 @@ spec:
     automated:
       prune: true
       selfHeal: true
+  # The API server defaults hostUsers on every pod spec (1.31+); the chart
+  # does not set it, so without this Argo reports drift forever.
+  ignoreDifferences:
+  - group: apps
+    kind: Deployment
+    jsonPointers:
+    - /spec/template/spec/hostUsers

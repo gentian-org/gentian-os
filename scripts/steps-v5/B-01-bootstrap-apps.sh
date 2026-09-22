@@ -2,7 +2,7 @@
 # step: B-01-bootstrap-apps
 # phase: secrets
 # requires: A-06-argocd
-# provides: the gentian AppProject and the kernel Applications of kernel/bootstrap-v5/chart (openbao, openbao-transit, reloader, cnpg, kernel-postgres, kyverno, headlamp, external-dns when a DNS provider is set) and the HTTPRoutes for Argo CD and Headlamp, each Synced and Healthy in its layout namespace
+# provides: the gentian AppProject and the kernel Applications of kernel/bootstrap-v5/chart (reloader, cnpg, kernel-postgres, kyverno, headlamp Synced and Healthy; openbao and openbao-transit Synced, awaiting their init) and the HTTPRoutes for Argo CD and Headlamp, each in its layout namespace
 # mutates: Application and AppProject objects in the gitops namespace; what they sync lands in the seal, secrets, data, admission, observability and edge namespaces
 # pins: openbao headlamp
 
@@ -11,34 +11,42 @@
 # layout does not have. The installer passes kernel/namespaces.yaml, the same
 # file A-01 created the namespaces from.
 
-# Synced says git and cluster agree; Healthy says the workload came up. Only
-# both mean the Application delivered: OpenBao waiting on its seal, or CNPG in
-# ImagePullBackOff, is Synced and not Healthy.
-_v5_delivered() {
-    local ns="$1" app="$2" sync health
-    sync="$(kubectl get application "${app}" -n "${ns}" -o jsonpath='{.status.sync.status}' 2>/dev/null)"
-    health="$(kubectl get application "${app}" -n "${ns}" -o jsonpath='{.status.health.status}' 2>/dev/null)"
-    [[ "${sync}" == "Synced" && "${health}" == "Healthy" ]]
+# Synced says git and cluster agree; Healthy says the workload came up. Most
+# Applications here must be both. The vault and its seal cannot be Healthy
+# until they are initialised, which is the next steps' work, so for them B-01
+# asks only Synced and their init steps ask Healthy. external-dns needs a
+# credential that arrives with the secrets steps, so its Application is
+# applied by the step after those, not here.
+_v5_app_state() {
+    local ns="$1" app="$2"
+    kubectl get application "${app}" -n "${ns}" -o jsonpath='{.status.sync.status} {.status.health.status}' 2>/dev/null
 }
 
-_v5_apps() {
-    local apps="openbao openbao-transit reloader cnpg kernel-postgres kyverno headlamp"
-    [[ "${DNS_PROVIDER:-none}" != "none" ]] && apps="${apps} external-dns"
-    echo "${apps}"
+_v5_delivered() {
+    local ns="$1" app="$2" want="${3:-healthy}" state
+    state="$(_v5_app_state "${ns}" "${app}")"
+    case "${want}" in
+        synced)  [[ "${state%% *}" == "Synced" ]] ;;
+        *)       [[ "${state}" == "Synced Healthy" ]] ;;
+    esac
 }
+
+_v5_apps_healthy() { echo "reloader cnpg kernel-postgres kyverno headlamp"; }
+_v5_apps_synced()  { echo "openbao openbao-transit"; }
+_v5_apps()         { echo "$(_v5_apps_healthy) $(_v5_apps_synced)"; }
 
 _v5_render() {
-    # The layout and the DNS providers are YAML files; helm reads a values file
-    # per key with --set-file only as a string, so both go in as values files
-    # wrapped under their key.
+    # The layout goes in as a values file under its own key; platforms.yaml
+    # already is one (its top-level dnsProviders table is what the chart reads).
     local tmp
     tmp="$(mktemp -d)"
     { echo "namespaces:"; sed 's/^/  /' "${NAMESPACES_FILE}"; } > "${tmp}/namespaces.yaml"
-    { echo "dnsProviders:"; sed 's/^/  /' "${SCRIPT_DIR}/kernel/platforms.yaml"; } > "${tmp}/platforms.yaml"
     helm template gentian-bootstrap "${SCRIPT_DIR}/kernel/bootstrap-v5/chart" \
-        -f "${tmp}/namespaces.yaml" -f "${tmp}/platforms.yaml" \
-        --set-string "dnsProvider=${DNS_PROVIDER:-none}" \
+        -f "${tmp}/namespaces.yaml" -f "${SCRIPT_DIR}/kernel/platforms.yaml" \
+        --set-string "dnsProvider=none" \
         --set-string "kernelDomain=${KERNEL_DOMAIN:-}" \
+        --set-string "cluster=${GENTIAN_DEPLOYMENTS_CLUSTER_ID:-}" \
+        --set-string "networkMode=${NETWORK_MODE:-static-ip}" \
         --set-string "osRepo=${GENTIAN_OS_REPO:-https://github.com/gentian-org/gentian-os}" \
         --set-string "gentianOsBranch=${GENTIAN_OS_BRANCH:-develop}" \
         --set-string "storageClass=${STORAGE_CLASS:-}" \
@@ -53,23 +61,24 @@ check() {
     local ns app
     ns="$(ns_kernel gitops)"
     kubectl get appproject gentian -n "${ns}" >/dev/null 2>&1 || return 1
-    for app in $(_v5_apps); do
-        _v5_delivered "${ns}" "${app}" || return 1
-    done
+    for app in $(_v5_apps_healthy); do _v5_delivered "${ns}" "${app}" || return 1; done
+    for app in $(_v5_apps_synced);  do _v5_delivered "${ns}" "${app}" synced || return 1; done
     return 0
 }
 
 apply() {
     banner "Kernel bootstrap Applications"
     _v5_render | kubectl apply -f -
-    local ns app
+    local ns app want
     ns="$(ns_kernel gitops)"
     for app in $(_v5_apps); do
-        info "waiting for ${app} to be Synced and Healthy"
+        want=healthy
+        case " $(_v5_apps_synced) " in *" ${app} "*) want=synced ;; esac
+        info "waiting for ${app} to be Synced$([[ ${want} == healthy ]] && echo ' and Healthy')"
         local t=$((SECONDS + 600))
-        until _v5_delivered "${ns}" "${app}"; do
+        until _v5_delivered "${ns}" "${app}" "${want}"; do
             if (( SECONDS > t )); then
-                error "${app} is not Synced and Healthy after 10m:"
+                error "${app} is not as required after 10m:"
                 kubectl get application "${app}" -n "${ns}" -o jsonpath='{"  sync: "}{.status.sync.status}{"  health: "}{.status.health.status}{" "}{.status.health.message}{"\n"}' 2>/dev/null
                 return 1
             fi

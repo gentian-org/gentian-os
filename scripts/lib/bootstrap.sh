@@ -1458,8 +1458,11 @@ print_summary_cp() {
 
     xr_ready=$(kubectl get "xcluster.gentianos.io/${xr_name}" \
         -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null || echo "unknown")
-    mr_count=$(kubectl get managed -l "crossplane.io/composite=${xr_name}" \
-        --no-headers 2>/dev/null | wc -l | tr -d ' ')
+    # `managed` is a category the providers register; before any provider is
+    # installed the query itself fails, and under pipefail that failed the
+    # whole summary.
+    mr_count=$({ kubectl get managed -l "crossplane.io/composite=${xr_name}" \
+        --no-headers 2>/dev/null || true; } | wc -l | tr -d ' ')
     # Releases are named <composite>-<chart>, and the composite carries
     # Crossplane's random suffix (e.g. ifk-l2-prod-infra-data-n6z4s-postgresql).
     # Looking them up under the *claim* name never matched, so these flags always
