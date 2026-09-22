@@ -22,7 +22,7 @@ CROSSPLANE_IMAGE ?= xpkg.crossplane.io/crossplane/crossplane:$(CROSSPLANE_CLI_VE
 KUBEBUILDER_ASSETS ?= /tmp/envtest-bins/k8s/1.32.0-linux-amd64
 export KUBEBUILDER_ASSETS
 
-.PHONY: all build generate manifests test lint docker-build clean install-plugin uninstall-plugin validate-steps gen-credentials check-credentials lint-cluster-config-keys lint-rbac-coverage lint-marker-ascii test-e04-token-classification test-a05-cert-manager-dns01-args lint-composed-resource-names lint-sequencer-targets lint-eso-readable-paths lint-template-placeholders lint-portability lint-image-digests check-render-fixtures lint-resolvable lint-bootstrap-apps lint-step-contracts lint-claim-defaults lint-live-identifiers lint-password-schemes test-policy test-policy-openbao test-policy-authz verify-authz-vocabulary test-director-contract run-director-dev verify-claim-applied verify-argocd-config verify-image-updates gen-provider-rbac lint-provider-rbac lint-credential-validators lint-credential-catalogue
+.PHONY: all build generate manifests test lint docker-build clean install-plugin uninstall-plugin validate-steps gen-credentials check-credentials lint-cluster-config-keys lint-rbac-coverage lint-marker-ascii test-e04-token-classification test-a05-cert-manager-dns01-args lint-composed-resource-names lint-sequencer-targets lint-eso-readable-paths lint-template-placeholders lint-portability lint-image-digests check-render-fixtures lint-resolvable lint-bootstrap-apps lint-step-contracts lint-claim-defaults lint-live-identifiers lint-password-schemes test-policy test-policy-openbao test-policy-authz verify-authz-vocabulary test-director-contract run-director-dev validate-steps-v5 lint-namespace-layout verify-claim-applied verify-argocd-config verify-image-updates gen-provider-rbac lint-provider-rbac lint-credential-validators lint-credential-catalogue
 
 all: generate build test
 
@@ -269,6 +269,15 @@ lint-bootstrap-apps:
 ## Reads only the step files — no cluster, no kubeconfig.
 validate-steps:
 	@SCRIPT_DIR="$(CURDIR)" bash -c 'source scripts/lib/load.sh; source scripts/lib/driver.sh; validate_steps'
+
+## The v5 (kernel-* layout) step set: the same contract checks as validate-steps,
+## plus the lint that no v5 file names a namespace by hand.
+validate-steps-v5: lint-namespace-layout
+	@SCRIPT_DIR="$(CURDIR)" GENTIAN_STEPS_DIR="$(CURDIR)/scripts/steps-v5" bash -c 'source scripts/lib/load.sh; source scripts/lib/driver.sh; validate_steps'
+	@GENTIAN_STEPS_DIR="$(CURDIR)/scripts/steps-v5" bash scripts/lint/lint-step-contracts.sh
+
+lint-namespace-layout:
+	@bash scripts/lint/lint-namespace-layout.sh
 
 ## Build the operator container image
 docker-build:

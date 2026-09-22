@@ -1,0 +1,62 @@
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: openbao
+  namespace: {{ include "ns" (list . "gitops") }}
+  finalizers: []
+spec:
+  project: gentian
+  sources:
+  - repoURL: https://openbao.github.io/openbao-helm
+    chart: openbao
+    targetRevision: "0.25.5"
+    helm:
+      valueFiles:
+      - $values/kernel/openbao/values.yaml
+      parameters:
+      - name: server.dataStorage.storageClass
+        value: {{ .Values.storageClass | quote }}
+      # The server configuration is HCL inside a values string, so the seal's
+      # address cannot be set as a parameter. It is rendered here from the
+      # layout and merged last; everything else stays in kernel/openbao/values.yaml.
+      valuesObject:
+        server:
+          standalone:
+            config: |
+              ui = true
+
+              listener "tcp" {
+                tls_disable     = 0
+                tls_cert_file   = "/openbao/tls/tls.crt"
+                tls_key_file    = "/openbao/tls/tls.key"
+                address         = "[::]:8200"
+                cluster_address = "[::]:8201"
+              }
+              storage "file" {
+                path = "/openbao/data"
+              }
+
+              # Transit auto-unseal — primary is unsealed by openbao-transit.
+              # Token is read from the AUTOUNSEAL_TOKEN environment variable which is
+              # populated from the openbao-transit-token Kubernetes Secret.
+              seal "transit" {
+                address    = "http://openbao-transit.{{ include "ns" (list $ "seal") }}.svc.cluster.local:8200"
+                key_name   = "autounseal"
+                mount_path = "transit/"
+              }
+  - repoURL: {{ .Values.osRepo | default "https://github.com/gentian-org/gentian-os" }}
+    targetRevision: {{ .Values.gentianOsBranch }}
+    ref: values
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: {{ include "ns" (list . "secrets") }}
+  syncPolicy:
+    automated:
+      prune: false
+      selfHeal: true
+  ignoreDifferences:
+  - group: apps
+    kind: StatefulSet
+    jsonPointers:
+    - /spec/volumeClaimTemplates

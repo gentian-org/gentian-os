@@ -1,0 +1,38 @@
+---
+# The transit seal: a small OpenBao whose only job is the key that auto-unseals
+# the vault. It lives in its own namespace so that its RBAC and its backup are
+# separate from what it protects.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: openbao-transit
+  namespace: {{ include "ns" (list . "gitops") }}
+  finalizers: []
+spec:
+  project: gentian
+  sources:
+  - repoURL: https://openbao.github.io/openbao-helm
+    chart: openbao
+    targetRevision: "0.25.5"
+    helm:
+      releaseName: openbao-transit
+      valueFiles:
+      - $values/kernel/openbao/transit-values.yaml
+      parameters:
+      - name: server.dataStorage.storageClass
+        value: {{ .Values.storageClass | quote }}
+  - repoURL: {{ .Values.osRepo | default "https://github.com/gentian-org/gentian-os" }}
+    targetRevision: {{ .Values.gentianOsBranch }}
+    ref: values
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: {{ include "ns" (list . "seal") }}
+  syncPolicy:
+    automated:
+      prune: false
+      selfHeal: true
+  ignoreDifferences:
+  - group: apps
+    kind: StatefulSet
+    jsonPointers:
+    - /spec/volumeClaimTemplates

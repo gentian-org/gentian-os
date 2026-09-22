@@ -1,0 +1,5 @@
+instances: 1
+storageClass: ""
+storageSize: 10Gi
+# Databases are created by the operator's Database CRs as the kernel services
+# ask for them; the cluster starts empty.

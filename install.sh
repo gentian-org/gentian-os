@@ -131,6 +131,8 @@ Running part of it. A step is named by its number or its full id, so
   --skip ID[,ID...]     run everything except these
   --from ID             start here and continue to the end
   --until ID            start at the beginning and stop after this one
+  --layout v5           the kernel-* layout (scripts/steps-v5/): a fresh-install
+                        skeleton being built step by step; v4 is the default
   --phase NAME          one phase: control-plane, secrets, platform,
                         applications, handover — or its letter, A through E
   --force               apply even where check() says satisfied. The way past a
@@ -204,6 +206,16 @@ parse_driver_args() {
             --phase)
                 shift; [[ $# -gt 0 ]] || { error "$0: --phase requires a value"; exit 1; }
                 GENTIAN_PHASE="$1" ;;
+            --layout)
+                # v5: the kernel-* namespace layout, from scripts/steps-v5/.
+                # It is a fresh-install layout; the default step set stays the
+                # one release 4.1 shipped until v5 replaces it.
+                shift; [[ $# -gt 0 ]] || { error "$0: --layout requires a value (v5)"; exit 1; }
+                case "$1" in
+                    v5)  GENTIAN_STEPS_DIR="${SCRIPT_DIR}/scripts/steps-v5" ;;
+                    v4)  GENTIAN_STEPS_DIR="${SCRIPT_DIR}/scripts/steps" ;;
+                    *)   error "$0: --layout must be v4 or v5, not '$1'"; exit 1 ;;
+                esac ;;
             --export-recovery-kit)
                 GENTIAN_DIRECTION="export-kit"
                 if [[ -z "${2:-}" || "${2:-}" == -* ]]; then GENTIAN_KIT_PATH=""

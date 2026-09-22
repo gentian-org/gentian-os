@@ -1,0 +1,16 @@
+# The bootstrap Applications are parameterised on these values. Namespaces are
+# not among them: every destination is resolved from kernel/namespaces.yaml,
+# which the installer copies in as `namespaces` (see B-01), so an Application
+# cannot name a namespace the layout does not have.
+gentianOsBranch: develop
+osRepo: https://github.com/gentian-org/gentian-os
+storageClass: ""
+
+# Who hosts the zone, for external-dns; an entry in kernel/platforms.yaml.
+# "none" emits no external-dns Application.
+dnsProvider: none
+dnsProviders: {}
+kernelDomain: ""
+
+# Filled by the installer from kernel/namespaces.yaml. Never set by hand.
+namespaces: {}

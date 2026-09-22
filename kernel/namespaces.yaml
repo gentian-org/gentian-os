@@ -1,0 +1,50 @@
+# The cluster's namespace layout: the one list the installer creates from, the
+# operator selects on and the lints check against. Policies select on the
+# labels, never on names; the names are what a person types.
+#
+# tier: kernel | system | system-dmz | shared | tenant | tenant-dmz
+# function: what the namespace is for. The software behind it can change.
+#
+# Kernel namespaces are created by the installer before anything else exists.
+# System namespaces are composed from the Cluster claim. Tenant namespaces are
+# composed per tenant as tenant-<t> and tenant-<t>-dmz.
+kernel:
+  - name: kernel-gitops
+    function: gitops
+    holds: Argo CD, argocd-image-updater
+  - name: kernel-provisioning
+    function: provisioning
+    holds: Crossplane, its providers and functions
+  - name: kernel-secrets
+    function: secrets
+    holds: OpenBao, External Secrets Operator, Reloader
+  - name: kernel-seal
+    function: seal
+    holds: the OpenBao transit seal; a separate RBAC and backup domain from the vault it unseals
+  - name: kernel-data
+    function: data
+    holds: the CNPG operator and kernel-postgres (Keycloak, its extensions, OpenFGA, the console)
+  - name: kernel-authentication
+    function: authentication
+    holds: Keycloak, its configuration, the event listener
+  - name: kernel-authorization
+    function: authorization
+    holds: OpenFGA; reachable from enforcement points only
+  - name: kernel-control
+    function: control
+    holds: the operator, the director, the credential manager, job-gc
+  - name: kernel-edge
+    function: edge
+    holds: Envoy Gateway, both Gateway objects, cert-manager, external-dns, cloudflared
+  - name: kernel-admission
+    function: admission
+    holds: Kyverno and the baseline policies
+
+# Namespaces the platform provides that gentian-os labels but does not create.
+labelled:
+  - name: kube-system
+    tier: kernel
+    function: platform
+  - name: metallb-system
+    tier: kernel
+    function: load-balancer

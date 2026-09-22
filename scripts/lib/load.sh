@@ -37,6 +37,12 @@ source "${__GENTIAN_LIB_DIR}/compat.sh"
 # shellcheck source=scripts/lib/lib-runtime.sh
 source "${__GENTIAN_LIB_DIR}/lib-runtime.sh"
 
+# The namespace layout and the pinned-helm helper: what the v5 steps build on.
+# shellcheck source=scripts/lib/namespaces.sh
+source "${__GENTIAN_LIB_DIR}/namespaces.sh"
+# shellcheck source=scripts/lib/helm-pinned.sh
+source "${__GENTIAN_LIB_DIR}/helm-pinned.sh"
+
 for _gentian_lib in portforward common certs openbao argocd catalogue validators credentials recovery bootstrap teardown; do
     # shellcheck source=/dev/null
     source "${__GENTIAN_LIB_DIR}/${_gentian_lib}.sh"

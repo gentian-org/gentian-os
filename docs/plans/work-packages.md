@@ -429,9 +429,11 @@ Specified in [ui-restructure.md](ui-restructure.md) §1–§2.
 
 Specified in [namespace-cleanup.md](namespace-cleanup.md).
 
-- [ ] Step 1, labels first: `gentianos.io/tier`, `gentianos.io/function`,
-      `gentianos.io/tenant` on every namespace; NetworkPolicy generation,
-      Kyverno scoping and operator selectors use labels.
+- [x] Step 1, labels first: `gentianos.io/tier`, `gentianos.io/function`
+      on every kernel namespace (`kernel/namespaces.yaml`, `internal/layout`);
+      Kyverno's webhook scoped by tier label in the v5 chart.
+- [ ] `gentianos.io/tenant` on tenant namespaces; NetworkPolicy generation
+      and operator selectors switched to labels.
 - [ ] Stateless renames for fresh installs: `kernel-gitops`,
       `kernel-provisioning`, `kernel-secrets`, `kernel-seal`,
       `kernel-control`, `kernel-edge`, `kernel-admission`, `kernel-data`,
@@ -502,6 +504,25 @@ From [security-gap-closing.md](security-gap-closing.md).
 - [ ] Cluster claim fields: `exposure` policy, `network.egressAllow`,
       default fulfiller per contract, identity/secrets/database provider
       selectors for the modular kernel, and the `compliance` block of WP-13.
+- [x] **Phase 1 skeleton, `install.sh --layout v5`** (`scripts/steps-v5/`,
+      `kernel/bootstrap-v5/chart`, `kernel/data/kernel-postgres`): one namespace
+      list, `kernel/namespaces.yaml`, read by the installer
+      (`scripts/lib/namespaces.sh`), by Go (`internal/layout`, whose test pins
+      it to the file) and by the bootstrap chart (which refuses to render
+      without it); A-01 creates and labels every kernel namespace; A-02…A-07
+      install cert-manager, ESO, Crossplane, Envoy Gateway, Argo CD and
+      metrics-server by function; B-01 applies the AppProject and the kernel
+      Applications — OpenBao in `kernel-secrets` with its seal in
+      `kernel-seal`, Reloader, CNPG and `kernel-postgres` in `kernel-data`,
+      Kyverno in `kernel-admission` (kernel tier exempt by label), external-dns
+      in `kernel-edge`. `make validate-steps-v5` runs the step-contract checks
+      and `lint-namespace-layout`, which fails on any namespace named by hand.
+      The v4 step set is untouched. **Not run against a cluster yet.**
+- [ ] Phase 1 continued: OpenBao init and the seal token (B-02), ESO stores,
+      Crossplane providers, Keycloak and OpenFGA in their namespaces (the Suze
+      composition takes the layout's names), the two Gateways from the Cluster
+      claim, the director and operator in `kernel-control`; then the first run
+      on the purged cluster with ACME staging.
 - [ ] Namespace label step (WP-8 step 1) and the fresh-install layout.
 - [ ] **API-server audit logging**: an audit policy shipped by the installer,
       flowing to the same store as the decision log. Without it break-glass is

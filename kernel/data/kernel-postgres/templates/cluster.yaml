@@ -1,0 +1,18 @@
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: kernel-postgres
+  labels:
+    gentianos.io/tier: kernel
+    gentianos.io/function: data
+spec:
+  instances: {{ .Values.instances }}
+  storage:
+    size: {{ .Values.storageSize }}
+    {{- if .Values.storageClass }}
+    storageClass: {{ .Values.storageClass }}
+    {{- end }}
+  postgresql:
+    parameters:
+      max_connections: "200"
+  # Reachable from the kernel only: the tier label is the selector.

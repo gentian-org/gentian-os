@@ -703,7 +703,7 @@ validate_step_calls() {
         [[ -n "${src}" && -f "${SCRIPT_DIR}/${src}" ]] || continue
         # shellcheck source=/dev/null
         source "${SCRIPT_DIR}/${src}" >/dev/null 2>&1 || true
-    done < <(grep -ho 'source "\${SCRIPT_DIR}/[^"]*"' "${GENTIAN_STEPS_DIR}"/*.sh 2>/dev/null |
+    done < <({ grep -ho 'source "\${SCRIPT_DIR}/[^"]*"' "${GENTIAN_STEPS_DIR}"/*.sh 2>/dev/null || true; } |
              sed 's|source "\${SCRIPT_DIR}/||; s|"$||' | sort -u)
 
     # install.sh's own prepare_run is checked too. Leaving it out is how

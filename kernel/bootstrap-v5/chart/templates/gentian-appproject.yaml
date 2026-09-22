@@ -1,0 +1,30 @@
+---
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: gentian
+  namespace: {{ include "ns" (list . "gitops") }}
+spec:
+  description: Gentian OS kernel, system and tenant deployments
+  {{- $osRepo := .Values.osRepo | default "https://github.com/gentian-org/gentian-os" }}
+  sourceRepos:
+  - {{ $osRepo | quote }}
+  - {{ printf "%s/*" $osRepo | quote }}
+  - https://openbao.github.io/openbao-helm
+  - ghcr.io/cloudnative-pg/charts
+  - ghcr.io/stakater/charts
+  - https://kubernetes-sigs.github.io/external-dns/
+  - https://kyverno.github.io/kyverno/
+  # Every kernel namespace, by the layout; nothing else. System, shared and
+  # tenant namespaces get their own projects with their own ceilings.
+  destinations:
+  {{- range .Values.namespaces.kernel }}
+  - namespace: {{ .name | quote }}
+    server: https://kubernetes.default.svc
+  {{- end }}
+  clusterResourceWhitelist:
+  - group: '*'
+    kind: '*'
+  namespaceResourceWhitelist:
+  - group: '*'
+    kind: '*'

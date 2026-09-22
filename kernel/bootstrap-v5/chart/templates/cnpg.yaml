@@ -1,0 +1,40 @@
+---
+# The CloudNativePG operator, in the data namespace beside kernel-postgres.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: cnpg
+  namespace: {{ include "ns" (list . "gitops") }}
+  finalizers: []
+spec:
+  project: gentian
+  sources:
+  - repoURL: ghcr.io/cloudnative-pg/charts
+    chart: cloudnative-pg
+    targetRevision: "0.23.0"
+    helm:
+      valueFiles:
+      - $values/kernel/values/cnpg.yaml
+  - repoURL: {{ .Values.osRepo | default "https://github.com/gentian-org/gentian-os" }}
+    targetRevision: {{ .Values.gentianOsBranch }}
+    ref: values
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: {{ include "ns" (list . "data") }}
+  syncPolicy:
+    automated:
+      prune: false
+      selfHeal: true
+    syncOptions:
+    - ServerSideApply=true
+  ignoreDifferences:
+  - group: admissionregistration.k8s.io
+    kind: MutatingWebhookConfiguration
+    name: cnpg-mutating-webhook-configuration
+    jqPathExpressions:
+    - .webhooks[].clientConfig.caBundle
+  - group: admissionregistration.k8s.io
+    kind: ValidatingWebhookConfiguration
+    name: cnpg-validating-webhook-configuration
+    jqPathExpressions:
+    - .webhooks[].clientConfig.caBundle

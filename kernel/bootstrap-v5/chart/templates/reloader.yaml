@@ -1,0 +1,28 @@
+---
+# Reloader restarts workloads when a Secret rotates: part of the secrets path,
+# so it lives with ESO and OpenBao.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: reloader
+  namespace: {{ include "ns" (list . "gitops") }}
+  finalizers: []
+spec:
+  project: gentian
+  sources:
+  - repoURL: ghcr.io/stakater/charts
+    chart: reloader
+    targetRevision: "2.2.9"
+    helm:
+      valueFiles:
+      - $values/kernel/values/reloader.yaml
+  - repoURL: {{ .Values.osRepo | default "https://github.com/gentian-org/gentian-os" }}
+    targetRevision: {{ .Values.gentianOsBranch }}
+    ref: values
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: {{ include "ns" (list . "secrets") }}
+  syncPolicy:
+    automated:
+      prune: false
+      selfHeal: true
