@@ -2,7 +2,7 @@
 # step: B-01-bootstrap-apps
 # phase: secrets
 # requires: A-06-argocd
-# provides: the gentian AppProject and the kernel Applications of kernel/bootstrap-v5/chart (openbao, openbao-transit, reloader, cnpg, kernel-postgres, kyverno, external-dns when a DNS provider is set), each in its layout namespace
+# provides: the gentian AppProject and the kernel Applications of kernel/bootstrap-v5/chart (openbao, openbao-transit, reloader, cnpg, kernel-postgres, kyverno, external-dns when a DNS provider is set), each Synced and Healthy in its layout namespace
 # mutates: Application and AppProject objects in the gitops namespace; what they sync lands in the seal, secrets, data, admission and edge namespaces
 # pins: openbao
 
@@ -10,6 +10,16 @@
 # destination from it; it refuses to render an Application whose function the
 # layout does not have. The installer passes kernel/namespaces.yaml, the same
 # file A-01 created the namespaces from.
+
+# Synced says git and cluster agree; Healthy says the workload came up. Only
+# both mean the Application delivered: OpenBao waiting on its seal, or CNPG in
+# ImagePullBackOff, is Synced and not Healthy.
+_v5_delivered() {
+    local ns="$1" app="$2" sync health
+    sync="$(kubectl get application "${app}" -n "${ns}" -o jsonpath='{.status.sync.status}' 2>/dev/null)"
+    health="$(kubectl get application "${app}" -n "${ns}" -o jsonpath='{.status.health.status}' 2>/dev/null)"
+    [[ "${sync}" == "Synced" && "${health}" == "Healthy" ]]
+}
 
 _v5_apps() {
     local apps="openbao openbao-transit reloader cnpg kernel-postgres kyverno"
@@ -42,7 +52,7 @@ check() {
     ns="$(ns_kernel gitops)"
     kubectl get appproject gentian -n "${ns}" >/dev/null 2>&1 || return 1
     for app in $(_v5_apps); do
-        [[ "$(kubectl get application "${app}" -n "${ns}" -o jsonpath='{.status.sync.status}' 2>/dev/null)" == "Synced" ]] || return 1
+        _v5_delivered "${ns}" "${app}" || return 1
     done
     return 0
 }
@@ -53,13 +63,17 @@ apply() {
     local ns app
     ns="$(ns_kernel gitops)"
     for app in $(_v5_apps); do
-        info "waiting for ${app} to sync"
+        info "waiting for ${app} to be Synced and Healthy"
         local t=$((SECONDS + 600))
-        until [[ "$(kubectl get application "${app}" -n "${ns}" -o jsonpath='{.status.sync.status}' 2>/dev/null)" == "Synced" ]]; do
-            (( SECONDS > t )) && { error "${app} did not sync within 10m"; return 1; }
+        until _v5_delivered "${ns}" "${app}"; do
+            if (( SECONDS > t )); then
+                error "${app} is not Synced and Healthy after 10m:"
+                kubectl get application "${app}" -n "${ns}" -o jsonpath='{"  sync: "}{.status.sync.status}{"  health: "}{.status.health.status}{" "}{.status.health.message}{"\n"}' 2>/dev/null
+                return 1
+            fi
             sleep 5
         done
-        success "${app} synced"
+        success "${app} delivered"
     done
 }
 
