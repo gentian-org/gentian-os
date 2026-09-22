@@ -60,6 +60,8 @@ type ComponentSpec struct {
 	// Addons enabled on this instance, by the profile's own names.
 	// +optional
 	// +listType=set
+	// +kubebuilder:validation:MaxItems=128
+	// +kubebuilder:validation:items:MaxLength=63
 	Addons []string `json:"addons,omitempty"`
 
 	// Exposures are the perimeter entries of the profile that are switched on.
@@ -67,6 +69,7 @@ type ComponentSpec struct {
 	// +optional
 	// +listType=map
 	// +listMapKey=exposureName
+	// +kubebuilder:validation:MaxItems=32
 	Exposures []ExposureEnablement `json:"exposures,omitempty"`
 
 	// Privileges are the profile's privilege requests that a person granted.
@@ -75,12 +78,14 @@ type ComponentSpec struct {
 	// +optional
 	// +listType=map
 	// +listMapKey=privilege
+	// +kubebuilder:validation:MaxItems=64
 	Privileges []PrivilegeGrant `json:"privileges,omitempty"`
 }
 
 // ProfileRef names a ComponentProfile.
 type ProfileRef struct {
 	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=63
 	Name string `json:"name"`
 
 	// Digest pins the profile bundle this instance was installed from.
@@ -100,6 +105,7 @@ type ExposureEnablement struct {
 	// ExposureName names an entry of the profile's expose list whose surface is
 	// "perimeter".
 	// +kubebuilder:validation:Pattern=`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`
+	// +kubebuilder:validation:MaxLength=40
 	ExposureName string `json:"exposureName"`
 
 	// Host is the public hostname. Empty means the entry's default host in the
@@ -107,11 +113,13 @@ type ExposureEnablement struct {
 	// domains include it.
 	// +optional
 	// +kubebuilder:validation:Pattern=`^([a-z0-9]([-a-z0-9]*[a-z0-9])?\.)+[a-z]{2,}$`
+	// +kubebuilder:validation:MaxLength=253
 	Host string `json:"host,omitempty"`
 
 	// Owner is the Keycloak subject that enabled the surface, set by the
 	// director from the caller's token.
 	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=256
 	Owner string `json:"owner"`
 
 	// ExpiresAt bounds the exposure, and is always set: a public surface with
@@ -132,17 +140,20 @@ type PrivilegeGrant struct {
 	// Privilege names one entry of the profile's request, as <kind>/<name>,
 	// where kind is podSecurity, egress or clusterRoles.
 	// +kubebuilder:validation:Pattern=`^(podSecurity|egress|clusterRoles)/[a-z0-9]([-a-z0-9]*[a-z0-9])?$`
+	// +kubebuilder:validation:MaxLength=80
 	Privilege string `json:"privilege"`
 
 	// Approver is the Keycloak subject who said yes, set by the director from
 	// the caller's token.
 	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=256
 	Approver string `json:"approver"`
 
 	ApprovedAt metav1.Time `json:"approvedAt"`
 
 	// Reason in the approver's words, not the profile's.
 	// +kubebuilder:validation:MinLength=10
+	// +kubebuilder:validation:MaxLength=2000
 	Reason string `json:"reason"`
 
 	// ExpiresAt bounds the grant. A waiver with no expiry is a waiver nobody
@@ -167,6 +178,8 @@ type ComponentStatus struct {
 	// yet, as <kind>/<name>. While any is listed the install waits.
 	// +optional
 	// +listType=set
+	// +kubebuilder:validation:MaxItems=64
+	// +kubebuilder:validation:items:MaxLength=80
 	PendingPrivileges []string `json:"pendingPrivileges,omitempty"`
 
 	// +optional

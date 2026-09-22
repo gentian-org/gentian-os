@@ -650,7 +650,9 @@ spec:
                         DenyPaths are refused even where Paths admits them. Deny wins regardless
                         of specificity, so a broad allow with narrow denials stays readable.
                       items:
+                        maxLength: 512
                         type: string
+                      maxItems: 64
                       type: array
                       x-kubernetes-list-type: set
                     forwardToken:
@@ -667,7 +669,9 @@ spec:
                       description: Paths this entry serves. Empty means the whole
                         host.
                       items:
+                        maxLength: 512
                         type: string
+                      maxItems: 64
                       type: array
                       x-kubernetes-list-type: set
                     source:
@@ -678,13 +682,16 @@ spec:
                           description: CIDRs admitted, after the real client IP is
                             resolved at the edge.
                           items:
+                            maxLength: 43
                             type: string
+                          maxItems: 64
                           type: array
                           x-kubernetes-list-type: set
                         component:
                           description: |-
                             Component names another installed component whose pods may call this
                             entry. Preferred over CIDRs, which age badly.
+                          maxLength: 63
                           type: string
                       type: object
                       x-kubernetes-validations:
@@ -722,6 +729,7 @@ spec:
                   - message: 'a perimeter entry cannot use authMode oidc: the session
                       lives on the gateway'
                     rule: self.surface != 'perimeter' || self.authMode != 'oidc'
+                maxItems: 32
                 type: array
                 x-kubernetes-list-map-keys:
                 - name
@@ -1855,6 +1863,7 @@ spec:
                           - reason
                           - rules
                           type: object
+                        maxItems: 32
                         type: array
                         x-kubernetes-list-map-keys:
                         - name
@@ -2065,6 +2074,7 @@ spec:
                           - reason
                           - rule
                           type: object
+                        maxItems: 32
                         type: array
                         x-kubernetes-list-map-keys:
                         - name
@@ -2101,6 +2111,7 @@ spec:
                           - reason
                           - scope
                           type: object
+                        maxItems: 32
                         type: array
                         x-kubernetes-list-map-keys:
                         - name
@@ -2208,6 +2219,7 @@ spec:
               version:
                 description: Version is the catalogue entry's version, not the upstream
                   project's.
+                maxLength: 64
                 minLength: 1
                 type: string
             required:

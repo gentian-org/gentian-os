@@ -24,6 +24,7 @@ import (
 
 	"k8s.io/apiextensions-apiserver/pkg/apis/apiextensions"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
+	apiextvalidation "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/validation"
 	structuralschema "k8s.io/apiextensions-apiserver/pkg/apiserver/schema"
 	"k8s.io/apiextensions-apiserver/pkg/apiserver/schema/cel"
 	"k8s.io/apiextensions-apiserver/pkg/apiserver/validation"
@@ -58,6 +59,13 @@ func loadCRD(t *testing.T, file string) *crdValidator {
 	var crd apiextensions.CustomResourceDefinition
 	if err := apiextensionsv1.Convert_v1_CustomResourceDefinition_To_apiextensions_CustomResourceDefinition(&v1crd, &crd, nil); err != nil {
 		t.Fatal(err)
+	}
+	// What the API server checks before it accepts the CRD at all — including
+	// the CEL cost budget, which a transition rule over an unbounded list or
+	// string exceeds. The first version of Component passed every rule test
+	// here and was refused by envtest for exactly that.
+	if errs := apiextvalidation.ValidateCustomResourceDefinition(context.Background(), &crd); len(errs) > 0 {
+		t.Fatalf("the API server would refuse %s:\n%v", file, errs.ToAggregate())
 	}
 	props := crd.Spec.Versions[0].Schema
 	if props == nil {

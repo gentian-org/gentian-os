@@ -62,7 +62,9 @@ spec:
                 description: Addons enabled on this instance, by the profile's own
                   names.
                 items:
+                  maxLength: 63
                   type: string
+                maxItems: 128
                 type: array
                 x-kubernetes-list-type: set
               exposures:
@@ -87,6 +89,7 @@ spec:
                       description: |-
                         ExposureName names an entry of the profile's expose list whose surface is
                         "perimeter".
+                      maxLength: 40
                       pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
                       type: string
                     host:
@@ -94,12 +97,14 @@ spec:
                         Host is the public hostname. Empty means the entry's default host in the
                         tenant's zone. A vanity host is admitted only if the tenant's approved
                         domains include it.
+                      maxLength: 253
                       pattern: ^([a-z0-9]([-a-z0-9]*[a-z0-9])?\.)+[a-z]{2,}$
                       type: string
                     owner:
                       description: |-
                         Owner is the Keycloak subject that enabled the surface, set by the
                         director from the caller's token.
+                      maxLength: 256
                       minLength: 1
                       type: string
                     reviewAt:
@@ -119,6 +124,7 @@ spec:
                     rule: self.owner == oldSelf.owner
                   - message: reviewAt must not be later than expiresAt
                     rule: '!has(self.reviewAt) || self.reviewAt <= self.expiresAt'
+                maxItems: 32
                 type: array
                 x-kubernetes-list-map-keys:
                 - exposureName
@@ -146,6 +152,7 @@ spec:
                       description: |-
                         Approver is the Keycloak subject who said yes, set by the director from
                         the caller's token.
+                      maxLength: 256
                       minLength: 1
                       type: string
                     expiresAt:
@@ -158,10 +165,12 @@ spec:
                       description: |-
                         Privilege names one entry of the profile's request, as <kind>/<name>,
                         where kind is podSecurity, egress or clusterRoles.
+                      maxLength: 80
                       pattern: ^(podSecurity|egress|clusterRoles)/[a-z0-9]([-a-z0-9]*[a-z0-9])?$
                       type: string
                     reason:
                       description: Reason in the approver's words, not the profile's.
+                      maxLength: 2000
                       minLength: 10
                       type: string
                   required:
@@ -175,6 +184,7 @@ spec:
                       is a new grant'
                     rule: self.approver == oldSelf.approver && self.approvedAt ==
                       oldSelf.approvedAt
+                maxItems: 64
                 type: array
                 x-kubernetes-list-map-keys:
                 - privilege
@@ -189,6 +199,7 @@ spec:
                     pattern: ^sha256:[a-f0-9]{64}$
                     type: string
                   name:
+                    maxLength: 63
                     minLength: 1
                     type: string
                 required:
@@ -292,7 +303,9 @@ spec:
                   PendingPrivileges are requests of the profile that nobody has granted
                   yet, as <kind>/<name>. While any is listed the install waits.
                 items:
+                  maxLength: 80
                   type: string
+                maxItems: 64
                 type: array
                 x-kubernetes-list-type: set
               sharedInstance:

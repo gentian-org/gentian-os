@@ -64,6 +64,7 @@ type ComponentProfileSpec struct {
 
 	// Version is the catalogue entry's version, not the upstream project's.
 	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=64
 	Version string `json:"version"`
 
 	// Package is how the component is deployed.
@@ -95,6 +96,7 @@ type ComponentProfileSpec struct {
 	// +optional
 	// +listType=map
 	// +listMapKey=name
+	// +kubebuilder:validation:MaxItems=32
 	Expose []ExposureSpec `json:"expose,omitempty"`
 
 	// SessionMaxAge caps the app's own session, for apps that run their own
@@ -176,6 +178,7 @@ type PrivilegeRequest struct {
 	// +optional
 	// +listType=map
 	// +listMapKey=name
+	// +kubebuilder:validation:MaxItems=32
 	PodSecurity []PodSecurityWaiver `json:"podSecurity,omitempty"`
 
 	// Egress opens outbound network beyond the tenant baseline. Tenant scope:
@@ -183,6 +186,7 @@ type PrivilegeRequest struct {
 	// +optional
 	// +listType=map
 	// +listMapKey=name
+	// +kubebuilder:validation:MaxItems=32
 	Egress []EgressRequest `json:"egress,omitempty"`
 
 	// ClusterRoles the component's ServiceAccount needs. Cluster scope, and the
@@ -191,6 +195,7 @@ type PrivilegeRequest struct {
 	// +optional
 	// +listType=map
 	// +listMapKey=name
+	// +kubebuilder:validation:MaxItems=32
 	ClusterRoles []ClusterRoleRequest `json:"clusterRoles,omitempty"`
 }
 
@@ -300,12 +305,16 @@ type ExposureSpec struct {
 	// Paths this entry serves. Empty means the whole host.
 	// +optional
 	// +listType=set
+	// +kubebuilder:validation:MaxItems=64
+	// +kubebuilder:validation:items:MaxLength=512
 	Paths []string `json:"paths,omitempty"`
 
 	// DenyPaths are refused even where Paths admits them. Deny wins regardless
 	// of specificity, so a broad allow with narrow denials stays readable.
 	// +optional
 	// +listType=set
+	// +kubebuilder:validation:MaxItems=64
+	// +kubebuilder:validation:items:MaxLength=512
 	DenyPaths []string `json:"denyPaths,omitempty"`
 
 	// StripPrefix removes the matched path prefix before the request reaches
@@ -335,11 +344,14 @@ type SourceRestriction struct {
 	// CIDRs admitted, after the real client IP is resolved at the edge.
 	// +optional
 	// +listType=set
+	// +kubebuilder:validation:MaxItems=64
+	// +kubebuilder:validation:items:MaxLength=43
 	CIDRs []string `json:"cidrs,omitempty"`
 
 	// Component names another installed component whose pods may call this
 	// entry. Preferred over CIDRs, which age badly.
 	// +optional
+	// +kubebuilder:validation:MaxLength=63
 	Component string `json:"component,omitempty"`
 }
 
