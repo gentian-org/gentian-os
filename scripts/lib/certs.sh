@@ -500,7 +500,7 @@ install_envoy_gateway() {
     info "  Controller:   ${GENTIAN_GATEWAY_CONTROLLER_NAME}"
     info "  Status:       kubectl get gatewayclass,gateway -A"
 
-    _pin_static_ip_edge_address
+    apply_edge_envoyproxy
 }
 
 
@@ -546,21 +546,44 @@ _detect_platform() {
 }
 
 
-# Pin the Envoy data-plane LoadBalancer to NODE_IP (NETWORK_MODE=static-ip only).
+# apply_edge_envoyproxy — the EnvoyProxy the kernel's GatewayClass points at,
+# and the GatewayClass itself.
 #
-# Without this the cloud controller allocates an arbitrary public IP for the
-# Envoy Service, so NODE_IP — which is what DNS and gentian-cluster-config point
-# at — never matches the address traffic actually arrives on. See
-# kernel/manifests/gateway/chart for the full rationale.
+# Two shapes, one per network mode.
 #
-# Must run before the operator creates kernel-public-gateway: loadBalancerIP is
-# honoured at Service creation only, never on update.
-_pin_static_ip_edge_address() {
-    [[ "${NETWORK_MODE:-tunnel}" == "static-ip" ]] || return 0
-
+# static-ip: the data plane is a LoadBalancer. Without this the cloud
+# controller allocates an arbitrary public address, so NODE_IP — which is what
+# DNS and gentian-cluster-config point at — never matches the address traffic
+# actually arrives on. See kernel/manifests/gateway/chart for the full
+# rationale. It must run before the operator creates kernel-public-gateway:
+# loadBalancerIP is honoured at Service creation only, never on update.
+#
+# tunnel: nothing outside the cluster connects to the data plane at all — the
+# tunnel daemon runs beside it and dials out. A LoadBalancer there asks for an
+# address from a cloud that is not there: on a cluster with no load-balancer
+# controller the Service sits Pending forever, and a Gateway with no address is
+# never Programmed, so every route it carries stays unserved. ClusterIP is both
+# what the tunnel needs and something every cluster can give.
+apply_edge_envoyproxy() {
     local ns="${ENVOY_GATEWAY_NAMESPACE}"
     local gw_name="${KERNEL_PUBLIC_GATEWAY_NAME:-kernel-public-gateway}"
     local gw_class="${GENTIAN_GATEWAY_CLASS_NAME:-gentian-envoy}"
+    local svc_type=ClusterIP
+    [[ "${NETWORK_MODE:-tunnel}" == "static-ip" ]] && svc_type=LoadBalancer
+
+    if [[ "${svc_type}" == "ClusterIP" ]]; then
+        info "Edge data plane: ClusterIP (NETWORK_MODE=${NETWORK_MODE:-tunnel}; the tunnel dials out)."
+        helm template gentian-edge "${SCRIPT_DIR}/kernel/manifests/gateway/chart" \
+            -f "$(gentian_platforms_values)" \
+            --set "namespace=${ns}" \
+            --set-string "envoy.serviceType=ClusterIP" \
+            | kubectl apply -f -
+        kubectl apply -f "${SCRIPT_DIR}/kernel/manifests/gateway/gatewayclass.yaml"
+        kubectl patch gatewayclass "${gw_class}" --type=merge -p \
+            "{\"spec\":{\"parametersRef\":{\"group\":\"gateway.envoyproxy.io\",\"kind\":\"EnvoyProxy\",\"name\":\"gentian-edge\",\"namespace\":\"${ns}\"}}}"
+        success "EnvoyProxy gentian-edge applied; GatewayClass ${gw_class} points at it."
+        return 0
+    fi
 
     # Detection first, and unconditionally.
     #
@@ -614,6 +637,7 @@ _pin_static_ip_edge_address() {
         --set-string "nodeIp=${NODE_IP:-}" \
         --set-string "platform=${PLATFORM:-}" \
         --set-string "addressRef=${EDGE_ADDRESS_REF:-}" \
+        --set-string "envoy.serviceType=LoadBalancer" \
         "${extra[@]+"${extra[@]}"}" \
         | kubectl apply -f -
 

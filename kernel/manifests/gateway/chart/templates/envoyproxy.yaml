@@ -63,14 +63,14 @@ spec:
                 matchLabels:
                   app.kubernetes.io/name: envoy
       envoyService:
-        type: LoadBalancer
-        {{- if $pinIP }}
+        type: {{ .Values.envoy.serviceType | default "LoadBalancer" }}
+        {{- if and $pinIP (eq (.Values.envoy.serviceType | default "LoadBalancer") "LoadBalancer") }}
         # Only where the platform accepts an address by IP. AWS NLBs and Azure
         # standard load balancers do not, so they carry the address in an
         # annotation instead and this field would be a lie.
         loadBalancerIP: {{ .Values.nodeIp | quote }}
         {{- end }}
-        {{- with $ann }}
+        {{- with (ternary $ann dict (eq (.Values.envoy.serviceType | default "LoadBalancer") "LoadBalancer")) }}
         annotations:
           {{- range $k, $v := . }}
           {{ $k }}: {{ $v | quote }}
