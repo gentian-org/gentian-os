@@ -71,8 +71,12 @@ func run(log *slog.Logger) error {
 	issuerBase := req.env("DIRECTOR_ISSUER_BASE_URL")
 	audience := req.env("DIRECTOR_AUDIENCE")
 	fgaURL := req.env("OPENFGA_API_URL")
-	fgaStore := req.env("OPENFGA_STORE_ID")
-	fgaModel := req.env("OPENFGA_MODEL_ID")
+	// The store and the model are the director's to create: they exist only
+	// once OpenFGA answers, and a cluster rebuilt from git has to arrive at
+	// the same place without anyone remembering to run something. Set them to
+	// pin a store a cluster already has.
+	fgaStore := os.Getenv("OPENFGA_STORE_ID")
+	fgaModel := os.Getenv("OPENFGA_MODEL_ID")
 	repoPath := req.env("GENTIAN_DEPLOYMENTS_PATH")
 	repoURL := req.env("GENTIAN_DEPLOYMENTS_REPO")
 	cluster := req.env("GENTIAN_DEPLOYMENTS_CLUSTER_ID")
@@ -101,10 +105,23 @@ func run(log *slog.Logger) error {
 	if err != nil {
 		return err
 	}
-	checker, err := authz.NewOpenFGA(authz.Options{
-		BaseURL: fgaURL, APIToken: os.Getenv("OPENFGA_API_TOKEN"),
-		StoreID: fgaStore, ModelID: fgaModel, Logger: log,
-	})
+	fgaOptions := authz.Options{BaseURL: fgaURL, APIToken: os.Getenv("OPENFGA_API_TOKEN"), Logger: log}
+	if fgaStore == "" || fgaModel == "" {
+		bootstrapCtx, cancelBootstrap := context.WithTimeout(context.Background(), 2*time.Minute)
+		store, model, err := authz.Bootstrap(bootstrapCtx, fgaOptions)
+		cancelBootstrap()
+		if err != nil {
+			return fmt.Errorf("authorization store: %w", err)
+		}
+		if fgaStore == "" {
+			fgaStore = store
+		}
+		if fgaModel == "" {
+			fgaModel = model
+		}
+	}
+	fgaOptions.StoreID, fgaOptions.ModelID = fgaStore, fgaModel
+	checker, err := authz.NewOpenFGA(fgaOptions)
 	if err != nil {
 		return err
 	}

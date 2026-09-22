@@ -22,7 +22,7 @@ CROSSPLANE_IMAGE ?= xpkg.crossplane.io/crossplane/crossplane:$(CROSSPLANE_CLI_VE
 KUBEBUILDER_ASSETS ?= /tmp/envtest-bins/k8s/1.32.0-linux-amd64
 export KUBEBUILDER_ASSETS
 
-.PHONY: all build generate manifests test lint docker-build clean install-plugin uninstall-plugin validate-steps gen-credentials check-credentials lint-cluster-config-keys lint-rbac-coverage lint-marker-ascii test-e04-token-classification test-a05-cert-manager-dns01-args lint-composed-resource-names lint-sequencer-targets lint-eso-readable-paths lint-template-placeholders lint-portability lint-image-digests check-render-fixtures lint-resolvable lint-bootstrap-apps lint-step-contracts lint-claim-defaults lint-live-identifiers lint-password-schemes test-policy test-policy-openbao test-policy-authz verify-authz-vocabulary test-director-contract run-director-dev validate-steps-v5 lint-namespace-layout verify-claim-applied verify-argocd-config verify-image-updates gen-provider-rbac lint-provider-rbac lint-credential-validators lint-credential-catalogue
+.PHONY: all build generate manifests test lint docker-build clean install-plugin uninstall-plugin validate-steps gen-credentials gen-authz-model check-credentials lint-cluster-config-keys lint-rbac-coverage lint-marker-ascii test-e04-token-classification test-a05-cert-manager-dns01-args lint-composed-resource-names lint-sequencer-targets lint-eso-readable-paths lint-template-placeholders lint-portability lint-image-digests check-render-fixtures lint-resolvable lint-bootstrap-apps lint-step-contracts lint-claim-defaults lint-live-identifiers lint-password-schemes test-policy test-policy-openbao test-policy-authz verify-authz-vocabulary test-director-contract run-director-dev validate-steps-v5 lint-namespace-layout verify-claim-applied verify-argocd-config verify-image-updates gen-provider-rbac lint-provider-rbac lint-credential-validators lint-credential-catalogue
 
 all: generate build test
 
@@ -85,6 +85,12 @@ manifests:
 	$(CONTROLLER_GEN) rbac:roleName=gentian-os paths="./internal/..." output:rbac:artifacts:config=config/rbac
 	python3 scripts/gen/gen-clusterrole.py
 
+## The director embeds the authorization model it checks against; this copies
+## the repository's model.json to where the embed reads it, so the code and the
+## model it was tested with cannot be separated.
+gen-authz-model:
+	cp authz/model/v1/model.json internal/director/authz/model.json
+
 ## Render the Keycloak login theme sources into the ConfigMap Argo CD applies
 gen-theme:
 	python3 scripts/gen/gen-keycloak-theme-configmap.py
@@ -98,12 +104,12 @@ gen-provider-rbac:
 	python3 scripts/gen/gen-provider-rbac.py
 
 ## Both generate and manifests in order
-gen-all: generate manifests gen-theme gen-credentials gen-provider-rbac
+gen-all: generate manifests gen-theme gen-credentials gen-provider-rbac gen-authz-model
 
 ## Verify generated files are up to date (CI check)
 verify-gen: gen-all
 	python3 scripts/gen/gen-credential-requirements.py --check
-	git diff --exit-code api/ config/crd/ charts/gentian-os/crds/ charts/gentian-os/templates/clusterrole.yaml kernel/services/keycloak-idp/manifests/ kernel/credentials/ crossplane/providers/provider-rbac.yaml || (echo "Generated files are out of date. Run 'make gen-all'." && exit 1)
+	git diff --exit-code api/ internal/director/authz/model.json config/crd/ charts/gentian-os/crds/ charts/gentian-os/templates/clusterrole.yaml kernel/services/keycloak-idp/manifests/ kernel/credentials/ crossplane/providers/provider-rbac.yaml || (echo "Generated files are out of date. Run 'make gen-all'." && exit 1)
 
 ## Tidy module dependencies
 tidy:

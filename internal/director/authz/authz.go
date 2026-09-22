@@ -271,7 +271,7 @@ func (c *OpenFGA) Read(ctx context.Context, filter Tuple) ([]Tuple, error) {
 			} `json:"tuples"`
 			ContinuationToken string `json:"continuation_token"`
 		}
-		if err := c.post(ctx, "/read", body, &page); err != nil {
+		if err := c.post(ctx, c.storeID, "/read", body, &page); err != nil {
 			return nil, err
 		}
 		for _, t := range page.Tuples {
@@ -297,7 +297,7 @@ func (c *OpenFGA) Write(ctx context.Context, writes, deletes []Tuple) error {
 				"authorization_model_id": c.modelID,
 				field:                    map[string]any{"tuple_keys": tuples[:n]},
 			}
-			if err := c.post(ctx, "/write", body, nil); err != nil {
+			if err := c.post(ctx, c.storeID, "/write", body, nil); err != nil {
 				return err
 			}
 			tuples = tuples[n:]
@@ -314,27 +314,46 @@ func (c *OpenFGA) Write(ctx context.Context, writes, deletes []Tuple) error {
 	return send("writes", writes)
 }
 
-func (c *OpenFGA) post(ctx context.Context, path string, body, out any) error {
+// get reads a path under the server root (not under the store).
+func (c *OpenFGA) get(ctx context.Context, path string, out any) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+path, nil)
+	if err != nil {
+		return err
+	}
+	return c.do(req, out)
+}
+
+func (c *OpenFGA) post(ctx context.Context, storeID, path string, body, out any) error {
 	payload, err := json.Marshal(body)
 	if err != nil {
 		return err
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/stores/"+c.storeID+path, bytes.NewReader(payload))
+	url := c.baseURL + path
+	if storeID != "" {
+		url = c.baseURL + "/stores/" + storeID + path
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(payload))
 	if err != nil {
 		return err
 	}
 	req.Header.Set("Content-Type", "application/json")
+	return c.do(req, out)
+}
+
+// do sends a prepared request with the store's credential and decodes a 2xx
+// body into out, which may be nil.
+func (c *OpenFGA) do(req *http.Request, out any) error {
 	if c.token != "" {
 		req.Header.Set("Authorization", "Bearer "+c.token)
 	}
 	resp, err := c.http.Do(req)
 	if err != nil {
-		return fmt.Errorf("openfga %s: %w", path, err)
+		return fmt.Errorf("openfga %s: %w", req.URL.Path, err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode/100 != 2 {
 		b, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		return fmt.Errorf("openfga %s: status %d: %s", path, resp.StatusCode, strings.TrimSpace(string(b)))
+		return fmt.Errorf("openfga %s: status %d: %s", req.URL.Path, resp.StatusCode, strings.TrimSpace(string(b)))
 	}
 	if out == nil {
 		return nil
