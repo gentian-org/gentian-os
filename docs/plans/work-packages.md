@@ -546,8 +546,18 @@ From [security-gap-closing.md](security-gap-closing.md).
       5. `[ ]` D-01 operator and director in `kernel-control`; the Gateway in
          `kernel-edge`; the platform tenant's console rendering the tiles
          (gentian-ui: BFF passthrough `[x]`, the console screen `[ ]`).
-      6. `[ ]` First run on the purged cluster: `--until A-07`, then
-         `--until B-01`, then step by step; every `check()` honest.
+      6. `[~]` First run on the purged cluster: `--until A-07`, then
+         `--until B-01`, then step by step; every `check()` honest. Done
+         through C-01 (2026-09-22); Keycloak and OpenFGA next, on
+         `kernel-postgres` — kernel data on its own instance, app data on the
+         system engines.
+      7. `[ ]` Headlamp as the person, not a robot: an OIDC proxy in
+         `kernel-observability` (kube-oidc-proxy) that verifies the kernel
+         realm's token and impersonates the person at the API server, so
+         RBAC and the audit log name them; token login stays the fallback for
+         a cluster without a realm.
+      8. `[ ]` The dev claim's `llm` block (vLLM on the GPU, the external
+         providers) goes back on the claim after the kernel is observable.
 - [ ] Phase 1 continued: OpenBao init and the seal token (B-02), ESO stores,
       Crossplane providers, Keycloak and OpenFGA in their namespaces (the Suze
       composition takes the layout's names), the two Gateways from the Cluster
