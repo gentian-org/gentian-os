@@ -8,8 +8,8 @@ where an item belongs to one of those it says so. The decisions behind the
 packages are [architectural-decisions.md](architectural-decisions.md).
 
 Repositories: `os` = gentian-os, `apps` = gentian-apps, `ui` = gentian-ui,
-`deploy` = gentian-deployments, `store` = the external App Store (outside
-these repositories; listed because the cluster side depends on it).
+`deploy` = gentian-deployments, `store` = the App Store, a service outside
+the cluster in its own repository (WP-14 is its reference implementation).
 
 ## Sequence at a glance
 
@@ -25,8 +25,8 @@ to be tested against, and each package then brings its own step.
 | Phase | Packages | Needs | Gate |
 | --- | --- | --- | --- |
 | 0 — no cluster | WP-1 cutover A (director against a bare repo, static JWKS, OpenFGA in a container); WP-3 model v1, tests, vocabulary check; WP-5 CRD schemas, CEL rules, profile conversion tooling; WP-6 store contract and grant format; WP-7 desktop and console against a mocked director; WP-3 the event listener provider, the director's ingestion endpoint and the membership tuple writer (code only — no Keycloak needed to build or unit-test them) | nothing | contract tests green |
-| 1 — installer skeleton | the parts of WP-8 and WP-10 that produce an *empty* cluster in the target shape: labelled `kernel-*` namespaces, tier-0 operators, `kernel-data` with `kernel-postgres`, Keycloak and OpenFGA in their namespaces, OpenBao and the seal, the two Gateways; the step framework kept, step contents rewritten; ACME staging issuers while iterating | the purged cluster | `install.sh` stands up the empty layout repeatably; `--dry-run` and `--status` true |
-| 2 — packages on the fresh cluster | WP-1 deployed (no side-by-side), WP-2, WP-4, WP-5 on-cluster parts, WP-9 wave 0 and signing, WP-8 remaining namespaces — each adding its installer step as it lands; **WP-3's event listener deployed and wired**, because the director starts checking here and an empty membership projection denies every write, including phase 3's handover commit | phase 1 | each package's tests; the step's `check()` honest |
+| 1 — installer skeleton, and the store's counterpart | the parts of WP-8 and WP-10 that produce an *empty* cluster in the target shape: labelled `kernel-*` namespaces, tier-0 operators, `kernel-data` with `kernel-postgres`, Keycloak and OpenFGA in their namespaces, OpenBao and the seal, the two Gateways; the step framework kept, step contents rewritten; ACME staging issuers while iterating. **In parallel, WP-14**: the store reference implementation, built against `director-dev` — it needs no cluster, so it fills this phase without competing for the one being rebuilt, and every director call the store makes is exercised before phase 2 wires the operator behind it | the purged cluster (WP-8/10); nothing (WP-14) | `install.sh` stands up the empty layout repeatably; `--dry-run` and `--status` true; the store's flow test passes against `director-dev` |
+| 2 — packages on the fresh cluster | WP-1 deployed (no side-by-side), WP-2, WP-4, WP-5 on-cluster parts and materialise-on-reference against WP-14's catalogue source, WP-9 wave 0 and signing, WP-8 remaining namespaces — each adding its installer step as it lands; **WP-3's event listener deployed and wired**, because the director starts checking here and an empty membership projection denies every write, including phase 3's handover commit | phase 1 | each package's tests; the step's `check()` honest |
 | 3 — handover and challenge | WP-10 `E-05`, credential split, challenge lists; WP-11 deployments layout; WP-13 toggles verified off and on | phase 2 | the challenge list passes as scripted tests on a fresh install |
 | 4 — identities, audit, depth | WP-3 reconcile hardening and drift reporting (the feed itself landed in phase 2), WP-9 identities and agents, WP-4 log store and exposure view, WP-9 data-plane depth (gap-plan waves 2–4) | phase 3 | audit joins on one request id |
 | existing clusters | operator-split-plan.md §6 B and D, or a rebuild from the recovery kit (AD-11) | a passing fresh install | per cluster |
@@ -622,3 +622,68 @@ compliance:
       roles document is the list of complementary user-entity controls.
 - [ ] **Request id everywhere**: the director, the shim, the console and
       the Keycloak listener propagate one id; the exports join on it.
+
+## WP-14 Store reference implementation (`store`)
+
+Specified by [store-contract.md](../design/store-contract.md) (the interface),
+[ui-restructure.md](ui-restructure.md) §3 and
+[app-store-schema.sql](app-store-schema.sql). WP-6 is the cluster's half of
+the contract and is done; this is the other half, built so the whole flow —
+listing, entitlement, install, read-back, revocation — can be run and tested
+before any of it touches a cluster. It is a reference implementation: the
+smallest service that honours the contract, in the shape a product store
+would take, and the one the contract tests run against. Billing, plans and
+subscriptions stay out until the flow is proven.
+
+The store holds no cluster credential and no identity toward the cluster
+(AD-3). Everything it does at the director it does with the signed-in
+person's token, or with a statement it signed.
+
+- [ ] **Repository and service.** A new repository; one service over the
+      schema (Postgres), runnable with one command beside `director-dev`.
+      Configuration: its signing key, the catalogue sources, the director
+      URL of each registered cluster.
+- [ ] **Ingest.** `convert-appprofiles.sh` already produces
+      `listings/<name>.yaml` per profile; the store ingests a directory of
+      them plus the catalogue index (coordinate → profile name, bundle
+      digest, source). It refuses a listing whose profile is not deployable
+      as `tenant`. The catalogue index is the thing that ties
+      `main/nextcloud` to the profile `nextcloud` — today nothing does, and
+      the director's materialise-on-reference (WP-5) reads the same index.
+- [ ] **Listings API.** Locale fallback as the schema describes; per cluster,
+      which catalogues it may see. Public: this is the shop window.
+- [ ] **Cluster registration.** A cluster registers with an id and the store
+      publishes its signing keys for the platform administrator to pin on the
+      Cluster claim (`store.signingKeys`); rotation is a new key published
+      before it signs, the old one retired after.
+- [ ] **Entitlement statements.** Sign grants and revocations exactly as
+      store-contract.md §2 states (compact JWS, EdDSA, `aud`/`sub`/`jti`/`iat`,
+      `exp` on grants, `reason` on revocations); record each in
+      `entitlement_grant`; deliver a grant through the signed-in tenant
+      administrator's browser (`POST /v1/tenants/{t}/entitlements` with their
+      token) and a revocation directly, with no token. Retry until the
+      director answers `recorded` or `unchanged`; `409` is the store's own
+      older statement and is final.
+- [ ] **OSS and paid, as one mechanism.** An OSS listing is granted on
+      request with a far expiry; a paid one on a recorded purchase, and
+      revoked on refund. No second code path: the difference is who may
+      trigger the grant and when it ends.
+- [ ] **Install and read-back.** The store triggers
+      `POST /v1/tenants/{t}/apps/{p}` with the person's token and the
+      coordinate, and renders "installed / addons enabled / entitled until"
+      from the director's reads — never from its own tables.
+- [ ] **Private catalogue sources** (paid apps): a single-use fetch token
+      issued with the grant, for the director to fetch the bundle at the
+      digest; the pull credential handed to the credential manager as the
+      tenant administrator. Lands with WP-5's materialise-on-reference, not
+      before.
+- [ ] **Flow test**, runnable without a cluster: store + `director-dev` (with
+      `-entitlements`) — ingest two listings, register the dev cluster, pin
+      the key, grant one entry to tenant demo, install it as tom (202),
+      install the other (403), revoke, install again (403), replay the old
+      grant (409), read the tenant's apps and entitlements as mia (200). The
+      same test later runs against a real director in phase 2.
+- [ ] **Not in the cluster, ever.** The `app-store-me` profile and its dead
+      install paths are retired with WP-5; the cluster keeps the director's
+      endpoint and, per tenant, only the installed profiles.
+
