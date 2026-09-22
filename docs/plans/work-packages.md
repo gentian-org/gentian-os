@@ -640,26 +640,25 @@ The store holds no cluster credential and no identity toward the cluster
 (AD-3). Everything it does at the director it does with the signed-in
 person's token, or with a statement it signed.
 
-- [ ] **Repository and service.** In the store's own repository, built the
-      way that repository's other services are; one service over the schema
-      (Postgres), runnable with one command beside `director-dev`.
-      Configuration: its signing key, the catalogue sources it publishes
-      from, the director URL of each registered cluster. Private artefacts
-      of paid apps are a private catalogue source, not part of the store.
-- [ ] **Ingest.** `convert-appprofiles.sh` already produces
+- [x] **Repository and service.** In the store's own repository, one service
+      per trust boundary over a shared account library; the store is FastAPI
+      over SQLAlchemy (Postgres; SQLite in tests), runnable beside
+      `director-dev` from that repository's dev compose. Its signing key is
+      one setting with no fallback; without it every entitlement route is 503.
+- [x] **Ingest.** `convert-appprofiles.sh` already produces
       `listings/<name>.yaml` per profile; the store ingests a directory of
       them plus the catalogue index (coordinate → profile name, bundle
       digest, source). It refuses a listing whose profile is not deployable
       as `tenant`. The catalogue index is the thing that ties
       `main/nextcloud` to the profile `nextcloud` — today nothing does, and
       the director's materialise-on-reference (WP-5) reads the same index.
-- [ ] **Listings API.** Locale fallback as the schema describes; per cluster,
+- [x] **Listings API.** Locale fallback as the schema describes; per cluster,
       which catalogues it may see. Public: this is the shop window.
-- [ ] **Cluster registration.** A cluster registers with an id and the store
+- [x] **Cluster registration.** A cluster registers with an id and the store
       publishes its signing keys for the platform administrator to pin on the
       Cluster claim (`store.signingKeys`); rotation is a new key published
       before it signs, the old one retired after.
-- [ ] **Entitlement statements.** Sign grants and revocations exactly as
+- [x] **Entitlement statements.** Sign grants and revocations exactly as
       store-contract.md §2 states (compact JWS, EdDSA, `aud`/`sub`/`jti`/`iat`,
       `exp` on grants, `reason` on revocations); record each in
       `entitlement_grant`; deliver a grant through the signed-in tenant
@@ -667,11 +666,14 @@ person's token, or with a statement it signed.
       token) and a revocation directly, with no token. Retry until the
       director answers `recorded` or `unchanged`; `409` is the store's own
       older statement and is final.
-- [ ] **OSS and paid, as one mechanism.** An OSS listing is granted on
+- [x] **OSS and paid, as one mechanism.** An OSS listing is granted on
       request with a far expiry; a paid one on a recorded purchase, and
       revoked on refund. No second code path: the difference is who may
       trigger the grant and when it ends.
-- [ ] **Install and read-back.** The store triggers
+- [~] **Install and read-back.** The website's checkout page and account page
+      call the store from the browser with the person's GTC token; the
+      install trigger and read-back live in the tenant desktop's store screen
+      (WP-7), which delivers the grant it is handed. The store triggers
       `POST /v1/tenants/{t}/apps/{p}` with the person's token and the
       coordinate, and renders "installed / addons enabled / entitled until"
       from the director's reads — never from its own tables.
@@ -680,7 +682,9 @@ person's token, or with a statement it signed.
       digest; the pull credential handed to the credential manager as the
       tenant administrator. Lands with WP-5's materialise-on-reference, not
       before.
-- [ ] **Flow test**, runnable without a cluster: store + `director-dev` (with
+- [x] **Flow test**, runnable without a cluster — `tests/test_flow.py` in the
+      store, against `director-dev -entitlements -store-keys …`; also run in
+      that repository's CI with `director-dev` built from this branch. Passes:: store + `director-dev` (with
       `-entitlements`) — ingest two listings, register the dev cluster, pin
       the key, grant one entry to tenant demo, install it as tom (202),
       install the other (403), revoke, install again (403), replay the old
