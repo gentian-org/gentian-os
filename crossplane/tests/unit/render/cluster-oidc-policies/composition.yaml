@@ -688,6 +688,77 @@ spec:
               providerConfigRef:
                 name: openbao
 
+            {{- /* ── The operator's own OpenBao access ─────────────────────────
+                 It reads the master password every credential is derived from,
+                 and writes what it seeds. This lived in a kernel service whose
+                 manifests named crossplane-system and gentian-system outright,
+                 so a v5 cluster got neither the policy nor the role: the
+                 operator's Kubernetes login failed with "invalid role name",
+                 it fell back to random credentials, and nothing said so twice.
+                 Here it follows the layout like every other binding.
+
+                 v5 only. A v4 cluster still gets both from that kernel service,
+                 and two owners of one OpenBao policy would take turns writing
+                 it. */}}
+            {{- if $v5 }}
+            ---
+            apiVersion: vault.vault.upbound.io/v1alpha1
+            kind: Policy
+            metadata:
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: vault-policy-operator-write
+              name: {{ $name }}-policy-operator-write
+            spec:
+              forProvider:
+                name: operator-write
+                policy: |
+                  path "{{ $kvMount }}/data/gentian-os/*"     { capabilities = ["create","read","update","patch","delete"] }
+                  path "{{ $kvMount }}/metadata/gentian-os/*" { capabilities = ["list","read","delete"] }
+                  path "auth/token/create"                    { capabilities = ["update"] }
+                  path "auth/token/lookup-self"               { capabilities = ["read"] }
+
+                  # Per-tenant JWT auth mounts. A tenant member authenticates in
+                  # their own Keycloak realm — that is where their apps' OIDC
+                  # clients live — so their portal token is signed by that realm
+                  # and the kernel realm's mount cannot verify it. One mount per
+                  # realm is what makes the exchange possible.
+                  #
+                  # Deliberately NOT one mount trusting many keys, which would be
+                  # fewer objects and a privilege escalation: a tenant
+                  # administrator holds realm-admin in their own realm, so they
+                  # can mint a token carrying any groups claim, the cluster admin
+                  # group included. Isolation belongs at the mount boundary,
+                  # because claim values are precisely what they control.
+                  #
+                  # Glob, not the + segment wildcard: OpenBao's + matches one
+                  # whole path segment, so "oidc-+" matches nothing at all.
+                  path "sys/auth/oidc-*"                      { capabilities = ["create","read","update","delete","sudo"] }
+                  path "auth/oidc-*"                          { capabilities = ["create","read","update","delete","list"] }
+              providerConfigRef:
+                name: openbao
+
+            ---
+            apiVersion: kubernetes.vault.upbound.io/v1alpha1
+            kind: AuthBackendRole
+            metadata:
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: vault-auth-role-operator
+              name: {{ $name }}-auth-role-operator
+            spec:
+              forProvider:
+                backend: {{ $authMount }}
+                roleName: gentian-os-operator
+                boundServiceAccountNames:
+                  - gentian-os
+                boundServiceAccountNamespaces:
+                  - {{ $controlNs }}
+                tokenPolicies:
+                  - operator-write
+                tokenTtl: 3600
+              providerConfigRef:
+                name: openbao
+            {{- end }}
+
             ---
             apiVersion: kubernetes.vault.upbound.io/v1alpha1
             kind: AuthBackendRole
