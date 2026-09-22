@@ -64,6 +64,8 @@ func loadCRD(t *testing.T, file string) *crdValidator {
 	// the CEL cost budget, which a transition rule over an unbounded list or
 	// string exceeds. The first version of Component passed every rule test
 	// here and was refused by envtest for exactly that.
+	// The server fills status on create; the validator expects it present.
+	crd.Status.StoredVersions = []string{crd.Spec.Versions[0].Name}
 	if errs := apiextvalidation.ValidateCustomResourceDefinition(context.Background(), &crd); len(errs) > 0 {
 		t.Fatalf("the API server would refuse %s:\n%v", file, errs.ToAggregate())
 	}
