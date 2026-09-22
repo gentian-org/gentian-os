@@ -1320,10 +1320,55 @@ spec:
                         xRobotsTag: "none"
                         xXssProtection: "1; mode=block"
                         referrerPolicy: "no-referrer"
-                {{- /* No smtpServer yet. The tenant SMTP Job reads its host, port
-                     and from address out of a Secret, and a Composition cannot read
-                     Secrets — the same wall the broker IdP hit. It moves once the
-                     host is published the way identity.internalUrl was. */}}
+                {{- /* The realm's mail server, declared rather than left to the Job.
+
+                     Only the password ever needed a Secret, and the provider takes
+                     that by reference — so the wall this block used to describe was
+                     never in front of the whole field. The host follows the Job's own
+                     rule, mail.<kernelDomain>: the PUBLIC name, because Postfix
+                     withholds AUTH until STARTTLS has succeeded and Java verifies the
+                     certificate against the name it dialled, which no public CA signs
+                     for an in-cluster address.
+
+                     Left undeclared, the field did not stay unmanaged. Upjet
+                     late-initialisation copied whatever was live into
+                     spec.forProvider, and because late-init only fills fields that
+                     are EMPTY it captured the pre-authentication state — in-cluster
+                     host, no auth — and then froze. Every tenant on this cluster
+                     ended up declaring a mail server it had stopped using, which the
+                     provider would have restored on the next refresh that noticed:
+                     host moved back in-cluster, auth, user and password dropped.
+                     Declaring every field is what stops that, because late-init has
+                     nothing left to fill.
+
+                     A password cannot be late-initialised back in, either: Keycloak
+                     returns it as ten asterisks, and the CRD models it only as
+                     passwordSecretRef, so a captured value would be the mask.
+
+                     Gated on serviceMode, not on the Secret: a Composition still
+                     cannot read one, and external mode relays through a provider
+                     whose address is not derivable from the domain. Those clusters
+                     keep the Job's behaviour unchanged. */}}
+                {{- if and (eq (dig "mail.serviceMode" "" $ccData) "kernel") $kd }}
+                smtpServer:
+                  - host: {{ printf "mail.%s" $kd | quote }}
+                    port: "587"
+                    from: {{ printf "noreply@%s" $kd | quote }}
+                    fromDisplayName: "Gentian"
+                    ssl: false
+                    starttls: true
+                    auth:
+                      {{- /* The identity this realm authenticates as, minted per
+                           tenant by syncMailSubmissionCredential and verified by
+                           Dovecot, which is the SASL server the kernel Postfix asks.
+                           Same Secret and key the Job reads, so the two writers
+                           cannot present different credentials. */}}
+                      - username: {{ printf "noreply@%s" $domain | quote }}
+                        passwordSecretRef:
+                          name: {{ printf "mail-submission-%s" $tenant | quote }}
+                          namespace: platform-kernel
+                          key: smtp_password
+                {{- end }}
               providerConfigRef:
                 name: keycloak
 
