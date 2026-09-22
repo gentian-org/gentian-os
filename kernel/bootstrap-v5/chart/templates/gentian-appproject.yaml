@@ -10,6 +10,12 @@ spec:
   sourceRepos:
   - {{ $osRepo | quote }}
   - {{ printf "%s/*" $osRepo | quote }}
+  # The deployments repository: the claims and tenants Argo syncs from it.
+  {{- if .Values.deployments.repo }}
+  - {{ .Values.deployments.repo | quote }}
+  {{- end }}
+  - {{ .Values.appsRepo | default "https://github.com/gentian-org/gentian-apps" | quote }}
+  - {{ .Values.uiRepo | default "https://github.com/gentian-org/gentian-ui" | quote }}
   - https://openbao.github.io/openbao-helm
   - ghcr.io/cloudnative-pg/charts
   - ghcr.io/stakater/charts
