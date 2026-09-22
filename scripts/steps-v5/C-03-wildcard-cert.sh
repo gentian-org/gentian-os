@@ -12,7 +12,10 @@
 _v5_wildcard_targets() { echo "$(ns_kernel edge) $(ns_kernel gitops)"; }
 
 check() {
-    [[ "${DNS_PROVIDER:-none}" == "none" ]] && return "${CHECK_UNDEFINED}"
+    # The claim says which provider hosts the zone, not the environment: a
+    # --status pass carries no DNS_PROVIDER and would otherwise report a
+    # cluster that is serving the certificate as undefined.
+    [[ "$(gentian_dns_provider)" == "none" ]] && return "${CHECK_UNDEFINED}"
     GENTIAN_WILDCARD_TARGETS="$(_v5_wildcard_targets)" kernel_wildcard_propagated
 }
 
