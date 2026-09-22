@@ -217,7 +217,7 @@ spec:
             - message: tenant is required when scope is tenant, and must be empty
                 when scope is cluster
               rule: 'self.scope == ''tenant'' ? (has(self.tenant) && self.tenant !=
-                ”) : (!has(self.tenant) || self.tenant == ”)'
+                '''') : (!has(self.tenant) || self.tenant == '''')'
           status:
             description: |-
               BackupPolicyStatus reports what this policy resolved to and whether it can

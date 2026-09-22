@@ -143,7 +143,10 @@ jobs:
         run: python3 -m pip install --quiet pyyaml
 
       - name: lints
-        run: make lint-shell lint-yaml lint-portability lint-image-digests
+        # lint-marker-ascii: a kubebuilder marker that carries a typographic
+        # quote renders a CRD the API server refuses, and nothing else catches
+        # it — not envtest, whose newer API server is more forgiving.
+        run: make lint-shell lint-yaml lint-portability lint-image-digests lint-marker-ascii
 
       # The recovery kit is what rebuilds a cluster once its OpenBao is gone,
       # and only its export was ever exercised. age is installed rather than
