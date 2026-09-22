@@ -122,6 +122,14 @@ spec:
             - name: MAIL_EGRESS_HOST
               value: {{ . | quote }}
             {{- end }}
+            {{- /*
+            Where abuse@ and postmaster@ are delivered, for every domain this
+            cluster accepts mail for. Empty leaves both accepted and unreadable,
+            which the mail reconciler logs on every sync — see mailAdminContact
+            in values.yaml.
+            */}}
+            - name: MAIL_ADMIN_CONTACT
+              value: {{ .Values.mailAdminContact | default "" | quote }}
             - name: TENANCY_MODE
               value: {{ .Values.tenancyMode | default "multi" | quote }}
             {{- /*

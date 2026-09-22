@@ -86,6 +86,61 @@ const (
 	postfixAllowedSenderDomainsKey = "allowed_sender_domains"
 	postfixVirtualMailboxMapsKey   = "virtual_mailbox_maps"
 
+	// The role addresses RFC 2142 reserves, rewritten to a real inbox.
+	//
+	// Both already ARRIVE: the mailbox map is a catch-all, so every address in a
+	// registered domain is accepted and written to /var/mail/<domain>/<local>.
+	// What none of them have is a reader. Dovecot authenticates against Keycloak,
+	// so a mailbox is only reachable when its local part is a Keycloak user, and
+	// "abuse" and "postmaster" never are. Mail to them is accepted, stored, and
+	// unreadable -- which is worse than refusing it, because the sender is told
+	// it was delivered.
+	//
+	// postmaster is required by RFC 5321 §4.5.1 and abuse by RFC 2142 §4, and
+	// both are checked rather than assumed: Microsoft's JMRP and SNDS
+	// enrolments mail these addresses and enrol nobody who does not answer.
+	//
+	// dmarc is deliberately NOT here even though mailDMARCRecord publishes
+	// rua=mailto:dmarc@<domain> and that mailbox is equally unreadable. Those
+	// are high-volume machine-readable XML, and forwarding them to a person
+	// buries the two addresses a person must actually read. It needs a parser,
+	// not an alias.
+	postfixVirtualAliasKey = "virtual_alias"
+)
+
+// roleAliasLocalParts are the local parts rewritten to the cluster's admin
+// contact, in every domain this cluster accepts mail for.
+var roleAliasLocalParts = []string{"abuse", "postmaster"}
+
+// resolveRoleAliasTarget decides whether a configured contact may be aliased to.
+//
+// Returns the address to write, and a message naming why it was refused when it
+// may not be. An empty contact is neither: nothing to write and nothing wrong,
+// which is the state every cluster starts in.
+//
+// The rule worth the function is the second one. An address inside a domain this
+// cluster hosts would alias into another /var/mail/<domain>/<local-part>, and
+// Dovecot opens a mailbox only for a Keycloak user — so the message would be
+// accepted, reported delivered, and be exactly as unreadable as it is today,
+// one hop further along. Writing that line would make the problem look solved
+// while changing nothing, so it is refused instead.
+func resolveRoleAliasTarget(contact string, hosted map[string]bool) (target, reject string) {
+	contact = strings.TrimSpace(contact)
+	if contact == "" {
+		return "", ""
+	}
+	at := strings.LastIndex(contact, "@")
+	if at < 0 || at == len(contact)-1 {
+		return "", "MAIL_ADMIN_CONTACT is not an e-mail address; abuse@ and postmaster@ stay unreadable"
+	}
+	if hosted[strings.ToLower(contact[at+1:])] {
+		return "", "MAIL_ADMIN_CONTACT is inside a domain this cluster hosts, so it would alias into a mailbox nobody can open; set it to an address off this cluster"
+	}
+	return contact, ""
+}
+
+const (
+
 	// OpenDKIM decides which key signs which domain from these two tables. The
 	// operator generates a key per tenant already; without the tables OpenDKIM
 	// never learns of it, so tenant mail leaves unsigned while its DNS record
@@ -525,7 +580,27 @@ func (r *TenantReconciler) syncPostfixVirtualMailboxMaps(ctx context.Context) er
 	// two tenants can name the same mail domain — the kernel entry and a tenant
 	// that inherited the kernel domain from a defaults component, for instance —
 	// which emitted the same texthash line twice.
-	var domainsFile, mapsFile strings.Builder
+	// The domains this cluster accepts mail for, as a set, so the contact can be
+	// checked against them before any line is written.
+	hostedDomains := make(map[string]bool, len(registry.Data))
+	for _, d := range registry.Data {
+		if d != "" {
+			hostedDomains[strings.ToLower(d)] = true
+		}
+	}
+	if r.KernelDomain != "" {
+		hostedDomains[strings.ToLower(r.KernelDomain)] = true
+	}
+
+	aliasTarget, reject := resolveRoleAliasTarget(r.MailAdminContact, hostedDomains)
+	switch {
+	case reject != "":
+		log.FromContext(ctx).Error(nil, reject, "contact", r.MailAdminContact)
+	case aliasTarget == "":
+		log.FromContext(ctx).Info("no MAIL_ADMIN_CONTACT set: abuse@ and postmaster@ are accepted but unreadable. RFC 5321 and RFC 2142 require them to work, and Microsoft's JMRP/SNDS enrolment mails them")
+	}
+
+	var domainsFile, mapsFile, aliasFile strings.Builder
 	domainList := make([]string, 0, len(names))
 	emitted := make(map[string]bool, len(names))
 	for _, name := range names {
@@ -541,6 +616,27 @@ func (r *TenantReconciler) syncPostfixVirtualMailboxMaps(ctx context.Context) er
 		// Catch-all: every address at the domain is delivered into the domain's
 		// Dovecot mailbox directory.
 		fmt.Fprintf(&mapsFile, "@%s %s/\n", d, d)
+		// Role addresses, rewritten to a reachable inbox.
+		//
+		// Written here, from the domains actually accepted, rather than from
+		// domainList below: that list carries the kernel domain whether or not
+		// the registry holds it, and an alias for a domain Postfix refuses at
+		// RCPT is a line that can never match.
+		//
+		// virtual_alias_maps is consulted during cleanup, before the mailbox
+		// map, so a hit replaces the recipient and the catch-all never sees it.
+		// A miss changes nothing, which is why only the role local parts appear
+		// and the rest of the domain keeps arriving exactly as before.
+		//
+		// Nothing is written when no contact is configured -- deliberately, and
+		// not defaulted to a local address: aliasing abuse@ to another mailbox
+		// in a domain this cluster hosts moves the mail without giving it a
+		// reader, so it would report success while changing nothing.
+		if aliasTarget != "" {
+			for _, lp := range roleAliasLocalParts {
+				fmt.Fprintf(&aliasFile, "%s@%s %s\n", lp, d, aliasTarget)
+			}
+		}
 	}
 	desiredDomains, desiredMaps := domainsFile.String(), mapsFile.String()
 
@@ -567,6 +663,7 @@ func (r *TenantReconciler) syncPostfixVirtualMailboxMaps(ctx context.Context) er
 		postfixVirtualMailboxMapsKey:    desiredMaps,
 		postfixSenderAccessKey:          desiredDomains,
 		postfixAllowedSenderDomainsKey:  desiredAllowed,
+		postfixVirtualAliasKey:          aliasFile.String(),
 	}
 
 	// Who may relay without authenticating, derived from the cluster rather than
