@@ -37,7 +37,7 @@
   existing platform-kernel configMapKeyRef to "gentian-kernel-services"
   just works without a separate reference convention to maintain.
 */ -}}
-{{- range $ns := list .Release.Namespace "platform-kernel" | uniq }}
+{{- range $ns := list .Release.Namespace (.Values.servicesNamespace | default "platform-kernel") (.Values.layout.authentication | default "") | compact | uniq }}
 apiVersion: v1
 kind: ConfigMap
 metadata:

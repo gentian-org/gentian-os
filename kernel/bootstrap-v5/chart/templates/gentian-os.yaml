@@ -63,6 +63,9 @@ spec:
         director:
           enabled: true
           entitlements: "off"
+        # The vault's namespace, for the Role that lets the operator exec into
+        # its pod during bootstrap.
+        openbaoNamespace: {{ include "ns" (list . "secrets") }}
         openbao:
           address: {{ printf "https://openbao.%s.svc.cluster.local:8200" (include "ns" (list . "secrets")) | quote }}
   - repoURL: {{ .Values.deployments.repo }}
