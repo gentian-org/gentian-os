@@ -134,17 +134,7 @@ func (r *GatewayPlatformReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		return ok && cm.GetNamespace() == operatorNamespace && cm.GetName() == operatorConfigMapName
 	})
 
-	envoyKernelServicePredicate := predicate.NewPredicateFuncs(func(obj client.Object) bool {
-		svc, ok := obj.(*corev1.Service)
-		if !ok {
-			return false
-		}
-		if svc.GetNamespace() != envoyGatewayInstallNamespace {
-			return false
-		}
-		return svc.GetLabels()["gateway.envoyproxy.io/owning-gateway-name"] == KernelPublicGatewayName &&
-			svc.GetLabels()["gateway.envoyproxy.io/owning-gateway-namespace"] == servicesNamespace
-	})
+	envoyKernelServicePredicate := predicate.NewPredicateFuncs(isKernelEdgeService)
 
 	return ctrl.NewControllerManagedBy(mgr).
 		Named("gateway-platform").

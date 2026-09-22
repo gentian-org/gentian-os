@@ -225,20 +225,11 @@ func insertBeforeMarker(lines []string, marker, newLine string) []string {
 }
 
 func kernelEdgeClusterIP(ctx context.Context, c client.Client, _ string) (string, error) {
-	list := &corev1.ServiceList{}
-	if err := c.List(ctx, list,
-		client.InNamespace(envoyGatewayInstallNamespace),
-		client.MatchingLabels{
-			"gateway.envoyproxy.io/owning-gateway-name":      KernelPublicGatewayName,
-			"gateway.envoyproxy.io/owning-gateway-namespace": servicesNamespace,
-		},
-	); err != nil {
-		return "", fmt.Errorf("list kernel Envoy Gateway service: %w", err)
+	svc, err := findKernelEdgeService(ctx, c)
+	if err != nil {
+		return "", err
 	}
-	if len(list.Items) == 0 {
-		return "", fmt.Errorf("kernel Envoy Gateway service not found")
-	}
-	ip := list.Items[0].Spec.ClusterIP
+	ip := svc.Spec.ClusterIP
 	if ip == "" {
 		return "", fmt.Errorf("kernel Envoy Gateway service has no ClusterIP")
 	}

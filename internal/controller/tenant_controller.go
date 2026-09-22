@@ -440,17 +440,7 @@ func (r *TenantReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		return requests
 	}
 
-	envoyKernelServicePredicate := predicate.NewPredicateFuncs(func(obj client.Object) bool {
-		svc, ok := obj.(*corev1.Service)
-		if !ok {
-			return false
-		}
-		if svc.GetNamespace() != envoyGatewayInstallNamespace {
-			return false
-		}
-		return svc.GetLabels()["gateway.envoyproxy.io/owning-gateway-name"] == KernelPublicGatewayName &&
-			svc.GetLabels()["gateway.envoyproxy.io/owning-gateway-namespace"] == servicesNamespace
-	})
+	envoyKernelServicePredicate := predicate.NewPredicateFuncs(isKernelEdgeService)
 
 	ctrlBuilder := ctrl.NewControllerManagedBy(mgr).
 		For(&gentianov1alpha1.Tenant{}).
