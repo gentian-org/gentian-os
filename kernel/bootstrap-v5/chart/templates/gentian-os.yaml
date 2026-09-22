@@ -30,6 +30,17 @@ spec:
     kind: Deployment
     jqPathExpressions:
     - .spec.template.spec.hostUsers
+  # The External Secrets Operator writes its own defaults onto every
+  # ExternalSecret it adopts. They are its state, not desired configuration.
+  - group: external-secrets.io
+    kind: ExternalSecret
+    jqPathExpressions:
+    - .spec.data[].remoteRef.conversionStrategy
+    - .spec.data[].remoteRef.decodingStrategy
+    - .spec.data[].remoteRef.metadataPolicy
+    - .spec.data[].remoteRef.nullBytePolicy
+    - .spec.target.deletionPolicy
+    - .metadata.finalizers
   sources:
   - repoURL: {{ .Values.osRepo | default "https://github.com/gentian-org/gentian-os" }}
     targetRevision: {{ .Values.gentianOsBranch }}
