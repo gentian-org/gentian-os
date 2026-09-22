@@ -593,3 +593,25 @@ llmSupport: false
 # Cluster claim. Used for the SPF record the mail reconciler publishes. Empty
 # means a shared egress address or a smarthost relay.
 mailEgressHost: ""
+
+# Where abuse@ and postmaster@ are delivered, for every domain this cluster
+# accepts mail for.
+#
+# Both addresses already arrive: the Postfix mailbox map is a catch-all, so any
+# address in a registered domain is accepted and written to
+# /var/mail/<domain>/<local-part>. None of them can be read. Dovecot
+# authenticates against Keycloak, so a mailbox opens only for a Keycloak user,
+# and neither "abuse" nor "postmaster" is one — the mail is accepted, stored,
+# and lost, which is worse than refusing it because the sender is told it
+# arrived.
+#
+# MUST be an address OFF this cluster. One inside a hosted domain aliases into
+# another mailbox nobody can open, and the reconciler refuses it rather than
+# write a line that looks like a fix.
+#
+# Empty is honest, not broken: the mail keeps landing where it lands today and
+# the reconciler logs that it is unreadable. Set it before registering with a
+# reputation programme — RFC 5321 §4.5.1 requires postmaster, RFC 2142 §4
+# requires abuse, and Microsoft's JMRP and SNDS enrolments mail both and enrol
+# nobody who does not answer.
+mailAdminContact: ""

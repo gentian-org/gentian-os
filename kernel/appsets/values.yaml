@@ -80,3 +80,13 @@ deploymentsCluster: ""
 # The hostname outbound mail leaves from, from spec.mail.egressHost on the
 # Cluster claim. Empty means the shared egress address or a smarthost relay.
 mailEgressHost: ""
+
+# Where abuse@ and postmaster@ are delivered, for every domain this cluster
+# accepts mail for. An address OFF this cluster; one inside a hosted domain is
+# refused, because it would alias into a mailbox Dovecot opens for nobody.
+#
+# Empty leaves both addresses accepted and unreadable, which is the state every
+# cluster starts in and the mail reconciler logs on every sync. RFC 5321
+# requires postmaster to work and RFC 2142 requires abuse; Microsoft's JMRP and
+# SNDS enrolments mail both.
+mailAdminContact: ""

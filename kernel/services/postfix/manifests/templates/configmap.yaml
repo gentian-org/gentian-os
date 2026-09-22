@@ -289,6 +289,24 @@ data:
         # the next lookup sees the new domain.
         virtual_mailbox_domains: "texthash:/etc/postfix/kernel-maps/virtual_mailbox_domains"
         virtual_mailbox_maps: "texthash:/etc/postfix/kernel-maps/virtual_mailbox_maps"
+        # abuse@ and postmaster@, rewritten to an address that has a reader.
+        #
+        # Consulted in cleanup, BEFORE virtual_mailbox_maps, so a hit replaces
+        # the recipient and the catch-all beside it never sees the address. A
+        # miss changes nothing: the file holds only the role local parts, and
+        # every other address in the domain is delivered exactly as before.
+        #
+        # Written by the operator into the same ConfigMap as the maps above and
+        # mounted by the same volume, so it needs no new mount and follows the
+        # same restart-free path — the operator rewrites the key, kubelet swaps
+        # the file, the next lookup sees it.
+        #
+        # The file is EMPTY until a cluster sets mailAdminContact. An empty
+        # texthash map is a valid map with no keys, so every lookup misses and
+        # Postfix behaves exactly as it did before this line existed. That is
+        # why the setting can default to empty without breaking a cluster that
+        # never sets it.
+        virtual_alias_maps: "texthash:/etc/postfix/kernel-maps/virtual_alias"
         # Who may SEND, from the same operator-maintained file that decides who
         # may receive.
         #
