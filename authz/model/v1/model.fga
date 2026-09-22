@@ -100,10 +100,20 @@ type tenant
     # which in tenant-platform would be every tile the console has.
     define can_administer: admin
 
+# A catalogue source is a repository of profile bundles named on the Cluster
+# claim: the store's, or one a platform administrator added. Opening a source
+# to a tenant is that administrator's act (can_configure), recorded as a tuple;
+# an entry of an open source installs without any statement from the store.
+# Nothing is open by default.
+type catalogue_source
+  relations
+    define open: [tenant]                         # written by the director from the Cluster claim
+
 type catalogue_entry
   relations
+    define source: [catalogue_source]
     define entitled: [tenant with grant_valid]   # written by the director from a signed grant
-    define can_install: entitled                  # checked with user = tenant:<t>
+    define can_install: entitled or open from source   # checked with user = tenant:<t>
 
 type app
   relations

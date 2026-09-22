@@ -106,3 +106,46 @@ GET /v1/tenants/{t}/entitlements          the recorded facts
 ```
 
 Reads are authorised by `can_view`, never by the write relation.
+
+## 6. Without the store
+
+The store is the default path to an app and the path of least resistance. It
+is not a gate on the mechanism.
+
+A **catalogue source** is a repository of profile bundles, named on the
+Cluster claim:
+
+```yaml
+catalogue:
+  sources:
+  - name: store            # the store's own catalogue; entries need a grant
+    url: https://…
+    access: entitled
+  - name: in-house         # a platform administrator's own repository
+    url: https://…
+    access: open
+    tenants: [demo]        # which tenants may install from it; empty means none
+```
+
+The director reads each source's index and serves it —
+`GET /v1/catalogues` and `GET /v1/catalogues/{source}/entries`: name,
+version, digest, and whether this tenant may install it — so the desktop's
+store screen has something to render with no store connection at all: the
+entries of the cluster's sources with an install button, and none of the
+listing information. When the store is reachable, it adds the listings and
+the entitlements on top of the same index.
+
+Whether an entry may be installed is one question with two answers
+(`catalogue_entry#can_install`): the store granted it, or the entry's source
+is open to the tenant. Opening a source is the platform administrator's act,
+under `can_configure`, recorded as a tuple the director writes from the
+claim; nothing is open by default, and a source is opened per tenant, not
+per cluster.
+
+What does not change without the store: the install mechanism (fetch the
+bundle at the digest, apply the profile, commit as the person), the
+attribution, the audit trail, and every check on the profile itself — a
+side-loaded profile meets the same CEL rules, admission policies and
+privilege approvals as one the store lists. Only the questions the store
+answers — presentation and payment — go unanswered.
+

@@ -503,7 +503,8 @@ From [security-gap-closing.md](security-gap-closing.md).
       keeps the credential for materialisation only.
 - [ ] Cluster claim fields: `exposure` policy, `network.egressAllow`,
       default fulfiller per contract, identity/secrets/database provider
-      selectors for the modular kernel, and the `compliance` block of WP-13.
+      selectors for the modular kernel, `catalogue.sources[]` (AD-14),
+      `store.signingKeys`, and the `compliance` block of WP-13.
 - [x] **Phase 1 skeleton, `install.sh --layout v5`** (`scripts/steps-v5/`,
       `kernel/bootstrap-v5/chart`, `kernel/data/kernel-postgres`): one namespace
       list, `kernel/namespaces.yaml`, read by the installer
@@ -639,10 +640,12 @@ The store holds no cluster credential and no identity toward the cluster
 (AD-3). Everything it does at the director it does with the signed-in
 person's token, or with a statement it signed.
 
-- [ ] **Repository and service.** A new repository; one service over the
-      schema (Postgres), runnable with one command beside `director-dev`.
-      Configuration: its signing key, the catalogue sources, the director
-      URL of each registered cluster.
+- [ ] **Repository and service.** In the store's own repository, built the
+      way that repository's other services are; one service over the schema
+      (Postgres), runnable with one command beside `director-dev`.
+      Configuration: its signing key, the catalogue sources it publishes
+      from, the director URL of each registered cluster. Private artefacts
+      of paid apps are a private catalogue source, not part of the store.
 - [ ] **Ingest.** `convert-appprofiles.sh` already produces
       `listings/<name>.yaml` per profile; the store ingests a directory of
       them plus the catalogue index (coordinate → profile name, bundle
@@ -683,6 +686,16 @@ person's token, or with a statement it signed.
       install the other (403), revoke, install again (403), replay the old
       grant (409), read the tenant's apps and entitlements as mia (200). The
       same test later runs against a real director in phase 2.
+- [ ] **The store is optional (AD-14).** In `os`: `catalogue.sources[]` on
+      the Cluster claim with `access: entitled|open` and `tenants`; the
+      director reads each source's index, writes `catalogue_entry#source`
+      and `catalogue_source#open` tuples from the claim, and serves
+      `GET /v1/catalogues[/{source}/entries]` filtered by `can_install` for
+      the tenant. `[x]` model v1: `catalogue_source#open`,
+      `can_install: entitled or open from source`, tested. In `ui`: the
+      store screen renders the director's index — name, version, install —
+      when the store is unreachable or not configured, and the store's
+      listings on top of it when it is.
 - [ ] **Not in the cluster, ever.** The `app-store-me` profile and its dead
       install paths are retired with WP-5; the cluster keeps the director's
       endpoint and, per tenant, only the installed profiles.

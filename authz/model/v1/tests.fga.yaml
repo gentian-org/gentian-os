@@ -121,6 +121,16 @@ tests:
       - {user: user:alice, object: app:solo/wiki,      assertions: {can_write_credential: false}}
       - {user: user:mia,   object: app:demo/nextcloud, assertions: {can_write_credential: false}}
 
+  - name: an entry of a source the platform administrator opened to a tenant needs no grant
+    tuples:
+      - {user: catalogue_source:store,   relation: source, object: catalogue_entry:store/odoo}
+      - {user: catalogue_source:in-house, relation: source, object: catalogue_entry:in-house/timesheets}
+      - {user: tenant:demo, relation: open, object: catalogue_source:in-house}
+    check:
+      - {user: tenant:demo, object: catalogue_entry:in-house/timesheets, assertions: {can_install: true}}
+      - {user: tenant:solo, object: catalogue_entry:in-house/timesheets, assertions: {can_install: false}}
+      - {user: tenant:demo, object: catalogue_entry:store/odoo,          assertions: {can_install: false}}
+
   - name: an entitlement is valid until it expires
     tuples:
       - user: tenant:demo

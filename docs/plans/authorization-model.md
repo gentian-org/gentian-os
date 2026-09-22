@@ -98,6 +98,8 @@ worst case for an authorization change (§2).
 | `contract:<t>/<name>#provider@app:<t>/<p>` and `#consumer@app:<t>/<q>` | director | on the commit that creates the `AppGrant`. **Deleting the consumer tuple does not revoke access today**: no enforcement point sits on an app-to-app call, and the credential is already in OpenBao and injected into the consumer's values. Revoking means the director deletes the binding's OpenBao path and re-rolls the consumer. That stays true until workloads carry identity (G8) |
 | `shared_instance:<p>#offered_to@tenant:<t>` | director | the platform administrator makes a shared instance available to a tenant (`can_grant_shared`). The tenant still sees nothing until its own administrator installs it, and that install is where the director checks `can_bind` for the tenant |
 | `catalogue_entry:<catalogue>/<app>#entitled@tenant:<t>` with `expires_at` | director | signed grant received (ui-restructure §3) |
+| `catalogue_entry:<source>/<app>#source@catalogue_source:<source>` | director | the source's index is read; one per entry |
+| `catalogue_source:<source>#open@tenant:<t>` | director | the Cluster claim opens a source to a tenant (`can_configure`); removed when it no longer does. An entry of an open source needs no grant (AD-14) |
 | the same tuple, **deleted** | director | signed revocation received — same endpoint, same signature check, committed as a fact; a later commit overrides an earlier `expires_at` (operator-split-plan §3.8) |
 | `group:<g>#member@user:<sub>` | director, from Keycloak's event stream; reconciled with a read-only client | on each membership event; reconcile on an interval and on start |
 
