@@ -546,6 +546,15 @@ _resolve_bao_token() {
         fi
     fi
 
+    # Both routes below need a person: one opens a browser, the other reads
+    # from the terminal. Unattended, they cost their own timeouts and then
+    # fail anyway, so say what is missing and let the caller decide.
+    if [[ "${GENTIAN_NONINTERACTIVE:-0}" == "1" || ! -t 0 ]]; then
+        warn "No OpenBao token available, and no terminal to ask at."
+        warn "  Export BAO_TOKEN, or run this from an interactive shell."
+        return 1
+    fi
+
     if command -v bao >/dev/null 2>&1 && [[ -n "${BAO_ADDR:-}" ]]; then
         info "No OpenBao token available; trying an OIDC sign-in as cluster-admin..."
         info "  A browser should open. Sign in as the cluster administrator."
@@ -625,7 +634,10 @@ seed_secrets() {
     export BAO_ADDR
     export VAULT_SKIP_VERIFY=true
 
-    _resolve_bao_token
+    if ! _resolve_bao_token; then
+        error "Cannot seed kernel secrets without an OpenBao token."
+        exit 1
+    fi
 
     # Automatically query Cloudflare zone ID and tunnel CNAME to seed into OpenBao
     local zone_id=""

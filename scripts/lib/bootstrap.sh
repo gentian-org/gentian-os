@@ -425,7 +425,10 @@ bootstrap_openbao_for_crossplane() {
     export BAO_ADDR="${VAULT_ADDR}"
     export VAULT_SKIP_VERIFY=true
 
-    _resolve_bao_token
+    if ! _resolve_bao_token; then
+        error "Cannot configure the vault without an OpenBao token."
+        exit 1
+    fi
     export VAULT_TOKEN="${BAO_TOKEN}"
 
     # ── 1. KV v2 mount — use KV_MOUNT from install.env (default: secret) ─────

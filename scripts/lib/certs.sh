@@ -215,6 +215,15 @@ gentian_dns_credential_vault_path() {
 gentian_dns_credential_present() {
     local path; path="$(gentian_dns_credential_vault_path)"
     [[ -n "${path}" && "${path}" != "null" ]] || return 1
+    # BAO_TOKEN is a by-product of initialising the vault, so a run that skips
+    # that step because it is already satisfied arrives here with nothing to
+    # read OpenBao with — and this function's answer, on a cluster that has the
+    # credential, would be "no credential" and the wildcard would be skipped.
+    # Reaching for the token here makes the answer about the cluster again.
+    if [[ -z "${BAO_TOKEN:-}" ]]; then
+        OPENBAO_NAMESPACE="${OPENBAO_NAMESPACE:-$(ns_kernel secrets 2>/dev/null || echo openbao)}" \
+            resolve_openbao_access >/dev/null 2>&1 || return 1
+    fi
     [[ -n "${BAO_TOKEN:-}" ]] || return 1
     bao kv get -mount=secret "${path}" >/dev/null 2>&1
 }
