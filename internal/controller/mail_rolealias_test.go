@@ -16,7 +16,10 @@ limitations under the License.
 
 package controller
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 // The rule this exists for: an alias into a domain the cluster hosts is refused
 // rather than written. It would resolve, Postfix would report delivery, and the
@@ -117,5 +120,96 @@ func TestRoleAliasLocalParts(t *testing.T) {
 		if !want[lp] {
 			t.Errorf("unexpected role local part %q", lp)
 		}
+	}
+}
+
+// A recipient map is only safe if it is complete. These pin the two ways it
+// could quietly lose mail: dropping an owner, and dropping an address the specs
+// require every domain to accept.
+func TestDomainRecipients(t *testing.T) {
+	t.Parallel()
+
+	t.Run("owners and role addresses are both written", func(t *testing.T) {
+		t.Parallel()
+		lines, owners := domainRecipients("finnor.example", []string{
+			"sibylle@finnor.example",
+			"admin@finnor.example",
+		})
+		if owners != 2 {
+			t.Errorf("owners = %d, want 2", owners)
+		}
+		for _, want := range []string{
+			"sibylle@finnor.example finnor.example/",
+			"admin@finnor.example finnor.example/",
+			"abuse@finnor.example finnor.example/",
+			"postmaster@finnor.example finnor.example/",
+			"dmarc@finnor.example finnor.example/",
+		} {
+			if !strings.Contains(lines, want) {
+				t.Errorf("missing %q in:\n%s", want, lines)
+			}
+		}
+	})
+
+	t.Run("a user in another domain is not written into this one", func(t *testing.T) {
+		t.Parallel()
+		lines, owners := domainRecipients("finnor.example", []string{
+			"sibylle@finnor.example",
+			"someone@corp.example",
+		})
+		if owners != 1 {
+			t.Errorf("owners = %d, want 1", owners)
+		}
+		if strings.Contains(lines, "corp.example") {
+			t.Errorf("leaked a foreign domain into the map:\n%s", lines)
+		}
+	})
+
+	t.Run("an owner who is already a role address is not written twice", func(t *testing.T) {
+		t.Parallel()
+		lines, _ := domainRecipients("finnor.example", []string{"postmaster@finnor.example"})
+		if got := strings.Count(lines, "postmaster@finnor.example"); got != 1 {
+			t.Errorf("postmaster written %d times:\n%s", got, lines)
+		}
+	})
+
+	t.Run("case is normalised so one address is one line", func(t *testing.T) {
+		t.Parallel()
+		lines, _ := domainRecipients("finnor.example", []string{
+			"Sibylle@Finnor.Example",
+			"sibylle@finnor.example",
+		})
+		if got := strings.Count(lines, "sibylle@finnor.example"); got != 1 {
+			t.Errorf("same address written %d times:\n%s", got, lines)
+		}
+	})
+
+	t.Run("no owners still accepts what the specs require", func(t *testing.T) {
+		t.Parallel()
+		lines, owners := domainRecipients("finnor.example", nil)
+		if owners != 0 {
+			t.Errorf("owners = %d, want 0", owners)
+		}
+		// The caller keeps the catch-all at owners == 0, but the lines must
+		// still be well formed -- postmaster may never be refused.
+		for _, want := range []string{"abuse@", "dmarc@", "postmaster@"} {
+			if !strings.Contains(lines, want) {
+				t.Errorf("missing %q in:\n%s", want, lines)
+			}
+		}
+	})
+}
+
+// The kernel domain's owners live in the kernel realm, every other key is a
+// tenant whose realm is its name. Getting this wrong narrows a domain against
+// the wrong realm, which is how a recipient map bounces everyone.
+func TestMailRealmForRegistryKey(t *testing.T) {
+	t.Parallel()
+	r := &TenantReconciler{KernelRealm: "kernel"}
+	if got := r.mailRealmForRegistryKey("_kernel"); got != "kernel" {
+		t.Errorf("_kernel -> %q, want kernel", got)
+	}
+	if got := r.mailRealmForRegistryKey("finnor"); got != "finnor" {
+		t.Errorf("finnor -> %q, want finnor", got)
 	}
 }

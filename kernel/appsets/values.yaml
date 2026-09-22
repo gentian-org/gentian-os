@@ -90,3 +90,17 @@ mailEgressHost: ""
 # requires postmaster to work and RFC 2142 requires abuse; Microsoft's JMRP and
 # SNDS enrolments mail both.
 mailAdminContact: ""
+
+# Whether an address nobody owns is accepted: catchall (default), observe or
+# strict.
+#
+# The mailbox map is a catch-all today, so every address in a registered domain
+# is accepted whether or not anyone owns it — unbounded disk, and the behaviour
+# of a spam trap as far as a large provider is concerned. strict replaces it
+# with the addresses Keycloak actually holds; observe builds the same list and
+# only logs it, which is how to check it against real traffic first.
+#
+# strict fails open per domain — an unreachable Keycloak or an empty enumeration
+# keeps that domain's catch-all — because a 550 on real mail is permanent and
+# accepting junk for one more cycle is not.
+mailRecipientPolicy: catchall

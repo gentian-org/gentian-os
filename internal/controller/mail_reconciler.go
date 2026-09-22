@@ -112,6 +112,48 @@ const (
 // contact, in every domain this cluster accepts mail for.
 var roleAliasLocalParts = []string{"abuse", "postmaster"}
 
+// Recipient policy: whether an address that belongs to nobody is accepted.
+//
+// The mailbox map has always been "@<domain> <domain>/", a catch-all, so every
+// address in a registered domain is accepted whether or not anyone owns it. On
+// ifk-w4h that is 352 maildirs and 16MB written by dictionary attacks, and it
+// grows without bound. It is also a reputation signal in its own right: a
+// domain that accepts mail for addresses that do not exist is how a spam trap
+// behaves, and Microsoft weighs that against a sender.
+//
+// The fix is a real recipient list, and the danger is the same list. A
+// catch-all that is too permissive stores junk; a recipient map that is too
+// narrow answers 550, which is PERMANENT — the sender does not retry and the
+// mail is gone. So this is staged rather than switched:
+//
+//	catchall  what every cluster does today, and the default. No Keycloak call.
+//	observe   build the list and log it, keep the catch-all. Nothing rejected.
+//	strict    write the list. Unknown addresses are refused at RCPT.
+//
+// observe exists because the only honest way to check a recipient list is
+// against real traffic, and the alternative is finding out in production which
+// address nobody remembered.
+const (
+	mailRecipientCatchall = "catchall"
+	mailRecipientObserve  = "observe"
+	mailRecipientStrict   = "strict"
+)
+
+// mailboxLocalParts are accepted in every domain regardless of who exists.
+//
+// postmaster is not optional: RFC 5321 §4.5.1 requires every domain to accept
+// it, so refusing it to tidy a recipient list breaks the spec and the first
+// thing a large provider checks. abuse is required by RFC 2142 §4 on the same
+// terms. dmarc is here because mailDMARCRecord publishes rua=mailto:dmarc@ for
+// this domain — rejecting reports this cluster asked for would be its own kind
+// of absurd.
+//
+// Listed even when roleAliasLocalParts already rewrites two of them. An alias
+// is resolved before the mailbox map, so those never reach it — but an alias
+// exists only when a contact is configured, and the spec obligation does not
+// wait for that.
+var mailboxLocalParts = []string{"abuse", "dmarc", "postmaster"}
+
 // resolveRoleAliasTarget decides whether a configured contact may be aliased to.
 //
 // Returns the address to write, and a message naming why it was refused when it
@@ -124,6 +166,58 @@ var roleAliasLocalParts = []string{"abuse", "postmaster"}
 // accepted, reported delivered, and be exactly as unreadable as it is today,
 // one hop further along. Writing that line would make the problem look solved
 // while changing nothing, so it is refused instead.
+// mailRealmForRegistryKey maps a domain-registry key to the Keycloak realm
+// holding that domain's mailbox owners.
+//
+// The registry is keyed by tenant name, with one reserved key for the kernel
+// domain, and a tenant's realm is its name — so the mapping is the identity
+// everywhere except that one entry. Returns "" when no realm can be named,
+// which the caller treats as "do not narrow this domain".
+func (r *TenantReconciler) mailRealmForRegistryKey(key string) string {
+	if key == kernelMailRegistryKey {
+		return r.KernelRealm
+	}
+	return key
+}
+
+// domainRecipients renders the mailbox-map lines for one domain.
+//
+// users are the addresses that exist; the role local parts are added whether or
+// not anyone owns them. Returns the lines and how many owners were counted, so
+// the caller can log a list it is not yet enforcing.
+//
+// The right-hand side is the domain directory, the same value the catch-all
+// used. Delivery does not read it — virtual_transport hands the message to
+// Dovecot over LMTP and mail_location decides the path — so it is the presence
+// of the key that makes an address valid, not the value.
+func domainRecipients(domain string, users []string) (lines string, owners int) {
+	seen := make(map[string]bool, len(users)+len(mailboxLocalParts))
+	var b strings.Builder
+	emit := func(addr string) {
+		addr = strings.ToLower(addr)
+		if seen[addr] {
+			return
+		}
+		seen[addr] = true
+		fmt.Fprintf(&b, "%s %s/\n", addr, domain)
+	}
+	suffix := "@" + strings.ToLower(domain)
+	for _, u := range users {
+		// A realm holds its own users, whose usernames are full addresses, but
+		// a realm is not required to keep them all in one domain. Anything
+		// outside this domain belongs to a different map and is skipped rather
+		// than written here, where it would widen the wrong domain.
+		if strings.HasSuffix(strings.ToLower(u), suffix) {
+			emit(u)
+			owners++
+		}
+	}
+	for _, lp := range mailboxLocalParts {
+		emit(lp + suffix)
+	}
+	return b.String(), owners
+}
+
 func resolveRoleAliasTarget(contact string, hosted map[string]bool) (target, reject string) {
 	contact = strings.TrimSpace(contact)
 	if contact == "" {
@@ -613,9 +707,49 @@ func (r *TenantReconciler) syncPostfixVirtualMailboxMaps(ctx context.Context) er
 		// "OK" is only a non-empty lookup result; Postfix reads the presence of
 		// the key, not the value.
 		fmt.Fprintf(&domainsFile, "%s OK\n", d)
-		// Catch-all: every address at the domain is delivered into the domain's
-		// Dovecot mailbox directory.
-		fmt.Fprintf(&mapsFile, "@%s %s/\n", d, d)
+
+		// Who may receive in this domain.
+		//
+		// The realm is the registry key: a tenant's realm is its name, and the
+		// kernel entry names the kernel realm. A key with no realm behind it
+		// cannot be enumerated, so it keeps the catch-all rather than being
+		// narrowed on a guess.
+		//
+		// Fail OPEN, per domain and deliberately. Every path that does not
+		// produce a list the operator is confident in falls back to the
+		// catch-all: unknown policy, unknown realm, Keycloak unreachable, or a
+		// realm that enumerated to nothing. The failure being avoided is a 550
+		// on real mail, which is permanent and unrecoverable; the cost of
+		// falling back is that junk keeps being accepted for one more cycle,
+		// which is what happens today anyway.
+		strict := false
+		if r.MailRecipientPolicy == mailRecipientObserve || r.MailRecipientPolicy == mailRecipientStrict {
+			if realm := r.mailRealmForRegistryKey(name); realm == "" {
+				log.FromContext(ctx).Info("no realm for mail domain; keeping the catch-all",
+					"domain", d, "registryKey", name)
+			} else if users, err := r.keycloakRealmUsers(ctx, realm); err != nil {
+				log.FromContext(ctx).Error(err, "could not enumerate mailbox owners; keeping the catch-all for this domain",
+					"domain", d, "realm", realm)
+			} else if lines, owners := domainRecipients(d, users); owners == 0 {
+				// A domain whose realm holds no addresses in it is far more
+				// likely to be a lookup that went wrong than a domain nobody
+				// uses, and narrowing to the role addresses alone would bounce
+				// every real recipient it has.
+				log.FromContext(ctx).Info("realm returned no mailbox owners for this domain; keeping the catch-all",
+					"domain", d, "realm", realm)
+			} else if r.MailRecipientPolicy == mailRecipientStrict {
+				mapsFile.WriteString(lines)
+				strict = true
+			} else {
+				log.FromContext(ctx).Info("mail recipient policy is observe: this list would be enforced under strict",
+					"domain", d, "owners", owners, "recipients", strings.Fields(strings.ReplaceAll(lines, " "+d+"/\n", " ")))
+			}
+		}
+		if !strict {
+			// Catch-all: every address at the domain is delivered into the
+			// domain's Dovecot mailbox directory.
+			fmt.Fprintf(&mapsFile, "@%s %s/\n", d, d)
+		}
 		// Role addresses, rewritten to a reachable inbox.
 		//
 		// Written here, from the domains actually accepted, rather than from

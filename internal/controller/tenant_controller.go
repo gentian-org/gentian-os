@@ -249,6 +249,14 @@ type TenantReconciler struct {
 	// today and syncRoleAliasWarning says so; there is no local address worth
 	// defaulting to, because every one of them is just as unreadable.
 	MailAdminContact string
+	// MailRecipientPolicy decides whether an address nobody owns is accepted:
+	// catchall (default), observe, or strict. Sourced from
+	// MAIL_RECIPIENT_POLICY.
+	//
+	// Anything other than observe or strict leaves the catch-all in place, so an
+	// unset or misspelled value keeps today's behaviour rather than rejecting
+	// mail on the strength of a typo.
+	MailRecipientPolicy string
 	// MailServiceMode is the CLUSTER's mail stack — kernel or external — from
 	// the Cluster claim's mail.serviceMode. Sourced from MAIL_SERVICE_MODE.
 	//

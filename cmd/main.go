@@ -136,6 +136,7 @@ func main() {
 		TenancyMode:              os.Getenv("TENANCY_MODE"),
 		MailServiceMode:          os.Getenv("MAIL_SERVICE_MODE"),
 		MailAdminContact:         os.Getenv("MAIL_ADMIN_CONTACT"),
+		MailRecipientPolicy:      os.Getenv("MAIL_RECIPIENT_POLICY"),
 		TenantDNS01ClusterIssuer: os.Getenv("TENANT_DNS01_CLUSTER_ISSUER"),
 		KernelRealm:              kernelRealmOrDefault(os.Getenv("KERNEL_REALM")),
 		Ingress:                  buildEdgeIngress(),
