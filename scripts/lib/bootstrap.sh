@@ -407,7 +407,7 @@ install_crossplane_providers() {
 bootstrap_openbao_for_crossplane() {
     banner "OpenBao bootstrap for Crossplane (mount, policy, token)"
 
-    if ! VAULT_ADDR=$(gentian_service_addr openbao openbao 8200 https); then
+    if ! VAULT_ADDR=$(gentian_service_addr openbao "${OPENBAO_NAMESPACE:-openbao}" 8200 https); then
         error "Could not reach the openbao Service on :8200."
         error "  Neither the ClusterIP nor a kubectl port-forward responded."
         exit 1

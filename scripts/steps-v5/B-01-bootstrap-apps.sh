@@ -3,8 +3,8 @@
 # phase: secrets
 # requires: A-06-argocd
 # provides: the gentian AppProject and the kernel Applications of kernel/bootstrap-v5/chart (reloader, cnpg, kernel-postgres, kyverno, headlamp Synced and Healthy; openbao and openbao-transit Synced, awaiting their init) and the HTTPRoutes for Argo CD and Headlamp, each in its layout namespace
-# mutates: Application and AppProject objects in the gitops namespace; what they sync lands in the seal, secrets, data, admission, observability and edge namespaces
-# pins: openbao headlamp
+# mutates: a placeholder Secret openbao-transit-unseal in the seal namespace; the vault's self-signed Issuer and Certificate in the secrets namespace; Application and AppProject objects in the gitops namespace; what they sync lands in the seal, secrets, data, admission, observability and edge namespaces
+# pins: headlamp
 
 # The chart takes the namespace layout as a value and resolves every
 # destination from it; it refuses to render an Application whose function the
@@ -61,6 +61,7 @@ check() {
     local ns app
     ns="$(ns_kernel gitops)"
     kubectl get appproject gentian -n "${ns}" >/dev/null 2>&1 || return 1
+    kubectl get certificate openbao-tls -n "$(ns_kernel secrets)" >/dev/null 2>&1 || return 1
     for app in $(_v5_apps_healthy); do _v5_delivered "${ns}" "${app}" || return 1; done
     for app in $(_v5_apps_synced);  do _v5_delivered "${ns}" "${app}" synced || return 1; done
     return 0
@@ -68,6 +69,14 @@ check() {
 
 apply() {
     banner "Kernel bootstrap Applications"
+    # The seal's pod injects its unseal key from this Secret and cannot start
+    # without it; the key does not exist until B-02 initialises the seal. A
+    # placeholder lets the pod start, and B-02 replaces it.
+    if ! kubectl get secret openbao-transit-unseal -n "$(ns_kernel seal)" >/dev/null 2>&1; then
+        kubectl create secret generic openbao-transit-unseal -n "$(ns_kernel seal)" \
+            --from-literal=unseal-key=placeholder >/dev/null
+        info "placeholder openbao-transit-unseal created in $(ns_kernel seal); B-02 replaces it."
+    fi
     _v5_render | kubectl apply -f -
     local ns app want
     ns="$(ns_kernel gitops)"
