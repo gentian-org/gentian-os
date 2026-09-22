@@ -94,7 +94,7 @@ func (r *GatewayPlatformReconciler) reconcileKernelHTTPRoutes(ctx context.Contex
 	// A route lives beside the Gateway; the Services it points at live where
 	// their own function does, so each of those namespaces grants the
 	// reference. Duplicates in the v4 layout, where they are one namespace.
-	for _, ns := range dedupe(argocdNamespace, identityNamespace, kernelNamespace) {
+	for _, ns := range dedupe(argocdNamespace, identityNamespace, servicesNamespace) {
 		if err := r.ensureRouteReferenceGrant(ctx, ns); err != nil {
 			return fmt.Errorf("ensure ReferenceGrant in %s: %w", ns, err)
 		}
@@ -240,7 +240,7 @@ func kernelHTTPRouteSpecs(
 			host:        fmt.Sprintf("llm.%s", kernelDomain),
 			sectionName: wildcardListenerName,
 			rules: []gatewayv1.HTTPRouteRule{
-				kernelBackendRulePrefixNS(litellmProxyServiceName, kernelNamespace, litellmProxyPort, "/"),
+				kernelBackendRulePrefixNS(litellmProxyServiceName, servicesNamespace, litellmProxyPort, "/"),
 			},
 		})
 	}
@@ -249,10 +249,10 @@ func kernelHTTPRouteSpecs(
 
 func kernelGentianPortalHTTPRouteRules() []gatewayv1.HTTPRouteRule {
 	return []gatewayv1.HTTPRouteRule{
-		kernelBackendRulePrefixNS(gentianPortalAPIService, kernelNamespace, 8000, "/api"),
-		kernelBackendRuleExactNS(gentianPortalAPIService, kernelNamespace, 8000, "/healthz"),
-		kernelBackendRuleExactNS(gentianPortalAPIService, kernelNamespace, 8000, "/readyz"),
-		kernelBackendRulePrefixNS(gentianPortalWebService, kernelNamespace, 8080, "/"),
+		kernelBackendRulePrefixNS(gentianPortalAPIService, servicesNamespace, 8000, "/api"),
+		kernelBackendRuleExactNS(gentianPortalAPIService, servicesNamespace, 8000, "/healthz"),
+		kernelBackendRuleExactNS(gentianPortalAPIService, servicesNamespace, 8000, "/readyz"),
+		kernelBackendRulePrefixNS(gentianPortalWebService, servicesNamespace, 8080, "/"),
 	}
 }
 
