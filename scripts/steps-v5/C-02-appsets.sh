@@ -10,7 +10,7 @@
 # shellcheck source=scripts/steps-v5/B-01-bootstrap-apps.sh
 source "${SCRIPT_DIR}/scripts/steps-v5/B-01-bootstrap-apps.sh"
 
-_v5_appsets_children() { echo "keycloak-idp-${GENTIAN_DEPLOYMENTS_STAGE:-dev} openfga-${GENTIAN_DEPLOYMENTS_STAGE:-dev} gentian-claims-${GENTIAN_DEPLOYMENTS_STAGE:-dev}"; }
+_v5_appsets_children() { local s="${GENTIAN_DEPLOYMENTS_STAGE:-dev}"; echo "keycloak-idp-${s} openfga-${s} gentian-claims-${s} keycloak-provider-${s}"; }
 
 check() {
     local ns app
