@@ -209,15 +209,23 @@ gentian_dns_credential_secret_name() {
 # installation has exactly one of, so it is what the question is asked of, and
 # the answer is cached in CERT_MANAGER_NAMESPACE for the rest of the run.
 gentian_cert_manager_namespace() {
-    if [[ -z "${CERT_MANAGER_NAMESPACE:-}" ]]; then
-        local detected
-        detected="$(kubectl get deploy -A -o json 2>/dev/null \
-            | jq -r '.items[] | select(.metadata.name=="cert-manager-webhook") | .metadata.namespace' \
-            | head -1 || true)"
-        CERT_MANAGER_NAMESPACE="${detected:-cert-manager}"
+    # CERT_MANAGER_NAMESPACE carries a default from load time, so an unset
+    # variable is not what "unknown" looks like here — a value that no
+    # cert-manager answers to is. Check it before trusting it.
+    if [[ -n "${CERT_MANAGER_NAMESPACE:-}" ]] \
+        && kubectl get deploy cert-manager-webhook -n "${CERT_MANAGER_NAMESPACE}" >/dev/null 2>&1; then
+        echo "${CERT_MANAGER_NAMESPACE}"
+        return 0
+    fi
+    local detected
+    detected="$(kubectl get deploy -A -o json 2>/dev/null \
+        | jq -r '.items[] | select(.metadata.name=="cert-manager-webhook") | .metadata.namespace' \
+        | head -1 || true)"
+    if [[ -n "${detected}" ]]; then
+        CERT_MANAGER_NAMESPACE="${detected}"
         export CERT_MANAGER_NAMESPACE
     fi
-    echo "${CERT_MANAGER_NAMESPACE}"
+    echo "${CERT_MANAGER_NAMESPACE:-cert-manager}"
 }
 
 gentian_dns_credential_vault_path() {
