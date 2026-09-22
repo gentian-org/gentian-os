@@ -58,11 +58,12 @@ import (
 	"github.com/gentian-org/gentian-os/internal/director/authz"
 	"github.com/gentian-org/gentian-os/internal/director/entitlement"
 	"github.com/gentian-org/gentian-os/internal/director/gitops"
+	"github.com/gentian-org/gentian-os/internal/director/membership"
 )
 
 const (
 	audience = "gentian-director"
-	cluster  = "dev-cluster"
+	cluster  = "dev-cluster" // the default; -cluster overrides
 )
 
 // person is a fixture account. The cast is that of authz/model/v1's tests.
@@ -135,23 +136,25 @@ func main() {
 	origins := flag.String("cors", "http://localhost:5173", "comma-separated origins allowed to call the API from a browser")
 	public := flag.String("url", "", "URL the API is reached at, when it differs from http://<listen> (a published container port)")
 	entitlements := flag.Bool("entitlements", false, "require an entitlement to install, as a cluster with a store does")
+	storeKeys := flag.String("store-keys", "", "pin a store's keys, as DIRECTOR_STORE_KEYS does (id=base64,…); default: a throwaway key that /dev/statement signs with")
+	clusterID := flag.String("cluster", cluster, "the cluster id statements must be addressed to")
 	flag.Parse()
 	log := slog.New(slog.NewTextHandler(os.Stdout, nil))
 	if *public == "" {
 		*public = "http://" + *listen
 	}
-	if err := run(log, *listen, strings.TrimRight(*public, "/"), strings.Split(*origins, ","), *entitlements); err != nil {
+	if err := run(log, *listen, strings.TrimRight(*public, "/"), strings.Split(*origins, ","), *entitlements, *storeKeys, *clusterID); err != nil {
 		log.Error("director-dev stopped", "error", err.Error())
 		os.Exit(1)
 	}
 }
 
-func run(log *slog.Logger, listen, base string, origins []string, enforce bool) error {
+func run(log *slog.Logger, listen, base string, origins []string, enforce bool, storeKeys, cluster string) error {
 	work, err := os.MkdirTemp("", "director-dev-")
 	if err != nil {
 		return err
 	}
-	remote, err := seed(work)
+	remote, err := seed(work, cluster)
 	if err != nil {
 		return err
 	}
@@ -161,6 +164,16 @@ func run(log *slog.Logger, listen, base string, origins []string, enforce bool) 
 		return err
 	}
 	storePub, storeKey, _ := ed25519.GenerateKey(rand.Reader)
+	pinned := map[string]ed25519.PublicKey{"dev-store": storePub}
+	if storeKeys != "" {
+		external, err := membership.ParseKeys(storeKeys)
+		if err != nil {
+			return err
+		}
+		for id, k := range external {
+			pinned[id] = k
+		}
+	}
 
 	verifier, err := authn.NewVerifier(authn.Config{IssuerBase: base, Audience: audience})
 	if err != nil {
@@ -180,7 +193,7 @@ func run(log *slog.Logger, listen, base string, origins []string, enforce bool) 
 		checker, tuples = d, d
 	}
 	repo := gitops.NewGitOps(filepath.Join(work, "checkout"), remote, cluster, gitops.Person{})
-	storeVerifier, err := entitlement.NewVerifier(map[string]ed25519.PublicKey{"dev-store": storePub}, cluster)
+	storeVerifier, err := entitlement.NewVerifier(pinned, cluster)
 	if err != nil {
 		return err
 	}
@@ -303,7 +316,7 @@ func cors(next http.Handler, origins []string) http.Handler {
 }
 
 // seed creates the bare repository with tenants demo and solo.
-func seed(work string) (string, error) {
+func seed(work, cluster string) (string, error) {
 	remote := filepath.Join(work, "gentian-deployments.git")
 	src := filepath.Join(work, "seed")
 	steps := [][]string{
