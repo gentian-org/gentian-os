@@ -213,3 +213,44 @@ func TestMailRealmForRegistryKey(t *testing.T) {
 		t.Errorf("finnor -> %q, want finnor", got)
 	}
 }
+
+// The kernel realm's administrator is "administrator" with the address in the
+// email field, while a tenant realm's users are created with the address AS the
+// username. Reading the login for both is what left the kernel domain reporting
+// no owners and kept 352 junk maildirs on the catch-all.
+func TestKeycloakRealmUserMailAddress(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name string
+		u    keycloakRealmUser
+		want string
+	}{
+		{
+			name: "tenant realm: the username is the address",
+			u:    keycloakRealmUser{Username: "sibylle@finnor.example", Email: "sibylle@finnor.example", Enabled: true},
+			want: "sibylle@finnor.example",
+		},
+		{
+			name: "kernel realm: the login has no domain, the email does",
+			u:    keycloakRealmUser{Username: "administrator", Email: "administrator@gentian.cloud", Enabled: true},
+			want: "administrator@gentian.cloud",
+		},
+		{
+			name: "the username wins when both are addresses",
+			u:    keycloakRealmUser{Username: "a@x.example", Email: "b@y.example", Enabled: true},
+			want: "a@x.example",
+		},
+		{
+			name: "a service account with neither is not a recipient",
+			u:    keycloakRealmUser{Username: "service-account-odoo-cb", Enabled: true},
+			want: "",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			if got := tc.u.mailAddress(); got != tc.want {
+				t.Errorf("mailAddress() = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}

@@ -727,7 +727,7 @@ func (r *TenantReconciler) syncPostfixVirtualMailboxMaps(ctx context.Context) er
 			if realm := r.mailRealmForRegistryKey(name); realm == "" {
 				log.FromContext(ctx).Info("no realm for mail domain; keeping the catch-all",
 					"domain", d, "registryKey", name)
-			} else if users, err := r.keycloakRealmUsers(ctx, realm); err != nil {
+			} else if users, err := r.keycloakRealmAddresses(ctx, realm); err != nil {
 				log.FromContext(ctx).Error(err, "could not enumerate mailbox owners; keeping the catch-all for this domain",
 					"domain", d, "realm", realm)
 			} else if lines, owners := domainRecipients(d, users); owners == 0 {
