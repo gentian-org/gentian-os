@@ -6,12 +6,11 @@
 # mutates: the gitops namespace, Argo CD CRDs, cluster-scoped RBAC
 # pins: argocd
 
-# Argo CD's upstream manifests are written for a namespace called argocd. They
-# are applied into the gitops namespace with -n, which is what the manifests
-# support: every namespaced object takes the namespace from the apply, and the
-# ClusterRoleBindings name their subjects by the namespace the controller finds
-# itself in. The image updater is installed beside it, watching the same
-# namespace, rather than in one of its own.
+# Argo CD's upstream manifests are written for a namespace called argocd:
+# namespaced objects take the namespace from the apply, but the cluster-scoped
+# bindings name it in their subjects, so that literal is rewritten to the
+# layout's namespace. The image updater is installed beside it, watching the
+# same namespace, rather than in one of its own.
 
 _argocd_ns() { ns_kernel gitops; }
 
@@ -20,7 +19,8 @@ check() {
     kubectl get crd applicationsets.argoproj.io >/dev/null 2>&1 &&
         kubectl get deployment argocd-server -n "${ns}" >/dev/null 2>&1 &&
         kubectl get deployment argocd-applicationset-controller -n "${ns}" >/dev/null 2>&1 &&
-        helm status argocd-image-updater -n "${ns}" >/dev/null 2>&1
+        helm status argocd-image-updater -n "${ns}" >/dev/null 2>&1 &&
+        [[ "$(kubectl get clusterrolebinding argocd-application-controller -o jsonpath='{.subjects[0].namespace}' 2>/dev/null)" == "${ns}" ]]
 }
 
 apply() {
@@ -29,8 +29,13 @@ apply() {
     ns="$(_argocd_ns)"
     version="$(gentian_pin argocd manifest)"
     ns_ensure "${ns}"
-    kubectl apply --server-side --force-conflicts -n "${ns}" \
-        -f "https://raw.githubusercontent.com/argoproj/argo-cd/${version}/manifests/install.yaml"
+    # The upstream manifest names its namespace in the cluster-scoped
+    # bindings' subjects ("namespace: argocd"); -n does not reach those, and a
+    # controller in another namespace is then bound to nobody. Rewritten to
+    # the layout's namespace before applying — the one edit the manifest needs.
+    curl -fsSL "https://raw.githubusercontent.com/argoproj/argo-cd/${version}/manifests/install.yaml" \
+        | sed "s/^\(\s*\)namespace: argocd$/\1namespace: ${ns}/" \
+        | kubectl apply --server-side --force-conflicts -n "${ns}" -f -
     local d
     for d in argocd-server argocd-repo-server argocd-applicationset-controller; do
         kubectl wait --for=condition=available --timeout=300s "deployment/${d}" -n "${ns}"
@@ -54,7 +59,7 @@ apply() {
 destroy() {
     local ns; ns="$(_argocd_ns)"
     helm uninstall argocd-image-updater -n "${ns}" >/dev/null 2>&1 || true
-    kubectl delete -n "${ns}" \
-        -f "https://raw.githubusercontent.com/argoproj/argo-cd/$(gentian_pin argocd manifest)/manifests/install.yaml" \
-        --ignore-not-found >/dev/null 2>&1 || true
+    curl -fsSL "https://raw.githubusercontent.com/argoproj/argo-cd/$(gentian_pin argocd manifest)/manifests/install.yaml" 2>/dev/null \
+        | sed "s/^\(\s*\)namespace: argocd$/\1namespace: ${ns}/" \
+        | kubectl delete -n "${ns}" -f - --ignore-not-found >/dev/null 2>&1 || true
 }
