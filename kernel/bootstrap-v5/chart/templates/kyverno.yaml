@@ -49,10 +49,14 @@ spec:
           image:
             repository: alpine/k8s
             tag: "1.32.3"
+        # clean-reports is a Helm post-upgrade hook, which Argo CD runs as a
+        # PostSync hook on EVERY sync -- it would delete every PolicyReport in
+        # the cluster each time, and a hook Job that cannot start (its default
+        # image is bitnami/kubectl) leaves the Application OutOfSync for good.
+        # Kyverno's reports controller rebuilds reports on its own, so the
+        # upgrade-time cleanup has no job to do here.
         policyReportsCleanup:
-          image:
-            repository: alpine/k8s
-            tag: "1.32.3"
+          enabled: false
   destination:
     server: https://kubernetes.default.svc
     namespace: {{ include "ns" (list . "admission") }}
