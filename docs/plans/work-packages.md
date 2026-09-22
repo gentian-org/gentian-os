@@ -453,6 +453,12 @@ Specified in [namespace-cleanup.md](namespace-cleanup.md).
 
 From [security-gap-closing.md](security-gap-closing.md).
 
+- [ ] **Backup split (decided 2026-09-22).** Local backup, tenant
+      export/restore and `BackupPolicy` stay here. Remote targets with key
+      escrow, retention across tenants, restore drills with proof, DR and
+      tenant migration become a GTC-authored component delivered as an
+      entitled catalogue entry; its source leaves this repository when the
+      backup code is touched in phase 2. Nothing here references it.
 - [ ] Wave 0: G4 random LiteLLM keys from OpenBao behind the gateway; G5
       Redis ACL key and channel prefixes via `valueMapping.cache`; G6
       MariaDB wildcard grant on the tenant prefix, no `GRANT OPTION`.
@@ -723,6 +729,12 @@ person's token, or with a statement it signed.
       store screen renders the director's index — name, version, install —
       when the store is unreachable or not configured, and the store's
       listings on top of it when it is.
+- [ ] **Account tier and terms.** Sign-up records the tier (individual,
+      organisation under the threshold, corporate or MSP) and the terms
+      version accepted; a grant is refused without a current acceptance and
+      records the tier and version it was issued under. Listings carry the
+      upstream license and "distributed under the store terms"; GTC-authored
+      components carry "commercial license". The desktop shows it per entry.
 - [ ] **Not in the cluster, ever.** The `app-store-me` profile and its dead
       install paths are retired with WP-5; the cluster keeps the director's
       endpoint and, per tenant, only the installed profiles.
