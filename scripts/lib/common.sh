@@ -1915,11 +1915,26 @@ check_prereqs() {
         _os_tag="$(yq_get '.image.tag' "${_os_values}" 2>/dev/null || true)"
     fi
     resolve_gentian_os_image_tag
-    _os_tag="${_os_tag:-${GENTIAN_OS_IMAGE_TAG}}"
-    if validate_image_tag "${_os_repo}" "${_os_tag}"; then
-        success "Operator image ${_os_repo}:${_os_tag} exists"
-    else
-        error "  Set image.tag in ${_os_values} to a tag that exists."
+    # Two tags can decide what runs — the one in the cluster's values file and
+    # the one the installer renders into the Application — and which of them
+    # wins is the Application's business, not this check's. Checking one and
+    # announcing it as "the operator image" is how a run reported a tag the
+    # cluster was never going to pull. Both are checked, and each is named.
+    local _os_ok=1 _t
+    for _t in "${_os_tag}" "${GENTIAN_OS_IMAGE_TAG:-}"; do
+        [[ -n "${_t}" ]] || continue
+        if validate_image_tag "${_os_repo}" "${_t}"; then
+            success "Operator image ${_os_repo}:${_t} exists"
+        else
+            error "  ${_os_repo}:${_t} does not exist."
+            error "  Set image.tag in ${_os_values}, or GENTIAN_OS_IMAGE_TAG, to a tag that does."
+            _os_ok=0
+        fi
+    done
+    if [[ -n "${_os_tag}" && -n "${GENTIAN_OS_IMAGE_TAG:-}" && "${_os_tag}" != "${GENTIAN_OS_IMAGE_TAG}" ]]; then
+        info "  The cluster's values file says ${_os_tag}; this run renders ${GENTIAN_OS_IMAGE_TAG}."
+    fi
+    if [[ "${_os_ok}" != "1" ]]; then
         missing=$((missing + 1))
     fi
 
