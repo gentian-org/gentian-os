@@ -1,0 +1,59 @@
+---
+# Keycloak's and OpenFGA's values into their own namespaces. The workloads
+# themselves are composed by the Suze claim (11-claims), which reads these
+# ConfigMaps and ExternalSecrets from the namespaces the claim names.
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: gentian-identity
+  namespace: ns.gitops.placeholder
+  annotations:
+    argocd.argoproj.io/sync-wave: "9"
+spec:
+  syncPolicy:
+    preserveResourcesOnDeletion: true
+  goTemplate: true
+  goTemplateOptions: ["missingkey=error"]
+  generators:
+  - matrix:
+      generators:
+      - list:
+          elements:
+          - env: dev
+      - list:
+          elements:
+          - app: keycloak-idp
+            namespace: ns.authentication.placeholder
+          - app: openfga
+            namespace: ns.authorization.placeholder
+  template:
+    metadata:
+      name: '{{.app}}-{{.env}}'
+      annotations:
+        argocd.argoproj.io/sync-wave: "9"
+    spec:
+      project: gentian
+      source:
+        repoURL: https://github.com/gentian-org/gentian-os
+        targetRevision: develop
+        path: kernel/services/{{.app}}/manifests
+        helm:
+          parameters:
+            - name: env
+              value: '{{.env}}'
+            - name: kernelDomain
+              value: 'kernel.domain.placeholder'
+            # Kernel data lives on kernel-postgres, in the data namespace.
+            - name: dbHost
+              value: 'kernel-postgres-rw.ns.data.placeholder.svc.cluster.local'
+          valueFiles:
+            - values.yaml
+            - values-{{.env}}.yaml
+          ignoreMissingValueFiles: true
+      destination:
+        server: https://kubernetes.default.svc
+        namespace: '{{.namespace}}'
+      syncPolicy:
+        automated:
+          prune: true
+          selfHeal: true

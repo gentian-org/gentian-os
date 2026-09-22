@@ -2245,7 +2245,9 @@ EOF
         generated=1
     fi
 
-    if [[ ! -f "${kernel_dir}/claims/infra-data.yaml" ]]; then
+    # v5 has no InfraData claim: kernel data is on kernel-postgres, and the
+    # system engines are composed with the tenants, not scaffolded here.
+    if [[ "${GENTIAN_LAYOUT:-v4}" != "v5" && ! -f "${kernel_dir}/claims/infra-data.yaml" ]]; then
         cat > "${kernel_dir}/claims/infra-data.yaml" <<EOF
 apiVersion: gentianos.io/v1alpha1
 kind: InfraData

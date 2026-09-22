@@ -34,3 +34,13 @@ headlamp:
 edge:
   # The authenticated Gateway the operator reconciles in the edge namespace.
   gatewayName: kernel-public-gateway
+
+# The stage and the deployments repository, for the ApplicationSets.
+stage: dev
+deployments:
+  repo: ""
+  revision: main
+  cluster: ""
+# The app of apps is applied by C-02, once its children's prerequisites exist.
+appsets:
+  enabled: false

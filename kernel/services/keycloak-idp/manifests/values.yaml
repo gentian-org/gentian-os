@@ -17,3 +17,5 @@ kernelDomain: ""
 # The realm the cluster's own users live in. Tenants have their own realms and
 # are configured by the operator, not from here.
 kernelRealm: kernel
+# The database host. v4: the InfraData Postgres; v5: kernel-postgres in kernel-data.
+dbHost: ""   # empty: gentian-postgresql-<env>.gentian-infra-<env> (v4); v5 sets kernel-postgres-rw.kernel-data

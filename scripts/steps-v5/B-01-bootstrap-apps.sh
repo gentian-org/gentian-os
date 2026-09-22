@@ -50,6 +50,11 @@ _v5_render() {
         --set-string "osRepo=${GENTIAN_OS_REPO:-https://github.com/gentian-org/gentian-os}" \
         --set-string "gentianOsBranch=${GENTIAN_OS_BRANCH:-develop}" \
         --set-string "storageClass=${STORAGE_CLASS:-}" \
+        --set-string "stage=${GENTIAN_DEPLOYMENTS_STAGE:-dev}" \
+        --set-string "deployments.repo=${GENTIAN_DEPLOYMENTS_REPO:-}" \
+        --set-string "deployments.revision=${GENTIAN_DEPLOYMENTS_BRANCH:-main}" \
+        --set-string "deployments.cluster=${GENTIAN_DEPLOYMENTS_CLUSTER_ID:-}" \
+        --set-string "appsets.enabled=${V5_APPSETS:-false}" \
         --set-string "versions.headlamp.chart=$(gentian_pin headlamp chart)" \
         --set-string "versions.headlamp.repo=$(gentian_pin headlamp repo)"
     local rc=$?

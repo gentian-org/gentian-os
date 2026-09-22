@@ -1,0 +1,24 @@
+{{- /*
+  Pass raw/*.yaml through verbatim (.Files.Get never re-templates them: they
+  carry ApplicationSet templating Argo evaluates at its own sync time). The
+  wrapper swaps literals only: the stage, the git ref and origin of gentian-os,
+  the deployments placeholders, and the namespace placeholders, which are
+  resolved from the layout so that no raw file names a namespace by hand.
+*/ -}}
+{{- $ns := dict -}}
+{{- range .Values.namespaces.kernel }}{{ $_ := set $ns .function .name }}{{ end -}}
+{{- if not $ns }}{{ fail "kernel/appsets-v5 needs the namespace layout (.Values.namespaces from kernel/namespaces.yaml)" }}{{ end -}}
+{{- range $path, $_ := .Files.Glob "raw/*.yaml" }}
+---
+{{- $text := $.Files.Get $path
+     | replace "env: dev" (printf "env: %s" $.Values.stage)
+     | replace "targetRevision: develop" (printf "targetRevision: %s" $.Values.targetRevision)
+     | replace "kernel.domain.placeholder" $.Values.kernelDomain
+     | replace "https://github.com/gentian-org/gentian-os" $.Values.gentianOsRepo
+     | replace "deployments.repo.placeholder" $.Values.deploymentsRepo
+     | replace "deployments.revision.placeholder" $.Values.deploymentsRevision
+     | replace "deployments.cluster.placeholder" $.Values.deploymentsCluster }}
+{{- range $fn, $name := $ns }}{{ $text = replace (printf "ns.%s.placeholder" $fn) $name $text }}{{ end }}
+{{- if contains ".placeholder" $text }}{{ fail (printf "%s: an unresolved placeholder remains" $path) }}{{ end }}
+{{ $text }}
+{{- end }}

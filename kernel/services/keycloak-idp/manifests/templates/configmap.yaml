@@ -4,7 +4,7 @@ apiVersion: v1
 kind: ConfigMap
 metadata:
   name: keycloak-idp-base-values
-  namespace: platform-kernel
+  namespace: {{ .Release.Namespace }}
   annotations:
     argocd.argoproj.io/sync-wave: "-1"
 data:
@@ -44,7 +44,7 @@ data:
       enabled: false
     database:
       vendor: postgres
-      hostname: gentian-postgresql-{{ .Values.env }}.gentian-infra-{{ .Values.env }}.svc.cluster.local
+      hostname: {{ .Values.dbHost | default (printf "gentian-postgresql-%s.gentian-infra-%s.svc.cluster.local" .Values.env .Values.env) }}
       port: 5432
       database: keycloak
       username: keycloak_user
@@ -146,7 +146,7 @@ apiVersion: v1
 kind: ConfigMap
 metadata:
   name: keycloak-idp-{{ .Values.env }}-values
-  namespace: platform-kernel
+  namespace: {{ .Release.Namespace }}
   annotations:
     argocd.argoproj.io/sync-wave: "-1"
 data:

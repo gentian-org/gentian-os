@@ -1,0 +1,12 @@
+# The v5 wrapper's parameters. Namespaces are not among them by name: raw
+# files address a kernel namespace as ns.<function>.placeholder and the
+# wrapper resolves it from the layout the installer passes in.
+stage: dev
+targetRevision: develop
+kernelDomain: ""
+gentianOsRepo: https://github.com/gentian-org/gentian-os
+deploymentsRepo: ""
+deploymentsRevision: main
+deploymentsCluster: ""
+# Filled by the installer from kernel/namespaces.yaml. Never set by hand.
+namespaces: {}
