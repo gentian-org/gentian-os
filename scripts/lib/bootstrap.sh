@@ -758,7 +758,7 @@ cluster_claim_is_current() {
     [[ -r "${claim_file}" ]] || return 0
 
     local live
-    live="$(kubectl get cluster.gentianos.io "${claim}" -n crossplane-system \
+    live="$(kubectl get cluster.gentianos.io "${claim}" -n "${CROSSPLANE_NAMESPACE:-crossplane-system}" \
         -o jsonpath='{.spec}' 2>/dev/null)" || return 0
     [[ -n "${live}" ]] || return 0
 
@@ -1030,6 +1030,15 @@ apply_cluster_xr() {
         exit 1
     }
 
+    # A claim written for another installer is refused before anything is
+    # applied: the composition places the kernel where the claim's layout says.
+    local claim_layout
+    claim_layout="$(_gentian_yq '.spec.layout' "${claims_dir}/cluster.yaml" 2>/dev/null || echo v4)"
+    if [[ "${claim_layout}" != "${GENTIAN_LAYOUT:-v4}" ]]; then
+        error "The Cluster claim is written for layout '${claim_layout}'; this installer runs layout '${GENTIAN_LAYOUT:-v4}'."
+        error "  Start the installer with --layout ${claim_layout}, or scaffold a new claim for this layout."
+        return 1
+    fi
     info "Applying Cluster claim from ${claims_dir}/cluster.yaml..."
     kubectl apply -f "${claims_dir}/cluster.yaml"
 
@@ -1041,11 +1050,11 @@ apply_cluster_xr() {
     local xr_name=""
     local deadline=$((SECONDS + 60))
     until [[ -n "${xr_name}" ]]; do
-        xr_name=$(kubectl get cluster.gentianos.io "${claim_name}" -n crossplane-system \
+        xr_name=$(kubectl get cluster.gentianos.io "${claim_name}" -n "${CROSSPLANE_NAMESPACE:-crossplane-system}" \
             -o jsonpath='{.spec.resourceRef.name}' 2>/dev/null || true)
         if (( SECONDS > deadline )); then
             error "Claim ${claim_name} was never bound to a composite after 60s."
-            error "  kubectl describe cluster.gentianos.io ${claim_name} -n crossplane-system"
+            error "  kubectl describe cluster.gentianos.io ${claim_name} -n ${CROSSPLANE_NAMESPACE:-crossplane-system}"
             exit 1
         fi
         [[ -n "${xr_name}" ]] || sleep 3
@@ -1452,7 +1461,7 @@ print_summary_cp() {
 
     local claim_name
     claim_name="$(gentian_cluster_claim_name)"
-    xr_name=$(kubectl get cluster.gentianos.io "${claim_name}" -n crossplane-system \
+    xr_name=$(kubectl get cluster.gentianos.io "${claim_name}" -n "${CROSSPLANE_NAMESPACE:-crossplane-system}" \
         -o jsonpath='{.spec.resourceRef.name}' 2>/dev/null || true)
     xr_name="${xr_name:-${claim_name}}"
 
@@ -1469,7 +1478,7 @@ print_summary_cp() {
     # read "unknown" regardless of the actual state. Resolve the composite first.
     local infra_claim infra_xr
     infra_claim="$(gentian_infradata_claim_name)"
-    infra_xr=$(kubectl get infradata.gentianos.io "${infra_claim}" -n crossplane-system \
+    infra_xr=$(kubectl get infradata.gentianos.io "${infra_claim}" -n "${CROSSPLANE_NAMESPACE:-crossplane-system}" \
         -o jsonpath='{.spec.resourceRef.name}' 2>/dev/null || true)
     infra_xr="${infra_xr:-${infra_claim}}"
     _release_ready() {
@@ -1482,7 +1491,7 @@ print_summary_cp() {
     infra_minio_ready=$(_release_ready minio)
     local suze_ready openfga_ready keycloak_ready suze_xr
     suze_ready=$(kubectl get xsuze -o jsonpath='{.items[0].status.conditions[?(@.type=="Ready")].status}' 2>/dev/null || echo "unknown")
-    suze_xr=$(kubectl get suze.gentianos.io "$(gentian_suze_claim_name)" -n crossplane-system \
+    suze_xr=$(kubectl get suze.gentianos.io "$(gentian_suze_claim_name)" -n "${CROSSPLANE_NAMESPACE:-crossplane-system}" \
         -o jsonpath='{.spec.resourceRef.name}' 2>/dev/null || gentian_suze_claim_name)
     # `|| true` on both: grep exits 1 when the release is absent, which is the
     # normal state until phase D deploys Suze. Under pipefail and the ERR trap
@@ -1546,7 +1555,7 @@ print_summary_cp() {
     fi
     echo ""
     echo -e "${GREEN}  Inspect authz stack:${NC}"
-    echo -e "${GREEN}    kubectl get xsuze,suze -n crossplane-system${NC}"
+    echo -e "${GREEN}    kubectl get xsuze,suze -n ${CROSSPLANE_NAMESPACE:-crossplane-system}${NC}"
     echo -e "${GREEN}    kubectl get secret openfga-runtime -n platform-kernel${NC}"
     echo ""
     echo -e "${GREEN}  Inspect Crossplane managed resources:${NC}"
@@ -2220,8 +2229,11 @@ apiVersion: gentianos.io/v1alpha1
 kind: Cluster
 metadata:
   name: ${cluster}-${stage}
-  namespace: crossplane-system
+  namespace: ${CROSSPLANE_NAMESPACE:-crossplane-system}
 spec:
+  # The installer this claim is written for. The installer refuses a claim
+  # whose layout is not the one it was started with (--layout).
+  layout: ${GENTIAN_LAYOUT:-v4}
   kernelDomain: ${domain}
 $(_claim_cluster_fields)
 EOF
@@ -2235,7 +2247,7 @@ apiVersion: gentianos.io/v1alpha1
 kind: InfraData
 metadata:
   name: ${cluster}-${stage}-infra-data
-  namespace: crossplane-system
+  namespace: ${CROSSPLANE_NAMESPACE:-crossplane-system}
 spec:
   environment: ${stage}
   compositeDeletePolicy: Background
@@ -2250,10 +2262,14 @@ apiVersion: gentianos.io/v1alpha1
 kind: Suze
 metadata:
   name: ${cluster}-${stage}-suze
-  namespace: crossplane-system
+  namespace: ${CROSSPLANE_NAMESPACE:-crossplane-system}
 spec:
   environment: ${stage}
-  idpNamespace: platform-kernel
+$(if [[ "${GENTIAN_LAYOUT:-v4}" == "v5" ]]; then
+    printf '  idpNamespace: kernel-authentication\n  fgaNamespace: kernel-authorization\n'
+  else
+    printf '  idpNamespace: platform-kernel\n'
+  fi)
   compositeDeletePolicy: Background
   openfga:
     chartVersion: "0.3.10"

@@ -23,12 +23,20 @@ spec:
             {{- $spec := $xr.spec }}
             {{- $name := $xr.metadata.name }}
 
-            {{- $openbaoServer    := default "https://openbao.openbao.svc.cluster.local:8200" (dig "openbao" "server" "" $spec) }}
+            {{- /* The layout the claim is written for decides where the kernel is.
+                 v4: the namespaces release 4.1 installs. v5: kernel/namespaces.yaml,
+                 created and labelled by the installer before this claim exists. */}}
+            {{- $layout := default "v4" $spec.layout }}
+            {{- $v5 := eq $layout "v5" }}
+            {{- $provisioningNs := ternary "kernel-provisioning" "crossplane-system" $v5 }}
+            {{- $controlNs      := ternary "kernel-control" "gentian-system" $v5 }}
+            {{- $secretsNs      := ternary "kernel-secrets" "openbao" $v5 }}
+            {{- $openbaoServer    := default (printf "https://openbao.%s.svc.cluster.local:8200" $secretsNs) (dig "openbao" "server" "" $spec) }}
             {{- $kvMount          := default "secret" (dig "openbao" "kvMount" "" $spec) }}
             {{- $authMount        := default "kubernetes" (dig "openbao" "authMount" "" $spec) }}
             {{- $k8sHost          := default "https://kubernetes.default.svc" (dig "openbao" "kubernetesHost" "" $spec) }}
-            {{- $argoNs           := default "argocd" (dig "argocd" "namespace" "" $spec) }}
-            {{- $esoNs            := default "external-secrets" (dig "eso" "namespace" "" $spec) }}
+            {{- $argoNs           := default (ternary "kernel-gitops" "argocd" $v5) (dig "argocd" "namespace" "" $spec) }}
+            {{- $esoNs            := default (ternary "kernel-secrets" "external-secrets" $v5) (dig "eso" "namespace" "" $spec) }}
             {{- $esoSa            := default "external-secrets" (dig "eso" "serviceAccount" "" $spec) }}
             {{- $letsencryptEmail := default (printf "admin@%s" $spec.kernelDomain) (dig "certManager" "letsencryptEmail" "" $spec) }}
 
@@ -41,11 +49,12 @@ spec:
                  rather than rendered with a placeholder. */}}
             {{- $authObs   := dig "vault-auth-oidc" dict (default dict .observed.resources) }}
             {{- $accessor  := dig "resource" "status" "atProvider" "accessor" "" $authObs }}
-            {{- $defaultMasterRef := dict "name" "gentian-os-master-password" "namespace" "crossplane-system" }}
+            {{- $defaultMasterRef := dict "name" "gentian-os-master-password" "namespace" $provisioningNs }}
             {{- $masterRef        := default $defaultMasterRef (default (dict) $spec.masterPasswordSecretRef) }}
 
             {{- /* ── Kernel namespaces ─────────────────────────────────────────── */}}
-            {{- range list "platform-kernel" "gentian-system" }}
+            {{- /* v5's namespaces exist before the claim does (installer A-01). */}}
+            {{- range (ternary list (list "platform-kernel" "gentian-system") $v5) }}
             ---
             apiVersion: kubernetes.crossplane.io/v1alpha2
             kind: Object
@@ -693,7 +702,7 @@ spec:
                 boundServiceAccountNames:
                   - crossplane-provider-vault
                 boundServiceAccountNamespaces:
-                  - crossplane-system
+                  - {{ $provisioningNs }}
                 tokenPolicies:
                   - crossplane-write
                 tokenTtl: 3600
@@ -737,7 +746,7 @@ spec:
                 name: gentian-os/kernel/{{ . }}
                 dataJsonSecretRef:
                   name: gentian-os-kernel-{{ $safeName }}
-                  namespace: crossplane-system
+                  namespace: {{ $provisioningNs }}
                   key: data.json
               providerConfigRef:
                 name: openbao
@@ -807,7 +816,7 @@ spec:
                   kind: ConfigMap
                   metadata:
                     name: gentian-cluster-config
-                    namespace: crossplane-system
+                    namespace: {{ $provisioningNs }}
                     labels:
                       app.kubernetes.io/managed-by: crossplane
                       gentianos.io/config-type: cluster-config
@@ -885,7 +894,7 @@ spec:
                         caProvider:
                           type: Secret
                           name: openbao-tls
-                          namespace: openbao
+                          namespace: {{ $secretsNs }}
                           key: tls.crt
                         {{- end }}
                         auth:

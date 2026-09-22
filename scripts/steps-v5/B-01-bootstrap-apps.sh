@@ -46,7 +46,7 @@ _v5_render() {
         --set-string "dnsProvider=none" \
         --set-string "kernelDomain=${KERNEL_DOMAIN:-}" \
         --set-string "cluster=${GENTIAN_DEPLOYMENTS_CLUSTER_ID:-}" \
-        --set-string "networkMode=${NETWORK_MODE:-static-ip}" \
+        --set-string "networkMode=${NETWORK_MODE:-tunnel}" \
         --set-string "osRepo=${GENTIAN_OS_REPO:-https://github.com/gentian-org/gentian-os}" \
         --set-string "gentianOsBranch=${GENTIAN_OS_BRANCH:-develop}" \
         --set-string "storageClass=${STORAGE_CLASS:-}" \

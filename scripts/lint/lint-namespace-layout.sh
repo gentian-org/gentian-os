@@ -17,7 +17,7 @@ while IFS= read -r hit; do
   fail "an old namespace name in a v5 file: ${hit}"
 done < <(grep -rnE "(namespace:|[[:space:]]-n|--namespace)[[:space:]]+\"?(${old#\\b(}" \
            "${ROOT}/scripts/steps-v5" "${ROOT}/kernel/bootstrap-v5" "${ROOT}/kernel/data" 2>/dev/null \
-         | grep -vE '^\S+:\s*#' || true)
+         | grep -vE '^\S+:\s*#' | grep -vE 's/namespace: ' || true)  # a sed pattern replacing the old name is the point
 
 # Every kernel namespace in the file is kernel-<function>, and the function
 # matches the name.

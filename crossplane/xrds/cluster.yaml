@@ -25,6 +25,17 @@ spec:
               required:
                 - kernelDomain
               properties:
+                layout:
+                  type: string
+                  enum: [v4, v5]
+                  default: v4
+                  description: >
+                    Which installer this claim is written for. v4 is the layout
+                    release 4.1 installs (platform-kernel, crossplane-system,
+                    openbao, ...); v5 is the kernel-<function> layout of
+                    kernel/namespaces.yaml. The installer refuses a claim whose
+                    layout is not the one it was started with, and the
+                    composition reads it to place what it creates.
                 identity:
                   type: object
                   # The object itself defaults, not just its fields. A nested default

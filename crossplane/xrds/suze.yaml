@@ -34,8 +34,14 @@ spec:
                   description: Environment slug (e.g. dev).
                 idpNamespace:
                   type: string
-                  description: Namespace for Keycloak and OpenFGA workloads.
+                  description: Namespace for Keycloak (and, unless fgaNamespace says otherwise, OpenFGA).
                   default: platform-kernel
+                fgaNamespace:
+                  type: string
+                  description: >
+                    Namespace for OpenFGA. Empty means idpNamespace; the v5
+                    layout separates the two (kernel-authorization is reachable
+                    from enforcement points only).
                 openfga:
                   type: object
                   properties:

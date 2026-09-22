@@ -15,8 +15,8 @@ kernelDomain: ""
 # so two clusters never fight over one zone.
 cluster: ""
 # How traffic reaches this cluster (the Cluster claim's networkMode):
-# static-ip, or tunnel.
-networkMode: static-ip
+# tunnel (the claim's default), or static-ip.
+networkMode: tunnel
 
 # Filled by the installer from kernel/namespaces.yaml. Never set by hand.
 namespaces: {}

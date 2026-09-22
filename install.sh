@@ -88,8 +88,9 @@ source "${SCRIPT_DIR}/scripts/lib/driver.sh"
 # operator-settable version selects an untested combination. The namespace is a
 # constant — references to it are hardcoded across the repo, so presenting it as
 # a knob would invite someone to turn it.
-# v4's namespace; a v5 step overrides it from the layout (ns_kernel provisioning).
+# v4's namespace; --layout v5 sets kernel-provisioning (kernel/namespaces.yaml).
 export CROSSPLANE_NAMESPACE="${CROSSPLANE_NAMESPACE:-crossplane-system}"
+export GENTIAN_LAYOUT="${GENTIAN_LAYOUT:-v4}"
 CROSSPLANE_VERSION="$(gentian_pin crossplane chart)"
 CROSSPLANE_HELM_REPO="$(gentian_pin crossplane repo)"
 export CROSSPLANE_VERSION CROSSPLANE_HELM_REPO
@@ -213,8 +214,9 @@ parse_driver_args() {
                 # one release 4.1 shipped until v5 replaces it.
                 shift; [[ $# -gt 0 ]] || { error "$0: --layout requires a value (v5)"; exit 1; }
                 case "$1" in
-                    v5)  GENTIAN_STEPS_DIR="${SCRIPT_DIR}/scripts/steps-v5" ;;
-                    v4)  GENTIAN_STEPS_DIR="${SCRIPT_DIR}/scripts/steps" ;;
+                    v5)  GENTIAN_STEPS_DIR="${SCRIPT_DIR}/scripts/steps-v5"; export GENTIAN_LAYOUT=v5
+                         export CROSSPLANE_NAMESPACE=kernel-provisioning ;;
+                    v4)  GENTIAN_STEPS_DIR="${SCRIPT_DIR}/scripts/steps"; export GENTIAN_LAYOUT=v4 ;;
                     *)   error "$0: --layout must be v4 or v5, not '$1'"; exit 1 ;;
                 esac ;;
             --export-recovery-kit)
