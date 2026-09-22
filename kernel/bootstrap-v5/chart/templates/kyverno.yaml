@@ -22,6 +22,37 @@ spec:
               - key: gentianos.io/tier
                 operator: NotIn
                 values: [kernel]
+        admissionController:
+          replicas: 1
+          container:
+            extraArgs:
+              # PolicyExceptions honoured from one namespace only (MetalLB's).
+              enablePolicyException: "true"
+              exceptionNamespace: "metallb-system"
+        backgroundController:
+          replicas: 1
+        cleanupController:
+          replicas: 1
+          # The default 128Mi is OOM-killed on a Crossplane-heavy cluster: the
+          # TTL manager starts an informer per GVR.
+          resources:
+            limits:
+              memory: 512Mi
+            requests:
+              cpu: 100m
+              memory: 256Mi
+        reportsController:
+          replicas: 1
+        # The chart's cleanup jobs default to bitnami/kubectl, which no longer
+        # pulls; alpine/k8s carries bash and kubectl.
+        webhooksCleanup:
+          image:
+            repository: alpine/k8s
+            tag: "1.32.3"
+        policyReportsCleanup:
+          image:
+            repository: alpine/k8s
+            tag: "1.32.3"
   destination:
     server: https://kubernetes.default.svc
     namespace: {{ include "ns" (list . "admission") }}
