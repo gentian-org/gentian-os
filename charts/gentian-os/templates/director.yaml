@@ -1,0 +1,239 @@
+{{- /*
+  The director: the only writer to gentian-deployments.
+
+  It runs beside the operator and shares nothing with it. The operator holds a
+  cluster credential and no git credential; the director holds a git credential
+  and, in the cluster, only what its own ServiceAccount is granted — which is
+  nothing. Every request it serves is authorised against OpenFGA with the
+  caller's own Keycloak token.
+*/ -}}
+{{- if .Values.director.enabled }}
+{{- $deployments := .Values.appLifecycle.deployments | default dict }}
+{{- $gitSecret := $deployments.gitCredentialsSecret | default "" }}
+{{- $checkout := "/data/gentian-deployments" }}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ include "gentian-os.fullname" . }}-director
+  labels:
+    {{- include "gentian-os.labels" . | nindent 4 }}
+    app.kubernetes.io/component: director
+automountServiceAccountToken: false
+---
+{{- if .Values.director.openfgaTokenSecretRef.openbaoPath }}
+apiVersion: external-secrets.io/v1
+kind: ExternalSecret
+metadata:
+  name: {{ .Values.director.openfgaTokenSecretRef.name }}
+  labels:
+    {{- include "gentian-os.labels" . | nindent 4 }}
+spec:
+  refreshInterval: 1h
+  secretStoreRef:
+    kind: ClusterSecretStore
+    name: openbao
+  target:
+    name: {{ .Values.director.openfgaTokenSecretRef.name }}
+    creationPolicy: Owner
+    deletionPolicy: Retain
+  data:
+    - secretKey: {{ .Values.director.openfgaTokenSecretRef.key }}
+      remoteRef:
+        key: {{ .Values.director.openfgaTokenSecretRef.openbaoPath }}
+        property: {{ .Values.director.openfgaTokenSecretRef.property }}
+---
+{{- end }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "gentian-os.fullname" . }}-director
+  labels:
+    {{- include "gentian-os.labels" . | nindent 4 }}
+    app.kubernetes.io/component: director
+spec:
+  selector:
+    {{- include "gentian-os.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: director
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "gentian-os.fullname" . }}-director
+  labels:
+    {{- include "gentian-os.labels" . | nindent 4 }}
+    app.kubernetes.io/component: director
+spec:
+  replicas: {{ .Values.director.replicas }}
+  selector:
+    matchLabels:
+      {{- include "gentian-os.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: director
+  template:
+    metadata:
+      labels:
+        {{- include "gentian-os.labels" . | nindent 8 }}
+        app.kubernetes.io/component: director
+    spec:
+      serviceAccountName: {{ include "gentian-os.fullname" . }}-director
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        fsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      initContainers:
+        # The checkout is scratch space for composing one commit, so it is an
+        # emptyDir and a fresh clone on every start.
+        - name: clone-deployments
+          image: alpine/git:2.45.2
+          command: ["sh", "-c"]
+          args:
+            - |
+              set -e
+              CLONE_URL="${GENTIAN_DEPLOYMENTS_REPO}"
+              if [ -f /etc/git/credentials ] && [ -s /etc/git/credentials ]; then
+                CLONE_URL="$(cat /etc/git/credentials)"
+              fi
+              rm -rf {{ $checkout }}/* {{ $checkout }}/.git 2>/dev/null || true
+              for attempt in 1 2 3 4 5; do
+                git clone "${CLONE_URL}" {{ $checkout }} && exit 0
+                echo "clone attempt ${attempt} failed; retrying"
+                sleep 10
+              done
+              exit 1
+          env:
+            - name: GENTIAN_DEPLOYMENTS_REPO
+              value: {{ $deployments.repo | quote }}
+            - name: HOME
+              value: /tmp
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+            readOnlyRootFilesystem: true
+          volumeMounts:
+            - name: deployments
+              mountPath: {{ $checkout }}
+            - name: tmp
+              mountPath: /tmp
+            {{- if $gitSecret }}
+            - name: git-credentials
+              mountPath: /etc/git
+              readOnly: true
+            {{- end }}
+      containers:
+        - name: director
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: ["/director"]
+          ports:
+            - name: http
+              containerPort: 8080
+          env:
+            - name: DIRECTOR_LISTEN
+              value: ":8080"
+            # Identity comes from the issuer and from nowhere else. The public
+            # URL is what tokens carry; the in-cluster one is where keys are
+            # fetched, which is not the same address from inside.
+            - name: DIRECTOR_ISSUER_BASE_URL
+              value: {{ printf "https://id.%s/auth" .Values.kernelDomain | quote }}
+            - name: DIRECTOR_JWKS_BASE_URL
+              value: {{ .Values.director.jwksBaseURL | default (printf "http://gentian-idp-keycloak-keycloakx-http.%s.svc.cluster.local:8080/auth" (.Values.layout.authentication | default .Values.servicesNamespace)) | quote }}
+            - name: DIRECTOR_AUDIENCE
+              value: {{ .Values.director.audience | quote }}
+            - name: OPENFGA_API_URL
+              value: {{ .Values.director.openfgaURL | default .Values.authzBridge.openfgaURL | quote }}
+            {{- if .Values.director.openfgaTokenSecretRef.name }}
+            - name: OPENFGA_API_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.director.openfgaTokenSecretRef.name }}
+                  key: {{ .Values.director.openfgaTokenSecretRef.key }}
+                  optional: true
+            {{- end }}
+            - name: GENTIAN_DEPLOYMENTS_PATH
+              value: {{ $checkout }}
+            - name: GENTIAN_DEPLOYMENTS_REPO
+              value: {{ $deployments.repo | quote }}
+            - name: GENTIAN_DEPLOYMENTS_CLUSTER_ID
+              value: {{ $deployments.cluster | quote }}
+            - name: DIRECTOR_ENTITLEMENTS
+              value: {{ .Values.director.entitlements | quote }}
+            - name: DIRECTOR_COMMITTER_NAME
+              value: {{ .Values.director.committer.name | quote }}
+            - name: DIRECTOR_COMMITTER_EMAIL
+              value: {{ .Values.director.committer.email | quote }}
+            {{- if .Values.director.storeKeysSecretRef.name }}
+            - name: DIRECTOR_STORE_KEYS
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.director.storeKeysSecretRef.name }}
+                  key: {{ .Values.director.storeKeysSecretRef.key }}
+                  optional: true
+            {{- end }}
+            {{- if .Values.director.listenerKeysSecretRef.name }}
+            - name: DIRECTOR_LISTENER_KEYS
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.director.listenerKeysSecretRef.name }}
+                  key: {{ .Values.director.listenerKeysSecretRef.key }}
+                  optional: true
+            {{- end }}
+            - name: HOME
+              value: /tmp
+            {{- if $gitSecret }}
+            # The clone carries the credential in its origin URL, which is
+            # what the push then reads; nothing else in this container has it.
+            {{- end }}
+            {{- with .Values.trustAnchorSecret }}
+            - name: SSL_CERT_FILE
+              value: /opt/gentian-trust-anchor/ca.crt
+            {{- end }}
+          livenessProbe:
+            httpGet: { path: /healthz, port: http }
+            initialDelaySeconds: 5
+            periodSeconds: 20
+          readinessProbe:
+            httpGet: { path: /healthz, port: http }
+            initialDelaySeconds: 3
+            periodSeconds: 10
+          resources:
+            {{- toYaml .Values.director.resources | nindent 12 }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+            readOnlyRootFilesystem: true
+          volumeMounts:
+            - name: deployments
+              mountPath: {{ $checkout }}
+            - name: tmp
+              mountPath: /tmp
+            {{- with .Values.trustAnchorSecret }}
+            - name: trust-anchor
+              mountPath: /opt/gentian-trust-anchor
+              readOnly: true
+            {{- end }}
+      volumes:
+        - name: deployments
+          emptyDir: {}
+        - name: tmp
+          emptyDir: {}
+        {{- if $gitSecret }}
+        - name: git-credentials
+          secret:
+            secretName: {{ $gitSecret | quote }}
+            optional: true
+        {{- end }}
+        {{- with .Values.trustAnchorSecret }}
+        - name: trust-anchor
+          secret:
+            secretName: {{ . }}
+            optional: true
+        {{- end }}
+{{- end }}

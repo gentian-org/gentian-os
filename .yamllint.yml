@@ -18,6 +18,7 @@ ignore: |
   kernel/manifests/*/chart/templates/
   kernel/bootstrap/chart/templates/
   kernel/bootstrap-v5/chart/templates/
+  kernel/appsets-v5/templates/
   kernel/data/*/templates/
   charts/infra/
   kernel/manifests/flux-crds/

@@ -23,7 +23,9 @@ namespaces: {}
 
 # Pins the installer copies in from versions.yaml (B-01). Never set by hand.
 versions:
-  headlamp: { chart: "", repo: "" }
+  headlamp:
+    chart: ""
+    repo: ""
 
 headlamp:
   oidc:

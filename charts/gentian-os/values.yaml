@@ -144,6 +144,48 @@ servicesNamespace: "platform-kernel"
 # than by the one servicesNamespace above.
 layout: {}
 
+# The director: the only writer to gentian-deployments, and the read API the
+# desktop and the store render from. It runs beside the operator with its own
+# ServiceAccount, which is granted nothing — every request it serves is
+# authorised against OpenFGA with the caller's own token.
+director:
+  enabled: false
+  replicas: 1
+  # The audience its tokens must name. A token minted for another service is
+  # refused, which is what keeps a tenant app's token from writing to git.
+  audience: gentian-director
+  # Where keys are fetched from inside the cluster. Empty derives it from the
+  # layout's authentication namespace.
+  jwksBaseURL: ""
+  # Empty uses credentialManager.openfgaURL, which is the same service.
+  openfgaURL: ""
+  # enforce | off. A cluster with no App Store has nothing that could grant an
+  # entitlement, and says so here rather than by an absence.
+  entitlements: "off"
+  committer:
+    name: gentian-director
+    email: director@gentian.invalid
+  openfgaTokenSecretRef:
+    name: gentian-os-director-openfga-token
+    key: token
+    openbaoPath: "gentian-os/kernel/authz/openfga"
+    property: preshared_key
+  # The App Store's signing keys, pinned: id=base64,… Without them the
+  # entitlement endpoint does not exist.
+  storeKeysSecretRef:
+    name: ""
+    key: keys
+  # The Keycloak event listener's public keys, in the same form.
+  listenerKeysSecretRef:
+    name: ""
+    key: keys
+  resources:
+    requests:
+      cpu: 50m
+      memory: 96Mi
+    limits:
+      memory: 256Mi
+
 # kernelServices exposes cluster-wide infrastructure endpoints to Crossplane
 # compositions. Published as a `gentian-kernel-services` ConfigMap in gentian-system
 # and fetched by app-default.yaml via function-extra-resources.

@@ -54,8 +54,15 @@ spec:
         # The Gateway, its routes and its reference grants live at the edge.
         servicesNamespace: {{ include "ns" (list . "edge") }}
         infraNamespace: {{ include "ns" (list . "authentication") }}
-        credentialManager:
+        authzBridge:
+          # Retired with the split: the director projects membership from
+          # Keycloak's events instead. Its URL stays because it is where
+          # OpenFGA answers, which the director reads too.
+          enabled: false
           openfgaURL: {{ printf "http://gentian-openfga.%s.svc.cluster.local:8080" (include "ns" (list . "authorization")) | quote }}
+        director:
+          enabled: true
+          entitlements: "off"
         openbao:
           address: {{ printf "https://openbao.%s.svc.cluster.local:8200" (include "ns" (list . "secrets")) | quote }}
   - repoURL: {{ .Values.deployments.repo }}
