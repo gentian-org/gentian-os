@@ -81,7 +81,7 @@ func start(t *testing.T, entitlements bool) *harness {
 		t.Fatal(err)
 	}
 	srv, err := api.New(api.Config{
-		Authn: v, Authz: decisions, Repo: repo, EnforceEntitlements: entitlements,
+		Authn: v, Authz: decisions, Repo: repo, EnforceEntitlements: entitlements, Cluster: dt.Cluster,
 		Store: &api.StoreConfig{Verifier: verifier, Applier: &entitlement.Applier{Repo: repo, Store: tuples}},
 		Log:   slog.New(slog.NewTextHandler(io.Discard, nil)),
 	})
@@ -420,6 +420,43 @@ func TestAnExpiredGrantEntitlesToNothing(t *testing.T) {
 	}
 }
 
+// The kernel's own UIs on the administrator's console: which tiles a person
+// sees follows from their relations on the cluster, and every URL is under the
+// kernel domain the Cluster claim in git declares.
+func TestKernelTilesFollowTheClusterRelations(t *testing.T) {
+	h := start(t, false)
+	names := func(sub string) (int, []string) {
+		code, body := h.do(t, "GET", "/v1/clusters/demo-cluster/tiles", h.token(t, "gentian", sub), "")
+		if code != http.StatusOK {
+			return code, nil
+		}
+		var out []string
+		for _, tile := range body["tiles"].([]any) {
+			out = append(out, tile.(map[string]any)["name"].(string))
+		}
+		return code, out
+	}
+	if code, got := names("alice"); code != 200 || fmt.Sprint(got) != "[headlamp argocd keycloak]" {
+		t.Fatalf("platform admin: %d %v", code, got)
+	}
+	if code, got := names("audrey"); code != 200 || fmt.Sprint(got) != "[headlamp argocd]" {
+		t.Fatalf("auditor: %d %v", code, got)
+	}
+	if code, _ := names("serge"); code != http.StatusForbidden {
+		t.Fatalf("service admin without can_audit: %d", code)
+	}
+	if code, _ := names("mia"); code != http.StatusForbidden {
+		t.Fatalf("a tenant member: %d", code)
+	}
+	_, body := h.do(t, "GET", "/v1/clusters/demo-cluster/tiles", h.token(t, "gentian", "alice"), "")
+	if body["kernelDomain"] != dt.KernelDomain || !strings.Contains(fmt.Sprint(body["tiles"]), "https://headlamp.k.example/") {
+		t.Fatalf("body = %v", body)
+	}
+	if code, _ := h.do(t, "GET", "/v1/clusters/other/tiles", h.token(t, "gentian", "alice"), ""); code != http.StatusBadRequest {
+		t.Fatalf("another cluster id: %d", code)
+	}
+}
+
 func TestAddonsRoundTrip(t *testing.T) {
 	h := start(t, false)
 	tom := h.token(t, "tenant-demo", "tom")
@@ -526,6 +563,10 @@ var facts = table{
 	"user:alice can_view tenant:demo":                      true,
 	"user:tina can_install_app tenant:solo":                true,
 	"user:tina can_view tenant:solo":                       true,
+	"user:alice can_audit cluster:demo-cluster":            true,
+	"user:alice can_configure cluster:demo-cluster":        true,
+	"user:audrey can_audit cluster:demo-cluster":           true,
+	"user:serge can_operate_system cluster:demo-cluster":   true,
 	"tenant:demo can_install catalogue_entry:main/element": true,
 }
 
@@ -651,6 +692,11 @@ func loadOpenFGA(t *testing.T, base string) (storeID, modelID string) {
 			"condition": map[string]any{"name": "grant_valid", "context": map[string]any{"expires_at": until}}}
 	}
 	tuples := append(fixture.Tuples, entitled("main/element", "2999-01-01T00:00:00Z"), entitled("main/lapsed", "2020-01-01T00:00:00Z"))
+	// The fixture's cluster is cluster:main; this director serves dt.Cluster.
+	// Bind the same platform groups to it so cluster verbs can be checked.
+	for _, role := range [][2]string{{"admin", "admin"}, {"auditor", "auditor"}, {"service-admin", "service_admin"}, {"security", "security_officer"}} {
+		tuples = append(tuples, map[string]any{"user": "group:gentian/platform/" + role[0] + "#member", "relation": role[1], "object": "cluster:" + dt.Cluster})
+	}
 	post("/stores/"+store.ID+"/write", map[string]any{
 		"authorization_model_id": written.ID,
 		"writes":                 map[string]any{"tuple_keys": tuples},

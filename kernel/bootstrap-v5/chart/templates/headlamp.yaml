@@ -1,0 +1,52 @@
+---
+# Headlamp: the cluster as the administrator sees it, with their own identity.
+# OIDC against the kernel realm once the realm exists (headlamp.oidc.enabled);
+# until then a token login, which is enough to observe a fresh cluster.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: headlamp
+  namespace: {{ include "ns" (list . "gitops") }}
+  finalizers: []
+spec:
+  project: gentian
+  source:
+    repoURL: {{ .Values.versions.headlamp.repo }}
+    chart: headlamp
+    targetRevision: {{ .Values.versions.headlamp.chart | quote }}
+    helm:
+      valuesObject:
+        replicaCount: 1
+        ingress:
+          enabled: false
+        {{- if .Values.headlamp.oidc.enabled }}
+        config:
+          oidc:
+            secret:
+              create: false
+              name: headlamp-oidc
+            externalSecret:
+              enabled: false
+        env:
+          - name: OIDC_ISSUER_URL
+            value: {{ printf "https://id.%s/realms/kernel" .Values.kernelDomain | quote }}
+          - name: OIDC_CLIENT_ID
+            value: headlamp
+          - name: OIDC_SCOPES
+            value: "openid,profile,email,groups"
+        {{- end }}
+        # The pod has no rights of its own: every request is the person's.
+        clusterRoleBinding:
+          create: false
+        serviceAccount:
+          create: true
+        podSecurityContext:
+          runAsNonRoot: true
+          seccompProfile: { type: RuntimeDefault }
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: {{ include "ns" (list . "observability") }}
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true

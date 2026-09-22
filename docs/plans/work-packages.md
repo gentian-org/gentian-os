@@ -519,6 +519,29 @@ From [security-gap-closing.md](security-gap-closing.md).
       in `kernel-edge`. `make validate-steps-v5` runs the step-contract checks
       and `lint-namespace-layout`, which fails on any namespace named by hand.
       The v4 step set is untouched. **Not run against a cluster yet.**
+- [ ] **Milestone M1 — a clean install the cluster administrator can see.**
+      `install.sh --layout v5` runs end to end on the purged cluster,
+      `--status` is true afterwards, and the administrator opens Headlamp,
+      Argo CD and Keycloak from tiles on the platform console. In order:
+      1. `[x]` `kernel-observability` in the layout; Headlamp as a bootstrap
+         Application, pinned in versions.yaml; HTTPRoutes for Headlamp and
+         Argo CD on the kernel gateway; the pin lint takes several pins per
+         step and counts claims across step sets.
+      2. `[x]` Kernel tiles: `internal/director/tiles/tiles.yaml` (Headlamp,
+         Argo CD, Keycloak; who sees which by cluster relation), served by
+         `GET /v1/clusters/{c}/tiles` under the kernel domain the Cluster claim
+         in git declares; contract-tested with the table and with OpenFGA.
+      3. `[ ]` B-02 OpenBao init and the seal token; B-03 ESO
+         ClusterSecretStore; B-04 Crossplane providers.
+      4. `[ ]` C-01 Cluster claim applied; Keycloak and OpenFGA composed into
+         `kernel-authentication` / `kernel-authorization` (Suze composition
+         takes the layout's names); the `headlamp` client in the kernel realm
+         and its secret in OpenBao (`headlamp.oidc.enabled`).
+      5. `[ ]` D-01 operator and director in `kernel-control`; the Gateway in
+         `kernel-edge`; the platform tenant's console rendering the tiles
+         (gentian-ui: BFF passthrough `[x]`, the console screen `[ ]`).
+      6. `[ ]` First run on the purged cluster: `--until A-07`, then
+         `--until B-01`, then step by step; every `check()` honest.
 - [ ] Phase 1 continued: OpenBao init and the seal token (B-02), ESO stores,
       Crossplane providers, Keycloak and OpenFGA in their namespaces (the Suze
       composition takes the layout's names), the two Gateways from the Cluster

@@ -39,6 +39,9 @@ kernel:
   - name: kernel-admission
     function: admission
     holds: Kyverno and the baseline policies
+  - name: kernel-observability
+    function: observability
+    holds: Headlamp (the cluster administrator's view of the cluster, with their own identity); later metrics and logs
 
 # Namespaces the platform provides that gentian-os labels but does not create.
 labelled:

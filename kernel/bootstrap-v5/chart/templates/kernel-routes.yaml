@@ -1,0 +1,28 @@
+---
+# The kernel's own UIs on the kernel domain, through the authenticated gateway.
+# The Gateway is a kernel resource the operator reconciles from the Cluster
+# claim; these routes are declared now and attach when it exists. Keycloak's
+# route is composed with Keycloak by the Suze claim, not here.
+{{- $edge := include "ns" (list . "edge") }}
+{{- range $r := list
+      (dict "name" "argocd"   "host" "argocd"   "svc" "argocd-server"   "ns" (include "ns" (list . "gitops"))        "port" 80)
+      (dict "name" "headlamp" "host" "headlamp" "svc" "headlamp"        "ns" (include "ns" (list . "observability")) "port" 80) }}
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: kernel-{{ $r.name }}
+  namespace: {{ $r.ns }}
+  labels:
+    gentianos.io/tier: kernel
+spec:
+  parentRefs:
+    - name: {{ $.Values.edge.gatewayName }}
+      namespace: {{ $edge }}
+  hostnames:
+    - {{ printf "%s.%s" $r.host $.Values.kernelDomain | quote }}
+  rules:
+    - backendRefs:
+        - name: {{ $r.svc }}
+          port: {{ $r.port }}
+---
+{{- end }}

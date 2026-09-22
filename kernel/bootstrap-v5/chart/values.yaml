@@ -14,3 +14,17 @@ kernelDomain: ""
 
 # Filled by the installer from kernel/namespaces.yaml. Never set by hand.
 namespaces: {}
+
+# Pins the installer copies in from versions.yaml (B-01). Never set by hand.
+versions:
+  headlamp: { chart: "", repo: "" }
+
+headlamp:
+  oidc:
+    # On once the kernel realm carries the headlamp client and its secret is
+    # in OpenBao; a fresh cluster starts with token login.
+    enabled: false
+
+edge:
+  # The authenticated Gateway the operator reconciles in the edge namespace.
+  gatewayName: kernel-public-gateway

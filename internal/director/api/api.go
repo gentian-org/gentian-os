@@ -38,6 +38,7 @@ import (
 	"github.com/gentian-org/gentian-os/internal/director/authz"
 	"github.com/gentian-org/gentian-os/internal/director/entitlement"
 	"github.com/gentian-org/gentian-os/internal/director/gitops"
+	"github.com/gentian-org/gentian-os/internal/director/tiles"
 )
 
 // Authenticator establishes the caller's identity from a request.
@@ -52,6 +53,7 @@ type Repository interface {
 	SetAddons(ctx context.Context, tenant, profile string, addons []string, meta gitops.Meta) (gitops.Result, error)
 	Apps(ctx context.Context, tenant string) ([]gitops.App, error)
 	Entitlements(ctx context.Context, tenant string) ([]gitops.Entitlement, error)
+	KernelDomain(ctx context.Context) (string, error)
 }
 
 // Config assembles a Server.
@@ -69,6 +71,9 @@ type Config struct {
 	// caller by signature, not by token: the listener is not a user and holds
 	// no identity a token could carry. Nil leaves the endpoint unregistered.
 	Events http.Handler
+	// Cluster is the id of the one cluster this director serves: the object
+	// cluster verbs are checked against, and the only {c} the routes accept.
+	Cluster string
 	// Store verifies and applies what the App Store signed. Nil leaves the
 	// write unregistered: a cluster with no pinned store key believes no store.
 	Store *StoreConfig
@@ -138,6 +143,15 @@ type call struct {
 
 // object names what a route's relation is checked against.
 type object func(r *http.Request) (string, error)
+
+// clusterObject accepts only this director's own cluster. Another id is not
+// forbidden, it does not exist here.
+func (s *Server) clusterObject(r *http.Request) (string, error) {
+	if c := r.PathValue("c"); c != s.cfg.Cluster || c == "" {
+		return "", gitops.ErrInvalidName
+	}
+	return authz.Cluster(s.cfg.Cluster), nil
+}
 
 func tenantObject(r *http.Request) (string, error) {
 	t := r.PathValue("t")
@@ -217,6 +231,13 @@ func (s *Server) routes() {
 	s.guarded("GET /v1/tenants/{t}/apps/{p}/addons", "can_view", tenantObject, s.getAddons)
 
 	s.guarded("GET /v1/tenants/{t}/entitlements", "can_view", tenantObject, s.listEntitlements)
+
+	// The kernel's own UIs, for the cluster administrator's console. Entered
+	// under can_audit — the widest cluster relation — then each tile is
+	// filtered by its own.
+	if s.cfg.Cluster != "" {
+		s.guarded("GET /v1/clusters/{c}/tiles", "can_audit", s.clusterObject, s.kernelTiles)
+	}
 	if s.cfg.Store != nil {
 		s.mux.HandleFunc("POST /v1/tenants/{t}/entitlements", s.entitle)
 	}
@@ -261,6 +282,43 @@ func (s *Server) listEntitlements(w http.ResponseWriter, r *http.Request, _ call
 		return
 	}
 	s.json(w, http.StatusOK, map[string]any{"tenant": r.PathValue("t"), "entitlements": facts})
+}
+
+type tileOut struct {
+	Name        string `json:"name"`
+	DisplayName string `json:"displayName"`
+	Description string `json:"description"`
+	URL         string `json:"url"`
+	Icon        string `json:"icon"`
+}
+
+func (s *Server) kernelTiles(w http.ResponseWriter, r *http.Request, c call) {
+	ctx := r.Context()
+	domain, err := s.cfg.Repo.KernelDomain(ctx)
+	if err != nil {
+		s.repoError(w, r, err)
+		return
+	}
+	object := authz.Cluster(s.cfg.Cluster)
+	out := []tileOut{}
+	for _, t := range tiles.All() {
+		shown := false
+		for _, rel := range t.AnyOf {
+			ok, err := s.cfg.Authz.Check(ctx, reqID(ctx), c.user, rel, object)
+			if err != nil {
+				s.fail(w, r, http.StatusServiceUnavailable, "authorization unavailable")
+				return
+			}
+			if ok {
+				shown = true
+				break
+			}
+		}
+		if shown {
+			out = append(out, tileOut{Name: t.Name, DisplayName: t.DisplayName, Description: t.Description, URL: t.URL(domain), Icon: t.Icon})
+		}
+	}
+	s.json(w, http.StatusOK, map[string]any{"cluster": s.cfg.Cluster, "kernelDomain": domain, "tiles": out})
 }
 
 type entitleRequest struct {
@@ -394,6 +452,8 @@ func (s *Server) repoError(w http.ResponseWriter, r *http.Request, err error) {
 	switch {
 	case errors.Is(err, gitops.ErrTenantNotFound):
 		s.fail(w, r, http.StatusNotFound, "tenant not found")
+	case errors.Is(err, gitops.ErrNoClusterClaim):
+		s.fail(w, r, http.StatusNotFound, "this cluster has no Cluster claim in the repository")
 	case errors.Is(err, gitops.ErrInvalidName):
 		s.fail(w, r, http.StatusBadRequest, "invalid name")
 	case errors.Is(err, gitops.ErrPushContended):

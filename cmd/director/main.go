@@ -152,7 +152,7 @@ func run(log *slog.Logger) error {
 		store = &api.StoreConfig{Verifier: sv, Applier: &entitlement.Applier{Repo: repo, Store: checker}}
 	}
 	handler, err := api.New(api.Config{Authn: verifier, Authz: checker, Repo: repo, Log: log,
-		EnforceEntitlements: enforce, Events: events, Store: store})
+		EnforceEntitlements: enforce, Events: events, Store: store, Cluster: cluster})
 	if err != nil {
 		return err
 	}

@@ -773,13 +773,22 @@ validate_pins() {
     local i file rc=0 c claimed=" " comp
     for (( i = 0; i < ${#_STEP_IDS[@]}; i++ )); do
         file="${_STEP_FILES[$i]}"
-        c="$(step_header "$file" pins)"
-        [[ -n "$c" ]] || continue
-        if ! _gentian_yq ".\"${c}\"" "${GENTIAN_VERSIONS_FILE}" >/dev/null 2>&1; then
-            error "$(step_id_of "$file"): pins '${c}', which is not in versions.yaml"
-            rc=1
-        fi
-        claimed+="${c} "
+        # A step may pull more than one pinned component: `# pins: a b`.
+        for c in $(step_header "$file" pins); do
+            if ! _gentian_yq ".\"${c}\"" "${GENTIAN_VERSIONS_FILE}" >/dev/null 2>&1; then
+                error "$(step_id_of "$file"): pins '${c}', which is not in versions.yaml"
+                rc=1
+            fi
+            claimed+="${c} "
+        done
+    done
+
+    # The inventory is shared by every step set (scripts/steps*/): a pin only
+    # the other layout pulls is claimed, not stale.
+    local other
+    for other in "${SCRIPT_DIR}"/scripts/steps*/[A-Z]-[0-9][0-9]-*.sh; do
+        [[ -f "${other}" ]] || continue
+        for c in $(step_header "${other}" pins); do claimed+="${c} "; done
     done
 
     while IFS= read -r comp; do

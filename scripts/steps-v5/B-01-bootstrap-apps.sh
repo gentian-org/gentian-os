@@ -2,9 +2,9 @@
 # step: B-01-bootstrap-apps
 # phase: secrets
 # requires: A-06-argocd
-# provides: the gentian AppProject and the kernel Applications of kernel/bootstrap-v5/chart (openbao, openbao-transit, reloader, cnpg, kernel-postgres, kyverno, external-dns when a DNS provider is set), each Synced and Healthy in its layout namespace
-# mutates: Application and AppProject objects in the gitops namespace; what they sync lands in the seal, secrets, data, admission and edge namespaces
-# pins: openbao
+# provides: the gentian AppProject and the kernel Applications of kernel/bootstrap-v5/chart (openbao, openbao-transit, reloader, cnpg, kernel-postgres, kyverno, headlamp, external-dns when a DNS provider is set) and the HTTPRoutes for Argo CD and Headlamp, each Synced and Healthy in its layout namespace
+# mutates: Application and AppProject objects in the gitops namespace; what they sync lands in the seal, secrets, data, admission, observability and edge namespaces
+# pins: openbao headlamp
 
 # The chart takes the namespace layout as a value and resolves every
 # destination from it; it refuses to render an Application whose function the
@@ -22,7 +22,7 @@ _v5_delivered() {
 }
 
 _v5_apps() {
-    local apps="openbao openbao-transit reloader cnpg kernel-postgres kyverno"
+    local apps="openbao openbao-transit reloader cnpg kernel-postgres kyverno headlamp"
     [[ "${DNS_PROVIDER:-none}" != "none" ]] && apps="${apps} external-dns"
     echo "${apps}"
 }
@@ -41,7 +41,9 @@ _v5_render() {
         --set-string "kernelDomain=${KERNEL_DOMAIN:-}" \
         --set-string "osRepo=${GENTIAN_OS_REPO:-https://github.com/gentian-org/gentian-os}" \
         --set-string "gentianOsBranch=${GENTIAN_OS_BRANCH:-develop}" \
-        --set-string "storageClass=${STORAGE_CLASS:-}"
+        --set-string "storageClass=${STORAGE_CLASS:-}" \
+        --set-string "versions.headlamp.chart=$(gentian_pin headlamp chart)" \
+        --set-string "versions.headlamp.repo=$(gentian_pin headlamp repo)"
     local rc=$?
     rm -rf "${tmp}"
     return ${rc}

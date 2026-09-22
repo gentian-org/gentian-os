@@ -18,8 +18,10 @@ package gitops
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 
 	"sigs.k8s.io/yaml"
 )
@@ -56,4 +58,42 @@ func (g *GitOps) Apps(ctx context.Context, tenant string) ([]App, error) {
 		return []App{}, nil
 	}
 	return doc.Spec.Apps, nil
+}
+
+// ErrNoClusterClaim is returned when the repository has no Cluster claim for
+// this cluster.
+var ErrNoClusterClaim = errors.New("no Cluster claim in the repository")
+
+// KernelDomain returns the kernel domain the cluster's Cluster claim declares
+// (clusters/<cluster>/kernel/claims/cluster.yaml). The claim in git is the one
+// source of that name; the director does not ask the cluster.
+func (g *GitOps) KernelDomain(ctx context.Context) (string, error) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if err := g.ensureRepo(ctx); err != nil {
+		return "", err
+	}
+	cluster := g.cluster
+	if cluster == "" {
+		cluster = "default-cluster"
+	}
+	raw, err := os.ReadFile(filepath.Join(g.path, "clusters", cluster, "kernel", "claims", "cluster.yaml"))
+	if errors.Is(err, os.ErrNotExist) {
+		return "", ErrNoClusterClaim
+	}
+	if err != nil {
+		return "", err
+	}
+	var claim struct {
+		Spec struct {
+			KernelDomain string `json:"kernelDomain"`
+		} `json:"spec"`
+	}
+	if err := yaml.Unmarshal(raw, &claim); err != nil {
+		return "", fmt.Errorf("parse cluster claim: %w", err)
+	}
+	if claim.Spec.KernelDomain == "" {
+		return "", fmt.Errorf("%w: the claim declares no kernelDomain", ErrNoClusterClaim)
+	}
+	return claim.Spec.KernelDomain, nil
 }

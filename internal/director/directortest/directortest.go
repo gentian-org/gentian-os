@@ -36,8 +36,12 @@ import (
 	"github.com/go-jose/go-jose/v4/jwt"
 )
 
-// Cluster is the cluster name every fixture repository uses.
-const Cluster = "demo-cluster"
+// Cluster is the cluster name every fixture repository uses; KernelDomain is
+// what its Cluster claim declares.
+const (
+	Cluster      = "demo-cluster"
+	KernelDomain = "k.example"
+)
 
 // TenantYAML is a minimal tenant manifest.
 func TenantYAML(name string) string {
@@ -59,6 +63,13 @@ func Remote(t testing.TB, tenants ...string) string {
 	Git(t, "", "init", "--bare", "--initial-branch=main", remote)
 	seed := t.TempDir()
 	Git(t, "", "clone", remote, seed)
+	claims := filepath.Join(seed, "clusters", Cluster, "kernel", "claims")
+	if err := os.MkdirAll(claims, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(claims, "cluster.yaml"), []byte("apiVersion: gentianos.io/v1alpha1\nkind: Cluster\nmetadata:\n  name: "+Cluster+"\nspec:\n  kernelDomain: "+KernelDomain+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	for _, name := range tenants {
 		dir := filepath.Join(seed, "clusters", Cluster, "tenants", name)
 		if err := os.MkdirAll(dir, 0o755); err != nil {

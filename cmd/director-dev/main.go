@@ -84,13 +84,15 @@ var people = map[string]person{
 // facts is what model v1 answers for the fixture. make test-director-contract
 // is what shows this table and the model agree.
 var facts = map[string]bool{
-	"user:tom can_install_app tenant:demo":   true,
-	"user:tom can_view tenant:demo":          true,
-	"user:mia can_view tenant:demo":          true,
-	"user:alice can_install_app tenant:demo": true,
-	"user:alice can_view tenant:demo":        true,
-	"user:tina can_install_app tenant:solo":  true,
-	"user:tina can_view tenant:solo":         true,
+	"user:tom can_install_app tenant:demo":         true,
+	"user:tom can_view tenant:demo":                true,
+	"user:mia can_view tenant:demo":                true,
+	"user:alice can_install_app tenant:demo":       true,
+	"user:alice can_view tenant:demo":              true,
+	"user:tina can_install_app tenant:solo":        true,
+	"user:tina can_view tenant:solo":               true,
+	"user:alice can_audit cluster:dev-cluster":     true,
+	"user:alice can_configure cluster:dev-cluster": true,
 }
 
 // decisions answers from the table, and for entitlements from the tuples the
@@ -198,7 +200,7 @@ func run(log *slog.Logger, listen, base string, origins []string, enforce bool, 
 		return err
 	}
 	director, err := api.New(api.Config{
-		Authn: verifier, Authz: checker, Repo: repo, Log: log, EnforceEntitlements: enforce,
+		Authn: verifier, Authz: checker, Repo: repo, Log: log, EnforceEntitlements: enforce, Cluster: cluster,
 		Store: &api.StoreConfig{Verifier: storeVerifier, Applier: &entitlement.Applier{Repo: repo, Store: tuples}},
 	})
 	if err != nil {
@@ -327,6 +329,13 @@ func seed(work, cluster string) (string, error) {
 		if out, err := exec.Command("git", s...).CombinedOutput(); err != nil {
 			return "", fmt.Errorf("git %v: %w: %s", s, err, out)
 		}
+	}
+	claims := filepath.Join(src, "clusters", cluster, "kernel", "claims")
+	if err := os.MkdirAll(claims, 0o755); err != nil {
+		return "", err
+	}
+	if err := os.WriteFile(filepath.Join(claims, "cluster.yaml"), []byte("apiVersion: gentianos.io/v1alpha1\nkind: Cluster\nmetadata:\n  name: "+cluster+"\nspec:\n  kernelDomain: k.example\n"), 0o644); err != nil {
+		return "", err
 	}
 	for tenant, apps := range map[string][]string{"demo": {"nextcloud", "element"}, "solo": {"wiki"}} {
 		dir := filepath.Join(src, "clusters", cluster, "tenants", tenant)

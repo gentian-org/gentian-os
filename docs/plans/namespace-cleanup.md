@@ -67,6 +67,7 @@ the catalogue.
 | cloudflared (tunnel mode), `cf-tunnel` ExternalSecret | operator chart, `gentian-system` | `kernel-edge` | |
 | Kyverno, baseline policies | `kyverno` | `kernel-admission` | |
 | Platform-admin console | part of `gentian-portal`, `platform-kernel` | `tenant-platform` — see §2.5 | a UI with no authority is not kernel (AD-10); the platform is a tenant whose realm is the kernel realm |
+| Headlamp | — | `kernel-observability` | new; the cluster as the administrator sees it, with their own identity (OIDC against the kernel realm; a kubectl in a browser is kernel, not system). The namespace is where metrics and logs go when they come |
 | metrics-server | `kube-system` | stays, labelled | API-aggregation convention |
 | MetalLB, Kyverno exception for it | `metallb-system` | stays, labelled | platform-provided, not installed by gentian-os |
 

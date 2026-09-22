@@ -15,6 +15,7 @@ spec:
   - ghcr.io/stakater/charts
   - https://kubernetes-sigs.github.io/external-dns/
   - https://kyverno.github.io/kyverno/
+  - https://kubernetes-sigs.github.io/headlamp/
   # Every kernel namespace, by the layout; nothing else. System, shared and
   # tenant namespaces get their own projects with their own ceilings.
   destinations:

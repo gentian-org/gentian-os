@@ -55,6 +55,7 @@ const (
 	Control        Function = "control"
 	Edge           Function = "edge"
 	Admission      Function = "admission"
+	Observability  Function = "observability"
 )
 
 // kernel maps a function to its namespace. Order is creation order.
@@ -72,6 +73,7 @@ var kernel = []struct {
 	{Control, "kernel-control"},
 	{Edge, "kernel-edge"},
 	{Admission, "kernel-admission"},
+	{Observability, "kernel-observability"},
 }
 
 // Kernel returns the namespace with a kernel function. It panics on a function
