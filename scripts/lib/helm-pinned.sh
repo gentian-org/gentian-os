@@ -35,7 +35,15 @@ helm_pinned() {
         args+=("${chart}" --repo "${repo}")
     fi
     info "helm ${release} ← ${component} ${version} → ${ns}"
-    _helm_retry "${args[@]}"
+    # From a scratch directory: a bare chart name that is also a directory in
+    # this checkout ("crossplane") is read by helm as that directory, --repo
+    # notwithstanding. Nothing here is local, so nowhere is the right cwd.
+    local scratch
+    scratch="$(mktemp -d)"
+    (cd "${scratch}" && _helm_retry "${args[@]}")
+    local rc=$?
+    rm -rf "${scratch}"
+    return ${rc}
 }
 
 # helm_pinned_ok — check() half: the release is deployed in the right
@@ -45,6 +53,9 @@ helm_pinned_ok() {
     local ns version
     ns="$(ns_kernel "${fn}")"
     version="$(gentian_pin "${component}" chart)"
-    helm list -n "${ns}" -o json 2>/dev/null | jq -e --arg r "${release}" --arg v "${version#v}" \
+    # The chart column is "<name>-<version>" with the version exactly as the
+    # chart publishes it — "v1.21.0" for cert-manager, "2.2.1" for Crossplane —
+    # which is also how versions.yaml stores it. Compare as published.
+    helm list -n "${ns}" -o json 2>/dev/null | jq -e --arg r "${release}" --arg v "${version}" \
         '.[] | select(.name == $r and .status == "deployed" and (.chart | endswith("-" + $v)))' >/dev/null
 }
