@@ -61,6 +61,10 @@ func Remote(t testing.TB, tenants ...string) string {
 	t.Helper()
 	remote := filepath.Join(t.TempDir(), "remote.git")
 	Git(t, "", "init", "--bare", "--initial-branch=main", remote)
+	// No background maintenance on the remote: a detached `git gc --auto`
+	// still writing when the test ends is what makes TempDir cleanup fail.
+	Git(t, "", "--git-dir", remote, "config", "gc.auto", "0")
+	Git(t, "", "--git-dir", remote, "config", "receive.autogc", "false")
 	seed := t.TempDir()
 	Git(t, "", "clone", remote, seed)
 	claims := filepath.Join(seed, "clusters", Cluster, "kernel", "claims")

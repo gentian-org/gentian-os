@@ -213,7 +213,7 @@ func (c *OpenFGA) Check(ctx context.Context, requestID, user, relation, object s
 	if err != nil {
 		return false, fmt.Errorf("openfga check: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		b, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
 		return false, fmt.Errorf("openfga check: status %d: %s", resp.StatusCode, strings.TrimSpace(string(b)))
@@ -331,7 +331,7 @@ func (c *OpenFGA) post(ctx context.Context, path string, body, out any) error {
 	if err != nil {
 		return fmt.Errorf("openfga %s: %w", path, err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode/100 != 2 {
 		b, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
 		return fmt.Errorf("openfga %s: status %d: %s", path, resp.StatusCode, strings.TrimSpace(string(b)))

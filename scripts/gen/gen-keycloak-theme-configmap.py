@@ -63,7 +63,7 @@ apiVersion: v1
 kind: ConfigMap
 metadata:
   name: keycloak-idp-theme
-  namespace: platform-kernel
+  namespace: {{ .Release.Namespace }}
   annotations:
     argocd.argoproj.io/sync-wave: "-1"
 """

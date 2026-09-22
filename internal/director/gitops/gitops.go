@@ -300,7 +300,7 @@ func (g *GitOps) applyTo(ctx context.Context, tenant, sibling, message string, m
 			file = filepath.Join(filepath.Dir(file), sibling)
 		}
 		content, err := os.ReadFile(file)
-		if err != nil && !(sibling != "" && errors.Is(err, os.ErrNotExist)) {
+		if err != nil && (sibling == "" || !errors.Is(err, os.ErrNotExist)) {
 			return Result{}, err
 		}
 		text, status, changed, err := fn(string(content))

@@ -40,10 +40,9 @@ import (
 // that does.
 
 type crdValidator struct {
-	schema     *structuralschema.Structural
-	openapi    validation.SchemaValidator
-	celRules   *cel.Validator
-	specSchema *structuralschema.Structural
+	schema   *structuralschema.Structural
+	openapi  validation.SchemaValidator
+	celRules *cel.Validator
 }
 
 func loadCRD(t *testing.T, file string) *crdValidator {
