@@ -201,6 +201,25 @@ gentian_dns_credential_secret_name() {
         "$(gentian_platforms_values)" 2>/dev/null || true
 }
 
+# gentian_cert_manager_namespace — where cert-manager runs on THIS cluster.
+#
+# Not a constant: the v4 layout gave cert-manager a namespace of its own, the
+# v5 layout runs it at the edge beside the Gateway, and a distro addon puts it
+# wherever it likes. The webhook Deployment is the one object every
+# installation has exactly one of, so it is what the question is asked of, and
+# the answer is cached in CERT_MANAGER_NAMESPACE for the rest of the run.
+gentian_cert_manager_namespace() {
+    if [[ -z "${CERT_MANAGER_NAMESPACE:-}" ]]; then
+        local detected
+        detected="$(kubectl get deploy -A -o json 2>/dev/null \
+            | jq -r '.items[] | select(.metadata.name=="cert-manager-webhook") | .metadata.namespace' \
+            | head -1 || true)"
+        CERT_MANAGER_NAMESPACE="${detected:-cert-manager}"
+        export CERT_MANAGER_NAMESPACE
+    fi
+    echo "${CERT_MANAGER_NAMESPACE}"
+}
+
 gentian_dns_credential_vault_path() {
     yq_get ".dnsProviders.$(gentian_dns_provider).credential.vaultPath" \
         "$(gentian_platforms_values)" 2>/dev/null || true
@@ -826,7 +845,7 @@ _kernel_wildcard_targets() {
 # certificate — so it costs one GET per namespace and needs no openssl.
 kernel_wildcard_propagated() {
     local want ns have
-    want="$(kubectl get secret wildcard-kernel-tls -n cert-manager \
+    want="$(kubectl get secret wildcard-kernel-tls -n "$(gentian_cert_manager_namespace)" \
         -o jsonpath='{.data.tls\.crt}' 2>/dev/null || true)"
     # Nothing issued yet is not "propagated"; the caller decides what that means.
     [[ -n "${want}" ]] || return 1
@@ -845,12 +864,12 @@ kernel_wildcard_propagated() {
 # Certificate has not been issued yet returns without complaint, because the
 # caller that is about to issue one will call this again afterwards.
 propagate_kernel_wildcard() {
-    kubectl get secret wildcard-kernel-tls -n cert-manager >/dev/null 2>&1 || return 0
+    kubectl get secret wildcard-kernel-tls -n "$(gentian_cert_manager_namespace)" >/dev/null 2>&1 || return 0
     local ns
     while IFS= read -r ns; do
         [[ -n "${ns}" ]] || continue
         info "Propagating wildcard-tls into namespace ${ns}..."
-        kubectl get secret wildcard-kernel-tls -n cert-manager -o json \
+        kubectl get secret wildcard-kernel-tls -n "$(gentian_cert_manager_namespace)" -o json \
             | python3 -c "
 import sys, json
 s = json.load(sys.stdin)
@@ -913,24 +932,25 @@ install_kernel_wildcard() {
     helm template gentian-cert-manager "${SCRIPT_DIR}/kernel/manifests/cert-manager/chart" \
         -f "$(gentian_platforms_values)" \
         -s templates/dns-credentials-externalsecret.yaml \
+        --set-string certManagerNamespace="$(gentian_cert_manager_namespace)" \
         --set-string kernelDomain="${KERNEL_DOMAIN}" \
         --set-string dnsProvider="${dns_provider}" \
         "${dns_args[@]+"${dns_args[@]}"}" \
         | kubectl apply -f -
 
     # 2) Wait for the underlying Secret to materialize (ESO refresh).
-    info "Waiting for Secret cert-manager/${secret_name} (max 120s)..."
+    info "Waiting for Secret $(gentian_cert_manager_namespace)/${secret_name} (max 120s)..."
     local i
     for i in {1..60}; do
-        if kubectl get secret "${secret_name}" -n cert-manager &>/dev/null; then
+        if kubectl get secret "${secret_name}" -n "$(gentian_cert_manager_namespace)" &>/dev/null; then
             success "${secret_name} materialized after ${i}x2s."
             break
         fi
         sleep 2
     done
-    if ! kubectl get secret "${secret_name}" -n cert-manager &>/dev/null; then
+    if ! kubectl get secret "${secret_name}" -n "$(gentian_cert_manager_namespace)" &>/dev/null; then
         warn "${secret_name} did not materialize within 120s; check ExternalSecret status:"
-        warn "  kubectl describe externalsecret ${secret_name} -n cert-manager"
+        warn "  kubectl describe externalsecret ${secret_name} -n $(gentian_cert_manager_namespace)"
         warn "Continuing — wildcard Certificate will issue once the Secret appears."
     fi
 
@@ -961,13 +981,14 @@ install_kernel_wildcard() {
     helm template gentian-cert-manager "${SCRIPT_DIR}/kernel/manifests/cert-manager/chart" \
         -f "$(gentian_platforms_values)" \
         -s templates/wildcard-kernel-cert.yaml \
+        --set-string certManagerNamespace="$(gentian_cert_manager_namespace)" \
         --set-string kernelDomain="${KERNEL_DOMAIN}" \
         --set-string dns01ClusterIssuer="${DNS01_CLUSTER_ISSUER}" \
         --set-string dnsProvider="${dns_provider}" \
         "${dns_args[@]+"${dns_args[@]}"}" \
         | kubectl apply -f -
-    success "Kernel wildcard Certificate wildcard-kernel applied (cert-manager namespace)."
-    info "Issuance status:  kubectl get certificate wildcard-kernel -n cert-manager"
+    success "Kernel wildcard Certificate wildcard-kernel applied in $(gentian_cert_manager_namespace)."
+    info "Issuance status:  kubectl get certificate wildcard-kernel -n $(gentian_cert_manager_namespace)"
 
     # 4) Propagate wildcard-kernel-tls → wildcard-tls in kernel app namespaces.
     #    The Tenant operator issues per-tenant wildcard certs (tenant-*-wildcard-tls),
@@ -976,14 +997,14 @@ install_kernel_wildcard() {
     info "Waiting for wildcard-kernel-tls to be issued (max 180s)..."
     local i
     for i in {1..90}; do
-        if kubectl get secret wildcard-kernel-tls -n cert-manager &>/dev/null; then
+        if kubectl get secret wildcard-kernel-tls -n "$(gentian_cert_manager_namespace)" &>/dev/null; then
             success "wildcard-kernel-tls Secret exists after ${i}x2s."
             break
         fi
         sleep 2
     done
     local app_ns="gentian-${ENV:-dev}"
-    if ! kubectl get secret wildcard-kernel-tls -n cert-manager &>/dev/null; then
+    if ! kubectl get secret wildcard-kernel-tls -n "$(gentian_cert_manager_namespace)" &>/dev/null; then
         warn "wildcard-kernel-tls not yet issued (LE rate-limited or still pending)."
         warn "Re-run install.sh or manually copy the secret once the Certificate is Ready."
         return

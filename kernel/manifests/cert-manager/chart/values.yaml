@@ -3,6 +3,12 @@
 letsencryptEmail: ""
 kernelDomain: ""
 
+# Where cert-manager runs, which is also where it reads a DNS credential and
+# writes an issued Certificate's Secret. The v4 layout gave it a namespace of
+# its own; the v5 layout puts it at the edge, with the Gateway that serves what
+# it issues.
+certManagerNamespace: cert-manager
+
 # The Gateway the HTTP-01 solver routes through.
 gatewayNamespace: platform-kernel
 gatewayName: kernel-public-gateway
