@@ -57,3 +57,8 @@ smtpHost: ""
 operator:
   enabled: false
   image: ghcr.io/gentian-org/gentian-os
+  # An exact published tag. Empty means the branch tag, which is right when
+  # the manifests come from a branch CI publishes images from. Naming one is
+  # for the case where they do not — a feature branch under test — and it also
+  # takes the image updater off the Application, so the pin holds.
+  tag: ""

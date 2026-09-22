@@ -3,6 +3,14 @@
 # values, so it addresses kernel namespaces by function rather than by the one
 # name v4 had for all of them.
 {{- if .Values.operator.enabled }}
+{{- /*
+  The manifests come from a git ref; the image comes from a published tag.
+  They are the same name only for the branches CI publishes from. Reading
+  manifests from a feature branch means naming the tag separately, and a tag
+  named on purpose must not then be moved by the image updater, so pinning one
+  takes the updater off this Application.
+*/}}
+{{- $imageTag := .Values.operator.tag | default .Values.gentianOsBranch }}
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
@@ -10,12 +18,14 @@ metadata:
   namespace: {{ include "ns" (list . "gitops") }}
   annotations:
     argocd.argoproj.io/sync-wave: "0"
+    {{- if not .Values.operator.tag }}
     argocd-image-updater.argoproj.io/image-list: gentianos={{ .Values.operator.image }}
     argocd-image-updater.argoproj.io/gentianos.allow-tags: regexp:^{{ .Values.gentianOsBranch }}-[0-9a-f]{7,}$
     argocd-image-updater.argoproj.io/gentianos.update-strategy: newest-build
     argocd-image-updater.argoproj.io/gentianos.helm.image-name: image.repository
     argocd-image-updater.argoproj.io/gentianos.helm.image-tag: image.tag
     argocd-image-updater.argoproj.io/write-back-method: argocd
+    {{- end }}
   finalizers:
   - resources-finalizer.argocd.argoproj.io
 spec:
@@ -54,8 +64,9 @@ spec:
         image:
           repository: {{ .Values.operator.image }}
           # The branch tag, so a fresh cluster syncs something that exists;
-          # the image updater pins a <branch>-<sha> from the next build on.
-          tag: {{ .Values.gentianOsBranch | quote }}
+          # the image updater pins a <branch>-<sha> from the next build on,
+          # unless operator.tag named one already.
+          tag: {{ $imageTag | quote }}
         # Where each kernel function runs. The operator reads these as
         # GENTIAN_NS_<FUNCTION>; without them it runs the v4 layout.
         layout:
