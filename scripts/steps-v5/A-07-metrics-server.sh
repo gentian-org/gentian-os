@@ -28,6 +28,9 @@ apply() {
 }
 
 destroy() {
-    helm status metrics-server -n kube-system >/dev/null 2>&1 &&
+    # Only what this installer put there: a platform's own metrics-server is
+    # not ours to remove.
+    if helm status metrics-server -n kube-system >/dev/null 2>&1; then
         helm uninstall metrics-server -n kube-system >/dev/null 2>&1 || true
+    fi
 }
