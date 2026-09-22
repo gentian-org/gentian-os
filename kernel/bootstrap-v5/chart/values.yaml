@@ -49,3 +49,9 @@ appsets:
 tenancyMode: multi
 acmeStaging: "true"
 smtpHost: ""
+
+# The operator (and, with it, the director) — applied by D-01, once the
+# identity services its reconcilers address exist.
+operator:
+  enabled: false
+  image: ghcr.io/gentian-org/gentian-os

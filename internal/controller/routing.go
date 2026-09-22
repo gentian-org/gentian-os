@@ -18,6 +18,7 @@ package controller
 
 import (
 	"fmt"
+	"github.com/gentian-org/gentian-os/internal/layout"
 	"strings"
 	"time"
 )
@@ -34,9 +35,19 @@ const (
 	gatewayPlatformReconcileKey  = "gateway-platform"
 	conditionGatewayReady        = "GatewayReady"
 	conditionTunnelIngressReady  = "TunnelIngressReady"
-	operatorNamespace            = "gentian-system"
 	operatorConfigMapName        = "gentian-os-config"
-	argocdNamespace              = "argocd"
+)
+
+// Where the kernel's functions run. Resolved from the layout the chart passes
+// in (internal/layout), which answers the v4 names when a process is started
+// without it — so an operator of this release behaves identically on a cluster
+// that has not been rebuilt.
+var (
+	operatorNamespace = layout.Namespace(layout.Control)
+	argocdNamespace   = layout.Namespace(layout.GitOps)
+	// identityNamespace is where Keycloak answers: the backend its route
+	// points at, and where the jobs that configure it run.
+	identityNamespace = layout.Namespace(layout.Authentication)
 )
 
 func normalizeRoutingMode(mode string) string {

@@ -58,6 +58,7 @@ import (
 	"github.com/gentian-org/gentian-os/internal/customization"
 	"github.com/gentian-org/gentian-os/internal/kernel/secrets"
 	"github.com/gentian-org/gentian-os/internal/kernel/trustanchor"
+	"github.com/gentian-org/gentian-os/internal/layout"
 	"github.com/gentian-org/gentian-os/internal/meta"
 )
 
@@ -85,7 +86,9 @@ func defaultServicesNamespace() string {
 	if v := os.Getenv("SERVICES_NAMESPACE"); v != "" {
 		return v
 	}
-	return meta.KernelNamespace
+	// The edge: the Gateway, its routes and its reference grants. In the v4
+	// layout that is the same namespace as everything else kernel.
+	return layout.Namespace(layout.Edge)
 }
 
 // errDeleteJobPending is returned by delete helpers when a cleanup Job has been

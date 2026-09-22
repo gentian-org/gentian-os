@@ -91,7 +91,10 @@ func (r *GatewayPlatformReconciler) reconcileKernelHTTPRoutes(ctx context.Contex
 	if err != nil {
 		return fmt.Errorf("collect OIDC ingress subdomains: %w", err)
 	}
-	for _, ns := range []string{argocdNamespace, kernelNamespace} {
+	// A route lives beside the Gateway; the Services it points at live where
+	// their own function does, so each of those namespaces grants the
+	// reference. Duplicates in the v4 layout, where they are one namespace.
+	for _, ns := range dedupe(argocdNamespace, identityNamespace, kernelNamespace) {
 		if err := r.ensureRouteReferenceGrant(ctx, ns); err != nil {
 			return fmt.Errorf("ensure ReferenceGrant in %s: %w", ns, err)
 		}
@@ -157,7 +160,7 @@ func kernelHTTPRouteSpecs(
 			rules: []gatewayv1.HTTPRouteRule{
 				kernelBackendRulePrefixNS(
 					kcService,
-					kernelNamespace,
+					identityNamespace,
 					kcPort,
 					"/",
 					keycloakGatewayResponseFilters(kernelDomain, tenantEffectiveDomains, tenantOIDCSubdomains, tenantNames)...,
@@ -609,6 +612,21 @@ func cloneMap(in map[string]interface{}) map[string]interface{} {
 	out := make(map[string]interface{}, len(in))
 	for k, v := range in {
 		out[k] = v
+	}
+	return out
+}
+
+// dedupe returns the distinct namespaces, in order. Several functions share
+// one namespace in the v4 layout and a grant applied twice is a conflict.
+func dedupe(ns ...string) []string {
+	seen := make(map[string]bool, len(ns))
+	out := make([]string, 0, len(ns))
+	for _, n := range ns {
+		if n == "" || seen[n] {
+			continue
+		}
+		seen[n] = true
+		out = append(out, n)
 	}
 	return out
 }

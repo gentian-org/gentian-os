@@ -1,0 +1,73 @@
+---
+# The operator, in the control namespace. It takes the namespace layout as
+# values, so it addresses kernel namespaces by function rather than by the one
+# name v4 had for all of them.
+{{- if .Values.operator.enabled }}
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: gentian-os
+  namespace: {{ include "ns" (list . "gitops") }}
+  annotations:
+    argocd.argoproj.io/sync-wave: "0"
+    argocd-image-updater.argoproj.io/image-list: gentianos={{ .Values.operator.image }}
+    argocd-image-updater.argoproj.io/gentianos.allow-tags: regexp:^{{ .Values.gentianOsBranch }}-[0-9a-f]{7,}$
+    argocd-image-updater.argoproj.io/gentianos.update-strategy: newest-build
+    argocd-image-updater.argoproj.io/gentianos.helm.image-name: image.repository
+    argocd-image-updater.argoproj.io/gentianos.helm.image-tag: image.tag
+    argocd-image-updater.argoproj.io/write-back-method: argocd
+  finalizers:
+  - resources-finalizer.argocd.argoproj.io
+spec:
+  project: gentian
+  ignoreDifferences:
+  - group: admissionregistration.k8s.io
+    kind: ValidatingWebhookConfiguration
+    name: gentian-os-tenant-validator
+    jsonPointers:
+    - /webhooks/0/clientConfig/caBundle
+  - group: apps
+    kind: Deployment
+    jqPathExpressions:
+    - .spec.template.spec.hostUsers
+  sources:
+  - repoURL: {{ .Values.osRepo | default "https://github.com/gentian-org/gentian-os" }}
+    targetRevision: {{ .Values.gentianOsBranch }}
+    path: charts/gentian-os
+    helm:
+      valueFiles:
+      - $deploy/profiles/_base.yaml
+      - $deploy/profiles/{{ .Values.stage }}.yaml
+      - $deploy/clusters/{{ .Values.deployments.cluster }}/kernel/values.yaml
+      valuesObject:
+        image:
+          repository: {{ .Values.operator.image }}
+          # The branch tag, so a fresh cluster syncs something that exists;
+          # the image updater pins a <branch>-<sha> from the next build on.
+          tag: {{ .Values.gentianOsBranch | quote }}
+        # Where each kernel function runs. The operator reads these as
+        # GENTIAN_NS_<FUNCTION>; without them it runs the v4 layout.
+        layout:
+          {{- range .Values.namespaces.kernel }}
+          {{ .function }}: {{ .name }}
+          {{- end }}
+        # The Gateway, its routes and its reference grants live at the edge.
+        servicesNamespace: {{ include "ns" (list . "edge") }}
+        infraNamespace: {{ include "ns" (list . "authentication") }}
+        credentialManager:
+          openfgaURL: {{ printf "http://gentian-openfga.%s.svc.cluster.local:8080" (include "ns" (list . "authorization")) | quote }}
+        openbao:
+          address: {{ printf "https://openbao.%s.svc.cluster.local:8200" (include "ns" (list . "secrets")) | quote }}
+  - repoURL: {{ .Values.deployments.repo }}
+    targetRevision: {{ .Values.deployments.revision }}
+    ref: deploy
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: {{ include "ns" (list . "control") }}
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+    - ServerSideApply=true
+{{- end }}

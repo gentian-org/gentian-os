@@ -82,6 +82,7 @@ spec:
             - configMapRef:
                 name: {{ include "gentian-os.fullname" . }}-config
           env:
+            {{- include "gentian-os.layoutEnv" . | nindent 12 }}
             {{- with .Values.trustAnchorSecret }}
             # Outside every feature guard on purpose: the operator talks to
             # Keycloak and OpenBao over kernel hostnames whatever else is

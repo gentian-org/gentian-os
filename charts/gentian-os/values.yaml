@@ -138,6 +138,12 @@ openbaoNamespace: "openbao"
 # something different.
 servicesNamespace: "platform-kernel"
 
+# Where each kernel function runs, from kernel/namespaces.yaml. Empty is the
+# v4 layout, which the operator answers from its own defaults; a v5 install
+# passes every entry, and the operator addresses namespaces by function rather
+# than by the one servicesNamespace above.
+layout: {}
+
 # kernelServices exposes cluster-wide infrastructure endpoints to Crossplane
 # compositions. Published as a `gentian-kernel-services` ConfigMap in gentian-system
 # and fetched by app-default.yaml via function-extra-resources.
