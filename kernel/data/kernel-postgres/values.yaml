@@ -1,5 +1,15 @@
 instances: 1
 storageClass: ""
 storageSize: 10Gi
-# Databases are created by the operator's Database CRs as the kernel services
-# ask for them; the cluster starts empty.
+
+# The kernel's own databases: one role and one database per service, the
+# role's password read from the vault by ESO (the path the seed writes) and
+# kept equal to the Secret by CNPG. Kernel data lives here and nowhere else;
+# tenant and app data live on the system engines.
+databases:
+  - name: keycloak
+    role: keycloak_user
+    passwordKey: keycloak_user_password
+  - name: openfga
+    role: openfga_user
+    passwordKey: openfga_user_password

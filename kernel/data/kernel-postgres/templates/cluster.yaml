@@ -5,6 +5,8 @@ metadata:
   labels:
     gentianos.io/tier: kernel
     gentianos.io/function: data
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
 spec:
   instances: {{ .Values.instances }}
   storage:
@@ -15,4 +17,12 @@ spec:
   postgresql:
     parameters:
       max_connections: "200"
-  # Reachable from the kernel only: the tier label is the selector.
+  managed:
+    roles:
+      {{- range .Values.databases }}
+      - name: {{ .role }}
+        ensure: present
+        login: true
+        passwordSecret:
+          name: kernel-postgres-role-{{ .name }}
+      {{- end }}

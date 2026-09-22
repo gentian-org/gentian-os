@@ -1,0 +1,42 @@
+{{- range .Values.databases }}
+---
+# The role's password: read from the vault, so it is one value in one place.
+# Wave 0, before the Cluster reads it as the managed role's passwordSecret.
+apiVersion: external-secrets.io/v1
+kind: ExternalSecret
+metadata:
+  name: kernel-postgres-role-{{ .name }}
+  annotations:
+    argocd.argoproj.io/sync-wave: "0"
+spec:
+  refreshInterval: 1h
+  secretStoreRef:
+    name: openbao
+    kind: ClusterSecretStore
+  target:
+    name: kernel-postgres-role-{{ .name }}
+    creationPolicy: Owner
+    template:
+      type: kubernetes.io/basic-auth
+      data:
+        username: {{ .role | quote }}
+        password: "{{ "{{" }} .password }}"
+  data:
+    - secretKey: password
+      remoteRef:
+        key: gentian-os/kernel/database/postgresql
+        property: {{ .passwordKey }}
+---
+apiVersion: postgresql.cnpg.io/v1
+kind: Database
+metadata:
+  name: {{ .name }}
+  annotations:
+    argocd.argoproj.io/sync-wave: "2"
+spec:
+  cluster:
+    name: kernel-postgres
+  name: {{ .name }}
+  owner: {{ .role }}
+  ensure: present
+{{- end }}
