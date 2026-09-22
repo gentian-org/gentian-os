@@ -14,9 +14,11 @@
 # Synced says git and cluster agree; Healthy says the workload came up. Most
 # Applications here must be both. The vault and its seal cannot be Healthy
 # until they are initialised, which is the next steps' work, so for them B-01
-# asks only Synced and their init steps ask Healthy. external-dns needs a
-# credential that arrives with the secrets steps, so its Application is
-# applied by the step after those, not here.
+# asks only Synced and their init steps ask Healthy. external-dns is declared
+# here but not waited on: it needs a DNS credential that arrives with the
+# secrets steps, and Argo CD brings it up once that lands. Rendering it with
+# dnsProvider=none instead left the cluster with no DNS writer at all, so a
+# kernel hostname the operator later published never resolved.
 _v5_app_state() {
     local ns="$1" app="$2"
     kubectl get application "${app}" -n "${ns}" -o jsonpath='{.status.sync.status} {.status.health.status}' 2>/dev/null
@@ -43,7 +45,7 @@ _v5_render() {
     { echo "namespaces:"; sed 's/^/  /' "${NAMESPACES_FILE}"; } > "${tmp}/namespaces.yaml"
     helm template gentian-bootstrap "${SCRIPT_DIR}/kernel/bootstrap-v5/chart" \
         -f "${tmp}/namespaces.yaml" -f "${SCRIPT_DIR}/kernel/platforms.yaml" \
-        --set-string "dnsProvider=none" \
+        --set-string "dnsProvider=$(gentian_dns_provider)" \
         --set-string "kernelDomain=${KERNEL_DOMAIN:-}" \
         --set-string "cluster=${GENTIAN_DEPLOYMENTS_CLUSTER_ID:-}" \
         --set-string "networkMode=${NETWORK_MODE:-tunnel}" \
