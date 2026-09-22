@@ -31,6 +31,7 @@ spec:
             {{- $provisioningNs := ternary "kernel-provisioning" "crossplane-system" $v5 }}
             {{- $controlNs      := ternary "kernel-control" "gentian-system" $v5 }}
             {{- $secretsNs      := ternary "kernel-secrets" "openbao" $v5 }}
+            {{- $obNs           := default $secretsNs (dig "openbao" "namespace" "" $spec) }}
             {{- $openbaoServer    := default (printf "https://openbao.%s.svc.cluster.local:8200" $secretsNs) (dig "openbao" "server" "" $spec) }}
             {{- $kvMount          := default "secret" (dig "openbao" "kvMount" "" $spec) }}
             {{- $authMount        := default "kubernetes" (dig "openbao" "authMount" "" $spec) }}
@@ -321,7 +322,7 @@ spec:
                 oidcClientId: {{ $oidc.clientId | default "openbao" | quote }}
                 oidcClientSecretSecretRef:
                   name: {{ $oidc.clientSecretRef | default "openbao-oidc-client" }}
-                  namespace: {{ $spec.openbao.namespace | default "openbao" }}
+                  namespace: {{ $obNs }}
                   key: client-secret
                 defaultRole: cluster-admin
               providerConfigRef:
@@ -505,7 +506,6 @@ spec:
             {{- $realm := $oidc.realm | default "kernel" }}
             {{- $obClientId := $oidc.clientId | default "openbao" }}
             {{- $obSecretName := $oidc.clientSecretRef | default "openbao-oidc-client" }}
-            {{- $obNs := $spec.openbao.namespace | default "openbao" }}
 
             {{- /* The client secret, materialised from the KV path seeded above.
                  One Secret, read by both ends — the auth backend takes its

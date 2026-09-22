@@ -2,7 +2,7 @@
 # step: C-01-cluster-claim
 # phase: platform
 # requires: B-06-crossplane-definitions
-# provides: the Cluster claim of clusters/<cluster>/kernel/claims/cluster.yaml applied and its composite Ready — the vault's Kubernetes auth and roles, the ESO ClusterSecretStore, the kernel config
+# provides: the Cluster claim of clusters/<cluster>/kernel/claims/cluster.yaml applied and its composite structurally Ready — the vault's Kubernetes auth and roles, the ESO ClusterSecretStore, the kernel config; the Keycloak-dependent parts follow the Suze claim
 # mutates: the Cluster claim in the provisioning namespace and everything its composition creates
 
 # The claim comes from the deployments checkout, written by the installer's
@@ -10,9 +10,15 @@
 # Its spec.layout must be this installer's; apply_cluster_xr refuses otherwise.
 
 check() {
-    local claim
+    local claim xr
     claim="$(gentian_cluster_claim_name 2>/dev/null)" || return 1
-    [[ "$(kubectl get cluster.gentianos.io "${claim}" -n "$(ns_kernel provisioning)" -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null)" == "True" ]]
+    xr="$(kubectl get cluster.gentianos.io "${claim}" -n "$(ns_kernel provisioning)" -o jsonpath='{.spec.resourceRef.name}' 2>/dev/null)"
+    [[ -n "${xr}" ]] || return 1
+    # Fully Ready once Keycloak answers (the Suze claim, C-02); until then,
+    # everything that does not depend on Keycloak — the same criterion the
+    # apply waits for.
+    kubectl get "xcluster.gentianos.io/${xr}" -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null | grep -q True ||
+        xcluster_structural_ready "${xr}"
 }
 
 apply() {

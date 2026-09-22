@@ -899,6 +899,10 @@ for x in items:
     # Depends on a phase this step precedes (Keycloak, wave 9/16).
     if "keycloak.crossplane.io" in x.get("apiVersion", ""):
         continue
+    # The vault OIDC roles need the auth/oidc backend, which is configured
+    # once Keycloak answers (D-07 in v4): as Keycloak-dependent as the above.
+    if "jwt.vault.upbound.io" in x.get("apiVersion", ""):
+        continue
     # Observe-only: reflects state this composition does not create.
     if [p for p in (x.get("spec", {}).get("managementPolicies") or []) if p == "Observe"] \
        and len(x.get("spec", {}).get("managementPolicies") or []) == 1:
