@@ -615,3 +615,33 @@ mailEgressHost: ""
 # requires abuse, and Microsoft's JMRP and SNDS enrolments mail both and enrol
 # nobody who does not answer.
 mailAdminContact: ""
+
+# Whether an address nobody owns is accepted.
+#
+# The Postfix mailbox map has always been a catch-all — "@<domain> <domain>/" —
+# so every address in a registered domain is accepted whether or not anyone owns
+# it, and Dovecot's static userdb accepts it in turn. On ifk-w4h that is 352
+# maildirs and 16MB written by dictionary attacks, growing without bound. It is
+# also a reputation signal: a domain that accepts mail for addresses that do not
+# exist behaves like a spam trap, and Microsoft weighs that against a sender.
+#
+# The fix and the danger are the same list. A catch-all that is too permissive
+# stores junk; a recipient map that is too narrow answers 550, which is
+# PERMANENT — the sender does not retry and the mail is gone. So the switch has
+# three positions rather than two:
+#
+#   catchall  today's behaviour, and the default. No Keycloak call is made.
+#   observe   build the recipient list and log it; keep accepting everything.
+#             Nothing is rejected. This is how you check the list against real
+#             traffic before it can cost you anything.
+#   strict    write the list. An address nobody owns is refused at RCPT.
+#
+# strict fails OPEN, per domain: an unknown realm, an unreachable Keycloak, or a
+# realm that enumerates to no addresses in that domain all keep the catch-all
+# for that domain and say so in the log. Accepting junk for another cycle is
+# recoverable; bouncing a tenant's mail is not.
+#
+# abuse@, postmaster@ and dmarc@ are accepted in every domain under every
+# policy. RFC 5321 requires postmaster, RFC 2142 requires abuse, and dmarc is
+# the address this cluster's own DMARC record asks reports to be sent to.
+mailRecipientPolicy: catchall
