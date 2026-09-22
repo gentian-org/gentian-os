@@ -753,5 +753,68 @@ verify_argocd_apps() {
 }
 
 # =============================================================================
+# unstick_argo_hook_job <argocd_namespace> <application>
+#
+# Self-heal for a sync operation parked forever on a Helm hook.
+#
+# Argo CD maps Helm's post-install/post-upgrade hooks onto its own PostSync
+# phase and then waits for the hook Job to finish before the operation ends.
+# A Job whose pod can never start — an image that no longer pulls is the case
+# this exists for, and a Job's pod template is immutable, so a corrected chart
+# cannot repair it — parks the operation indefinitely. While an operation is
+# Running, Argo CD starts no new sync, so the Application stays OutOfSync no
+# matter what the repository now says and every step waiting on it times out.
+#
+# Removing the Job lets the hook resolve and the operation end; the next sync
+# renders from the current desired state. Only ever acts on a Job that has no
+# pod able to make progress, so a hook that is genuinely working is untouched.
+# =============================================================================
+unstick_argo_hook_job() {
+    local ns="$1" app="$2" json hook job_ns job started
+
+    json="$(kubectl get application "${app}" -n "${ns}" -o json 2>/dev/null)" || return 0
+    [[ "$(jq -r '.status.operationState.phase // ""' <<<"${json}")" == "Running" ]] || return 0
+
+    hook="$(jq -r '[.status.operationState.syncResult.resources[]?
+                    | select(.kind == "Job" and .hookType != null and .hookPhase == "Running")][0]
+                   | select(. != null) | "\(.namespace) \(.name)"' <<<"${json}")"
+    [[ -n "${hook}" ]] || return 0
+    read -r job_ns job <<<"${hook}"
+
+    # A pull that is merely slow deserves the benefit of the doubt.
+    started="$(jq -r '.status.operationState.startedAt // ""' <<<"${json}")"
+    if [[ -n "${started}" ]]; then
+        local age
+        age=$(( $(date -u +%s) - $(date -u -d "${started}" +%s 2>/dev/null || echo 0) ))
+        (( age > 300 )) || return 0
+    fi
+
+    # Progress means a pod that runs or has already finished. Anything else
+    # waiting on its image or its configuration will not resolve by itself.
+    local pods stuck
+    pods="$(kubectl get pods -n "${job_ns}" -l "batch.kubernetes.io/job-name=${job}" -o json 2>/dev/null)" || return 0
+    if jq -e '[.items[]? | select(.status.phase == "Running" or .status.phase == "Succeeded")] | length > 0' \
+        <<<"${pods}" >/dev/null 2>&1; then
+        return 0
+    fi
+    stuck="$(jq -r '[.items[]?.status.containerStatuses[]?.state.waiting.reason
+                     | select(. == "ImagePullBackOff" or . == "ErrImagePull"
+                              or . == "InvalidImageName" or . == "CreateContainerConfigError")]
+                    | first // ""' <<<"${pods}")"
+    [[ -n "${stuck}" ]] || return 0
+
+    warn "${app}: its sync is parked on hook Job ${job_ns}/${job}, whose pod cannot start (${stuck})."
+    warn "  Argo CD runs no further sync while an operation waits, so the Application"
+    warn "  cannot pick up the current chart. Removing the Job so the operation ends."
+    kubectl delete job "${job}" -n "${job_ns}" --ignore-not-found=true --wait=false >/dev/null 2>&1 || true
+    # Terminating what is left releases the operation even when Argo CD has
+    # already stopped watching the Job. The Application CRD carries no status
+    # subresource, so this is a plain merge patch.
+    kubectl patch application "${app}" -n "${ns}" --type merge \
+        -p '{"status":{"operationState":{"phase":"Terminating"}}}' >/dev/null 2>&1 || true
+    success "${app}: parked hook released."
+}
+
+# =============================================================================
 # Summary — portal admin credentials for install output
 # =============================================================================

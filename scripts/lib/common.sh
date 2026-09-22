@@ -1626,12 +1626,19 @@ _is_testnet_ip() {
 # blocks ALL matching resource creation cluster-wide — including Crossplane's
 # own pods, before Kyverno is ever reinstalled later in the sequence.
 #
-# Safe to call unconditionally: only acts when the kyverno namespace is
-# absent (i.e. Kyverno is not actually running) but its webhook
+# Safe to call unconditionally: only acts when no Kyverno admission controller
+# is deployed anywhere (i.e. Kyverno is not actually running) but its webhook
 # registrations remain. A healthy, running Kyverno is left untouched.
+#
+# Presence is read from the workload, not from a namespace name: which
+# namespace Kyverno lives in is the layout's business (kyverno under v4,
+# kernel-admission under v5), and asking for one name would tear the live
+# webhooks off a perfectly healthy Kyverno installed under the other.
 # =============================================================================
 cleanup_orphaned_kyverno_webhooks() {
-    kubectl get namespace kyverno >/dev/null 2>&1 && return 0
+    kubectl get deployments --all-namespaces \
+        -l app.kubernetes.io/part-of=kyverno -o name 2>/dev/null \
+        | grep -q . && return 0
 
     local hooks
     hooks=$(kubectl get mutatingwebhookconfiguration,validatingwebhookconfiguration \

@@ -95,6 +95,10 @@ apply() {
         info "waiting for ${app} to be Synced$([[ ${want} == healthy ]] && echo ' and Healthy')"
         local t=$((SECONDS + 600))
         until _v5_delivered "${ns}" "${app}" "${want}"; do
+            # An Application whose operation is parked on a hook Job that
+            # cannot start never syncs again on its own, and no amount of
+            # waiting changes that.
+            unstick_argo_hook_job "${ns}" "${app}"
             if (( SECONDS > t )); then
                 error "${app} is not as required after 10m:"
                 kubectl get application "${app}" -n "${ns}" -o jsonpath='{"  sync: "}{.status.sync.status}{"  health: "}{.status.health.status}{" "}{.status.health.message}{"\n"}' 2>/dev/null
