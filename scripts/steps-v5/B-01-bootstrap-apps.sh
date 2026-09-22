@@ -55,6 +55,9 @@ _v5_render() {
         --set-string "deployments.revision=${GENTIAN_DEPLOYMENTS_BRANCH:-main}" \
         --set-string "deployments.cluster=${GENTIAN_DEPLOYMENTS_CLUSTER_ID:-}" \
         --set-string "appsets.enabled=${V5_APPSETS:-false}" \
+        --set-string "tenancyMode=${TENANCY_MODE:-multi}" \
+        --set-string "acmeStaging=$([[ "${ACME_ENV:-staging}" == "staging" ]] && echo true || echo false)" \
+        --set-string "smtpHost=${EXTERNAL_SMTP_HOST:-}" \
         --set-string "versions.headlamp.chart=$(gentian_pin headlamp chart)" \
         --set-string "versions.headlamp.repo=$(gentian_pin headlamp repo)"
     local rc=$?

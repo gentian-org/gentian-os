@@ -44,3 +44,8 @@ deployments:
 # The app of apps is applied by C-02, once its children's prerequisites exist.
 appsets:
   enabled: false
+
+# What the kernel-services ConfigMap says beyond the layout.
+tenancyMode: multi
+acmeStaging: "true"
+smtpHost: ""
