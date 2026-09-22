@@ -2391,9 +2391,9 @@ require_cluster_deployment() {
     # cluster exists, so demanding the file rejected a cluster whose
     # configuration is complete — this one, immediately after migrating it.
     # v5 has no InfraData claim (see scaffold_cluster_deployment).
-    local required="claims/cluster.yaml claims/infra-data.yaml claims/suze.yaml values.yaml"
-    [[ "${GENTIAN_LAYOUT:-v4}" == "v5" ]] && required="claims/cluster.yaml claims/suze.yaml values.yaml"
-    for f in ${required}; do
+    local kernel_files="claims/cluster.yaml claims/infra-data.yaml claims/suze.yaml values.yaml"
+    [[ "${GENTIAN_LAYOUT:-v4}" == "v5" ]] && kernel_files="claims/cluster.yaml claims/suze.yaml values.yaml"
+    for f in ${kernel_files}; do
         [[ -f "${kernel_dir}/${f}" ]] || missing+=("${f}")
     done
 
