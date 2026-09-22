@@ -36,6 +36,7 @@ const (
 	kernelRouteKernelApex    = "kernel-apex-redirect"
 	kernelRouteHTTPRedirect  = "kernel-http-redirect"
 	kernelRouteArgoCD        = "kernel-argocd"
+	kernelRouteHeadlamp      = "kernel-headlamp"
 	kernelRouteGentianPortal = "kernel-gentian-portal"
 	kernelRouteLiteLLM       = "kernel-llm"
 
@@ -43,6 +44,7 @@ const (
 	gentianPortalWebService = "gentian-portal-gentian-portal-web"
 
 	argocdServerServiceName = "argocd-server"
+	headlampServiceName     = "headlamp"
 	litellmProxyServiceName = "litellm-proxy"
 	litellmProxyPort        = int32(4000)
 )
@@ -94,7 +96,7 @@ func (r *GatewayPlatformReconciler) reconcileKernelHTTPRoutes(ctx context.Contex
 	// A route lives beside the Gateway; the Services it points at live where
 	// their own function does, so each of those namespaces grants the
 	// reference. Duplicates in the v4 layout, where they are one namespace.
-	for _, ns := range dedupe(argocdNamespace, identityNamespace, servicesNamespace) {
+	for _, ns := range dedupe(argocdNamespace, identityNamespace, servicesNamespace, observabilityNamespace) {
 		if err := r.ensureRouteReferenceGrant(ctx, ns); err != nil {
 			return fmt.Errorf("ensure ReferenceGrant in %s: %w", ns, err)
 		}
@@ -231,6 +233,24 @@ func kernelHTTPRouteSpecs(
 			},
 		},
 	)
+	// The cluster view. It belongs with the other kernel consoles rather than
+	// beside its own Deployment: a route the operator owns is the one that gets
+	// a tunnel hostname and a DNS record, and one created elsewhere is
+	// reachable from inside the cluster and nowhere else.
+	//
+	// Only where the layout has an observability namespace. A v4 cluster has
+	// none and runs no Headlamp, and a route to a Service that does not exist
+	// would still claim the hostname on the tunnel.
+	if observabilityNamespace != "" {
+		specs = append(specs, kernelHTTPRouteSpec{
+			name:        kernelRouteHeadlamp,
+			host:        fmt.Sprintf("headlamp.%s", kernelDomain),
+			sectionName: wildcardListenerName,
+			rules: []gatewayv1.HTTPRouteRule{
+				kernelBackendRuleCrossNamespace(headlampServiceName, observabilityNamespace, 80),
+			},
+		})
+	}
 	// LiteLLM admin console — platform-level only (the claim's llm.enabled).
 	// Tenants do not get their own route; app-catalogue "litellm" tiles stay
 	// unused until per-tenant access is designed (see docs/design/llms.md).

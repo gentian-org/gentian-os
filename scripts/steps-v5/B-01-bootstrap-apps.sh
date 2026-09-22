@@ -2,7 +2,7 @@
 # step: B-01-bootstrap-apps
 # phase: secrets
 # requires: A-06-argocd
-# provides: the gentian AppProject and the kernel Applications of kernel/bootstrap-v5/chart (reloader, cnpg, kernel-postgres, kyverno, headlamp Synced and Healthy; openbao and openbao-transit Synced, awaiting their init) and the HTTPRoutes for Argo CD and Headlamp, each in its layout namespace
+# provides: the gentian AppProject and the kernel Applications of kernel/bootstrap-v5/chart (reloader, cnpg, kernel-postgres, kyverno, headlamp Synced and Healthy; openbao and openbao-transit Synced, awaiting their init), each in its layout namespace
 # mutates: a placeholder Secret openbao-transit-unseal in the seal namespace; the vault's self-signed Issuer and Certificate in the secrets namespace; Application and AppProject objects in the gitops namespace; what they sync lands in the seal, secrets, data, admission, observability and edge namespaces
 # pins: headlamp
 

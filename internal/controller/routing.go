@@ -47,6 +47,8 @@ var (
 	// identityNamespace is where Keycloak answers: the backend its route
 	// points at, and where the jobs that configure it run.
 	identityNamespace = layout.Namespace(layout.Authentication)
+	// observabilityNamespace is where the cluster view runs.
+	observabilityNamespace = layout.Namespace(layout.Observability)
 )
 
 func normalizeRoutingMode(mode string) string {
