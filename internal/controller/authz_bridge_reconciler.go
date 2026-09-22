@@ -104,7 +104,7 @@ func (r *AuthzBridgeReconciler) Reconcile(ctx context.Context, req reconcile.Req
 // keycloak-admin Secret events sync the kernel realm only; Tenant events sync
 // that tenant's realm (event-driven — no periodic full-cluster sweep).
 func (r *AuthzBridgeReconciler) realmsToSync(ctx context.Context, req reconcile.Request) ([]string, error) {
-	if req.Namespace == kernelNamespace && req.Name == keycloakAdminSecret {
+	if req.Namespace == identityNamespace && req.Name == keycloakAdminSecret {
 		return []string{r.kernelRealm()}, nil
 	}
 
@@ -130,7 +130,7 @@ func (r *AuthzBridgeReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		Named("authz-bridge").
 		For(&corev1.Secret{}, builder.WithPredicates(predicate.NewPredicateFuncs(func(obj client.Object) bool {
-			return obj.GetNamespace() == kernelNamespace && obj.GetName() == keycloakAdminSecret
+			return obj.GetNamespace() == identityNamespace && obj.GetName() == keycloakAdminSecret
 		}))).
 		Watches(
 			&gentianov1alpha1.Tenant{},
@@ -155,9 +155,12 @@ func (r *AuthzBridgeReconciler) kernelRealm() string {
 // (keycloak_browser_security.go) used whichever it happened to be a method on.
 // The Secret, its keys and the "admin" default are one fact about the cluster,
 // not a property of any reconciler, so it takes a reader instead.
+// loadKeycloakAdmin reads Keycloak's admin credential from where Keycloak
+// runs. That used to be the one kernel namespace; under a layout that gives
+// identity its own, the secret follows Keycloak and this has to ask there.
 func loadKeycloakAdmin(ctx context.Context, c client.Reader) (url, user, pass string, err error) {
 	secret := &corev1.Secret{}
-	if err := c.Get(ctx, types.NamespacedName{Name: keycloakAdminSecret, Namespace: kernelNamespace}, secret); err != nil {
+	if err := c.Get(ctx, types.NamespacedName{Name: keycloakAdminSecret, Namespace: identityNamespace}, secret); err != nil {
 		return "", "", "", err
 	}
 	url = string(secret.Data["url"])
