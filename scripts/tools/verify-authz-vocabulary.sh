@@ -31,16 +31,16 @@ documents+=("${ROOT}/docs/security-principles.md")
 status=0
 fail() { echo "FAIL — $*" >&2; status=1; }
 
-for rel in $(grep -ohE '\bcan_[a-z_]+\b' "${documents[@]}" | sort -u); do
+while IFS= read -r rel; do
   grep -qx "${rel}" <<<"${model}" && continue
   grep -qx "${rel}" <<<"${planned}" && continue
   where="$(grep -lE "\b${rel}\b" "${documents[@]}" | sed "s|${ROOT}/||" | tr '\n' ' ')"
   fail "${rel} is named in ${where}but model ${VERSION} does not define it (add it, or list it in planned.txt with the reason)"
-done
+done < <(grep -ohE '\bcan_[a-z_]+\b' "${documents[@]}" | sort -u)
 
-for rel in $(grep -E '^can_' <<<"${model}"); do
+while IFS= read -r rel; do
   grep -qE "\b${rel}\b" "${VOCABULARY_DOC}" || fail "${rel} is defined in model ${VERSION} but docs/plans/authorization-model.md never mentions it"
-done
+done < <(grep -E '^can_' <<<"${model}")
 
 for rel in ${planned}; do
   grep -qx "${rel}" <<<"${model}" && fail "${rel} is in planned.txt and in the model: remove it from planned.txt"

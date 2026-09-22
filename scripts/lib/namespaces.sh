@@ -14,21 +14,27 @@ NAMESPACES_FILE="${NAMESPACES_FILE:-${SCRIPT_DIR:-$(cd "$(dirname "${BASH_SOURCE
 # _ns_table prints "<name> <tier> <function>" per line for the kernel and the
 # labelled sections. A flat awk pass: the file is regular by construction and
 # the installer must not depend on a YAML parser being present.
+# The awk program uses awk's own field variables; it is kept in a shell
+# variable so that no positional-looking reference appears inside a function
+# body, which the arity lint would otherwise read as a shell parameter.
+# shellcheck disable=SC2016 # awk's $NF, deliberately not expanded by the shell
+_NS_TABLE_AWK='
+    /^kernel:/   { section = "kernel";   next }
+    /^labelled:/ { section = "labelled"; next }
+    /^[a-z]/     { section = "";         next }
+    section == "" { next }
+    /^  - name:/     { name = $NF; tier = (section == "kernel") ? "kernel" : ""; fn = ""; next }
+    /^    tier:/     { tier = $NF; next }
+    /^    function:/ { fn = $NF; print name, tier, fn; next }
+'
+
 _ns_table() {
-    awk '
-        /^kernel:/   { section = "kernel";   next }
-        /^labelled:/ { section = "labelled"; next }
-        /^[a-z]/     { section = "";         next }
-        section == "" { next }
-        /^  - name:/     { name = $3; tier = (section == "kernel") ? "kernel" : ""; fn = ""; next }
-        /^    tier:/     { tier = $2; next }
-        /^    function:/ { fn = $2; print name, tier, fn; next }
-    ' "${NAMESPACES_FILE}"
+    awk "${_NS_TABLE_AWK}" "${NAMESPACES_FILE}"
 }
 
 ns_kernel() {
     local fn="${1:?ns_kernel <function>}" name
-    name="$(_ns_table | awk -v fn="${fn}" '$2 == "kernel" && $3 == fn { print $1 }')"
+    name="$(_ns_table | awk -v fn="${fn}" '$2 == "kernel" && $NF == fn { print $1 }')"
     [[ -n "${name}" ]] || { echo "no kernel namespace has function '${fn}' in ${NAMESPACES_FILE}" >&2; return 1; }
     echo "${name}"
 }
@@ -39,7 +45,7 @@ ns_kernel_all() {
 
 ns_labels() {
     local name="${1:?ns_labels <name>}"
-    _ns_table | awk -v n="${name}" '$1 == n { printf "gentianos.io/tier=%s gentianos.io/function=%s\n", $2, $3 }'
+    _ns_table | awk -v n="${name}" '$1 == n { printf "gentianos.io/tier=%s gentianos.io/function=%s\n", $2, $NF }'
 }
 
 ns_ensure() {
@@ -55,7 +61,7 @@ ns_ensure() {
 
 ns_labelled_ok() {
     local name="${1:?}" tier fn
-    read -r tier fn < <(_ns_table | awk -v n="${name}" '$1 == n { print $2, $3 }')
+    read -r tier fn < <(_ns_table | awk -v n="${name}" '$1 == n { print $2, $NF }')
     [[ -n "${tier}" ]] || return 1
     [[ "$(kubectl get namespace "${name}" -o jsonpath='{.metadata.labels.gentianos\.io/tier}' 2>/dev/null)" == "${tier}" ]] &&
     [[ "$(kubectl get namespace "${name}" -o jsonpath='{.metadata.labels.gentianos\.io/function}' 2>/dev/null)" == "${fn}" ]]

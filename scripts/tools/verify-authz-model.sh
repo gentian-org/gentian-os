@@ -18,7 +18,8 @@ if command -v fga >/dev/null 2>&1; then
 elif command -v go >/dev/null 2>&1; then
   echo "Installing openfga/cli ${FGA_VERSION} via go install..."
   go install "github.com/openfga/cli/cmd/fga@${FGA_VERSION}"
-  export PATH="${PATH}:$(go env GOPATH)/bin"
+  gopath="$(go env GOPATH)"
+  export PATH="${PATH}:${gopath}/bin"
   fga_run() { local dir="$1"; shift; (cd "${dir}" && fga "$@"); }
 elif command -v docker >/dev/null 2>&1; then
   echo "No fga and no go on PATH — using openfga/cli:${FGA_VERSION} under docker."
