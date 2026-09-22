@@ -52,6 +52,7 @@
      | replace "deployments.revision.placeholder" $.Values.deploymentsRevision
      | replace "deployments.cluster.placeholder" $.Values.deploymentsCluster
      | replace "mail.service.mode.placeholder" $.Values.mailServiceMode
-     | replace "llm.mock.backend.placeholder" (ternary "false" "true" (eq (toString $.Values.llmGpuAcceleration) "true")) }}
+     | replace "llm.mock.backend.placeholder" (ternary "false" "true" (eq (toString $.Values.llmGpuAcceleration) "true"))
+     | replace "llm.external.providers.placeholder" (toString $.Values.llmExternalProviders) }}
 {{- end }}
 {{- end }}

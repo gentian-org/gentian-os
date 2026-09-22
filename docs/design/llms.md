@@ -136,3 +136,96 @@ Stage 1 focuses on establishing the core loop: running a single-GPU server, secu
 
 ### Task 4: Integration with Tenant Provisioning
 *   **Action:** Update the `App` composition files in the operator to support injection of LLM environment variables for any catalogue application that requests the `ai-assistant` integration contract.
+
+---
+
+## 5. External Providers
+
+A cluster does not have to serve its own weights. `spec.llm.providers` on the
+Cluster claim declares external, OpenAI-compatible endpoints, and they route
+through the same LiteLLM gateway as the vLLM instances — so the virtual keys,
+per-tenant Teams and token budgets apply to them unchanged. It is independent of
+`gpuAcceleration`: a CPU-only cluster with no `instances` is the case these
+exist for.
+
+```yaml
+spec:
+  llm:
+    enabled: true
+    providers:
+      - name: infomaniak
+        displayName: Infomaniak AI Services
+        apiBase: https://api.infomaniak.com/2/ai/<product-id>/openai/v1
+        apiKeyProperty: infomaniak_api_key
+        models:
+          - name: gemma-4-31b
+            model: google/gemma-4-31B-it
+            maxTokens: 8192
+```
+
+Each `models` entry becomes one LiteLLM registration named
+`<provider>/<model.name>` — `infomaniak/gemma-4-31b` above. The prefix is
+deliberate: upstream ids collide across providers, and a tenant reading a model
+list should be able to see who serves what.
+
+**The claim is the only way in.** `scripts/lib/llm-lib.sh`
+(`ensure_litellm_provider_models`, run by D-05 and again by E-02) reconciles
+LiteLLM's registry against the claim: an entry added here is registered, an entry
+removed is deregistered, and a model typed into LiteLLM's Admin Console is
+deleted by the next run. Registrations it owns are marked
+`model_info.gentian_managed`, so models registered by hand and by the vLLM sync
+are left alone rather than swept up.
+
+### The API key is a credential, the product id is not
+
+Each provider has its own `llm-provider-<name>` credential declaring one field,
+and they all share the OpenBao path `gentian-os/kernel/llm-providers` (see
+[`credentials.yaml`](../../credentials.yaml)); `apiKeyProperty` on the claim names
+which property to read. Supply the token in the portal's **Admin Console** under
+that credential — the write happens as your own OpenBao token, merge-patches the
+path so it cannot clobber another provider's key, and tells the ExternalSecret to
+resync immediately rather than at the end of its refresh interval.
+
+One requirement per provider rather than one with a field each, because
+`checkFields` requires every declared field in a single write: a combined
+credential would make the console demand every provider's token at once and
+refuse a single rotation. Adding a provider is two edits in git — a requirement
+there and an entry here — and they are checked against each other, so a provider
+whose property is missing is reported rather than registered as a model that
+answers 401.
+
+> These credentials declare `validate: noop`, so the console stores the token
+> without probing it — the validator enum has no generic bearer-token check. A
+> wrong or unscoped token is caught by the reconcile's own per-provider probe at
+> install time, not by the form.
+
+The product id in `apiBase` is not secret: it selects which product is billed and
+it is part of the endpoint, so it belongs on the claim where it can be reviewed.
+For Infomaniak it is the AI Tools product id (`GET /1/ai` returns it), not an
+account or user id, and the token needs the `ai-tools` scope — one without it
+authenticates and then refuses every AI endpoint.
+
+### Where a provider can be reached from
+
+Only from the kernel. `platform-kernel` has no NetworkPolicy, so LiteLLM reaches
+the internet; a tenant namespace is held to `10.0.0.0/8:443` by
+`tenant-isolation`, so a tenant app configured to call a provider directly gets a
+timeout its UI usually renders as an empty model list. That asymmetry is the
+design — the gateway is what holds the credential and the budget — and it is why
+the reconcile probes each provider from inside `platform-kernel` before
+registering anything, reporting unreachable, refused (401/403), wrong `apiBase`
+(404) and missing-credential apart, because each has a different fix.
+
+> Adding an egress NetworkPolicy to `platform-kernel` to "allow 443" would be a
+> regression, not a hardening: the namespace has no egress policy today, and the
+> first one switches every pod there to deny-by-default, breaking LiteLLM's DNS,
+> Postgres and Redis unless all of it is enumerated in the same policy.
+
+### Operator access
+
+LiteLLM's Admin Console is routed at `llm.<kernelDomain>` whenever the claim
+enables LLM (`kernel_gateway_routes.go`), and the portal shows a platform
+administrator an **LLM Gateway** tile for it — kernel-scope, gated on the `llm`
+capability, platform administrators only, because the routing and budgets there
+apply to every tenant. Model registrations are still reconciled from the claim;
+the console is for inspecting them, keys and spend.

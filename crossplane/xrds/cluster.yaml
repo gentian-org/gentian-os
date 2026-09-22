@@ -366,6 +366,99 @@ spec:
                               vLLM tool-call parser for this model, e.g. hermes.
                               Empty disables tool calling.
                       default: []
+                    providers:
+                      type: array
+                      description: >
+                        External, OpenAI-compatible inference providers this
+                        cluster routes to, alongside (or instead of) the vLLM
+                        instances above. One LiteLLM model registration per
+                        entry in models, reconciled from this list — adding an
+                        entry registers it, removing one deregisters it, and
+                        nothing else may register a provider model. Editing
+                        LiteLLM's Admin Console instead produces an entry the
+                        next reconcile deletes.
+
+                        Independent of gpuAcceleration: a CPU-only cluster with
+                        no instances is exactly the case these serve. The API
+                        key never appears here — it is a kernel credential (see
+                        kernel/credentials/credential-requirements.yaml), and
+                        apiKeyProperty names which property of it to read.
+                      items:
+                        type: object
+                        required: [name, apiBase, apiKeyProperty, models]
+                        properties:
+                          name:
+                            type: string
+                            description: >
+                              Short provider id, used as the prefix of every
+                              model name it registers (infomaniak/gemma-4-31b)
+                              so the gateway's model list says where a model is
+                              served from.
+                            pattern: '^[a-z0-9]([-a-z0-9]*[a-z0-9])?$'
+                          displayName:
+                            type: string
+                            description: Human name for the provider, for operator-facing output.
+                          apiBase:
+                            type: string
+                            description: >
+                              The OpenAI-compatible base URL, up to but not
+                              including /chat/completions — the same value an
+                              OpenAI client would take. For Infomaniak AI
+                              Services that is
+                              https://api.infomaniak.com/2/ai/<product-id>/openai/v1,
+                              where the path segment is the AI Tools product id
+                              (GET /1/ai returns it), not an account or user id.
+                            pattern: '^https://.+'
+                          apiKeyProperty:
+                            type: string
+                            description: >
+                              Which property of the llm-provider-credentials
+                              kernel credential holds this provider's API token
+                              (e.g. infomaniak_api_key). The property must exist
+                              in OpenBao at gentian-os/kernel/llm-providers
+                              before the models can answer; the reconcile says
+                              so rather than registering a model that 401s.
+                            pattern: '^[a-z0-9_]+$'
+                          models:
+                            type: array
+                            description: >
+                              The provider's models to expose. An empty list
+                              registers nothing, which is how a provider is
+                              staged before its credential exists.
+                            items:
+                              type: object
+                              required: [name, model]
+                              properties:
+                                name:
+                                  type: string
+                                  description: >
+                                    Name this model is offered under, after the
+                                    provider prefix. Tenant-facing — it is what
+                                    Open WebUI lists — so prefer a stable short
+                                    name over the upstream id.
+                                  pattern: '^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$'
+                                model:
+                                  type: string
+                                  description: >
+                                    The model id the provider expects, verbatim
+                                    (e.g. google/gemma-4-31B-it). Passed through
+                                    with an openai/ prefix, because the endpoint
+                                    is OpenAI-compatible whoever serves it.
+                                maxTokens:
+                                  type: integer
+                                  description: >
+                                    Context window to advertise. Omitted leaves
+                                    LiteLLM's own default, which is a guess.
+                                mode:
+                                  type: string
+                                  description: >
+                                    What the model does. Embedding models must
+                                    say so — routed as chat they fail at the
+                                    first request rather than at registration.
+                                  enum: [chat, completion, embedding]
+                                  default: chat
+                            default: []
+                      default: []
                 tenantDefaults:
                   type: object
                   description: >

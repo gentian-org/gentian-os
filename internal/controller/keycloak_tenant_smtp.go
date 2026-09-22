@@ -60,11 +60,49 @@ AUTH_HEADER="Authorization: Bearer ${TOKEN}"
 
 REALM_JSON=$(curl -sf --max-time 30 -H "${AUTH_HEADER}" \
   "${KEYCLOAK_URL}/admin/realms/${REALM}")
-# The kernel Postfix accepts relaying from inside the cluster by mynetworks and
-# advertises no AUTH mechanism, so asking Keycloak to authenticate against it
-# fails outright. Only the external relay expects credentials.
+# Kernel mode authenticates too, when the realm has been given an identity to
+# authenticate as.
+#
+# It used to send anonymously, because relaying was granted by mynetworks and the
+# kernel Postfix advertised no AUTH at all. That made "may this sender relay?" a
+# question about the Pod network, which is a property of the cloud provider — and
+# on a provider whose load balancer proxies from a trusted-looking address it
+# answers yes for the whole internet. A credential means the same thing wherever
+# the cluster is rebuilt.
+#
+# Falls back to the old behaviour when KERNEL_SMTP_USER is empty, so a cluster
+# whose operator has not yet minted the credential keeps sending rather than
+# failing every invite. mynetworks still permits it; this is a migration, and the
+# grant is removed only once every sender authenticates.
 if [ "${MAIL_SERVICE_MODE:-external}" = "kernel" ]; then
-  SMTP_AUTH="false"
+  if [ -n "${KERNEL_SMTP_USER:-}" ] && [ -n "${KERNEL_SMTP_PASSWORD:-}" ] && [ -n "${KERNEL_MAIL_HOST:-}" ]; then
+    SMTP_AUTH="true"
+    SMTP_USER="${KERNEL_SMTP_USER}"
+    SMTP_PASSWORD="${KERNEL_SMTP_PASSWORD}"
+    # The PUBLIC name, and STARTTLS with it. Both change together or neither
+    # does, because they are one decision.
+    #
+    # Postfix withholds AUTH until STARTTLS has succeeded (smtpd_tls_auth_only),
+    # so authenticating means encrypting. Java then verifies the certificate
+    # against the name it dialled, and no public CA signs
+    # postfix-<env>.<ns>.svc.cluster.local — so the in-cluster name cannot be
+    # verified, whatever certificate is installed. mail.<domain> is covered by the
+    # cluster wildcard and resolves from inside and outside alike.
+    #
+    # The trade is that this address is not in mynetworks: reaching Postfix
+    # through the load balancer makes Keycloak a stranger, and a stranger may
+    # only relay by authenticating. That is the point, and it is also why the
+    # host moves only when there IS a credential — see the else branch.
+    SMTP_HOST="${KERNEL_MAIL_HOST}"
+    SMTP_PORT="587"
+    SMTP_STARTTLS="true"
+    SMTP_SSL="false"
+  else
+    # No credential minted yet. Keep the in-cluster host, which relays on
+    # mynetworks without authenticating, rather than moving to an address where
+    # this realm would be a stranger with nothing to present.
+    SMTP_AUTH="false"
+  fi
 else
   SMTP_AUTH="true"
 fi
@@ -97,7 +135,7 @@ echo "tenant realm SMTP configured for ${REALM} (${SMTP_HOST}:${SMTP_PORT})"
 `, realmExpr, keycloak.ShellWaitForRealm(realmExpr))
 }
 
-func makeTenantSMTPJob(tenantName, realmName string) *batchv1.Job {
+func makeTenantSMTPJob(tenantName, realmName, kernelMailHost string) *batchv1.Job {
 	ttl := meta.ProvisioningJobTTLSeconds
 	deadline := meta.ProvisioningJobActiveDeadlineSeconds
 	// Older installs predate the mail_service_mode key in the SMTP secret.
@@ -177,13 +215,47 @@ func makeTenantSMTPJob(tenantName, realmName string) *batchv1.Job {
 			},
 		},
 		corev1.EnvVar{
+			// The identity this realm authenticates as, minted per tenant by
+			// syncMailSubmissionCredential and verified by Dovecot, which is the
+			// SASL server the kernel Postfix asks.
+			//
+			// Optional on purpose: a cluster that has not reconciled since this
+			// landed has no such Secret, the variable stays empty, and the script
+			// keeps sending unauthenticated over mynetworks instead of failing
+			// every invite on a credential that does not exist yet.
+			// Empty when the cluster has no kernel domain, which keeps the
+			// script on its unauthenticated path rather than sending it at a
+			// hostname built from an empty string.
+			Name:  "KERNEL_MAIL_HOST",
+			Value: kernelMailHost,
+		},
+		corev1.EnvVar{
+			Name: "KERNEL_SMTP_USER",
+			ValueFrom: &corev1.EnvVarSource{
+				SecretKeyRef: &corev1.SecretKeySelector{
+					LocalObjectReference: corev1.LocalObjectReference{Name: mailSubmissionSecretPrefix + tenantName},
+					Key:                  "smtp_user",
+					Optional:             &optionalKey,
+				},
+			},
+		},
+		corev1.EnvVar{
+			Name: "KERNEL_SMTP_PASSWORD",
+			ValueFrom: &corev1.EnvVarSource{
+				SecretKeyRef: &corev1.SecretKeySelector{
+					LocalObjectReference: corev1.LocalObjectReference{Name: mailSubmissionSecretPrefix + tenantName},
+					Key:                  "smtp_password",
+					Optional:             &optionalKey,
+				},
+			},
+		},
+		corev1.EnvVar{
 			// Decides whether Keycloak authenticates to the SMTP host. The
-			// kernel Postfix is reachable only inside the cluster and permits
-			// relaying by mynetworks, so it runs with smtpSASLAuthEnable "no"
-			// and advertises no AUTH at all. Keycloak was told auth=true
-			// unconditionally and could not authenticate against a server that
-			// offers no mechanism, so every invite failed with "Failed to send
-			// execute actions email".
+			// kernel Postfix now advertises AUTH and verifies it against
+			// Dovecot, so kernel mode authenticates whenever the realm has a
+			// credential — see KERNEL_SMTP_USER above. It still decides the
+			// shape of the request, because external mode authenticates against
+			// somebody else's relay with somebody else's credentials.
 			Name: "MAIL_SERVICE_MODE",
 			ValueFrom: &corev1.EnvVarSource{
 				SecretKeyRef: &corev1.SecretKeySelector{

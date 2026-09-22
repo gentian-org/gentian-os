@@ -749,6 +749,101 @@ sys.stdout.write(corefile[:i] + new_block + corefile[j + len(end):])
 # `secret/gentian-os/kernel/dns/cloudflare` is populated. Skipped silently
 # when CF_API_TOKEN was not provided.
 # =============================================================================
+# =============================================================================
+# The kernel wildcard, after it is issued: who holds a copy, whether they hold
+# the RIGHT one, and putting it there.
+#
+# Separated from install_kernel_wildcard because issuing and distributing need
+# different things and fail for different reasons. Issuing needs a DNS
+# credential out of OpenBao; copying a Secret that already exists needs
+# nothing. Behind one credential gate, a cluster whose certificate had been
+# re-issued but whose copies were stale could not be repaired by the step that
+# owns those copies: C-01 reported "No credential for DNS provider cloudflare",
+# returned 0, printed a tick, and left the Gateway serving the old chain.
+# =============================================================================
+
+# _kernel_wildcard_targets — the namespaces that hold a copy, one per line.
+#
+# One list, read by both the check and the copy. Two lists is how a check comes
+# to pass over the namespace the copy writes to.
+#
+# platform-kernel is the important one: the kernel Gateway lives there (the
+# operator creates it in servicesNamespace, whose chart default is
+# "platform-kernel" — see charts/gentian-os/values.yaml) and its HTTPS
+# listeners reference the wildcard-tls Secret by name. Without the copy both
+# listeners sit at ResolvedRefs=False/InvalidCertificateRef, the Gateway never
+# reaches Programmed, no address is assigned, Envoy never creates the
+# data-plane LoadBalancer, and the cluster answers nothing at all.
+#
+# app_ns ("gentian-<env>") is kept because the shell half of the installer
+# defaults SERVICES_NAMESPACE there — the two halves disagree about which
+# namespace is "services", so copy to both rather than pick a side here.
+# Namespaces that do not exist are skipped: they are not a gap, they are a
+# shape this cluster does not have.
+_kernel_wildcard_targets() {
+    local app_ns="gentian-${ENV:-dev}"
+    local ns seen=""
+    for ns in "${app_ns}" "$(gentian_services_namespace)" argocd; do
+        [[ " ${seen} " == *" ${ns} "* ]] && continue
+        seen+=" ${ns}"
+        kubectl get namespace "${ns}" >/dev/null 2>&1 || continue
+        printf '%s\n' "${ns}"
+    done
+}
+
+# kernel_wildcard_propagated — does every copy carry the certificate
+# cert-manager actually holds?
+#
+# The certificate, not the Secret's name. Existence was what this used to be
+# asked, and existence is true of a copy made months ago for a domain the
+# cluster has since left: C-01 reported satisfied while every kernel hostname
+# was served a certificate for the PREVIOUS kernel domain, and the failure
+# surfaced three steps later as OpenBao refusing an OIDC discovery document
+# whose TLS it could not verify.
+#
+# Compares the base64 as the API server returns it — same bytes, same
+# certificate — so it costs one GET per namespace and needs no openssl.
+kernel_wildcard_propagated() {
+    local want ns have
+    want="$(kubectl get secret wildcard-kernel-tls -n cert-manager \
+        -o jsonpath='{.data.tls\.crt}' 2>/dev/null || true)"
+    # Nothing issued yet is not "propagated"; the caller decides what that means.
+    [[ -n "${want}" ]] || return 1
+    while IFS= read -r ns; do
+        [[ -n "${ns}" ]] || continue
+        have="$(kubectl get secret wildcard-tls -n "${ns}" \
+            -o jsonpath='{.data.tls\.crt}' 2>/dev/null || true)"
+        [[ "${have}" == "${want}" ]] || return 1
+    done < <(_kernel_wildcard_targets)
+    return 0
+}
+
+# propagate_kernel_wildcard — copy cert-manager's wildcard into every target.
+#
+# Idempotent, and safe to call when there is nothing to copy: a cluster whose
+# Certificate has not been issued yet returns without complaint, because the
+# caller that is about to issue one will call this again afterwards.
+propagate_kernel_wildcard() {
+    kubectl get secret wildcard-kernel-tls -n cert-manager >/dev/null 2>&1 || return 0
+    local ns
+    while IFS= read -r ns; do
+        [[ -n "${ns}" ]] || continue
+        info "Propagating wildcard-tls into namespace ${ns}..."
+        kubectl get secret wildcard-kernel-tls -n cert-manager -o json \
+            | python3 -c "
+import sys, json
+s = json.load(sys.stdin)
+for k in ('resourceVersion','uid','creationTimestamp'):
+    s['metadata'].pop(k, None)
+s['metadata'].pop('annotations', None)
+s['metadata']['namespace'] = sys.argv[1]
+s['metadata']['name'] = 'wildcard-tls'
+print(json.dumps(s))
+" "${ns}" | kubectl apply -f -
+        success "wildcard-tls propagated to ${ns}."
+    done < <(_kernel_wildcard_targets)
+}
+
 install_kernel_wildcard() {
     if [[ "$INSTALL_CLUSTER_INFRA" != "1" ]]; then
         return
@@ -764,8 +859,14 @@ install_kernel_wildcard() {
         return
     fi
     if ! gentian_dns_credential_present; then
-        info "No credential for DNS provider ${dns_provider}; skipping the kernel wildcard Certificate."
+        info "No credential for DNS provider ${dns_provider}; skipping wildcard ISSUANCE."
         info "  Supply it to the credential manager and re-run: ./install.sh --only C-01"
+        # Distribution is not issuance and does not need the credential. A
+        # certificate cert-manager has already renewed still has to reach the
+        # namespaces that serve it, and this is the step that owns that copy --
+        # returning here left the only repair path shut on exactly the cluster
+        # that needed it. Costs nothing when there is nothing to copy.
+        propagate_kernel_wildcard
         return
     fi
 
@@ -871,39 +972,7 @@ install_kernel_wildcard() {
         kubectl delete certificate wildcard-dev-tls -n "${app_ns}"
         success "Deleted fallback wildcard-dev-tls Certificate CR from ${app_ns}."
     fi
-    # Propagate to all namespaces that reference wildcard-tls.
-    #
-    # platform-kernel is the important one and was missing: the kernel Gateway
-    # lives there (the operator creates it in servicesNamespace, whose chart
-    # default is "platform-kernel" — see charts/gentian-os/values.yaml), and its
-    # HTTPS listeners reference the wildcard-tls Secret by name. Without the copy
-    # both listeners sit at ResolvedRefs=False/InvalidCertificateRef, the Gateway
-    # never reaches Programmed, no address is assigned, Envoy never creates the
-    # data-plane LoadBalancer, and the cluster answers nothing at all.
-    #
-    # app_ns ("gentian-<env>") is kept because the shell half of the installer
-    # defaults SERVICES_NAMESPACE there — the two halves disagree about which
-    # namespace is "services", so copy to both rather than pick a side here.
-    local _wc_targets=("${app_ns}" "$(gentian_services_namespace)" argocd)
-    local _wc_seen=""
-    for _wc_ns in "${_wc_targets[@]}"; do
-        [[ " ${_wc_seen} " == *" ${_wc_ns} "* ]] && continue
-        _wc_seen+=" ${_wc_ns}"
-        kubectl get namespace "${_wc_ns}" >/dev/null 2>&1 || continue
-        info "Propagating wildcard-tls into namespace ${_wc_ns}..."
-        kubectl get secret wildcard-kernel-tls -n cert-manager -o json \
-            | python3 -c "
-import sys, json
-s = json.load(sys.stdin)
-for k in ('resourceVersion','uid','creationTimestamp'):
-    s['metadata'].pop(k, None)
-s['metadata'].pop('annotations', None)
-s['metadata']['namespace'] = sys.argv[1]
-s['metadata']['name'] = 'wildcard-tls'
-print(json.dumps(s))
-" "${_wc_ns}" | kubectl apply -f -
-        success "wildcard-tls propagated to ${_wc_ns}."
-    done
+    propagate_kernel_wildcard
 
     # ACME staging: trust bundle for in-cluster OIDC clients.
     if [[ "${ACME_ENV:-production}" == "staging" ]]; then

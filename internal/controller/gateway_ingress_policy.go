@@ -112,15 +112,44 @@ func collectTenantIngressIntents(ctx context.Context, c client.Client, tenant *g
 		if profile.Spec.Ingress != nil {
 			intents = append(intents, ingressIntent{appProfile: app.Profile, profile: profile, ingress: profile.Spec.Ingress})
 		}
-		for i := range profile.Spec.AdditionalIngresses {
-			intents = append(intents, ingressIntent{
-				appProfile: additionalIngressProfile(app.Profile, i),
-				profile:    profile,
-				ingress:    &profile.Spec.AdditionalIngresses[i],
-			})
+		intents = append(intents, additionalIngressIntents(app.Profile, profile)...)
+
+		// Addons too. An addon is not a separate install and has no App claim,
+		// but it can still need a hostname: Odoo's website module publishes the
+		// tenant's homepage, which belongs on its own subdomain rather than on
+		// the ERP host its base answers. Walking only app.Profile meant an
+		// ingress declared on an addon was read by nobody -- no route, no
+		// certificate, no DNS record, and no error to say so.
+		//
+		// Only AdditionalIngresses, never Spec.Ingress. An addon is reached
+		// inside its base and does not get a primary host of its own; what it
+		// may do is add a hostname, pointed at whichever Service it names.
+		for _, addonProfile := range app.Addons {
+			addon, ok := appProfileFromIndex(profileIndex, addonProfile)
+			if !ok {
+				continue
+			}
+			intents = append(intents, additionalIngressIntents(addonProfile, addon)...)
 		}
 	}
 	return intents, nil
+}
+
+// additionalIngressIntents turns a profile's AdditionalIngresses into intents.
+// The name carries the profile the ingress was declared on, so an addon's host
+// is named for the addon rather than for the base it is activated inside.
+func additionalIngressIntents(
+	profileName string, profile *gentianov1alpha1.AppProfile,
+) []ingressIntent {
+	intents := make([]ingressIntent, 0, len(profile.Spec.AdditionalIngresses))
+	for i := range profile.Spec.AdditionalIngresses {
+		intents = append(intents, ingressIntent{
+			appProfile: additionalIngressProfile(profileName, i),
+			profile:    profile,
+			ingress:    &profile.Spec.AdditionalIngresses[i],
+		})
+	}
+	return intents
 }
 
 func clusterNeedsEscapedSlashesKeepUnchanged(ctx context.Context, c client.Client) (bool, error) {

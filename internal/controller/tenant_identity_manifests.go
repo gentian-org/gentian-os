@@ -235,7 +235,11 @@ func (r *TenantReconciler) buildIdentityProvisioningJobs(ctx context.Context, te
 		// natural keys, so a Job writing the same fields would be a second owner
 		// racing the first.
 		if r.clusterKeycloakSMTPCredentialsAvailable(ctx) {
-			jobs = append(jobs, *makeTenantSMTPJob(tenant.Name, realmName))
+			mailHost := ""
+			if r.KernelDomain != "" {
+				mailHost = "mail." + r.KernelDomain
+			}
+			jobs = append(jobs, *makeTenantSMTPJob(tenant.Name, realmName, mailHost))
 		}
 	}
 

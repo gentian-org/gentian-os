@@ -53,6 +53,10 @@ spec:
             # next sync instead of leaving it running.
             - name: mockBackend
               value: 'llm.mock.backend.placeholder'
+            # Whether spec.llm.providers lists anything, so the chart knows
+            # whether an OpenBao path for provider API keys exists to read.
+            - name: externalProviders
+              value: 'llm.external.providers.placeholder'
       destination:
         server: https://kubernetes.default.svc
         namespace: platform-kernel

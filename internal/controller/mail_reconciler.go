@@ -107,11 +107,29 @@ const (
 	smtpPasswordLength = 24
 )
 
-// mailSharedPostfixHost returns the in-cluster Postfix submission hostname.
-// Override with MAIL_SMTP_HOST; otherwise postfix-{stage}.{servicesNamespace}.
-func mailSharedPostfixHost() string {
+// mailSharedPostfixHost returns the submission hostname handed to tenant apps.
+//
+// mail.<kernelDomain> when the cluster has a kernel domain, rather than the
+// in-cluster Service name. Apps that authenticate have to STARTTLS first
+// (smtpd_tls_auth_only), and a client that verifies the certificate checks it
+// against the name it dialled: the certificate is the public wildcard for the
+// kernel domain, which covers mail.<domain> and cannot cover
+// postfix-<env>.<ns>.svc.cluster.local, because no public CA signs that name.
+// Nextcloud and Docmost both verify by default, so the Service name made
+// authenticated submission fail its TLS handshake before AUTH was ever offered.
+//
+// Written once per tenant — the credential Secret and the OpenBao record are not
+// rewritten — so this reaches tenants created from here on; existing ones keep
+// the host they were given until migrated.
+//
+// Override with MAIL_SMTP_HOST. Without a kernel domain there is no public name
+// to use, and the Service name remains the only option.
+func mailSharedPostfixHost(kernelDomain string) string {
 	if v := envOrDefault("MAIL_SMTP_HOST", ""); v != "" {
 		return v
+	}
+	if kernelDomain != "" {
+		return "mail." + kernelDomain
 	}
 	stage := envOrDefault("GENTIAN_STAGE", envOrDefault("ENV", "dev"))
 	return fmt.Sprintf("postfix-%s.%s.svc.cluster.local", stage, servicesNamespace)
@@ -139,10 +157,34 @@ func (r *TenantReconciler) dovecotDeployed(ctx context.Context) bool {
 	return clusterMailServiceMode(ctx, r.Client, r.MailServiceMode) == "kernel"
 }
 
+// defaultTenantMailMode — what a tenant gets when it does not say.
+//
+// selfhosted unconditionally, before: it means "register in the shared kernel
+// Postfix and Dovecot", and a cluster running mail.serviceMode external has no
+// Dovecot to register in. The default therefore named a stack that did not
+// exist on every cluster that relays through a provider, which is the common
+// deployment rather than an edge case.
+//
+// transport-only is what such a cluster can actually honour: the shared Postfix
+// relay IS deployed in external mode, so the tenant's domain is registered for
+// outbound and its apps get SMTP credentials -- no mailbox, no IMAP, and no MX
+// claiming this cluster accepts inbound mail for the domain.
+//
+// Only the DEFAULT. A tenant that asks for selfhosted still gets it, because a
+// cluster administrator may be about to deploy the kernel stack and a silently
+// overridden spec is worse than one that does nothing yet. What it will not do
+// any more is publish DNS for it -- see syncTenantMailDNS.
+func (r *TenantReconciler) defaultTenantMailMode(ctx context.Context) gentianov1alpha1.MailMode {
+	if r.dovecotDeployed(ctx) {
+		return gentianov1alpha1.MailModeSelfhosted
+	}
+	return gentianov1alpha1.MailModeTransportOnly
+}
+
 // ensureMail provisions the mail stack for the tenant according to spec.mail.mode.
 // It dispatches to one of four mode-specific handlers and sets the MailReady condition.
 func (r *TenantReconciler) ensureMail(ctx context.Context, tenant *gentianov1alpha1.Tenant) (ctrl.Result, error) {
-	mode := gentianov1alpha1.MailModeSelfhosted
+	mode := r.defaultTenantMailMode(ctx)
 	if tenant.Spec.Mail != nil && tenant.Spec.Mail.Mode != "" {
 		mode = tenant.Spec.Mail.Mode
 	}
@@ -248,14 +290,9 @@ func (r *TenantReconciler) ensureMailSelfhosted(ctx context.Context, tenant *gen
 	// a:<egressHost> rather than an ip4: literal, so the record follows the
 	// egress A record instead of having to be edited in two places whenever the
 	// address changes; the one that gets forgotten fails closed and silently.
-	if egress := clusterMailEgressHost(ctx, r.Client, envOrDefault("MAIL_EGRESS_HOST", "")); egress != "" {
-		tenant.Status.Mail.SPFRecord = "v=spf1 a:" + egress + " -all"
-	} else {
-		// No dedicated egress: the cluster sends from a shared address or relays
-		// through a smarthost, and mx is the best guess available here.
-		tenant.Status.Mail.SPFRecord = "v=spf1 mx ~all"
-	}
-	tenant.Status.Mail.DMARCRecord = fmt.Sprintf("v=DMARC1; p=none; rua=mailto:dmarc@%s", domain)
+	tenant.Status.Mail.SPFRecord = mailSPFRecord(
+		clusterMailEgressHost(ctx, r.Client, envOrDefault("MAIL_EGRESS_HOST", "")))
+	tenant.Status.Mail.DMARCRecord = mailDMARCRecord(domain)
 
 	// 2. Register the tenant domain in the shared Postfix virtual-domains ConfigMap.
 	if err := r.ensurePostfixVirtualDomain(ctx, tenant); err != nil {
@@ -273,6 +310,12 @@ func (r *TenantReconciler) ensureMailSelfhosted(ctx context.Context, tenant *gen
 	// Logged rather than returned: Keycloak being briefly unreachable should not
 	// fail the whole tenant reconcile, and a user without a password yet sees a
 	// mail client that cannot sign in — not a tenant that fails to provision.
+	// The kernel realm is not a tenant and has no reconcile of its own, so its
+	// identity is registered alongside the tenants'. Idempotent and cheap: it
+	// reads one Secret and rewrites a passwd-file only when the hash changes.
+	if err := r.syncKernelRealmSubmissionIdentity(ctx); err != nil {
+		log.FromContext(ctx).Error(err, "sync kernel realm submission identity")
+	}
 	if err := r.syncMailAppPasswords(ctx, tenant); err != nil {
 		log.FromContext(ctx).Error(err, "sync mail app passwords", "tenant", tenant.Name)
 	}
@@ -526,6 +569,22 @@ func (r *TenantReconciler) syncPostfixVirtualMailboxMaps(ctx context.Context) er
 		postfixAllowedSenderDomainsKey:  desiredAllowed,
 	}
 
+	// Who may relay without authenticating, derived from the cluster rather than
+	// configured per cluster — see mail_trustednetworks.go for why a configured
+	// range is a guess about the cloud provider that eventually trusts the load
+	// balancer, and with it the whole internet.
+	//
+	// Absent, not empty, when nothing can be derived: the key is left out so the
+	// chart's configured value still applies. Writing an empty value here would
+	// override it and stop every in-cluster sender relaying at once.
+	nodes := &corev1.NodeList{}
+	if err := r.List(ctx, nodes); err != nil {
+		return err
+	}
+	if nets := podNetworks(ctx, nodes); nets != "" {
+		desired[postfixMyNetworksKey] = nets
+	}
+
 	maps := &corev1.ConfigMap{}
 	err := r.Get(ctx, types.NamespacedName{
 		Name: postfixVirtualMailboxMapsConfigMap, Namespace: servicesNamespace,
@@ -543,19 +602,22 @@ func (r *TenantReconciler) syncPostfixVirtualMailboxMaps(ctx context.Context) er
 	if err != nil {
 		return err
 	}
-	if maps.Data[postfixVirtualMailboxDomainsKey] == desiredDomains &&
-		maps.Data[postfixVirtualMailboxMapsKey] == desiredMaps &&
-		maps.Data[postfixSenderAccessKey] == desiredDomains &&
-		maps.Data[postfixAllowedSenderDomainsKey] == desiredAllowed {
+	unchanged := true
+	for k, v := range desired {
+		if maps.Data[k] != v {
+			unchanged = false
+			break
+		}
+	}
+	if unchanged {
 		return nil
 	}
 	if maps.Data == nil {
 		maps.Data = make(map[string]string)
 	}
-	maps.Data[postfixVirtualMailboxDomainsKey] = desiredDomains
-	maps.Data[postfixVirtualMailboxMapsKey] = desiredMaps
-	maps.Data[postfixSenderAccessKey] = desiredDomains
-	maps.Data[postfixAllowedSenderDomainsKey] = desiredAllowed
+	for k, v := range desired {
+		maps.Data[k] = v
+	}
 	return r.Update(ctx, maps)
 }
 
@@ -1032,7 +1094,13 @@ func (r *TenantReconciler) ensureSmtpCredentialsSecret(ctx context.Context, tena
 	existing := &corev1.Secret{}
 	err := r.Get(ctx, types.NamespacedName{Name: secretName, Namespace: nsName}, existing)
 	if err == nil {
-		return nil // already exists
+		// The credential is not regenerated, but it IS re-registered: a tenant
+		// whose Secret predates SASL has a username and password its apps already
+		// send and Dovecot has never heard of, so registering only at creation
+		// would authenticate new tenants and leave every existing one relaying
+		// anonymously.
+		return r.registerSubmissionIdentity(ctx, mailAppSubmissionApp, tenant.Name,
+			string(existing.Data["username"]), string(existing.Data["password"]))
 	}
 	if !errors.IsNotFound(err) {
 		return err
@@ -1044,6 +1112,7 @@ func (r *TenantReconciler) ensureSmtpCredentialsSecret(ctx context.Context, tena
 		return fmt.Errorf("generate SMTP password for tenant %s: %w", tenant.Name, randErr)
 	}
 	password := base64.RawURLEncoding.EncodeToString(passBytes)
+	username := fmt.Sprintf("smtp-%s", tenant.Name)
 
 	secret := &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{
@@ -1055,13 +1124,90 @@ func (r *TenantReconciler) ensureSmtpCredentialsSecret(ctx context.Context, tena
 			},
 		},
 		StringData: map[string]string{
-			"host":     mailSharedPostfixHost(),
+			"host":     mailSharedPostfixHost(r.KernelDomain),
 			"port":     mailSharedPostfixPort,
-			"username": fmt.Sprintf("smtp-%s", tenant.Name),
+			"username": username,
 			"password": password,
 		},
 	}
-	return r.Create(ctx, secret)
+	if err := r.Create(ctx, secret); err != nil {
+		return err
+	}
+	return r.registerSubmissionIdentity(ctx, mailAppSubmissionApp, tenant.Name, username, password)
+}
+
+// registerSubmissionIdentity teaches Dovecot a credential the platform already
+// hands out, so that presenting it actually proves something.
+//
+// Every one of these identities existed before SASL did — the per-tenant app
+// user smtp-<tenant>, the kernel realm's gentian-system@<domain> — and each was
+// injected into the sender's configuration complete with a password. None was
+// ever registered anywhere, because relaying was granted by IP: the sender
+// offered credentials, Postfix advertised no AUTH, and the mail went out
+// regardless. The configuration therefore described an authentication that was
+// not happening, which is the kind of gap that survives review.
+//
+// Empty user or password is not an error. A tenant whose Secret was written by
+// an older operator may carry neither, and refusing to reconcile it would take
+// the tenant down over a credential nothing has asked for yet.
+func (r *TenantReconciler) registerSubmissionIdentity(ctx context.Context, app, tenant, user, password string) error {
+	if user == "" || password == "" {
+		return nil
+	}
+	file := mailAppPasswordFile(app, tenant)
+	// Rewritten only when it does not already verify. The salt is random, so
+	// rendering a fresh line for an unchanged password differs every time, and
+	// writing it would make every reconcile an Update that wakes every watcher
+	// and schedules the next one.
+	sec := &corev1.Secret{}
+	err := r.Get(ctx, types.NamespacedName{
+		Name: "dovecot-app-passwords", Namespace: defaultServicesNamespace(),
+	}, sec)
+	if err != nil && !errors.IsNotFound(err) {
+		return err
+	}
+	if argon2idLineMatches(string(sec.Data[file+".users"]), user, password) &&
+		string(sec.Data[file+".conf"]) == string(passdbInclude(file)) {
+		return nil
+	}
+	line, err := argon2idPasswdLine(user, password)
+	if err != nil {
+		return err
+	}
+	return r.upsertSecret(ctx, "dovecot-app-passwords", defaultServicesNamespace(), map[string][]byte{
+		file + ".users": []byte(line + "\n"),
+		file + ".conf":  passdbInclude(file),
+	})
+}
+
+// syncKernelRealmSubmissionIdentity registers whatever credential the installer
+// gave the kernel realm.
+//
+// The password is not derived here and must not be: portal-login-bootstrap.sh
+// derives it from the master password and writes it into
+// keycloak-smtp-credentials, so deriving a second one would produce a hash that
+// verifies a password nobody sends. Reading what is there and hashing THAT keeps
+// one source of truth, whichever side chose it.
+//
+// Kernel mode only. In external mode that Secret holds the upstream relay's
+// credentials, which belong to somebody else's server — registering them here
+// would create a local login with a third party's password.
+func (r *TenantReconciler) syncKernelRealmSubmissionIdentity(ctx context.Context) error {
+	if !r.dovecotDeployed(ctx) {
+		return nil
+	}
+	sec := &corev1.Secret{}
+	err := r.Get(ctx, types.NamespacedName{
+		Name: keycloakSMTPCredentialsSecret, Namespace: defaultServicesNamespace(),
+	}, sec)
+	if errors.IsNotFound(err) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	return r.registerSubmissionIdentity(ctx, mailKernelRealmSubmissionApp, "kernel",
+		string(sec.Data["smtp_user"]), string(sec.Data["smtp_password"]))
 }
 
 // seedPerAppMailSecrets writes each app's SMTP/IMAP KV record into OpenBao so
@@ -1126,9 +1272,21 @@ func (r *TenantReconciler) seedPerAppMailSecrets(ctx context.Context, tenant *ge
 			}
 		}
 		if n.imap {
+			// imap.<kernelDomain>:993, not the in-cluster Service name.
+			//
+			// The old value named a Service that does not exist — the Service is
+			// dovecot-<env>, never plain "dovecot" — so it resolved to nothing
+			// wherever anything tried to use it. Correcting it to the real
+			// in-cluster name would have broken differently once TLS was on: no
+			// public CA signs .svc.cluster.local, so the certificate could not
+			// match and the client would refuse.
+			//
+			// The public name is covered by the cluster wildcard, resolves both
+			// inside and outside, and is the same address a user types into a
+			// mail client on their phone.
 			if err := r.Seeder.SeedIMAP(ctx, effectiveTenant, appName, secrets.IMAPCreds{
-				Host: "dovecot.platform-kernel.svc.cluster.local",
-				Port: "143",
+				Host: "imap." + r.KernelDomain,
+				Port: "993",
 			}); err != nil {
 				return fmt.Errorf("seed imap for %s: %w", appName, err)
 			}
@@ -1165,6 +1323,21 @@ func (r *TenantReconciler) deleteMail(ctx context.Context, tenant *gentianov1alp
 		if err := r.removeFromMailConfigMap(ctx, mailDovecotDomainsConfigMap, tenant.Name); err != nil {
 			return fmt.Errorf("remove Dovecot domain config for tenant %s: %w", tenant.Name, err)
 		}
+	}
+
+	// The tenant's SASL credentials, removed whatever the deletion policy says.
+	//
+	// DeletionPolicy governs whether the tenant's DATA is kept — a mailbox one
+	// might still want to read is a different question from a login that should
+	// still work. Leaving the passwd-files behind means the deleted tenant's users
+	// and its apps can go on authenticating to submission and IMAP, which is the
+	// one thing deleting a tenant has to stop.
+	//
+	// Domain routing above is already gone by this point, so what is left is
+	// exactly a credential with nothing to reach.
+	if err := r.deleteSecretKeys(ctx, "dovecot-app-passwords", defaultServicesNamespace(),
+		mailPasswdFileKeys(tenant.Name)...); err != nil {
+		return fmt.Errorf("remove mail passdb entries for tenant %s: %w", tenant.Name, err)
 	}
 
 	if tenant.Spec.DeletionPolicy != gentianov1alpha1.DeletionPolicyDelete {
@@ -1308,6 +1481,39 @@ func mailDomain(tenant *gentianov1alpha1.Tenant, kernelDomain, tenancyMode strin
 		return tenant.Spec.Mail.Domain
 	}
 	return tenant.EffectiveDomain(kernelDomain, tenancyMode)
+}
+
+// mailSPFRecord is the SPF policy for a domain this cluster sends as.
+//
+// Shared by tenants and by the kernel domain, which had none at all: every
+// tenant domain published one while gentian.cloud itself did not, so the one
+// domain the platform signs its own mail as was also the one no receiver could
+// check. That is the domain the relay spam forged its senders in.
+//
+// a:<egressHost> rather than an ip4: literal, so the record follows the egress A
+// record instead of having to be edited in two places whenever the address
+// changes; the one that gets forgotten fails closed and silently.
+func mailSPFRecord(egressHost string) string {
+	if egressHost != "" {
+		return "v=spf1 a:" + egressHost + " -all"
+	}
+	// No dedicated egress: the cluster sends from a shared address or relays
+	// through a smarthost, and mx is the best guess available here. ~all rather
+	// than -all, because a guess should not tell receivers to reject.
+	return "v=spf1 mx ~all"
+}
+
+// mailDMARCRecord is the DMARC policy for a domain this cluster sends as.
+//
+// p=none: report, do not reject. The reports are what say whether a stricter
+// policy would bounce legitimate mail, and publishing quarantine or reject
+// before reading any is how a domain silences its own invites. Tighten it once
+// rua has been arriving for a while and shows only sources you recognise.
+//
+// rua needs a mailbox that can actually receive, which is why the kernel
+// domain's MX is published alongside this rather than left to chance.
+func mailDMARCRecord(domain string) string {
+	return fmt.Sprintf("v=DMARC1; p=none; rua=mailto:dmarc@%s", domain)
 }
 
 func dkimSecretName(tenantName string) string {

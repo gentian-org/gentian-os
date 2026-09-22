@@ -63,15 +63,44 @@ func dnsEndpointRecord(name, recordType string, targets ...string) map[string]in
 // syncTenantMailDNS writes one DNSEndpoint holding every mail record a tenant
 // domain needs.
 //
-// Skipped entirely when the tenant is not on kernel mail: publishing an MX for
-// a domain this cluster does not accept mail for points senders at a server
+// Skipped entirely when the CLUSTER does not run kernel mail: publishing an MX
+// for a domain this cluster does not accept mail for points senders at a server
 // that will refuse them, which is worse than no record at all.
+//
+// That sentence was the contract long before anything enforced it. The records
+// were published for any tenant whose own spec.mail.mode said selfhosted, which
+// is a statement about what the TENANT wants and not about what exists: on a
+// cluster with mail.serviceMode external there is no Dovecot, no mailbox, and
+// no mail.<kernelDomain> to point an MX at. Every tenant on such a cluster
+// published `MX 0 mail.<kernelDomain>` naming a host with no address, and
+// `v=spf1 mx ~all` authorising that same absent MX. Inbound mail was
+// undeliverable and the SPF record authorised nothing.
+//
+// The gate is the same one Dovecot uses, for the same reason and read from the
+// same place — see dovecotDeployed. Steps 4 to 6 of ensureMailSelfhosted were
+// given it after they were found "provisioning into a void"; this step does the
+// same thing to a public DNS zone and was missed.
+//
+// On a tunnel cluster it is worse than waste. The tenant's web address is a
+// CNAME to the tunnel at exactly the name these records claim, and RFC 1034
+// §3.6.2 forbids a CNAME beside any other type — so external-dns discards the
+// CNAME, logs "conflicting record type candidates" once a minute, and the
+// tenant's site stops resolving entirely. Mail that cannot work takes down a
+// website that otherwise would.
+//
+// Records already published are removed rather than left: a cluster that
+// switches to external, or a tenant that moves off kernel mail, must not keep
+// an MX pointing at a server that no longer accepts for it.
 func (r *TenantReconciler) syncTenantMailDNS(ctx context.Context, tenant *gentianov1alpha1.Tenant) error {
 	domain := mailDomain(tenant, r.KernelDomain, r.TenancyMode)
 	if domain == "" || tenant.Status.Mail == nil {
 		return nil
 	}
 	ns := defaultServicesNamespace()
+
+	if !r.dovecotDeployed(ctx) {
+		return r.deleteTenantMailDNS(ctx, tenant, ns)
+	}
 
 	// The MX target is the kernel's mail host, not the tenant's own domain: one
 	// Postfix serves every tenant, so they all point at the same name. That name
@@ -140,12 +169,47 @@ func (r *TenantReconciler) syncTenantMailDNS(ctx context.Context, tenant *gentia
 	return r.Update(ctx, obj)
 }
 
-// syncKernelMailDNS publishes the DKIM record for the kernel domain itself.
+// deleteTenantMailDNS removes the tenant's mail DNSEndpoint, if one is there.
+//
+// Not a no-op on a cluster that never had kernel mail: a cluster whose
+// serviceMode CHANGED, or a tenant moved to transport-only, still holds records
+// published under the old answer, and external-dns keeps serving them until
+// something withdraws the desired state. Leaving them is how a tenant's website
+// stays down after the fault that took it down has been fixed.
+//
+// Absent CRD and absent object are both success: a cluster without external-dns
+// keeps its records by hand, which is a missing convenience rather than a
+// broken tenant -- the same reasoning the create path uses.
+func (r *TenantReconciler) deleteTenantMailDNS(ctx context.Context, tenant *gentianov1alpha1.Tenant, ns string) error {
+	obj := &unstructured.Unstructured{}
+	obj.SetGroupVersionKind(dnsEndpointGVK)
+	obj.SetName("mail-" + tenant.Name)
+	obj.SetNamespace(ns)
+	if err := r.Delete(ctx, obj); err != nil {
+		if runtimeMeta.IsNoMatchError(err) || client.IgnoreNotFound(err) == nil {
+			return nil
+		}
+		return err
+	}
+	return nil
+}
+
+// syncKernelMailDNS publishes the mail records for the kernel domain itself.
 //
 // Separate from the per-tenant endpoint because the kernel domain has no Tenant
-// to hang off, and narrower: only the DKIM record. The kernel domain's MX, SPF
-// and web records come from elsewhere, and republishing them here would let two
-// owners write the same names.
+// to hang off. It used to publish only DKIM, on the stated grounds that "the MX,
+// SPF and web records come from elsewhere" — and for MX and SPF, nowhere was
+// elsewhere. Every tenant domain had all three while the kernel domain had a
+// DKIM key and nothing else, which is the worst of the available states: mail
+// was signed as the kernel domain, no receiver was told which hosts may send as
+// it, and no policy said what to do about the ones that are not. That is the
+// domain the open-relay spam forged its senders in.
+//
+// Its MX was missing too, so mail addressed to the kernel domain fell back to
+// the A record — the HTTP gateway, which is not a mail server. Postfix accepts
+// the domain and Dovecot holds a maildir for it, so the mailbox existed and was
+// merely unreachable. The DMARC record below names rua=dmarc@<kernelDomain>, so
+// the MX is what makes those reports arrive rather than bounce.
 func (r *TenantReconciler) syncKernelMailDNS(ctx context.Context, dkimPublicKey string) error {
 	if r.KernelDomain == "" {
 		return nil
@@ -160,6 +224,22 @@ func (r *TenantReconciler) syncKernelMailDNS(ctx context.Context, dkimPublicKey 
 		records = append(records, dnsEndpointRecord(
 			postfixDKIMSelector+"._domainkey."+r.KernelDomain, "TXT",
 			fmt.Sprintf("v=DKIM1; h=sha256; k=rsa; s=email; p=%s", dkimPublicKey)))
+	}
+
+	// SPF and DMARC for the kernel domain, on the same terms as every tenant's.
+	//
+	// Skipped when a Tenant already owns the domain — single-tenant clusters give
+	// the tenant the kernel domain itself, and two endpoints writing one name is
+	// how external-dns ends up flapping between two owners' ideas of it.
+	ownedByTenant, err := r.kernelDomainOwnedByTenant(ctx)
+	if err != nil {
+		return err
+	}
+	if !ownedByTenant {
+		records = append(records,
+			dnsEndpointRecord(r.KernelDomain, "TXT", mailSPFRecord(
+				clusterMailEgressHost(ctx, r.Client, envOrDefault("MAIL_EGRESS_HOST", "")))),
+			dnsEndpointRecord("_dmarc."+r.KernelDomain, "TXT", mailDMARCRecord(r.KernelDomain)))
 	}
 
 	// The address the MX points at.
@@ -179,6 +259,29 @@ func (r *TenantReconciler) syncKernelMailDNS(ctx context.Context, dkimPublicKey 
 	// the internet's mail at something that is not a mail server.
 	if addr := r.kernelMailAddress(ctx); addr != "" {
 		records = append(records, dnsEndpointRecord("mail."+r.KernelDomain, "A", addr))
+		// The kernel domain's own MX, gated on the same address for the same
+		// reason the tenants' is: an MX naming a host with no address is worse
+		// than no MX, because a sender keeps retrying instead of failing fast.
+		//
+		// Preference 0 — see syncTenantMailDNS for why anything else makes
+		// external-dns delete and recreate the record once a minute.
+		if !ownedByTenant {
+			records = append(records, dnsEndpointRecord(r.KernelDomain, "MX", "0 mail."+r.KernelDomain))
+		}
+	}
+
+	// Where a mail client fetches mail, published for the same reason as the MX
+	// and taken from the same place — the Service the cloud assigned.
+	//
+	// It is a distinct name from mail.<domain> because it is a distinct load
+	// balancer in front of a distinct workload: Dovecot serves IMAPS, Postfix
+	// serves the MX, and a single name could only ever point at one of them.
+	//
+	// The name also has to be one the certificate covers, since a mail client
+	// verifies it — which is why clients are told to use imap.<domain> rather
+	// than the in-cluster Service name no public CA can sign for.
+	if addr := r.kernelIMAPAddress(ctx); addr != "" {
+		records = append(records, dnsEndpointRecord("imap."+r.KernelDomain, "A", addr))
 	}
 
 	// The forward half of forward-confirmed reverse DNS.
@@ -218,7 +321,7 @@ func (r *TenantReconciler) syncKernelMailDNS(ctx context.Context, dkimPublicKey 
 
 	existing := &unstructured.Unstructured{}
 	existing.SetGroupVersionKind(dnsEndpointGVK)
-	err := r.Get(ctx, types.NamespacedName{Name: obj.GetName(), Namespace: ns}, existing)
+	err = r.Get(ctx, types.NamespacedName{Name: obj.GetName(), Namespace: ns}, existing)
 	if err != nil {
 		// No external-dns on this cluster: the record stays manual rather than
 		// failing the reconcile.
@@ -248,6 +351,49 @@ func (r *TenantReconciler) kernelMailAddress(ctx context.Context) string {
 	svc := &corev1.Service{}
 	name := types.NamespacedName{
 		Name:      envOrDefault("MAIL_SMTP_SERVICE", "postfix-"+envOrDefault("GENTIAN_STAGE", envOrDefault("ENV", "dev"))+"-smtp"),
+		Namespace: defaultServicesNamespace(),
+	}
+	if err := r.Get(ctx, name, svc); err != nil {
+		return ""
+	}
+	for _, ing := range svc.Status.LoadBalancer.Ingress {
+		if ing.IP != "" {
+			return ing.IP
+		}
+	}
+	return ""
+}
+
+// kernelDomainOwnedByTenant reports whether some Tenant's mail domain IS the
+// kernel domain, which is the normal arrangement on a single-tenant cluster.
+//
+// The per-tenant endpoint then already publishes the MX, SPF and DMARC for that
+// name, and publishing them here as well would give one name two owners with no
+// mechanism to agree — each reconcile overwriting the other's version.
+func (r *TenantReconciler) kernelDomainOwnedByTenant(ctx context.Context) (bool, error) {
+	tenants := &gentianov1alpha1.TenantList{}
+	if err := r.List(ctx, tenants); err != nil {
+		return false, err
+	}
+	for i := range tenants.Items {
+		if mailDomain(&tenants.Items[i], r.KernelDomain, r.TenancyMode) == r.KernelDomain {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+// kernelIMAPAddress is the address mail clients fetch from: the external address
+// of the Dovecot IMAPS Service.
+//
+// Empty when IMAPS is not published — imapIngress disabled, or the address not
+// assigned yet — and the caller then publishes no record, which is the honest
+// answer. A name that resolves to nothing tells a mail client to keep retrying;
+// a name that resolves to the wrong host tells it to send credentials there.
+func (r *TenantReconciler) kernelIMAPAddress(ctx context.Context) string {
+	svc := &corev1.Service{}
+	name := types.NamespacedName{
+		Name:      envOrDefault("MAIL_IMAP_SERVICE", "dovecot-"+envOrDefault("GENTIAN_STAGE", envOrDefault("ENV", "dev"))+"-imaps"),
 		Namespace: defaultServicesNamespace(),
 	}
 	if err := r.Get(ctx, name, svc); err != nil {

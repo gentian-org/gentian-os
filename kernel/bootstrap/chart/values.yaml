@@ -54,6 +54,11 @@ networkMode: tunnel
 # backend is deployed alongside LiteLLM.
 llmEnabled: "false"
 llmGpuAcceleration: "false"
+# Whether the claim's llm.providers lists any external provider. Gates the
+# ExternalSecret projecting their API keys into platform-kernel: with no
+# provider there is no OpenBao path behind it, and an ExternalSecret pointed at
+# a path that does not exist reports SecretSyncError forever.
+llmExternalProviders: "false"
 # The hostname outbound mail leaves from, from spec.mail.egressHost on the
 # Cluster claim. Empty means the shared egress address or a smarthost relay.
 mailEgressHost: ""

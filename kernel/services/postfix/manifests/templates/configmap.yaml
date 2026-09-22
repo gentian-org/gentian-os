@@ -60,6 +60,14 @@ data:
     {{- end }}
     persistence:
       enabled: false
+    # The chart mounts this Secret at /var/run/certs and runs its own
+    # _enable_tls.sh, which points smtpd_tls_cert_file and smtpd_tls_key_file at
+    # the tls.crt and tls.key inside it — exactly the layout cert-manager writes,
+    # so the Certificate needs no conversion step.
+    {{- if .Values.tls.secretName }}
+    certs:
+      existingSecret: {{ .Values.tls.secretName }}
+    {{- end }}
     service:
       type: ClusterIP
       port: 587
@@ -123,6 +131,146 @@ data:
         # of the sending IP names a host, and that host resolves back to the same IP
         # — so this name, its A record and the PTR must all agree.
         myhostname: {{ .Values.egressHost | default (printf "mail.%s" .Values.kernelDomain) }}
+        {{- if .Values.kernelDomain }}
+        # Keep in-cluster hostnames out of mail that leaves the cluster. See the
+        # postfix-internal-headers ConfigMap below for what each rule removes and
+        # why the two live in different lookups.
+        header_checks: "pcre:/etc/postfix/gentian/header_checks.pcre"
+        smtp_header_checks: "pcre:/etc/postfix/gentian/smtp_header_checks.pcre"
+        {{- end }}
+        # An MX must accept connections from strangers. The image does not, because
+        # it ships as an outbound relay:
+        #   smtpd_client_restrictions = permit_mynetworks,permit_sasl_authenticated,reject
+        #   smtpd_sender_restrictions = permit_mynetworks,reject
+        # Every client outside mynetworks is refused at the CLIENT stage, before any
+        # recipient is examined, with
+        #   554 5.7.1 <unknown[a.b.c.d]>: Client host rejected: Access denied
+        #
+        # That was invisible while mynetworks still contained 172.16.0.0/12, because
+        # the load balancer proxies inbound mail from the node network and so every
+        # sender on the internet arrived pre-trusted. The same wrong entry that made
+        # this an open relay is what made it able to receive at all, so scoping
+        # mynetworks to the pod range closed the relay and stopped inbound mail in
+        # one move: Spamhaus's own delisting confirmation was rejected with the
+        # message above, and a 554 is permanent, so it was not retried.
+        #
+        # Opening these two stages does NOT reopen the relay. What a stranger may do
+        # is decided by smtpd_relay_restrictions (reject_unauth_destination, so only
+        # domains this cluster hosts) and by smtpd_recipient_restrictions below —
+        # relay restrictions are evaluated BEFORE recipient restrictions, so a forged
+        # sender in our own domain cannot buy relay access through check_sender_access.
+        #
+        # reject_non_fqdn_sender and reject_unknown_sender_domain stay because they
+        # cost a legitimate sender nothing and refuse mail whose envelope sender
+        # cannot exist. The trailing permit is explicit: this list is hygiene, not
+        # authorisation.
+        # Authenticated submission, and why it is the primary grant rather than a
+        # second one alongside mynetworks.
+        #
+        # Relaying used to be granted by IP alone. That is not portable and it is
+        # not safe: mynetworks has to name the Pod range exactly, while the load
+        # balancer proxies inbound mail from an address that falls OUTSIDE that
+        # range on this CSP and INSIDE it on the next one. Get it wrong by one
+        # prefix and every client on the internet is trusted — which is exactly
+        # what happened here, DKIM-signed as the kernel domain, ending on the
+        # Spamhaus SBL. A credential carries the same meaning on every cluster.
+        #
+        # Dovecot is the SASL server: it already holds one credential per
+        # (user, app) for IMAP, so submission is another app rather than a second
+        # identity store. inet: because the two run in separate Pods and share no
+        # socket — see the auth service in the Dovecot manifests.
+        smtpd_sasl_auth_enable: "yes"
+        smtpd_sasl_type: "dovecot"
+        smtpd_sasl_path: "inet:dovecot-{{ .Values.env }}.{{ .Values.servicesNamespace }}.svc.cluster.local:12345"
+        # noanonymous, because an anonymous mechanism would make
+        # permit_sasl_authenticated grant relaying to anyone who asks for it.
+        smtpd_sasl_security_options: "noanonymous"
+        # The submission port announces AUTH; port 25 does not need to, but Postfix
+        # applies this process-wide and a receiving MX advertising AUTH is normal.
+        # What matters is that offering it is not accepting it: the restrictions
+        # below decide, not the announcement.
+        broken_sasl_auth_clients: "yes"
+        smtpd_client_restrictions: "permit_sasl_authenticated, permit_mynetworks, permit"
+        smtpd_sender_restrictions: "permit_sasl_authenticated, permit_mynetworks, reject_non_fqdn_sender, reject_unknown_sender_domain, permit"
+        # Never offer AUTH before TLS.
+        #
+        # Submission is published on the internet, so without this a password
+        # crosses in clear to anyone who asks for it — and the client cannot tell,
+        # because Postfix would advertise AUTH on a plaintext connection exactly
+        # as it does on an encrypted one. With it, AUTH does not appear in the
+        # EHLO response until STARTTLS has succeeded, so a client that cannot do
+        # TLS fails to authenticate instead of succeeding insecurely.
+        #
+        # Inbound mail on 25 is untouched: remote MTAs do not authenticate, and
+        # smtpd_tls_security_level stays "may" so a sender without TLS still
+        # delivers. This governs credentials, not mail.
+        smtpd_tls_auth_only: "yes"
+        # What a published submission port needs that an internal one does not.
+        #
+        # Failed logins get slower and connections are capped per client, so a
+        # credential-stuffing run costs the attacker time instead of costing us a
+        # reputation. anvil keeps the counters; the limits are per client address
+        # per anvil_rate_time_unit (60s by default), and are generous enough that
+        # a real mail client never meets them.
+        smtpd_client_auth_rate_limit: "10"
+        smtpd_client_connection_rate_limit: "30"
+        smtpd_error_sleep_time: "5s"
+        smtpd_soft_error_limit: "3"
+        smtpd_hard_error_limit: "10"
+        # Cap the number of forked processes. The default is 100, and a queue that
+        # deep forks 100 smtp clients at once on start — which is what exceeded the
+        # memory limit and crash-looped the container. This cluster sends
+        # notification mail, not campaigns; 20 concurrent deliveries is ample and
+        # makes the worst-case memory a property of the config rather than of
+        # however much mail happens to be queued.
+        default_process_limit: "20"
+        # Who may relay, and who is merely allowed to deliver to our own tenants.
+        #
+        # Rendered from .Values.trustedNetworks, which documents why the image's
+        # default is unusable once port 25 is published: the load balancer proxies
+        # inbound connections from the node network, which the default trusts, so
+        # every internet client could relay. This is the ONLY thing separating a
+        # tenant realm sending an invite from a spammer sending a campaign, because
+        # both arrive without credentials.
+        mynetworks: "{{ .Values.trustedNetworks }}"
+        # Stated explicitly rather than left to the default
+        #   permit_mynetworks permit_sasl_authenticated defer_unauth_destination
+        # for the last term. defer_unauth_destination answers an unauthorised relay
+        # attempt with 450 (try again later), which is correct for a temporary
+        # problem and wrong here: nothing about "you may not relay through me" is
+        # temporary, and a rejected spam run that is merely deferred comes back.
+        # reject_unauth_destination answers 554 and ends it.
+        #
+        # permit_sasl_authenticated comes FIRST, because it is the grant meant to
+        # outlive the others: it says the sender proved who it is, which is true
+        # on every cluster. permit_mynetworks behind it is the migration path for
+        # senders that do not authenticate yet, and the line this platform should
+        # eventually be able to delete.
+        #
+        # Whether relaying still accepts an unauthenticated in-cluster client.
+        #
+        # requireAuthentication: true removes permit_mynetworks, so the only way to
+        # relay to a domain this cluster does not host is to authenticate — and,
+        # with smtpd_tls_auth_only, to do so inside TLS. Trust then no longer
+        # depends on an address plan at all, which is the property that makes this
+        # portable: the open relay this stack started with came from exactly that
+        # dependency. Mail TO hosted domains is unaffected either way, because
+        # reject_unauth_destination permits authorised destinations.
+        #
+        # false keeps permit_mynetworks for senders that do not authenticate yet,
+        # and puts warn_if_reject in front of it. warn_if_reject turns the next
+        # restriction into a log line instead of a rejection, so every relay that
+        # WOULD be refused once this is true is logged as
+        #   reject_warning: RCPT from <client>: 554 5.7.1 ...: Relay access denied
+        # while still being delivered. That log is the migration list: when no
+        # in-cluster client appears in it, this can be switched on. Lines from the
+        # load balancer's address are internet clients being refused a relay, which
+        # happens regardless and can be ignored.
+        {{- if .Values.submission.requireAuthentication }}
+        smtpd_relay_restrictions: "permit_sasl_authenticated, reject_unauth_destination"
+        {{- else }}
+        smtpd_relay_restrictions: "permit_sasl_authenticated, warn_if_reject reject_unauth_destination, permit_mynetworks, reject_unauth_destination"
+        {{- end }}
         # Inbound tenant mail: hand every message for a registered tenant domain
         # to Dovecot over LMTP, which files it into /var/mail/<domain>/<user>.
         virtual_transport: "lmtp:[dovecot-{{ .Values.env }}.{{ .Values.servicesNamespace }}.svc.cluster.local]:24"
@@ -222,6 +370,25 @@ data:
     # Read once at start, unlike the texthash maps beside it, so a new tenant signs
     # only after Postfix restarts.
     extraEnv:
+      # The derived Pod CIDRs win over the value rendered above.
+      #
+      # An explicit env entry beats the envFrom ConfigMap the chart builds from
+      # config.postfix, so this overrides mynetworks whenever the operator has
+      # written it — and the operator derives it from the cluster's own Nodes,
+      # which is correct on a provider whose address plan nobody here has seen.
+      #
+      # optional: true is what makes the configured value a fallback rather than
+      # dead weight. A cluster whose CNI leaves spec.podCIDR unset (Calico with
+      # its own IPAM is the usual case) has no key to read, the variable stays
+      # unset, and trustedNetworks from values.yaml applies unchanged. Verified
+      # rather than assumed: an env entry whose optional source is absent does
+      # not suppress the envFrom value.
+      - name: POSTFIX_mynetworks
+        valueFrom:
+          configMapKeyRef:
+            name: postfix-kernel-virtual-mailbox-maps
+            key: mynetworks
+            optional: true
       - name: ALLOWED_SENDER_DOMAINS
         valueFrom:
           configMapKeyRef:
@@ -258,6 +425,11 @@ data:
             mountPath: /tenant-keys
             readOnly: true
     extraVolumes:
+      {{- if .Values.kernelDomain }}
+      - name: internal-headers
+        configMap:
+          name: postfix-{{ .Values.env }}-internal-headers
+      {{- end }}
       # The DKIM signing keys.
       #
       # The image generates a key per domain at start and writes it under
@@ -287,6 +459,11 @@ data:
           secretName: postfix-dkim-tenants
           defaultMode: 0400
     extraVolumeMounts:
+      {{- if .Values.kernelDomain }}
+      - name: internal-headers
+        mountPath: /etc/postfix/gentian
+        readOnly: true
+      {{- end }}
       - name: dkim-keys
         mountPath: /etc/opendkim/keys
       # Postfix warns about this mount on every start:
@@ -328,7 +505,61 @@ data:
     resources:
       limits:
         cpu: 500m
-        memory: 256Mi
+        # 256Mi was not enough to survive a full queue. Postfix forks one smtp
+        # process per concurrent delivery, so the memory a restart needs is set by
+        # how much mail is queued, not by how much it normally sends: a queue of
+        # ~100 messages OOM-killed the container ~17s into every start, which
+        # crash-looped it and took Keycloak invites down with it
+        # ("No route to host" to postfix:587, because no Pod was ever ready).
+        # Raised together with default_process_limit below, which is what actually
+        # bounds the fork count.
+        memory: 512Mi
       requests:
         cpu: 50m
         memory: 64Mi
+{{- if .Values.kernelDomain }}
+---
+# Header rewrites that keep in-cluster hostnames out of mail leaving the cluster.
+#
+# Mail submitted from inside the cluster carried two traces of it. Keycloak's
+# Message-ID ended in its Pod's DNS name,
+#   <2138900765.11.1789634446988@gentian-idp-keycloak-keycloakx-0.…svc.cluster.local>
+# because Jakarta Mail builds it from the local hostname, and the Received header
+# Postfix adds named the same host and its Pod address. A Message-ID whose domain
+# does not resolve is a spam signal in its own right, and both disclose the
+# internal layout to every recipient. Neither mattered until invitations started
+# going to Microsoft-hosted tenants, where they were accepted and then filtered.
+#
+# The two rules sit in DIFFERENT lookups, and that is load-bearing:
+#
+# * Message-ID is covered by the DKIM signature (it is in h=), so it must be
+#   rewritten BEFORE OpenDKIM signs. header_checks runs in cleanup(8), ahead of
+#   the milter. Rewriting it later would break every signature.
+#
+# * Received is not signed, but Postfix does not pass the Received header it
+#   generates itself through header_checks at all. smtp_header_checks runs in
+#   smtp(8) at delivery, after signing, which is also the only place it can
+#   safely be dropped. Mail delivered locally over LMTP keeps it, which only our
+#   own users see.
+#
+# Postfix pcre flags TOGGLE their defaults, and both case-insensitivity and
+# dot-matches-newline are on by default — so neither rule carries a flag. A
+# trailing /s turned DOTALL off and silently stopped the Received rule matching
+# across the header's folded lines.
+#
+# Verified end to end in boky/postfix:5.1.0 with OpenDKIM signing: the rewritten
+# Message-ID verifies (and a tampered copy does not), and no .svc.cluster.local
+# name survives in the delivered headers.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: postfix-{{ .Values.env }}-internal-headers
+  namespace: {{ .Values.servicesNamespace }}
+  annotations:
+    argocd.argoproj.io/sync-wave: "-1"
+data:
+  header_checks.pcre: |
+    /^Message-ID:\s*<([^@>]+)@[^>]*\.svc\.cluster\.local>\s*$/ REPLACE Message-ID: <$1@{{ .Values.kernelDomain }}>
+  smtp_header_checks.pcre: |
+    /^Received:\s+from\s.*\.svc\.cluster\.local.*\bby {{ .Values.egressHost | default (printf "mail.%s" .Values.kernelDomain) | regexQuoteMeta }} \(Postfix\)/ IGNORE
+{{- end }}

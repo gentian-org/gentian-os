@@ -24,7 +24,11 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/kubernetes/scheme"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 	"github.com/gentian-org/gentian-os/internal/controller"
@@ -146,8 +150,10 @@ func TestMail_Selfhosted_ProvisionsTenantInSharedInfra(t *testing.T) {
 		return testClient.Get(context.Background(),
 			types.NamespacedName{Name: "smtp-credentials-mailself", Namespace: "tenant-mailself"}, smtpSecret) == nil
 	})
-	if string(smtpSecret.Data["host"]) != "postfix-dev.platform-kernel.svc.cluster.local" {
-		t.Errorf("expected SMTP host=postfix-dev.platform-kernel.svc.cluster.local, got %q",
+	// The public name, not the in-cluster Service: apps STARTTLS before they can
+	// authenticate, and the certificate covers mail.<kernelDomain> only.
+	if string(smtpSecret.Data["host"]) != "mail.platform.example.test" {
+		t.Errorf("expected SMTP host=mail.platform.example.test, got %q",
 			string(smtpSecret.Data["host"]))
 	}
 	if string(smtpSecret.Data["username"]) != "smtp-mailself" {
@@ -625,4 +631,143 @@ func TestDovecotDeployed(t *testing.T) {
 			t.Errorf("MailServiceMode=%q → %v, want %v", tc.mode, got, tc.want)
 		}
 	}
+}
+
+// The mail-mode default.
+//
+// selfhosted unconditionally, before — which means "register in the shared
+// kernel Postfix and Dovecot" on a cluster whose mail.serviceMode is external
+// and has neither. Every tenant on a relaying cluster therefore defaulted to a
+// stack that does not exist, and the operator published an MX naming a host
+// with no address to go with it.
+//
+// The pairing is the assertion: the default has to follow the same predicate
+// the Dovecot gate uses, because it is answering the same question — does this
+// cluster run kernel mail — and two answers that can disagree is how the
+// original bug was possible at all.
+func TestDefaultTenantMailMode(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		mode string
+		want gentianov1alpha1.MailMode
+	}{
+		{"kernel", gentianov1alpha1.MailModeSelfhosted},
+		// The relaying cluster: Postfix is deployed for outbound, Dovecot is
+		// not. transport-only is exactly that shape — a registered domain and
+		// SMTP credentials, no mailbox, and no MX claiming inbound.
+		{"external", gentianov1alpha1.MailModeTransportOnly},
+		// Unset is external, same as the Dovecot gate: defaulting to a stack
+		// that may not exist is the failure this whole change is about.
+		{"", gentianov1alpha1.MailModeTransportOnly},
+		// A typo must not provision kernel mail.
+		{"Kernel", gentianov1alpha1.MailModeTransportOnly},
+	} {
+		r := &controller.TenantReconciler{MailServiceMode: tc.mode}
+		if got := r.DefaultTenantMailModeForTest(context.Background()); got != tc.want {
+			t.Errorf("MailServiceMode=%q → %v, want %v", tc.mode, got, tc.want)
+		}
+		// The two predicates must never disagree.
+		if wantSelfhosted := r.DovecotDeployedForTest(context.Background()); wantSelfhosted !=
+			(tc.want == gentianov1alpha1.MailModeSelfhosted) {
+			t.Errorf("MailServiceMode=%q: dovecotDeployed=%v disagrees with default %v",
+				tc.mode, wantSelfhosted, tc.want)
+		}
+	}
+}
+
+// The mail-DNS gate, and the cleanup behind it.
+//
+// syncTenantMailDNS publishes MX, SPF, DMARC and DKIM into a PUBLIC zone. Its
+// doc comment always said it was "skipped entirely when the tenant is not on
+// kernel mail"; nothing enforced that, and it ran for any tenant whose own
+// spec said selfhosted -- a statement about what the tenant wants, not about
+// what the cluster runs. On mail.serviceMode external there is no Dovecot and
+// no mail.<kernelDomain>, so the published MX named a host with no address.
+//
+// On a tunnel cluster it also took the tenant's website down: the records land
+// on the same name as the tenant's web CNAME, RFC 1034 forbids a CNAME beside
+// another type, and external-dns discards the CNAME.
+//
+// Both directions are asserted, and the removal matters as much as the
+// withholding: a cluster that switches to external keeps serving whatever was
+// published under the old answer until something withdraws it.
+func TestSyncTenantMailDNS_GatedOnClusterMailMode(t *testing.T) {
+	t.Parallel()
+
+	newTenant := func() *gentianov1alpha1.Tenant {
+		return &gentianov1alpha1.Tenant{
+			ObjectMeta: metav1.ObjectMeta{Name: "dnsgate"},
+			Spec: gentianov1alpha1.TenantSpec{
+				DisplayName: "DNS Gate Co",
+				// Explicitly selfhosted: the point is that the CLUSTER's answer
+				// governs the zone, not the tenant's wish.
+				Mail: &gentianov1alpha1.TenantMail{Mode: gentianov1alpha1.MailModeSelfhosted},
+			},
+			Status: gentianov1alpha1.TenantStatus{
+				Mail: &gentianov1alpha1.TenantMailStatus{
+					SPFRecord:   "v=spf1 mx ~all",
+					DMARCRecord: "v=DMARC1; p=none",
+				},
+			},
+		}
+	}
+
+	endpoint := func() *unstructured.Unstructured {
+		o := &unstructured.Unstructured{}
+		o.SetAPIVersion("externaldns.k8s.io/v1alpha1")
+		o.SetKind("DNSEndpoint")
+		o.SetName("mail-dnsgate")
+		o.SetNamespace("platform-kernel")
+		return o
+	}
+
+	get := func(c client.Client) error {
+		o := &unstructured.Unstructured{}
+		o.SetAPIVersion("externaldns.k8s.io/v1alpha1")
+		o.SetKind("DNSEndpoint")
+		return c.Get(context.Background(), types.NamespacedName{
+			Name: "mail-dnsgate", Namespace: "platform-kernel"}, o)
+	}
+
+	t.Run("kernel mail publishes", func(t *testing.T) {
+		c := fake.NewClientBuilder().WithScheme(scheme.Scheme).Build()
+		r := &controller.TenantReconciler{
+			Client: c, KernelDomain: "example.org", MailServiceMode: "kernel",
+		}
+		if err := r.SyncTenantMailDNSForTest(context.Background(), newTenant()); err != nil {
+			t.Fatalf("sync: %v", err)
+		}
+		if err := get(c); err != nil {
+			t.Errorf("kernel mail: expected a DNSEndpoint, got %v", err)
+		}
+	})
+
+	t.Run("external mail publishes nothing", func(t *testing.T) {
+		c := fake.NewClientBuilder().WithScheme(scheme.Scheme).Build()
+		r := &controller.TenantReconciler{
+			Client: c, KernelDomain: "example.org", MailServiceMode: "external",
+		}
+		if err := r.SyncTenantMailDNSForTest(context.Background(), newTenant()); err != nil {
+			t.Fatalf("sync: %v", err)
+		}
+		if err := get(c); err == nil {
+			t.Error("external mail: a DNSEndpoint was published; an MX here names a host with no address")
+		}
+	})
+
+	t.Run("external mail removes what kernel mail left", func(t *testing.T) {
+		c := fake.NewClientBuilder().WithScheme(scheme.Scheme).WithObjects(endpoint()).Build()
+		if err := get(c); err != nil {
+			t.Fatalf("precondition: seeded endpoint missing: %v", err)
+		}
+		r := &controller.TenantReconciler{
+			Client: c, KernelDomain: "example.org", MailServiceMode: "external",
+		}
+		if err := r.SyncTenantMailDNSForTest(context.Background(), newTenant()); err != nil {
+			t.Fatalf("sync: %v", err)
+		}
+		if err := get(c); err == nil {
+			t.Error("stale DNSEndpoint survived; the tenant's web CNAME stays discarded until it goes")
+		}
+	})
 }
