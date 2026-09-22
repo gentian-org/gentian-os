@@ -88,7 +88,8 @@ source "${SCRIPT_DIR}/scripts/lib/driver.sh"
 # operator-settable version selects an untested combination. The namespace is a
 # constant — references to it are hardcoded across the repo, so presenting it as
 # a knob would invite someone to turn it.
-export CROSSPLANE_NAMESPACE=crossplane-system
+# v4's namespace; a v5 step overrides it from the layout (ns_kernel provisioning).
+export CROSSPLANE_NAMESPACE="${CROSSPLANE_NAMESPACE:-crossplane-system}"
 CROSSPLANE_VERSION="$(gentian_pin crossplane chart)"
 CROSSPLANE_HELM_REPO="$(gentian_pin crossplane repo)"
 export CROSSPLANE_VERSION CROSSPLANE_HELM_REPO
