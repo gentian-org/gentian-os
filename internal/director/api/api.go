@@ -71,6 +71,11 @@ type Config struct {
 	// caller by signature, not by token: the listener is not a user and holds
 	// no identity a token could carry. Nil leaves the endpoint unregistered.
 	Events http.Handler
+	// Logout receives the zone clients' back-channel logouts and records the
+	// ended session for every shim replica (networking.md §4). Authenticated
+	// by the issuer's signature on the logout token, not by a bearer. Nil
+	// leaves the endpoint unregistered.
+	Logout http.Handler
 	// Cluster is the id of the one cluster this director serves: the object
 	// cluster verbs are checked against, and the only {c} the routes accept.
 	Cluster string
@@ -222,6 +227,9 @@ func (s *Server) routes() {
 
 	if s.cfg.Events != nil {
 		s.mux.Handle("POST /v1/events/keycloak", s.cfg.Events)
+	}
+	if s.cfg.Logout != nil {
+		s.mux.Handle("POST /v1/logout/keycloak", s.cfg.Logout)
 	}
 
 	// Reads are authorised by can_view, never by the write relation: whoever

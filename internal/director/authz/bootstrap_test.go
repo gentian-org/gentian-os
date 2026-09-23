@@ -23,6 +23,7 @@ import (
 	"log/slog"
 	"os"
 	"testing"
+	"time"
 )
 
 // These run against a real OpenFGA: make test-director-contract.
@@ -245,5 +246,53 @@ func TestTenantsAreAttachedToTheirClusterFromGit(t *testing.T) {
 	}
 	if ok, _ := c.Check(ctx, "test", "user:root", "can_administer", Tenant("platform")); !ok {
 		t.Error("the platform tenant is always operated by its cluster")
+	}
+}
+
+func TestARevokedSessionIsDeniedUntilSwept(t *testing.T) {
+	o := requireOpenFGA(t)
+	ctx := context.Background()
+	store, model, err := Bootstrap(ctx, o)
+	if err != nil {
+		t.Fatal(err)
+	}
+	o.StoreID, o.ModelID = store, model
+	c, err := NewOpenFGA(o)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := c.RevokeSession(ctx, "u-1", "sess-1"); err != nil {
+		t.Fatal(err)
+	}
+	// Idempotent: Keycloak retries, and a second delivery must not fail.
+	if err := c.RevokeSession(ctx, "u-1", "sess-1"); err != nil {
+		t.Fatal(err)
+	}
+	if ok, err := c.Check(ctx, "test", "user:u-1", "revoked", "session:sess-1"); err != nil || !ok {
+		t.Fatalf("revoked = %v, %v; want true", ok, err)
+	}
+	// The changelog names the session type, which is what the shim polls.
+	changes, _, err := c.Changes(ctx, "session", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var seen bool
+	for _, ch := range changes {
+		if ch.Write && ch.Tuple.Object == "session:sess-1" {
+			seen = true
+		}
+	}
+	if !seen {
+		t.Fatalf("the revocation is not in the changelog: %+v", changes)
+	}
+	// Younger than the TTL: kept. Older: retired.
+	if n, err := c.SweepRevocations(ctx, time.Now().Add(-time.Hour)); err != nil || n != 0 {
+		t.Fatalf("sweep retired %d, %v; want 0", n, err)
+	}
+	if n, err := c.SweepRevocations(ctx, time.Now().Add(time.Hour)); err != nil || n != 1 {
+		t.Fatalf("sweep retired %d, %v; want 1", n, err)
+	}
+	if ok, _ := c.Check(ctx, "test", "user:u-1", "revoked", "session:sess-1"); ok {
+		t.Fatal("the session is still revoked after the sweep")
 	}
 }

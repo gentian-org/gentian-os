@@ -170,6 +170,9 @@ type Claims struct {
 	Email    string
 	Key      *rsa.PrivateKey // sign with a key the issuer does not publish
 	KeyID    string
+	// Extra claims, written over the defaults: how a test mints something
+	// other than an access token, such as a back-channel logout token.
+	Extra map[string]any
 }
 
 // Token mints a signed token.
@@ -204,6 +207,9 @@ func (is *Issuer) Token(t testing.TB, c Claims) string {
 		Expiry: jwt.NewNumericDate(exp), IssuedAt: jwt.NewNumericDate(time.Now().Add(-time.Second)),
 	}
 	extra := map[string]any{"typ": typ, "sid": "sid-" + c.Subject, "azp": "gentian-console", "name": c.Name, "email": c.Email}
+	for k, v := range c.Extra {
+		extra[k] = v
+	}
 	raw, err := jwt.Signed(signer).Claims(std).Claims(extra).Serialize()
 	if err != nil {
 		t.Fatal(err)

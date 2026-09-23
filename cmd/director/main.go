@@ -37,6 +37,7 @@ import (
 	"github.com/gentian-org/gentian-os/internal/director/entitlement"
 	"github.com/gentian-org/gentian-os/internal/director/gitops"
 	"github.com/gentian-org/gentian-os/internal/director/membership"
+	"github.com/gentian-org/gentian-os/internal/director/session"
 )
 
 func main() {
@@ -198,8 +199,19 @@ func run(log *slog.Logger) error {
 		}
 		store = &api.StoreConfig{Verifier: sv, Applier: &entitlement.Applier{Repo: repo, Store: checker}}
 	}
+	// Where every zone client's back-channel logout arrives. What is kept
+	// is bounded by the longest a token of an ended session could still be
+	// presented; the sweep retires the rest.
+	revocationTTL, err := time.ParseDuration(envOr("DIRECTOR_REVOCATION_TTL", "12h"))
+	if err != nil {
+		return fmt.Errorf("DIRECTOR_REVOCATION_TTL: %w", err)
+	}
+	revoker, err := session.New(verifier, checker, revocationTTL, log)
+	if err != nil {
+		return err
+	}
 	handler, err := api.New(api.Config{Authn: verifier, Authz: checker, Repo: repo, Log: log,
-		EnforceEntitlements: enforce, Events: events, Store: store, Cluster: cluster})
+		EnforceEntitlements: enforce, Events: events, Logout: revoker, Store: store, Cluster: cluster})
 	if err != nil {
 		return err
 	}
@@ -218,6 +230,7 @@ func run(log *slog.Logger) error {
 	defer stop()
 	done := make(chan error, 1)
 	go func() { done <- srv.ListenAndServe() }()
+	go revoker.Run(ctx, 5*time.Minute)
 	log.Info("director listening", "addr", srv.Addr, "cluster", cluster, "issuer", issuerBase, "model", fgaModel)
 
 	select {
