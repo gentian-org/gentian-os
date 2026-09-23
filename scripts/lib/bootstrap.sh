@@ -673,7 +673,7 @@ create_crossplane_secrets() {
         # token from its own init may still have no address, and then every
         # read fails with nothing to say for itself. Both are required.
         if [[ -z "${BAO_TOKEN:-}" || -z "${BAO_ADDR:-}" ]]; then
-            OPENBAO_NAMESPACE="${OPENBAO_NAMESPACE:-$(ns_kernel secrets 2>/dev/null || echo openbao)}" \
+            OPENBAO_NAMESPACE="${OPENBAO_NAMESPACE:-$(ns_kernel secrets)}" \
                 resolve_openbao_access >/dev/null 2>&1 || true
         fi
         if [[ -z "${BAO_TOKEN:-}" ]]; then

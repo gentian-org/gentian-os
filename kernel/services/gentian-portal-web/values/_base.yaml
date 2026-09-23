@@ -45,8 +45,8 @@ api:
     # Credentials tab cannot issue one, so the installer waits out its full
     # thirty minutes for a sign-in that already happened and had nowhere to be
     # recorded.
-    CREDENTIAL_MANAGER_URL: http://gentian-os-credentials.gentian-system.svc.cluster.local:9444
-    APP_LIFECYCLE_URL: http://gentian-os-lifecycle.gentian-system.svc.cluster.local:8082
+    CREDENTIAL_MANAGER_URL: http://gentian-os-credentials.kernel-control.svc.cluster.local:9444
+    APP_LIFECYCLE_URL: http://gentian-os-lifecycle.kernel-control.svc.cluster.local:8082
 
 web:
   image:
@@ -74,14 +74,14 @@ web:
 gateway:
   enabled: false
   parentGatewayName: kernel-public-gateway
-  parentGatewayNamespace: platform-kernel
+  parentGatewayNamespace: kernel-edge
   host: portal
 
 existingSecret:
   name: gentian-portal-secrets
 
 openfga:
-  apiUrl: http://gentian-openfga.platform-kernel.svc.cluster.local:8080
+  apiUrl: http://gentian-openfga.kernel-authorization.svc.cluster.local:8080
   storeId: ""
   authzenEnabled: true
 

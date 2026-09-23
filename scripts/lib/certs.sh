@@ -248,7 +248,7 @@ gentian_dns_credential_present() {
     # credential, would be "no credential" and the wildcard would be skipped.
     # Reaching for the token here makes the answer about the cluster again.
     if [[ -z "${BAO_TOKEN:-}" ]]; then
-        OPENBAO_NAMESPACE="${OPENBAO_NAMESPACE:-$(ns_kernel secrets 2>/dev/null || echo openbao)}" \
+        OPENBAO_NAMESPACE="${OPENBAO_NAMESPACE:-$(ns_kernel secrets)}" \
             resolve_openbao_access >/dev/null 2>&1 || return 1
     fi
     [[ -n "${BAO_TOKEN:-}" ]] || return 1

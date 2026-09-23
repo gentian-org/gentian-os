@@ -8,21 +8,30 @@ set -euo pipefail
 # =============================================================================
 # Where each thing lives.
 #
-# The v4 layout put the portal, Keycloak, OpenFGA, the wildcard certificate and
-# the bootstrap Job in one namespace, and this file said so about twenty times.
-# Under a layout that gives each function its own, those are five different
-# answers, and a literal is right for at most one of them.
+# This file used to name one namespace for the portal, Keycloak, OpenFGA, the
+# wildcard certificate and the bootstrap Job alike, about twenty times over.
+# Each of those is a different function, and the layout gives each its own, so
+# each is asked for separately.
 #
-# Defaults are the v4 names, so a v4 install behaves exactly as before; the
-# step that runs this under another layout exports what it resolved.
+# The step that runs this exports what the layout resolved. Answering from the
+# layout directly would be the same thing said twice, and a default would be a
+# third place for it to be wrong.
 # =============================================================================
-_pl_portal_ns()   { echo "${PORTAL_NAMESPACE:-platform-kernel}"; }
-_pl_identity_ns() { echo "${IDENTITY_NAMESPACE:-platform-kernel}"; }
-_pl_authz_ns()    { echo "${AUTHZ_NAMESPACE:-platform-kernel}"; }
-_pl_gitops_ns()   { echo "${GITOPS_NAMESPACE:-argocd}"; }
-_pl_edge_ns()     { echo "${EDGE_NAMESPACE:-platform-kernel}"; }
-_pl_control_ns()  { echo "${GENTIAN_SYSTEM_NAMESPACE:-gentian-system}"; }
-_pl_observability_ns() { echo "${OBSERVABILITY_NAMESPACE:-platform-kernel}"; }
+_pl_ns() {
+    local var="$1" fn="$2"
+    if [[ -n "${!var:-}" ]]; then
+        echo "${!var}"
+        return 0
+    fi
+    ns_kernel "${fn}"
+}
+_pl_portal_ns()        { _pl_ns PORTAL_NAMESPACE edge; }
+_pl_identity_ns()      { _pl_ns IDENTITY_NAMESPACE authentication; }
+_pl_authz_ns()         { _pl_ns AUTHZ_NAMESPACE authorization; }
+_pl_gitops_ns()        { _pl_ns GITOPS_NAMESPACE gitops; }
+_pl_edge_ns()          { _pl_ns EDGE_NAMESPACE edge; }
+_pl_control_ns()       { _pl_ns GENTIAN_SYSTEM_NAMESPACE control; }
+_pl_observability_ns() { _pl_ns OBSERVABILITY_NAMESPACE observability; }
 
 _platform_admin_derive_password() {
     if [[ "${SECRET_MODE:-derived}" == "random" ]]; then

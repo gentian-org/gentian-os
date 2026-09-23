@@ -232,6 +232,22 @@ func (r *TenantReconciler) ensureSAMLClientJob(ctx context.Context, tenant *gent
 func (r *TenantReconciler) deleteIdentity(ctx context.Context, tenant *gentianov1alpha1.Tenant) error {
 	realmName := keycloakRealmName(tenant)
 
+	// The kernel realm is never a tenant's to disable or delete, however the
+	// tenant was written. The platform is itself a tenant whose realm is the
+	// kernel one (AD-10), and a tenant can also be pointed at it by hand
+	// through isolation.keycloakRealm -- in either case deleting that tenant
+	// would run a realm-disable Job against the realm every administrator
+	// signs in through, and lock all of them out of the cluster at once.
+	//
+	// The realm is adopted, never created by the tenant that adopts it, so
+	// there is nothing here for its deletion to undo.
+	if r.KernelRealm != "" && realmName == r.KernelRealm {
+		ctrl.LoggerFrom(ctx).Info(
+			"tenant adopts the kernel realm; leaving it alone on deletion",
+			"tenant", tenant.Name, "realm", realmName)
+		return nil
+	}
+
 	var jobName string
 	var makeJob func() *batchv1.Job
 	if tenant.Spec.DeletionPolicy == gentianov1alpha1.DeletionPolicyDelete {

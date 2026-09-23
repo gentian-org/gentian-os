@@ -449,7 +449,7 @@ configure_argocd_oidc() {
     # layout, and the realm silently disagreed with every other caller here,
     # which honours KERNEL_REALM -- a cluster whose realm is not called kernel
     # got an issuer nothing had ever issued a token for.
-    local ns="${GITOPS_NAMESPACE:-argocd}"
+    local ns="${GITOPS_NAMESPACE:-$(ns_kernel gitops)}"
     local realm="${KERNEL_REALM:-kernel}"
     info "Configuring ArgoCD OIDC (Keycloak integration)..."
 

@@ -83,23 +83,14 @@ spec:
         # tile pointing at a host that resolves to nothing is worse than no
         # tile, so each console is named only where the kernel serves it.
         capabilities: {{ printf "gitops,cluster-view,identity%s" (ternary ",llm" "" (eq (toString .Values.llmEnabled) "true")) | quote }}
+        {{- with .Values.portal.tag }}
         api:
-          env:
-            # The operator's two APIs the console proxies to. Both answer on
-            # the cluster network in the control namespace.
-            CREDENTIAL_MANAGER_URL: http://gentian-os-credentials.{{ include "ns" (list . "control") }}.svc.cluster.local:9444
-            APP_LIFECYCLE_URL: http://gentian-os-lifecycle.{{ include "ns" (list . "control") }}.svc.cluster.local:8082
-          {{- with .Values.portal.tag }}
           image:
             tag: {{ . | quote }}
-          {{- end }}
-        {{- with .Values.portal.tag }}
         web:
           image:
             tag: {{ . | quote }}
         {{- end }}
-        openfga:
-          apiUrl: http://gentian-openfga.{{ include "ns" (list . "authorization") }}.svc.cluster.local:8080
         # The director, for what only it can decide: which of the cluster's own
         # consoles this person may open. The console forwards their token and
         # adds nothing of its own, so the answer is about them rather than
