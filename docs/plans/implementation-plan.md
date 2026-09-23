@@ -256,7 +256,28 @@ GUI over the director's API. When either grows a screen that seems to need a
 credential, that is the signal that an endpoint is missing from the director,
 not that the UI needs the credential.
 
-### S7A.7 A read-only view of the authorization state
+### S7A.7 The zone cookie does not reach the applications
+
+The one place the edge session is weaker than a session per application, and
+it is fixable.
+
+The zone's cookie is scoped to `.<kernel>` so that one sign-in covers every
+host in the zone. That means the browser sends it to each of those hosts, and
+nothing currently removes it before the request reaches the application behind
+the route. Neither Envoy's OIDC filter nor our routes strip it. So an
+application that is compromised, or simply careless with what it logs, sees a
+credential that is good for every other application in the zone — which is
+exactly the isolation a per-application cookie would have given.
+
+The edge authorization service already rewrites headers on every allowed
+request: it strips `authorization` unless the route forwards the token, and
+adds the identity headers. It should rewrite `cookie` in the same pass,
+removing the zone's own cookies and leaving whatever the application set for
+itself. Nothing behind the edge has any use for them.
+
+Do this before any third-party application is routed.
+
+### S7A.8 A read-only view of the authorization state
 
 Part of the same console, worth naming separately because it replaces the idea
 of exposing OpenFGA's own playground. OpenFGA's read APIs answer "which groups
@@ -265,7 +286,7 @@ renders that; anything a person wants to change is changed on the screens
 above, through the director, into git. No development-only UI is exposed and
 no second write path exists.
 
-### S7A.8 The kernel UIs are actually usable
+### S7A.9 The kernel UIs are actually usable
 
 - **Argo CD** showed an empty list to a full administrator. The groups claim
   carries the full path, `/gentian:platform:admin`, because OpenBao's roles
@@ -291,7 +312,7 @@ no second write path exists.
   people (S7A.4), so it is reached by more than the platform administrator and
   its relation has to allow for that.
 
-### S7A.9 The installer does what it claims
+### S7A.10 The installer does what it claims
 
 Recorded in WP-10. Two cold-start races are fixed. These remain, in priority
 order:
