@@ -205,3 +205,35 @@ func TestATableRefusesWhatItCannotDecide(t *testing.T) {
 		t.Fatal("hosts match case-insensitively and without the port")
 	}
 }
+
+// Signing out has to survive its own success. Keycloak's back-channel logout
+// records the session as revoked before the browser gets back to the path
+// that clears the Gateway's cookies, so a revoked session must still reach
+// /oauth2/logout. The callback is the same shape from the other side: it
+// completes a sign-in that has no session yet.
+func TestTheEdgesOwnPathsAreNotOursToRefuse(t *testing.T) {
+	// A store that allows nothing and a revoked session: neither may matter.
+	store := &fakeStore{allow: map[string]bool{"user:root|revoked|session:s1": true}}
+	d := decider(store)
+	for _, path := range []string{"/oauth2/logout", "/oauth2/callback"} {
+		dec := d.Decide(context.Background(), Request{
+			Host: "console.k.example", Path: path,
+			Cookies: map[string]string{"at": "root-token"},
+		})
+		if !dec.Allow {
+			t.Errorf("%s was refused: %s", path, dec.Reason)
+		}
+		if dec.Headers[HeaderSubject] != "" {
+			t.Errorf("%s was given an identity this service did not establish", path)
+		}
+	}
+	// The same session on an ordinary path is still refused, or the exception
+	// would be a hole rather than a door.
+	dec := d.Decide(context.Background(), Request{
+		Host: "console.k.example", Path: "/desktop",
+		Cookies: map[string]string{"at": "root-token"},
+	})
+	if dec.Allow {
+		t.Error("a revoked session reached the app itself")
+	}
+}

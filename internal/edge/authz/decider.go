@@ -126,6 +126,10 @@ func (d *Decider) Evict() int { return d.cache.evictAll() }
 // Identity headers the backend receives. The gateway strips whatever the
 // client sent under these names by overriding them, so the app may trust
 // one at all (networking.md §2, L1').
+// edgeOAuth2Prefix is where Envoy Gateway's OIDC filter answers: the
+// callback that completes a sign-in and the path that ends a session.
+const edgeOAuth2Prefix = "/oauth2/"
+
 const (
 	HeaderSubject = "x-gentian-subject"
 	HeaderRealm   = "x-gentian-realm"
@@ -143,6 +147,17 @@ func (d *Decider) Decide(ctx context.Context, req Request) Decision {
 	route := d.Table().Match(req.Host)
 	if route == nil {
 		return deny(http.StatusForbidden, "no route class for host "+req.Host)
+	}
+	// The edge's own endpoints are not the app's, and this service must not
+	// have an opinion about them. /oauth2/callback finishes a sign-in that by
+	// definition has no session yet, and /oauth2/logout ends one that may
+	// already be refused here -- which is how signing out broke: Keycloak's
+	// back-channel logout recorded the session as revoked, so the redirect
+	// back to /oauth2/logout was answered 403 by this service and the Gateway
+	// never got to drop its cookies. A revoked session must still be able to
+	// reach the path that clears it.
+	if strings.HasPrefix(req.Path, edgeOAuth2Prefix) {
+		return Decision{Allow: true, RemoveHeaders: append([]string{"authorization"}, identityHeaders...)}
 	}
 	raw := bearer(req.Authorization)
 	if raw == "" && route.AccessTokenCookie != "" {
