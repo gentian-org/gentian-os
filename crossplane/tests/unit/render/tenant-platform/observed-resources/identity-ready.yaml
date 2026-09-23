@@ -1,0 +1,79 @@
+# Prerequisites marked Ready so function-sequencer emits the full tenant graph.
+---
+apiVersion: kubernetes.crossplane.io/v1alpha2
+kind: Object
+metadata:
+  name: platform-namespace
+  annotations:
+    crossplane.io/composition-resource-name: namespace
+status:
+  conditions:
+  - type: Ready
+    status: "True"
+  - type: Synced
+    status: "True"
+---
+apiVersion: kubernetes.crossplane.io/v1alpha2
+kind: Object
+metadata:
+  name: platform-limitrange
+  annotations:
+    crossplane.io/composition-resource-name: limitrange
+status:
+  conditions:
+  - type: Ready
+    status: "True"
+  - type: Synced
+    status: "True"
+---
+apiVersion: kubernetes.crossplane.io/v1alpha2
+kind: Object
+metadata:
+  name: platform-networkpolicy
+  annotations:
+    crossplane.io/composition-resource-name: networkpolicy
+status:
+  conditions:
+  - type: Ready
+    status: "True"
+  - type: Synced
+    status: "True"
+---
+apiVersion: vault.vault.upbound.io/v1alpha1
+kind: Policy
+metadata:
+  name: platform-tenant-policy
+  annotations:
+    crossplane.io/composition-resource-name: vault-policy
+status:
+  conditions:
+  - type: Ready
+    status: "True"
+  - type: Synced
+    status: "True"
+---
+apiVersion: kubernetes.crossplane.io/v1alpha2
+kind: Object
+metadata:
+  name: platform-job-keycloak-realm-platform
+  annotations:
+    crossplane.io/composition-resource-name: job-keycloak-realm-platform
+status:
+  conditions:
+  - type: Ready
+    status: "True"
+  - type: Synced
+    status: "True"
+---
+apiVersion: kubernetes.crossplane.io/v1alpha2
+kind: Object
+metadata:
+  name: platform-job-keycloak-admin-platform
+  annotations:
+    crossplane.io/composition-resource-name: job-keycloak-admin-platform
+status:
+  conditions:
+  - type: Ready
+    status: "True"
+  - type: Synced
+    status: "True"

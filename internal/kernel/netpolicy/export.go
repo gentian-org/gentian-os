@@ -22,6 +22,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/intstr"
 
+	"github.com/gentian-org/gentian-os/internal/layout"
 	"github.com/gentian-org/gentian-os/internal/meta"
 )
 
@@ -48,8 +49,9 @@ func ExportJobNetworkPolicy(tenantName, nsName string, cfg Config) *networkingv1
 			}},
 			PolicyTypes: []networkingv1.PolicyType{networkingv1.PolicyTypeEgress},
 			Egress: []networkingv1.NetworkPolicyEgressRule{
-				namespaceEgress(cfg.InfraNamespace),
-				namespaceEgress(meta.KernelNamespace),
+				namespaceEgress(layout.System("postgresql")),
+				namespaceEgress(layout.System("mariadb")),
+				namespaceEgress(layout.System("s3")),
 				// Internet, because the encrypt step installs age via apk and
 				// a tenant-namespace restore fetches the MinIO client — both
 				// at runtime, from public endpoints. Confined to export pods,

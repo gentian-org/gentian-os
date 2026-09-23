@@ -271,7 +271,7 @@ func makeTenantSMTPJob(tenantName, realmName, kernelMailHost string) *batchv1.Jo
 	return &batchv1.Job{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      tenantSMTPJobName(tenantName),
-			Namespace: kernelNamespace,
+			Namespace: identityNamespace,
 			Labels: map[string]string{
 				tenantLabel:                         tenantName,
 				managedByLabel:                      managedByValue,
@@ -313,7 +313,7 @@ func smtpCredentialsUsable(data map[string][]byte) bool {
 
 func (r *TenantReconciler) clusterKeycloakSMTPCredentialsAvailable(ctx context.Context) bool {
 	secret := &corev1.Secret{}
-	if err := r.Get(ctx, types.NamespacedName{Name: keycloakSMTPCredentialsSecret, Namespace: kernelNamespace}, secret); err != nil {
+	if err := r.Get(ctx, types.NamespacedName{Name: keycloakSMTPCredentialsSecret, Namespace: identityNamespace}, secret); err != nil {
 		return false
 	}
 	return smtpCredentialsUsable(secret.Data)
@@ -337,7 +337,7 @@ func (r *TenantReconciler) ensureTenantSMTPJob(ctx context.Context, tenant *gent
 		log.FromContext(ctx).V(1).Info(
 			"realm SMTP left unconfigured: the cluster has no usable SMTP credential",
 			"tenant", tenant.Name,
-			"secret", fmt.Sprintf("%s/%s", kernelNamespace, keycloakSMTPCredentialsSecret),
+			"secret", fmt.Sprintf("%s/%s", identityNamespace, keycloakSMTPCredentialsSecret),
 			"remedy", "supply the smtp-relay credential (Admin Console -> Credentials)")
 		return true, nil
 	}
@@ -369,7 +369,7 @@ func (r *TenantReconciler) replaceOutdatedTenantSMTPJob(ctx context.Context, ten
 // mechanism, named so the next Job can use it instead of growing a third copy.
 func (r *TenantReconciler) replaceOutdatedJob(ctx context.Context, jobName, tenantName, labelKey, want string) error {
 	job := &batchv1.Job{}
-	err := r.Get(ctx, types.NamespacedName{Name: jobName, Namespace: kernelNamespace}, job)
+	err := r.Get(ctx, types.NamespacedName{Name: jobName, Namespace: identityNamespace}, job)
 	if err != nil {
 		// Absent is the normal path; waitForProvisioningJob creates it.
 		return client.IgnoreNotFound(err)

@@ -96,7 +96,7 @@ func (r *TenantReconciler) syncTenantMailDNS(ctx context.Context, tenant *gentia
 	if domain == "" || tenant.Status.Mail == nil {
 		return nil
 	}
-	ns := defaultServicesNamespace()
+	ns := mailDMZNamespace
 
 	if !r.dovecotDeployed(ctx) {
 		return r.deleteTenantMailDNS(ctx, tenant, ns)
@@ -214,7 +214,7 @@ func (r *TenantReconciler) syncKernelMailDNS(ctx context.Context, dkimPublicKey 
 	if r.KernelDomain == "" {
 		return nil
 	}
-	ns := defaultServicesNamespace()
+	ns := mailDMZNamespace
 
 	// The two records are independent. This used to return early without a DKIM
 	// key, which would now also withhold the address the MX points at -- and the
@@ -351,7 +351,7 @@ func (r *TenantReconciler) kernelMailAddress(ctx context.Context) string {
 	svc := &corev1.Service{}
 	name := types.NamespacedName{
 		Name:      envOrDefault("MAIL_SMTP_SERVICE", "postfix-"+envOrDefault("GENTIAN_STAGE", envOrDefault("ENV", "dev"))+"-smtp"),
-		Namespace: defaultServicesNamespace(),
+		Namespace: mailDMZNamespace,
 	}
 	if err := r.Get(ctx, name, svc); err != nil {
 		return ""
@@ -394,7 +394,7 @@ func (r *TenantReconciler) kernelIMAPAddress(ctx context.Context) string {
 	svc := &corev1.Service{}
 	name := types.NamespacedName{
 		Name:      envOrDefault("MAIL_IMAP_SERVICE", "dovecot-"+envOrDefault("GENTIAN_STAGE", envOrDefault("ENV", "dev"))+"-imaps"),
-		Namespace: defaultServicesNamespace(),
+		Namespace: mailDMZNamespace,
 	}
 	if err := r.Get(ctx, name, svc); err != nil {
 		return ""

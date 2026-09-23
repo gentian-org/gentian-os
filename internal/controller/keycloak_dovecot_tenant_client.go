@@ -98,7 +98,7 @@ func makeDovecotOIDCClientJob(jobName, realmName string, pack oidc.Pack, labels 
 	return &batchv1.Job{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      jobName,
-			Namespace: kernelNamespace,
+			Namespace: identityNamespace,
 			Labels:    labels,
 		},
 		Spec: batchv1.JobSpec{
@@ -208,7 +208,7 @@ func (r *TenantReconciler) ensureKernelDovecotOIDCClientJob(ctx context.Context)
 
 func (r *TenantReconciler) ensureDovecotOIDCClientJob(ctx context.Context, tenantName, jobName string, desired *batchv1.Job) (bool, error) {
 	existing := &batchv1.Job{}
-	err := r.Get(ctx, types.NamespacedName{Name: jobName, Namespace: kernelNamespace}, existing)
+	err := r.Get(ctx, types.NamespacedName{Name: jobName, Namespace: identityNamespace}, existing)
 	if errors.IsNotFound(err) {
 		if err := r.Create(ctx, desired); err != nil {
 			return false, err

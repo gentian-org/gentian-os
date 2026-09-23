@@ -94,9 +94,6 @@ func (s *Service) lockApp(tenant, profile string) func() {
 
 // NewService constructs a lifecycle service.
 func NewService(c client.Client, cfg *rest.Config, opts Options) (*Service, error) {
-	if opts.KernelNamespace == "" {
-		opts.KernelNamespace = "platform-kernel"
-	}
 	if opts.OpenBaoNamespace == "" {
 		opts.OpenBaoNamespace = "openbao"
 	}

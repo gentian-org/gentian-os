@@ -54,6 +54,13 @@ type TenantValidator struct {
 	// out broken, and it is affordable on an empty cluster and ruinous on one
 	// carrying tenants.
 	GateOnHandover bool
+
+	// KernelRealm is the realm the platform's administrators sign in through.
+	// A tenant whose isolation names it adopts that realm (Tenant/platform,
+	// AD-10): it is admitted before handover, because the handover is proven
+	// through its desktop, and it is never deleted, because a realm-disable Job
+	// against the kernel realm would lock every administrator out at once.
+	KernelRealm string
 	// HandoverNamespace holds the record. Empty disables the gate, which is
 	// what a misconfigured operator should do — refusing every tenant because
 	// a namespace name is unset would be a worse failure than not gating.
@@ -78,6 +85,9 @@ func (v *TenantValidator) Handle(ctx context.Context, req admission.Request) adm
 		return admission.Errored(http.StatusInternalServerError, errors.New("tenant validator client is not initialized"))
 	}
 
+	if req.Operation == admissionv1.Delete {
+		return v.handleDelete(req)
+	}
 	tenant := &gentianov1alpha1.Tenant{}
 	if v.Decoder != nil {
 		if err := v.Decoder.DecodeRaw(req.Object, tenant); err != nil {
@@ -92,7 +102,7 @@ func (v *TenantValidator) Handle(ctx context.Context, req admission.Request) adm
 	// Creation only. An existing tenant must stay manageable: gating updates
 	// would mean a cluster that has not finished handover cannot fix the very
 	// tenant that is misconfigured, which turns a precaution into a trap.
-	if req.Operation == admissionv1.Create {
+	if req.Operation == admissionv1.Create && !v.adoptsKernelRealm(tenant) {
 		if err := v.validateHandover(ctx, tenant); err != nil {
 			return admission.Denied(err.Error())
 		}
@@ -197,4 +207,28 @@ func (v *TenantValidator) SetupWithManager(mgr ctrl.Manager) {
 		"/validate-gentianos-io-v1alpha1-tenant",
 		&admission.Webhook{Handler: v},
 	)
+}
+
+func (v *TenantValidator) adoptsKernelRealm(tenant *gentianov1alpha1.Tenant) bool {
+	return v.KernelRealm != "" && tenant.Spec.Isolation != nil && tenant.Spec.Isolation.KeycloakRealm == v.KernelRealm
+}
+
+// handleDelete refuses to delete a tenant that adopts the kernel realm. The
+// object being deleted arrives in OldObject.
+func (v *TenantValidator) handleDelete(req admission.Request) admission.Response {
+	tenant := &gentianov1alpha1.Tenant{}
+	if len(req.OldObject.Raw) == 0 {
+		return admission.Allowed("")
+	}
+	if err := json.Unmarshal(req.OldObject.Raw, tenant); err != nil {
+		return admission.Errored(http.StatusBadRequest, err)
+	}
+	if v.adoptsKernelRealm(tenant) {
+		return admission.Denied(fmt.Sprintf(
+			"tenant %q adopts the kernel realm %q and cannot be deleted: disabling or removing that realm "+
+				"would lock every platform administrator out of the cluster at once. The platform tenant "+
+				"lives as long as the cluster does.",
+			tenant.Name, v.KernelRealm))
+	}
+	return admission.Allowed("")
 }

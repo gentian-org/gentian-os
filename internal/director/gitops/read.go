@@ -60,6 +60,55 @@ func (g *GitOps) Apps(ctx context.Context, tenant string) ([]App, error) {
 	return doc.Spec.Apps, nil
 }
 
+// Tenants lists the tenants deployed on this cluster: every directory under
+// clusters/<cluster>/tenants/ that holds a tenant.yaml, by the name in the
+// file. Git is the list of record; what the cluster has made of it is the
+// operator's to report.
+func (g *GitOps) Tenants(ctx context.Context) ([]string, error) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if err := g.ensureRepo(ctx); err != nil {
+		return nil, err
+	}
+	cluster := g.cluster
+	if cluster == "" {
+		cluster = "default-cluster"
+	}
+	entries, err := os.ReadDir(filepath.Join(g.path, "clusters", cluster, "tenants"))
+	if errors.Is(err, os.ErrNotExist) {
+		return []string{}, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	var out []string
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+		b, err := os.ReadFile(filepath.Join(g.path, "clusters", cluster, "tenants", e.Name(), "tenant.yaml"))
+		if errors.Is(err, os.ErrNotExist) {
+			continue
+		}
+		if err != nil {
+			return nil, err
+		}
+		var doc struct {
+			Metadata struct {
+				Name string `json:"name"`
+			} `json:"metadata"`
+		}
+		if err := yaml.Unmarshal(b, &doc); err != nil {
+			return nil, fmt.Errorf("parse %s: %w", e.Name(), err)
+		}
+		if doc.Metadata.Name == "" || !ValidName(doc.Metadata.Name) {
+			continue
+		}
+		out = append(out, doc.Metadata.Name)
+	}
+	return out, nil
+}
+
 // ErrNoClusterClaim is returned when the repository has no Cluster claim for
 // this cluster.
 var ErrNoClusterClaim = errors.New("no Cluster claim in the repository")

@@ -197,7 +197,7 @@ func (r *TenantExportReconciler) stagePassphrase(
 	copied := &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      passphraseSecretName(export.Name),
-			Namespace: kernelNamespace,
+			Namespace: s3Namespace,
 			Labels: map[string]string{
 				tenantLabel:        tenantNameFromNamespace(export.Namespace),
 				managedByLabel:     managedByValue,
@@ -211,7 +211,7 @@ func (r *TenantExportReconciler) stagePassphrase(
 	existing := &corev1.Secret{}
 	getErr := r.Get(ctx, types.NamespacedName{
 		Name:      copied.Name,
-		Namespace: kernelNamespace,
+		Namespace: s3Namespace,
 	}, existing)
 	switch {
 	case apierrors.IsNotFound(getErr):
@@ -236,7 +236,7 @@ func (r *TenantExportReconciler) discardPassphrase(
 	secret := &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      passphraseSecretName(export.Name),
-			Namespace: kernelNamespace,
+			Namespace: s3Namespace,
 		},
 	}
 	if err := r.Delete(ctx, secret); err != nil && !apierrors.IsNotFound(err) {

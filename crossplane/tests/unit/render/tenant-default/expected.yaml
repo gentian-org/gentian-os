@@ -1155,6 +1155,7 @@ spec:
           app.kubernetes.io/managed-by: gentian-os
           gentianos.io/managed-by: crossplane
           gentianos.io/tenant: render-fixture
+          gentianos.io/tier: tenant
         name: tenant-render-fixture
   providerConfigRef:
     name: kubernetes

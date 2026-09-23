@@ -132,16 +132,19 @@ Specified in [operator-split-plan.md](operator-split-plan.md) §3, §5, §6.
 - [ ] Network intent: `Cluster.spec.network.egressAllow`,
       `Tenant.spec.network.{egressAllow,denyKernel}` merged into
       `BuildDesired`; webhook enforces tenant ⊆ cluster.
-- [ ] Platform tenant: `Tenant/platform` adopts the kernel realm; the
+- [x] Platform tenant: `Tenant/platform` adopts the kernel realm; the
       identity reconciler adopts rather than creates it; undeletable
-      (ui-restructure §2).
+      (ui-restructure §2). The tenant composition composes only the tenant's
+      own groups for a realm it adopts; the webhook admits it before handover
+      and refuses its deletion; the installer scaffolds it with the cluster;
+      the director attaches every tenant in git to its cluster at start.
+- [x] Retire `authz_bridge_reconciler` — safe because WP-3's event feed
+      landed in the same phase — and `app_grant_reconciler`'s tuple writes,
+      since the director is the store's only writer and rebuilds from git on
+      start, which would otherwise delete AppGrant tuples it did not write.
 - [ ] Retire: `AppCatalogue` singleton and the catalogue ApplicationSet
-      (catalogue leaves the cluster, AD-3); `authz_bridge_reconciler` — safe
-      because WP-3's event feed lands in the same phase, not two later; also
-      `app_grant_reconciler`'s tuple writes, since the director is the store's
-      only writer and rebuilds from git on start, which would otherwise delete
-      AppGrant tuples it did not write;
-      `app-privilege-requested` annotation kick.
+      (catalogue leaves the cluster, AD-3); `app-privilege-requested`
+      annotation kick.
 - [ ] RBAC: no `argoproj.io` write verbs; `pods/exec` stays for purge.
 
 ## WP-3 Authorization — model, feed, groups (`os`)
@@ -432,8 +435,13 @@ Specified in [namespace-cleanup.md](namespace-cleanup.md).
 - [x] Step 1, labels first: `gentianos.io/tier`, `gentianos.io/function`
       on every kernel namespace (`kernel/namespaces.yaml`, `internal/layout`);
       Kyverno's webhook scoped by tier label in the v5 chart.
-- [ ] `gentianos.io/tenant` on tenant namespaces; NetworkPolicy generation
-      and operator selectors switched to labels.
+- [x] `gentianos.io/tier` and `gentianos.io/tenant` on tenant namespaces;
+      the operator addresses every platform namespace by function
+      (`internal/controller/namespaces.go`: Keycloak Jobs in the
+      authentication namespace, each data-plane Job beside its `system-*`
+      service, the provisioning ConfigMap in `kernel-provisioning`) and
+      `meta.KernelNamespace` is gone.
+- [ ] NetworkPolicy generation by label selectors.
 - [ ] Stateless renames for fresh installs: `kernel-gitops`,
       `kernel-provisioning`, `kernel-secrets`, `kernel-seal`,
       `kernel-control`, `kernel-edge`, `kernel-admission`, `kernel-data`,

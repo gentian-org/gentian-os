@@ -167,7 +167,7 @@ func (r *TenantReconciler) ensureDatabaseCR(ctx context.Context, tenant *gentian
 		Version: cnpgVersion,
 		Kind:    cnpgDatabaseKind,
 	})
-	err := r.Get(ctx, types.NamespacedName{Name: crName, Namespace: kernelNamespace}, existing)
+	err := r.Get(ctx, types.NamespacedName{Name: crName, Namespace: postgresNamespace}, existing)
 	if errors.IsNotFound(err) {
 		return false, nil
 	}
@@ -204,7 +204,7 @@ func buildDatabaseCR(tenant *gentianov1alpha1.Tenant, nsName, dbName, appName st
 		Kind:    cnpgDatabaseKind,
 	})
 	obj.SetName(databaseCRName(tenant.Name, appName))
-	obj.SetNamespace(kernelNamespace) // must be in the same namespace as the CNPG Cluster
+	obj.SetNamespace(postgresNamespace) // must be in the same namespace as the CNPG Cluster
 	obj.SetLabels(map[string]string{
 		tenantLabel:    tenant.Name,
 		managedByLabel: managedByValue,
@@ -241,7 +241,7 @@ func makeRoleJob(tenant *gentianov1alpha1.Tenant, nsName, dbName, appName, roleP
 	return &batchv1.Job{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      roleJobName(tenant.Name, appName),
-			Namespace: kernelNamespace,
+			Namespace: postgresNamespace,
 			Labels: map[string]string{
 				tenantLabel:    tenant.Name,
 				managedByLabel: managedByValue,

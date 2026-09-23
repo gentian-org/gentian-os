@@ -20,7 +20,6 @@ import (
 	"context"
 	"fmt"
 	"strings"
-	"time"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -28,44 +27,43 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
-	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
-	"github.com/gentian-org/gentian-os/internal/authz"
 	"github.com/gentian-org/gentian-os/internal/catalogue"
 )
 
 const (
+	appGrantFinalizer      = "gentianos.io/app-grant-cleanup"
 	conditionAppGrantReady = "AppGrantReady"
-	appGrantRequeue        = 2 * time.Minute
 )
 
 // +kubebuilder:rbac:groups=gentianos.io,resources=appgrants,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=gentianos.io,resources=appgrants/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=gentianos.io,resources=appgrants/finalizers,verbs=update
 
-// AppGrantReconciler syncs AppGrant objects to OpenFGA tuples.
+// AppGrantReconciler records an AppGrant as admitted.
+//
+// It writes nothing to the authorization store. The director is the store's
+// only writer and projects grants from git when it starts, so a second writer
+// here would delete on its own schedule what the director wrote on its own
+// (WP-2). What remains is the object's lifecycle: a finalizer so a grant is
+// observed leaving, and a status that says it was taken in.
 type AppGrantReconciler struct {
 	client.Client
-	OpenFGAURL   string
-	OpenFGAToken string
-	Enabled      bool
-	storeID      string
 }
 
 func (r *AppGrantReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
-	logger := log.FromContext(ctx)
 	grant := &gentianov1alpha1.AppGrant{}
 	if err := r.Get(ctx, req.NamespacedName, grant); err != nil {
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
-
-	tenantName := grantTenantName(grant, req.Namespace)
-
 	if !grant.DeletionTimestamp.IsZero() {
-		return r.reconcileAppGrantDelete(ctx, grant, tenantName)
+		if controllerutil.ContainsFinalizer(grant, appGrantFinalizer) {
+			controllerutil.RemoveFinalizer(grant, appGrantFinalizer)
+			return ctrl.Result{}, r.Update(ctx, grant)
+		}
+		return ctrl.Result{}, nil
 	}
-
 	if !controllerutil.ContainsFinalizer(grant, appGrantFinalizer) {
 		controllerutil.AddFinalizer(grant, appGrantFinalizer)
 		if err := r.Update(ctx, grant); err != nil {
@@ -73,62 +71,14 @@ func (r *AppGrantReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 		}
 		return ctrl.Result{}, nil
 	}
-
-	if !r.Enabled {
-		setAppGrantCondition(grant, conditionAppGrantReady, metav1.ConditionTrue, "AuthzBridgeDisabled",
-			"OpenFGA bridge disabled; grant recorded in Kubernetes only")
-		grant.Status.Phase = gentianov1alpha1.AppGrantPhaseReady
-		grant.Status.ObservedGeneration = grant.Generation
-		return ctrl.Result{}, r.Status().Update(ctx, grant)
+	if grant.Status.Phase == gentianov1alpha1.AppGrantPhaseReady && grant.Status.ObservedGeneration == grant.Generation {
+		return ctrl.Result{}, nil
 	}
-
-	if err := r.ensureStore(ctx); err != nil {
-		setAppGrantCondition(grant, conditionAppGrantReady, metav1.ConditionFalse, "OpenFGABootstrapFailed", err.Error())
-		grant.Status.Phase = gentianov1alpha1.AppGrantPhaseDegraded
-		_ = r.Status().Update(ctx, grant)
-		return ctrl.Result{RequeueAfter: appGrantRequeue}, err
-	}
-
-	prevKeys, err := syncedTupleKeysFromAnnotation(grant.Annotations[syncedTupleKeysAnnotation])
-	if err != nil {
-		setAppGrantCondition(grant, conditionAppGrantReady, metav1.ConditionFalse, "TupleStateInvalid", err.Error())
-		grant.Status.Phase = gentianov1alpha1.AppGrantPhaseDegraded
-		_ = r.Status().Update(ctx, grant)
-		return ctrl.Result{RequeueAfter: appGrantRequeue}, err
-	}
-
-	writes, deletes, nextKeys := grantTupleSyncPlan(tenantName, grant, prevKeys)
-	fga := authz.NewOpenFGAClient(r.OpenFGAURL, r.OpenFGAToken)
-	if err := fga.WriteTuples(ctx, r.storeID, writes, deletes); err != nil {
-		setAppGrantCondition(grant, conditionAppGrantReady, metav1.ConditionFalse, "TupleSyncFailed", err.Error())
-		grant.Status.Phase = gentianov1alpha1.AppGrantPhaseDegraded
-		_ = r.Status().Update(ctx, grant)
-		return ctrl.Result{RequeueAfter: appGrantRequeue}, err
-	}
-
-	patch := client.MergeFrom(grant.DeepCopy())
-	if grant.Annotations == nil {
-		grant.Annotations = map[string]string{}
-	}
-	encoded, err := encodeSyncedTupleKeys(nextKeys)
-	if err != nil {
-		return ctrl.Result{}, err
-	}
-	grant.Annotations[syncedTupleKeysAnnotation] = encoded
-	if err := r.Patch(ctx, grant, patch); err != nil {
-		return ctrl.Result{}, err
-	}
-
-	grant.Status.TupleCount = len(nextKeys)
+	setAppGrantCondition(grant, conditionAppGrantReady, metav1.ConditionTrue, "Recorded",
+		"grant recorded; the director projects it to the authorization store from git")
 	grant.Status.Phase = gentianov1alpha1.AppGrantPhaseReady
 	grant.Status.ObservedGeneration = grant.Generation
-	setAppGrantCondition(grant, conditionAppGrantReady, metav1.ConditionTrue, "Synced",
-		fmt.Sprintf("Synced %d OpenFGA tuples (%d writes, %d deletes)", len(nextKeys), len(writes), len(deletes)))
-	if err := r.Status().Update(ctx, grant); err != nil {
-		return ctrl.Result{}, err
-	}
-	logger.Info("app grant synced", "tenant", tenantName, "app", grant.Spec.App, "tuples", len(nextKeys), "writes", len(writes), "deletes", len(deletes))
-	return ctrl.Result{}, nil
+	return ctrl.Result{}, r.Status().Update(ctx, grant)
 }
 
 func grantTenantName(grant *gentianov1alpha1.AppGrant, namespace string) string {
@@ -137,43 +87,6 @@ func grantTenantName(grant *gentianov1alpha1.AppGrant, namespace string) string 
 		tenantName = strings.TrimPrefix(namespace, "tenant-")
 	}
 	return tenantName
-}
-
-func (r *AppGrantReconciler) reconcileAppGrantDelete(ctx context.Context, grant *gentianov1alpha1.AppGrant, tenantName string) (ctrl.Result, error) {
-	if !r.Enabled {
-		controllerutil.RemoveFinalizer(grant, appGrantFinalizer)
-		return ctrl.Result{}, r.Update(ctx, grant)
-	}
-	if err := r.ensureStore(ctx); err != nil {
-		return ctrl.Result{RequeueAfter: appGrantRequeue}, err
-	}
-	prevKeys, err := syncedTupleKeysFromAnnotation(grant.Annotations[syncedTupleKeysAnnotation])
-	if err != nil {
-		return ctrl.Result{RequeueAfter: appGrantRequeue}, err
-	}
-	if len(prevKeys) == 0 {
-		prevKeys = authz.GrantTupleKeys(tenantName, grant)
-	}
-	fga := authz.NewOpenFGAClient(r.OpenFGAURL, r.OpenFGAToken)
-	if err := fga.WriteTuples(ctx, r.storeID, nil, prevKeys); err != nil {
-		return ctrl.Result{RequeueAfter: appGrantRequeue}, err
-	}
-	controllerutil.RemoveFinalizer(grant, appGrantFinalizer)
-	return ctrl.Result{}, r.Update(ctx, grant)
-}
-
-func (r *AppGrantReconciler) ensureStore(ctx context.Context) error {
-	if r.storeID != "" {
-		return nil
-	}
-	bridge := &authz.Bridge{
-		OpenFGA: authz.NewOpenFGAClient(r.OpenFGAURL, r.OpenFGAToken),
-	}
-	if err := bridge.EnsureBootstrap(ctx); err != nil {
-		return err
-	}
-	r.storeID = bridge.StoreID
-	return nil
 }
 
 func (r *AppGrantReconciler) SetupWithManager(mgr ctrl.Manager) error {

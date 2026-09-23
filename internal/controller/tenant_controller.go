@@ -67,7 +67,6 @@ const (
 	tenantLabel             = meta.TenantLabel
 	managedByLabel          = meta.ManagedByLabel
 	managedByValue          = meta.ManagedByValue
-	kernelNamespace         = meta.KernelNamespace
 	conditionNamespaceReady = "NamespaceReady"
 )
 
@@ -104,8 +103,8 @@ var errDeleteJobPending = provisioner.ErrDeleteJobPending
 func (r *TenantReconciler) deleteProvisioningJobs(ctx context.Context, jobNames ...string) {
 	prop := metav1.DeletePropagationBackground
 	for _, name := range jobNames {
-		job := &batchv1.Job{}
-		if err := r.Get(ctx, types.NamespacedName{Name: name, Namespace: kernelNamespace}, job); err != nil {
+		job, err := r.getProvisioningJob(ctx, name)
+		if err != nil {
 			continue
 		}
 		_ = r.Delete(ctx, job, &client.DeleteOptions{PropagationPolicy: &prop})
@@ -467,7 +466,7 @@ func (r *TenantReconciler) SetupWithManager(mgr ctrl.Manager) error {
 			handler.EnqueueRequestsFromMapFunc(mapToTenant),
 			builder.WithPredicates(predicate.NewPredicateFuncs(func(obj client.Object) bool {
 				_, hasLabel := obj.GetLabels()[tenantLabel]
-				return hasLabel && obj.GetNamespace() == kernelNamespace
+				return hasLabel && isTenantPlatformNamespace(obj.GetNamespace())
 			})),
 		).
 		Watches(

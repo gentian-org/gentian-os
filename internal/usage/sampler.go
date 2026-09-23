@@ -28,6 +28,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
+	"github.com/gentian-org/gentian-os/internal/layout"
 	"github.com/gentian-org/gentian-os/internal/resourceplan"
 )
 
@@ -190,7 +191,7 @@ func (s *Sampler) sampleTenant(
 
 // StoreFor opens the usage store for one tenant.
 func (s *Sampler) storeFor(ctx context.Context, tenantName string) (*Store, error) {
-	return StoreForTenant(ctx, s.Client, s.KernelNamespace, tenantName)
+	return StoreForTenant(ctx, s.Client, layout.Tenant(tenantName), tenantName)
 }
 
 // StoreForTenant resolves a tenant's shell database from its portal-shell

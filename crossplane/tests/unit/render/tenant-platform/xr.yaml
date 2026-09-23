@@ -1,0 +1,30 @@
+# Tenant/platform: the platform is a tenant whose realm is the kernel realm
+# (AD-10). What this must render is a tenant shell — namespace, limits,
+# quota, its entitlement groups in the KERNEL realm — and what it must not
+# render is any realm state or realm bridge: no Realm, no broker client, no
+# IdP, no flow, no mapper. The kernel realm is adopted, never composed.
+apiVersion: gentianos.io/v1alpha1
+kind: XTenant
+metadata:
+  name: platform
+  annotations:
+    crossplane.io/external-name: platform
+spec:
+  displayName: Platform
+  adminEmail: admin@platform.platform.example.test
+  kernelDomain: platform.example.test
+  isolation:
+    keycloakRealm: kernel
+    databasePrefix: platform_
+    s3Prefix: platform-
+  deletionPolicy: Retain
+  apps: []
+  quotas:
+    requestsCpu: "4"
+    requestsMemory: 16Gi
+    cpu: "16"
+    memory: 32Gi
+    storage: 50Gi
+    maxApps: 20
+  compositeDeletePolicy: Background
+  resourceRefs: []

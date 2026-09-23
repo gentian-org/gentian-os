@@ -509,7 +509,7 @@ func (r *TenantRestoreReconciler) jobParams(
 ) backup.JobParams {
 	bundle := restore.Status.Bundle
 	p := backup.JobParams{
-		Namespace: kernelNamespace,
+		Namespace: s3Namespace,
 		Tenant:    tenant.Name,
 		App:       appName,
 		Export:    restore.Name,
@@ -659,7 +659,7 @@ func stagedDecryptionSecretName(restoreName string) string {
 // The kernel copy leaking past the restore was a real gap — the identity is
 // escrowed off-cluster precisely so the cluster does not hold it.
 func (r *TenantRestoreReconciler) discardStagedRestoreSecrets(ctx context.Context, restore *gentianov1alpha1.TenantRestore) error {
-	kernelErr := discardStagedSecret(ctx, r.Client, stagedDecryptionSecretName(restore.Name), kernelNamespace)
+	kernelErr := discardStagedSecret(ctx, r.Client, stagedDecryptionSecretName(restore.Name), s3Namespace)
 	tenantErr := r.discardRestoreVolumeSecret(ctx, restore)
 	if kernelErr != nil {
 		return kernelErr
@@ -777,7 +777,7 @@ func (r *TenantRestoreReconciler) stageDecryptionSecret(
 	copied := &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      name,
-			Namespace: kernelNamespace,
+			Namespace: s3Namespace,
 			Labels: map[string]string{
 				tenantLabel:        tenantNameFromNamespace(restore.Namespace),
 				managedByLabel:     managedByValue,
@@ -789,7 +789,7 @@ func (r *TenantRestoreReconciler) stageDecryptionSecret(
 	}
 
 	existing := &corev1.Secret{}
-	err := r.Get(ctx, types.NamespacedName{Name: name, Namespace: kernelNamespace}, existing)
+	err := r.Get(ctx, types.NamespacedName{Name: name, Namespace: s3Namespace}, existing)
 	switch {
 	case apierrors.IsNotFound(err):
 		return name, r.Create(ctx, copied)

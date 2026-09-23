@@ -61,7 +61,7 @@ func (r *TenantReconciler) ensurePortalShellDatabase(ctx context.Context, tenant
 	}
 
 	conn := secrets.DatabaseCreds{
-		Host: fmt.Sprintf("%s-rw.%s.svc.cluster.local", cnpgClusterName, kernelNamespace),
+		Host: fmt.Sprintf("%s-rw.%s.svc.cluster.local", cnpgClusterName, postgresNamespace),
 		Port: "5432",
 		Name: dbName,
 		User: roleUserName(tenant.Name, portalShellAppName),
@@ -101,7 +101,7 @@ func portalShellSecretName(tenantName string) string {
 // something durable is neither.
 func (r *TenantReconciler) deletePortalShellSecret(ctx context.Context, tenant *gentianov1alpha1.Tenant) error {
 	secret := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{
-		Name: portalShellSecretName(tenant.Name), Namespace: kernelNamespace,
+		Name: portalShellSecretName(tenant.Name), Namespace: tenantNamespaceName(tenant),
 	}}
 	if err := r.Delete(ctx, secret); client.IgnoreNotFound(err) != nil {
 		return fmt.Errorf("delete portal shell secret for tenant %s: %w", tenant.Name, err)
@@ -118,7 +118,7 @@ func (r *TenantReconciler) ensurePortalShellSecret(ctx context.Context, tenant *
 	desired := &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      name,
-			Namespace: kernelNamespace,
+			Namespace: tenantNamespaceName(tenant),
 			Labels: map[string]string{
 				tenantLabel:                   tenant.Name,
 				managedByLabel:                managedByValue,
@@ -137,7 +137,7 @@ func (r *TenantReconciler) ensurePortalShellSecret(ctx context.Context, tenant *
 		},
 	}
 	existing := &corev1.Secret{}
-	err = r.Get(ctx, types.NamespacedName{Name: name, Namespace: kernelNamespace}, existing)
+	err = r.Get(ctx, types.NamespacedName{Name: name, Namespace: tenantNamespaceName(tenant)}, existing)
 	if errors.IsNotFound(err) {
 		return r.Create(ctx, desired)
 	}

@@ -20,7 +20,8 @@ webhooks:
     rules:
       - apiGroups: ["gentianos.io"]
         apiVersions: ["v1alpha1"]
-        operations: ["CREATE", "UPDATE"]
+        # DELETE too: the tenant that adopts the kernel realm is refused.
+        operations: ["CREATE", "UPDATE", "DELETE"]
         resources: ["tenants"]
         scope: "*"
     clientConfig:

@@ -17,7 +17,6 @@ limitations under the License.
 package meta
 
 const (
-	KernelNamespace    = "platform-kernel"
 	OperatorNamespace  = "gentian-system"
 	RoutingModeGateway = "gateway"
 )

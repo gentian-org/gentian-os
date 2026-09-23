@@ -73,6 +73,16 @@ spec:
                  — the same rule oidc.discoveryUrl follows. */}}
             {{- $kernelRealm := dig "identity.kernelRealm" "" $ccData }}
             {{- $kcInternal  := dig "identity.internalUrl" "" $ccData }}
+            {{- /* The realm this tenant's identity lives in: its own by default,
+                 or one named on the claim. Naming the KERNEL realm is what
+                 Tenant/platform does (AD-10): the realm every administrator
+                 signs in through is adopted, never created, configured or
+                 brokered — every object below that is realm state or a bridge
+                 between two realms stays unrendered, and only what belongs to
+                 the tenant inside that realm (its entitlement groups) is
+                 composed. */}}
+            {{- $realm := default $tenant (dig "isolation" "keycloakRealm" "" $spec) }}
+            {{- $adoptsKernelRealm := and $kernelRealm (eq $realm $kernelRealm) }}
             {{- $provList  := dig "provisioningJobs" list $extraRes }}
             {{- $provCM    := ternary (index $provList 0) dict (gt (len $provList) 0) }}
             {{- $jobsJSON  := dig "data" "jobs.json" "[]" $provCM }}
@@ -115,6 +125,7 @@ spec:
                   metadata:
                     name: {{ $ns }}
                     labels:
+                      gentianos.io/tier: tenant
                       gentianos.io/tenant: {{ $tenant }}
                       gentianos.io/managed-by: crossplane
                       app.kubernetes.io/managed-by: gentian-os
@@ -249,6 +260,13 @@ spec:
                 manifest:
                   {{- $obj | toYaml | nindent 18 }}
             {{- end }}
+            {{- if not $adoptsKernelRealm }}
+            {{- /* The clients the desktop signs in with, the portal's tenant
+                 claim and the mailbox store's client are realm state: one set
+                 per realm, owned by whoever owns the realm. A tenant that
+                 adopts the kernel realm owns none of it, and composing them
+                 here would make two writers of the identity bootstrap's
+                 clients. */}}
 
             {{- /*
             The portal's public OIDC client, declared rather than provisioned by a
@@ -280,7 +298,7 @@ spec:
               forProvider:
                 clientId: gentian-portal
                 name: Gentian Portal
-                realmId: {{ $tenant }}
+                realmId: {{ $realm }}
                 accessType: PUBLIC
                 enabled: true
                 standardFlowEnabled: true
@@ -354,7 +372,7 @@ spec:
             spec:
               deletionPolicy: Orphan
               forProvider:
-                realmId: {{ $tenant }}
+                realmId: {{ $realm }}
                 clientIdRef:
                   name: {{ $tenant }}-portal-public-client
                   policy:
@@ -414,7 +432,7 @@ spec:
               forProvider:
                 clientId: gentian-portal-bff
                 name: Gentian Portal BFF
-                realmId: {{ $tenant }}
+                realmId: {{ $realm }}
                 accessType: CONFIDENTIAL
                 enabled: true
                 standardFlowEnabled: false
@@ -484,7 +502,7 @@ spec:
             spec:
               deletionPolicy: Orphan
               forProvider:
-                realmId: {{ $tenant }}
+                realmId: {{ $realm }}
                 clientIdRef:
                   name: {{ $tenant }}-portal-bff-client
                   policy:
@@ -528,7 +546,7 @@ spec:
             spec:
               deletionPolicy: Orphan
               forProvider:
-                realmId: {{ $tenant }}
+                realmId: {{ $realm }}
                 clientIdRef:
                   name: {{ $tenant }}-portal-public-client
                   policy:
@@ -591,7 +609,7 @@ spec:
               managementPolicies: ["Observe", "Create", "Update", "Delete"]
               forProvider:
                 clientId: gentian-dovecot
-                realmId: {{ $tenant }}
+                realmId: {{ $realm }}
                 accessType: CONFIDENTIAL
                 enabled: true
                 standardFlowEnabled: false
@@ -607,6 +625,7 @@ spec:
                 name: keycloak
             {{- end }}
 
+            {{- end }}
             {{- if and $kernelRealm $kcInternal }}
             {{- /* ── the tenant's entitlement groups ─────────────────────────
                  Three fixed, one per app. The names are internal/keycloak/groups.go's
@@ -645,11 +664,12 @@ spec:
             spec:
               deletionPolicy: Orphan
               forProvider:
-                realmId: {{ $tenant }}
+                realmId: {{ $realm }}
                 name: {{ $g | quote }}
               providerConfigRef:
                 name: keycloak
             {{- end }}
+            {{- if not $adoptsKernelRealm }}
 
             {{- /* ── the reverse broker: kernel realm → this tenant ────────────
                  The mirror of the kernel IdP above. That one lets a tenant user
@@ -683,7 +703,7 @@ spec:
               managementPolicies: ["Observe"]
               forProvider:
                 clientId: broker-kernel-portal
-                realmId: {{ $tenant }}
+                realmId: {{ $realm }}
               writeConnectionSecretToRef:
                 name: {{ $tenant }}-kernel-portal-broker-client
                 namespace: platform-kernel
@@ -746,11 +766,11 @@ spec:
                 firstBrokerLoginFlowAlias: first-broker-login-kernel-portal
                 {{- /* Browser-facing endpoints go to the public URL; the
                      server-to-server half stays inside the cluster. */}}
-                issuer: https://id.{{ $kd }}/auth/realms/{{ $tenant }}
-                authorizationUrl: https://id.{{ $kd }}/auth/realms/{{ $tenant }}/protocol/openid-connect/auth
-                tokenUrl: {{ $kcInternal }}/realms/{{ $tenant }}/protocol/openid-connect/token
-                jwksUrl: {{ $kcInternal }}/realms/{{ $tenant }}/protocol/openid-connect/certs
-                userInfoUrl: {{ $kcInternal }}/realms/{{ $tenant }}/protocol/openid-connect/userinfo
+                issuer: https://id.{{ $kd }}/auth/realms/{{ $realm }}
+                authorizationUrl: https://id.{{ $kd }}/auth/realms/{{ $realm }}/protocol/openid-connect/auth
+                tokenUrl: {{ $kcInternal }}/realms/{{ $realm }}/protocol/openid-connect/token
+                jwksUrl: {{ $kcInternal }}/realms/{{ $realm }}/protocol/openid-connect/certs
+                userInfoUrl: {{ $kcInternal }}/realms/{{ $realm }}/protocol/openid-connect/userinfo
                 {{- /* updateProfileFirstLoginMode has no field on the provider and
                      is read back, so it belongs here.
 
@@ -804,7 +824,7 @@ spec:
             spec:
               deletionPolicy: Orphan
               forProvider:
-                realmId: {{ $tenant }}
+                realmId: {{ $realm }}
                 alias: {{ $ra.alias }}
                 name: {{ $ra.name | quote }}
                 enabled: false
@@ -856,7 +876,7 @@ spec:
             spec:
               deletionPolicy: Orphan
               forProvider:
-                realmId: {{ $tenant }}
+                realmId: {{ $realm }}
                 group:
                   - name: user-metadata
                     displayHeader: User metadata
@@ -988,7 +1008,7 @@ spec:
             spec:
               deletionPolicy: Orphan
               forProvider:
-                realm: {{ $tenant }}
+                realm: {{ $realm }}
                 identityProviderAlias: kernel
                 name: gentian_username
                 identityProviderMapper: oidc-user-attribute-idp-mapper
@@ -1076,7 +1096,7 @@ spec:
             spec:
               deletionPolicy: Orphan
               forProvider:
-                realmId: {{ $tenant }}
+                realmId: {{ $realm }}
                 alias: first-broker-login-gentian
                 description: Confirm/verify link kernel IdP to tenant users by email
                 providerId: basic-flow
@@ -1108,7 +1128,7 @@ spec:
             spec:
               deletionPolicy: Orphan
               forProvider:
-                realmId: {{ $tenant }}
+                realmId: {{ $realm }}
                 parentFlowAlias: first-broker-login-gentian
                 authenticator: {{ $auth }}
                 requirement: REQUIRED
@@ -1140,7 +1160,7 @@ spec:
               deletionPolicy: Orphan
               managementPolicies: ["Observe"]
               forProvider:
-                realmId: {{ $tenant }}
+                realmId: {{ $realm }}
                 name: groups
               providerConfigRef:
                 name: keycloak
@@ -1160,7 +1180,7 @@ spec:
             spec:
               deletionPolicy: Orphan
               forProvider:
-                realmId: {{ $tenant }}
+                realmId: {{ $realm }}
                 name: groups
                 protocol: openid-connect
                 protocolMapper: oidc-group-membership-mapper
@@ -1203,12 +1223,12 @@ spec:
             metadata:
               name: {{ $tenant }}-realm
               annotations:
-                crossplane.io/external-name: {{ $tenant }}
+                crossplane.io/external-name: {{ $realm }}
                 gotemplating.fn.crossplane.io/composition-resource-name: keycloak-realm
             spec:
               deletionPolicy: Orphan
               forProvider:
-                realm: {{ $tenant }}
+                realm: {{ $realm }}
                 enabled: true
                 displayName: {{ $spec.displayName | quote }}
                 {{- if $kd }}
@@ -1467,7 +1487,7 @@ spec:
               # the portal BFF client ended up unable to reconcile at all.
               managementPolicies: ["Observe", "Create", "Update", "Delete"]
               forProvider:
-                realm: {{ $tenant }}
+                realm: {{ $realm }}
                 alias: kernel
                 displayName: Gentian SSO
                 providerId: oidc
@@ -1519,6 +1539,7 @@ spec:
                   key: attribute.client_secret
               providerConfigRef:
                 name: keycloak
+            {{- end }}
             {{- end }}
 
             {{- range $app := dig "apps" list $spec }}

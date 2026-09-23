@@ -169,7 +169,7 @@ func (r *TenantReconciler) deleteCache(ctx context.Context, tenant *gentianov1al
 		return err
 	}
 
-	if err := r.ensureDeleteJobs(ctx, tenant, redisApps, redisACLDeleteJobName, makeRedisACLDeleteJob); err != nil {
+	if err := r.ensureDeleteJobs(ctx, cacheNamespace, tenant, redisApps, redisACLDeleteJobName, makeRedisACLDeleteJob); err != nil {
 		return err
 	}
 
@@ -211,7 +211,7 @@ func makeRedisACLJob(tenant *gentianov1alpha1.Tenant, appName, userPassword stri
 	return &batchv1.Job{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      redisACLJobName(tenant.Name, appName),
-			Namespace: kernelNamespace,
+			Namespace: cacheNamespace,
 			Labels: map[string]string{
 				tenantLabel:    tenant.Name,
 				managedByLabel: managedByValue,
@@ -240,7 +240,7 @@ func makeRedisACLDeleteJob(tenant *gentianov1alpha1.Tenant, appName string) *bat
 	return &batchv1.Job{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      redisACLDeleteJobName(tenant.Name, appName),
-			Namespace: kernelNamespace,
+			Namespace: cacheNamespace,
 			Labels: map[string]string{
 				tenantLabel:    tenant.Name,
 				managedByLabel: managedByValue,
@@ -411,7 +411,7 @@ echo "ACL user %s provisioned"`,
 // redisCacheEndpoint returns the shared Redis host/port from the kernel redis-admin Secret.
 func (r *TenantReconciler) redisCacheEndpoint(ctx context.Context) (host, port string, err error) {
 	secret := &corev1.Secret{}
-	if err := r.Get(ctx, types.NamespacedName{Name: redisAdminSecret, Namespace: kernelNamespace}, secret); err != nil {
+	if err := r.Get(ctx, types.NamespacedName{Name: redisAdminSecret, Namespace: cacheNamespace}, secret); err != nil {
 		return "", "", fmt.Errorf("get redis-admin secret: %w", err)
 	}
 	host = string(secret.Data["host"])

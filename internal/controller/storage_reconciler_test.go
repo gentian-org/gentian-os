@@ -107,7 +107,7 @@ func TestStorage_CreatesS3BucketJob(t *testing.T) {
 	job := &batchv1.Job{}
 	waitFor(t, jobAppearTimeout, func() bool {
 		return testClient.Get(context.Background(),
-			types.NamespacedName{Name: "s3-bucket-s3create-s3-app1", Namespace: "platform-kernel"}, job) == nil
+			types.NamespacedName{Name: "s3-bucket-s3create-s3-app1", Namespace: "system-s3"}, job) == nil
 	})
 
 	if job.Labels["gentianos.io/tenant"] != "s3create" {
@@ -183,9 +183,9 @@ func TestStorage_SetsReadyWhenAllJobsDone(t *testing.T) {
 	waitFor(t, jobAppearTimeout, func() bool {
 		job := &batchv1.Job{}
 		return testClient.Get(context.Background(),
-			types.NamespacedName{Name: "s3-bucket-storageready-s3-app2", Namespace: "platform-kernel"}, job) == nil
+			types.NamespacedName{Name: "s3-bucket-storageready-s3-app2", Namespace: "system-s3"}, job) == nil
 	})
-	markJobComplete(t, "s3-bucket-storageready-s3-app2", "platform-kernel")
+	markJobComplete(t, "s3-bucket-storageready-s3-app2", "system-s3")
 
 	// Phase=Ready and StorageReady=True should follow.
 	waitFor(t, tenantReadyTimeout, func() bool {
@@ -234,7 +234,7 @@ func TestStorage_DeleteDeletePolicy_CreatesDeleteJobs(t *testing.T) {
 	waitFor(t, jobAppearTimeout, func() bool {
 		job := &batchv1.Job{}
 		return testClient.Get(context.Background(),
-			types.NamespacedName{Name: "s3-bucket-storagedelete-s3-app3", Namespace: "platform-kernel"}, job) == nil
+			types.NamespacedName{Name: "s3-bucket-storagedelete-s3-app3", Namespace: "system-s3"}, job) == nil
 	})
 
 	// Delete the tenant.
@@ -247,7 +247,7 @@ func TestStorage_DeleteDeletePolicy_CreatesDeleteJobs(t *testing.T) {
 	s3DeleteJob := &batchv1.Job{}
 	waitFor(t, jobAppearTimeout, func() bool {
 		return testClient.Get(context.Background(),
-			types.NamespacedName{Name: "s3-delete-storagedelete-s3-app3", Namespace: "platform-kernel"}, s3DeleteJob) == nil
+			types.NamespacedName{Name: "s3-delete-storagedelete-s3-app3", Namespace: "system-s3"}, s3DeleteJob) == nil
 	})
 	if s3DeleteJob.Labels["gentianos.io/tenant"] != "storagedelete" {
 		t.Errorf("expected tenant label 'storagedelete', got %q", s3DeleteJob.Labels["gentianos.io/tenant"])

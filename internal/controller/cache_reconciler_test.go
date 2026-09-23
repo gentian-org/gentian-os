@@ -129,7 +129,7 @@ func TestCache_CreatesRedisACLJob(t *testing.T) {
 	job := &batchv1.Job{}
 	waitFor(t, jobAppearTimeout, func() bool {
 		return testClient.Get(context.Background(),
-			types.NamespacedName{Name: "redis-acl-rediscreate-redis-app1", Namespace: "platform-kernel"}, job) == nil
+			types.NamespacedName{Name: "redis-acl-rediscreate-redis-app1", Namespace: "system-cache"}, job) == nil
 	})
 
 	if job.Labels["gentianos.io/tenant"] != "rediscreate" {
@@ -239,9 +239,9 @@ func TestCache_SetsReadyWhenRedisJobsDone(t *testing.T) {
 	waitFor(t, jobAppearTimeout, func() bool {
 		job := &batchv1.Job{}
 		return testClient.Get(context.Background(),
-			types.NamespacedName{Name: "redis-acl-cacheready-redis-app2", Namespace: "platform-kernel"}, job) == nil
+			types.NamespacedName{Name: "redis-acl-cacheready-redis-app2", Namespace: "system-cache"}, job) == nil
 	})
-	markJobComplete(t, "redis-acl-cacheready-redis-app2", "platform-kernel")
+	markJobComplete(t, "redis-acl-cacheready-redis-app2", "system-cache")
 
 	// Phase=Ready and CacheReady=True should follow.
 	waitFor(t, tenantReadyTimeout, func() bool {
@@ -298,7 +298,7 @@ func TestCache_DeleteDeletePolicy_CreatesDeleteJobsAndDeletesApplication(t *test
 	waitFor(t, jobAppearTimeout, func() bool {
 		job := &batchv1.Job{}
 		return testClient.Get(context.Background(),
-			types.NamespacedName{Name: "redis-acl-cachedelete-redis-app3", Namespace: "platform-kernel"}, job) == nil
+			types.NamespacedName{Name: "redis-acl-cachedelete-redis-app3", Namespace: "system-cache"}, job) == nil
 	})
 	waitFor(t, jobAppearTimeout, func() bool {
 		dep := &appsv1.Deployment{}

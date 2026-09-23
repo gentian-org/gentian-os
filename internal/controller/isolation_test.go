@@ -402,7 +402,7 @@ func TestDeletion_Retain_KeepsDataRevokesAccess(t *testing.T) {
 
 	waitFor(t, jobAppearTimeout, func() bool {
 		cm := &corev1.ConfigMap{}
-		if err := testClient.Get(ctx, types.NamespacedName{Name: "mail-postfix-virtual-domains", Namespace: "platform-kernel"}, cm); err != nil {
+		if err := testClient.Get(ctx, types.NamespacedName{Name: "mail-postfix-virtual-domains", Namespace: "system-mail"}, cm); err != nil {
 			return false
 		}
 		_, ok := cm.Data["ret-full"]
@@ -446,7 +446,7 @@ func TestDeletion_Retain_KeepsDataRevokesAccess(t *testing.T) {
 
 	// Mail ConfigMap entries should be removed (cutting routing).
 	postfixCM := &corev1.ConfigMap{}
-	if err := testClient.Get(ctx, types.NamespacedName{Name: "mail-postfix-virtual-domains", Namespace: "platform-kernel"}, postfixCM); err == nil {
+	if err := testClient.Get(ctx, types.NamespacedName{Name: "mail-postfix-virtual-domains", Namespace: "system-mail"}, postfixCM); err == nil {
 		if _, ok := postfixCM.Data["ret-full"]; ok {
 			t.Error("Postfix virtual-domain entry should be removed in Retain mode (route revocation)")
 		}

@@ -66,7 +66,9 @@ func markJobComplete(t *testing.T, jobName, namespace string) {
 	for attempt := 0; attempt < 5; attempt++ {
 		job := &batchv1.Job{}
 		if err := testClient.Get(context.Background(), types.NamespacedName{Name: jobName, Namespace: namespace}, job); err != nil {
-			t.Fatalf("get Job %s: %v", jobName, err)
+			if job = getPlatformJob(context.Background(), jobName); job == nil {
+				t.Fatalf("get Job %s: %v", jobName, err)
+			}
 		}
 		if job.Status.Succeeded > 0 {
 			return
@@ -147,7 +149,10 @@ func markJobCompleteWhenReady(jobName, namespace string) {
 	deadline := time.Now().Add(60 * time.Second)
 	for time.Now().Before(deadline) {
 		job := &batchv1.Job{}
-		if testClient.Get(ctx, types.NamespacedName{Name: jobName, Namespace: namespace}, job) == nil {
+		if testClient.Get(ctx, types.NamespacedName{Name: jobName, Namespace: namespace}, job) != nil {
+			job = getPlatformJob(ctx, jobName)
+		}
+		if job != nil {
 			now := metav1.Now()
 			job.Status.StartTime = &now
 			job.Status.CompletionTime = &now

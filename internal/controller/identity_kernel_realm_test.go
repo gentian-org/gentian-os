@@ -20,6 +20,10 @@ import (
 	"context"
 	"testing"
 
+	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 )
 
@@ -44,6 +48,62 @@ func TestDeletingATenantNeverTouchesTheKernelRealm(t *testing.T) {
 
 		if err := r.deleteIdentity(context.Background(), tenant); err != nil {
 			t.Fatalf("deletionPolicy %s: deleteIdentity = %v, want nil and no work", policy, err)
+		}
+	}
+}
+
+// A tenant that adopts the kernel realm provisions only what is its own inside
+// that realm. The realm Job would recreate or reconfigure the realm every
+// administrator signs in through; the admin Job would mint a second
+// administrator; the broker Job would broker the kernel realm to itself. None
+// of them is emitted, and the groups Job -- the tenant's entitlement groups,
+// which are the tenant's -- is.
+func TestATenantAdoptingTheKernelRealmProvisionsOnlyItsOwnGroups(t *testing.T) {
+	scheme := runtime.NewScheme()
+	if err := gentianov1alpha1.AddToScheme(scheme); err != nil {
+		t.Fatal(err)
+	}
+	if err := corev1.AddToScheme(scheme); err != nil {
+		t.Fatal(err)
+	}
+	r := &TenantReconciler{
+		Client:       fake.NewClientBuilder().WithScheme(scheme).Build(),
+		KernelRealm:  "kernel",
+		KernelDomain: "platform.example.test",
+	}
+	tenant := &gentianov1alpha1.Tenant{}
+	tenant.Name = "platform"
+	tenant.Spec.Isolation = &gentianov1alpha1.TenantIsolation{KeycloakRealm: "kernel"}
+
+	jobs, err := r.buildIdentityProvisioningJobs(context.Background(), tenant, keycloakRealmName(tenant))
+	if err != nil {
+		t.Fatalf("buildIdentityProvisioningJobs: %v", err)
+	}
+	var names []string
+	for _, j := range jobs {
+		names = append(names, j.Name)
+	}
+	if len(jobs) != 1 || jobs[0].Name != gentianGroupsJobName("platform") {
+		t.Fatalf("jobs = %v, want only %s", names, gentianGroupsJobName("platform"))
+	}
+	if jobs[0].Namespace != identityNamespace {
+		t.Fatalf("groups Job namespace = %q, want the authentication namespace %q", jobs[0].Namespace, identityNamespace)
+	}
+
+	// And an ordinary tenant still gets its realm and administrator.
+	plain := &gentianov1alpha1.Tenant{}
+	plain.Name = "acme"
+	jobs, err = r.buildIdentityProvisioningJobs(context.Background(), plain, keycloakRealmName(plain))
+	if err != nil {
+		t.Fatalf("buildIdentityProvisioningJobs(acme): %v", err)
+	}
+	seen := map[string]bool{}
+	for _, j := range jobs {
+		seen[j.Name] = true
+	}
+	for _, want := range []string{realmJobName("acme"), gentianGroupsJobName("acme"), adminJobName("acme")} {
+		if !seen[want] {
+			t.Errorf("ordinary tenant lacks Job %s (got %v)", want, seen)
 		}
 	}
 }

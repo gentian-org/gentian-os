@@ -189,3 +189,61 @@ func TestClusterRolesFollowTheClaim(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestTenantsAreAttachedToTheirClusterFromGit(t *testing.T) {
+	o := requireOpenFGA(t)
+	ctx := context.Background()
+	store, model, err := Bootstrap(ctx, o)
+	if err != nil {
+		t.Fatal(err)
+	}
+	o.StoreID, o.ModelID = store, model
+	c, err := NewOpenFGA(o)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cluster := "tenants-test"
+	if err := c.ReconcileClusterRoles(ctx, cluster, map[string]string{"admin": "gentian:platform:admin"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.ReconcileTenants(ctx, cluster, []string{"platform", "acme"}); err != nil {
+		t.Fatal(err)
+	}
+	// A platform administrator: in the group, so admin of the cluster, so
+	// through operated_by an admin of every tenant deployed from git, and
+	// through cluster able to enter the platform desktop.
+	if err := c.Write(ctx, []Tuple{{User: "user:root", Relation: "member", Object: "group:gentian/platform/admin"}}, nil); err != nil {
+		t.Fatal(err)
+	}
+	for _, tenant := range []string{"platform", "acme"} {
+		for _, rel := range []string{"can_enter", "can_administer"} {
+			ok, err := c.Check(ctx, "test", "user:root", rel, Tenant(tenant))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !ok {
+				t.Errorf("platform admin lacks %s on %s", rel, Tenant(tenant))
+			}
+		}
+	}
+	// A tenant withdraws consent; a restart does not restore it -- except for
+	// the platform tenant, which is always the cluster's.
+	if err := c.Write(ctx, nil, []Tuple{{User: Cluster(cluster), Relation: "operated_by", Object: Tenant("acme")}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.ReconcileTenants(ctx, cluster, []string{"platform", "acme"}); err != nil {
+		t.Fatal(err)
+	}
+	if ok, _ := c.Check(ctx, "test", "user:root", "can_administer", Tenant("acme")); ok {
+		t.Error("a withdrawn operated_by was written back")
+	}
+	if err := c.Write(ctx, nil, []Tuple{{User: Cluster(cluster), Relation: "operated_by", Object: Tenant("platform")}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.ReconcileTenants(ctx, cluster, []string{"platform"}); err != nil {
+		t.Fatal(err)
+	}
+	if ok, _ := c.Check(ctx, "test", "user:root", "can_administer", Tenant("platform")); !ok {
+		t.Error("the platform tenant is always operated by its cluster")
+	}
+}

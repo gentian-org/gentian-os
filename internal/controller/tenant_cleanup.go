@@ -21,8 +21,6 @@ import (
 	"fmt"
 	"strings"
 
-	batchv1 "k8s.io/api/batch/v1"
-	corev1 "k8s.io/api/core/v1"
 	runtimeMeta "k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -86,8 +84,8 @@ func isTenantCleanupJobName(tenantName, jobName string) bool {
 // listTenantAppsFromJobPrefix returns app profile names inferred from completed
 // or attempted provision Jobs whose names start with namePrefix.
 func (r *TenantReconciler) listTenantAppsFromJobPrefix(ctx context.Context, tenantName, namePrefix string) ([]string, error) {
-	jobList := &batchv1.JobList{}
-	if err := r.List(ctx, jobList, client.InNamespace(kernelNamespace), tenantKernelLabelSelector(tenantName)); err != nil {
+	jobList, err := r.listTenantPlatformJobs(ctx, tenantKernelLabelSelector(tenantName))
+	if err != nil {
 		return nil, fmt.Errorf("list Jobs for tenant %s: %w", tenantName, err)
 	}
 	var apps []string
@@ -110,7 +108,7 @@ func (r *TenantReconciler) deleteTenantLabeledDatabaseCRs(ctx context.Context, t
 		Version: cnpgVersion,
 		Kind:    cnpgDatabaseKind + "List",
 	})
-	if err := r.List(ctx, dbList, client.InNamespace(kernelNamespace), tenantKernelLabelSelector(tenantName)); err != nil {
+	if err := r.List(ctx, dbList, client.InNamespace(postgresNamespace), tenantKernelLabelSelector(tenantName)); err != nil {
 		return fmt.Errorf("list Database CRs for tenant %s: %w", tenantName, err)
 	}
 	for i := range dbList.Items {
@@ -153,8 +151,8 @@ func (r *TenantReconciler) purgeTenantKernelResources(ctx context.Context, tenan
 		return err
 	}
 
-	secList := &corev1.SecretList{}
-	if err := r.List(ctx, secList, client.InNamespace(kernelNamespace), selector); err != nil {
+	secList, err := r.listTenantPlatformSecrets(ctx, selector)
+	if err != nil {
 		return fmt.Errorf("list Secrets for tenant %s: %w", tenant.Name, err)
 	}
 	for i := range secList.Items {
@@ -200,8 +198,8 @@ func (r *TenantReconciler) purgeTenantKernelResources(ctx context.Context, tenan
 		}
 	}
 
-	jobList := &batchv1.JobList{}
-	if err := r.List(ctx, jobList, client.InNamespace(kernelNamespace), selector); err != nil {
+	jobList, err := r.listTenantPlatformJobs(ctx, selector)
+	if err != nil {
 		return fmt.Errorf("list Jobs for tenant %s: %w", tenant.Name, err)
 	}
 	prop := metav1.DeletePropagationBackground

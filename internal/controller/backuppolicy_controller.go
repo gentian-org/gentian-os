@@ -402,7 +402,7 @@ func (r *BackupPolicyReconciler) deleteDestinationCredential(ctx context.Context
 	}
 	for _, es := range []struct{ name, namespace string }{
 		{credentialProbePrefix + name, meta.OperatorNamespace},
-		{name, kernelNamespace},
+		{name, s3Namespace},
 	} {
 		obj := &unstructured.Unstructured{}
 		obj.SetGroupVersionKind(externalSecretGVK)
@@ -438,7 +438,7 @@ func (r *BackupPolicyReconciler) ensureConsumingSecret(
 	vaultPath string,
 ) error {
 	name := backup.DestinationSecretName(policy.Spec.Scope, policy.Spec.Tenant)
-	return r.applyExternalSecret(ctx, name, kernelNamespace, vaultPath, "Owner", map[string]string{
+	return r.applyExternalSecret(ctx, name, s3Namespace, vaultPath, "Owner", map[string]string{
 		managedByLabel:               managedByValue,
 		"gentianos.io/backup-policy": policy.Name,
 	})

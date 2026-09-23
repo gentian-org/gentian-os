@@ -19,6 +19,7 @@ package netpolicy
 import (
 	"testing"
 
+	"github.com/gentian-org/gentian-os/internal/layout"
 	"github.com/gentian-org/gentian-os/internal/meta"
 )
 
@@ -50,7 +51,7 @@ func TestExportJobNetworkPolicyIsScopedToExportPods(t *testing.T) {
 	if !internet {
 		t.Error("missing internet egress for runtime tool installs")
 	}
-	want := map[string]bool{"gentian-infra-dev": false, meta.KernelNamespace: false}
+	want := map[string]bool{layout.System("postgresql"): false, layout.System("mariadb"): false, layout.System("s3"): false}
 	for _, ns := range namespaces {
 		if _, ok := want[ns]; ok {
 			want[ns] = true

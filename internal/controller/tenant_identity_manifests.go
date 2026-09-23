@@ -78,7 +78,7 @@ func (r *TenantReconciler) ensureTenantProvisioningManifests(ctx context.Context
 	desired := &corev1.ConfigMap{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      name,
-			Namespace: kernelNamespace,
+			Namespace: provisioningNamespace,
 			Labels: map[string]string{
 				tenantLabel:                tenant.Name,
 				"gentianos.io/config-type": tenantProvisioningJobsConfigType,
@@ -92,7 +92,7 @@ func (r *TenantReconciler) ensureTenantProvisioningManifests(ctx context.Context
 	}
 
 	existing := &corev1.ConfigMap{}
-	err = r.Get(ctx, types.NamespacedName{Name: name, Namespace: kernelNamespace}, existing)
+	err = r.Get(ctx, types.NamespacedName{Name: name, Namespace: provisioningNamespace}, existing)
 	if errors.IsNotFound(err) {
 		return r.Create(ctx, desired)
 	}
@@ -165,6 +165,10 @@ func (r *TenantReconciler) buildTenantProvisioningJobs(ctx context.Context, tena
 func (r *TenantReconciler) buildIdentityProvisioningJobs(ctx context.Context, tenant *gentianov1alpha1.Tenant, realmName string) ([]batchv1.Job, error) {
 	var jobs []batchv1.Job
 
+	// A tenant that adopts the kernel realm gets no realm Job, no
+	// administrator, no broker and no mail server: those are the realm's,
+	// and the realm is the identity bootstrap's. See adoptsKernelRealm.
+	adopted := r.adoptsKernelRealm(tenant)
 	var broker *realmBrokerParams
 	if r.KernelRealm != "" && r.KernelDomain != "" {
 		broker = &realmBrokerParams{
@@ -172,7 +176,9 @@ func (r *TenantReconciler) buildIdentityProvisioningJobs(ctx context.Context, te
 			kernelExternalURL: kernelExternalURL(r.KernelDomain),
 		}
 	}
-	jobs = append(jobs, *makeRealmJob(tenant, realmName, r.KernelDomain, broker))
+	if !adopted {
+		jobs = append(jobs, *makeRealmJob(tenant, realmName, r.KernelDomain, broker))
+	}
 
 	oidcConfigs, err := r.collectOIDCAppConfigs(ctx, tenant)
 	if err != nil {
@@ -190,11 +196,13 @@ func (r *TenantReconciler) buildIdentityProvisioningJobs(ctx context.Context, te
 	}
 	jobs = append(jobs, *makeGentianGroupsJob(tenant, realmName, groupsJSON))
 
-	adminCreds, err := r.seedTenantAdminCreds(ctx, tenant)
-	if err != nil {
-		return nil, err
+	if !adopted {
+		adminCreds, err := r.seedTenantAdminCreds(ctx, tenant)
+		if err != nil {
+			return nil, err
+		}
+		jobs = append(jobs, *makeAdminJob(tenant, realmName, r.tenantAdminEmail(tenant), adminCreds))
 	}
-	jobs = append(jobs, *makeAdminJob(tenant, realmName, r.tenantAdminEmail(tenant), adminCreds))
 
 	for _, cfg := range oidcConfigs {
 		profile, err := r.getOIDCOwnerProfile(ctx, cfg)
@@ -218,7 +226,7 @@ func (r *TenantReconciler) buildIdentityProvisioningJobs(ctx context.Context, te
 		jobs = append(jobs, *makeSAMLClientJob(tenant, realmName, cfg.profileName, cfg.entityID, cfg.acsURL))
 	}
 
-	if r.KernelRealm != "" && r.KernelDomain != "" {
+	if r.KernelRealm != "" && r.KernelDomain != "" && !adopted {
 		// No broker IdP Job. Every object it wrote — the kernel IdP, the tenant
 		// realm's first-broker-login flow, the two gentian_username mappers — is
 		// a Composition resource now, so the Job had nothing left to do.
@@ -557,7 +565,7 @@ func (r *TenantReconciler) retireStaleProvisioningJobs(ctx context.Context, jobs
 		desired := jobs[i].Annotations[provisioningScriptHashAnnotation]
 		live := &batchv1.Job{}
 		if err := r.Get(ctx, types.NamespacedName{
-			Name: jobs[i].Name, Namespace: kernelNamespace,
+			Name: jobs[i].Name, Namespace: jobs[i].Namespace,
 		}, live); err != nil {
 			continue
 		}

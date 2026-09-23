@@ -85,7 +85,7 @@ func TestMariaDB_NoMariaDBApps(t *testing.T) {
 	// No setup Job should have been created.
 	job := &batchv1.Job{}
 	if err := testClient.Get(context.Background(),
-		types.NamespacedName{Name: "mariadb-setup-nomaria-anything", Namespace: "platform-kernel"}, job); err == nil {
+		types.NamespacedName{Name: "mariadb-setup-nomaria-anything", Namespace: "system-mariadb"}, job); err == nil {
 		t.Error("expected no setup Job for Tenant with no MariaDB apps")
 	}
 }
@@ -116,7 +116,7 @@ func TestMariaDB_CreatesSetupJob(t *testing.T) {
 	job := &batchv1.Job{}
 	waitFor(t, jobAppearTimeout, func() bool {
 		return testClient.Get(context.Background(),
-			types.NamespacedName{Name: "mariadb-setup-mariacreate-maria-app1", Namespace: "platform-kernel"}, job) == nil
+			types.NamespacedName{Name: "mariadb-setup-mariacreate-maria-app1", Namespace: "system-mariadb"}, job) == nil
 	})
 
 	if job.Labels["gentianos.io/tenant"] != "mariacreate" {
@@ -195,9 +195,9 @@ func TestMariaDB_SetsReadyWhenJobsDone(t *testing.T) {
 	waitFor(t, jobAppearTimeout, func() bool {
 		job := &batchv1.Job{}
 		return testClient.Get(context.Background(),
-			types.NamespacedName{Name: "mariadb-setup-mariaready-maria-app2", Namespace: "platform-kernel"}, job) == nil
+			types.NamespacedName{Name: "mariadb-setup-mariaready-maria-app2", Namespace: "system-mariadb"}, job) == nil
 	})
-	markJobComplete(t, "mariadb-setup-mariaready-maria-app2", "platform-kernel")
+	markJobComplete(t, "mariadb-setup-mariaready-maria-app2", "system-mariadb")
 
 	// Phase=Ready and MariaDBReady=True should follow.
 	waitFor(t, tenantReadyTimeout, func() bool {
@@ -244,7 +244,7 @@ func TestMariaDB_DeleteDeletePolicy_CreatesDeleteJob(t *testing.T) {
 	waitFor(t, jobAppearTimeout, func() bool {
 		job := &batchv1.Job{}
 		return testClient.Get(context.Background(),
-			types.NamespacedName{Name: "mariadb-setup-mariadelete-maria-app3", Namespace: "platform-kernel"}, job) == nil
+			types.NamespacedName{Name: "mariadb-setup-mariadelete-maria-app3", Namespace: "system-mariadb"}, job) == nil
 	})
 
 	// Delete the tenant.

@@ -20,6 +20,7 @@ import (
 	"testing"
 
 	"github.com/gentian-org/gentian-os/internal/kernel/netpolicy"
+	"github.com/gentian-org/gentian-os/internal/layout"
 	"github.com/gentian-org/gentian-os/internal/meta"
 )
 
@@ -44,7 +45,7 @@ func TestBaselineNetworkPolicy_AllowsKernelAndOperatorIngress(t *testing.T) {
 
 	for _, ns := range []string{
 		meta.EnvoyGatewayInstallNamespace,
-		meta.KernelNamespace,
+		layout.Namespace(layout.Authentication),
 		meta.OperatorNamespace,
 	} {
 		if !got[ns] {

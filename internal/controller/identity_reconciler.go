@@ -28,6 +28,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 	"github.com/gentian-org/gentian-os/internal/authz"
@@ -58,6 +59,9 @@ type realmBrokerParams struct {
 // Keycloak Admin REST API. Returns a non-zero RequeueAfter while Jobs are pending.
 func (r *TenantReconciler) ensureIdentity(ctx context.Context, tenant *gentianov1alpha1.Tenant) (ctrl.Result, error) {
 	realmName := keycloakRealmName(tenant)
+	if r.adoptsKernelRealm(tenant) {
+		return r.ensureAdoptedRealmIdentity(ctx, tenant)
+	}
 
 	oidcConfigs, err := r.collectOIDCAppConfigs(ctx, tenant)
 	if err != nil {
@@ -241,7 +245,7 @@ func (r *TenantReconciler) deleteIdentity(ctx context.Context, tenant *gentianov
 	//
 	// The realm is adopted, never created by the tenant that adopts it, so
 	// there is nothing here for its deletion to undo.
-	if r.KernelRealm != "" && realmName == r.KernelRealm {
+	if r.adoptsKernelRealm(tenant) {
 		ctrl.LoggerFrom(ctx).Info(
 			"tenant adopts the kernel realm; leaving it alone on deletion",
 			"tenant", tenant.Name, "realm", realmName)
@@ -257,7 +261,7 @@ func (r *TenantReconciler) deleteIdentity(ctx context.Context, tenant *gentianov
 		// Retain path: only disable the realm if one was actually provisioned.
 		// If the realm job is absent, no realm exists in Keycloak and there is nothing to disable.
 		rj := &batchv1.Job{}
-		switch err := r.Get(ctx, types.NamespacedName{Name: realmJobName(tenant.Name), Namespace: kernelNamespace}, rj); {
+		switch err := r.Get(ctx, types.NamespacedName{Name: realmJobName(tenant.Name), Namespace: identityNamespace}, rj); {
 		case err == nil:
 			if !jobIsComplete(rj) {
 				// Manifest exists but Crossplane never finished provisioning the realm.
@@ -274,7 +278,7 @@ func (r *TenantReconciler) deleteIdentity(ctx context.Context, tenant *gentianov
 	}
 
 	existing := &batchv1.Job{}
-	err := r.Get(ctx, types.NamespacedName{Name: jobName, Namespace: kernelNamespace}, existing)
+	err := r.Get(ctx, types.NamespacedName{Name: jobName, Namespace: identityNamespace}, existing)
 	if err == nil {
 		if jobIsComplete(existing) {
 			// Delete provisioning jobs so they are re-created on the next deploy.
@@ -323,7 +327,7 @@ func makeRealmJob(tenant *gentianov1alpha1.Tenant, realmName, kernelDomain strin
 	return &batchv1.Job{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      realmJobName(tenant.Name),
-			Namespace: kernelNamespace,
+			Namespace: identityNamespace,
 			Labels: map[string]string{
 				tenantLabel:    tenant.Name,
 				managedByLabel: managedByValue,
@@ -356,7 +360,7 @@ func makeClientJob(tenant *gentianov1alpha1.Tenant, realmName, appName, clientID
 	return &batchv1.Job{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      clientJobName(tenant.Name, appName),
-			Namespace: kernelNamespace,
+			Namespace: identityNamespace,
 			Labels: map[string]string{
 				tenantLabel:    tenant.Name,
 				managedByLabel: managedByValue,
@@ -383,7 +387,7 @@ func makeSAMLClientJob(tenant *gentianov1alpha1.Tenant, realmName, appName, enti
 	return &batchv1.Job{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      clientJobName(tenant.Name, appName),
-			Namespace: kernelNamespace,
+			Namespace: identityNamespace,
 			Labels: map[string]string{
 				tenantLabel:    tenant.Name,
 				managedByLabel: managedByValue,
@@ -420,7 +424,7 @@ func makeAdminJob(tenant *gentianov1alpha1.Tenant, realmName, adminEmail string,
 	return &batchv1.Job{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      adminJobName(tenant.Name),
-			Namespace: kernelNamespace,
+			Namespace: identityNamespace,
 			Labels: map[string]string{
 				tenantLabel:    tenant.Name,
 				managedByLabel: managedByValue,
@@ -445,7 +449,7 @@ func makeRealmDisableJob(tenant *gentianov1alpha1.Tenant, realmName, kernelRealm
 	return &batchv1.Job{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      realmDisableJobName(tenant.Name),
-			Namespace: kernelNamespace,
+			Namespace: identityNamespace,
 			Labels: map[string]string{
 				tenantLabel:    tenant.Name,
 				managedByLabel: managedByValue,
@@ -472,7 +476,7 @@ func makeRealmDeleteJob(tenant *gentianov1alpha1.Tenant, realmName string) *batc
 	return &batchv1.Job{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      realmDeleteJobName(tenant.Name),
-			Namespace: kernelNamespace,
+			Namespace: identityNamespace,
 			Labels: map[string]string{
 				tenantLabel:    tenant.Name,
 				managedByLabel: managedByValue,
@@ -938,4 +942,72 @@ func jobCompletedAfter(sync, source *batchv1.Job) bool {
 
 func jobIsFailed(job *batchv1.Job) bool {
 	return jobHasCondition(job, batchv1.JobFailed)
+}
+
+// loadKeycloakAdmin reads Keycloak's admin endpoint and credential from the
+// authentication namespace, for the Jobs and calls that configure a realm.
+func loadKeycloakAdmin(ctx context.Context, c client.Reader) (url, user, pass string, err error) {
+	secret := &corev1.Secret{}
+	if err := c.Get(ctx, types.NamespacedName{Name: keycloakAdminSecret, Namespace: identityNamespace}, secret); err != nil {
+		return "", "", "", err
+	}
+	url = string(secret.Data["url"])
+	user = string(secret.Data["username"])
+	if user == "" {
+		user = "admin"
+	}
+	pass = string(secret.Data["password"])
+	if url == "" || pass == "" {
+		return "", "", "", fmt.Errorf("keycloak-admin secret missing url or password")
+	}
+	return url, user, pass, nil
+}
+
+// adoptsKernelRealm reports whether a tenant's identity lives in the kernel
+// realm rather than in one of its own. Tenant/platform is the case (AD-10):
+// the realm every administrator signs in through is adopted, never created,
+// configured, brokered or deleted by a tenant. Only what belongs to the
+// tenant inside it -- its entitlement groups, its apps' clients -- is the
+// tenant's to provision.
+func (r *TenantReconciler) adoptsKernelRealm(tenant *gentianov1alpha1.Tenant) bool {
+	return r.KernelRealm != "" && keycloakRealmName(tenant) == r.KernelRealm
+}
+
+// ensureAdoptedRealmIdentity is ensureIdentity for a tenant that adopts the
+// kernel realm: no realm Job to wait for, no administrator account minted,
+// no broker in either direction, no mail server and no auth mount of its own
+// -- the realm has all of those already, from the identity bootstrap. What
+// is waited for is the tenant's groups, and its apps' clients when it has any.
+func (r *TenantReconciler) ensureAdoptedRealmIdentity(ctx context.Context, tenant *gentianov1alpha1.Tenant) (ctrl.Result, error) {
+	groupsDone, err := r.ensureGentianGroupsJob(ctx, tenant)
+	if err != nil {
+		return ctrl.Result{}, fmt.Errorf("ensure Gentian groups Job: %w", err)
+	}
+	if !groupsDone {
+		r.setCondition(tenant, conditionIdentityReady, metav1.ConditionFalse,
+			"ProvisioningGroups", "Waiting for Gentian groups Job to complete")
+		return r.requeueForPendingJob(ctx, tenant.Name, gentianGroupsJobName(tenant.Name)), nil
+	}
+	oidcConfigs, err := r.collectOIDCAppConfigs(ctx, tenant)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+	var pending []string
+	for _, cfg := range oidcConfigs {
+		done, err := r.ensureOIDCClientJob(ctx, tenant, r.KernelRealm, cfg)
+		if err != nil {
+			return ctrl.Result{}, fmt.Errorf("ensure Keycloak OIDC Job for app %s: %w", cfg.profileName, err)
+		}
+		if !done {
+			pending = append(pending, clientJobName(tenant.Name, cfg.profileName))
+		}
+	}
+	if len(pending) > 0 {
+		r.setCondition(tenant, conditionIdentityReady, metav1.ConditionFalse,
+			"ProvisioningClients", "Waiting for OIDC client Jobs to complete")
+		return r.requeueForPendingJob(ctx, tenant.Name, pending...), nil
+	}
+	r.setCondition(tenant, conditionIdentityReady, metav1.ConditionTrue,
+		"Adopted", "The kernel realm is adopted; the tenant's groups and clients are ready")
+	return ctrl.Result{}, nil
 }

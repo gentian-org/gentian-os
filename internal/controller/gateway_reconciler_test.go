@@ -475,8 +475,8 @@ func TestKernelHTTPRouteSpecs(t *testing.T) {
 		t.Fatalf("id backend port = %d, want 8080 (Suze Keycloak)", got)
 	}
 	idNS := idRoute.Spec.Rules[0].BackendRefs[0].Namespace
-	if idNS == nil || string(*idNS) != kernelNamespace {
-		t.Fatalf("id backend namespace = %v, want %s", idNS, kernelNamespace)
+	if idNS == nil || string(*idNS) != identityNamespace {
+		t.Fatalf("id backend namespace = %v, want %s", idNS, identityNamespace)
 	}
 	portalRoute := buildKernelHTTPRoute(specs[1])
 	if portalRoute.Name != kernelRouteGentianPortal {
@@ -486,8 +486,8 @@ func TestKernelHTTPRouteSpecs(t *testing.T) {
 		t.Fatalf("portal host = %v", portalRoute.Spec.Hostnames[0])
 	}
 	ns := portalRoute.Spec.Rules[0].BackendRefs[0].Namespace
-	if ns == nil || string(*ns) != kernelNamespace {
-		t.Fatalf("portal api backend namespace = %v, want %s", ns, kernelNamespace)
+	if ns == nil || string(*ns) != servicesNamespace {
+		t.Fatalf("portal api backend namespace = %v, want %s", ns, servicesNamespace)
 	}
 }
 
@@ -569,8 +569,8 @@ func TestKernelHTTPRouteSpecsLLMEnabled(t *testing.T) {
 	if string(backend.Name) != litellmProxyServiceName {
 		t.Fatalf("llm backend service = %q, want %q", backend.Name, litellmProxyServiceName)
 	}
-	if backend.Namespace == nil || string(*backend.Namespace) != kernelNamespace {
-		t.Fatalf("llm backend namespace = %v, want %s", backend.Namespace, kernelNamespace)
+	if backend.Namespace == nil || string(*backend.Namespace) != servicesNamespace {
+		t.Fatalf("llm backend namespace = %v, want %s", backend.Namespace, servicesNamespace)
 	}
 	if got := *backend.Port; got != gatewayv1.PortNumber(litellmProxyPort) {
 		t.Fatalf("llm backend port = %d, want %d", got, litellmProxyPort)

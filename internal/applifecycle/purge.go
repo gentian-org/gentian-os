@@ -35,6 +35,7 @@ import (
 
 	"github.com/gentian-org/gentian-os/internal/backup"
 	"github.com/gentian-org/gentian-os/internal/kernel"
+	"github.com/gentian-org/gentian-os/internal/layout"
 	"github.com/gentian-org/gentian-os/internal/meta"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
@@ -172,7 +173,7 @@ func (s *Service) databasesOwnedBy(ctx context.Context, pod, role string) ([]str
 }
 
 func (s *Service) postgresPod(ctx context.Context) (string, error) {
-	pods, err := s.clientset.CoreV1().Pods(s.opts.KernelNamespace).List(ctx, metav1.ListOptions{
+	pods, err := s.clientset.CoreV1().Pods(layout.System("postgresql")).List(ctx, metav1.ListOptions{
 		LabelSelector: "cnpg.io/cluster=postgres",
 	})
 	if err != nil || len(pods.Items) == 0 {
@@ -185,7 +186,7 @@ func (s *Service) execPostgres(ctx context.Context, pod, sql string) (string, er
 	req := s.clientset.CoreV1().RESTClient().Post().
 		Resource("pods").
 		Name(pod).
-		Namespace(s.opts.KernelNamespace).
+		Namespace(layout.System("postgresql")).
 		SubResource("exec").
 		VersionedParams(&corev1.PodExecOptions{
 			Container: "postgres",
@@ -206,15 +207,15 @@ func (s *Service) execPostgres(ctx context.Context, pod, sql string) (string, er
 }
 
 func (s *Service) runKernelJob(ctx context.Context, job *batchv1.Job) []string {
-	_ = s.clientset.BatchV1().Jobs(s.opts.KernelNamespace).Delete(ctx, job.Name, metav1.DeleteOptions{
+	_ = s.clientset.BatchV1().Jobs(job.Namespace).Delete(ctx, job.Name, metav1.DeleteOptions{
 		PropagationPolicy: ptr(metav1.DeletePropagationBackground),
 	})
-	if _, err := s.clientset.BatchV1().Jobs(s.opts.KernelNamespace).Create(ctx, job, metav1.CreateOptions{}); err != nil {
+	if _, err := s.clientset.BatchV1().Jobs(job.Namespace).Create(ctx, job, metav1.CreateOptions{}); err != nil {
 		return []string{fmt.Sprintf("create job %s: %v", job.Name, err)}
 	}
 	deadline := time.Now().Add(5 * time.Minute)
 	for time.Now().Before(deadline) {
-		j, err := s.clientset.BatchV1().Jobs(s.opts.KernelNamespace).Get(ctx, job.Name, metav1.GetOptions{})
+		j, err := s.clientset.BatchV1().Jobs(job.Namespace).Get(ctx, job.Name, metav1.GetOptions{})
 		if err != nil {
 			return []string{fmt.Sprintf("get job %s: %v", job.Name, err)}
 		}
@@ -238,7 +239,7 @@ func (s *Service) runKernelJob(ctx context.Context, job *batchv1.Job) []string {
 func (s *Service) runMariaDBDeleteJob(ctx context.Context, tenant *gentianov1alpha1.Tenant, app string) []string {
 	dbName := databaseName(tenant, app)
 	dbUser := mariadbUserName(tenant.Name, app)
-	job := kernelDeleteJob(s.opts.KernelNamespace, mariadbDeleteJobName(tenant.Name, app), tenant.Name, app,
+	job := kernelDeleteJob(layout.System("mariadb"), mariadbDeleteJobName(tenant.Name, app), tenant.Name, app,
 		kernel.MariaDBProvisionerImage(), "delete-db", mariadbDeleteScript, append(mysqlAdminEnv(),
 			corev1.EnvVar{Name: "DB_NAME", Value: dbName},
 			corev1.EnvVar{Name: "DB_USER", Value: dbUser},
@@ -252,7 +253,7 @@ func (s *Service) runS3DeleteJob(ctx context.Context, tenant *gentianov1alpha1.T
 mc alias set gentian "${MINIO_ENDPOINT}" "${MINIO_ACCESS_KEY}" "${MINIO_SECRET_KEY}"
 mc rb --force "gentian/%s" 2>/dev/null || echo "bucket %s already gone"
 echo "bucket %s removed"`, bucket, bucket, bucket)
-	job := kernelDeleteJob(s.opts.KernelNamespace, s3DeleteJobName(tenant.Name, app), tenant.Name, app,
+	job := kernelDeleteJob(layout.System("s3"), s3DeleteJobName(tenant.Name, app), tenant.Name, app,
 		"quay.io/minio/mc:RELEASE.2025-08-13T08-35-41Z", "delete-bucket", script, minioAdminEnv())
 	return s.runKernelJob(ctx, job)
 }
@@ -263,7 +264,7 @@ func (s *Service) runRedisDeleteJob(ctx context.Context, tenant, app string) []s
 redis-cli -h "$REDIS_HOST" -p "${REDIS_PORT:-6379}" -a "$REDIS_PASSWORD" --no-auth-warning \
   ACL DELUSER %s 2>/dev/null || echo "user %s already absent"
 echo done`, user, user)
-	job := kernelDeleteJob(s.opts.KernelNamespace, redisACLDeleteJobName(tenant, app), tenant, app,
+	job := kernelDeleteJob(layout.System("cache"), redisACLDeleteJobName(tenant, app), tenant, app,
 		kernel.RedisProvisionerImage(), "del-acl-user", script, redisAdminEnv())
 	return s.runKernelJob(ctx, job)
 }
@@ -432,12 +433,12 @@ func (s *Service) purgeClusterArtifacts(ctx context.Context, tenant, app string)
 	var warnings []string
 	selector := fmt.Sprintf("%s=%s,gentianos.io/app=%s,%s=%s",
 		meta.TenantLabel, tenant, app, meta.ManagedByLabel, meta.ManagedByValue)
-	jobs, err := s.clientset.BatchV1().Jobs(s.opts.KernelNamespace).List(ctx, metav1.ListOptions{LabelSelector: selector})
+	jobs, err := s.listPlatformJobs(ctx, selector)
 	if err != nil {
 		return []string{fmt.Sprintf("list kernel jobs: %v", err)}
 	}
 	for _, job := range jobs.Items {
-		_ = s.clientset.BatchV1().Jobs(s.opts.KernelNamespace).Delete(ctx, job.Name, metav1.DeleteOptions{
+		_ = s.clientset.BatchV1().Jobs(job.Namespace).Delete(ctx, job.Name, metav1.DeleteOptions{
 			PropagationPolicy: ptr(metav1.DeletePropagationBackground),
 		})
 	}
@@ -477,12 +478,14 @@ func (s *Service) purgeClusterArtifacts(ctx context.Context, tenant, app string)
 			}
 		}
 	}
-	secrets, err := s.clientset.CoreV1().Secrets(s.opts.KernelNamespace).List(ctx, metav1.ListOptions{LabelSelector: selector})
-	if err != nil {
-		warnings = append(warnings, fmt.Sprintf("list kernel secrets: %v", err))
-	} else {
+	for _, ns := range platformNamespaces() {
+		secrets, err := s.clientset.CoreV1().Secrets(ns).List(ctx, metav1.ListOptions{LabelSelector: selector})
+		if err != nil {
+			warnings = append(warnings, fmt.Sprintf("list kernel secrets in %s: %v", ns, err))
+			continue
+		}
 		for _, sec := range secrets.Items {
-			_ = s.clientset.CoreV1().Secrets(s.opts.KernelNamespace).Delete(ctx, sec.Name, metav1.DeleteOptions{})
+			_ = s.clientset.CoreV1().Secrets(ns).Delete(ctx, sec.Name, metav1.DeleteOptions{})
 		}
 	}
 	// The operator also writes Secrets into the tenant's own namespace — the LLM
@@ -513,7 +516,7 @@ func (s *Service) purgeClusterArtifacts(ctx context.Context, tenant, app string)
 		Group: "postgresql.cnpg.io", Version: "v1", Kind: "Database",
 	})
 	dbObj.SetName(dbCR)
-	dbObj.SetNamespace(s.opts.KernelNamespace)
+	dbObj.SetNamespace(layout.System("postgresql"))
 	if err := s.client.Delete(ctx, dbObj); err != nil && !apierrors.IsNotFound(err) {
 		warnings = append(warnings, fmt.Sprintf("delete CNPG database %s: %v", dbCR, err))
 	}
@@ -680,3 +683,38 @@ func (s *Service) waitForPVCsGone(ctx context.Context, ns string, claims []strin
 }
 
 func ptr[T any](v T) *T { return &v }
+
+// platformNamespaces are where tenant provisioning leaves objects: one per
+// function, as internal/controller addresses them.
+func platformNamespaces() []string {
+	seen := map[string]struct{}{}
+	var out []string
+	for _, ns := range []string{
+		layout.Namespace(layout.Authentication),
+		layout.Namespace(layout.Provisioning),
+		layout.System("postgresql"),
+		layout.System("mariadb"),
+		layout.System("s3"),
+		layout.System("cache"),
+		layout.System("mail"),
+	} {
+		if _, ok := seen[ns]; ok {
+			continue
+		}
+		seen[ns] = struct{}{}
+		out = append(out, ns)
+	}
+	return out
+}
+
+func (s *Service) listPlatformJobs(ctx context.Context, selector string) (*batchv1.JobList, error) {
+	out := &batchv1.JobList{}
+	for _, ns := range platformNamespaces() {
+		page, err := s.clientset.BatchV1().Jobs(ns).List(ctx, metav1.ListOptions{LabelSelector: selector})
+		if err != nil {
+			return nil, err
+		}
+		out.Items = append(out.Items, page.Items...)
+	}
+	return out, nil
+}

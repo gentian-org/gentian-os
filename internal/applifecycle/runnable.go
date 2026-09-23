@@ -20,7 +20,6 @@ import (
 	"context"
 	"os"
 
-	"github.com/gentian-org/gentian-os/internal/meta"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
 )
 
@@ -36,7 +35,6 @@ func NewRunnableFromEnv(mgr manager.Manager) (*Runnable, error) {
 		addr = ":8082"
 	}
 	svc, err := NewService(mgr.GetClient(), mgr.GetConfig(), Options{
-		KernelNamespace:    envOrDefault("KERNEL_NAMESPACE", meta.KernelNamespace),
 		OpenBaoNamespace:   envOrDefault("OPENBAO_NAMESPACE", "openbao"),
 		OperatorNamespace:  envOrDefault("POD_NAMESPACE", "gentian-system"),
 		OperatorSA:         envOrDefault("OPERATOR_SA", "gentian-os"),

@@ -150,6 +150,14 @@ func run(log *slog.Logger) error {
 		log.Warn("the Cluster claim assigns no platform roles, so nobody administers this cluster",
 			"setting", "spec.platformRoles")
 	}
+	// The tenants git deploys on this cluster, attached to it in the store
+	// (WP-2): what the platform's administrators derive their authority over
+	// a tenant from, and what a tenant's own groups derive theirs from.
+	if tenants, err := repo.Tenants(rolesCtx); err != nil {
+		log.Warn("tenants not reconciled: no tenant is attached to this cluster until this succeeds", "error", err)
+	} else if err := checker.ReconcileTenants(rolesCtx, cluster, tenants); err != nil {
+		log.Warn("tenants not reconciled: no tenant is attached to this cluster until this succeeds", "error", err)
+	}
 	cancelRoles()
 	// Membership reaches OpenFGA only through this endpoint. Without a listener
 	// key nothing can be believed, so the endpoint does not exist — and no

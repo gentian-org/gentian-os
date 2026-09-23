@@ -77,7 +77,7 @@ func stageVolumeSecret(
 		sourceSecret = backup.MinIOAdminSecret
 	}
 	source := &corev1.Secret{}
-	if err := c.Get(ctx, types.NamespacedName{Name: sourceSecret, Namespace: kernelNamespace}, source); err != nil {
+	if err := c.Get(ctx, types.NamespacedName{Name: sourceSecret, Namespace: s3Namespace}, source); err != nil {
 		return fmt.Errorf("read %s: %w", sourceSecret, err)
 	}
 	// An external destination's Secret carries only the keys: the endpoint is a
@@ -139,7 +139,7 @@ func (r *TenantExportReconciler) ensureVolumeUploadSecret(
 	extra := map[string][]byte{}
 	if enc.Mode == gentianov1alpha1.ExportEncryptionPassphrase {
 		pp := &corev1.Secret{}
-		if err := r.Get(ctx, types.NamespacedName{Name: enc.PassphraseSecret, Namespace: kernelNamespace}, pp); err != nil {
+		if err := r.Get(ctx, types.NamespacedName{Name: enc.PassphraseSecret, Namespace: s3Namespace}, pp); err != nil {
 			return fmt.Errorf("read passphrase for volume capture: %w", err)
 		}
 		value, ok := pp.Data[enc.PassphraseKey]

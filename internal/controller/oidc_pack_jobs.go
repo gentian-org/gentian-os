@@ -109,7 +109,7 @@ func (r *TenantReconciler) cleanupOrphanedClientJobs(ctx context.Context, tenant
 
 	prefix := clientJobName(tenant.Name, "")
 	jobList := &batchv1.JobList{}
-	if err := r.List(ctx, jobList, client.InNamespace(kernelNamespace), tenantKernelLabelSelector(tenant.Name)); err != nil {
+	if err := r.List(ctx, jobList, client.InNamespace(identityNamespace), tenantKernelLabelSelector(tenant.Name)); err != nil {
 		return fmt.Errorf("list OIDC/SAML client Jobs for tenant %s: %w", tenant.Name, err)
 	}
 	for i := range jobList.Items {
@@ -277,7 +277,7 @@ func makeOIDCPackJob(tenant *gentianov1alpha1.Tenant, realmName string, cfg oidc
 	return &batchv1.Job{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      clientJobName(tenant.Name, cfg.profileName),
-			Namespace: kernelNamespace,
+			Namespace: identityNamespace,
 			Labels: map[string]string{
 				tenantLabel:    tenant.Name,
 				managedByLabel: managedByValue,

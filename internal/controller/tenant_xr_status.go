@@ -152,7 +152,7 @@ func (r *TenantReconciler) deleteTenantProvisioningConfigMap(ctx context.Context
 	cm := &corev1.ConfigMap{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      tenantProvisioningConfigMapName(tenantName),
-			Namespace: kernelNamespace,
+			Namespace: provisioningNamespace,
 		},
 	}
 	return client.IgnoreNotFound(r.Delete(ctx, cm))

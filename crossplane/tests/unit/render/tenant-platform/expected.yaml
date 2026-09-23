@@ -1,0 +1,252 @@
+---
+apiVersion: gentianos.io/v1alpha1
+kind: XTenant
+metadata:
+  name: platform
+status:
+  conditions:
+  - lastTransitionTime: "2024-01-01T00:00:00Z"
+    message: 'Unready resources: job-keycloak-gentian-groups-platform, keycloak-group-gentian-tenant-platform-admins,
+      keycloak-group-gentian-tenant-platform-app-admins, and 2 more'
+    reason: Creating
+    status: "False"
+    type: Ready
+---
+apiVersion: kubernetes.crossplane.io/v1alpha2
+kind: Object
+metadata:
+  annotations:
+    crossplane.io/composition-resource-name: job-keycloak-gentian-groups-platform
+  labels:
+    crossplane.io/composite: platform
+  name: platform-job-keycloak-gentian-groups-platform
+  ownerReferences:
+  - apiVersion: gentianos.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XTenant
+    name: platform
+    uid: ""
+spec:
+  forProvider:
+    manifest:
+      apiVersion: batch/v1
+      kind: Job
+      metadata:
+        labels:
+          gentianos.io/tenant: platform
+        name: keycloak-gentian-groups-platform
+        namespace: kernel-authentication
+      spec:
+        template:
+          spec:
+            containers:
+            - image: ghcr.io/gentian-org/gentian-app-init:develop
+              name: provision
+            restartPolicy: Never
+  providerConfigRef:
+    name: kubernetes
+---
+apiVersion: group.keycloak.crossplane.io/v1alpha1
+kind: Group
+metadata:
+  annotations:
+    crossplane.io/composition-resource-name: keycloak-group-gentian-tenant-platform-admins
+  labels:
+    crossplane.io/composite: platform
+  name: gentian-tenant-platform-admins
+  ownerReferences:
+  - apiVersion: gentianos.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XTenant
+    name: platform
+    uid: ""
+spec:
+  deletionPolicy: Orphan
+  forProvider:
+    name: gentian:tenant:platform:admins
+    realmId: kernel
+  providerConfigRef:
+    name: keycloak
+---
+apiVersion: group.keycloak.crossplane.io/v1alpha1
+kind: Group
+metadata:
+  annotations:
+    crossplane.io/composition-resource-name: keycloak-group-gentian-tenant-platform-app-admins
+  labels:
+    crossplane.io/composite: platform
+  name: gentian-tenant-platform-app-admins
+  ownerReferences:
+  - apiVersion: gentianos.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XTenant
+    name: platform
+    uid: ""
+spec:
+  deletionPolicy: Orphan
+  forProvider:
+    name: gentian:tenant:platform:app-admins
+    realmId: kernel
+  providerConfigRef:
+    name: keycloak
+---
+apiVersion: group.keycloak.crossplane.io/v1alpha1
+kind: Group
+metadata:
+  annotations:
+    crossplane.io/composition-resource-name: keycloak-group-gentian-tenant-platform-members
+  labels:
+    crossplane.io/composite: platform
+  name: gentian-tenant-platform-members
+  ownerReferences:
+  - apiVersion: gentianos.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XTenant
+    name: platform
+    uid: ""
+spec:
+  deletionPolicy: Orphan
+  forProvider:
+    name: gentian:tenant:platform:members
+    realmId: kernel
+  providerConfigRef:
+    name: keycloak
+---
+apiVersion: kubernetes.crossplane.io/v1alpha2
+kind: Object
+metadata:
+  annotations:
+    crossplane.io/composition-resource-name: limitrange
+  labels:
+    crossplane.io/composite: platform
+  name: platform-limitrange
+  ownerReferences:
+  - apiVersion: gentianos.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XTenant
+    name: platform
+    uid: ""
+spec:
+  forProvider:
+    manifest:
+      apiVersion: v1
+      kind: LimitRange
+      metadata:
+        labels:
+          app.kubernetes.io/managed-by: gentian-os
+          gentianos.io/tenant: platform
+        name: tenant-limits
+        namespace: tenant-platform
+      spec:
+        limits:
+        - default:
+            cpu: 500m
+            memory: 512Mi
+          defaultRequest:
+            cpu: 100m
+            memory: 128Mi
+          max:
+            cpu: "4"
+            memory: 8Gi
+          type: Container
+  providerConfigRef:
+    name: kubernetes
+---
+apiVersion: kubernetes.crossplane.io/v1alpha2
+kind: Object
+metadata:
+  annotations:
+    crossplane.io/composition-resource-name: namespace
+  labels:
+    crossplane.io/composite: platform
+  name: platform-namespace
+  ownerReferences:
+  - apiVersion: gentianos.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XTenant
+    name: platform
+    uid: ""
+spec:
+  forProvider:
+    manifest:
+      apiVersion: v1
+      kind: Namespace
+      metadata:
+        labels:
+          app.kubernetes.io/managed-by: gentian-os
+          gentianos.io/managed-by: crossplane
+          gentianos.io/tenant: platform
+          gentianos.io/tier: tenant
+        name: tenant-platform
+  providerConfigRef:
+    name: kubernetes
+---
+apiVersion: kubernetes.crossplane.io/v1alpha2
+kind: Object
+metadata:
+  annotations:
+    crossplane.io/composition-resource-name: resourcequota
+  labels:
+    crossplane.io/composite: platform
+  name: platform-resourcequota
+  ownerReferences:
+  - apiVersion: gentianos.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XTenant
+    name: platform
+    uid: ""
+spec:
+  forProvider:
+    manifest:
+      apiVersion: v1
+      kind: ResourceQuota
+      metadata:
+        labels:
+          app.kubernetes.io/managed-by: gentian-os
+          gentianos.io/tenant: platform
+        name: tenant-quota
+        namespace: tenant-platform
+      spec:
+        hard:
+          limits.cpu: "16"
+          limits.memory: 32Gi
+          requests.cpu: "4"
+          requests.memory: 16Gi
+          requests.storage: 50Gi
+  providerConfigRef:
+    name: kubernetes
+---
+apiVersion: vault.vault.upbound.io/v1alpha1
+kind: Policy
+metadata:
+  annotations:
+    crossplane.io/composition-resource-name: vault-policy
+  labels:
+    crossplane.io/composite: platform
+  name: platform-tenant-policy
+  ownerReferences:
+  - apiVersion: gentianos.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XTenant
+    name: platform
+    uid: ""
+spec:
+  forProvider:
+    name: tenant-platform
+    policy: |
+      path "secret/data/gentian-os/tenants/platform/*" {
+        capabilities = ["create", "read", "update", "delete", "list"]
+      }
+      path "secret/metadata/gentian-os/tenants/platform/*" {
+        capabilities = ["list", "delete"]
+      }
+  providerConfigRef:
+    name: openbao

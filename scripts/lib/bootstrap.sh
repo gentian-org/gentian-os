@@ -2419,6 +2419,58 @@ EOF
         generated=1
     fi
 
+    # Tenant/platform: the platform is a tenant whose realm is the kernel
+    # realm (AD-10). Its desktop is the platform-admin console and its members
+    # are the platform's administrators, so it exists from the first install,
+    # scaffolded here beside the claim rather than deployed later like a
+    # customer tenant. The operator adopts the realm it names and refuses to
+    # delete the tenant; both follow from isolation.keycloakRealm being the
+    # kernel realm, which is the one line below that must not change.
+    local platform_dir="${GENTIAN_DEPLOYMENTS_PATH}/clusters/${cluster}/tenants/platform"
+    if [[ ! -f "${platform_dir}/tenant.yaml" ]]; then
+        mkdir -p "${platform_dir}"
+        cat > "${platform_dir}/tenant.yaml" <<EOF
+# The platform tenant. Its realm is the kernel realm: the operator adopts
+# that realm rather than creating one, and this tenant cannot be deleted --
+# a realm-disable against the kernel realm would lock every administrator
+# out at once. Everything else about it is what any tenant gets.
+apiVersion: gentianos.io/v1alpha1
+kind: Tenant
+metadata:
+  name: platform
+  annotations:
+    argocd.argoproj.io/sync-wave: "2"
+spec:
+  displayName: Platform
+  isolation:
+    mode: namespace
+    keycloakRealm: ${KERNEL_REALM:-kernel}
+    databasePrefix: platform_
+    s3Prefix: platform-
+  deletionPolicy: Retain
+  # The base plan's capacity, the same ceiling every deployed tenant starts
+  # on (see the tenant-defaults component the deploy command writes).
+  quotas:
+    requestsCpu: "4"
+    requestsMemory: 16Gi
+    cpu: "16"
+    memory: 32Gi
+    storage: 50Gi
+    maxApps: 20
+  # No apps: the platform desktop's tiles are the kernel consoles the
+  # director answers from this account's relations, not catalogue apps.
+  apps: []
+EOF
+        cat > "${platform_dir}/kustomization.yaml" <<EOF
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+- tenant.yaml
+EOF
+        info "Scaffolded clusters/${cluster}/tenants/platform"
+        generated=1
+    fi
+
     # No cluster-settings.env is written. Everything it carried that describes
     # the cluster is a field on claims/cluster.yaml, emitted above by
     # _claim_cluster_fields and read back by claim_setting before Crossplane

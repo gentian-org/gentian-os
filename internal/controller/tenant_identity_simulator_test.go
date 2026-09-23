@@ -54,7 +54,7 @@ func startTenantProvisioningJobSimulator(ctx context.Context, c client.Client) {
 
 func simulateTenantProvisioningJobsOnce(ctx context.Context, c client.Client) {
 	var cms corev1.ConfigMapList
-	if err := c.List(ctx, &cms, client.InNamespace("platform-kernel"),
+	if err := c.List(ctx, &cms, client.InNamespace("crossplane-system"),
 		client.MatchingLabels{"gentianos.io/config-type": tenantProvisioningJobsConfigType}); err != nil {
 		return
 	}

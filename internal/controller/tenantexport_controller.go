@@ -636,7 +636,7 @@ func (r *TenantExportReconciler) jobParams(
 ) backup.JobParams {
 	bundle := export.Status.Bundle
 	p := backup.JobParams{
-		Namespace:    kernelNamespace,
+		Namespace:    s3Namespace,
 		Tenant:       tenant.Name,
 		App:          appName,
 		Export:       export.Name,
@@ -875,7 +875,7 @@ func bundleDeleteJobName(exportName string) string {
 // the kernel namespace, and in the tenant namespace where volume Jobs run.
 func (r *TenantExportReconciler) deleteExportJobs(ctx context.Context, export *gentianov1alpha1.TenantExport) error {
 	keep := bundleDeleteJobName(export.Name)
-	for _, ns := range []string{kernelNamespace, export.Namespace} {
+	for _, ns := range []string{s3Namespace, export.Namespace} {
 		jobs := &batchv1.JobList{}
 		if err := r.List(ctx, jobs,
 			client.InNamespace(ns),
@@ -913,14 +913,14 @@ func (r *TenantExportReconciler) ensureBundleDeleted(
 
 	name := bundleDeleteJobName(export.Name)
 	existing := &batchv1.Job{}
-	err := r.Get(ctx, types.NamespacedName{Name: name, Namespace: kernelNamespace}, existing)
+	err := r.Get(ctx, types.NamespacedName{Name: name, Namespace: s3Namespace}, existing)
 	switch {
 	case apierrors.IsNotFound(err):
 		// Deleting a bundle must address the storage it was written to. A
 		// cleanup that assumed the platform's own would report success having
 		// deleted a prefix that was never there, leaving the real objects.
 		deleteParams := backup.JobParams{
-			Namespace:    kernelNamespace,
+			Namespace:    s3Namespace,
 			Name:         name,
 			Tenant:       tenantName,
 			App:          "bundle",

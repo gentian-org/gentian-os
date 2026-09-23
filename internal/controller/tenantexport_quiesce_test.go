@@ -313,7 +313,7 @@ func TestDeletingAnExportResumesAppsCleansBundleThenReleases(t *testing.T) {
 	paused.Annotations = map[string]string{replicaMemoAnnotation: "1"}
 	captureJob := &batchv1.Job{ObjectMeta: metav1.ObjectMeta{
 		Name:      "tx-export-x-app-store-me-pg",
-		Namespace: kernelNamespace,
+		Namespace: s3Namespace,
 		Labels:    map[string]string{backup.ExportLabel: "export-x"},
 	}}
 	// A live namespace and tenant: this is someone deleting one backup, which
@@ -340,12 +340,12 @@ func TestDeletingAnExportResumesAppsCleansBundleThenReleases(t *testing.T) {
 	if got := *getDeployment(t, c, "app-store-me").Spec.Replicas; got != 1 {
 		t.Fatalf("replicas = %d, want resumed 1", got)
 	}
-	if err := c.Get(ctx, types.NamespacedName{Name: captureJob.Name, Namespace: kernelNamespace}, &batchv1.Job{}); err == nil {
+	if err := c.Get(ctx, types.NamespacedName{Name: captureJob.Name, Namespace: s3Namespace}, &batchv1.Job{}); err == nil {
 		t.Fatal("capture Job survived deletion; it would upload into the prefix being removed")
 	}
 	cleanup := &batchv1.Job{}
 	cleanupName := bundleDeleteJobName("export-x")
-	if err := c.Get(ctx, types.NamespacedName{Name: cleanupName, Namespace: kernelNamespace}, cleanup); err != nil {
+	if err := c.Get(ctx, types.NamespacedName{Name: cleanupName, Namespace: s3Namespace}, cleanup); err != nil {
 		t.Fatalf("cleanup Job not created: %v", err)
 	}
 
@@ -400,7 +400,7 @@ func TestCompletedUnitIsNotRerunAfterItsJobDisappears(t *testing.T) {
 
 	unit := captureUnit{JobName: jobName, Job: &batchv1.Job{ObjectMeta: metav1.ObjectMeta{
 		Name:      jobName,
-		Namespace: kernelNamespace,
+		Namespace: s3Namespace,
 		Labels:    map[string]string{meta.AppLabel: "app-store-me"},
 	}}}
 	done, err := r.ensureCaptureJob(context.Background(), export, unit)
@@ -410,7 +410,7 @@ func TestCompletedUnitIsNotRerunAfterItsJobDisappears(t *testing.T) {
 	if !done {
 		t.Fatal("recorded-complete unit reported not done")
 	}
-	if err := c.Get(context.Background(), types.NamespacedName{Name: jobName, Namespace: kernelNamespace}, &batchv1.Job{}); !apierrors.IsNotFound(err) {
+	if err := c.Get(context.Background(), types.NamespacedName{Name: jobName, Namespace: s3Namespace}, &batchv1.Job{}); !apierrors.IsNotFound(err) {
 		t.Fatalf("the Job was recreated for an already-completed unit: %v", err)
 	}
 }
@@ -466,7 +466,7 @@ func TestVolumeUnitsRunInTheTenantNamespaceWithStagedCredentials(t *testing.T) {
 		u := &units[i]
 		if u.Kind == "volume" {
 			volume = u
-		} else if u.Job.Namespace != kernelNamespace {
+		} else if u.Job.Namespace != s3Namespace {
 			t.Errorf("%s unit runs in %q, want the kernel namespace", u.Kind, u.Job.Namespace)
 		}
 	}
@@ -844,7 +844,7 @@ func TestTenantTeardownKeepsTheBundle(t *testing.T) {
 
 			// No cleanup Job: the bundle's objects stay in the bucket.
 			if err := c.Get(ctx, types.NamespacedName{
-				Name: bundleDeleteJobName("keep-me"), Namespace: kernelNamespace,
+				Name: bundleDeleteJobName("keep-me"), Namespace: s3Namespace,
 			}, &batchv1.Job{}); !apierrors.IsNotFound(err) {
 				t.Fatalf("a cleanup Job was created during teardown: %v", err)
 			}
@@ -934,7 +934,7 @@ func (f *fakeTailer) Tail(_ context.Context, _, _, container string, _ int64) (s
 
 func failedPod(name, jobName string, initFailed, mainFailed string) *corev1.Pod {
 	pod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{
-		Name: name, Namespace: kernelNamespace,
+		Name: name, Namespace: s3Namespace,
 		Labels: map[string]string{"job-name": jobName},
 	}}
 	if initFailed != "" {
@@ -971,7 +971,7 @@ func TestACaptureFailureSaysWhatTheContainerSaid(t *testing.T) {
 	}}
 	r := &TenantExportReconciler{Client: c, Scheme: s, LogTailer: tail}
 
-	got := r.captureFailureReason(context.Background(), kernelNamespace, "tx-e-docmost-s3")
+	got := r.captureFailureReason(context.Background(), s3Namespace, "tx-e-docmost-s3")
 
 	if !strings.Contains(got, "Insufficient permissions") {
 		t.Fatalf("the container's error is missing from %q", got)
@@ -1000,7 +1000,7 @@ func TestTheFirstFailedContainerIsTheOneReported(t *testing.T) {
 	}}
 	r := &TenantExportReconciler{Client: c, Scheme: s, LogTailer: tail}
 
-	got := r.captureFailureReason(context.Background(), kernelNamespace, "tx-e-docmost-s3")
+	got := r.captureFailureReason(context.Background(), s3Namespace, "tx-e-docmost-s3")
 
 	if !strings.Contains(got, "fetch-bucket") || !strings.Contains(got, "Access Denied") {
 		t.Fatalf("the failing init container was not reported: %q", got)
@@ -1021,13 +1021,13 @@ func TestAnUnreadableLogIsNotItselfAFailure(t *testing.T) {
 
 	r := &TenantExportReconciler{Client: c, Scheme: s,
 		LogTailer: &fakeTailer{err: errors.New("pod is gone")}}
-	if got := r.captureFailureReason(context.Background(), kernelNamespace, "tx-e-x"); got != "" {
+	if got := r.captureFailureReason(context.Background(), s3Namespace, "tx-e-x"); got != "" {
 		t.Errorf("an unreadable log produced %q instead of nothing", got)
 	}
 
 	// And with no tailer at all, which is how every unit suite builds this.
 	r = &TenantExportReconciler{Client: c, Scheme: s}
-	if got := r.captureFailureReason(context.Background(), kernelNamespace, "tx-e-x"); got != "" {
+	if got := r.captureFailureReason(context.Background(), s3Namespace, "tx-e-x"); got != "" {
 		t.Errorf("no tailer produced %q instead of nothing", got)
 	}
 }
@@ -1157,7 +1157,7 @@ func TestVolumeUploadStagesTheDestinationsKeysNotThePlatforms(t *testing.T) {
 	}
 
 	platform := &corev1.Secret{
-		ObjectMeta: metav1.ObjectMeta{Name: backup.MinIOAdminSecret, Namespace: kernelNamespace},
+		ObjectMeta: metav1.ObjectMeta{Name: backup.MinIOAdminSecret, Namespace: s3Namespace},
 		Data: map[string][]byte{
 			"endpoint":  []byte("http://minio-prod:9000"),
 			"accessKey": []byte("platform-key"),
@@ -1165,7 +1165,7 @@ func TestVolumeUploadStagesTheDestinationsKeysNotThePlatforms(t *testing.T) {
 		},
 	}
 	destination := &corev1.Secret{
-		ObjectMeta: metav1.ObjectMeta{Name: "backup-destination-demo", Namespace: kernelNamespace},
+		ObjectMeta: metav1.ObjectMeta{Name: "backup-destination-demo", Namespace: s3Namespace},
 		Data: map[string][]byte{
 			backup.DestinationAccessKeyField: []byte("EXO-key"),
 			backup.DestinationSecretKeyField: []byte("EXO-secret"),
@@ -1221,7 +1221,7 @@ func TestVolumeUploadStillStagesPlatformKeysForAPlatformBundle(t *testing.T) {
 		t.Fatalf("add gentian scheme: %v", err)
 	}
 	platform := &corev1.Secret{
-		ObjectMeta: metav1.ObjectMeta{Name: backup.MinIOAdminSecret, Namespace: kernelNamespace},
+		ObjectMeta: metav1.ObjectMeta{Name: backup.MinIOAdminSecret, Namespace: s3Namespace},
 		Data: map[string][]byte{
 			"endpoint":  []byte("http://minio-prod:9000"),
 			"accessKey": []byte("platform-key"),
@@ -1341,9 +1341,9 @@ func TestTheFailureReasonIsTakenWhileThePodStillExists(t *testing.T) {
 	// A Job that has not failed yet — it is retrying — with a pod whose upload
 	// container has already died. This is the window that used to be missed.
 	job := &batchv1.Job{ObjectMeta: metav1.ObjectMeta{
-		Name: "tx-e-nextcloud-vol0", Namespace: kernelNamespace}}
+		Name: "tx-e-nextcloud-vol0", Namespace: s3Namespace}}
 	pod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{
-		Name: "tx-e-nextcloud-vol0-abc", Namespace: kernelNamespace,
+		Name: "tx-e-nextcloud-vol0-abc", Namespace: s3Namespace,
 		Labels: map[string]string{"job-name": "tx-e-nextcloud-vol0"},
 	}}
 	pod.Status.Phase = corev1.PodRunning
@@ -1370,7 +1370,7 @@ func TestTheFailureReasonIsTakenWhileThePodStillExists(t *testing.T) {
 	unit := captureUnit{
 		Kind: "volume", Name: "nextcloud-nextcloud", JobName: job.Name,
 		Job: &batchv1.Job{ObjectMeta: metav1.ObjectMeta{
-			Name: job.Name, Namespace: kernelNamespace,
+			Name: job.Name, Namespace: s3Namespace,
 			Labels: map[string]string{meta.AppLabel: "nextcloud-base-ce"},
 		}},
 	}

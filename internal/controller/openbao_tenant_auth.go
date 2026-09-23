@@ -63,7 +63,9 @@ func (r *TenantReconciler) ensureTenantOpenBaoAuth(ctx context.Context, tenant *
 		return nil
 	}
 	realm := tenantRealm(tenant)
-	if realm == "" {
+	if realm == "" || r.adoptsKernelRealm(tenant) {
+		// The mount is keyed by realm, and the kernel realm's mount is the
+		// cluster's own (B-04): never a tenant's to create or remove.
 		return nil
 	}
 
@@ -125,7 +127,9 @@ func (r *TenantReconciler) removeTenantOpenBaoAuth(ctx context.Context, tenant *
 		return nil
 	}
 	realm := tenantRealm(tenant)
-	if realm == "" {
+	if realm == "" || r.adoptsKernelRealm(tenant) {
+		// The mount is keyed by realm, and the kernel realm's mount is the
+		// cluster's own (B-04): never a tenant's to create or remove.
 		return nil
 	}
 	return secrets.NewTenantAuth(r.Seeder.KV()).DeleteMount(ctx, realm)

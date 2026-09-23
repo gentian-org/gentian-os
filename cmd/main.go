@@ -41,7 +41,6 @@ import (
 	"github.com/gentian-org/gentian-os/internal/controller"
 	"github.com/gentian-org/gentian-os/internal/credentialmgr"
 	"github.com/gentian-org/gentian-os/internal/kernel/secrets"
-	"github.com/gentian-org/gentian-os/internal/meta"
 	"github.com/gentian-org/gentian-os/internal/usage"
 	"github.com/gentian-org/gentian-os/internal/webhook"
 )
@@ -191,10 +190,9 @@ func main() {
 	// a cluster without the per-tenant shell databases has nowhere to write.
 	if os.Getenv("USAGE_SAMPLER_ENABLED") != "false" {
 		sampler := &usage.Sampler{
-			Client:          mgr.GetClient(),
-			KernelNamespace: envOrDefault("KERNEL_NAMESPACE", meta.KernelNamespace),
-			Interval:        envDuration("USAGE_SAMPLE_INTERVAL", 15*time.Minute),
-			Retention:       envDuration("USAGE_RETENTION", 400*24*time.Hour),
+			Client:    mgr.GetClient(),
+			Interval:  envDuration("USAGE_SAMPLE_INTERVAL", 15*time.Minute),
+			Retention: envDuration("USAGE_RETENTION", 400*24*time.Hour),
 		}
 		// The live series is optional and its absence is not an error: a
 		// cluster with no metrics-server still records the figures a plan is
@@ -255,24 +253,6 @@ func main() {
 		os.Exit(1)
 	}
 
-	openfgaURL := os.Getenv("OPENFGA_API_URL")
-	if openfgaURL == "" {
-		openfgaURL = "http://gentian-openfga.platform-kernel.svc.cluster.local:8080"
-	}
-	if err := (&controller.AuthzBridgeReconciler{
-		Client:       mgr.GetClient(),
-		KernelRealm:  kernelRealmOrDefault(os.Getenv("KERNEL_REALM")),
-		OpenFGAURL:   openfgaURL,
-		OpenFGAToken: os.Getenv("OPENFGA_API_TOKEN"),
-		Enabled:      controller.AuthzBridgeEnabled(),
-	}).SetupWithManager(mgr); err != nil {
-		setupLog.Error(err, "unable to create controller", "controller", "AuthzBridge")
-		os.Exit(1)
-	}
-	if controller.AuthzBridgeEnabled() {
-		setupLog.Info("authz bridge enabled", "openfga_url", openfgaURL)
-	}
-
 	if err := (&controller.PlatformSecurityPolicyReconciler{
 		Client:            mgr.GetClient(),
 		OperatorNamespace: "gentian-system",
@@ -282,10 +262,7 @@ func main() {
 	}
 
 	if err := (&controller.AppGrantReconciler{
-		Client:       mgr.GetClient(),
-		OpenFGAURL:   openfgaURL,
-		OpenFGAToken: os.Getenv("OPENFGA_API_TOKEN"),
-		Enabled:      controller.AuthzBridgeEnabled(),
+		Client: mgr.GetClient(),
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "AppGrant")
 		os.Exit(1)
@@ -354,6 +331,7 @@ func main() {
 			// path is still cheap, and admitting tenants is what makes it
 			// expensive — so the safe default is the one that keeps the exit open.
 			GateOnHandover:    os.Getenv("HANDOVER_GATE_TENANTS") != "false",
+			KernelRealm:       kernelRealmOrDefault(os.Getenv("KERNEL_REALM")),
 			HandoverNamespace: envOrDefault("HANDOVER_NAMESPACE", envOrDefault("OPERATOR_NAMESPACE", "gentian-system")),
 		}).SetupWithManager(mgr)
 

@@ -90,7 +90,7 @@ func makeKernelTenantBrokerJob(tenantName, realmName, kernelRealm string) *batch
 	return &batchv1.Job{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      tenantKernelBrokerJobName(tenantName),
-			Namespace: kernelNamespace,
+			Namespace: identityNamespace,
 			Labels: map[string]string{
 				tenantLabel:    tenantName,
 				managedByLabel: managedByValue,

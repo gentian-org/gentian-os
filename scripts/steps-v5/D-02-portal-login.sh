@@ -43,6 +43,11 @@ check() {
     # The realm is the thing this step exists to create, and the Secret the
     # portal reads is only meaningful once the clients in that realm exist.
     kubectl get secret gentian-portal-secrets -n "${PORTAL_NAMESPACE}" >/dev/null 2>&1 || return "${CHECK_MISSING}"
+    # The platform is a tenant whose realm is this one (AD-10). It is
+    # scaffolded with the cluster and synced by the tenants ApplicationSet,
+    # and it is Ready only once the operator has adopted the realm and its
+    # groups exist in it -- which is what this step is for.
+    [[ "$(kubectl get tenant platform -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null)" == "True" ]] || return "${CHECK_MISSING}"
     return 0
 }
 
@@ -73,6 +78,23 @@ apply() {
     # anything configures its SMTP.
     install_portal_login
     configure_keycloak_realm_smtp || warn "Keycloak realm SMTP configuration skipped."
+
+    # Tenant/platform arrives from git through the tenants ApplicationSet and
+    # is provisioned by the operator against the realm just created. Nothing
+    # here applies it; what is waited for is the operator's verdict.
+    info "Waiting for Tenant/platform to be Ready..."
+    local deadline=$((SECONDS + 900))
+    until [[ "$(kubectl get tenant platform -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null)" == "True" ]]; do
+        if (( SECONDS > deadline )); then
+            error "Tenant/platform is not Ready after 15 minutes."
+            kubectl get tenant platform -o jsonpath='{range .status.conditions[*]}{.type}={.status} {.reason}: {.message}{"\n"}{end}' 2>/dev/null || \
+                error "  Tenant/platform does not exist: is clusters/${GENTIAN_DEPLOYMENTS_CLUSTER_ID}/tenants/platform pushed to gentian-deployments?"
+            return 1
+        fi
+        request_argo_sync_if_stalled "${GITOPS_NAMESPACE}" "tenant-platform" 2>/dev/null || true
+        sleep 10
+    done
+    success "Tenant/platform is Ready: the platform tenant adopts realm ${KERNEL_REALM:-kernel}."
 }
 
 destroy() {

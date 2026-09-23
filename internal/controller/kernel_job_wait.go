@@ -20,7 +20,6 @@ import (
 	"context"
 	"fmt"
 
-	batchv1 "k8s.io/api/batch/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -60,12 +59,11 @@ func crossplaneObjectReady(obj *unstructured.Unstructured) bool {
 }
 
 // waitForProvisioningJob returns true when a Crossplane-owned provisioning Job
-// in platform-kernel has completed successfully. When the Batch Job was removed
+// has completed successfully, in whichever platform namespace its function put it. When the Batch Job was removed
 // by TTL after success, the corresponding kubernetes.crossplane.io/Object MR is
 // consulted so tenants do not stay stuck in Provisioning.
 func (r *TenantReconciler) waitForProvisioningJob(ctx context.Context, tenantName, jobName string) (bool, error) {
-	job := &batchv1.Job{}
-	err := r.Get(ctx, types.NamespacedName{Name: jobName, Namespace: kernelNamespace}, job)
+	job, err := r.getProvisioningJob(ctx, jobName)
 	if err == nil {
 		if jobIsFailed(job) {
 			prop := metav1.DeletePropagationBackground

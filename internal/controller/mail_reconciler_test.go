@@ -68,7 +68,7 @@ func TestMail_Disabled(t *testing.T) {
 	// No Postfix virtual-domains ConfigMap entry should exist for this tenant.
 	postfixCM := &corev1.ConfigMap{}
 	if err := testClient.Get(context.Background(),
-		types.NamespacedName{Name: "mail-postfix-virtual-domains", Namespace: "platform-kernel"}, postfixCM); err == nil {
+		types.NamespacedName{Name: "mail-postfix-virtual-domains", Namespace: "system-mail"}, postfixCM); err == nil {
 		if _, ok := postfixCM.Data["maildisabled"]; ok {
 			t.Error("unexpected Postfix virtual-domain entry found for disabled mail mode")
 		}
@@ -114,7 +114,7 @@ func TestMail_Selfhosted_ProvisionsTenantInSharedInfra(t *testing.T) {
 	dkimSecret := &corev1.Secret{}
 	waitFor(t, jobAppearTimeout, func() bool {
 		return testClient.Get(context.Background(),
-			types.NamespacedName{Name: "dkim-mailself", Namespace: "platform-kernel"}, dkimSecret) == nil
+			types.NamespacedName{Name: "dkim-mailself", Namespace: "system-mail"}, dkimSecret) == nil
 	})
 	if len(dkimSecret.Data["tls.key"]) == 0 {
 		t.Error("expected non-empty tls.key in DKIM secret")
@@ -128,7 +128,7 @@ func TestMail_Selfhosted_ProvisionsTenantInSharedInfra(t *testing.T) {
 	postfixCM := &corev1.ConfigMap{}
 	waitFor(t, jobAppearTimeout, func() bool {
 		return testClient.Get(context.Background(),
-			types.NamespacedName{Name: "mail-postfix-virtual-domains", Namespace: "platform-kernel"}, postfixCM) == nil
+			types.NamespacedName{Name: "mail-postfix-virtual-domains", Namespace: "system-mail"}, postfixCM) == nil
 	})
 	if postfixCM.Data["mailself"] != "mailself.example.com" {
 		t.Errorf("expected Postfix virtual-domain 'mailself.example.com', got %q", postfixCM.Data["mailself"])
@@ -138,7 +138,7 @@ func TestMail_Selfhosted_ProvisionsTenantInSharedInfra(t *testing.T) {
 	dovecotCM := &corev1.ConfigMap{}
 	waitFor(t, jobAppearTimeout, func() bool {
 		return testClient.Get(context.Background(),
-			types.NamespacedName{Name: "mail-dovecot-domains", Namespace: "platform-kernel"}, dovecotCM) == nil
+			types.NamespacedName{Name: "mail-dovecot-domains", Namespace: "system-mail"}, dovecotCM) == nil
 	})
 	if dovecotCM.Data["mailself"] != "mailself.example.com" {
 		t.Errorf("expected Dovecot domain 'mailself.example.com', got %q", dovecotCM.Data["mailself"])
@@ -214,7 +214,7 @@ func TestMail_Selfhosted_DoesNotCreatePerTenantApplicationCRs(t *testing.T) {
 	// We verify this by confirming the shared ConfigMap path was used instead.
 	postfixCM := &corev1.ConfigMap{}
 	if err := testClient.Get(context.Background(),
-		types.NamespacedName{Name: "mail-postfix-virtual-domains", Namespace: "platform-kernel"}, postfixCM); err != nil {
+		types.NamespacedName{Name: "mail-postfix-virtual-domains", Namespace: "system-mail"}, postfixCM); err != nil {
 		t.Errorf("expected shared Postfix ConfigMap to exist: %v", err)
 	}
 }
@@ -250,7 +250,7 @@ func TestMail_DefaultMode_IsSelfhosted(t *testing.T) {
 	postfixCM := &corev1.ConfigMap{}
 	waitFor(t, jobAppearTimeout, func() bool {
 		return testClient.Get(context.Background(),
-			types.NamespacedName{Name: "mail-postfix-virtual-domains", Namespace: "platform-kernel"}, postfixCM) == nil
+			types.NamespacedName{Name: "mail-postfix-virtual-domains", Namespace: "system-mail"}, postfixCM) == nil
 	})
 	if postfixCM.Data["maildefault"] != "maildefault.example.com" {
 		t.Errorf("expected Postfix virtual-domain 'maildefault.example.com', got %q",
@@ -261,7 +261,7 @@ func TestMail_DefaultMode_IsSelfhosted(t *testing.T) {
 	dovecotCM := &corev1.ConfigMap{}
 	waitFor(t, jobAppearTimeout, func() bool {
 		return testClient.Get(context.Background(),
-			types.NamespacedName{Name: "mail-dovecot-domains", Namespace: "platform-kernel"}, dovecotCM) == nil
+			types.NamespacedName{Name: "mail-dovecot-domains", Namespace: "system-mail"}, dovecotCM) == nil
 	})
 	if dovecotCM.Data["maildefault"] != "maildefault.example.com" {
 		t.Errorf("expected Dovecot domain 'maildefault.example.com', got %q",
@@ -291,7 +291,7 @@ func TestMail_TransportOnly_RegistersPostfixOnly(t *testing.T) {
 	postfixCM := &corev1.ConfigMap{}
 	waitFor(t, jobAppearTimeout, func() bool {
 		if err := testClient.Get(context.Background(),
-			types.NamespacedName{Name: "mail-postfix-virtual-domains", Namespace: "platform-kernel"}, postfixCM); err != nil {
+			types.NamespacedName{Name: "mail-postfix-virtual-domains", Namespace: "system-mail"}, postfixCM); err != nil {
 			return false
 		}
 		return postfixCM.Data["mailrelay"] != ""
@@ -312,7 +312,7 @@ func TestMail_TransportOnly_RegistersPostfixOnly(t *testing.T) {
 	time.Sleep(500 * time.Millisecond)
 	dovecotCM := &corev1.ConfigMap{}
 	if err := testClient.Get(context.Background(),
-		types.NamespacedName{Name: "mail-dovecot-domains", Namespace: "platform-kernel"}, dovecotCM); err == nil {
+		types.NamespacedName{Name: "mail-dovecot-domains", Namespace: "system-mail"}, dovecotCM); err == nil {
 		if _, ok := dovecotCM.Data["mailrelay"]; ok {
 			t.Error("unexpected Dovecot domain entry found for transport-only mode")
 		}
@@ -359,7 +359,7 @@ func TestMail_External_CopiesCredentialsSecret(t *testing.T) {
 	src := &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "tenant-smtp-creds",
-			Namespace: "platform-kernel",
+			Namespace: "system-mail",
 		},
 		Data: map[string][]byte{
 			"host":     []byte("smtp.example.com"),
@@ -437,7 +437,7 @@ func TestMail_PostfixInboundMapsFollowTenant(t *testing.T) {
 
 	maps := &corev1.ConfigMap{}
 	mapsKey := types.NamespacedName{
-		Name: "postfix-kernel-virtual-mailbox-maps", Namespace: "platform-kernel",
+		Name: "postfix-kernel-virtual-mailbox-maps", Namespace: "system-mail-dmz",
 	}
 	waitFor(t, jobAppearTimeout, func() bool {
 		if err := testClient.Get(context.Background(), mapsKey, maps); err != nil {
@@ -489,7 +489,7 @@ func TestTenantDelete_RemovesPortalShellSecret(t *testing.T) {
 		t.Fatalf("create tenant: %v", err)
 	}
 
-	key := types.NamespacedName{Name: "portal-shell-shellsecret", Namespace: "platform-kernel"}
+	key := types.NamespacedName{Name: "portal-shell-shellsecret", Namespace: "tenant-shellsecret"}
 	secret := &corev1.Secret{}
 	waitFor(t, jobAppearTimeout, func() bool {
 		return testClient.Get(context.Background(), key, secret) == nil
@@ -531,7 +531,7 @@ func TestMail_MapsDedupeSharedDomain(t *testing.T) {
 
 	maps := &corev1.ConfigMap{}
 	key := types.NamespacedName{
-		Name: "postfix-kernel-virtual-mailbox-maps", Namespace: "platform-kernel",
+		Name: "postfix-kernel-virtual-mailbox-maps", Namespace: "system-mail-dmz",
 	}
 	waitFor(t, jobAppearTimeout, func() bool {
 		if err := testClient.Get(context.Background(), key, maps); err != nil {
@@ -717,7 +717,7 @@ func TestSyncTenantMailDNS_GatedOnClusterMailMode(t *testing.T) {
 		o.SetAPIVersion("externaldns.k8s.io/v1alpha1")
 		o.SetKind("DNSEndpoint")
 		o.SetName("mail-dnsgate")
-		o.SetNamespace("platform-kernel")
+		o.SetNamespace("system-mail-dmz")
 		return o
 	}
 
@@ -726,7 +726,7 @@ func TestSyncTenantMailDNS_GatedOnClusterMailMode(t *testing.T) {
 		o.SetAPIVersion("externaldns.k8s.io/v1alpha1")
 		o.SetKind("DNSEndpoint")
 		return c.Get(context.Background(), types.NamespacedName{
-			Name: "mail-dnsgate", Namespace: "platform-kernel"}, o)
+			Name: "mail-dnsgate", Namespace: "system-mail-dmz"}, o)
 	}
 
 	t.Run("kernel mail publishes", func(t *testing.T) {

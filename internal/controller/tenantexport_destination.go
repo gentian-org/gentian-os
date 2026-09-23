@@ -89,7 +89,7 @@ func (r *TenantExportReconciler) stageDestinationCredential(
 	copied := &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      backup.ExportCredentialSecretName(export.Name),
-			Namespace: kernelNamespace,
+			Namespace: s3Namespace,
 			Labels: map[string]string{
 				tenantLabel:        tenantNameFromNamespace(export.Namespace),
 				managedByLabel:     managedByValue,
@@ -103,7 +103,7 @@ func (r *TenantExportReconciler) stageDestinationCredential(
 	existing := &corev1.Secret{}
 	getErr := r.Get(ctx, types.NamespacedName{
 		Name:      copied.Name,
-		Namespace: kernelNamespace,
+		Namespace: s3Namespace,
 	}, existing)
 	switch {
 	case apierrors.IsNotFound(getErr):
@@ -129,7 +129,7 @@ func (r *TenantExportReconciler) discardDestinationCredential(
 	secret := &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      backup.ExportCredentialSecretName(export.Name),
-			Namespace: kernelNamespace,
+			Namespace: s3Namespace,
 		},
 	}
 	if err := r.Delete(ctx, secret); err != nil && !apierrors.IsNotFound(err) {

@@ -23,6 +23,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/intstr"
 
+	"github.com/gentian-org/gentian-os/internal/layout"
 	"github.com/gentian-org/gentian-os/internal/meta"
 )
 
@@ -77,7 +78,9 @@ func BaselineNetworkPolicy(tenantName, nsName string, cfg Config, kubeAPIEndpts 
 
 	ingress := []networkingv1.NetworkPolicyIngressRule{
 		namespaceIngress(meta.EnvoyGatewayInstallNamespace),
-		namespaceIngress(meta.KernelNamespace),
+		// Keycloak calls an app's back-channel logout endpoint, so the
+		// authentication function may reach tenant pods; nothing else kernel does.
+		namespaceIngress(layout.Namespace(layout.Authentication)),
 		// The operator itself provisions *into* running tenant apps over their
 		// own admin APIs — AppProfile.spec.provisioning.privilegedRole is the
 		// first such case (see app_privilege_reconciler.go). It runs in

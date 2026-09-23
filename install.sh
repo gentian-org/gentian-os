@@ -340,9 +340,17 @@ prepare_deployment_run() {
     prompt_app_repos
     resolve_kernel_domain_from_claim   # a re-run reads back what it wrote
     prompt_kernel_domain
-    prompt_network_mode
-    prompt_issuer_mode
-    prompt_mail_mode
+    # A re-run is a scaffold of whatever is still missing, never a second
+    # interview: the exposure model, the issuer and the mail model are in the
+    # claim already, and the claim is not rewritten. Asking again produced
+    # answers nothing used and, without a terminal, an install that stopped.
+    if [[ -f "${GENTIAN_DEPLOYMENTS_PATH}/clusters/${GENTIAN_DEPLOYMENTS_CLUSTER_ID}/kernel/claims/cluster.yaml" ]]; then
+        info "clusters/${GENTIAN_DEPLOYMENTS_CLUSTER_ID}/kernel/claims/cluster.yaml exists; exposure, issuer and mail are read from it."
+    else
+        prompt_network_mode
+        prompt_issuer_mode
+        prompt_mail_mode
+    fi
     scaffold_cluster_deployment
 }
 

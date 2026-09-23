@@ -107,7 +107,7 @@ func (r *TenantReconciler) deleteStorage(ctx context.Context, tenant *gentianov1
 	if err != nil {
 		return err
 	}
-	return r.ensureDeleteJobs(ctx, tenant, s3Apps, s3BucketDeleteJobName, makeS3BucketDeleteJob)
+	return r.ensureDeleteJobs(ctx, s3Namespace, tenant, s3Apps, s3BucketDeleteJobName, makeS3BucketDeleteJob)
 }
 
 // makeS3BucketJob builds a kernel-namespace Job that creates the per-app bucket
@@ -129,7 +129,7 @@ func makeS3BucketJob(tenant *gentianov1alpha1.Tenant, appName, accessKey, secret
 	return &batchv1.Job{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      s3BucketJobName(tenant.Name, appName),
-			Namespace: kernelNamespace,
+			Namespace: s3Namespace,
 			Labels: map[string]string{
 				tenantLabel:    tenant.Name,
 				managedByLabel: managedByValue,
@@ -154,7 +154,7 @@ func makeS3BucketJob(tenant *gentianov1alpha1.Tenant, appName, accessKey, secret
 // still records the remaining S3 fields.
 func (r *TenantReconciler) minioEndpoint(ctx context.Context) string {
 	secret := &corev1.Secret{}
-	if err := r.Get(ctx, types.NamespacedName{Name: minioAdminSecret, Namespace: kernelNamespace}, secret); err != nil {
+	if err := r.Get(ctx, types.NamespacedName{Name: minioAdminSecret, Namespace: s3Namespace}, secret); err != nil {
 		return ""
 	}
 	return string(secret.Data["endpoint"])
@@ -167,7 +167,7 @@ func makeS3BucketDeleteJob(tenant *gentianov1alpha1.Tenant, appName string) *bat
 	return &batchv1.Job{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      s3BucketDeleteJobName(tenant.Name, appName),
-			Namespace: kernelNamespace,
+			Namespace: s3Namespace,
 			Labels: map[string]string{
 				tenantLabel:    tenant.Name,
 				managedByLabel: managedByValue,

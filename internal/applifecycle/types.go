@@ -20,7 +20,6 @@ import "time"
 
 // Options configures the lifecycle service.
 type Options struct {
-	KernelNamespace    string
 	OpenBaoNamespace   string
 	OperatorNamespace  string
 	OperatorSA         string

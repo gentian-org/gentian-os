@@ -1,0 +1,63 @@
+---
+# The tenants deployed on this cluster, from the deployments repository:
+#
+#   clusters/<cluster>/tenants/<tenant>/{tenant.yaml,kustomization.yaml}
+#
+# One Application per directory. Tenant/platform is among them from the first
+# install -- the platform is a tenant whose realm is the kernel realm (AD-10),
+# scaffolded with the cluster and adopted, never created, by the operator --
+# and every other tenant arrives the same way, by a directory in git.
+#
+# Kept apart from the kernel ApplicationSets so that a tenant's provisioning
+# never holds an operator rollout, and so that pruning here means what it
+# says: a directory removed from git is a tenant undeployed. The Tenant is
+# cluster-scoped; the destination namespace is only what Argo CD requires of
+# an Application, and nothing namespaced is written there.
+#
+# Sync wave 12: after the claims (11), which compose the AppProject and the
+# secret store a tenant's resources resolve through.
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: gentian-tenants
+  namespace: ns.gitops.placeholder
+  annotations:
+    argocd.argoproj.io/sync-wave: "12"
+spec:
+  goTemplate: true
+  goTemplateOptions: ["missingkey=error"]
+  generators:
+  - git:
+      repoURL: deployments.repo.placeholder
+      revision: deployments.revision.placeholder
+      directories:
+      - path: clusters/deployments.cluster.placeholder/tenants/*
+  template:
+    metadata:
+      name: 'tenant-{{ .path.basename }}'
+      annotations:
+        argocd.argoproj.io/sync-wave: "12"
+      finalizers:
+      - resources-finalizer.argocd.argoproj.io
+    spec:
+      project: gentian
+      source:
+        repoURL: deployments.repo.placeholder
+        targetRevision: deployments.revision.placeholder
+        path: '{{ .path.path }}'
+      destination:
+        server: https://kubernetes.default.svc
+        namespace: ns.provisioning.placeholder
+      syncPolicy:
+        automated:
+          prune: true
+          selfHeal: true
+        retry:
+          limit: 10
+          backoff:
+            duration: 15s
+            factor: 2
+            maxDuration: 2m
+        syncOptions:
+        - CreateNamespace=false
+        - ServerSideApply=true

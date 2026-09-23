@@ -127,19 +127,20 @@ func (r *TenantReconciler) reconcileJobWaitRequirement(
 	return ctrl.Result{}, nil
 }
 
-func newKernelProvisioningJob(name string, tenant *gentianov1alpha1.Tenant, appName string, container corev1.Container) *batchv1.Job {
+func newKernelProvisioningJob(name, namespace string, tenant *gentianov1alpha1.Tenant, appName string, container corev1.Container) *batchv1.Job {
 	return provisioner.NewKernelProvisioningJob(
-		name, kernelNamespace, tenantLabel, managedByLabel, managedByValue, appLabel,
+		name, namespace, tenantLabel, managedByLabel, managedByValue, appLabel,
 		tenant.Name, appName, container,
 	)
 }
 
 func (r *TenantReconciler) ensureDeleteJobs(
 	ctx context.Context,
+	namespace string,
 	tenant *gentianov1alpha1.Tenant,
 	apps []string,
 	jobName func(tenantName, appName string) string,
 	makeJob func(*gentianov1alpha1.Tenant, string) *batchv1.Job,
 ) error {
-	return provisioner.EnsureDeleteJobs(ctx, r.Client, kernelNamespace, tenant, apps, jobName, makeJob, jobIsComplete)
+	return provisioner.EnsureDeleteJobs(ctx, r.Client, namespace, tenant, apps, jobName, makeJob, jobIsComplete)
 }

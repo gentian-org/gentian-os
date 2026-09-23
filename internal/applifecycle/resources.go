@@ -29,6 +29,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
+	"github.com/gentian-org/gentian-os/internal/layout"
 	"github.com/gentian-org/gentian-os/internal/resourceplan"
 	"github.com/gentian-org/gentian-os/internal/usage"
 )
@@ -321,7 +322,7 @@ func (s *Service) UsageHistory(
 	from, to time.Time,
 	step time.Duration,
 ) ([]usage.Sample, error) {
-	store, err := usage.StoreForTenant(ctx, s.client, s.opts.KernelNamespace, tenantName)
+	store, err := usage.StoreForTenant(ctx, s.client, layout.Tenant(tenantName), tenantName)
 	if err != nil {
 		return nil, err
 	}
@@ -334,7 +335,7 @@ func (s *Service) UsageReport(
 	tenantName string,
 	from, to time.Time,
 ) (*usage.Report, error) {
-	store, err := usage.StoreForTenant(ctx, s.client, s.opts.KernelNamespace, tenantName)
+	store, err := usage.StoreForTenant(ctx, s.client, layout.Tenant(tenantName), tenantName)
 	if err != nil {
 		return nil, err
 	}
@@ -347,7 +348,7 @@ func (s *Service) recordPlanEvent(
 	plan *gentianov1alpha1.ResourcePlan,
 	actor string,
 ) {
-	store, err := usage.StoreForTenant(ctx, s.client, s.opts.KernelNamespace, tenantName)
+	store, err := usage.StoreForTenant(ctx, s.client, layout.Tenant(tenantName), tenantName)
 	if err != nil {
 		log.FromContext(ctx).WithName("resources").Error(err,
 			"could not open the usage store to record a plan change", "tenant", tenantName)

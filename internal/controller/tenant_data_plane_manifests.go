@@ -52,7 +52,7 @@ func (r *TenantReconciler) buildDataPlaneJobs(ctx context.Context, tenant *genti
 		rolePassword := ""
 		if r.Seeder != nil {
 			creds, seedErr := r.Seeder.SeedDatabase(ctx, tenant.Name, appName, secrets.DatabaseCreds{
-				Host: fmt.Sprintf("%s-rw.%s.svc.cluster.local", cnpgClusterName, kernelNamespace),
+				Host: fmt.Sprintf("%s-rw.%s.svc.cluster.local", cnpgClusterName, postgresNamespace),
 				Port: "5432",
 				Name: dbName,
 				User: roleUserName(tenant.Name, appName),
@@ -82,7 +82,7 @@ func (r *TenantReconciler) buildDataPlaneJobs(ctx context.Context, tenant *genti
 		dbPassword := ""
 		if r.Seeder != nil {
 			creds, seedErr := r.Seeder.SeedMariaDB(ctx, tenant.Name, appName, secrets.DatabaseCreds{
-				Host: fmt.Sprintf("%s.%s.svc.cluster.local", "mariadb", kernelNamespace),
+				Host: fmt.Sprintf("%s.%s.svc.cluster.local", "mariadb", mariadbNamespace),
 				Port: "3306",
 				Name: databaseName(tenant, appName),
 				User: mariadbUserName(tenant.Name, appName),
@@ -218,7 +218,7 @@ func (r *TenantReconciler) appendPortalShellRoleJob(
 	rolePassword := ""
 	if r.Seeder != nil {
 		creds, err := r.Seeder.SeedDatabase(ctx, tenant.Name, appName, secrets.DatabaseCreds{
-			Host: fmt.Sprintf("%s-rw.%s.svc.cluster.local", cnpgClusterName, kernelNamespace),
+			Host: fmt.Sprintf("%s-rw.%s.svc.cluster.local", cnpgClusterName, postgresNamespace),
 			Port: "5432",
 			Name: dbName,
 			User: roleUserName(tenant.Name, appName),
