@@ -29,7 +29,11 @@ import (
 // were fulfilled with. The desktop of the platform tenant reaches the
 // kernel's postgres and the director, and nothing else.
 func TestTheDesktopReachesItsDatabaseAndTheDirector(t *testing.T) {
-	t.Parallel()
+	// The v5 layout, so that the three functions are three namespaces; in
+	// the v4 fallback data and edge are one, and the list would dedupe.
+	t.Setenv("GENTIAN_NS_DATA", "kernel-data")
+	t.Setenv("GENTIAN_NS_EDGE", "kernel-edge")
+	t.Setenv("GENTIAN_NS_CONTROL", "kernel-control")
 	r := &ComponentReconciler{KernelRealm: "kernel"}
 	tenant := &gentianov1alpha1.Tenant{}
 	tenant.Name = "platform"
