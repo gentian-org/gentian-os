@@ -54,8 +54,8 @@ func TestBuildKernelGateway(t *testing.T) {
 	tenants := []gentianov1alpha1.Tenant{
 		{ObjectMeta: metav1.ObjectMeta{Name: "demo"}},
 	}
-	gw := buildKernelGateway("platform.example.test", "multi", tenants)
-	if gw.Name != KernelPublicGatewayName {
+	gw := buildAuthenticatedGateway("platform.example.test", "multi", tenants)
+	if gw.Name != AuthenticatedGatewayName {
 		t.Fatalf("name = %q", gw.Name)
 	}
 	if gw.Namespace != servicesNamespace {
@@ -107,17 +107,42 @@ func TestBuildKernelGateway(t *testing.T) {
 		t.Fatal("https-tenant-demo-apex still present: the tenant apex is covered by the kernel certificate and served by the catch-all")
 	}
 
+	// :80 is not this Gateway's. Under mergeGateways a listener is unique per
+	// port and hostname across the class, and :80 -- the ACME challenge and
+	// the https redirect -- is the perimeter's (networking.md §1).
+	if _, exists := byName[httpRedirectListenerName]; exists {
+		t.Fatalf("listener %q on the authenticated Gateway; :80 belongs to the perimeter", httpRedirectListenerName)
+	}
+	perimeter := buildPerimeterGateway("platform.example.test")
+	if perimeter.Name != PerimeterGatewayName || perimeter.Namespace != servicesNamespace {
+		t.Fatalf("perimeter Gateway = %s/%s", perimeter.Namespace, perimeter.Name)
+	}
+	perimeterByName := map[string]gatewayv1.Listener{}
+	for _, l := range perimeter.Spec.Listeners {
+		perimeterByName[string(l.Name)] = l
+	}
 	// The :80 redirect listener is hostname-less on purpose: it must match every
 	// host so any plaintext request can be bounced to https.
-	redirect, ok := byName[httpRedirectListenerName]
+	redirect, ok := perimeterByName[httpRedirectListenerName]
 	if !ok {
-		t.Fatalf("listener %q missing; have %v", httpRedirectListenerName, slices.Sorted(maps.Keys(byName)))
+		t.Fatalf("listener %q missing on the perimeter; have %v", httpRedirectListenerName, slices.Sorted(maps.Keys(perimeterByName)))
 	}
 	if redirect.Port != 80 {
 		t.Fatalf("redirect listener port = %d, want 80", redirect.Port)
 	}
 	if redirect.Hostname != nil {
 		t.Fatalf("redirect listener hostname = %v, want nil (match all hosts)", *redirect.Hostname)
+	}
+	// The identity provider's own hostname, with the kernel wildcard certificate.
+	idL, ok := perimeterByName[perimeterIDListenerName]
+	if !ok {
+		t.Fatalf("listener %q missing on the perimeter; have %v", perimeterIDListenerName, slices.Sorted(maps.Keys(perimeterByName)))
+	}
+	if idL.Hostname == nil || string(*idL.Hostname) != "id.platform.example.test" {
+		t.Fatalf("id listener hostname = %v", idL.Hostname)
+	}
+	if idL.TLS == nil || len(idL.TLS.CertificateRefs) != 1 || string(idL.TLS.CertificateRefs[0].Name) != kernelWildcardTLSSecretName {
+		t.Fatalf("id listener certificate = %v, want %s", idL.TLS, kernelWildcardTLSSecretName)
 	}
 
 	if wildcard.AllowedRoutes == nil || wildcard.AllowedRoutes.Namespaces.From == nil ||
@@ -137,7 +162,7 @@ func TestGatewayProgrammed(t *testing.T) {
 	}
 
 	gw := &gatewayv1.Gateway{
-		ObjectMeta: metav1.ObjectMeta{Name: KernelPublicGatewayName, Namespace: "platform-kernel"},
+		ObjectMeta: metav1.ObjectMeta{Name: AuthenticatedGatewayName, Namespace: "platform-kernel"},
 	}
 	gw.Status.Conditions = []metav1.Condition{
 		{Type: string(gatewayv1.GatewayConditionProgrammed), Status: metav1.ConditionTrue, Reason: "Programmed"},
@@ -158,7 +183,7 @@ func TestGatewayProgrammedAddressNotAssignedWithListeners(t *testing.T) {
 	}
 
 	gw := &gatewayv1.Gateway{
-		ObjectMeta: metav1.ObjectMeta{Name: KernelPublicGatewayName, Namespace: "platform-kernel"},
+		ObjectMeta: metav1.ObjectMeta{Name: AuthenticatedGatewayName, Namespace: "platform-kernel"},
 	}
 	gw.Status.Conditions = []metav1.Condition{
 		{
@@ -210,7 +235,7 @@ func TestBuildAppHTTPRoute(t *testing.T) {
 	if len(route.Spec.ParentRefs) != 1 {
 		t.Fatalf("parent refs = %d, want 1", len(route.Spec.ParentRefs))
 	}
-	if route.Spec.ParentRefs[0].Name != KernelPublicGatewayName {
+	if route.Spec.ParentRefs[0].Name != AuthenticatedGatewayName {
 		t.Fatalf("kernel parent = %v", route.Spec.ParentRefs[0].Name)
 	}
 	if route.Spec.ParentRefs[0].Namespace == nil || string(*route.Spec.ParentRefs[0].Namespace) != servicesNamespace {
@@ -457,31 +482,68 @@ func TestKernelHTTPRouteSpecs(t *testing.T) {
 		byName[s.name] = s
 	}
 	for _, want := range []string{
-		kernelRouteKeycloakIDP, kernelRouteGentianPortal, kernelRouteKernelApex,
-		kernelRouteArgoCD, "tenant-demo-portal",
+		kernelRouteKeycloakIDP, kernelRouteKeycloakAdmin, kernelRouteGentianPortal, kernelRouteKernelApex,
+		kernelRouteArgoCD, kernelRouteHTTPRedirect, "tenant-demo-portal",
 	} {
 		if _, ok := byName[want]; !ok {
 			t.Fatalf("missing kernel route %q; got %v", want, specs)
 		}
 	}
-	idRoute := buildKernelHTTPRoute(specs[0])
-	if idRoute.Name != kernelRouteKeycloakIDP {
-		t.Fatalf("id route name = %q", idRoute.Name)
-	}
+	// The identity provider is a perimeter surface: its own listener on the
+	// perimeter Gateway, realm endpoints and theme assets allowed, the master
+	// realm and the admin console refused by a rule rather than by absence.
+	idRoute := buildKernelHTTPRoute(byName[kernelRouteKeycloakIDP])
 	if string(idRoute.Spec.Hostnames[0]) != "id.platform.example.test" {
 		t.Fatalf("id host = %v", idRoute.Spec.Hostnames[0])
 	}
-	if got := *idRoute.Spec.Rules[0].BackendRefs[0].Port; got != gatewayv1.PortNumber(8080) {
-		t.Fatalf("id backend port = %d, want 8080 (Suze Keycloak)", got)
+	if got := string(idRoute.Spec.ParentRefs[0].Name); got != PerimeterGatewayName {
+		t.Fatalf("id route parent = %q, want the perimeter Gateway", got)
 	}
-	idNS := idRoute.Spec.Rules[0].BackendRefs[0].Namespace
-	if idNS == nil || string(*idNS) != identityNamespace {
-		t.Fatalf("id backend namespace = %v, want %s", idNS, identityNamespace)
+	if got := string(*idRoute.Spec.ParentRefs[0].SectionName); got != perimeterIDListenerName {
+		t.Fatalf("id route listener = %q", got)
 	}
-	portalRoute := buildKernelHTTPRoute(specs[1])
-	if portalRoute.Name != kernelRouteGentianPortal {
-		t.Fatalf("portal route name = %q", portalRoute.Name)
+	denied, allowed := map[string]bool{}, map[string]bool{}
+	for _, rule := range idRoute.Spec.Rules {
+		prefix := *rule.Matches[0].Path.Value
+		if len(rule.BackendRefs) == 0 {
+			if len(rule.Filters) != 1 || rule.Filters[0].ExtensionRef == nil || string(rule.Filters[0].ExtensionRef.Name) != kernelDenyFilterName {
+				t.Fatalf("rule %s has no backend and no deny filter", prefix)
+			}
+			denied[prefix] = true
+			continue
+		}
+		if got := *rule.BackendRefs[0].Port; got != gatewayv1.PortNumber(8080) {
+			t.Fatalf("id backend port = %d, want 8080 (Suze Keycloak)", got)
+		}
+		if ns := rule.BackendRefs[0].Namespace; ns == nil || string(*ns) != identityNamespace {
+			t.Fatalf("id backend namespace = %v, want %s", ns, identityNamespace)
+		}
+		allowed[prefix] = true
 	}
+	for _, want := range []string{"/auth/realms/master/", "/auth/admin/"} {
+		if !denied[want] {
+			t.Errorf("id.<kernel> must refuse %s; refused %v", want, denied)
+		}
+	}
+	for _, want := range []string{"/auth/realms/", "/auth/resources/"} {
+		if !allowed[want] {
+			t.Errorf("id.<kernel> must serve %s; served %v", want, allowed)
+		}
+	}
+	// The admin console has its own hostname on the authenticated edge.
+	adminRoute := buildKernelHTTPRoute(byName[kernelRouteKeycloakAdmin])
+	if string(adminRoute.Spec.Hostnames[0]) != "id-admin.platform.example.test" {
+		t.Fatalf("id-admin host = %v", adminRoute.Spec.Hostnames[0])
+	}
+	if got := string(adminRoute.Spec.ParentRefs[0].Name); got != AuthenticatedGatewayName {
+		t.Fatalf("id-admin route parent = %q, want the authenticated Gateway", got)
+	}
+	// The :80 redirect lives where :80 does, on the perimeter.
+	redirect := buildKernelHTTPRoute(byName[kernelRouteHTTPRedirect])
+	if got := string(redirect.Spec.ParentRefs[0].Name); got != PerimeterGatewayName {
+		t.Fatalf("http redirect parent = %q, want the perimeter Gateway", got)
+	}
+	portalRoute := buildKernelHTTPRoute(byName[kernelRouteGentianPortal])
 	if string(portalRoute.Spec.Hostnames[0]) != "portal.platform.example.test" {
 		t.Fatalf("portal host = %v", portalRoute.Spec.Hostnames[0])
 	}
@@ -663,7 +725,7 @@ func TestTenantAppRouteBindsToTenantListener(t *testing.T) {
 	}
 	var kernelRef *gatewayv1.ParentReference
 	for i := range refs {
-		if string(refs[i].Name) == KernelPublicGatewayName {
+		if string(refs[i].Name) == AuthenticatedGatewayName {
 			kernelRef = &refs[i]
 		}
 	}

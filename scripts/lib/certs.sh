@@ -297,7 +297,7 @@ apply_gentian_cluster_issuers() {
 
     : "${LETSENCRYPT_EMAIL:=admin@${KERNEL_DOMAIN}}"
     : "${KERNEL_PUBLIC_GATEWAY_NAMESPACE:=$(gentian_services_namespace)}"
-    : "${KERNEL_PUBLIC_GATEWAY_NAME:=kernel-public-gateway}"
+    : "${KERNEL_PUBLIC_GATEWAY_NAME:=perimeter}"
     export LETSENCRYPT_EMAIL KERNEL_DOMAIN KERNEL_PUBLIC_GATEWAY_NAMESPACE KERNEL_PUBLIC_GATEWAY_NAME
 
     if ! command -v helm &>/dev/null; then
@@ -555,7 +555,7 @@ _detect_platform() {
 # controller allocates an arbitrary public address, so NODE_IP — which is what
 # DNS and gentian-cluster-config point at — never matches the address traffic
 # actually arrives on. See kernel/manifests/gateway/chart for the full
-# rationale. It must run before the operator creates kernel-public-gateway:
+# rationale. It must run before the operator creates the edge Gateways:
 # loadBalancerIP is honoured at Service creation only, never on update.
 #
 # tunnel: nothing outside the cluster connects to the data plane at all — the
@@ -566,7 +566,7 @@ _detect_platform() {
 # what the tunnel needs and something every cluster can give.
 apply_edge_envoyproxy() {
     local ns="${ENVOY_GATEWAY_NAMESPACE}"
-    local gw_name="${KERNEL_PUBLIC_GATEWAY_NAME:-kernel-public-gateway}"
+    local gw_name="${KERNEL_PUBLIC_GATEWAY_NAME:-perimeter}"
     local gw_class="${GENTIAN_GATEWAY_CLASS_NAME:-gentian-envoy}"
     local svc_type=ClusterIP
     [[ "${NETWORK_MODE:-tunnel}" == "static-ip" ]] && svc_type=LoadBalancer
@@ -681,18 +681,18 @@ wait_for_gateway_platform() {
     fi
     success "GatewayClass gentian-envoy present."
 
-    info "Waiting for Gateway kernel-public-gateway in ${ns} (up to 300s)..."
+    info "Waiting for Gateway authenticated in ${ns} (up to 300s)..."
     while (( SECONDS < deadline )); do
-        if kubectl get gateway -n "${ns}" kernel-public-gateway >/dev/null 2>&1; then
+        if kubectl get gateway -n "${ns}" authenticated >/dev/null 2>&1; then
             break
         fi
         sleep 5
     done
-    if ! kubectl get gateway -n "${ns}" kernel-public-gateway >/dev/null 2>&1; then
-        warn "Gateway kernel-public-gateway not found after 300s."
+    if ! kubectl get gateway -n "${ns}" authenticated >/dev/null 2>&1; then
+        warn "Gateway authenticated not found after 300s."
         return 1
     fi
-    success "Gateway kernel-public-gateway present."
+    success "Gateway authenticated present."
 
     info "Waiting for kernel HTTPRoutes (up to 300s)..."
     while (( SECONDS < deadline )); do
@@ -720,10 +720,10 @@ print_gateway_tunnel_hints() {
     info "Gateway API tunnel wiring (${NETWORK_MODE:-tunnel}):"
     info "  Point Cloudflare Tunnel (or your edge proxy) at the Envoy Gateway data plane Service"
     info "  in namespace ${envoy_ns}, not a legacy Ingress controller."
-    info "  Discover the Service after kernel-public-gateway is Programmed:"
-    info "    kubectl get svc -n ${envoy_ns} -l gateway.envoyproxy.io/owning-gateway-name=kernel-public-gateway"
+    info "  Discover the Service after the edge Gateways are Programmed:"
+    info "    kubectl get svc -n ${envoy_ns} -l gateway.envoyproxy.io/owning-gatewayclass=gentian-envoy"
     info "  Typical origin: https://<envoy-svc>.${envoy_ns}.svc.cluster.local:443"
-    info "  Verify: kubectl get gateway -n ${ns} kernel-public-gateway -o yaml | grep -A5 conditions"
+    info "  Verify: kubectl get gateway -n ${ns} authenticated -o yaml | grep -A5 conditions"
 }
 
 # Point CoreDNS kernel HTTPS hairpin entries at the Envoy Gateway ClusterIP.
@@ -738,7 +738,7 @@ _reconcile_kernel_https_coredns_hairpin() {
     local mail_domain="mail.${KERNEL_DOMAIN}"
     local edge_ip
     edge_ip=$(kubectl get svc -n "${envoy_ns}" \
-        -l "gateway.envoyproxy.io/owning-gateway-name=kernel-public-gateway,gateway.envoyproxy.io/owning-gateway-namespace=${services_ns}" \
+        -l "gateway.envoyproxy.io/owning-gatewayclass=gentian-envoy" \
         -o jsonpath='{.items[0].spec.clusterIP}' 2>/dev/null || true)
     if [[ -z "${edge_ip}" ]]; then
         warn "Envoy kernel Gateway Service not found; skipping CoreDNS hairpin update."

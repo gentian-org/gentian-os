@@ -33,7 +33,11 @@ import (
 )
 
 const (
-	kernelRouteKeycloakIDP      = "kernel-idp"
+	kernelRouteKeycloakIDP   = "kernel-idp"
+	kernelRouteKeycloakAdmin = "kernel-id-admin"
+	// kernelDenyFilterName is the HTTPRouteFilter that answers 404: what a
+	// perimeter surface refuses is written as a rule, not left to absence.
+	kernelDenyFilterName        = "kernel-deny"
 	kernelRouteKernelApex       = "kernel-apex-redirect"
 	kernelRouteHTTPRedirect     = "kernel-http-redirect"
 	kernelRouteArgoCD           = "kernel-argocd"
@@ -61,7 +65,11 @@ type kernelHTTPRouteSpec struct {
 	// route attaches to every listener whose hostname matches, which for the
 	// HTTP->HTTPS redirect would include the :443 listeners and send TLS
 	// requests into an infinite redirect back to themselves.
-	sectionName  string
+	sectionName string
+	// gateway names the edge the route attaches to; empty is the
+	// authenticated Gateway. Only the identity provider's realm endpoints
+	// and the :80 redirect are the perimeter's.
+	gateway      string
 	policy       map[string]interface{}
 	clientPolicy map[string]interface{}
 }
@@ -104,6 +112,9 @@ func (r *GatewayPlatformReconciler) reconcileKernelHTTPRoutes(ctx context.Contex
 		}
 	}
 
+	if err := r.ensureKernelDenyFilter(ctx); err != nil {
+		return fmt.Errorf("ensure kernel deny HTTPRouteFilter: %w", err)
+	}
 	specs := kernelHTTPRouteSpecs(r.KernelDomain, effectiveDomains, oidcSubs, tenantNames,
 		clusterLLMEnabled(ctx, r.Client), portalDeployed(ctx, r.Client))
 	expected := make(map[string]struct{}, len(specs))
@@ -170,25 +181,42 @@ func kernelHTTPRouteSpecs(
 	kcService := suzeKeycloakHTTPServiceName()
 	kcPort := int32(8080)
 
+	idFilters := keycloakGatewayResponseFilters(kernelDomain, tenantEffectiveDomains, tenantOIDCSubdomains, tenantNames)
 	specs := []kernelHTTPRouteSpec{
+		// The identity provider is a kernel-owned perimeter surface: no
+		// session, because it is the issuer, and a path allowlist, because it
+		// is public. Realm endpoints and the theme assets they load are the
+		// whole of it; the master realm is refused by name, and the admin
+		// console is served on id-admin.<kernel> behind the kernel session.
 		{
 			name:        kernelRouteKeycloakIDP,
 			host:        idHost,
+			gateway:     PerimeterGatewayName,
+			sectionName: perimeterIDListenerName,
+			rules: []gatewayv1.HTTPRouteRule{
+				kernelDenyRule("/auth/realms/master/"),
+				kernelDenyRule("/auth/admin/"),
+				kernelBackendRulePrefixNS(kcService, identityNamespace, kcPort, "/auth/realms/", idFilters...),
+				kernelBackendRulePrefixNS(kcService, identityNamespace, kcPort, "/auth/resources/", idFilters...),
+			},
+			policy: keycloakProxyBackendTrafficPolicySpec(),
+		},
+		// Keycloak's administration, on its own hostname on the authenticated
+		// edge: the kernel session decides who reaches it, and Keycloak's own
+		// login is the second factor. Framed by the console like Argo CD.
+		{
+			name:        kernelRouteKeycloakAdmin,
+			host:        "id-admin." + kernelDomain,
 			sectionName: wildcardListenerName,
 			rules: []gatewayv1.HTTPRouteRule{
-				kernelBackendRulePrefixNS(
-					kcService,
-					identityNamespace,
-					kcPort,
-					"/",
-					keycloakGatewayResponseFilters(kernelDomain, tenantEffectiveDomains, tenantOIDCSubdomains, tenantNames)...,
-				),
+				kernelBackendRulePrefixNS(kcService, identityNamespace, kcPort, "/auth/",
+					kernelConsoleFrameFilters(kernelDomain)...),
 			},
 			policy: keycloakProxyBackendTrafficPolicySpec(),
 		},
 	}
 	// The Gentian UI portal (API + SPA); edge traffic reaches
-	// kernel-public-gateway in servicesNamespace via the tunnel.
+	// the edge Gateways in servicesNamespace via the tunnel.
 	//
 	// Only once the portal is actually deployed. A route whose backends do not
 	// exist is not inert: the hostname is published on the tunnel and given a
@@ -261,6 +289,7 @@ func kernelHTTPRouteSpecs(
 		kernelHTTPRouteSpec{
 			// Plaintext :80 -> https, bound to the http-redirect listener only.
 			name:        kernelRouteHTTPRedirect,
+			gateway:     PerimeterGatewayName,
 			sectionName: httpRedirectListenerName,
 			rules:       []gatewayv1.HTTPRouteRule{kernelHTTPSRedirectRule()},
 		},
@@ -538,7 +567,11 @@ func escapedSlashesKeepUnchangedClientTrafficPolicySpec() map[string]interface{}
 }
 
 func buildKernelHTTPRoute(spec kernelHTTPRouteSpec) *gatewayv1.HTTPRoute {
-	parentRef := gatewayParentRef(KernelPublicGatewayName)
+	gateway := spec.gateway
+	if gateway == "" {
+		gateway = AuthenticatedGatewayName
+	}
+	parentRef := gatewayParentRef(gateway)
 	if spec.sectionName != "" {
 		s := gatewayv1.SectionName(spec.sectionName)
 		parentRef.SectionName = &s
@@ -630,7 +663,7 @@ func attachKernelClientTrafficPolicyTarget(spec map[string]interface{}, sectionN
 		map[string]interface{}{
 			"group":       gatewayv1.GroupName,
 			"kind":        "Gateway",
-			"name":        KernelPublicGatewayName,
+			"name":        AuthenticatedGatewayName,
 			"sectionName": sectionName,
 		},
 	}
@@ -719,4 +752,70 @@ func dedupe(ns ...string) []string {
 		out = append(out, n)
 	}
 	return out
+}
+
+var httpRouteFilterGVK = schema.GroupVersionKind{
+	Group:   "gateway.envoyproxy.io",
+	Version: "v1alpha1",
+	Kind:    "HTTPRouteFilter",
+}
+
+// ensureKernelDenyFilter keeps the one HTTPRouteFilter every kernelDenyRule
+// refers to: a direct 404. Envoy Gateway's extension, because Gateway API
+// itself has no way to refuse a path; a rule with no backend would answer
+// 500, which reads as an outage rather than a decision.
+func (r *GatewayPlatformReconciler) ensureKernelDenyFilter(ctx context.Context) error {
+	desired := &unstructured.Unstructured{}
+	desired.SetGroupVersionKind(httpRouteFilterGVK)
+	desired.SetName(kernelDenyFilterName)
+	desired.SetNamespace(servicesNamespace)
+	desired.SetLabels(map[string]string{
+		managedByLabel:        managedByValue,
+		gatewayComponentLabel: gatewayComponentKernel,
+	})
+	spec := map[string]interface{}{
+		"directResponse": map[string]interface{}{"statusCode": int64(404)},
+	}
+	if err := unstructured.SetNestedField(desired.Object, spec, "spec"); err != nil {
+		return err
+	}
+	existing := &unstructured.Unstructured{}
+	existing.SetGroupVersionKind(httpRouteFilterGVK)
+	err := r.Get(ctx, client.ObjectKey{Name: kernelDenyFilterName, Namespace: servicesNamespace}, existing)
+	if errors.IsNotFound(err) {
+		return r.Create(ctx, desired)
+	}
+	if err != nil {
+		return err
+	}
+	if !equality.Semantic.DeepEqual(existing.Object["spec"], desired.Object["spec"]) {
+		patch := client.MergeFrom(existing.DeepCopy())
+		if err := unstructured.SetNestedField(existing.Object, spec, "spec"); err != nil {
+			return err
+		}
+		return r.Patch(ctx, existing, patch)
+	}
+	return nil
+}
+
+// kernelDenyRule refuses a path prefix with the deny filter. It sits before
+// the broader allow it carves out of: Gateway API ranks a longer prefix
+// first, so the order here is for the reader, not the proxy.
+func kernelDenyRule(prefix string) gatewayv1.HTTPRouteRule {
+	pathType := gatewayv1.PathMatchPathPrefix
+	group := gatewayv1.Group(httpRouteFilterGVK.Group)
+	kind := gatewayv1.Kind(httpRouteFilterGVK.Kind)
+	return gatewayv1.HTTPRouteRule{
+		Matches: []gatewayv1.HTTPRouteMatch{{
+			Path: &gatewayv1.HTTPPathMatch{Type: &pathType, Value: &prefix},
+		}},
+		Filters: []gatewayv1.HTTPRouteFilter{{
+			Type: gatewayv1.HTTPRouteFilterExtensionRef,
+			ExtensionRef: &gatewayv1.LocalObjectReference{
+				Group: group,
+				Kind:  kind,
+				Name:  gatewayv1.ObjectName(kernelDenyFilterName),
+			},
+		}},
+	}
 }

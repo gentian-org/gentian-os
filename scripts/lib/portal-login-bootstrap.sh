@@ -362,7 +362,7 @@ ensure_portal_gateway_readiness() {
     ns="$(_pl_edge_ns)"
     if ! kubectl get secret wildcard-tls -n "${ns}" >/dev/null 2>&1; then
         if kubectl get secret wildcard-kernel-tls -n "$(gentian_cert_manager_namespace)" >/dev/null 2>&1; then
-            info "Copying wildcard-kernel-tls → ${ns}/wildcard-tls for kernel-public-gateway..."
+            info "Copying wildcard-kernel-tls → ${ns}/wildcard-tls for the edge Gateways..."
             kubectl get secret wildcard-kernel-tls -n "$(gentian_cert_manager_namespace)" -o json | python3 -c "
 import sys, json
 s = json.load(sys.stdin)

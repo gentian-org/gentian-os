@@ -169,6 +169,11 @@ data:
         value: "false"
       - name: KC_HOSTNAME
         value: "https://id.$(KERNEL_DOMAIN)/auth"
+      # The administration console on its own hostname, behind the kernel
+      # session at the edge (networking.md §3); id.<kernel> serves realm
+      # endpoints only and refuses /admin.
+      - name: KC_HOSTNAME_ADMIN
+        value: "https://id-admin.$(KERNEL_DOMAIN)/auth"
       - name: KC_HOSTNAME_BACKCHANNEL_DYNAMIC
         value: "true"
       - name: KC_HOSTNAME_STRICT

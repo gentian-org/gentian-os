@@ -62,7 +62,7 @@ import (
 // +kubebuilder:rbac:groups=apps,resources=deployments,verbs=get;list;watch;patch
 
 // GatewayPlatformReconciler ensures cluster-scoped Gateway API foundation
-// resources: the shared GatewayClass and kernel-public-gateway.
+// resources: the shared GatewayClass and the two edge Gateways.
 type GatewayPlatformReconciler struct {
 	client.Client
 	KernelDomain string
@@ -81,8 +81,8 @@ func (r *GatewayPlatformReconciler) Reconcile(ctx context.Context, _ reconcile.R
 		logger.Error(err, "ensure GatewayClass")
 		return reconcile.Result{RequeueAfter: 30 * time.Second}, err
 	}
-	if err := r.ensureKernelGateway(ctx); err != nil {
-		logger.Error(err, "ensure kernel Gateway")
+	if err := r.ensureEdgeGateways(ctx); err != nil {
+		logger.Error(err, "ensure edge Gateways")
 		return reconcile.Result{RequeueAfter: 30 * time.Second}, err
 	}
 	if err := r.reconcileKernelHTTPRoutes(ctx); err != nil {
@@ -116,15 +116,15 @@ func (r *GatewayPlatformReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	gatewayPredicate := predicate.Funcs{
 		CreateFunc: func(e event.CreateEvent) bool {
 			gw, ok := e.Object.(*gatewayv1.Gateway)
-			return ok && gw.GetName() == KernelPublicGatewayName && gw.GetNamespace() == servicesNamespace
+			return ok && isEdgeGateway(gw)
 		},
 		UpdateFunc: func(e event.UpdateEvent) bool {
 			gw, ok := e.ObjectNew.(*gatewayv1.Gateway)
-			return ok && gw.GetName() == KernelPublicGatewayName && gw.GetNamespace() == servicesNamespace
+			return ok && isEdgeGateway(gw)
 		},
 		DeleteFunc: func(e event.DeleteEvent) bool {
 			gw, ok := e.Object.(*gatewayv1.Gateway)
-			return ok && gw.GetName() == KernelPublicGatewayName && gw.GetNamespace() == servicesNamespace
+			return ok && isEdgeGateway(gw)
 		},
 		GenericFunc: func(_ event.GenericEvent) bool { return false },
 	}
@@ -190,33 +190,70 @@ func (r *GatewayPlatformReconciler) ensureGatewayClass(ctx context.Context) erro
 	return nil
 }
 
-func (r *GatewayPlatformReconciler) ensureKernelGateway(ctx context.Context) error {
-	tenantList := &gentianov1alpha1.TenantList{}
-	if err := r.List(ctx, tenantList); err != nil {
-		return fmt.Errorf("list tenants for kernel Gateway: %w", err)
-	}
-	// Tenant ReferenceGrants are owned by Crossplane via each tenant's manifest bridge.
-	desired := buildKernelGateway(r.KernelDomain, r.TenancyMode, tenantList.Items)
-
-	// What every hostname on this Gateway must resolve to, declared by the
-	// ingress and read by external-dns. One object rather than one per route:
-	// the kernel Gateway is what all of them attach to, so annotating it
-	// covers kernel and tenant hostnames alike.
-	//
-	// Empty on a static-ip cluster, where external-dns reads the Gateway's own
-	// LoadBalancer address and needs telling nothing.
-	if ann := edgeDNSAnnotations(r.Ingress); len(ann) > 0 {
-		if desired.Annotations == nil {
-			desired.Annotations = map[string]string{}
-		}
-		for k, v := range ann {
-			desired.Annotations[k] = v
-		}
-	}
-	return ensureGatewayResource(ctx, r.Client, desired)
+func isEdgeGateway(gw *gatewayv1.Gateway) bool {
+	return gw.GetNamespace() == servicesNamespace &&
+		(gw.GetName() == AuthenticatedGatewayName || gw.GetName() == PerimeterGatewayName)
 }
 
-func buildKernelGateway(kernelDomain, tenancyMode string, tenants []gentianov1alpha1.Tenant) *gatewayv1.Gateway {
+// ensureEdgeGateways reconciles the two Gateways of the edge from the
+// cluster's state: the authenticated one with the kernel wildcard and a
+// listener per tenant zone, the perimeter one with the identity provider's
+// hostname and the :80 listener the ACME challenge and the https redirect
+// share. Both are kernel resources -- a tenant owns HTTPRoutes, never a
+// Gateway, because listener uniqueness is class-wide once gateways merge.
+func (r *GatewayPlatformReconciler) ensureEdgeGateways(ctx context.Context) error {
+	tenantList := &gentianov1alpha1.TenantList{}
+	if err := r.List(ctx, tenantList); err != nil {
+		return fmt.Errorf("list tenants for the edge Gateways: %w", err)
+	}
+	ann := edgeDNSAnnotations(r.Ingress)
+	for _, desired := range []*gatewayv1.Gateway{
+		buildAuthenticatedGateway(r.KernelDomain, r.TenancyMode, tenantList.Items),
+		buildPerimeterGateway(r.KernelDomain),
+	} {
+		if len(ann) > 0 {
+			if desired.Annotations == nil {
+				desired.Annotations = map[string]string{}
+			}
+			for k, v := range ann {
+				desired.Annotations[k] = v
+			}
+		}
+		if err := ensureGatewayResource(ctx, r.Client, desired); err != nil {
+			return fmt.Errorf("ensure Gateway %s: %w", desired.Name, err)
+		}
+	}
+	return nil
+}
+
+// buildPerimeterGateway is the edge with no session: the identity provider's
+// own hostname on :443 with the kernel wildcard certificate, and :80, where
+// the ACME HTTP-01 solver answers and everything else is redirected to https.
+// Under mergeGateways a listener is unique per port and hostname across the
+// class, so :80 lives here and nowhere else.
+func buildPerimeterGateway(kernelDomain string) *gatewayv1.Gateway {
+	idHost := gatewayv1.Hostname("id." + kernelDomain)
+	return &gatewayv1.Gateway{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      PerimeterGatewayName,
+			Namespace: servicesNamespace,
+			Labels: map[string]string{
+				managedByLabel:       managedByValue,
+				"gentianos.io/scope": "kernel",
+				"gentianos.io/edge":  "perimeter",
+			},
+		},
+		Spec: gatewayv1.GatewaySpec{
+			GatewayClassName: gatewayv1.ObjectName(GentianGatewayClassName),
+			Listeners: []gatewayv1.Listener{
+				withAllowedRoutes(tlsListener(perimeterIDListenerName, idHost, kernelWildcardTLSSecretName, servicesNamespace), true),
+				withAllowedRoutes(httpRedirectListener(), true),
+			},
+		},
+	}
+}
+
+func buildAuthenticatedGateway(kernelDomain, tenancyMode string, tenants []gentianov1alpha1.Tenant) *gatewayv1.Gateway {
 	// No apex listener. The catch-all HTTPS listener already serves gtn.host —
 	// the kernel certificate carries it alongside *.gtn.host — and a separate
 	// listener scoped to the apex only served to make portal.gtn.host
@@ -242,9 +279,10 @@ func buildKernelGateway(kernelDomain, tenancyMode string, tenants []gentianov1al
 			tenantKernelGatewayListener(tenant.Name, effectiveDomain, tlsSecret, nsName),
 		)
 	}
-	return buildGateway(KernelPublicGatewayName, servicesNamespace, kernelDomain, kernelWildcardTLSSecretName, map[string]string{
+	return buildGateway(AuthenticatedGatewayName, servicesNamespace, kernelDomain, kernelWildcardTLSSecretName, map[string]string{
 		managedByLabel:       managedByValue,
 		"gentianos.io/scope": "kernel",
+		"gentianos.io/edge":  "authenticated",
 	}, gatewayBuildOptions{
 		allowCrossNamespaceRoutes: true,
 		extraListeners:            extraListeners,
@@ -259,7 +297,8 @@ func buildKernelGateway(kernelDomain, tenancyMode string, tenants []gentianov1al
 // route's absent one, so http://<any-host> was served in the clear instead of
 // being redirected. Every content route must name its HTTPS listener.
 const (
-	wildcardListenerName = "https-wildcard"
+	wildcardListenerName    = "https-wildcard"
+	perimeterIDListenerName = "https-id"
 )
 
 // tenantGatewayListenerName is the kernel-Gateway listener carrying a tenant's
@@ -350,7 +389,6 @@ func buildGateway(name, namespace, domain, tlsSecret string, labels map[string]s
 	// is what keeps connection coalescing working (see tlsListener).
 	listeners := []gatewayv1.Listener{
 		withAllowedRoutes(tlsListener(wildcardListenerName, "", tlsSecret, namespace), opts.allowCrossNamespaceRoutes),
-		withAllowedRoutes(httpRedirectListener(), opts.allowCrossNamespaceRoutes),
 	}
 	for i := range opts.extraListeners {
 		listeners = append(listeners, withAllowedRoutes(opts.extraListeners[i], opts.allowCrossNamespaceRoutes))

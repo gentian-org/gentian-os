@@ -41,7 +41,7 @@ type referenceGrantIntent struct {
 }
 
 // tenantKernelGatewayReferenceGrantIntents allows tenant HTTPRoutes to attach to
-// kernel-public-gateway and lets that Gateway terminate TLS with the tenant wildcard certificate.
+// the authenticated Gateway and lets it terminate TLS with the tenant wildcard certificate.
 func tenantKernelGatewayReferenceGrantIntents(tenant *gentianov1alpha1.Tenant) []referenceGrantIntent {
 	nsName := tenantNamespaceName(tenant)
 	return []referenceGrantIntent{
@@ -60,7 +60,7 @@ func tenantKernelGatewayReferenceGrantIntents(tenant *gentianov1alpha1.Tenant) [
 					map[string]interface{}{
 						"group": gatewayv1.GroupName,
 						"kind":  "Gateway",
-						"name":  KernelPublicGatewayName,
+						"name":  AuthenticatedGatewayName,
 					},
 					map[string]interface{}{
 						"group": "",

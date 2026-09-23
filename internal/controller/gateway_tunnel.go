@@ -24,8 +24,11 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
-// kernelEdgeServiceLabels select the Envoy data-plane Service that belongs to
-// the kernel's public Gateway.
+// kernelEdgeServiceLabels select the Envoy data-plane Service of the edge.
+//
+// Under mergeGateways the authenticated and perimeter Gateways share one
+// deployment and one Service, and Envoy Gateway labels that Service with the
+// GatewayClass it serves rather than with either Gateway.
 //
 // Ownership identifies it; where Envoy Gateway happens to be installed does
 // not. That namespace was once a constant, and it stopped being true the
@@ -35,8 +38,7 @@ import (
 // kernel hostnames answered 502.
 func kernelEdgeServiceLabels() client.MatchingLabels {
 	return client.MatchingLabels{
-		"gateway.envoyproxy.io/owning-gateway-name":      KernelPublicGatewayName,
-		"gateway.envoyproxy.io/owning-gateway-namespace": servicesNamespace,
+		"gateway.envoyproxy.io/owning-gatewayclass": GentianGatewayClassName,
 	}
 }
 
@@ -46,12 +48,11 @@ func isKernelEdgeService(obj client.Object) bool {
 	if !ok {
 		return false
 	}
-	return svc.GetLabels()["gateway.envoyproxy.io/owning-gateway-name"] == KernelPublicGatewayName &&
-		svc.GetLabels()["gateway.envoyproxy.io/owning-gateway-namespace"] == servicesNamespace
+	return svc.GetLabels()["gateway.envoyproxy.io/owning-gatewayclass"] == GentianGatewayClassName
 }
 
-// findKernelEdgeService returns the Envoy data-plane Service of the kernel's
-// public Gateway, wherever Envoy Gateway runs.
+// findKernelEdgeService returns the Envoy data-plane Service of the edge,
+// wherever Envoy Gateway runs.
 func findKernelEdgeService(ctx context.Context, c client.Client) (*corev1.Service, error) {
 	list := &corev1.ServiceList{}
 	if err := c.List(ctx, list, kernelEdgeServiceLabels()); err != nil {

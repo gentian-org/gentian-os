@@ -100,7 +100,7 @@ func (r *TenantReconciler) waitForTenantEdgeResources(ctx context.Context, tenan
 	// Edge readiness is the kernel Gateway's: it terminates TLS and carries the
 	// tenant listener for this tenant's subdomains.
 	kernelGW := &gatewayv1.Gateway{}
-	kernelGW.Name = KernelPublicGatewayName
+	kernelGW.Name = AuthenticatedGatewayName
 	kernelGW.Namespace = servicesNamespace
 	if programmed, reason := gatewayProgrammed(ctx, r.Client, kernelGW); !programmed {
 		return false, reason, nil

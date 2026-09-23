@@ -29,12 +29,19 @@ const (
 
 	GentianGatewayClassName      = "gentian-envoy"
 	GentianGatewayControllerName = "gateway.envoyproxy.io/gentian-gatewayclass-controller"
-	KernelPublicGatewayName      = "kernel-public-gateway"
-	kernelWildcardTLSSecretName  = "wildcard-tls"
-	gatewayPlatformReconcileKey  = "gateway-platform"
-	conditionGatewayReady        = "GatewayReady"
-	conditionTunnelIngressReady  = "TunnelIngressReady"
-	operatorConfigMapName        = "gentian-os-config"
+	// The two edges (networking.md §1): one Envoy fleet, two policy domains,
+	// both Gateways in the edge namespace under mergeGateways. The
+	// authenticated Gateway serves every surface behind a session; the
+	// perimeter Gateway serves surfaces on their own hostname with no
+	// session -- for the kernel, exactly two: the identity provider's realm
+	// endpoints on id.<kernel>, and the ACME challenge on :80.
+	AuthenticatedGatewayName    = "authenticated"
+	PerimeterGatewayName        = "perimeter"
+	kernelWildcardTLSSecretName = "wildcard-tls"
+	gatewayPlatformReconcileKey = "gateway-platform"
+	conditionGatewayReady       = "GatewayReady"
+	conditionTunnelIngressReady = "TunnelIngressReady"
+	operatorConfigMapName       = "gentian-os-config"
 )
 
 // Where the kernel's functions run. Resolved from the layout the chart passes

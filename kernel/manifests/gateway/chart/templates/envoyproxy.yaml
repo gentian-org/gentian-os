@@ -45,6 +45,10 @@ metadata:
   labels:
     app.kubernetes.io/managed-by: gentian-os
 spec:
+  # The authenticated and perimeter Gateways are two policy domains on one
+  # fleet: the cluster has one address, and two Envoy Services would
+  # contend for it (networking.md §1).
+  mergeGateways: true
   provider:
     type: Kubernetes
     kubernetes:

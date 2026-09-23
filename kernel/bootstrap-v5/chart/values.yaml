@@ -44,8 +44,9 @@ headlamp:
       caFile: /etc/ssl/certs/ca-certificates.crt
 
 edge:
-  # The authenticated Gateway the operator reconciles in the edge namespace.
-  gatewayName: kernel-public-gateway
+  # The perimeter Gateway the operator reconciles in the edge namespace: the
+  # ACME HTTP-01 solver's routes attach to its :80 listener.
+  gatewayName: perimeter
 
 # The stage and the deployments repository, for the ApplicationSets.
 stage: dev

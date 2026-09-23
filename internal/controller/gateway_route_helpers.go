@@ -64,7 +64,7 @@ func gatewayParentRef(gatewayName string) gatewayv1.ParentReference {
 }
 
 func kernelGatewayParentRef() gatewayv1.ParentReference {
-	ref := gatewayParentRef(KernelPublicGatewayName)
+	ref := gatewayParentRef(AuthenticatedGatewayName)
 	ns := gatewayv1.Namespace(servicesNamespace)
 	ref.Namespace = &ns
 	return ref

@@ -28,7 +28,7 @@ import (
 )
 
 // ensureKernelGatewayTunnelIngress programs explicit kernel and tenant apex hostnames
-// on the Cloudflare tunnel to reach kernel-public-gateway. Wildcard tunnel hostname
+// on the Cloudflare tunnel to reach the edge Gateways. Wildcard tunnel hostname
 // rules such as *.platform.example.com are unreliable for multi-label kernel domains;
 // tenant app wildcards (*.demo.platform.example.com) are handled per-tenant separately.
 func ensureKernelGatewayTunnelIngress(

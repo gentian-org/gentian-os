@@ -25,7 +25,7 @@ tiles:
   - name: keycloak
     displayName: Identity
     description: Realms, clients and the people in them.
-    subDomain: id
+    subDomain: id-admin
     # Keycloak is served under /auth, and its realm console is per realm: a
     # link to /admin/ alone lands on the master realm's console, which a
     # kernel-realm administrator may not open. That refusal reads like a
