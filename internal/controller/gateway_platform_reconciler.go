@@ -142,6 +142,12 @@ func (r *GatewayPlatformReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	})
 
 	envoyKernelServicePredicate := predicate.NewPredicateFuncs(isKernelEdgeService)
+	// The kernel zone's client secret: the kernel UIs are routed only once
+	// it exists, so its arrival is what routes them.
+	zoneSecretPredicate := predicate.NewPredicateFuncs(func(obj client.Object) bool {
+		s, ok := obj.(*corev1.Secret)
+		return ok && s.GetNamespace() == servicesNamespace && s.GetName() == edgeKernelSecretName
+	})
 
 	return ctrl.NewControllerManagedBy(mgr).
 		Named("gateway-platform").
@@ -159,6 +165,11 @@ func (r *GatewayPlatformReconciler) SetupWithManager(mgr ctrl.Manager) error {
 			&corev1.Service{},
 			handler.EnqueueRequestsFromMapFunc(mapToPlatform),
 			builder.WithPredicates(envoyKernelServicePredicate),
+		).
+		Watches(
+			&corev1.Secret{},
+			handler.EnqueueRequestsFromMapFunc(mapToPlatform),
+			builder.WithPredicates(zoneSecretPredicate),
 		).
 		Complete(r)
 }
