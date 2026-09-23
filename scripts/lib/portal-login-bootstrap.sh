@@ -1241,7 +1241,7 @@ spec:
                 fullScopeAllowed: false,
                 protocol: "openid-connect",
                 secret: \$secret,
-                redirectUris: (["console", "argocd", "headlamp", "id-admin"] | map("https://" + . + "." + \$domain + "/oauth2/callback")),
+                redirectUris: (["console", "argocd", "headlamp", "id"] | map("https://" + . + "." + \$domain + "/oauth2/callback")),
                 webOrigins: [],
                 attributes: {
                   "backchannel.logout.url": (\$director + "/v1/logout/keycloak"),

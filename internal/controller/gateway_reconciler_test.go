@@ -528,21 +528,46 @@ func TestKernelHTTPRouteSpecs(t *testing.T) {
 	for _, rule := range refused.rules {
 		refusedPrefixes[*rule.Matches[0].Path.Value] = true
 	}
-	for _, want := range []string{"/auth/realms/master/", "/auth/admin/"} {
-		if !refusedPrefixes[want] {
-			t.Errorf("id.<kernel> must refuse %s; refused %v", want, refusedPrefixes)
-		}
+	// The master realm only. /auth/admin/ used to be refused here too, when
+	// the console lived on a hostname of its own; it is now a route on this
+	// same host behind the kernel session, and refusing it here would close
+	// the console to everyone.
+	if !refusedPrefixes["/auth/realms/master/"] {
+		t.Errorf("id.<kernel> must refuse the master realm; refused %v", refusedPrefixes)
+	}
+	if refusedPrefixes["/auth/admin/"] {
+		t.Error("/auth/admin/ is behind the session now, not refused outright")
 	}
 	if auth, _ := refused.securityPolicy["authorization"].(map[string]interface{}); auth["defaultAction"] != "Deny" {
 		t.Fatalf("the refused route's policy = %v, want defaultAction Deny", refused.securityPolicy)
 	}
-	// The admin console has its own hostname on the authenticated edge.
+	// The admin console shares the issuer's hostname, because Keycloak
+	// refuses its own Admin REST API when served on a second one. So it is
+	// the same host and the same listener as the public realm routes, told
+	// apart by path, and it is the one route there that carries a session.
 	adminRoute := buildKernelHTTPRoute(byName[kernelRouteKeycloakAdmin])
-	if string(adminRoute.Spec.Hostnames[0]) != "id-admin.platform.example.test" {
-		t.Fatalf("id-admin host = %v", adminRoute.Spec.Hostnames[0])
+	if string(adminRoute.Spec.Hostnames[0]) != "id.platform.example.test" {
+		t.Fatalf("admin console host = %v, want the issuer's", adminRoute.Spec.Hostnames[0])
 	}
-	if got := string(adminRoute.Spec.ParentRefs[0].Name); got != AuthenticatedGatewayName {
-		t.Fatalf("id-admin route parent = %q, want the authenticated Gateway", got)
+	if got := string(adminRoute.Spec.ParentRefs[0].Name); got != PerimeterGatewayName {
+		t.Fatalf("admin console parent = %q, want the same Gateway the issuer is on", got)
+	}
+	adminPaths := map[string]bool{}
+	for _, rule := range byName[kernelRouteKeycloakAdmin].rules {
+		adminPaths[*rule.Matches[0].Path.Value] = true
+	}
+	if !adminPaths["/auth/admin/"] || !adminPaths[edgeOAuth2Prefix] {
+		t.Fatalf("admin console paths = %v, want /auth/admin/ and the callback", adminPaths)
+	}
+	if byName[kernelRouteKeycloakAdmin].authz == nil ||
+		byName[kernelRouteKeycloakAdmin].authz.relation != "can_configure" {
+		t.Fatal("the admin console must be behind can_configure")
+	}
+	// And the public route on that host must not answer for it.
+	for _, rule := range byName[kernelRouteKeycloakIDP].rules {
+		if *rule.Matches[0].Path.Value == "/auth/admin/" {
+			t.Fatal("the public allowlist must not carry /auth/admin/")
+		}
 	}
 	// The :80 redirect lives where :80 does, on the perimeter.
 	redirect := buildKernelHTTPRoute(byName[kernelRouteHTTPRedirect])

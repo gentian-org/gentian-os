@@ -25,7 +25,10 @@ tiles:
   - name: keycloak
     displayName: Identity
     description: Realms, clients and the people in them.
-    subDomain: id-admin
+    # The same hostname that issues the tokens: Keycloak refuses its own
+    # Admin REST API when the console is served on a second one, so there is
+    # no id-admin.<kernel> (networking.md §3).
+    subDomain: id
     # Keycloak is served under /auth, and its realm console is per realm: a
     # link to /admin/ alone lands on the master realm's console, which a
     # kernel-realm administrator may not open. That refusal reads like a

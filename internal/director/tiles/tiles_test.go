@@ -29,9 +29,10 @@ func TestEveryTileHasWhatTheConsoleNeeds(t *testing.T) {
 	}
 	// Keycloak's console is per realm -- /admin/ alone is the master realm's,
 	// which a kernel-realm administrator may not open -- and it is served on
-	// id-admin.<kernel>, behind the kernel session at the edge; id.<kernel>
-	// serves realm endpoints only (networking.md §3).
-	if got := All()[2].URL("k.example"); got != "https://id-admin.k.example/auth/admin/kernel/console/" {
+	// the hostname that issues the tokens, behind the kernel session, because
+	// Keycloak refuses its own Admin REST API on a second one (networking.md
+	// §3).
+	if got := All()[2].URL("k.example"); got != "https://id.k.example/auth/admin/kernel/console/" {
 		t.Fatalf("keycloak URL = %s", got)
 	}
 }

@@ -212,8 +212,9 @@ func kernelHTTPRouteSpecs(
 		// The identity provider is a kernel-owned perimeter surface: no
 		// session, because it is the issuer, and a path allowlist, because it
 		// is public. Realm endpoints and the theme assets they load are the
-		// whole of it; the master realm is refused by name, and the admin
-		// console is served on id-admin.<kernel> behind the kernel session.
+		// whole of it; the master realm is refused by name, and the
+		// administration console is a route of its own on this same hostname
+		// behind the kernel session (networking.md §3).
 		{
 			name:        kernelRouteKeycloakIDP,
 			host:        idHost,
@@ -236,7 +237,6 @@ func kernelHTTPRouteSpecs(
 			sectionName: perimeterIDListenerName,
 			rules: []gatewayv1.HTTPRouteRule{
 				kernelBackendRulePrefixNS(kcService, identityNamespace, kcPort, "/auth/realms/master/"),
-				kernelBackendRulePrefixNS(kcService, identityNamespace, kcPort, "/auth/admin/"),
 			},
 			securityPolicy: map[string]interface{}{
 				"authorization": map[string]interface{}{"defaultAction": "Deny"},
@@ -245,15 +245,25 @@ func kernelHTTPRouteSpecs(
 	}
 	clusterObject := "cluster:" + cluster
 	if kernelZoneReady {
-		// Keycloak's administration, on its own hostname on the authenticated
-		// edge: the kernel session decides who reaches it, and Keycloak's own
-		// login is the second factor. Framed by the console like Argo CD.
+		// Keycloak's administration, on the SAME hostname that issues the
+		// tokens, behind the kernel session.
+		//
+		// It had a hostname of its own, id-admin.<kernel>, which is the shape
+		// every other kernel UI has. Keycloak cannot serve it that way: with
+		// KC_HOSTNAME and KC_HOSTNAME_ADMIN different, the console takes a
+		// token stamped with the issuer's hostname and calls the Admin REST
+		// API on the admin hostname, which refuses it, and the console never
+		// finishes loading. Upstream closed that as not planned
+		// (keycloak/keycloak#42264), so it is a constraint and not a bug to
+		// wait out. One hostname carrying two classes of route, told apart by
+		// path, is the only shape that works.
 		specs = append(specs, kernelHTTPRouteSpec{
 			name:        kernelRouteKeycloakAdmin,
-			host:        "id-admin." + kernelDomain,
-			sectionName: wildcardListenerName,
+			host:        idHost,
+			gateway:     PerimeterGatewayName,
+			sectionName: perimeterIDListenerName,
 			rules: []gatewayv1.HTTPRouteRule{
-				kernelBackendRulePrefixNS(kcService, identityNamespace, kcPort, "/auth/",
+				kernelBackendRulePrefixNS(kcService, identityNamespace, kcPort, "/auth/admin/",
 					kernelConsoleFrameFilters(kernelDomain)...),
 				// The zone's code flow lands on /oauth2/callback: the OIDC
 				// filter answers it, but only on a path the route carries.
