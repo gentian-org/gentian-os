@@ -43,6 +43,11 @@ const (
 	cnpgDatabaseKind       = "Database"
 	postgresAdminSecret    = "postgres-admin"
 	databaseRequeueAfter   = 2 * time.Second
+	// portalShellAppName names the desktop's database as exports and restores
+	// address it. The tenant reconciler no longer provisions it: the desktop
+	// is a component, and its database is that component's granted
+	// requirement (ui-restructure.md §1), fulfilled where the component is.
+	portalShellAppName = "shell"
 )
 
 // cnpgClusterName is the shared CloudNativePG Cluster in platform-kernel.
@@ -51,27 +56,15 @@ var cnpgClusterName = envOrDefault("CNPG_CLUSTER_NAME", "postgres")
 // ensureDatabase provisions per-app-per-tenant PostgreSQL databases via
 // CloudNativePG Database CRs and per-app role Jobs.
 func (r *TenantReconciler) ensureDatabase(ctx context.Context, tenant *gentianov1alpha1.Tenant) (ctrl.Result, error) {
-	portalShellDone, err := r.ensurePortalShellDatabase(ctx, tenant)
-	if err != nil {
-		return ctrl.Result{}, fmt.Errorf("ensure portal shell database: %w", err)
-	}
-	if !portalShellDone {
-		r.setCondition(tenant, conditionDatabaseReady, metav1.ConditionFalse,
-			"ProvisioningPortalShell", "Waiting for portal shell PostgreSQL database")
-		return r.requeueForPendingJob(ctx, tenant.Name, roleJobName(tenant.Name, portalShellAppName)), nil
-	}
-
 	pgApps, err := r.collectPostgresApps(ctx, tenant)
 	if err != nil {
 		return ctrl.Result{}, err
 	}
-
 	if len(pgApps) == 0 {
 		r.setCondition(tenant, conditionDatabaseReady, metav1.ConditionTrue,
-			"PortalShellReady", "Portal shell database ready; no app databases required")
+			"NoDatabaseRequired", "No app databases required")
 		return ctrl.Result{}, nil
 	}
-
 	nsName := tenantNamespaceName(tenant)
 	allDone := true
 	var pendingJobs []string

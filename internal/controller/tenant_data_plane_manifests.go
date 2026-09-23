@@ -34,10 +34,6 @@ func (r *TenantReconciler) buildDataPlaneJobs(ctx context.Context, tenant *genti
 	var jobs []batchv1.Job
 	nsName := tenantNamespaceName(tenant)
 
-	if err := r.appendPortalShellRoleJob(ctx, tenant, nsName, &jobs); err != nil {
-		return nil, err
-	}
-
 	pgApps, err := r.collectPostgresApps(ctx, tenant)
 	if err != nil {
 		return nil, err
@@ -147,13 +143,6 @@ func (r *TenantReconciler) buildDataPlaneObjects(ctx context.Context, tenant *ge
 	var objects []client.Object
 	nsName := tenantNamespaceName(tenant)
 
-	objects = append(objects, buildDatabaseCR(
-		tenant,
-		nsName,
-		databaseName(tenant, portalShellAppName),
-		portalShellAppName,
-	))
-
 	pgApps, err := r.collectPostgresApps(ctx, tenant)
 	if err != nil {
 		return nil, err
@@ -205,34 +194,6 @@ func (r *TenantReconciler) buildDataPlaneObjects(ctx context.Context, tenant *ge
 	objects = append(objects, edgeObjects...)
 
 	return objects, nil
-}
-
-func (r *TenantReconciler) appendPortalShellRoleJob(
-	ctx context.Context,
-	tenant *gentianov1alpha1.Tenant,
-	nsName string,
-	jobs *[]batchv1.Job,
-) error {
-	appName := portalShellAppName
-	dbName := databaseName(tenant, appName)
-	rolePassword := ""
-	if r.Seeder != nil {
-		creds, err := r.Seeder.SeedDatabase(ctx, tenant.Name, appName, secrets.DatabaseCreds{
-			Host: fmt.Sprintf("%s-rw.%s.svc.cluster.local", cnpgClusterName, postgresNamespace),
-			Port: "5432",
-			Name: dbName,
-			User: roleUserName(tenant.Name, appName),
-		})
-		if err != nil {
-			return fmt.Errorf("seed portal shell database: %w", err)
-		}
-		rolePassword = creds.Password
-	}
-	// The portal shell is not a catalogue app and has no profile to declare a
-	// preference, so it takes the defaults — and never creates databases.
-	*jobs = append(*jobs, *makeRoleJob(tenant, nsName, dbName, appName, rolePassword,
-		gentianov1alpha1.SchemaPreferenceAppSchema, false))
-	return nil
 }
 
 // collectDesiredIntegrationBindings returns IntegrationBinding CRs that should

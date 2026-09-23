@@ -52,7 +52,7 @@ func tenantHasConditionTrue(tenant *gentianov1alpha1.Tenant, condType string) bo
 //
 // Every one of them is set on every path its stage takes, including the
 // not-applicable path, which reports True with a reason saying so:
-// NoStorageRequired, PortalShellReady, "No apps require provisioning". So an
+// NoStorageRequired, NoDatabaseRequired, "No apps require provisioning". So an
 // absent condition here means the stage has not run, never that it had nothing
 // to do.
 var tenantFoundationConditions = []string{
