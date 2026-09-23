@@ -2277,6 +2277,13 @@ spec:
   # whose layout is not the one it was started with (--layout).
   layout: ${GENTIAN_LAYOUT:-v4}
   kernelDomain: ${domain}
+  # Who administers this cluster, by the Keycloak group they are in. The
+  # director reads this file from git -- not the object in the cluster -- so
+  # the assignment is written here rather than left to the schema's default,
+  # which a file reader never sees. Without it the director grants nobody a
+  # cluster role and every console the person is entitled to disappears.
+  platformRoles:
+    admin: ${PLATFORM_SUPERADMIN_GROUP:-gentian:platform:superadmin}
 $(_claim_cluster_fields)
 EOF
         info "Scaffolded ${kernel_dir}/claims/cluster.yaml"

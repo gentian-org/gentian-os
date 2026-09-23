@@ -88,6 +88,9 @@ spec:
                     All kernel services are reachable under this domain.
                 platformRoles:
                   type: object
+                  # So the schema's per-role defaults materialise: a property's
+                  # default is only applied when the object holding it exists.
+                  default: {}
                   description: >
                     Which Keycloak group in the kernel realm holds each platform
                     role. The director projects these into OpenFGA as the
