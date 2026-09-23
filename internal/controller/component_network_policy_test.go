@@ -39,13 +39,15 @@ func TestTheDesktopReachesItsDatabaseAndTheDirector(t *testing.T) {
 	profile.Spec.Requires = &gentianov1alpha1.RequirementSpec{
 		Contracts: &gentianov1alpha1.KernelRequirements{Database: &gentianov1alpha1.DatabaseRequirement{}},
 	}
+	profile.Spec.Expose = []gentianov1alpha1.ExposureSpec{{Name: "api", Surface: gentianov1alpha1.SurfaceGateway, ForwardToken: true}}
 	comp := &gentianov1alpha1.Component{}
 	comp.Name = "desktop"
 	comp.Namespace = "tenant-platform"
 
 	got := r.componentEgressNamespaces(profile, tenant)
-	want := []string{layout.Namespace(layout.Data), layout.Namespace(layout.Control)}
-	if len(got) != len(want) || got[0] != want[0] || got[1] != want[1] {
+	// Its database, the edge it verifies forwarded tokens through, the director.
+	want := []string{layout.Namespace(layout.Data), layout.Namespace(layout.Edge), layout.Namespace(layout.Control)}
+	if len(got) != len(want) || got[0] != want[0] || got[1] != want[1] || got[2] != want[2] {
 		t.Fatalf("egress namespaces = %v, want %v", got, want)
 	}
 
@@ -73,7 +75,7 @@ func TestTheDesktopReachesItsDatabaseAndTheDirector(t *testing.T) {
 }
 
 // Another tenant's desktop reaches the tenant postgres of the system tier,
-// not the kernel's data plane.
+// not the kernel's data plane; with no token forwarded to it, not the edge.
 func TestATenantDesktopReachesTheSystemPostgres(t *testing.T) {
 	t.Parallel()
 	r := &ComponentReconciler{KernelRealm: "kernel"}
