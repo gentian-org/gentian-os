@@ -124,6 +124,31 @@ a Secret `edge-<t>-oidc` in the edge namespace for the `SecurityPolicy` to
 read. The kernel zone then stops being a special case: the platform tenant
 composes its own like any other, and the bootstrap Job's client creation goes.
 
+The pieces, since the shape is decided and only the writing is left:
+
+1. **The secret exists first.** External Secrets is deployed and its
+   `Password` generator is available on the cluster, so the composition emits
+   an `ExternalSecret` in the edge namespace named `edge-<t>-oidc` whose value
+   comes from a generator and whose target key is `client-secret`, which is
+   the key Envoy Gateway's `SecurityPolicy` reads.
+2. **The client is pushed that secret**, not given one. `clientSecretSecretRef`
+   on the `Client` resource, exactly as the retired portal BFF client did it.
+   A client with no secret reference has Keycloak mint one, and then the two
+   sides disagree for ever.
+3. **The client itself**: `gentian-edge-<t>`, confidential, standard flow only,
+   `fullScopeAllowed: false` so no roles ride in the token, no groups scope,
+   the director in its audience, back-channel logout at the director, and a
+   redirect URI per host in that zone.
+4. **The kernel stops being special.** Once a tenant composes its own, the
+   platform tenant composes its own too and the client creation leaves
+   `portal-login-bootstrap.sh`. Do this second, after a tenant zone is proven,
+   because it is the sign-in everything else on the cluster depends on.
+
+Watch for the provider quirk the composition already documents at length: this
+provider cannot adopt an object it did not create, and `Observe`-only left the
+retired portal client uncreated in tenant realms while every tenant hung in
+Provisioning. Declare `Create` as well as `Observe` from the start.
+
 **Done when** a second tenant signs in at `console.<t>.<kernel>` against its
 own realm, with no installer step having run for it.
 
