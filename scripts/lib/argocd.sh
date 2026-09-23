@@ -494,7 +494,14 @@ EOF
 }"
 
     # 4. Restart ArgoCD server to pick up new configurations
-    kubectl rollout restart deployment argocd-server -n "${ns}"
+    #
+    # A restart triggered within the same second as an earlier one is refused:
+    # the annotation kubectl writes carries a timestamp, and two in one second
+    # are the same value, so there is nothing to patch. It means a restart is
+    # already on its way, which is what this wanted -- but unhandled it ended
+    # the whole install one line before the step's last success message.
+    kubectl rollout restart deployment argocd-server -n "${ns}" \
+        || warn "  argocd-server restart already in flight; the new configuration comes up with it."
     kubectl rollout status deployment argocd-server -n "${ns}" --timeout=90s 2>/dev/null || true
     success "ArgoCD OIDC configuration completed."
 }

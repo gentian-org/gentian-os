@@ -746,8 +746,11 @@ run_keycloak_portal_bootstrap_job() {
     local username="administrator"
     local email="administrator@${kernel_domain}"
     local password job_name="keycloak-portal-bootstrap"
+    # Where Keycloak's admin credential is, which is where this Job has to run:
+    # a Secret is readable only in its own namespace, and copying an admin
+    # password into another one to save a namespace is not a trade worth making.
     local ns
-    ns="$(_pl_portal_ns)"
+    ns="$(_pl_identity_ns)"
     local platform_superadmin_group="gentian:platform:superadmin"
 
     password=$(_platform_admin_derive_password)
@@ -757,8 +760,8 @@ run_keycloak_portal_bootstrap_job() {
 
     info "Bootstrapping Keycloak portal client + user via in-cluster Job..."
 
-    ensure_portal_bff_secret >/dev/null
-    local argocd_secret
+    local bff_secret argocd_secret
+    bff_secret=$(ensure_portal_bff_secret)
     argocd_secret=$(ensure_argocd_oidc_secret)
 
     local llm_support="${LLM_SUPPORT:-false}"
@@ -798,6 +801,10 @@ run_keycloak_portal_bootstrap_job() {
         --from-literal=password="${password}"
         --from-literal=platform_superadmin_group="${platform_superadmin_group}"
         --from-literal=argocd_client_secret="${argocd_secret}"
+        # The portal backend's own client secret travels with the rest rather
+        # than being read from the portal's Secret: this Job runs where
+        # Keycloak's admin credential is, and that is not where the portal runs.
+        --from-literal=bff_client_secret="${bff_secret}"
         --from-literal=llm_support="${llm_support}"
         --from-literal=litellm_sso_client_secret="${litellm_sso_secret}"
     )
@@ -1363,8 +1370,8 @@ ${smtp_shell}
             - name: PORTAL_BFF_CLIENT_SECRET
               valueFrom:
                 secretKeyRef:
-                  name: gentian-portal-bff
-                  key: client_secret
+                  name: portal-bootstrap-credentials
+                  key: bff_client_secret
             - name: ARGOCD_OIDC_CLIENT_SECRET
               valueFrom:
                 secretKeyRef:
@@ -1505,19 +1512,58 @@ build_gentian_portal_images() {
 # an unguarded command substitution aborts the install before that handling is
 # ever reached. A missing Secret is the normal state on a fresh cluster.
 _openfga_runtime_store_id() {
-    if ! kubectl get secret openfga-runtime -n "$(_pl_authz_ns)" >/dev/null 2>&1; then
-        return 1
+    if kubectl get secret openfga-runtime -n "$(_pl_authz_ns)" >/dev/null 2>&1; then
+        local from_secret
+        from_secret=$(kubectl get secret openfga-runtime -n "$(_pl_authz_ns)" \
+            -o jsonpath='{.data.store_id}' 2>/dev/null | base64 -d 2>/dev/null || true)
+        if [[ -n "${from_secret}" ]]; then
+            echo "${from_secret}"
+            return 0
+        fi
     fi
-    kubectl get secret openfga-runtime -n "$(_pl_authz_ns)" \
-        -o jsonpath='{.data.store_id}' 2>/dev/null | base64 -d 2>/dev/null || true
+    # No Secret: the authz bridge published that one, and it is retired. The
+    # director creates the store itself now and nothing writes the id down, so
+    # ask the service that holds it -- by the store's name, taking the oldest
+    # where several share it, which is the rule the director itself follows.
+    _openfga_store_id_from_api
+}
+
+# The store id, read from OpenFGA. Empty and non-zero when the service is not
+# reachable or has no store yet, which is the normal state before the director
+# has started.
+_openfga_store_id_from_api() {
+    local addr token id
+    # The same resolver every other in-cluster read here uses: the ClusterIP
+    # when this host can route to it, a port-forward when it cannot.
+    addr=$(gentian_service_addr gentian-openfga "$(_pl_authz_ns)" 8080 http 2>/dev/null) || return 1
+    token="$(_openfga_api_token || true)"
+    id=$(curl -sf --max-time 10 ${token:+-H "Authorization: Bearer ${token}"} \
+        "${addr}/stores" 2>/dev/null \
+        | python3 -c "
+import sys, json
+try:
+    stores = json.load(sys.stdin).get('stores', [])
+except Exception:
+    sys.exit(1)
+named = [s for s in stores if s.get('name') == 'gentian']
+named.sort(key=lambda s: s.get('created_at', ''))
+print(named[0]['id'] if named else '')
+" 2>/dev/null || true)
+    [[ -n "${id}" ]] || return 1
+    echo "${id}"
 }
 
 wait_for_openfga_runtime_store_id() {
     local timeout_sec="${1:-180}"
-    info "Waiting for openfga-runtime store_id (authz bridge bootstrap, up to ${timeout_sec}s)..."
+    info "Waiting for the OpenFGA store id (up to ${timeout_sec}s)..."
 
-    kubectl rollout restart deployment/gentian-os -n "$(_pl_control_ns)" 2>/dev/null || true
-    kubectl rollout status deployment/gentian-os -n "$(_pl_control_ns)" --timeout=180s 2>/dev/null || true
+    # Only where the authz bridge still publishes it. Where the director owns
+    # the store, restarting the operator does nothing for this and costs three
+    # minutes of the budget.
+    if kubectl get secret openfga-runtime -n "$(_pl_authz_ns)" >/dev/null 2>&1; then
+        kubectl rollout restart deployment/gentian-os -n "$(_pl_control_ns)" 2>/dev/null || true
+        kubectl rollout status deployment/gentian-os -n "$(_pl_control_ns)" --timeout=180s 2>/dev/null || true
+    fi
 
     local deadline=$((SECONDS + timeout_sec))
     while (( SECONDS < deadline )); do

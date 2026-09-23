@@ -5,6 +5,11 @@
 # provides: the kernel realm with its clients and the administrator user, Argo CD signing in against it, and the portal Application serving the desktop
 # mutates: Keycloak realm, clients, groups and users; Secrets in the edge and gitops namespaces; the argocd-cm, argocd-rbac-cm and argocd-tls-certs-cm ConfigMaps; the gentian-portal Application
 
+# _v5_render is B-01's; a step file is a library of verbs and sourcing another
+# one is how they are shared.
+# shellcheck source=scripts/steps-v5/B-01-bootstrap-apps.sh
+source "${SCRIPT_DIR}/scripts/steps-v5/B-01-bootstrap-apps.sh"
+
 # The bootstrap that turns a running Keycloak into one this cluster can be
 # signed in to: the kernel realm, the portal's public client, the confidential
 # clients the portal backend and Argo CD authenticate with, the
