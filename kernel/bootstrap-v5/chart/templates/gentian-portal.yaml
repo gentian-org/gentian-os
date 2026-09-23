@@ -100,6 +100,13 @@ spec:
         {{- end }}
         openfga:
           apiUrl: http://gentian-openfga.{{ include "ns" (list . "authorization") }}.svc.cluster.local:8080
+        # The director, for what only it can decide: which of the cluster's own
+        # consoles this person may open. The console forwards their token and
+        # adds nothing of its own, so the answer is about them rather than
+        # about whether they are an administrator.
+        director:
+          url: http://gentian-os-director.{{ include "ns" (list . "control") }}.svc.cluster.local:8080
+          cluster: {{ .Values.deployments.cluster | quote }}
   destination:
     server: https://kubernetes.default.svc
     namespace: {{ $portalNs }}
