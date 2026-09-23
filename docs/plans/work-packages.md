@@ -458,10 +458,31 @@ Specified in [ui-restructure.md](ui-restructure.md) §1–§2.
       so each one is a director call that authorises the caller and commits to
       git, exactly as installing an app already is. Until then the console is
       a set of screens with nothing behind them.
-- [ ] **The embedded tiles open signed in.** Argo CD does. Headlamp asks for
-      a second login, and the Keycloak console shows a spinner in the frame.
-      Decide per tile whether it can be embedded at all, and where it cannot,
-      open it in a tab rather than a window and say so on the tile.
+- [ ] **The Cluster tile opens signed in.** Headlamp runs its own OIDC flow
+      with its own client and keeps the result in its own cookie, and the
+      kubeconfig it proxies with has no `id-token` until that flow has run.
+      The edge session is deliberately not forwarded to it, and Headlamp would
+      not read it if it were: every `/clusters/main/*` call fails with
+      "No valid id-token, and cannot refresh without refresh-token". So the
+      second sign-in is structural. It costs a click and not a password, since
+      the Keycloak session already exists, but the click should go. Either
+      start Headlamp's own flow from the tile, or bridge the edge session into
+      the cookie it expects.
+- [ ] **The Identity tile is not an iframe problem.** Embedding works: the
+      realm sends no `X-Frame-Options` and no CSP, the edge injects a
+      permissive `frame-ancestors`, the console is same-site so its cookies
+      are first-party, and the silent SSO and token exchange both complete
+      inside the frame. It then dies on its first Admin REST call, 401, and
+      the spinner is what is left. The cause is that `KC_HOSTNAME` and
+      `KC_HOSTNAME_ADMIN` differ: tokens are minted by `id.<kernel>` and
+      presented to `id-admin.<kernel>`, which Keycloak refuses. Upstream has
+      this reported and closed as not planned (keycloak#42264), so opening the
+      tile in a tab would fail in exactly the same way. Decide whether to drop
+      the split hostname and serve `/auth/admin/` on `id.<kernel>` behind the
+      kernel session, which is the only fix that does not wait on upstream.
+      Note also what the current setup costs: the realm's clickjacking
+      defences are cleared wholesale to make one tile frameable, which removes
+      them from every login and account page in the realm.
 - [x] First slice, against a mocked director: `app/services/director.py`
       and `/api/v1/director/...` in the BFF forward the person's own token and
       repeat the director's answer, status and request id; no actor header,
