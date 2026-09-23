@@ -85,6 +85,11 @@ spec:
         # The edge's enforcement point, beside the Gateways (networking.md §2).
         edgeAuthz:
           enabled: true
+        # The desktop every tenant gets, from the branch this cluster follows.
+        desktop:
+          enabled: true
+          chart:
+            version: {{ printf "0.1.0-%s" (.Values.portal.imageBranch | default "develop") | quote }}
         director:
           enabled: true
           entitlements: "off"

@@ -91,6 +91,24 @@ func kernelSecurityPolicyName(route string) string { return "sp-" + route }
 // zone's session (OIDC against the kernel realm with the zone client,
 // cookie on the kernel domain) and the ext-auth shim, which fails closed.
 func kernelSecurityPolicySpec(kernelDomain, kernelRealm, route string, authz routeAuthz, shimService string) map[string]interface{} {
+	zone := edgeZone{
+		domain: kernelDomain, realm: kernelRealm, clientID: edgeKernelClientID, secretName: edgeKernelSecretName,
+		cookie: edgeKernelAccessTokenCookie, idCookie: edgeKernelIDTokenCookie, kernel: true,
+	}
+	return zoneSecurityPolicySpec(kernelDomain, zone, route, authz, "", shimService)
+}
+
+// zoneSecurityPolicySpec is L1 and L2 for one route in a zone. The zone's
+// client Secret and the shim live in the edge namespace; a policy elsewhere
+// names that namespace and relies on the ReferenceGrant the component
+// reconciler keeps there.
+func zoneSecurityPolicySpec(kernelDomain string, zone edgeZone, route string, authz routeAuthz, edgeNamespace, shimService string) map[string]interface{} {
+	clientSecret := map[string]interface{}{"name": zone.secretName}
+	backend := map[string]interface{}{"name": shimService, "port": int64(edgeAuthzPort)}
+	if edgeNamespace != "" {
+		clientSecret["namespace"] = edgeNamespace
+		backend["namespace"] = edgeNamespace
+	}
 	return map[string]interface{}{
 		"targetRefs": []interface{}{
 			map[string]interface{}{
@@ -101,15 +119,15 @@ func kernelSecurityPolicySpec(kernelDomain, kernelRealm, route string, authz rou
 		},
 		"oidc": map[string]interface{}{
 			"provider": map[string]interface{}{
-				"issuer": fmt.Sprintf("https://id.%s/auth/realms/%s", kernelDomain, kernelRealm),
+				"issuer": fmt.Sprintf("https://id.%s/auth/realms/%s", kernelDomain, zone.realm),
 			},
-			"clientID":     edgeKernelClientID,
-			"clientSecret": map[string]interface{}{"name": edgeKernelSecretName},
+			"clientID":     zone.clientID,
+			"clientSecret": clientSecret,
 			"logoutPath":   "/oauth2/logout",
-			"cookieDomain": kernelDomain,
+			"cookieDomain": zone.domain,
 			"cookieNames": map[string]interface{}{
-				"accessToken": edgeKernelAccessTokenCookie,
-				"idToken":     edgeKernelIDTokenCookie,
+				"accessToken": zone.cookie,
+				"idToken":     zone.idCookie,
 			},
 			"forwardAccessToken": authz.forwardToken,
 			"scopes":             []interface{}{"openid", "profile", "email"},
@@ -117,12 +135,7 @@ func kernelSecurityPolicySpec(kernelDomain, kernelRealm, route string, authz rou
 		},
 		"extAuth": map[string]interface{}{
 			"failOpen": false,
-			"grpc": map[string]interface{}{
-				"backendRef": map[string]interface{}{
-					"name": shimService,
-					"port": int64(edgeAuthzPort),
-				},
-			},
+			"grpc":     map[string]interface{}{"backendRef": backend},
 		},
 	}
 }
@@ -196,7 +209,7 @@ type edgeAuthzRoute struct {
 // edgeAuthzRouteTable renders the shim's table from the routes that carry an
 // L2 question. Sorted by host: one table for one state, however the specs
 // were listed.
-func edgeAuthzRouteTable(specs []kernelHTTPRouteSpec) (string, error) {
+func edgeAuthzRouteTable(specs []kernelHTTPRouteSpec, extra []edgeAuthzRoute) (string, error) {
 	var routes []edgeAuthzRoute
 	for _, s := range specs {
 		if s.authz == nil || s.host == "" {
@@ -208,6 +221,7 @@ func edgeAuthzRouteTable(specs []kernelHTTPRouteSpec) (string, error) {
 			AuthMode: "oidc",
 		})
 	}
+	routes = append(routes, extra...)
 	sort.Slice(routes, func(i, j int) bool { return routes[i].Host < routes[j].Host })
 	b, err := yaml.Marshal(map[string]interface{}{"routes": routes})
 	if err != nil {
@@ -217,7 +231,11 @@ func edgeAuthzRouteTable(specs []kernelHTTPRouteSpec) (string, error) {
 }
 
 func (r *GatewayPlatformReconciler) ensureEdgeAuthzRouteTable(ctx context.Context, specs []kernelHTTPRouteSpec) error {
-	table, err := edgeAuthzRouteTable(specs)
+	extra, err := componentRouteTableEntries(ctx, r.Client)
+	if err != nil {
+		return err
+	}
+	table, err := edgeAuthzRouteTable(specs, extra)
 	if err != nil {
 		return err
 	}
@@ -261,4 +279,37 @@ func (r *GatewayPlatformReconciler) edgeAuthzService() string {
 		return "gentian-os-edge-authz"
 	}
 	return r.EdgeAuthzService
+}
+
+// componentRouteTableEntries are the questions of every component route: the
+// component reconciler writes them on the route, and this is the one writer
+// of the table the shim reads.
+func componentRouteTableEntries(ctx context.Context, c client.Reader) ([]edgeAuthzRoute, error) {
+	list := &gatewayv1.HTTPRouteList{}
+	if err := c.List(ctx, list, client.MatchingLabels{edgeAuthzRouteLabel: "true"}); err != nil {
+		return nil, err
+	}
+	var out []edgeAuthzRoute
+	for i := range list.Items {
+		route := &list.Items[i]
+		if route.DeletionTimestamp != nil || len(route.Spec.Hostnames) == 0 {
+			continue
+		}
+		ann := route.Annotations
+		if ann[edgeAuthzRelationAnnotation] == "" || ann[edgeAuthzObjectAnnotation] == "" {
+			continue
+		}
+		mode := ann[edgeAuthzAuthModeAnnotation]
+		if mode == "" {
+			mode = "oidc"
+		}
+		for _, h := range route.Spec.Hostnames {
+			out = append(out, edgeAuthzRoute{
+				Host: string(h), Relation: ann[edgeAuthzRelationAnnotation], Object: ann[edgeAuthzObjectAnnotation],
+				AccessTokenCookie: ann[edgeAuthzCookieAnnotation], ForwardToken: ann[edgeAuthzForwardAnnotation] == "true",
+				AuthMode: mode,
+			})
+		}
+	}
+	return out, nil
 }

@@ -241,6 +241,20 @@ func main() {
 		os.Exit(1)
 	}
 
+	if err := (&controller.ComponentReconciler{
+		Client:           mgr.GetClient(),
+		Scheme:           mgr.GetScheme(),
+		KernelDomain:     os.Getenv("KERNEL_DOMAIN"),
+		KernelRealm:      kernelRealmOrDefault(os.Getenv("KERNEL_REALM")),
+		TenancyMode:      os.Getenv("TENANCY_MODE"),
+		Cluster:          envOrDefault("GENTIAN_DEPLOYMENTS_CLUSTER_ID", "default-cluster"),
+		EdgeAuthzService: envOrDefault("EDGE_AUTHZ_SERVICE", "gentian-os-edge-authz"),
+		DirectorURL:      os.Getenv("DIRECTOR_URL"),
+	}).SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "unable to create controller", "controller", "Component")
+		os.Exit(1)
+	}
+
 	if err := (&controller.AppStoreReconciler{
 		Client: mgr.GetClient(),
 		Scheme: mgr.GetScheme(),

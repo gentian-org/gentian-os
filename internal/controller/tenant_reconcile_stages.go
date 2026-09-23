@@ -397,6 +397,12 @@ func (r *TenantReconciler) reconcileTenantStageAppsAndEdge(ctx context.Context, 
 	}
 	state.privilegeResult = privilegeResult
 
+	// Every tenant gets its desktop: a Component of the profile the OS
+	// ships, reconciled beside its apps (ui-restructure.md §1).
+	if err := r.ensureDesktopComponent(ctx, tenant); err != nil {
+		return ctrl.Result{}, fmt.Errorf("ensure desktop component: %w", err)
+	}
+
 	if _, err := r.ensureGateway(ctx, tenant); err != nil {
 		r.setCondition(tenant, conditionGatewayReady, metav1.ConditionFalse, "EnsureFailed", err.Error())
 		r.updateBlockedStatus(ctx, tenant)

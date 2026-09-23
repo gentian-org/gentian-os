@@ -57,7 +57,7 @@ func TestTheRouteTableListsEveryRouteWithAQuestionSortedByHost(t *testing.T) {
 		{name: "b", host: "headlamp.k.example", authz: &routeAuthz{relation: "can_audit", object: "cluster:c1"}},
 		{name: "id", host: "id.k.example"},
 		{name: "a", host: "argocd.k.example", authz: &routeAuthz{relation: "can_configure", object: "cluster:c1"}},
-	})
+	}, []edgeAuthzRoute{{Host: "console.k.example", Relation: "can_enter", Object: "tenant:platform", AccessTokenCookie: edgeKernelAccessTokenCookie, ForwardToken: true, AuthMode: "oidc"}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -66,6 +66,9 @@ func TestTheRouteTableListsEveryRouteWithAQuestionSortedByHost(t *testing.T) {
 	}
 	if strings.Contains(table, "id.k.example") {
 		t.Fatalf("a route with no question is not in the table:\n%s", table)
+	}
+	if !strings.Contains(table, "host: console.k.example") {
+		t.Fatalf("a component's route is in the table beside the kernel's:\n%s", table)
 	}
 	if !strings.Contains(table, "authMode: oidc") {
 		t.Fatalf("the route's L1 mode is what tells the shim whose question a missing session is:\n%s", table)

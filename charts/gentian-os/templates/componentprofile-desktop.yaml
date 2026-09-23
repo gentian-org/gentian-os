@@ -1,0 +1,59 @@
+{{- /*
+  The desktop: the one component the OS ships itself (ui-restructure.md §1).
+  Every tenant gets one from this profile, the platform tenant included --
+  its desktop is the platform console, in the kernel zone (AD-10). The
+  profile is what the desktop is: a tenant component of platform trust, a
+  database requirement, and two gateway exposures on one host, the API's
+  forwarding the edge token because the BFF relays it to the director and to
+  nothing else. What the platform tells it -- realm, zone client, director --
+  is the component reconciler's, not the profile's.
+*/ -}}
+{{- if .Values.desktop.enabled }}
+apiVersion: gentianos.io/v1alpha1
+kind: ComponentProfile
+metadata:
+  name: desktop
+  labels:
+    {{- include "gentian-os.labels" . | nindent 4 }}
+  annotations:
+    gentianos.io/desktop: "true"
+spec:
+  tenancy: [tenant]
+  trustTier: platform
+  version: {{ .Values.desktop.chart.version | quote }}
+  package:
+    chart:
+      repository: {{ .Values.desktop.chart.repository | quote }}
+      name: {{ .Values.desktop.chart.name | quote }}
+      version: {{ .Values.desktop.chart.version | quote }}
+    {{- with .Values.desktop.extraValues }}
+    extraValues:
+      {{- toYaml . | nindent 6 }}
+    {{- end }}
+  requires:
+    contracts:
+      database:
+        engine: postgresql
+        databasePerTenant: true
+  expose:
+    # The BFF: the same-origin relay the shell talks to. It relays to the
+    # director with the user's own token, which is why this entry -- and
+    # only this entry -- forwards the edge token (AD-13).
+    - name: api
+      surface: gateway
+      authMode: oidc
+      subDomain: {{ .Values.desktop.subDomain | quote }}
+      paths: ["/api", "/healthz", "/readyz"]
+      forwardToken: true
+      backend:
+        service: desktop-gentian-portal-api
+        port: 8000
+    # The shell: a static bundle served from the tenant's own origin.
+    - name: web
+      surface: gateway
+      authMode: oidc
+      subDomain: {{ .Values.desktop.subDomain | quote }}
+      backend:
+        service: desktop-gentian-portal-web
+        port: 8080
+{{- end }}

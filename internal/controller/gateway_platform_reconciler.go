@@ -171,6 +171,14 @@ func (r *GatewayPlatformReconciler) SetupWithManager(mgr ctrl.Manager) error {
 			handler.EnqueueRequestsFromMapFunc(mapToPlatform),
 			builder.WithPredicates(zoneSecretPredicate),
 		).
+		// A component's route carries a question the shim's table must hold.
+		Watches(
+			&gatewayv1.HTTPRoute{},
+			handler.EnqueueRequestsFromMapFunc(mapToPlatform),
+			builder.WithPredicates(predicate.NewPredicateFuncs(func(obj client.Object) bool {
+				return obj.GetLabels()[edgeAuthzRouteLabel] == "true"
+			})),
+		).
 		Complete(r)
 }
 
