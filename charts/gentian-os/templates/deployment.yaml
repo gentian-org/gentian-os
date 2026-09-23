@@ -265,6 +265,10 @@ spec:
               value: {{ .Values.infraNamespace | quote }}
             - name: SERVICES_NAMESPACE
               value: {{ .Values.servicesNamespace | quote }}
+            # The ext-auth shim's Service, which every kernel-zone SecurityPolicy
+            # the operator writes names as its ext-auth backend.
+            - name: EDGE_AUTHZ_SERVICE
+              value: {{ printf "%s-edge-authz" (include "gentian-os.fullname" .) | quote }}
             - name: GENTIAN_STAGE
               value: {{ .Values.stage | default "dev" | quote }}
             - name: LLM_SUPPORT

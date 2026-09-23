@@ -51,7 +51,7 @@ import (
 //
 // ClientTrafficPolicy sits alongside BackendTrafficPolicy: the kernel routes
 // reconciler creates them and tenant cleanup lists them for stale removal.
-// +kubebuilder:rbac:groups=gateway.envoyproxy.io,resources=backendtrafficpolicies;clienttrafficpolicies,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=gateway.envoyproxy.io,resources=backendtrafficpolicies;clienttrafficpolicies;httproutefilters;securitypolicies,verbs=get;list;watch;create;update;patch;delete
 //
 // Deployments back the CoreDNS hairpin (coredns_hairpin.go): the ConfigMap name
 // is discovered from the volume the CoreDNS Deployment mounts, and the
@@ -69,6 +69,13 @@ type GatewayPlatformReconciler struct {
 	TenancyMode  string
 	RoutingMode  string
 	Ingress      EdgeIngress
+	// Cluster is this cluster's id in the authorization store: the object
+	// the kernel UIs' relations are asked on (cluster:<c>).
+	Cluster string
+	// KernelRealm is the realm the kernel zone's session is established in.
+	KernelRealm string
+	// EdgeAuthzService is the ext-auth shim's Service in the edge namespace.
+	EdgeAuthzService string
 }
 
 func (r *GatewayPlatformReconciler) Reconcile(ctx context.Context, _ reconcile.Request) (reconcile.Result, error) {

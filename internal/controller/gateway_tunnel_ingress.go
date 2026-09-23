@@ -70,8 +70,11 @@ func ensureKernelGatewayTunnelIngress(
 		kernelPortalHost(kernelDomain): {},
 		"corp." + kernelDomain:         {},
 	}
+	// The hostnames are the routes': a kernel UI is published only once it
+	// is routed, which is only once the kernel zone exists. The cluster id
+	// does not reach a hostname.
 	for _, spec := range kernelHTTPRouteSpecs(kernelDomain, effectiveDomains, oidcSubs, tenantNames,
-		clusterLLMEnabled(ctx, c), portalDeployed(ctx, c)) {
+		clusterLLMEnabled(ctx, c), portalDeployed(ctx, c), "", kernelZoneReadyWith(ctx, c)) {
 		if spec.host != "" {
 			hosts[spec.host] = struct{}{}
 		}

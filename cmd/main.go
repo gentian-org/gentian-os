@@ -227,11 +227,14 @@ func main() {
 	}
 
 	if err := (&controller.GatewayPlatformReconciler{
-		Client:       mgr.GetClient(),
-		KernelDomain: os.Getenv("KERNEL_DOMAIN"),
-		TenancyMode:  os.Getenv("TENANCY_MODE"),
-		RoutingMode:  routingMode,
-		Ingress:      buildEdgeIngress(),
+		Client:           mgr.GetClient(),
+		KernelDomain:     os.Getenv("KERNEL_DOMAIN"),
+		TenancyMode:      os.Getenv("TENANCY_MODE"),
+		RoutingMode:      routingMode,
+		Ingress:          buildEdgeIngress(),
+		Cluster:          envOrDefault("GENTIAN_DEPLOYMENTS_CLUSTER_ID", "default-cluster"),
+		KernelRealm:      kernelRealmOrDefault(os.Getenv("KERNEL_REALM")),
+		EdgeAuthzService: envOrDefault("EDGE_AUTHZ_SERVICE", "gentian-os-edge-authz"),
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "GatewayPlatform")
 		os.Exit(1)

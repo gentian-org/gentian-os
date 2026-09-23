@@ -733,7 +733,6 @@ _reconcile_kernel_https_coredns_hairpin() {
     [[ "${ROUTING_MODE:-gateway}" == "gateway" ]] || return 0
     [[ -n "${KERNEL_DOMAIN:-}" ]] || return 0
 
-    local services_ns; services_ns="$(gentian_services_namespace)"
     local envoy_ns="${ENVOY_GATEWAY_NAMESPACE:-envoy-gateway-system}"
     local mail_domain="mail.${KERNEL_DOMAIN}"
     local edge_ip

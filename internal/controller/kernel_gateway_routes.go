@@ -72,6 +72,9 @@ type kernelHTTPRouteSpec struct {
 	gateway      string
 	policy       map[string]interface{}
 	clientPolicy map[string]interface{}
+	// authz is the L2 question for a route behind the kernel zone's session;
+	// nil for a route with no session (the perimeter's) or none yet.
+	authz *routeAuthz
 }
 
 // suzeKeycloakHTTPServiceName is the keycloakx chart HTTP Service for Stage 1 Suze IdP.
@@ -116,13 +119,26 @@ func (r *GatewayPlatformReconciler) reconcileKernelHTTPRoutes(ctx context.Contex
 		return fmt.Errorf("ensure kernel deny HTTPRouteFilter: %w", err)
 	}
 	specs := kernelHTTPRouteSpecs(r.KernelDomain, effectiveDomains, oidcSubs, tenantNames,
-		clusterLLMEnabled(ctx, r.Client), portalDeployed(ctx, r.Client))
+		clusterLLMEnabled(ctx, r.Client), portalDeployed(ctx, r.Client), r.Cluster, r.kernelZoneReady(ctx))
+	// The shim's table first: a route whose policy asks the shim before the
+	// shim knows the host is refused, which is the right direction, but a
+	// short one.
+	if err := r.ensureEdgeAuthzRouteTable(ctx, specs); err != nil {
+		return fmt.Errorf("ensure edge-authz route table: %w", err)
+	}
 	expected := make(map[string]struct{}, len(specs))
+	expectedPolicies := map[string]struct{}{}
 	for _, spec := range specs {
 		expected[spec.name] = struct{}{}
 		route := buildKernelHTTPRoute(spec)
 		if err := ensureHTTPRouteResource(ctx, r.Client, route); err != nil {
 			return fmt.Errorf("ensure kernel HTTPRoute %s: %w", spec.name, err)
+		}
+		if spec.authz != nil {
+			expectedPolicies[kernelSecurityPolicyName(spec.name)] = struct{}{}
+			if err := r.ensureKernelSecurityPolicy(ctx, spec); err != nil {
+				return fmt.Errorf("ensure kernel SecurityPolicy %s: %w", spec.name, err)
+			}
 		}
 		if spec.policy != nil {
 			if err := r.ensureKernelBackendTrafficPolicy(ctx, spec); err != nil {
@@ -151,6 +167,9 @@ func (r *GatewayPlatformReconciler) reconcileKernelHTTPRoutes(ctx context.Contex
 			}
 		}
 	}
+	if err := r.deleteStaleKernelSecurityPolicies(ctx, expectedPolicies); err != nil {
+		return fmt.Errorf("delete stale kernel SecurityPolicies: %w", err)
+	}
 	return r.deleteStaleKernelHTTPRoutes(ctx, expected)
 }
 
@@ -174,6 +193,8 @@ func kernelHTTPRouteSpecs(
 	tenantNames []string,
 	llmEnabled bool,
 	portalDeployed bool,
+	cluster string,
+	kernelZoneReady bool,
 ) []kernelHTTPRouteSpec {
 	idHost := fmt.Sprintf("id.%s", kernelDomain)
 	portalHost := kernelPortalHost(kernelDomain)
@@ -201,10 +222,13 @@ func kernelHTTPRouteSpecs(
 			},
 			policy: keycloakProxyBackendTrafficPolicySpec(),
 		},
+	}
+	clusterObject := "cluster:" + cluster
+	if kernelZoneReady {
 		// Keycloak's administration, on its own hostname on the authenticated
 		// edge: the kernel session decides who reaches it, and Keycloak's own
 		// login is the second factor. Framed by the console like Argo CD.
-		{
+		specs = append(specs, kernelHTTPRouteSpec{
 			name:        kernelRouteKeycloakAdmin,
 			host:        "id-admin." + kernelDomain,
 			sectionName: wildcardListenerName,
@@ -213,7 +237,8 @@ func kernelHTTPRouteSpecs(
 					kernelConsoleFrameFilters(kernelDomain)...),
 			},
 			policy: keycloakProxyBackendTrafficPolicySpec(),
-		},
+			authz:  &routeAuthz{relation: "can_configure", object: clusterObject},
+		})
 	}
 	// The Gentian UI portal (API + SPA); edge traffic reaches
 	// the edge Gateways in servicesNamespace via the tunnel.
@@ -293,7 +318,12 @@ func kernelHTTPRouteSpecs(
 			sectionName: httpRedirectListenerName,
 			rules:       []gatewayv1.HTTPRouteRule{kernelHTTPSRedirectRule()},
 		},
-		kernelHTTPRouteSpec{
+	)
+	// The kernel UIs: "hidden" means behind a session with a platform role,
+	// not an internal hostname, and each tool's own login is the second
+	// factor (networking.md §3). No zone, no route: never an open one.
+	if kernelZoneReady {
+		specs = append(specs, kernelHTTPRouteSpec{
 			name:        kernelRouteArgoCD,
 			host:        fmt.Sprintf("argocd.%s", kernelDomain),
 			sectionName: wildcardListenerName,
@@ -301,26 +331,24 @@ func kernelHTTPRouteSpecs(
 				kernelBackendRuleCrossNamespace(argocdServerServiceName, argocdNamespace, 80,
 					kernelConsoleFrameFilters(kernelDomain)...),
 			},
-		},
-	)
-	// The cluster view. It belongs with the other kernel consoles rather than
-	// beside its own Deployment: a route the operator owns is the one that gets
-	// a tunnel hostname and a DNS record, and one created elsewhere is
-	// reachable from inside the cluster and nowhere else.
-	//
-	// Only where the layout has an observability namespace. A v4 cluster has
-	// none and runs no Headlamp, and a route to a Service that does not exist
-	// would still claim the hostname on the tunnel.
-	if observabilityNamespace != "" {
-		specs = append(specs, kernelHTTPRouteSpec{
-			name:        kernelRouteHeadlamp,
-			host:        fmt.Sprintf("headlamp.%s", kernelDomain),
-			sectionName: wildcardListenerName,
-			rules: []gatewayv1.HTTPRouteRule{
-				kernelBackendRuleCrossNamespace(headlampServiceName, observabilityNamespace, 80,
-					kernelConsoleFrameFilters(kernelDomain)...),
-			},
+			authz: &routeAuthz{relation: "can_configure", object: clusterObject},
 		})
+		// The cluster view, read-only: an auditor's right. A route the
+		// operator owns is the one that gets a tunnel hostname and a DNS
+		// record; only where the layout has an observability namespace, since
+		// a route to a Service that does not exist would still claim the host.
+		if observabilityNamespace != "" {
+			specs = append(specs, kernelHTTPRouteSpec{
+				name:        kernelRouteHeadlamp,
+				host:        fmt.Sprintf("headlamp.%s", kernelDomain),
+				sectionName: wildcardListenerName,
+				rules: []gatewayv1.HTTPRouteRule{
+					kernelBackendRuleCrossNamespace(headlampServiceName, observabilityNamespace, 80,
+						kernelConsoleFrameFilters(kernelDomain)...),
+				},
+				authz: &routeAuthz{relation: "can_audit", object: clusterObject},
+			})
+		}
 	}
 	// LiteLLM admin console — platform-level only (the claim's llm.enabled).
 	// Tenants do not get their own route; app-catalogue "litellm" tiles stay

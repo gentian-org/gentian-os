@@ -176,6 +176,8 @@ rules:
     resources:
     - backendtrafficpolicies
     - clienttrafficpolicies
+    - httproutefilters
+    - securitypolicies
     verbs:
     - get
     - list

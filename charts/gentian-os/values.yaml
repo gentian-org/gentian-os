@@ -186,6 +186,25 @@ director:
     limits:
       memory: 256Mi
 
+# The ext-auth shim: L2 of the edge, run in the edge namespace from this
+# image. Off by default; the v5 bootstrap turns it on with the director,
+# because it decides against the store the director established.
+edgeAuthz:
+  enabled: false
+  replicas: 2
+  # A cached allow lives this long at most; eviction on the store's changelog
+  # is what normally retires one.
+  cacheTTL: 5m
+  # How often the changelog is polled: the stated bound on how long a revoked
+  # right or an ended session survives at the edge (networking.md §4).
+  pollInterval: 2s
+  resources:
+    requests:
+      cpu: 20m
+      memory: 32Mi
+    limits:
+      memory: 128Mi
+
 # kernelServices exposes cluster-wide infrastructure endpoints to Crossplane
 # compositions. Published as a `gentian-kernel-services` ConfigMap in gentian-system
 # and fetched by app-default.yaml via function-extra-resources.

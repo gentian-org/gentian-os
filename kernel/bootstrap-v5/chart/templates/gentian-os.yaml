@@ -82,6 +82,9 @@ spec:
           # OpenFGA answers, which the director reads too.
           enabled: false
           openfgaURL: {{ printf "http://gentian-openfga.%s.svc.cluster.local:8080" (include "ns" (list . "authorization")) | quote }}
+        # The edge's enforcement point, beside the Gateways (networking.md §2).
+        edgeAuthz:
+          enabled: true
         director:
           enabled: true
           entitlements: "off"

@@ -1,0 +1,188 @@
+/*
+Copyright 2026 Gentian Organization.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
+package authz
+
+import (
+	"context"
+	"errors"
+	"io"
+	"log/slog"
+	"net/http"
+	"testing"
+	"time"
+
+	"github.com/gentian-org/gentian-os/internal/director/authn"
+	"github.com/gentian-org/gentian-os/internal/director/authz"
+)
+
+type fakeVerifier struct{ tokens map[string]*authn.Identity }
+
+func (f fakeVerifier) Verify(_ context.Context, raw string) (*authn.Identity, error) {
+	if id, ok := f.tokens[raw]; ok {
+		return id, nil
+	}
+	return nil, authn.ErrUnauthenticated
+}
+
+type fakeStore struct {
+	allow  map[string]bool // "user|relation|object"
+	down   bool
+	checks int
+	log    []authz.Change
+}
+
+func (f *fakeStore) Check(_ context.Context, _, user, relation, object string) (bool, error) {
+	f.checks++
+	if f.down {
+		return false, errors.New("connection refused")
+	}
+	return f.allow[user+"|"+relation+"|"+object], nil
+}
+
+func (f *fakeStore) Changes(_ context.Context, _, token string) ([]authz.Change, string, error) {
+	if f.down {
+		return nil, "", errors.New("connection refused")
+	}
+	if token == "" {
+		return f.log, "end", nil
+	}
+	return nil, token, nil
+}
+
+func table() *Table {
+	return &Table{Routes: []Route{
+		{Host: "argocd.k.example", Relation: "can_configure", Object: "cluster:c1", AccessTokenCookie: "at"},
+		{Host: "console.k.example", Relation: "can_enter", Object: "tenant:platform", AccessTokenCookie: "at", ForwardToken: true},
+	}}
+}
+
+func decider(store *fakeStore) *Decider {
+	return New(Options{
+		Verifier: fakeVerifier{tokens: map[string]*authn.Identity{
+			"root-token": {Subject: "root", Realm: "kernel", SessionID: "s1", Email: "root@k.example", Name: "Root"},
+			"mia-token":  {Subject: "mia", Realm: "kernel", SessionID: "s2"},
+		}},
+		Store: store, Table: table(), CacheTTL: time.Minute,
+		Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
+	})
+}
+
+func TestTheRouteRelationDecidesAndIdentityHeadersReplaceTheToken(t *testing.T) {
+	store := &fakeStore{allow: map[string]bool{"user:root|can_configure|cluster:c1": true}}
+	d := decider(store)
+	dec := d.Decide(context.Background(), Request{Host: "argocd.k.example", Cookies: map[string]string{"at": "root-token"}})
+	if !dec.Allow {
+		t.Fatalf("denied: %s", dec.Reason)
+	}
+	if dec.Headers[HeaderSubject] != "root" || dec.Headers[HeaderEmail] != "root@k.example" {
+		t.Fatalf("headers = %v", dec.Headers)
+	}
+	if len(dec.RemoveHeaders) != 1 || dec.RemoveHeaders[0] != "authorization" {
+		t.Fatalf("a route without forwardToken must strip the bearer; got %v", dec.RemoveHeaders)
+	}
+	// mia holds no relation: refused, whatever her token says.
+	dec = d.Decide(context.Background(), Request{Host: "argocd.k.example", Cookies: map[string]string{"at": "mia-token"}})
+	if dec.Allow || dec.Status != http.StatusForbidden {
+		t.Fatalf("mia: allow=%v status=%d", dec.Allow, dec.Status)
+	}
+}
+
+func TestTheDesktopRouteKeepsTheToken(t *testing.T) {
+	store := &fakeStore{allow: map[string]bool{"user:root|can_enter|tenant:platform": true}}
+	dec := decider(store).Decide(context.Background(), Request{Host: "console.k.example:443", Authorization: "Bearer root-token"})
+	if !dec.Allow {
+		t.Fatalf("denied: %s", dec.Reason)
+	}
+	if len(dec.RemoveHeaders) != 0 {
+		t.Fatalf("forwardToken route must keep the bearer; removes %v", dec.RemoveHeaders)
+	}
+}
+
+func TestWhatHasNoRouteClassOrNoTokenIsRefused(t *testing.T) {
+	d := decider(&fakeStore{})
+	if dec := d.Decide(context.Background(), Request{Host: "nothing.k.example", Authorization: "Bearer root-token"}); dec.Allow || dec.Status != http.StatusForbidden {
+		t.Fatalf("no class: %+v", dec)
+	}
+	if dec := d.Decide(context.Background(), Request{Host: "argocd.k.example"}); dec.Allow || dec.Status != http.StatusUnauthorized {
+		t.Fatalf("no token: %+v", dec)
+	}
+	if dec := d.Decide(context.Background(), Request{Host: "argocd.k.example", Authorization: "Bearer forged"}); dec.Allow || dec.Status != http.StatusUnauthorized {
+		t.Fatalf("forged: %+v", dec)
+	}
+}
+
+func TestARevokedSessionIsDeniedAtL2(t *testing.T) {
+	store := &fakeStore{allow: map[string]bool{
+		"user:root|can_configure|cluster:c1": true,
+		"user:root|revoked|session:s1":       true,
+	}}
+	dec := decider(store).Decide(context.Background(), Request{Host: "argocd.k.example", Authorization: "Bearer root-token"})
+	if dec.Allow || dec.Status != http.StatusForbidden {
+		t.Fatalf("revoked session: %+v", dec)
+	}
+}
+
+func TestDecisionsAreCachedPerSessionAndEvictedOnChange(t *testing.T) {
+	store := &fakeStore{allow: map[string]bool{"user:root|can_configure|cluster:c1": true}}
+	d := decider(store)
+	req := Request{Host: "argocd.k.example", Authorization: "Bearer root-token"}
+	d.Decide(context.Background(), req)
+	d.Decide(context.Background(), req)
+	if store.checks != 2 { // revoked + relation, once
+		t.Fatalf("store asked %d times, want 2 (the second request is a cache hit)", store.checks)
+	}
+	// The right is taken away and the changelog moves: the cache is evicted
+	// and the next request asks again -- and is refused.
+	store.allow = map[string]bool{}
+	d.Evict()
+	if dec := d.Decide(context.Background(), req); dec.Allow {
+		t.Fatal("a revoked right survived eviction")
+	}
+}
+
+func TestFailClosedButCachedAllowsCarry(t *testing.T) {
+	store := &fakeStore{allow: map[string]bool{"user:root|can_configure|cluster:c1": true}}
+	d := decider(store)
+	req := Request{Host: "argocd.k.example", Authorization: "Bearer root-token"}
+	if dec := d.Decide(context.Background(), req); !dec.Allow {
+		t.Fatalf("denied: %s", dec.Reason)
+	}
+	store.down = true
+	if dec := d.Decide(context.Background(), req); !dec.Allow {
+		t.Fatalf("a cached allow must carry while the store is down: %s", dec.Reason)
+	}
+	// A new login waits.
+	if dec := d.Decide(context.Background(), Request{Host: "argocd.k.example", Authorization: "Bearer mia-token"}); dec.Allow || dec.Status != http.StatusServiceUnavailable {
+		t.Fatalf("new login while the store is down: %+v", dec)
+	}
+}
+
+func TestATableRefusesWhatItCannotDecide(t *testing.T) {
+	if _, err := ParseTable([]byte("routes:\n- host: a.example\n")); err == nil {
+		t.Fatal("a host with no relation is not a route")
+	}
+	if _, err := ParseTable([]byte("routes:\n- {host: a.example, relation: r, object: o}\n- {host: A.example, relation: r, object: o}\n")); err == nil {
+		t.Fatal("a host listed twice is ambiguous")
+	}
+	tb, err := ParseTable([]byte("routes:\n- {host: A.Example, relation: can_enter, object: tenant:t}\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if tb.Match("a.example:443") == nil {
+		t.Fatal("hosts match case-insensitively and without the port")
+	}
+}

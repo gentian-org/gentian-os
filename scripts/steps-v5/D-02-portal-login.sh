@@ -48,6 +48,12 @@ check() {
     # and it is Ready only once the operator has adopted the realm and its
     # groups exist in it -- which is what this step is for.
     [[ "$(kubectl get tenant platform -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null)" == "True" ]] || return "${CHECK_MISSING}"
+    # The kernel zone at the edge: the zone client's secret, which this step
+    # writes, and the session policy the operator puts on the kernel UIs once
+    # it exists. Without the first there is no session; without the second the
+    # kernel UIs have no route (never an open one).
+    kubectl get secret edge-kernel-oidc -n "${EDGE_NAMESPACE}" >/dev/null 2>&1 || return "${CHECK_MISSING}"
+    [[ "$(kubectl get securitypolicy sp-kernel-argocd -n "${EDGE_NAMESPACE}" -o jsonpath='{.status.policies[0].conditions[?(@.type=="Accepted")].status}' 2>/dev/null)" == "True" ]] || return "${CHECK_MISSING}"
     return 0
 }
 
@@ -95,6 +101,22 @@ apply() {
         sleep 10
     done
     success "Tenant/platform is Ready: the platform tenant adopts realm ${KERNEL_REALM:-kernel}."
+
+    # The zone's session on the kernel UIs. The operator writes the policies
+    # once the zone secret exists; Envoy Gateway accepts them once the shim's
+    # Service and the secret resolve.
+    info "Waiting for the kernel zone's session policy on argocd.${KERNEL_DOMAIN}..."
+    deadline=$((SECONDS + 600))
+    until [[ "$(kubectl get securitypolicy sp-kernel-argocd -n "${EDGE_NAMESPACE}" -o jsonpath='{.status.policies[0].conditions[?(@.type=="Accepted")].status}' 2>/dev/null)" == "True" ]]; do
+        if (( SECONDS > deadline )); then
+            error "SecurityPolicy sp-kernel-argocd is not Accepted after 10 minutes."
+            kubectl get securitypolicy sp-kernel-argocd -n "${EDGE_NAMESPACE}" -o jsonpath='{range .status.policies[0].conditions[*]}{.type}={.status} {.reason}: {.message}{"\n"}{end}' 2>/dev/null || \
+                error "  The policy does not exist: is the operator running, and does ${EDGE_NAMESPACE}/edge-kernel-oidc exist?"
+            return 1
+        fi
+        sleep 10
+    done
+    success "The kernel UIs sit behind the kernel zone's session and the ext-auth shim."
 }
 
 destroy() {
