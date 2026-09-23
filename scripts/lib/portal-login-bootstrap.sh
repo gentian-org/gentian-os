@@ -1035,6 +1035,23 @@ spec:
                 exit 1
               fi
 
+              # Every surface Keycloak draws wears the product's theme.
+              #
+              # The login screen already did. The account and administration
+              # consoles did not, and the administration console is embedded
+              # in the desktop as the Identity tile, so its appearance is the
+              # product's appearance. A theme restyles what Keycloak draws and
+              # does not redraw it: both consoles are compiled React on
+              # PatternFly rendered from one template, and overriding that
+              # template would mean reworking it on every upgrade.
+              REALM_THEMES=\$(jq -n '{loginTheme:"gentian",adminTheme:"gentian",accountTheme:"gentian"}')
+              if curl -sf -X PUT -H "\${AUTH}" -H "Content-Type: application/json" \
+                "\${KEYCLOAK_BASE}/admin/realms/\${REALM}" -d "\${REALM_THEMES}" >/dev/null 2>&1; then
+                echo "Realm \${REALM} wears the gentian theme on login, account and admin"
+              else
+                printf '\033[1;33m[WARN]\033[0m  %s\n' "could not set the realm themes on \${REALM}" >&2
+              fi
+
               # The realm states its memberships to the director. Admin events
               # carry the changes an administrator makes; the user events carry
               # the ones nobody makes by hand -- a default group, a federation

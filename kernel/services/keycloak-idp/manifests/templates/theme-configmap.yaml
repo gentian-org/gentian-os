@@ -15,6 +15,188 @@ metadata:
   annotations:
     argocd.argoproj.io/sync-wave: "-1"
 data:
+  account__resources__css__gentian-account.css: |-
+    /* The account console, in the product's colours.
+     *
+     * Keycloak's consoles are PatternFly, and PatternFly exposes its palette,
+     * typography and radii as CSS custom properties. Remapping those is the whole
+     * of this file: no selectors that depend on PatternFly's class names, because
+     * those change between its major versions and ours would then style nothing
+     * while looking like it still did.
+     *
+     * Both v5 and v6 prefixes are written. Keycloak 26.0 renders v5; later
+     * releases move to v6, and a variable nobody reads costs nothing.
+     *
+     * Tokens are the design system's, frontend/design-system/gentian-theme.css in
+     * gentian-ui, copied rather than imported: this stylesheet is served by
+     * Keycloak from its own origin and cannot reach the desktop's assets.
+     */
+
+    :root {
+      --gtn-ink-0: #07081a;
+      --gtn-ink-1: #14152e;
+      --gtn-ink-3: #45486b;
+      --gtn-ink-4: #74779a;
+      --gtn-paper-0: #f4f1ea;
+      --gtn-paper-1: #ece8df;
+      --gtn-paper-2: #ded9cc;
+      --gtn-paper-3: #ffffff;
+      --gtn-500: #262696;
+      --gtn-600: #1b1a82;
+      --gtn-700: #131370;
+      --gtn-border: rgba(20, 21, 46, 0.1);
+      --gtn-border-strong: rgba(20, 21, 46, 0.22);
+      --gtn-font: "Hanken Grotesk", -apple-system, BlinkMacSystemFont, "Segoe UI",
+        Roboto, "Helvetica Neue", Arial, sans-serif;
+
+      /* Surfaces */
+      --pf-v5-global--BackgroundColor--100: var(--gtn-paper-3);
+      --pf-v5-global--BackgroundColor--200: var(--gtn-paper-0);
+      --pf-v5-global--BackgroundColor--light-300: var(--gtn-paper-1);
+      --pf-v6-global--BackgroundColor--100: var(--gtn-paper-3);
+      --pf-v6-global--BackgroundColor--200: var(--gtn-paper-0);
+
+      /* Text */
+      --pf-v5-global--Color--100: var(--gtn-ink-1);
+      --pf-v5-global--Color--200: var(--gtn-ink-3);
+      --pf-v5-global--Color--dark-100: var(--gtn-ink-1);
+      --pf-v5-global--Color--dark-200: var(--gtn-ink-3);
+      --pf-v6-global--Color--100: var(--gtn-ink-1);
+      --pf-v6-global--Color--200: var(--gtn-ink-3);
+
+      /* Accent */
+      --pf-v5-global--primary-color--100: var(--gtn-500);
+      --pf-v5-global--primary-color--200: var(--gtn-700);
+      --pf-v5-global--active-color--100: var(--gtn-500);
+      --pf-v5-global--link--Color: var(--gtn-500);
+      --pf-v5-global--link--Color--hover: var(--gtn-600);
+      --pf-v6-global--primary-color--100: var(--gtn-500);
+      --pf-v6-global--link--Color: var(--gtn-500);
+
+      /* Lines */
+      --pf-v5-global--BorderColor--100: var(--gtn-border-strong);
+      --pf-v5-global--BorderColor--200: var(--gtn-border);
+      --pf-v5-global--BorderColor--300: var(--gtn-border);
+      --pf-v6-global--BorderColor--100: var(--gtn-border-strong);
+
+      /* Type */
+      --pf-v5-global--FontFamily--text: var(--gtn-font);
+      --pf-v5-global--FontFamily--heading: var(--gtn-font);
+      --pf-v5-global--FontFamily--redhatFont--text: var(--gtn-font);
+      --pf-v5-global--FontFamily--redhatFont--heading: var(--gtn-font);
+      --pf-v6-global--FontFamily--text: var(--gtn-font);
+
+      /* The masthead is the one band that reads as someone else's product. */
+      --pf-v5-c-masthead--BackgroundColor: var(--gtn-ink-1);
+      --pf-v5-global--BackgroundColor--dark-100: var(--gtn-ink-1);
+      --pf-v6-c-masthead--BackgroundColor: var(--gtn-ink-1);
+    }
+
+    body {
+      font-family: var(--gtn-font);
+    }
+  account__theme.properties: |-
+    # Gentian account console theme. Same reasoning as the admin one beside it:
+    # restyle what Keycloak draws, do not redraw it.
+    parent=keycloak.v2
+    import=common/keycloak
+
+    styles=css/gentian-account.css
+  admin__resources__css__gentian-admin.css: |-
+    /* The administration console, in the product's colours.
+     *
+     * Keycloak's consoles are PatternFly, and PatternFly exposes its palette,
+     * typography and radii as CSS custom properties. Remapping those is the whole
+     * of this file: no selectors that depend on PatternFly's class names, because
+     * those change between its major versions and ours would then style nothing
+     * while looking like it still did.
+     *
+     * Both v5 and v6 prefixes are written. Keycloak 26.0 renders v5; later
+     * releases move to v6, and a variable nobody reads costs nothing.
+     *
+     * Tokens are the design system's, frontend/design-system/gentian-theme.css in
+     * gentian-ui, copied rather than imported: this stylesheet is served by
+     * Keycloak from its own origin and cannot reach the desktop's assets.
+     */
+
+    :root {
+      --gtn-ink-0: #07081a;
+      --gtn-ink-1: #14152e;
+      --gtn-ink-3: #45486b;
+      --gtn-ink-4: #74779a;
+      --gtn-paper-0: #f4f1ea;
+      --gtn-paper-1: #ece8df;
+      --gtn-paper-2: #ded9cc;
+      --gtn-paper-3: #ffffff;
+      --gtn-500: #262696;
+      --gtn-600: #1b1a82;
+      --gtn-700: #131370;
+      --gtn-border: rgba(20, 21, 46, 0.1);
+      --gtn-border-strong: rgba(20, 21, 46, 0.22);
+      --gtn-font: "Hanken Grotesk", -apple-system, BlinkMacSystemFont, "Segoe UI",
+        Roboto, "Helvetica Neue", Arial, sans-serif;
+
+      /* Surfaces */
+      --pf-v5-global--BackgroundColor--100: var(--gtn-paper-3);
+      --pf-v5-global--BackgroundColor--200: var(--gtn-paper-0);
+      --pf-v5-global--BackgroundColor--light-300: var(--gtn-paper-1);
+      --pf-v6-global--BackgroundColor--100: var(--gtn-paper-3);
+      --pf-v6-global--BackgroundColor--200: var(--gtn-paper-0);
+
+      /* Text */
+      --pf-v5-global--Color--100: var(--gtn-ink-1);
+      --pf-v5-global--Color--200: var(--gtn-ink-3);
+      --pf-v5-global--Color--dark-100: var(--gtn-ink-1);
+      --pf-v5-global--Color--dark-200: var(--gtn-ink-3);
+      --pf-v6-global--Color--100: var(--gtn-ink-1);
+      --pf-v6-global--Color--200: var(--gtn-ink-3);
+
+      /* Accent */
+      --pf-v5-global--primary-color--100: var(--gtn-500);
+      --pf-v5-global--primary-color--200: var(--gtn-700);
+      --pf-v5-global--active-color--100: var(--gtn-500);
+      --pf-v5-global--link--Color: var(--gtn-500);
+      --pf-v5-global--link--Color--hover: var(--gtn-600);
+      --pf-v6-global--primary-color--100: var(--gtn-500);
+      --pf-v6-global--link--Color: var(--gtn-500);
+
+      /* Lines */
+      --pf-v5-global--BorderColor--100: var(--gtn-border-strong);
+      --pf-v5-global--BorderColor--200: var(--gtn-border);
+      --pf-v5-global--BorderColor--300: var(--gtn-border);
+      --pf-v6-global--BorderColor--100: var(--gtn-border-strong);
+
+      /* Type */
+      --pf-v5-global--FontFamily--text: var(--gtn-font);
+      --pf-v5-global--FontFamily--heading: var(--gtn-font);
+      --pf-v5-global--FontFamily--redhatFont--text: var(--gtn-font);
+      --pf-v5-global--FontFamily--redhatFont--heading: var(--gtn-font);
+      --pf-v6-global--FontFamily--text: var(--gtn-font);
+
+      /* The masthead is the one band that reads as someone else's product. */
+      --pf-v5-c-masthead--BackgroundColor: var(--gtn-ink-1);
+      --pf-v5-global--BackgroundColor--dark-100: var(--gtn-ink-1);
+      --pf-v6-c-masthead--BackgroundColor: var(--gtn-ink-1);
+    }
+
+    body {
+      font-family: var(--gtn-font);
+    }
+  admin__theme.properties: |-
+    # Gentian administration console theme.
+    #
+    # Extends keycloak.v2, which is the console Keycloak actually ships: a compiled
+    # React application on PatternFly rendered from one template. A theme can
+    # change how it looks and not how it is laid out, and overriding the template
+    # means reworking it on every Keycloak release — which is a surface we do not
+    # want to own for a screen we embed rather than write.
+    #
+    # So this is a stylesheet and nothing else. It remaps PatternFly's own custom
+    # properties to the design system's tokens, which is the supported seam.
+    parent=keycloak.v2
+    import=common/keycloak
+
+    styles=css/gentian-admin.css
   login__login-reset-password.ftl: |-
     <#import "template.ftl" as layout>
     <@layout.registrationLayout displayMessage=false; section>
