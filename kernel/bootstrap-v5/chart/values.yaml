@@ -52,6 +52,26 @@ tenancyMode: multi
 acmeStaging: "true"
 smtpHost: ""
 
+# Whether this cluster serves LLM, from the Cluster claim's llm.enabled. The
+# portal turns it into a capability, and a tile appears only for a capability
+# the cluster actually has.
+llmEnabled: "false"
+
+# The portal -- the desktop and its tiles. Applied by the portal login step,
+# after the Keycloak realm, clients and administrator user it signs people in
+# against exist.
+portal:
+  enabled: false
+  repo: https://github.com/gentian-org/gentian-ui
+  # The git ref the chart comes from.
+  revision: develop
+  # The branch whose builds the image updater follows. Separate from the ref
+  # above for the same reason the operator's is: only some branches publish.
+  imageBranch: develop
+  # An exact published tag, which also takes the image updater off the
+  # Application so the pin holds.
+  tag: ""
+
 # The operator (and, with it, the director) — applied by D-01, once the
 # identity services its reconcilers address exist.
 operator:

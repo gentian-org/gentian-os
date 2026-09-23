@@ -13,3 +13,9 @@ databases:
   - name: openfga
     role: openfga_user
     passwordKey: openfga_user_password
+  # The portal's own store: a signed-in person's preferences and desktop
+  # layout. Named portal_shell because the console calls its shell what the
+  # user sees before any app is open.
+  - name: portal_shell
+    role: portal_shell_user
+    passwordKey: portal_shell_user_password

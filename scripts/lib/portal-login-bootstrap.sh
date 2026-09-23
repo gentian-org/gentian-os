@@ -5,6 +5,24 @@
 
 set -euo pipefail
 
+# =============================================================================
+# Where each thing lives.
+#
+# The v4 layout put the portal, Keycloak, OpenFGA, the wildcard certificate and
+# the bootstrap Job in one namespace, and this file said so about twenty times.
+# Under a layout that gives each function its own, those are five different
+# answers, and a literal is right for at most one of them.
+#
+# Defaults are the v4 names, so a v4 install behaves exactly as before; the
+# step that runs this under another layout exports what it resolved.
+# =============================================================================
+_pl_portal_ns()   { echo "${PORTAL_NAMESPACE:-platform-kernel}"; }
+_pl_identity_ns() { echo "${IDENTITY_NAMESPACE:-platform-kernel}"; }
+_pl_authz_ns()    { echo "${AUTHZ_NAMESPACE:-platform-kernel}"; }
+_pl_gitops_ns()   { echo "${GITOPS_NAMESPACE:-argocd}"; }
+_pl_edge_ns()     { echo "${EDGE_NAMESPACE:-platform-kernel}"; }
+_pl_control_ns()  { echo "${GENTIAN_SYSTEM_NAMESPACE:-gentian-system}"; }
+
 _platform_admin_derive_password() {
     if [[ "${SECRET_MODE:-derived}" == "random" ]]; then
         local existing_pw
@@ -78,7 +96,8 @@ _litellm_sso_derive_secret() {
 }
 
 ensure_portal_bff_secret() {
-    local ns="platform-kernel"
+    local ns
+    ns="$(_pl_portal_ns)"
     local secret
     secret="$(_portal_bff_derive_secret)"
     kubectl create secret generic gentian-portal-bff -n "${ns}" \
@@ -89,7 +108,8 @@ ensure_portal_bff_secret() {
 }
 
 ensure_argocd_oidc_secret() {
-    local ns="platform-kernel"
+    local ns
+    ns="$(_pl_portal_ns)"
     local secret
     secret="$(_argocd_oidc_derive_secret)"
     # >&2 on both, for the reason spelled out in ensure_litellm_sso_secret:
@@ -103,13 +123,14 @@ ensure_argocd_oidc_secret() {
         --from-literal=client_secret="${secret}" \
         --dry-run=client -o yaml | kubectl apply -f - >&2
     # Also patch the actual argocd-secret in the argocd namespace
-    kubectl patch secret argocd-secret -n argocd --type merge \
+    kubectl patch secret argocd-secret -n "$(_pl_gitops_ns)" --type merge \
         -p "{\"stringData\":{\"oidc.keycloak.clientSecret\":\"${secret}\"}}" >&2
     echo "${secret}"
 }
 
 ensure_litellm_sso_secret() {
-    local ns="platform-kernel"
+    local ns
+    ns="$(_pl_portal_ns)"
     local secret
     secret="$(_litellm_sso_derive_secret)"
     # >&2 on the apply, and this is not cosmetic. This function's stdout IS its
@@ -129,7 +150,8 @@ ensure_litellm_sso_secret() {
 }
 
 _keycloak_internal_service_url() {
-    local ns="${1:-platform-kernel}"
+    local ns
+    ns="${1:-$(_pl_identity_ns)}"
     local release="${GENTIAN_IDP_KEYCLOAK_RELEASE:-gentian-idp-keycloak}"
     local svc port
     # keycloakx Helm chart publishes {release}-keycloakx-http (Suze default release name).
@@ -151,7 +173,8 @@ _keycloak_internal_service_url() {
 }
 
 wait_for_keycloak_http_service() {
-    local ns="${1:-platform-kernel}"
+    local ns
+    ns="${1:-$(_pl_identity_ns)}"
     local timeout_sec="${2:-300}"
     local deadline=$((SECONDS + timeout_sec))
     while (( SECONDS < deadline )); do
@@ -165,7 +188,8 @@ wait_for_keycloak_http_service() {
 }
 
 ensure_keycloak_admin_secret_url() {
-    local ns="platform-kernel"
+    local ns
+    ns="$(_pl_identity_ns)"
     local url current
 
     # The first wait is the long one, because on a fresh install this is a race
@@ -255,11 +279,12 @@ ensure_keycloak_admin_secret_url() {
 }
 
 ensure_portal_gateway_readiness() {
-    local ns="platform-kernel"
+    local ns
+    ns="$(_pl_edge_ns)"
     if ! kubectl get secret wildcard-tls -n "${ns}" >/dev/null 2>&1; then
-        if kubectl get secret wildcard-kernel-tls -n cert-manager >/dev/null 2>&1; then
+        if kubectl get secret wildcard-kernel-tls -n "$(gentian_cert_manager_namespace)" >/dev/null 2>&1; then
             info "Copying wildcard-kernel-tls → ${ns}/wildcard-tls for kernel-public-gateway..."
-            kubectl get secret wildcard-kernel-tls -n cert-manager -o json | python3 -c "
+            kubectl get secret wildcard-kernel-tls -n "$(gentian_cert_manager_namespace)" -o json | python3 -c "
 import sys, json
 s = json.load(sys.stdin)
 s['metadata'] = {'name': 'wildcard-tls', 'namespace': '${ns}'}
@@ -430,7 +455,8 @@ EOREFRESH
 # kernel mode keeps this path: its submission password is derived, not stored,
 # so there is no OpenBao path for ESO to extract.
 _apply_keycloak_smtp_secret() {
-    local ns="${1:-platform-kernel}"
+    local ns
+    ns="${1:-$(_pl_identity_ns)}"
     local mail_mode
     mail_mode="$(gentian_mail_service_mode)"
     if kubectl get externalsecret keycloak-smtp-credentials -n "${ns}" >/dev/null 2>&1; then
@@ -467,7 +493,8 @@ _apply_keycloak_smtp_secret() {
 
 # Configure Keycloak kernel realm SMTP (standalone Job; used by ./install.sh --step D-04-mail).
 configure_keycloak_realm_smtp() {
-    local ns="platform-kernel"
+    local ns
+    ns="$(_pl_identity_ns)"
     local job_name="keycloak-smtp-configure"
     local kernel_realm="${KERNEL_REALM:-kernel}"
 
@@ -719,7 +746,8 @@ run_keycloak_portal_bootstrap_job() {
     local username="administrator"
     local email="administrator@${kernel_domain}"
     local password job_name="keycloak-portal-bootstrap"
-    local ns="platform-kernel"
+    local ns
+    ns="$(_pl_portal_ns)"
     local platform_superadmin_group="gentian:platform:superadmin"
 
     password=$(_platform_admin_derive_password)
@@ -1477,10 +1505,10 @@ build_gentian_portal_images() {
 # an unguarded command substitution aborts the install before that handling is
 # ever reached. A missing Secret is the normal state on a fresh cluster.
 _openfga_runtime_store_id() {
-    if ! kubectl get secret openfga-runtime -n platform-kernel >/dev/null 2>&1; then
+    if ! kubectl get secret openfga-runtime -n "$(_pl_authz_ns)" >/dev/null 2>&1; then
         return 1
     fi
-    kubectl get secret openfga-runtime -n platform-kernel \
+    kubectl get secret openfga-runtime -n "$(_pl_authz_ns)" \
         -o jsonpath='{.data.store_id}' 2>/dev/null | base64 -d 2>/dev/null || true
 }
 
@@ -1488,8 +1516,8 @@ wait_for_openfga_runtime_store_id() {
     local timeout_sec="${1:-180}"
     info "Waiting for openfga-runtime store_id (authz bridge bootstrap, up to ${timeout_sec}s)..."
 
-    kubectl rollout restart deployment/gentian-os -n gentian-system 2>/dev/null || true
-    kubectl rollout status deployment/gentian-os -n gentian-system --timeout=180s 2>/dev/null || true
+    kubectl rollout restart deployment/gentian-os -n "$(_pl_control_ns)" 2>/dev/null || true
+    kubectl rollout status deployment/gentian-os -n "$(_pl_control_ns)" --timeout=180s 2>/dev/null || true
 
     local deadline=$((SECONDS + timeout_sec))
     while (( SECONDS < deadline )); do
@@ -1499,7 +1527,7 @@ wait_for_openfga_runtime_store_id() {
             success "OpenFGA store_id ready."
             return 0
         fi
-        if kubectl logs -n gentian-system deploy/gentian-os --tail=30 2>/dev/null | grep -q "authz bridge sync complete"; then
+        if kubectl logs -n "$(_pl_control_ns)" deploy/gentian-os --tail=30 2>/dev/null | grep -q "authz bridge sync complete"; then
             store_id=$(_openfga_runtime_store_id || true)
             [[ -n "${store_id}" ]] && return 0
         fi
@@ -1510,10 +1538,10 @@ wait_for_openfga_runtime_store_id() {
 }
 
 _openfga_api_token() {
-    if ! kubectl get secret openfga-sensitive-values -n platform-kernel >/dev/null 2>&1; then
+    if ! kubectl get secret openfga-sensitive-values -n "$(_pl_authz_ns)" >/dev/null 2>&1; then
         return 0
     fi
-    kubectl get secret openfga-sensitive-values -n platform-kernel \
+    kubectl get secret openfga-sensitive-values -n "$(_pl_authz_ns)" \
         -o jsonpath='{.data.sensitive-values\.yaml}' 2>/dev/null | base64 -d 2>/dev/null \
         | grep -A1 'keys:' | tail -1 | sed 's/.*"\([^"]*\)".*/\1/' || true
 }
@@ -1521,7 +1549,8 @@ _openfga_api_token() {
 install_gentian_portal_secrets() {
     local kernel_domain="${KERNEL_DOMAIN:?KERNEL_DOMAIN required}"
     local kernel_realm="${KERNEL_REALM:-kernel}"
-    local ns="platform-kernel"
+    local ns
+    ns="$(_pl_portal_ns)"
     local issuer="https://id.${kernel_domain}/auth/realms/${kernel_realm}"
 
     local store_id
@@ -1553,9 +1582,9 @@ install_gentian_portal_secrets() {
     fi
 
     local kc_url kc_user kc_pass
-    kc_url=$(kubectl get secret keycloak-admin -n platform-kernel -o jsonpath='{.data.url}' 2>/dev/null | base64 -d || true)
-    kc_user=$(kubectl get secret keycloak-admin -n platform-kernel -o jsonpath='{.data.username}' 2>/dev/null | base64 -d || true)
-    kc_pass=$(kubectl get secret keycloak-admin -n platform-kernel -o jsonpath='{.data.password}' 2>/dev/null | base64 -d || true)
+    kc_url=$(kubectl get secret keycloak-admin -n "$(_pl_identity_ns)" -o jsonpath='{.data.url}' 2>/dev/null | base64 -d || true)
+    kc_user=$(kubectl get secret keycloak-admin -n "$(_pl_identity_ns)" -o jsonpath='{.data.username}' 2>/dev/null | base64 -d || true)
+    kc_pass=$(kubectl get secret keycloak-admin -n "$(_pl_identity_ns)" -o jsonpath='{.data.password}' 2>/dev/null | base64 -d || true)
     if [[ -n "${kc_url}" && -n "${kc_pass}" ]]; then
         secret_args+=(
             --from-literal=KEYCLOAK_ADMIN_URL="${kc_url}"
@@ -1579,7 +1608,8 @@ install_gentian_portal_secrets() {
 }
 
 release_gentian_portal_helm_bootstrap() {
-    local ns="platform-kernel"
+    local ns
+    ns="$(_pl_portal_ns)"
     if kubectl get secret -n "$ns" -l "owner=helm,name=gentian-portal" --no-headers 2>/dev/null | grep -q .; then
         info "Removing bootstrap Helm release metadata (ArgoCD owns gentian-portal now)..."
         kubectl delete secret -n "$ns" -l "owner=helm,name=gentian-portal" --ignore-not-found
@@ -1634,19 +1664,20 @@ apply_gentian_portal_argocd_application() {
 
 wait_for_gentian_portal_argocd() {
     local timeout_sec="${1:-300}"
-    local ns="platform-kernel"
+    local ns
+    ns="$(_pl_portal_ns)"
     info "Waiting for gentian-portal ArgoCD Application (up to ${timeout_sec}s)..."
     local elapsed=0
     local interval=10
     while (( elapsed < timeout_sec )); do
-        if ! kubectl get application gentian-portal -n argocd >/dev/null 2>&1; then
+        if ! kubectl get application gentian-portal -n "$(_pl_gitops_ns)" >/dev/null 2>&1; then
             sleep 5
             elapsed=$((elapsed + 5))
             continue
         fi
         local health sync
-        health=$(kubectl get application gentian-portal -n argocd -o jsonpath='{.status.health.status}' 2>/dev/null || true)
-        sync=$(kubectl get application gentian-portal -n argocd -o jsonpath='{.status.sync.status}' 2>/dev/null || true)
+        health=$(kubectl get application gentian-portal -n "$(_pl_gitops_ns)" -o jsonpath='{.status.health.status}' 2>/dev/null || true)
+        sync=$(kubectl get application gentian-portal -n "$(_pl_gitops_ns)" -o jsonpath='{.status.sync.status}' 2>/dev/null || true)
 
         # Gateway API HTTPRoute + ServerSideApply adds default backendRef fields that
         # keep sync=OutOfSync even when the route is Accepted and serving traffic.
@@ -1671,7 +1702,7 @@ wait_for_gentian_portal_argocd() {
         elapsed=$((elapsed + interval))
     done
     warn "gentian-portal ArgoCD Application did not become Healthy within ${timeout_sec}s."
-    kubectl get application gentian-portal -n argocd \
+    kubectl get application gentian-portal -n "$(_pl_gitops_ns)" \
         -o custom-columns='NAME:.metadata.name,SYNC:.status.sync.status,HEALTH:.status.health.status' 2>/dev/null || true
     kubectl get deploy -n "${ns}" -l app.kubernetes.io/instance=gentian-portal \
         -o custom-columns='NAME:.metadata.name,READY:.status.readyReplicas,AVAILABLE:.status.availableReplicas' 2>/dev/null || true
@@ -1681,7 +1712,8 @@ wait_for_gentian_portal_argocd() {
 refresh_gentian_portal_openfga() {
     local store_id="$1"
     [[ -n "${store_id}" ]] || return 0
-    local ns="platform-kernel"
+    local ns
+    ns="$(_pl_portal_ns)"
     info "Refreshing portal API with OpenFGA store_id..."
     install_gentian_portal_secrets
     kubectl patch secret gentian-portal-secrets -n "${ns}" --type merge \
@@ -1709,12 +1741,12 @@ install_portal_login() {
     # appeared 100 seconds later. Anything ESO produces is eventually consistent
     # with the step that needs it.
     local deadline=$(( SECONDS + 180 ))
-    until kubectl get secret keycloak-admin -n platform-kernel >/dev/null 2>&1; do
+    until kubectl get secret keycloak-admin -n "$(_pl_identity_ns)" >/dev/null 2>&1; do
         if (( SECONDS >= deadline )); then
             error "keycloak-admin Secret did not appear within 180s."
             error "  It is written by ESO from OpenBao once Keycloak is running. Check:"
-            error "    kubectl get externalsecret -n platform-kernel"
-            error "    kubectl get pods -n platform-kernel -l app.kubernetes.io/name=keycloakx"
+            error "    kubectl get externalsecret -n $(_pl_identity_ns)"
+            error "    kubectl get pods -n $(_pl_identity_ns) -l app.kubernetes.io/name=keycloakx"
             return 1
         fi
         sleep 5

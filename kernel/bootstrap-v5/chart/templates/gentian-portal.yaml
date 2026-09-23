@@ -1,0 +1,119 @@
+---
+# The portal: the desktop a platform administrator signs in to, and the tiles
+# that open the cluster's own consoles.
+#
+# The chart comes from gentian-ui; what this file adds is where everything it
+# talks to lives. Under v4 that was one namespace and the chart's shared values
+# file could name it; under v5 the identity service, the authorization service
+# and the operator's own APIs are each somewhere else, so the layout supplies
+# them here rather than a values file repeating one layout's answers.
+#
+# The Secret it reads, gentian-portal-secrets, and the Keycloak realm, clients
+# and administrator user behind it are the portal login step's work, not
+# Argo CD's: the Application syncs once they exist.
+{{- if .Values.portal.enabled }}
+{{- $portalNs := include "ns" (list . "edge") }}
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: gentian-portal
+  namespace: {{ include "ns" (list . "gitops") }}
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
+    {{- if not .Values.portal.tag }}
+    # No tag on the image-list: allow-tags does the selecting. A moving tag
+    # here would make the candidate set one name that never changes, so the
+    # updater would re-pick it every cycle and no build would ever reach the
+    # cluster while it reported itself healthy.
+    argocd-image-updater.argoproj.io/image-list: >-
+      api=ghcr.io/gentian-org/gentian-portal-api,
+      web=ghcr.io/gentian-org/gentian-portal-web
+    argocd-image-updater.argoproj.io/api.allow-tags: regexp:^{{ .Values.portal.imageBranch }}-[0-9a-f]{7,}$
+    argocd-image-updater.argoproj.io/web.allow-tags: regexp:^{{ .Values.portal.imageBranch }}-[0-9a-f]{7,}$
+    argocd-image-updater.argoproj.io/api.update-strategy: newest-build
+    argocd-image-updater.argoproj.io/web.update-strategy: newest-build
+    argocd-image-updater.argoproj.io/api.helm.image-name: api.image.repository
+    argocd-image-updater.argoproj.io/api.helm.image-tag: api.image.tag
+    argocd-image-updater.argoproj.io/web.helm.image-name: web.image.repository
+    argocd-image-updater.argoproj.io/web.helm.image-tag: web.image.tag
+    argocd-image-updater.argoproj.io/write-back-method: argocd
+    {{- end }}
+  finalizers:
+  - resources-finalizer.argocd.argoproj.io
+spec:
+  project: gentian
+  ignoreDifferences:
+  # The operator owns the portal's routes, on the kernel host and on every
+  # tenant's own host. The chart renders none (gateway.enabled: false), and
+  # this keeps a route it does not own out of the diff.
+  - group: gateway.networking.k8s.io
+    kind: HTTPRoute
+    namespace: {{ $portalNs }}
+    jsonPointers:
+    - /spec
+  - group: apps
+    kind: Deployment
+    namespace: {{ $portalNs }}
+    jqPathExpressions:
+    - .spec.template.spec.hostUsers
+  sources:
+  - repoURL: {{ .Values.osRepo | default "https://github.com/gentian-org/gentian-os" }}
+    targetRevision: {{ .Values.gentianOsBranch }}
+    ref: values
+  - repoURL: {{ .Values.deployments.repo }}
+    targetRevision: {{ .Values.deployments.revision }}
+    ref: deploy
+  - repoURL: {{ .Values.portal.repo | default "https://github.com/gentian-org/gentian-ui" }}
+    targetRevision: {{ .Values.portal.revision }}
+    path: chart
+    helm:
+      releaseName: gentian-portal
+      valueFiles:
+      - $values/kernel/services/gentian-portal-web/values/_base.yaml
+      - $deploy/clusters/{{ .Values.deployments.cluster }}/kernel/values.yaml
+      # valuesObject, not parameters: the image updater writes the resolved
+      # tags into spec.sources[].helm.parameters on the live object, and a
+      # template that also declares parameters replaces what it wrote on every
+      # apply.
+      valuesObject:
+        kernelDomain: {{ .Values.kernelDomain | quote }}
+        llm:
+          enabled: {{ ternary "true" "false" (eq (toString .Values.llmEnabled) "true") }}
+        # What this cluster runs, which is what decides the desktop's tiles. A
+        # tile pointing at a host that resolves to nothing is worse than no
+        # tile, so each console is named only where the kernel serves it.
+        capabilities: {{ printf "gitops,cluster-view,identity%s" (ternary ",llm" "" (eq (toString .Values.llmEnabled) "true")) | quote }}
+        api:
+          env:
+            # The operator's two APIs the console proxies to. Both answer on
+            # the cluster network in the control namespace.
+            CREDENTIAL_MANAGER_URL: http://gentian-os-credentials.{{ include "ns" (list . "control") }}.svc.cluster.local:9444
+            APP_LIFECYCLE_URL: http://gentian-os-lifecycle.{{ include "ns" (list . "control") }}.svc.cluster.local:8082
+          {{- with .Values.portal.tag }}
+          image:
+            tag: {{ . | quote }}
+          {{- end }}
+        {{- with .Values.portal.tag }}
+        web:
+          image:
+            tag: {{ . | quote }}
+        {{- end }}
+        openfga:
+          apiUrl: http://gentian-openfga.{{ include "ns" (list . "authorization") }}.svc.cluster.local:8080
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: {{ $portalNs }}
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    retry:
+      limit: 10
+      backoff:
+        duration: 15s
+        factor: 2
+        maxDuration: 2m
+    syncOptions:
+    - CreateNamespace=false
+    - ServerSideApply=true
+{{- end }}

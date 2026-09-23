@@ -59,6 +59,11 @@ _v5_render() {
         --set-string "appsets.enabled=${V5_APPSETS:-false}" \
         --set-string "operator.enabled=${V5_OPERATOR:-false}" \
         --set-string "operator.tag=${GENTIAN_OS_IMAGE_TAG:-}" \
+        --set-string "portal.enabled=${V5_PORTAL:-false}" \
+        --set-string "portal.repo=${GENTIAN_UI_REPO:-https://github.com/gentian-org/gentian-ui}" \
+        --set-string "portal.revision=${GENTIAN_UI_BRANCH:-develop}" \
+        --set-string "portal.imageBranch=${PORTAL_IMAGE_TAG:-develop}" \
+        --set-string "llmEnabled=${LLM_SUPPORT:-false}" \
         --set-string "tenancyMode=${TENANCY_MODE:-multi}" \
         --set-string "acmeStaging=$([[ "${ACME_ENV:-staging}" == "staging" ]] && echo true || echo false)" \
         --set-string "smtpHost=${EXTERNAL_SMTP_HOST:-}" \

@@ -444,17 +444,24 @@ install_argocd() {
 # Configure ArgoCD OIDC settings and group mapping.
 configure_argocd_oidc() {
     local kernel_domain="${KERNEL_DOMAIN:?KERNEL_DOMAIN required}"
+    # Where Argo CD runs, and which realm signs the tokens it must accept.
+    # Both were literals: the namespace made this unusable under any other
+    # layout, and the realm silently disagreed with every other caller here,
+    # which honours KERNEL_REALM -- a cluster whose realm is not called kernel
+    # got an issuer nothing had ever issued a token for.
+    local ns="${GITOPS_NAMESPACE:-argocd}"
+    local realm="${KERNEL_REALM:-kernel}"
     info "Configuring ArgoCD OIDC (Keycloak integration)..."
 
     # 1. Trust the wildcard-tls CA (self-signed or staging issuer support)
     local ca_cert
-    ca_cert=$(kubectl get secret wildcard-tls -n argocd -o jsonpath='{.data.ca\.crt}' 2>/dev/null | base64 -d || true)
+    ca_cert=$(kubectl get secret wildcard-tls -n "${ns}" -o jsonpath='{.data.ca\.crt}' 2>/dev/null | base64 -d || true)
     if [[ -z "$ca_cert" ]]; then
-        ca_cert=$(kubectl get secret wildcard-tls -n argocd -o jsonpath='{.data.tls\.crt}' 2>/dev/null | base64 -d || true)
+        ca_cert=$(kubectl get secret wildcard-tls -n "${ns}" -o jsonpath='{.data.tls\.crt}' 2>/dev/null | base64 -d || true)
     fi
     if [[ -n "$ca_cert" ]]; then
         info "Registering gateway CA certificate in argocd-tls-certs-cm..."
-        kubectl patch configmap argocd-tls-certs-cm -n argocd --type merge \
+        kubectl patch configmap argocd-tls-certs-cm -n "${ns}" --type merge \
             --patch "{\"data\":{\"id.${kernel_domain}\":$(jq -R -s '.' <<<"${ca_cert}")}}"
     fi
 
@@ -462,13 +469,13 @@ configure_argocd_oidc() {
     local oidc_config
     oidc_config=$(cat <<EOF
 name: Keycloak
-issuer: https://id.${kernel_domain}/auth/realms/kernel
+issuer: https://id.${kernel_domain}/auth/realms/${realm}
 clientID: gentian-argocd
 clientSecret: \$oidc.keycloak.clientSecret
 requestedScopes: ["openid", "profile", "email", "groups"]
 EOF
 )
-    kubectl patch configmap argocd-cm -n argocd --type merge -p "
+    kubectl patch configmap argocd-cm -n "${ns}" --type merge -p "
 {
   \"data\": {
     \"url\": \"https://argocd.${kernel_domain}\",
@@ -478,7 +485,7 @@ EOF
 
     # 3. Patch argocd-rbac-cm to map group to admin role
     local policy_csv="g, gentian:platform:superadmin, role:admin"
-    kubectl patch configmap argocd-rbac-cm -n argocd --type merge -p "
+    kubectl patch configmap argocd-rbac-cm -n "${ns}" --type merge -p "
 {
   \"data\": {
     \"policy.csv\": $(jq -R -s '.' <<<"${policy_csv}"),
@@ -487,8 +494,8 @@ EOF
 }"
 
     # 4. Restart ArgoCD server to pick up new configurations
-    kubectl rollout restart deployment argocd-server -n argocd
-    kubectl rollout status deployment argocd-server -n argocd --timeout=90s 2>/dev/null || true
+    kubectl rollout restart deployment argocd-server -n "${ns}"
+    kubectl rollout status deployment argocd-server -n "${ns}" --timeout=90s 2>/dev/null || true
     success "ArgoCD OIDC configuration completed."
 }
 
