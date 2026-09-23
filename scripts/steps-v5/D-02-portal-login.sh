@@ -40,8 +40,10 @@ check() {
     # The platform is a tenant whose realm is this one (AD-10). It is
     # scaffolded with the cluster and synced by the tenants ApplicationSet,
     # and it is Ready only once the operator has adopted the realm and its
-    # groups exist in it -- which is what this step is for.
-    [[ "$(kubectl get tenant platform -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null)" == "True" ]] || return "${CHECK_MISSING}"
+    # groups exist in it -- which is what this step is for. The operator
+    # says so in status.phase; the conditions are the per-function verdicts
+    # it derives that from, and none of them is named Ready.
+    [[ "$(kubectl get tenant platform -o jsonpath='{.status.phase}' 2>/dev/null)" == "Ready" ]] || return "${CHECK_MISSING}"
     # The kernel zone at the edge: the zone client's secret, which this step
     # writes, and the session policy the operator puts on the kernel UIs once
     # it exists. Without the first there is no session; without the second the
@@ -79,7 +81,7 @@ apply() {
     # here applies it; what is waited for is the operator's verdict.
     info "Waiting for Tenant/platform to be Ready..."
     local deadline=$((SECONDS + 900))
-    until [[ "$(kubectl get tenant platform -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null)" == "True" ]]; do
+    until [[ "$(kubectl get tenant platform -o jsonpath='{.status.phase}' 2>/dev/null)" == "Ready" ]]; do
         if (( SECONDS > deadline )); then
             error "Tenant/platform is not Ready after 15 minutes."
             kubectl get tenant platform -o jsonpath='{range .status.conditions[*]}{.type}={.status} {.reason}: {.message}{"\n"}{end}' 2>/dev/null || \
