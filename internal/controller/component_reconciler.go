@@ -28,6 +28,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -417,6 +418,21 @@ func (r *ComponentReconciler) ensureZonePolicy(ctx context.Context, comp *gentia
 	}
 	if err := controllerutil.SetControllerReference(comp, policy, r.Scheme); err != nil {
 		return err
+	}
+	// One policy per component: any other policy of this component's is a
+	// session of its own, and goes.
+	list := &unstructured.UnstructuredList{}
+	list.SetGroupVersionKind(schema.GroupVersionKind{Group: securityPolicyGVK.Group, Version: securityPolicyGVK.Version, Kind: "SecurityPolicyList"})
+	if err := r.List(ctx, list, client.InNamespace(comp.Namespace), client.MatchingLabels{componentLabel: comp.Name, managedByLabel: managedByValue}); err != nil {
+		return err
+	}
+	for i := range list.Items {
+		if list.Items[i].GetName() == policy.GetName() {
+			continue
+		}
+		if err := r.Delete(ctx, &list.Items[i]); client.IgnoreNotFound(err) != nil {
+			return err
+		}
 	}
 	existing := &unstructured.Unstructured{}
 	existing.SetGroupVersionKind(securityPolicyGVK)
