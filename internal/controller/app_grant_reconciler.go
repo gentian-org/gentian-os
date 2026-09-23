@@ -19,7 +19,6 @@ package controller
 import (
 	"context"
 	"fmt"
-	"strings"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -79,14 +78,6 @@ func (r *AppGrantReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 	grant.Status.Phase = gentianov1alpha1.AppGrantPhaseReady
 	grant.Status.ObservedGeneration = grant.Generation
 	return ctrl.Result{}, r.Status().Update(ctx, grant)
-}
-
-func grantTenantName(grant *gentianov1alpha1.AppGrant, namespace string) string {
-	tenantName := grant.Labels[tenantLabel]
-	if tenantName == "" {
-		tenantName = strings.TrimPrefix(namespace, "tenant-")
-	}
-	return tenantName
 }
 
 func (r *AppGrantReconciler) SetupWithManager(mgr ctrl.Manager) error {
