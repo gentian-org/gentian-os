@@ -21,6 +21,17 @@ check() {
 
 apply() {
     banner "Application sets"
+
+    # The signing key first: the identity ApplicationSet below deploys
+    # Keycloak with the listener's key mounted, and a pod waits on a Secret
+    # that is not there. The key is derived from the master password and needs
+    # nothing from the cluster, so it can exist before anything reads it.
+    # shellcheck source=scripts/lib/portal-login-bootstrap.sh
+    source "${SCRIPT_DIR}/scripts/lib/portal-login-bootstrap.sh"
+    IDENTITY_NAMESPACE="$(ns_kernel authentication)" \
+        GENTIAN_SYSTEM_NAMESPACE="$(ns_kernel control)" \
+        ensure_keycloak_listener_keypair
+
     V5_APPSETS=true _v5_render | kubectl apply -f - >/dev/null
     local ns app t
     ns="$(ns_kernel gitops)"

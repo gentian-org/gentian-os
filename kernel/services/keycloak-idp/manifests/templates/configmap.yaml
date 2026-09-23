@@ -127,6 +127,11 @@ data:
       - name: listener-key
         secret:
           secretName: keycloak-event-listener-key
+          # Optional so a missing key can never stop Keycloak from starting.
+          # Without it the listener cannot sign, Keycloak says so, and the
+          # director says it is accepting no statements -- two loud complaints
+          # rather than a pod that waits forever on a volume.
+          optional: true
       - name: theme-src
         configMap:
           name: keycloak-idp-theme

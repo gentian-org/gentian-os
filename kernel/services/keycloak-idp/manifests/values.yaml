@@ -27,7 +27,7 @@ dbHost: ""   # empty: gentian-postgresql-<env>.gentian-infra-<env> (v4); v5 sets
 # projection is empty, so nobody holds a group, and every permission that
 # follows from group membership is refused to everyone.
 eventListener:
-  image: ghcr.io/gentian-org/keycloak-event-listener:develop
+  image: ghcr.io/gentian-org/keycloak-event-listener:test-cb
   # The director's endpoint on the cluster network. Supplied by the
   # ApplicationSet, which knows where the control namespace is.
   directorURL: ""
