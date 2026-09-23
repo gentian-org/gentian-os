@@ -23,6 +23,8 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+
+	"github.com/gentian-org/gentian-os/internal/layout"
 )
 
 // gentian-cluster-config is composed from the Cluster claim by cluster-default,
@@ -31,7 +33,6 @@ import (
 // from the same source instead of from a Helm value that has to be kept in
 // agreement by hand.
 const (
-	clusterConfigNamespace     = "crossplane-system"
 	clusterConfigName          = "gentian-cluster-config"
 	clusterConfigLLMKey        = "llm.enabled"
 	clusterConfigMailModeKey   = "mail.serviceMode"
@@ -52,6 +53,10 @@ const (
 // the claim and external in the operator. lint-cluster-config-keys.py fails the
 // build when a key read here is not written by the composition, so that
 // silence cannot be reintroduced.
+// clusterConfigNamespace is where the Cluster composition writes the
+// ConfigMap: the provisioning namespace, by function, never by name.
+var clusterConfigNamespace = layout.Namespace(layout.Provisioning)
+
 func clusterConfigValue(ctx context.Context, c client.Reader, key, envVar string) string {
 	return clusterConfigValueOr(ctx, c, key, os.Getenv(envVar))
 }

@@ -41,6 +41,7 @@ import (
 	"github.com/gentian-org/gentian-os/internal/controller"
 	"github.com/gentian-org/gentian-os/internal/credentialmgr"
 	"github.com/gentian-org/gentian-os/internal/kernel/secrets"
+	"github.com/gentian-org/gentian-os/internal/layout"
 	"github.com/gentian-org/gentian-os/internal/usage"
 	"github.com/gentian-org/gentian-os/internal/webhook"
 )
@@ -258,7 +259,7 @@ func main() {
 
 	if err := (&controller.PlatformSecurityPolicyReconciler{
 		Client:            mgr.GetClient(),
-		OperatorNamespace: "gentian-system",
+		OperatorNamespace: layout.Namespace(layout.Control),
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "PlatformSecurityPolicy")
 		os.Exit(1)
@@ -335,7 +336,7 @@ func main() {
 			// expensive — so the safe default is the one that keeps the exit open.
 			GateOnHandover:    os.Getenv("HANDOVER_GATE_TENANTS") != "false",
 			KernelRealm:       kernelRealmOrDefault(os.Getenv("KERNEL_REALM")),
-			HandoverNamespace: envOrDefault("HANDOVER_NAMESPACE", envOrDefault("OPERATOR_NAMESPACE", "gentian-system")),
+			HandoverNamespace: envOrDefault("HANDOVER_NAMESPACE", envOrDefault("OPERATOR_NAMESPACE", layout.Namespace(layout.Control))),
 		}).SetupWithManager(mgr)
 
 		(&webhook.AppProfileValidator{

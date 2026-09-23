@@ -37,7 +37,6 @@ const (
 	TenantLabel                  = meta.TenantLabel
 	ManagedByLabel               = meta.ManagedByLabel
 	ManagedByValue               = meta.ManagedByValue
-	OperatorNamespace            = meta.OperatorNamespace
 	EnvoyGatewayInstallNamespace = meta.EnvoyGatewayInstallNamespace
 	RoutingModeGateway           = meta.RoutingModeGateway
 )

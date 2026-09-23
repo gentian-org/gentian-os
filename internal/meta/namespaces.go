@@ -16,7 +16,12 @@ limitations under the License.
 
 package meta
 
+import "github.com/gentian-org/gentian-os/internal/layout"
+
 const (
-	OperatorNamespace  = "gentian-system"
 	RoutingModeGateway = "gateway"
 )
+
+// OperatorNamespace is where the operator runs: the control function of the
+// layout, read from the environment the chart sets.
+var OperatorNamespace = layout.Namespace(layout.Control)

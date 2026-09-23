@@ -20,6 +20,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/gentian-org/gentian-os/internal/layout"
 	"net/http"
 	"sort"
 	"strings"
@@ -51,7 +52,7 @@ var repositoryGVK = schema.GroupVersionKind{
 
 // repositoryNamespace holds Repository claims. They are namespaced because
 // claims are, not because a tenant owns a namespace here.
-const repositoryNamespace = "crossplane-system"
+var repositoryNamespace = layout.Namespace(layout.Provisioning)
 
 // RepositoryRole distinguishes what losing a repository costs.
 //

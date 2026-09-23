@@ -37,6 +37,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/manager"
 
 	"github.com/gentian-org/gentian-os/internal/handover"
+	"github.com/gentian-org/gentian-os/internal/layout"
 )
 
 var externalSecretGVK = schema.GroupVersionKind{
@@ -149,7 +150,7 @@ func NewRunnableFromEnv(mgr manager.Manager, validator Validator) (*Server, erro
 		Addr: addr,
 		Catalogue: &Catalogue{
 			Client:         mgr.GetClient(),
-			ProbeNamespace: envOr("CREDENTIAL_PROBE_NAMESPACE", "gentian-system"),
+			ProbeNamespace: envOr("CREDENTIAL_PROBE_NAMESPACE", layout.Namespace(layout.Control)),
 		},
 		Bao: NewOpenBao(
 			baoAddr,
@@ -179,7 +180,7 @@ func NewRunnableFromEnv(mgr manager.Manager, validator Validator) (*Server, erro
 		Client:             mgr.GetClient(),
 		// The operator's own namespace by default: the record belongs beside
 		// the thing that gates on it, not beside the credentials.
-		HandoverNamespace: envOr("HANDOVER_NAMESPACE", envOr("OPERATOR_NAMESPACE", "gentian-system")),
+		HandoverNamespace: envOr("HANDOVER_NAMESPACE", envOr("OPERATOR_NAMESPACE", layout.Namespace(layout.Control))),
 	}, nil
 }
 

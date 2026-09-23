@@ -20,6 +20,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/gentian-org/gentian-os/internal/layout"
 
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -32,7 +33,7 @@ import (
 	"github.com/gentian-org/gentian-os/internal/meta"
 )
 
-const operatorNamespace = "gentian-system"
+var operatorNamespace = layout.Namespace(layout.Control)
 
 // LoadAllowedMacWaivers reads the cluster PlatformSecurityPolicy singleton.
 func LoadAllowedMacWaivers(ctx context.Context, c client.Client) ([]gentianov1alpha1.AllowedMacWaiver, error) {

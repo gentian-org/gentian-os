@@ -18,6 +18,7 @@ package applifecycle
 
 import (
 	"context"
+	"github.com/gentian-org/gentian-os/internal/layout"
 	"os"
 
 	"sigs.k8s.io/controller-runtime/pkg/manager"
@@ -36,7 +37,7 @@ func NewRunnableFromEnv(mgr manager.Manager) (*Runnable, error) {
 	}
 	svc, err := NewService(mgr.GetClient(), mgr.GetConfig(), Options{
 		OpenBaoNamespace:   envOrDefault("OPENBAO_NAMESPACE", "openbao"),
-		OperatorNamespace:  envOrDefault("POD_NAMESPACE", "gentian-system"),
+		OperatorNamespace:  envOrDefault("POD_NAMESPACE", layout.Namespace(layout.Control)),
 		OperatorSA:         envOrDefault("OPERATOR_SA", "gentian-os"),
 		DeploymentsPath:    os.Getenv("GENTIAN_DEPLOYMENTS_PATH"),
 		DeploymentsRepo:    os.Getenv("GENTIAN_DEPLOYMENTS_REPO"),

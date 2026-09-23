@@ -153,6 +153,19 @@ func mailSharedPostfixHost(kernelDomain string) string {
 // cluster whose claim said kernel — so Dovecot ran, unprovisioned, and the
 // ApplicationSet that would have managed it was never rendered. The field
 // remains as the fallback for a cluster whose ConfigMap cannot answer yet.
+// mailFunctionPresent reports whether the mail function's namespace exists.
+func (r *TenantReconciler) mailFunctionPresent(ctx context.Context) (bool, error) {
+	ns := &corev1.Namespace{}
+	err := r.Get(ctx, types.NamespacedName{Name: mailNamespace}, ns)
+	if errors.IsNotFound(err) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return ns.DeletionTimestamp == nil, nil
+}
+
 func (r *TenantReconciler) dovecotDeployed(ctx context.Context) bool {
 	return clusterMailServiceMode(ctx, r.Client, r.MailServiceMode) == "kernel"
 }
@@ -184,6 +197,17 @@ func (r *TenantReconciler) defaultTenantMailMode(ctx context.Context) gentianov1
 // ensureMail provisions the mail stack for the tenant according to spec.mail.mode.
 // It dispatches to one of four mode-specific handlers and sets the MailReady condition.
 func (r *TenantReconciler) ensureMail(ctx context.Context, tenant *gentianov1alpha1.Tenant) (ctrl.Result, error) {
+	// Mail is a function the Cluster claim composes (system-mail and its
+	// DMZ, namespace-cleanup.md §2). A cluster that has not composed it has
+	// no relay to register a tenant in and no store to give it a mailbox in;
+	// the tenant is not held for a function the cluster does not run.
+	if present, err := r.mailFunctionPresent(ctx); err != nil {
+		return ctrl.Result{}, err
+	} else if !present {
+		r.setCondition(tenant, conditionMailReady, metav1.ConditionTrue,
+			"NoMailFunction", "This cluster composes no mail function; nothing to register")
+		return ctrl.Result{}, nil
+	}
 	mode := r.defaultTenantMailMode(ctx)
 	if tenant.Spec.Mail != nil && tenant.Spec.Mail.Mode != "" {
 		mode = tenant.Spec.Mail.Mode

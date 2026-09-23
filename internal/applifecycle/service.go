@@ -37,6 +37,7 @@ import (
 	"github.com/gentian-org/gentian-os/internal/authz"
 	"github.com/gentian-org/gentian-os/internal/customization"
 	"github.com/gentian-org/gentian-os/internal/keycloak"
+	"github.com/gentian-org/gentian-os/internal/layout"
 	"github.com/gentian-org/gentian-os/internal/usage"
 )
 
@@ -98,7 +99,7 @@ func NewService(c client.Client, cfg *rest.Config, opts Options) (*Service, erro
 		opts.OpenBaoNamespace = "openbao"
 	}
 	if opts.OperatorNamespace == "" {
-		opts.OperatorNamespace = "gentian-system"
+		opts.OperatorNamespace = layout.Namespace(layout.Control)
 	}
 	if opts.OperatorSA == "" {
 		opts.OperatorSA = "gentian-os"
