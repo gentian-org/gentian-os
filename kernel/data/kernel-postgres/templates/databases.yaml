@@ -1,3 +1,10 @@
+{{- /*
+  name is the Kubernetes object name, so it is a DNS label; database is the
+  name Postgres knows, which may carry an underscore. They were one field, and
+  the first database whose SQL name is not a valid object name was rejected by
+  the API server -- the Application stayed OutOfSync with a validation error
+  three layers from the values file that caused it.
+*/}}
 {{- range .Values.databases }}
 ---
 # The role's password: read from the vault, so it is one value in one place.
@@ -36,7 +43,7 @@ metadata:
 spec:
   cluster:
     name: kernel-postgres
-  name: {{ .name }}
+  name: {{ .database | default .name }}
   owner: {{ .role }}
   ensure: present
 {{- end }}
