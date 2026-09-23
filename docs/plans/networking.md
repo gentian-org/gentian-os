@@ -247,14 +247,38 @@ word someone wrote.
 | Shared app | `<app>.<t>.<kernel>` per granted tenant | `oidc` | tenant-realm session | `can_use` via the tenant's grant | instance in `shared-<app>` |
 | Platform desktop (console) | `console.<kernel>` | `oidc` | **kernel**-realm session | `can_enter` on `tenant:platform` | desktop BFF in `tenant-platform` (AD-10) — a tenant desktop whose realm is the kernel realm |
 | Director API | `api.<kernel>` | `bearer` | JWT, any realm; the director verifies again | its own OpenFGA check | director |
-| Kernel UI | `argocd.<kernel>`, `headlamp.<kernel>`, Keycloak `/admin/*` on `id-admin.<kernel>` | `oidc` | **kernel**-realm session | `can_configure`, or `can_audit` for read-only tools | the tool in its `kernel-*` namespace. "Hidden" means behind a session with a platform role, not an internal hostname: the tool's own login is the second factor, not the first |
-| Identity provider | `id.<kernel>` | `none` — it *is* the issuer; a kernel-owned perimeter surface on the `perimeter` Gateway with a **path allowlist**: `/realms/<r>/protocol/openid-connect/*`, `/realms/<r>/login-actions/*`, theme assets. `/admin/*`, the `master` realm, metrics and health are served on an internal hostname only (roadmap 1.6) | — | — | Keycloak in `kernel-authentication`; brute-force detection per realm, per-IP and per-username rate limits, body limits at L0 |
+| Kernel UI | `argocd.<kernel>`, `headlamp.<kernel>`, Keycloak `/auth/admin/*` on `id.<kernel>` | `oidc` | **kernel**-realm session | `can_configure`, or `can_audit` for read-only tools | the tool in its `kernel-*` namespace. "Hidden" means behind a session with a platform role, not an internal hostname: the tool's own login is the second factor, not the first |
+| Identity provider | `id.<kernel>` | `none` — it *is* the issuer; a kernel-owned perimeter surface on the `perimeter` Gateway with a **path allowlist**: `/realms/<r>/protocol/openid-connect/*`, `/realms/<r>/login-actions/*`, theme assets. `/admin/*`, the `master` realm, metrics and health are served on an internal hostname only (roadmap 1.6) | — | — | Keycloak in `kernel-authentication`; brute-force detection per realm, per-IP and per-username rate limits, body limits at L0 **Except `/auth/admin/*`**, which is the same hostname behind the kernel-realm session and `can_configure` — see below. |
 | Perimeter, HTTP | app host (paths) or own host | per entry | — | — | proxy in `tenant-<t>-dmz` |
 | Perimeter, TCP/UDP | own port | protocol-native | — | — | `system-mail-dmz` (edge MTA, Dovecot proxy), `system-turn` |
 | ACME HTTP-01 | any host, `/.well-known/acme-challenge/*`, port 80 | `none` | — | — | cert-manager solver in `kernel-edge`; with the realm endpoints, one of exactly two kernel-owned perimeter surfaces |
 
 Nothing is routable without a class. A hostname with no `expose[]` entry
 behind it returns 404 at the listener.
+
+**Keycloak's administration console shares the issuer's hostname**, and this is
+not a preference. It was `id-admin.<kernel>`, a second hostname behind the
+authenticated Gateway, which is the shape the rest of this document would
+predict. Keycloak cannot serve it that way: with `KC_HOSTNAME` and
+`KC_HOSTNAME_ADMIN` set to different names, the console obtains a token stamped
+with the issuer's hostname and then calls the Admin REST API on the admin
+hostname, where Keycloak refuses it with 401 and the console never finishes
+loading. Upstream has this reported and closed as not planned
+(`keycloak/keycloak#42264`), so it is a constraint rather than a bug to wait
+out, and a new browser tab fails in exactly the same way as an iframe.
+
+So `id.<kernel>` carries two classes of route on one hostname, which is the one
+place in this document where that happens:
+
+- `/auth/realms/*` and `/auth/resources/*` — public, no session, on the
+  `perimeter` Gateway. It is the issuer; nothing else could reach it.
+- `/auth/admin/*` — the kernel-realm session and `can_configure`, the same L1
+  and L2 as any other kernel UI.
+- `/auth/realms/master/*` — refused by a route of its own.
+
+The path allowlist is what keeps this honest: the classes are distinguished by
+path on one host rather than by hostname, and each is still one route with one
+policy. `id-admin.<kernel>` is retired.
 
 ## 4. Sessions, caching, logout
 

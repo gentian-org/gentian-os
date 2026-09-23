@@ -1,12 +1,83 @@
 # Implementation plan
 
-The order things get built in. Milestone M1 is specified in
-[work-packages.md](work-packages.md) under WP-10; this document is the running
-order, what is done, and what has to land before each next step. The work
-packages say *what* each piece is, this says *when*.
+The order things get built in. Milestone M1 is defined below, moved here from
+WP-10. [work-packages.md](work-packages.md) says *what* each package is, this
+says *when*, and what blocks what.
 
 Step labels `S1`…`S8` are the eight numbered items inside M1. They exist so a
 conversation can point at one; they are not a second plan.
+
+## Milestone M1
+
+Moved here from WP-10, unchanged, because this is where the order lives.
+
+**M1 — the platform administrator signs in and sees the
+cluster, in the plans' shape.** `install.sh --layout v5` runs end to end
+on the purged cluster; `administrator@<kernel>` signs in once at
+`console.<kernel>` and sees the platform tenant's desktop; the kernel
+consoles are tiles the director answered from that account's relations;
+each opens in a window on the desktop, signed in, with no second login
+and no token to paste. Nothing about it is a stand-in for the plan: the
+desktop is `Tenant/platform`'s, the edge holds the session, the desktop
+holds no authority. In order, each landing with its installer step and
+verified on the cluster before the next:
+1. `[x]` **Vocabulary** (WP-3): the Keycloak groups exactly as model v1
+   names them — `gentian:platform:admin` replaces the bootstrap's
+   `superadmin` everywhere it is written or read: the identity
+   bootstrap, the claim's `platformRoles` default, Argo CD's policy,
+   the proxy's binding, the OpenBao OIDC roles, the desktop's constant.
+2. `[x]` **Platform tenant** (WP-2, WP-8): `Tenant/platform` with
+   `isolation.keycloakRealm: kernel`, realm adopted and never created,
+   disabled or deleted — the tenant composition honours the realm
+   override and emits no Realm and no kernel broker for a tenant that
+   adopts the kernel realm; tenant namespaces carry
+   `gentianos.io/tier: tenant` beside `gentianos.io/tenant`; the v5
+   ApplicationSets sync `clusters/<c>/tenants/*`; the installer
+   scaffolds `tenants/platform/`; the director writes
+   `tenant:platform#cluster` and `#operated_by` at start, as it writes
+   the cluster roles.
+3. `[ ]` **The edge** (WP-4): `authenticated` and `perimeter` Gateways
+   in `kernel-edge` under `mergeGateways`, reconciled by the operator
+   from the Cluster claim; the kernel zone's one confidential client
+   (`gentian-edge-kernel`: no groups scope, secret in `kernel-edge`,
+   back-channel logout at the director); `SecurityPolicy` OIDC with the
+   zone's cookie on `.<kernel>` and ext-auth on every kernel-zone route;
+   the ext-auth shim as a new binary in `kernel-edge` — gRPC, verifies
+   the token, asks the route's relation, caches per `(sub, sid, route)`,
+   evicts on `ReadChanges`, denies `session#revoked`, fails closed with
+   cached allows carrying — with its route table written by the
+   operator beside the routes; `id.<kernel>` serves `/realms/*` only on
+   the perimeter Gateway, and `/auth/admin/*` behind the kernel session
+   on that same hostname — `id-admin.<kernel>` was retired from
+   networking.md §3 once Keycloak turned out not to work across two
+   hostnames, and this is the only line of M1 that moved with it.
+4. `[x]` **The desktop as a component** (WP-5, WP-2): a
+   `ComponentProfile` `desktop` (`tenancy: [tenant]`, `trustTier:
+   platform`, a database requirement, one gateway exposure with
+   `authMode: oidc` and `forwardToken: true`); a Component reconciler
+   that gives every tenant its desktop from that profile — a
+   provider-helm Release in `tenant-<t>`, the database fulfilled in
+   the tenant's namespace, the route and `SecurityPolicy` from
+   `expose[]` — so `tenant-platform` serves `console.<kernel>`.
+5. `[x]` **The desktop without authority** (WP-7, WP-1): the BFF
+   consumes the token the edge forwards and runs no code flow; no
+   client secret, no Keycloak admin credential, `rbac.yaml` empty; the
+   database from the granted requirement; tiles from the director —
+   the kernel consoles from `/v1/clusters/{c}/tiles`, the admin tile by
+   `can_administer` from a `GET /v1/tenants/{t}/me` relations read.
+6. `[x]` **Kernel UIs behind the kernel session** (WP-4): Argo CD,
+   Headlamp and `id-admin` routes carry the zone's `SecurityPolicy` and
+   the shim's `can_configure` / `can_audit`; each tool's own OIDC login
+   is the silent second factor.
+7. `[x]` **Retire** the portal in `kernel-edge`, `portal.<kernel>`, the
+   portal secret and BFF client in the identity bootstrap, and
+   `kernelPortalHost`; `www.<kernel>` is an alias of the console.
+8. `[ ]` **Purge and reinstall** — the confirmation cycle; every
+   `check()` honest; `--status` true.
+Earlier partial results (kernel tiles served by the director, Headlamp
+through the impersonating proxy, the event listener wired, the claim's
+`platformRoles` projected) stand and are reused; they are not the
+milestone.
 
 ## Where M1 stands
 
@@ -119,7 +190,34 @@ Keycloak from it, which keeps the rule intact, or the console keeps a path to
 Keycloak that is not the director, which breaks it. The first is the plan's
 shape; it needs deciding before the screens are built.
 
-### S7A.5 A read-only view of the authorization state
+### S7A.5 The console and the desktop hold nothing
+
+A rule to apply to both, and to check before each is called finished: a UI
+offers a surface for making requests, and every one of those requests is
+decided somewhere else. It holds no authority and sits on no critical path
+beyond rendering.
+
+Concretely, neither may hold:
+
+- an OIDC client secret, a Keycloak credential, or any credential belonging to
+  a person other than the caller;
+- a Kubernetes identity — `rbac.create` stays false and the ServiceAccount
+  token stays unmounted;
+- a decision. Showing or hiding a screen follows an answer the director gave;
+  it is never a rule written in the UI, and hiding a thing is never what stops
+  someone reaching it. Every surface behind it is its own enforcement point.
+
+What they may hold is the minimum to be useful: the token the edge forwards,
+for the length of the request it relays, and their own store of per-person
+display state such as window positions.
+
+The desktop already meets this. The admin console does not, because it was
+built against a Keycloak admin credential, which is why S7A.4 rebuilds it as a
+GUI over the director's API. When either grows a screen that seems to need a
+credential, that is the signal that an endpoint is missing from the director,
+not that the UI needs the credential.
+
+### S7A.6 A read-only view of the authorization state
 
 Part of the same console, worth naming separately because it replaces the idea
 of exposing OpenFGA's own playground. OpenFGA's read APIs answer "which groups
@@ -128,7 +226,7 @@ renders that; anything a person wants to change is changed on the screens
 above, through the director, into git. No development-only UI is exposed and
 no second write path exists.
 
-### S7A.6 The kernel UIs are actually usable
+### S7A.7 The kernel UIs are actually usable
 
 - **Argo CD** showed an empty list to a full administrator. The groups claim
   carries the full path, `/gentian:platform:admin`, because OpenBao's roles
@@ -144,11 +242,15 @@ no second write path exists.
   works, the silent SSO and the token exchange both complete in the frame, and
   it then dies on its first Admin REST call with a 401 because `KC_HOSTNAME`
   and `KC_HOSTNAME_ADMIN` differ. Upstream closed this as not planned, so a
-  new tab fails identically. Drop the split hostname and serve `/auth/admin/`
-  on `id.<kernel>` behind the kernel session. While there, stop clearing the
-  realm's clickjacking defences wholesale.
+  new tab fails identically and there is nothing to wait for. **Decided**:
+  networking.md §3 now serves `/auth/admin/*` on `id.<kernel>` behind the
+  kernel session and retires `id-admin.<kernel>`. To build: drop
+  `KC_HOSTNAME_ADMIN`, move the route and its policy, add the redirect URI,
+  and repoint the tile. While there, stop clearing the realm's clickjacking
+  defences wholesale — one tile should not cost every login page in the realm
+  its protection.
 
-### S7A.7 The installer does what it claims
+### S7A.8 The installer does what it claims
 
 Recorded in WP-10. Two cold-start races are fixed. These remain, in priority
 order:
