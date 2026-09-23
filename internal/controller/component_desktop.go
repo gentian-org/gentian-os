@@ -134,6 +134,17 @@ func splitDots(s string) []string {
 	return append(out, cur)
 }
 
+// componentDatabaseNamespace is where a tenant's component databases live,
+// and so where its pods must be allowed to go: the kernel's data plane for
+// the platform tenant, the tenant postgres of the system tier for every
+// other (namespace-cleanup.md §2).
+func (r *ComponentReconciler) componentDatabaseNamespace(tenant *gentianov1alpha1.Tenant) string {
+	if tenantAdoptsKernelRealm(tenant, r.KernelRealm) {
+		return layout.Namespace(layout.Data)
+	}
+	return postgresNamespace
+}
+
 // ensureDatabaseRequirement fulfils a component's database requirement with
 // a credential Secret in its namespace.
 //
@@ -150,7 +161,7 @@ func (r *ComponentReconciler) ensureDatabaseRequirement(ctx context.Context, com
 			fmt.Sprintf("this cluster composes no tenant postgres yet (%s); the requirement waits", postgresNamespace), nil
 	}
 	name := comp.Name + componentDatabaseSecretSuffix
-	host := fmt.Sprintf("kernel-postgres-rw.%s.svc.cluster.local", layout.Namespace(layout.Data))
+	host := fmt.Sprintf("kernel-postgres-rw.%s.svc.cluster.local", r.componentDatabaseNamespace(tenant))
 	spec := map[string]interface{}{
 		"refreshInterval": "1h",
 		"secretStoreRef":  map[string]interface{}{"name": "openbao", "kind": "ClusterSecretStore"},

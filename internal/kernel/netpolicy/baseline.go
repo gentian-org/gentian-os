@@ -77,7 +77,9 @@ func BaselineNetworkPolicy(tenantName, nsName string, cfg Config, kubeAPIEndpts 
 	}
 
 	ingress := []networkingv1.NetworkPolicyIngressRule{
-		namespaceIngress(meta.EnvoyGatewayInstallNamespace),
+		// The edge: the Gateways' data plane runs in the edge function's
+		// namespace, and it is what reaches a tenant's routed pods.
+		namespaceIngress(layout.Namespace(layout.Edge)),
 		// Keycloak calls an app's back-channel logout endpoint, so the
 		// authentication function may reach tenant pods; nothing else kernel does.
 		namespaceIngress(layout.Namespace(layout.Authentication)),

@@ -30,6 +30,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
+	"github.com/gentian-org/gentian-os/internal/layout"
 )
 
 // ---------------------------------------------------------------------------
@@ -110,7 +111,9 @@ func TestIsolation_NetworkPolicyIngressRules(t *testing.T) {
 
 	allowedNamespaces := collectIngressNamespaces(np)
 
-	expectedNS := []string{"envoy-gateway-system", "platform-kernel"}
+	// The edge and the authentication function; platform-kernel is the
+	// v4 fallback of both.
+	expectedNS := []string{layout.Namespace(layout.Edge), layout.Namespace(layout.Authentication)}
 	for _, ns := range expectedNS {
 		found := false
 		for _, allowed := range allowedNamespaces {

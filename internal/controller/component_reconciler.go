@@ -77,7 +77,7 @@ const (
 	// edgeAuthzRouteLabel marks an HTTPRoute whose L2 question the gateway
 	// reconciler copies into the shim's table; the question is in the
 	// annotations below.
-	edgeAuthzRouteLabel           = "gentianos.io/edge-authz"
+	edgeAuthzRouteLabel = "gentianos.io/edge-authz"
 
 	// desktopAPIServiceName is the desktop's BFF Service in its tenant's
 	// namespace, as the desktop profile's api exposure names it.
@@ -165,6 +165,12 @@ func (r *ComponentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	}
 	if isDesktopProfile(profile) {
 		mergeValues(values, r.desktopValues(tenant, zone, comp.Name+componentDatabaseSecretSuffix))
+	}
+	// The namespace is closed by default; the component's pods may reach
+	// what its requirements were fulfilled with, written down before the
+	// chart runs so its first connection is not the one that is refused.
+	if err := r.ensureNetworkPolicy(ctx, comp, profile, tenant); err != nil {
+		return ctrl.Result{}, fmt.Errorf("network policy: %w", err)
 	}
 
 	if profile.Spec.Package.Chart == nil {

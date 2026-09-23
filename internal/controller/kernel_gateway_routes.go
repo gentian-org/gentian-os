@@ -38,11 +38,11 @@ const (
 	// master realm and the admin console -- as a route of its own, more
 	// specific than the allow and closed by a policy: what a perimeter
 	// surface refuses is written down, not left to absence.
-	kernelRouteKeycloakRefused  = "kernel-idp-refused"
-	kernelRouteKernelApex       = "kernel-apex-redirect"
-	kernelRouteHTTPRedirect     = "kernel-http-redirect"
-	kernelRouteArgoCD           = "kernel-argocd"
-	kernelRouteHeadlamp         = "kernel-headlamp"
+	kernelRouteKeycloakRefused = "kernel-idp-refused"
+	kernelRouteKernelApex      = "kernel-apex-redirect"
+	kernelRouteHTTPRedirect    = "kernel-http-redirect"
+	kernelRouteArgoCD          = "kernel-argocd"
+	kernelRouteHeadlamp        = "kernel-headlamp"
 	// The name people type: an alias of the console, by redirect.
 	kernelRouteWWWRedirect = "kernel-www-redirect"
 	kernelRouteLiteLLM     = "kernel-llm"

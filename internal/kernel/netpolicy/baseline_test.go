@@ -44,7 +44,7 @@ func TestBaselineNetworkPolicy_AllowsKernelAndOperatorIngress(t *testing.T) {
 	}
 
 	for _, ns := range []string{
-		meta.EnvoyGatewayInstallNamespace,
+		layout.Namespace(layout.Edge),
 		layout.Namespace(layout.Authentication),
 		meta.OperatorNamespace,
 	} {
