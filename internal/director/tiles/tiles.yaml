@@ -15,6 +15,11 @@ tiles:
     displayName: Deployments
     description: What git says the cluster should run, and whether it does.
     subDomain: argocd
+    # The sign-in entry, not the front page. Argo CD's front page is a login
+    # form with a button that starts the realm's flow; the person following
+    # this tile has a session already, so the tile skips the form and the
+    # flow completes without them typing anything.
+    path: /auth/login
     icon: sync
     anyOf: [can_configure, can_operate_system, can_audit]
   - name: keycloak

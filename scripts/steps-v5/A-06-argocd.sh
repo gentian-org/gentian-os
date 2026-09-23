@@ -60,6 +60,12 @@ apply() {
     # a push lands in the cluster only when someone happens to refresh. Three
     # minutes matches the reconciliation window, and a webhook still shortens
     # it to seconds where one is registered.
+    #
+    # Framing is NOT set here. The console opens Argo CD in a window on the
+    # desktop, and what may frame a kernel host is the Gateway's answer for
+    # every one of them -- Argo CD's own setting would be a second writer of
+    # the same header, and its x-frame-options cannot be turned off through a
+    # parameter anyway: an empty value falls back to the default.
     kubectl patch configmap argocd-cmd-params-cm -n "${ns}" --type merge \
         -p '{"data":{"server.insecure":"true","reposerver.repo.cache.expiration":"3m"}}' >/dev/null
     kubectl rollout restart deployment argocd-server argocd-repo-server -n "${ns}" >/dev/null

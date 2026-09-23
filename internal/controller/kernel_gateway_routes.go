@@ -269,7 +269,8 @@ func kernelHTTPRouteSpecs(
 			host:        fmt.Sprintf("argocd.%s", kernelDomain),
 			sectionName: wildcardListenerName,
 			rules: []gatewayv1.HTTPRouteRule{
-				kernelBackendRuleCrossNamespace(argocdServerServiceName, argocdNamespace, 80),
+				kernelBackendRuleCrossNamespace(argocdServerServiceName, argocdNamespace, 80,
+					kernelConsoleFrameFilters(kernelDomain)...),
 			},
 		},
 	)
@@ -287,7 +288,8 @@ func kernelHTTPRouteSpecs(
 			host:        fmt.Sprintf("headlamp.%s", kernelDomain),
 			sectionName: wildcardListenerName,
 			rules: []gatewayv1.HTTPRouteRule{
-				kernelBackendRuleCrossNamespace(headlampServiceName, observabilityNamespace, 80),
+				kernelBackendRuleCrossNamespace(headlampServiceName, observabilityNamespace, 80,
+					kernelConsoleFrameFilters(kernelDomain)...),
 			},
 		})
 	}
@@ -350,10 +352,38 @@ func kernelBackendRuleExactNS(serviceName, namespace string, port int32, path st
 	return kernelBackendRuleNS(serviceName, namespace, port, pathExactMatch(path), filters...)
 }
 
-func kernelBackendRuleCrossNamespace(serviceName, namespace string, port int32) gatewayv1.HTTPRouteRule {
+// kernelConsoleFrameFilters lets the desktop open a kernel console in a window.
+//
+// Each console defends itself against being framed, which is right against a
+// stranger and wrong here: the desktop, the console and the realm are all on
+// the kernel domain, and the tile is how a platform administrator is meant to
+// reach it. Argo CD is the strict one -- x-frame-options: sameorigin, which it
+// cannot be told to drop, because an empty setting falls back to the default.
+//
+// So the Gateway decides, for every kernel host the same way: the header that
+// cannot express an exception is removed, and the one that can names the
+// kernel domain and nothing else.
+func kernelConsoleFrameFilters(kernelDomain string) []gatewayv1.HTTPRouteFilter {
+	if kernelDomain == "" {
+		return nil
+	}
+	return []gatewayv1.HTTPRouteFilter{{
+		Type: gatewayv1.HTTPRouteFilterResponseHeaderModifier,
+		ResponseHeaderModifier: &gatewayv1.HTTPHeaderFilter{
+			Remove: []string{"X-Frame-Options"},
+			Set: []gatewayv1.HTTPHeader{{
+				Name:  "Content-Security-Policy",
+				Value: fmt.Sprintf("frame-ancestors 'self' https://*.%s", kernelDomain),
+			}},
+		},
+	}}
+}
+
+func kernelBackendRuleCrossNamespace(serviceName, namespace string, port int32, filters ...gatewayv1.HTTPRouteFilter) gatewayv1.HTTPRouteRule {
 	p := gatewayv1.PortNumber(port)
 	ns := gatewayv1.Namespace(namespace)
 	return gatewayv1.HTTPRouteRule{
+		Filters: filters,
 		Matches: []gatewayv1.HTTPRouteMatch{pathPrefixMatch("/")},
 		BackendRefs: []gatewayv1.HTTPBackendRef{
 			{

@@ -218,5 +218,18 @@ data:
     current-context: main
     users:
     - name: oidc
-      user: {}
+      user:
+        # This is what tells Headlamp the cluster is reached with an identity
+        # rather than with a token. Left empty, Headlamp has nothing to offer
+        # but its "paste your authentication token" prompt -- which is exactly
+        # the thing the proxy exists to remove.
+        #
+        # The values are the browser's half of the flow. The client secret is
+        # not here: Headlamp holds it from its own Secret, and a kubeconfig is
+        # readable by anything that can read the ConfigMap.
+        auth-provider:
+          name: oidc
+          config:
+            idp-issuer-url: {{ $issuer }}
+            client-id: headlamp
 {{- end }}

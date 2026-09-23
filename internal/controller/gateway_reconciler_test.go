@@ -677,3 +677,42 @@ func TestTenantAppRouteBindsToTenantListener(t *testing.T) {
 		t.Fatalf("sectionName = %q", *kernelRef.SectionName)
 	}
 }
+
+// A tile that opens a blank window is worse than no tile, and that is what a
+// console's own framing defence does to the desktop: the request succeeds, the
+// browser refuses to paint it, and nothing anywhere says why.
+func TestKernelConsolesMayBeFramedByTheDesktop(t *testing.T) {
+	// Not parallel: the observability namespace is resolved once at process
+	// start, and the cluster view's route exists only where the layout has
+	// one. Setting it here is what makes this test about framing rather than
+	// about which layout the test binary happened to start in.
+	saved := observabilityNamespace
+	observabilityNamespace = "kernel-observability"
+	t.Cleanup(func() { observabilityNamespace = saved })
+
+	specs := kernelHTTPRouteSpecs("platform.example.test", nil, nil, nil, false, true)
+	for _, name := range []string{kernelRouteArgoCD, kernelRouteHeadlamp} {
+		var spec *kernelHTTPRouteSpec
+		for i := range specs {
+			if specs[i].name == name {
+				spec = &specs[i]
+			}
+		}
+		if spec == nil {
+			t.Fatalf("route %q missing", name)
+		}
+		f := spec.rules[0].Filters
+		if len(f) != 1 || f[0].ResponseHeaderModifier == nil {
+			t.Fatalf("%s: no response header filter", name)
+		}
+		m := f[0].ResponseHeaderModifier
+		// X-Frame-Options cannot express an exception, so it goes; the policy
+		// that can names the kernel domain and nothing wider.
+		if len(m.Remove) != 1 || m.Remove[0] != "X-Frame-Options" {
+			t.Errorf("%s: removes %v, want X-Frame-Options", name, m.Remove)
+		}
+		if len(m.Set) != 1 || m.Set[0].Value != "frame-ancestors 'self' https://*.platform.example.test" {
+			t.Errorf("%s: sets %v", name, m.Set)
+		}
+	}
+}
