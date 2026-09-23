@@ -75,10 +75,16 @@ func reconcileKeycloakIDPGatewayRoute(ctx context.Context, c client.Client, kern
 		return fmt.Errorf("keycloak IdP HTTPRoute %s has no rules", existing.Name)
 	}
 
-	desiredRule := existing.Spec.Rules[0]
-	desiredRule.Filters = desiredFilters
+	// The filters on every rule, the rules themselves untouched: the route
+	// is the kernel route builder's, and it carries one rule per allowed
+	// prefix. Rebuilding it from rule zero alone collapsed it to a single
+	// prefix every time this ran after the builder, and the two writers
+	// took turns -- id.<kernel> answered 404 on whichever prefix had just
+	// been dropped.
 	desiredSpec := existing.Spec.DeepCopy()
-	desiredSpec.Rules = []gatewayv1.HTTPRouteRule{desiredRule}
+	for i := range desiredSpec.Rules {
+		desiredSpec.Rules[i].Filters = desiredFilters
+	}
 
 	if equality.Semantic.DeepEqual(existing.Spec, *desiredSpec) {
 		return nil

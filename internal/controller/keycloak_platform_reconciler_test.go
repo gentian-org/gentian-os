@@ -47,15 +47,12 @@ func TestReconcileKeycloakIDPGatewayRoutePatchesHTTPRoute(t *testing.T) {
 			Namespace: "platform-kernel",
 		},
 		Spec: gatewayv1.HTTPRouteSpec{
-			Rules: []gatewayv1.HTTPRouteRule{{
-				BackendRefs: []gatewayv1.HTTPBackendRef{{
-					BackendRef: gatewayv1.BackendRef{
-						BackendObjectReference: gatewayv1.BackendObjectReference{
-							Name: "gentian-idp-keycloak-keycloakx-http",
-						},
-					},
-				}},
-			}},
+			// Two rules, as the kernel route builder writes them: one per
+			// allowed prefix on the identity provider's perimeter.
+			Rules: []gatewayv1.HTTPRouteRule{
+				kernelBackendRulePrefixNS("gentian-idp-keycloak-keycloakx-http", "", 8080, "/auth/realms/"),
+				kernelBackendRulePrefixNS("gentian-idp-keycloak-keycloakx-http", "", 8080, "/auth/resources/"),
+			},
 		},
 	}
 
@@ -72,8 +69,16 @@ func TestReconcileKeycloakIDPGatewayRoutePatchesHTTPRoute(t *testing.T) {
 	if err := c.Get(context.Background(), types.NamespacedName{Name: kernelKeycloakHTTPRouteName(), Namespace: "platform-kernel"}, got); err != nil {
 		t.Fatalf("get HTTPRoute: %v", err)
 	}
-	if len(got.Spec.Rules) != 1 || len(got.Spec.Rules[0].Filters) == 0 {
-		t.Fatalf("expected frame-ancestors filters on Keycloak IdP HTTPRoute, got %+v", got.Spec.Rules)
+	// Every rule keeps its place and gets the filters. Rebuilding the route
+	// from rule zero alone collapsed it to one prefix and left id.<kernel>
+	// answering 404 on the other.
+	if len(got.Spec.Rules) != 2 {
+		t.Fatalf("expected both rules to survive the frame-ancestors patch, got %+v", got.Spec.Rules)
+	}
+	for i := range got.Spec.Rules {
+		if len(got.Spec.Rules[i].Filters) == 0 {
+			t.Fatalf("rule %d has no frame-ancestors filters: %+v", i, got.Spec.Rules[i])
+		}
 	}
 	modifier := got.Spec.Rules[0].Filters[0].ResponseHeaderModifier
 	if modifier == nil {
