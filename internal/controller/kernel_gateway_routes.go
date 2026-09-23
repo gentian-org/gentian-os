@@ -388,10 +388,6 @@ func kernelBackendRulePrefixNS(serviceName, namespace string, port int32, prefix
 	return kernelBackendRuleNS(serviceName, namespace, port, pathPrefixMatch(prefix), filters...)
 }
 
-func kernelBackendRuleExactNS(serviceName, namespace string, port int32, path string, filters ...gatewayv1.HTTPRouteFilter) gatewayv1.HTTPRouteRule {
-	return kernelBackendRuleNS(serviceName, namespace, port, pathExactMatch(path), filters...)
-}
-
 // kernelConsoleFrameFilters lets the desktop open a kernel console in a window.
 //
 // Each console defends itself against being framed, which is right against a

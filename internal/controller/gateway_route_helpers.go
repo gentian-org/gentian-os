@@ -98,10 +98,6 @@ func pathPrefixMatch(prefix string) gatewayv1.HTTPRouteMatch {
 	return pathMatch(gatewayv1.PathMatchPathPrefix, prefix)
 }
 
-func pathExactMatch(path string) gatewayv1.HTTPRouteMatch {
-	return pathMatch(gatewayv1.PathMatchExact, path)
-}
-
 // appHTTPRoutesForIntents builds the desired per-app HTTPRoutes for a tenant.
 func appHTTPRoutesForIntents(
 	tenant *gentianov1alpha1.Tenant,
