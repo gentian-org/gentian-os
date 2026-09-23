@@ -683,5 +683,7 @@ func (r *ComponentReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		For(&gentianov1alpha1.Component{}).
 		Owns(&gatewayv1.HTTPRoute{}).
 		Watches(release, componentOfRelease()).
+		Watches(&gentianov1alpha1.ComponentProfile{}, componentsOfProfile(mgr.GetClient())).
+		Watches(&corev1.Secret{}, componentsOfZoneSecret(mgr.GetClient())).
 		Complete(r)
 }

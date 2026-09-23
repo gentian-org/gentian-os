@@ -20,6 +20,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
@@ -247,6 +248,49 @@ func componentOfRelease() handler.EventHandler {
 			return nil
 		}
 		return []reconcile.Request{{NamespacedName: types.NamespacedName{Name: name, Namespace: layout.Tenant(tenant)}}}
+	})
+}
+
+// componentsOfProfile re-runs every Component of a profile when the profile
+// changes: a new chart version pinned on the profile reaches the Release
+// through the components, and nothing else would run them.
+func componentsOfProfile(c client.Client) handler.EventHandler {
+	return handler.EnqueueRequestsFromMapFunc(func(ctx context.Context, obj client.Object) []reconcile.Request {
+		return componentsReferencingProfile(ctx, c, obj.GetName())
+	})
+}
+
+func componentsReferencingProfile(ctx context.Context, c client.Reader, profile string) []reconcile.Request {
+	list := &gentianov1alpha1.ComponentList{}
+	if err := c.List(ctx, list); err != nil {
+		return nil
+	}
+	var out []reconcile.Request
+	for i := range list.Items {
+		if list.Items[i].Spec.ProfileRef.Name == profile {
+			out = append(out, reconcile.Request{NamespacedName: types.NamespacedName{Name: list.Items[i].Name, Namespace: list.Items[i].Namespace}})
+		}
+	}
+	return out
+}
+
+// componentsOfZoneSecret re-runs every Component when a zone's edge client
+// secret appears or changes in the edge namespace: until it exists nothing
+// is routed, and once it does the components are what route.
+func componentsOfZoneSecret(c client.Client) handler.EventHandler {
+	return handler.EnqueueRequestsFromMapFunc(func(ctx context.Context, obj client.Object) []reconcile.Request {
+		if obj.GetNamespace() != servicesNamespace || !strings.HasPrefix(obj.GetName(), "edge-") || !strings.HasSuffix(obj.GetName(), "-oidc") {
+			return nil
+		}
+		list := &gentianov1alpha1.ComponentList{}
+		if err := c.List(ctx, list); err != nil {
+			return nil
+		}
+		var out []reconcile.Request
+		for i := range list.Items {
+			out = append(out, reconcile.Request{NamespacedName: types.NamespacedName{Name: list.Items[i].Name, Namespace: list.Items[i].Namespace}})
+		}
+		return out
 	})
 }
 

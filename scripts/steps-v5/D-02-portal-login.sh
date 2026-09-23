@@ -81,8 +81,13 @@ check() {
     [[ "$(kubectl get securitypolicy sp-kernel-argocd -n "${EDGE_NAMESPACE}" -o jsonpath='{.status.ancestors[0].conditions[?(@.type=="Accepted")].status}' 2>/dev/null)" == "True" ]] || return "${CHECK_MISSING}"
     # The platform's desktop: a component of the platform tenant, the console
     # at console.<kernel> behind the kernel session. Ready means its chart is
-    # deployed and its routes exist.
+    # deployed and its routes exist -- the chart the profile pins, not an
+    # earlier one still deployed under a moving version.
     [[ "$(kubectl get component desktop -n tenant-platform -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null)" == "True" ]] || return "${CHECK_MISSING}"
+    local pinned deployed
+    pinned="$(kubectl get componentprofile desktop -o jsonpath='{.spec.package.chart.version}' 2>/dev/null)"
+    deployed="$(kubectl get release tenant-platform-desktop -o jsonpath='{.spec.forProvider.chart.version}' 2>/dev/null)"
+    [[ -n "${pinned}" && "${pinned}" == "${deployed}" ]] || return "${CHECK_MISSING}"
     return 0
 }
 
@@ -145,9 +150,10 @@ apply() {
     # The platform desktop: the component reconciler installs it from the
     # desktop profile once the zone exists and the database credential is
     # delivered; its chart comes from the registry the profile names.
-    info "Waiting for the platform desktop (Component tenant-platform/desktop)..."
+    info "Waiting for the platform desktop (Component tenant-platform/desktop) on chart ${desktop_chart_version}..."
     deadline=$((SECONDS + 900))
-    until [[ "$(kubectl get component desktop -n tenant-platform -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null)" == "True" ]]; do
+    until [[ "$(kubectl get release tenant-platform-desktop -o jsonpath='{.spec.forProvider.chart.version}' 2>/dev/null)" == "${desktop_chart_version}" \
+        && "$(kubectl get component desktop -n tenant-platform -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null)" == "True" ]]; do
         if (( SECONDS > deadline )); then
             error "The platform desktop is not Ready after 15 minutes."
             kubectl get component desktop -n tenant-platform -o jsonpath='{range .status.conditions[*]}{.type}={.status} {.reason}: {.message}{"\n"}{end}' 2>/dev/null || \
