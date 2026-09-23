@@ -341,9 +341,11 @@ no second write path exists.
 Recorded in WP-10. Two cold-start races are fixed. These remain, in priority
 order:
 
-1. The OpenBao **`oidc` auth mount** and its configuration. The Cluster
-   composition already composes auth roles against a mount no v5 step creates,
-   so OpenBao accepts no Keycloak login.
+1. The OpenBao **`oidc` auth mount**. **Done**: `B-09-vault-oidc-mount`
+   enables it between the seeded secrets and the Cluster claim, so the roles
+   the composition composes have a mount to attach to. Its *configuration*,
+   which needs the realm's client secret and Keycloak serving discovery, is
+   still missing and belongs after `D-02`.
 2. The four **`Repository` claims**. Without them nothing composes Argo CD's
    repository Secret, the operator's push credential or the catalogue-sync
    ApplicationSet, and a private deployments repository has no credential path.

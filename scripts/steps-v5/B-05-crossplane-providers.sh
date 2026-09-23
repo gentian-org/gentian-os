@@ -13,9 +13,9 @@
 # instances of. Named rather than discovered: a list that is written down is
 # one a reader can check against provider-configs.yaml.
 _V5_PROVIDER_CRDS=(
-    providerconfigs.kubernetes.crossplane.io
-    providerconfigs.helm.crossplane.io
-    providerconfigs.vault.upbound.io
+    "providerconfigs.kubernetes.crossplane.io"
+    "providerconfigs.helm.crossplane.io"
+    "providerconfigs.vault.upbound.io"
 )
 
 # The functions declared in crossplane/providers/providers.yaml, read from the
