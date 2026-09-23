@@ -240,6 +240,12 @@ func (s *Server) routes() {
 
 	s.guarded("GET /v1/tenants/{t}/entitlements", "can_view", tenantObject, s.listEntitlements)
 
+	// What the caller holds on a tenant, for the desktop: it renders from
+	// the answer -- the admin tile by can_administer, the store by
+	// can_install_app -- and decides nothing itself (ui-restructure.md §2).
+	// Entered under can_enter, the relation that reaches the desktop at all.
+	s.guarded("GET /v1/tenants/{t}/me", "can_enter", tenantObject, s.tenantMe)
+
 	// The kernel's own UIs, for the cluster administrator's console. Entered
 	// under can_audit — the widest cluster relation — then each tile is
 	// filtered by its own.
@@ -253,6 +259,34 @@ func (s *Server) routes() {
 	s.guarded("POST /v1/tenants/{t}/apps/{p}", "can_install_app", tenantObject, s.install)
 	s.guarded("DELETE /v1/tenants/{t}/apps/{p}", "can_install_app", tenantObject, s.uninstall)
 	s.guarded("PUT /v1/tenants/{t}/apps/{p}/addons", "can_install_app", tenantObject, s.setAddons)
+}
+
+// tenantRelations are the tenant verbs the desktop asks about the caller.
+var tenantRelations = []string{
+	"can_enter", "can_view", "can_administer", "can_install_app", "can_manage_users",
+	"can_set_plan", "can_set_policy", "can_grant", "can_approve_privilege", "can_expose",
+}
+
+func (s *Server) tenantMe(w http.ResponseWriter, r *http.Request, c call) {
+	target, err := tenantObject(r)
+	if err != nil {
+		s.fail(w, r, http.StatusBadRequest, "invalid name")
+		return
+	}
+	relations := make(map[string]bool, len(tenantRelations))
+	for _, rel := range tenantRelations {
+		ok, err := s.cfg.Authz.Check(r.Context(), reqID(r.Context()), c.user, rel, target)
+		if err != nil {
+			s.fail(w, r, http.StatusServiceUnavailable, "authorization unavailable")
+			return
+		}
+		relations[rel] = ok
+	}
+	s.json(w, http.StatusOK, map[string]any{
+		"tenant":    r.PathValue("t"),
+		"subject":   c.meta.Subject,
+		"relations": relations,
+	})
 }
 
 func (s *Server) listApps(w http.ResponseWriter, r *http.Request, _ call) {

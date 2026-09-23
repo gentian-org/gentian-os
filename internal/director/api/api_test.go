@@ -560,6 +560,13 @@ var facts = table{
 	"user:tom can_install_app tenant:demo":                 true,
 	"user:tom can_view tenant:demo":                        true,
 	"user:mia can_view tenant:demo":                        true,
+	"user:mia can_enter tenant:demo":                       true,
+	"user:tom can_enter tenant:demo":                       true,
+	"user:tom can_administer tenant:demo":                  true,
+	"user:tom can_manage_users tenant:demo":                true,
+	"user:alice can_enter tenant:demo":                     true,
+	"user:alice can_administer tenant:demo":                true,
+	"user:alice can_manage_users tenant:demo":              true,
 	"user:alice can_install_app tenant:demo":               true,
 	"user:alice can_view tenant:demo":                      true,
 	"user:tina can_install_app tenant:solo":                true,
@@ -703,4 +710,31 @@ func loadOpenFGA(t *testing.T, base string) (storeID, modelID string) {
 		"writes":                 map[string]any{"tuple_keys": tuples},
 	}, nil)
 	return store.ID, written.ID
+}
+
+// The desktop renders from what the director says the caller holds, and
+// decides nothing itself: a member sees no admin tile because can_administer
+// is false, not because a flag in the desktop hid it.
+func TestTheDesktopReadsTheCallersRelations(t *testing.T) {
+	h := start(t, false)
+	code, body := h.do(t, "GET", "/v1/tenants/demo/me", h.token(t, "tenant-demo", "mia"), "")
+	if code != http.StatusOK {
+		t.Fatalf("mia: %d %v", code, body)
+	}
+	rel, _ := body["relations"].(map[string]any)
+	if rel["can_enter"] != true || rel["can_administer"] != false || rel["can_install_app"] != false {
+		t.Fatalf("mia's relations = %v", rel)
+	}
+	if body["subject"] != "mia" {
+		t.Fatalf("subject = %v", body["subject"])
+	}
+	code, body = h.do(t, "GET", "/v1/tenants/demo/me", h.token(t, "tenant-demo", "tom"), "")
+	rel, _ = body["relations"].(map[string]any)
+	if code != http.StatusOK || rel["can_administer"] != true || rel["can_install_app"] != true {
+		t.Fatalf("tom: %d %v", code, rel)
+	}
+	// A stranger cannot even ask.
+	if code, _ := h.do(t, "GET", "/v1/tenants/demo/me", h.token(t, "tenant-demo", "olaf"), ""); code != http.StatusForbidden {
+		t.Fatalf("olaf: %d", code)
+	}
 }
