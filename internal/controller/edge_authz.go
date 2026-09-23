@@ -106,11 +106,16 @@ func kernelSecurityPolicySpec(kernelDomain, kernelRealm, route string, authz rou
 // client Secret and the shim live in the edge namespace; a policy elsewhere
 // names that namespace and relies on the ReferenceGrant the component
 // reconciler keeps there.
+// zoneSecurityPolicySpec is the session-and-shim policy for one route. The
+// client secret is named without a namespace: Envoy Gateway (1.2) reads an
+// OIDC client secret only from the policy's own namespace, ReferenceGrant or
+// not, so whoever writes a policy outside the edge puts the zone's secret
+// beside it (ensureZoneSecret). The shim is reached across namespaces, which
+// a backendRef may do under a grant.
 func zoneSecurityPolicySpec(kernelDomain string, zone edgeZone, route string, authz routeAuthz, edgeNamespace, shimService string) map[string]interface{} {
 	clientSecret := map[string]interface{}{"name": zone.secretName}
 	backend := map[string]interface{}{"name": shimService, "port": int64(edgeAuthzPort)}
 	if edgeNamespace != "" {
-		clientSecret["namespace"] = edgeNamespace
 		backend["namespace"] = edgeNamespace
 	}
 	return map[string]interface{}{

@@ -199,6 +199,9 @@ func (r *ComponentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		if err := r.ensureZoneGrant(ctx, comp); err != nil {
 			return ctrl.Result{}, err
 		}
+		if err := r.ensureZoneSecret(ctx, comp, zone); err != nil {
+			return ctrl.Result{}, fmt.Errorf("zone secret: %w", err)
+		}
 		var oidcRoutes []string
 		forward := false
 		for i := range profile.Spec.Expose {
@@ -549,8 +552,9 @@ func (r *ComponentReconciler) ensureZoneGrant(ctx context.Context, comp *gentian
 		"from": []interface{}{
 			map[string]interface{}{"group": "gateway.envoyproxy.io", "kind": "SecurityPolicy", "namespace": comp.Namespace},
 		},
+		// The shim's Service only: the zone's client secret is copied beside
+		// the policy, because Envoy Gateway reads it from no other namespace.
 		"to": []interface{}{
-			map[string]interface{}{"group": "", "kind": "Secret"},
 			map[string]interface{}{"group": "", "kind": "Service"},
 		},
 	}
@@ -575,6 +579,44 @@ func (r *ComponentReconciler) ensureZoneGrant(ctx context.Context, comp *gentian
 		return r.Patch(ctx, existing, patch)
 	}
 	return nil
+}
+
+// ensureZoneSecret keeps a copy of the zone's edge client secret in the
+// component's namespace, under the same name the policy uses. The zone is
+// the tenant's own (the kernel's for the platform tenant), so its secret in
+// the tenant's namespace crosses no trust boundary.
+func (r *ComponentReconciler) ensureZoneSecret(ctx context.Context, comp *gentianov1alpha1.Component, zone edgeZone) error {
+	source := &corev1.Secret{}
+	if err := r.Get(ctx, types.NamespacedName{Name: zone.secretName, Namespace: servicesNamespace}, source); err != nil {
+		return err
+	}
+	desired := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      zone.secretName,
+			Namespace: comp.Namespace,
+			Labels: map[string]string{
+				managedByLabel: managedByValue,
+				tenantLabel:    strings.TrimPrefix(comp.Namespace, "tenant-"),
+			},
+		},
+		Type: source.Type,
+		Data: source.Data,
+	}
+	existing := &corev1.Secret{}
+	err := r.Get(ctx, types.NamespacedName{Name: desired.Name, Namespace: desired.Namespace}, existing)
+	if errors.IsNotFound(err) {
+		return r.Create(ctx, desired)
+	}
+	if err != nil {
+		return err
+	}
+	if equality.Semantic.DeepEqual(existing.Data, desired.Data) && equality.Semantic.DeepEqual(existing.Labels, desired.Labels) {
+		return nil
+	}
+	patch := client.MergeFrom(existing.DeepCopy())
+	existing.Data = desired.Data
+	existing.Labels = desired.Labels
+	return r.Patch(ctx, existing, patch)
 }
 
 func (r *ComponentReconciler) deleteZoneGrant(ctx context.Context, comp *gentianov1alpha1.Component) error {

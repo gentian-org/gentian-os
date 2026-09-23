@@ -137,8 +137,11 @@ func TestAComponentRouteCarriesItsQuestion(t *testing.T) {
 func TestAZonePolicyOutsideTheEdgeNamesIt(t *testing.T) {
 	zone := edgeZone{domain: "k.example", realm: "kernel", clientID: edgeKernelClientID, secretName: edgeKernelSecretName, cookie: "c", idCookie: "i"}
 	spec := zoneSecurityPolicySpec("k.example", zone, "desktop-api", routeAuthz{forwardToken: true}, "kernel-edge", "gentian-os-edge-authz")
+	// The secret is read from the policy's own namespace and no other
+	// (Envoy Gateway 1.2), so it is named without one and copied beside
+	// the policy; the shim is reached across namespaces under the grant.
 	secret := spec["oidc"].(map[string]interface{})["clientSecret"].(map[string]interface{})
-	if secret["namespace"] != "kernel-edge" || secret["name"] != edgeKernelSecretName {
+	if _, has := secret["namespace"]; has || secret["name"] != edgeKernelSecretName {
 		t.Fatalf("clientSecret = %v", secret)
 	}
 	backend := spec["extAuth"].(map[string]interface{})["grpc"].(map[string]interface{})["backendRef"].(map[string]interface{})
