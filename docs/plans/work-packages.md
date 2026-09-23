@@ -543,25 +543,25 @@ From [security-gap-closing.md](security-gap-closing.md).
          `kernel-authentication` / `kernel-authorization` (Suze composition
          takes the layout's names); the `headlamp` client in the kernel realm
          and its secret in OpenBao (`headlamp.oidc.enabled`).
-      5. `[~]` D-01 operator and director in `kernel-control`; the Gateway in
+      5. `[x]` D-01 operator and director in `kernel-control`; the Gateway in
          `kernel-edge`; the platform tenant's console rendering the tiles.
          The chain is built and verified on the cluster: the claim's
          `platformRoles` become cluster tuples at director start, Keycloak's
          event listener states memberships, and the tiles endpoint answers a
-         signed-in administrator with all three consoles. The console screen
-         that renders them is gentian-ui#24, waiting on review.
+         signed-in administrator with all three consoles. The console renders
+         them (gentian-ui#24) with their icons (#25).
       6. `[~]` First run on the purged cluster: `--until A-07`, then
          `--until B-01`, then step by step; every `check()` honest. Done
          through C-01 (2026-09-22); Keycloak and OpenFGA next, on
          `kernel-postgres` — kernel data on its own instance, app data on the
          system engines.
-      7. `[~]` Headlamp as the person, not a robot: an OIDC proxy in
+      7. `[x]` Headlamp as the person, not a robot: an OIDC proxy in
          `kernel-observability` (the maintained fork of kube-oidc-proxy) that
          verifies the kernel realm's token and impersonates the person at the
          API server, so RBAC and the audit log name them; token login stays
-         the fallback for a cluster without a realm. Deployed with the
-         `headlamp` client and its key; the sign-in itself is not yet
-         exercised end to end.
+         the fallback for a cluster without a realm. Verified: a token from
+         the realm's `headlamp` client reaches the API server through the
+         proxy, impersonated, and lists the cluster.
       8. `[ ]` The dev claim's `llm` block (vLLM on the GPU, the external
          providers) goes back on the claim after the kernel is observable.
 - [ ] Phase 1 continued: OpenBao init and the seal token (B-02), ESO stores,
