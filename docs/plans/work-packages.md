@@ -578,7 +578,7 @@ From [security-gap-closing.md](security-gap-closing.md).
          operator beside the routes; `id.<kernel>` serves `/realms/*` only on
          the perimeter Gateway and `/admin/*` on `id-admin.<kernel>` behind
          the kernel session.
-      4. `[ ]` **The desktop as a component** (WP-5, WP-2): a
+      4. `[x]` **The desktop as a component** (WP-5, WP-2): a
          `ComponentProfile` `desktop` (`tenancy: [tenant]`, `trustTier:
          platform`, a database requirement, one gateway exposure with
          `authMode: oidc` and `forwardToken: true`); a Component reconciler
@@ -586,7 +586,7 @@ From [security-gap-closing.md](security-gap-closing.md).
          provider-helm Release in `tenant-<t>`, the database fulfilled in
          the tenant's namespace, the route and `SecurityPolicy` from
          `expose[]` — so `tenant-platform` serves `console.<kernel>`.
-      5. `[ ]` **The desktop without authority** (WP-7, WP-1): the BFF
+      5. `[x]` **The desktop without authority** (WP-7, WP-1): the BFF
          consumes the token the edge forwards and runs no code flow; no
          client secret, no Keycloak admin credential, `rbac.yaml` empty; the
          database from the granted requirement; tiles from the director —
