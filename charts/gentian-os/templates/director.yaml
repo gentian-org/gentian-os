@@ -186,6 +186,21 @@ spec:
             {{- end }}
             - name: HOME
               value: /tmp
+            # git refuses to work in a repository owned by someone else, and
+            # this one always is: the checkout is an emptyDir, so Kubernetes
+            # owns its top directory as root and hands it to the pod by group.
+            # Naming it safe is the documented answer; the alternative is a
+            # chown the container has no right to make.
+            #
+            # Without this every read of the claim fails -- the kernel domain,
+            # the platform roles -- and the director looks like it has lost its
+            # repository rather than like it cannot be trusted with it.
+            - name: GIT_CONFIG_COUNT
+              value: "1"
+            - name: GIT_CONFIG_KEY_0
+              value: safe.directory
+            - name: GIT_CONFIG_VALUE_0
+              value: {{ $checkout | quote }}
             {{- if $gitSecret }}
             # The clone carries the credential in its origin URL, which is
             # what the push then reads; nothing else in this container has it.
