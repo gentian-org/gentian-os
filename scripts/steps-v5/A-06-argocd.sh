@@ -20,6 +20,10 @@ check() {
         kubectl get deployment argocd-server -n "${ns}" >/dev/null 2>&1 &&
         kubectl get deployment argocd-applicationset-controller -n "${ns}" >/dev/null 2>&1 &&
         helm status argocd-image-updater -n "${ns}" >/dev/null 2>&1 &&
+        # Serving plain HTTP is not a preference here, it is what makes the
+        # console reachable at all; a step that reports satisfied without it
+        # leaves a redirect loop nothing else in the sequence looks at.
+        [[ "$(kubectl get configmap argocd-cmd-params-cm -n "${ns}" -o jsonpath='{.data.server\.insecure}' 2>/dev/null)" == "true" ]] &&
         [[ "$(kubectl get clusterrolebinding argocd-application-controller -o jsonpath='{.subjects[0].namespace}' 2>/dev/null)" == "${ns}" ]]
 }
 
@@ -45,6 +49,23 @@ apply() {
     # No public address: Argo CD is reached through the console's route or a
     # port-forward by a platform administrator, never as a LoadBalancer.
     kubectl patch svc argocd-server -n "${ns}" -p '{"spec":{"type":"ClusterIP"}}' >/dev/null
+
+    # The Gateway terminates TLS, so what reaches argocd-server is plain HTTP.
+    # In its default mode the server answers that with a redirect to the https
+    # URL the browser already asked for, and the browser gives up after a few
+    # rounds: the console is unreachable with everything reporting healthy.
+    #
+    # reposerver.repo.cache.expiration is set with it. The default of 24h
+    # caches a branch's resolved SHA and its rendered manifests for a day, so
+    # a push lands in the cluster only when someone happens to refresh. Three
+    # minutes matches the reconciliation window, and a webhook still shortens
+    # it to seconds where one is registered.
+    kubectl patch configmap argocd-cmd-params-cm -n "${ns}" --type merge \
+        -p '{"data":{"server.insecure":"true","reposerver.repo.cache.expiration":"3m"}}' >/dev/null
+    kubectl rollout restart deployment argocd-server argocd-repo-server -n "${ns}" >/dev/null
+    kubectl rollout status deployment argocd-server -n "${ns}" --timeout=180s >/dev/null
+    kubectl rollout status deployment argocd-repo-server -n "${ns}" --timeout=180s >/dev/null
+    success "Argo CD serving plain HTTP behind the Gateway, with a 3-minute repo cache."
 
     banner "Argo CD Image Updater"
     helm repo add argo "$(gentian_pin argocd repo)" --force-update >/dev/null

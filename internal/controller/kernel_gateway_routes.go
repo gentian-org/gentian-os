@@ -20,6 +20,7 @@ import (
 	"context"
 	"fmt"
 
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/equality"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -103,7 +104,7 @@ func (r *GatewayPlatformReconciler) reconcileKernelHTTPRoutes(ctx context.Contex
 	}
 
 	specs := kernelHTTPRouteSpecs(r.KernelDomain, effectiveDomains, oidcSubs, tenantNames,
-		clusterLLMEnabled(ctx, r.Client))
+		clusterLLMEnabled(ctx, r.Client), portalDeployed(ctx, r.Client))
 	expected := make(map[string]struct{}, len(specs))
 	for _, spec := range specs {
 		expected[spec.name] = struct{}{}
@@ -141,12 +142,26 @@ func (r *GatewayPlatformReconciler) reconcileKernelHTTPRoutes(ctx context.Contex
 	return r.deleteStaleKernelHTTPRoutes(ctx, expected)
 }
 
+// portalDeployed reports whether the Gentian portal is actually running, which
+// is what its routes wait for.
+//
+// Read from the Service rather than from a claim field: the claim says what the
+// cluster should have, and a hostname published ahead of the workload is a
+// public 500 for however long the gap lasts. The web Service is the one the
+// SPA is served from, so it is the one whose absence means "not yet".
+func portalDeployed(ctx context.Context, c client.Reader) bool {
+	svc := &corev1.Service{}
+	err := c.Get(ctx, client.ObjectKey{Name: gentianPortalWebService, Namespace: servicesNamespace}, svc)
+	return err == nil
+}
+
 func kernelHTTPRouteSpecs(
 	kernelDomain string,
 	tenantEffectiveDomains []string,
 	tenantOIDCSubdomains map[string][]string,
 	tenantNames []string,
 	llmEnabled bool,
+	portalDeployed bool,
 ) []kernelHTTPRouteSpec {
 	idHost := fmt.Sprintf("id.%s", kernelDomain)
 	portalHost := kernelPortalHost(kernelDomain)
@@ -171,14 +186,21 @@ func kernelHTTPRouteSpecs(
 			policy: keycloakProxyBackendTrafficPolicySpec(),
 		},
 	}
-	// Gentian UI portal (API + SPA) runs in platform-kernel; edge traffic reaches
-	// kernel-public-gateway in servicesNamespace via Cloudflare tunnel.
-	specs = append(specs, kernelHTTPRouteSpec{
-		name:        kernelRouteGentianPortal,
-		host:        portalHost,
-		sectionName: wildcardListenerName,
-		rules:       kernelGentianPortalHTTPRouteRules(),
-	})
+	// The Gentian UI portal (API + SPA); edge traffic reaches
+	// kernel-public-gateway in servicesNamespace via the tunnel.
+	//
+	// Only once the portal is actually deployed. A route whose backends do not
+	// exist is not inert: the hostname is published on the tunnel and given a
+	// DNS record, so the portal's address becomes a public 500 rather than a
+	// name that does not resolve yet.
+	if portalDeployed {
+		specs = append(specs, kernelHTTPRouteSpec{
+			name:        kernelRouteGentianPortal,
+			host:        portalHost,
+			sectionName: wildcardListenerName,
+			rules:       kernelGentianPortalHTTPRouteRules(),
+		})
+	}
 	// Serve the portal on each tenant's own host, rather than redirecting there to
 	// the shared one.
 	//
@@ -199,6 +221,9 @@ func kernelHTTPRouteSpecs(
 		if i >= len(tenantNames) {
 			break
 		}
+		if !portalDeployed {
+			break
+		}
 		specs = append(specs, kernelHTTPRouteSpec{
 			name: fmt.Sprintf("tenant-%s-portal", tenantNames[i]),
 			host: domain,
@@ -209,15 +234,19 @@ func kernelHTTPRouteSpecs(
 			rules:       kernelGentianPortalHTTPRouteRules(),
 		})
 	}
-	specs = append(specs,
-		kernelHTTPRouteSpec{
+	// The apex sends visitors to the portal, so it waits for the same thing the
+	// portal route does rather than redirecting to a name that does not resolve.
+	if portalDeployed {
+		specs = append(specs, kernelHTTPRouteSpec{
 			name:        kernelRouteKernelApex,
 			host:        kernelDomain,
 			sectionName: wildcardListenerName,
 			rules: []gatewayv1.HTTPRouteRule{
 				kernelApexRedirectRule(kernelDomain),
 			},
-		},
+		})
+	}
+	specs = append(specs,
 		kernelHTTPRouteSpec{
 			// Plaintext :80 -> https, bound to the http-redirect listener only.
 			name:        kernelRouteHTTPRedirect,

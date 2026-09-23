@@ -448,7 +448,7 @@ func TestBuildAppBackendTrafficPolicyObject(t *testing.T) {
 
 func TestKernelHTTPRouteSpecs(t *testing.T) {
 	t.Parallel()
-	specs := kernelHTTPRouteSpecs("platform.example.test", []string{"demo.platform.example.test"}, nil, []string{"demo"}, false)
+	specs := kernelHTTPRouteSpecs("platform.example.test", []string{"demo.platform.example.test"}, nil, []string{"demo"}, false, true)
 	// One route per kernel host, plus one per tenant host serving the portal.
 	// Asserted by name rather than by count, so adding a route does not fail a
 	// test that has nothing to do with it.
@@ -491,8 +491,34 @@ func TestKernelHTTPRouteSpecs(t *testing.T) {
 	}
 }
 
+// A route whose backends do not exist is not inert. Its hostname is published
+// on the tunnel and given a DNS record, so the portal's address answers 500 to
+// anyone who visits it, for as long as the portal is not deployed. Until then
+// the name should simply not resolve.
+func TestNoPortalRoutesBeforeThePortalIsDeployed(t *testing.T) {
+	t.Parallel()
+	specs := kernelHTTPRouteSpecs("platform.example.test",
+		[]string{"demo.platform.example.test"}, nil, []string{"demo"}, false, false)
+	for _, s := range specs {
+		switch s.name {
+		case kernelRouteGentianPortal, kernelRouteKernelApex, "tenant-demo-portal":
+			t.Errorf("route %q published with no portal behind it", s.name)
+		}
+	}
+	// The routes that do not depend on the portal are still there.
+	var sawIDP bool
+	for _, s := range specs {
+		if s.name == kernelRouteKeycloakIDP {
+			sawIDP = true
+		}
+	}
+	if !sawIDP {
+		t.Error("the identity route should not wait for the portal")
+	}
+}
+
 func TestKernelHTTPRouteSpecsLLMDisabledByDefault(t *testing.T) {
-	specs := kernelHTTPRouteSpecs("platform.example.test", []string{"demo.platform.example.test"}, nil, []string{"demo"}, false)
+	specs := kernelHTTPRouteSpecs("platform.example.test", []string{"demo.platform.example.test"}, nil, []string{"demo"}, false, true)
 	for _, spec := range specs {
 		if spec.name == kernelRouteLiteLLM {
 			t.Fatalf("kernel-llm route present with llm disabled")
@@ -501,7 +527,7 @@ func TestKernelHTTPRouteSpecsLLMDisabledByDefault(t *testing.T) {
 }
 
 func TestKernelHTTPRouteSpecsLLMEnabled(t *testing.T) {
-	specs := kernelHTTPRouteSpecs("platform.example.test", nil, nil, nil, true)
+	specs := kernelHTTPRouteSpecs("platform.example.test", nil, nil, nil, true, true)
 	// 6, not 5: the :80 -> :443 redirect route (kernel-http-redirect) is emitted
 	// alongside the apex and argocd routes. The LLM route is still appended last,
 	// which is what the specs[len-1] lookup below relies on.
@@ -582,6 +608,7 @@ func TestKernelHTTPRouteSpecsAllBindToAListener(t *testing.T) {
 		nil,
 		[]string{"demo"},
 		true,
+		true,
 	)
 	if len(specs) == 0 {
 		t.Fatal("no kernel route specs produced")
@@ -598,7 +625,7 @@ func TestKernelHTTPRouteSpecsAllBindToAListener(t *testing.T) {
 // the catch-all redirect must stay on :80. If it ever attached to a :443
 // listener it would redirect https traffic back to itself, forever.
 func TestKernelHTTPRedirectBindsOnlyToPort80(t *testing.T) {
-	specs := kernelHTTPRouteSpecs("platform.example.test", nil, nil, nil, false)
+	specs := kernelHTTPRouteSpecs("platform.example.test", nil, nil, nil, false, true)
 	var found bool
 	for _, s := range specs {
 		if s.name != kernelRouteHTTPRedirect {

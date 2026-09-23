@@ -84,6 +84,7 @@ func TestTenantHostGetsAPortalRouteWithTheSameBackends(t *testing.T) {
 		nil,
 		[]string{"demo"},
 		false,
+		true,
 	)
 	var found *kernelHTTPRouteSpec
 	for i := range specs {

@@ -71,7 +71,7 @@ func ensureKernelGatewayTunnelIngress(
 		"corp." + kernelDomain:         {},
 	}
 	for _, spec := range kernelHTTPRouteSpecs(kernelDomain, effectiveDomains, oidcSubs, tenantNames,
-		clusterLLMEnabled(ctx, c)) {
+		clusterLLMEnabled(ctx, c), portalDeployed(ctx, c)) {
 		if spec.host != "" {
 			hosts[spec.host] = struct{}{}
 		}
