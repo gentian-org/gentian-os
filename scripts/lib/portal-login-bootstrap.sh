@@ -1177,6 +1177,44 @@ spec:
                       ;;
                   esac
 
+                  # The director's audience. The console reaches the director
+                  # for what only it can answer -- the cluster's tiles, its
+                  # tenants, its entitlements -- and the director refuses a
+                  # token that was not meant for it. Without this mapper the
+                  # desktop loads and every one of those calls is rejected as
+                  # unauthorized, which reads as a broken sign-in.
+                  DIR_AUD_BODY='{
+                    "name": "director-audience",
+                    "protocol": "openid-connect",
+                    "protocolMapper": "oidc-audience-mapper",
+                    "config": {
+                      "included.client.audience": "gentian-director",
+                      "id.token.claim": "false",
+                      "access.token.claim": "true"
+                    }
+                  }'
+                  DIR_AUD_ID=\$(curl -sf -H "\${AUTH}" \
+                    "\${KEYCLOAK_BASE}/admin/realms/\${REALM}/clients/\${CLIENT_ID}/protocol-mappers/models" \
+                    | jq -r '.[] | select(.name=="director-audience") | .id' | head -1)
+                  if [ -n "\${DIR_AUD_ID}" ] && [ "\${DIR_AUD_ID}" != "null" ]; then
+                    DIR_AUD_HTTP=\$(printf '%s' "\${DIR_AUD_BODY}" | jq --arg id "\${DIR_AUD_ID}" '. + {id: \$id}' \
+                      | curl -s -o /tmp/diraud.err -w '%{http_code}' -X PUT -H "\${AUTH}" -H "Content-Type: application/json" \
+                        "\${KEYCLOAK_BASE}/admin/realms/\${REALM}/clients/\${CLIENT_ID}/protocol-mappers/models/\${DIR_AUD_ID}" -d @-)
+                  else
+                    DIR_AUD_HTTP=\$(curl -s -o /tmp/diraud.err -w '%{http_code}' -X POST -H "\${AUTH}" -H "Content-Type: application/json" \
+                      "\${KEYCLOAK_BASE}/admin/realms/\${REALM}/clients/\${CLIENT_ID}/protocol-mappers/models" -d "\${DIR_AUD_BODY}")
+                  fi
+                  case "\${DIR_AUD_HTTP}" in
+                    2*) echo "gentian-portal audience mapper: aud += gentian-director" ;;
+                    *)
+                      printf '\033[0;31m[ERROR]\033[0m %s\n' "could not add the director audience mapper (HTTP \${DIR_AUD_HTTP})." >&2
+                      if [ -s /tmp/diraud.err ]; then head -c 300 /tmp/diraud.err >&2; echo >&2; fi
+                      echo "  Without it the console cannot reach the director at all." >&2
+                      exit 1
+                      ;;
+                  esac
+
+
                   # Emit the FULL path. OpenBao's roles bind /group-name with a
                   # leading slash; the bare name matches nothing and fails as a
                   # denied login rather than as a misconfigured claim.

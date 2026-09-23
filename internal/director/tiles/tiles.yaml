@@ -21,6 +21,10 @@ tiles:
     displayName: Identity
     description: Realms, clients and the people in them.
     subDomain: id
-    path: /admin/
+    # Keycloak is served under /auth, and its realm console is per realm: a
+    # link to /admin/ alone lands on the master realm's console, which a
+    # kernel-realm administrator may not open. That refusal reads like a
+    # broken sign-in rather than a wrong address.
+    path: /auth/admin/kernel/console/
     icon: identity
     anyOf: [can_configure]

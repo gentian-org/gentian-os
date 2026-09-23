@@ -27,7 +27,10 @@ func TestEveryTileHasWhatTheConsoleNeeds(t *testing.T) {
 			t.Errorf("%s: display name, icon and description are what the console shows", tile.Name)
 		}
 	}
-	if got := All()[2].URL("k.example"); got != "https://id.k.example/admin/" {
+	// Keycloak is served under /auth, and its console is per realm: /admin/
+	// alone is the master realm's, which a kernel-realm administrator may not
+	// open -- a refusal that reads like a broken sign-in.
+	if got := All()[2].URL("k.example"); got != "https://id.k.example/auth/admin/kernel/console/" {
 		t.Fatalf("keycloak URL = %s", got)
 	}
 }
