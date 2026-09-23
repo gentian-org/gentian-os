@@ -257,19 +257,23 @@ Specified in [authorization-model.md](authorization-model.md) and
 
 Specified in [networking.md](networking.md).
 
-- [ ] Two `Gateway` objects, `authenticated` and `perimeter`, in
+- [x] Two `Gateway` objects, `authenticated` and `perimeter`, in
       `kernel-edge` under `mergeGateways`; tenant listeners stay per-zone.
-- [ ] `SecurityPolicy` per route: OIDC session per tenant zone (edge
-      clients from WP-2), JWT for bearer routes, ext-auth for reachability;
-      the edge client's scope emits no groups.
-- [ ] **Ext-auth shim** — new component in `kernel-edge`: verifies the
-      token, asks `can_use`/`can_enter`, caches per `(sub, sid, route)`,
-      evicts by subject on a `ReadChanges` poll (OpenFGA has no push stream),
-      denies on a `Check` transport error while previously cached allows
-      carry until they expire; denies a `sid` the director has recorded as
-      `session:<sid>#revoked`, which every replica reads on the same poll
-      (AD-13) — the back-channel logout itself goes to the director, so the
-      shim stays stateless; gRPC, topology-aware.
+- [x] `SecurityPolicy` per route for the kernel zone: OIDC session with
+      `gentian-edge-kernel` (no groups scope, director in its audience,
+      back-channel logout at the director), ext-auth for reachability. Envoy
+      Gateway binds a session's cookies to the policy that made it, so a
+      component's oidc routes share one policy.
+- [ ] `SecurityPolicy` per route for tenant zones (edge clients from WP-2)
+      and JWT for bearer routes.
+- [x] **Ext-auth shim** — `edge-authz` in `kernel-edge`, shipped in the
+      operator image: verifies the token, asks the route's relation, caches
+      per `(sub, sid, route)`, evicts on every `ReadChanges` entry, fails
+      closed with cached allows carrying, denies a revoked `sid`; gRPC. Envoy
+      Gateway runs ext_authz before its OIDC filter, so on an oidc route a
+      request with no session passes to the OIDC filter with no identity and
+      is refused only on a bearer route.
+- [ ] Shim: `can_use` on app routes; topology-aware routing to it.
 - [ ] DMZ publishing proxy image: generic Envoy/nginx with config rendered
       per surface — path allow/deny, `authMode` adapter (basic via the
       broker's passdb, bearer via JWKS, signature via HMAC from OpenBao),
@@ -297,9 +301,12 @@ Specified in [networking.md](networking.md).
       requires it.
 - [ ] Default per-route rate limits in `BackendTrafficPolicy`; WebSocket
       max connection duration (G15).
-- [ ] Keycloak route on the perimeter Gateway with the `/realms/*` path
-      allowlist; `/admin`, `master`, metrics on an internal hostname
-      (roadmap 1.6); brute-force detection per realm (G16).
+- [x] Keycloak route on the perimeter Gateway with the `/realms/*` path
+      allowlist; `/admin` and `master` refused by a route of their own
+      closed by an authorization policy; the console on `id-admin.<kernel>`
+      behind the kernel session.
+- [ ] Keycloak metrics and health on an internal hostname only (roadmap
+      1.6); brute-force detection per realm (G16).
 - [ ] Exposure API and console view: summary, condensed log (most requests,
       most recent incl. first-seen, most bytes, rejections), public objects
       via the contract, complete log (networking §8.4).
@@ -309,7 +316,7 @@ Specified in [networking.md](networking.md).
       forwarding, setting only its own. Without the strip, an app-host
       perimeter path is a header-spoofing route to the same pod the
       authenticated Gateway serves.
-- [ ] Both `Gateway` objects are kernel resources in `kernel-edge`,
+- [x] Both `Gateway` objects are kernel resources in `kernel-edge`,
       reconciled by the operator from the Cluster claim. Tenants get listeners
       and own `HTTPRoute`s only — under `mergeGateways` listener uniqueness is
       class-wide, so a tenant-owned Gateway could claim another tenant's
