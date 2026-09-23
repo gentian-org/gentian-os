@@ -127,7 +127,13 @@ func patchHairpinCorefile(corefile, edgeIP, kernelDomain string, tenantHosts map
 			continue
 		}
 
-		outLines = append(outLines, line)
+		// A host inside our own markers that nothing wants any more: a tenant
+		// that was deleted, an app that was uninstalled, or a kernel domain
+		// this cluster was installed under before. It goes. Keeping it was
+		// not harmless -- the line pins a name to an address that may now
+		// belong to something else, and it does so for every pod in the
+		// cluster, which is the one place a stale override is hardest to see.
+		changed = true
 	}
 
 	for host := range httpsHosts {

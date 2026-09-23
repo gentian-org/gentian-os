@@ -190,3 +190,65 @@ func TestPatchHairpinCorefile_ReportsUnplaceableCorefile(t *testing.T) {
 		t.Fatal("expected no change when there is no kubernetes directive to anchor the hosts block to")
 	}
 }
+
+// A host inside the markers that nothing wants any more is removed: the
+// block used to keep every line it did not recognise, so a cluster carried
+// the hostnames of every domain it had ever been installed under, each
+// pinned to an address that might since belong to something else.
+func TestPatchHairpinCorefile_RetiresHostsNothingWants(t *testing.T) {
+	t.Parallel()
+
+	corefile := `# BEGIN gentian-hairpin
+          192.0.2.36 platform.example.test
+          192.0.2.36 console.platform.example.test
+          192.0.2.36 id.platform.example.test
+          192.0.2.36 argocd.platform.example.test
+          192.0.2.36 mail.platform.example.test
+          198.51.100.7 old.previous.test
+          198.51.100.7 console.previous.test
+          198.51.100.7 mail.previous.test
+          # END gentian-hairpin`
+
+	patched, changed := patchHairpinCorefile(corefile, "192.0.2.36", "platform.example.test", nil)
+	if !changed {
+		t.Fatal("expected the stale hosts to be retired")
+	}
+	for _, gone := range []string{"old.previous.test", "console.previous.test", "mail.previous.test"} {
+		if strings.Contains(patched, gone) {
+			t.Errorf("%q survived:\n%s", gone, patched)
+		}
+	}
+	// What this cluster wants is untouched, the mail host included.
+	for _, kept := range []string{
+		"192.0.2.36 platform.example.test",
+		"192.0.2.36 console.platform.example.test",
+		"192.0.2.36 id.platform.example.test",
+		"192.0.2.36 argocd.platform.example.test",
+		"192.0.2.36 mail.platform.example.test",
+	} {
+		if !strings.Contains(patched, kept) {
+			t.Errorf("%q was dropped:\n%s", kept, patched)
+		}
+	}
+	// And a second pass changes nothing.
+	if _, changed := patchHairpinCorefile(patched, "192.0.2.36", "platform.example.test", nil); changed {
+		t.Error("retiring stale hosts is not idempotent")
+	}
+}
+
+// A tenant's app hostnames are retired with the tenant: they reach this
+// function as the tenantHosts set, and a set that no longer names them is
+// how a deleted tenant's overrides disappear.
+func TestPatchHairpinCorefile_RetiresTenantHostsWithTheTenant(t *testing.T) {
+	t.Parallel()
+
+	corefile := `# BEGIN gentian-hairpin
+          192.0.2.36 platform.example.test
+          192.0.2.36 chat.demo.platform.example.test
+          # END gentian-hairpin`
+
+	patched, changed := patchHairpinCorefile(corefile, "192.0.2.36", "platform.example.test", nil)
+	if !changed || strings.Contains(patched, "chat.demo.platform.example.test") {
+		t.Fatalf("the deleted tenant's host survived:\n%s", patched)
+	}
+}
