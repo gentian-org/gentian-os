@@ -45,7 +45,7 @@ const (
 func kernelHTTPSHairpinHosts(kernelDomain string) map[string]struct{} {
 	hosts := []string{
 		kernelDomain,
-		"portal." + kernelDomain,
+		consoleHost(kernelDomain),
 		"id." + kernelDomain,
 		"argocd." + kernelDomain,
 	}
@@ -207,8 +207,8 @@ func sortedHairpinHosts(kernelDomain string) []string {
 	return []string{
 		kernelDomain,
 		"argocd." + kernelDomain,
+		consoleHost(kernelDomain),
 		"id." + kernelDomain,
-		"portal." + kernelDomain,
 	}
 }
 

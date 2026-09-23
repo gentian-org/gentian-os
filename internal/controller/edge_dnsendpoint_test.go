@@ -75,7 +75,7 @@ func TestTunnelClusterPublishesEveryHostname(t *testing.T) {
 	ctx := context.Background()
 	ing := NewCloudflareTunnelIngress("t", "z", "abc-123.cfargotunnel.com", "")
 
-	hosts := []string{"portal.example.test", "id.example.test", "portal.example.test", ""}
+	hosts := []string{"www.example.test", "id.example.test", "www.example.test", ""}
 	if err := syncEdgeDNSEndpoint(ctx, c, ing, "platform-kernel", hosts); err != nil {
 		t.Fatalf("sync: %v", err)
 	}

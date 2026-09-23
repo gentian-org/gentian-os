@@ -89,7 +89,7 @@ spec:
         desktop:
           enabled: true
           chart:
-            version: {{ printf "0.1.0-%s" (.Values.portal.imageBranch | default "develop") | quote }}
+            version: {{ printf "0.1.0-%s" (.Values.desktop.chartBranch | default "develop") | quote }}
         director:
           enabled: true
           entitlements: "off"

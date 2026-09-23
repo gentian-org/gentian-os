@@ -86,7 +86,7 @@ func TestReconcileKeycloakIDPGatewayRoutePatchesHTTPRoute(t *testing.T) {
 			break
 		}
 	}
-	if csp == "" || !strings.Contains(csp, "https://portal.platform.example.test") || !strings.Contains(csp, "https://*.demo.platform.example.test") {
+	if csp == "" || !strings.Contains(csp, "https://console.platform.example.test") || !strings.Contains(csp, "https://*.demo.platform.example.test") {
 		t.Fatalf("unexpected CSP: %q", csp)
 	}
 }

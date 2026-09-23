@@ -20,7 +20,6 @@ import (
 	"context"
 	"fmt"
 
-	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/equality"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -44,12 +43,15 @@ const (
 	kernelRouteHTTPRedirect     = "kernel-http-redirect"
 	kernelRouteArgoCD           = "kernel-argocd"
 	kernelRouteHeadlamp         = "kernel-headlamp"
-	kernelRouteGentianPortal    = "kernel-gentian-portal"
-	kernelRouteGentianPortalWWW = "kernel-gentian-portal-www"
-	kernelRouteLiteLLM          = "kernel-llm"
+	// The name people type: an alias of the console, by redirect.
+	kernelRouteWWWRedirect = "kernel-www-redirect"
+	kernelRouteLiteLLM     = "kernel-llm"
 
-	gentianPortalAPIService = "gentian-portal-gentian-portal-api"
-	gentianPortalWebService = "gentian-portal-gentian-portal-web"
+	// consoleSubdomain is the desktop's host label in every zone
+	// (networking.md §3): console.<kernel> for the platform, console.<t>.<kernel>
+	// for a tenant. The desktop profile exposes it under this name, and
+	// every redirect and frame policy here assumes it.
+	consoleSubdomain = "console"
 
 	argocdServerServiceName = "argocd-server"
 	headlampServiceName     = "headlamp"
@@ -121,7 +123,7 @@ func (r *GatewayPlatformReconciler) reconcileKernelHTTPRoutes(ctx context.Contex
 	}
 
 	specs := kernelHTTPRouteSpecs(r.KernelDomain, effectiveDomains, oidcSubs, tenantNames,
-		clusterLLMEnabled(ctx, r.Client), portalDeployed(ctx, r.Client), r.Cluster, r.kernelZoneReady(ctx))
+		clusterLLMEnabled(ctx, r.Client), r.Cluster, r.kernelZoneReady(ctx), desktopPresent(ctx, r.Client))
 	// The shim's table first: a route whose policy asks the shim before the
 	// shim knows the host is refused, which is the right direction, but a
 	// short one.
@@ -175,17 +177,19 @@ func (r *GatewayPlatformReconciler) reconcileKernelHTTPRoutes(ctx context.Contex
 	return r.deleteStaleKernelHTTPRoutes(ctx, expected)
 }
 
-// portalDeployed reports whether the Gentian portal is actually running, which
-// is what its routes wait for.
-//
-// Read from the Service rather than from a claim field: the claim says what the
-// cluster should have, and a hostname published ahead of the workload is a
-// public 500 for however long the gap lasts. The web Service is the one the
-// SPA is served from, so it is the one whose absence means "not yet".
-func portalDeployed(ctx context.Context, c client.Reader) bool {
-	svc := &corev1.Service{}
-	err := c.Get(ctx, client.ObjectKey{Name: gentianPortalWebService, Namespace: servicesNamespace}, svc)
-	return err == nil
+// desktopPresent reports whether this cluster ships a desktop at all: the
+// profile the operator chart installs (ui-restructure.md §1). Without it
+// there is no console anywhere, and nothing is redirected to one.
+func desktopPresent(ctx context.Context, c client.Reader) bool {
+	profile := &gentianov1alpha1.ComponentProfile{}
+	return c.Get(ctx, client.ObjectKey{Name: DesktopProfileName}, profile) == nil
+}
+
+// consoleHost is where a zone's desktop answers, console.<zone>
+// (networking.md §3): the name the desktop profile exposes and the
+// component reconciler routes.
+func consoleHost(zoneDomain string) string {
+	return consoleSubdomain + "." + zoneDomain
 }
 
 func kernelHTTPRouteSpecs(
@@ -194,12 +198,11 @@ func kernelHTTPRouteSpecs(
 	tenantOIDCSubdomains map[string][]string,
 	tenantNames []string,
 	llmEnabled bool,
-	portalDeployed bool,
 	cluster string,
 	kernelZoneReady bool,
+	desktop bool,
 ) []kernelHTTPRouteSpec {
 	idHost := fmt.Sprintf("id.%s", kernelDomain)
-	portalHost := kernelPortalHost(kernelDomain)
 
 	kcService := suzeKeycloakHTTPServiceName()
 	kcPort := int32(8080)
@@ -260,75 +263,44 @@ func kernelHTTPRouteSpecs(
 			authz:  &routeAuthz{relation: "can_configure", object: clusterObject},
 		})
 	}
-	// The Gentian UI portal (API + SPA); edge traffic reaches
-	// the edge Gateways in servicesNamespace via the tunnel.
-	//
-	// Only once the portal is actually deployed. A route whose backends do not
-	// exist is not inert: the hostname is published on the tunnel and given a
-	// DNS record, so the portal's address becomes a public 500 rather than a
-	// name that does not resolve yet.
-	if portalDeployed {
-		specs = append(specs, kernelHTTPRouteSpec{
-			name:        kernelRouteGentianPortal,
-			host:        portalHost,
-			sectionName: wildcardListenerName,
-			rules:       kernelGentianPortalHTTPRouteRules(),
-		})
-		// The same desktop on the name people type into a browser. Served
-		// rather than redirected: a redirect would change the address bar
-		// mid-login and drop anything travelling on the request, and the
-		// portal is one deployment either way.
-		specs = append(specs, kernelHTTPRouteSpec{
-			name:        kernelRouteGentianPortalWWW,
-			host:        "www." + kernelDomain,
-			sectionName: wildcardListenerName,
-			rules:       kernelGentianPortalHTTPRouteRules(),
-		})
-	}
-	// Serve the portal on each tenant's own host, rather than redirecting there to
-	// the shared one.
-	//
-	// A redirect cannot carry anything: the gateway filter replaces path and query
-	// wholesale, so a login hint travelling on <tenant>.<kernel-domain> was dropped
-	// before the portal ever saw it. Answering directly also means the address bar
-	// stays on the tenant's name instead of bouncing through portal.<kernel-domain>.
-	//
-	// Same rules and the same backends as the shared route, so there is one portal
-	// deployment answering on more names — not a copy per tenant, which would put
-	// the portal's Keycloak admin credentials inside every tenant's blast radius.
-	//
-	// Consequence worth knowing: tokens live in sessionStorage, which is per origin,
-	// so a user signed in on the tenant host is a separate session from the same
-	// user on portal.<kernel-domain>. Keycloak's SSO cookie makes crossing between
-	// them silent, but they are two sessions.
-	for i, domain := range tenantEffectiveDomains {
-		if i >= len(tenantNames) {
-			break
-		}
-		if !portalDeployed {
-			break
-		}
-		specs = append(specs, kernelHTTPRouteSpec{
-			name: fmt.Sprintf("tenant-%s-portal", tenantNames[i]),
-			host: domain,
-			// The tenant apex listener carries the tenant's own certificate.
-			// buildKernelGateway creates it from the same filtered tenant list
-			// that produced this route, so it is always present.
-			sectionName: wildcardListenerName,
-			rules:       kernelGentianPortalHTTPRouteRules(),
-		})
-	}
-	// The apex sends visitors to the portal, so it waits for the same thing the
-	// portal route does rather than redirecting to a name that does not resolve.
-	if portalDeployed {
-		specs = append(specs, kernelHTTPRouteSpec{
-			name:        kernelRouteKernelApex,
-			host:        kernelDomain,
-			sectionName: wildcardListenerName,
-			rules: []gatewayv1.HTTPRouteRule{
-				kernelApexRedirectRule(kernelDomain),
+	// The desktop is the tenant's own component, routed where it runs
+	// (tenant-<t>, on console.<zone>); the kernel routes two names to it.
+	// www.<kernel> and the apex are the names people type, and both send the
+	// browser to the platform console with path and query kept: a session
+	// travels in cookies on the kernel domain, so nothing is lost on the way.
+	// Only once the kernel zone exists, because the console does not before.
+	if kernelZoneReady && desktop {
+		console := consoleHost(kernelDomain)
+		specs = append(specs,
+			kernelHTTPRouteSpec{
+				name:        kernelRouteWWWRedirect,
+				host:        "www." + kernelDomain,
+				sectionName: wildcardListenerName,
+				rules:       []gatewayv1.HTTPRouteRule{consoleRedirectRule(console)},
 			},
-		})
+			kernelHTTPRouteSpec{
+				name:        kernelRouteKernelApex,
+				host:        kernelDomain,
+				sectionName: wildcardListenerName,
+				rules:       []gatewayv1.HTTPRouteRule{consoleRedirectRule(console)},
+			},
+		)
+	}
+	// A tenant's apex likewise sends the browser to the tenant's own console.
+	// The apex is published with the tenant either way (it is the tenant's
+	// name), so the redirect is what makes it answer.
+	if desktop {
+		for i, domain := range tenantEffectiveDomains {
+			if i >= len(tenantNames) {
+				break
+			}
+			specs = append(specs, kernelHTTPRouteSpec{
+				name:        fmt.Sprintf("tenant-%s-apex", tenantNames[i]),
+				host:        domain,
+				sectionName: wildcardListenerName,
+				rules:       []gatewayv1.HTTPRouteRule{consoleRedirectRule(consoleHost(domain))},
+			})
+		}
 	}
 	specs = append(specs,
 		kernelHTTPRouteSpec{
@@ -384,15 +356,6 @@ func kernelHTTPRouteSpecs(
 		})
 	}
 	return specs
-}
-
-func kernelGentianPortalHTTPRouteRules() []gatewayv1.HTTPRouteRule {
-	return []gatewayv1.HTTPRouteRule{
-		kernelBackendRulePrefixNS(gentianPortalAPIService, servicesNamespace, 8000, "/api"),
-		kernelBackendRuleExactNS(gentianPortalAPIService, servicesNamespace, 8000, "/healthz"),
-		kernelBackendRuleExactNS(gentianPortalAPIService, servicesNamespace, 8000, "/readyz"),
-		kernelBackendRulePrefixNS(gentianPortalWebService, servicesNamespace, 8080, "/"),
-	}
 }
 
 // kernelBackendRuleNS routes one match to one Service, optionally cross-namespace.
@@ -560,19 +523,16 @@ func kernelHTTPSRedirectRule() gatewayv1.HTTPRouteRule {
 	}
 }
 
-func kernelApexRedirectRule(kernelDomain string) gatewayv1.HTTPRouteRule {
+// consoleRedirectRule sends every request on a host to the console, keeping
+// path and query: a redirect that replaced them dropped whatever travelled on
+// the request, which is why the portal used to be served on these names
+// rather than redirected. Nothing travels on them now -- the session is in
+// cookies on the zone's domain -- so an alias by redirect loses nothing.
+func consoleRedirectRule(console string) gatewayv1.HTTPRouteRule {
 	scheme := "https"
 	status := 302
 	port := gatewayv1.PortNumber(443)
-	pathType := gatewayv1.FullPathHTTPPathModifier
-	// No trailing slash. The portal's router declares the route as "/login"
-	// (frontend/src/router.tsx) and TanStack Router does not normalise the
-	// difference — "/login/" matches nothing and renders its not-found page. The
-	// static server answers both with 200 and index.html, so this is invisible
-	// from the outside: only the browser sees the 404, and only via the apex
-	// redirect, since nothing in the app ever links to "/login/".
-	loginPath := "/login"
-	portalHost := gatewayv1.PreciseHostname(kernelPortalHost(kernelDomain))
+	host := gatewayv1.PreciseHostname(console)
 	return gatewayv1.HTTPRouteRule{
 		Matches: []gatewayv1.HTTPRouteMatch{pathPrefixMatch("/")},
 		Filters: []gatewayv1.HTTPRouteFilter{
@@ -580,8 +540,7 @@ func kernelApexRedirectRule(kernelDomain string) gatewayv1.HTTPRouteRule {
 				Type: gatewayv1.HTTPRouteFilterRequestRedirect,
 				RequestRedirect: &gatewayv1.HTTPRequestRedirectFilter{
 					Scheme:     &scheme,
-					Hostname:   &portalHost,
-					Path:       &gatewayv1.HTTPPathModifier{Type: pathType, ReplaceFullPath: &loginPath},
+					Hostname:   &host,
 					Port:       &port,
 					StatusCode: &status,
 				},

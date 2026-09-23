@@ -49,10 +49,6 @@ func appBackendTrafficPolicyName(tenantName, appProfile string) string {
 	return fmt.Sprintf("btp-%s-%s", tenantName, appProfile)
 }
 
-func tenantApexRedirectRouteName(tenantName string) string {
-	return tenantPortalRedirectName(tenantName)
-}
-
 func gatewayParentRef(gatewayName string) gatewayv1.ParentReference {
 	g := gatewayv1.Group("gateway.networking.k8s.io")
 	k := gatewayv1.Kind("Gateway")
@@ -213,6 +209,8 @@ func buildAppHTTPRoute(
 				}
 			}
 		case gentianov1alpha1.APIIntegrationRuntimePortalProxy:
+			// The tenant's own desktop, the BFF beside this route in the
+			// tenant's namespace (ui-restructure.md §1) -- not a shared one.
 			portVal := gatewayv1.PortNumber(8000)
 			rule = gatewayv1.HTTPRouteRule{
 				Matches: []gatewayv1.HTTPRouteMatch{pathPrefixMatch("/")},
@@ -220,9 +218,8 @@ func buildAppHTTPRoute(
 					{
 						BackendRef: gatewayv1.BackendRef{
 							BackendObjectReference: gatewayv1.BackendObjectReference{
-								Name:      gatewayv1.ObjectName("gentian-portal-gentian-portal-api"),
-								Namespace: (*gatewayv1.Namespace)(&servicesNamespace),
-								Port:      &portVal,
+								Name: gatewayv1.ObjectName(desktopAPIServiceName),
+								Port: &portVal,
 							},
 						},
 					},
@@ -407,33 +404,30 @@ type gatewayFrameAncestorsPolicy struct {
 	Origins string
 }
 
-// portalOrigins lists every origin the portal answers on for one tenant. There
-// are two: the shared kernel host, and the tenant's own apex, which
-// kernelHTTPRouteSpecs serves the same portal deployment from. Anything an
-// embedded app may be framed by has to name both, since frame-ancestors is
-// checked against the whole ancestor chain and the top frame is whichever host
-// the user happens to be signed in on.
+// consoleOrigins lists every desktop an app of one tenant may be framed by:
+// the tenant's own console, and the platform's, whose tiles open a tenant's
+// apps too. frame-ancestors is checked against the whole ancestor chain and
+// the top frame is whichever console the user came from, so both are named.
 //
 // Both the computed default below and the "portal" token in
 // ingressFrameAncestorsPolicy resolve through here. They used to enumerate the
-// hosts separately, and when the portal gained the tenant apex the token kept
-// naming only portal.<kernel-domain> — so the one route that opts out of the
-// default (Collabora) lost the origin the user was actually on, and every
-// document open failed with "Failed to load Nextcloud Office" while the server
-// side stayed healthy. A third portal hostname must reach both policies at once.
-func portalOrigins(kernelDomain, effectiveDomain string) []string {
+// hosts separately, and the one route that opts out of the default (Collabora)
+// lost the origin the user was actually on, and every document open failed
+// with "Failed to load Nextcloud Office" while the server side stayed healthy.
+// A console hostname must reach both policies at once.
+func consoleOrigins(kernelDomain, effectiveDomain string) []string {
 	var origins []string
 	if kernelDomain != "" {
-		origins = append(origins, fmt.Sprintf("https://%s", kernelPortalHost(kernelDomain)))
+		origins = append(origins, "https://"+consoleHost(kernelDomain))
 	}
 	if effectiveDomain != "" && effectiveDomain != kernelDomain {
-		origins = append(origins, fmt.Sprintf("https://%s", effectiveDomain))
+		origins = append(origins, "https://"+consoleHost(effectiveDomain))
 	}
 	return origins
 }
 
 func computeGatewayFrameAncestorsPolicy(kernelDomain, effectiveDomain, _ string) gatewayFrameAncestorsPolicy {
-	origins := portalOrigins(kernelDomain, effectiveDomain)
+	origins := consoleOrigins(kernelDomain, effectiveDomain)
 	if effectiveDomain != "" && effectiveDomain != kernelDomain {
 		origins = append(origins, fmt.Sprintf("https://*.%s", effectiveDomain))
 	}

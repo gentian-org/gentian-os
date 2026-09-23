@@ -732,7 +732,7 @@ verify_argocd_apps() {
             [[ -n "$_app" ]] && synced=$((synced + 1))
         done < <(kubectl get applications -n argocd \
             -o jsonpath='{range .items[?(@.status.sync.status=="OutOfSync" && @.status.health.status=="Healthy")]}{.metadata.name}{"\n"}{end}' \
-            2>/dev/null | grep -E '^(gentian-os|gentian-appsets|gentian-portal)$' || true)
+            2>/dev/null | grep -E '^(gentian-os|gentian-appsets)$' || true)
         healthy=$(kubectl get applications -n argocd \
             -o jsonpath='{range .items[?(@.status.health.status=="Healthy")]}{.metadata.name}{"\n"}{end}' \
             2>/dev/null | wc -l)

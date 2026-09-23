@@ -61,7 +61,7 @@ func ingressFrameAncestorsPolicy(
 	for _, token := range spec.Origins {
 		switch strings.TrimSpace(token) {
 		case gatewayFrameAncestorsOriginPortal:
-			for _, origin := range portalOrigins(kernelDomain, effectiveDomain) {
+			for _, origin := range consoleOrigins(kernelDomain, effectiveDomain) {
 				add(origin)
 			}
 		case gatewayFrameAncestorsOriginMainApp:

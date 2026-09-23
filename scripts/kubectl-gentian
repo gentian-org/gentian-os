@@ -1134,9 +1134,9 @@ print_tenant_admin_login_instructions() {
 
   local portal_base
   if [[ -n "${kernel_domain_name}" ]]; then
-    portal_base="https://portal.${kernel_domain_name}"
+    portal_base="https://console.${kernel_domain_name}"
   else
-    portal_base="https://portal.<KERNEL_DOMAIN>"
+    portal_base="https://console.<KERNEL_DOMAIN>"
   fi
 
   echo ""

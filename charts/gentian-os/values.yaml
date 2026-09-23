@@ -191,16 +191,16 @@ director:
 # bootstrap turns it on.
 desktop:
   enabled: false
-  # The host label of the desktop in its tenant's zone: console.<kernel> for
-  # the platform tenant, console.<t>.<kernel> for every other.
-  subDomain: console
   chart:
     repository: oci://ghcr.io/gentian-org/charts
     name: gentian-portal
     # A moving prerelease per branch on a dev cluster; a release pins one.
     version: 0.1.0-develop
-  # Values the profile carries as its own (the chart's images, for instance).
-  extraValues: {}
+  # Values the profile carries as its own. The chart's objects are named
+  # after the component, not the Release (which carries the namespace too),
+  # so that the profile's exposures can name the Services.
+  extraValues:
+    fullnameOverride: desktop-gentian-portal
 
 # The ext-auth shim: L2 of the edge, run in the edge namespace from this
 # image. Off by default; the v5 bootstrap turns it on with the director,

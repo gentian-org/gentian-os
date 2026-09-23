@@ -68,12 +68,9 @@ _v5_render() {
         --set-string "appsets.enabled=${V5_APPSETS:-false}" \
         --set-string "operator.enabled=${V5_OPERATOR:-false}" \
         --set-string "operator.tag=${GENTIAN_OS_IMAGE_TAG:-}" \
-        --set-string "portal.enabled=${V5_PORTAL:-false}" \
         --set-string "headlamp.oidc.enabled=${V5_HEADLAMP_OIDC:-false}" \
         --set-string "kernelRealm=${KERNEL_REALM:-kernel}" \
-        --set-string "portal.repo=${GENTIAN_UI_REPO:-https://github.com/gentian-org/gentian-ui}" \
-        --set-string "portal.revision=${GENTIAN_UI_BRANCH:-develop}" \
-        --set-string "portal.imageBranch=${PORTAL_IMAGE_TAG:-develop}" \
+        --set-string "desktop.chartBranch=${PORTAL_IMAGE_TAG:-develop}" \
         --set-string "llmEnabled=${LLM_SUPPORT:-false}" \
         --set-string "tenancyMode=${TENANCY_MODE:-multi}" \
         --set-string "acmeStaging=${acme_staging}" \

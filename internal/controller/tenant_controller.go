@@ -678,11 +678,6 @@ func (r *TenantReconciler) reconcileDelete(ctx context.Context, tenant *gentiano
 		return ctrl.Result{}, err
 	}
 
-	// Clean up portal redirect routes.
-	if err := r.deletePortalRedirect(ctx, tenant); err != nil {
-		return ctrl.Result{}, err
-	}
-
 	// Delete the XTenant composite so Crossplane cascades deletion of
 	// the Composition-managed resources (Namespace, NetworkPolicy, OpenBao policy,
 	// App claims). "Not found" is treated as already deleted.

@@ -592,11 +592,11 @@ From [security-gap-closing.md](security-gap-closing.md).
          database from the granted requirement; tiles from the director —
          the kernel consoles from `/v1/clusters/{c}/tiles`, the admin tile by
          `can_administer` from a `GET /v1/tenants/{t}/me` relations read.
-      6. `[ ]` **Kernel UIs behind the kernel session** (WP-4): Argo CD,
+      6. `[x]` **Kernel UIs behind the kernel session** (WP-4): Argo CD,
          Headlamp and `id-admin` routes carry the zone's `SecurityPolicy` and
          the shim's `can_configure` / `can_audit`; each tool's own OIDC login
          is the silent second factor.
-      7. `[ ]` **Retire** the portal in `kernel-edge`, `portal.<kernel>`, the
+      7. `[x]` **Retire** the portal in `kernel-edge`, `portal.<kernel>`, the
          portal secret and BFF client in the identity bootstrap, and
          `kernelPortalHost`; `www.<kernel>` is an alias of the console.
       8. `[ ]` **Purge and reinstall** — the confirmation cycle; every

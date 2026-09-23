@@ -81,7 +81,7 @@ func TestBuildKernelGateway(t *testing.T) {
 	// A listener's hostname both selects it by SNI and gates which routes may
 	// attach, and a route only attaches where its hostnames intersect. The
 	// kernel certificate covers platform.example.test and *.platform.example.test, so a
-	// browser may coalesce portal.platform.example.test onto an existing
+	// browser may coalesce console.platform.example.test onto an existing
 	// platform.example.test connection; with a listener scoped to the apex that
 	// request had nowhere to attach and Envoy returned a bare 404. Serving every
 	// name the certificate covers from one listener removes the hole.
@@ -292,7 +292,7 @@ func TestComputeGatewayFrameAncestorsPolicy(t *testing.T) {
 	if policy.Mode != gatewayFrameAncestorsReplace {
 		t.Fatalf("mode = %q", policy.Mode)
 	}
-	if policy.Origins != "https://portal.platform.example.test https://demo.platform.example.test https://*.demo.platform.example.test" {
+	if policy.Origins != "https://console.platform.example.test https://console.demo.platform.example.test https://*.demo.platform.example.test" {
 		t.Fatalf("origins = %q", policy.Origins)
 	}
 }
@@ -317,13 +317,13 @@ func TestIngressGatewayFrameAncestorsPolicy(t *testing.T) {
 	if !strings.Contains(policy.Origins, "https://cloud.demo.platform.example.test") {
 		t.Fatalf("origins = %q", policy.Origins)
 	}
-	if !strings.Contains(policy.Origins, "https://portal.platform.example.test") {
+	if !strings.Contains(policy.Origins, "https://console.platform.example.test") {
 		t.Fatalf("origins = %q", policy.Origins)
 	}
-	// The portal answers on the tenant apex too, and that is the host a tenant
-	// user is normally signed in on. Leaving it out passes every server-side
-	// check and still blocks the iframe in the browser, so assert it explicitly.
-	if !strings.Contains(policy.Origins, "https://demo.platform.example.test") {
+	// The tenant's own console is the host a tenant user is normally signed
+	// in on. Leaving it out passes every server-side check and still blocks
+	// the iframe in the browser, so assert it explicitly.
+	if !strings.Contains(policy.Origins, "https://console.demo.platform.example.test") {
 		t.Fatalf("origins = %q", policy.Origins)
 	}
 }
@@ -345,7 +345,7 @@ func TestIngressGatewayFrameAncestorsPortalTokenMatchesRoutedPortalHosts(t *test
 	if !ok {
 		t.Fatal("expected custom policy")
 	}
-	want := strings.Join(portalOrigins("platform.example.test", "demo.platform.example.test"), " ")
+	want := strings.Join(consoleOrigins("platform.example.test", "demo.platform.example.test"), " ")
 	if policy.Origins != want {
 		t.Fatalf("origins = %q, want %q", policy.Origins, want)
 	}
@@ -416,7 +416,7 @@ func TestAppAPIBackendRulesApplyEmbeddingFilters(t *testing.T) {
 	if modifier == nil || len(modifier.Set) != 1 {
 		t.Fatalf("modifier = %+v", modifier)
 	}
-	if !strings.Contains(modifier.Set[0].Value, "https://portal.platform.example.test") {
+	if !strings.Contains(modifier.Set[0].Value, "https://console.platform.example.test") {
 		t.Fatalf("csp = %q", modifier.Set[0].Value)
 	}
 }
@@ -473,17 +473,17 @@ func TestBuildAppBackendTrafficPolicyObject(t *testing.T) {
 
 func TestKernelHTTPRouteSpecs(t *testing.T) {
 	t.Parallel()
-	specs := kernelHTTPRouteSpecs("platform.example.test", []string{"demo.platform.example.test"}, nil, []string{"demo"}, false, true, "c1", true)
-	// One route per kernel host, plus one per tenant host serving the portal.
-	// Asserted by name rather than by count, so adding a route does not fail a
-	// test that has nothing to do with it.
+	specs := kernelHTTPRouteSpecs("platform.example.test", []string{"demo.platform.example.test"}, nil, []string{"demo"}, false, "c1", true, true)
+	// One route per kernel host, plus one per tenant apex sending the browser
+	// to that tenant's console. Asserted by name rather than by count, so
+	// adding a route does not fail a test that has nothing to do with it.
 	byName := map[string]kernelHTTPRouteSpec{}
 	for _, s := range specs {
 		byName[s.name] = s
 	}
 	for _, want := range []string{
-		kernelRouteKeycloakIDP, kernelRouteKeycloakRefused, kernelRouteKeycloakAdmin, kernelRouteGentianPortal, kernelRouteKernelApex,
-		kernelRouteArgoCD, kernelRouteHTTPRedirect, "tenant-demo-portal",
+		kernelRouteKeycloakIDP, kernelRouteKeycloakRefused, kernelRouteKeycloakAdmin, kernelRouteWWWRedirect, kernelRouteKernelApex,
+		kernelRouteArgoCD, kernelRouteHTTPRedirect, "tenant-demo-apex",
 	} {
 		if _, ok := byName[want]; !ok {
 			t.Fatalf("missing kernel route %q; got %v", want, specs)
@@ -549,31 +549,43 @@ func TestKernelHTTPRouteSpecs(t *testing.T) {
 	if got := string(redirect.Spec.ParentRefs[0].Name); got != PerimeterGatewayName {
 		t.Fatalf("http redirect parent = %q, want the perimeter Gateway", got)
 	}
-	portalRoute := buildKernelHTTPRoute(byName[kernelRouteGentianPortal])
-	if string(portalRoute.Spec.Hostnames[0]) != "portal.platform.example.test" {
-		t.Fatalf("portal host = %v", portalRoute.Spec.Hostnames[0])
+	// www is an alias of the platform console, by redirect; a tenant's apex
+	// is an alias of the tenant's own.
+	www := buildKernelHTTPRoute(byName[kernelRouteWWWRedirect])
+	if string(www.Spec.Hostnames[0]) != "www.platform.example.test" {
+		t.Fatalf("www host = %v", www.Spec.Hostnames[0])
 	}
-	ns := portalRoute.Spec.Rules[0].BackendRefs[0].Namespace
-	if ns == nil || string(*ns) != servicesNamespace {
-		t.Fatalf("portal api backend namespace = %v, want %s", ns, servicesNamespace)
+	if got := *www.Spec.Rules[0].Filters[0].RequestRedirect.Hostname; string(got) != "console.platform.example.test" {
+		t.Fatalf("www redirects to %q", got)
+	}
+	apex := buildKernelHTTPRoute(byName["tenant-demo-apex"])
+	if got := *apex.Spec.Rules[0].Filters[0].RequestRedirect.Hostname; string(got) != "console.demo.platform.example.test" {
+		t.Fatalf("tenant apex redirects to %q", got)
 	}
 }
 
-// A route whose backends do not exist is not inert. Its hostname is published
-// on the tunnel and given a DNS record, so the portal's address answers 500 to
-// anyone who visits it, for as long as the portal is not deployed. Until then
-// the name should simply not resolve.
-func TestNoPortalRoutesBeforeThePortalIsDeployed(t *testing.T) {
+// A redirect to a console that does not exist is a public dead end, so
+// without a desktop profile no name is sent to one -- and before the kernel
+// zone exists there is no platform console to send the kernel names to.
+func TestNoConsoleRedirectsWithoutADesktop(t *testing.T) {
 	t.Parallel()
 	specs := kernelHTTPRouteSpecs("platform.example.test",
-		[]string{"demo.platform.example.test"}, nil, []string{"demo"}, false, false, "c1", true)
+		[]string{"demo.platform.example.test"}, nil, []string{"demo"}, false, "c1", true, false)
 	for _, s := range specs {
 		switch s.name {
-		case kernelRouteGentianPortal, kernelRouteKernelApex, "tenant-demo-portal":
-			t.Errorf("route %q published with no portal behind it", s.name)
+		case kernelRouteWWWRedirect, kernelRouteKernelApex, "tenant-demo-apex":
+			t.Errorf("route %q published with no desktop behind it", s.name)
 		}
 	}
-	// The routes that do not depend on the portal are still there.
+	specs = kernelHTTPRouteSpecs("platform.example.test",
+		[]string{"demo.platform.example.test"}, nil, []string{"demo"}, false, "c1", false, true)
+	for _, s := range specs {
+		switch s.name {
+		case kernelRouteWWWRedirect, kernelRouteKernelApex:
+			t.Errorf("route %q published before the kernel zone exists", s.name)
+		}
+	}
+	// The routes that do not depend on the desktop are still there.
 	var sawIDP bool
 	for _, s := range specs {
 		if s.name == kernelRouteKeycloakIDP {
@@ -581,12 +593,12 @@ func TestNoPortalRoutesBeforeThePortalIsDeployed(t *testing.T) {
 		}
 	}
 	if !sawIDP {
-		t.Error("the identity route should not wait for the portal")
+		t.Error("the identity route should not wait for the desktop")
 	}
 }
 
 func TestKernelHTTPRouteSpecsLLMDisabledByDefault(t *testing.T) {
-	specs := kernelHTTPRouteSpecs("platform.example.test", []string{"demo.platform.example.test"}, nil, []string{"demo"}, false, true, "c1", true)
+	specs := kernelHTTPRouteSpecs("platform.example.test", []string{"demo.platform.example.test"}, nil, []string{"demo"}, false, "c1", true, true)
 	for _, spec := range specs {
 		if spec.name == kernelRouteLiteLLM {
 			t.Fatalf("kernel-llm route present with llm disabled")
@@ -595,7 +607,7 @@ func TestKernelHTTPRouteSpecsLLMDisabledByDefault(t *testing.T) {
 }
 
 func TestKernelHTTPRouteSpecsLLMEnabled(t *testing.T) {
-	specs := kernelHTTPRouteSpecs("platform.example.test", nil, nil, nil, true, true, "c1", true)
+	specs := kernelHTTPRouteSpecs("platform.example.test", nil, nil, nil, true, "c1", true, true)
 	// By name, not by count: adding a kernel route should not fail a test
 	// about the LLM one. The LLM route is still appended last, which is what
 	// the specs[len-1] lookup below relies on.
@@ -604,7 +616,7 @@ func TestKernelHTTPRouteSpecsLLMEnabled(t *testing.T) {
 		byName[s.name] = struct{}{}
 	}
 	for _, want := range []string{
-		kernelRouteKeycloakIDP, kernelRouteGentianPortal, kernelRouteKernelApex,
+		kernelRouteKeycloakIDP, kernelRouteWWWRedirect, kernelRouteKernelApex,
 		kernelRouteArgoCD, kernelRouteHTTPRedirect, kernelRouteLiteLLM,
 	} {
 		if _, ok := byName[want]; !ok {
@@ -645,25 +657,19 @@ func TestKernelHTTPRouteSpecsLLMEnabled(t *testing.T) {
 	}
 }
 
-func TestKernelApexRedirectRule(t *testing.T) {
+func TestConsoleRedirectRule(t *testing.T) {
 	t.Parallel()
-	rule := kernelApexRedirectRule("platform.example.test")
+	rule := consoleRedirectRule("console.platform.example.test")
 	if len(rule.Filters) != 1 || rule.Filters[0].RequestRedirect == nil {
 		t.Fatalf("rule = %+v", rule)
 	}
 	redirect := rule.Filters[0].RequestRedirect
-	if redirect.Hostname == nil || string(*redirect.Hostname) != "portal.platform.example.test" {
+	if redirect.Hostname == nil || string(*redirect.Hostname) != "console.platform.example.test" {
 		t.Fatalf("hostname = %v", redirect.Hostname)
 	}
-	// No trailing slash: the portal router declares "/login" and TanStack Router
-	// does not normalise "/login/", so the apex redirect landed users on the
-	// app's not-found page. The static server answers both paths with 200 and
-	// index.html, so nothing outside the browser could see it.
-	if redirect.Path == nil || redirect.Path.ReplaceFullPath == nil {
-		t.Fatalf("apex redirect has no path modifier: %+v", redirect)
-	}
-	if got := *redirect.Path.ReplaceFullPath; got != "/login" {
-		t.Fatalf("apex redirect path = %q, want %q", got, "/login")
+	// Path and query travel: an alias by redirect loses nothing of the request.
+	if redirect.Path != nil {
+		t.Fatalf("console redirect rewrites the path: %+v", redirect.Path)
 	}
 }
 
@@ -675,7 +681,7 @@ func TestKernelApexRedirectRule(t *testing.T) {
 // content route silently attached to :80 as well. Gateway API then ranks a
 // route's specific hostname above the redirect route's absent one, so plaintext
 // requests were answered with content instead of a redirect and every kernel
-// host was reachable unencrypted (verified live: http://portal.<domain> -> 200).
+// host was reachable unencrypted (verified live: http://<kernel host> -> 200).
 //
 // The invariant is therefore: every kernel route names exactly one listener.
 func TestKernelHTTPRouteSpecsAllBindToAListener(t *testing.T) {
@@ -685,7 +691,7 @@ func TestKernelHTTPRouteSpecsAllBindToAListener(t *testing.T) {
 		nil,
 		[]string{"demo"},
 		true,
-		true, "c1", true)
+		"c1", true, true)
 	if len(specs) == 0 {
 		t.Fatal("no kernel route specs produced")
 	}
@@ -701,7 +707,7 @@ func TestKernelHTTPRouteSpecsAllBindToAListener(t *testing.T) {
 // the catch-all redirect must stay on :80. If it ever attached to a :443
 // listener it would redirect https traffic back to itself, forever.
 func TestKernelHTTPRedirectBindsOnlyToPort80(t *testing.T) {
-	specs := kernelHTTPRouteSpecs("platform.example.test", nil, nil, nil, false, true, "c1", true)
+	specs := kernelHTTPRouteSpecs("platform.example.test", nil, nil, nil, false, "c1", true, true)
 	var found bool
 	for _, s := range specs {
 		if s.name != kernelRouteHTTPRedirect {
@@ -757,7 +763,7 @@ func TestKernelConsolesMayBeFramedByTheDesktop(t *testing.T) {
 	observabilityNamespace = "kernel-observability"
 	t.Cleanup(func() { observabilityNamespace = saved })
 
-	specs := kernelHTTPRouteSpecs("platform.example.test", nil, nil, nil, false, true, "c1", true)
+	specs := kernelHTTPRouteSpecs("platform.example.test", nil, nil, nil, false, "c1", true, true)
 	for _, name := range []string{kernelRouteArgoCD, kernelRouteHeadlamp} {
 		var spec *kernelHTTPRouteSpec
 		for i := range specs {

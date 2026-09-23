@@ -78,6 +78,21 @@ const (
 	// reconciler copies into the shim's table; the question is in the
 	// annotations below.
 	edgeAuthzRouteLabel           = "gentianos.io/edge-authz"
+
+	// desktopAPIServiceName is the desktop's BFF Service in its tenant's
+	// namespace, as the desktop profile's api exposure names it.
+	desktopAPIServiceName = "desktop-gentian-portal-api"
+)
+
+// helmReleaseGVK is provider-helm's Release, the shape a component's chart is
+// installed as.
+var helmReleaseGVK = schema.GroupVersionKind{
+	Group:   "helm.crossplane.io",
+	Version: "v1beta1",
+	Kind:    "Release",
+}
+
+const (
 	edgeAuthzRelationAnnotation   = "gentianos.io/edge-authz-relation"
 	edgeAuthzObjectAnnotation     = "gentianos.io/edge-authz-object"
 	edgeAuthzForwardAnnotation    = "gentianos.io/edge-authz-forward-token"

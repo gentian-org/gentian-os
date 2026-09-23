@@ -68,20 +68,12 @@ smtpHost: ""
 # the cluster actually has.
 llmEnabled: "false"
 
-# The portal -- the desktop and its tiles. Applied by the portal login step,
-# after the Keycloak realm, clients and administrator user it signs people in
-# against exist.
-portal:
-  enabled: false
-  repo: https://github.com/gentian-org/gentian-ui
-  # The git ref the chart comes from.
-  revision: develop
-  # The branch whose builds the image updater follows. Separate from the ref
-  # above for the same reason the operator's is: only some branches publish.
-  imageBranch: develop
-  # An exact published tag, which also takes the image updater off the
-  # Application so the pin holds.
-  tag: ""
+# The desktop -- a component every tenant gets from the profile the operator
+# chart ships (ui-restructure.md §1). What the bootstrap decides is which
+# branch's chart that profile names: a prerelease per branch on a dev cluster,
+# and only some branches publish.
+desktop:
+  chartBranch: develop
 
 # The operator (and, with it, the director) — applied by D-01, once the
 # identity services its reconcilers address exist.

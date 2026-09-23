@@ -73,7 +73,7 @@ func TestPatchHairpinCorefile_InsertsMissingHosts(t *testing.T) {
 	t.Parallel()
 
 	corefile := `# BEGIN gentian-hairpin
-          192.0.2.197 portal.platform.example.test
+          192.0.2.197 console.platform.example.test
           # END gentian-hairpin`
 
 	patched, changed := patchHairpinCorefile(corefile, "192.0.2.36", "platform.example.test", nil)
@@ -89,7 +89,7 @@ func TestPatchHairpinCorefile_AddsTenantAppHosts(t *testing.T) {
 	t.Parallel()
 
 	corefile := `# BEGIN gentian-hairpin
-          192.0.2.36 portal.platform.example.test
+          192.0.2.36 console.platform.example.test
           # END gentian-hairpin`
 
 	tenantHosts := map[string]struct{}{

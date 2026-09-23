@@ -1738,11 +1738,11 @@ print_handover_summary() {
         # E-03 writes the kit, so this means that step did not run or failed.
         echo -e "${YELLOW}      1. ./install.sh --only E-03      (write the recovery kit)${NC}"
         echo -e "${YELLOW}      2. move the kit somewhere safe${NC}"
-        echo -e "${YELLOW}      3. sign in at https://portal.${KERNEL_DOMAIN:-<kernel-domain>}/login${NC}"
+        echo -e "${YELLOW}      3. sign in at https://console.${KERNEL_DOMAIN:-<kernel-domain>}/${NC}"
         echo -e "${YELLOW}      4. ./install.sh --only E-04      (revoke and finish)${NC}"
     elif [[ "${proven}" != "true" ]]; then
         echo -e "${YELLOW}      1. move the recovery kit somewhere safe${NC}"
-        echo -e "${YELLOW}      2. sign in at https://portal.${KERNEL_DOMAIN:-<kernel-domain>}/login${NC}"
+        echo -e "${YELLOW}      2. sign in at https://console.${KERNEL_DOMAIN:-<kernel-domain>}/${NC}"
         echo -e "${YELLOW}      3. ./install.sh --only E-04      (revoke and finish)${NC}"
     else
         echo -e "${YELLOW}    Someone has signed in and a kit exists, so only the revocation${NC}"
@@ -2387,18 +2387,12 @@ EOF
 # Cluster overlay — only what's unique to THIS cluster. Tier-wide policy
 # lives in gentian-deployments/profiles/${stage}.yaml (Layer 2); chart
 # defaults live in gentian-os/charts/gentian-os/values.yaml (Layer 1).
-# Also read directly by the gentian-portal Application for kernelDomain
-# (portal chart is separate from the operator chart but shares this file).
 kernelDomain: ${domain}
 stage: ${stage}
 llmSupport: ${LLM_SUPPORT:-false}
 
 image:
   tag: "develop"
-
-api:
-  env:
-    BACKEND_CORS_ORIGINS: https://portal.${domain}
 
 appLifecycle:
   deployments:

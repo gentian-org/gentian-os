@@ -42,7 +42,9 @@ spec:
     - name: api
       surface: gateway
       authMode: oidc
-      subDomain: {{ .Values.desktop.subDomain | quote }}
+      # console.<zone>, the desktop's name in every zone (networking.md §3);
+      # the operator's redirects and frame policies assume it.
+      subDomain: console
       paths: ["/api", "/healthz", "/readyz"]
       forwardToken: true
       backend:
@@ -52,7 +54,7 @@ spec:
     - name: web
       surface: gateway
       authMode: oidc
-      subDomain: {{ .Values.desktop.subDomain | quote }}
+      subDomain: console
       backend:
         service: desktop-gentian-portal-web
         port: 8080
