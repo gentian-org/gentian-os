@@ -177,15 +177,32 @@ func (r *ComponentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		if err := r.ensureZoneGrant(ctx, comp); err != nil {
 			return ctrl.Result{}, err
 		}
+		var oidcRoutes []string
+		forward := false
 		for i := range profile.Spec.Expose {
 			e := &profile.Spec.Expose[i]
 			if e.Surface != gentianov1alpha1.SurfaceGateway {
 				continue // perimeter surfaces are enabled per tenant (§5.1); not yet
 			}
-			if err := r.ensureExposure(ctx, comp, profile, tenant, zone, e); err != nil {
+			routeName, err := r.ensureExposureRoute(ctx, comp, tenant, zone, e)
+			if err != nil {
 				return ctrl.Result{}, fmt.Errorf("expose %s: %w", e.Name, err)
 			}
+			if e.AuthMode == gentianov1alpha1.AuthModeOIDC {
+				oidcRoutes = append(oidcRoutes, routeName)
+				forward = forward || e.ForwardToken
+			}
 			exposed++
+		}
+		// One policy over every oidc route of the component. Envoy Gateway
+		// binds a session's cookies to the policy that made it, so two
+		// policies on one host would be two sessions; forwardToken is
+		// therefore the component's, held if any of its entries holds it.
+		if len(oidcRoutes) > 0 {
+			authz := exposureAuthz(tenant, forward)
+			if err := r.ensureZonePolicy(ctx, comp, zone, oidcRoutes, authz); err != nil {
+				return ctrl.Result{}, fmt.Errorf("zone policy: %w", err)
+			}
 		}
 	}
 	if !releaseReady {
@@ -370,25 +387,29 @@ func componentLabels(comp *gentianov1alpha1.Component) map[string]string {
 	}
 }
 
-// ensureExposure keeps one gateway exposure's route and policy.
-func (r *ComponentReconciler) ensureExposure(ctx context.Context, comp *gentianov1alpha1.Component, profile *gentianov1alpha1.ComponentProfile, tenant *gentianov1alpha1.Tenant, zone edgeZone, e *gentianov1alpha1.ExposureSpec) error {
+// ensureExposureRoute keeps one gateway exposure's route.
+func (r *ComponentReconciler) ensureExposureRoute(ctx context.Context, comp *gentianov1alpha1.Component, tenant *gentianov1alpha1.Tenant, zone edgeZone, e *gentianov1alpha1.ExposureSpec) (string, error) {
 	host := exposureHost(zone, comp, e)
 	routeName := comp.Name + "-" + e.Name
-	authz := exposureAuthz(tenant, e)
-	route := buildExposureRoute(comp, routeName, host, zone, e, authz)
+	route := buildExposureRoute(comp, routeName, host, zone, e, exposureAuthz(tenant, e.ForwardToken))
 	if err := controllerutil.SetControllerReference(comp, route, r.Scheme); err != nil {
-		return err
+		return "", err
 	}
-	if err := ensureHTTPRouteResource(ctx, r.Client, route); err != nil {
-		return err
+	return routeName, ensureHTTPRouteResource(ctx, r.Client, route)
+}
+
+// ensureZonePolicy keeps the component's one SecurityPolicy: the zone's
+// session and the shim, over every oidc route the component has.
+func (r *ComponentReconciler) ensureZonePolicy(ctx context.Context, comp *gentianov1alpha1.Component, zone edgeZone, routes []string, authz routeAuthz) error {
+	spec := zoneSecurityPolicySpec(r.KernelDomain, zone, routes[0], authz, servicesNamespace, r.edgeAuthzService())
+	targets := make([]interface{}, 0, len(routes))
+	for _, name := range routes {
+		targets = append(targets, map[string]interface{}{"group": gatewayv1.GroupName, "kind": "HTTPRoute", "name": name})
 	}
-	if e.AuthMode != gentianov1alpha1.AuthModeOIDC {
-		return nil // bearer and jwt policies are the next slice; the route table refuses them meanwhile
-	}
-	spec := zoneSecurityPolicySpec(r.KernelDomain, zone, routeName, authz, servicesNamespace, r.edgeAuthzService())
+	spec["targetRefs"] = targets
 	policy := &unstructured.Unstructured{}
 	policy.SetGroupVersionKind(securityPolicyGVK)
-	policy.SetName("sp-" + routeName)
+	policy.SetName("sp-" + comp.Name)
 	policy.SetNamespace(comp.Namespace)
 	policy.SetLabels(componentLabels(comp))
 	if err := unstructured.SetNestedField(policy.Object, spec, "spec"); err != nil {
@@ -430,8 +451,8 @@ func exposureHost(zone edgeZone, comp *gentianov1alpha1.Component, e *gentianov1
 // exposureAuthz is the L2 question a gateway entry asks (networking.md §3):
 // the tenant's desktop is can_enter on the tenant; an app is can_use on the
 // app. Only the desktop is routed yet.
-func exposureAuthz(tenant *gentianov1alpha1.Tenant, e *gentianov1alpha1.ExposureSpec) routeAuthz {
-	return routeAuthz{relation: "can_enter", object: "tenant:" + tenant.Name, forwardToken: e.ForwardToken}
+func exposureAuthz(tenant *gentianov1alpha1.Tenant, forwardToken bool) routeAuthz {
+	return routeAuthz{relation: "can_enter", object: "tenant:" + tenant.Name, forwardToken: forwardToken}
 }
 
 func buildExposureRoute(comp *gentianov1alpha1.Component, name, host string, zone edgeZone, e *gentianov1alpha1.ExposureSpec, authz routeAuthz) *gatewayv1.HTTPRoute {
@@ -445,8 +466,14 @@ func buildExposureRoute(comp *gentianov1alpha1.Component, name, host string, zon
 		paths = []string{"/"}
 	}
 	var rules []gatewayv1.HTTPRouteRule
+	wholeHost := false
 	for _, p := range paths {
 		rules = append(rules, kernelBackendRulePrefixNS(e.Backend.Service, comp.Namespace, e.Backend.Port, p))
+		wholeHost = wholeHost || p == "/"
+	}
+	// A route behind a session must carry the path the code flow lands on.
+	if e.AuthMode == gentianov1alpha1.AuthModeOIDC && !wholeHost {
+		rules = append(rules, kernelBackendRulePrefixNS(e.Backend.Service, comp.Namespace, e.Backend.Port, edgeOAuth2Prefix))
 	}
 	labels := componentLabels(comp)
 	labels[edgeAuthzRouteLabel] = "true"

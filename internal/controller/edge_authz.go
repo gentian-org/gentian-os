@@ -53,6 +53,10 @@ const (
 	edgeAuthzRoutesConfigMap = "edge-authz-routes"
 	edgeAuthzRoutesKey       = "routes.yaml"
 	edgeAuthzPort            = int32(9001)
+	// edgeOAuth2Prefix is where Envoy Gateway's OIDC filter answers the code
+	// flow's callback and the logout: a route behind a session carries it,
+	// or the flow has nowhere to land.
+	edgeOAuth2Prefix = "/oauth2/"
 )
 
 // routeAuthz is what a route's exposure says must hold at L2.
@@ -297,7 +301,8 @@ func componentRouteTableEntries(ctx context.Context, c client.Reader) ([]edgeAut
 	if err := c.List(ctx, list, client.MatchingLabels{edgeAuthzRouteLabel: "true"}); err != nil {
 		return nil, err
 	}
-	var out []edgeAuthzRoute
+	byHost := map[string]*edgeAuthzRoute{}
+	var order []string
 	for i := range list.Items {
 		route := &list.Items[i]
 		if route.DeletionTimestamp != nil || len(route.Spec.Hostnames) == 0 {
@@ -312,12 +317,24 @@ func componentRouteTableEntries(ctx context.Context, c client.Reader) ([]edgeAut
 			mode = "oidc"
 		}
 		for _, h := range route.Spec.Hostnames {
-			out = append(out, edgeAuthzRoute{
-				Host: string(h), Relation: ann[edgeAuthzRelationAnnotation], Object: ann[edgeAuthzObjectAnnotation],
+			host := string(h)
+			// A component's routes share its host and its question; the
+			// token is forwarded to the host if any of them says so.
+			if cur, ok := byHost[host]; ok {
+				cur.ForwardToken = cur.ForwardToken || ann[edgeAuthzForwardAnnotation] == "true"
+				continue
+			}
+			byHost[host] = &edgeAuthzRoute{
+				Host: host, Relation: ann[edgeAuthzRelationAnnotation], Object: ann[edgeAuthzObjectAnnotation],
 				AccessTokenCookie: ann[edgeAuthzCookieAnnotation], ForwardToken: ann[edgeAuthzForwardAnnotation] == "true",
 				AuthMode: mode,
-			})
+			}
+			order = append(order, host)
 		}
+	}
+	out := make([]edgeAuthzRoute, 0, len(order))
+	for _, h := range order {
+		out = append(out, *byHost[h])
 	}
 	return out, nil
 }

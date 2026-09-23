@@ -99,7 +99,7 @@ func TestAComponentRouteCarriesItsQuestion(t *testing.T) {
 		SubDomain: "console", Paths: []string{"/api", "/healthz"}, ForwardToken: true,
 		Backend: gentianov1alpha1.BackendRef{Service: "desktop-gentian-portal-api", Port: 8000},
 	}
-	route := buildExposureRoute(comp, "desktop-api", "console.k.example", zone, e, exposureAuthz(platformTenantFixture(), e))
+	route := buildExposureRoute(comp, "desktop-api", "console.k.example", zone, e, exposureAuthz(platformTenantFixture(), e.ForwardToken))
 	if route.Labels[edgeAuthzRouteLabel] != "true" || route.Annotations[edgeAuthzRelationAnnotation] != "can_enter" ||
 		route.Annotations[edgeAuthzObjectAnnotation] != "tenant:platform" || route.Annotations[edgeAuthzForwardAnnotation] != "true" {
 		t.Fatalf("route question = %v %v", route.Labels, route.Annotations)
@@ -107,14 +107,22 @@ func TestAComponentRouteCarriesItsQuestion(t *testing.T) {
 	if string(route.Spec.ParentRefs[0].Name) != AuthenticatedGatewayName || string(*route.Spec.ParentRefs[0].SectionName) != wildcardListenerName {
 		t.Fatalf("parent = %+v", route.Spec.ParentRefs[0])
 	}
-	if len(route.Spec.Rules) != 2 || string(route.Spec.Rules[0].BackendRefs[0].Name) != "desktop-gentian-portal-api" {
+	// Its two paths, and the code flow's landing path, which an entry that
+	// does not cover the whole host would otherwise leave unroutable.
+	if len(route.Spec.Rules) != 3 || string(route.Spec.Rules[0].BackendRefs[0].Name) != "desktop-gentian-portal-api" ||
+		*route.Spec.Rules[2].Matches[0].Path.Value != edgeOAuth2Prefix {
 		t.Fatalf("rules = %+v", route.Spec.Rules)
 	}
+	// A second route on the same host folds into the same table entry.
+	web := buildExposureRoute(comp, "desktop-web", "console.k.example", zone,
+		&gentianov1alpha1.ExposureSpec{Name: "web", Surface: gentianov1alpha1.SurfaceGateway, AuthMode: gentianov1alpha1.AuthModeOIDC, SubDomain: "console",
+			Backend: gentianov1alpha1.BackendRef{Service: "desktop-gentian-portal-web", Port: 8080}},
+		exposureAuthz(platformTenantFixture(), false))
 
 	// And the table reads it back, from any namespace.
 	scheme := runtime.NewScheme()
 	_ = gatewayv1.Install(scheme)
-	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(route).Build()
+	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(route, web).Build()
 	entries, err := componentRouteTableEntries(context.Background(), c)
 	if err != nil {
 		t.Fatal(err)

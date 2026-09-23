@@ -252,6 +252,9 @@ func kernelHTTPRouteSpecs(
 			rules: []gatewayv1.HTTPRouteRule{
 				kernelBackendRulePrefixNS(kcService, identityNamespace, kcPort, "/auth/",
 					kernelConsoleFrameFilters(kernelDomain)...),
+				// The zone's code flow lands on /oauth2/callback: the OIDC
+				// filter answers it, but only on a path the route carries.
+				kernelBackendRulePrefixNS(kcService, identityNamespace, kcPort, edgeOAuth2Prefix),
 			},
 			policy: keycloakProxyBackendTrafficPolicySpec(),
 			authz:  &routeAuthz{relation: "can_configure", object: clusterObject},
