@@ -23,15 +23,23 @@ namespaces: {}
 
 # Pins the installer copies in from versions.yaml (B-01). Never set by hand.
 versions:
-  headlamp:
+  # The realm the kernel signs people in against.
+kernelRealm: kernel
+
+headlamp:
     chart: ""
     repo: ""
 
 headlamp:
   oidc:
-    # On once the kernel realm carries the headlamp client and its secret is
-    # in OpenBao; a fresh cluster starts with token login.
+    # On once the kernel realm carries the headlamp client and its secret;
+    # a fresh cluster starts with token login, which is enough to look at a
+    # cluster that has no realm yet. The portal login step turns it on.
     enabled: false
+    proxy:
+      # The maintained fork of jetstack's kube-oidc-proxy, which the archived
+      # original names as its successor.
+      image: docker.io/tremolosecurity/kube-oidc-proxy:1.0.13
 
 edge:
   # The authenticated Gateway the operator reconciles in the edge namespace.

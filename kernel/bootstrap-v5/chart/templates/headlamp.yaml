@@ -21,19 +21,39 @@ spec:
           enabled: false
         {{- if .Values.headlamp.oidc.enabled }}
         config:
+          # Not in-cluster: in that mode Headlamp talks to the API server
+          # directly, and the API server has no reason to trust the kernel
+          # realm's tokens. The kubeconfig below points at the proxy that
+          # does, which turns the person's token into an impersonated request.
+          inCluster: false
+          extraArgs:
+          - "-kubeconfig=/kubeconfig/config"
           oidc:
+            # envFrom a Secret this cluster owns: it carries the client secret,
+            # which is not something to put in a values file.
             secret:
               create: false
               name: headlamp-oidc
             externalSecret:
-              enabled: false
-        env:
-          - name: OIDC_ISSUER_URL
-            value: {{ printf "https://id.%s/realms/kernel" .Values.kernelDomain | quote }}
-          - name: OIDC_CLIENT_ID
-            value: headlamp
-          - name: OIDC_SCOPES
-            value: "openid,profile,email,groups"
+              enabled: true
+              name: headlamp-oidc
+        volumes:
+        - name: kubeconfig
+          configMap:
+            name: headlamp-kubeconfig
+        - name: proxy-ca
+          secret:
+            secretName: kube-oidc-proxy-tls
+            items:
+            - key: ca.crt
+              path: ca.crt
+        volumeMounts:
+        - name: kubeconfig
+          mountPath: /kubeconfig
+          readOnly: true
+        - name: proxy-ca
+          mountPath: /proxy-ca
+          readOnly: true
         {{- end }}
         # The pod has no rights of its own: every request is the person's.
         clusterRoleBinding:

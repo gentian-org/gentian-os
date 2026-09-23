@@ -22,6 +22,7 @@ _pl_authz_ns()    { echo "${AUTHZ_NAMESPACE:-platform-kernel}"; }
 _pl_gitops_ns()   { echo "${GITOPS_NAMESPACE:-argocd}"; }
 _pl_edge_ns()     { echo "${EDGE_NAMESPACE:-platform-kernel}"; }
 _pl_control_ns()  { echo "${GENTIAN_SYSTEM_NAMESPACE:-gentian-system}"; }
+_pl_observability_ns() { echo "${OBSERVABILITY_NAMESPACE:-platform-kernel}"; }
 
 _platform_admin_derive_password() {
     if [[ "${SECRET_MODE:-derived}" == "random" ]]; then
@@ -57,6 +58,41 @@ _portal_bff_derive_secret() {
     else
         echo -n "portal-bootstrap:bff_client_secret" | openssl dgst -sha256 -hmac "${MASTER_PASSWORD}${DERIVATION_SALT:-}" | awk '{print $2}'
     fi
+}
+
+_headlamp_derive_secret() {
+    if [[ "${SECRET_MODE:-derived}" == "random" ]]; then
+        local existing_sec
+        existing_sec=$(bao kv get -mount=secret -field=headlamp_client_secret identity/portal-admin 2>/dev/null || true)
+        if [[ -n "${existing_sec}" ]]; then
+            echo -n "${existing_sec}"
+            return 0
+        fi
+        local new_sec
+        new_sec=$(openssl rand -hex 24)
+        bao kv patch -mount=secret identity/portal-admin headlamp_client_secret="${new_sec}" >/dev/null 2>&1 || \
+            bao kv put -mount=secret identity/portal-admin headlamp_client_secret="${new_sec}" >/dev/null 2>&1
+        echo -n "${new_sec}"
+        return 0
+    fi
+    echo -n "portal-bootstrap:headlamp_client_secret" | openssl dgst -sha256 -hmac "${MASTER_PASSWORD}${DERIVATION_SALT:-}" | awk '{print $2}'
+}
+
+# The Secret Headlamp reads, in the namespace Headlamp runs in. Keys are the
+# environment variable names, because the chart loads it with envFrom.
+ensure_headlamp_oidc_secret() {
+    local kernel_domain="${KERNEL_DOMAIN:?KERNEL_DOMAIN required}"
+    local kernel_realm="${KERNEL_REALM:-kernel}"
+    local ns secret
+    ns="$(_pl_observability_ns)"
+    secret="$(_headlamp_derive_secret)"
+    kubectl create secret generic headlamp-oidc -n "${ns}" \
+        --from-literal=OIDC_CLIENT_ID="headlamp" \
+        --from-literal=OIDC_CLIENT_SECRET="${secret}" \
+        --from-literal=OIDC_ISSUER_URL="https://id.${kernel_domain}/auth/realms/${kernel_realm}" \
+        --from-literal=OIDC_SCOPES="openid,profile,email,groups" \
+        --dry-run=client -o yaml | kubectl apply -f - >&2
+    echo "${secret}"
 }
 
 _argocd_oidc_derive_secret() {
@@ -760,9 +796,10 @@ run_keycloak_portal_bootstrap_job() {
 
     info "Bootstrapping Keycloak portal client + user via in-cluster Job..."
 
-    local bff_secret argocd_secret
+    local bff_secret argocd_secret headlamp_secret
     bff_secret=$(ensure_portal_bff_secret)
     argocd_secret=$(ensure_argocd_oidc_secret)
+    headlamp_secret=$(ensure_headlamp_oidc_secret)
 
     local llm_support="${LLM_SUPPORT:-false}"
     local litellm_sso_secret=""
@@ -805,6 +842,7 @@ run_keycloak_portal_bootstrap_job() {
         # than being read from the portal's Secret: this Job runs where
         # Keycloak's admin credential is, and that is not where the portal runs.
         --from-literal=bff_client_secret="${bff_secret}"
+        --from-literal=headlamp_client_secret="${headlamp_secret}"
         --from-literal=llm_support="${llm_support}"
         --from-literal=litellm_sso_client_secret="${litellm_sso_secret}"
     )
@@ -1239,6 +1277,47 @@ spec:
                 echo "gentian-argocd default scope: groups"
               fi
 
+              # Headlamp. Confidential, because the token it receives is what
+              # the impersonating proxy in front of the API server verifies --
+              # a public client would let anyone mint one.
+              HEADLAMP_CLIENT_ID=\$(curl -sf -H "\${AUTH}" \\
+                "\${KEYCLOAK_BASE}/admin/realms/\${REALM}/clients?clientId=headlamp" \\
+                | jq -r '.[0].id // empty')
+              HEADLAMP_BODY=\$(jq -n --arg secret "\${HEADLAMP_CLIENT_SECRET}" --arg base "https://headlamp.\${KERNEL_DOMAIN}" '{
+                clientId: "headlamp",
+                name: "Headlamp",
+                enabled: true,
+                publicClient: false,
+                standardFlowEnabled: true,
+                directAccessGrantsEnabled: false,
+                serviceAccountsEnabled: false,
+                protocol: "openid-connect",
+                redirectUris: [(\$base + "/oidc-callback"), (\$base + "/*")],
+                rootUrl: \$base,
+                baseUrl: "/",
+                webOrigins: [\$base],
+                secret: \$secret
+              }')
+              if [ -n "\${HEADLAMP_CLIENT_ID}" ]; then
+                curl -sf -X PUT -H "\${AUTH}" -H "Content-Type: application/json" \\
+                  "\${KEYCLOAK_BASE}/admin/realms/\${REALM}/clients/\${HEADLAMP_CLIENT_ID}" -d "\${HEADLAMP_BODY}"
+                echo "Updated client headlamp"
+              else
+                curl -sf -X POST -H "\${AUTH}" -H "Content-Type: application/json" \\
+                  "\${KEYCLOAK_BASE}/admin/realms/\${REALM}/clients" -d "\${HEADLAMP_BODY}"
+                HEADLAMP_CLIENT_ID=\$(curl -sf -H "\${AUTH}" \\
+                  "\${KEYCLOAK_BASE}/admin/realms/\${REALM}/clients?clientId=headlamp" \\
+                  | jq -r '.[0].id')
+                echo "Created client headlamp"
+              fi
+              # Without the groups claim the proxy impersonates a person with
+              # no groups, and every API call is refused by RBAC.
+              if [ -n "\${HEADLAMP_CLIENT_ID}" ] && [ -n "\${GROUPS_SCOPE_ID}" ] && [ "\${GROUPS_SCOPE_ID}" != "null" ]; then
+                curl -sf -X PUT -H "\${AUTH}" \\
+                  "\${KEYCLOAK_BASE}/admin/realms/\${REALM}/clients/\${HEADLAMP_CLIENT_ID}/default-client-scopes/\${GROUPS_SCOPE_ID}" >/dev/null 2>&1 || true
+                echo "headlamp default scope: groups"
+              fi
+
 ${refresh_shell}
               if [ "\${LLM_SUPPORT}" = "true" ]; then
                 # Best-effort, deliberately. Everything in here serves an optional LLM
@@ -1403,6 +1482,11 @@ ${smtp_shell}
                 secretKeyRef:
                   name: portal-bootstrap-credentials
                   key: bff_client_secret
+            - name: HEADLAMP_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: portal-bootstrap-credentials
+                  key: headlamp_client_secret
             - name: ARGOCD_OIDC_CLIENT_SECRET
               valueFrom:
                 secretKeyRef:

@@ -1,0 +1,203 @@
+---
+# The cluster view as the person, not as a robot.
+#
+# Headlamp signs in against the kernel realm and then has to talk to the API
+# server as whoever signed in. The API server only accepts an OIDC token if it
+# was started with that issuer configured, which is not something a cluster
+# can decide about itself -- on a managed control plane nobody can set it at
+# all. The alternative every Headlamp install falls back to is pasting a
+# service account token, and then the audit log records the robot rather than
+# the administrator.
+#
+# So a proxy stands in front: it verifies the realm's token, and forwards the
+# request to the API server with impersonation headers naming the person and
+# their groups. RBAC and the audit log see a human. The pod itself holds only
+# the right to impersonate -- it cannot read a single Secret on its own.
+#
+# The implementation is the maintained fork of jetstack's kube-oidc-proxy,
+# which the archived original names as its successor.
+{{- if .Values.headlamp.oidc.enabled }}
+{{- $ns := include "ns" (list . "observability") }}
+{{- $issuer := printf "https://id.%s/auth/realms/%s" .Values.kernelDomain .Values.kernelRealm }}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: kube-oidc-proxy
+  namespace: {{ $ns }}
+---
+# Impersonation and nothing else. Whatever the person may do, they may do;
+# whatever they may not, the proxy cannot do for them.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: kube-oidc-proxy
+rules:
+- apiGroups: [""]
+  resources: ["users", "groups", "serviceaccounts"]
+  verbs: ["impersonate"]
+- apiGroups: ["authentication.k8s.io"]
+  resources: ["userextras/scopes", "tokenreviews"]
+  verbs: ["impersonate", "create"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: kube-oidc-proxy
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: kube-oidc-proxy
+subjects:
+- kind: ServiceAccount
+  name: kube-oidc-proxy
+  namespace: {{ $ns }}
+---
+# What the impersonated person is allowed. The group is the kernel realm's
+# platform administrators, the same claim the portal and Argo CD read, so
+# there is one answer to "who administers this cluster" rather than three.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: gentian-platform-superadmin-cluster-admin
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: cluster-admin
+subjects:
+- kind: Group
+  # Keycloak emits group paths, so the claim carries the leading slash.
+  name: /gentian:platform:superadmin
+  apiGroup: rbac.authorization.k8s.io
+---
+# The proxy serves TLS, and what talks to it is inside the cluster, so the
+# certificate is the cluster's own rather than the public wildcard.
+apiVersion: cert-manager.io/v1
+kind: Issuer
+metadata:
+  name: kube-oidc-proxy-selfsign
+  namespace: {{ $ns }}
+spec:
+  selfSigned: {}
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: kube-oidc-proxy-tls
+  namespace: {{ $ns }}
+spec:
+  secretName: kube-oidc-proxy-tls
+  issuerRef:
+    name: kube-oidc-proxy-selfsign
+    kind: Issuer
+  commonName: kube-oidc-proxy
+  dnsNames:
+  - kube-oidc-proxy
+  - {{ printf "kube-oidc-proxy.%s" $ns }}
+  - {{ printf "kube-oidc-proxy.%s.svc" $ns }}
+  - {{ printf "kube-oidc-proxy.%s.svc.cluster.local" $ns }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: kube-oidc-proxy
+  namespace: {{ $ns }}
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: kube-oidc-proxy
+  ports:
+  - name: https
+    port: 443
+    targetPort: 8443
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: kube-oidc-proxy
+  namespace: {{ $ns }}
+  labels:
+    app.kubernetes.io/name: kube-oidc-proxy
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: kube-oidc-proxy
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: kube-oidc-proxy
+    spec:
+      serviceAccountName: kube-oidc-proxy
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+      - name: proxy
+        image: {{ .Values.headlamp.oidc.proxy.image }}
+        imagePullPolicy: IfNotPresent
+        args:
+        - "kube-oidc-proxy"
+        - "--secure-port=8443"
+        - "--tls-cert-file=/etc/oidc/tls/tls.crt"
+        - "--tls-private-key-file=/etc/oidc/tls/tls.key"
+        - "--oidc-client-id=headlamp"
+        - "--oidc-issuer-url={{ $issuer }}"
+        # The name a person recognises in an audit log and in a RoleBinding.
+        - "--oidc-username-claim=preferred_username"
+        - "--oidc-groups-claim=groups"
+        ports:
+        - containerPort: 8443
+          name: https
+        readinessProbe:
+          tcpSocket:
+            port: 8443
+          initialDelaySeconds: 5
+        resources:
+          requests:
+            cpu: 50m
+            memory: 64Mi
+          limits:
+            memory: 256Mi
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop: ["ALL"]
+          readOnlyRootFilesystem: true
+        volumeMounts:
+        - name: tls
+          mountPath: /etc/oidc/tls
+          readOnly: true
+      volumes:
+      - name: tls
+        secret:
+          secretName: kube-oidc-proxy-tls
+---
+# What Headlamp is handed instead of the in-cluster API server: the same
+# cluster, reached through the proxy, with the proxy's own CA to verify it.
+# The token it sends is the person's, which is the whole point.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: headlamp-kubeconfig
+  namespace: {{ $ns }}
+data:
+  config: |
+    apiVersion: v1
+    kind: Config
+    clusters:
+    - name: main
+      cluster:
+        server: https://kube-oidc-proxy.{{ $ns }}.svc.cluster.local
+        certificate-authority: /proxy-ca/ca.crt
+    contexts:
+    - name: main
+      context:
+        cluster: main
+        user: oidc
+    current-context: main
+    users:
+    - name: oidc
+      user: {}
+{{- end }}

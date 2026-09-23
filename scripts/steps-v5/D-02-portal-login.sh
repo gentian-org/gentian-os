@@ -24,7 +24,7 @@ source "${SCRIPT_DIR}/scripts/steps-v5/B-01-bootstrap-apps.sh"
 
 _d02_export_layout() {
     export PORTAL_NAMESPACE IDENTITY_NAMESPACE AUTHZ_NAMESPACE GITOPS_NAMESPACE \
-        EDGE_NAMESPACE GENTIAN_SYSTEM_NAMESPACE CROSSPLANE_NAMESPACE
+        EDGE_NAMESPACE GENTIAN_SYSTEM_NAMESPACE CROSSPLANE_NAMESPACE OBSERVABILITY_NAMESPACE
     # The portal answers on the edge, beside the Gateway that serves it -- the
     # same namespace the operator's routes send portal traffic to.
     PORTAL_NAMESPACE="$(ns_kernel edge)"
@@ -34,6 +34,7 @@ _d02_export_layout() {
     EDGE_NAMESPACE="$(ns_kernel edge)"
     GENTIAN_SYSTEM_NAMESPACE="$(ns_kernel control)"
     CROSSPLANE_NAMESPACE="$(ns_kernel provisioning)"
+    OBSERVABILITY_NAMESPACE="$(ns_kernel observability)"
 }
 
 check() {
@@ -56,8 +57,14 @@ apply() {
     # one namespace for everything. This layout's Application comes from the
     # same chart every other kernel Application here comes from, so the
     # renderer is B-01's and the destination follows the layout.
+    #
+    # The same render turns Headlamp's OIDC on: the realm, the headlamp client
+    # and its Secret exist by the time this runs, and the proxy that verifies
+    # the person's token comes with it. Before this step there is no realm to
+    # sign in against, which is why a fresh cluster starts on token login.
     apply_gentian_portal_argocd_application() {
-        V5_APPSETS=true V5_OPERATOR=true V5_PORTAL=true _v5_render | kubectl apply -f - >/dev/null
+        V5_APPSETS=true V5_OPERATOR=true V5_PORTAL=true V5_HEADLAMP_OIDC=true \
+            _v5_render | kubectl apply -f - >/dev/null
     }
 
     # The Application first would be the wrong order: it syncs a chart whose
