@@ -23,12 +23,12 @@ namespaces: {}
 
 # Pins the installer copies in from versions.yaml (B-01). Never set by hand.
 versions:
-  # The realm the kernel signs people in against.
-kernelRealm: kernel
-
-headlamp:
+  headlamp:
     chart: ""
     repo: ""
+
+# The realm the kernel signs people in against. Tenants have their own.
+kernelRealm: kernel
 
 headlamp:
   oidc:
