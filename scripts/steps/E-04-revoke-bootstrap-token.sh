@@ -34,7 +34,7 @@
 # auth backend configured, role exists. Every link absent by default and present
 # only when something created it — and every one of them true while no token
 # opens anything. The role binds a group claim, and if Keycloak emits
-# "superadmin" where the role expects "/gentian:platform:superadmin", the parts
+# "admin" where the role expects "/gentian:platform:admin", the parts
 # are all there and the login is refused. Revoking on that evidence is changing
 # the locks and posting the old key through the letterbox without trying the new
 # one; the recovery is re-initialising OpenBao.

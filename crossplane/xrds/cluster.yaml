@@ -102,7 +102,7 @@ spec:
                   properties:
                     admin:
                       type: string
-                      default: "gentian:platform:superadmin"
+                      default: "gentian:platform:admin"
                       description: >
                         The cluster's administrators: the claim, plans,
                         ceilings, tenant deployment. Defaults to the group the
@@ -565,7 +565,7 @@ spec:
                         creates it and adds administrator@<kernelDomain>, so a
                         cluster admin can log in without being added to anything
                         by hand.
-                      default: "/gentian:platform:superadmin"
+                      default: "/gentian:platform:admin"
                     additionalAudiences:
                       type: array
                       items:

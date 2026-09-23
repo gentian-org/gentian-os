@@ -484,7 +484,7 @@ EOF
 }"
 
     # 3. Patch argocd-rbac-cm to map group to admin role
-    local policy_csv="g, gentian:platform:superadmin, role:admin"
+    local policy_csv="g, gentian:platform:admin, role:admin"
     kubectl patch configmap argocd-rbac-cm -n "${ns}" --type merge -p "
 {
   \"data\": {

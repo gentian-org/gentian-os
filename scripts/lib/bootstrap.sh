@@ -2264,7 +2264,7 @@ _claim_cluster_fields() {
     printf '    discoveryUrl: https://id.%s/auth/realms/kernel\n' "${KERNEL_DOMAIN:-<kernel-domain>}"
     printf '    # clientId:          openbao\n'
     printf '    # clientSecretRef:   openbao-oidc-client   Secret in the OpenBao namespace\n'
-    printf '    # clusterAdminGroup: /gentian:platform:superadmin\n'
+    printf '    # clusterAdminGroup: /gentian:platform:admin\n'
     printf '    # externalUrl:                             OpenBao UI callback, if exposed\n'
     return 0
 }
@@ -2336,7 +2336,7 @@ spec:
   # which a file reader never sees. Without it the director grants nobody a
   # cluster role and every console the person is entitled to disappears.
   platformRoles:
-    admin: ${PLATFORM_SUPERADMIN_GROUP:-gentian:platform:superadmin}
+    admin: ${PLATFORM_ADMIN_GROUP:-gentian:platform:admin}
 $(_claim_cluster_fields)
 EOF
         info "Scaffolded ${kernel_dir}/claims/cluster.yaml"

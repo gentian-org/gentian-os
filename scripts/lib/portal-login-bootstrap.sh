@@ -830,7 +830,9 @@ run_keycloak_portal_bootstrap_job() {
     # password into another one to save a namespace is not a trade worth making.
     local ns
     ns="$(_pl_identity_ns)"
-    local platform_superadmin_group="gentian:platform:superadmin"
+    # The group model v1 names for the platform administrator role; the
+    # claim binds it to cluster#admin and every console derives from that.
+    local platform_admin_group="gentian:platform:admin"
 
     password=$(_platform_admin_derive_password)
     export PORTAL_LOGIN_USERNAME="${username}"
@@ -879,7 +881,7 @@ run_keycloak_portal_bootstrap_job() {
         --from-literal=username="${username}"
         --from-literal=email="${email}"
         --from-literal=password="${password}"
-        --from-literal=platform_superadmin_group="${platform_superadmin_group}"
+        --from-literal=platform_admin_group="${platform_admin_group}"
         --from-literal=argocd_client_secret="${argocd_secret}"
         # The portal backend's own client secret travels with the rest rather
         # than being read from the portal's Secret: this Job runs where
@@ -1268,24 +1270,24 @@ spec:
               curl -sf -X PUT -H "\${AUTH}" -H "Content-Type: application/json" \\
                 "\${KEYCLOAK_BASE}/admin/realms/\${REALM}/users/\${USER_ID}/reset-password" -d "\${CRED}"
 
-              SUPERADMIN_GROUP="\${PLATFORM_SUPERADMIN_GROUP}"
+              ADMIN_GROUP="\${PLATFORM_ADMIN_GROUP}"
               GROUP_LIST=\$(curl -sf -H "\${AUTH}" \\
-                "\${KEYCLOAK_BASE}/admin/realms/\${REALM}/groups?search=\${SUPERADMIN_GROUP}&exact=true")
-              GROUP_ID=\$(printf '%s' "\${GROUP_LIST}" | jq -r --arg n "\${SUPERADMIN_GROUP}" '.[] | select(.name==\$n) | .id' | head -1)
+                "\${KEYCLOAK_BASE}/admin/realms/\${REALM}/groups?search=\${ADMIN_GROUP}&exact=true")
+              GROUP_ID=\$(printf '%s' "\${GROUP_LIST}" | jq -r --arg n "\${ADMIN_GROUP}" '.[] | select(.name==\$n) | .id' | head -1)
               if [ -z "\${GROUP_ID}" ] || [ "\${GROUP_ID}" = "null" ]; then
                 curl -sf -X POST -H "\${AUTH}" -H "Content-Type: application/json" \\
                   "\${KEYCLOAK_BASE}/admin/realms/\${REALM}/groups" \\
-                  -d "{\"name\":\"\${SUPERADMIN_GROUP}\"}"
+                  -d "{\"name\":\"\${ADMIN_GROUP}\"}"
                 GROUP_LIST=\$(curl -sf -H "\${AUTH}" \\
-                  "\${KEYCLOAK_BASE}/admin/realms/\${REALM}/groups?search=\${SUPERADMIN_GROUP}&exact=true")
-                GROUP_ID=\$(printf '%s' "\${GROUP_LIST}" | jq -r --arg n "\${SUPERADMIN_GROUP}" '.[] | select(.name==\$n) | .id' | head -1)
-                echo "Created group \${SUPERADMIN_GROUP}"
+                  "\${KEYCLOAK_BASE}/admin/realms/\${REALM}/groups?search=\${ADMIN_GROUP}&exact=true")
+                GROUP_ID=\$(printf '%s' "\${GROUP_LIST}" | jq -r --arg n "\${ADMIN_GROUP}" '.[] | select(.name==\$n) | .id' | head -1)
+                echo "Created group \${ADMIN_GROUP}"
               else
-                echo "Group \${SUPERADMIN_GROUP} already exists"
+                echo "Group \${ADMIN_GROUP} already exists"
               fi
               curl -sf -X PUT -H "\${AUTH}" \\
                 "\${KEYCLOAK_BASE}/admin/realms/\${REALM}/users/\${USER_ID}/groups/\${GROUP_ID}" >/dev/null || true
-              echo "User \${PORTAL_USERNAME} joined \${SUPERADMIN_GROUP}"
+              echo "User \${PORTAL_USERNAME} joined \${ADMIN_GROUP}"
 
               # The realm's own administration, granted to the group rather than
               # to the person: whoever the cluster's platform administrators are,
@@ -1304,9 +1306,9 @@ spec:
                   if curl -sf -X POST -H "\${AUTH}" -H "Content-Type: application/json" \\
                     "\${KEYCLOAK_BASE}/admin/realms/\${REALM}/groups/\${GROUP_ID}/role-mappings/clients/\${RM_CLIENT_ID}" \\
                     -d "[\${RM_ROLE}]" >/dev/null 2>&1; then
-                    echo "Group \${SUPERADMIN_GROUP} granted realm-management:realm-admin"
+                    echo "Group \${ADMIN_GROUP} granted realm-management:realm-admin"
                   else
-                    echo "Group \${SUPERADMIN_GROUP} already holds realm-management:realm-admin"
+                    echo "Group \${ADMIN_GROUP} already holds realm-management:realm-admin"
                   fi
                 fi
               fi
@@ -1573,11 +1575,11 @@ ${smtp_shell}
                 secretKeyRef:
                   name: portal-bootstrap-credentials
                   key: password
-            - name: PLATFORM_SUPERADMIN_GROUP
+            - name: PLATFORM_ADMIN_GROUP
               valueFrom:
                 secretKeyRef:
                   name: portal-bootstrap-credentials
-                  key: platform_superadmin_group
+                  key: platform_admin_group
             - name: PORTAL_BFF_CLIENT_SECRET
               valueFrom:
                 secretKeyRef:

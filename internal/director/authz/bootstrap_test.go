@@ -145,7 +145,7 @@ func TestClusterRolesFollowTheClaim(t *testing.T) {
 	cluster := "roles-test"
 
 	if err := c.ReconcileClusterRoles(ctx, cluster, map[string]string{
-		"admin":   "gentian:platform:superadmin",
+		"admin":   "gentian:platform:admin",
 		"auditor": "gentian:platform:auditor",
 	}); err != nil {
 		t.Fatal(err)
@@ -161,7 +161,7 @@ func TestClusterRolesFollowTheClaim(t *testing.T) {
 	// Declarative: a role the claim stops assigning is taken away, rather than
 	// left behind for whoever was in that group.
 	if err := c.ReconcileClusterRoles(ctx, cluster, map[string]string{
-		"admin": "gentian:platform:superadmin",
+		"admin": "gentian:platform:admin",
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -175,7 +175,7 @@ func TestClusterRolesFollowTheClaim(t *testing.T) {
 
 	// Running it again writes nothing: the second call has nothing to change.
 	if err := c.ReconcileClusterRoles(ctx, cluster, map[string]string{
-		"admin": "gentian:platform:superadmin",
+		"admin": "gentian:platform:admin",
 	}); err != nil {
 		t.Fatal(err)
 	}

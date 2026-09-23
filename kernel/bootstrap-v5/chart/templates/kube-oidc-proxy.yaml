@@ -72,7 +72,7 @@ subjects:
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
 metadata:
-  name: gentian-platform-superadmin-cluster-admin
+  name: gentian-platform-admin-cluster-admin
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole
@@ -80,7 +80,7 @@ roleRef:
 subjects:
 - kind: Group
   # Keycloak emits group paths, so the claim carries the leading slash.
-  name: /gentian:platform:superadmin
+  name: /gentian:platform:admin
   apiGroup: rbac.authorization.k8s.io
 ---
 # The proxy serves TLS, and what talks to it is inside the cluster, so the
