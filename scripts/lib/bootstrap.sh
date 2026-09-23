@@ -637,14 +637,66 @@ create_crossplane_secrets() {
     fi
     export DERIVATION_SALT
 
-    # Helper: upsert a K8s Secret in crossplane-system with data.json key
+    # Helper: upsert a K8s Secret in crossplane-system with data.json key.
+    #
+    # The Secret is what the composition creates the vault path FROM, and it
+    # creates it once: an existing path is observed, never overwritten, so a
+    # rotated password is never clobbered by a re-run. The cost is that a key
+    # added to this file later never arrives on a cluster that already has the
+    # path -- which is how a new database's password came to be missing from a
+    # path whose Secret carried it, with the failure surfacing as an
+    # ExternalSecret that "could not get secret data from provider".
+    #
+    # So the missing keys are patched in directly, and only the missing ones.
+    # Adding what is absent cannot overwrite what somebody rotated.
     _kv_secret() {
-        local name="$1" json="$2"
+        local name="$1" json="$2" path="${3:-}"
         kubectl create secret generic "${name}" \
             -n "${CROSSPLANE_NAMESPACE}" \
             "--from-literal=data.json=${json}" \
             --dry-run=client -o yaml | kubectl apply -f -
+        [[ -n "${path}" ]] && _kv_add_missing "${path}" "${json}"
         success "  ${name}"
+    }
+
+    # _kv_add_missing <kv path> <json> — add the keys the path does not have.
+    # Silent when the vault is unreachable: the path may not exist yet, which
+    # is the ordinary case on a first install, and the composition creates it.
+    _kv_add_missing() {
+        local path="$1" json="$2" have missing
+        if ! command -v bao >/dev/null 2>&1; then
+            warn "  ${path}: no bao on PATH, so missing keys were not added"
+            return 0
+        fi
+        # The token and the address are both by-products of initialising the
+        # vault, and they do not always travel together: a step that has the
+        # token from its own init may still have no address, and then every
+        # read fails with nothing to say for itself. Both are required.
+        if [[ -z "${BAO_TOKEN:-}" || -z "${BAO_ADDR:-}" ]]; then
+            OPENBAO_NAMESPACE="${OPENBAO_NAMESPACE:-$(ns_kernel secrets 2>/dev/null || echo openbao)}" \
+                resolve_openbao_access >/dev/null 2>&1 || true
+        fi
+        if [[ -z "${BAO_TOKEN:-}" ]]; then
+            warn "  ${path}: no vault token, so missing keys were not added"
+            return 0
+        fi
+        have=$(bao kv get -mount="${KV_MOUNT:-secret}" -format=json "${path}" 2>/dev/null \
+            | jq -c '.data.data // {}' 2>/dev/null) || true
+        if [[ -z "${have}" ]]; then
+            warn "  ${path}: could not be read, so missing keys were not added"
+            return 0
+        fi
+        missing=$(jq -nc --argjson have "${have}" --argjson want "${json}" \
+            '$want | with_entries(select(.key as $k | $have | has($k) | not))')
+        [[ "${missing}" == "{}" ]] && return 0
+        info "  ${path}: adding $(jq -r 'keys | join(", ")' <<<"${missing}")"
+        # One argument per key, built as an array: a value may carry anything
+        # openssl produced, and word splitting would cut it in half.
+        local -a pairs=()
+        while IFS= read -r pair; do pairs+=("${pair}"); done \
+            < <(jq -r 'to_entries[] | "\(.key)=\(.value)"' <<<"${missing}")
+        bao kv patch -mount="${KV_MOUNT:-secret}" "${path}" "${pairs[@]}" >/dev/null 2>&1 \
+            || warn "  ${path}: could not add the missing keys"
     }
 
     # master-password Secret (referenced by spec.masterPasswordSecretRef in the Cluster claim)
@@ -663,7 +715,8 @@ create_crossplane_secrets() {
             --arg c "$(_derive postgres keycloak_extensions_user)" \
             --arg h "$(_derive postgres openfga_user)" \
             --arg p "$(_derive postgres portal_shell_user)" \
-            '{postgres_password:$a,keycloak_user_password:$b,keycloak_extensions_user_password:$c,openfga_user_password:$h,portal_shell_user_password:$p}')"
+            '{postgres_password:$a,keycloak_user_password:$b,keycloak_extensions_user_password:$c,openfga_user_password:$h,portal_shell_user_password:$p}')" \
+        "gentian-os/kernel/database/postgresql"
 
     # ── database/mariadb ──────────────────────────────────────────────────────
     _kv_secret "gentian-os-kernel-database-mariadb" \

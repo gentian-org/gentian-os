@@ -830,5 +830,39 @@ unstick_argo_hook_job() {
 }
 
 # =============================================================================
+# request_argo_sync_if_stalled <argocd_namespace> <application>
+#
+# Self-heal for an Application whose automated sync has given up.
+#
+# Automated sync retries a failed attempt a fixed number of times and then
+# stops. That is correct -- retrying a bad manifest forever helps nobody -- but
+# it also means an Application whose cause has since been fixed stays OutOfSync
+# with a failure from before the fix, and a refresh does not restart it. Every
+# step waiting on that Application then waits out its whole timeout and reports
+# a fault that was repaired minutes earlier.
+#
+# Asking for a sync is the documented way to say "try again now". Only ever
+# asked when the last attempt FAILED and nothing is running, so a sync in
+# progress is never disturbed and a healthy Application is never touched.
+# =============================================================================
+request_argo_sync_if_stalled() {
+    local ns="$1" app="$2" json phase sync
+
+    json="$(kubectl get application "${app}" -n "${ns}" -o json 2>/dev/null)" || return 0
+    phase="$(jq -r '.status.operationState.phase // ""' <<<"${json}")"
+    sync="$(jq -r '.status.sync.status // ""' <<<"${json}")"
+    [[ "${phase}" == "Failed" || "${phase}" == "Error" ]] || return 0
+    [[ "${sync}" != "Synced" ]] || return 0
+    # An operation still in flight has its own phase; only a finished one is
+    # ours to replace.
+    [[ "$(jq -r '.operation // "" | type' <<<"${json}")" == "string" ]] || return 0
+
+    info "${app}: its last sync failed and automated retries are exhausted; asking for another."
+    kubectl patch application "${app}" -n "${ns}" --type merge \
+        -p '{"operation":{"initiatedBy":{"username":"gentian-installer"},"sync":{"syncStrategy":{"hook":{}}}}}' \
+        >/dev/null 2>&1 || warn "  ${app}: could not request a sync."
+}
+
+# =============================================================================
 # Summary — portal admin credentials for install output
 # =============================================================================

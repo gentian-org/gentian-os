@@ -109,6 +109,9 @@ apply() {
             # cannot start never syncs again on its own, and no amount of
             # waiting changes that.
             unstick_argo_hook_job "${ns}" "${app}"
+            # And an Application whose retries are spent does not try again on
+            # its own, however long anything waits for it.
+            request_argo_sync_if_stalled "${ns}" "${app}"
             if (( SECONDS > t )); then
                 error "${app} is not as required after 10m:"
                 kubectl get application "${app}" -n "${ns}" -o jsonpath='{"  sync: "}{.status.sync.status}{"  health: "}{.status.health.status}{" "}{.status.health.message}{"\n"}' 2>/dev/null
