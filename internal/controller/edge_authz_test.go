@@ -67,6 +67,9 @@ func TestTheRouteTableListsEveryRouteWithAQuestionSortedByHost(t *testing.T) {
 	if strings.Contains(table, "id.k.example") {
 		t.Fatalf("a route with no question is not in the table:\n%s", table)
 	}
+	if !strings.Contains(table, "authMode: oidc") {
+		t.Fatalf("the route's L1 mode is what tells the shim whose question a missing session is:\n%s", table)
+	}
 	if !strings.Contains(table, "accessTokenCookie: "+edgeKernelAccessTokenCookie) {
 		t.Fatalf("the zone's cookie name is what the shim reads the token from:\n%s", table)
 	}

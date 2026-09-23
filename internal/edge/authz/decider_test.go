@@ -65,8 +65,9 @@ func (f *fakeStore) Changes(_ context.Context, _, token string) ([]authz.Change,
 
 func table() *Table {
 	return &Table{Routes: []Route{
-		{Host: "argocd.k.example", Relation: "can_configure", Object: "cluster:c1", AccessTokenCookie: "at"},
-		{Host: "console.k.example", Relation: "can_enter", Object: "tenant:platform", AccessTokenCookie: "at", ForwardToken: true},
+		{Host: "argocd.k.example", Relation: "can_configure", Object: "cluster:c1", AccessTokenCookie: "at", AuthMode: AuthModeOIDC},
+		{Host: "console.k.example", Relation: "can_enter", Object: "tenant:platform", AccessTokenCookie: "at", ForwardToken: true, AuthMode: AuthModeOIDC},
+		{Host: "api.k.example", Relation: "can_view", Object: "tenant:platform", AuthMode: AuthModeBearer},
 	}}
 }
 
@@ -117,11 +118,26 @@ func TestWhatHasNoRouteClassOrNoTokenIsRefused(t *testing.T) {
 	if dec := d.Decide(context.Background(), Request{Host: "nothing.k.example", Authorization: "Bearer root-token"}); dec.Allow || dec.Status != http.StatusForbidden {
 		t.Fatalf("no class: %+v", dec)
 	}
-	if dec := d.Decide(context.Background(), Request{Host: "argocd.k.example"}); dec.Allow || dec.Status != http.StatusUnauthorized {
-		t.Fatalf("no token: %+v", dec)
+	// On an oidc route a request with no valid session is the OIDC filter's,
+	// which runs behind the shim: it passes, with no identity and no bearer.
+	for name, req := range map[string]Request{
+		"no token": {Host: "argocd.k.example"},
+		"forged":   {Host: "argocd.k.example", Authorization: "Bearer forged"},
+	} {
+		dec := d.Decide(context.Background(), req)
+		if !dec.Allow || dec.Identified {
+			t.Fatalf("%s on an oidc route: %+v", name, dec)
+		}
+		if len(dec.Headers) != 0 || len(dec.RemoveHeaders) < 2 || dec.RemoveHeaders[0] != "authorization" {
+			t.Fatalf("%s must carry no identity: %+v", name, dec)
+		}
 	}
-	if dec := d.Decide(context.Background(), Request{Host: "argocd.k.example", Authorization: "Bearer forged"}); dec.Allow || dec.Status != http.StatusUnauthorized {
-		t.Fatalf("forged: %+v", dec)
+	// On a bearer route the same request is refused here.
+	if dec := d.Decide(context.Background(), Request{Host: "api.k.example"}); dec.Allow || dec.Status != http.StatusUnauthorized {
+		t.Fatalf("no token on a bearer route: %+v", dec)
+	}
+	if dec := d.Decide(context.Background(), Request{Host: "api.k.example", Authorization: "Bearer forged"}); dec.Allow || dec.Status != http.StatusUnauthorized {
+		t.Fatalf("forged on a bearer route: %+v", dec)
 	}
 }
 
@@ -175,10 +191,13 @@ func TestATableRefusesWhatItCannotDecide(t *testing.T) {
 	if _, err := ParseTable([]byte("routes:\n- host: a.example\n")); err == nil {
 		t.Fatal("a host with no relation is not a route")
 	}
-	if _, err := ParseTable([]byte("routes:\n- {host: a.example, relation: r, object: o}\n- {host: A.example, relation: r, object: o}\n")); err == nil {
+	if _, err := ParseTable([]byte("routes:\n- {host: a.example, relation: r, object: o, authMode: oidc}\n- {host: A.example, relation: r, object: o, authMode: oidc}\n")); err == nil {
 		t.Fatal("a host listed twice is ambiguous")
 	}
-	tb, err := ParseTable([]byte("routes:\n- {host: A.Example, relation: can_enter, object: tenant:t}\n"))
+	if _, err := ParseTable([]byte("routes:\n- {host: a.example, relation: r, object: o}\n")); err == nil {
+		t.Fatal("a route without an L1 mode is not a route")
+	}
+	tb, err := ParseTable([]byte("routes:\n- {host: A.Example, relation: can_enter, object: tenant:t, authMode: oidc}\n"))
 	if err != nil {
 		t.Fatal(err)
 	}

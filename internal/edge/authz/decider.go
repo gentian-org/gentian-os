@@ -52,6 +52,9 @@ type Request struct {
 // Decision is the shim's answer.
 type Decision struct {
 	Allow bool
+	// Identified is false when the request passed with no identity: an oidc
+	// route with no valid session, left to the OIDC filter behind the shim.
+	Identified bool
 	// Status is the HTTP status to answer with when not allowed.
 	Status int
 	Reason string
@@ -146,14 +149,14 @@ func (d *Decider) Decide(ctx context.Context, req Request) Decision {
 		raw = req.Cookies[route.AccessTokenCookie]
 	}
 	if raw == "" {
-		return deny(http.StatusUnauthorized, "no token")
+		return unauthenticated(route, "no token")
 	}
 	id, err := d.verify.Verify(ctx, raw)
 	if err != nil {
-		return deny(http.StatusUnauthorized, "token refused: "+err.Error())
+		return unauthenticated(route, "token refused: "+err.Error())
 	}
 	if id.SessionID == "" {
-		return deny(http.StatusUnauthorized, "token names no session")
+		return unauthenticated(route, "token names no session")
 	}
 	who := identity{subject: id.Subject, realm: id.Realm, session: id.SessionID, email: id.Email, name: id.Name}
 	if cached, ok := d.cache.get(id.Subject, id.SessionID, route.Host); ok {
@@ -199,9 +202,33 @@ func deny(status int, reason string) Decision {
 	return Decision{Allow: false, Status: status, Reason: reason}
 }
 
+// identityHeaders are what a backend may trust, so the shim owns them: set
+// on an identified request, stripped on every other.
+var identityHeaders = []string{HeaderSubject, HeaderRealm, HeaderSession, HeaderEmail, HeaderName}
+
+// unauthenticated answers a request that carries no valid token. On a bearer
+// route that is a refusal. On an oidc route it is not this shim's question:
+// Envoy Gateway runs ext_authz before its OIDC filter, so the request goes on
+// -- stripped of every identity header and of whatever bearer it carried --
+// to the OIDC filter, which sends it to sign in or completes the code flow.
+// Nothing reaches a backend on an oidc route without a session that filter
+// established, and every request that has one comes back through here.
+func unauthenticated(route *Route, reason string) Decision {
+	if route.AuthMode != AuthModeOIDC {
+		return deny(http.StatusUnauthorized, reason)
+	}
+	return Decision{
+		Allow:         true,
+		Identified:    false,
+		Reason:        reason,
+		RemoveHeaders: append([]string{"authorization"}, identityHeaders...),
+	}
+}
+
 func allow(route *Route, who identity) Decision {
 	dec := Decision{
-		Allow: true,
+		Allow:      true,
+		Identified: true,
 		Headers: map[string]string{
 			HeaderSubject: who.subject,
 			HeaderRealm:   who.realm,

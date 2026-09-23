@@ -68,7 +68,17 @@ func TestEnvoyGetsHeadersOnAllowAndAStatusOnDeny(t *testing.T) {
 	if got := ok.GetOkResponse().GetHeadersToRemove(); len(got) != 1 || got[0] != "authorization" {
 		t.Fatalf("headers to remove = %v", got)
 	}
-	denied := check("argocd.k.example", "at=forged")
+	// A forged session on an oidc route passes to the OIDC filter with
+	// nothing: no identity header set, the bearer and every identity header
+	// removed.
+	passed := check("argocd.k.example", "at=forged")
+	if passed.Status.Code != int32(codes.OK) || len(passed.GetOkResponse().GetHeaders()) != 0 {
+		t.Fatalf("passed = %v", passed)
+	}
+	if got := passed.GetOkResponse().GetHeadersToRemove(); len(got) < 2 || got[0] != "authorization" {
+		t.Fatalf("headers to remove = %v", got)
+	}
+	denied := check("api.k.example", "")
 	if denied.Status.Code != int32(codes.Unauthenticated) || denied.GetDeniedResponse().GetStatus().GetCode() != typev3.StatusCode_Unauthorized {
 		t.Fatalf("denied = %v", denied)
 	}

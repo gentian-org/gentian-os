@@ -40,6 +40,13 @@ type Route struct {
 	// Relation and Object are the store question: user:<sub> Relation Object.
 	Relation string `json:"relation"`
 	Object   string `json:"object"`
+	// AuthMode is the route's L1: "oidc", a session the Gateway's OIDC filter
+	// establishes, or "bearer", a token the caller presents. Envoy Gateway
+	// runs ext_authz before its OIDC filter, so on an oidc route a request
+	// with no valid token is not this shim's to refuse: it passes, carrying
+	// no identity, and the OIDC filter behind sends it to sign in. On a
+	// bearer route the same request is refused here.
+	AuthMode string `json:"authMode"`
 	// AccessTokenCookie is where the zone's session keeps the access token,
 	// for routes whose token is not forwarded as a bearer.
 	AccessTokenCookie string `json:"accessTokenCookie,omitempty"`
@@ -48,6 +55,12 @@ type Route struct {
 	// director -- has it; every other backend gets identity headers instead.
 	ForwardToken bool `json:"forwardToken,omitempty"`
 }
+
+// The two L1 modes a route with an L2 question can have.
+const (
+	AuthModeOIDC   = "oidc"
+	AuthModeBearer = "bearer"
+)
 
 // Table is the route table.
 type Table struct {
@@ -75,6 +88,9 @@ func ParseTable(b []byte) (*Table, error) {
 		host := strings.ToLower(strings.TrimSpace(r.Host))
 		if host == "" || r.Relation == "" || r.Object == "" {
 			return nil, fmt.Errorf("route table: entry %d (%q) needs host, relation and object", i, r.Host)
+		}
+		if r.AuthMode != AuthModeOIDC && r.AuthMode != AuthModeBearer {
+			return nil, fmt.Errorf("route table: entry %d (%q) needs authMode oidc or bearer", i, r.Host)
 		}
 		if seen[host] {
 			return nil, fmt.Errorf("route table: host %q listed twice", host)

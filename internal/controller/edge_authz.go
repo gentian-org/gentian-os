@@ -190,6 +190,7 @@ type edgeAuthzRoute struct {
 	Object            string `json:"object"`
 	AccessTokenCookie string `json:"accessTokenCookie,omitempty"`
 	ForwardToken      bool   `json:"forwardToken,omitempty"`
+	AuthMode          string `json:"authMode"`
 }
 
 // edgeAuthzRouteTable renders the shim's table from the routes that carry an
@@ -204,6 +205,7 @@ func edgeAuthzRouteTable(specs []kernelHTTPRouteSpec) (string, error) {
 		routes = append(routes, edgeAuthzRoute{
 			Host: s.host, Relation: s.authz.relation, Object: s.authz.object,
 			AccessTokenCookie: edgeKernelAccessTokenCookie, ForwardToken: s.authz.forwardToken,
+			AuthMode: "oidc",
 		})
 	}
 	sort.Slice(routes, func(i, j int) bool { return routes[i].Host < routes[j].Host })

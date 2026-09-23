@@ -53,7 +53,7 @@ check() {
     # it exists. Without the first there is no session; without the second the
     # kernel UIs have no route (never an open one).
     kubectl get secret edge-kernel-oidc -n "${EDGE_NAMESPACE}" >/dev/null 2>&1 || return "${CHECK_MISSING}"
-    [[ "$(kubectl get securitypolicy sp-kernel-argocd -n "${EDGE_NAMESPACE}" -o jsonpath='{.status.policies[0].conditions[?(@.type=="Accepted")].status}' 2>/dev/null)" == "True" ]] || return "${CHECK_MISSING}"
+    [[ "$(kubectl get securitypolicy sp-kernel-argocd -n "${EDGE_NAMESPACE}" -o jsonpath='{.status.ancestors[0].conditions[?(@.type=="Accepted")].status}' 2>/dev/null)" == "True" ]] || return "${CHECK_MISSING}"
     return 0
 }
 
@@ -107,10 +107,10 @@ apply() {
     # Service and the secret resolve.
     info "Waiting for the kernel zone's session policy on argocd.${KERNEL_DOMAIN}..."
     deadline=$((SECONDS + 600))
-    until [[ "$(kubectl get securitypolicy sp-kernel-argocd -n "${EDGE_NAMESPACE}" -o jsonpath='{.status.policies[0].conditions[?(@.type=="Accepted")].status}' 2>/dev/null)" == "True" ]]; do
+    until [[ "$(kubectl get securitypolicy sp-kernel-argocd -n "${EDGE_NAMESPACE}" -o jsonpath='{.status.ancestors[0].conditions[?(@.type=="Accepted")].status}' 2>/dev/null)" == "True" ]]; do
         if (( SECONDS > deadline )); then
             error "SecurityPolicy sp-kernel-argocd is not Accepted after 10 minutes."
-            kubectl get securitypolicy sp-kernel-argocd -n "${EDGE_NAMESPACE}" -o jsonpath='{range .status.policies[0].conditions[*]}{.type}={.status} {.reason}: {.message}{"\n"}{end}' 2>/dev/null || \
+            kubectl get securitypolicy sp-kernel-argocd -n "${EDGE_NAMESPACE}" -o jsonpath='{range .status.ancestors[0].conditions[*]}{.type}={.status} {.reason}: {.message}{"\n"}{end}' 2>/dev/null || \
                 error "  The policy does not exist: is the operator running, and does ${EDGE_NAMESPACE}/edge-kernel-oidc exist?"
             return 1
         fi
