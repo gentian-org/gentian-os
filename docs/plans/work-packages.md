@@ -525,45 +525,71 @@ From [security-gap-closing.md](security-gap-closing.md).
       in `kernel-edge`. `make validate-steps-v5` runs the step-contract checks
       and `lint-namespace-layout`, which fails on any namespace named by hand.
       The v4 step set is untouched. **Not run against a cluster yet.**
-- [ ] **Milestone M1 — a clean install the cluster administrator can see.**
-      `install.sh --layout v5` runs end to end on the purged cluster,
-      `--status` is true afterwards, and the administrator opens Headlamp,
-      Argo CD and Keycloak from tiles on the platform console. In order:
-      1. `[x]` `kernel-observability` in the layout; Headlamp as a bootstrap
-         Application, pinned in versions.yaml; HTTPRoutes for Headlamp and
-         Argo CD on the kernel gateway; the pin lint takes several pins per
-         step and counts claims across step sets.
-      2. `[x]` Kernel tiles: `internal/director/tiles/tiles.yaml` (Headlamp,
-         Argo CD, Keycloak; who sees which by cluster relation), served by
-         `GET /v1/clusters/{c}/tiles` under the kernel domain the Cluster claim
-         in git declares; contract-tested with the table and with OpenFGA.
-      3. `[ ]` B-02 OpenBao init and the seal token; B-03 ESO
-         ClusterSecretStore; B-04 Crossplane providers.
-      4. `[ ]` C-01 Cluster claim applied; Keycloak and OpenFGA composed into
-         `kernel-authentication` / `kernel-authorization` (Suze composition
-         takes the layout's names); the `headlamp` client in the kernel realm
-         and its secret in OpenBao (`headlamp.oidc.enabled`).
-      5. `[x]` D-01 operator and director in `kernel-control`; the Gateway in
-         `kernel-edge`; the platform tenant's console rendering the tiles.
-         The chain is built and verified on the cluster: the claim's
-         `platformRoles` become cluster tuples at director start, Keycloak's
-         event listener states memberships, and the tiles endpoint answers a
-         signed-in administrator with all three consoles. The console renders
-         them (gentian-ui#24) with their icons (#25).
-      6. `[~]` First run on the purged cluster: `--until A-07`, then
-         `--until B-01`, then step by step; every `check()` honest. Done
-         through C-01 (2026-09-22); Keycloak and OpenFGA next, on
-         `kernel-postgres` — kernel data on its own instance, app data on the
-         system engines.
-      7. `[x]` Headlamp as the person, not a robot: an OIDC proxy in
-         `kernel-observability` (the maintained fork of kube-oidc-proxy) that
-         verifies the kernel realm's token and impersonates the person at the
-         API server, so RBAC and the audit log name them; token login stays
-         the fallback for a cluster without a realm. Verified: a token from
-         the realm's `headlamp` client reaches the API server through the
-         proxy, impersonated, and lists the cluster.
-      8. `[ ]` The dev claim's `llm` block (vLLM on the GPU, the external
-         providers) goes back on the claim after the kernel is observable.
+- [ ] **Milestone M1 — the platform administrator signs in and sees the
+      cluster, in the plans' shape.** `install.sh --layout v5` runs end to end
+      on the purged cluster; `administrator@<kernel>` signs in once at
+      `console.<kernel>` and sees the platform tenant's desktop; the kernel
+      consoles are tiles the director answered from that account's relations;
+      each opens in a window on the desktop, signed in, with no second login
+      and no token to paste. Nothing about it is a stand-in for the plan: the
+      desktop is `Tenant/platform`'s, the edge holds the session, the desktop
+      holds no authority. In order, each landing with its installer step and
+      verified on the cluster before the next:
+      1. `[ ]` **Vocabulary** (WP-3): the Keycloak groups exactly as model v1
+         names them — `gentian:platform:admin` replaces the bootstrap's
+         `superadmin` everywhere it is written or read: the identity
+         bootstrap, the claim's `platformRoles` default, Argo CD's policy,
+         the proxy's binding, the OpenBao OIDC roles, the desktop's constant.
+      2. `[ ]` **Platform tenant** (WP-2, WP-8): `Tenant/platform` with
+         `isolation.keycloakRealm: kernel`, realm adopted and never created,
+         disabled or deleted — the tenant composition honours the realm
+         override and emits no Realm and no kernel broker for a tenant that
+         adopts the kernel realm; tenant namespaces carry
+         `gentianos.io/tier: tenant` beside `gentianos.io/tenant`; the v5
+         ApplicationSets sync `clusters/<c>/tenants/*`; the installer
+         scaffolds `tenants/platform/`; the director writes
+         `tenant:platform#cluster` and `#operated_by` at start, as it writes
+         the cluster roles.
+      3. `[ ]` **The edge** (WP-4): `authenticated` and `perimeter` Gateways
+         in `kernel-edge` under `mergeGateways`, reconciled by the operator
+         from the Cluster claim; the kernel zone's one confidential client
+         (`gentian-edge-kernel`: no groups scope, secret in `kernel-edge`,
+         back-channel logout at the director); `SecurityPolicy` OIDC with the
+         zone's cookie on `.<kernel>` and ext-auth on every kernel-zone route;
+         the ext-auth shim as a new binary in `kernel-edge` — gRPC, verifies
+         the token, asks the route's relation, caches per `(sub, sid, route)`,
+         evicts on `ReadChanges`, denies `session#revoked`, fails closed with
+         cached allows carrying — with its route table written by the
+         operator beside the routes; `id.<kernel>` serves `/realms/*` only on
+         the perimeter Gateway and `/admin/*` on `id-admin.<kernel>` behind
+         the kernel session.
+      4. `[ ]` **The desktop as a component** (WP-5, WP-2): a
+         `ComponentProfile` `desktop` (`tenancy: [tenant]`, `trustTier:
+         platform`, a database requirement, one gateway exposure with
+         `authMode: oidc` and `forwardToken: true`); a Component reconciler
+         that gives every tenant its desktop from that profile — a
+         provider-helm Release in `tenant-<t>`, the database fulfilled in
+         the tenant's namespace, the route and `SecurityPolicy` from
+         `expose[]` — so `tenant-platform` serves `console.<kernel>`.
+      5. `[ ]` **The desktop without authority** (WP-7, WP-1): the BFF
+         consumes the token the edge forwards and runs no code flow; no
+         client secret, no Keycloak admin credential, `rbac.yaml` empty; the
+         database from the granted requirement; tiles from the director —
+         the kernel consoles from `/v1/clusters/{c}/tiles`, the admin tile by
+         `can_administer` from a `GET /v1/tenants/{t}/me` relations read.
+      6. `[ ]` **Kernel UIs behind the kernel session** (WP-4): Argo CD,
+         Headlamp and `id-admin` routes carry the zone's `SecurityPolicy` and
+         the shim's `can_configure` / `can_audit`; each tool's own OIDC login
+         is the silent second factor.
+      7. `[ ]` **Retire** the portal in `kernel-edge`, `portal.<kernel>`, the
+         portal secret and BFF client in the identity bootstrap, and
+         `kernelPortalHost`; `www.<kernel>` is an alias of the console.
+      8. `[ ]` **Purge and reinstall** — the confirmation cycle; every
+         `check()` honest; `--status` true.
+      Earlier partial results (kernel tiles served by the director, Headlamp
+      through the impersonating proxy, the event listener wired, the claim's
+      `platformRoles` projected) stand and are reused; they are not the
+      milestone.
 - [ ] Phase 1 continued: OpenBao init and the seal token (B-02), ESO stores,
       Crossplane providers, Keycloak and OpenFGA in their namespaces (the Suze
       composition takes the layout's names), the two Gateways from the Cluster
