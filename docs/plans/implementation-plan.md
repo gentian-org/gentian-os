@@ -132,7 +132,7 @@ own realm, with no installer step having run for it.
 The director's job is to read OpenFGA to decide whether a caller may make a
 call, and to write git. Argo CD syncs git and the operator turns it into
 cluster state. As built it also writes OpenFGA in six places: it creates the
-store and the model, projects cluster roles from the claim, projects tenants
+OpenFGA store object and the model, projects cluster roles from the claim, projects tenants
 and tenant roles from the manifests, applies Keycloak membership events,
 records session revocations, and writes entitlement tuples.
 
@@ -140,7 +140,7 @@ Move them:
 
 | Write | New home |
 | --- | --- |
-| store and model at first start | shipped as configuration the operator applies, not created at runtime |
+| the OpenFGA store object and the model at first start | shipped as configuration the operator applies, not created at runtime |
 | cluster roles from the claim | operator |
 | tenants, `operated_by`, tenant roles | operator |
 | membership from Keycloak events | operator |
@@ -150,7 +150,7 @@ Move them:
 Then take the write capability off the director's OpenFGA token, so the rule
 is enforced by the credential and not by care.
 
-**Ask first**: how much of the store can be static rather than written at all.
+**Ask first**: how much of the graph can be static rather than written at all.
 See "How much has to be written" below.
 
 ### S7A.3 The platform administrator is an address
@@ -177,20 +177,59 @@ The breakdown, screen by screen:
 | --- | --- | --- |
 | Tenants: list, create, retire | director, from git | director → `clusters/<c>/tenants/<t>/tenant.yaml` |
 | Apps in a tenant: install, remove, addons | director, from git | director, endpoints that already exist |
-| Entitlements | director, from `entitlements.yaml` | the store signs, the director records |
+| Entitlements | director, from `entitlements.yaml` | the App Store signs, the director records |
 | Cluster settings: kernel domain, platform roles, certificates, LLM | director, from the Cluster claim | director → `clusters/<c>/kernel/claims/cluster.yaml` |
-| People and groups | director, from git plus a read of the store | **open question below** |
+| People and groups | **not here** — Keycloak's own console, embedded; see S7A.4 |
 | Authorization view: who holds what | director, read-only from OpenFGA | nothing; changes are made on the screens above |
 
-Two things follow. The director needs write endpoints it does not have yet
-(tenants and the Cluster claim), each guarded by a relation and each a commit.
-And membership is the open question: accounts live in Keycloak, not git, so
-either tenant membership is declared in git and the operator reconciles
-Keycloak from it, which keeps the rule intact, or the console keeps a path to
-Keycloak that is not the director, which breaks it. The first is the plan's
-shape; it needs deciding before the screens are built.
+The director needs write endpoints it does not have yet, for tenants and for
+the Cluster claim, each guarded by a relation and each a commit.
 
-### S7A.5 The console and the desktop hold nothing
+**People are not in this console.** Decided rather than deferred. Accounts,
+groups and memberships stay in Keycloak, and Gentian does not reimplement
+managing them:
+
+- Declaring people in git was the alternative and it is worse. Git is
+  append-only, so a name and an address committed there outlive the account,
+  which collides with erasure.
+- Keycloak's own administration console already does this, is maintained, and
+  since 26.2 its fine-grained admin permissions can be scoped so that a tenant
+  administrator manages only that tenant's users and groups, without holding
+  `realm-admin`. That scoping is what makes it safe to hand to a tenant at all,
+  and it is a permission model we would otherwise write ourselves.
+- So the People screen becomes the Identity tile: Keycloak's console, embedded
+  like any other component, visible to holders of the relation.
+
+Two consequences. The Keycloak hostname fix in S7A.7 stops being a nicety,
+because that tile is how anyone reaches people at all. And the fine-grained
+permissions have to be granted per tenant by whatever provisions the tenant,
+which is a new piece of the tenant composition's work.
+
+### S7A.5 Keycloak looks like the rest of the product
+
+Embedding Keycloak's console makes its appearance the product's appearance, and
+it does not currently match anything. The login screen is already themed
+(`kernel/services/keycloak-idp/theme/login`); the administration and account
+consoles are not.
+
+What is possible, and what is not:
+
+- Both are theme types Keycloak supports, so a `gentian` theme can carry them
+  alongside the login one. Both render from a single template, and both are
+  compiled React applications built on PatternFly, so what a theme can change
+  is the styling, the logo and the favicon, not the layout.
+- PatternFly exposes its palette, typography and spacing as CSS custom
+  properties, so mapping the `--gtn-*` tokens from `gentian-ui` onto them gets
+  most of the way. Dark mode comes with it.
+- Overriding the templates themselves is technically allowed and a bad idea:
+  Keycloak's own guidance is that custom templates have to be reworked on every
+  upgrade, and this is a surface we do not want to own.
+
+So: a shared `gentian-tokens.css` generated from the design system, applied to
+the login, account and admin themes, plus the logo and favicon. Accept the
+layout as Keycloak draws it.
+
+### S7A.6 The console and the desktop hold nothing
 
 A rule to apply to both, and to check before each is called finished: a UI
 offers a surface for making requests, and every one of those requests is
@@ -217,7 +256,7 @@ GUI over the director's API. When either grows a screen that seems to need a
 credential, that is the signal that an endpoint is missing from the director,
 not that the UI needs the credential.
 
-### S7A.6 A read-only view of the authorization state
+### S7A.7 A read-only view of the authorization state
 
 Part of the same console, worth naming separately because it replaces the idea
 of exposing OpenFGA's own playground. OpenFGA's read APIs answer "which groups
@@ -226,7 +265,7 @@ renders that; anything a person wants to change is changed on the screens
 above, through the director, into git. No development-only UI is exposed and
 no second write path exists.
 
-### S7A.7 The kernel UIs are actually usable
+### S7A.8 The kernel UIs are actually usable
 
 - **Argo CD** showed an empty list to a full administrator. The groups claim
   carries the full path, `/gentian:platform:admin`, because OpenBao's roles
@@ -248,9 +287,11 @@ no second write path exists.
   `KC_HOSTNAME_ADMIN`, move the route and its policy, add the redirect URI,
   and repoint the tile. While there, stop clearing the realm's clickjacking
   defences wholesale — one tile should not cost every login page in the realm
-  its protection.
+  its protection. This tile is now also how tenant administrators manage
+  people (S7A.4), so it is reached by more than the platform administrator and
+  its relation has to allow for that.
 
-### S7A.8 The installer does what it claims
+### S7A.9 The installer does what it claims
 
 Recorded in WP-10. Two cold-start races are fixed. These remain, in priority
 order:
@@ -283,7 +324,7 @@ The work packages in order. Each is specified in `work-packages.md`.
 | Order | Package | Why here |
 | --- | --- | --- |
 | 1 | WP-1 Director | S7A.2 is its first item; the rest of the API follows |
-| 2 | WP-3 Authorization | who projects into the store, and the naming rule |
+| 2 | WP-3 Authorization | who projects into OpenFGA, and the naming rule |
 | 3 | WP-7 UI | the admin console and the desktop, on the director's API |
 | 4 | WP-5 Catalogue | `ComponentProfile` for everything, not only the desktop |
 | 5 | WP-2 Operator | what the operator gives up and what it takes on |
@@ -298,6 +339,8 @@ The work packages in order. Each is specified in `work-packages.md`.
 Raised while planning S7A.2 and worth answering before building it.
 
 Most of what the director writes into OpenFGA today is not per-cluster at all.
+A note on naming: OpenFGA, or the ReBAC graph. Never "the store" — that is the
+App Store, which is a different thing entirely.
 The authorization **model** is a file in the repository and changes only when
 the model version does. The **relation structure** — that a cluster has
 tenants, that a tenant has admins, members and a perimeter group, which
@@ -305,7 +348,7 @@ relation each role implies — is the model, not data. What is genuinely
 per-cluster is small: which groups exist, who is in them, which tenants this
 cluster has, and which entitlements are current.
 
-So the store should arrive mostly built: the model shipped and applied like a
+So the graph should arrive mostly built: the model shipped and applied like a
 CRD, the role-to-relation structure derived from the model rather than written
 tuple by tuple, and only the names, the memberships and the facts written at
 runtime. That is both less code and a smaller blast radius: a bug in a
