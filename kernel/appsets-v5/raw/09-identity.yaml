@@ -49,6 +49,11 @@ spec:
             # Where Keycloak states a user's groups. The director runs in the
             # control namespace and is reached on the cluster network, never
             # through the edge: this is the kernel talking to itself.
+            # The provider jar is built from this repository, so it follows
+            # the same ref the manifests do. A tag of its own would let the
+            # jar and the values that configure it come from different commits.
+            - name: eventListener.image
+              value: 'ghcr.io/gentian-org/keycloak-event-listener:gentian.os.revision.placeholder'
             - name: eventListener.directorURL
               value: 'http://gentian-os-director.ns.control.placeholder.svc.cluster.local:8080/v1/events/keycloak'
           valueFiles:
