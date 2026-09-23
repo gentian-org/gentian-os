@@ -916,6 +916,12 @@ spec:
               AUTH="Authorization: Bearer \${TOKEN}"
               REALM="\${KERNEL_REALM}"
               PORTAL="https://portal.\${KERNEL_DOMAIN}"
+              # The same desktop on the name people type. Keycloak matches a
+              # redirect URI exactly, so a second host is a second set of URIs
+              # -- without them a visitor to www is bounced at the login
+              # request with invalid_redirect_uri and never sees a password
+              # prompt.
+              PORTAL_WWW="https://www.\${KERNEL_DOMAIN}"
 
               realm_http=\$(curl -s -o /dev/null -w '%{http_code}' -H "\${AUTH}" "\${KEYCLOAK_BASE}/admin/realms/\${REALM}")
               if [ "\${realm_http}" = "404" ]; then
@@ -960,7 +966,7 @@ spec:
               CLIENT_ID=\$(curl -sf -H "\${AUTH}" \\
                 "\${KEYCLOAK_BASE}/admin/realms/\${REALM}/clients?clientId=gentian-portal" \\
                 | jq -r '.[0].id // empty')
-              BODY=\$(jq -n --arg portal "\${PORTAL}" '{
+              BODY=\$(jq -n --arg portal "\${PORTAL}" --arg www "\${PORTAL_WWW}" '{
                 clientId: "gentian-portal",
                 name: "Gentian Portal",
                 enabled: true,
@@ -970,12 +976,13 @@ spec:
                 implicitFlowEnabled: false,
                 serviceAccountsEnabled: false,
                 protocol: "openid-connect",
-                redirectUris: [(\$portal + "/login"), (\$portal + "/login/*"), (\$portal + "/*")],
+                redirectUris: [(\$portal + "/login"), (\$portal + "/login/*"), (\$portal + "/*"),
+                               (\$www + "/login"), (\$www + "/login/*"), (\$www + "/*")],
                 attributes: {
                   "pkce.code.challenge.method": "S256",
-                  "post.logout.redirect.uris": ((\$portal + "/login") + "##" + (\$portal + "/*"))
+                  "post.logout.redirect.uris": ((\$portal + "/login") + "##" + (\$portal + "/*") + "##" + (\$www + "/login") + "##" + (\$www + "/*"))
                 },
-                webOrigins: [\$portal, "+"],
+                webOrigins: [\$portal, \$www, "+"],
                 rootUrl: \$portal,
                 baseUrl: \$portal
               }')

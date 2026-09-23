@@ -33,13 +33,14 @@ import (
 )
 
 const (
-	kernelRouteKeycloakIDP   = "kernel-idp"
-	kernelRouteKernelApex    = "kernel-apex-redirect"
-	kernelRouteHTTPRedirect  = "kernel-http-redirect"
-	kernelRouteArgoCD        = "kernel-argocd"
-	kernelRouteHeadlamp      = "kernel-headlamp"
-	kernelRouteGentianPortal = "kernel-gentian-portal"
-	kernelRouteLiteLLM       = "kernel-llm"
+	kernelRouteKeycloakIDP      = "kernel-idp"
+	kernelRouteKernelApex       = "kernel-apex-redirect"
+	kernelRouteHTTPRedirect     = "kernel-http-redirect"
+	kernelRouteArgoCD           = "kernel-argocd"
+	kernelRouteHeadlamp         = "kernel-headlamp"
+	kernelRouteGentianPortal    = "kernel-gentian-portal"
+	kernelRouteGentianPortalWWW = "kernel-gentian-portal-www"
+	kernelRouteLiteLLM          = "kernel-llm"
 
 	gentianPortalAPIService = "gentian-portal-gentian-portal-api"
 	gentianPortalWebService = "gentian-portal-gentian-portal-web"
@@ -197,6 +198,16 @@ func kernelHTTPRouteSpecs(
 		specs = append(specs, kernelHTTPRouteSpec{
 			name:        kernelRouteGentianPortal,
 			host:        portalHost,
+			sectionName: wildcardListenerName,
+			rules:       kernelGentianPortalHTTPRouteRules(),
+		})
+		// The same desktop on the name people type into a browser. Served
+		// rather than redirected: a redirect would change the address bar
+		// mid-login and drop anything travelling on the request, and the
+		// portal is one deployment either way.
+		specs = append(specs, kernelHTTPRouteSpec{
+			name:        kernelRouteGentianPortalWWW,
+			host:        "www." + kernelDomain,
 			sectionName: wildcardListenerName,
 			rules:       kernelGentianPortalHTTPRouteRules(),
 		})

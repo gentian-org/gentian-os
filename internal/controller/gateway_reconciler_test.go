@@ -528,11 +528,20 @@ func TestKernelHTTPRouteSpecsLLMDisabledByDefault(t *testing.T) {
 
 func TestKernelHTTPRouteSpecsLLMEnabled(t *testing.T) {
 	specs := kernelHTTPRouteSpecs("platform.example.test", nil, nil, nil, true, true)
-	// 6, not 5: the :80 -> :443 redirect route (kernel-http-redirect) is emitted
-	// alongside the apex and argocd routes. The LLM route is still appended last,
-	// which is what the specs[len-1] lookup below relies on.
-	if len(specs) != 6 {
-		t.Fatalf("spec count = %d, want 6 with llm enabled", len(specs))
+	// By name, not by count: adding a kernel route should not fail a test
+	// about the LLM one. The LLM route is still appended last, which is what
+	// the specs[len-1] lookup below relies on.
+	byName := map[string]struct{}{}
+	for _, s := range specs {
+		byName[s.name] = struct{}{}
+	}
+	for _, want := range []string{
+		kernelRouteKeycloakIDP, kernelRouteGentianPortal, kernelRouteKernelApex,
+		kernelRouteArgoCD, kernelRouteHTTPRedirect, kernelRouteLiteLLM,
+	} {
+		if _, ok := byName[want]; !ok {
+			t.Fatalf("route %q missing from kernel specs", want)
+		}
 	}
 	var haveRedirect bool
 	for _, s := range specs {
