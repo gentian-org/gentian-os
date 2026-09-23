@@ -369,9 +369,19 @@ func (r *ComponentReconciler) ensureRelease(ctx context.Context, comp *gentianov
 	if err != nil {
 		return false, "", err
 	}
-	if !equality.Semantic.DeepEqual(existing.Object["spec"], desired.Object["spec"]) {
+	// Only what this reconciler writes is compared: the provider fills the
+	// rest of the spec (deletionPolicy, managementPolicies, rollbackLimit)
+	// with defaults, and comparing the whole spec against a desired one
+	// without them found drift on every pass and never let the component
+	// be Ready.
+	existingFor, _, _ := unstructured.NestedMap(existing.Object, "spec", "forProvider")
+	existingRef, _, _ := unstructured.NestedMap(existing.Object, "spec", "providerConfigRef")
+	if !equality.Semantic.DeepEqual(existingFor, spec["forProvider"]) || !equality.Semantic.DeepEqual(existingRef, spec["providerConfigRef"]) {
 		patch := client.MergeFrom(existing.DeepCopy())
-		if err := unstructured.SetNestedField(existing.Object, spec, "spec"); err != nil {
+		if err := unstructured.SetNestedField(existing.Object, spec["forProvider"], "spec", "forProvider"); err != nil {
+			return false, "", err
+		}
+		if err := unstructured.SetNestedField(existing.Object, spec["providerConfigRef"], "spec", "providerConfigRef"); err != nil {
 			return false, "", err
 		}
 		if err := r.Patch(ctx, existing, patch); err != nil {

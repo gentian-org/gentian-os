@@ -76,6 +76,9 @@ func TestDesktopValuesAreThePlatformsFacts(t *testing.T) {
 	if auth["mode"] != "edge" || auth["clientId"] != edgeKernelClientID {
 		t.Fatalf("auth = %v", auth)
 	}
+	if auth["issuer"] != "https://id.k.example/auth/realms/kernel" {
+		t.Fatalf("issuer = %v, want the zone's realm on the identity provider", auth["issuer"])
+	}
 	if v["tenant"] != "platform" || v["existingSecret"].(map[string]interface{})["name"] != "desktop-database" {
 		t.Fatalf("tenant/secret = %v %v", v["tenant"], v["existingSecret"])
 	}

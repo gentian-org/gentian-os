@@ -70,6 +70,10 @@ func (r *ComponentReconciler) desktopValues(tenant *gentianov1alpha1.Tenant, zon
 			"disabled": false,
 			"mode":     "edge",
 			"clientId": zone.clientID,
+			// The zone's issuer: what the forwarded token is verified
+			// against. Without it the BFF verifies nothing and answers as
+			// nobody in particular.
+			"issuer": fmt.Sprintf("https://id.%s/auth/realms/%s", r.KernelDomain, zone.realm),
 		},
 		"existingSecret": map[string]interface{}{"name": databaseSecret},
 		"director": map[string]interface{}{
