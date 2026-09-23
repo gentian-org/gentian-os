@@ -40,6 +40,15 @@ _v5_apps()         { echo "$(_v5_apps_healthy) $(_v5_apps_synced)"; }
 _v5_render() {
     # The layout goes in as a values file under its own key; platforms.yaml
     # already is one (its top-level dnsProviders table is what the chart reads).
+    # Production unless the claim asks for staging, which is what every other
+    # reader of this setting assumes. Defaulting the other way here meant a
+    # cluster that said nothing got a certificate nothing trusts, while every
+    # check reported success: the edge terminates TLS with its own
+    # certificate, so only something INSIDE the cluster ever sees this one,
+    # and what it sees is an unknown authority.
+    local acme_staging=false
+    [[ "${ACME_ENV:-production}" == "staging" ]] && acme_staging=true
+
     local tmp
     tmp="$(mktemp -d)"
     { echo "namespaces:"; sed 's/^/  /' "${NAMESPACES_FILE}"; } > "${tmp}/namespaces.yaml"
@@ -67,13 +76,7 @@ _v5_render() {
         --set-string "portal.imageBranch=${PORTAL_IMAGE_TAG:-develop}" \
         --set-string "llmEnabled=${LLM_SUPPORT:-false}" \
         --set-string "tenancyMode=${TENANCY_MODE:-multi}" \
-        # Production unless the claim asks for staging, which is what every
-        # other reader of this setting assumes. Defaulting the other way here
-        # meant a cluster that said nothing got a certificate nothing trusts,
-        # while every check reported success -- the edge terminates TLS with
-        # its own certificate, so only something INSIDE the cluster ever sees
-        # this one, and what it sees is an unknown authority.
-        --set-string "acmeStaging=$([[ "${ACME_ENV:-production}" == "staging" ]] && echo true || echo false)" \
+        --set-string "acmeStaging=${acme_staging}" \
         --set-string "smtpHost=${EXTERNAL_SMTP_HOST:-}" \
         --set-string "versions.headlamp.chart=$(gentian_pin headlamp chart)" \
         --set-string "versions.headlamp.repo=$(gentian_pin headlamp repo)"
