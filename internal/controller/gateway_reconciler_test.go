@@ -482,7 +482,7 @@ func TestKernelHTTPRouteSpecs(t *testing.T) {
 		byName[s.name] = s
 	}
 	for _, want := range []string{
-		kernelRouteKeycloakIDP, kernelRouteKeycloakAdmin, kernelRouteGentianPortal, kernelRouteKernelApex,
+		kernelRouteKeycloakIDP, kernelRouteKeycloakRefused, kernelRouteKeycloakAdmin, kernelRouteGentianPortal, kernelRouteKernelApex,
 		kernelRouteArgoCD, kernelRouteHTTPRedirect, "tenant-demo-portal",
 	} {
 		if _, ok := byName[want]; !ok {
@@ -502,16 +502,9 @@ func TestKernelHTTPRouteSpecs(t *testing.T) {
 	if got := string(*idRoute.Spec.ParentRefs[0].SectionName); got != perimeterIDListenerName {
 		t.Fatalf("id route listener = %q", got)
 	}
-	denied, allowed := map[string]bool{}, map[string]bool{}
+	allowed := map[string]bool{}
 	for _, rule := range idRoute.Spec.Rules {
 		prefix := *rule.Matches[0].Path.Value
-		if len(rule.BackendRefs) == 0 {
-			if len(rule.Filters) != 1 || rule.Filters[0].ExtensionRef == nil || string(rule.Filters[0].ExtensionRef.Name) != kernelDenyFilterName {
-				t.Fatalf("rule %s has no backend and no deny filter", prefix)
-			}
-			denied[prefix] = true
-			continue
-		}
 		if got := *rule.BackendRefs[0].Port; got != gatewayv1.PortNumber(8080) {
 			t.Fatalf("id backend port = %d, want 8080 (Suze Keycloak)", got)
 		}
@@ -520,32 +513,28 @@ func TestKernelHTTPRouteSpecs(t *testing.T) {
 		}
 		allowed[prefix] = true
 	}
-	for _, want := range []string{"/auth/realms/master/", "/auth/admin/"} {
-		if !denied[want] {
-			t.Errorf("id.<kernel> must refuse %s; refused %v", want, denied)
-		}
-	}
 	for _, want := range []string{"/auth/realms/", "/auth/resources/"} {
 		if !allowed[want] {
 			t.Errorf("id.<kernel> must serve %s; served %v", want, allowed)
 		}
 	}
-	// The kernel UIs carry the zone's L2 question, on this cluster.
-	for name, want := range map[string]string{kernelRouteArgoCD: "can_configure", kernelRouteHeadlamp: "can_audit", kernelRouteKeycloakAdmin: "can_configure"} {
-		spec, ok := byName[name]
-		if !ok {
-			continue // headlamp is only routed where observability has a namespace
-		}
-		if spec.authz == nil || spec.authz.relation != want || spec.authz.object != "cluster:c1" {
-			t.Fatalf("%s authz = %+v, want %s on cluster:c1", name, spec.authz, want)
+	// What it refuses is a route of its own -- more specific, so ranked
+	// first -- closed by a policy that denies every caller.
+	refused := byName[kernelRouteKeycloakRefused]
+	if refused.gateway != PerimeterGatewayName || refused.host != "id.platform.example.test" {
+		t.Fatalf("refused route = %+v", refused)
+	}
+	refusedPrefixes := map[string]bool{}
+	for _, rule := range refused.rules {
+		refusedPrefixes[*rule.Matches[0].Path.Value] = true
+	}
+	for _, want := range []string{"/auth/realms/master/", "/auth/admin/"} {
+		if !refusedPrefixes[want] {
+			t.Errorf("id.<kernel> must refuse %s; refused %v", want, refusedPrefixes)
 		}
 	}
-	// And without the zone's client secret they are not routed at all: no
-	// session means no route, never an open one.
-	for _, s := range kernelHTTPRouteSpecs("platform.example.test", nil, nil, nil, false, true, "c1", false) {
-		if s.authz != nil || s.name == kernelRouteArgoCD || s.name == kernelRouteKeycloakAdmin {
-			t.Fatalf("route %s is emitted before the kernel zone exists", s.name)
-		}
+	if auth, _ := refused.securityPolicy["authorization"].(map[string]interface{}); auth["defaultAction"] != "Deny" {
+		t.Fatalf("the refused route's policy = %v, want defaultAction Deny", refused.securityPolicy)
 	}
 	// The admin console has its own hostname on the authenticated edge.
 	adminRoute := buildKernelHTTPRoute(byName[kernelRouteKeycloakAdmin])

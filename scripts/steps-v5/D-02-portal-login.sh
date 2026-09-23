@@ -54,6 +54,10 @@ check() {
     # kernel UIs have no route (never an open one).
     kubectl get secret edge-kernel-oidc -n "${EDGE_NAMESPACE}" >/dev/null 2>&1 || return "${CHECK_MISSING}"
     [[ "$(kubectl get securitypolicy sp-kernel-argocd -n "${EDGE_NAMESPACE}" -o jsonpath='{.status.ancestors[0].conditions[?(@.type=="Accepted")].status}' 2>/dev/null)" == "True" ]] || return "${CHECK_MISSING}"
+    # The platform's desktop: a component of the platform tenant, the console
+    # at console.<kernel> behind the kernel session. Ready means its chart is
+    # deployed and its routes exist.
+    [[ "$(kubectl get component desktop -n tenant-platform -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null)" == "True" ]] || return "${CHECK_MISSING}"
     return 0
 }
 
@@ -117,6 +121,22 @@ apply() {
         sleep 10
     done
     success "The kernel UIs sit behind the kernel zone's session and the ext-auth shim."
+
+    # The platform desktop: the component reconciler installs it from the
+    # desktop profile once the zone exists and the database credential is
+    # delivered; its chart comes from the registry the profile names.
+    info "Waiting for the platform desktop (Component tenant-platform/desktop)..."
+    deadline=$((SECONDS + 900))
+    until [[ "$(kubectl get component desktop -n tenant-platform -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null)" == "True" ]]; do
+        if (( SECONDS > deadline )); then
+            error "The platform desktop is not Ready after 15 minutes."
+            kubectl get component desktop -n tenant-platform -o jsonpath='{range .status.conditions[*]}{.type}={.status} {.reason}: {.message}{"\n"}{end}' 2>/dev/null || \
+                error "  Component tenant-platform/desktop does not exist: is the operator running and the desktop profile installed?"
+            return 1
+        fi
+        sleep 10
+    done
+    success "The platform desktop serves console.${KERNEL_DOMAIN} behind the kernel zone's session."
 }
 
 destroy() {

@@ -141,11 +141,19 @@ func zoneSecurityPolicySpec(kernelDomain string, zone edgeZone, route string, au
 }
 
 func (r *GatewayPlatformReconciler) ensureKernelSecurityPolicy(ctx context.Context, spec kernelHTTPRouteSpec) error {
-	if spec.authz == nil {
+	var policySpec map[string]interface{}
+	switch {
+	case spec.authz != nil:
+		policySpec = kernelSecurityPolicySpec(r.KernelDomain, r.kernelRealm(), spec.name, *spec.authz, r.edgeAuthzService())
+	case spec.securityPolicy != nil:
+		policySpec = cloneMap(spec.securityPolicy)
+		policySpec["targetRefs"] = []interface{}{
+			map[string]interface{}{"group": gatewayv1.GroupName, "kind": "HTTPRoute", "name": spec.name},
+		}
+	default:
 		return nil
 	}
 	name := kernelSecurityPolicyName(spec.name)
-	policySpec := kernelSecurityPolicySpec(r.KernelDomain, r.kernelRealm(), spec.name, *spec.authz, r.edgeAuthzService())
 	desired := &unstructured.Unstructured{}
 	desired.SetGroupVersionKind(securityPolicyGVK)
 	desired.SetName(name)

@@ -35,9 +35,11 @@ import (
 const (
 	kernelRouteKeycloakIDP   = "kernel-idp"
 	kernelRouteKeycloakAdmin = "kernel-id-admin"
-	// kernelDenyFilterName is the HTTPRouteFilter that answers 404: what a
-	// perimeter surface refuses is written as a rule, not left to absence.
-	kernelDenyFilterName        = "kernel-deny"
+	// kernelRouteKeycloakRefused carries the paths id.<kernel> refuses -- the
+	// master realm and the admin console -- as a route of its own, more
+	// specific than the allow and closed by a policy: what a perimeter
+	// surface refuses is written down, not left to absence.
+	kernelRouteKeycloakRefused  = "kernel-idp-refused"
 	kernelRouteKernelApex       = "kernel-apex-redirect"
 	kernelRouteHTTPRedirect     = "kernel-http-redirect"
 	kernelRouteArgoCD           = "kernel-argocd"
@@ -72,6 +74,9 @@ type kernelHTTPRouteSpec struct {
 	gateway      string
 	policy       map[string]interface{}
 	clientPolicy map[string]interface{}
+	// securityPolicy is a SecurityPolicy of the route's own, for a route with
+	// no zone session: the refusal on the identity provider's perimeter.
+	securityPolicy map[string]interface{}
 	// authz is the L2 question for a route behind the kernel zone's session;
 	// nil for a route with no session (the perimeter's) or none yet.
 	authz *routeAuthz
@@ -115,9 +120,6 @@ func (r *GatewayPlatformReconciler) reconcileKernelHTTPRoutes(ctx context.Contex
 		}
 	}
 
-	if err := r.ensureKernelDenyFilter(ctx); err != nil {
-		return fmt.Errorf("ensure kernel deny HTTPRouteFilter: %w", err)
-	}
 	specs := kernelHTTPRouteSpecs(r.KernelDomain, effectiveDomains, oidcSubs, tenantNames,
 		clusterLLMEnabled(ctx, r.Client), portalDeployed(ctx, r.Client), r.Cluster, r.kernelZoneReady(ctx))
 	// The shim's table first: a route whose policy asks the shim before the
@@ -134,7 +136,7 @@ func (r *GatewayPlatformReconciler) reconcileKernelHTTPRoutes(ctx context.Contex
 		if err := ensureHTTPRouteResource(ctx, r.Client, route); err != nil {
 			return fmt.Errorf("ensure kernel HTTPRoute %s: %w", spec.name, err)
 		}
-		if spec.authz != nil {
+		if spec.authz != nil || spec.securityPolicy != nil {
 			expectedPolicies[kernelSecurityPolicyName(spec.name)] = struct{}{}
 			if err := r.ensureKernelSecurityPolicy(ctx, spec); err != nil {
 				return fmt.Errorf("ensure kernel SecurityPolicy %s: %w", spec.name, err)
@@ -215,12 +217,27 @@ func kernelHTTPRouteSpecs(
 			gateway:     PerimeterGatewayName,
 			sectionName: perimeterIDListenerName,
 			rules: []gatewayv1.HTTPRouteRule{
-				kernelDenyRule("/auth/realms/master/"),
-				kernelDenyRule("/auth/admin/"),
 				kernelBackendRulePrefixNS(kcService, identityNamespace, kcPort, "/auth/realms/", idFilters...),
 				kernelBackendRulePrefixNS(kcService, identityNamespace, kcPort, "/auth/resources/", idFilters...),
 			},
 			policy: keycloakProxyBackendTrafficPolicySpec(),
+		},
+		// What id.<kernel> refuses, as a route: these prefixes are more
+		// specific than the allow above, so Gateway API ranks them first, and
+		// the policy on them denies every caller. A refusal that is an object
+		// can be read, listed and tested; an absence cannot.
+		{
+			name:        kernelRouteKeycloakRefused,
+			host:        idHost,
+			gateway:     PerimeterGatewayName,
+			sectionName: perimeterIDListenerName,
+			rules: []gatewayv1.HTTPRouteRule{
+				kernelBackendRulePrefixNS(kcService, identityNamespace, kcPort, "/auth/realms/master/"),
+				kernelBackendRulePrefixNS(kcService, identityNamespace, kcPort, "/auth/admin/"),
+			},
+			securityPolicy: map[string]interface{}{
+				"authorization": map[string]interface{}{"defaultAction": "Deny"},
+			},
 		},
 	}
 	clusterObject := "cluster:" + cluster
@@ -780,70 +797,4 @@ func dedupe(ns ...string) []string {
 		out = append(out, n)
 	}
 	return out
-}
-
-var httpRouteFilterGVK = schema.GroupVersionKind{
-	Group:   "gateway.envoyproxy.io",
-	Version: "v1alpha1",
-	Kind:    "HTTPRouteFilter",
-}
-
-// ensureKernelDenyFilter keeps the one HTTPRouteFilter every kernelDenyRule
-// refers to: a direct 404. Envoy Gateway's extension, because Gateway API
-// itself has no way to refuse a path; a rule with no backend would answer
-// 500, which reads as an outage rather than a decision.
-func (r *GatewayPlatformReconciler) ensureKernelDenyFilter(ctx context.Context) error {
-	desired := &unstructured.Unstructured{}
-	desired.SetGroupVersionKind(httpRouteFilterGVK)
-	desired.SetName(kernelDenyFilterName)
-	desired.SetNamespace(servicesNamespace)
-	desired.SetLabels(map[string]string{
-		managedByLabel:        managedByValue,
-		gatewayComponentLabel: gatewayComponentKernel,
-	})
-	spec := map[string]interface{}{
-		"directResponse": map[string]interface{}{"statusCode": int64(404)},
-	}
-	if err := unstructured.SetNestedField(desired.Object, spec, "spec"); err != nil {
-		return err
-	}
-	existing := &unstructured.Unstructured{}
-	existing.SetGroupVersionKind(httpRouteFilterGVK)
-	err := r.Get(ctx, client.ObjectKey{Name: kernelDenyFilterName, Namespace: servicesNamespace}, existing)
-	if errors.IsNotFound(err) {
-		return r.Create(ctx, desired)
-	}
-	if err != nil {
-		return err
-	}
-	if !equality.Semantic.DeepEqual(existing.Object["spec"], desired.Object["spec"]) {
-		patch := client.MergeFrom(existing.DeepCopy())
-		if err := unstructured.SetNestedField(existing.Object, spec, "spec"); err != nil {
-			return err
-		}
-		return r.Patch(ctx, existing, patch)
-	}
-	return nil
-}
-
-// kernelDenyRule refuses a path prefix with the deny filter. It sits before
-// the broader allow it carves out of: Gateway API ranks a longer prefix
-// first, so the order here is for the reader, not the proxy.
-func kernelDenyRule(prefix string) gatewayv1.HTTPRouteRule {
-	pathType := gatewayv1.PathMatchPathPrefix
-	group := gatewayv1.Group(httpRouteFilterGVK.Group)
-	kind := gatewayv1.Kind(httpRouteFilterGVK.Kind)
-	return gatewayv1.HTTPRouteRule{
-		Matches: []gatewayv1.HTTPRouteMatch{{
-			Path: &gatewayv1.HTTPPathMatch{Type: &pathType, Value: &prefix},
-		}},
-		Filters: []gatewayv1.HTTPRouteFilter{{
-			Type: gatewayv1.HTTPRouteFilterExtensionRef,
-			ExtensionRef: &gatewayv1.LocalObjectReference{
-				Group: group,
-				Kind:  kind,
-				Name:  gatewayv1.ObjectName(kernelDenyFilterName),
-			},
-		}},
-	}
 }

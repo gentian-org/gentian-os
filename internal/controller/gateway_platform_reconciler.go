@@ -51,7 +51,7 @@ import (
 //
 // ClientTrafficPolicy sits alongside BackendTrafficPolicy: the kernel routes
 // reconciler creates them and tenant cleanup lists them for stale removal.
-// +kubebuilder:rbac:groups=gateway.envoyproxy.io,resources=backendtrafficpolicies;clienttrafficpolicies;httproutefilters;securitypolicies,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=gateway.envoyproxy.io,resources=backendtrafficpolicies;clienttrafficpolicies;securitypolicies,verbs=get;list;watch;create;update;patch;delete
 //
 // Deployments back the CoreDNS hairpin (coredns_hairpin.go): the ConfigMap name
 // is discovered from the volume the CoreDNS Deployment mounts, and the

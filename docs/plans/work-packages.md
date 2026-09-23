@@ -543,12 +543,12 @@ From [security-gap-closing.md](security-gap-closing.md).
       desktop is `Tenant/platform`'s, the edge holds the session, the desktop
       holds no authority. In order, each landing with its installer step and
       verified on the cluster before the next:
-      1. `[ ]` **Vocabulary** (WP-3): the Keycloak groups exactly as model v1
+      1. `[x]` **Vocabulary** (WP-3): the Keycloak groups exactly as model v1
          names them — `gentian:platform:admin` replaces the bootstrap's
          `superadmin` everywhere it is written or read: the identity
          bootstrap, the claim's `platformRoles` default, Argo CD's policy,
          the proxy's binding, the OpenBao OIDC roles, the desktop's constant.
-      2. `[ ]` **Platform tenant** (WP-2, WP-8): `Tenant/platform` with
+      2. `[x]` **Platform tenant** (WP-2, WP-8): `Tenant/platform` with
          `isolation.keycloakRealm: kernel`, realm adopted and never created,
          disabled or deleted — the tenant composition honours the realm
          override and emits no Realm and no kernel broker for a tenant that
