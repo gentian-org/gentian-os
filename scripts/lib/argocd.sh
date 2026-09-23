@@ -484,7 +484,22 @@ EOF
 }"
 
     # 3. Patch argocd-rbac-cm to map group to admin role
-    local policy_csv="g, gentian:platform:admin, role:admin"
+    #
+    # Both spellings, because the claim carries the FULL path.
+    #
+    # The kernel realm's groups mapper is configured full.path=true, which
+    # OpenBao needs: its roles bind /group-name with a leading slash and the
+    # bare name matches nothing. So the token Argo CD receives says
+    # "/gentian:platform:admin", and a policy naming the bare form matches no
+    # subject at all -- which does not look like a permissions problem from
+    # the outside. It looks like an empty Argo CD: "No applications available
+    # to you just yet", for a platform administrator who holds everything.
+    #
+    # Naming both costs nothing and survives the mapper being changed back.
+    local platform_admin_group="${PLATFORM_ADMIN_GROUP:-gentian:platform:admin}"
+    local policy_csv
+    policy_csv="g, ${platform_admin_group}, role:admin
+g, /${platform_admin_group}, role:admin"
     kubectl patch configmap argocd-rbac-cm -n "${ns}" --type merge -p "
 {
   \"data\": {
