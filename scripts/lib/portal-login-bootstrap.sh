@@ -1148,6 +1148,30 @@ spec:
                 "\${KEYCLOAK_BASE}/admin/realms/\${REALM}/users/\${USER_ID}/groups/\${GROUP_ID}" >/dev/null || true
               echo "User \${PORTAL_USERNAME} joined \${SUPERADMIN_GROUP}"
 
+              # The realm's own administration, granted to the group rather than
+              # to the person: whoever the cluster's platform administrators are,
+              # they are the ones who manage users, groups and clients here.
+              #
+              # Without it the identity console answers 403 to the very account
+              # the install says to sign in as -- a refusal that reads like a
+              # broken login rather than a missing role.
+              RM_CLIENT_ID=\$(curl -sf -H "\${AUTH}" \\
+                "\${KEYCLOAK_BASE}/admin/realms/\${REALM}/clients?clientId=realm-management" \\
+                | jq -r '.[0].id // empty')
+              if [ -n "\${RM_CLIENT_ID}" ]; then
+                RM_ROLE=\$(curl -sf -H "\${AUTH}" \\
+                  "\${KEYCLOAK_BASE}/admin/realms/\${REALM}/clients/\${RM_CLIENT_ID}/roles/realm-admin")
+                if [ -n "\${RM_ROLE}" ]; then
+                  if curl -sf -X POST -H "\${AUTH}" -H "Content-Type: application/json" \\
+                    "\${KEYCLOAK_BASE}/admin/realms/\${REALM}/groups/\${GROUP_ID}/role-mappings/clients/\${RM_CLIENT_ID}" \\
+                    -d "[\${RM_ROLE}]" >/dev/null 2>&1; then
+                    echo "Group \${SUPERADMIN_GROUP} granted realm-management:realm-admin"
+                  else
+                    echo "Group \${SUPERADMIN_GROUP} already holds realm-management:realm-admin"
+                  fi
+                fi
+              fi
+
               BFF_CLIENT_ID=\$(curl -sf -H "\${AUTH}" \\
                 "\${KEYCLOAK_BASE}/admin/realms/\${REALM}/clients?clientId=gentian-portal-bff" \\
                 | jq -r '.[0].id // empty')
