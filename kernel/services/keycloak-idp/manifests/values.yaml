@@ -19,3 +19,17 @@ kernelDomain: ""
 kernelRealm: kernel
 # The database host. v4: the InfraData Postgres; v5: kernel-postgres in kernel-data.
 dbHost: ""   # empty: gentian-postgresql-<env>.gentian-infra-<env> (v4); v5 sets kernel-postgres-rw.kernel-data
+
+# The event listener that keeps OpenFGA's memberships equal to Keycloak's.
+#
+# Keycloak is the only place a membership changes; the director holds a
+# projection of it and never edits that in place. Without this provider the
+# projection is empty, so nobody holds a group, and every permission that
+# follows from group membership is refused to everyone.
+eventListener:
+  image: ghcr.io/gentian-org/keycloak-event-listener:develop
+  # The director's endpoint on the cluster network. Supplied by the
+  # ApplicationSet, which knows where the control namespace is.
+  directorURL: ""
+  # The id the director lists this key under.
+  keyID: gentian-listener

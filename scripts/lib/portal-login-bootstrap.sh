@@ -60,6 +60,40 @@ _portal_bff_derive_secret() {
     fi
 }
 
+# The key the Keycloak event listener signs its statements with, and the public
+# half the director believes them by.
+#
+# Derived like every other kernel credential, so a cluster rebuilt from the
+# same master password arrives at the same pair and the two halves cannot drift
+# apart. An Ed25519 private key in PKCS#8 is a fixed 16-byte prefix followed by
+# a 32-byte seed, and an HMAC-SHA256 is exactly 32 bytes, so the seed is the
+# derivation and openssl does the rest.
+ensure_keycloak_listener_keypair() {
+    local key_id="${KEYCLOAK_LISTENER_KEY_ID:-gentian-listener}"
+    local seed der pem pub tmp
+    seed=$(printf '%s' "portal-bootstrap:listener_signing_seed" \
+        | openssl dgst -sha256 -hmac "${MASTER_PASSWORD}${DERIVATION_SALT:-}" | awk '{print $2}')
+    tmp="$(mktemp -d)"
+    printf '%s' "302e020100300506032b657004220420${seed}" | xxd -r -p > "${tmp}/key.der"
+    if ! openssl pkey -inform DER -in "${tmp}/key.der" -out "${tmp}/listener.pem" 2>/dev/null; then
+        rm -rf "${tmp}"
+        error "Could not build the listener signing key; openssl has no Ed25519 support."
+        return 1
+    fi
+    pub=$(openssl pkey -in "${tmp}/listener.pem" -pubout -outform DER 2>/dev/null | tail -c 32 | base64 -w0)
+
+    # The private half goes where Keycloak runs, the public half where the
+    # director runs. Neither namespace ever sees the other's.
+    kubectl create secret generic keycloak-event-listener-key -n "$(_pl_identity_ns)" \
+        --from-file=listener.pem="${tmp}/listener.pem" \
+        --dry-run=client -o yaml | kubectl apply -f - >&2
+    kubectl create secret generic director-listener-keys -n "$(_pl_control_ns)" \
+        --from-literal=keys="${key_id}=${pub}" \
+        --dry-run=client -o yaml | kubectl apply -f - >&2
+    rm -rf "${tmp}"
+    success "Keycloak event listener key ${key_id} in place."
+}
+
 _headlamp_derive_secret() {
     if [[ "${SECRET_MODE:-derived}" == "random" ]]; then
         local existing_sec
@@ -973,6 +1007,26 @@ spec:
                 echo "Realm \${REALM} enabled"
               else
                 printf '\033[0;31m[ERROR]\033[0m %s\n' "realm \${REALM} check returned HTTP \${realm_http}" >&2
+                exit 1
+              fi
+
+              # The realm states its memberships to the director. Admin events
+              # carry the changes an administrator makes; the user events carry
+              # the ones nobody makes by hand -- a default group, a federation
+              # mapper -- which is why both are on.
+              REALM_EVENTS=\$(jq -n '{
+                eventsEnabled: true,
+                adminEventsEnabled: true,
+                adminEventsDetailsEnabled: false,
+                eventsListeners: ["jboss-logging", "gentian-director"]
+              }')
+              if curl -sf -X PUT -H "\${AUTH}" -H "Content-Type: application/json" \
+                "\${KEYCLOAK_BASE}/admin/realms/\${REALM}/events/config" -d "\${REALM_EVENTS}" >/dev/null 2>&1; then
+                echo "Realm \${REALM} states memberships to the director"
+              else
+                printf '\033[0;31m[ERROR]\033[0m %s\n' "could not enable the gentian-director event listener on \${REALM}." >&2
+                echo "  Without it OpenFGA never learns who is in which group, so every" >&2
+                echo "  permission that follows from membership is refused to everyone." >&2
                 exit 1
               fi
 

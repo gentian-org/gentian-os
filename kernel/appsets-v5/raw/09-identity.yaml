@@ -46,6 +46,11 @@ spec:
             # Kernel data lives on kernel-postgres, in the data namespace.
             - name: dbHost
               value: 'kernel-postgres-rw.ns.data.placeholder.svc.cluster.local'
+            # Where Keycloak states a user's groups. The director runs in the
+            # control namespace and is reached on the cluster network, never
+            # through the edge: this is the kernel talking to itself.
+            - name: eventListener.directorURL
+              value: 'http://gentian-os-director.ns.control.placeholder.svc.cluster.local:8080/v1/events/keycloak'
           valueFiles:
             - values.yaml
             - values-{{.env}}.yaml

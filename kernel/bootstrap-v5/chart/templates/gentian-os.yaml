@@ -85,6 +85,14 @@ spec:
         director:
           enabled: true
           entitlements: "off"
+          # The public half of the key Keycloak's event listener signs with.
+          # Without it the director accepts no membership statement, so
+          # OpenFGA never learns who is in which group and every permission
+          # that follows from membership is refused to everyone. The portal
+          # login step derives the pair and writes both halves.
+          listenerKeysSecretRef:
+            name: director-listener-keys
+            key: keys
         # The vault's namespace, for the Role that lets the operator exec into
         # its pod during bootstrap.
         openbaoNamespace: {{ include "ns" (list . "secrets") }}

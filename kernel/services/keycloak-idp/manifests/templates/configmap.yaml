@@ -105,7 +105,28 @@ data:
             readOnly: true
           - name: theme
             mountPath: /theme
+      # The event listener. Keycloak is the only place a membership changes,
+      # and this provider is what tells the director about it, so OpenFGA's
+      # copy follows rather than drifting. Its image exists to be copied from:
+      # Keycloak's own image stays upstream's.
+      - name: install-event-listener
+        image: {{ .Values.eventListener.image | quote }}
+        imagePullPolicy: IfNotPresent
+        securityContext:
+          allowPrivilegeEscalation: false
+          runAsNonRoot: true
+          readOnlyRootFilesystem: true
+          capabilities:
+            drop: ["ALL"]
+        volumeMounts:
+          - name: providers
+            mountPath: /target
     extraVolumes: |
+      - name: providers
+        emptyDir: {}
+      - name: listener-key
+        secret:
+          secretName: keycloak-event-listener-key
       - name: theme-src
         configMap:
           name: keycloak-idp-theme
@@ -115,10 +136,16 @@ data:
       - name: theme
         mountPath: /opt/keycloak/themes
         readOnly: true
+      - name: providers
+        mountPath: /opt/keycloak/providers
+        readOnly: true
+      - name: listener-key
+        mountPath: /etc/gentian/listener
+        readOnly: true
     # Keycloak caches themes, so a change has to roll the pod rather than rely on
     # the kubelet refreshing a mounted file in place.
     podAnnotations:
-      secret.reloader.stakater.com/reload: keycloak-idp-sensitive-values
+      secret.reloader.stakater.com/reload: keycloak-idp-sensitive-values,keycloak-event-listener-key
       configmap.reloader.stakater.com/reload: keycloak-idp-theme
     extraEnv: |
       - name: KERNEL_DOMAIN
@@ -141,6 +168,15 @@ data:
         value: "true"
       - name: KC_HOSTNAME_STRICT
         value: "false"
+      # Where the listener states a user's groups, and the key it signs with.
+      # The director believes a statement only from a key it lists, and only
+      # about groups the stating realm is entitled to speak for.
+      - name: KC_SPI_EVENTS_LISTENER_GENTIAN_DIRECTOR_DIRECTOR_URL
+        value: {{ .Values.eventListener.directorURL | quote }}
+      - name: KC_SPI_EVENTS_LISTENER_GENTIAN_DIRECTOR_KEY_ID
+        value: {{ .Values.eventListener.keyID | quote }}
+      - name: KC_SPI_EVENTS_LISTENER_GENTIAN_DIRECTOR_PRIVATE_KEY_FILE
+        value: /etc/gentian/listener/listener.pem
 ---
 apiVersion: v1
 kind: ConfigMap
