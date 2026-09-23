@@ -45,13 +45,6 @@ import (
 // one policy per gateway exposure in the tenant's zone (component-profile.md
 // §5, networking.md §7). It writes nothing outside the component's namespace
 // except the ReferenceGrant the zone's policy needs in the edge namespace.
-//
-// +kubebuilder:rbac:groups=gentianos.io,resources=components,verbs=get;list;watch;create;update;patch;delete
-// +kubebuilder:rbac:groups=gentianos.io,resources=components/status,verbs=get;update;patch
-// +kubebuilder:rbac:groups=gentianos.io,resources=components/finalizers,verbs=update
-// +kubebuilder:rbac:groups=gentianos.io,resources=componentprofiles,verbs=get;list;watch
-// +kubebuilder:rbac:groups=helm.crossplane.io,resources=releases,verbs=get;list;watch;create;update;patch;delete
-// +kubebuilder:rbac:groups=gateway.networking.k8s.io,resources=referencegrants,verbs=get;list;watch;create;update;patch;delete
 type ComponentReconciler struct {
 	client.Client
 	Scheme           *runtime.Scheme
@@ -64,6 +57,16 @@ type ComponentReconciler struct {
 	// layout's control namespace.
 	DirectorURL string
 }
+
+// The markers are a free-floating block: controller-gen ignores a block that
+// is part of a declaration's doc comment.
+//
+// +kubebuilder:rbac:groups=gentianos.io,resources=components,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=gentianos.io,resources=components/status,verbs=get;update;patch
+// +kubebuilder:rbac:groups=gentianos.io,resources=components/finalizers,verbs=update
+// +kubebuilder:rbac:groups=gentianos.io,resources=componentprofiles,verbs=get;list;watch
+// +kubebuilder:rbac:groups=helm.crossplane.io,resources=releases,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=gateway.networking.k8s.io,resources=referencegrants,verbs=get;list;watch;create;update;patch;delete
 
 const (
 	conditionComponentReady = "Ready"

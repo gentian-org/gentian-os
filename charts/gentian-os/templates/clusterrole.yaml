@@ -219,6 +219,7 @@ rules:
     - appgrants
     - apps
     - backuppolicies
+    - components
     - credentialrequirements
     - integrationbindings
     - platformsecuritypolicies
@@ -242,6 +243,7 @@ rules:
     - appcatalogues/status
     - appgrants/status
     - backuppolicies/status
+    - components/status
     - customizations/status
     - integrationbindings/status
     - platformsecuritypolicies/status
@@ -258,6 +260,7 @@ rules:
     - gentianos.io
     resources:
     - appgrants/finalizers
+    - components/finalizers
     - integrationbindings/finalizers
     - platformsecuritypolicies/finalizers
     - tenantexports/finalizers
@@ -280,6 +283,7 @@ rules:
     - gentianos.io
     resources:
     - clusters
+    - componentprofiles
     - oidcpackcatalogs
     - resourceplans
     - xapps
@@ -295,6 +299,9 @@ rules:
     - get
     - list
     - watch
+    - create
+    - update
+    - patch
     - delete
   - apiGroups:
     - kubernetes.crossplane.io
