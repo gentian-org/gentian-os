@@ -13,7 +13,7 @@ Moved here from WP-10, unchanged, because this is where the order lives.
 
 **M1 — the platform administrator signs in and sees the
 cluster, in the plans' shape.** `install.sh --layout v5` runs end to end
-on the purged cluster; `administrator@<kernel>` signs in once at
+on the purged cluster; `admin@<kernel>` signs in once at
 `console.<kernel>` and sees the platform tenant's desktop; the kernel
 consoles are tiles the director answered from that account's relations;
 each opens in a window on the desktop, signed in, with no second login
@@ -160,9 +160,13 @@ The kernel realm's `email` claim is mapped to the username so that the email
 works when the username is itself an address. The platform administrator is
 created as the bare name `administrator`, so the claim reads `administrator`.
 
-Rename it to `admin@<kernel>`, produced by the same code path that names every
-tenant's administrator rather than by a separate constant, and delete the old
-account. Nothing may create a username that is not an address.
+**Done.** The kernel realm bootstrap now creates `admin@<kernel>`, the same
+`admin@<domain>` pattern every tenant administrator follows, and deletes the
+`administrator` account it replaces once the new one exists and is in the
+group. The password derivation label is unchanged on purpose: it is an opaque
+string that decides the derived value, and renaming it would silently change
+the password on every cluster. Nothing may create a username that is not an
+address.
 
 ### S7A.4 The admin console is an app, and it talks to the director
 
@@ -269,13 +273,33 @@ application that is compromised, or simply careless with what it logs, sees a
 credential that is good for every other application in the zone — which is
 exactly the isolation a per-application cookie would have given.
 
-The edge authorization service already rewrites headers on every allowed
-request: it strips `authorization` unless the route forwards the token, and
-adds the identity headers. It should rewrite `cookie` in the same pass,
-removing the zone's own cookies and leaving whatever the application set for
-itself. Nothing behind the edge has any use for them.
+**Not in the authorization service**, which was the first idea and is wrong.
+Its header mutations are applied to the request before the remaining filters
+run, and it runs before Envoy's OIDC filter, so a cookie stripped there would
+be invisible to the filter that has to validate it. Sign-in would break.
 
-Do this before any third-party application is routed.
+Three ways that do work, in increasing order of what they cost:
+
+1. **Scope the cookie to the host instead of the zone.** Drop `cookieDomain`
+   and each host gets its own edge session. The first request to each host
+   does one silent round trip to Keycloak, because the Keycloak session
+   already exists, so single sign-on is preserved and what the browser sends
+   to an application is a cookie good only for that application. Logout still
+   works across all of them, because every one of those sessions carries the
+   same Keycloak session id and revocation is by session id. This is the old
+   model's isolation with the new model's single implementation, and it needs
+   no new component.
+2. **Rewrite `cookie` at the router stage**, after every filter has run, with
+   a Lua extension policy. Envoy Gateway supports this from 1.3; the cluster
+   runs 1.2.5, so it means an upgrade. An upgrade is wanted anyway for the
+   logout confirmation in S7A.9.
+3. **Remove the whole `Cookie` header** with a route-level header modifier.
+   Available today and too blunt: applications behind the edge set their own
+   cookies, Argo CD and Keycloak included, and this would take those too.
+
+Recommendation: (1), measured first, because the extra round trip per host is
+the only cost and it happens once per session. Do it before any third-party
+application is routed.
 
 ### S7A.8 A read-only view of the authorization state
 

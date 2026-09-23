@@ -418,7 +418,7 @@ fi
 
 # --- LLM serving (LiteLLM / vLLM credentials) ---
 KERNEL_REALM="${KERNEL_REALM:-kernel}"
-LITELLM_UI_USERNAME="administrator@${KERNEL_DOMAIN}"
+LITELLM_UI_USERNAME="admin@${KERNEL_DOMAIN}"
 LITELLM_UI_PASSWORD=$(derive_password "portal-bootstrap" "administrator_password")
 VLLM_API_KEY=$(derive_password "llm" "vllm_api_key")
 # sk- prefixed, because LiteLLM requires it of a master key and refuses

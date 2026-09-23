@@ -32,6 +32,9 @@ _pl_edge_ns()          { _pl_ns EDGE_NAMESPACE edge; }
 _pl_control_ns()       { _pl_ns GENTIAN_SYSTEM_NAMESPACE control; }
 _pl_observability_ns() { _pl_ns OBSERVABILITY_NAMESPACE observability; }
 
+# The derivation label stays "administrator_password" although the account is
+# now admin@<kernel>: it is an opaque string that decides the derived value,
+# and renaming it would silently change the password on every cluster.
 _platform_admin_derive_password() {
     if [[ "${SECRET_MODE:-derived}" == "random" ]]; then
         local existing_pw
@@ -829,8 +832,18 @@ gentian_job_logs() {
 run_keycloak_portal_bootstrap_job() {
     local kernel_domain="${KERNEL_DOMAIN:?KERNEL_DOMAIN required}"
     local kernel_realm="${KERNEL_REALM:-kernel}"
-    local username="administrator"
-    local email="administrator@${kernel_domain}"
+    # A username is an address, like every tenant administrator's.
+    #
+    # The kernel realm's email claim is mapped to the USERNAME so that the
+    # email field can hold the recovery address Keycloak mails a reset to.
+    # That only works where the username is itself an address; the bare name
+    # "administrator" made every token say email=administrator. Tenants are
+    # named admin@<their domain> and the platform administrator follows the
+    # same pattern on the kernel domain.
+    local username="admin@${kernel_domain}"
+    local email="admin@${kernel_domain}"
+    # The account this replaces, removed below once the new one exists.
+    local legacy_username="administrator"
     local password job_name="keycloak-portal-bootstrap"
     # Where Keycloak's admin credential is, which is where this Job has to run:
     # a Secret is readable only in its own namespace, and copying an admin
@@ -889,6 +902,7 @@ run_keycloak_portal_bootstrap_job() {
         --from-literal=email="${email}"
         --from-literal=password="${password}"
         --from-literal=platform_admin_group="${platform_admin_group}"
+        --from-literal=legacy_username="${legacy_username}"
         --from-literal=argocd_client_secret="${argocd_secret}"
         --from-literal=headlamp_client_secret="${headlamp_secret}"
         --from-literal=edge_kernel_client_secret="${edge_secret}"
@@ -1162,6 +1176,25 @@ spec:
               curl -sf -X PUT -H "\${AUTH}" \\
                 "\${KEYCLOAK_BASE}/admin/realms/\${REALM}/users/\${USER_ID}/groups/\${GROUP_ID}" >/dev/null || true
               echo "User \${PORTAL_USERNAME} joined \${ADMIN_GROUP}"
+
+              # The account this one replaces. Removed rather than left
+              # disabled: two administrators, one of whom cannot be reached by
+              # a password reset because their username is not an address, is
+              # worse than one. Only ever the exact legacy name, and never the
+              # account just created.
+              if [ -n "\${LEGACY_USERNAME:-}" ] && [ "\${LEGACY_USERNAME}" != "\${PORTAL_USERNAME}" ]; then
+                LEGACY_ID=\$(curl -sf -H "\${AUTH}" \\
+                  "\${KEYCLOAK_BASE}/admin/realms/\${REALM}/users?username=\${LEGACY_USERNAME}&exact=true" \\
+                  | jq -r '.[0].id // empty')
+                if [ -n "\${LEGACY_ID}" ] && [ "\${LEGACY_ID}" != "\${USER_ID}" ]; then
+                  if curl -sf -X DELETE -H "\${AUTH}" \\
+                    "\${KEYCLOAK_BASE}/admin/realms/\${REALM}/users/\${LEGACY_ID}" >/dev/null 2>&1; then
+                    echo "Removed the account \${LEGACY_USERNAME} replaced by \${PORTAL_USERNAME}"
+                  else
+                    printf '\033[1;33m[WARN]\033[0m  %s\n' "could not remove the legacy account \${LEGACY_USERNAME}" >&2
+                  fi
+                fi
+              fi
 
               # The realm's own administration, granted to the group rather than
               # to the person: whoever the cluster's platform administrators are,
@@ -1475,6 +1508,11 @@ ${smtp_shell}
                 secretKeyRef:
                   name: portal-bootstrap-credentials
                   key: platform_admin_group
+            - name: LEGACY_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: portal-bootstrap-credentials
+                  key: legacy_username
             - name: HEADLAMP_CLIENT_SECRET
               valueFrom:
                 secretKeyRef:
@@ -1604,7 +1642,7 @@ install_portal_login() {
 
     success "The kernel realm can be signed in to."
     info "  https://console.${KERNEL_DOMAIN}/  (once the platform desktop is Ready)"
-    info "  user: administrator@${KERNEL_DOMAIN}"
+    info "  user: admin@${KERNEL_DOMAIN}"
     info "  password: $(_platform_admin_derive_password)"
 }
 
@@ -1667,7 +1705,7 @@ print_portal_login_summary() {
         local grant
         grant="$(curl -sS --max-time 15 \
             -d "client_id=admin-cli" \
-            -d "username=administrator@${kernel_domain}" \
+            -d "username=admin@${kernel_domain}" \
             -d "password=${password}" \
             -d "grant_type=password" \
             "${verify_base}/protocol/openid-connect/token" 2>/dev/null || true)"
@@ -1693,7 +1731,7 @@ print_portal_login_summary() {
     echo ""
     echo -e "${GREEN}  Platform console (cluster admin):${NC}"
     echo -e "${GREEN}    URL      : https://console.${kernel_domain}/${NC}"
-    echo -e "${GREEN}    User     : administrator@${kernel_domain}${NC}"
+    echo -e "${GREEN}    User     : admin@${kernel_domain}${NC}"
     echo -e "${GREEN}    Password : ${password}${NC}"
     echo -e "${GREEN}    OIDC     : https://id.${kernel_domain}/auth/realms/${KERNEL_REALM:-kernel}${NC}"
 }
