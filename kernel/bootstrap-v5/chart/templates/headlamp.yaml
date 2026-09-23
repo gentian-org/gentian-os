@@ -29,6 +29,10 @@ spec:
           extraArgs:
           - "-kubeconfig=/kubeconfig/config"
           oidc:
+            # Outside in-cluster mode Headlamp refuses the OIDC settings
+            # unless it keeps the session in a cookie: with a kubeconfig it
+            # has no place to put the token otherwise.
+            useCookie: true
             # envFrom a Secret this cluster owns: it carries the client secret,
             # which is not something to put in a values file.
             secret:

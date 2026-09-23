@@ -147,6 +147,11 @@ spec:
         # The name a person recognises in an audit log and in a RoleBinding.
         - "--oidc-username-claim=preferred_username"
         - "--oidc-groups-claim=groups"
+        # The issuer is served with a public certificate, so the roots the
+        # image ships are what verifies it. Named explicitly because the flag
+        # is read whether or not it was set, and an empty path fails at start
+        # with "Failed to read the CA contents".
+        - "--oidc-ca-file={{ .Values.headlamp.oidc.proxy.caFile }}"
         ports:
         - containerPort: 8443
           name: https

@@ -86,6 +86,45 @@ spec:
                   description: >
                     Cluster-wide platform DNS suffix, e.g. "platform.example.com".
                     All kernel services are reachable under this domain.
+                platformRoles:
+                  type: object
+                  description: >
+                    Which Keycloak group in the kernel realm holds each platform
+                    role. The director projects these into OpenFGA as the
+                    cluster's role relations, so a person's authority over the
+                    cluster follows from their group membership and from
+                    nothing else. A role left unset has no group and therefore
+                    nobody holds it, which is the right default for the ones
+                    that should be granted deliberately.
+                  properties:
+                    admin:
+                      type: string
+                      default: "gentian:platform:superadmin"
+                      description: >
+                        The cluster's administrators: the claim, plans,
+                        ceilings, tenant deployment. Defaults to the group the
+                        install's bootstrap administrator is placed in.
+                    securityOfficer:
+                      type: string
+                      description: >
+                        Approvals: waivers, egress beyond the baseline,
+                        exposure policy.
+                    auditor:
+                      type: string
+                      description: Read access to what happened, and nothing else.
+                    serviceAdmin:
+                      type: string
+                      description: The claim's system section.
+                    sharedAppsAdmin:
+                      type: string
+                      description: >
+                        Shared applications, installing them and granting them.
+                    breakGlass:
+                      type: string
+                      description: >
+                        Admission overlays and raw file edits. No standing
+                        membership is expected; this names the group that is
+                        filled only when it is needed.
                 masterPasswordSecretRef:
                   type: object
                   description: >

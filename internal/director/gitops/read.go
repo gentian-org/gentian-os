@@ -64,14 +64,60 @@ func (g *GitOps) Apps(ctx context.Context, tenant string) ([]App, error) {
 // this cluster.
 var ErrNoClusterClaim = errors.New("no Cluster claim in the repository")
 
+// PlatformRoles returns the Keycloak group that holds each platform role,
+// keyed by the cluster relation it grants, from the cluster's Cluster claim.
+//
+// The claim in git is where authority over a cluster is written down, so this
+// is read from the same file the kernel domain comes from rather than from the
+// cluster: a cluster cannot widen its own administrators' rights by editing
+// something inside itself.
+func (g *GitOps) PlatformRoles(ctx context.Context) (map[string]string, error) {
+	var claim struct {
+		Spec struct {
+			PlatformRoles struct {
+				Admin           string `json:"admin"`
+				SecurityOfficer string `json:"securityOfficer"`
+				Auditor         string `json:"auditor"`
+				ServiceAdmin    string `json:"serviceAdmin"`
+				SharedAppsAdmin string `json:"sharedAppsAdmin"`
+				BreakGlass      string `json:"breakGlass"`
+			} `json:"platformRoles"`
+		} `json:"spec"`
+	}
+	if err := g.readClusterClaim(ctx, &claim); err != nil {
+		return nil, err
+	}
+	r := claim.Spec.PlatformRoles
+	// The claim's field names are what an operator writes; the map's keys are
+	// the model's relations. Translating here keeps the model's vocabulary out
+	// of the claim and the claim's spelling out of the model.
+	out := map[string]string{}
+	for rel, group := range map[string]string{
+		"admin":             r.Admin,
+		"security_officer":  r.SecurityOfficer,
+		"auditor":           r.Auditor,
+		"service_admin":     r.ServiceAdmin,
+		"shared_apps_admin": r.SharedAppsAdmin,
+		"break_glass":       r.BreakGlass,
+	} {
+		if group != "" {
+			out[rel] = group
+		}
+	}
+	return out, nil
+}
+
 // KernelDomain returns the kernel domain the cluster's Cluster claim declares
 // (clusters/<cluster>/kernel/claims/cluster.yaml). The claim in git is the one
 // source of that name; the director does not ask the cluster.
-func (g *GitOps) KernelDomain(ctx context.Context) (string, error) {
+// readClusterClaim parses this cluster's Cluster claim into out. One reader,
+// so every field taken from the claim comes from the same file and the same
+// "which cluster am I" answer.
+func (g *GitOps) readClusterClaim(ctx context.Context, out any) error {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	if err := g.ensureRepo(ctx); err != nil {
-		return "", err
+		return err
 	}
 	cluster := g.cluster
 	if cluster == "" {
@@ -79,18 +125,25 @@ func (g *GitOps) KernelDomain(ctx context.Context) (string, error) {
 	}
 	raw, err := os.ReadFile(filepath.Join(g.path, "clusters", cluster, "kernel", "claims", "cluster.yaml"))
 	if errors.Is(err, os.ErrNotExist) {
-		return "", ErrNoClusterClaim
+		return ErrNoClusterClaim
 	}
 	if err != nil {
-		return "", err
+		return err
 	}
+	if err := yaml.Unmarshal(raw, out); err != nil {
+		return fmt.Errorf("parse cluster claim: %w", err)
+	}
+	return nil
+}
+
+func (g *GitOps) KernelDomain(ctx context.Context) (string, error) {
 	var claim struct {
 		Spec struct {
 			KernelDomain string `json:"kernelDomain"`
 		} `json:"spec"`
 	}
-	if err := yaml.Unmarshal(raw, &claim); err != nil {
-		return "", fmt.Errorf("parse cluster claim: %w", err)
+	if err := g.readClusterClaim(ctx, &claim); err != nil {
+		return "", err
 	}
 	if claim.Spec.KernelDomain == "" {
 		return "", fmt.Errorf("%w: the claim declares no kernelDomain", ErrNoClusterClaim)

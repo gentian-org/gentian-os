@@ -129,6 +129,28 @@ func run(log *slog.Logger) error {
 		Name:  envOr("DIRECTOR_COMMITTER_NAME", "gentian-director"),
 		Email: os.Getenv("DIRECTOR_COMMITTER_EMAIL"),
 	})
+
+	// Who holds which role over this cluster, from the claim in git. Done at
+	// start and not on request: the answer changes when someone edits the
+	// claim, not when someone asks, and a cluster rebuilt from git must arrive
+	// at the same place without anybody remembering to run something.
+	//
+	// A repository that cannot be read is not fatal. The director still serves
+	// what does not depend on it, and says plainly that nobody holds a cluster
+	// role -- which is what an empty projection means, rather than a silent
+	// refusal everyone reads as a broken login.
+	rolesCtx, cancelRoles := context.WithTimeout(context.Background(), 2*time.Minute)
+	if roles, err := repo.PlatformRoles(rolesCtx); err != nil {
+		log.Warn("cluster roles not reconciled: nobody holds a cluster role until this succeeds",
+			"error", err)
+	} else if err := checker.ReconcileClusterRoles(rolesCtx, cluster, roles); err != nil {
+		log.Warn("cluster roles not reconciled: nobody holds a cluster role until this succeeds",
+			"error", err)
+	} else if len(roles) == 0 {
+		log.Warn("the Cluster claim assigns no platform roles, so nobody administers this cluster",
+			"setting", "spec.platformRoles")
+	}
+	cancelRoles()
 	// Membership reaches OpenFGA only through this endpoint. Without a listener
 	// key nothing can be believed, so the endpoint does not exist — and no
 	// membership changes until it does, which is worth saying at start.

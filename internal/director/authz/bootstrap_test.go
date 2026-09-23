@@ -126,3 +126,66 @@ func TestTheEmbeddedModelIsTheRepositorysModel(t *testing.T) {
 		t.Fatal("internal/director/authz/model.json differs from authz/model/v1/model.json (make gen-all copies it)")
 	}
 }
+
+// The claim decides who administers a cluster, so this is the tuple-writing
+// path that grants and takes away authority over it.
+func TestClusterRolesFollowTheClaim(t *testing.T) {
+	o := requireOpenFGA(t)
+	ctx := context.Background()
+
+	store, model, err := Bootstrap(ctx, o)
+	if err != nil {
+		t.Fatal(err)
+	}
+	o.StoreID, o.ModelID = store, model
+	c, err := NewOpenFGA(o)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cluster := "roles-test"
+
+	if err := c.ReconcileClusterRoles(ctx, cluster, map[string]string{
+		"admin":   "gentian:platform:superadmin",
+		"auditor": "gentian:platform:auditor",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	admins, err := c.Read(ctx, Tuple{Relation: "admin", Object: Cluster(cluster)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(admins) != 1 {
+		t.Fatalf("admin tuples = %d, want 1", len(admins))
+	}
+
+	// Declarative: a role the claim stops assigning is taken away, rather than
+	// left behind for whoever was in that group.
+	if err := c.ReconcileClusterRoles(ctx, cluster, map[string]string{
+		"admin": "gentian:platform:superadmin",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	auditors, err := c.Read(ctx, Tuple{Relation: "auditor", Object: Cluster(cluster)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(auditors) != 0 {
+		t.Fatalf("auditor tuples = %d after the claim dropped the role, want 0", len(auditors))
+	}
+
+	// Running it again writes nothing: the second call has nothing to change.
+	if err := c.ReconcileClusterRoles(ctx, cluster, map[string]string{
+		"admin": "gentian:platform:superadmin",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := c.ReconcileClusterRoles(ctx, cluster, map[string]string{"nonsense": "x"}); err == nil {
+		t.Fatal("a relation the model does not have should be refused, not written")
+	}
+
+	// Leave nothing behind for the next run.
+	if err := c.ReconcileClusterRoles(ctx, cluster, nil); err != nil {
+		t.Fatal(err)
+	}
+}

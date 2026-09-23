@@ -40,6 +40,8 @@ headlamp:
       # The maintained fork of jetstack's kube-oidc-proxy, which the archived
       # original names as its successor.
       image: docker.io/tremolosecurity/kube-oidc-proxy:1.0.13
+      # Where the image keeps the public roots that verify the issuer.
+      caFile: /etc/ssl/certs/ca-certificates.crt
 
 edge:
   # The authenticated Gateway the operator reconciles in the edge namespace.
