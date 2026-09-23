@@ -71,6 +71,7 @@ _v5_render() {
         --set-string "headlamp.oidc.enabled=${V5_HEADLAMP_OIDC:-false}" \
         --set-string "kernelRealm=${KERNEL_REALM:-kernel}" \
         --set-string "desktop.chartBranch=${PORTAL_IMAGE_TAG:-develop}" \
+        --set-string "desktop.chartVersion=${DESKTOP_CHART_VERSION:-}" \
         --set-string "llmEnabled=${LLM_SUPPORT:-false}" \
         --set-string "tenancyMode=${TENANCY_MODE:-multi}" \
         --set-string "acmeStaging=${acme_staging}" \

@@ -23,6 +23,35 @@ source "${SCRIPT_DIR}/scripts/steps-v5/B-01-bootstrap-apps.sh"
 # the wildcard certificate and Argo CD alike, and under this layout those are
 # different answers.
 
+# The desktop chart's immutable version for the branch this cluster follows.
+#
+# The registry holds a moving version per branch and an immutable one per
+# build, and the moving chart's appVersion names the immutable one it is a
+# copy of. A Helm release under an unchanged version string is never
+# upgraded, so what the profile pins is the immutable version; this reads it
+# off the moving chart through the registry's OCI API, anonymously, the way
+# the cluster pulls it. No answer is an error: a desktop that cannot be
+# installed is not something to guess at.
+_d02_desktop_chart_version() {
+    local repo="gentian-org/charts/gentian-portal"
+    local moving="0.1.0-${PORTAL_IMAGE_TAG:-develop}"
+    local token manifest config_digest version
+    token="$(curl -sf --max-time 20 "https://ghcr.io/token?scope=repository:${repo}:pull&service=ghcr.io" | jq -r '.token // empty')"
+    [[ -n "${token}" ]] || { error "could not get a pull token for ${repo} from ghcr.io"; return 1; }
+    manifest="$(curl -sf --max-time 20 -H "Authorization: Bearer ${token}" \
+        -H "Accept: application/vnd.oci.image.manifest.v1+json" \
+        "https://ghcr.io/v2/${repo}/manifests/${moving}")" \
+        || { error "chart ${repo}:${moving} is not published; merge to the branch this cluster follows first"; return 1; }
+    config_digest="$(jq -r '.config.digest // empty' <<<"${manifest}")"
+    [[ -n "${config_digest}" ]] || { error "chart ${repo}:${moving} has no config blob"; return 1; }
+    version="$(curl -sfL --max-time 20 -H "Authorization: Bearer ${token}" \
+        "https://ghcr.io/v2/${repo}/blobs/${config_digest}" | jq -r '.appVersion // empty')"
+    case "${version}" in
+        "${moving}".*) echo "${version}" ;;
+        *) error "chart ${repo}:${moving} names no immutable version (appVersion=${version:-none})"; return 1 ;;
+    esac
+}
+
 _d02_export_layout() {
     export IDENTITY_NAMESPACE AUTHZ_NAMESPACE GITOPS_NAMESPACE \
         EDGE_NAMESPACE GENTIAN_SYSTEM_NAMESPACE CROSSPLANE_NAMESPACE OBSERVABILITY_NAMESPACE
@@ -72,8 +101,12 @@ apply() {
     # the headlamp client and its Secret exist now, and the proxy that
     # verifies the person's token comes with the render. Before this step
     # there is no realm to sign in against, which is why a fresh cluster
-    # starts on token login.
-    V5_APPSETS=true V5_OPERATOR=true V5_HEADLAMP_OIDC=true \
+    # starts on token login. The same render pins the desktop chart.
+    local desktop_chart_version
+    desktop_chart_version="$(_d02_desktop_chart_version)" || return 1
+    info "Desktop chart: ${desktop_chart_version}"
+    DESKTOP_CHART_VERSION="${desktop_chart_version}" \
+        V5_APPSETS=true V5_OPERATOR=true V5_HEADLAMP_OIDC=true \
         _v5_render | kubectl apply -f - >/dev/null
 
     # Tenant/platform arrives from git through the tenants ApplicationSet and

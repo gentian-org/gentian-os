@@ -74,6 +74,12 @@ llmEnabled: "false"
 # and only some branches publish.
 desktop:
   chartBranch: develop
+  # An exact chart version, which is what a cluster runs once the realm
+  # exists: the kernel realm step resolves the branch's newest immutable
+  # version and sets it here, because a Helm release under an unchanged
+  # version string is never upgraded, so the moving version can only ever
+  # install the first build it saw.
+  chartVersion: ""
 
 # The operator (and, with it, the director) — applied by D-01, once the
 # identity services its reconcilers address exist.
