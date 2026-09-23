@@ -67,7 +67,13 @@ _v5_render() {
         --set-string "portal.imageBranch=${PORTAL_IMAGE_TAG:-develop}" \
         --set-string "llmEnabled=${LLM_SUPPORT:-false}" \
         --set-string "tenancyMode=${TENANCY_MODE:-multi}" \
-        --set-string "acmeStaging=$([[ "${ACME_ENV:-staging}" == "staging" ]] && echo true || echo false)" \
+        # Production unless the claim asks for staging, which is what every
+        # other reader of this setting assumes. Defaulting the other way here
+        # meant a cluster that said nothing got a certificate nothing trusts,
+        # while every check reported success -- the edge terminates TLS with
+        # its own certificate, so only something INSIDE the cluster ever sees
+        # this one, and what it sees is an unknown authority.
+        --set-string "acmeStaging=$([[ "${ACME_ENV:-production}" == "staging" ]] && echo true || echo false)" \
         --set-string "smtpHost=${EXTERNAL_SMTP_HOST:-}" \
         --set-string "versions.headlamp.chart=$(gentian_pin headlamp chart)" \
         --set-string "versions.headlamp.repo=$(gentian_pin headlamp repo)"

@@ -36,7 +36,21 @@ rules:
   resources: ["users", "groups", "serviceaccounts"]
   verbs: ["impersonate"]
 - apiGroups: ["authentication.k8s.io"]
-  resources: ["userextras/scopes", "tokenreviews"]
+  # The extras the proxy carries across, named one by one.
+  #
+  # RBAC splits resource/subresource on the FIRST slash and compares the rest
+  # literally, so "userextras/*" matches nothing at all -- least of all
+  # authentication.kubernetes.io/credential-id, which is itself two segments.
+  # An extra the proxy may not impersonate refuses the whole request, and the
+  # refusal names a claim rather than a permission, which reads as the token
+  # being wrong rather than this rule being short.
+  resources:
+  - "userextras/scopes"
+  # The id of the credential the person authenticated with, which the API
+  # server adds from 1.31 on. It is what ties an audited request back to one
+  # sign-in rather than to the account in general.
+  - "userextras/authentication.kubernetes.io/credential-id"
+  - "tokenreviews"
   verbs: ["impersonate", "create"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
