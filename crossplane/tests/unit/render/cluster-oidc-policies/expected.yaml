@@ -124,6 +124,7 @@ spec:
         mail.egressHost: ""
         mail.serviceMode: ""
         mail.smtpHost: ""
+        network.edgeNamespace: platform-kernel
         node.ip: ""
         tenancyMode: multi
         tenant.limitRange.default.cpu: 500m

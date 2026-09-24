@@ -103,7 +103,7 @@ reinstalling with these open would only reproduce them. In order.
 
 ✅ done and verified on the cluster · ◐ partly done · ☐ not started
 
-### S7A.1 ☐ The operator produces a zone's Keycloak client and its secret
+### S7A.1 ◐ The operator produces a zone's Keycloak client and its secret
 
 A **zone** is one sign-in domain: a hostname, the realm behind it, one
 confidential Keycloak client for the edge to hold the session with, that
@@ -153,6 +153,19 @@ Provisioning. Declare `Create` as well as `Observe` from the start.
 
 **Done when** a second tenant signs in at `console.<t>.<kernel>` against its
 own realm, with no installer step having run for it.
+
+**Built, not yet verified on a cluster.** All four pieces are in
+`tenant-default.yaml`: an External Secrets `Password` generator and an
+`ExternalSecret` in the edge namespace, the `Client` pushed that secret through
+`clientSecretSecretRef`, its `director-audience` mapper, and a
+`ClientDefaultScopes` naming Keycloak's six own defaults so `groups` stays off.
+The block renders for a tenant that adopts the kernel realm as well, so the
+platform tenant composes `gentian-edge-kernel` and the client creation has left
+`portal-login-bootstrap.sh`. One thing departs from piece 3 above: there is no
+back-channel logout URL, because the Job had already dropped it once session
+revocation was deleted in S7A.2, and re-adding it would restore a write to the
+authorization store that has no reader. The post-logout redirect URIs S7A.11
+needs are written.
 
 ### S7A.2 ◐ The director stops writing authorization state — only entitlements left
 

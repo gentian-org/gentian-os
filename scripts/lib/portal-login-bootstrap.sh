@@ -105,43 +105,13 @@ _headlamp_derive_secret() {
     echo -n "portal-bootstrap:headlamp_client_secret" | openssl dgst -sha256 -hmac "${MASTER_PASSWORD}${DERIVATION_SALT:-}" | awk '{print $2}'
 }
 
-# The kernel zone's one confidential client (networking.md §4): the edge runs
-# the code flow for console.<kernel> and the kernel UIs with it, and forwards
-# the token only where an exposure says so. Nothing downstream holds this
-# secret -- which is what keeps a kernel-realm client secret out of
-# tenant-platform.
-_edge_kernel_derive_secret() {
-    if [[ "${SECRET_MODE:-derived}" == "random" ]]; then
-        local existing_sec
-        existing_sec=$(bao kv get -mount=secret -field=edge_kernel_client_secret identity/portal-admin 2>/dev/null || true)
-        if [[ -n "${existing_sec}" ]]; then
-            echo -n "${existing_sec}"
-            return 0
-        fi
-        local new_sec
-        new_sec=$(openssl rand -hex 24)
-        bao kv patch -mount=secret identity/portal-admin edge_kernel_client_secret="${new_sec}" >/dev/null 2>&1 || \
-            bao kv put -mount=secret identity/portal-admin edge_kernel_client_secret="${new_sec}" >/dev/null 2>&1
-        echo -n "${new_sec}"
-        return 0
-    fi
-    echo -n "portal-bootstrap:edge_kernel_client_secret" | openssl dgst -sha256 -hmac "${MASTER_PASSWORD}${DERIVATION_SALT:-}" | awk '{print $2}'
-}
-
-# The Secret the edge's SecurityPolicies reference, in the edge namespace.
-# The key is the one Envoy Gateway reads (client-secret), and it holds
-# nothing else: the client id is written on the policy.
-ensure_edge_kernel_secret() {
-    local ns secret
-    ns="$(_pl_edge_ns)"
-    secret="$(_edge_kernel_derive_secret)"
-    kubectl create secret generic edge-kernel-oidc -n "${ns}" \
-        --from-literal=client-secret="${secret}" \
-        --dry-run=client -o yaml | kubectl apply -f - >&2
-    kubectl label secret edge-kernel-oidc -n "${ns}" \
-        app.kubernetes.io/managed-by=gentian-os gentianos.io/edge-zone=kernel --overwrite >/dev/null 2>&1 || true
-    echo -n "${secret}"
-}
+# The kernel zone's confidential client and its secret are no longer written
+# here. A zone is produced by the tenant that owns it: the platform tenant
+# adopts the kernel realm (AD-10), so the kernel zone's client, its redirect
+# URIs, its audience mapper and the edge-kernel-oidc Secret the SecurityPolicies
+# read all come from crossplane/compositions/tenant-default.yaml, the same way
+# every other tenant's zone does. What this library still does for the zone is
+# create the realm the client lives in, which has to exist first.
 
 # The placeholder the chart writes where the client secret belongs. D-02's
 # check() reads it too, before this library is sourced, so it carries the same
@@ -933,10 +903,9 @@ run_keycloak_portal_bootstrap_job() {
 
     info "Bootstrapping the kernel realm, its clients and the administrator via in-cluster Job..."
 
-    local argocd_secret headlamp_secret edge_secret
+    local argocd_secret headlamp_secret
     argocd_secret=$(ensure_argocd_oidc_secret)
     headlamp_secret=$(ensure_headlamp_oidc_secret)
-    edge_secret=$(ensure_edge_kernel_secret)
 
     local llm_support="${LLM_SUPPORT:-false}"
     local litellm_sso_secret=""
@@ -977,10 +946,6 @@ run_keycloak_portal_bootstrap_job() {
         --from-literal=legacy_username="${legacy_username}"
         --from-literal=argocd_client_secret="${argocd_secret}"
         --from-literal=headlamp_client_secret="${headlamp_secret}"
-        --from-literal=edge_kernel_client_secret="${edge_secret}"
-        # Where the zone client's back-channel logout goes: the director, which
-        # records the ended session for every shim replica (networking.md §4).
-        --from-literal=director_url="http://gentian-os-director.$(_pl_control_ns).svc.cluster.local:8080"
         --from-literal=llm_support="${llm_support}"
         --from-literal=litellm_sso_client_secret="${litellm_sso_secret}"
     )
@@ -1340,68 +1305,12 @@ spec:
                 fi
               fi
 
-              # The kernel zone's edge client: confidential, code flow only,
-              # one redirect per kernel-zone host, NO groups scope (the shim
-              # asks the store, never the token), the director in its
-              # audience so the desktop can relay the forwarded token, and
-              # back-channel logout at the director.
-              EDGE_CLIENT_ID=\$(curl -sf -H "\${AUTH}" \\
-                "\${KEYCLOAK_BASE}/admin/realms/\${REALM}/clients?clientId=gentian-edge-kernel" \\
-                | jq -r '.[0].id // empty')
-              EDGE_BODY=\$(jq -n --arg secret "\${EDGE_KERNEL_CLIENT_SECRET}" --arg domain "\${KERNEL_DOMAIN}" --arg director "\${DIRECTOR_URL}" '{
-                clientId: "gentian-edge-kernel",
-                name: "Gentian edge (kernel zone)",
-                enabled: true,
-                publicClient: false,
-                standardFlowEnabled: true,
-                implicitFlowEnabled: false,
-                directAccessGrantsEnabled: false,
-                serviceAccountsEnabled: false,
-                fullScopeAllowed: false,
-                protocol: "openid-connect",
-                secret: \$secret,
-                redirectUris: (["console", "argocd", "headlamp", "id"] | map("https://" + . + "." + \$domain + "/oauth2/callback")),
-                webOrigins: [],
-                attributes: {
-                  # No backchannel.logout.url. It pointed at the director,
-                  # which recorded the ended session so the edge would refuse
-                  # it at once. Nothing records it now: the access token lives
-                  # five minutes and its refresh fails once the session is
-                  # gone, which is the same outcome one token later and needs
-                  # no write to the authorization store.
-                  # Every host in the zone, because signing out has to work
-                  # from whichever one the person is looking at. The sign-out
-                  # that skips Keycloak's "did you mean it" page hands it a
-                  # post_logout_redirect_uri pointing back at that host's own
-                  # /oauth2/logout, and Keycloak refuses one it has not been
-                  # told about -- which puts the person on an error page
-                  # instead of back on the portal.
-                  "post.logout.redirect.uris": (["console", "argocd", "headlamp", "id"] | map("https://" + . + "." + \$domain + "/*") | join("##"))
-                }
-              }')
-              if [ -n "\${EDGE_CLIENT_ID}" ]; then
-                curl -sf -X PUT -H "\${AUTH}" -H "Content-Type: application/json" \\
-                  "\${KEYCLOAK_BASE}/admin/realms/\${REALM}/clients/\${EDGE_CLIENT_ID}" -d "\${EDGE_BODY}"
-                echo "Updated client gentian-edge-kernel"
-              else
-                curl -sf -X POST -H "\${AUTH}" -H "Content-Type: application/json" \\
-                  "\${KEYCLOAK_BASE}/admin/realms/\${REALM}/clients" -d "\${EDGE_BODY}"
-                EDGE_CLIENT_ID=\$(curl -sf -H "\${AUTH}" \\
-                  "\${KEYCLOAK_BASE}/admin/realms/\${REALM}/clients?clientId=gentian-edge-kernel" \\
-                  | jq -r '.[0].id')
-                echo "Created client gentian-edge-kernel"
-              fi
-              EDGE_AUD_ID=\$(curl -sf -H "\${AUTH}" \\
-                "\${KEYCLOAK_BASE}/admin/realms/\${REALM}/clients/\${EDGE_CLIENT_ID}/protocol-mappers/models" \\
-                | jq -r '.[] | select(.name=="director-audience") | .id' | head -1)
-              if [ -n "\${EDGE_AUD_ID}" ] && [ "\${EDGE_AUD_ID}" != "null" ]; then
-                echo "gentian-edge-kernel audience mapper present"
-              else
-                curl -sf -X POST -H "\${AUTH}" -H "Content-Type: application/json" \\
-                  "\${KEYCLOAK_BASE}/admin/realms/\${REALM}/clients/\${EDGE_CLIENT_ID}/protocol-mappers/models" \\
-                  -d '{"name":"director-audience","protocol":"openid-connect","protocolMapper":"oidc-audience-mapper","config":{"included.client.audience":"gentian-director","id.token.claim":"false","access.token.claim":"true"}}' >/dev/null
-                echo "gentian-edge-kernel audience mapper: aud += gentian-director"
-              fi
+              # The kernel zone's edge client is not created here. It is a
+              # zone, and a zone is produced by the tenant that owns it:
+              # Tenant/platform adopts this realm (AD-10) and its composition
+              # writes the client, its redirect and post-logout URIs, its
+              # director audience mapper and the Secret the edge reads. This
+              # Job creates the realm that client lives in, and stops there.
 
               ARGOCD_CLIENT_ID=\$(curl -sf -H "\${AUTH}" \\
                 "\${KEYCLOAK_BASE}/admin/realms/\${REALM}/clients?clientId=gentian-argocd" \\
@@ -1682,16 +1591,6 @@ ${smtp_shell}
                 secretKeyRef:
                   name: portal-bootstrap-credentials
                   key: headlamp_client_secret
-            - name: EDGE_KERNEL_CLIENT_SECRET
-              valueFrom:
-                secretKeyRef:
-                  name: portal-bootstrap-credentials
-                  key: edge_kernel_client_secret
-            - name: DIRECTOR_URL
-              valueFrom:
-                secretKeyRef:
-                  name: portal-bootstrap-credentials
-                  key: director_url
             - name: ARGOCD_OIDC_CLIENT_SECRET
               valueFrom:
                 secretKeyRef:
