@@ -188,11 +188,20 @@ func (c *KeycloakAdminClient) UpdateRealmBrowserSecurityHeaders(ctx context.Cont
 	if err != nil {
 		return err
 	}
+	// The headers and the theme. NOT the session or token lifetimes.
+	//
+	// This used to carry accessTokenLifespan and both session timeouts, all
+	// 12 hours, and it runs on every tenant reconcile — so it was a second
+	// writer of them, and the one that ran last. The realm bootstrap set a
+	// five-minute access token, reported that it had, and this put twelve
+	// hours back within the minute. A twelve-hour access token is also
+	// exactly what made a logout need a revocation list: nothing the edge
+	// held expired for half a day.
+	//
+	// Lifetimes belong to the realm bootstrap, which sets a short access
+	// token against a workday session. One writer.
 	body := map[string]any{
 		"browserSecurityHeaders": DefaultBrowserSecurityHeaders,
-		"accessTokenLifespan":    43200, // 12 hours
-		"ssoSessionIdleTimeout":  43200, // 12 hours
-		"ssoSessionMaxLifespan":  43200, // 12 hours
 		// Every realm that can render a login screen renders Gentian's, so a user
 		// sent to the IdP sees the portal's own card rather than stock Keycloak.
 		// Set here rather than per realm-creation path because the kernel realm has
