@@ -93,5 +93,5 @@ spec:
         description: Configure this tenant, and for a platform administrator, the cluster underneath.
         icon: admin
         relation: can_administer
-        on: tenant
+        object: tenant
 {{- end }}

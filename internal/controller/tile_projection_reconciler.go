@@ -319,7 +319,7 @@ func (r *TileProjectionReconciler) componentTiles(ctx context.Context) ([]tileca
 
 // tileObject is the graph object a tile's relation is checked against.
 func tileObject(tile *gentianov1alpha1.ExposureTile, tenant, profile string) string {
-	if tile.On == gentianov1alpha1.TileObjectTenant {
+	if tile.Object == gentianov1alpha1.TileObjectTenant {
 		return "tenant:" + tenant
 	}
 	return "app:" + tenant + "/" + profile

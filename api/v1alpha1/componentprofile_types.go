@@ -398,7 +398,7 @@ type ExposureTile struct {
 	// +kubebuilder:validation:Pattern=`^/`
 	Path string `json:"path,omitempty"`
 
-	// Relation is what the caller must hold, on the object On names, for the
+	// Relation is what the caller must hold, on the object Object names, for the
 	// tile to be on their page: a permission of the authorization model
 	// (authz/model/v1/model.fga). It is required: a tile with no question is a
 	// link shown to everyone, and the portal is not where that is decided.
@@ -407,7 +407,7 @@ type ExposureTile struct {
 	// +kubebuilder:validation:Pattern=`^can_[a-z0-9_]+$`
 	Relation string `json:"relation"`
 
-	// On is the object Relation is checked against. "app", the default, is
+	// Object is what Relation is checked against. "app", the default, is
 	// this component's own app object, app:<tenant>/<profile>, where an
 	// installed app's permissions live. "tenant" is the tenant the component
 	// runs in, tenant:<tenant>, which is where the model keeps the permissions
@@ -415,10 +415,14 @@ type ExposureTile struct {
 	// The model says it in one line: admin tiles are tenant#can_administer.
 	// A component that exists to administer the tenant it runs in has no app
 	// object worth asking about, and asking one would be answered no.
+	//
+	// Not called "on": YAML 1.1 reads a bare on as the boolean true, so a
+	// profile written by hand would carry a key named true and be refused by
+	// the schema, and the same goes for off, yes and no.
 	// +optional
 	// +kubebuilder:default=app
 	// +kubebuilder:validation:Enum=app;tenant
-	On TileObject `json:"on,omitempty"`
+	Object TileObject `json:"object,omitempty"`
 }
 
 // TileObject is the kind of object a tile's relation is checked against.
