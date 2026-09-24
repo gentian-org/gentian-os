@@ -423,7 +423,7 @@ renders that; anything a person wants to change is changed on the screens
 above, through the director, into git. No development-only UI is exposed and
 no second write path exists.
 
-### S7A.9 ◐ The kernel UIs are actually usable — Argo CD and Keycloak done, Headlamp open
+### S7A.9 ◐ The kernel UIs are actually usable — all three built, none verified since
 
 - **Argo CD** ✅ showed an empty list to a full administrator. The groups claim
   carries the full path, `/gentian:platform:admin`, because OpenBao's roles
