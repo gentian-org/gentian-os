@@ -1,0 +1,97 @@
+{{- /*
+  The administration console: the second component every tenant gets, and the
+  first built from the app template rather than shipped as part of the
+  desktop. It is a client of the director and holds nothing of its own: no
+  Keycloak credential, no Kubernetes access, no database. What a person may
+  see or change in it is the director's answer, and this profile is the
+  platform's whole statement about it -- the console's own repository ships
+  no profile on purpose.
+*/ -}}
+{{- if .Values.adminConsole.enabled }}
+apiVersion: gentianos.io/v1alpha1
+kind: ComponentProfile
+metadata:
+  name: admin-console
+  labels:
+    {{- include "gentian-os.labels" . | nindent 4 }}
+spec:
+  tenancy: [tenant]
+  # Platform trust, because it relays the forwarded token to the director,
+  # which forwardToken below requires.
+  trustTier: platform
+  version: {{ .Values.adminConsole.chart.version | quote }}
+  # Every tenant gets one, by the same rule that gives every tenant its
+  # desktop. The tile below decides who sees it.
+  defaultForTenants: true
+  package:
+    chart:
+      repository: {{ .Values.adminConsole.chart.repository | quote }}
+      name: {{ .Values.adminConsole.chart.name | quote }}
+      version: {{ .Values.adminConsole.chart.version | quote }}
+    valueMapping:
+      # Where the console's chart takes the facts of the cluster it runs in.
+      # Every key matches the chart's values.yaml as the app template ships
+      # it. The director keys are what make this a client of the director,
+      # and naming them is also what opens its egress to the control
+      # namespace.
+      platform:
+        issuerKey: auth.issuer
+        zoneClientIdKey: auth.clientId
+        audienceKey: auth.audience
+        directorUrlKey: director.url
+        clusterKey: director.cluster
+        tenantKey: platform.tenant
+        kernelDomainKey: platform.kernelDomain
+        realmKey: platform.realm
+        zoneKindKey: platform.zoneKind
+    extraValues:
+      # The name every object of the release derives from, pinned so the
+      # Services the exposures below route to are known before the release
+      # exists.
+      fullnameOverride: admin-console
+      auth:
+        disabled: false
+        mode: edge
+      gateway:
+        enabled: false
+      rbac:
+        create: false
+      networkPolicy:
+        create: false
+      api:
+        env:
+          ENVIRONMENT: production
+      {{- with .Values.adminConsole.extraValues }}
+      {{- toYaml . | nindent 6 }}
+      {{- end }}
+  expose:
+    # The API. It relays the caller's token to the director, which is why this
+    # entry forwards the edge token, and why the profile is platform trust.
+    - name: api
+      surface: gateway
+      authMode: oidc
+      subDomain: admin
+      paths: ["/api", "/healthz", "/readyz"]
+      forwardToken: true
+      backend:
+        service: admin-console-api
+        port: 8000
+    # The bundle, on the same host so both share one session. The tile is
+    # asked on the tenant, not on an app object: administering the tenant is
+    # what this component is for, and the model keeps that permission on the
+    # tenant. The desktop opens it in a frame, which the exposure's frame
+    # policy admits and nothing else does.
+    - name: web
+      surface: gateway
+      authMode: oidc
+      subDomain: admin
+      backend:
+        service: admin-console-web
+        port: 8080
+      tile:
+        displayName: Administration
+        description: Configure this tenant, and for a platform administrator, the cluster underneath.
+        icon: admin
+        relation: can_administer
+        on: tenant
+{{- end }}

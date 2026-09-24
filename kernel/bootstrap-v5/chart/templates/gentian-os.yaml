@@ -90,6 +90,11 @@ spec:
           enabled: true
           chart:
             version: {{ .Values.desktop.chartVersion | default (printf "0.1.0-%s" (.Values.desktop.chartBranch | default "develop")) | quote }}
+        # The administration console every tenant gets, likewise.
+        adminConsole:
+          enabled: true
+          chart:
+            version: {{ .Values.adminConsole.chartVersion | default (printf "0.1.0-%s" (.Values.adminConsole.chartBranch | default "main")) | quote }}
         # The public half of the key Keycloak's event listener signs with.
         # Without it nothing accepts a membership statement, so OpenFGA never
         # learns who is in which group and every permission that follows from
