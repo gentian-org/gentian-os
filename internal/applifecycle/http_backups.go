@@ -163,3 +163,41 @@ func (h *HTTPServer) handleAllBackupSchedules(w http.ResponseWriter, r *http.Req
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"schedules": schedules})
 }
+
+// registerPlatformRoutes serves the reads behind the console's remaining
+// screens. Reads only, like the rest of this API: what an app may consume is
+// declared in git, what the cluster permits to escape the default posture is
+// the operator chart's, and a customisation record is written where the
+// customisation is.
+func (h *HTTPServer) registerPlatformRoutes(mux *http.ServeMux) {
+	mux.HandleFunc("GET /v1/tenants/{tenant}/integrations", h.handleIntegrations)
+	mux.HandleFunc("GET /v1/platform-security", h.handlePlatformSecurity)
+	mux.HandleFunc("GET /v1/customizations", h.handleCustomizationDebt)
+}
+
+func (h *HTTPServer) handleIntegrations(w http.ResponseWriter, r *http.Request) {
+	overview, err := h.Service.Integrations(r.Context(), r.PathValue("tenant"))
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, overview)
+}
+
+func (h *HTTPServer) handlePlatformSecurity(w http.ResponseWriter, r *http.Request) {
+	policy, err := h.Service.PlatformSecurity(r.Context())
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, policy)
+}
+
+func (h *HTTPServer) handleCustomizationDebt(w http.ResponseWriter, r *http.Request) {
+	report, err := h.Service.CustomizationDebtReport(r.Context())
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, report)
+}

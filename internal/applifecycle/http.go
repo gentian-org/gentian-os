@@ -48,6 +48,7 @@ func (h *HTTPServer) Start(ctx context.Context) error {
 	mux.HandleFunc("PUT /v1/tenants/{tenant}/apps/{profile}/addons", h.handleSetAddons)
 	h.registerResourceRoutes(mux)
 	h.registerBackupRoutes(mux)
+	h.registerPlatformRoutes(mux)
 
 	srv := &http.Server{Addr: h.Addr, Handler: mux, ReadHeaderTimeout: 10 * time.Second}
 	errCh := make(chan error, 1)

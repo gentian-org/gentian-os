@@ -423,3 +423,17 @@ func (s *Server) clusterChanges(w http.ResponseWriter, r *http.Request, _ call) 
 		"covers":  "changes to declared state, from git. Sign-ins, refused requests and reads of data are recorded elsewhere and are not in this list.",
 	})
 }
+
+// ── Integrations, platform security, customisation ──────────────────────────
+
+func (s *Server) tenantIntegrations(w http.ResponseWriter, r *http.Request, _ call) {
+	s.relayed(w, r, "/v1/tenants/"+url.PathEscape(r.PathValue("t"))+"/integrations")
+}
+
+func (s *Server) platformSecurity(w http.ResponseWriter, r *http.Request, _ call) {
+	s.relayed(w, r, "/v1/platform-security")
+}
+
+func (s *Server) customizations(w http.ResponseWriter, r *http.Request, _ call) {
+	s.relayed(w, r, "/v1/customizations")
+}

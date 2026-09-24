@@ -418,6 +418,18 @@ func (s *Server) routes() {
 			s.guarded("PUT /v1/clusters/{c}/backup-policy", "can_configure", s.clusterObject, s.setClusterBackupPolicy)
 		}
 
+		// What one tenant's apps consume from each other, and whether the
+		// grant permits what the binding asks for. can_view: seeing which
+		// apps are wired together is reading the tenant, not changing it.
+		s.guarded("GET /v1/tenants/{t}/integrations", "can_view", tenantObject, s.tenantIntegrations)
+		if s.cfg.Cluster != "" {
+			// What the platform permits to escape its default posture, and
+			// how much customisation the cluster carries. Both are the
+			// cluster's own state and read under can_audit.
+			s.guarded("GET /v1/clusters/{c}/platform-security", "can_audit", s.clusterObject, s.platformSecurity)
+			s.guarded("GET /v1/clusters/{c}/customizations", "can_audit", s.clusterObject, s.customizations)
+		}
+
 		// What changed, who changed it, and what allowed them to. The
 		// audit evidence the platform already had: every change to declared
 		// state is a commit the director authored as the person and
