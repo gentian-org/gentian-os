@@ -306,14 +306,24 @@ spec:
             {{- end }}
             {{- /* The hosts the zone serves, which is what the redirect URIs
                  have to cover. The kernel zone's four were read off the Job
-                 this replaces rather than reconstructed from the routes. A
-                 tenant zone serves console.<domain> and nothing else yet: the
-                 desktop is the only ComponentProfile that declares a gateway
-                 exposure, and an app is composed without a host of its own.
-                 When an app gets one, it belongs in this list, because
-                 Keycloak refuses a redirect URI it was not told about and the
-                 person lands on an error page rather than on the app. */}}
-            {{- $zoneHosts  := ternary (list "console" "argocd" "headlamp" "id") (list "console") $adoptsKernelRealm }}
+                 this replaces rather than reconstructed from the routes.
+
+                 console and admin are the components every tenant gets: the
+                 desktop, and the administration console beside it. Both are
+                 ComponentProfiles with defaultForTenants, so both hosts exist
+                 in every zone, kernel and tenant alike.
+
+                 This list is enumerated and not derived, which is a known
+                 limit: a component whose profile declares a subDomain that is
+                 not here gets a Keycloak refusal -- "Invalid parameter:
+                 redirect_uri" -- on an error page that says nothing about a
+                 redirect URI list. The operator is what knows every host a
+                 zone serves, because it composes the routes; projecting that
+                 per tenant, the way it already projects the tile catalogue,
+                 is what would make this list follow the components instead of
+                 being maintained beside them. Until then, a component with a
+                 host of its own belongs here. */}}
+            {{- $zoneHosts  := ternary (list "console" "admin" "argocd" "headlamp" "id") (list "console" "admin") $adoptsKernelRealm }}
 
             {{- /* The secret exists before the client does, and is generated
                  here rather than minted by Keycloak. A client created with no

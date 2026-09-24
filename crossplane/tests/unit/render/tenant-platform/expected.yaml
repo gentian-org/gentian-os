@@ -167,11 +167,13 @@ spec:
     standardFlowEnabled: true
     validPostLogoutRedirectUris:
     - https://console.platform.example.test/*
+    - https://admin.platform.example.test/*
     - https://argocd.platform.example.test/*
     - https://headlamp.platform.example.test/*
     - https://id.platform.example.test/*
     validRedirectUris:
     - https://console.platform.example.test/oauth2/callback
+    - https://admin.platform.example.test/oauth2/callback
     - https://argocd.platform.example.test/oauth2/callback
     - https://headlamp.platform.example.test/oauth2/callback
     - https://id.platform.example.test/oauth2/callback
