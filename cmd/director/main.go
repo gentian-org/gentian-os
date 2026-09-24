@@ -107,12 +107,21 @@ func run(log *slog.Logger) error {
 		return err
 	}
 	fgaOptions := authz.Options{BaseURL: fgaURL, APIToken: os.Getenv("OPENFGA_API_TOKEN"), Logger: log}
+	// Found, never created.
+	//
+	// The director decides; it does not establish. The store and the model are
+	// the operator's to create, because projecting declared state into cluster
+	// state is its work and not this service's, and because a service that
+	// only has to READ the graph to answer a question should not hold a
+	// credential that can rewrite it. Lookup is the same read-only discovery
+	// the edge authorization service uses.
 	if fgaStore == "" || fgaModel == "" {
-		bootstrapCtx, cancelBootstrap := context.WithTimeout(context.Background(), 2*time.Minute)
-		store, model, err := authz.Bootstrap(bootstrapCtx, fgaOptions)
-		cancelBootstrap()
+		lookupCtx, cancelLookup := context.WithTimeout(context.Background(), 2*time.Minute)
+		store, model, err := authz.Lookup(lookupCtx, fgaOptions)
+		cancelLookup()
 		if err != nil {
-			return fmt.Errorf("authorization store: %w", err)
+			return fmt.Errorf("authorization graph: %w "+
+				"(the operator creates the store and the model; this service only reads them)", err)
 		}
 		if fgaStore == "" {
 			fgaStore = store
@@ -131,35 +140,14 @@ func run(log *slog.Logger) error {
 		Email: os.Getenv("DIRECTOR_COMMITTER_EMAIL"),
 	})
 
-	// Who holds which role over this cluster, from the claim in git. Done at
-	// start and not on request: the answer changes when someone edits the
-	// claim, not when someone asks, and a cluster rebuilt from git must arrive
-	// at the same place without anybody remembering to run something.
+	// No cluster-role or tenant projection here.
 	//
-	// A repository that cannot be read is not fatal. The director still serves
-	// what does not depend on it, and says plainly that nobody holds a cluster
-	// role -- which is what an empty projection means, rather than a silent
-	// refusal everyone reads as a broken login.
-	rolesCtx, cancelRoles := context.WithTimeout(context.Background(), 2*time.Minute)
-	if roles, err := repo.PlatformRoles(rolesCtx); err != nil {
-		log.Warn("cluster roles not reconciled: nobody holds a cluster role until this succeeds",
-			"error", err)
-	} else if err := checker.ReconcileClusterRoles(rolesCtx, cluster, roles); err != nil {
-		log.Warn("cluster roles not reconciled: nobody holds a cluster role until this succeeds",
-			"error", err)
-	} else if len(roles) == 0 {
-		log.Warn("the Cluster claim assigns no platform roles, so nobody administers this cluster",
-			"setting", "spec.platformRoles")
-	}
-	// The tenants git deploys on this cluster, attached to it in the store
-	// (WP-2): what the platform's administrators derive their authority over
-	// a tenant from, and what a tenant's own groups derive theirs from.
-	if tenants, err := repo.Tenants(rolesCtx); err != nil {
-		log.Warn("tenants not reconciled: no tenant is attached to this cluster until this succeeds", "error", err)
-	} else if err := checker.ReconcileTenants(rolesCtx, cluster, tenants); err != nil {
-		log.Warn("tenants not reconciled: no tenant is attached to this cluster until this succeeds", "error", err)
-	}
-	cancelRoles()
+	// Both used to run at this point, from the claim and the tenant manifests
+	// in git, and both wrote tuples. They are the operator's now
+	// (internal/controller/authz_projection_reconciler.go): the same state,
+	// projected by the thing that turns git into cluster state, and reconciled
+	// continuously rather than once at whatever moment this process happened
+	// to start.
 	// Membership reaches OpenFGA only through this endpoint. Without a listener
 	// key nothing can be believed, so the endpoint does not exist — and no
 	// membership changes until it does, which is worth saying at start.

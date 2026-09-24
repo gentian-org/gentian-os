@@ -170,6 +170,18 @@ spec:
             {{- if .Values.authzBridge.enabled }}
             - name: AUTHZ_BRIDGE_ENABLED
               value: "true"
+            {{- end }}
+            {{- /*
+              Not gated on the retired bridge.
+
+              The operator projects the authorization graph's structure -- the
+              cluster's roles and its tenants -- whether or not the bridge that
+              used to sync app grants is on. Leaving these behind
+              authzBridge.enabled meant that turning the bridge off, which v5
+              does, also took away the address the projection needs, and
+              nobody would administer the cluster.
+            */}}
+            {{- if .Values.authzBridge.openfgaURL }}
             - name: OPENFGA_API_URL
               value: {{ .Values.authzBridge.openfgaURL | quote }}
             {{- /*
@@ -192,6 +204,14 @@ spec:
                   key: {{ .Values.authzBridge.openfgaTokenSecretRef.key | default "api-token" | quote }}
                   optional: true
             {{- end }}
+            {{- end }}
+            {{- with .Values.authzBridge.storeID }}
+            - name: OPENFGA_STORE_ID
+              value: {{ . | quote }}
+            {{- end }}
+            {{- with .Values.authzBridge.modelID }}
+            - name: OPENFGA_MODEL_ID
+              value: {{ . | quote }}
             {{- end }}
             # Which EdgeIngress this cluster runs, by the name
             # kernel/platforms.yaml uses. Empty follows networkMode, so an

@@ -99,6 +99,11 @@ authzBridge:
   # cloudflare.apiTokenSecretRef. When openbaoPath is set the chart also renders
   # an ExternalSecret that syncs it out of OpenBao, so the token never transits
   # a Helm value, an Application spec, or the installer's process arguments.
+  # Pin the graph this cluster uses. Empty means find the store named
+  # "gentian" and write the model if it differs, which is what a first install
+  # does; pinning is for a cluster whose graph was established elsewhere.
+  storeID: ""
+  modelID: ""
   openfgaTokenSecretRef:
     name: "gentian-os-openfga-token"
     # The key inside the Kubernetes Secret the Deployment reads.

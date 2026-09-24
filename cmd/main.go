@@ -19,9 +19,11 @@ package main
 import (
 	"context"
 	"flag"
+	"log/slog"
 	"os"
 	"time"
 
+	"github.com/go-logr/logr"
 	corev1 "k8s.io/api/core/v1"
 	discoveryv1 "k8s.io/api/discovery/v1"
 	networkingv1 "k8s.io/api/networking/v1"
@@ -40,6 +42,7 @@ import (
 	"github.com/gentian-org/gentian-os/internal/applifecycle"
 	"github.com/gentian-org/gentian-os/internal/controller"
 	"github.com/gentian-org/gentian-os/internal/credentialmgr"
+	"github.com/gentian-org/gentian-os/internal/director/authz"
 	"github.com/gentian-org/gentian-os/internal/kernel/secrets"
 	"github.com/gentian-org/gentian-os/internal/layout"
 	"github.com/gentian-org/gentian-os/internal/usage"
@@ -72,6 +75,51 @@ func buildLogTailer(mgr ctrl.Manager) controller.PodLogTailer {
 		return nil
 	}
 	return controller.ClientsetLogTailer{Clientset: cs}
+}
+
+// authorizationGraph builds the operator's OpenFGA client, creating the store
+// and writing the model when this cluster has neither.
+//
+// Nil is a working answer: a cluster with no OPENFGA_API_URL has no
+// authorization service, and the projection is simply not run. A cluster that
+// has one and cannot be reached is a different thing, and says so loudly --
+// nobody administers a cluster whose roles were never projected, and that
+// reads from the outside exactly like a broken login.
+func authorizationGraph(log logr.Logger) *authz.OpenFGA {
+	url := os.Getenv("OPENFGA_API_URL")
+	if url == "" {
+		return nil
+	}
+	opts := authz.Options{
+		BaseURL:  url,
+		APIToken: os.Getenv("OPENFGA_API_TOKEN"),
+		StoreID:  os.Getenv("OPENFGA_STORE_ID"),
+		ModelID:  os.Getenv("OPENFGA_MODEL_ID"),
+		Logger:   slog.New(slog.NewTextHandler(os.Stderr, nil)),
+	}
+	if opts.StoreID == "" || opts.ModelID == "" {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+		defer cancel()
+		store, model, err := authz.Bootstrap(ctx, opts)
+		if err != nil {
+			log.Error(err, "authorization graph unavailable: the cluster's roles and tenants are not projected, "+
+				"so nobody administers this cluster until it is reachable")
+			return nil
+		}
+		if opts.StoreID == "" {
+			opts.StoreID = store
+		}
+		if opts.ModelID == "" {
+			opts.ModelID = model
+		}
+	}
+	graph, err := authz.NewOpenFGA(opts)
+	if err != nil {
+		log.Error(err, "authorization graph unavailable: the cluster's roles and tenants are not projected")
+		return nil
+	}
+	log.Info("authorization graph ready", "store", opts.StoreID, "model", opts.ModelID)
+	return graph
 }
 
 func main() {
@@ -337,6 +385,26 @@ func main() {
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "BackupPolicy")
 		os.Exit(1)
+	}
+
+	// The authorization graph's structure: which tenants this cluster has and
+	// which group holds which role over it.
+	//
+	// The director used to do this at its own start, with a token that could
+	// write anything in the graph. Projecting declared state into cluster
+	// state is the operator's work, and leaving the write capability with the
+	// service that only has to READ the graph to make a decision is the part
+	// that was wrong. Off entirely when no OpenFGA address is configured,
+	// which is what a cluster with no authorization service runs.
+	if graph := authorizationGraph(setupLog); graph != nil {
+		if err := (&controller.AuthzProjectionReconciler{
+			Client:  mgr.GetClient(),
+			Cluster: os.Getenv("GENTIAN_DEPLOYMENTS_CLUSTER_ID"),
+			Graph:   graph,
+		}).SetupWithManager(mgr); err != nil {
+			setupLog.Error(err, "unable to create controller", "controller", "AuthzProjection")
+			os.Exit(1)
+		}
 	}
 
 	if enableWebhook {
