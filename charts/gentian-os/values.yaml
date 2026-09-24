@@ -220,7 +220,7 @@ adminConsole:
     # version in its Chart.yaml, like the app-store, with no moving chart per
     # branch, so there is nothing for the installer to resolve: this is the
     # pin, bumped when the console is released.
-    version: "0.1.0"
+    version: "0.1.1"
   # Values the profile carries as its own, merged over what it sets already.
   extraValues: {}
 
