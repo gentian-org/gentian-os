@@ -216,11 +216,13 @@ adminConsole:
   chart:
     repository: oci://ghcr.io/gentian-org/charts
     name: admin-console
-    # An exact version. gentian-apps publishes the console's chart at the
-    # version in its Chart.yaml, like the app-store, with no moving chart per
-    # branch, so there is nothing for the installer to resolve: this is the
-    # pin, bumped when the console is released.
-    version: "0.1.1"
+    # An immutable version. gentian-apps publishes the console's chart twice:
+    # a moving prerelease per branch and an immutable one per commit, whose
+    # version the moving chart names in appVersion. The installer resolves the
+    # first into the second and pins it here, because provider-helm never
+    # upgrades a release whose version string has not changed -- so a moving
+    # version installs the first build and then stays on it for ever.
+    version: "0.1.1-main"
   # Values the profile carries as its own, merged over what it sets already.
   extraValues: {}
 

@@ -121,10 +121,13 @@ apply() {
     # verifies the person's token comes with the render. Before this step
     # there is no realm to sign in against, which is why a fresh cluster
     # starts on token login. The same render pins the desktop chart.
-    local desktop_chart_version
+    local desktop_chart_version admin_console_chart_version
     desktop_chart_version="$(_d02_component_chart_version gentian-org/charts/gentian-portal "0.1.0-${PORTAL_IMAGE_TAG:-develop}")" || return 1
     info "Desktop chart: ${desktop_chart_version}"
+    admin_console_chart_version="$(_d02_component_chart_version gentian-org/charts/admin-console "0.1.1-${GENTIAN_APPS_BRANCH:-main}")" || return 1
+    info "Administration console chart: ${admin_console_chart_version}"
     DESKTOP_CHART_VERSION="${desktop_chart_version}" \
+        ADMIN_CONSOLE_CHART_VERSION="${admin_console_chart_version}" \
         V5_APPSETS=true V5_OPERATOR=true V5_HEADLAMP_OIDC=true \
         _v5_render | kubectl apply -f - >/dev/null
 

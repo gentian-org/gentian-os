@@ -139,10 +139,20 @@ The installer pulls published images and builds none. CI publishes a moving tag
 per branch (`develop`), the version for a release tag (`v1.2.3` → `1.2.3`), and
 `<branch>-<short-sha>` per commit.
 
-`GENTIAN_OS_IMAGE_TAG` follows `GENTIAN_OS_BRANCH` unless set, so a cluster
-tracking a ref runs the image that ref published — set it only to run something
-else. `PORTAL_IMAGE_TAG` follows gentian-ui's tags the same way. A cluster pins
-its own tags in `clusters/<cluster>/kernel/values.yaml`.
+`GENTIAN_OS_IMAGE_TAG` is resolved from the checkout unless set: a branch
+resolves to `<branch>-<short-sha>` of the commit you are installing from, so
+the manifests Argo CD syncs and the binary the kubelet pulls come from one
+commit. A release tag resolves to its version. Set it only to run something
+else — and a value that names a moving tag is warned about, because a
+Deployment on one never rolls by itself and a pod that restarts picks up
+whatever the tag meant at that second.
+
+Nothing advances the pin on its own. `./install.sh --layout v5 --only B-01`
+does, which is how a cluster following a branch takes a newer build; if the
+commit has not been published yet, the preflight says so rather than leaving
+the cluster on an older image. `PORTAL_IMAGE_TAG` follows gentian-ui's tags the
+same way. A cluster pins its own tags in
+`clusters/<cluster>/kernel/values.yaml`.
 
 ### App Store write-back
 

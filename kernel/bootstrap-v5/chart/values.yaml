@@ -83,11 +83,20 @@ desktop:
 
 # The operator (and, with it, the director) — applied by D-01, once the
 # identity services its reconcilers address exist.
+# The administration console's chart, published by gentian-apps. D-02 resolves
+# the moving prerelease for the branch into the immutable version it names and
+# passes that as chartVersion; empty falls back to the moving one, which
+# installs but never upgrades.
+adminConsole:
+  chartBranch: main
+  chartVersion: ""
+
 operator:
   enabled: false
   image: ghcr.io/gentian-org/gentian-os
-  # An exact published tag. Empty means the branch tag, which is right when
-  # the manifests come from a branch CI publishes images from. Naming one is
-  # for the case where they do not — a feature branch under test — and it also
-  # takes the image updater off the Application, so the pin holds.
+  # An exact published tag. The installer sets it to the image built from the
+  # checkout's own commit (`<branch>-<sha>`), so the manifests Argo CD syncs
+  # and the binary the kubelet pulls come from one commit. Empty falls back to
+  # the branch tag, which moves and therefore never rolls a Deployment by
+  # itself.
   tag: ""

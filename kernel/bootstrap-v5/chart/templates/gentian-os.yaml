@@ -4,11 +4,18 @@
 # name v4 had for all of them.
 {{- if .Values.operator.enabled }}
 {{- /*
-  The manifests come from a git ref; the image comes from a published tag.
-  They are the same name only for the branches CI publishes from. Reading
-  manifests from a feature branch means naming the tag separately, and a tag
-  named on purpose must not then be moved by the image updater, so pinning one
-  takes the updater off this Application.
+  The manifests come from a git ref; the image comes from a published tag, and
+  the installer resolves that to the image built from THIS CHECKOUT'S COMMIT
+  (resolve_gentian_os_image_tag). So the manifests and the binary are one
+  thing: what Argo CD syncs and what the kubelet pulls were built together.
+
+  No image-updater annotations. They were here, gated on nobody having named a
+  tag — which the installer always does, so they never rendered once; and the
+  updater deployed on a v5 cluster is v1.x, which acts on `ImageUpdater` CRs
+  and reads an Application's annotations only when a CR points it at them. Two
+  reasons for the same conclusion: nothing read them. A cluster that wants an
+  image to roll on its own gets an `ImageUpdater` CR, which is a thing someone
+  writes on purpose rather than an annotation that quietly does nothing.
 */}}
 {{- $imageTag := .Values.operator.tag | default .Values.gentianOsBranch }}
 apiVersion: argoproj.io/v1alpha1
@@ -18,14 +25,6 @@ metadata:
   namespace: {{ include "ns" (list . "gitops") }}
   annotations:
     argocd.argoproj.io/sync-wave: "0"
-    {{- if not .Values.operator.tag }}
-    argocd-image-updater.argoproj.io/image-list: gentianos={{ .Values.operator.image }}
-    argocd-image-updater.argoproj.io/gentianos.allow-tags: regexp:^{{ .Values.gentianOsBranch }}-[0-9a-f]{7,}$
-    argocd-image-updater.argoproj.io/gentianos.update-strategy: newest-build
-    argocd-image-updater.argoproj.io/gentianos.helm.image-name: image.repository
-    argocd-image-updater.argoproj.io/gentianos.helm.image-tag: image.tag
-    argocd-image-updater.argoproj.io/write-back-method: argocd
-    {{- end }}
   finalizers:
   - resources-finalizer.argocd.argoproj.io
 spec:
@@ -63,9 +62,9 @@ spec:
       valuesObject:
         image:
           repository: {{ .Values.operator.image }}
-          # The branch tag, so a fresh cluster syncs something that exists;
-          # the image updater pins a <branch>-<sha> from the next build on,
-          # unless operator.tag named one already.
+          # An immutable <branch>-<sha>, resolved by the installer from the
+          # commit these manifests came from. A moving branch tag here is what
+          # let a pod restart onto a build nobody chose.
           tag: {{ $imageTag | quote }}
         # Where each kernel function runs. The operator reads these as
         # GENTIAN_NS_<FUNCTION>; without them it runs the v4 layout.
@@ -90,11 +89,16 @@ spec:
           enabled: true
           chart:
             version: {{ .Values.desktop.chartVersion | default (printf "0.1.0-%s" (.Values.desktop.chartBranch | default "develop")) | quote }}
-        # The administration console every tenant gets. Its chart version is
-        # the operator chart's own pin: gentian-apps publishes it at an exact
-        # version, so there is no branch to follow and nothing to resolve.
+        # The administration console every tenant gets, from the branch of
+        # gentian-apps this cluster follows. Like the desktop, it is published
+        # as a moving prerelease per branch and an immutable one per commit,
+        # and what is pinned here is the immutable one -- a Helm release under
+        # an unchanged version string is never upgraded, so following the
+        # moving version would install the first build and then never move.
         adminConsole:
           enabled: true
+          chart:
+            version: {{ .Values.adminConsole.chartVersion | default (printf "0.1.1-%s" (.Values.adminConsole.chartBranch | default "main")) | quote }}
         # The public half of the key Keycloak's event listener signs with.
         # Without it nothing accepts a membership statement, so OpenFGA never
         # learns who is in which group and every permission that follows from

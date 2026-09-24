@@ -2448,10 +2448,44 @@ _verify_gentian_os_ref_exists() {
 # asks ghcr.io whether the tag exists, and the helm install pulls it. Validating
 # a different tag than the install pulls is a check that passes for the wrong
 # image — which is what the shared "develop" default was doing.
+#
+# WHY A BRANCH RESOLVES TO A COMMIT AND NOT TO THE BRANCH TAG
+# ------------------------------------------------------------
+# CI publishes both `<branch>` and `<branch>-<sha>`, and the branch tag moves.
+# A Deployment that names it never rolls on its own — the tag string does not
+# change, so nothing reconciles — and a pod that restarts for an unrelated
+# reason silently picks up whatever the tag meant at that second. That is not
+# hypothetical: the director spent an afternoon serving a binary from before
+# the branch, because it restarted while CI was still building, and nothing
+# anywhere said so.
+#
+# So a branch resolves to the image of THIS CHECKOUT'S COMMIT. It is the right
+# answer for a second reason: B-01 renders the bootstrap manifests from this
+# checkout, so pinning the image built from the same commit makes the manifests
+# and the binary one thing rather than two that agree by habit. A commit CI has
+# not published yet resolves to nothing, and validate_image_tag says so before
+# anything is deployed — which is the failure we want, and the opposite of
+# running an older build without noticing.
+#
+# Nothing rolls the cluster forward on its own any more. That is a real loss
+# and a deliberate one: nothing ever did here either, because the image-updater
+# annotations the bootstrap chart wrote were read by nobody (the deployed
+# updater is v1.x, which acts on `ImageUpdater` CRs and reads an Application's
+# annotations only when a CR points it at them). `./install.sh --only B-01`
+# advances the pin, which is one command and is honest about what it does.
 # =============================================================================
 resolve_gentian_os_image_tag() {
     if [[ -n "${GENTIAN_OS_IMAGE_TAG:-}" ]]; then
         export GENTIAN_OS_IMAGE_TAG
+        case "${GENTIAN_OS_IMAGE_TAG}" in
+            *-[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]*|[0-9]*.[0-9]*.[0-9]*) ;;
+            *)
+                warn "GENTIAN_OS_IMAGE_TAG=${GENTIAN_OS_IMAGE_TAG} names a tag that moves."
+                warn "  A Deployment on a moving tag never rolls by itself, and a pod that"
+                warn "  restarts picks up whatever the tag means then. Unset it to pin the"
+                warn "  image built from this checkout's commit."
+                ;;
+        esac
         return 0
     fi
     resolve_gentian_os_branch
@@ -2470,11 +2504,20 @@ resolve_gentian_os_image_tag() {
             export GENTIAN_OS_IMAGE_TAG="develop"
             ;;
         *)
-            # A branch CI does not publish from lands here and resolves to a tag
-            # that does not exist. That is the intended outcome: validate_image_tag
-            # answers it with a 404 before anything is deployed, which is the
-            # whole reason that check exists.
-            export GENTIAN_OS_IMAGE_TAG="${GENTIAN_OS_BRANCH}"
+            # A branch CI publishes from: the image of this checkout's commit.
+            # A branch it does not publish from resolves to a tag that does not
+            # exist, and validate_image_tag answers that with a 404 before
+            # anything is deployed, which is the whole reason that check exists.
+            local _sha
+            _sha="$(git -C "${SCRIPT_DIR}" rev-parse --short=7 HEAD 2>/dev/null || true)"
+            if [[ -n "${_sha}" ]]; then
+                export GENTIAN_OS_IMAGE_TAG="${GENTIAN_OS_BRANCH}-${_sha}"
+            else
+                # No checkout to read a commit from — an install from a tarball.
+                # The branch tag is all there is, and it moves.
+                warn "This is not a git checkout, so the operator image is the branch tag ${GENTIAN_OS_BRANCH}, which moves."
+                export GENTIAN_OS_IMAGE_TAG="${GENTIAN_OS_BRANCH}"
+            fi
             ;;
     esac
 }
