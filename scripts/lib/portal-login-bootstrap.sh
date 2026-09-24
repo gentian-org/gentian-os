@@ -1044,10 +1044,29 @@ spec:
               # does not redraw it: both consoles are compiled React on
               # PatternFly rendered from one template, and overriding that
               # template would mean reworking it on every upgrade.
-              REALM_THEMES=\$(jq -n '{loginTheme:"gentian",adminTheme:"gentian",accountTheme:"gentian"}')
+              # A workday session, a short-lived token.
+              #
+              # These two numbers are what makes removing someone take effect.
+              # The SSO session lasts a working day, so nobody is asked for a
+              # password again mid-morning. The ACCESS token lasts five
+              # minutes, and the edge refreshes it against Keycloak without
+              # the person noticing. A refresh re-checks the session and
+              # re-reads the account, so disabling someone, ending their
+              # session or changing their groups stops them within one token
+              # lifetime rather than at the end of the day.
+              #
+              # This is why there is no revocation list anywhere: it existed
+              # to make that immediate while the access token lived twelve
+              # hours, which is what this realm was set to.
+              REALM_THEMES=\$(jq -n '{
+                loginTheme:"gentian", adminTheme:"gentian", accountTheme:"gentian",
+                accessTokenLifespan: 300,
+                ssoSessionIdleTimeout: 43200,
+                ssoSessionMaxLifespan: 43200
+              }')
               if curl -sf -X PUT -H "\${AUTH}" -H "Content-Type: application/json" \
                 "\${KEYCLOAK_BASE}/admin/realms/\${REALM}" -d "\${REALM_THEMES}" >/dev/null 2>&1; then
-                echo "Realm \${REALM} wears the gentian theme on login, account and admin"
+                echo "Realm \${REALM}: gentian theme, 5-minute access tokens, 12-hour sessions"
               else
                 printf '\033[1;33m[WARN]\033[0m  %s\n' "could not set the realm themes on \${REALM}" >&2
               fi
@@ -1261,8 +1280,12 @@ spec:
                 redirectUris: (["console", "argocd", "headlamp", "id"] | map("https://" + . + "." + \$domain + "/oauth2/callback")),
                 webOrigins: [],
                 attributes: {
-                  "backchannel.logout.url": (\$director + "/v1/logout/keycloak"),
-                  "backchannel.logout.session.required": "true",
+                  # No backchannel.logout.url. It pointed at the director,
+                  # which recorded the ended session so the edge would refuse
+                  # it at once. Nothing records it now: the access token lives
+                  # five minutes and its refresh fails once the session is
+                  # gone, which is the same outcome one token later and needs
+                  # no write to the authorization store.
                   "post.logout.redirect.uris": ("https://console." + \$domain + "/*")
                 }
               }')

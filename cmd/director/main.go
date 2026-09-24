@@ -37,7 +37,6 @@ import (
 	"github.com/gentian-org/gentian-os/internal/director/entitlement"
 	"github.com/gentian-org/gentian-os/internal/director/gitops"
 	"github.com/gentian-org/gentian-os/internal/director/membership"
-	"github.com/gentian-org/gentian-os/internal/director/session"
 )
 
 func main() {
@@ -187,19 +186,17 @@ func run(log *slog.Logger) error {
 		}
 		store = &api.StoreConfig{Verifier: sv, Applier: &entitlement.Applier{Repo: repo, Store: checker}}
 	}
-	// Where every zone client's back-channel logout arrives. What is kept
-	// is bounded by the longest a token of an ended session could still be
-	// presented; the sweep retires the rest.
-	revocationTTL, err := time.ParseDuration(envOr("DIRECTOR_REVOCATION_TTL", "12h"))
-	if err != nil {
-		return fmt.Errorf("DIRECTOR_REVOCATION_TTL: %w", err)
-	}
-	revoker, err := session.New(verifier, checker, revocationTTL, log)
-	if err != nil {
-		return err
-	}
+	// No back-channel logout endpoint, and nothing to sweep.
+	//
+	// Ending a session at Keycloak is what ends it. The edge holds a
+	// short-lived access token and refreshes it against Keycloak; a refresh
+	// against an ended session fails, so access stops within the access
+	// token's lifetime, which the realm sets. The director recorded a
+	// revocation tuple to make that immediate, which meant it held write
+	// access to the authorization store for one event it is not otherwise
+	// part of. Deleting it is the cheaper answer.
 	handler, err := api.New(api.Config{Authn: verifier, Authz: checker, Repo: repo, Log: log,
-		EnforceEntitlements: enforce, Events: events, Logout: revoker, Store: store, Cluster: cluster})
+		EnforceEntitlements: enforce, Events: events, Store: store, Cluster: cluster})
 	if err != nil {
 		return err
 	}
@@ -218,7 +215,6 @@ func run(log *slog.Logger) error {
 	defer stop()
 	done := make(chan error, 1)
 	go func() { done <- srv.ListenAndServe() }()
-	go revoker.Run(ctx, 5*time.Minute)
 	log.Info("director listening", "addr", srv.Addr, "cluster", cluster, "issuer", issuerBase, "model", fgaModel)
 
 	select {

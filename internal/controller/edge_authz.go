@@ -63,8 +63,14 @@ const (
 type routeAuthz struct {
 	relation string
 	object   string
-	// forwardToken hands the edge token to the backend. Only the desktop,
-	// which relays to the director, declares it (AD-13).
+	// forwardToken leaves the Authorization header alone, so whatever bearer
+	// the request carries reaches the backend.
+	//
+	// Two reasons a route wants it, and they are not the same. The desktop
+	// relays the edge's token to the director (AD-13). Keycloak's
+	// administration console carries a token of its OWN, minted by the code
+	// flow inside the page, and calls its Admin REST API with it; stripping
+	// that is a 401 and a console that never finishes loading.
 	forwardToken bool
 }
 

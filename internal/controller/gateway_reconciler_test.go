@@ -814,3 +814,21 @@ func TestKernelConsolesMayBeFramedByTheDesktop(t *testing.T) {
 		}
 	}
 }
+
+// Keycloak's administration console calls its own Admin REST API with a token
+// its own code flow minted inside the page. The edge must leave that header
+// alone: stripping it answers 401 and the console never finishes loading.
+func TestTheKeycloakConsoleKeepsItsOwnBearer(t *testing.T) {
+	t.Parallel()
+	specs := kernelHTTPRouteSpecs("platform.example.test", nil, nil, nil, false, "c1", true, true)
+	for _, s := range specs {
+		if s.name != kernelRouteKeycloakAdmin {
+			continue
+		}
+		if s.authz == nil || !s.authz.forwardToken {
+			t.Fatalf("the admin console route must forward the token: %+v", s.authz)
+		}
+		return
+	}
+	t.Fatal("the admin console route is missing")
+}

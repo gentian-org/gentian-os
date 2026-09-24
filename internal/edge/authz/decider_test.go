@@ -141,25 +141,16 @@ func TestWhatHasNoRouteClassOrNoTokenIsRefused(t *testing.T) {
 	}
 }
 
-func TestARevokedSessionIsDeniedAtL2(t *testing.T) {
-	store := &fakeStore{allow: map[string]bool{
-		"user:root|can_configure|cluster:c1": true,
-		"user:root|revoked|session:s1":       true,
-	}}
-	dec := decider(store).Decide(context.Background(), Request{Host: "argocd.k.example", Authorization: "Bearer root-token"})
-	if dec.Allow || dec.Status != http.StatusForbidden {
-		t.Fatalf("revoked session: %+v", dec)
-	}
-}
-
 func TestDecisionsAreCachedPerSessionAndEvictedOnChange(t *testing.T) {
 	store := &fakeStore{allow: map[string]bool{"user:root|can_configure|cluster:c1": true}}
 	d := decider(store)
 	req := Request{Host: "argocd.k.example", Authorization: "Bearer root-token"}
 	d.Decide(context.Background(), req)
 	d.Decide(context.Background(), req)
-	if store.checks != 2 { // revoked + relation, once
-		t.Fatalf("store asked %d times, want 2 (the second request is a cache hit)", store.checks)
+	// One question per decision now, not two: the revocation check is gone
+	// with the tuple that backed it.
+	if store.checks != 1 {
+		t.Fatalf("store asked %d times, want 1 (the second request is a cache hit)", store.checks)
 	}
 	// The right is taken away and the changelog moves: the cache is evicted
 	// and the next request asks again -- and is refused.

@@ -154,7 +154,7 @@ Provisioning. Declare `Create` as well as `Observe` from the start.
 **Done when** a second tenant signs in at `console.<t>.<kernel>` against its
 own realm, with no installer step having run for it.
 
-### S7A.2 ☐ The director stops writing authorization state
+### S7A.2 ◐ The director stops writing authorization state — structure done, membership next
 
 The director's job is to read OpenFGA to decide whether a caller may make a
 call, and to write git. Argo CD syncs git and the operator turns it into
@@ -172,10 +172,19 @@ Move them:
 | tenants, `operated_by`, tenant roles | operator |
 | membership from Keycloak events | operator |
 | entitlement tuples | operator, from the fact the director committed to git |
-| session revocation | the edge authorization service, which is the only reader |
+| session revocation | **deleted**: a five-minute access token and a failing refresh do the same job |
 
 Then take the write capability off the director's OpenFGA token, so the rule
 is enforced by the credential and not by care.
+
+**Done so far**: the structure (the OpenFGA store object and model, cluster
+roles, tenants) moved to the operator's `AuthzProjectionReconciler`, and
+session revocation was **deleted** rather than moved. It existed to make a
+logout immediate while the realm's access token lived twelve hours; the realm
+now issues five-minute tokens against a twelve-hour session, so the edge's
+refresh fails within one token lifetime of the session ending and the tuple,
+the write, the endpoint and the background sweep are all gone. What is left is
+membership, and the entitlement tuples the store's statements produce.
 
 **Ask first**: how much of the graph can be static rather than written at all.
 See "How much has to be written" below.
@@ -313,7 +322,7 @@ Three ways that do work, in increasing order of what they cost:
    already exists, so single sign-on is preserved and what the browser sends
    to an application is a cookie good only for that application. Logout still
    works across all of them, because every one of those sessions carries the
-   same Keycloak session id and revocation is by session id. This is the old
+   same Keycloak session, which ends everywhere at once. This is the old
    model's isolation with the new model's single implementation, and it needs
    no new component.
 2. **Rewrite `cookie` at the router stage**, after every filter has run, with

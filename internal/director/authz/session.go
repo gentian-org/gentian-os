@@ -18,37 +18,9 @@ package authz
 
 import (
 	"context"
-	"fmt"
 	"net/url"
 	"time"
 )
-
-// RevokeSession records that the issuer has ended a subject's session:
-// session:<sid>#revoked@user:<sub> (model v1). The shim asks it at L2, and
-// because it is a stored tuple every replica sees it on the ReadChanges poll
-// it already runs, and nothing is lost when a replica restarts (AD-13).
-func (c *OpenFGA) RevokeSession(ctx context.Context, sub, sid string) error {
-	user, err := User(sub)
-	if err != nil {
-		return err
-	}
-	session, err := Session(sid)
-	if err != nil {
-		return err
-	}
-	t := Tuple{User: user, Relation: "revoked", Object: session}
-	have, err := c.Read(ctx, t)
-	if err != nil {
-		return fmt.Errorf("read %s: %w", session, err)
-	}
-	if len(have) > 0 {
-		return nil
-	}
-	if err := c.Write(ctx, []Tuple{t}, nil); err != nil {
-		return fmt.Errorf("revoke %s: %w", session, err)
-	}
-	return nil
-}
 
 // Change is one entry of the store's changelog.
 type Change struct {
@@ -90,44 +62,4 @@ func (c *OpenFGA) Changes(ctx context.Context, objectType, token string) ([]Chan
 		})
 	}
 	return out, page.ContinuationToken, nil
-}
-
-// SweepRevocations deletes revocation tuples written before olderThan: once
-// the session's longest token has expired there is nothing left to deny, and
-// a store that only ever grew would carry every session that ever ended.
-// The changelog is the record of when each was written.
-func (c *OpenFGA) SweepRevocations(ctx context.Context, olderThan time.Time) (int, error) {
-	live := map[string]Change{}
-	token := ""
-	for {
-		changes, next, err := c.Changes(ctx, "session", token)
-		if err != nil {
-			return 0, err
-		}
-		for _, ch := range changes {
-			k := key(ch.Tuple)
-			if ch.Write {
-				live[k] = ch
-			} else {
-				delete(live, k)
-			}
-		}
-		if next == "" || next == token || len(changes) == 0 {
-			break
-		}
-		token = next
-	}
-	var deletes []Tuple
-	for _, ch := range live {
-		if ch.Timestamp.Before(olderThan) {
-			deletes = append(deletes, ch.Tuple)
-		}
-	}
-	if len(deletes) == 0 {
-		return 0, nil
-	}
-	if err := c.Write(ctx, nil, deletes); err != nil {
-		return 0, fmt.Errorf("sweep revocations: %w", err)
-	}
-	return len(deletes), nil
 }

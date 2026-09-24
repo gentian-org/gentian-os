@@ -185,18 +185,15 @@ func (d *Decider) Decide(ctx context.Context, req Request) Decision {
 	if err != nil {
 		return deny(http.StatusUnauthorized, err.Error())
 	}
-	session, err := authz.Session(id.SessionID)
-	if err != nil {
-		return deny(http.StatusUnauthorized, err.Error())
-	}
-	revoked, err := d.store.Check(ctx, req.ID, user, "revoked", session)
-	if err != nil {
-		d.log.WarnContext(ctx, "store unreachable; failing closed", "host", req.Host, "error", err.Error())
-		return deny(http.StatusServiceUnavailable, "authorization store unreachable")
-	}
-	if revoked {
-		return browserRefusal(route, deny(http.StatusForbidden, "session revoked"))
-	}
+	// No revocation question.
+	//
+	// This used to ask whether the session had been recorded as revoked, a
+	// tuple the director wrote on back-channel logout. That whole path is
+	// gone. Ending the session at Keycloak is what ends it: the edge holds a
+	// short-lived access token and refreshes it, and a refresh against an
+	// ended session fails. The bound is the access token's lifetime, which
+	// the realm sets, and this costs one fewer round trip per request than
+	// asking did.
 	ok, err := d.store.Check(ctx, req.ID, user, route.Relation, route.Object)
 	if err != nil {
 		d.log.WarnContext(ctx, "store unreachable; failing closed", "host", req.Host, "error", err.Error())
