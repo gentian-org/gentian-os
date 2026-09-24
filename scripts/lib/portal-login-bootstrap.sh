@@ -1044,32 +1044,6 @@ spec:
               # does not redraw it: both consoles are compiled React on
               # PatternFly rendered from one template, and overriding that
               # template would mean reworking it on every upgrade.
-              # A workday session, a short-lived token.
-              #
-              # These two numbers are what makes removing someone take effect.
-              # The SSO session lasts a working day, so nobody is asked for a
-              # password again mid-morning. The ACCESS token lasts five
-              # minutes, and the edge refreshes it against Keycloak without
-              # the person noticing. A refresh re-checks the session and
-              # re-reads the account, so disabling someone, ending their
-              # session or changing their groups stops them within one token
-              # lifetime rather than at the end of the day.
-              #
-              # This is why there is no revocation list anywhere: it existed
-              # to make that immediate while the access token lived twelve
-              # hours, which is what this realm was set to.
-              REALM_THEMES=\$(jq -n '{
-                loginTheme:"gentian", adminTheme:"gentian", accountTheme:"gentian",
-                accessTokenLifespan: 300,
-                ssoSessionIdleTimeout: 43200,
-                ssoSessionMaxLifespan: 43200
-              }')
-              if curl -sf -X PUT -H "\${AUTH}" -H "Content-Type: application/json" \
-                "\${KEYCLOAK_BASE}/admin/realms/\${REALM}" -d "\${REALM_THEMES}" >/dev/null 2>&1; then
-                echo "Realm \${REALM}: gentian theme, 5-minute access tokens, 12-hour sessions"
-              else
-                printf '\033[1;33m[WARN]\033[0m  %s\n' "could not set the realm themes on \${REALM}" >&2
-              fi
 
               # The realm states its memberships to the director. Admin events
               # carry the changes an administrator makes; the user events carry
@@ -1500,6 +1474,40 @@ ${refresh_shell}
 
 ${refresh_shell}
 ${smtp_shell}
+
+              # A workday session, a short-lived token.
+              #
+              # LAST, after the SMTP fragment above. That fragment reads the
+              # whole realm, sets smtpServer on the copy and writes the copy
+              # back, so anything written before it that the copy predates is
+              # silently undone -- which is exactly what happened to this
+              # block: the Job reported setting a five-minute token and the
+              # realm still said twelve hours.
+              #
+              # These two numbers are what makes removing someone take effect.
+              # The SSO session lasts a working day, so nobody is asked for a
+              # password again mid-morning. The ACCESS token lasts five
+              # minutes, and the edge refreshes it against Keycloak without
+              # the person noticing. A refresh re-checks the session and
+              # re-reads the account, so disabling someone, ending their
+              # session or changing their groups stops them within one token
+              # lifetime rather than at the end of the day.
+              #
+              # This is why there is no revocation list anywhere: it existed
+              # to make that immediate while the access token lived twelve
+              # hours, which is what this realm was set to.
+              REALM_THEMES=\$(jq -n '{
+                loginTheme:"gentian", adminTheme:"gentian", accountTheme:"gentian",
+                accessTokenLifespan: 300,
+                ssoSessionIdleTimeout: 43200,
+                ssoSessionMaxLifespan: 43200
+              }')
+              if curl -sf -X PUT -H "\${AUTH}" -H "Content-Type: application/json" \
+                "\${KEYCLOAK_BASE}/admin/realms/\${REALM}" -d "\${REALM_THEMES}" >/dev/null 2>&1; then
+                echo "Realm \${REALM}: gentian theme, 5-minute access tokens, 12-hour sessions"
+              else
+                printf '\033[1;33m[WARN]\033[0m  %s\n' "could not set the realm themes on \${REALM}" >&2
+              fi
 
               echo "Portal bootstrap complete for \${PORTAL_USERNAME}@\${KERNEL_DOMAIN}"
           env:
