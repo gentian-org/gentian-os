@@ -52,6 +52,19 @@ type TenantSpec struct {
 	// +optional
 	Quotas *TenantQuotas `json:"quotas,omitempty"`
 
+	// Security is the realm policy this tenant runs under: how strong a
+	// password has to be, how long a session lasts, what happens after
+	// repeated failures. Unset leaves Keycloak's own defaults.
+	//
+	// Declared here rather than set through Keycloak's admin API, which is
+	// what the console used to do. The composition turns this into the
+	// realm's fields, so the policy is reviewable in git, survives a realm
+	// being rebuilt, and needs no credential anywhere: the thing that changes
+	// it is a commit, and the thing that applies it is the reconciler that
+	// owns the realm.
+	// +optional
+	Security *TenantSecurity `json:"security,omitempty"`
+
 	// DeletionPolicy controls behaviour when the Tenant CR is deleted.
 	// Defaults to Retain.
 	// +optional
@@ -248,6 +261,105 @@ type TenantAppDropIn struct {
 	// +kubebuilder:validation:Required
 	// +kubebuilder:validation:MinProperties=1
 	Files map[string]string `json:"files"`
+}
+
+// TenantSecurity is the realm policy a tenant administrator may set.
+//
+// Every field maps to something the Keycloak realm already has. Nothing here
+// is a Gentian invention on top: the console shows the realm's own controls,
+// and the composition is what carries them across.
+type TenantSecurity struct {
+	// Password is how strong a password must be.
+	// +optional
+	Password *PasswordPolicy `json:"password,omitempty"`
+
+	// Session is how long one lasts.
+	// +optional
+	Session *SessionPolicy `json:"session,omitempty"`
+
+	// BruteForce is what happens after repeated failures.
+	// +optional
+	BruteForce *BruteForcePolicy `json:"bruteForce,omitempty"`
+}
+
+// PasswordPolicy becomes Keycloak's own password policy string.
+//
+// Split into fields rather than carried as that string, because a screen has
+// to offer the parts and a reviewer has to read the diff. The composition
+// assembles it; "length(12) and digits(1)" is not something anybody should
+// have to write by hand into a tenant manifest.
+type PasswordPolicy struct {
+	// MinLength is the shortest password accepted. Zero leaves it unstated.
+	// +optional
+	// +kubebuilder:validation:Minimum=0
+	// +kubebuilder:validation:Maximum=128
+	MinLength int32 `json:"minLength,omitempty"`
+
+	// RequireDigits, RequireLowercase, RequireUppercase and
+	// RequireSpecialChars each demand at least one of that kind.
+	// +optional
+	RequireDigits bool `json:"requireDigits,omitempty"`
+	// +optional
+	RequireLowercase bool `json:"requireLowercase,omitempty"`
+	// +optional
+	RequireUppercase bool `json:"requireUppercase,omitempty"`
+	// +optional
+	RequireSpecialChars bool `json:"requireSpecialChars,omitempty"`
+
+	// HistoryCount refuses a password the person has used in their last N.
+	// +optional
+	// +kubebuilder:validation:Minimum=0
+	// +kubebuilder:validation:Maximum=64
+	HistoryCount int32 `json:"historyCount,omitempty"`
+
+	// MaxAgeDays forces a change after that many days. Zero means never,
+	// which is what current guidance actually recommends: rotation on a
+	// timer makes people choose worse passwords, and it is here because
+	// some compliance regimes still demand it.
+	// +optional
+	// +kubebuilder:validation:Minimum=0
+	// +kubebuilder:validation:Maximum=3650
+	MaxAgeDays int32 `json:"maxAgeDays,omitempty"`
+}
+
+// SessionPolicy is how long a sign-in lasts.
+type SessionPolicy struct {
+	// IdleMinutes ends a session that has done nothing for this long.
+	// +optional
+	// +kubebuilder:validation:Minimum=0
+	// +kubebuilder:validation:Maximum=43200
+	IdleMinutes int32 `json:"idleMinutes,omitempty"`
+
+	// MaxHours ends it regardless of activity.
+	// +optional
+	// +kubebuilder:validation:Minimum=0
+	// +kubebuilder:validation:Maximum=8760
+	MaxHours int32 `json:"maxHours,omitempty"`
+
+	// RememberMe offers the longer session the realm is configured for.
+	// +optional
+	RememberMe bool `json:"rememberMe,omitempty"`
+}
+
+// BruteForcePolicy is what happens after repeated failures.
+type BruteForcePolicy struct {
+	// Enabled turns detection on. Off is Keycloak's default and is worth
+	// stating deliberately: without it, a password can be guessed at the
+	// speed of the network.
+	// +optional
+	Enabled bool `json:"enabled,omitempty"`
+
+	// MaxLoginFailures before the account is locked out.
+	// +optional
+	// +kubebuilder:validation:Minimum=0
+	// +kubebuilder:validation:Maximum=1000
+	MaxLoginFailures int32 `json:"maxLoginFailures,omitempty"`
+
+	// LockoutDurationSeconds is how long a lockout lasts.
+	// +optional
+	// +kubebuilder:validation:Minimum=0
+	// +kubebuilder:validation:Maximum=604800
+	LockoutDurationSeconds int32 `json:"lockoutDurationSeconds,omitempty"`
 }
 
 // TenantStatus holds the observed state of a Tenant.

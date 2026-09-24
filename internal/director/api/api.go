@@ -69,6 +69,8 @@ type Repository interface {
 	SetTenantBackupPolicy(ctx context.Context, tenant string, policy gitops.BackupPolicy, meta gitops.Meta) (gitops.Result, error)
 	ClearTenantBackupPolicy(ctx context.Context, tenant string, meta gitops.Meta) (gitops.Result, error)
 	SetClusterBackupPolicy(ctx context.Context, policy gitops.BackupPolicy, meta gitops.Meta) (gitops.Result, error)
+	TenantSecurityPolicy(ctx context.Context, tenant string) (*gitops.SecurityPolicy, error)
+	SetTenantSecurityPolicy(ctx context.Context, tenant string, policy gitops.SecurityPolicy, meta gitops.Meta) (gitops.Result, error)
 }
 
 // Lifecycle is the operator's app-lifecycle API, read and never written: what
@@ -413,6 +415,15 @@ func (s *Server) routes() {
 		if s.cfg.Cluster != "" {
 			s.guarded("PUT /v1/clusters/{c}/backup-policy", "can_configure", s.clusterObject, s.setClusterBackupPolicy)
 		}
+
+		// The realm policy this tenant runs under: how strong a password
+		// has to be, how long a session lasts, what happens after repeated
+		// failures. Read from git, because git is where it is declared and
+		// the composition is what applies it -- there is no Keycloak
+		// credential anywhere in this path, which is the point. Written
+		// under can_set_policy, like the backup policy beside it.
+		s.guarded("GET /v1/tenants/{t}/security-policy", "can_view", tenantObject, s.tenantSecurityPolicy)
+		s.guarded("PUT /v1/tenants/{t}/security-policy", "can_set_policy", tenantObject, s.setTenantSecurityPolicy)
 
 		// Taking a backup is not declaring anything: it happens once, now.
 		// can_administer, because it reads every store the tenant has and

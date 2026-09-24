@@ -22,6 +22,27 @@ spec:
   # schema — which is how it went on rendering requests.cpu correctly while the
   # real path pruned it and tenants on a plan got none of the reserved capacity
   # they were sold.
+  # Every field of TenantSecurity, so the password-policy string the
+  # composition assembles is rendered and compared. That string is the part
+  # that breaks silently: a realm accepts a policy it does not understand by
+  # ignoring it, so a typo costs the policy rather than the install.
+  security:
+    password:
+      minLength: 12
+      requireDigits: true
+      requireLowercase: true
+      requireUppercase: true
+      requireSpecialChars: true
+      historyCount: 3
+      maxAgeDays: 90
+    session:
+      idleMinutes: 30
+      maxHours: 12
+      rememberMe: true
+    bruteForce:
+      enabled: true
+      maxLoginFailures: 5
+      lockoutDurationSeconds: 900
   quotas:
     requestsCpu: "2"
     requestsMemory: 4Gi

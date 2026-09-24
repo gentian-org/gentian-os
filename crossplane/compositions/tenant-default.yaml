@@ -1562,6 +1562,31 @@ spec:
                 realm: {{ $realm }}
                 enabled: true
                 displayName: {{ $spec.displayName | quote }}
+                {{- /* ── Security policy ──────────────────────────────────
+                     What the tenant declares in spec.security, as the realm's
+                     own fields. The console changes it by committing to the
+                     tenant's manifest; nothing holds a Keycloak credential to
+                     do it, and a realm rebuilt from scratch comes back with
+                     the same policy because the policy is in git.
+
+                     Unstated is unstated: a field the tenant does not set is
+                     left off entirely, so Keycloak's own default applies
+                     rather than a zero written over it. */}}
+                {{- $sec := $spec.security | default dict }}
+                {{- $pw := dig "password" dict $sec }}
+                {{- $pwParts := list }}
+                {{- if gt (int (dig "minLength" 0 $pw)) 0 }}{{- $pwParts = append $pwParts (printf "length(%d)" (int (dig "minLength" 0 $pw))) }}{{- end }}
+                {{- if dig "requireDigits" false $pw }}{{- $pwParts = append $pwParts "digits(1)" }}{{- end }}
+                {{- if dig "requireLowercase" false $pw }}{{- $pwParts = append $pwParts "lowerCase(1)" }}{{- end }}
+                {{- if dig "requireUppercase" false $pw }}{{- $pwParts = append $pwParts "upperCase(1)" }}{{- end }}
+                {{- if dig "requireSpecialChars" false $pw }}{{- $pwParts = append $pwParts "specialChars(1)" }}{{- end }}
+                {{- if gt (int (dig "historyCount" 0 $pw)) 0 }}{{- $pwParts = append $pwParts (printf "passwordHistory(%d)" (int (dig "historyCount" 0 $pw))) }}{{- end }}
+                {{- if gt (int (dig "maxAgeDays" 0 $pw)) 0 }}{{- $pwParts = append $pwParts (printf "forceExpiredPasswordChange(%d)" (int (dig "maxAgeDays" 0 $pw))) }}{{- end }}
+                {{- if $pwParts }}
+                passwordPolicy: {{ join " and " $pwParts | quote }}
+                {{- end }}
+                {{- $session := dig "session" dict $sec }}
+                {{- $bf := dig "bruteForce" dict $sec }}
                 {{- if $kd }}
                 {{- /* The URL this realm advertises for itself, independent of
                      how it was asked.
@@ -1631,8 +1656,18 @@ spec:
                      managed realm that did not name them would quietly cut every
                      tenant session from twelve hours to thirty minutes. */}}
                 accessTokenLifespan: 12h0m0s
-                ssoSessionIdleTimeout: 12h0m0s
-                ssoSessionMaxLifespan: 12h0m0s
+                {{- /* Twelve hours unless the tenant says otherwise. The
+                     default is not the provider's -- Keycloak ships a 30m idle
+                     timeout, so a managed realm that named nothing would cut
+                     every session to thirty minutes -- and a tenant that
+                     states its own replaces it here rather than having a
+                     second key written further up, which is a duplicate the
+                     later one silently wins. */}}
+                ssoSessionIdleTimeout: {{ if gt (int (dig "idleMinutes" 0 $session)) 0 }}{{ printf "%dm" (int (dig "idleMinutes" 0 $session)) }}{{ else }}12h0m0s{{ end }}
+                ssoSessionMaxLifespan: {{ if gt (int (dig "maxHours" 0 $session)) 0 }}{{ printf "%dh" (int (dig "maxHours" 0 $session)) }}{{ else }}12h0m0s{{ end }}
+                {{- if dig "rememberMe" false $session }}
+                rememberMe: true
+                {{- end }}
                 loginTheme: gentian
                 {{- /* Keycloak's built-in browser flow, named explicitly.
 
@@ -1662,7 +1697,19 @@ spec:
                      xFrameOptions are cleared so the portal can frame Keycloak;
                      Keycloak's own defaults would refuse it. */}}
                 securityDefenses:
+                  {{- if dig "enabled" false $bf }}
+                  {{- /* Beside the headers, in the same list entry: the
+                       provider models securityDefenses as a repeated block,
+                       and a second entry would be a second securityDefenses
+                       rather than another field of the one. */}}
+                  - bruteForceDetection:
+                      - permanentLockout: false
+                        maxLoginFailures: {{ int (dig "maxLoginFailures" 5 $bf) }}
+                        maxFailureWaitSeconds: {{ int (dig "lockoutDurationSeconds" 900 $bf) }}
+                    headers:
+                  {{- else }}
                   - headers:
+                  {{- end }}
                       - contentSecurityPolicy: ""
                         contentSecurityPolicyReportOnly: ""
                         strictTransportSecurity: "max-age=31536000; includeSubDomains"

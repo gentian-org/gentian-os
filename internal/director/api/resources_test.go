@@ -472,3 +472,76 @@ func TestWhoMaySetAPolicyAndWhoMayTakeABackup(t *testing.T) {
 		t.Fatalf("cluster policy:\n%s", claim)
 	}
 }
+
+// The realm policy is declared state: read from git, written as a commit, and
+// applied by the composition that owns the realm. No Keycloak credential is
+// involved at any point, which is what let the console stop holding one.
+func TestTheRealmPolicyIsCommittedAndReadBack(t *testing.T) {
+	h, _ := startWithOperator(t)
+	tom := h.token(t, "tenant-demo", "tom")
+
+	// Nothing declared is a real answer, with the defaults the composition
+	// applies beside it.
+	code, body := h.do(t, "GET", "/v1/tenants/demo/security-policy", tom, "")
+	if code != http.StatusOK {
+		t.Fatalf("read: %d %v", code, body)
+	}
+	if defaults, _ := body["defaults"].(map[string]any); defaults == nil {
+		t.Fatalf("no defaults to render: %v", body)
+	}
+
+	before := h.tip(t)
+	code, body = h.do(t, "PUT", "/v1/tenants/demo/security-policy", tom,
+		`{"password":{"minLength":12,"requireDigits":true,"requireUppercase":true,"historyCount":3},`+
+			`"session":{"idleMinutes":30,"maxHours":8},`+
+			`"bruteForce":{"enabled":true,"maxLoginFailures":5,"lockoutDurationSeconds":900}}`)
+	if code != http.StatusAccepted || body["commit"] != h.tip(t) || h.tip(t) == before {
+		t.Fatalf("write: %d %v", code, body)
+	}
+
+	// What landed is a patch a reviewer can read, applied after the
+	// components the tenant pulls in.
+	patch := dt.RemoteFile(t, h.remote, "clusters/"+dt.Cluster+"/tenants/demo/security-policy.yaml")
+	for _, want := range []string{"kind: Tenant", "security:", "minLength: 12", "requireDigits: true", "historyCount: 3", "idleMinutes: 30", "maxLoginFailures: 5"} {
+		if !strings.Contains(patch, want) {
+			t.Errorf("patch is missing %q:\n%s", want, patch)
+		}
+	}
+	// What was not asked for is absent, not zero: the realm keeps the
+	// composition's default rather than a zero written over it.
+	if strings.Contains(patch, "requireLowercase") || strings.Contains(patch, "maxAgeDays") {
+		t.Errorf("an unstated field was written:\n%s", patch)
+	}
+	kustomization := dt.RemoteFile(t, h.remote, "clusters/"+dt.Cluster+"/tenants/demo/kustomization.yaml")
+	if !strings.Contains(kustomization, "- path: security-policy.yaml") {
+		t.Fatalf("the policy is not applied:\n%s", kustomization)
+	}
+
+	// And it reads back as what was set.
+	_, body = h.do(t, "GET", "/v1/tenants/demo/security-policy", tom, "")
+	policy, _ := body["policy"].(map[string]any)
+	password, _ := policy["password"].(map[string]any)
+	if password["minLength"] != float64(12) || password["requireDigits"] != true {
+		t.Fatalf("read back: %v", policy)
+	}
+}
+
+func TestOnlyWhoeverMaySetPolicyChangesTheRealm(t *testing.T) {
+	h, _ := startWithOperator(t)
+	before := h.tip(t)
+
+	mia := h.token(t, "tenant-demo", "mia") // a member: may look
+	if code, _ := h.do(t, "GET", "/v1/tenants/demo/security-policy", mia, ""); code != http.StatusOK {
+		t.Fatalf("a member could not read the policy: %d", code)
+	}
+	if code, _ := h.do(t, "PUT", "/v1/tenants/demo/security-policy", mia, `{"password":{"minLength":4}}`); code != http.StatusForbidden {
+		t.Fatalf("a member set the realm policy: %d", code)
+	}
+	tina := h.token(t, "tenant-solo", "tina")
+	if code, _ := h.do(t, "PUT", "/v1/tenants/demo/security-policy", tina, `{"password":{"minLength":4}}`); code != http.StatusForbidden {
+		t.Fatalf("a stranger set the realm policy: %d", code)
+	}
+	if h.tip(t) != before {
+		t.Fatal("a refused request moved the repository")
+	}
+}

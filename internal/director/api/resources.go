@@ -337,3 +337,44 @@ func (s *Server) deleteBackup(w http.ResponseWriter, r *http.Request, c call) {
 	}
 	s.started(w, r, status, answer)
 }
+
+// ── The realm policy a tenant runs under ────────────────────────────────────
+
+// tenantSecurityPolicy answers what the tenant declares.
+//
+// From git rather than from Keycloak, and that is not a shortcut: the
+// composition writes these fields onto the realm on every reconcile, so what
+// git says is what the realm is. Asking Keycloak instead would need a
+// credential the director does not hold and should not.
+func (s *Server) tenantSecurityPolicy(w http.ResponseWriter, r *http.Request, _ call) {
+	policy, err := s.cfg.Repo.TenantSecurityPolicy(r.Context(), r.PathValue("t"))
+	if err != nil {
+		s.repoError(w, r, err)
+		return
+	}
+	// Nothing declared is a real answer, and an empty object is how it is
+	// said: the screen renders the defaults rather than a blank form.
+	if policy == nil {
+		policy = &gitops.SecurityPolicy{}
+	}
+	s.json(w, http.StatusOK, map[string]any{
+		"tenant": r.PathValue("t"),
+		"policy": policy,
+		// What the realm does when the tenant states nothing. Not a guess:
+		// these are the values crossplane/compositions/tenant-default.yaml
+		// writes, and they are here so a console can say "12 hours, unless
+		// you change it" instead of leaving a zero to be interpreted.
+		"defaults": map[string]any{"session": map[string]any{"idleMinutes": 720, "maxHours": 12}},
+	})
+}
+
+// setTenantSecurityPolicy commits it.
+func (s *Server) setTenantSecurityPolicy(w http.ResponseWriter, r *http.Request, c call) {
+	var body gitops.SecurityPolicy
+	if err := decode(r, &body); err != nil {
+		s.fail(w, r, http.StatusBadRequest, "body must be a security policy")
+		return
+	}
+	res, err := s.cfg.Repo.SetTenantSecurityPolicy(r.Context(), r.PathValue("t"), body, c.meta)
+	s.written(w, r, res, err)
+}

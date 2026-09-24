@@ -1087,11 +1087,18 @@ spec:
     duplicateEmailsAllowed: true
     enabled: true
     loginTheme: gentian
+    passwordPolicy: length(12) and digits(1) and lowerCase(1) and upperCase(1) and
+      specialChars(1) and passwordHistory(3) and forceExpiredPasswordChange(90)
     realm: render-fixture
     registrationAllowed: false
+    rememberMe: true
     resetPasswordAllowed: true
     securityDefenses:
-    - headers:
+    - bruteForceDetection:
+      - maxFailureWaitSeconds: 900
+        maxLoginFailures: 5
+        permanentLockout: false
+      headers:
       - contentSecurityPolicy: ""
         contentSecurityPolicyReportOnly: ""
         referrerPolicy: no-referrer
@@ -1113,8 +1120,8 @@ spec:
       port: "587"
       ssl: false
       starttls: true
-    ssoSessionIdleTimeout: 12h0m0s
-    ssoSessionMaxLifespan: 12h0m0s
+    ssoSessionIdleTimeout: 30m
+    ssoSessionMaxLifespan: 12h
   providerConfigRef:
     name: keycloak
 ---

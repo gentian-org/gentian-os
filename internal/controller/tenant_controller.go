@@ -229,7 +229,7 @@ type TenantReconciler struct {
 	// PlanEventStore opens a tenant's usage store for the plan event a landed
 	// plan change is recorded as. Nil opens the tenant's own database.
 	PlanEventStore planEventStoreFor
-	Scheme    *runtime.Scheme
+	Scheme         *runtime.Scheme
 	// Seeder derives and persists per-tenant-per-app credentials into OpenBao.
 	// May be nil — in which case all reconcilers skip the seeding step and behave
 	// exactly as they did before Inc 21a. This keeps existing envtest suites
@@ -1204,6 +1204,69 @@ func (r *TenantReconciler) deleteXTenant(ctx context.Context, tenant *gentianov1
 // was simply sold something the cluster was never told to enforce.
 //
 // xtenant_quotas_agreement_test.go holds the two ends together.
+// xtenantSecurity projects the realm policy onto the XTenant.
+//
+// Only what is set: a field left out means the realm keeps Keycloak's own
+// default, and writing a zero instead would be this projection inventing a
+// policy the tenant never stated.
+func xtenantSecurity(sec *gentianov1alpha1.TenantSecurity) map[string]interface{} {
+	if sec == nil {
+		return nil
+	}
+	out := map[string]interface{}{}
+	if p := sec.Password; p != nil {
+		pw := map[string]interface{}{}
+		if p.MinLength > 0 {
+			pw["minLength"] = int64(p.MinLength)
+		}
+		for key, on := range map[string]bool{
+			"requireDigits":       p.RequireDigits,
+			"requireLowercase":    p.RequireLowercase,
+			"requireUppercase":    p.RequireUppercase,
+			"requireSpecialChars": p.RequireSpecialChars,
+		} {
+			if on {
+				pw[key] = true
+			}
+		}
+		if p.HistoryCount > 0 {
+			pw["historyCount"] = int64(p.HistoryCount)
+		}
+		if p.MaxAgeDays > 0 {
+			pw["maxAgeDays"] = int64(p.MaxAgeDays)
+		}
+		if len(pw) > 0 {
+			out["password"] = pw
+		}
+	}
+	if s := sec.Session; s != nil {
+		session := map[string]interface{}{}
+		if s.IdleMinutes > 0 {
+			session["idleMinutes"] = int64(s.IdleMinutes)
+		}
+		if s.MaxHours > 0 {
+			session["maxHours"] = int64(s.MaxHours)
+		}
+		if s.RememberMe {
+			session["rememberMe"] = true
+		}
+		if len(session) > 0 {
+			out["session"] = session
+		}
+	}
+	if b := sec.BruteForce; b != nil && b.Enabled {
+		bf := map[string]interface{}{"enabled": true}
+		if b.MaxLoginFailures > 0 {
+			bf["maxLoginFailures"] = int64(b.MaxLoginFailures)
+		}
+		if b.LockoutDurationSeconds > 0 {
+			bf["lockoutDurationSeconds"] = int64(b.LockoutDurationSeconds)
+		}
+		out["bruteForce"] = bf
+	}
+	return out
+}
+
 func xtenantQuotas(q *gentianov1alpha1.TenantQuotas) map[string]interface{} {
 	if q == nil {
 		return nil
@@ -1282,6 +1345,10 @@ func (r *TenantReconciler) buildXTenant(ctx context.Context, tenant *gentianov1a
 
 	if quotas := xtenantQuotas(tenant.Spec.Quotas); len(quotas) > 0 {
 		spec["quotas"] = quotas
+	}
+
+	if security := xtenantSecurity(tenant.Spec.Security); len(security) > 0 {
+		spec["security"] = security
 	}
 
 	profileIndex, err := loadAppProfileIndex(ctx, r.Client)

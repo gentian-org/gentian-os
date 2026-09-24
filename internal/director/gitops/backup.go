@@ -96,7 +96,7 @@ func (g *GitOps) SetTenantBackupPolicy(ctx context.Context, tenant string, polic
 	// refusing a field the screen never shows would be a puzzle.
 	policy.AllowTenantOverride = nil
 	body := renderBackupPolicy("tenant", tenant, policy)
-	return g.writeTenantFile(ctx, tenant, BackupPolicyFile, body,
+	return g.writeTenantFile(ctx, tenant, BackupPolicyFile, body, listResource,
 		fmt.Sprintf("Set the backup policy for tenant %s", tenant), meta)
 }
 
@@ -108,7 +108,7 @@ func (g *GitOps) ClearTenantBackupPolicy(ctx context.Context, tenant string, met
 	if !ValidName(tenant) {
 		return Result{}, fmt.Errorf("%w: tenant %q", ErrInvalidName, tenant)
 	}
-	return g.writeTenantFile(ctx, tenant, BackupPolicyFile, "",
+	return g.writeTenantFile(ctx, tenant, BackupPolicyFile, "", listResource,
 		fmt.Sprintf("Tenant %s inherits the cluster's backup policy", tenant), meta)
 }
 
@@ -176,10 +176,22 @@ func (g *GitOps) ClusterBackupPolicy(ctx context.Context) (*BackupPolicy, error)
 	return &doc.Spec, nil
 }
 
+// kustomizationList says which list a file beside the manifest belongs in.
+// An object of its own is a resource; something that modifies the Tenant is a
+// patch, and kustomize applies patches after the components a tenant pulls
+// in, which is what makes a patch the last word.
+type kustomizationList int
+
+const (
+	listResource kustomizationList = iota
+	listPatch
+)
+
 // writeTenantFile writes (or removes, when body is empty) a file beside a
-// tenant's manifest and keeps the kustomization's resource list in step, as
-// one commit. Both are only correct together.
-func (g *GitOps) writeTenantFile(ctx context.Context, tenant, name, body, message string, meta Meta) (Result, error) {
+// tenant's manifest and keeps the kustomization in step, as one commit. Both
+// are only correct together: a repository synced between them either applies
+// a file nothing lists or lists one that is not there.
+func (g *GitOps) writeTenantFile(ctx context.Context, tenant, name, body string, list kustomizationList, message string, meta Meta) (Result, error) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	manifest, err := g.tenantFile(ctx, tenant)
@@ -205,12 +217,12 @@ func (g *GitOps) writeTenantFile(ctx context.Context, tenant, name, body, messag
 		if errors.Is(err, os.ErrNotExist) || len(existing) == 0 {
 			return Result{Status: "unchanged"}, nil
 		}
-		listed, kustomizationChanged = removeResourceListed(string(kustomization), name)
+		listed, kustomizationChanged = removeListed(string(kustomization), name, list)
 		if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
 			return Result{}, err
 		}
 	} else {
-		listed, kustomizationChanged = ensureResourceListed(string(kustomization), name)
+		listed, kustomizationChanged = ensureListed(string(kustomization), name, list)
 		if string(existing) == body && !kustomizationChanged {
 			return Result{Status: "unchanged"}, nil
 		}
@@ -311,6 +323,36 @@ func writeCount(b *strings.Builder, key string, v int32) {
 	fmt.Fprintf(b, "%s: %d\n", key, v)
 }
 
+// ensureListed adds a file to whichever list it belongs in.
+func ensureListed(text, file string, list kustomizationList) (string, bool) {
+	if list == listPatch {
+		return ensurePatchListed(text, file)
+	}
+	return ensureResourceListed(text, file)
+}
+
+// removeListed takes it back out.
+func removeListed(text, file string, list kustomizationList) (string, bool) {
+	entry := "- " + file
+	if list == listPatch {
+		entry = "- path: " + file
+	}
+	lines := strings.Split(strings.TrimRight(text, "\n"), "\n")
+	out := make([]string, 0, len(lines))
+	removed := false
+	for _, line := range lines {
+		if strings.TrimSpace(line) == entry {
+			removed = true
+			continue
+		}
+		out = append(out, line)
+	}
+	if !removed {
+		return text, false
+	}
+	return strings.Join(out, "\n") + "\n", true
+}
+
 // ensureResourceListed adds a file to the kustomization's resources list.
 // Empty text is a tenant directory without a kustomization, and gets the one
 // every tenant starts with.
@@ -339,23 +381,4 @@ func ensureResourceListed(text, file string) (string, bool) {
 		return strings.Join(out, "\n") + "\n", true
 	}
 	return strings.Join(lines, "\n") + "\nresources:\n" + entry + "\n", true
-}
-
-// removeResourceListed takes a file back out of the resources list.
-func removeResourceListed(text, file string) (string, bool) {
-	entry := "- " + file
-	lines := strings.Split(strings.TrimRight(text, "\n"), "\n")
-	out := make([]string, 0, len(lines))
-	removed := false
-	for _, line := range lines {
-		if strings.TrimSpace(line) == entry {
-			removed = true
-			continue
-		}
-		out = append(out, line)
-	}
-	if !removed {
-		return text, false
-	}
-	return strings.Join(out, "\n") + "\n", true
 }

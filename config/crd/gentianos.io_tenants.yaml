@@ -354,6 +354,104 @@ spec:
                     pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
                     x-kubernetes-int-or-string: true
                 type: object
+              security:
+                description: |-
+                  Security is the realm policy this tenant runs under: how strong a
+                  password has to be, how long a session lasts, what happens after
+                  repeated failures. Unset leaves Keycloak's own defaults.
+
+                  Declared here rather than set through Keycloak's admin API, which is
+                  what the console used to do. The composition turns this into the
+                  realm's fields, so the policy is reviewable in git, survives a realm
+                  being rebuilt, and needs no credential anywhere: the thing that changes
+                  it is a commit, and the thing that applies it is the reconciler that
+                  owns the realm.
+                properties:
+                  bruteForce:
+                    description: BruteForce is what happens after repeated failures.
+                    properties:
+                      enabled:
+                        description: |-
+                          Enabled turns detection on. Off is Keycloak's default and is worth
+                          stating deliberately: without it, a password can be guessed at the
+                          speed of the network.
+                        type: boolean
+                      lockoutDurationSeconds:
+                        description: LockoutDurationSeconds is how long a lockout
+                          lasts.
+                        format: int32
+                        maximum: 604800
+                        minimum: 0
+                        type: integer
+                      maxLoginFailures:
+                        description: MaxLoginFailures before the account is locked
+                          out.
+                        format: int32
+                        maximum: 1000
+                        minimum: 0
+                        type: integer
+                    type: object
+                  password:
+                    description: Password is how strong a password must be.
+                    properties:
+                      historyCount:
+                        description: HistoryCount refuses a password the person has
+                          used in their last N.
+                        format: int32
+                        maximum: 64
+                        minimum: 0
+                        type: integer
+                      maxAgeDays:
+                        description: |-
+                          MaxAgeDays forces a change after that many days. Zero means never,
+                          which is what current guidance actually recommends: rotation on a
+                          timer makes people choose worse passwords, and it is here because
+                          some compliance regimes still demand it.
+                        format: int32
+                        maximum: 3650
+                        minimum: 0
+                        type: integer
+                      minLength:
+                        description: MinLength is the shortest password accepted.
+                          Zero leaves it unstated.
+                        format: int32
+                        maximum: 128
+                        minimum: 0
+                        type: integer
+                      requireDigits:
+                        description: |-
+                          RequireDigits, RequireLowercase, RequireUppercase and
+                          RequireSpecialChars each demand at least one of that kind.
+                        type: boolean
+                      requireLowercase:
+                        type: boolean
+                      requireSpecialChars:
+                        type: boolean
+                      requireUppercase:
+                        type: boolean
+                    type: object
+                  session:
+                    description: Session is how long one lasts.
+                    properties:
+                      idleMinutes:
+                        description: IdleMinutes ends a session that has done nothing
+                          for this long.
+                        format: int32
+                        maximum: 43200
+                        minimum: 0
+                        type: integer
+                      maxHours:
+                        description: MaxHours ends it regardless of activity.
+                        format: int32
+                        maximum: 8760
+                        minimum: 0
+                        type: integer
+                      rememberMe:
+                        description: RememberMe offers the longer session the realm
+                          is configured for.
+                        type: boolean
+                    type: object
+                type: object
             required:
             - displayName
             type: object
