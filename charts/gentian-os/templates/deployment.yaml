@@ -33,6 +33,15 @@ metadata:
     # bridge read an empty OpenFGA token for an hour after ESO had populated
     # its Secret, retrying 401 bearer_token_missing against a value that was
     # by then sitting right beside it.
+    {{- /*
+      The claim's projection. gentian-cluster-config carries the settings the
+      operator reads from the claim rather than from its own Helm values --
+      tenancy, mail, LLM, the tenant limit range. Without this annotation a
+      setting changed through the director lands in git, reaches the
+      ConfigMap, and then waits for an unrelated restart before anything acts
+      on it, which reads as the change having been ignored.
+    */}}
+    configmap.reloader.stakater.com/reload: "gentian-cluster-config"
     secret.reloader.stakater.com/reload: >-
       {{ .Values.authzBridge.openfgaTokenSecretRef.name | default "gentian-os-openfga-token" }}
       {{- with .Values.cloudflare.apiTokenSecretRef }}{{- if .name }},{{ .name }}{{- end }}{{- end }}

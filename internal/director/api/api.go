@@ -54,6 +54,8 @@ type Repository interface {
 	Apps(ctx context.Context, tenant string) ([]gitops.App, error)
 	Entitlements(ctx context.Context, tenant string) ([]gitops.Entitlement, error)
 	KernelDomain(ctx context.Context) (string, error)
+	ClusterSettingValues(ctx context.Context) (map[string]string, error)
+	SetClusterSettings(ctx context.Context, values map[string]string, meta gitops.Meta) (gitops.Result, error)
 }
 
 // Config assembles a Server.
@@ -251,6 +253,16 @@ func (s *Server) routes() {
 	// filtered by its own.
 	if s.cfg.Cluster != "" {
 		s.guarded("GET /v1/clusters/{c}/tiles", "can_audit", s.clusterObject, s.kernelTiles)
+		// The cluster's settings: what they are, and changing them.
+		//
+		// Reading is can_audit, the widest cluster relation, because a
+		// setting is not a secret and someone who may look at the cluster may
+		// see how it is configured. Writing is can_configure, which model v1
+		// defines as exactly this: "Cluster claim, plans, ceilings, network".
+		// Every change is a commit to the claim in git with the person as its
+		// author, and the operator acts on it from there.
+		s.guarded("GET /v1/clusters/{c}/settings", "can_audit", s.clusterObject, s.clusterSettings)
+		s.guarded("PATCH /v1/clusters/{c}/settings", "can_configure", s.clusterObject, s.setClusterSettings)
 	}
 	if s.cfg.Store != nil {
 		s.mux.HandleFunc("POST /v1/tenants/{t}/entitlements", s.entitle)
@@ -472,6 +484,59 @@ func (s *Server) setAddons(w http.ResponseWriter, r *http.Request, c call) {
 		return
 	}
 	res, err := s.cfg.Repo.SetAddons(r.Context(), r.PathValue("t"), r.PathValue("p"), body.Addons, c.meta)
+	s.written(w, r, res, err)
+}
+
+// clusterSettings answers what this cluster is configured with, and what may
+// be changed.
+//
+// The catalogue travels with the values so a console can render the screen
+// from one answer: what each setting means, what it accepts, and what it is
+// now. A setting the claim does not carry is absent rather than empty,
+// because "unset, so the schema's default applies" and "set to nothing" are
+// different answers.
+func (s *Server) clusterSettings(w http.ResponseWriter, r *http.Request, _ call) {
+	values, err := s.cfg.Repo.ClusterSettingValues(r.Context())
+	if err != nil {
+		s.repoError(w, r, err)
+		return
+	}
+	catalogue := gitops.ClusterSettings()
+	out := make([]map[string]any, 0, len(catalogue))
+	for _, c := range catalogue {
+		entry := map[string]any{"path": c.Path, "doc": c.Doc}
+		if len(c.OneOf) > 0 {
+			entry["oneOf"] = c.OneOf
+		}
+		if v, ok := values[c.Path]; ok {
+			entry["value"] = v
+		}
+		out = append(out, entry)
+	}
+	s.json(w, http.StatusOK, map[string]any{"cluster": s.cfg.Cluster, "settings": out})
+}
+
+type clusterSettingsRequest struct {
+	Settings map[string]string `json:"settings"`
+}
+
+// setClusterSettings writes the named settings to the claim in git.
+//
+// One commit for the whole request. A caller changing mail from the kernel's
+// own stack to an external relay sets the mode and the host together, and a
+// commit carrying only the first is a cluster that has stopped sending mail
+// with no sign of why in the diff.
+func (s *Server) setClusterSettings(w http.ResponseWriter, r *http.Request, c call) {
+	var body clusterSettingsRequest
+	if err := decode(r, &body); err != nil || len(body.Settings) == 0 {
+		s.fail(w, r, http.StatusBadRequest, `body must be {"settings": {"<path>": "<value>"}}`)
+		return
+	}
+	res, err := s.cfg.Repo.SetClusterSettings(r.Context(), body.Settings, c.meta)
+	if errors.Is(err, gitops.ErrUnknownSetting) || errors.Is(err, gitops.ErrNotScalar) {
+		s.fail(w, r, http.StatusBadRequest, err.Error())
+		return
+	}
 	s.written(w, r, res, err)
 }
 

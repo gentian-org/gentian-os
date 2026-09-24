@@ -35,6 +35,7 @@ import (
 const (
 	clusterConfigName          = "gentian-cluster-config"
 	clusterConfigLLMKey        = "llm.enabled"
+	clusterConfigTenancyKey    = "tenancyMode"
 	clusterConfigMailModeKey   = "mail.serviceMode"
 	clusterConfigMailEgressKey = "mail.egressHost"
 )
@@ -76,6 +77,18 @@ func clusterConfigValueOr(ctx context.Context, c client.Reader, key, fallback st
 		}
 	}
 	return fallback
+}
+
+// ClusterTenancyMode reports whether this cluster serves one tenant or many.
+//
+// From the claim, with the operator's own value as the fallback. Every host a
+// tenant is reachable at is derived from this, so the claim saying one thing
+// while the running operator believes another is not cosmetic: it decides
+// whether an app answers on <app>.<tenant>.<kernel> or on <app>.<kernel>.
+// It also makes the setting changeable through the director, which writes the
+// claim and nothing else.
+func ClusterTenancyMode(ctx context.Context, c client.Reader, fallback string) string {
+	return clusterConfigValueOr(ctx, c, clusterConfigTenancyKey, fallback)
 }
 
 // clusterMailServiceMode reports this cluster's mail stack — kernel or external.

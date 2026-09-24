@@ -933,6 +933,15 @@ spec:
                     # and a default parked there never materialises.
                     identity.kernelRealm: {{ dig "oidc" "realm" (dig "identity" "kernelRealm" "" $spec) $spec | quote }}
                     llm.enabled: {{ default false (dig "llm" "enabled" false $spec) | quote }}
+                    # Whether this cluster serves one tenant or many.
+                    #
+                    # Here for the same reason mail.serviceMode is: the operator read it
+                    # from its own Helm value, so the claim could say one thing and the
+                    # running operator another, and changing it through the director
+                    # would have committed a setting nothing acted on. Every host a
+                    # tenant is reachable at is derived from this, so the two disagreeing
+                    # is not cosmetic.
+                    tenancyMode: {{ default "multi" (dig "tenancyMode" "" $spec) | quote }}
                     tenant.limitRange.default.cpu: {{ default "500m" (dig "tenantDefaults" "limitRange" "defaultCpu" "" $spec) | quote }}
                     tenant.limitRange.default.memory: {{ default "512Mi" (dig "tenantDefaults" "limitRange" "defaultMemory" "" $spec) | quote }}
                     tenant.limitRange.defaultRequest.cpu: {{ default "100m" (dig "tenantDefaults" "limitRange" "defaultRequestCpu" "" $spec) | quote }}

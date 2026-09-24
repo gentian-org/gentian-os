@@ -32,6 +32,7 @@ import (
 	"k8s.io/client-go/kubernetes"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
@@ -85,6 +86,24 @@ func buildLogTailer(mgr ctrl.Manager) controller.PodLogTailer {
 // has one and cannot be reached is a different thing, and says so loudly --
 // nobody administers a cluster whose roles were never projected, and that
 // reads from the outside exactly like a broken login.
+// bootClient reads the API server before the manager's cache exists.
+//
+// Settings taken from the claim are needed to build the reconcilers, which is
+// before the cache is running, so a cached client would answer from nothing.
+// A nil client is a working answer: every reader of it falls back to the value
+// this process was started with.
+func bootClient() client.Reader {
+	cfg, err := ctrl.GetConfig()
+	if err != nil {
+		return nil
+	}
+	c, err := client.New(cfg, client.Options{})
+	if err != nil {
+		return nil
+	}
+	return c
+}
+
 func authorizationGraph(log logr.Logger) *authz.OpenFGA {
 	url := os.Getenv("OPENFGA_API_URL")
 	if url == "" {
@@ -158,6 +177,18 @@ func main() {
 	if routingMode == "" {
 		routingMode = controller.RoutingModeGateway
 	}
+	// Tenancy from the claim, not from this process's Helm value.
+	//
+	// The claim is where a cluster's settings are written down and the
+	// director's API is how they are changed; an operator that kept reading
+	// its own value would ignore both. Read once at start: the Deployment
+	// restarts when the projection changes, so an edit takes effect without
+	// anybody remembering to roll it.
+	tenancyMode := controller.ClusterTenancyMode(context.Background(), bootClient(), os.Getenv("TENANCY_MODE"))
+	if tenancyMode != os.Getenv("TENANCY_MODE") {
+		setupLog.Info("tenancy mode taken from the Cluster claim",
+			"claim", tenancyMode, "helmValue", os.Getenv("TENANCY_MODE"))
+	}
 	setupLog.Info("edge routing mode", "routing_mode", routingMode)
 
 	// Exec lets a profile's maintenance-mode and restore hooks run inside the
@@ -181,7 +212,7 @@ func main() {
 		Scheme:                   mgr.GetScheme(),
 		Seeder:                   buildSeeder(),
 		KernelDomain:             os.Getenv("KERNEL_DOMAIN"),
-		TenancyMode:              os.Getenv("TENANCY_MODE"),
+		TenancyMode:              tenancyMode,
 		MailServiceMode:          os.Getenv("MAIL_SERVICE_MODE"),
 		TenantDNS01ClusterIssuer: os.Getenv("TENANT_DNS01_CLUSTER_ISSUER"),
 		KernelRealm:              kernelRealmOrDefault(os.Getenv("KERNEL_REALM")),
@@ -267,7 +298,7 @@ func main() {
 	if err := (&controller.KeycloakPlatformReconciler{
 		Client:       mgr.GetClient(),
 		KernelDomain: os.Getenv("KERNEL_DOMAIN"),
-		TenancyMode:  os.Getenv("TENANCY_MODE"),
+		TenancyMode:  tenancyMode,
 		KernelRealm:  kernelRealmOrDefault(os.Getenv("KERNEL_REALM")),
 		RoutingMode:  routingMode,
 	}).SetupWithManager(mgr); err != nil {
@@ -278,7 +309,7 @@ func main() {
 	if err := (&controller.GatewayPlatformReconciler{
 		Client:           mgr.GetClient(),
 		KernelDomain:     os.Getenv("KERNEL_DOMAIN"),
-		TenancyMode:      os.Getenv("TENANCY_MODE"),
+		TenancyMode:      tenancyMode,
 		RoutingMode:      routingMode,
 		Ingress:          buildEdgeIngress(),
 		Cluster:          envOrDefault("GENTIAN_DEPLOYMENTS_CLUSTER_ID", "default-cluster"),
@@ -294,7 +325,7 @@ func main() {
 		Scheme:           mgr.GetScheme(),
 		KernelDomain:     os.Getenv("KERNEL_DOMAIN"),
 		KernelRealm:      kernelRealmOrDefault(os.Getenv("KERNEL_REALM")),
-		TenancyMode:      os.Getenv("TENANCY_MODE"),
+		TenancyMode:      tenancyMode,
 		Cluster:          envOrDefault("GENTIAN_DEPLOYMENTS_CLUSTER_ID", "default-cluster"),
 		EdgeAuthzService: envOrDefault("EDGE_AUTHZ_SERVICE", "gentian-os-edge-authz"),
 		DirectorURL:      os.Getenv("DIRECTOR_URL"),
@@ -410,7 +441,7 @@ func main() {
 	if enableWebhook {
 		(&webhook.TenantValidator{
 			Client:       mgr.GetClient(),
-			TenancyMode:  os.Getenv("TENANCY_MODE"),
+			TenancyMode:  tenancyMode,
 			KernelDomain: os.Getenv("KERNEL_DOMAIN"),
 			// Default on. A cluster that has not proven its administrator can
 			// write credentials is one where the recovery from a broken write

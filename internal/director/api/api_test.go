@@ -738,3 +738,61 @@ func TestTheDesktopReadsTheCallersRelations(t *testing.T) {
 		t.Fatalf("olaf: %d", code)
 	}
 }
+
+// The cluster's settings are read by whoever may audit the cluster and
+// changed by whoever may configure it, which is what model v1 defines
+// can_configure as: the Cluster claim, plans, ceilings and network.
+func TestClusterSettingsAreReadWidelyAndWrittenNarrowly(t *testing.T) {
+	h := start(t, false)
+	alice := h.token(t, "gentian", "alice") // platform administrator
+
+	code, body := h.do(t, "GET", "/v1/clusters/"+dt.Cluster+"/settings", alice, "")
+	if code != http.StatusOK {
+		t.Fatalf("read: %d %v", code, body)
+	}
+	settings, _ := body["settings"].([]any)
+	if len(settings) == 0 {
+		t.Fatal("the catalogue is empty; a console has nothing to render")
+	}
+
+	// A change lands as a commit against the claim.
+	code, body = h.do(t, "PATCH", "/v1/clusters/"+dt.Cluster+"/settings", alice,
+		`{"settings":{"mail.serviceMode":"external"}}`)
+	if code != http.StatusAccepted {
+		t.Fatalf("write: %d %v", code, body)
+	}
+
+	// And it is visible on the next read.
+	_, body = h.do(t, "GET", "/v1/clusters/"+dt.Cluster+"/settings", alice, "")
+	found := ""
+	for _, s := range body["settings"].([]any) {
+		m := s.(map[string]any)
+		if m["path"] == "mail.serviceMode" {
+			found, _ = m["value"].(string)
+		}
+	}
+	if found != "external" {
+		t.Fatalf("the setting did not land: %q", found)
+	}
+
+	// A setting outside the allowlist is refused rather than written.
+	if code, _ := h.do(t, "PATCH", "/v1/clusters/"+dt.Cluster+"/settings", alice,
+		`{"settings":{"masterPasswordSecretRef.name":"mine"}}`); code != http.StatusBadRequest {
+		t.Fatalf("a secret reference was accepted as a setting: %d", code)
+	}
+	// So is a value the setting does not take.
+	if code, _ := h.do(t, "PATCH", "/v1/clusters/"+dt.Cluster+"/settings", alice,
+		`{"settings":{"mail.serviceMode":"carrier-pigeon"}}`); code != http.StatusBadRequest {
+		t.Fatalf("an unknown value was accepted: %d", code)
+	}
+
+	// A tenant administrator holds nothing over the cluster.
+	tina := h.token(t, "tenant-solo", "tina")
+	if code, _ := h.do(t, "GET", "/v1/clusters/"+dt.Cluster+"/settings", tina, ""); code != http.StatusForbidden {
+		t.Fatalf("a tenant admin read the cluster's settings: %d", code)
+	}
+	if code, _ := h.do(t, "PATCH", "/v1/clusters/"+dt.Cluster+"/settings", tina,
+		`{"settings":{"mail.serviceMode":"kernel"}}`); code != http.StatusForbidden {
+		t.Fatalf("a tenant admin changed the cluster's settings: %d", code)
+	}
+}
