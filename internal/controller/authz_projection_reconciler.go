@@ -63,8 +63,6 @@ const (
 	// even when nothing watched has changed. The claim is not a CRD this
 	// operator owns, so an edit to it may arrive without an event.
 	authzProjectionRequeue = 10 * time.Minute
-	// clusterClaimResource is the claim this cluster was installed from.
-	clusterClaimResource = "clusters"
 )
 
 var clusterClaimGVK = schema.GroupVersionKind{
