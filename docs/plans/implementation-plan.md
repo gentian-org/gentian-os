@@ -167,6 +167,55 @@ revocation was deleted in S7A.2, and re-adding it would restore a write to the
 authorization store that has no reader. The post-logout redirect URIs S7A.11
 needs are written.
 
+**It is not on `test-cb`, on purpose.** Taking over on a cluster that already
+has these objects costs a sign-in outage of a minute or two on the kernel
+zone, so it waits for a moment when that is acceptable rather than arriving
+inside somebody's test run. To promote it, move `test-cb` onto this branch and
+then, in this order:
+
+1. **Delete the existing Secret.** External Secrets refuses to adopt a Secret
+   of that name it does not own, and the installer wrote this one with
+   `kubectl`:
+
+   ```
+   kubectl delete secret edge-kernel-oidc -n kernel-edge
+   ```
+
+   Let Argo CD sync, then confirm the replacement is owned by an
+   `ExternalSecret` rather than by nothing.
+
+2. **Check whether the Keycloak client is adopted.** `docs/roadmap.md` §1.24
+   says a `Client` whose external name is its clientId adopts an existing
+   object, but the only live `Client` on this cluster carries a UUID, and
+   provider-keycloak's identifier for an OIDC client is Keycloak's UUID. So it
+   may or may not adopt, and the answer is in the resource's conditions. If it
+   reaches `Synced=True Ready=True`, nothing more is needed and the provider
+   pushes the generated secret onto the existing client. If it reports a
+   duplicate clientId or a missing external resource, delete
+   `gentian-edge-kernel` from the kernel realm in Keycloak's console and let it
+   be recreated.
+
+3. **Nothing to do for the copies.** The operator re-copies the zone secret
+   into `tenant-platform` when the source changes, and Envoy Gateway re-reads
+   what its policies name. Clearing the zone cookies is enough if a session
+   misbehaves afterwards.
+
+A fresh install needs none of this.
+
+**Three things are unproven** and each has a named fallback: whether the
+External Secrets `Password` generator honours `secretKeys` in this build (no
+generator has ever run here; the fallback is a `target.template` or a
+`rewrite`), whether `DeriveFromObject` readiness behaves as documented in
+provider-kubernetes (the symptom would be the `Client` never being created;
+the fallback is default readiness and dropping the sequencer rule), and
+whether the client adopts, which is step 2 above.
+
+One change of character worth knowing: the zone client's secret is generated
+rather than derived from the master password, and it is not written to
+OpenBao. A cluster rebuilt from a recovery kit regenerates it. That is fine
+because both sides read the same Secret, but `SECRET_MODE=derived`
+reproducibility no longer covers it.
+
 ### S7A.2 ◐ The director stops writing authorization state — only entitlements left
 
 The director's job is to read OpenFGA to decide whether a caller may make a
