@@ -245,6 +245,51 @@ because that tile is how anyone reaches people at all. And the fine-grained
 permissions have to be granted per tenant by whatever provisions the tenant,
 which is a new piece of the tenant composition's work.
 
+#### What the console should be
+
+Not a form per setting. The people who use it are MSP employees and IT
+administrators, and they do a handful of jobs: bring a tenant on, give it
+apps, set what it may consume, check something is healthy, and answer a
+question about who can do what. The console should be organised around those
+jobs; the fourteen flat tabs it has today are a map of the systems underneath,
+which is a different thing.
+
+What exists to build on: about 7,000 lines across fourteen sections, and they
+are on a good track — the resources, backup and security screens in particular
+know what they are for. What has to change is where they get their answers.
+Today they reach Keycloak and Kubernetes through the desktop's backend. They
+should ask the director, which authorises the caller and reads git, and write
+through it, which authorises the caller and commits.
+
+Five things worth doing differently:
+
+1. **A tenant is a page, not a filter.** Today every tab takes a tenant
+   selector, so working on one tenant means re-choosing it fourteen times.
+   Open a tenant and see its apps, entitlements, limits, health and the link
+   to its people, and act there.
+2. **Show the change before it happens, and the commit after.** Every write is
+   a commit to git with the caller as author. A console that says "this will
+   add `nextcloud` to `spec.apps`" and then "landed as `a1b2c3d`" is telling
+   the truth about what the platform does, and no other admin console can.
+   The director already answers whether a commit exists, so the same screen
+   can follow it from committed to applied.
+3. **Say that a change is on its way.** A write answers 202: git has it, the
+   cluster does not yet. The screen should show committed, syncing, applied
+   rather than pretending the save was the end of it.
+4. **Screens follow relations, never a role string.** The director already
+   returns what the caller holds; a screen appears because of that answer and
+   for no other reason. Hiding a screen is never what stops someone reaching
+   what is behind it.
+5. **People stay in Keycloak**, deep-linked with the tenant in the URL. The
+   Members, Groups, Invitations and Sessions tabs go (S7A.4), which is four of
+   the fourteen and the four that need a credential the console must not have.
+
+The director needs endpoints these screens do not have yet. In order:
+tenants (list, create, retire), resource plans and ceilings, backup policies
+and schedules, security policies, and the authorization view of S7A.8. Each is
+the same shape as the app and settings endpoints that already exist: a
+relation, a read of git, a commit.
+
 ### S7A.5 ✅ Keycloak looks like the rest of the product
 
 Embedding Keycloak's console makes its appearance the product's appearance, and
