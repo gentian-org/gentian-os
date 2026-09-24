@@ -572,12 +572,22 @@ spec:
                         type: string
                       description: >
                         Further client IDs whose tokens OpenBao accepts, beyond
-                        clientId. The console authenticates with its own Keycloak
-                        client, so its tokens carry its own audience; without it
-                        listed here every console request fails the token
-                        exchange. Group membership still gates what a token can
-                        do — this only decides which clients may present one.
+                        clientId. A console relaying a person's own token to the
+                        credential manager presents whatever audience that token
+                        carries; without it listed here every such request fails
+                        the exchange, with "the token's audience is not one this
+                        cluster's roles accept". Group membership still gates
+                        what a token can do — this only decides which clients
+                        may present one.
+
+
+                        gentian-director is the audience of the zone token the
+                        edge forwards, which is what a component behind the edge
+                        relays. gentian-portal was the retired portal's own
+                        client and is kept so a cluster mid-migration does not
+                        lose its console the moment this default moves.
                       default:
+                        - gentian-director
                         - gentian-portal
                     realm:
                       type: string
