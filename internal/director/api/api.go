@@ -351,6 +351,23 @@ func (s *Server) routes() {
 			// from.
 			s.guarded("GET /v1/clusters/{c}/resources", "can_audit", s.clusterObject, s.clusterResources)
 		}
+
+		// A tenant's backups: what exists, what each run did, the policy in
+		// force once inheritance is resolved, and when the next scheduled
+		// run is. All reads, all relayed from the operator under can_view --
+		// whoever may see a tenant may see whether its data is being kept.
+		// Changing a policy is a commit, and is not here yet.
+		s.guarded("GET /v1/tenants/{t}/backups", "can_view", tenantObject, s.tenantBackups)
+		s.guarded("GET /v1/tenants/{t}/backups/{name}", "can_view", tenantObject, s.tenantBackup)
+		s.guarded("GET /v1/tenants/{t}/backup-policy", "can_view", tenantObject, s.tenantBackupPolicy)
+		s.guarded("GET /v1/tenants/{t}/backup-schedules", "can_view", tenantObject, s.tenantBackupSchedules)
+		if s.cfg.Cluster != "" {
+			// The cluster's own policy, and every tenant's schedules. Read
+			// under can_audit: what the platform keeps, and for how long, is
+			// something whoever may look at the cluster may see.
+			s.guarded("GET /v1/clusters/{c}/backup-policy", "can_audit", s.clusterObject, s.clusterBackupPolicy)
+			s.guarded("GET /v1/clusters/{c}/backup-schedules", "can_audit", s.clusterObject, s.clusterBackupSchedules)
+		}
 	}
 }
 

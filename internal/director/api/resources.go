@@ -233,3 +233,40 @@ func (s *Server) lifecycleError(w http.ResponseWriter, r *http.Request, err erro
 	s.cfg.Log.ErrorContext(r.Context(), "app-lifecycle API unreachable", "request_id", reqID(r.Context()), "error", err.Error())
 	s.fail(w, r, http.StatusBadGateway, "the operator's API did not answer")
 }
+
+// A tenant's backups, relayed from the operator.
+//
+// What exists, what each run did, what policy is in force and when the next
+// scheduled run is are all cluster state, held on the CRs the backup
+// reconcilers own. The inheritance — a tenant's policy over the cluster's —
+// is resolved there and reported on status, so it is relayed rather than
+// recomputed here: two answers to "what applies to this tenant" is exactly
+// the drift this architecture exists to avoid.
+
+func backupsPath(r *http.Request, suffix string) string {
+	return "/v1/tenants/" + url.PathEscape(r.PathValue("t")) + suffix
+}
+
+func (s *Server) tenantBackups(w http.ResponseWriter, r *http.Request, _ call) {
+	s.relayed(w, r, backupsPath(r, "/backups"))
+}
+
+func (s *Server) tenantBackup(w http.ResponseWriter, r *http.Request, _ call) {
+	s.relayed(w, r, backupsPath(r, "/backups/"+url.PathEscape(r.PathValue("name"))))
+}
+
+func (s *Server) tenantBackupPolicy(w http.ResponseWriter, r *http.Request, _ call) {
+	s.relayed(w, r, backupsPath(r, "/backup-policy"))
+}
+
+func (s *Server) tenantBackupSchedules(w http.ResponseWriter, r *http.Request, _ call) {
+	s.relayed(w, r, backupsPath(r, "/backup-schedules"))
+}
+
+func (s *Server) clusterBackupPolicy(w http.ResponseWriter, r *http.Request, _ call) {
+	s.relayed(w, r, "/v1/backup-policy")
+}
+
+func (s *Server) clusterBackupSchedules(w http.ResponseWriter, r *http.Request, _ call) {
+	s.relayed(w, r, "/v1/backup-schedules")
+}

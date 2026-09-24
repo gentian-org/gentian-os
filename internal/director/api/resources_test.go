@@ -96,6 +96,37 @@ func startOperator(t *testing.T) *operator {
 		}
 		_ = json.NewEncoder(w).Encode(map[string]any{"tenant": r.PathValue("t"), "intervals": []any{}})
 	})
+	mux.HandleFunc("GET /v1/tenants/{t}/backups", func(w http.ResponseWriter, r *http.Request) {
+		if !known(w, r) {
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"tenant": r.PathValue("t"), "backups": []any{
+			map[string]any{"name": "nightly-1", "phase": "Ready", "platformReadable": true},
+		}})
+	})
+	mux.HandleFunc("GET /v1/tenants/{t}/backup-policy", func(w http.ResponseWriter, r *http.Request) {
+		if !known(w, r) {
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"scope": "tenant", "tenant": r.PathValue("t"), "configured": false,
+			"effectiveSchedule": "0 2 * * *", "effectiveBucket": "gentian-backups",
+		})
+	})
+	mux.HandleFunc("GET /v1/tenants/{t}/backup-schedules", func(w http.ResponseWriter, r *http.Request) {
+		if !known(w, r) {
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"tenant": r.PathValue("t"), "schedules": []any{
+			map[string]any{"name": "policy", "managed": true, "schedule": "0 2 * * *"},
+		}})
+	})
+	mux.HandleFunc("GET /v1/backup-policy", func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{"scope": "cluster", "configured": true, "effectiveSchedule": "0 2 * * *"})
+	})
+	mux.HandleFunc("GET /v1/backup-schedules", func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{"schedules": []any{}})
+	})
 	op.Server = httptest.NewServer(mux)
 	t.Cleanup(op.Close)
 	return op
@@ -290,5 +321,47 @@ func TestWithoutAnOperatorThereAreNoResourcesRoutes(t *testing.T) {
 	tom := h.token(t, "tenant-demo", "tom")
 	if code, _ := h.do(t, "GET", "/v1/tenants/demo/resources", tom, ""); code != http.StatusNotFound {
 		t.Fatalf("resources without an operator: %d", code)
+	}
+}
+
+// Backups are read by whoever may view the tenant: seeing whether a tenant's
+// data is being kept is not the same permission as changing how. The
+// cluster's own policy is can_audit, like the rest of the cluster's state.
+func TestBackupsAreReadByWhoeverMayViewTheTenant(t *testing.T) {
+	h, _ := startWithOperator(t)
+
+	mia := h.token(t, "tenant-demo", "mia") // a member: can_view, nothing more
+	code, body := h.do(t, "GET", "/v1/tenants/demo/backups", mia, "")
+	if code != http.StatusOK {
+		t.Fatalf("member reading backups: %d %v", code, body)
+	}
+	if list, _ := body["backups"].([]any); len(list) != 1 {
+		t.Fatalf("backups = %v", body["backups"])
+	}
+	// The policy says what applies even where the tenant states nothing of
+	// its own, which is what the screen renders instead of an empty form.
+	code, body = h.do(t, "GET", "/v1/tenants/demo/backup-policy", mia, "")
+	if code != http.StatusOK || body["configured"] != false || body["effectiveSchedule"] != "0 2 * * *" {
+		t.Fatalf("policy: %d %v", code, body)
+	}
+	if code, body = h.do(t, "GET", "/v1/tenants/demo/backup-schedules", mia, ""); code != http.StatusOK {
+		t.Fatalf("schedules: %d %v", code, body)
+	}
+
+	// Another tenant's administrator holds nothing here.
+	tina := h.token(t, "tenant-solo", "tina")
+	for _, path := range []string{"/v1/tenants/demo/backups", "/v1/tenants/demo/backup-policy", "/v1/tenants/demo/backup-schedules"} {
+		if code, _ := h.do(t, "GET", path, tina, ""); code != http.StatusForbidden {
+			t.Fatalf("a stranger read %s: %d", path, code)
+		}
+	}
+
+	// The cluster's own policy: can_audit, which a tenant admin does not hold.
+	audrey := h.token(t, "gentian", "audrey")
+	if code, body := h.do(t, "GET", "/v1/clusters/"+dt.Cluster+"/backup-policy", audrey, ""); code != http.StatusOK || body["scope"] != "cluster" {
+		t.Fatalf("cluster policy: %d %v", code, body)
+	}
+	if code, _ := h.do(t, "GET", "/v1/clusters/"+dt.Cluster+"/backup-policy", tina, ""); code != http.StatusForbidden {
+		t.Fatalf("a tenant admin read the cluster's backup policy: %d", code)
 	}
 }
