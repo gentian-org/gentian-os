@@ -211,9 +211,12 @@ adminConsole:
   enabled: false
   chart:
     repository: oci://ghcr.io/gentian-org/charts
-    name: gentian-admin-console
-    # A moving prerelease per branch on a dev cluster; a release pins one.
-    version: 0.1.0-main
+    name: admin-console
+    # An exact version. gentian-apps publishes the console's chart at the
+    # version in its Chart.yaml, like the app-store, with no moving chart per
+    # branch, so there is nothing for the installer to resolve: this is the
+    # pin, bumped when the console is released.
+    version: "0.1.0"
   # Values the profile carries as its own, merged over what it sets already.
   extraValues: {}
 

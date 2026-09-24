@@ -31,9 +31,10 @@ source "${SCRIPT_DIR}/scripts/steps-v5/B-01-bootstrap-apps.sh"
 # upgraded, so what a profile pins is the immutable version; this reads it
 # off the moving chart through the registry's OCI API, anonymously, the way
 # the cluster pulls it. No answer is an error: a component that cannot be
-# installed is not something to guess at. Two components are pinned this way,
-# the desktop and the administration console, so the chart and the branch are
-# arguments.
+# installed is not something to guess at. The chart and the branch are
+# arguments rather than the desktop's by name; the administration console is
+# not resolved this way, because gentian-apps publishes its chart at an exact
+# version the operator chart pins directly.
 _d02_component_chart_version() {
     local repo="$1" moving="$2"
     local token manifest config_digest version
@@ -120,13 +121,10 @@ apply() {
     # verifies the person's token comes with the render. Before this step
     # there is no realm to sign in against, which is why a fresh cluster
     # starts on token login. The same render pins the desktop chart.
-    local desktop_chart_version admin_console_chart_version
+    local desktop_chart_version
     desktop_chart_version="$(_d02_component_chart_version gentian-org/charts/gentian-portal "0.1.0-${PORTAL_IMAGE_TAG:-develop}")" || return 1
     info "Desktop chart: ${desktop_chart_version}"
-    admin_console_chart_version="$(_d02_component_chart_version gentian-org/charts/gentian-admin-console "0.1.0-${ADMIN_CONSOLE_CHART_BRANCH:-main}")" || return 1
-    info "Administration console chart: ${admin_console_chart_version}"
     DESKTOP_CHART_VERSION="${desktop_chart_version}" \
-        ADMIN_CONSOLE_CHART_VERSION="${admin_console_chart_version}" \
         V5_APPSETS=true V5_OPERATOR=true V5_HEADLAMP_OIDC=true \
         _v5_render | kubectl apply -f - >/dev/null
 

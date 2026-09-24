@@ -81,12 +81,6 @@ desktop:
   # install the first build it saw.
   chartVersion: ""
 
-# The administration console, pinned the same way and for the same reason.
-# It integrates on main.
-adminConsole:
-  chartBranch: main
-  chartVersion: ""
-
 # The operator (and, with it, the director) — applied by D-01, once the
 # identity services its reconcilers address exist.
 operator:
