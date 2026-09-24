@@ -626,6 +626,29 @@ The endpoint itself stays where it is. A tile the caller cannot open must not
 be on the page, that decision is an authorization read, and authorization
 reads are what the director is for.
 
+### S7A.13 ☐ `denyPaths` promises a control it does not apply
+
+`ComponentProfile.spec.expose[].denyPaths` is declared, documented as "refused
+even where Paths admits them. Deny wins regardless", and read by no code
+outside tests. `buildExposureRoute` uses `paths`, `authMode`, `backend`,
+`forwardToken` and `subDomain`, and nothing else.
+
+That makes it worse than a missing feature. A component author reading the CRD
+has every reason to believe that listing an administrative path under
+`denyPaths` keeps it off the edge, and it does not: the path is served. The
+same is true of `stripPrefix` and `source`, though neither reads as a security
+control, so neither misleads in the same way.
+
+Either build it or take it out, and prefer building it: deny rules on a route
+are what a component needs to expose a UI without exposing its own admin
+endpoints, and the alternative is every app carrying that logic itself. Until
+one or the other lands, the field is a false statement in a published API.
+
+Found while putting the console through the app template. It is the same
+pattern the September threat-model exercise turned up, which is worth saying
+out loud: a declared field is not a control, and the CRD is a place we have
+now twice described one we do not have.
+
 ## S8 — purge and reinstall
 
 `install.sh --layout v5` from nothing, every `check()` honest, `--status` all
