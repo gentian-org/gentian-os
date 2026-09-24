@@ -15,8 +15,6 @@ metadata:
   name: desktop
   labels:
     {{- include "gentian-os.labels" . | nindent 4 }}
-  annotations:
-    gentianos.io/desktop: "true"
 spec:
   tenancy: [tenant]
   trustTier: platform

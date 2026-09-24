@@ -403,6 +403,31 @@ read through the same admin client (`keycloak_security_policy_store.py`,
 desktop still holds a credential that can read and write the realm, so S7A.6
 is not closed by this. Move them next, and the credential goes with them.
 
+Since then the console has moved out of the desktop into
+`gentian-apps/apps/admin-console`, built from the restated app template and
+described by the `admin-console` ComponentProfile the operator chart ships.
+Its backend is a relay to the director and nothing else; every screen whose
+director endpoints do not exist yet answers 501 naming the screen
+(`NOT_YET_MAPPED` in its `admin.py`), and leaves that list by getting them.
+
+Wired so far, in the order the table above asks for: **Tenants**, **Cluster
+settings**, **Resources**. Resources was the first screen whose write already
+went to git, only through the operator's own HTTP API; it now goes
+`console → director → git → Tenant → operator`. The director gained
+`/v1/tenants/{t}/resources` (reads under `can_view`, relayed from the
+operator's app-lifecycle API; `PUT` under `can_set_plan`, validated against the
+operator's catalogue and committed as the person) and
+`/v1/clusters/{c}/resources` for the all-tenants view. The operator lost its
+`PUT`, marks each blocked plan with the rule behind it (`blockedBy`), and
+records the plan event when the change lands on the Tenant rather than when it
+was asked for, with the chooser carried in a second annotation. Self-service
+is decided by the director from `can_configure`, not asserted by the screen.
+`kubectl gentian resources set` now says where plans are set and exits; the
+reads stay. Left for this screen: none. Left in `NOT_YET_MAPPED`: Backup,
+Backup policy, Backup schedules, Security, Integrations, Notifications, Audit,
+Platform security, Customization; and Credentials needs a credential-manager
+mapping on the profile.
+
 #### How it ships
 
 As an app component, built from the app template and described by a

@@ -154,11 +154,22 @@ func (g *GitOps) CreateTenant(ctx context.Context, req NewTenant, meta Meta) (Re
 	if err := os.WriteFile(file, []byte(tenantManifest(req.Name, display)), 0o644); err != nil {
 		return Result{}, err
 	}
-	rel, err := filepath.Rel(g.path, file)
-	if err != nil {
+	// The kustomization the bootstrap scaffolds for the platform tenant,
+	// written here for every tenant so that the directory is a kustomization
+	// from the start rather than becoming one the day a plan is chosen.
+	kustomization := filepath.Join(dir, "kustomization.yaml")
+	if err := os.WriteFile(kustomization, []byte(tenantKustomization()), 0o644); err != nil {
 		return Result{}, err
 	}
-	if err := g.commitPaths(ctx, []string{rel}, fmt.Sprintf("Add tenant %s", req.Name), meta); err != nil {
+	rels := make([]string, 0, 2)
+	for _, f := range []string{file, kustomization} {
+		rel, err := filepath.Rel(g.path, f)
+		if err != nil {
+			return Result{}, err
+		}
+		rels = append(rels, rel)
+	}
+	if err := g.commitPaths(ctx, rels, fmt.Sprintf("Add tenant %s", req.Name), meta); err != nil {
 		return Result{}, err
 	}
 	return g.landed(ctx, "created")

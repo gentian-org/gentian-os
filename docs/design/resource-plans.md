@@ -152,9 +152,18 @@ inserted later without renumbering ones already sold.
 ## 3. The write path
 
 Selecting a plan is a **commit to `gentian-deployments`**, exactly as installing
-an app is. Argo CD syncs it, the operator reconciles the ResourceQuota, and
+an app is, and it is made by the same writer: the **director**. It checks that
+the caller holds `can_set_plan` on the tenant, reads the catalogue as it applies
+to that tenant from the operator (§7), refuses a plan the tenant may not move
+to, and commits the patch below as the person who asked. Argo CD syncs it, the
+operator reconciles the ResourceQuota, records the plan change in the tenant's
+usage history (§6.3), and
 [`app_workload_health.go`](../../internal/controller/app_workload_health.go)'s
 fingerprint nudge retries workloads the widened quota now admits.
+
+The operator has no write endpoint for plans. It reads the plan back from git
+like every other change to a tenant, so the only way onto a ceiling is a commit
+that names who chose it and which decision allowed it.
 
 ### 3.1 Why not `tenant.yaml`
 
@@ -179,19 +188,20 @@ A per-tenant `resource-plan.yaml`, listed under the tenant kustomization's own
 ```
 clusters/<cluster>/tenants/<tenant>/
 ├── tenant.yaml            # apps, isolation, mail — hand-maintained
-├── resource-plan.yaml     # the chosen plan, written by the API
-└── kustomization.yaml     # components: tenant-defaults
+├── resource-plan.yaml     # the chosen plan, written by the director
+└── kustomization.yaml     # resources: - tenant.yaml
                            # patches: - path: resource-plan.yaml
 ```
 
 ```yaml
-# resource-plan.yaml — managed by the resources API
+# resource-plan.yaml — managed by the director
 apiVersion: gentianos.io/v1alpha1
 kind: Tenant
 metadata:
   name: corp
   annotations:
     gentianos.io/resource-plan: nodes-2
+    gentianos.io/resource-plan-set-by: "ada@example.com"
 spec:
   quotas:
     cpu: "40"
@@ -209,7 +219,14 @@ the plan's CPU with the default's storage, priced as the plan.
 The patch file and the kustomization that lists it are committed **together**, in
 one commit: a repository synced between the two would either apply a patch
 nothing references or reference a patch that is not there, and Argo would fail
-the whole tenant on the second.
+the whole tenant on the second. A tenant directory without a kustomization gets
+the one every tenant starts with; the director writes it on create as well.
+
+`resource-plan-set-by` names who chose the plan. It is in the patch and not only
+in the commit because the operator reads the Tenant, not git, and it is what
+lets the plan event (§6.3) carry an actor. Re-choosing the plan git already
+records is not a commit, whoever asks: the state asked for already holds, and a
+commit that only renamed the chooser would change the record and not the tenant.
 
 ---
 
@@ -313,10 +330,18 @@ pruned**. Samples are pruned at `usage.sampler.retention` (400 days by default);
 plan events accrue at the rate a tenant changes plan, which is a handful of rows
 a year.
 
-The event is written when the change is made, not when the sync lands: now is
-when the decision was made and by whom. A sync that fails leaves an event the
-samples will contradict, which is visible; waiting for the sync would instead
-lose the actor, which is not recoverable from anywhere else.
+The event is written by the **operator when the change lands**, not by the
+director when it is asked for. The tenant reconciler compares the
+`resource-plan` annotation with `status.resourcePlan`, the plan whose event was
+last written, and when they differ records the move — from the recorded plan
+(or, for a history that predates the status field, the store's last event) to
+the annotated one, with the SKU from the catalogue and the actor from
+`resource-plan-set-by` — then notes it on the status. So the record describes
+the ceiling the cluster went on to enforce, which is the one a bill can be
+defended with, and it still names who chose it, because the commit carried
+that into the Tenant. A usage store that is not reachable yet leaves the status
+alone and the event is written on a later reconcile; a plan the catalogue does
+not know is recorded without a SKU rather than not at all.
 
 ### 6.4 The report
 
@@ -345,36 +370,47 @@ moved *to* — because a gap is honest and a wrong price is not.
 
 ## 7. Surfaces
 
-One set of rules, three front doors. The plan catalogue, the downgrade guard, the
-entitlement ceiling and the git write all live in the operator; nothing
-reimplements them.
+One set of rules, one writer. The plan catalogue, the downgrade guard and the
+entitlement ceiling live in the operator, which answers them for a tenant; the
+director relays those answers to whoever may view the tenant, validates a choice
+against them, and makes the one write. Nothing reimplements either half.
 
 | Surface | How it reaches them |
 |---|---|
-| **Admin Console → Resources** | Portal BFF → lifecycle API |
-| **`kubectl gentian resources`** | Port-forward → lifecycle API |
-| **Anything else** | The same HTTP endpoints |
+| **Admin Console → Resources** | console API → director, as the caller |
+| **`kubectl gentian resources`** | port-forward → the operator's reads; no write |
+| **Anything else** | the director's endpoints, with a person's token |
+
+The director, guarded by the tenant relation named:
 
 ```
-GET  /v1/tenants/{tenant}/resources          # plan, ceiling, committed, live
-GET  /v1/tenants/{tenant}/resources/plans    # catalogue, with blocked reasons
-PUT  /v1/tenants/{tenant}/resources          # {"plan": "nodes-2"}
-GET  /v1/tenants/{tenant}/resources/usage    # thinned sample series
-GET  /v1/tenants/{tenant}/resources/report   # billable plan intervals
+GET  /v1/tenants/{t}/resources          can_view      plan, ceiling, committed, live
+GET  /v1/tenants/{t}/resources/plans    can_view      catalogue, with blocked reasons
+PUT  /v1/tenants/{t}/resources          can_set_plan  {"plan": "nodes-2", "force": false}
+GET  /v1/tenants/{t}/resources/usage    can_view      thinned sample series
+GET  /v1/tenants/{t}/resources/report   can_view      billable plan intervals
+GET  /v1/clusters/{c}/resources         can_audit     every tenant's state, for the cluster's view
 ```
 
-Status codes carry meaning the caller acts on:
+The operator's app-lifecycle API keeps the reads (`GET .../resources`,
+`/plans`, `/usage`, `/report`), which is what the director relays. It has no
+`PUT`. Each plan it lists that the tenant may not move to carries `blocked`, the
+reason in words, and `blockedBy` — `fit`, `entitlement` or `self-service` — which
+is what the director turns into a status:
 
 | Code | Means |
 |---|---|
-| `409` | The plan does not fit **today** — retry after freeing something |
-| `402` | Above the tenant's entitlement — an entitlement problem, not a permission one |
-| `404` | No such plan |
+| `202` | Committed; the answer names the commit. `200` means the tenant is on that plan already |
+| `409` | The plan does not fit **today** (`fit`) — retry after freeing something, or `force` it |
+| `402` | Above the tenant's entitlement, or arranged by hand (`entitlement`, `self-service`) — an entitlement problem, not a permission one |
+| `404` | No such plan on this cluster |
+| `403` | The caller does not hold `can_set_plan`, or asked to `force` without `can_configure` on the cluster |
 
-The BFF adds only what the operator cannot know: which tenant this caller may
-act on, and whether they are a tenant administrator or a platform operator.
-Tenant scope is resolved by `resolve_admin_tenant`, which rejects cross-tenant
-access unless the caller holds `gentian:platform:superadmin`.
+Whether the caller chooses for themselves — a tenant administrator, held to
+the self-service catalogue — or for the cluster is decided by the director from
+`can_configure` on the cluster, and asserted by no screen. The console adds
+nothing: it forwards the caller's own token and hands back what the director
+answered, including a refusal.
 
 ### 7.1 Console
 
@@ -391,10 +427,11 @@ series — it is the frame the other two are read against.
 
 ### 7.2 Audit
 
-Plan changes are recorded through the console's own audit log
-(`resources.plan_changed`), **including refusals** (`resources.plan_change_refused`).
-A refused downgrade is a decision someone made about a tenant's ceiling, and the
-attempt is the interesting half when the tenant later asks why nothing changed.
+A plan change is a commit authored by the person, with the director's
+`Gentian-Authz` trailer naming the request, the subject and the decision that
+allowed it, and a plan event in the tenant's usage history naming the same
+person (§6.3). A refusal is the director's decision-log entry: the attempt is
+the interesting half when the tenant later asks why nothing changed.
 
 ---
 
@@ -439,11 +476,11 @@ Operator chart (`charts/gentian-os/values.yaml`):
 | `usage.plans.enabled` | `true` | Ship the plan catalogue |
 | `usage.plans.catalogue` | five node tiers | The priced plans themselves |
 
-Portal chart (`gentian-ui/chart/values.yaml`):
+Director (the same chart):
 
 | Value | Effect |
 |---|---|
-| `appLifecycle.url` | Where the resources API lives. Unset disables the Resources tab, which says so rather than showing a cluster with no plans. |
+| `director.appLifecycleURL` | The operator's app-lifecycle API, which the director reads a tenant's resources from and validates a plan choice against. Empty derives it from the release's own lifecycle Service. Without it the director registers no resources routes, and the console's Resources screen says so rather than showing a cluster with no plans. |
 
 ---
 
@@ -457,8 +494,10 @@ kubectl gentian resources plans --tenant corp
 # A tenant's ceiling and what is under it
 kubectl gentian resources show corp
 
-# Move a tenant, refused if it does not fit
-kubectl gentian resources set corp --plan nodes-2
+# Move a tenant: through the director, as yourself. Refused if it does not fit.
+curl -X PUT -H "Authorization: Bearer $TOKEN" -d '{"plan":"nodes-2"}' \
+  https://<director>/v1/tenants/corp/resources
+# (or the administration console's Resources screen, which does exactly this)
 
 # What a month resolves to for invoicing
 kubectl gentian resources report corp --from 2026-01-01T00:00:00Z --to 2026-02-01T00:00:00Z

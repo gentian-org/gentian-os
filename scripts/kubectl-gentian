@@ -239,9 +239,11 @@ Usage:
       Show the tenant's plan, enforced ceiling and what is committed under it.
 
     kubectl gentian resources set <tenant> --plan <plan> [--force]
-      Move the tenant to a plan by committing to gentian-deployments. Refused
-      when the plan is smaller than what the tenant is currently using, unless
-      --force says to shrink it anyway.
+      Not from here. A plan is chosen through the director, which checks
+      who is asking against the authorization graph and commits the change
+      as that person: the administration console's Resources screen, or
+      PUT /v1/tenants/<tenant>/resources on the director with your own
+      token. This command says so and exits.
 
     kubectl gentian resources report <tenant> [--from <RFC3339>] [--to <RFC3339>]
       Print the plan intervals the window resolves to, with the SKU in effect
@@ -2928,12 +2930,15 @@ cmd_install() {
 # ---------------------------------------------------------------------------
 # resources — tenant resource plans and usage
 # ---------------------------------------------------------------------------
-# These call the operator's lifecycle API rather than editing git directly, as
-# `apps install` does. The difference is deliberate: a plan change is refused
-# when the plan is smaller than what the tenant is already using, is checked
-# against the tenant's entitlement, and is recorded as a billing event — and all
-# three live in the operator. Reimplementing them here in bash would put the
-# rules in two places, and the copy that drifted would be the one writing to git.
+# The reads call the operator's lifecycle API: the ceiling it enforces, what
+# is committed under it, the catalogue as it applies to one tenant, and the
+# usage history all live there and nowhere else. The one write, choosing a
+# plan, is not here. It is a commit to gentian-deployments made by the
+# director as the person who asked, after the director has checked that they
+# may set the plan and validated the choice against the operator's own
+# answer -- so a plan change carries who chose it and why it was allowed, in
+# the commit and in the billing record. A command that committed with
+# whatever git credential the workstation holds would carry neither.
 #
 # The API is a ClusterIP Service, so reaching it from a workstation needs a
 # port-forward. One is established per invocation and torn down on exit.
@@ -3200,32 +3205,20 @@ PY
 }
 
 cmd_resources_set() {
-  local tenant="${1:-}" plan="${2:-}" force="${3:-false}"
-  if [[ -z "${tenant}" || -z "${plan}" ]]; then
-    echo "ERROR: usage: kubectl gentian resources set <tenant> --plan <plan> [--force]" >&2
-    exit 1
+  local tenant="${1:-}" plan="${2:-}"
+  # Kept as a command so that the answer to "how do I set a plan from here"
+  # is printed where the question is asked, rather than as a missing verb.
+  echo "ERROR: a resource plan is chosen through the director, not from this plugin." >&2
+  echo "  The director checks who is asking against the authorization graph and commits" >&2
+  echo "  the change to gentian-deployments as that person. Use one of:" >&2
+  echo "    - the administration console's Resources screen, or" >&2
+  if [[ -n "${tenant}" && -n "${plan}" ]]; then
+    echo "    - PUT /v1/tenants/${tenant}/resources {\"plan\": \"${plan}\"} on the director, with your own token." >&2
+  else
+    echo "    - PUT /v1/tenants/<tenant>/resources {\"plan\": \"<plan>\"} on the director, with your own token." >&2
   fi
-
-  local body payload
-  body="$(python3 - "${plan}" "${force}" <<'PY'
-import json, sys
-print(json.dumps({"plan": sys.argv[1], "force": sys.argv[2] == "true"}))
-PY
-)"
-  _lifecycle_connect
-  payload="$(_lifecycle_call PUT "/v1/tenants/${tenant}/resources" "${body}")"
-  python3 - "${payload}" <<'PY'
-import json, sys
-
-r = json.loads(sys.argv[1])
-print(f"{r['status']}: tenant {r['tenant']} -> plan {r['plan']}")
-if r.get("previousPlan"):
-    print(f"  previously: {r['previousPlan']}")
-if r.get("file"):
-    print(f"  wrote: {r['file']}")
-if r.get("message"):
-    print(f"  {r['message']}")
-PY
+  echo "  The operator records the change in the tenant's usage history once Argo CD has synced it." >&2
+  exit 1
 }
 
 cmd_resources_report() {

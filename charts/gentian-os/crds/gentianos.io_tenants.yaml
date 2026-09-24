@@ -480,6 +480,14 @@ spec:
                 description: ReadyApps is the number of apps that have been successfully
                   provisioned.
                 type: integer
+              resourcePlan:
+                description: |-
+                  ResourcePlan is the plan whose selection was last recorded in the
+                  tenant's usage history: the value of the resource-plan annotation at
+                  the time the plan event was written. It differing from the annotation
+                  is what tells the reconciler a change has landed that the billing
+                  record does not know about yet.
+                type: string
             type: object
         type: object
     served: true

@@ -278,9 +278,12 @@ A cluster's stage (`dev`, `staging`, `prod`) is fixed at bootstrap via
 
 A tenant's resource ceiling is chosen from a priced catalogue of `ResourcePlan`
 objects, never typed as a quantity — see
-[design/resource-plans.md](design/resource-plans.md). The commands below and the
-Admin Console's **Resources** tab call the same API, so the rules (the downgrade
-guard, the entitlement ceiling, the git write) are enforced once.
+[design/resource-plans.md](design/resource-plans.md). The commands below read
+the operator's answers — the same ones the Admin Console's **Resources** screen
+shows — so the rules (the downgrade guard, the entitlement ceiling) are enforced
+once. Choosing a plan is not a command here: it is a commit the director makes
+as the person who asked, from the console or from its API with that person's
+token.
 
 List the catalogue, or what one tenant may pick:
 
@@ -299,26 +302,31 @@ Show a tenant's ceiling and what is committed under it:
 kubectl gentian resources show corp
 ```
 
-Move a tenant to a plan:
+Move a tenant to a plan — through the director, as yourself:
 
 ```bash
-kubectl gentian resources set corp --plan nodes-2
+curl -X PUT -H "Authorization: Bearer $TOKEN" -d '{"plan":"nodes-2"}' \
+  https://<director>/v1/tenants/corp/resources
 ```
 
-This commits `clusters/<cluster>/tenants/corp/resource-plan.yaml` and pushes;
-ArgoCD applies it on the next sync and the operator reconciles the
-`tenant-quota` ResourceQuota. It is refused when the plan is smaller than what
-the tenant is using:
+`kubectl gentian resources set` prints this and exits: a plan change has to
+carry who chose it and which decision allowed it, and a command committing
+with whatever git credential the workstation holds carries neither. The
+director commits `clusters/<cluster>/tenants/corp/resource-plan.yaml` as the
+caller; ArgoCD applies it on the next sync, the operator reconciles the
+`tenant-quota` ResourceQuota and records the change in the tenant's usage
+history. It is refused (409) when the plan is smaller than what the tenant is
+using:
 
 ```
-ERROR: the lifecycle API refused the request (HTTP 409).
-  plan small is smaller than what the tenant is using (limits.cpu: using 34, plan allows 32)
+{"error": "plan small is smaller than what the tenant is using (limits.cpu: using 34, plan allows 32)"}
 ```
 
 Kubernetes does not evict pods to fit a shrunken quota — it refuses the *next*
 create — so shrinking a tenant too far would otherwise appear to work and fail
-hours later at the next restart. `--force` overrides the guard; it is for a
-cluster operator who has accepted that cost.
+hours later at the next restart. `"force": true` overrides the guard; it is
+accepted only from someone who may configure the cluster, who has accepted
+that cost.
 
 What a window resolves to for invoicing:
 

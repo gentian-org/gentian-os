@@ -17,14 +17,11 @@ limitations under the License.
 package applifecycle
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
 	"strconv"
 	"time"
-
-	"github.com/gentian-org/gentian-os/internal/resourceplan"
 )
 
 const (
@@ -41,7 +38,11 @@ const (
 func (h *HTTPServer) registerResourceRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /v1/tenants/{tenant}/resources", h.handleResourceState)
 	mux.HandleFunc("GET /v1/tenants/{tenant}/resources/plans", h.handleResourcePlans)
-	mux.HandleFunc("PUT /v1/tenants/{tenant}/resources", h.handleSetResourcePlan)
+	// No PUT. Choosing a plan is a commit to the deployments repository, and
+	// the director is the one writer to it: it checks can_set_plan, writes
+	// the tenant's resource-plan.yaml as the person, and this API reads the
+	// result back once Argo CD has synced it. The reads here are what the
+	// director relays and what it validates a choice against.
 	mux.HandleFunc("GET /v1/tenants/{tenant}/resources/usage", h.handleResourceUsage)
 	mux.HandleFunc("GET /v1/tenants/{tenant}/resources/report", h.handleResourceReport)
 }
@@ -57,10 +58,9 @@ func (h *HTTPServer) handleResourceState(w http.ResponseWriter, r *http.Request)
 
 func (h *HTTPServer) handleResourcePlans(w http.ResponseWriter, r *http.Request) {
 	// No maxTier parameter: the entitlement ceiling is read from the Tenant, so
-	// a caller cannot raise it by leaving a field out. selfService remains a
-	// caller assertion because only the caller's own front end knows whether a
-	// tenant administrator or a platform operator is asking, and it can only
-	// ever withhold plans.
+	// a caller cannot raise it by leaving a field out. selfService is the
+	// director's assertion, made from whether the caller may configure the
+	// cluster, and it can only ever withhold plans.
 	plans, err := h.Service.Plans(
 		r.Context(),
 		r.PathValue("tenant"),
@@ -74,44 +74,6 @@ func (h *HTTPServer) handleResourcePlans(w http.ResponseWriter, r *http.Request)
 		"tenant": r.PathValue("tenant"),
 		"plans":  plans,
 	})
-}
-
-func (h *HTTPServer) handleSetResourcePlan(w http.ResponseWriter, r *http.Request) {
-	actor := r.Header.Get("X-Gentian-Actor")
-	if actor == "" {
-		actor = "app-lifecycle-api"
-	}
-
-	// PUT with a plan name, and no endpoint anywhere that accepts quantities.
-	// That is the whole point of the catalogue: a ceiling reachable through
-	// this API is always one the platform has priced, so a month of usage
-	// resolves to SKUs rather than to numbers someone has to interpret.
-	var body struct {
-		Plan        string `json:"plan"`
-		SelfService bool   `json:"selfService"`
-		Force       bool   `json:"force"`
-	}
-	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 16<<10)).Decode(&body); err != nil {
-		writeErr(w, http.StatusBadRequest, fmt.Errorf("invalid request body: %w", err))
-		return
-	}
-	if body.Plan == "" {
-		writeErr(w, http.StatusBadRequest, errors.New("plan is required"))
-		return
-	}
-
-	result, err := h.Service.SetPlan(r.Context(), SetPlanRequest{
-		Tenant:      r.PathValue("tenant"),
-		Plan:        body.Plan,
-		Actor:       actor,
-		SelfService: body.SelfService,
-		Force:       body.Force,
-	})
-	if err != nil {
-		writeErr(w, resourceErrorStatus(err), err)
-		return
-	}
-	writeJSON(w, http.StatusOK, result)
 }
 
 func (h *HTTPServer) handleResourceUsage(w http.ResponseWriter, r *http.Request) {
@@ -152,29 +114,6 @@ func (h *HTTPServer) handleResourceReport(w http.ResponseWriter, r *http.Request
 		return
 	}
 	writeJSON(w, http.StatusOK, report)
-}
-
-// resourceErrorStatus maps a plan failure onto the status a client can act on.
-//
-// A downgrade that does not fit is 409, not 400: the request is well formed and
-// would be accepted at another time or after the tenant frees something. A
-// client that retries a 400 verbatim is wrong; one that retries this after
-// uninstalling an app is right.
-func resourceErrorStatus(err error) int {
-	var downgrade *resourceplan.DowngradeError
-	switch {
-	case errors.As(err, &downgrade):
-		return http.StatusConflict
-	case errors.Is(err, ErrPlanNotFound):
-		return http.StatusNotFound
-	case errors.Is(err, ErrPlanNotSelectable):
-		// 402, matching the App Store's answer for a Pro app the tenant has not
-		// bought: the plan is real, the request is valid, and what is missing
-		// is an entitlement rather than a permission.
-		return http.StatusPaymentRequired
-	default:
-		return http.StatusBadRequest
-	}
 }
 
 func usageWindow(r *http.Request) (time.Time, time.Time, error) {

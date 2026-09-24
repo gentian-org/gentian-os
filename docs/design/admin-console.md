@@ -296,19 +296,24 @@ can be any number that was never sold, so every ceiling reachable through the
 console is one the platform has priced — which is what makes a month resolve to
 SKUs rather than to numbers somebody downstream has to interpret.
 
-**The write is a commit, not a patch.** Selecting a plan edits
-`gentian-deployments` through the same app lifecycle API an App Store install
-uses, so the console and the GitOps repository cannot disagree about a tenant's
-ceiling. `kubectl gentian resources` calls the same endpoints.
+**The write is a commit, not a patch.** Selecting a plan is the director
+committing `resource-plan.yaml` to `gentian-deployments` as the caller, after
+checking `can_set_plan` and validating the choice against the operator's answer
+for that tenant — so the console and the GitOps repository cannot disagree
+about a tenant's ceiling, and the console decides nothing itself. The reads
+are the operator's, relayed by the director; `kubectl gentian resources` reads
+them too, and has no write.
 
 **A downgrade below current use is refused.** Kubernetes does not evict pods to
 fit a shrunken quota — it refuses the *next* create — so shrinking a tenant too
 far fails silently, hours later, at the next restart. The console names the
 resource and both numbers instead.
 
-Plan changes are audited (§4.7), **including refusals**: a refused downgrade is
-a decision someone made, and the attempt is the interesting half when a tenant
-later asks why nothing changed.
+A plan change is audited as the commit it is, authored by the person and
+trailered with the decision that allowed it, and as the plan event the operator
+records once the change has landed; a refusal is the director's decision-log
+entry. The attempt is the interesting half when a tenant later asks why nothing
+changed.
 
 ---
 

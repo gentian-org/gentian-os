@@ -164,6 +164,10 @@ director:
   jwksBaseURL: ""
   # Empty uses credentialManager.openfgaURL, which is the same service.
   openfgaURL: ""
+  # The operator's app-lifecycle API, which the director reads a tenant's
+  # resources from and validates a plan choice against. Empty derives it from
+  # this release's own lifecycle Service.
+  appLifecycleURL: ""
   # enforce | off. A cluster with no App Store has nothing that could grant an
   # entitlement, and says so here rather than by an absence.
   entitlements: "off"

@@ -174,6 +174,12 @@ spec:
             # operator's projection writes them.
             - name: DIRECTOR_TILES_PATH
               value: /etc/gentian/tiles/tiles.yaml
+            # The operator's app-lifecycle API, beside this pod: the one
+            # cluster question the director asks. A tenant's enforced
+            # ceiling and the plans it may move to come from here; the plan
+            # chosen goes to git, and the operator reads it back from there.
+            - name: DIRECTOR_APP_LIFECYCLE_URL
+              value: {{ .Values.director.appLifecycleURL | default (printf "http://%s-lifecycle.%s.svc.cluster.local:%v" (include "gentian-os.fullname" .) .Release.Namespace .Values.appLifecycle.port) | quote }}
             - name: DIRECTOR_COMMITTER_NAME
               value: {{ .Values.director.committer.name | quote }}
             - name: DIRECTOR_COMMITTER_EMAIL

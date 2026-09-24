@@ -20,13 +20,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"sync"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/types"
-	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 	"github.com/gentian-org/gentian-os/internal/layout"
@@ -51,7 +49,25 @@ type PlanSummary struct {
 	Selectable bool `json:"selectable"`
 	// Blocked, when set, says why Selectable is false in the caller's terms.
 	Blocked string `json:"blocked,omitempty"`
+	// BlockedBy names the rule behind Blocked, for a caller that has to act
+	// on it rather than show it: the director turns a plan that does not fit
+	// into 409 and one the tenant is not entitled to into 402, and it cannot
+	// tell those apart from a sentence.
+	BlockedBy PlanBlock `json:"blockedBy,omitempty"`
 }
+
+// PlanBlock is why a plan is not selectable for a tenant.
+type PlanBlock string
+
+const (
+	// PlanBlockedSelfService: the plan is arranged with the platform operator
+	// and a tenant administrator cannot pick it.
+	PlanBlockedSelfService PlanBlock = "self-service"
+	// PlanBlockedEntitlement: the plan is above the tenant's entitlement.
+	PlanBlockedEntitlement PlanBlock = "entitlement"
+	// PlanBlockedFit: the tenant's committed usage does not fit under the plan.
+	PlanBlockedFit PlanBlock = "fit"
+)
 
 // ResourceStateResult is a tenant's ceiling, consumption and plan.
 type ResourceStateResult struct {
@@ -79,52 +95,6 @@ type ResourceStateResult struct {
 	// checked against the plan: an app cap is the Tenant webhook's policy
 	// limit, not part of the capacity a plan sells.
 	InstalledApps int `json:"installedApps"`
-}
-
-// SetPlanRequest moves a tenant to a plan.
-type SetPlanRequest struct {
-	Tenant string
-	Plan   string
-	Actor  string
-	// SelfService marks a request made by a tenant administrator rather than a
-	// cluster operator. It withholds plans flagged SelfServiceDisabled; it does
-	// not relax any check, because the downgrade guard protects the tenant's
-	// own workloads and a cluster operator has no more business breaking them.
-	SelfService bool
-	// Force skips the downgrade guard. Reserved for a cluster operator who has
-	// decided the tenant will be shrunk regardless — the pods that cannot be
-	// recreated afterwards are then a known cost rather than a surprise.
-	Force bool
-}
-
-// SetPlanResult reports the outcome of a plan change.
-type SetPlanResult struct {
-	Status string `json:"status"`
-	Tenant string `json:"tenant"`
-	Plan   string `json:"plan"`
-	// PreviousPlan is what the tenant was on, empty when it was on none.
-	PreviousPlan string `json:"previousPlan,omitempty"`
-	File         string `json:"file,omitempty"`
-	Message      string `json:"message,omitempty"`
-}
-
-// ErrPlanNotFound is returned for a plan name absent from the catalogue.
-var ErrPlanNotFound = errors.New("resource plan not found")
-
-// ErrPlanNotSelectable is returned when a plan exists but the caller may not
-// move this tenant to it.
-var ErrPlanNotSelectable = errors.New("resource plan is not selectable for this tenant")
-
-// tenantPlanLocks serializes plan changes per tenant. Two concurrent changes
-// would each read the tenant's current plan before either had written, and the
-// loser's plan event would record a transition that never happened.
-var tenantPlanLocks sync.Map
-
-func lockTenantPlan(tenant string) func() {
-	v, _ := tenantPlanLocks.LoadOrStore(tenant, &sync.Mutex{})
-	mu := v.(*sync.Mutex)
-	mu.Lock()
-	return mu.Unlock
 }
 
 // ResourceState reports a tenant's current ceiling, consumption and plan.
@@ -223,96 +193,24 @@ func (s *Service) Plans(
 		case selfService && plan.Spec.SelfServiceDisabled:
 			summary.Selectable = false
 			summary.Blocked = "this plan is arranged with the platform operator, not self-service"
+			summary.BlockedBy = PlanBlockedSelfService
 		case maxTier != nil && plan.Spec.Tier > *maxTier:
 			summary.Selectable = false
 			summary.Blocked = "this plan is above the tenant's current entitlement"
+			summary.BlockedBy = PlanBlockedEntitlement
 		default:
 			if err := resourceplan.CheckFit(plan, used); err != nil {
 				var downgrade *resourceplan.DowngradeError
 				if errors.As(err, &downgrade) {
 					summary.Selectable = false
 					summary.Blocked = downgrade.Error()
+					summary.BlockedBy = PlanBlockedFit
 				}
 			}
 		}
 		out = append(out, summary)
 	}
 	return out, nil
-}
-
-// SetPlan moves a tenant to a plan by committing the change to GitOps.
-//
-// The write is the same mechanism an app install uses — an edit to the
-// deployments repository, pushed, and left for Argo to sync — so a tenant's
-// ceiling has exactly one source of truth and a plan chosen in the console
-// cannot be reverted by the next sync.
-func (s *Service) SetPlan(ctx context.Context, req SetPlanRequest) (*SetPlanResult, error) {
-	defer lockTenantPlan(req.Tenant)()
-
-	tenant, err := s.getTenant(ctx, req.Tenant)
-	if err != nil {
-		return nil, err
-	}
-	catalogue, err := resourceplan.Load(ctx, s.client)
-	if err != nil {
-		return nil, err
-	}
-	plan := catalogue.Get(req.Plan)
-	if plan == nil {
-		return nil, fmt.Errorf("%w: %s", ErrPlanNotFound, req.Plan)
-	}
-	if req.SelfService && plan.Spec.SelfServiceDisabled {
-		return nil, fmt.Errorf("%w: %s is arranged with the platform operator", ErrPlanNotSelectable, plan.Name)
-	}
-	if maxTier := resourceplan.MaxTier(tenant); maxTier != nil && plan.Spec.Tier > *maxTier {
-		return nil, fmt.Errorf("%w: %s is above the tenant's entitlement", ErrPlanNotSelectable, plan.Name)
-	}
-
-	resolution := catalogue.Resolve(tenant)
-	previous := ""
-	if resolution.Plan != nil {
-		previous = resolution.Plan.Name
-	}
-
-	if !req.Force {
-		quota, err := s.tenantQuota(ctx, tenant)
-		if err != nil {
-			return nil, err
-		}
-		var used corev1.ResourceList
-		if quota != nil {
-			used = quota.Status.Used
-		}
-		if err := resourceplan.CheckFit(plan, used); err != nil {
-			return nil, err
-		}
-	}
-
-	status, file, changed, err := s.git.SetResourcePlan(ctx, req.Tenant, plan, req.Actor)
-	if err != nil {
-		return nil, err
-	}
-
-	result := &SetPlanResult{
-		Status:       status,
-		Tenant:       req.Tenant,
-		Plan:         plan.Name,
-		PreviousPlan: previous,
-		File:         file,
-	}
-	if !changed {
-		result.Message = "the tenant is already on this plan"
-		return result, nil
-	}
-	result.Message = "committed to the deployments repository; Argo CD applies it on the next sync"
-
-	// The plan event is recorded now rather than when the sync lands, because
-	// now is when the decision was made and by whom. A sync that fails leaves
-	// an event describing an intent the samples will contradict, which is
-	// visible; waiting for the sync would instead lose the actor, which is not
-	// recoverable from anywhere else.
-	s.recordPlanEvent(ctx, req.Tenant, previous, plan, req.Actor)
-	return result, nil
 }
 
 // UsageHistory returns thinned samples over a window.
@@ -340,41 +238,6 @@ func (s *Service) UsageReport(
 		return nil, err
 	}
 	return usage.BuildReport(ctx, store, tenantName, from, to)
-}
-
-func (s *Service) recordPlanEvent(
-	ctx context.Context,
-	tenantName, previous string,
-	plan *gentianov1alpha1.ResourcePlan,
-	actor string,
-) {
-	store, err := usage.StoreForTenant(ctx, s.client, layout.Tenant(tenantName), tenantName)
-	if err != nil {
-		log.FromContext(ctx).WithName("resources").Error(err,
-			"could not open the usage store to record a plan change", "tenant", tenantName)
-		return
-	}
-	if err := store.EnsureSchema(ctx); err != nil {
-		log.FromContext(ctx).WithName("resources").Error(err,
-			"could not prepare the usage schema", "tenant", tenantName)
-		return
-	}
-	err = store.RecordPlanEvent(ctx, usage.PlanEvent{
-		OccurredAt: time.Now().UTC(),
-		FromPlan:   previous,
-		ToPlan:     plan.Name,
-		ProductSku: plan.Spec.ProductSku,
-		Actor:      actor,
-	})
-	if err != nil {
-		// Not fatal to the plan change: the ceiling is already committed to
-		// git and will be enforced. What is lost is the billing record's
-		// precision, which the samples partially reconstruct — so the change
-		// stands and the gap is logged rather than the change being refused
-		// after it has already been pushed.
-		log.FromContext(ctx).WithName("resources").Error(err,
-			"plan change committed but not recorded in the usage history", "tenant", tenantName)
-	}
 }
 
 func (s *Service) getTenant(ctx context.Context, name string) (*gentianov1alpha1.Tenant, error) {

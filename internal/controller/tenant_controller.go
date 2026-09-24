@@ -226,6 +226,9 @@ type TenantReconciler struct {
 	// APIReader is an optional uncached client for kernel Secret lookups. The
 	// default cached Client can lag behind direct API writes (e.g. envtest).
 	APIReader client.Reader
+	// PlanEventStore opens a tenant's usage store for the plan event a landed
+	// plan change is recorded as. Nil opens the tenant's own database.
+	PlanEventStore planEventStoreFor
 	Scheme    *runtime.Scheme
 	// Seeder derives and persists per-tenant-per-app credentials into OpenBao.
 	// May be nil — in which case all reconcilers skip the seeding step and behave

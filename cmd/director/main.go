@@ -36,6 +36,7 @@ import (
 	"github.com/gentian-org/gentian-os/internal/director/authz"
 	"github.com/gentian-org/gentian-os/internal/director/entitlement"
 	"github.com/gentian-org/gentian-os/internal/director/gitops"
+	"github.com/gentian-org/gentian-os/internal/director/lifecycle"
 	"github.com/gentian-org/gentian-os/internal/membership"
 )
 
@@ -190,9 +191,21 @@ func run(log *slog.Logger) error {
 	// cluster routes by being handed it rather than by being trusted to go and
 	// look. A cluster whose operator has not projected yet has no file here,
 	// and the endpoint answers an empty list.
+	// The operator's app-lifecycle API is the one thing in the cluster this
+	// process asks a question of, and it only ever asks: a tenant's enforced
+	// ceiling, what is under it, which plans it may move to. Choosing a plan
+	// is then a commit here, like every other change. Without the URL the
+	// resources routes do not exist, which a console shows as exactly that.
+	var lc api.Lifecycle
+	if u := os.Getenv("DIRECTOR_APP_LIFECYCLE_URL"); u == "" {
+		log.Warn("no app-lifecycle URL: a tenant's resources cannot be read or its plan chosen here", "setting", "DIRECTOR_APP_LIFECYCLE_URL")
+	} else {
+		lc = lifecycle.New(u)
+	}
 	handler, err := api.New(api.Config{Authn: verifier, Authz: checker, Repo: repo, Log: log,
 		EnforceEntitlements: enforce, Store: store, Cluster: cluster,
-		TilesPath: envOr("DIRECTOR_TILES_PATH", "/etc/gentian/tiles/tiles.yaml")})
+		TilesPath: envOr("DIRECTOR_TILES_PATH", "/etc/gentian/tiles/tiles.yaml"),
+		Lifecycle: lc})
 	if err != nil {
 		return err
 	}

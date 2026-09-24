@@ -45,13 +45,8 @@ const (
 	// DesktopProfileName is the ComponentProfile the operator chart ships.
 	DesktopProfileName = "desktop"
 	// DesktopComponentName is the Component each tenant gets from it.
-	DesktopComponentName     = "desktop"
-	desktopProfileAnnotation = "gentianos.io/desktop"
+	DesktopComponentName = "desktop"
 )
-
-func isDesktopProfile(profile *gentianov1alpha1.ComponentProfile) bool {
-	return profile.Name == DesktopProfileName || profile.Annotations[desktopProfileAnnotation] == "true"
-}
 
 // directorAudience is the audience the zone's edge token carries: the
 // director's, because that token is minted for the director and relayed to it

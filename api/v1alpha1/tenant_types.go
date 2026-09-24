@@ -294,6 +294,14 @@ type TenantStatus struct {
 	// Operators must publish these values in the tenant's DNS zone.
 	// +optional
 	Mail *TenantMailStatus `json:"mail,omitempty"`
+
+	// ResourcePlan is the plan whose selection was last recorded in the
+	// tenant's usage history: the value of the resource-plan annotation at
+	// the time the plan event was written. It differing from the annotation
+	// is what tells the reconciler a change has landed that the billing
+	// record does not know about yet.
+	// +optional
+	ResourcePlan string `json:"resourcePlan,omitempty"`
 }
 
 // TenantMailStatus holds DNS record data emitted by the mail reconciler for

@@ -493,6 +493,9 @@ func (r *TenantReconciler) reconcileTenantStageFinalize(ctx context.Context, sta
 		provisioningDuration.WithLabelValues(tenant.Name).Observe(time.Since(state.start).Seconds())
 	}
 	tenantAppsTotal.WithLabelValues(tenant.Name).Set(float64(tenant.Status.AppCount))
+	// A plan change that Argo CD has synced is recorded in the usage history
+	// here, before the status it is noted on is written.
+	r.recordResourcePlan(ctx, tenant)
 	if err := r.Status().Update(ctx, tenant); err != nil {
 		return ctrl.Result{}, err
 	}

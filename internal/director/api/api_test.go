@@ -117,6 +117,14 @@ func projectedTiles(t *testing.T) string {
 
 func startWithTiles(t *testing.T, entitlements bool, tilesPath string) *harness {
 	t.Helper()
+	return startWith(t, entitlements, tilesPath, nil)
+}
+
+// startWith is the harness with an operator to ask. lc is what answers the
+// app-lifecycle API's reads; nil leaves the resources routes unregistered,
+// which is what a director configured without one does.
+func startWith(t *testing.T, entitlements bool, tilesPath string, lc api.Lifecycle) *harness {
+	t.Helper()
 	is := dt.NewIssuer(t, "gentian", "tenant-demo", "tenant-solo")
 	v, err := authn.NewVerifier(authn.Config{IssuerBase: is.URL, Audience: audience})
 	if err != nil {
@@ -135,6 +143,7 @@ func startWithTiles(t *testing.T, entitlements bool, tilesPath string) *harness 
 		Store:     &api.StoreConfig{Verifier: verifier, Applier: &entitlement.Applier{Repo: repo, Store: tuples}},
 		Log:       slog.New(slog.NewTextHandler(io.Discard, nil)),
 		TilesPath: tilesPath,
+		Lifecycle: lc,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -655,6 +664,8 @@ var facts = table{
 	"user:mia can_enter tenant:demo":                       true,
 	"user:tom can_enter tenant:demo":                       true,
 	"user:tom can_administer tenant:demo":                  true,
+	"user:tom can_set_plan tenant:demo":                    true,
+	"user:alice can_set_plan tenant:demo":                  true,
 	"user:tom can_manage_users tenant:demo":                true,
 	"user:alice can_enter tenant:demo":                     true,
 	"user:alice can_administer tenant:demo":                true,

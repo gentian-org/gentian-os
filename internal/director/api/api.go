@@ -33,6 +33,7 @@ import (
 	"io/fs"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"os"
 	"regexp"
 
@@ -40,6 +41,7 @@ import (
 	"github.com/gentian-org/gentian-os/internal/director/authz"
 	"github.com/gentian-org/gentian-os/internal/director/entitlement"
 	"github.com/gentian-org/gentian-os/internal/director/gitops"
+	"github.com/gentian-org/gentian-os/internal/director/lifecycle"
 	"github.com/gentian-org/gentian-os/internal/tilecatalogue"
 )
 
@@ -61,6 +63,16 @@ type Repository interface {
 	TenantDetails(ctx context.Context) ([]gitops.Tenant, error)
 	CreateTenant(ctx context.Context, req gitops.NewTenant, meta gitops.Meta) (gitops.Result, error)
 	RetireTenant(ctx context.Context, tenant string, meta gitops.Meta) (gitops.Result, error)
+	Tenants(ctx context.Context) ([]string, error)
+	SetResourcePlan(ctx context.Context, tenant string, plan gitops.Plan, meta gitops.Meta) (gitops.Result, error)
+}
+
+// Lifecycle is the operator's app-lifecycle API, read and never written: what
+// the cluster enforces for a tenant, what is committed under it, and which
+// plans the tenant may move to. See internal/director/lifecycle.
+type Lifecycle interface {
+	Get(ctx context.Context, path string, query url.Values) (int, []byte, error)
+	Plans(ctx context.Context, tenant string, selfService bool) ([]lifecycle.Plan, error)
 }
 
 // Config assembles a Server.
@@ -92,6 +104,11 @@ type Config struct {
 	//
 	// Empty, or a path that does not exist, is an empty catalogue.
 	TilesPath string
+	// Lifecycle answers what only the cluster knows about a tenant's
+	// resources. Nil leaves the resources routes unregistered: a director
+	// with no operator to ask has nothing to relay and nothing to validate a
+	// plan against.
+	Lifecycle Lifecycle
 }
 
 // StoreConfig is what the entitlement write needs.
@@ -316,6 +333,25 @@ func (s *Server) routes() {
 	s.guarded("POST /v1/tenants/{t}/apps/{p}", "can_install_app", tenantObject, s.install)
 	s.guarded("DELETE /v1/tenants/{t}/apps/{p}", "can_install_app", tenantObject, s.uninstall)
 	s.guarded("PUT /v1/tenants/{t}/apps/{p}/addons", "can_install_app", tenantObject, s.setAddons)
+
+	// A tenant's resources: the ceiling the cluster enforces, what is under
+	// it, the plans it may move to, and its history. The reads are the
+	// operator's answers relayed under can_view. The one write, choosing a
+	// plan, is can_set_plan, model v1's own verb for it, and it is a commit:
+	// the operator learns the plan from git like everything else.
+	if s.cfg.Lifecycle != nil {
+		s.guarded("GET /v1/tenants/{t}/resources", "can_view", tenantObject, s.resourceState)
+		s.guarded("GET /v1/tenants/{t}/resources/plans", "can_view", tenantObject, s.resourcePlans)
+		s.guarded("GET /v1/tenants/{t}/resources/usage", "can_view", tenantObject, s.resourceUsage)
+		s.guarded("GET /v1/tenants/{t}/resources/report", "can_view", tenantObject, s.resourceReport)
+		s.guarded("PUT /v1/tenants/{t}/resources", "can_set_plan", tenantObject, s.setResourcePlan)
+		if s.cfg.Cluster != "" {
+			// Every tenant's ceiling in one answer, for the platform
+			// operator's view. can_audit, like the tenant list it is made
+			// from.
+			s.guarded("GET /v1/clusters/{c}/resources", "can_audit", s.clusterObject, s.clusterResources)
+		}
+	}
 }
 
 // clusterRelations are the cluster verbs a console asks about the caller: the
