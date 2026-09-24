@@ -28,6 +28,23 @@ import (
 	"google.golang.org/grpc/codes"
 )
 
+// deniedPage is what a browser gets instead of the word "Forbidden": the
+// refusal, and the one link that can change it. Inline and tiny, because this
+// service serves no assets and must answer without reaching anything.
+const deniedPage = `<!doctype html><html lang="en"><head><meta charset="utf-8">` +
+	`<meta name="viewport" content="width=device-width,initial-scale=1">` +
+	`<title>Not available to you</title><style>` +
+	`body{font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;background:#f4f1ea;color:#14152e;` +
+	`display:flex;min-height:100vh;align-items:center;justify-content:center;margin:0}` +
+	`main{max-width:32rem;padding:2rem}h1{font-size:1.25rem;margin:0 0 .5rem}` +
+	`p{margin:0 0 1rem;color:#45486b;line-height:1.5}` +
+	`a{display:inline-block;background:#262696;color:#fff;text-decoration:none;` +
+	`padding:.55rem 1rem;border-radius:.5rem}</style></head><body><main>` +
+	`<h1>This is not available to you</h1>` +
+	`<p>Your session does not carry the access this page needs. If you have ` +
+	`just been given it, or you are signed in as someone else, sign out and ` +
+	`sign in again.</p><a href="/oauth2/logout">Sign out</a></main></body></html>`
+
 // Server is the Envoy ext_authz gRPC service over a Decider.
 type Server struct {
 	authv3.UnimplementedAuthorizationServer
@@ -50,12 +67,29 @@ func (s *Server) Check(ctx context.Context, req *authv3.CheckRequest) (*authv3.C
 	}
 	dec := s.Decider.Decide(ctx, r)
 	if !dec.Allow {
+		denied := &authv3.DeniedHttpResponse{
+			Status: &typev3.HttpStatus{Code: typev3.StatusCode(dec.Status)},
+			Body:   http.StatusText(dec.Status),
+		}
+		// A refusal a browser can act on.
+		//
+		// A session may name someone this cluster no longer knows: an account
+		// deleted, or renamed, while a browser still holds a valid cookie for
+		// it. Every relation is then denied and the answer is a bare 403 on
+		// every page, including the desktop the person would have signed out
+		// from. The way out is the edge's own logout path, so the refusal
+		// names it. It grants nothing: signing out is available to anyone
+		// holding a session, refused or not.
+		if dec.Browser {
+			denied.Body = deniedPage
+			denied.Headers = []*corev3.HeaderValueOption{{
+				Header:       &corev3.HeaderValue{Key: "content-type", Value: "text/html; charset=utf-8"},
+				AppendAction: corev3.HeaderValueOption_OVERWRITE_IF_EXISTS_OR_ADD,
+			}}
+		}
 		return &authv3.CheckResponse{
-			Status: &rpcstatus.Status{Code: int32(grpcCode(dec.Status)), Message: dec.Reason},
-			HttpResponse: &authv3.CheckResponse_DeniedResponse{DeniedResponse: &authv3.DeniedHttpResponse{
-				Status: &typev3.HttpStatus{Code: typev3.StatusCode(dec.Status)},
-				Body:   http.StatusText(dec.Status),
-			}},
+			Status:       &rpcstatus.Status{Code: int32(grpcCode(dec.Status)), Message: dec.Reason},
+			HttpResponse: &authv3.CheckResponse_DeniedResponse{DeniedResponse: denied},
 		}, nil
 	}
 	ok := &authv3.OkHttpResponse{HeadersToRemove: dec.RemoveHeaders}

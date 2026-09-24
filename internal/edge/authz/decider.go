@@ -62,6 +62,10 @@ type Decision struct {
 	// client sent; RemoveHeaders are stripped.
 	Headers       map[string]string
 	RemoveHeaders []string
+	// Browser is true when a refusal will be read by a person rather than by
+	// a program: an oidc route, where the caller followed a link. It decides
+	// whether the denial carries a page or the bare status.
+	Browser bool
 }
 
 type identity struct {
@@ -191,7 +195,7 @@ func (d *Decider) Decide(ctx context.Context, req Request) Decision {
 		return deny(http.StatusServiceUnavailable, "authorization store unreachable")
 	}
 	if revoked {
-		return deny(http.StatusForbidden, "session revoked")
+		return browserRefusal(route, deny(http.StatusForbidden, "session revoked"))
 	}
 	ok, err := d.store.Check(ctx, req.ID, user, route.Relation, route.Object)
 	if err != nil {
@@ -199,7 +203,7 @@ func (d *Decider) Decide(ctx context.Context, req Request) Decision {
 		return deny(http.StatusServiceUnavailable, "authorization store unreachable")
 	}
 	if !ok {
-		return deny(http.StatusForbidden, "not "+route.Relation+" on "+route.Object)
+		return browserRefusal(route, deny(http.StatusForbidden, "not "+route.Relation+" on "+route.Object))
 	}
 	d.cache.put(id.Subject, id.SessionID, route.Host, who)
 	return allow(route, who)
@@ -238,6 +242,15 @@ func unauthenticated(route *Route, reason string) Decision {
 		Reason:        reason,
 		RemoveHeaders: append([]string{"authorization"}, identityHeaders...),
 	}
+}
+
+// browserRefusal marks a denial that a person will see, so it can be answered
+// with something they can act on.
+func browserRefusal(route *Route, dec Decision) Decision {
+	if route != nil && route.AuthMode == AuthModeOIDC {
+		dec.Browser = true
+	}
+	return dec
 }
 
 func allow(route *Route, who identity) Decision {

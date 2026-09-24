@@ -101,7 +101,9 @@ what turns that into an install.
 A purge and reinstall proves the installer. It does not fix a design, and
 reinstalling with these open would only reproduce them. In order.
 
-### S7A.1 The operator produces a zone's Keycloak client and its secret
+✅ done and verified on the cluster · ◐ partly done · ☐ not started
+
+### S7A.1 ☐ The operator produces a zone's Keycloak client and its secret
 
 A **zone** is one sign-in domain: a hostname, the realm behind it, one
 confidential Keycloak client for the edge to hold the session with, that
@@ -152,7 +154,7 @@ Provisioning. Declare `Create` as well as `Observe` from the start.
 **Done when** a second tenant signs in at `console.<t>.<kernel>` against its
 own realm, with no installer step having run for it.
 
-### S7A.2 The director stops writing authorization state
+### S7A.2 ☐ The director stops writing authorization state
 
 The director's job is to read OpenFGA to decide whether a caller may make a
 call, and to write git. Argo CD syncs git and the operator turns it into
@@ -178,7 +180,7 @@ is enforced by the credential and not by care.
 **Ask first**: how much of the graph can be static rather than written at all.
 See "How much has to be written" below.
 
-### S7A.3 The platform administrator is an address
+### S7A.3 ✅ The platform administrator is an address
 
 The kernel realm's `email` claim is mapped to the username so that the email
 *field* can hold the recovery address Keycloak mails a reset to. That only
@@ -193,7 +195,7 @@ string that decides the derived value, and renaming it would silently change
 the password on every cluster. Nothing may create a username that is not an
 address.
 
-### S7A.4 The admin console is an app, and it talks to the director
+### S7A.4 ☐ The admin console is an app, and it talks to the director
 
 Today it is a route inside the desktop image, and its screens were built
 against a Keycloak admin credential the desktop no longer holds. It becomes a
@@ -234,7 +236,7 @@ because that tile is how anyone reaches people at all. And the fine-grained
 permissions have to be granted per tenant by whatever provisions the tenant,
 which is a new piece of the tenant composition's work.
 
-### S7A.5 Keycloak looks like the rest of the product
+### S7A.5 ✅ Keycloak looks like the rest of the product
 
 Embedding Keycloak's console makes its appearance the product's appearance, and
 it does not currently match anything. The login screen is already themed
@@ -258,7 +260,7 @@ So: a shared `gentian-tokens.css` generated from the design system, applied to
 the login, account and admin themes, plus the logo and favicon. Accept the
 layout as Keycloak draws it.
 
-### S7A.6 The console and the desktop hold nothing
+### S7A.6 ◐ The console and the desktop hold nothing — the desktop does, the admin console does not
 
 A rule to apply to both, and to check before each is called finished: a UI
 offers a surface for making requests, and every one of those requests is
@@ -285,7 +287,7 @@ GUI over the director's API. When either grows a screen that seems to need a
 credential, that is the signal that an endpoint is missing from the director,
 not that the UI needs the credential.
 
-### S7A.7 The zone cookie does not reach the applications
+### S7A.7 ☐ The zone cookie does not reach the applications
 
 The one place the edge session is weaker than a session per application, and
 it is fixable.
@@ -326,7 +328,7 @@ Recommendation: (1), measured first, because the extra round trip per host is
 the only cost and it happens once per session. Do it before any third-party
 application is routed.
 
-### S7A.8 A read-only view of the authorization state
+### S7A.8 ☐ A read-only view of the authorization state
 
 Part of the same console, worth naming separately because it replaces the idea
 of exposing OpenFGA's own playground. OpenFGA's read APIs answer "which groups
@@ -335,19 +337,19 @@ renders that; anything a person wants to change is changed on the screens
 above, through the director, into git. No development-only UI is exposed and
 no second write path exists.
 
-### S7A.9 The kernel UIs are actually usable
+### S7A.9 ◐ The kernel UIs are actually usable — Argo CD and Keycloak done, Headlamp open
 
-- **Argo CD** showed an empty list to a full administrator. The groups claim
+- **Argo CD** ✅ showed an empty list to a full administrator. The groups claim
   carries the full path, `/gentian:platform:admin`, because OpenBao's roles
   need it; Argo CD's policy named the bare form and matched nothing. Fixed by
   naming both spellings. Verify after the next `D-02`.
-- **Headlamp** asks for a second sign-in. It runs its own OIDC flow with its
+- **Headlamp** ☐ asks for a second sign-in. It runs its own OIDC flow with its
   own client and keeps the result in its own cookie, and the kubeconfig it
   proxies with has no token until that flow has run. It costs a click, not a
   password. Decide between starting that flow from the tile and giving
   Headlamp an authenticating sidecar that turns the edge session into what it
   expects, which is the pattern an app with no OIDC support would use anyway.
-- **The Keycloak console** shows a spinner. Not an iframe problem: embedding
+- **The Keycloak console** ✅ showed a spinner. Not an iframe problem: embedding
   works, the silent SSO and the token exchange both complete in the frame, and
   it then dies on its first Admin REST call with a 401 because `KC_HOSTNAME`
   and `KC_HOSTNAME_ADMIN` differ. Upstream closed this as not planned, so a
@@ -361,7 +363,21 @@ no second write path exists.
   people (S7A.4), so it is reached by more than the platform administrator and
   its relation has to allow for that.
 
-### S7A.10 The installer does what it claims
+### S7A.9b ✅ A refusal a person can act on
+
+An account that is deleted or renamed leaves live sessions naming a subject
+the graph no longer knows. Every relation is then denied, correctly, and the
+answer was the bare word `Forbidden` on every page — including the desktop the
+person would have signed out from, so there was no way out but clearing
+cookies by hand. This happened the moment the `administrator` account was
+replaced in S7A.3.
+
+A refusal on an `oidc` route now carries a small page naming the one link that
+can change the outcome, the edge's own `/oauth2/logout`. It grants nothing:
+signing out is available to anyone holding a session, refused or not. A
+`bearer` route still gets the bare status, because a program is reading it.
+
+### S7A.10 ◐ The installer does what it claims — two races and the OIDC mount done
 
 Recorded in WP-10. Two cold-start races are fixed. These remain, in priority
 order:

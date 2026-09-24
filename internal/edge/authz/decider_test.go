@@ -237,3 +237,26 @@ func TestTheEdgesOwnPathsAreNotOursToRefuse(t *testing.T) {
 		t.Error("a revoked session reached the app itself")
 	}
 }
+
+// A person refused on a page needs a way out, because the way out is behind
+// the same refusal: a session naming an account this cluster no longer knows
+// is denied everywhere, including the desktop they would sign out from.
+func TestARefusedBrowserIsToldHowToLeave(t *testing.T) {
+	t.Parallel()
+	store := &fakeStore{allow: map[string]bool{}}
+	d := decider(store)
+	// An oidc route: a person followed a link here.
+	dec := d.Decide(context.Background(), Request{
+		Host: "argocd.k.example", Path: "/", Cookies: map[string]string{"at": "mia-token"},
+	})
+	if dec.Allow || !dec.Browser {
+		t.Fatalf("a refused page must be marked for a browser: allow=%v browser=%v", dec.Allow, dec.Browser)
+	}
+	// A bearer route is a program's: it gets the status and nothing else.
+	dec = d.Decide(context.Background(), Request{
+		Host: "api.k.example", Path: "/v1/things", Authorization: "Bearer mia-token",
+	})
+	if dec.Allow || dec.Browser {
+		t.Fatalf("an API refusal must stay a bare status: allow=%v browser=%v", dec.Allow, dec.Browser)
+	}
+}
