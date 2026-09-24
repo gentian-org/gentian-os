@@ -88,6 +88,17 @@ check() {
     pinned="$(kubectl get componentprofile desktop -o jsonpath='{.spec.package.chart.version}' 2>/dev/null)"
     deployed="$(kubectl get release tenant-platform-desktop -o jsonpath='{.spec.forProvider.chart.version}' 2>/dev/null)"
     [[ -n "${pinned}" && "${pinned}" == "${deployed}" ]] || return "${CHECK_MISSING}"
+    # Headlamp signs in with the client secret its kubeconfig names, and this
+    # step is what puts it there. A kubeconfig still carrying the chart's
+    # placeholder means the step has not finished its job, whatever else is
+    # Ready -- so say so here rather than let a re-run skip it.
+    local kubeconfig
+    kubeconfig="$(kubectl get secret headlamp-kubeconfig -n "${OBSERVABILITY_NAMESPACE}" \
+        -o jsonpath='{.data.config}' 2>/dev/null | base64 -d 2>/dev/null || true)"
+    case "${kubeconfig}" in
+    *"${HEADLAMP_KUBECONFIG_PLACEHOLDER:-PLACEHOLDER_REPLACED_BY_THE_INSTALLER}"*)
+        return "${CHECK_MISSING}" ;;
+    esac
     return 0
 }
 
@@ -113,6 +124,12 @@ apply() {
     DESKTOP_CHART_VERSION="${desktop_chart_version}" \
         V5_APPSETS=true V5_OPERATOR=true V5_HEADLAMP_OIDC=true \
         _v5_render | kubectl apply -f - >/dev/null
+
+    # Only now: that render carries the chart's placeholder where Headlamp's
+    # client secret belongs, so anything written before it is overwritten
+    # here. This is the last apply of the bootstrap chart in the install, and
+    # the fill reads its own work back rather than assuming it stuck.
+    ensure_headlamp_kubeconfig || return 1
 
     # Tenant/platform arrives from git through the tenants ApplicationSet and
     # is provisioned by the operator against the realm just created. Nothing

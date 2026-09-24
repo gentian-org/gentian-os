@@ -203,7 +203,9 @@ metadata:
   namespace: {{ $ns }}
   annotations:
     # The installer replaces the placeholder below with the derived client
-    # secret. Argo CD must not put the placeholder back over it.
+    # secret, in D-02 and AFTER the last render of this chart -- that step
+    # renders it a second time to turn Headlamp's OIDC on, and this object
+    # comes with the render. Argo CD must not put the placeholder back either.
     argocd.argoproj.io/compare-options: IgnoreExtraneous
     argocd.argoproj.io/sync-options: Replace=false
 type: Opaque

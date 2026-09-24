@@ -143,19 +143,35 @@ ensure_edge_kernel_secret() {
     echo -n "${secret}"
 }
 
-# The Secret Headlamp reads, in the namespace Headlamp runs in. Keys are the
-# environment variable names, because the chart loads it with envFrom.
+# The placeholder the chart writes where the client secret belongs. D-02's
+# check() reads it too, before this library is sourced, so it carries the same
+# literal as a default there.
+HEADLAMP_KUBECONFIG_PLACEHOLDER="PLACEHOLDER_REPLACED_BY_THE_INSTALLER"
+
 # Put the derived client secret into the kubeconfig Headlamp reads.
 #
 # The chart renders the Secret with a placeholder, because the value is
 # derived from the master password and no chart can know it. This rewrites
 # that one line in place and leaves the rest of the file exactly as the chart
 # wrote it, so the two cannot drift.
-_headlamp_kubeconfig_secret() {
-    local ns="$1" secret="$2" config
+#
+# MUST RUN AFTER THE LAST RENDER OF THE BOOTSTRAP CHART. D-02 renders that
+# chart a second time, to turn Headlamp's OIDC on now that the realm exists,
+# and that render carries the placeholder. Filling the secret in before it
+# means the render puts the placeholder straight back: the step reports
+# success, the Secret looks written, and the person is told to sign in again
+# for ever. The caller checks the result rather than trusting the write.
+ensure_headlamp_kubeconfig() {
+    local ns secret config
+    ns="$(_pl_observability_ns)"
+    secret="$(_headlamp_derive_secret)"
+    if [[ -z "${secret}" ]]; then
+        error "no Headlamp client secret could be derived; the kubeconfig would authenticate with nothing."
+        return 1
+    fi
     config="$(kubectl get secret headlamp-kubeconfig -n "${ns}" -o jsonpath='{.data.config}' 2>/dev/null | base64 -d 2>/dev/null || true)"
     if [[ -z "${config}" ]]; then
-        info "headlamp-kubeconfig is not present yet; Argo CD renders it and this fills it in on the next run."
+        warn "headlamp-kubeconfig is not present; Headlamp will ask for a token until the chart renders it."
         return 0
     fi
     if ! grep -q "client-secret:" <<<"${config}"; then
@@ -171,32 +187,42 @@ _headlamp_kubeconfig_secret() {
         esac
     done <<<"${config}"
     updated="${out%$'\n'}"
-    if [[ "${updated}" == "${config}" ]]; then
-        return 0
+    if [[ "${updated}" != "${config}" ]]; then
+        kubectl create secret generic headlamp-kubeconfig -n "${ns}" \
+            --from-literal=config="${updated}" \
+            --dry-run=client -o yaml | kubectl apply -f - >&2
+        # A mounted Secret is re-read from the API server, but only on the
+        # kubelet's own schedule; a restart makes the new file immediate.
+        kubectl rollout restart deployment/headlamp -n "${ns}" >/dev/null 2>&1 || true
     fi
-    kubectl create secret generic headlamp-kubeconfig -n "${ns}" \
-        --from-literal=config="${updated}" \
-        --dry-run=client -o yaml | kubectl apply -f - >&2
-    # envFrom and mounted Secrets are read at container start, so the running
-    # pod keeps the old file until it is replaced.
-    kubectl rollout restart deployment/headlamp -n "${ns}" >/dev/null 2>&1 || true
+    # Read it back. A write that another apply has already overwritten is the
+    # failure this whole function exists to catch, and it is invisible unless
+    # someone looks.
+    local stored
+    stored="$(kubectl get secret headlamp-kubeconfig -n "${ns}" -o jsonpath='{.data.config}' 2>/dev/null | base64 -d 2>/dev/null || true)"
+    if grep -q "${HEADLAMP_KUBECONFIG_PLACEHOLDER}" <<<"${stored}"; then
+        error "headlamp-kubeconfig still carries the placeholder after being written."
+        error "  Something re-applied the chart's copy over it. Headlamp would exchange"
+        error "  its code with no credential and Keycloak would answer unauthorized_client."
+        return 1
+    fi
+    success "Headlamp exchanges its code with the client secret its kubeconfig names."
 }
 
+# The Secret Headlamp reads, in the namespace Headlamp runs in. Keys are the
+# environment variable names, because the chart loads it with envFrom.
 ensure_headlamp_oidc_secret() {
     local kernel_domain="${KERNEL_DOMAIN:?KERNEL_DOMAIN required}"
     local kernel_realm="${KERNEL_REALM:-kernel}"
     local ns secret
     ns="$(_pl_observability_ns)"
     secret="$(_headlamp_derive_secret)"
-    # The kubeconfig Headlamp builds its token exchange from.
-    #
-    # It names the client AND its secret, because Headlamp exchanges the code
-    # with what the kubeconfig's auth-provider says and not with its own
-    # -oidc-client-secret flag. A kubeconfig naming only the client sends no
-    # credential, Keycloak answers "unauthorized_client", and the person is
-    # asked to sign in again with no way to succeed. The chart declares the
-    # rest of the file; this fills in the one value the chart cannot know.
-    _headlamp_kubeconfig_secret "${ns}" "${secret}"
+    # The kubeconfig Headlamp builds its token exchange from is NOT written
+    # here. It names the client AND its secret, because Headlamp exchanges the
+    # code with what the kubeconfig's auth-provider says and not with its own
+    # -oidc-client-secret flag. But the chart renders that file, and D-02
+    # renders the chart again after this point, so writing it here is writing
+    # it too early. ensure_headlamp_kubeconfig does it after the last render.
     kubectl create secret generic headlamp-oidc -n "${ns}" \
         --from-literal=OIDC_CLIENT_ID="headlamp" \
         --from-literal=OIDC_CLIENT_SECRET="${secret}" \
