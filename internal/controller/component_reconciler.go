@@ -426,7 +426,7 @@ func componentLabels(comp *gentianov1alpha1.Component) map[string]string {
 func (r *ComponentReconciler) ensureExposureRoute(ctx context.Context, comp *gentianov1alpha1.Component, tenant *gentianov1alpha1.Tenant, zone edgeZone, e *gentianov1alpha1.ExposureSpec) (string, error) {
 	host := exposureHost(zone, comp, e)
 	routeName := comp.Name + "-" + e.Name
-	route := buildExposureRoute(comp, routeName, host, zone, e, exposureAuthz(tenant, e.ForwardToken))
+	route := buildExposureRoute(comp, routeName, host, zone, e, exposureAuthz(tenant, e.ForwardToken), r.KernelDomain)
 	if err := controllerutil.SetControllerReference(comp, route, r.Scheme); err != nil {
 		return "", err
 	}
@@ -505,7 +505,16 @@ func exposureAuthz(tenant *gentianov1alpha1.Tenant, forwardToken bool) routeAuth
 	return routeAuthz{relation: "can_enter", object: "tenant:" + tenant.Name, forwardToken: forwardToken}
 }
 
-func buildExposureRoute(comp *gentianov1alpha1.Component, name, host string, zone edgeZone, e *gentianov1alpha1.ExposureSpec, authz routeAuthz) *gatewayv1.HTTPRoute {
+// buildExposureRoute is one exposure as an HTTPRoute on the zone's Gateway.
+//
+// Every rule carries the same frame policy the kernel consoles carry: this
+// component may be embedded by a page on the kernel domain, which is where the
+// desktop lives, and by nothing else. Without it a component is embeddable by
+// any origin, which is the clickjacking exposure the kernel routes closed, and
+// the desktop opens components in frames, so the policy has to admit exactly
+// that and no more. It is not the component's to choose: a component that
+// answered X-Frame-Options: DENY would silently break its own tile.
+func buildExposureRoute(comp *gentianov1alpha1.Component, name, host string, zone edgeZone, e *gentianov1alpha1.ExposureSpec, authz routeAuthz, kernelDomain string) *gatewayv1.HTTPRoute {
 	parent := gatewayParentRef(AuthenticatedGatewayName)
 	ns := gatewayv1.Namespace(servicesNamespace)
 	parent.Namespace = &ns
@@ -517,13 +526,14 @@ func buildExposureRoute(comp *gentianov1alpha1.Component, name, host string, zon
 	}
 	var rules []gatewayv1.HTTPRouteRule
 	wholeHost := false
+	frame := kernelConsoleFrameFilters(kernelDomain)
 	for _, p := range paths {
-		rules = append(rules, kernelBackendRulePrefixNS(e.Backend.Service, comp.Namespace, e.Backend.Port, p))
+		rules = append(rules, kernelBackendRulePrefixNS(e.Backend.Service, comp.Namespace, e.Backend.Port, p, frame...))
 		wholeHost = wholeHost || p == "/"
 	}
 	// A route behind a session must carry the path the code flow lands on.
 	if e.AuthMode == gentianov1alpha1.AuthModeOIDC && !wholeHost {
-		rules = append(rules, kernelBackendRulePrefixNS(e.Backend.Service, comp.Namespace, e.Backend.Port, edgeOAuth2Prefix))
+		rules = append(rules, kernelBackendRulePrefixNS(e.Backend.Service, comp.Namespace, e.Backend.Port, edgeOAuth2Prefix, frame...))
 	}
 	labels := componentLabels(comp)
 	labels[edgeAuthzRouteLabel] = "true"

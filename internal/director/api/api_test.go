@@ -831,6 +831,51 @@ func TestTheDesktopReadsTheCallersRelations(t *testing.T) {
 	}
 }
 
+// Who a caller is at cluster scope is answered for anyone who can be
+// identified, with every verb false for a person who holds nothing here.
+// That is the ordinary answer for almost everyone who signs in, and a console
+// renders it as "no platform screens" rather than as a failure.
+func TestClusterMeAnswersAnyIdentifiedCaller(t *testing.T) {
+	h := start(t, false)
+	path := "/v1/clusters/" + dt.Cluster + "/me"
+
+	code, body := h.do(t, "GET", path, h.token(t, "gentian", "alice"), "")
+	if code != http.StatusOK {
+		t.Fatalf("alice: %d %v", code, body)
+	}
+	rel := body["relations"].(map[string]any)
+	if rel["can_configure"] != true || rel["can_audit"] != true || rel["can_operate_system"] != false {
+		t.Fatalf("alice holds %v", rel)
+	}
+	if body["subject"] != "alice" || body["cluster"] != dt.Cluster {
+		t.Fatalf("body = %v", body)
+	}
+
+	code, body = h.do(t, "GET", path, h.token(t, "gentian", "serge"), "")
+	rel = body["relations"].(map[string]any)
+	if code != http.StatusOK || rel["can_operate_system"] != true || rel["can_configure"] != false {
+		t.Fatalf("serge: %d %v", code, rel)
+	}
+
+	// Nothing at all, and still an answer.
+	code, body = h.do(t, "GET", path, h.token(t, "gentian", "nobody"), "")
+	if code != http.StatusOK {
+		t.Fatalf("nobody: %d %v", code, body)
+	}
+	for verb, held := range body["relations"].(map[string]any) {
+		if held != false {
+			t.Fatalf("nobody holds %s", verb)
+		}
+	}
+
+	if code, _ := h.do(t, "GET", path, "", ""); code != http.StatusUnauthorized {
+		t.Fatalf("no token: %d, want 401", code)
+	}
+	if code, _ := h.do(t, "GET", "/v1/clusters/elsewhere/me", h.token(t, "gentian", "alice"), ""); code != http.StatusNotFound {
+		t.Fatalf("another cluster: %d, want 404", code)
+	}
+}
+
 // The cluster's settings are read by whoever may audit the cluster and
 // changed by whoever may configure it, which is what model v1 defines
 // can_configure as: the Cluster claim, plans, ceilings and network.

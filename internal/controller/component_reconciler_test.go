@@ -156,7 +156,7 @@ func TestAComponentRouteCarriesItsQuestion(t *testing.T) {
 		SubDomain: "console", Paths: []string{"/api", "/healthz"}, ForwardToken: true,
 		Backend: gentianov1alpha1.BackendRef{Service: "desktop-gentian-portal-api", Port: 8000},
 	}
-	route := buildExposureRoute(comp, "desktop-api", "console.k.example", zone, e, exposureAuthz(platformTenantFixture(), e.ForwardToken))
+	route := buildExposureRoute(comp, "desktop-api", "console.k.example", zone, e, exposureAuthz(platformTenantFixture(), e.ForwardToken), "k.example")
 	if route.Labels[edgeAuthzRouteLabel] != "true" || route.Annotations[edgeAuthzRelationAnnotation] != "can_enter" ||
 		route.Annotations[edgeAuthzObjectAnnotation] != "tenant:platform" || route.Annotations[edgeAuthzForwardAnnotation] != "true" {
 		t.Fatalf("route question = %v %v", route.Labels, route.Annotations)
@@ -174,7 +174,16 @@ func TestAComponentRouteCarriesItsQuestion(t *testing.T) {
 	web := buildExposureRoute(comp, "desktop-web", "console.k.example", zone,
 		&gentianov1alpha1.ExposureSpec{Name: "web", Surface: gentianov1alpha1.SurfaceGateway, AuthMode: gentianov1alpha1.AuthModeOIDC, SubDomain: "console",
 			Backend: gentianov1alpha1.BackendRef{Service: "desktop-gentian-portal-web", Port: 8080}},
-		exposureAuthz(platformTenantFixture(), false))
+		exposureAuthz(platformTenantFixture(), false), "k.example")
+
+	// Every rule admits embedding by the kernel domain and nothing else: the
+	// desktop opens components in frames, and nobody else may.
+	for _, rule := range route.Spec.Rules {
+		if len(rule.Filters) != 1 || rule.Filters[0].ResponseHeaderModifier == nil ||
+			rule.Filters[0].ResponseHeaderModifier.Set[0].Value != "frame-ancestors 'self' https://*.k.example" {
+			t.Fatalf("rule %v carries no frame policy", rule.Matches)
+		}
+	}
 
 	// And the table reads it back, from any namespace.
 	scheme := runtime.NewScheme()

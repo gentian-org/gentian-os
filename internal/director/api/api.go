@@ -159,6 +159,31 @@ type call struct {
 // object names what a route's relation is checked against.
 type object func(r *http.Request) (string, error)
 
+// identified registers a route that needs a caller and no relation: the
+// caller asking about themselves. Everything else this server serves is
+// guarded, and the difference is deliberate, so it is spelled out here rather
+// than done by passing an empty relation to guarded.
+func (s *Server) identified(pattern string, h func(http.ResponseWriter, *http.Request, call)) {
+	s.mux.HandleFunc(pattern, func(w http.ResponseWriter, r *http.Request) {
+		ctx := r.Context()
+		ident, err := s.cfg.Authn.FromRequest(r)
+		if err != nil {
+			s.cfg.Log.WarnContext(ctx, "authentication failed", "request_id", reqID(ctx), "reason", err.Error(), "route", pattern)
+			w.Header().Set("WWW-Authenticate", `Bearer realm="gentian-director"`)
+			s.fail(w, r, http.StatusUnauthorized, "unauthenticated")
+			return
+		}
+		user, err := authz.User(ident.Subject)
+		if err != nil {
+			s.fail(w, r, http.StatusUnauthorized, "unauthenticated")
+			return
+		}
+		h(w, r, call{id: ident, user: user, meta: gitops.Meta{
+			Author: gitops.Person{Name: ident.Name, Email: ident.Email}, Subject: user[len("user:"):], RequestID: reqID(ctx),
+		}})
+	})
+}
+
 // clusterObject accepts only this director's own cluster. Another id is not
 // forbidden, it does not exist here.
 func (s *Server) clusterObject(r *http.Request) (string, error) {
@@ -277,6 +302,12 @@ func (s *Server) routes() {
 		s.guarded("GET /v1/clusters/{c}/tenants", "can_audit", s.clusterObject, s.listTenants)
 		s.guarded("POST /v1/clusters/{c}/tenants", "can_configure", s.clusterObject, s.createTenant)
 		s.guarded("DELETE /v1/clusters/{c}/tenants/{t}", "can_configure", s.clusterObject, s.retireTenant)
+		// Who the caller is at cluster scope: which of the cluster's verbs
+		// they hold. Identified, not guarded: a person with no cluster
+		// relation at all is answered with every verb false, because "you
+		// hold nothing here" is the ordinary answer for almost everyone who
+		// signs in, and a console has to render that rather than an error.
+		s.identified("GET /v1/clusters/{c}/me", s.clusterMe)
 	}
 	if s.cfg.Store != nil {
 		s.mux.HandleFunc("POST /v1/tenants/{t}/entitlements", s.entitle)
@@ -285,6 +316,37 @@ func (s *Server) routes() {
 	s.guarded("POST /v1/tenants/{t}/apps/{p}", "can_install_app", tenantObject, s.install)
 	s.guarded("DELETE /v1/tenants/{t}/apps/{p}", "can_install_app", tenantObject, s.uninstall)
 	s.guarded("PUT /v1/tenants/{t}/apps/{p}/addons", "can_install_app", tenantObject, s.setAddons)
+}
+
+// clusterRelations are the cluster verbs a console asks about the caller: the
+// ones that decide which screens exist for them. They are the permissions of
+// type cluster in the model, and the vocabulary check keeps this list honest.
+var clusterRelations = []string{
+	"can_configure", "can_deploy_tenant", "can_operate_system", "can_install_shared",
+	"can_grant_shared", "can_approve", "can_set_admission", "can_edit_raw", "can_audit",
+}
+
+// clusterMe answers which cluster verbs the caller holds.
+func (s *Server) clusterMe(w http.ResponseWriter, r *http.Request, c call) {
+	if r.PathValue("c") != s.cfg.Cluster {
+		s.fail(w, r, http.StatusNotFound, "unknown cluster")
+		return
+	}
+	target := authz.Cluster(s.cfg.Cluster)
+	relations := make(map[string]bool, len(clusterRelations))
+	for _, rel := range clusterRelations {
+		ok, err := s.cfg.Authz.Check(r.Context(), reqID(r.Context()), c.user, rel, target)
+		if err != nil {
+			s.fail(w, r, http.StatusServiceUnavailable, "authorization unavailable")
+			return
+		}
+		relations[rel] = ok
+	}
+	s.json(w, http.StatusOK, map[string]any{
+		"cluster":   s.cfg.Cluster,
+		"subject":   c.meta.Subject,
+		"relations": relations,
+	})
 }
 
 // tenantRelations are the tenant verbs the desktop asks about the caller.
