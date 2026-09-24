@@ -54,8 +54,13 @@ spec:
             # jar and the values that configure it come from different commits.
             - name: eventListener.image
               value: 'ghcr.io/gentian-org/keycloak-event-listener:gentian.os.revision.placeholder'
+            # The OPERATOR's endpoint, not the director's. Who is in which
+            # group is cluster state, so the thing that turns declared state
+            # into cluster state projects it; the director reads the graph to
+            # decide a call and writes git, and its token can no longer write
+            # a tuple at all. The path is unchanged, so only the host moved.
             - name: eventListener.directorURL
-              value: 'http://gentian-os-director.ns.control.placeholder.svc.cluster.local:8080/v1/events/keycloak'
+              value: 'http://gentian-os-membership.ns.control.placeholder.svc.cluster.local:8090/v1/events/keycloak'
           valueFiles:
             - values.yaml
             - values-{{.env}}.yaml

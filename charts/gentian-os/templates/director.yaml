@@ -176,14 +176,15 @@ spec:
                   key: {{ .Values.director.storeKeysSecretRef.key }}
                   optional: true
             {{- end }}
-            {{- if .Values.director.listenerKeysSecretRef.name }}
-            - name: DIRECTOR_LISTENER_KEYS
-              valueFrom:
-                secretKeyRef:
-                  name: {{ .Values.director.listenerKeysSecretRef.name }}
-                  key: {{ .Values.director.listenerKeysSecretRef.key }}
-                  optional: true
-            {{- end }}
+            {{- /* No listener key here any more.
+
+                 Keycloak states a user's groups to the operator, which
+                 projects them into the authorization graph along with the
+                 rest of its structure. This service reads that graph to
+                 decide whether a caller may make a call, and writes git. It
+                 writes no tuples, and with the key gone it could not verify a
+                 statement even if something posted one.
+              */}}
             - name: HOME
               value: /tmp
             # git refuses to work in a repository owned by someone else, and

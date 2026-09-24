@@ -69,10 +69,6 @@ type Config struct {
 	// a deployment turns it off explicitly, which a cluster without a store
 	// has to do — and which is then visible as a setting, not as an absence.
 	EnforceEntitlements bool
-	// Events receives Keycloak's membership events. It authenticates its one
-	// caller by signature, not by token: the listener is not a user and holds
-	// no identity a token could carry. Nil leaves the endpoint unregistered.
-	Events http.Handler
 	// Cluster is the id of the one cluster this director serves: the object
 	// cluster verbs are checked against, and the only {c} the routes accept.
 	Cluster string
@@ -222,9 +218,10 @@ func (s *Server) routes() {
 		w.WriteHeader(http.StatusNoContent)
 	})
 
-	if s.cfg.Events != nil {
-		s.mux.Handle("POST /v1/events/keycloak", s.cfg.Events)
-	}
+	// No membership endpoint. Keycloak states a user's groups to the
+	// operator, which projects them into the graph along with the rest of its
+	// structure. This service reads the graph to decide a call and writes git;
+	// it writes no tuples, and its token cannot.
 
 	// Reads are authorised by can_view, never by the write relation: whoever
 	// may see a tenant may see what it has installed, whether or not they may

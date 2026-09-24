@@ -30,8 +30,9 @@ eventListener:
   # Overridden by the ApplicationSet with the ref the manifests come from.
   # The default only matters for a `helm template` run by hand.
   image: ghcr.io/gentian-org/keycloak-event-listener:develop
-  # The director's endpoint on the cluster network. Supplied by the
-  # ApplicationSet, which knows where the control namespace is.
+  # The operator's membership endpoint on the cluster network. Supplied by
+  # the ApplicationSet, which knows where the control namespace is. Still
+  # called directorURL because that is the name the listener jar reads.
   directorURL: ""
   # The id the director lists this key under.
   keyID: gentian-listener

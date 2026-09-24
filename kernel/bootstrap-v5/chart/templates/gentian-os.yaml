@@ -90,17 +90,24 @@ spec:
           enabled: true
           chart:
             version: {{ .Values.desktop.chartVersion | default (printf "0.1.0-%s" (.Values.desktop.chartBranch | default "develop")) | quote }}
+        # The public half of the key Keycloak's event listener signs with.
+        # Without it nothing accepts a membership statement, so OpenFGA never
+        # learns who is in which group and every permission that follows from
+        # membership is refused to everyone. The portal login step derives the
+        # pair and writes both halves.
+        #
+        # It belongs to the OPERATOR now. Membership is cluster state, so the
+        # thing that turns declared state into cluster state projects it, and
+        # the director is left reading the graph and writing git with a token
+        # that cannot write a tuple at all. The Secret's name is unchanged, so
+        # an existing cluster needs nothing reissued.
+        membershipListener:
+          keysSecretRef:
+            name: director-listener-keys
+            key: keys
         director:
           enabled: true
           entitlements: "off"
-          # The public half of the key Keycloak's event listener signs with.
-          # Without it the director accepts no membership statement, so
-          # OpenFGA never learns who is in which group and every permission
-          # that follows from membership is refused to everyone. The portal
-          # login step derives the pair and writes both halves.
-          listenerKeysSecretRef:
-            name: director-listener-keys
-            key: keys
         # The vault's namespace, for the Role that lets the operator exec into
         # its pod during bootstrap.
         openbaoNamespace: {{ include "ns" (list . "secrets") }}

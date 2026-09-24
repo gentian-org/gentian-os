@@ -181,9 +181,6 @@ director:
     name: ""
     key: keys
   # The Keycloak event listener's public keys, in the same form.
-  listenerKeysSecretRef:
-    name: ""
-    key: keys
   resources:
     requests:
       cpu: 50m
@@ -628,6 +625,26 @@ usage:
           cpu: "256"
           memory: 512Gi
           storage: 800Gi
+
+# Who is in which group, as Keycloak states it.
+#
+# A listener inside Keycloak posts a user's complete group set, signed, every
+# time it changes, and the operator projects that into the authorization graph
+# beside the structure it already projects. This used to be the director's
+# endpoint, which is why the director's OpenFGA token had to be able to write;
+# it is here so that token can be read-only.
+#
+# Off until keysSecretRef names something. A cluster with no key accepts no
+# membership, so every permission that follows from a group is refused to
+# everyone -- which the operator says at start rather than leaving to be
+# discovered as a login that grants nothing.
+membershipListener:
+  port: 8090
+  platformRealm: kernel
+  platformTenant: platform
+  keysSecretRef:
+    name: ""
+    key: keys
 
 appLifecycle:
   port: 8082

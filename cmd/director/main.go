@@ -36,7 +36,7 @@ import (
 	"github.com/gentian-org/gentian-os/internal/director/authz"
 	"github.com/gentian-org/gentian-os/internal/director/entitlement"
 	"github.com/gentian-org/gentian-os/internal/director/gitops"
-	"github.com/gentian-org/gentian-os/internal/director/membership"
+	"github.com/gentian-org/gentian-os/internal/membership"
 )
 
 func main() {
@@ -147,28 +147,15 @@ func run(log *slog.Logger) error {
 	// projected by the thing that turns git into cluster state, and reconciled
 	// continuously rather than once at whatever moment this process happened
 	// to start.
-	// Membership reaches OpenFGA only through this endpoint. Without a listener
-	// key nothing can be believed, so the endpoint does not exist — and no
-	// membership changes until it does, which is worth saying at start.
-	var events http.Handler
-	if raw := os.Getenv("DIRECTOR_LISTENER_KEYS"); raw == "" {
-		log.Warn("no Keycloak listener key configured: membership events are not accepted", "setting", "DIRECTOR_LISTENER_KEYS")
-	} else {
-		keys, err := membership.ParseKeys(raw)
-		if err != nil {
-			return err
-		}
-		proj, err := membership.NewProjector(checker, membership.Scope{
-			PlatformRealm:  envOr("DIRECTOR_PLATFORM_REALM", "kernel"),
-			PlatformTenant: envOr("DIRECTOR_PLATFORM_TENANT", "platform"),
-		}, log)
-		if err != nil {
-			return err
-		}
-		if events, err = membership.NewReceiver(keys, proj, log); err != nil {
-			return err
-		}
-	}
+	// Membership is not accepted here any more.
+	//
+	// Keycloak's listener now states a user's groups to the OPERATOR
+	// (internal/controller/membership_listener.go), which projects them like
+	// it projects the rest of the graph's structure. It was the last thing
+	// this process wrote to the authorization graph, and while it lived here
+	// the director's token had to be able to write -- so the rule that the
+	// director reads the graph and writes git was enforced by care rather
+	// than by the credential. Now it is enforced by the credential.
 	// The store is believed only through keys pinned here, from the Cluster
 	// claim. No key, no store: statements are refused because the endpoint does
 	// not exist, not because a lookup failed.
@@ -196,7 +183,7 @@ func run(log *slog.Logger) error {
 	// access to the authorization store for one event it is not otherwise
 	// part of. Deleting it is the cheaper answer.
 	handler, err := api.New(api.Config{Authn: verifier, Authz: checker, Repo: repo, Log: log,
-		EnforceEntitlements: enforce, Events: events, Store: store, Cluster: cluster})
+		EnforceEntitlements: enforce, Store: store, Cluster: cluster})
 	if err != nil {
 		return err
 	}

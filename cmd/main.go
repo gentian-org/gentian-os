@@ -436,6 +436,22 @@ func main() {
 			setupLog.Error(err, "unable to create controller", "controller", "AuthzProjection")
 			os.Exit(1)
 		}
+		// Membership, from the same graph client and for the same reason.
+		// Keycloak states a user's whole group set, signed; this applies it.
+		// It was the director's last write to the graph, which is what kept
+		// the director's token a writing token.
+		listener, err := controller.NewMembershipListener(graph, slog.New(slog.NewJSONHandler(os.Stderr, nil)))
+		if err != nil {
+			setupLog.Error(err, "unable to create the membership listener")
+			os.Exit(1)
+		}
+		if listener != nil {
+			if err := mgr.Add(listener); err != nil {
+				setupLog.Error(err, "unable to add the membership listener")
+				os.Exit(1)
+			}
+			setupLog.Info("membership listener enabled", "addr", listener.Addr)
+		}
 	}
 
 	if enableWebhook {

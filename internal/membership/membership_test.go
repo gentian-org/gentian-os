@@ -37,7 +37,7 @@ import (
 	"time"
 
 	"github.com/gentian-org/gentian-os/internal/director/authz"
-	"github.com/gentian-org/gentian-os/internal/director/membership"
+	"github.com/gentian-org/gentian-os/internal/membership"
 )
 
 var quiet = slog.New(slog.NewTextHandler(io.Discard, nil))

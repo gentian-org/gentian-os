@@ -222,6 +222,26 @@ spec:
             - name: OPENFGA_MODEL_ID
               value: {{ . | quote }}
             {{- end }}
+            {{- if .Values.membershipListener.keysSecretRef.name }}
+            # The public halves of the keys Keycloak's event listener signs
+            # with. A statement about who is in which group is believed only
+            # when it carries one of these signatures, so without this the
+            # operator accepts no membership at all and every permission that
+            # follows from a group is refused to everyone. The portal login
+            # step derives the pair and writes both halves.
+            - name: GENTIAN_LISTENER_KEYS
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.membershipListener.keysSecretRef.name | quote }}
+                  key: {{ .Values.membershipListener.keysSecretRef.key | default "keys" | quote }}
+                  optional: true
+            - name: GENTIAN_MEMBERSHIP_ADDR
+              value: ":{{ .Values.membershipListener.port }}"
+            - name: GENTIAN_PLATFORM_REALM
+              value: {{ .Values.membershipListener.platformRealm | quote }}
+            - name: GENTIAN_PLATFORM_TENANT
+              value: {{ .Values.membershipListener.platformTenant | quote }}
+            {{- end }}
             # Which EdgeIngress this cluster runs, by the name
             # kernel/platforms.yaml uses. Empty follows networkMode, so an
             # existing cluster needs no new value to keep behaving as it does.
@@ -446,6 +466,11 @@ spec:
             - name: lifecycle
               containerPort: {{ .Values.appLifecycle.port }}
               protocol: TCP
+            {{- if .Values.membershipListener.keysSecretRef.name }}
+            - name: membership
+              containerPort: {{ .Values.membershipListener.port }}
+              protocol: TCP
+            {{- end }}
             {{- if .Values.credentialManager.enabled }}
             - name: credentials
               containerPort: {{ .Values.credentialManager.port }}

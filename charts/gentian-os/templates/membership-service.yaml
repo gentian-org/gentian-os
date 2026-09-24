@@ -1,0 +1,23 @@
+{{- if .Values.membershipListener.keysSecretRef.name }}
+# Where Keycloak's event listener posts what it has just changed.
+#
+# A Service of its own rather than a path on the metrics one: this port takes
+# signed statements from inside the cluster and nothing else, and keeping it
+# separate is what lets a NetworkPolicy say "only Keycloak may reach this"
+# without also describing scraping.
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "gentian-os.fullname" . }}-membership
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "gentian-os.labels" . | nindent 4 }}
+spec:
+  selector:
+    {{- include "gentian-os.selectorLabels" . | nindent 4 }}
+  ports:
+    - name: membership
+      port: {{ .Values.membershipListener.port }}
+      targetPort: membership
+      protocol: TCP
+{{- end }}

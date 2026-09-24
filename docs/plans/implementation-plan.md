@@ -154,7 +154,7 @@ Provisioning. Declare `Create` as well as `Observe` from the start.
 **Done when** a second tenant signs in at `console.<t>.<kernel>` against its
 own realm, with no installer step having run for it.
 
-### S7A.2 ◐ The director stops writing authorization state — structure done, membership next
+### S7A.2 ◐ The director stops writing authorization state — only entitlements left
 
 The director's job is to read OpenFGA to decide whether a caller may make a
 call, and to write git. Argo CD syncs git and the operator turns it into
@@ -178,13 +178,30 @@ Then take the write capability off the director's OpenFGA token, so the rule
 is enforced by the credential and not by care.
 
 **Done so far**: the structure (the OpenFGA store object and model, cluster
-roles, tenants) moved to the operator's `AuthzProjectionReconciler`, and
+roles, tenants) moved to the operator's `AuthzProjectionReconciler`,
+**membership moved** to the operator's `MembershipListener`, and
 session revocation was **deleted** rather than moved. It existed to make a
 logout immediate while the realm's access token lived twelve hours; the realm
 now issues five-minute tokens against a twelve-hour session, so the edge's
 refresh fails within one token lifetime of the session ending and the tuple,
-the write, the endpoint and the background sweep are all gone. What is left is
-membership, and the entitlement tuples the store's statements produce.
+the write, the endpoint and the background sweep are all gone.
+
+Membership followed. Keycloak's listener now posts to the operator rather than
+the director: same path, same signed statements, same projection, a different
+host. The director has no membership endpoint, no listener key mounted, and no
+code that writes a tuple except the entitlement applier. What is left is the
+entitlement tuples the App Store's statements produce, which are gated on
+`DIRECTOR_STORE_KEYS` and off on this cluster.
+
+**One thing cannot be done the way this plan assumed.** "Take the write
+capability off the director's OpenFGA token" is not available: OpenFGA
+authenticates with a preshared key and a key carries no scope, so every key
+that may read may also write. There is no read-only token to issue. The rule
+is therefore enforced by the director having no code that writes and no reason
+to, which is weaker than a credential that cannot. If that is not good enough,
+the options are an authorizing proxy in front of OpenFGA or OpenFGA's OIDC
+auth mode with something that maps a subject to permitted operations, and
+neither is small. Worth a decision rather than a silent assumption.
 
 **Ask first**: how much of the graph can be static rather than written at all.
 See "How much has to be written" below.

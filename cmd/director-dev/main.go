@@ -58,7 +58,7 @@ import (
 	"github.com/gentian-org/gentian-os/internal/director/authz"
 	"github.com/gentian-org/gentian-os/internal/director/entitlement"
 	"github.com/gentian-org/gentian-os/internal/director/gitops"
-	"github.com/gentian-org/gentian-os/internal/director/membership"
+	"github.com/gentian-org/gentian-os/internal/membership"
 )
 
 const (
