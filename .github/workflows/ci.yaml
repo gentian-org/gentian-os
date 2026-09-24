@@ -146,7 +146,7 @@ jobs:
         # lint-marker-ascii: a kubebuilder marker that carries a typographic
         # quote renders a CRD the API server refuses, and nothing else catches
         # it — not envtest, whose newer API server is more forgiving.
-        run: make lint-shell lint-yaml lint-portability lint-image-digests lint-marker-ascii
+        run: make lint-shell lint-yaml lint-job-scripts lint-portability lint-image-digests lint-marker-ascii
 
       # The recovery kit is what rebuilds a cluster once its OpenBao is gone,
       # and only its export was ever exercised. age is installed rather than

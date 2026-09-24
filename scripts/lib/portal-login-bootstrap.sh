@@ -1371,11 +1371,15 @@ spec:
                   # no write to the authorization store.
                   # Every host in the zone, because signing out has to work
                   # from whichever one the person is looking at. The sign-out
-                  # that skips Keycloak's "did you mean it" page hands it a
-                  # post_logout_redirect_uri pointing back at that host's own
-                  # /oauth2/logout, and Keycloak refuses one it has not been
-                  # told about -- which puts the person on an error page
-                  # instead of back on the portal.
+                  # that skips the Keycloak confirmation page hands it a
+                  # post_logout_redirect_uri pointing back at the same host,
+                  # at its own /oauth2/logout, and Keycloak refuses a target
+                  # it has not been told about -- which puts the person on an
+                  # error page instead of back on the portal.
+                  #
+                  # NO APOSTROPHES IN THIS BLOCK. It sits inside a
+                  # single-quoted jq program, so one closes the quote and the
+                  # generated script dies at "syntax error: unexpected word".
                   "post.logout.redirect.uris": (["console", "argocd", "headlamp", "id"] | map("https://" + . + "." + \$domain + "/*") | join("##"))
                 }
               }')
