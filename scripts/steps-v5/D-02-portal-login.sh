@@ -11,12 +11,12 @@
 source "${SCRIPT_DIR}/scripts/steps-v5/B-01-bootstrap-apps.sh"
 
 # The bootstrap that turns a running Keycloak into one this cluster can be
-# signed in to: the kernel realm, the kernel zone's edge client, the
-# confidential clients Argo CD and Headlamp authenticate with, the
-# gentian:platform:admin group, and the administrator account itself --
-# whose password is derived from the master password, like every other kernel
-# credential. The desktop is not this step's to install: it is a component of
-# the platform tenant, and this step waits for it.
+# signed in to: the kernel realm, the confidential clients Argo CD and Headlamp
+# authenticate with, the gentian:platform:admin group, and the administrator
+# account itself -- whose password is derived from the master password, like
+# every other kernel credential. Neither the desktop nor the kernel zone's edge
+# client is this step's to create: both belong to the platform tenant, which
+# adopts this realm (AD-10), and this step waits for them.
 #
 # The work is portal-login-bootstrap.sh. What this step adds is where each
 # piece lives: that library used to name one namespace for Keycloak, OpenFGA,
@@ -73,10 +73,11 @@ check() {
     # says so in status.phase; the conditions are the per-function verdicts
     # it derives that from, and none of them is named Ready.
     [[ "$(kubectl get tenant platform -o jsonpath='{.status.phase}' 2>/dev/null)" == "Ready" ]] || return "${CHECK_MISSING}"
-    # The kernel zone at the edge: the zone client's secret, which this step
-    # writes, and the session policy the operator puts on the kernel UIs once
-    # it exists. Without the first there is no session; without the second the
-    # kernel UIs have no route (never an open one).
+    # The kernel zone at the edge: the zone client's secret, which the platform
+    # tenant's composition writes and this step waits for, and the session
+    # policy the operator puts on the kernel UIs once it exists. Without the
+    # first there is no session; without the second the kernel UIs have no
+    # route (never an open one).
     kubectl get secret edge-kernel-oidc -n "${EDGE_NAMESPACE}" >/dev/null 2>&1 || return "${CHECK_MISSING}"
     [[ "$(kubectl get securitypolicy sp-kernel-argocd -n "${EDGE_NAMESPACE}" -o jsonpath='{.status.ancestors[0].conditions[?(@.type=="Accepted")].status}' 2>/dev/null)" == "True" ]] || return "${CHECK_MISSING}"
     # The platform's desktop: a component of the platform tenant, the console
@@ -157,7 +158,7 @@ apply() {
         if (( SECONDS > deadline )); then
             error "SecurityPolicy sp-kernel-argocd is not Accepted after 10 minutes."
             kubectl get securitypolicy sp-kernel-argocd -n "${EDGE_NAMESPACE}" -o jsonpath='{range .status.ancestors[0].conditions[*]}{.type}={.status} {.reason}: {.message}{"\n"}{end}' 2>/dev/null || \
-                error "  The policy does not exist: is the operator running, and does ${EDGE_NAMESPACE}/edge-kernel-oidc exist?"
+                error "  The policy does not exist: is the operator running, and did Tenant/platform compose ${EDGE_NAMESPACE}/edge-kernel-oidc?"
             return 1
         fi
         sleep 10

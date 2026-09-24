@@ -260,6 +260,327 @@ spec:
                 manifest:
                   {{- $obj | toYaml | nindent 18 }}
             {{- end }}
+
+            {{- /* ── the zone's edge client and its secret ──────────────────
+                 A zone is one sign-in domain: a hostname, the realm behind it,
+                 one confidential client the edge holds the session with, that
+                 session's cookie names and the Gateway listener that serves it
+                 (networking.md §4). Everything that consumes a zone is already
+                 general, and until now nothing produced one except a shell Job
+                 in the installer, which made the kernel's and no other. This
+                 composes it per tenant, so a second tenant signs in at
+                 console.<t>.<kernel> with no installer step having run for it.
+
+                 Rendered for a tenant that adopts the kernel realm as well as
+                 for one with its own, unlike the realm state above. The kernel
+                 zone belongs to the platform tenant rather than to the identity
+                 bootstrap (AD-10), and a realm backs exactly one zone, so the
+                 tenant that adopts a realm is the one that owns its zone. Two
+                 tenants naming the same realm would compose the same client
+                 twice and the two copies would fight; AD-10 has only the one.
+              */}}
+            {{- $zone       := ternary "kernel" $tenant $adoptsKernelRealm }}
+            {{- $zoneSecret := printf "edge-%s-oidc" $zone }}
+            {{- /* Where the edge runs, which is where the Secret and its
+                 generator go. Envoy Gateway reads an OIDC client secret only
+                 from the SecurityPolicy's own namespace, and the policies are
+                 the edge's, so this is not a choice. Read from the cluster
+                 config rather than written here: the operator answers the same
+                 question from GENTIAN_NS_EDGE and the two have to agree, or the
+                 secret is written where nothing reads it. The default is the v4
+                 layout's answer, which is what a cluster whose ConfigMap
+                 predates the key has. */}}
+            {{- $edgeNs     := default "platform-kernel" (dig "network.edgeNamespace" "" $ccData) }}
+            {{- /* The zone's domain, which is EffectiveDomain in the operator.
+                 A vanity domain wins, then single tenancy puts the one tenant
+                 on the kernel domain itself, and otherwise the tenant is a
+                 subdomain of it. $domain above is the multi-tenant answer only,
+                 and every host in a redirect URI has to be the one the Gateway
+                 actually serves, so this is derived again rather than reused. */}}
+            {{- $tenancyMode := default "multi" (dig "tenancyMode" "" $ccData) }}
+            {{- $zoneDomain  := $domain }}
+            {{- if $adoptsKernelRealm }}
+            {{- $zoneDomain = $kd }}
+            {{- else if and (eq $tenancyMode "single") (not (default "" $spec.domain)) }}
+            {{- $zoneDomain = $kd }}
+            {{- end }}
+            {{- /* The hosts the zone serves, which is what the redirect URIs
+                 have to cover. The kernel zone's four were read off the Job
+                 this replaces rather than reconstructed from the routes. A
+                 tenant zone serves console.<domain> and nothing else yet: the
+                 desktop is the only ComponentProfile that declares a gateway
+                 exposure, and an app is composed without a host of its own.
+                 When an app gets one, it belongs in this list, because
+                 Keycloak refuses a redirect URI it was not told about and the
+                 person lands on an error page rather than on the app. */}}
+            {{- $zoneHosts  := ternary (list "console" "argocd" "headlamp" "id") (list "console") $adoptsKernelRealm }}
+
+            {{- /* The secret exists before the client does, and is generated
+                 here rather than minted by Keycloak. A client created with no
+                 clientSecretSecretRef gets a secret only Keycloak knows, and
+                 the edge, which reads the Secret below, would then authenticate
+                 with a value the realm never had.
+
+                 External Secrets generates it. A Password generator is
+                 configuration and holds nothing, so one per tenant costs a tiny
+                 object and keeps the zone self-contained; the value it produces
+                 lives only in the Secret the ExternalSecret owns.
+
+                 No symbols. The value travels as a form parameter in the code
+                 exchange and as a Kubernetes Secret, and 48 alphanumeric
+                 characters are well beyond what a client secret needs to be. */}}
+            ---
+            apiVersion: kubernetes.crossplane.io/v1alpha2
+            kind: Object
+            metadata:
+              name: {{ $tenant }}-edge-zone-password
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: edge-zone-password
+            spec:
+              forProvider:
+                manifest:
+                  apiVersion: generators.external-secrets.io/v1alpha1
+                  kind: Password
+                  metadata:
+                    name: {{ $zoneSecret }}
+                    namespace: {{ $edgeNs }}
+                    labels:
+                      app.kubernetes.io/managed-by: crossplane
+                      gentianos.io/edge-zone: {{ $zone }}
+                  spec:
+                    length: 48
+                    digits: 8
+                    symbols: 0
+                    noUpper: false
+                    allowRepeat: true
+                    secretKeys:
+                      - client-secret
+              providerConfigRef:
+                name: kubernetes
+
+            {{- /* The Secret both sides read, in the edge namespace, under the
+                 key Envoy Gateway's SecurityPolicy names. Envoy Gateway 1.2
+                 reads an OIDC client secret only from the policy's own
+                 namespace, ReferenceGrant or not, which is why this one is
+                 written where the edge is and copied beside a policy that
+                 sits elsewhere (ensureZoneSecret in the operator).
+
+                 Generated once and never again. A generator answers with a new
+                 value every time it is asked, so an ExternalSecret that
+                 refreshes rotates the client secret on its own schedule --
+                 which would be survivable, since the Client below is pushed
+                 whatever this holds, but it would break every session in flight
+                 at an hour nobody chose. refreshPolicy says it; refreshInterval
+                 zero says the same thing to an External Secrets that predates
+                 the policy field.
+
+                 creationPolicy Owner, so the Secret is deleted with the
+                 ExternalSecret and cannot be left behind holding a credential
+                 for a zone that no longer exists. It also means External
+                 Secrets refuses a Secret of this name that it does not own, so
+                 a cluster whose zone secret was written by the installer has to
+                 have that Secret removed once before this can take over. */}}
+            ---
+            apiVersion: kubernetes.crossplane.io/v1alpha2
+            kind: Object
+            metadata:
+              name: {{ $tenant }}-edge-zone-client-secret
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: edge-zone-client-secret
+            spec:
+              {{- /* Ready when the ExternalSecret is, not when it was applied,
+                   so the sequencer rule below holds the Client back until the
+                   Secret it reads actually exists. */}}
+              readiness:
+                policy: DeriveFromObject
+              forProvider:
+                manifest:
+                  apiVersion: external-secrets.io/v1
+                  kind: ExternalSecret
+                  metadata:
+                    name: {{ $zoneSecret }}
+                    namespace: {{ $edgeNs }}
+                    labels:
+                      app.kubernetes.io/managed-by: crossplane
+                      gentianos.io/edge-zone: {{ $zone }}
+                  spec:
+                    refreshPolicy: CreatedOnce
+                    refreshInterval: "0"
+                    target:
+                      name: {{ $zoneSecret }}
+                      creationPolicy: Owner
+                      template:
+                        metadata:
+                          labels:
+                            app.kubernetes.io/managed-by: gentian-os
+                            gentianos.io/edge-zone: {{ $zone }}
+                    dataFrom:
+                      - sourceRef:
+                          generatorRef:
+                            apiVersion: generators.external-secrets.io/v1alpha1
+                            kind: Password
+                            name: {{ $zoneSecret }}
+              providerConfigRef:
+                name: kubernetes
+
+            {{- /* The client the edge runs the code flow with.
+
+                 Confidential and standard flow only: the edge is the only
+                 session authority (AD-13), so nothing else ever presents this
+                 client, and no other grant type has a caller.
+
+                 fullScopeAllowed false and no groups scope, which is what the
+                 ClientDefaultScopes below spells out. The token this client
+                 issues is a session, not an authorization: the shim asks
+                 OpenFGA on every request and reads nothing out of the token but
+                 who the person is. Roles and groups riding along would be a
+                 second answer to a question that already has one, and a stale
+                 one, since a token outlives the membership it was minted from.
+
+                 A redirect URI per host in the zone, and a post-logout URI per
+                 host as well. The second is not decoration: signing out hands
+                 Keycloak a post_logout_redirect_uri pointing back at the host
+                 the person is looking at, and Keycloak refuses one it has not
+                 been told about, which puts them on an error page instead of
+                 back on the portal.
+
+                 No back-channel logout URL. It used to point at the director,
+                 which recorded the ended session so the edge would refuse it at
+                 once. Nothing records it now: the realm issues five-minute
+                 access tokens against a twelve-hour session, so the edge's
+                 refresh fails within one token lifetime of the session ending,
+                 which is the same outcome one token later and needs no write to
+                 the authorization store.
+
+                 Everything except LateInitialize, for the reason the portal BFF
+                 client demonstrated further down: late-init copies fields the
+                 provider observes but this template does not set out of the
+                 live object into spec.forProvider, and the declared intent then
+                 becomes whatever is already there. */}}
+            ---
+            apiVersion: openidclient.keycloak.crossplane.io/v1alpha1
+            kind: Client
+            metadata:
+              name: {{ $tenant }}-edge-zone-client
+              annotations:
+                crossplane.io/external-name: gentian-edge-{{ $zone }}
+                gotemplating.fn.crossplane.io/composition-resource-name: keycloak-edge-zone-client
+            spec:
+              {{- /* Orphan, like every other client here. A zone client that
+                   vanished on a reconcile hiccup would take the whole sign-in
+                   domain with it, and a tenant that is torn down loses its
+                   realm and everything in it anyway. */}}
+              deletionPolicy: Orphan
+              managementPolicies: ["Observe", "Create", "Update", "Delete"]
+              forProvider:
+                clientId: gentian-edge-{{ $zone }}
+                name: Gentian edge ({{ $zone }} zone)
+                realmId: {{ $realm }}
+                accessType: CONFIDENTIAL
+                enabled: true
+                standardFlowEnabled: true
+                implicitFlowEnabled: false
+                directAccessGrantsEnabled: false
+                serviceAccountsEnabled: false
+                fullScopeAllowed: false
+                webOrigins: []
+                validRedirectUris:
+                  {{- range $host := $zoneHosts }}
+                  - https://{{ $host }}.{{ $zoneDomain }}/oauth2/callback
+                  {{- end }}
+                validPostLogoutRedirectUris:
+                  {{- range $host := $zoneHosts }}
+                  - https://{{ $host }}.{{ $zoneDomain }}/*
+                  {{- end }}
+                clientSecretSecretRef:
+                  name: {{ $zoneSecret }}
+                  namespace: {{ $edgeNs }}
+                  key: client-secret
+              providerConfigRef:
+                name: keycloak
+
+            {{- /* The director in the zone token's audience.
+
+                 The desktop's BFF relays to the director with the person's own
+                 token, and the director refuses a token minted for someone
+                 else. A Keycloak access token does not carry the requesting
+                 client in aud -- azp names it, and aud holds only what an
+                 audience mapper puts there -- so without this every relayed
+                 call is refused on the audience.
+
+                 All five config keys, not the three that express the intent,
+                 for the reason the openbao-audience mapper below gives: this
+                 map is replaced wholesale on reconcile and Keycloak adds the
+                 other two on create.
+
+                 No external-name, also for the reason given there: a protocol
+                 mapper is identified by its UUID, and seeding the annotation
+                 with the mapper's name hands the provider an id that will never
+                 match. */}}
+            ---
+            apiVersion: client.keycloak.crossplane.io/v1alpha1
+            kind: ProtocolMapper
+            metadata:
+              name: {{ $tenant }}-edge-zone-director-audience
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: keycloak-edge-zone-director-audience
+            spec:
+              deletionPolicy: Orphan
+              forProvider:
+                realmId: {{ $realm }}
+                clientIdRef:
+                  name: {{ $tenant }}-edge-zone-client
+                  policy:
+                    resolve: Always
+                name: director-audience
+                protocol: openid-connect
+                protocolMapper: oidc-audience-mapper
+                config:
+                  included.client.audience: gentian-director
+                  id.token.claim: "false"
+                  access.token.claim: "true"
+                  introspection.token.claim: "true"
+                  userinfo.token.claim: "false"
+              providerConfigRef:
+                name: keycloak
+
+            {{- /* Keycloak's six own defaults and deliberately not groups.
+
+                 This list is replaced wholesale on reconcile, so it has to name
+                 the six that were already there rather than only the absence
+                 that matters: declaring an empty list would strip acr, basic,
+                 email, profile, roles and web-origins from the client and every
+                 zone token would lose its profile and email claims.
+
+                 Stating it at all, rather than leaving Keycloak's defaults
+                 alone, is what makes "no groups scope" a fact this file
+                 maintains instead of one that held until somebody added the
+                 scope by hand. */}}
+            ---
+            apiVersion: openidclient.keycloak.crossplane.io/v1alpha1
+            kind: ClientDefaultScopes
+            metadata:
+              name: {{ $tenant }}-edge-zone-default-scopes
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: keycloak-edge-zone-default-scopes
+            spec:
+              deletionPolicy: Orphan
+              forProvider:
+                realmId: {{ $realm }}
+                clientIdRef:
+                  name: {{ $tenant }}-edge-zone-client
+                  policy:
+                    resolve: Always
+                defaultScopes:
+                  - acr
+                  - basic
+                  - email
+                  - profile
+                  - roles
+                  - web-origins
+              providerConfigRef:
+                name: keycloak
+
             {{- if not $adoptsKernelRealm }}
             {{- /* The clients the desktop signs in with, the portal's tenant
                  claim and the mailbox store's client are realm state: one set
@@ -1629,3 +1950,15 @@ spec:
           - sequence:
             - job-keycloak-(admin|broker|client|kernel|oidc)-.*
             - app-.*
+          # The zone's client secret before the client that is pushed it.
+          #
+          # A generator answers with a value the moment it is asked, but the
+          # ExternalSecret that asks has to reconcile before the Secret exists,
+          # and the Client refuses to create without the Secret its
+          # clientSecretSecretRef names. Without this the client's first few
+          # reconciles fail on a Secret that is seconds away, which is
+          # recoverable but reads as a broken zone to anyone watching.
+          - sequence:
+            - edge-zone-password
+            - edge-zone-client-secret
+            - keycloak-edge-zone-client

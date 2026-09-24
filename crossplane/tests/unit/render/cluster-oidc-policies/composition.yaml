@@ -933,6 +933,19 @@ spec:
                     # and a default parked there never materialises.
                     identity.kernelRealm: {{ dig "oidc" "realm" (dig "identity" "kernelRealm" "" $spec) $spec | quote }}
                     llm.enabled: {{ default false (dig "llm" "enabled" false $spec) | quote }}
+                    # Where the edge runs, which is the one kernel namespace a
+                    # Composition has to name. The Gateway, its SecurityPolicies
+                    # and the zone client secrets they read all live there, and
+                    # Envoy Gateway reads an OIDC client secret from no other
+                    # namespace, so the tenant Composition writes its zone's
+                    # secret into this one.
+                    #
+                    # Derived from the layout rather than asked for, for the
+                    # reason the trust anchor is: a second field could name a
+                    # namespace the layout does not have. The operator answers
+                    # the same question from GENTIAN_NS_EDGE, which the chart
+                    # sets from the same file this branch encodes.
+                    network.edgeNamespace: {{ ternary "kernel-edge" "platform-kernel" $v5 | quote }}
                     # Whether this cluster serves one tenant or many.
                     #
                     # Here for the same reason mail.serviceMode is: the operator read it

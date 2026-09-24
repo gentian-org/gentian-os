@@ -6,11 +6,96 @@ metadata:
 status:
   conditions:
   - lastTransitionTime: "2024-01-01T00:00:00Z"
-    message: 'Unready resources: job-keycloak-gentian-groups-platform, keycloak-group-gentian-tenant-platform-admins,
-      keycloak-group-gentian-tenant-platform-app-admins, and 2 more'
+    message: 'Unready resources: job-keycloak-gentian-groups-platform, keycloak-edge-zone-client,
+      keycloak-edge-zone-default-scopes, and 5 more'
     reason: Creating
     status: "False"
     type: Ready
+---
+apiVersion: kubernetes.crossplane.io/v1alpha2
+kind: Object
+metadata:
+  annotations:
+    crossplane.io/composition-resource-name: edge-zone-client-secret
+  labels:
+    crossplane.io/composite: platform
+  name: platform-edge-zone-client-secret
+  ownerReferences:
+  - apiVersion: gentianos.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XTenant
+    name: platform
+    uid: ""
+spec:
+  forProvider:
+    manifest:
+      apiVersion: external-secrets.io/v1
+      kind: ExternalSecret
+      metadata:
+        labels:
+          app.kubernetes.io/managed-by: crossplane
+          gentianos.io/edge-zone: kernel
+        name: edge-kernel-oidc
+        namespace: kernel-edge
+      spec:
+        dataFrom:
+        - sourceRef:
+            generatorRef:
+              apiVersion: generators.external-secrets.io/v1alpha1
+              kind: Password
+              name: edge-kernel-oidc
+        refreshInterval: "0"
+        refreshPolicy: CreatedOnce
+        target:
+          creationPolicy: Owner
+          name: edge-kernel-oidc
+          template:
+            metadata:
+              labels:
+                app.kubernetes.io/managed-by: gentian-os
+                gentianos.io/edge-zone: kernel
+  providerConfigRef:
+    name: kubernetes
+  readiness:
+    policy: DeriveFromObject
+---
+apiVersion: kubernetes.crossplane.io/v1alpha2
+kind: Object
+metadata:
+  annotations:
+    crossplane.io/composition-resource-name: edge-zone-password
+  labels:
+    crossplane.io/composite: platform
+  name: platform-edge-zone-password
+  ownerReferences:
+  - apiVersion: gentianos.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XTenant
+    name: platform
+    uid: ""
+spec:
+  forProvider:
+    manifest:
+      apiVersion: generators.external-secrets.io/v1alpha1
+      kind: Password
+      metadata:
+        labels:
+          app.kubernetes.io/managed-by: crossplane
+          gentianos.io/edge-zone: kernel
+        name: edge-kernel-oidc
+        namespace: kernel-edge
+      spec:
+        allowRepeat: true
+        digits: 8
+        length: 48
+        noUpper: false
+        secretKeys:
+        - client-secret
+        symbols: 0
+  providerConfigRef:
+    name: kubernetes
 ---
 apiVersion: kubernetes.crossplane.io/v1alpha2
 kind: Object
@@ -46,6 +131,126 @@ spec:
             restartPolicy: Never
   providerConfigRef:
     name: kubernetes
+---
+apiVersion: openidclient.keycloak.crossplane.io/v1alpha1
+kind: Client
+metadata:
+  annotations:
+    crossplane.io/composition-resource-name: keycloak-edge-zone-client
+    crossplane.io/external-name: gentian-edge-kernel
+  labels:
+    crossplane.io/composite: platform
+  name: platform-edge-zone-client
+  ownerReferences:
+  - apiVersion: gentianos.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XTenant
+    name: platform
+    uid: ""
+spec:
+  deletionPolicy: Orphan
+  forProvider:
+    accessType: CONFIDENTIAL
+    clientId: gentian-edge-kernel
+    clientSecretSecretRef:
+      key: client-secret
+      name: edge-kernel-oidc
+      namespace: kernel-edge
+    directAccessGrantsEnabled: false
+    enabled: true
+    fullScopeAllowed: false
+    implicitFlowEnabled: false
+    name: Gentian edge (kernel zone)
+    realmId: kernel
+    serviceAccountsEnabled: false
+    standardFlowEnabled: true
+    validPostLogoutRedirectUris:
+    - https://console.platform.example.test/*
+    - https://argocd.platform.example.test/*
+    - https://headlamp.platform.example.test/*
+    - https://id.platform.example.test/*
+    validRedirectUris:
+    - https://console.platform.example.test/oauth2/callback
+    - https://argocd.platform.example.test/oauth2/callback
+    - https://headlamp.platform.example.test/oauth2/callback
+    - https://id.platform.example.test/oauth2/callback
+    webOrigins: []
+  managementPolicies:
+  - Observe
+  - Create
+  - Update
+  - Delete
+  providerConfigRef:
+    name: keycloak
+---
+apiVersion: openidclient.keycloak.crossplane.io/v1alpha1
+kind: ClientDefaultScopes
+metadata:
+  annotations:
+    crossplane.io/composition-resource-name: keycloak-edge-zone-default-scopes
+  labels:
+    crossplane.io/composite: platform
+  name: platform-edge-zone-default-scopes
+  ownerReferences:
+  - apiVersion: gentianos.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XTenant
+    name: platform
+    uid: ""
+spec:
+  deletionPolicy: Orphan
+  forProvider:
+    clientIdRef:
+      name: platform-edge-zone-client
+      policy:
+        resolve: Always
+    defaultScopes:
+    - acr
+    - basic
+    - email
+    - profile
+    - roles
+    - web-origins
+    realmId: kernel
+  providerConfigRef:
+    name: keycloak
+---
+apiVersion: client.keycloak.crossplane.io/v1alpha1
+kind: ProtocolMapper
+metadata:
+  annotations:
+    crossplane.io/composition-resource-name: keycloak-edge-zone-director-audience
+  labels:
+    crossplane.io/composite: platform
+  name: platform-edge-zone-director-audience
+  ownerReferences:
+  - apiVersion: gentianos.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XTenant
+    name: platform
+    uid: ""
+spec:
+  deletionPolicy: Orphan
+  forProvider:
+    clientIdRef:
+      name: platform-edge-zone-client
+      policy:
+        resolve: Always
+    config:
+      access.token.claim: "true"
+      id.token.claim: "false"
+      included.client.audience: gentian-director
+      introspection.token.claim: "true"
+      userinfo.token.claim: "false"
+    name: director-audience
+    protocol: openid-connect
+    protocolMapper: oidc-audience-mapper
+    realmId: kernel
+  providerConfigRef:
+    name: keycloak
 ---
 apiVersion: group.keycloak.crossplane.io/v1alpha1
 kind: Group
