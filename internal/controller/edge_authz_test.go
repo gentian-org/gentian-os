@@ -57,14 +57,17 @@ func TestTheRouteTableListsEveryRouteWithAQuestionSortedByHost(t *testing.T) {
 		{name: "b", host: "headlamp.k.example", authz: &routeAuthz{relation: "can_audit", object: "cluster:c1"}},
 		{name: "id", host: "id.k.example"},
 		{name: "a", host: "argocd.k.example", authz: &routeAuthz{relation: "can_configure", object: "cluster:c1"}},
-	}, []edgeAuthzRoute{{Host: "console.k.example", Relation: "can_enter", Object: "tenant:platform", AccessTokenCookie: edgeKernelAccessTokenCookie, ForwardToken: true, AuthMode: "oidc"}})
+	}, []edgeAuthzRoute{{Host: "console.k.example", Relation: "can_enter", Object: "tenant:platform", AccessTokenCookie: edgeKernelAccessTokenCookie, ForwardToken: true, AuthMode: "oidc"}}, "k.example", "kernel")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if strings.Index(table, "argocd.k.example") > strings.Index(table, "headlamp.k.example") {
 		t.Fatalf("not sorted by host:\n%s", table)
 	}
-	if strings.Contains(table, "id.k.example") {
+	// As a host entry, specifically. The identity hostname also appears
+	// inside every route's endSessionURL, which is the realm's logout
+	// endpoint and has nothing to do with whether id.k.example is routed.
+	if strings.Contains(table, "host: id.k.example") {
 		t.Fatalf("a route with no question is not in the table:\n%s", table)
 	}
 	if !strings.Contains(table, "host: console.k.example") {

@@ -229,15 +229,33 @@ type edgeAuthzRoute struct {
 	Relation          string `json:"relation"`
 	Object            string `json:"object"`
 	AccessTokenCookie string `json:"accessTokenCookie,omitempty"`
+	IDTokenCookie     string `json:"idTokenCookie,omitempty"`
+	EndSessionURL     string `json:"endSessionURL,omitempty"`
 	KeepClientToken   bool   `json:"keepClientToken,omitempty"`
 	ForwardToken      bool   `json:"forwardToken,omitempty"`
 	AuthMode          string `json:"authMode"`
 }
 
+// endSessionURL is the realm's OIDC logout endpoint.
+//
+// Built rather than discovered. Keycloak publishes it in the realm's
+// well-known document, but the edge authorization service answers requests on
+// the hot path and must not depend on reaching the identity provider to do
+// so: a sign-out that waited on discovery would fail in exactly the situation
+// where a person most wants to sign out, which is when the identity provider
+// is unwell. The shape has been stable across every Keycloak major this
+// platform has run, and it is served under /auth like the rest of the realm.
+func endSessionURL(kernelDomain, realm string) string {
+	if kernelDomain == "" || realm == "" {
+		return ""
+	}
+	return fmt.Sprintf("https://id.%s/auth/realms/%s/protocol/openid-connect/logout", kernelDomain, realm)
+}
+
 // edgeAuthzRouteTable renders the shim's table from the routes that carry an
 // L2 question. Sorted by host: one table for one state, however the specs
 // were listed.
-func edgeAuthzRouteTable(specs []kernelHTTPRouteSpec, extra []edgeAuthzRoute) (string, error) {
+func edgeAuthzRouteTable(specs []kernelHTTPRouteSpec, extra []edgeAuthzRoute, kernelDomain, kernelRealm string) (string, error) {
 	var routes []edgeAuthzRoute
 	for _, s := range specs {
 		if s.authz == nil || s.host == "" {
@@ -247,7 +265,11 @@ func edgeAuthzRouteTable(specs []kernelHTTPRouteSpec, extra []edgeAuthzRoute) (s
 			Host: s.host, Relation: s.authz.relation, Object: s.authz.object,
 			AccessTokenCookie: edgeKernelAccessTokenCookie, ForwardToken: s.authz.forwardToken,
 			KeepClientToken: s.authz.keepClientToken,
-			AuthMode:        "oidc",
+			// What sign-out needs, written here because the operator knows
+			// the issuer and the realm and the edge must not have to ask.
+			IDTokenCookie: edgeKernelIDTokenCookie,
+			EndSessionURL: endSessionURL(kernelDomain, kernelRealm),
+			AuthMode:      "oidc",
 		})
 	}
 	routes = append(routes, extra...)
@@ -264,7 +286,7 @@ func (r *GatewayPlatformReconciler) ensureEdgeAuthzRouteTable(ctx context.Contex
 	if err != nil {
 		return err
 	}
-	table, err := edgeAuthzRouteTable(specs, extra)
+	table, err := edgeAuthzRouteTable(specs, extra, r.KernelDomain, r.kernelRealm())
 	if err != nil {
 		return err
 	}

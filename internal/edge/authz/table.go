@@ -50,6 +50,24 @@ type Route struct {
 	// AccessTokenCookie is where the zone's session keeps the access token,
 	// for routes whose token is not forwarded as a bearer.
 	AccessTokenCookie string `json:"accessTokenCookie,omitempty"`
+	// IDTokenCookie is where the zone's session keeps the ID token.
+	//
+	// Only sign-out needs it. Keycloak shows a "did you really mean it" page
+	// for any logout that arrives without an id_token_hint, because a logout
+	// it cannot attribute to a session might have been triggered by a link on
+	// somebody else's page. The hint is sitting in this cookie, so the edge
+	// can answer that question on the person's behalf and they never see the
+	// page.
+	IDTokenCookie string `json:"idTokenCookie,omitempty"`
+	// EndSessionURL is the realm's OIDC end_session_endpoint.
+	//
+	// Written by the operator, which knows the issuer and the realm, rather
+	// than discovered here: this service must not depend on reaching the
+	// identity provider to answer a request, and a sign-out that waited on
+	// discovery would fail exactly when the identity provider is the thing
+	// that is unwell. Empty means sign-out falls back to clearing the edge's
+	// own cookies and nothing else.
+	EndSessionURL string `json:"endSessionURL,omitempty"`
 	// KeepClientToken leaves the caller's own Authorization header alone
 	// without the edge putting its token there.
 	//

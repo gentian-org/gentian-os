@@ -835,7 +835,7 @@ func TestTheKeycloakConsoleKeepsItsOwnBearer(t *testing.T) {
 		}
 		// And the two must reach their two destinations: the table line the
 		// authorization service reads, and the policy Envoy reads.
-		table, err := edgeAuthzRouteTable([]kernelHTTPRouteSpec{s}, nil)
+		table, err := edgeAuthzRouteTable([]kernelHTTPRouteSpec{s}, nil, "platform.example.test", "kernel")
 		if err != nil {
 			t.Fatal(err)
 		}

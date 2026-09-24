@@ -22,6 +22,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"testing"
 	"time"
 
@@ -67,7 +68,7 @@ func table() *Table {
 	return &Table{Routes: []Route{
 		{Host: "argocd.k.example", Relation: "can_configure", Object: "cluster:c1", AccessTokenCookie: "at", AuthMode: AuthModeOIDC},
 		{Host: "console.k.example", Relation: "can_enter", Object: "tenant:platform", AccessTokenCookie: "at", ForwardToken: true, AuthMode: AuthModeOIDC},
-		{Host: "id.k.example", Relation: "can_configure", Object: "cluster:c1", AccessTokenCookie: "at", KeepClientToken: true, AuthMode: AuthModeOIDC},
+		{Host: "id.k.example", Relation: "can_configure", Object: "cluster:c1", AccessTokenCookie: "at", IDTokenCookie: "idt", EndSessionURL: "https://id.k.example/auth/realms/kernel/protocol/openid-connect/logout", KeepClientToken: true, AuthMode: AuthModeOIDC},
 		{Host: "api.k.example", Relation: "can_view", Object: "tenant:platform", AuthMode: AuthModeBearer},
 	}}
 }
@@ -129,6 +130,80 @@ func TestAKeepClientTokenRouteIsNotStripped(t *testing.T) {
 	}
 	if len(dec.RemoveHeaders) != 0 {
 		t.Fatalf("the console's own bearer was stripped; removes %v", dec.RemoveHeaders)
+	}
+}
+
+// Signing out should not take the person through Keycloak asking whether they
+// meant it. That page appears for any logout with no id_token_hint, and the
+// hint is in the zone's own cookie, so the edge answers with it.
+func TestSignOutCarriesTheHintSoKeycloakDoesNotAsk(t *testing.T) {
+	dec := decider(&fakeStore{}).Decide(context.Background(), Request{
+		Host:    "id.k.example",
+		Path:    SignOutPath,
+		Cookies: map[string]string{"at": "root-token", "idt": "the-id-token"},
+	})
+	if dec.Allow || dec.Status != http.StatusFound {
+		t.Fatalf("allow=%v status=%d", dec.Allow, dec.Status)
+	}
+	u, err := url.Parse(dec.Redirect)
+	if err != nil {
+		t.Fatalf("redirect is not a URL: %q", dec.Redirect)
+	}
+	if u.Host != "id.k.example" || u.Path != "/auth/realms/kernel/protocol/openid-connect/logout" {
+		t.Fatalf("redirect = %s", dec.Redirect)
+	}
+	q := u.Query()
+	if q.Get("id_token_hint") != "the-id-token" {
+		t.Errorf("no hint: %s", dec.Redirect)
+	}
+	// And back to the edge's own logout afterwards, so the zone's cookies go
+	// too. The realm session first, then the edge's, because the other order
+	// throws the hint away before it has been used.
+	if q.Get("post_logout_redirect_uri") != "https://id.k.example/oauth2/logout" {
+		t.Errorf("post-logout target = %q", q.Get("post_logout_redirect_uri"))
+	}
+}
+
+// A session the graph refuses everywhere must still be able to end itself.
+// Someone whose account was just deleted is exactly the person who needs to
+// sign out, and asking the store first would refuse them.
+func TestSignOutAsksTheStoreNothing(t *testing.T) {
+	// A store that would deny everything, and errors if consulted.
+	store := &fakeStore{allow: map[string]bool{}}
+	dec := decider(store).Decide(context.Background(), Request{
+		Host:    "argocd.k.example",
+		Path:    SignOutPath,
+		Cookies: map[string]string{"at": "mia-token", "idt": "mias-id-token"},
+	})
+	if dec.Status != http.StatusFound || dec.Redirect == "" {
+		t.Fatalf("a refused session could not sign out: %+v", dec)
+	}
+}
+
+// With no hint there is nothing to gain by going to the realm, so it clears
+// the edge's cookies and stops there, which is what it did before.
+func TestSignOutWithoutAHintFallsBackToTheEdgesOwnLogout(t *testing.T) {
+	dec := decider(&fakeStore{}).Decide(context.Background(), Request{
+		Host:    "id.k.example",
+		Path:    SignOutPath,
+		Cookies: map[string]string{"at": "root-token"},
+	})
+	if dec.Redirect != "https://id.k.example/oauth2/logout" {
+		t.Fatalf("redirect = %q", dec.Redirect)
+	}
+}
+
+// The Host header carries a port on a non-default port, and a
+// post_logout_redirect_uri carrying one will not match what was registered.
+func TestSignOutDropsThePortFromTheReturnAddress(t *testing.T) {
+	dec := decider(&fakeStore{}).Decide(context.Background(), Request{
+		Host:    "id.k.example:8443",
+		Path:    SignOutPath,
+		Cookies: map[string]string{"idt": "the-id-token"},
+	})
+	u, _ := url.Parse(dec.Redirect)
+	if got := u.Query().Get("post_logout_redirect_uri"); got != "https://id.k.example/oauth2/logout" {
+		t.Fatalf("post-logout target = %q", got)
 	}
 }
 

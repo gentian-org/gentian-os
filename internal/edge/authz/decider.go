@@ -20,6 +20,7 @@ import (
 	"context"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"strings"
 	"sync"
 	"time"
@@ -66,6 +67,10 @@ type Decision struct {
 	// a program: an oidc route, where the caller followed a link. It decides
 	// whether the denial carries a page or the bare status.
 	Browser bool
+	// Redirect makes this decision a 302 to that location instead of a
+	// refusal with a body. Only sign-out uses it: the request is answered
+	// here and never reaches a backend, which is the point.
+	Redirect string
 }
 
 type identity struct {
@@ -134,6 +139,30 @@ func (d *Decider) Evict() int { return d.cache.evictAll() }
 // callback that completes a sign-in and the path that ends a session.
 const edgeOAuth2Prefix = "/oauth2/"
 
+// SignOutPath is the one path this service answers itself.
+//
+// Signing out of the edge is not signing out. Envoy Gateway's own logout path
+// clears the zone's cookies and sends the browser to the realm, but with no
+// id_token_hint, and Keycloak will not end a session it cannot attribute
+// without asking the person to confirm. That confirmation page is the "another
+// screen" a person sees between pressing sign out and arriving back where they
+// started, and it exists for a good reason: a logout request that names no
+// session might have come from a link on somebody else's site.
+//
+// The hint is in the browser already, in the zone's own ID token cookie. So
+// this path reads it, answers a redirect that carries it, and Keycloak ends
+// the session without asking. The post-logout target is the zone's own
+// /oauth2/logout, so the last thing that happens is Envoy dropping its
+// cookies: end the realm session first, then the edge's, because the reverse
+// order throws away the hint before it has been used.
+// Under /oauth2/ because that prefix is routed on every host in a zone: the
+// Keycloak console route carries it explicitly and every component exposure
+// gets it, so a path anywhere else would be a 404 from Envoy before this
+// service ever saw it. Envoy's own OAuth2 filter claims only its callback and
+// its logout path and passes the rest through, and ext_authz runs ahead of it
+// in any case, so this one is answered here.
+const SignOutPath = "/oauth2/sign-out"
+
 const (
 	HeaderSubject = "x-gentian-subject"
 	HeaderRealm   = "x-gentian-realm"
@@ -160,6 +189,9 @@ func (d *Decider) Decide(ctx context.Context, req Request) Decision {
 	// back to /oauth2/logout was answered 403 by this service and the Gateway
 	// never got to drop its cookies. A revoked session must still be able to
 	// reach the path that clears it.
+	if req.Path == SignOutPath {
+		return signOut(route, req)
+	}
 	if strings.HasPrefix(req.Path, edgeOAuth2Prefix) {
 		return Decision{Allow: true, RemoveHeaders: append([]string{"authorization"}, identityHeaders...)}
 	}
@@ -270,4 +302,41 @@ func allow(route *Route, who identity) Decision {
 		dec.RemoveHeaders = []string{"authorization"}
 	}
 	return dec
+}
+
+// signOut answers the sign-out path with a redirect the person never sees.
+//
+// It asks the authorization store nothing. Ending your own session is not a
+// permission: a session that is refused everywhere must still be able to end
+// itself, which is the same reason the edge's own /oauth2/ paths pass through
+// untouched. Requiring a relation here would mean the one person who most
+// needs to sign out, someone whose account was just deleted, could not.
+func signOut(route *Route, req Request) Decision {
+	// Where the browser ends up either way: Envoy's logout path, which drops
+	// the zone's cookies and returns to the portal.
+	local := "https://" + hostOnly(req.Host) + edgeOAuth2Prefix + "logout"
+	hint := ""
+	if route.IDTokenCookie != "" {
+		hint = req.Cookies[route.IDTokenCookie]
+	}
+	if route.EndSessionURL == "" || hint == "" {
+		// No hint to offer, so nothing is gained by going to the realm first.
+		// Clearing the edge's cookies still signs the person out of every
+		// kernel host; the realm session outlives it until its own idle
+		// timeout, which is the behaviour this had before.
+		return Decision{Status: http.StatusFound, Redirect: local, Reason: "sign out, edge only"}
+	}
+	target := route.EndSessionURL + "?id_token_hint=" + url.QueryEscape(hint) +
+		"&post_logout_redirect_uri=" + url.QueryEscape(local)
+	return Decision{Status: http.StatusFound, Redirect: target, Reason: "sign out"}
+}
+
+// hostOnly drops the port. A Host header carries one on a non-default port,
+// and a post_logout_redirect_uri that carries it will not match what the
+// client registered.
+func hostOnly(host string) string {
+	if i := strings.LastIndex(host, ":"); i > 0 && !strings.Contains(host[i:], "]") {
+		return host[:i]
+	}
+	return host
 }
