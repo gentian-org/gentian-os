@@ -36,7 +36,13 @@ files=(
 for file in "${files[@]}"; do
     [[ -f "${file}" ]] || continue
     # One temporary file per embedded block, numbered, so a failure names which.
-    mapfile -t rendered < <(python3 - "${file}" <<'PY'
+    #
+    # Collected with read rather than mapfile because this repository targets
+    # stock macOS bash 3.2, which has neither mapfile nor readarray.
+    rendered=""
+    while IFS= read -r line; do
+        rendered="${rendered}${line}"$'\n'
+    done < <(python3 - "${file}" <<'PY'
 import pathlib, re, sys, tempfile
 
 src = pathlib.Path(sys.argv[1]).read_text().splitlines()
@@ -65,7 +71,8 @@ for n, start in enumerate(i for i, l in enumerate(src) if l.strip() == "- |"):
     print(out.name)
 PY
     )
-    for script in "${rendered[@]}"; do
+    while IFS= read -r script; do
+        [[ -n "${script}" ]] || continue
         checked=$((checked + 1))
         if ! sh -n "${script}" 2>/tmp/gentian-lint-job-err; then
             echo "FAIL ${file}: the script it writes into a Job does not parse." >&2
@@ -77,7 +84,7 @@ PY
         else
             rm -f "${script}"
         fi
-    done
+    done <<<"${rendered}"
 done
 
 rm -f /tmp/gentian-lint-job-err
