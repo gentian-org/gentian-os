@@ -1,749 +1,485 @@
 # Implementation plan
 
-The order things get built in. Milestone M1 is defined below, moved here from
-WP-10. [work-packages.md](work-packages.md) says *what* each package is, this
-says *when*, and what blocks what.
+The order things get built in, and where each one stands.
+[work-packages.md](work-packages.md) says *what* each package is; this says
+*when*, what blocks what, and what is true today.
 
-Step labels `S1`…`S8` are the eight numbered items inside M1. They exist so a
-conversation can point at one; they are not a second plan.
+Status is one of three things, and nothing is called done on the strength of a
+build alone:
 
-## Milestone M1
+| | |
+|---|---|
+| ✅ | done, and seen working on a cluster |
+| ◐ | built, not verified — or done in part, with the rest named |
+| ☐ | not started |
 
-Moved here from WP-10, unchanged, because this is where the order lives.
+Step labels (`S1`…`S8`, `S7A.1`…) exist so a conversation can point at one.
+They are not a second plan, and they are not renumbered when something lands.
 
-**M1 — the platform administrator signs in and sees the
-cluster, in the plans' shape.** `install.sh --layout v5` runs end to end
-on the purged cluster; `admin@<kernel>` signs in once at
-`console.<kernel>` and sees the platform tenant's desktop; the kernel
-consoles are tiles the director answered from that account's relations;
-each opens in a window on the desktop, signed in, with no second login
-and no token to paste. Nothing about it is a stand-in for the plan: the
-desktop is `Tenant/platform`'s, the edge holds the session, the desktop
-holds no authority. In order, each landing with its installer step and
-verified on the cluster before the next:
-1. `[x]` **Vocabulary** (WP-3): the Keycloak groups exactly as model v1
-   names them — `gentian:platform:admin` replaces the bootstrap's
-   `superadmin` everywhere it is written or read: the identity
-   bootstrap, the claim's `platformRoles` default, Argo CD's policy,
-   the proxy's binding, the OpenBao OIDC roles, the desktop's constant.
-2. `[x]` **Platform tenant** (WP-2, WP-8): `Tenant/platform` with
-   `isolation.keycloakRealm: kernel`, realm adopted and never created,
-   disabled or deleted — the tenant composition honours the realm
-   override and emits no Realm and no kernel broker for a tenant that
-   adopts the kernel realm; tenant namespaces carry
-   `gentianos.io/tier: tenant` beside `gentianos.io/tenant`; the v5
-   ApplicationSets sync `clusters/<c>/tenants/*`; the installer
-   scaffolds `tenants/platform/`; the director writes
-   `tenant:platform#cluster` and `#operated_by` at start, as it writes
-   the cluster roles.
-3. `[ ]` **The edge** (WP-4): `authenticated` and `perimeter` Gateways
-   in `kernel-edge` under `mergeGateways`, reconciled by the operator
-   from the Cluster claim; the kernel zone's one confidential client
-   (`gentian-edge-kernel`: no groups scope, secret in `kernel-edge`,
-   back-channel logout at the director); `SecurityPolicy` OIDC with the
-   zone's cookie on `.<kernel>` and ext-auth on every kernel-zone route;
-   the ext-auth shim as a new binary in `kernel-edge` — gRPC, verifies
-   the token, asks the route's relation, caches per `(sub, sid, route)`,
-   evicts on `ReadChanges`, denies `session#revoked`, fails closed with
-   cached allows carrying — with its route table written by the
-   operator beside the routes; `id.<kernel>` serves `/realms/*` only on
-   the perimeter Gateway, and `/auth/admin/*` behind the kernel session
-   on that same hostname — `id-admin.<kernel>` was retired from
-   networking.md §3 once Keycloak turned out not to work across two
-   hostnames, and this is the only line of M1 that moved with it.
-4. `[x]` **The desktop as a component** (WP-5, WP-2): a
-   `ComponentProfile` `desktop` (`tenancy: [tenant]`, `trustTier:
-   platform`, a database requirement, one gateway exposure with
-   `authMode: oidc` and `forwardToken: true`); a Component reconciler
-   that gives every tenant its desktop from that profile — a
-   provider-helm Release in `tenant-<t>`, the database fulfilled in
-   the tenant's namespace, the route and `SecurityPolicy` from
-   `expose[]` — so `tenant-platform` serves `console.<kernel>`.
-5. `[x]` **The desktop without authority** (WP-7, WP-1): the BFF
-   consumes the token the edge forwards and runs no code flow; no
-   client secret, no Keycloak admin credential, `rbac.yaml` empty; the
-   database from the granted requirement; tiles from the director —
-   the kernel consoles from `/v1/clusters/{c}/tiles`, the admin tile by
-   `can_administer` from a `GET /v1/tenants/{t}/me` relations read.
-6. `[x]` **Kernel UIs behind the kernel session** (WP-4): Argo CD,
-   Headlamp and `id-admin` routes carry the zone's `SecurityPolicy` and
-   the shim's `can_configure` / `can_audit`; each tool's own OIDC login
-   is the silent second factor.
-7. `[x]` **Retire** the portal in `kernel-edge`, `portal.<kernel>`, the
-   portal secret and BFF client in the identity bootstrap, and
-   `kernelPortalHost`; `www.<kernel>` is an alias of the console.
-8. `[ ]` **Purge and reinstall** — the confirmation cycle; every
-   `check()` honest; `--status` true.
-Earlier partial results (kernel tiles served by the director, Headlamp
-through the impersonating proxy, the event listener wired, the claim's
-`platformRoles` projected) stand and are reused; they are not the
-milestone.
+---
 
-## Where M1 stands
+## 1. Sequence at a glance
 
-| Step | What it is | State |
-| --- | --- | --- |
-| S1 | Vocabulary: the groups model v1 names | done |
-| S2 | `Tenant/platform` adopting the kernel realm | done |
-| S3 | The edge: two Gateways, the zone's client, the session and the enforcement point | kernel zone done, tenant zones not |
-| S4 | The desktop as a `Component` | done |
-| S5 | The desktop without authority | done |
-| S6 | Kernel UIs behind the kernel session | reachable, two of three not usable |
-| S7 | Retire the portal in `kernel-edge` | done |
-| **S7A** | **What is wrong that a reinstall would only reproduce** | **not started** |
-| S8 | Purge and reinstall | not started |
+### M1 — the platform administrator signs in and sees the cluster
+
+| Step | What it is | |
+|---|---|---|
+| S1 | Vocabulary: the Keycloak groups model v1 names | ✅ |
+| S2 | `Tenant/platform`, adopting the kernel realm | ✅ |
+| S3 | The edge: two Gateways, the zone's client, the session, the enforcement point | ◐ kernel zone done, tenant zones unproven |
+| S4 | The desktop as a `Component` | ✅ |
+| S5 | The desktop without authority | ✅ |
+| S6 | Kernel UIs behind the kernel session | ✅ |
+| S7 | Retire the portal in `kernel-edge` | ✅ |
+| **S7A** | **What is wrong that a reinstall would only reproduce** | ◐ see below |
+| S8 | Purge and reinstall | ☐ |
+
+### S7A — before the purge
+
+| | | |
+|---|---|---|
+| S7A.1 | The operator produces a zone's Keycloak client and its secret | ✅ |
+| S7A.2 | The director stops writing authorization state | ◐ entitlements left; read-only token impossible |
+| S7A.3 | The platform administrator is an address | ✅ |
+| S7A.4 | The admin console is an app, and it talks to the director | ◐ shipped; 7 screens still to re-point |
+| S7A.5 | Keycloak looks like the rest of the product | ✅ |
+| S7A.6 | The console and the desktop hold nothing | ◐ console yes, desktop still holds a Keycloak credential |
+| S7A.7 | The zone cookie does not reach the applications | ☐ |
+| S7A.8 | A read-only view of the authorization state | ☐ |
+| S7A.9 | The kernel UIs are actually usable | ✅ |
+| S7A.9b | A refusal a person can act on | ✅ |
+| S7A.10 | The installer does what it claims | ◐ 1 of 7 done |
+| S7A.11 | Signing out does not ask a second time | ◐ built, not verified |
+| S7A.12 | The tile catalogue leaves the director | ✅ |
+| S7A.13 | `denyPaths` promises a control it does not apply | ☐ |
+| S7A.14 | A release reaches a cluster by an immutable name | ☐ |
+| S7A.15 | A zone's hosts follow the components, not a list | ☐ |
+
+### What is left, in the order to do it
+
+1. **S7A.14 — immutable image names.** Everything below is tested by
+   deploying it, and today a deploy can silently be a no-op.
+2. **S7A.4 — the remaining console screens**, in this order: Backup ·
+   Security · Audit · Integrations · Notifications · Platform security ·
+   Customization · Credentials. Security and Audit come early because they
+   are what still hold the desktop's Keycloak credential.
+3. **S7A.6 — remove the bundled console from the desktop**, which the two
+   above make possible, and the credential goes with it.
+4. **S7A.8 — the authorization view**, the last console screen.
+5. **S7A.15 — zone hosts derived from what the operator routes.**
+6. **S7A.11 — verify sign-out**; it is built and unverified.
+7. **S7A.7 — scope the zone cookie per host**, before any third-party
+   application is routed.
+8. **S7A.13 — `denyPaths`**: build it or take it out of the CRD.
+9. **S7A.10 — the installer's remaining six**, of which tenant teardown
+   blocks S8.
+10. **S8 — purge and reinstall.**
+11. **After M1**, the work packages in the order in §5.
+
+---
+
+## 2. M1 — what it means
+
+**The platform administrator signs in and sees the cluster, in the plans'
+shape.** `install.sh --layout v5` runs end to end on a purged cluster;
+`admin@<kernel>` signs in once at `console.<kernel>` and sees the platform
+tenant's desktop; the kernel consoles are tiles the director answered from
+that account's relations; each opens signed in, with no second login and no
+token to paste. Nothing about it is a stand-in: the desktop is
+`Tenant/platform`'s, the edge holds the session, the desktop holds no
+authority.
+
+What each step meant, and what landed:
+
+- **S1 Vocabulary ✅** — `gentian:platform:admin` replaces the bootstrap's
+  `superadmin` everywhere it is written or read: identity bootstrap, the
+  claim's `platformRoles` default, Argo CD's policy, the proxy's binding, the
+  OpenBao OIDC roles, the desktop's constant.
+- **S2 Platform tenant ✅** — `Tenant/platform` with
+  `isolation.keycloakRealm: kernel`, the realm adopted and never created,
+  disabled or deleted; tenant namespaces carry `gentianos.io/tier: tenant`;
+  the v5 ApplicationSets sync `clusters/<c>/tenants/*`.
+- **S3 The edge ◐** — `authenticated` and `perimeter` Gateways in
+  `kernel-edge` under `mergeGateways`, reconciled from the Cluster claim; the
+  zone's confidential client; `SecurityPolicy` OIDC with the zone cookie on
+  `.<kernel>`; the edge authorization service in `kernel-edge` with its route
+  table written by the operator beside the routes. The kernel zone runs.
+  **A second tenant zone has never been stood up**, which is what S7A.1's
+  "done when" asks for and the one part of M1 still open.
+- **S4 The desktop as a component ✅** — a `ComponentProfile` and a Component
+  reconciler that gives every tenant its desktop: a provider-helm Release in
+  `tenant-<t>`, the database fulfilled in the tenant's namespace, the route
+  and `SecurityPolicy` from `expose[]`.
+- **S5 The desktop without authority ✅** — the BFF consumes the token the
+  edge forwards and runs no code flow; no client secret, no Keycloak admin
+  credential, `rbac.yaml` empty; tiles from the director.
+- **S6 Kernel UIs behind the kernel session ✅** — Argo CD, Headlamp and the
+  Keycloak console carry the zone's `SecurityPolicy` and the edge's
+  `can_configure` / `can_audit`; each tool's own OIDC login is the silent
+  second factor. `id-admin.<kernel>` was retired when Keycloak turned out not
+  to work across two hostnames; `/auth/admin/*` is served on `id.<kernel>`.
+- **S7 Retire the portal ✅** — the portal in `kernel-edge`,
+  `portal.<kernel>`, its secret and BFF client, and `kernelPortalHost` are
+  gone; `www.<kernel>` is an alias of the console.
+- **S8 Purge and reinstall ☐** — §4.
 
 Everything above was verified on beefy1 only, never on a purged cluster. S8 is
 what turns that into an install.
 
-## S7A — before the purge
+---
+
+## 3. S7A — the steps
 
 A purge and reinstall proves the installer. It does not fix a design, and
-reinstalling with these open would only reproduce them. In order.
+reinstalling with these open would only reproduce them.
 
-✅ done and verified on the cluster · ◐ partly done · ☐ not started
-
-### S7A.1 ◐ The operator produces a zone's Keycloak client and its secret
+### S7A.1 ✅ The operator produces a zone's Keycloak client and its secret
 
 A **zone** is one sign-in domain: a hostname, the realm behind it, one
 confidential Keycloak client for the edge to hold the session with, that
-session's cookie names, and the Gateway listener that serves it.
+session's cookie names, and the Gateway listener that serves it. Everything
+that *consumes* a zone was already general; nothing *produced* one except a
+shell Job in `D-02`.
 
-Everything that *consumes* a zone is already general. The operator derives a
-tenant's zone from the tenant, and the route table, the session policy, the
-cookie names and the host all follow with no kernel special case. Nothing
-*produces* one except for the kernel, and that is done by a shell Job in
-`D-02` (`scripts/lib/portal-login-bootstrap.sh`), which creates
-`gentian-edge-kernel` and writes `edge-kernel-oidc` into the edge namespace.
+**Done.** The tenant composition emits it all: an External Secrets `Password`
+generator and an `ExternalSecret` in the edge namespace, the `Client` pushed
+that generated secret through `clientSecretSecretRef`, its `director-audience`
+mapper, and a `ClientDefaultScopes` naming Keycloak's six own defaults so
+`groups` stays off. It renders for a tenant that adopts the kernel realm too,
+so the platform tenant composes `gentian-edge-kernel` like any other and the
+client creation has left `portal-login-bootstrap.sh`.
 
-So: a tenant gets a client the same way it already gets its other Keycloak
-objects, from the tenant composition
-(`crossplane/compositions/tenant-default.yaml`), which already composes
-clients and their secrets. Per tenant it emits `gentian-edge-<t>`,
-confidential, code flow only, no groups scope, the director in its audience,
-back-channel logout at the director, redirect URIs for that zone's hosts; and
-a Secret `edge-<t>-oidc` in the edge namespace for the `SecurityPolicy` to
-read. The kernel zone then stops being a special case: the platform tenant
-composes its own like any other, and the bootstrap Job's client creation goes.
+Verified on the cluster on 2026-09-24, including the three things this plan
+listed as unproven: the `Password` generator honours `secretKeys`,
+`DeriveFromObject` readiness holds the `Client` back until its Secret exists,
+and **the client adopts** — `platform-edge-zone-client` reached
+`Synced=True Ready=True` against the existing `gentian-edge-kernel`. Taking
+over on a live cluster costs one deleted Secret (External Secrets refuses to
+adopt a Secret it does not own) and a sign-in outage of about a minute.
 
-The pieces, since the shape is decided and only the writing is left:
+Two things to know. There is no back-channel logout URL: session revocation
+was deleted in S7A.2 and re-adding the URL would restore a write to the
+authorization graph that has no reader. And the zone secret is generated
+rather than derived from the master password and is not written to OpenBao, so
+`SECRET_MODE=derived` reproducibility no longer covers it — which is fine,
+because both sides read the same Secret.
 
-1. **The secret exists first.** External Secrets is deployed and its
-   `Password` generator is available on the cluster, so the composition emits
-   an `ExternalSecret` in the edge namespace named `edge-<t>-oidc` whose value
-   comes from a generator and whose target key is `client-secret`, which is
-   the key Envoy Gateway's `SecurityPolicy` reads.
-2. **The client is pushed that secret**, not given one. `clientSecretSecretRef`
-   on the `Client` resource, exactly as the retired portal BFF client did it.
-   A client with no secret reference has Keycloak mint one, and then the two
-   sides disagree for ever.
-3. **The client itself**: `gentian-edge-<t>`, confidential, standard flow only,
-   `fullScopeAllowed: false` so no roles ride in the token, no groups scope,
-   the director in its audience, back-channel logout at the director, and a
-   redirect URI per host in that zone.
-4. **The kernel stops being special.** Once a tenant composes its own, the
-   platform tenant composes its own too and the client creation leaves
-   `portal-login-bootstrap.sh`. Do this second, after a tenant zone is proven,
-   because it is the sign-in everything else on the cluster depends on.
+**Still open:** the "done when" of this step was *a second tenant* signing in
+at `console.<t>.<kernel>` with no installer step having run for it. That has
+not been tried. It is the same code path, and the kernel zone is the harder
+case, but it is unproven.
 
-Watch for the provider quirk the composition already documents at length: this
-provider cannot adopt an object it did not create, and `Observe`-only left the
-retired portal client uncreated in tenant realms while every tenant hung in
-Provisioning. Declare `Create` as well as `Observe` from the start.
+### S7A.2 ◐ The director stops writing authorization state
 
-**Done when** a second tenant signs in at `console.<t>.<kernel>` against its
-own realm, with no installer step having run for it.
+The director's job is to read the graph to decide whether a caller may make a
+call, and to write git. As built it also wrote OpenFGA in six places.
 
-**Built, not yet verified on a cluster.** All four pieces are in
-`tenant-default.yaml`: an External Secrets `Password` generator and an
-`ExternalSecret` in the edge namespace, the `Client` pushed that secret through
-`clientSecretSecretRef`, its `director-audience` mapper, and a
-`ClientDefaultScopes` naming Keycloak's six own defaults so `groups` stays off.
-The block renders for a tenant that adopts the kernel realm as well, so the
-platform tenant composes `gentian-edge-kernel` and the client creation has left
-`portal-login-bootstrap.sh`. One thing departs from piece 3 above: there is no
-back-channel logout URL, because the Job had already dropped it once session
-revocation was deleted in S7A.2, and re-adding it would restore a write to the
-authorization store that has no reader. The post-logout redirect URIs S7A.11
-needs are written.
-
-**It is not on `test-cb`, on purpose.** Taking over on a cluster that already
-has these objects costs a sign-in outage of a minute or two on the kernel
-zone, so it waits for a moment when that is acceptable rather than arriving
-inside somebody's test run. To promote it, move `test-cb` onto this branch and
-then, in this order:
-
-1. **Delete the existing Secret.** External Secrets refuses to adopt a Secret
-   of that name it does not own, and the installer wrote this one with
-   `kubectl`:
-
-   ```
-   kubectl delete secret edge-kernel-oidc -n kernel-edge
-   ```
-
-   Let Argo CD sync, then confirm the replacement is owned by an
-   `ExternalSecret` rather than by nothing.
-
-2. **Check whether the Keycloak client is adopted.** `docs/roadmap.md` §1.24
-   says a `Client` whose external name is its clientId adopts an existing
-   object, but the only live `Client` on this cluster carries a UUID, and
-   provider-keycloak's identifier for an OIDC client is Keycloak's UUID. So it
-   may or may not adopt, and the answer is in the resource's conditions. If it
-   reaches `Synced=True Ready=True`, nothing more is needed and the provider
-   pushes the generated secret onto the existing client. If it reports a
-   duplicate clientId or a missing external resource, delete
-   `gentian-edge-kernel` from the kernel realm in Keycloak's console and let it
-   be recreated.
-
-3. **Nothing to do for the copies.** The operator re-copies the zone secret
-   into `tenant-platform` when the source changes, and Envoy Gateway re-reads
-   what its policies name. Clearing the zone cookies is enough if a session
-   misbehaves afterwards.
-
-A fresh install needs none of this.
-
-**Three things are unproven** and each has a named fallback: whether the
-External Secrets `Password` generator honours `secretKeys` in this build (no
-generator has ever run here; the fallback is a `target.template` or a
-`rewrite`), whether `DeriveFromObject` readiness behaves as documented in
-provider-kubernetes (the symptom would be the `Client` never being created;
-the fallback is default readiness and dropping the sequencer rule), and
-whether the client adopts, which is step 2 above.
-
-One change of character worth knowing: the zone client's secret is generated
-rather than derived from the master password, and it is not written to
-OpenBao. A cluster rebuilt from a recovery kit regenerates it. That is fine
-because both sides read the same Secret, but `SECRET_MODE=derived`
-reproducibility no longer covers it.
-
-### S7A.2 ◐ The director stops writing authorization state — only entitlements left
-
-The director's job is to read OpenFGA to decide whether a caller may make a
-call, and to write git. Argo CD syncs git and the operator turns it into
-cluster state. As built it also writes OpenFGA in six places: it creates the
-OpenFGA store object and the model, projects cluster roles from the claim, projects tenants
-and tenant roles from the manifests, applies Keycloak membership events,
-records session revocations, and writes entitlement tuples.
-
-Move them:
-
-| Write | New home |
-| --- | --- |
-| the OpenFGA store object and the model at first start | shipped as configuration the operator applies, not created at runtime |
-| cluster roles from the claim | operator |
+| Write | Where it went |
+|---|---|
+| the store object and the model at first start | operator, applied as configuration |
+| cluster roles from the claim | operator (`AuthzProjectionReconciler`) |
 | tenants, `operated_by`, tenant roles | operator |
-| membership from Keycloak events | operator |
-| entitlement tuples | operator, from the fact the director committed to git |
-| session revocation | **deleted**: a five-minute access token and a failing refresh do the same job |
+| membership from Keycloak events | operator (`MembershipListener`) |
+| session revocation | **deleted** |
+| entitlement tuples | still the director's, gated on `DIRECTOR_STORE_KEYS` |
 
-Then take the write capability off the director's OpenFGA token, so the rule
-is enforced by the credential and not by care.
+Session revocation existed to make a logout immediate while the realm's access
+token lived twelve hours. The realm now issues five-minute tokens against a
+twelve-hour session, so the edge's refresh fails within one token lifetime of
+the session ending, and the tuple, the write, the endpoint and the background
+sweep are all gone. Membership followed: Keycloak's listener posts to the
+operator now — same path, same signed statements, a different host.
 
-**Done so far**: the structure (the OpenFGA store object and model, cluster
-roles, tenants) moved to the operator's `AuthzProjectionReconciler`,
-**membership moved** to the operator's `MembershipListener`, and
-session revocation was **deleted** rather than moved. It existed to make a
-logout immediate while the realm's access token lived twelve hours; the realm
-now issues five-minute tokens against a twelve-hour session, so the edge's
-refresh fails within one token lifetime of the session ending and the tuple,
-the write, the endpoint and the background sweep are all gone.
+**What cannot be done as this plan assumed.** "Take the write capability off
+the director's OpenFGA token" is not available: OpenFGA authenticates with a
+preshared key, and a key carries no scope, so every key that may read may also
+write. The rule is therefore enforced by the director having no code that
+writes, which is weaker than a credential that cannot. The alternatives are an
+authorizing proxy in front of OpenFGA, or OpenFGA's OIDC auth mode with
+something that maps a subject to permitted operations. Neither is small.
+Worth a decision rather than a silent assumption.
 
-Membership followed. Keycloak's listener now posts to the operator rather than
-the director: same path, same signed statements, same projection, a different
-host. The director has no membership endpoint, no listener key mounted, and no
-code that writes a tuple except the entitlement applier. What is left is the
-entitlement tuples the App Store's statements produce, which are gated on
-`DIRECTOR_STORE_KEYS` and off on this cluster.
-
-**One thing cannot be done the way this plan assumed.** "Take the write
-capability off the director's OpenFGA token" is not available: OpenFGA
-authenticates with a preshared key and a key carries no scope, so every key
-that may read may also write. There is no read-only token to issue. The rule
-is therefore enforced by the director having no code that writes and no reason
-to, which is weaker than a credential that cannot. If that is not good enough,
-the options are an authorizing proxy in front of OpenFGA or OpenFGA's OIDC
-auth mode with something that maps a subject to permitted operations, and
-neither is small. Worth a decision rather than a silent assumption.
-
-**Ask first**: how much of the graph can be static rather than written at all.
-See "How much has to be written" below.
+**Left:** the entitlement tuples, which the App Store's signed statements
+produce and which are off on this cluster.
 
 ### S7A.3 ✅ The platform administrator is an address
 
-The kernel realm's `email` claim is mapped to the username so that the email
-*field* can hold the recovery address Keycloak mails a reset to. That only
-works when the username is itself an address. The platform administrator is
-created as the bare name `administrator`, so the claim reads `administrator`.
+The kernel realm maps the `email` claim to the username, so the email *field*
+can hold the recovery address. That only works when the username is itself an
+address. **Done:** the bootstrap creates `admin@<kernel>` — the same pattern
+every tenant administrator follows — and deletes the `administrator` account
+it replaces. The password derivation label is unchanged on purpose: it decides
+the derived value, and renaming it would silently change the password on every
+cluster. Nothing may create a username that is not an address.
 
-**Done.** The kernel realm bootstrap now creates `admin@<kernel>`, the same
-`admin@<domain>` pattern every tenant administrator follows, and deletes the
-`administrator` account it replaces once the new one exists and is in the
-group. The password derivation label is unchanged on purpose: it is an opaque
-string that decides the derived value, and renaming it would silently change
-the password on every cluster. Nothing may create a username that is not an
-address.
+### S7A.4 ◐ The admin console is an app, and it talks to the director
 
-### S7A.4 ☐ The admin console is an app, and it talks to the director
+It was a route inside the desktop image, built against a Keycloak admin
+credential the desktop no longer holds. It becomes a component like any other,
+visible only to holders of the relation, whose only job is to be a GUI over
+the director's API.
 
-Today it is a route inside the desktop image, and its screens were built
-against a Keycloak admin credential the desktop no longer holds. It becomes a
-component like any other, visible only to holders of the relation, whose only
-job is to be a GUI over the director's API.
+**Shipped and running.** It lives in `gentian-apps/apps/admin-console`, built
+from the restated app template, described by the `admin-console`
+`ComponentProfile` the operator chart ships, published as chart
+`admin-console` with its own images, and installed into every tenant by
+`defaultForTenants`. Its backend is a relay and nothing else: it holds no
+credential, keeps no state, forwards the caller's own token, and hands back
+what the director answered — including a refusal. Putting the product's own
+console through the app template was the point, and it found three gaps the
+template had (below).
 
-The breakdown, screen by screen:
+**People are not in this console.** Decided, not deferred. Declaring people in
+git is worse than it sounds — git is append-only, so a name and an address
+committed there outlive the account, which collides with erasure. Keycloak's
+own console already manages them, is maintained, and since 26.2 its
+fine-grained admin permissions can be scoped so a tenant administrator manages
+only that tenant's users without holding `realm-admin`. So the People screen
+is the Identity tile, embedded like any other component.
 
-| Screen | Reads | Writes |
-| --- | --- | --- |
-| Tenants: list, create, retire | director, from git | director → `clusters/<c>/tenants/<t>/tenant.yaml` |
-| Apps in a tenant: install, remove, addons | director, from git | director, endpoints that already exist |
-| Entitlements | director, from `entitlements.yaml` | the App Store signs, the director records |
-| Cluster settings: kernel domain, platform roles, certificates, LLM | director, from the Cluster claim | director → `clusters/<c>/kernel/claims/cluster.yaml` |
-| People and groups | **not here** — Keycloak's own console, embedded; see S7A.4 |
-| Authorization view: who holds what | director, read-only from OpenFGA | nothing; changes are made on the screens above |
+**Screen by screen.** A screen whose director endpoints do not exist yet
+answers 501 naming itself, so the console shows exactly that rather than a
+spinner or a fabricated empty state; `NOT_YET_MAPPED` in its `admin.py` is the
+worklist, and a screen leaves it by getting real routes.
 
-The director needs write endpoints it does not have yet, for tenants and for
-the Cluster claim, each guarded by a relation and each a commit.
+| Screen | Reads | Writes | |
+|---|---|---|---|
+| Tenants: list, create, retire | director, from git | director → `tenants/<t>/tenant.yaml` | ✅ |
+| Cluster settings | director, from the Cluster claim | director → `kernel/claims/cluster.yaml` | ✅ |
+| Resources: plans, ceilings, usage | director, relaying the operator | director → `tenants/<t>/resource-plan.yaml` | ✅ |
+| Apps in a tenant: install, remove, addons | director, from git | director, endpoints that exist | ◐ endpoints exist, screen not built |
+| Backup, backup policy, backup schedules | operator state | operator CRs, through the director | ☐ |
+| Security policies | Keycloak realm | Keycloak, through the director | ☐ |
+| Audit | Keycloak events + the decision log | — | ☐ |
+| Integrations: bindings and grants | operator state | operator CRs, through the director | ☐ |
+| Notifications | tenant database | tenant database | ☐ |
+| Platform security: MAC waivers | operator state | claim, through the director | ☐ |
+| Customization debt | `Customization` CRs | — | ☐ |
+| Credentials | credential manager | credential manager | ☐ needs a profile mapping |
+| Authorization view | OpenFGA, read-only | — | ☐ S7A.8 |
+| People and groups | **not here** — Keycloak's own console, embedded | | ✅ |
 
-**People are not in this console.** Decided rather than deferred. Accounts,
-groups and memberships stay in Keycloak, and Gentian does not reimplement
-managing them:
+**Resources is the shape the rest should follow.** Its write already went to
+git, but through the operator's own HTTP API, which took an actor from a
+header and recorded the plan change when the request arrived. Now:
+`console → director → git → Tenant → operator`. The director relays the
+operator's reads under `can_view`, checks `can_set_plan` for the write,
+validates the choice against the operator's own catalogue, and commits as the
+person; the operator dropped its `PUT` and records the plan event when the
+change *lands* on the Tenant, with the chooser carried in an annotation. What
+is billed is then what the cluster enforced, and it still names who chose it.
 
-- Declaring people in git was the alternative and it is worse. Git is
-  append-only, so a name and an address committed there outlive the account,
-  which collides with erasure.
-- Keycloak's own administration console already does this, is maintained, and
-  since 26.2 its fine-grained admin permissions can be scoped so that a tenant
-  administrator manages only that tenant's users and groups, without holding
-  `realm-admin`. That scoping is what makes it safe to hand to a tenant at all,
-  and it is a permission model we would otherwise write ourselves.
-- So the People screen becomes the Identity tile: Keycloak's console, embedded
-  like any other component, visible to holders of the relation.
+**Credentials needs one thing first**: a `credentialManagerUrlKey` on the
+profile's platform mapping, the way `directorUrlKey` works today. Without it
+the component does not know where the credential manager is and cannot relay
+to it.
 
-Two consequences. The Keycloak hostname fix in S7A.7 stops being a nicety,
-because that tile is how anyone reaches people at all. And the fine-grained
-permissions have to be granted per tenant by whatever provisions the tenant,
-which is a new piece of the tenant composition's work.
-
-#### What the console should be
-
-Not a form per setting. The people who use it are MSP employees and IT
-administrators, and they do a handful of jobs: bring a tenant on, give it
-apps, set what it may consume, check something is healthy, and answer a
-question about who can do what. The console should be organised around those
-jobs; the fourteen flat tabs it has today are a map of the systems underneath,
-which is a different thing.
-
-What exists to build on: about 7,000 lines across fourteen sections, and they
-are on a good track — the resources, backup and security screens in particular
-know what they are for. What has to change is where they get their answers.
-Today they reach Keycloak and Kubernetes through the desktop's backend. They
-should ask the director, which authorises the caller and reads git, and write
-through it, which authorises the caller and commits.
-
-Five things worth doing differently:
-
-1. **A tenant is a page, not a filter.** Today every tab takes a tenant
-   selector, so working on one tenant means re-choosing it fourteen times.
-   Open a tenant and see its apps, entitlements, limits, health and the link
-   to its people, and act there.
-2. **Show the change before it happens, and the commit after.** Every write is
-   a commit to git with the caller as author. A console that says "this will
-   add `nextcloud` to `spec.apps`" and then "landed as `a1b2c3d`" is telling
-   the truth about what the platform does, and no other admin console can.
-   The director already answers whether a commit exists, so the same screen
-   can follow it from committed to applied.
-3. **Say that a change is on its way.** A write answers 202: git has it, the
-   cluster does not yet. The screen should show committed, syncing, applied
-   rather than pretending the save was the end of it.
-4. **Screens follow relations, never a role string.** The director already
-   returns what the caller holds; a screen appears because of that answer and
-   for no other reason. Hiding a screen is never what stops someone reaching
-   what is behind it.
-5. **People stay in Keycloak**, deep-linked with the tenant in the URL. The
-   Members, Groups, Invitations and Sessions tabs go (S7A.4), which is four of
-   the fourteen and the four that need a credential the console must not have.
-6. **The Templates tab was not what its name suggested, and what the name
-   suggested is still worth building.** Read before removing: that screen
-   copied one member's shell preferences onto another. It is a member screen
-   under a different name, it went with the member screens, and nothing is
-   owed to it. Its one real use — a new joiner should not start on an empty
-   desktop — belongs to the desktop as a default preference set, not to an
-   administrator pushing settings onto people one at a time.
-
-   What the name should mean is a **tenant template**, and that does not exist
-   yet. It is how an MSP brings on the twentieth customer in the time the
-   first one took, and no upstream console offers it. The shape that fits the
-   rest of this plan: a template is a file in git under the cluster listing
-   apps, entitlements, limits and the tenant settings to seed, and applying
-   one is a single director call that writes a tenant from it — one commit,
-   one relation (`can_configure` on the cluster), reviewable in the
-   deployments repository like everything else. The screen is then a list, a
-   preview of the commit it would make, and an apply button, with no backend
-   of its own. Build it when the tenant endpoints land, not before.
-
-The director needs endpoints these screens do not have yet. In order:
-tenants (list, create, retire), resource plans and ceilings, backup policies
-and schedules, security policies, and the authorization view of S7A.8. Each is
-the same shape as the app and settings endpoints that already exist: a
-relation, a read of git, a commit.
-
-#### Where it stands
-
-First cut landed in `gentian-ui` on `feat/console-is-a-director-client`. The
-four people tabs and Templates are gone, replaced by a People tab that opens
-Keycloak's console with the session the person already holds, and Cluster
-settings arrived as the first screen that asks the director: no catalogue of
-its own, no credential, the caller's token forwarded, and a commit named on
-screen rather than a save claimed. Fourteen tabs are now eleven.
-
-One thing that blocks the rest. The backend's Keycloak administrator
-credential cannot go with the member screens, because `Security` and `Audit`
-read through the same admin client (`keycloak_security_policy_store.py`,
-`keycloak_audit_fetcher.py`). Until those two move to the director, the
-desktop still holds a credential that can read and write the realm, so S7A.6
-is not closed by this. Move them next, and the credential goes with them.
-
-Since then the console has moved out of the desktop into
-`gentian-apps/apps/admin-console`, built from the restated app template and
-described by the `admin-console` ComponentProfile the operator chart ships.
-Its backend is a relay to the director and nothing else; every screen whose
-director endpoints do not exist yet answers 501 naming the screen
-(`NOT_YET_MAPPED` in its `admin.py`), and leaves that list by getting them.
-
-Wired so far, in the order the table above asks for: **Tenants**, **Cluster
-settings**, **Resources**. Resources was the first screen whose write already
-went to git, only through the operator's own HTTP API; it now goes
-`console → director → git → Tenant → operator`. The director gained
-`/v1/tenants/{t}/resources` (reads under `can_view`, relayed from the
-operator's app-lifecycle API; `PUT` under `can_set_plan`, validated against the
-operator's catalogue and committed as the person) and
-`/v1/clusters/{c}/resources` for the all-tenants view. The operator lost its
-`PUT`, marks each blocked plan with the rule behind it (`blockedBy`), and
-records the plan event when the change lands on the Tenant rather than when it
-was asked for, with the chooser carried in a second annotation. Self-service
-is decided by the director from `can_configure`, not asserted by the screen.
-`kubectl gentian resources set` now says where plans are set and exits; the
-reads stay. Left for this screen: none. Left in `NOT_YET_MAPPED`: Backup,
-Backup policy, Backup schedules, Security, Integrations, Notifications, Audit,
-Platform security, Customization; and Credentials needs a credential-manager
-mapping on the profile.
-
-#### How it ships
-
-As an app component, built from the app template and described by a
-`ComponentProfile` — the same path a customer's app takes, with nothing
-reserved for the kernel's own console.
-
-**The template cannot do this yet.** `gentian-app-template` knows only
-`AppProfile`; `ComponentProfile` does not appear in it, and the template ships
-no CI at all, so there is nothing to build and publish an image with. The only
-working reference for the publish flow is `gentian-ui`'s own workflow. So the
-sequence is: teach the template `ComponentProfile` and give it a CI workflow,
-then move the console onto it. Discovering that gap was the point of choosing
-the console as the test. That is deliberate: the template and
-the profile are the contract every app is asked to meet, and the fastest way
-to find out whether they actually carry a real application is to put the
-product's own console through them. If the console needs something the
-template cannot express, that is a gap in the template, and better found here
-than by the first partner who packages an app.
-
-What it exercises, specifically: an image built by the template's pipeline; a
-`ComponentProfile` declaring one HTTP exposure on its own subdomain, the
-relation that may open it (`can_configure` on the cluster) and its tile; the
-generic provisioning path rather than a bespoke Job; and the route table entry
-the operator derives from the profile instead of the compiled-in kernel list.
-It needs no database, no secret of its own and no identity beyond the caller's,
-which makes it the smallest honest test of the contract.
+**Three gaps in the app template**, found by putting the console through it
+and all three fixed there rather than worked around in the console: the chart
+named a platform Secret unconditionally, so a component with no database sat
+in `CreateContainerConfigError`; the tile field was called `on`, which YAML
+1.1 reads as the boolean `true`, so a hand-written profile was refused by the
+schema; and the profile had no way to say a tile's relation is held on the
+tenant rather than on the app.
 
 ### S7A.5 ✅ Keycloak looks like the rest of the product
 
-Embedding Keycloak's console makes its appearance the product's appearance, and
-it does not currently match anything. The login screen is already themed
-(`kernel/services/keycloak-idp/theme/login`); the administration and account
-consoles are not.
+Embedding Keycloak's console makes its appearance the product's appearance.
+The login screen was already themed; the administration and account consoles
+were not. **Done** as a shared `gentian-tokens.css` generated from the design
+system and applied to all three themes, plus the logo and favicon. Both
+consoles are compiled React applications on PatternFly, so a theme changes
+styling and not layout — and overriding the templates is a surface we
+deliberately do not own, because Keycloak's own guidance is that custom
+templates are reworked on every upgrade.
 
-What is possible, and what is not:
+### S7A.6 ◐ The console and the desktop hold nothing
 
-- Both are theme types Keycloak supports, so a `gentian` theme can carry them
-  alongside the login one. Both render from a single template, and both are
-  compiled React applications built on PatternFly, so what a theme can change
-  is the styling, the logo and the favicon, not the layout.
-- PatternFly exposes its palette, typography and spacing as CSS custom
-  properties, so mapping the `--gtn-*` tokens from `gentian-ui` onto them gets
-  most of the way. Dark mode comes with it.
-- Overriding the templates themselves is technically allowed and a bad idea:
-  Keycloak's own guidance is that custom templates have to be reworked on every
-  upgrade, and this is a surface we do not want to own.
+A rule to check before either is called finished: a UI offers a surface for
+making requests, and every one of those requests is decided somewhere else.
+Neither may hold an OIDC client secret, a Keycloak credential, or any
+credential belonging to a person other than the caller; neither may hold a
+Kubernetes identity (`rbac.create` false, ServiceAccount token unmounted); and
+neither may hold a decision — showing or hiding a screen follows an answer the
+director gave, and hiding a thing is never what stops someone reaching it.
 
-So: a shared `gentian-tokens.css` generated from the design system, applied to
-the login, account and admin themes, plus the logo and favicon. Accept the
-layout as Keycloak draws it.
+**The desktop meets this. The new admin console meets it.** What does not is
+the desktop's *bundled* copy of the old console: `Security` and `Audit` read
+through a Keycloak admin client (`keycloak_security_policy_store.py`,
+`keycloak_audit_fetcher.py`), so the desktop image still carries a credential
+that can read and write the realm. Re-pointing those two screens at the
+director is what lets the bundled console be deleted, and the credential goes
+with it. That is why they are early in §1's order.
 
-### S7A.6 ◐ The console and the desktop hold nothing — the desktop does, the admin console does not
-
-A rule to apply to both, and to check before each is called finished: a UI
-offers a surface for making requests, and every one of those requests is
-decided somewhere else. It holds no authority and sits on no critical path
-beyond rendering.
-
-Concretely, neither may hold:
-
-- an OIDC client secret, a Keycloak credential, or any credential belonging to
-  a person other than the caller;
-- a Kubernetes identity — `rbac.create` stays false and the ServiceAccount
-  token stays unmounted;
-- a decision. Showing or hiding a screen follows an answer the director gave;
-  it is never a rule written in the UI, and hiding a thing is never what stops
-  someone reaching it. Every surface behind it is its own enforcement point.
-
-What they may hold is the minimum to be useful: the token the edge forwards,
-for the length of the request it relays, and their own store of per-person
-display state such as window positions.
-
-The desktop already meets this. The admin console does not, because it was
-built against a Keycloak admin credential, which is why S7A.4 rebuilds it as a
-GUI over the director's API. When either grows a screen that seems to need a
-credential, that is the signal that an endpoint is missing from the director,
-not that the UI needs the credential.
+When either grows a screen that seems to need a credential, that is the signal
+that an endpoint is missing from the director — not that the UI needs the
+credential.
 
 ### S7A.7 ☐ The zone cookie does not reach the applications
 
-The one place the edge session is weaker than a session per application, and
-it is fixable.
+The one place the edge session is weaker than a session per application.
 
-The zone's cookie is scoped to `.<kernel>` so that one sign-in covers every
-host in the zone. That means the browser sends it to each of those hosts, and
-nothing currently removes it before the request reaches the application behind
-the route. Neither Envoy's OIDC filter nor our routes strip it. So an
-application that is compromised, or simply careless with what it logs, sees a
-credential that is good for every other application in the zone — which is
-exactly the isolation a per-application cookie would have given.
+The zone's cookie is scoped to `.<kernel>` so one sign-in covers every host in
+the zone, which means the browser sends it to each of those hosts and nothing
+removes it before the request reaches the application. An application that is
+compromised, or careless with what it logs, sees a credential good for every
+other application in the zone.
 
-**Not in the authorization service**, which was the first idea and is wrong.
-Its header mutations are applied to the request before the remaining filters
-run, and it runs before Envoy's OIDC filter, so a cookie stripped there would
-be invisible to the filter that has to validate it. Sign-in would break.
+**Not in the authorization service**, which was the first idea and is wrong:
+its header mutations are applied before the remaining filters run, and it runs
+before Envoy's OIDC filter, so a cookie stripped there would be invisible to
+the filter that has to validate it. Sign-in would break.
 
-Three ways that do work, in increasing order of what they cost:
+Three that do work:
 
-1. **Scope the cookie to the host instead of the zone.** Drop `cookieDomain`
-   and each host gets its own edge session. The first request to each host
-   does one silent round trip to Keycloak, because the Keycloak session
-   already exists, so single sign-on is preserved and what the browser sends
-   to an application is a cookie good only for that application. Logout still
-   works across all of them, because every one of those sessions carries the
-   same Keycloak session, which ends everywhere at once. This is the old
-   model's isolation with the new model's single implementation, and it needs
-   no new component.
-2. **Rewrite `cookie` at the router stage**, after every filter has run, with
-   a Lua extension policy. Envoy Gateway supports this from 1.3; the cluster
-   runs 1.2.5, so it means an upgrade. An upgrade is wanted anyway for the
-   logout confirmation in S7A.9.
-3. **Remove the whole `Cookie` header** with a route-level header modifier.
-   Available today and too blunt: applications behind the edge set their own
-   cookies, Argo CD and Keycloak included, and this would take those too.
+1. **Scope the cookie to the host** — drop `cookieDomain`. Each host gets its
+   own edge session; the first request to each does one silent round trip to
+   Keycloak, because the Keycloak session already exists. Single sign-on is
+   preserved, logout still works everywhere at once, and what the browser
+   sends an application is good only for that application.
+2. **Rewrite `cookie` at the router stage** with a Lua extension policy, after
+   every filter has run. Envoy Gateway supports this from 1.3; the cluster
+   runs 1.2.5.
+3. **Remove the whole `Cookie` header** at the route. Available today and too
+   blunt: applications behind the edge set their own cookies.
 
-Recommendation: (1), measured first, because the extra round trip per host is
-the only cost and it happens once per session. Do it before any third-party
-application is routed.
+Recommendation: (1), measured first. Do it before any third-party application
+is routed.
 
 ### S7A.8 ☐ A read-only view of the authorization state
 
-Part of the same console, worth naming separately because it replaces the idea
-of exposing OpenFGA's own playground. OpenFGA's read APIs answer "which groups
-hold which relations on which objects" without any write surface. The console
+Part of the same console, named separately because it replaces the idea of
+exposing OpenFGA's own playground. OpenFGA's read APIs answer "which groups
+hold which relations on which objects" with no write surface. The console
 renders that; anything a person wants to change is changed on the screens
-above, through the director, into git. No development-only UI is exposed and
-no second write path exists.
+above, through the director, into git. No development-only UI, no second write
+path.
 
-### S7A.9 ◐ The kernel UIs are actually usable — all three built, none verified since
+### S7A.9 ✅ The kernel UIs are actually usable
 
-- **Argo CD** ✅ showed an empty list to a full administrator. The groups claim
-  carries the full path, `/gentian:platform:admin`, because OpenBao's roles
-  need it; Argo CD's policy named the bare form and matched nothing. Fixed by
-  naming both spellings. Verify after the next `D-02`.
-- **Headlamp** ◐ asks for a second sign-in, and until today that second
-  sign-in failed: the callback answered `unauthorized_client`, "Invalid client
-  or Invalid client credentials". Headlamp builds the code exchange out of the
-  `auth-provider` block of the kubeconfig it proxies with, and that block named
-  `client-id: headlamp` with no secret, so it authenticated with nothing
-  against a confidential client. Proved inside the pod against the live realm:
-  the real secret answers `400` for a spent code, a wrong one and no one at all
-  both answer `401`. The kubeconfig is now a Secret carrying a placeholder that
-  the portal bootstrap rewrites with the client's real secret before restarting
-  Headlamp. **Verify after the next `D-02`.** The click itself remains: decide
-  between starting that flow from the tile and giving Headlamp an
-  authenticating sidecar that turns the edge session into what it expects,
-  which is the pattern an app with no OIDC support would use anyway.
-- **The Keycloak console** ✅ showed a spinner. Not an iframe problem: embedding
-  works, the silent SSO and the token exchange both complete in the frame, and
-  it then dies on its first Admin REST call with a 401 because `KC_HOSTNAME`
-  and `KC_HOSTNAME_ADMIN` differ. Upstream closed this as not planned, so a
-  new tab fails identically and there is nothing to wait for. **Decided**:
-  networking.md §3 now serves `/auth/admin/*` on `id.<kernel>` behind the
-  kernel session and retires `id-admin.<kernel>`. To build: drop
-  `KC_HOSTNAME_ADMIN`, move the route and its policy, add the redirect URI,
-  and repoint the tile. While there, stop clearing the realm's clickjacking
-  defences wholesale — one tile should not cost every login page in the realm
-  its protection. This tile is now also how tenant administrators manage
-  people (S7A.4), so it is reached by more than the platform administrator and
-  its relation has to allow for that.
+All three verified on the cluster.
 
-  Two things surfaced behind that fix, both now built. The console mints a
-  token of its own inside the page and calls the Admin REST API with it, so the
-  edge must leave that header alone — and "leave it alone" is neither of the
-  two things the edge knew how to do. Stripping it, which is right everywhere
-  else because a backend should get identity headers rather than a token it
-  cannot use, answered `401` and left the console on its spinner. Forwarding
-  the edge's own token instead answered "Token issued for an application that
-  is not the admin console", which was true: that token is minted for the
-  zone's client. So the single `forwardToken` flag is now two. `forwardToken`
-  still means the edge puts its token on the request, and only the desktop asks
-  for it; `keepClientToken` means the caller's own bearer survives untouched,
-  and the console asks for that. **Verify after the next `D-02`.**
+- **Argo CD** showed an empty list to a full administrator: the groups claim
+  carries the full path `/gentian:platform:admin` because OpenBao's roles need
+  it, and Argo CD's policy named the bare form. Fixed by naming both.
+- **Headlamp** asked for a second sign-in that failed with
+  `unauthorized_client`: it builds the code exchange from the `auth-provider`
+  block of the kubeconfig it proxies with, which named `client-id: headlamp`
+  with no secret — authenticating with nothing against a confidential client.
+  The kubeconfig is now a Secret carrying a placeholder that the portal
+  bootstrap rewrites with the real secret. The remaining question is cosmetic:
+  whether to start that flow from the tile or give Headlamp an authenticating
+  sidecar, which is the pattern an app with no OIDC support would need anyway.
+- **The Keycloak console** showed a spinner. Not an iframe problem: embedding
+  works and the silent SSO completes, then the first Admin REST call answers
+  401 because `KC_HOSTNAME` and `KC_HOSTNAME_ADMIN` differ — closed upstream
+  as not planned, so a new tab fails identically. `/auth/admin/*` is now
+  served on `id.<kernel>` behind the kernel session and `id-admin.<kernel>` is
+  retired.
+
+That last fix produced a distinction worth keeping: the console mints a token
+of its own inside the page, so the edge must leave that header alone, which is
+neither of the two things it knew how to do. Stripping it — right everywhere
+else, because a backend should get identity headers rather than a token it
+cannot use — answered 401. Forwarding the edge's own token answered "Token
+issued for an application that is not the admin console", which was true. So
+`forwardToken` (the edge puts *its* token on the request) and
+`keepClientToken` (the caller's own bearer survives untouched) are two flags,
+and a route asks for the one it means.
 
 ### S7A.9b ✅ A refusal a person can act on
 
 An account that is deleted or renamed leaves live sessions naming a subject
 the graph no longer knows. Every relation is then denied, correctly, and the
 answer was the bare word `Forbidden` on every page — including the desktop the
-person would have signed out from, so there was no way out but clearing
-cookies by hand. This happened the moment the `administrator` account was
-replaced in S7A.3.
+person would have signed out from. A refusal on an `oidc` route now carries a
+small page naming the one link that can change the outcome, the edge's own
+sign-out. It grants nothing: signing out is available to anyone holding a
+session, refused or not. A `bearer` route still gets the bare status, because
+a program is reading it.
 
-A refusal on an `oidc` route now carries a small page naming the one link that
-can change the outcome, the edge's own `/oauth2/logout`. It grants nothing:
-signing out is available to anyone holding a session, refused or not. A
-`bearer` route still gets the bare status, because a program is reading it.
+### S7A.10 ◐ The installer does what it claims
 
-### S7A.10 ◐ The installer does what it claims — two races and the OIDC mount done
+Two cold-start races are fixed, and:
 
-Recorded in WP-10. Two cold-start races are fixed. These remain, in priority
-order:
-
-1. The OpenBao **`oidc` auth mount**. **Done**: `B-09-vault-oidc-mount`
-   enables it between the seeded secrets and the Cluster claim, so the roles
-   the composition composes have a mount to attach to. Its *configuration*,
-   which needs the realm's client secret and Keycloak serving discovery, is
-   still missing and belongs after `D-02`.
-2. The four **`Repository` claims**. Without them nothing composes Argo CD's
+1. ✅ The OpenBao **`oidc` auth mount** — `B-09-vault-oidc-mount` enables it
+   between the seeded secrets and the Cluster claim, so the roles the
+   composition composes have a mount to attach to. Its *configuration* needs
+   the realm's client secret and Keycloak serving discovery, and belongs after
+   `D-02`.
+2. ☐ The four **`Repository` claims**. Without them nothing composes Argo CD's
    repository Secret, the operator's push credential or the catalogue-sync
    ApplicationSet, and a private deployments repository has no credential path.
-3. **Tenant teardown**, without which a purge cannot complete — which S8 needs.
-4. The **credential catalogue** that `make check-credentials` reads.
-5. The **recovery kit** and the **bootstrap token revocation**, so an install
+3. ☐ **Tenant teardown**, without which a purge cannot complete — S8 needs it.
+4. ☐ The **credential catalogue** that `make check-credentials` reads.
+5. ☐ The **recovery kit** and **bootstrap token revocation**, so an install
    does not end with the installer's root token still valid.
-6. **Mail** and **LLM serving** have no v5 step and no ApplicationSet, while
+6. ☐ **Mail** and **LLM serving** have no v5 step and no ApplicationSet, while
    the operator still writes Postfix entries and still routes `llm.<kernel>`
    to a service nothing deploys. Decide whether these are deliberate drops.
-7. `B-08-seed-secrets` declares a dependency on a step that runs after it.
+7. ☐ `B-08-seed-secrets` declares a dependency on a step that runs after it.
 
-### S7A.11 ☐ Signing out does not ask a second time
+### S7A.11 ◐ Signing out does not ask a second time
 
-Pressing sign out lands on a Keycloak page asking whether you meant it, and
-only then returns. Nothing is broken; it is what Keycloak does when a logout
-request arrives without an `id_token_hint`. Since Keycloak 18 a logout that
-cannot prove which session it means has to be confirmed by the person, so that
-a link on someone else's page cannot sign people out. The edge sends exactly
-such a request: Envoy Gateway's `logoutPath` clears the zone cookies and hands
-the browser to the realm's `end_session_endpoint` with no hint.
+Pressing sign out lands on a Keycloak page asking whether you meant it.
+Nothing is broken: since Keycloak 18, a logout that cannot prove which session
+it means has to be confirmed, so a link on someone else's page cannot sign
+people out. Envoy Gateway's `logoutPath` clears the zone cookies and hands the
+browser to `end_session_endpoint` with no `id_token_hint`.
 
-The hint is already in the browser. The zone keeps the ID token in its own
-named cookie, `gentian-kernel-id`, next to the access token. So the fix is to
-send it, and the order matters, because `/oauth2/logout` clears that cookie:
+The hint is already in the browser — the zone keeps the ID token in
+`gentian-<zone>-id` — so the fix is to send it, and the order matters because
+`/oauth2/logout` clears that cookie: sign-out points at the edge authorization
+service, which reads the ID cookie and answers 302 to the realm's logout with
+`id_token_hint` set and `post_logout_redirect_uri` back at the zone's own
+`/oauth2/logout`; Keycloak ends the session without asking; Envoy clears the
+cookies. The composition writes the `post.logout.redirect.uris` this needs.
 
-1. Sign out points at the edge authorization service, which already serves the
-   zone's refusal page and knows which zone the host belongs to.
-2. It reads `gentian-kernel-id` and answers `302` to
-   `{issuer}/protocol/openid-connect/logout` with `id_token_hint` set and
-   `post_logout_redirect_uri` set to the zone's own `/oauth2/logout`.
-3. Keycloak ends the SSO session without asking, because the hint names it,
-   and returns the browser to `/oauth2/logout`.
-4. Envoy clears the zone cookies and the person lands on the portal, signed
-   out of the realm and not only of the edge.
+**Built, not verified.** The edge serves it and the desktop's sign-out was
+changed to use it. Verify on the cluster.
 
-One thing has to be provisioned for it: `post.logout.redirect.uris` on the
-zone's confidential client, which the composition of S7A.1 should write along
-with the redirect URIs it already writes. Keycloak rejects an unregistered
-`post_logout_redirect_uri` and the person would end on an error page instead.
+Two alternatives, recorded so they are not rediscovered. **Admin REST**
+(`POST .../users/{id}/logout`) ends every session server-side with no
+redirect — rejected, because it needs `manage-users` in the director, which
+S7A.2 just took away. **Account REST** (`DELETE .../account/sessions`) is the
+right shape but needs `account` in the edge token's audience, which means an
+audience mapper on every zone client, and it gives no redirect. Keep it as the
+fallback.
 
-Two alternatives, recorded so they are not rediscovered:
+### S7A.12 ✅ The tile catalogue leaves the director
 
-- **Admin REST**, `POST /admin/realms/{realm}/users/{id}/logout`, ends every
-  session server-side with no redirect at all. Rejected: it needs
-  `manage-users` in the director, which S7A.2 just took away, and it would
-  make signing out depend on a credential rather than on the person's own
-  session.
-- **Account REST**, `DELETE /realms/{realm}/account/sessions`, ends the
-  person's own sessions with the person's own token and no admin rights. It is
-  the right shape, but it needs `account` in the edge token's audience, which
-  means an audience mapper on every zone client, and it gives no redirect, so
-  the console would still have to drive the browser afterwards. Keep it as the
-  fallback if the hint route hits something unexpected.
+The filtering belongs in the director; the list did not. Which components
+exist, where each is served and what relation opens it is cluster state, and
+the operator holds all of it.
 
-### S7A.12 ◐ The tile catalogue leaves the director — built, not yet verified
-
-`GET /v1/clusters/{c}/tiles` is what the portal asks for the links it should
-show. The director answers it from `internal/director/tiles/tiles.yaml`, a
-list of three kernel UIs compiled into the binary, filtering each by whether
-the caller holds one of its relations on the cluster.
-
-The filtering belongs there. The list does not. Which components exist, where
-each is served and what relation opens it is cluster state, and the operator
-already holds all of it: it writes the `HTTPRoute` for those same hostnames
-and it reads the `ComponentProfile` of every installed app. A catalogue
-compiled into the director means the director has a second, hand-maintained
-copy of that, which will drift, and it means an installed app cannot appear on
-the portal without a director release — which is the wrong answer for a
-platform whose point is installing apps.
-
-To build:
-
-1. The operator projects the catalogue from what it actually routes: the
-   kernel routes it composes plus every `ComponentProfile` exposure that
-   declares a tile, into one ConfigMap in `kernel-control`.
-2. `ComponentProfile` gains the tile fields an app needs to describe itself —
-   display name, description, icon, the path within the host, and the relation
-   that may open it. An app that declares none gets no tile.
-3. The director reads that ConfigMap instead of the compiled list and keeps
-   doing the one thing that is its job: asking the graph, per caller, which of
-   those the caller may open. `internal/director/tiles` and its YAML go.
-
-The endpoint itself stays where it is. A tile the caller cannot open must not
-be on the page, that decision is an authorization read, and authorization
-reads are what the director is for.
-
-**Built.** The operator projects a `gentian-tiles` ConfigMap in the control
+**Done.** The operator projects a `gentian-tiles` ConfigMap in the control
 namespace from the routes it composes plus every `ComponentProfile` exposure
-that declares a tile; `internal/director/tiles` and its YAML are gone. Each
-kernel tile's hostname now comes from its route rather than being written
-twice, so a console with no route is simply absent instead of being a link to
-nothing.
+that declares a tile; `internal/director/tiles` and its compiled YAML are
+gone. Each kernel tile's hostname comes from its route rather than being
+written twice, so a console with no route is absent instead of a link to
+nothing. The director reads that ConfigMap as a **mounted file** rather than
+through the Kubernetes API — it holds the git credential and no cluster
+credential, and its ServiceAccount does not even mount a token.
 
-Three decisions worth knowing, none of them forced:
+Verified end to end on 2026-09-24: the administration console declared a tile
+in its profile and the tile appeared, which is the first time a component
+other than a kernel console has put itself on the desktop.
 
-- **`ComponentProfile` gained the tile fields**, and its doc comment, which
-  said the type carries no presentation because presentation is the App
-  Store's, was rewritten rather than left saying something untrue. The store
-  still owns the catalogue listing; the cluster owns the tile, because the
-  portal has to show what the cluster routes without asking a service outside
-  the cluster. `AppProfile`'s existing tile fields were not reused: they are
-  the v4 portal's icon plumbing and they carry no relation, which is the one
-  field the per-caller question needs.
-- **The director reads that ConfigMap as a mounted file**, not through the
-  Kubernetes API. It holds the git push credential and no cluster credential,
-  and its ServiceAccount does not even mount a token; an API read would have
-  meant giving it one, plus a Role and a RoleBinding, for one ConfigMap. A
-  cluster whose operator has not projected yet has no file, and the endpoint
-  answers an empty list.
-- **No app declares a tile yet**, so a real cluster's catalogue today is the
-  same three kernel consoles it was before. The desktop declares none on
-  purpose: it *is* the page the tiles are shown on.
+`ComponentProfile` gained the tile fields and its doc comment was rewritten
+rather than left saying something untrue: the App Store still owns the
+catalogue listing, and the cluster owns the tile, because the portal has to
+show what the cluster routes without asking a service outside the cluster.
+`AppProfile`'s existing tile fields were not reused — they are the v4 portal's
+icon plumbing and carry no relation, which is the one field the per-caller
+question needs.
 
-One thing to fix before an app can have a tile: the relation an app's profile
-declares has to exist on `type app` in `authz/model/v1/model.fga`, and today
-that type has only `tenant` and `admin`. `can_launch` is named in the design
-documents and is not in model v1.
+One thing still to fix before an ordinary app can have a tile: the relation an
+app's profile declares has to exist on `type app` in
+`authz/model/v1/model.fga`, and that type has only `tenant` and `admin`.
+`can_launch` is named in the design documents and is not in model v1. The
+console sidesteps it by asking on the tenant (`object: tenant`), which is
+right for a console that administers the tenant it runs in, and wrong as a
+general answer.
 
 ### S7A.13 ☐ `denyPaths` promises a control it does not apply
 
@@ -752,34 +488,75 @@ even where Paths admits them. Deny wins regardless", and read by no code
 outside tests. `buildExposureRoute` uses `paths`, `authMode`, `backend`,
 `forwardToken` and `subDomain`, and nothing else.
 
-That makes it worse than a missing feature. A component author reading the CRD
-has every reason to believe that listing an administrative path under
-`denyPaths` keeps it off the edge, and it does not: the path is served. The
-same is true of `stripPrefix` and `source`, though neither reads as a security
-control, so neither misleads in the same way.
+That is worse than a missing feature: a component author reading the CRD has
+every reason to believe that listing an administrative path there keeps it off
+the edge, and it does not — the path is served. The same is true of
+`stripPrefix` and `source`, though neither reads as a security control.
 
-Either build it or take it out, and prefer building it: deny rules on a route
-are what a component needs to expose a UI without exposing its own admin
-endpoints, and the alternative is every app carrying that logic itself. Until
-one or the other lands, the field is a false statement in a published API.
+Either build it or take it out, and prefer building it: deny rules are what a
+component needs to expose a UI without exposing its own admin endpoints, and
+the alternative is every app carrying that logic itself. Until one or the
+other lands, the field is a false statement in a published API — the same
+pattern the September threat-model exercise turned up, and the second time the
+CRD has described a control we do not have.
 
-Found while putting the console through the app template. It is the same
-pattern the September threat-model exercise turned up, which is worth saying
-out loud: a declared field is not a control, and the CRD is a place we have
-now twice described one we do not have.
+### S7A.14 ☐ A release reaches a cluster by an immutable name
 
-## S8 — purge and reinstall
+Found the hard way on 2026-09-24, twice in one afternoon, and it cost more
+time than anything else in this plan.
+
+- The operator and the director follow the **mutable** `:test-cb` tag.
+  Nothing rolls them when CI overwrites it, and a pod that restarts for an
+  unrelated reason silently picks up whatever the tag meant at that second.
+  The director spent an afternoon serving a binary from before the branch
+  because it restarted while CI was still building. The bootstrap chart is
+  written to add Argo CD Image Updater annotations that pin `test-cb-<sha>`;
+  on this cluster the Application carries none.
+- The administration console's chart pinned the **mutable** image tag `0.1.0`.
+  With `imagePullPolicy: IfNotPresent` the node kept its cached copy and went
+  on serving an old build after a new one was published.
+- A Helm release whose first install times out is left `pending-install`, and
+  provider-helm retries an install that can never succeed. Clearing it needed
+  a manual `helm uninstall`. Worth deciding whether the component reconciler
+  should recognise that state.
+
+The rule to apply everywhere: **a cluster follows an immutable name.** CI
+already publishes `<branch>-<sha>` images and immutable chart versions, and
+gentian-ui's workflow already rewrites its chart's values to the immutable
+image tag before packaging. Do the same for the operator, the director and
+every component chart in `gentian-apps`, and keep the moving tag for humans.
+
+### S7A.15 ☐ A zone's hosts follow the components, not a list
+
+The zone client's redirect URIs are enumerated in the tenant composition —
+`console`, `admin`, and for the kernel zone `argocd`, `headlamp`, `id`. A
+component whose profile declares any other `subDomain` gets a Keycloak refusal
+("Invalid parameter: redirect_uri") on an error page that says nothing about a
+redirect URI list. The administration console hit exactly this the first time
+its tile was opened.
+
+The operator is what knows every host a zone serves, because it composes the
+routes. Projecting that per tenant — the way it already projects the tile
+catalogue — would make the list follow the components instead of being
+maintained beside them. Until then, a component with a host of its own has to
+be added to the composition by hand.
+
+---
+
+## 4. S8 ☐ Purge and reinstall
 
 `install.sh --layout v5` from nothing, every `check()` honest, `--status` all
 true, and the sign-in confirmed in a browser rather than by a script that
-cannot execute the page.
+cannot execute the page. Blocked on S7A.10's tenant teardown.
 
-## After M1
+---
+
+## 5. After M1
 
 The work packages in order. Each is specified in `work-packages.md`.
 
 | Order | Package | Why here |
-| --- | --- | --- |
+|---|---|---|
 | 1 | WP-1 Director | S7A.2 is its first item; the rest of the API follows |
 | 2 | WP-3 Authorization | who projects into OpenFGA, and the naming rule |
 | 3 | WP-7 UI | the admin console and the desktop, on the director's API |
@@ -791,23 +568,39 @@ The work packages in order. Each is specified in `work-packages.md`.
 | 9 | WP-9 Security gaps | audit logging, break-glass |
 | 10 | WP-11, WP-12, WP-13 | repository layout, documentation, certification |
 
-## How much has to be written
+**WP-5 has a concrete first step.** `ComponentProfile` now carries everything
+an app needs — tenancy, trust tier, exposures, tiles, a platform value
+mapping, `defaultForTenants` — and the administration console proves a
+component can be built, published and installed through it end to end. But
+`Tenant.spec.apps` still resolves `AppProfile` only, at every site that reads
+it, so a profile of type app cannot yet be installed into a tenant by naming
+it there. That is what "ComponentProfile for everything" means in practice,
+and it is what lets an app be standalone rather than reached only through the
+App Store.
 
-Raised while planning S7A.2 and worth answering before building it.
+---
 
-Most of what the director writes into OpenFGA today is not per-cluster at all.
-A note on naming: OpenFGA, or the ReBAC graph. Never "the store" — that is the
-App Store, which is a different thing entirely.
-The authorization **model** is a file in the repository and changes only when
-the model version does. The **relation structure** — that a cluster has
-tenants, that a tenant has admins, members and a perimeter group, which
-relation each role implies — is the model, not data. What is genuinely
-per-cluster is small: which groups exist, who is in them, which tenants this
-cluster has, and which entitlements are current.
+## 6. Open decisions
 
-So the graph should arrive mostly built: the model shipped and applied like a
-CRD, the role-to-relation structure derived from the model rather than written
-tuple by tuple, and only the names, the memberships and the facts written at
-runtime. That is both less code and a smaller blast radius: a bug in a
-projector can then add or remove a membership, but it cannot invent a relation
-that was never in the model.
+**How much of the graph has to be written at all.** Raised while planning
+S7A.2 and still unanswered. Most of what is written into OpenFGA is not
+per-cluster: the authorization **model** is a file in the repository and
+changes only when the model version does, and the **relation structure** —
+that a cluster has tenants, that a tenant has admins, members and a perimeter
+group, which relation each role implies — is the model, not data. What is
+genuinely per-cluster is small: which groups exist, who is in them, which
+tenants this cluster has, and which entitlements are current. So the graph
+should arrive mostly built, with only names, memberships and facts written at
+runtime. That is less code and a smaller blast radius: a bug in a projector
+can then add or remove a membership, but it cannot invent a relation that was
+never in the model.
+
+**The director's OpenFGA credential** cannot be made read-only (S7A.2). Accept
+the weaker guarantee, or pay for a proxy or OIDC auth mode.
+
+**Headlamp's second sign-in** (S7A.9): start the flow from the tile, or give
+it an authenticating sidecar.
+
+A note on naming: OpenFGA, or the ReBAC graph, or the authorization store.
+Never "the store" on its own — that is the App Store, which is a different
+thing entirely.
