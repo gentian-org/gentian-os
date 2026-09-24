@@ -182,8 +182,17 @@ func run(log *slog.Logger) error {
 	// revocation tuple to make that immediate, which meant it held write
 	// access to the authorization store for one event it is not otherwise
 	// part of. Deleting it is the cheaper answer.
+	// The tile catalogue is read from a file, not from the Kubernetes API.
+	//
+	// It is the operator's ConfigMap, mounted into this pod. That keeps the
+	// division this process is built on: the operator holds the cluster
+	// credential and the director holds none, so the director learns what the
+	// cluster routes by being handed it rather than by being trusted to go and
+	// look. A cluster whose operator has not projected yet has no file here,
+	// and the endpoint answers an empty list.
 	handler, err := api.New(api.Config{Authn: verifier, Authz: checker, Repo: repo, Log: log,
-		EnforceEntitlements: enforce, Store: store, Cluster: cluster})
+		EnforceEntitlements: enforce, Store: store, Cluster: cluster,
+		TilesPath: envOr("DIRECTOR_TILES_PATH", "/etc/gentian/tiles/tiles.yaml")})
 	if err != nil {
 		return err
 	}

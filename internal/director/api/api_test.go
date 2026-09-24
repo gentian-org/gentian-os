@@ -29,6 +29,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -42,6 +43,7 @@ import (
 	dt "github.com/gentian-org/gentian-os/internal/director/directortest"
 	"github.com/gentian-org/gentian-os/internal/director/entitlement"
 	"github.com/gentian-org/gentian-os/internal/director/gitops"
+	"github.com/gentian-org/gentian-os/internal/tilecatalogue"
 )
 
 // The contract tests run the whole director — token verification, the OpenFGA
@@ -68,6 +70,53 @@ type harness struct {
 
 func start(t *testing.T, entitlements bool) *harness {
 	t.Helper()
+	return startWithTiles(t, entitlements, projectedTiles(t))
+}
+
+// projectedTiles writes what the operator would have projected on this
+// cluster: the three kernel consoles it routes, and one tile belonging to an
+// installed component, whose relation is held on the tenant rather than on the
+// cluster. The director reads a file in a cluster too, so the tests read one.
+func projectedTiles(t *testing.T) string {
+	t.Helper()
+	body, err := tilecatalogue.Marshal(tilecatalogue.Catalogue{Tiles: []tilecatalogue.Tile{
+		{
+			Name: "headlamp", DisplayName: "Cluster", Description: "The cluster as Kubernetes sees it.",
+			Icon: "cluster", URL: "https://headlamp." + dt.KernelDomain + "/",
+			Object: "cluster:" + dt.Cluster,
+			AnyOf:  []string{"can_configure", "can_operate_system", "can_audit"},
+		},
+		{
+			Name: "argocd", DisplayName: "Deployments", Description: "What git says the cluster should run.",
+			Icon: "sync", URL: "https://argocd." + dt.KernelDomain + "/auth/login",
+			Object: "cluster:" + dt.Cluster,
+			AnyOf:  []string{"can_configure", "can_operate_system", "can_audit"},
+		},
+		{
+			Name: "keycloak", DisplayName: "Identity", Description: "Realms, clients and the people in them.",
+			Icon: "identity", URL: "https://id." + dt.KernelDomain + "/auth/admin/kernel/console/",
+			Object: "cluster:" + dt.Cluster,
+			AnyOf:  []string{"can_configure"},
+		},
+		{
+			Name: "demo/notes/web", DisplayName: "Notes", Description: "A tenant's own app.",
+			Icon: "notes", URL: "https://notes.demo." + dt.KernelDomain + "/",
+			Object: "tenant:demo",
+			AnyOf:  []string{"can_administer"},
+		},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(t.TempDir(), tilecatalogue.Key)
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+func startWithTiles(t *testing.T, entitlements bool, tilesPath string) *harness {
+	t.Helper()
 	is := dt.NewIssuer(t, "gentian", "tenant-demo", "tenant-solo")
 	v, err := authn.NewVerifier(authn.Config{IssuerBase: is.URL, Audience: audience})
 	if err != nil {
@@ -83,8 +132,9 @@ func start(t *testing.T, entitlements bool) *harness {
 	}
 	srv, err := api.New(api.Config{
 		Authn: v, Authz: decisions, Repo: repo, EnforceEntitlements: entitlements, Cluster: dt.Cluster,
-		Store: &api.StoreConfig{Verifier: verifier, Applier: &entitlement.Applier{Repo: repo, Store: tuples}},
-		Log:   slog.New(slog.NewTextHandler(io.Discard, nil)),
+		Store:     &api.StoreConfig{Verifier: verifier, Applier: &entitlement.Applier{Repo: repo, Store: tuples}},
+		Log:       slog.New(slog.NewTextHandler(io.Discard, nil)),
+		TilesPath: tilesPath,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -421,10 +471,15 @@ func TestAnExpiredGrantEntitlesToNothing(t *testing.T) {
 	}
 }
 
-// The kernel's own UIs on the administrator's console: which tiles a person
-// sees follows from their relations on the cluster, and every URL is under the
-// kernel domain the Cluster claim in git declares.
-func TestKernelTilesFollowTheClusterRelations(t *testing.T) {
+// The tiles a person sees follow from that person's relations, and from
+// nothing the portal decides for itself.
+//
+// The catalogue itself is the operator's: this test hands the director the
+// file the operator would have projected, which is how the director gets it in
+// a cluster. What is under test here is the filtering, and that each tile is
+// filtered against its own object, so a tenant's app tile is not answered by a
+// relation on the cluster.
+func TestTilesFollowTheCallersRelations(t *testing.T) {
 	h := start(t, false)
 	names := func(sub string) (int, []string) {
 		code, body := h.do(t, "GET", "/v1/clusters/demo-cluster/tiles", h.token(t, "gentian", sub), "")
@@ -437,17 +492,33 @@ func TestKernelTilesFollowTheClusterRelations(t *testing.T) {
 		}
 		return code, out
 	}
-	if code, got := names("alice"); code != 200 || fmt.Sprint(got) != "[headlamp argocd keycloak]" {
-		t.Fatalf("platform admin: %d %v", code, got)
+	cases := map[string]struct {
+		subject string
+		code    int
+		tiles   string
+	}{
+		"the platform administrator opens every console and the tenant's app": {
+			subject: "alice", code: http.StatusOK, tiles: "[headlamp argocd keycloak demo/notes/web]",
+		},
+		"an auditor sees what it may read and not the identity console": {
+			subject: "audrey", code: http.StatusOK, tiles: "[headlamp argocd]",
+		},
+		"a service administrator without can_audit does not reach the endpoint": {
+			subject: "serge", code: http.StatusForbidden,
+		},
+		"a tenant member has no cluster relation at all": {
+			subject: "mia", code: http.StatusForbidden,
+		},
 	}
-	if code, got := names("audrey"); code != 200 || fmt.Sprint(got) != "[headlamp argocd]" {
-		t.Fatalf("auditor: %d %v", code, got)
-	}
-	if code, _ := names("serge"); code != http.StatusForbidden {
-		t.Fatalf("service admin without can_audit: %d", code)
-	}
-	if code, _ := names("mia"); code != http.StatusForbidden {
-		t.Fatalf("a tenant member: %d", code)
+	for name, c := range cases {
+		code, got := names(c.subject)
+		if code != c.code {
+			t.Errorf("%s: %d, want %d", name, code, c.code)
+			continue
+		}
+		if c.code == http.StatusOK && fmt.Sprint(got) != c.tiles {
+			t.Errorf("%s: %v, want %s", name, got, c.tiles)
+		}
 	}
 	_, body := h.do(t, "GET", "/v1/clusters/demo-cluster/tiles", h.token(t, "gentian", "alice"), "")
 	if body["kernelDomain"] != dt.KernelDomain || !strings.Contains(fmt.Sprint(body["tiles"]), "https://headlamp.k.example/") {
@@ -455,6 +526,27 @@ func TestKernelTilesFollowTheClusterRelations(t *testing.T) {
 	}
 	if code, _ := h.do(t, "GET", "/v1/clusters/other/tiles", h.token(t, "gentian", "alice"), ""); code != http.StatusBadRequest {
 		t.Fatalf("another cluster id: %d", code)
+	}
+}
+
+// A cluster whose operator has not projected yet has no catalogue to read, and
+// that is not a failure: the console shows a desktop with nothing on it, which
+// is the truth, instead of an error it cannot act on.
+func TestTilesWithoutAProjection(t *testing.T) {
+	cases := map[string]string{
+		"nothing configured":       "",
+		"configured but not there": filepath.Join(t.TempDir(), "never-written.yaml"),
+	}
+	for name, path := range cases {
+		h := startWithTiles(t, false, path)
+		code, body := h.do(t, "GET", "/v1/clusters/demo-cluster/tiles", h.token(t, "gentian", "alice"), "")
+		if code != http.StatusOK {
+			t.Errorf("%s: %d, want 200", name, code)
+			continue
+		}
+		if got := body["tiles"].([]any); len(got) != 0 {
+			t.Errorf("%s: %v, want no tiles", name, got)
+		}
 	}
 }
 

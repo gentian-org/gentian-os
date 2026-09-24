@@ -29,6 +29,10 @@ limitations under the License.
 //     with two tenants. Inspect it with git: the commits are the real ones.
 //   - The App Store is a throwaway signing key. GET /dev/statement signs an
 //     entitlement statement.
+//   - The operator's tile catalogue is a file written at start, holding the
+//     three kernel consoles a cluster routes. In a cluster the operator
+//     projects it into a ConfigMap and the director reads it mounted; here
+//     there is no operator, so the file is written directly.
 //
 // It is not shipped in any image and must never be: /dev/token makes anyone
 // anybody.
@@ -59,6 +63,7 @@ import (
 	"github.com/gentian-org/gentian-os/internal/director/entitlement"
 	"github.com/gentian-org/gentian-os/internal/director/gitops"
 	"github.com/gentian-org/gentian-os/internal/membership"
+	"github.com/gentian-org/gentian-os/internal/tilecatalogue"
 )
 
 const (
@@ -199,9 +204,14 @@ func run(log *slog.Logger, listen, base string, origins []string, enforce bool, 
 	if err != nil {
 		return err
 	}
+	tilesPath, err := seedTiles(work, cluster)
+	if err != nil {
+		return err
+	}
 	director, err := api.New(api.Config{
 		Authn: verifier, Authz: checker, Repo: repo, Log: log, EnforceEntitlements: enforce, Cluster: cluster,
-		Store: &api.StoreConfig{Verifier: storeVerifier, Applier: &entitlement.Applier{Repo: repo, Store: tuples}},
+		Store:     &api.StoreConfig{Verifier: storeVerifier, Applier: &entitlement.Applier{Repo: repo, Store: tuples}},
+		TilesPath: tilesPath,
 	})
 	if err != nil {
 		return err
@@ -315,6 +325,46 @@ func cors(next http.Handler, origins []string) http.Handler {
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+// seedTiles writes the catalogue the operator would have projected for a
+// cluster serving all three kernel consoles on k.example, which is the domain
+// the seeded claim declares. The director filters it per caller exactly as it
+// does in a cluster; what is missing here is only the operator that keeps it
+// in step with the routes.
+func seedTiles(work, cluster string) (string, error) {
+	body, err := tilecatalogue.Marshal(tilecatalogue.Catalogue{Tiles: []tilecatalogue.Tile{
+		{
+			Name: "headlamp", DisplayName: "Cluster",
+			Description: "The cluster as Kubernetes sees it — nodes, workloads, events — with your own identity.",
+			Icon:        "cluster", URL: "https://headlamp.k.example/",
+			Object: "cluster:" + cluster,
+			AnyOf:  []string{"can_configure", "can_operate_system", "can_audit"},
+		},
+		{
+			Name: "argocd", DisplayName: "Deployments",
+			Description: "What git says the cluster should run, and whether it does.",
+			Icon:        "sync", URL: "https://argocd.k.example/auth/login",
+			Object: "cluster:" + cluster,
+			AnyOf:  []string{"can_configure", "can_operate_system", "can_audit"},
+		},
+		{
+			Name: "keycloak", DisplayName: "Identity",
+			Description: "Realms, clients and the people in them.",
+			Icon:        "identity", URL: "https://id.k.example/auth/admin/kernel/console/",
+			Object: "cluster:" + cluster,
+			AnyOf:  []string{"can_configure"},
+		},
+	}})
+	if err != nil {
+		return "", err
+	}
+	dir := filepath.Join(work, "tiles")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return "", err
+	}
+	path := filepath.Join(dir, tilecatalogue.Key)
+	return path, os.WriteFile(path, []byte(body), 0o644)
 }
 
 // seed creates the bare repository with tenants demo and solo.

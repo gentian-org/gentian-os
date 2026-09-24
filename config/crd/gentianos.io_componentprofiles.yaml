@@ -53,10 +53,14 @@ spec:
           spec:
             description: |-
               ComponentProfileSpec is one catalogue entry: what a component is, what it
-              needs from the platform, and what it may expose. It carries no presentation
-              fields — names, descriptions, icons and tiles are the store's, outside the
-              cluster — and nothing in it grants anything: every permissive statement here
-              is a request that a named person answers on the Component.
+              needs from the platform, and what it may expose. The presentation of a
+              catalogue listing stays the store's, outside the cluster. The one piece of
+              presentation an entry carries here is the tile on an exposure, because the
+              portal has to be able to show what the cluster routes without asking the
+              store, and because an app that cannot appear on the portal until a service
+              outside the cluster answers is an app a person cannot reach. Nothing in it
+              grants anything: every permissive statement here is a request that a named
+              person answers on the Component.
             properties:
               backup:
                 description: Backup declares what a consistent copy of this component
@@ -715,6 +719,57 @@ spec:
                       - gateway
                       - perimeter
                       type: string
+                    tile:
+                      description: |-
+                        Tile is how this entry appears on the portal, for an entry a person is
+                        meant to open. An entry that declares none is reachable and unadvertised,
+                        which is what an API or a callback endpoint should be, so the absence is
+                        the default and nothing has to opt out.
+                      properties:
+                        description:
+                          description: Description is the sentence the portal shows
+                            beside the label.
+                          maxLength: 256
+                          type: string
+                        displayName:
+                          description: |-
+                            DisplayName is the label under the icon. A few words, in the language of
+                            the person using it rather than of the chart that installs it.
+                          maxLength: 64
+                          minLength: 1
+                          type: string
+                        icon:
+                          description: |-
+                            Icon is the glyph the portal draws, by name. The portal owns the set; a
+                            name it does not know draws its fallback rather than failing the page.
+                          maxLength: 64
+                          minLength: 1
+                          pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
+                          type: string
+                        path:
+                          description: |-
+                            Path is where within the host the tile leads. Empty means the front page.
+                            It exists because an app's front page is not always its entry: a tool
+                            whose front page is a login form is better entered past it, since the
+                            person following the tile already holds the zone's session.
+                          maxLength: 512
+                          pattern: ^/
+                          type: string
+                        relation:
+                          description: |-
+                            Relation is what the caller must hold on this component's app object for
+                            the tile to be on their page, a permission of the authorization model
+                            (authz/model/v1/model.fga). It is required: a tile with no question is a
+                            link shown to everyone, and the portal is not where that is decided.
+                          maxLength: 64
+                          minLength: 1
+                          pattern: ^can_[a-z0-9_]+$
+                          type: string
+                      required:
+                      - displayName
+                      - icon
+                      - relation
+                      type: object
                   required:
                   - authMode
                   - backend

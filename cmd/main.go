@@ -454,6 +454,21 @@ func main() {
 		}
 	}
 
+	// The tile catalogue: the kernel consoles this operator routes, plus every
+	// exposure of an installed component whose profile declares a tile.
+	//
+	// The director used to carry this as a list compiled into its binary,
+	// which is a second copy of facts the operator already holds and which no
+	// installed app could add itself to without a director release.
+	if err := (&controller.TileProjectionReconciler{
+		Client:      mgr.GetClient(),
+		Cluster:     envOrDefault("GENTIAN_DEPLOYMENTS_CLUSTER_ID", "default-cluster"),
+		KernelRealm: kernelRealmOrDefault(os.Getenv("KERNEL_REALM")),
+	}).SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "unable to create controller", "controller", "TileProjection")
+		os.Exit(1)
+	}
+
 	if enableWebhook {
 		(&webhook.TenantValidator{
 			Client:       mgr.GetClient(),
