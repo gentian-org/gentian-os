@@ -102,6 +102,11 @@ type Meta struct {
 	Principal string
 }
 
+// ActorName is who an ACTION records. A commit has an author and a trailer to
+// read a person off; an action has neither, so the object it creates carries
+// this name instead — the same identity, by the same rule.
+func (m Meta) ActorName() string { return m.actor() }
+
 func (m Meta) actor() string {
 	if m.Principal != "" {
 		return m.Principal

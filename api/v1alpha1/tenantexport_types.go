@@ -20,6 +20,14 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
+// RequestedByAnnotation names who asked for an action.
+//
+// An action leaves no commit to read an actor off, the way a change to
+// declared state does, so the object carries the name instead. Nothing
+// reconciles on it: it is there for the person who finds a bundle months
+// later and wants to know who took it.
+const RequestedByAnnotation = "gentianos.io/requested-by"
+
 // TenantExportSpec requests a point-in-time capture of one tenant's data.
 //
 // The resource lives in the tenant's own namespace, so a tenant's exports stay

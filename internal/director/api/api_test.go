@@ -666,6 +666,8 @@ var facts = table{
 	"user:tom can_administer tenant:demo":                  true,
 	"user:tom can_set_plan tenant:demo":                    true,
 	"user:alice can_set_plan tenant:demo":                  true,
+	"user:tom can_set_policy tenant:demo":                  true,
+	"user:alice can_set_policy tenant:demo":                true,
 	"user:tom can_manage_users tenant:demo":                true,
 	"user:alice can_enter tenant:demo":                     true,
 	"user:alice can_administer tenant:demo":                true,

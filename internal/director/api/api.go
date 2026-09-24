@@ -36,6 +36,7 @@ import (
 	"net/url"
 	"os"
 	"regexp"
+	"strings"
 
 	"github.com/gentian-org/gentian-os/internal/director/authn"
 	"github.com/gentian-org/gentian-os/internal/director/authz"
@@ -65,6 +66,9 @@ type Repository interface {
 	RetireTenant(ctx context.Context, tenant string, meta gitops.Meta) (gitops.Result, error)
 	Tenants(ctx context.Context) ([]string, error)
 	SetResourcePlan(ctx context.Context, tenant string, plan gitops.Plan, meta gitops.Meta) (gitops.Result, error)
+	SetTenantBackupPolicy(ctx context.Context, tenant string, policy gitops.BackupPolicy, meta gitops.Meta) (gitops.Result, error)
+	ClearTenantBackupPolicy(ctx context.Context, tenant string, meta gitops.Meta) (gitops.Result, error)
+	SetClusterBackupPolicy(ctx context.Context, policy gitops.BackupPolicy, meta gitops.Meta) (gitops.Result, error)
 }
 
 // Lifecycle is the operator's app-lifecycle API, read and never written: what
@@ -73,6 +77,9 @@ type Repository interface {
 type Lifecycle interface {
 	Get(ctx context.Context, path string, query url.Values) (int, []byte, error)
 	Plans(ctx context.Context, tenant string, selfService bool) ([]lifecycle.Plan, error)
+	// Do asks the cluster to do something once, as the person named. Only
+	// the action routes call it.
+	Do(ctx context.Context, path, actor string, body any) (int, []byte, error)
 }
 
 // Config assembles a Server.
@@ -264,12 +271,38 @@ func (s *Server) authorize(w http.ResponseWriter, r *http.Request, pattern, rela
 
 // guarded registers a route with the relation it requires. There is no other
 // way to register a route a user can call.
+//
+// This API serves three kinds of thing and says which in the route itself:
+//
+//	GET  <resource>            a READ of state. Answers what is.
+//	PUT/PATCH/DELETE <resource>  a WRITE of declared state. Answers a commit:
+//	                           202 with one, or 200 "unchanged". Git has it;
+//	                           the cluster does not yet.
+//	POST <resource>/actions/x  an ACTION. Answers what was started, not what
+//	                           was committed, because nothing was.
+//
+// The difference is not decoration. A write says what should be true from now
+// on and is reviewable in git for ever; an action happens once and leaves no
+// commit, so the object it creates carries who asked instead. Registering an
+// action through `action` rather than `guarded` is what keeps a handler from
+// answering in the wrong shape.
 func (s *Server) guarded(pattern, relation string, obj object, h func(http.ResponseWriter, *http.Request, call)) {
 	s.mux.HandleFunc(pattern, func(w http.ResponseWriter, r *http.Request) {
 		if c, ok := s.authorize(w, r, pattern, relation, obj); ok {
 			h(w, r, c)
 		}
 	})
+}
+
+// action registers something that happens once. The pattern must be a POST
+// under `/actions/`, which is checked here rather than trusted: a route that
+// looked like a read and made something happen would be the one mistake this
+// distinction exists to prevent.
+func (s *Server) action(pattern, relation string, obj object, h func(http.ResponseWriter, *http.Request, call)) {
+	if !strings.HasPrefix(pattern, "POST ") || !strings.Contains(pattern, "/actions/") {
+		panic("api: an action must be a POST under /actions/: " + pattern)
+	}
+	s.guarded(pattern, relation, obj, h)
 }
 
 func (s *Server) routes() {
@@ -368,6 +401,24 @@ func (s *Server) routes() {
 			s.guarded("GET /v1/clusters/{c}/backup-policy", "can_audit", s.clusterObject, s.clusterBackupPolicy)
 			s.guarded("GET /v1/clusters/{c}/backup-schedules", "can_audit", s.clusterObject, s.clusterBackupSchedules)
 		}
+
+		// Writing a backup policy is writing declared state: what should be
+		// true of every run from now on. It is a commit, under
+		// can_set_policy -- model v1's own verb for the policies of a tenant
+		// -- and the cluster's is can_configure, like every other thing the
+		// cluster declares about itself. Clearing a tenant's is the same
+		// kind of write: it stops declaring, and inherits again.
+		s.guarded("PUT /v1/tenants/{t}/backup-policy", "can_set_policy", tenantObject, s.setTenantBackupPolicy)
+		s.guarded("DELETE /v1/tenants/{t}/backup-policy", "can_set_policy", tenantObject, s.clearTenantBackupPolicy)
+		if s.cfg.Cluster != "" {
+			s.guarded("PUT /v1/clusters/{c}/backup-policy", "can_configure", s.clusterObject, s.setClusterBackupPolicy)
+		}
+
+		// Taking a backup is not declaring anything: it happens once, now.
+		// can_administer, because it reads every store the tenant has and
+		// writes a bundle somebody can restore from.
+		s.action("POST /v1/tenants/{t}/actions/backup", "can_administer", tenantObject, s.startBackup)
+		s.action("POST /v1/tenants/{t}/actions/delete-backup", "can_administer", tenantObject, s.deleteBackup)
 	}
 }
 
@@ -774,6 +825,19 @@ func (s *Server) written(w http.ResponseWriter, r *http.Request, res gitops.Resu
 		return
 	}
 	s.json(w, http.StatusAccepted, map[string]any{"status": res.Status, "commit": res.Commit})
+}
+
+// started answers an action. Not 202-with-a-commit, because there is no
+// commit: the cluster was asked to do something and is doing it, and the
+// handle is the object's name rather than a git id.
+func (s *Server) started(w http.ResponseWriter, r *http.Request, status int, body []byte) {
+	if status < 200 || status > 299 {
+		s.fail(w, r, status, lifecycle.ErrorMessage(body))
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusAccepted)
+	_, _ = w.Write(body)
 }
 
 func (s *Server) repoError(w http.ResponseWriter, r *http.Request, err error) {

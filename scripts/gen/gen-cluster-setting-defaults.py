@@ -96,9 +96,17 @@ def catalogue_paths() -> list[str]:
 
 
 def rendered(defaults: list[tuple[str, str]]) -> str:
+    """The map, aligned the way gofmt aligns one.
+
+    Formatted here rather than by shelling out: `make verify-gen` regenerates
+    and then asks git whether anything moved, so a generator whose output
+    gofmt would change makes that check fail on a file nobody edited.
+    """
+    width = max((len(f'"{p}":') for p, _ in defaults), default=0)
     lines = [HEADER]
     for path, value in defaults:
-        lines.append(f'\t{path!r}: {value!r},\n'.replace("'", '"'))
+        key = f'"{path}":'
+        lines.append(f'\t{key.ljust(width)} "{value}",\n')
     lines.append("}\n")
     return "".join(lines)
 

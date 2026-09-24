@@ -270,3 +270,70 @@ func (s *Server) clusterBackupPolicy(w http.ResponseWriter, r *http.Request, _ c
 func (s *Server) clusterBackupSchedules(w http.ResponseWriter, r *http.Request, _ call) {
 	s.relayed(w, r, "/v1/backup-schedules")
 }
+
+// ── Backup: declared state, and actions ─────────────────────────────────────
+
+// setTenantBackupPolicy writes what should be true of this tenant's backups
+// from now on. A commit, like every other change to declared state.
+func (s *Server) setTenantBackupPolicy(w http.ResponseWriter, r *http.Request, c call) {
+	var body gitops.BackupPolicy
+	if err := decode(r, &body); err != nil {
+		s.fail(w, r, http.StatusBadRequest, "body must be a backup policy")
+		return
+	}
+	res, err := s.cfg.Repo.SetTenantBackupPolicy(r.Context(), r.PathValue("t"), body, c.meta)
+	s.written(w, r, res, err)
+}
+
+// clearTenantBackupPolicy stops this tenant declaring one, which is how it
+// goes back to the cluster's. There is no "inherit" value to write: a tenant
+// inherits by saying nothing.
+func (s *Server) clearTenantBackupPolicy(w http.ResponseWriter, r *http.Request, c call) {
+	res, err := s.cfg.Repo.ClearTenantBackupPolicy(r.Context(), r.PathValue("t"), c.meta)
+	s.written(w, r, res, err)
+}
+
+func (s *Server) setClusterBackupPolicy(w http.ResponseWriter, r *http.Request, c call) {
+	var body gitops.BackupPolicy
+	if err := decode(r, &body); err != nil {
+		s.fail(w, r, http.StatusBadRequest, "body must be a backup policy")
+		return
+	}
+	res, err := s.cfg.Repo.SetClusterBackupPolicy(r.Context(), body, c.meta)
+	s.written(w, r, res, err)
+}
+
+// startBackup asks the cluster to take one now.
+func (s *Server) startBackup(w http.ResponseWriter, r *http.Request, c call) {
+	var body map[string]any
+	if err := decode(r, &body); err != nil {
+		body = map[string]any{}
+	}
+	status, answer, err := s.cfg.Lifecycle.Do(r.Context(),
+		"/v1/tenants/"+url.PathEscape(r.PathValue("t"))+"/actions/backup", c.meta.ActorName(), body)
+	if err != nil {
+		s.lifecycleError(w, r, err)
+		return
+	}
+	s.started(w, r, status, answer)
+}
+
+// deleteBackup removes one run's record. Also an action: the bundle's fate is
+// the retention policy's, and nothing about the tenant's desired state changes.
+func (s *Server) deleteBackup(w http.ResponseWriter, r *http.Request, c call) {
+	var body struct {
+		Name string `json:"name"`
+	}
+	if err := decode(r, &body); err != nil || body.Name == "" {
+		s.fail(w, r, http.StatusBadRequest, `body must be {"name": "<backup>"}`)
+		return
+	}
+	status, answer, err := s.cfg.Lifecycle.Do(r.Context(),
+		"/v1/tenants/"+url.PathEscape(r.PathValue("t"))+"/actions/delete-backup",
+		c.meta.ActorName(), map[string]string{"name": body.Name})
+	if err != nil {
+		s.lifecycleError(w, r, err)
+		return
+	}
+	s.started(w, r, status, answer)
+}

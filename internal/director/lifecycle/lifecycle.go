@@ -27,6 +27,7 @@ limitations under the License.
 package lifecycle
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -130,4 +131,35 @@ func ErrorMessage(body []byte) string {
 		return e.Detail
 	}
 	return strings.TrimSpace(string(body))
+}
+
+// Do asks the operator to do something once, as the person named.
+//
+// The only write in this client, and it is not a write of state: the director
+// writes state to git. What the cluster is asked to do here happens now,
+// leaves no commit, and so carries the actor on the request instead — which
+// is why the header exists and why nothing but the director may set it.
+func (c *Client) Do(ctx context.Context, path, actor string, body any) (int, []byte, error) {
+	payload, err := json.Marshal(body)
+	if err != nil {
+		return 0, nil, err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.base+path, bytes.NewReader(payload))
+	if err != nil {
+		return 0, nil, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	if actor != "" {
+		req.Header.Set("X-Gentian-Actor", actor)
+	}
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return 0, nil, fmt.Errorf("app-lifecycle API: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	answer, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if err != nil {
+		return 0, nil, fmt.Errorf("app-lifecycle API: %w", err)
+	}
+	return resp.StatusCode, answer, nil
 }

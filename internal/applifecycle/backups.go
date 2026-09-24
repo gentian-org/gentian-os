@@ -20,6 +20,7 @@ import (
 	"context"
 	"fmt"
 	"sort"
+	"time"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -406,4 +407,97 @@ func tenantFromNamespace(ns string) string {
 		return ns[len(prefix):]
 	}
 	return ""
+}
+
+// ── Actions ──────────────────────────────────────────────────────────────────
+//
+// A backup is not declared state. A policy says what should be true of every
+// run; a run happens once, at a moment somebody chose, and writing one into
+// git would leave an object there that has already finished and that somebody
+// then has to prune. So taking one and removing one are actions: the director
+// authorises the caller and asks for them by name, and the answer says what
+// was started rather than what was committed.
+
+// StartBackupRequest is one export, as the caller asks for it.
+type StartBackupRequest struct {
+	Tenant string
+	Name   string
+	Actor  string
+	// Apps limits the export; empty is every app the tenant has.
+	Apps []string
+	// Recipients, when set, encrypt the bundle to keys the caller holds. The
+	// platform then cannot read what it stores, which is the point and also
+	// the thing the console has to say out loud.
+	Recipients []string
+	// Destination chooses where the bundle is written: policy, platform or
+	// custom. Empty follows the policy.
+	Destination *gentianov1alpha1.ExportDestination
+}
+
+// StartedAction is what an action answers: what was started, and the handle
+// to ask about it.
+type StartedAction struct {
+	Action string `json:"action"`
+	Tenant string `json:"tenant"`
+	Name   string `json:"name"`
+	Status string `json:"status"`
+}
+
+// StartBackup creates a TenantExport, which is what makes the export happen.
+func (s *Service) StartBackup(ctx context.Context, req StartBackupRequest) (*StartedAction, error) {
+	tenant, err := s.getTenant(ctx, req.Tenant)
+	if err != nil {
+		return nil, err
+	}
+	name := req.Name
+	if name == "" {
+		name = fmt.Sprintf("manual-%s", time.Now().UTC().Format("20060102-150405"))
+	}
+	export := &gentianov1alpha1.TenantExport{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      name,
+			Namespace: tenant.NamespaceName(),
+			Annotations: map[string]string{
+				// Who asked. The reconciler does not read it; a person
+				// looking at a bundle months later does.
+				gentianov1alpha1.RequestedByAnnotation: req.Actor,
+			},
+		},
+		Spec: gentianov1alpha1.TenantExportSpec{Apps: req.Apps, Destination: req.Destination},
+	}
+	if len(req.Recipients) > 0 {
+		export.Spec.Encryption = &gentianov1alpha1.ExportEncryption{
+			Mode:       gentianov1alpha1.ExportEncryptionRecipient,
+			Recipients: req.Recipients,
+		}
+	}
+	if err := s.client.Create(ctx, export); err != nil {
+		if apierrors.IsAlreadyExists(err) {
+			return nil, fmt.Errorf("a backup named %q already exists for tenant %q", name, req.Tenant)
+		}
+		return nil, err
+	}
+	return &StartedAction{Action: "backup", Tenant: req.Tenant, Name: name, Status: "started"}, nil
+}
+
+// DeleteBackup removes an export.
+//
+// The bundle in storage is the TenantExport controller's to clean up or keep,
+// by the policy's retention; this removes the record of the run, which is
+// what a console's delete means.
+func (s *Service) DeleteBackup(ctx context.Context, tenantName, name string) (*StartedAction, error) {
+	tenant, err := s.getTenant(ctx, tenantName)
+	if err != nil {
+		return nil, err
+	}
+	export := &gentianov1alpha1.TenantExport{
+		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: tenant.NamespaceName()},
+	}
+	if err := s.client.Delete(ctx, export); err != nil {
+		if apierrors.IsNotFound(err) {
+			return nil, fmt.Errorf("backup %q not found for tenant %q", name, tenantName)
+		}
+		return nil, err
+	}
+	return &StartedAction{Action: "delete-backup", Tenant: tenantName, Name: name, Status: "started"}, nil
 }

@@ -54,6 +54,7 @@ They are not a second plan, and they are not renumbered when something lands.
 | S7A.13 | `denyPaths` promises a control it does not apply | ☐ |
 | S7A.14 | A release reaches a cluster by an immutable name | ☐ |
 | S7A.15 | A zone's hosts follow the components, not a list | ☐ |
+| S7A.16 | The app-lifecycle API authenticates nobody | ☐ |
 
 ### What is left, in the order to do it
 
@@ -525,6 +526,33 @@ already publishes `<branch>-<sha>` images and immutable chart versions, and
 gentian-ui's workflow already rewrites its chart's values to the immutable
 image tag before packaging. Do the same for the operator, the director and
 every component chart in `gentian-apps`, and keep the moving tag for humans.
+
+### S7A.16 ☐ The app-lifecycle API authenticates nobody
+
+The operator's HTTP API is reachable by anything that can reach the Service,
+and it has writes: installing and uninstalling an app, setting addons, and now
+taking and deleting a backup. Each takes the person's name from an
+`X-Gentian-Actor` header, which is a claim rather than a proof — so a pod in
+any namespace could take a backup and have somebody else's name recorded
+against it.
+
+This is not new and the backup actions did not create it; naming it here is
+what stops it being rediscovered. Three ways out, in increasing order of what
+they cost:
+
+1. **A NetworkPolicy** admitting only the director's pod. Cheap, and it is
+   topology rather than identity: it says who may connect, not who is asking.
+   It also has to account for `kubectl port-forward`, which the plugin's reads
+   use and which does not arrive from where a pod would.
+2. **A token both sides hold**, issued by the chart, mounted by the director
+   and required on every action. Real authentication, no CNI semantics to
+   reason about, one more secret to rotate.
+3. **The caller's own token**, verified here against the realm. The strongest,
+   and the most work: the operator would need the issuer's keys and the graph,
+   which is the director's job — so this is really "there should be no HTTP
+   write here at all, only the director's".
+
+Worth doing before a tenant application shares a cluster with this.
 
 ### S7A.15 ☐ A zone's hosts follow the components, not a list
 

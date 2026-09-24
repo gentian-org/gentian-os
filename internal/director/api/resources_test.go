@@ -41,6 +41,9 @@ type operator struct {
 	selfService map[string]string
 	// tenants the operator knows; any other is its 400.
 	tenants map[string]bool
+	// actor and lastAction record what an action arrived as.
+	actor      string
+	lastAction string
 }
 
 func startOperator(t *testing.T) *operator {
@@ -126,6 +129,18 @@ func startOperator(t *testing.T) *operator {
 	})
 	mux.HandleFunc("GET /v1/backup-schedules", func(w http.ResponseWriter, _ *http.Request) {
 		_ = json.NewEncoder(w).Encode(map[string]any{"schedules": []any{}})
+	})
+	mux.HandleFunc("POST /v1/tenants/{t}/actions/{action}", func(w http.ResponseWriter, r *http.Request) {
+		if !known(w, r) {
+			return
+		}
+		op.actor = r.Header.Get("X-Gentian-Actor")
+		op.lastAction = r.PathValue("action")
+		w.WriteHeader(http.StatusAccepted)
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"action": r.PathValue("action"), "tenant": r.PathValue("t"),
+			"name": "manual-20260924-210000", "status": "started",
+		})
 	})
 	op.Server = httptest.NewServer(mux)
 	t.Cleanup(op.Close)
@@ -363,5 +378,97 @@ func TestBackupsAreReadByWhoeverMayViewTheTenant(t *testing.T) {
 	}
 	if code, _ := h.do(t, "GET", "/v1/clusters/"+dt.Cluster+"/backup-policy", tina, ""); code != http.StatusForbidden {
 		t.Fatalf("a tenant admin read the cluster's backup policy: %d", code)
+	}
+}
+
+// A policy is declared state and a backup is an action, and the API says
+// which: a policy answers with a commit, a backup answers with what was
+// started. Neither is reachable by someone who does not hold the relation.
+func TestAPolicyIsCommittedAndABackupIsStarted(t *testing.T) {
+	h, op := startWithOperator(t)
+	tom := h.token(t, "tenant-demo", "tom") // administers demo
+
+	// Declared state: a commit, and the file a reviewer reads.
+	before := h.tip(t)
+	code, body := h.do(t, "PUT", "/v1/tenants/demo/backup-policy", tom,
+		`{"schedule":"0 3 * * *","retention":{"keepDaily":7},"encryption":{"recipients":["age1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq"]}}`)
+	if code != http.StatusAccepted || body["commit"] != h.tip(t) || h.tip(t) == before {
+		t.Fatalf("policy write: %d %v", code, body)
+	}
+	policy := dt.RemoteFile(t, h.remote, "clusters/"+dt.Cluster+"/tenants/demo/backup-policy.yaml")
+	for _, want := range []string{"kind: BackupPolicy", "scope: tenant", "tenant: demo", `schedule: "0 3 * * *"`, "keepDaily: 7", "recipients:"} {
+		if !strings.Contains(policy, want) {
+			t.Errorf("policy is missing %q:\n%s", want, policy)
+		}
+	}
+	kustomization := dt.RemoteFile(t, h.remote, "clusters/"+dt.Cluster+"/tenants/demo/kustomization.yaml")
+	if !strings.Contains(kustomization, "- backup-policy.yaml") {
+		t.Fatalf("the policy is not applied:\n%s", kustomization)
+	}
+	// Writing the same thing again changes nothing.
+	if code, body = h.do(t, "PUT", "/v1/tenants/demo/backup-policy", tom,
+		`{"schedule":"0 3 * * *","retention":{"keepDaily":7},"encryption":{"recipients":["age1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq"]}}`); code != http.StatusOK || body["status"] != "unchanged" {
+		t.Fatalf("rewriting the same policy: %d %v", code, body)
+	}
+
+	// An action: what was started, not what was committed, and the tip has
+	// not moved because nothing was written to git.
+	after := h.tip(t)
+	code, body = h.do(t, "POST", "/v1/tenants/demo/actions/backup", tom, `{}`)
+	if code != http.StatusAccepted || body["status"] != "started" || body["action"] != "backup" {
+		t.Fatalf("action: %d %v", code, body)
+	}
+	if _, isCommit := body["commit"]; isCommit || h.tip(t) != after {
+		t.Fatalf("an action wrote to git: %v", body)
+	}
+	// The person is named on the request, because there is no commit to
+	// read them off.
+	if op.actor != "tom@example.com" || op.lastAction != "backup" {
+		t.Fatalf("actor=%q action=%q", op.actor, op.lastAction)
+	}
+
+	// Clearing goes back to inheriting, which is the file being gone.
+	if code, _ := h.do(t, "DELETE", "/v1/tenants/demo/backup-policy", tom, ""); code != http.StatusAccepted {
+		t.Fatalf("clear: %d", code)
+	}
+	if out := dt.Git(t, "", "--git-dir", h.remote, "ls-tree", "--name-only", "main:clusters/"+dt.Cluster+"/tenants/demo"); strings.Contains(out, "backup-policy.yaml") {
+		t.Fatalf("the policy file survived the clear:\n%s", out)
+	}
+}
+
+func TestWhoMaySetAPolicyAndWhoMayTakeABackup(t *testing.T) {
+	h, _ := startWithOperator(t)
+	before := h.tip(t)
+
+	// A member may read backups and change nothing.
+	mia := h.token(t, "tenant-demo", "mia")
+	if code, _ := h.do(t, "PUT", "/v1/tenants/demo/backup-policy", mia, `{"schedule":"0 4 * * *"}`); code != http.StatusForbidden {
+		t.Fatalf("a member set the policy: %d", code)
+	}
+	if code, _ := h.do(t, "POST", "/v1/tenants/demo/actions/backup", mia, `{}`); code != http.StatusForbidden {
+		t.Fatalf("a member took a backup: %d", code)
+	}
+	// Another tenant's administrator holds nothing here.
+	tina := h.token(t, "tenant-solo", "tina")
+	if code, _ := h.do(t, "POST", "/v1/tenants/demo/actions/backup", tina, `{}`); code != http.StatusForbidden {
+		t.Fatalf("a stranger took a backup: %d", code)
+	}
+	// The cluster's own policy is the cluster's to set.
+	if code, _ := h.do(t, "PUT", "/v1/clusters/"+dt.Cluster+"/backup-policy", tina, `{"schedule":"0 4 * * *"}`); code != http.StatusForbidden {
+		t.Fatalf("a tenant admin set the cluster's policy: %d", code)
+	}
+	if h.tip(t) != before {
+		t.Fatal("a refused request moved the repository")
+	}
+
+	alice := h.token(t, "gentian", "alice") // platform administrator
+	code, body := h.do(t, "PUT", "/v1/clusters/"+dt.Cluster+"/backup-policy", alice,
+		`{"schedule":"0 1 * * *","allowTenantOverride":false}`)
+	if code != http.StatusAccepted || body["commit"] != h.tip(t) {
+		t.Fatalf("cluster policy: %d %v", code, body)
+	}
+	claim := dt.RemoteFile(t, h.remote, "clusters/"+dt.Cluster+"/kernel/claims/backup-policy.yaml")
+	if !strings.Contains(claim, "scope: cluster") || !strings.Contains(claim, "allowTenantOverride: false") {
+		t.Fatalf("cluster policy:\n%s", claim)
 	}
 }
