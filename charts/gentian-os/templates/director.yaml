@@ -6,6 +6,12 @@
   and, in the cluster, only what its own ServiceAccount is granted — which is
   nothing. Every request it serves is authorised against OpenFGA with the
   caller's own Keycloak token.
+
+  The one thing it needs from the cluster, the tile catalogue the operator
+  projects, is mounted rather than fetched: handing it the file keeps the
+  division intact, where reading one ConfigMap through the API would mean
+  giving this pod a token that can read the API at all. The mount is optional,
+  so a cluster whose operator has not projected yet still starts.
 */ -}}
 {{- if .Values.director.enabled }}
 {{- $deployments := .Values.appLifecycle.deployments | default dict }}
@@ -164,6 +170,10 @@ spec:
               value: {{ $deployments.cluster | quote }}
             - name: DIRECTOR_ENTITLEMENTS
               value: {{ .Values.director.entitlements | quote }}
+            # internal/tiles.ConfigMapName and internal/tiles.Key, as the
+            # operator's projection writes them.
+            - name: DIRECTOR_TILES_PATH
+              value: /etc/gentian/tiles/tiles.yaml
             - name: DIRECTOR_COMMITTER_NAME
               value: {{ .Values.director.committer.name | quote }}
             - name: DIRECTOR_COMMITTER_EMAIL
@@ -229,6 +239,9 @@ spec:
               mountPath: {{ $checkout }}
             - name: tmp
               mountPath: /tmp
+            - name: tiles
+              mountPath: /etc/gentian/tiles
+              readOnly: true
             {{- with .Values.trustAnchorSecret }}
             - name: trust-anchor
               mountPath: /opt/gentian-trust-anchor
@@ -239,6 +252,12 @@ spec:
           emptyDir: {}
         - name: tmp
           emptyDir: {}
+        # Optional: the projection is the operator's, and the director serves
+        # an empty catalogue until it exists rather than refusing to start.
+        - name: tiles
+          configMap:
+            name: gentian-tiles
+            optional: true
         {{- if $gitSecret }}
         - name: git-credentials
           secret:

@@ -30,15 +30,17 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"io/fs"
 	"log/slog"
 	"net/http"
+	"os"
 	"regexp"
 
 	"github.com/gentian-org/gentian-os/internal/director/authn"
 	"github.com/gentian-org/gentian-os/internal/director/authz"
 	"github.com/gentian-org/gentian-os/internal/director/entitlement"
 	"github.com/gentian-org/gentian-os/internal/director/gitops"
-	"github.com/gentian-org/gentian-os/internal/director/tiles"
+	"github.com/gentian-org/gentian-os/internal/tilecatalogue"
 )
 
 // Authenticator establishes the caller's identity from a request.
@@ -79,6 +81,18 @@ type Config struct {
 	// Store verifies and applies what the App Store signed. Nil leaves the
 	// write unregistered: a cluster with no pinned store key believes no store.
 	Store *StoreConfig
+	// TilesPath is the file the operator's tile catalogue is projected into,
+	// which is its ConfigMap mounted into this pod.
+	//
+	// Mounted rather than fetched: the director holds a git credential and no
+	// cluster credential, and reading one ConfigMap is not worth giving it a
+	// ServiceAccount token that can read the API at all. The kubelet keeps the
+	// file in step with the ConfigMap, so the file is read per request and the
+	// catalogue is never older than the projection by more than the kubelet's
+	// own refresh.
+	//
+	// Empty, or a path that does not exist, is an empty catalogue.
+	TilesPath string
 }
 
 // StoreConfig is what the entitlement write needs.
@@ -240,11 +254,12 @@ func (s *Server) routes() {
 	// Entered under can_enter, the relation that reaches the desktop at all.
 	s.guarded("GET /v1/tenants/{t}/me", "can_enter", tenantObject, s.tenantMe)
 
-	// The kernel's own UIs, for the cluster administrator's console. Entered
-	// under can_audit — the widest cluster relation — then each tile is
-	// filtered by its own.
+	// The tiles this cluster offers, for the console that shows them. What
+	// exists is the operator's projection; what this caller may open is asked
+	// here. Entered under can_audit — the widest cluster relation — then each
+	// tile is filtered by the relation it names on the object it names.
 	if s.cfg.Cluster != "" {
-		s.guarded("GET /v1/clusters/{c}/tiles", "can_audit", s.clusterObject, s.kernelTiles)
+		s.guarded("GET /v1/clusters/{c}/tiles", "can_audit", s.clusterObject, s.clusterTiles)
 		// The cluster's settings: what they are, and changing them.
 		//
 		// Reading is can_audit, the widest cluster relation, because a
@@ -338,19 +353,59 @@ type tileOut struct {
 	Icon        string `json:"icon"`
 }
 
-func (s *Server) kernelTiles(w http.ResponseWriter, r *http.Request, c call) {
+// catalogue is what the operator projected, or nothing.
+//
+// A missing file is an empty catalogue and not a failure. That is what a
+// cluster whose operator has not projected yet looks like, and it is also what
+// a cluster running an operator too old to project looks like; in both cases
+// the honest answer is that this director knows of no tiles, which a console
+// can render. An error would put a red banner on the page for a condition that
+// resolves itself on the operator's next pass.
+func (s *Server) catalogue() ([]tilecatalogue.Tile, error) {
+	if s.cfg.TilesPath == "" {
+		return nil, nil
+	}
+	data, err := os.ReadFile(s.cfg.TilesPath)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	c, err := tilecatalogue.Parse(data)
+	if err != nil {
+		return nil, err
+	}
+	return c.Tiles, nil
+}
+
+// clusterTiles answers with the tiles this caller may open.
+//
+// The list of what exists is the operator's: it projects the consoles it
+// routes and the exposures of installed components that declare a tile. This
+// handler adds the one thing the projection cannot know, which is who is
+// asking, and it asks the graph once per tile. A tile the caller may not open
+// is not on the page, because leaving it there and refusing the click tells a
+// person about a console they have no business knowing exists.
+func (s *Server) clusterTiles(w http.ResponseWriter, r *http.Request, c call) {
 	ctx := r.Context()
 	domain, err := s.cfg.Repo.KernelDomain(ctx)
 	if err != nil {
 		s.repoError(w, r, err)
 		return
 	}
-	object := authz.Cluster(s.cfg.Cluster)
+	catalogue, err := s.catalogue()
+	if err != nil {
+		s.cfg.Log.ErrorContext(ctx, "the tile catalogue cannot be read",
+			"request_id", reqID(ctx), "path", s.cfg.TilesPath, "error", err.Error())
+		s.fail(w, r, http.StatusServiceUnavailable, "the tile catalogue cannot be read")
+		return
+	}
 	out := []tileOut{}
-	for _, t := range tiles.All() {
+	for _, t := range catalogue {
 		shown := false
 		for _, rel := range t.AnyOf {
-			ok, err := s.cfg.Authz.Check(ctx, reqID(ctx), c.user, rel, object)
+			ok, err := s.cfg.Authz.Check(ctx, reqID(ctx), c.user, rel, t.Object)
 			if err != nil {
 				s.fail(w, r, http.StatusServiceUnavailable, "authorization unavailable")
 				return
@@ -361,7 +416,7 @@ func (s *Server) kernelTiles(w http.ResponseWriter, r *http.Request, c call) {
 			}
 		}
 		if shown {
-			out = append(out, tileOut{Name: t.Name, DisplayName: t.DisplayName, Description: t.Description, URL: t.URL(domain), Icon: t.Icon})
+			out = append(out, tileOut{Name: t.Name, DisplayName: t.DisplayName, Description: t.Description, URL: t.URL, Icon: t.Icon})
 		}
 	}
 	s.json(w, http.StatusOK, map[string]any{"cluster": s.cfg.Cluster, "kernelDomain": domain, "tiles": out})

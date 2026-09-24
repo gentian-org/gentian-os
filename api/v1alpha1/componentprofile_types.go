@@ -39,10 +39,14 @@ const (
 )
 
 // ComponentProfileSpec is one catalogue entry: what a component is, what it
-// needs from the platform, and what it may expose. It carries no presentation
-// fields — names, descriptions, icons and tiles are the store's, outside the
-// cluster — and nothing in it grants anything: every permissive statement here
-// is a request that a named person answers on the Component.
+// needs from the platform, and what it may expose. The presentation of a
+// catalogue listing stays the store's, outside the cluster. The one piece of
+// presentation an entry carries here is the tile on an exposure, because the
+// portal has to be able to show what the cluster routes without asking the
+// store, and because an app that cannot appear on the portal until a service
+// outside the cluster answers is an app a person cannot reach. Nothing in it
+// grants anything: every permissive statement here is a request that a named
+// person answers on the Component.
 //
 // +kubebuilder:validation:XValidation:rule="!('system' in self.tenancy) || self.tenancy.size() == 1",message="system is exclusive: a component serving contracts does not also serve humans"
 // +kubebuilder:validation:XValidation:rule="!('system' in self.tenancy) || !has(self.expose) || self.expose.size() == 0",message="system components have no exposure"
@@ -332,8 +336,65 @@ type ExposureSpec struct {
 	// +optional
 	ForwardToken bool `json:"forwardToken,omitempty"`
 
+	// Tile is how this entry appears on the portal, for an entry a person is
+	// meant to open. An entry that declares none is reachable and unadvertised,
+	// which is what an API or a callback endpoint should be, so the absence is
+	// the default and nothing has to opt out.
+	// +optional
+	Tile *ExposureTile `json:"tile,omitempty"`
+
 	// Backend is the Service the entry routes to.
 	Backend BackendRef `json:"backend"`
+}
+
+// ExposureTile is what a component says about itself on the portal.
+//
+// It is here rather than in the store because the portal must be able to show
+// an app the moment the cluster routes it, and because the operator already
+// holds everything else a tile needs: the host it wrote the route for, and the
+// tenant the component runs in. What the store adds is the catalogue listing a
+// person browses before installing, which is a different page with a different
+// audience.
+//
+// Nothing here grants anything. Relation names the question the director asks
+// the graph about the caller before the tile is put on their page, so a tile
+// nobody may open is a tile nobody is shown.
+type ExposureTile struct {
+	// DisplayName is the label under the icon. A few words, in the language of
+	// the person using it rather than of the chart that installs it.
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=64
+	DisplayName string `json:"displayName"`
+
+	// Description is the sentence the portal shows beside the label.
+	// +optional
+	// +kubebuilder:validation:MaxLength=256
+	Description string `json:"description,omitempty"`
+
+	// Icon is the glyph the portal draws, by name. The portal owns the set; a
+	// name it does not know draws its fallback rather than failing the page.
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=64
+	// +kubebuilder:validation:Pattern=`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`
+	Icon string `json:"icon"`
+
+	// Path is where within the host the tile leads. Empty means the front page.
+	// It exists because an app's front page is not always its entry: a tool
+	// whose front page is a login form is better entered past it, since the
+	// person following the tile already holds the zone's session.
+	// +optional
+	// +kubebuilder:validation:MaxLength=512
+	// +kubebuilder:validation:Pattern=`^/`
+	Path string `json:"path,omitempty"`
+
+	// Relation is what the caller must hold on this component's app object for
+	// the tile to be on their page, a permission of the authorization model
+	// (authz/model/v1/model.fga). It is required: a tile with no question is a
+	// link shown to everyone, and the portal is not where that is decided.
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=64
+	// +kubebuilder:validation:Pattern=`^can_[a-z0-9_]+$`
+	Relation string `json:"relation"`
 }
 
 // SourceRestriction pins the caller. Exactly one form; both are evaluated at
