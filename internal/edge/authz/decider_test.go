@@ -207,6 +207,77 @@ func TestSignOutDropsThePortFromTheReturnAddress(t *testing.T) {
 	}
 }
 
+// The session on an oidc route is the zone's cookie. A bearer in the header
+// belongs to the backend, and judging it as the session is how the Keycloak
+// console broke: its page holds a token minted for realm-management, the edge
+// expects one minted for the director, so the console's own token failed
+// verification, the request was treated as having no session, and the header
+// was stripped before it reached Keycloak.
+func TestAPagesOwnBearerIsNotMistakenForTheSession(t *testing.T) {
+	store := &fakeStore{allow: map[string]bool{"user:root|can_configure|cluster:c1": true}}
+	dec := decider(store).Decide(context.Background(), Request{
+		Host:    "id.k.example",
+		Cookies: map[string]string{"at": "root-token"},
+		// A token this edge cannot verify, because it was not minted for it.
+		Authorization: "Bearer a-token-for-a-different-audience",
+	})
+	if !dec.Allow {
+		t.Fatalf("the zone cookie should have authorised this: %s", dec.Reason)
+	}
+	if !dec.Identified {
+		t.Fatal("the session came from the cookie, so the caller is identified")
+	}
+	for _, h := range dec.RemoveHeaders {
+		if h == "authorization" {
+			t.Fatal("the page's own bearer was stripped; the backend gets nothing to authenticate")
+		}
+	}
+	if dec.Headers[HeaderSubject] != "root" {
+		t.Fatalf("identity headers come from the session, not the page's token: %v", dec.Headers)
+	}
+}
+
+// And with no session at all, a keepClientToken route still must not have its
+// caller's bearer removed: the backend may be able to authenticate it even
+// when the edge cannot.
+func TestAKeepClientTokenRouteWithNoSessionKeepsTheHeader(t *testing.T) {
+	dec := decider(&fakeStore{}).Decide(context.Background(), Request{
+		Host:          "id.k.example",
+		Authorization: "Bearer the-pages-own-token",
+	})
+	if !dec.Allow || dec.Identified {
+		t.Fatalf("an oidc route with no session passes through unidentified: %+v", dec)
+	}
+	for _, h := range dec.RemoveHeaders {
+		if h == "authorization" {
+			t.Fatal("the caller's bearer was stripped")
+		}
+	}
+	// The identity headers still go, or a backend that trusts them trusts a
+	// forgery.
+	if len(dec.RemoveHeaders) != len(identityHeaders) {
+		t.Fatalf("identity headers must still be removed: %v", dec.RemoveHeaders)
+	}
+}
+
+// A route that does NOT keep the client token still has it stripped when there
+// is no session, which is what keeps the edge's token off every other backend.
+func TestAnOrdinaryRouteWithNoSessionStillStripsTheHeader(t *testing.T) {
+	dec := decider(&fakeStore{}).Decide(context.Background(), Request{
+		Host:          "argocd.k.example",
+		Authorization: "Bearer something-unverifiable",
+	})
+	stripped := false
+	for _, h := range dec.RemoveHeaders {
+		if h == "authorization" {
+			stripped = true
+		}
+	}
+	if !stripped {
+		t.Fatalf("removes %v", dec.RemoveHeaders)
+	}
+}
+
 func TestWhatHasNoRouteClassOrNoTokenIsRefused(t *testing.T) {
 	d := decider(&fakeStore{})
 	if dec := d.Decide(context.Background(), Request{Host: "nothing.k.example", Authorization: "Bearer root-token"}); dec.Allow || dec.Status != http.StatusForbidden {

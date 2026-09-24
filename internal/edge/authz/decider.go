@@ -195,9 +195,29 @@ func (d *Decider) Decide(ctx context.Context, req Request) Decision {
 	if strings.HasPrefix(req.Path, edgeOAuth2Prefix) {
 		return Decision{Allow: true, RemoveHeaders: append([]string{"authorization"}, identityHeaders...)}
 	}
-	raw := bearer(req.Authorization)
-	if raw == "" && route.AccessTokenCookie != "" {
+	// Where the SESSION is, which is what the route's auth mode says and
+	// nothing else.
+	//
+	// This used to read the Authorization header first and fall back to the
+	// cookie, and that is wrong on an oidc route in a way that took a long
+	// time to see. On such a route the session is the zone's cookie; a bearer
+	// in the header belongs to the BACKEND and is none of this service's
+	// business. Reading it as the session means any page that calls its own
+	// API with its own token has that token judged against the zone's
+	// audience, fails, and is treated as having no session at all -- which
+	// then strips the header, so the backend is asked to authenticate a
+	// request carrying nothing.
+	//
+	// That is exactly what broke Keycloak's administration console. The page
+	// holds a token minted for realm-management, the edge expects one minted
+	// for the director, and the console's own Admin REST call arrived at
+	// Keycloak stripped bare and was answered 401.
+	raw := ""
+	if route.AuthMode == AuthModeOIDC && route.AccessTokenCookie != "" {
 		raw = req.Cookies[route.AccessTokenCookie]
+	}
+	if raw == "" {
+		raw = bearer(req.Authorization)
 	}
 	if raw == "" {
 		return unauthenticated(route, "no token")
@@ -265,11 +285,23 @@ func unauthenticated(route *Route, reason string) Decision {
 	if route.AuthMode != AuthModeOIDC {
 		return deny(http.StatusUnauthorized, reason)
 	}
+	// Identity headers always go: a request with no session must not arrive
+	// carrying any, or a backend that trusts them trusts a forgery.
+	//
+	// The Authorization header is a different question. Normally it goes too,
+	// because a backend behind the zone has no use for the edge's token and
+	// should not be handed one. But on a route that keeps the caller's own
+	// bearer, the header is the backend's business and removing it turns a
+	// request the backend could have authenticated into one it cannot.
+	remove := append([]string(nil), identityHeaders...)
+	if !route.KeepClientToken {
+		remove = append([]string{"authorization"}, identityHeaders...)
+	}
 	return Decision{
 		Allow:         true,
 		Identified:    false,
 		Reason:        reason,
-		RemoveHeaders: append([]string{"authorization"}, identityHeaders...),
+		RemoveHeaders: remove,
 	}
 }
 
