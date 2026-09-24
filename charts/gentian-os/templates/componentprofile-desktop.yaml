@@ -21,15 +21,55 @@ spec:
   tenancy: [tenant]
   trustTier: platform
   version: {{ .Values.desktop.chart.version | quote }}
+  # Every tenant gets one. Declared here, on the profile, so that the operator
+  # creates it without knowing the desktop by name: the administration
+  # console declares the same and is created the same way.
+  defaultForTenants: true
   package:
     chart:
       repository: {{ .Values.desktop.chart.repository | quote }}
       name: {{ .Values.desktop.chart.name | quote }}
       version: {{ .Values.desktop.chart.version | quote }}
-    {{- with .Values.desktop.extraValues }}
+    valueMapping:
+      # Where the desktop chart takes the facts of the cluster it runs in.
+      # These used to arrive through a special case in the operator keyed on
+      # the annotation above; now the profile says where they go and the
+      # operator fills them for any profile that asks. The chart derives what
+      # it may offer from zoneKind rather than being handed a capability list.
+      platform:
+        issuerKey: auth.issuer
+        zoneClientIdKey: auth.clientId
+        audienceKey: auth.audience
+        directorUrlKey: director.url
+        clusterKey: director.cluster
+        tenantKey: tenant
+        kernelDomainKey: kernelDomain
+        realmKey: kernelRealm
+        zoneKindKey: zoneKind
+      database:
+        # The desktop consumes its credentials Secret whole, with envFrom, so
+        # it is told the Secret's name and nothing else.
+        secretNameKey: existingSecret.name
     extraValues:
+      # The shape of the desktop chart as the platform runs it: the edge holds
+      # the session, so the bundle runs no code flow; and the desktop holds no
+      # Kubernetes authority, routes nothing of its own, and needs no policy
+      # of its own, because the component reconciler writes all three.
+      auth:
+        disabled: false
+        mode: edge
+      rbac:
+        create: false
+      gateway:
+        enabled: false
+      networkPolicy:
+        create: false
+      api:
+        env:
+          TENANCY_MODE: multi
+      {{- with .Values.desktop.extraValues }}
       {{- toYaml . | nindent 6 }}
-    {{- end }}
+      {{- end }}
   requires:
     contracts:
       database:

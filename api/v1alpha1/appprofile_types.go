@@ -879,6 +879,65 @@ type ValueMapping struct {
 	// keyed by the contract name.
 	// +optional
 	Integrations map[string]IntegrationValueMapping `json:"integrations,omitempty"`
+
+	// Platform maps the facts of the cluster a component runs in to Helm keys:
+	// which zone it is served in, which realm signs that zone's tokens, where
+	// the director answers. These are not requirements the platform fulfils
+	// on the component's behalf, like a database; they are things every
+	// component behind the edge has to be told and none can discover.
+	//
+	// Declared per profile rather than handed to one profile by name. The
+	// desktop used to receive exactly these values through a special case
+	// keyed on its annotation, which meant no second component could be built
+	// from the app template and put behind the edge without another special
+	// case. A profile that names no key here receives nothing, which is what
+	// a component with no exposure wants.
+	// +optional
+	Platform *PlatformValueMapping `json:"platform,omitempty"`
+}
+
+// PlatformValueMapping names where a chart takes the facts of the cluster it
+// runs in. Every field is a dot-notation Helm value path; an empty field is
+// simply not set. The values themselves are the operator's to know: nothing
+// here is configurable, only where it lands.
+type PlatformValueMapping struct {
+	// IssuerKey receives the zone's OIDC issuer, the realm on the identity
+	// provider whose tokens the edge forwards. A backend verifies the
+	// forwarded token against it and nothing else.
+	// +optional
+	IssuerKey string `json:"issuerKey,omitempty"`
+	// ZoneClientIDKey receives the client id the edge holds the zone's session
+	// with. Not the component's own client, which comes with the identity
+	// requirement; this is the one whose token arrives on forwardToken routes.
+	// +optional
+	ZoneClientIDKey string `json:"zoneClientIdKey,omitempty"`
+	// AudienceKey receives the audience the forwarded edge token carries, so
+	// a backend can require it rather than accept any token the realm signs.
+	// +optional
+	AudienceKey string `json:"audienceKey,omitempty"`
+	// DirectorURLKey receives the director's in-cluster URL. Only meaningful
+	// on a platform-trust component that relays the forwarded token there;
+	// naming it also opens the component's egress to the control namespace.
+	// +optional
+	DirectorURLKey string `json:"directorUrlKey,omitempty"`
+	// ClusterKey receives the id the director knows this cluster by.
+	// +optional
+	ClusterKey string `json:"clusterKey,omitempty"`
+	// TenantKey receives the name of the tenant the component runs in.
+	// +optional
+	TenantKey string `json:"tenantKey,omitempty"`
+	// KernelDomainKey receives the cluster's kernel domain.
+	// +optional
+	KernelDomainKey string `json:"kernelDomainKey,omitempty"`
+	// RealmKey receives the name of the zone's realm.
+	// +optional
+	RealmKey string `json:"realmKey,omitempty"`
+	// ZoneKindKey receives "kernel" for a component served in the kernel zone
+	// and "tenant" otherwise. A component whose behaviour differs between the
+	// platform's own zone and a customer's decides that from this, rather
+	// than from a list of capabilities the operator composes for it.
+	// +optional
+	ZoneKindKey string `json:"zoneKindKey,omitempty"`
 }
 
 // IntegrationValueMapping maps integration credentials to Helm chart keys.
@@ -926,7 +985,17 @@ type OIDCValueMapping struct {
 type DatabaseValueMapping struct {
 	// HostKey is the Helm value key for the database host.
 	// +optional
-	HostKey string `json:"hostKey,omitempty"`
+	// SecretNameKey receives the NAME of the Secret the platform wrote the
+	// database credentials into, as a plain string, for a chart that consumes
+	// it with envFrom or a secretKeyRef rather than taking each value apart.
+	// This is the Pattern A shape the desktop and the app template use:
+	// credentials are never chart values, and the chart is told only where
+	// they are. HostKey below receives a structured reference instead, for
+	// charts that take a host with a valueFrom; the two are not the same and
+	// a chart wants one or the other.
+	// +optional
+	SecretNameKey string `json:"secretNameKey,omitempty"`
+	HostKey       string `json:"hostKey,omitempty"`
 	// PortKey is the Helm value key for the database port.
 	// +optional
 	PortKey string `json:"portKey,omitempty"`

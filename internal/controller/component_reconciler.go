@@ -163,9 +163,9 @@ func (r *ComponentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		}
 		mergeValues(values, databaseValues(profile, comp.Name+componentDatabaseSecretSuffix))
 	}
-	if isDesktopProfile(profile) {
-		mergeValues(values, r.desktopValues(tenant, zone, comp.Name+componentDatabaseSecretSuffix))
-	}
+	// What the platform tells any component about itself, where its profile
+	// says its chart takes it. Nothing is keyed on which component this is.
+	mergeValues(values, r.platformValues(profile, tenant, zone))
 	// The namespace is closed by default; the component's pods may reach
 	// what its requirements were fulfilled with, written down before the
 	// chart runs so its first connection is not the one that is refused.

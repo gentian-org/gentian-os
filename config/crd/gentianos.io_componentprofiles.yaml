@@ -617,6 +617,17 @@ spec:
                     type: array
                     x-kubernetes-list-type: set
                 type: object
+              defaultForTenants:
+                description: |-
+                  DefaultForTenants means every tenant gets a Component of this profile,
+                  created by the operator when the tenant is provisioned and named after
+                  the profile. It is how the desktop reaches every tenant without anyone
+                  declaring it, and it is here as a field so that a second component the
+                  platform ships to everyone, such as the administration console, is
+                  declared the same way rather than by another name the operator knows.
+                  Only a tenant-tenancy profile may say it; the operator ignores it
+                  otherwise, since there is no tenant to give a shared component to.
+                type: boolean
               expose:
                 description: |-
                   Expose declares entry points. Forbidden for system tenancy. Every entry
@@ -746,6 +757,21 @@ spec:
                           minLength: 1
                           pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
                           type: string
+                        "on":
+                          default: app
+                          description: |-
+                            On is the object Relation is checked against. "app", the default, is
+                            this component's own app object, app:<tenant>/<profile>, where an
+                            installed app's permissions live. "tenant" is the tenant the component
+                            runs in, tenant:<tenant>, which is where the model keeps the permissions
+                            that are about administering the tenant rather than using an app in it.
+                            The model says it in one line: admin tiles are tenant#can_administer.
+                            A component that exists to administer the tenant it runs in has no app
+                            object worth asking about, and asking one would be answered no.
+                          enum:
+                          - app
+                          - tenant
+                          type: string
                         path:
                           description: |-
                             Path is where within the host the tile leads. Empty means the front page.
@@ -757,8 +783,8 @@ spec:
                           type: string
                         relation:
                           description: |-
-                            Relation is what the caller must hold on this component's app object for
-                            the tile to be on their page, a permission of the authorization model
+                            Relation is what the caller must hold, on the object On names, for the
+                            tile to be on their page: a permission of the authorization model
                             (authz/model/v1/model.fga). It is required: a tile with no question is a
                             link shown to everyone, and the portal is not where that is decided.
                           maxLength: 64
@@ -1423,8 +1449,6 @@ spec:
                           keys.
                         properties:
                           hostKey:
-                            description: HostKey is the Helm value key for the database
-                              host.
                             type: string
                           nameKey:
                             description: NameKey is the Helm value key for the database
@@ -1449,6 +1473,18 @@ spec:
                               ReadUserKey is the Helm value key for the read-replica database user.
                               Useful for charts that expose separate read and write connection endpoints
                               (e.g. OX App Suite's global.mysql.auth.readUser).
+                            type: string
+                          secretNameKey:
+                            description: |-
+                              HostKey is the Helm value key for the database host.
+                              SecretNameKey receives the NAME of the Secret the platform wrote the
+                              database credentials into, as a plain string, for a chart that consumes
+                              it with envFrom or a secretKeyRef rather than taking each value apart.
+                              This is the Pattern A shape the desktop and the app template use:
+                              credentials are never chart values, and the chart is told only where
+                              they are. HostKey below receives a structured reference instead, for
+                              charts that take a host with a valueFrom; the two are not the same and
+                              a chart wants one or the other.
                             type: string
                           userKey:
                             description: UserKey is the Helm value key for the database
@@ -1517,6 +1553,68 @@ spec:
                           issuerKey:
                             description: IssuerKey is the Helm value key for the OIDC
                               issuer URL.
+                            type: string
+                        type: object
+                      platform:
+                        description: |-
+                          Platform maps the facts of the cluster a component runs in to Helm keys:
+                          which zone it is served in, which realm signs that zone's tokens, where
+                          the director answers. These are not requirements the platform fulfils
+                          on the component's behalf, like a database; they are things every
+                          component behind the edge has to be told and none can discover.
+
+                          Declared per profile rather than handed to one profile by name. The
+                          desktop used to receive exactly these values through a special case
+                          keyed on its annotation, which meant no second component could be built
+                          from the app template and put behind the edge without another special
+                          case. A profile that names no key here receives nothing, which is what
+                          a component with no exposure wants.
+                        properties:
+                          audienceKey:
+                            description: |-
+                              AudienceKey receives the audience the forwarded edge token carries, so
+                              a backend can require it rather than accept any token the realm signs.
+                            type: string
+                          clusterKey:
+                            description: ClusterKey receives the id the director knows
+                              this cluster by.
+                            type: string
+                          directorUrlKey:
+                            description: |-
+                              DirectorURLKey receives the director's in-cluster URL. Only meaningful
+                              on a platform-trust component that relays the forwarded token there;
+                              naming it also opens the component's egress to the control namespace.
+                            type: string
+                          issuerKey:
+                            description: |-
+                              IssuerKey receives the zone's OIDC issuer, the realm on the identity
+                              provider whose tokens the edge forwards. A backend verifies the
+                              forwarded token against it and nothing else.
+                            type: string
+                          kernelDomainKey:
+                            description: KernelDomainKey receives the cluster's kernel
+                              domain.
+                            type: string
+                          realmKey:
+                            description: RealmKey receives the name of the zone's
+                              realm.
+                            type: string
+                          tenantKey:
+                            description: TenantKey receives the name of the tenant
+                              the component runs in.
+                            type: string
+                          zoneClientIdKey:
+                            description: |-
+                              ZoneClientIDKey receives the client id the edge holds the zone's session
+                              with. Not the component's own client, which comes with the identity
+                              requirement; this is the one whose token arrives on forwardToken routes.
+                            type: string
+                          zoneKindKey:
+                            description: |-
+                              ZoneKindKey receives "kernel" for a component served in the kernel zone
+                              and "tenant" otherwise. A component whose behaviour differs between the
+                              platform's own zone and a customer's decides that from this, rather
+                              than from a list of capabilities the operator composes for it.
                             type: string
                         type: object
                       s3:

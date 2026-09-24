@@ -397,10 +397,12 @@ func (r *TenantReconciler) reconcileTenantStageAppsAndEdge(ctx context.Context, 
 	}
 	state.privilegeResult = privilegeResult
 
-	// Every tenant gets its desktop: a Component of the profile the OS
-	// ships, reconciled beside its apps (ui-restructure.md §1).
-	if err := r.ensureDesktopComponent(ctx, tenant); err != nil {
-		return ctrl.Result{}, fmt.Errorf("ensure desktop component: %w", err)
+	// Every tenant gets the components the platform ships to everyone: the
+	// desktop, the administration console, whatever else declares
+	// defaultForTenants on its profile. Reconciled beside its apps
+	// (ui-restructure.md §1).
+	if err := r.ensureDefaultComponents(ctx, tenant); err != nil {
+		return ctrl.Result{}, fmt.Errorf("ensure default components: %w", err)
 	}
 
 	if _, err := r.ensureGateway(ctx, tenant); err != nil {

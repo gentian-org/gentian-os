@@ -53,43 +53,63 @@ func isDesktopProfile(profile *gentianov1alpha1.ComponentProfile) bool {
 	return profile.Name == DesktopProfileName || profile.Annotations[desktopProfileAnnotation] == "true"
 }
 
-// desktopValues are the chart values only the platform can supply: behind the
-// edge the desktop runs no code flow and holds no authority, so what it is
-// told is which tenant it is the desktop of, which zone client's tokens the
-// edge forwards, and where the director is.
-func (r *ComponentReconciler) desktopValues(tenant *gentianov1alpha1.Tenant, zone edgeZone, databaseSecret string) map[string]interface{} {
-	capabilities := ""
+// directorAudience is the audience the zone's edge token carries: the
+// director's, because that token is minted for the director and relayed to it
+// by whichever platform-trust component received it. A backend that verifies
+// the forwarded token requires this audience, which is what stops a token
+// minted for something else from being accepted as the zone's session.
+const directorAudience = "gentian-director"
+
+// platformValues is what a component is told about the cluster it runs in,
+// placed where its profile's valueMapping.platform says its chart takes them.
+//
+// A profile that names no key receives nothing. This is the whole of what the
+// desktop used to receive through a special case keyed on its annotation, and
+// the reason that case had to go: a component built from the app template and
+// put behind the edge needs exactly these facts, and the only way to give them
+// to it was to teach the operator its name too. Now the profile says where it
+// wants them and the operator does not know who is asking.
+//
+// The values are the operator's to know, not the profile's to choose: the
+// issuer is the zone's realm on the identity provider, the client is the one
+// the edge holds the zone's session with, the audience is what that token
+// carries, and the director is where it is. Nothing here is configurable
+// except where it lands.
+func (r *ComponentReconciler) platformValues(profile *gentianov1alpha1.ComponentProfile, tenant *gentianov1alpha1.Tenant, zone edgeZone) map[string]interface{} {
+	out := map[string]interface{}{}
+	if profile.Spec.Package.ValueMapping == nil || profile.Spec.Package.ValueMapping.Platform == nil {
+		return out
+	}
+	m := profile.Spec.Package.ValueMapping.Platform
+	zoneKind := "tenant"
 	if zone.kernel {
-		capabilities = "gitops,cluster-view,identity"
+		zoneKind = "kernel"
 	}
-	return map[string]interface{}{
-		"kernelDomain": r.KernelDomain,
-		"kernelRealm":  r.kernelRealm(),
-		"tenant":       tenant.Name,
-		"capabilities": capabilities,
-		"auth": map[string]interface{}{
-			"disabled": false,
-			"mode":     "edge",
-			"clientId": zone.clientID,
-			// The zone's issuer: what the forwarded token is verified
-			// against. Without it the BFF verifies nothing and answers as
-			// nobody in particular.
-			"issuer": fmt.Sprintf("https://id.%s/auth/realms/%s", r.KernelDomain, zone.realm),
-		},
-		"existingSecret": map[string]interface{}{"name": databaseSecret},
-		"director": map[string]interface{}{
-			"url":     r.directorURL(),
-			"cluster": r.Cluster,
-		},
-		"rbac":          map[string]interface{}{"create": false},
-		"gateway":       map[string]interface{}{"enabled": false},
-		"networkPolicy": map[string]interface{}{"create": false},
-		"api": map[string]interface{}{
-			"env": map[string]interface{}{
-				"TENANCY_MODE": "multi",
-			},
-		},
+	for key, value := range map[string]string{
+		m.IssuerKey:       fmt.Sprintf("https://id.%s/auth/realms/%s", r.KernelDomain, zone.realm),
+		m.ZoneClientIDKey: zone.clientID,
+		m.AudienceKey:     directorAudience,
+		m.DirectorURLKey:  r.directorURL(),
+		m.ClusterKey:      r.Cluster,
+		m.TenantKey:       tenant.Name,
+		m.KernelDomainKey: r.KernelDomain,
+		m.RealmKey:        zone.realm,
+		m.ZoneKindKey:     zoneKind,
+	} {
+		if key != "" {
+			setPath(out, key, value)
+		}
 	}
+	return out
+}
+
+// wantsDirector reports whether a profile asked to be told where the director
+// is, which is the one platform fact that also changes what the component may
+// reach: its egress to the control namespace follows from it.
+func wantsDirector(profile *gentianov1alpha1.ComponentProfile) bool {
+	return profile.Spec.Package.ValueMapping != nil &&
+		profile.Spec.Package.ValueMapping.Platform != nil &&
+		profile.Spec.Package.ValueMapping.Platform.DirectorURLKey != ""
 }
 
 // databaseValues maps the fulfilled database requirement onto the chart the
@@ -105,6 +125,12 @@ func databaseValues(profile *gentianov1alpha1.ComponentProfile, secretName strin
 	m := profile.Spec.Package.ValueMapping.Database
 	if m.HostKey != "" {
 		setPath(out, m.HostKey, map[string]interface{}{"valueFrom": secretName})
+	}
+	// The plain name, for a chart that consumes the Secret whole. Not the
+	// structured reference above: a chart that wants existingSecret.name gets
+	// a string there, or its envFrom names a map and nothing mounts.
+	if m.SecretNameKey != "" {
+		setPath(out, m.SecretNameKey, secretName)
 	}
 	return out
 }
@@ -294,32 +320,64 @@ func componentsOfZoneSecret(c client.Client) handler.EventHandler {
 	})
 }
 
-// ensureDesktopComponent gives a tenant its desktop: one Component of the
-// desktop profile in the tenant's namespace, owned by the Tenant. What the
-// profile is and whether it is installed is the Component reconciler's to
-// report; the tenant's part is to ask for one.
-func (r *TenantReconciler) ensureDesktopComponent(ctx context.Context, tenant *gentianov1alpha1.Tenant) error {
-	desired := &gentianov1alpha1.Component{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      DesktopComponentName,
-			Namespace: tenantNamespaceName(tenant),
-			Labels: map[string]string{
-				tenantLabel:    tenant.Name,
-				managedByLabel: managedByValue,
-			},
-		},
-		Spec: gentianov1alpha1.ComponentSpec{
-			ProfileRef: gentianov1alpha1.ProfileRef{Name: DesktopProfileName},
-			Tenancy:    gentianov1alpha1.ComponentTenancyTenant,
-		},
-	}
-	if err := controllerutil.SetControllerReference(tenant, desired, r.Scheme); err != nil {
+// ensureDefaultComponents gives the tenant a Component of every profile that
+// declares defaultForTenants, named after the profile.
+//
+// The desktop was the one component every tenant got, created here by name.
+// The administration console is the second, and rather than teach this
+// function a second name the profile says it: a component the platform ships
+// to everyone declares that on itself, and this creates whatever declares it.
+// Existing Components are left alone. Removing the declaration does not
+// delete them, because a tenant's component going away is a tenant-level
+// change and this is not where those are decided.
+func (r *TenantReconciler) ensureDefaultComponents(ctx context.Context, tenant *gentianov1alpha1.Tenant) error {
+	profiles := &gentianov1alpha1.ComponentProfileList{}
+	if err := r.List(ctx, profiles); err != nil {
 		return err
 	}
-	existing := &gentianov1alpha1.Component{}
-	err := r.Get(ctx, types.NamespacedName{Name: desired.Name, Namespace: desired.Namespace}, existing)
-	if errors.IsNotFound(err) {
-		return r.Create(ctx, desired)
+	for i := range profiles.Items {
+		profile := &profiles.Items[i]
+		if !profile.Spec.DefaultForTenants || !tenancyIncludes(profile, gentianov1alpha1.ComponentTenancyTenant) {
+			continue
+		}
+		desired := &gentianov1alpha1.Component{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      profile.Name,
+				Namespace: tenantNamespaceName(tenant),
+				Labels: map[string]string{
+					tenantLabel:    tenant.Name,
+					managedByLabel: managedByValue,
+				},
+			},
+			Spec: gentianov1alpha1.ComponentSpec{
+				ProfileRef: gentianov1alpha1.ProfileRef{Name: profile.Name},
+				Tenancy:    gentianov1alpha1.ComponentTenancyTenant,
+			},
+		}
+		if err := controllerutil.SetControllerReference(tenant, desired, r.Scheme); err != nil {
+			return err
+		}
+		existing := &gentianov1alpha1.Component{}
+		err := r.Get(ctx, types.NamespacedName{Name: desired.Name, Namespace: desired.Namespace}, existing)
+		if errors.IsNotFound(err) {
+			if err := r.Create(ctx, desired); err != nil {
+				return fmt.Errorf("create %s component: %w", profile.Name, err)
+			}
+			continue
+		}
+		if err != nil {
+			return err
+		}
 	}
-	return err
+	return nil
+}
+
+// tenancyIncludes reports whether a profile is certified for a tenancy.
+func tenancyIncludes(profile *gentianov1alpha1.ComponentProfile, t gentianov1alpha1.ComponentTenancy) bool {
+	for _, have := range profile.Spec.Tenancy {
+		if have == t {
+			return true
+		}
+	}
+	return false
 }

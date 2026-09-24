@@ -126,6 +126,17 @@ type ComponentProfileSpec struct {
 	// Customization declares what a tenant may change about this component.
 	// +optional
 	Customization *CustomizationSurface `json:"customization,omitempty"`
+
+	// DefaultForTenants means every tenant gets a Component of this profile,
+	// created by the operator when the tenant is provisioned and named after
+	// the profile. It is how the desktop reaches every tenant without anyone
+	// declaring it, and it is here as a field so that a second component the
+	// platform ships to everyone, such as the administration console, is
+	// declared the same way rather than by another name the operator knows.
+	// Only a tenant-tenancy profile may say it; the operator ignores it
+	// otherwise, since there is no tenant to give a shared component to.
+	// +optional
+	DefaultForTenants bool `json:"defaultForTenants,omitempty"`
 }
 
 // PackageSpec is the chart, the deployment method, and the mapping from granted
@@ -387,15 +398,38 @@ type ExposureTile struct {
 	// +kubebuilder:validation:Pattern=`^/`
 	Path string `json:"path,omitempty"`
 
-	// Relation is what the caller must hold on this component's app object for
-	// the tile to be on their page, a permission of the authorization model
+	// Relation is what the caller must hold, on the object On names, for the
+	// tile to be on their page: a permission of the authorization model
 	// (authz/model/v1/model.fga). It is required: a tile with no question is a
 	// link shown to everyone, and the portal is not where that is decided.
 	// +kubebuilder:validation:MinLength=1
 	// +kubebuilder:validation:MaxLength=64
 	// +kubebuilder:validation:Pattern=`^can_[a-z0-9_]+$`
 	Relation string `json:"relation"`
+
+	// On is the object Relation is checked against. "app", the default, is
+	// this component's own app object, app:<tenant>/<profile>, where an
+	// installed app's permissions live. "tenant" is the tenant the component
+	// runs in, tenant:<tenant>, which is where the model keeps the permissions
+	// that are about administering the tenant rather than using an app in it.
+	// The model says it in one line: admin tiles are tenant#can_administer.
+	// A component that exists to administer the tenant it runs in has no app
+	// object worth asking about, and asking one would be answered no.
+	// +optional
+	// +kubebuilder:default=app
+	// +kubebuilder:validation:Enum=app;tenant
+	On TileObject `json:"on,omitempty"`
 }
+
+// TileObject is the kind of object a tile's relation is checked against.
+type TileObject string
+
+const (
+	// TileObjectApp checks the relation on app:<tenant>/<profile>.
+	TileObjectApp TileObject = "app"
+	// TileObjectTenant checks the relation on tenant:<tenant>.
+	TileObjectTenant TileObject = "tenant"
+)
 
 // SourceRestriction pins the caller. Exactly one form; both are evaluated at
 // the proxy, not the app.

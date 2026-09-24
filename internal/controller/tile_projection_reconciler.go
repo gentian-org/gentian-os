@@ -302,9 +302,11 @@ func (r *TileProjectionReconciler) componentTiles(ctx context.Context) ([]tileca
 				Description: e.Tile.Description,
 				Icon:        e.Tile.Icon,
 				URL:         tilecatalogue.URL(string(route.Spec.Hostnames[0]), e.Tile.Path),
-				// app:<tenant>/<profile>, the object an installed app's own
-				// permissions hang off (authorization-model.md §4).
-				Object: "app:" + tenant + "/" + comp.Spec.ProfileRef.Name,
+				// Which object the relation is asked on is the tile's to say:
+				// app:<tenant>/<profile>, where an installed app's own
+				// permissions hang off (authorization-model.md §4), or the
+				// tenant itself, where administering it is decided.
+				Object: tileObject(e.Tile, tenant, comp.Spec.ProfileRef.Name),
 				AnyOf:  []string{e.Tile.Relation},
 			})
 		}
@@ -313,6 +315,14 @@ func (r *TileProjectionReconciler) componentTiles(ctx context.Context) ([]tileca
 	// ConfigMap and wake everything that watches it.
 	sort.Slice(out, func(a, b int) bool { return out[a].Name < out[b].Name })
 	return out, nil
+}
+
+// tileObject is the graph object a tile's relation is checked against.
+func tileObject(tile *gentianov1alpha1.ExposureTile, tenant, profile string) string {
+	if tile.On == gentianov1alpha1.TileObjectTenant {
+		return "tenant:" + tenant
+	}
+	return "app:" + tenant + "/" + profile
 }
 
 // write puts the catalogue in the control namespace, creating the ConfigMap

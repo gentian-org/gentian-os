@@ -76,7 +76,11 @@ func (r *ComponentReconciler) componentEgressNamespaces(profile *gentianov1alpha
 			break
 		}
 	}
-	if isDesktopProfile(profile) {
+	// A component that asked where the director is intends to call it, and the
+	// director lives in the control namespace. Following the mapping rather
+	// than a name means the console and the desktop both reach it and a
+	// component that never asked cannot.
+	if wantsDirector(profile) {
 		add(layout.Namespace(layout.Control))
 	}
 	return out

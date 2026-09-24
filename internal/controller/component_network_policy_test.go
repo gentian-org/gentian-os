@@ -40,6 +40,12 @@ func TestTheDesktopReachesItsDatabaseAndTheDirector(t *testing.T) {
 	tenant.Spec.Isolation = &gentianov1alpha1.TenantIsolation{KeycloakRealm: "kernel"}
 	profile := &gentianov1alpha1.ComponentProfile{}
 	profile.Name = DesktopProfileName
+	// What the shipped desktop profile declares: it asks where the director
+	// is, and that request is what opens its egress to the control namespace.
+	// Nothing about the name "desktop" does.
+	profile.Spec.Package.ValueMapping = &gentianov1alpha1.ValueMapping{
+		Platform: &gentianov1alpha1.PlatformValueMapping{DirectorURLKey: "director.url"},
+	}
 	profile.Spec.Requires = &gentianov1alpha1.RequirementSpec{
 		Contracts: &gentianov1alpha1.KernelRequirements{Database: &gentianov1alpha1.DatabaseRequirement{}},
 	}
@@ -87,6 +93,12 @@ func TestATenantDesktopReachesTheSystemPostgres(t *testing.T) {
 	tenant.Name = "demo"
 	profile := &gentianov1alpha1.ComponentProfile{}
 	profile.Name = DesktopProfileName
+	// What the shipped desktop profile declares: it asks where the director
+	// is, and that request is what opens its egress to the control namespace.
+	// Nothing about the name "desktop" does.
+	profile.Spec.Package.ValueMapping = &gentianov1alpha1.ValueMapping{
+		Platform: &gentianov1alpha1.PlatformValueMapping{DirectorURLKey: "director.url"},
+	}
 	profile.Spec.Requires = &gentianov1alpha1.RequirementSpec{
 		Contracts: &gentianov1alpha1.KernelRequirements{Database: &gentianov1alpha1.DatabaseRequirement{}},
 	}

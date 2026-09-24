@@ -69,24 +69,78 @@ func TestTheDesktopsZoneFollowsTheTenantsRealm(t *testing.T) {
 // What the platform tells the desktop, and nothing a profile author could
 // know: behind the edge, which tenant, which zone client, where the director
 // is, and no authority of its own.
-func TestDesktopValuesAreThePlatformsFacts(t *testing.T) {
+func TestPlatformValuesLandWhereTheProfileSays(t *testing.T) {
 	r := &ComponentReconciler{KernelDomain: "k.example", KernelRealm: "kernel", Cluster: "c1"}
-	v := r.desktopValues(platformTenantFixture(), r.zoneOf(platformTenantFixture()), "desktop-database")
+	profile := &gentianov1alpha1.ComponentProfile{}
+	profile.Spec.Package.ValueMapping = &gentianov1alpha1.ValueMapping{
+		Platform: &gentianov1alpha1.PlatformValueMapping{
+			IssuerKey: "auth.issuer", ZoneClientIDKey: "auth.clientId", AudienceKey: "auth.audience",
+			DirectorURLKey: "director.url", ClusterKey: "director.cluster",
+			TenantKey: "tenant", ZoneKindKey: "zoneKind",
+		},
+	}
+	tenant := platformTenantFixture()
+	v := r.platformValues(profile, tenant, r.zoneOf(tenant))
 	auth := v["auth"].(map[string]interface{})
-	if auth["mode"] != "edge" || auth["clientId"] != edgeKernelClientID {
+	if auth["clientId"] != edgeKernelClientID || auth["audience"] != directorAudience {
 		t.Fatalf("auth = %v", auth)
 	}
 	if auth["issuer"] != "https://id.k.example/auth/realms/kernel" {
 		t.Fatalf("issuer = %v, want the zone's realm on the identity provider", auth["issuer"])
 	}
-	if v["tenant"] != "platform" || v["existingSecret"].(map[string]interface{})["name"] != "desktop-database" {
-		t.Fatalf("tenant/secret = %v %v", v["tenant"], v["existingSecret"])
-	}
-	if v["rbac"].(map[string]interface{})["create"] != false {
-		t.Fatal("the desktop holds no Kubernetes authority")
+	if v["tenant"] != "platform" || v["zoneKind"] != "kernel" {
+		t.Fatalf("tenant/zoneKind = %v %v", v["tenant"], v["zoneKind"])
 	}
 	if v["director"].(map[string]interface{})["cluster"] != "c1" {
 		t.Fatalf("director = %v", v["director"])
+	}
+	// A key the profile did not name is not set: the chart is told only what
+	// it asked to be told.
+	if _, present := v["kernelDomain"]; present {
+		t.Fatal("kernelDomain was set without being asked for")
+	}
+}
+
+// The database Secret's name lands as a string where the profile asks for the
+// name, and as a structured reference where it asks for a host. A chart that
+// consumes the Secret with envFrom needs the first; handing it the second
+// names a map and nothing mounts, which is how the desktop would have lost its
+// database the moment its profile mapped the wrong key.
+func TestTheDatabaseSecretNameIsAStringWhereAskedFor(t *testing.T) {
+	profile := &gentianov1alpha1.ComponentProfile{}
+	profile.Spec.Package.ValueMapping = &gentianov1alpha1.ValueMapping{
+		Database: &gentianov1alpha1.DatabaseValueMapping{
+			SecretNameKey: "existingSecret.name",
+			HostKey:       "database.host",
+		},
+	}
+	v := databaseValues(profile, "desktop-database")
+	if got := v["existingSecret"].(map[string]interface{})["name"]; got != "desktop-database" {
+		t.Fatalf("existingSecret.name = %#v, want the plain name", got)
+	}
+	host := v["database"].(map[string]interface{})["host"].(map[string]interface{})
+	if host["valueFrom"] != "desktop-database" {
+		t.Fatalf("database.host = %#v, want a valueFrom reference", host)
+	}
+}
+
+// A profile with no platform mapping receives nothing, and one that does not
+// ask where the director is gets no egress to it.
+func TestAProfileThatAsksForNothingGetsNothing(t *testing.T) {
+	r := &ComponentReconciler{KernelDomain: "k.example", KernelRealm: "kernel", Cluster: "c1"}
+	profile := &gentianov1alpha1.ComponentProfile{}
+	tenant := platformTenantFixture()
+	if v := r.platformValues(profile, tenant, r.zoneOf(tenant)); len(v) != 0 {
+		t.Fatalf("values = %v", v)
+	}
+	if wantsDirector(profile) {
+		t.Fatal("no mapping, no director")
+	}
+	profile.Spec.Package.ValueMapping = &gentianov1alpha1.ValueMapping{
+		Platform: &gentianov1alpha1.PlatformValueMapping{DirectorURLKey: "director.url"},
+	}
+	if !wantsDirector(profile) {
+		t.Fatal("naming the director key is asking for the director")
 	}
 }
 
