@@ -60,10 +60,11 @@ They are not a second plan, and they are not renumbered when something lands.
 
 1. **S7A.14 — immutable image names.** Everything below is tested by
    deploying it, and today a deploy can silently be a no-op.
-2. **S7A.4 — the remaining console screens**, in this order: Backup ·
-   Security · Audit · Integrations · Notifications · Platform security ·
-   Customization · Credentials. Security and Audit come early because they
-   are what still hold the desktop's Keycloak credential.
+2. **S7A.4 — the remaining console screens**. Backup, Security and the
+   change half of Audit are done; what is left is Integrations ·
+   Notifications · Platform security · Customization · Credentials. The rest
+   of Audit — sign-ins, refused requests, reads of data — is not a screen
+   but three stores that do not exist yet, and is now roadmap §1.12.
 3. **S7A.6 — remove the bundled console from the desktop**, which the two
    above make possible, and the credential goes with it.
 4. **S7A.8 — the authorization view**, the last console screen.
@@ -251,7 +252,8 @@ worklist, and a screen leaves it by getting real routes.
 | Apps in a tenant: install, remove, addons | director, from git | director, endpoints that exist | ◐ endpoints exist, screen not built |
 | Backup, backup policy, backup schedules | operator state | operator CRs, through the director | ☐ |
 | Security policies | Keycloak realm | Keycloak, through the director | ☐ |
-| Audit | Keycloak events + the decision log | — | ☐ |
+| Audit: what changed, and what allowed it | director, from git | — | ✅ |
+| Audit: sign-ins, refusals, reads of data | not recorded anywhere yet | — | ☐ roadmap §1.12 |
 | Integrations: bindings and grants | operator state | operator CRs, through the director | ☐ |
 | Notifications | tenant database | tenant database | ☐ |
 | Platform security: MAC waivers | operator state | claim, through the director | ☐ |

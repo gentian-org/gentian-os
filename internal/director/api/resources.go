@@ -21,6 +21,7 @@ import (
 	"errors"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 
 	"github.com/gentian-org/gentian-os/internal/director/authz"
@@ -377,4 +378,48 @@ func (s *Server) setTenantSecurityPolicy(w http.ResponseWriter, r *http.Request,
 	}
 	res, err := s.cfg.Repo.SetTenantSecurityPolicy(r.Context(), r.PathValue("t"), body, c.meta)
 	s.written(w, r, res, err)
+}
+
+// ── What changed, and under what authority ──────────────────────────────────
+
+// changeWindow reads the two parameters a change list takes.
+func changeWindow(r *http.Request) (int, string) {
+	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
+	return limit, r.URL.Query().Get("since")
+}
+
+// tenantChanges answers a tenant's history from git.
+//
+// Nothing is stored for this. The commits are the record, the trailer is the
+// authority, and the answer marks a commit that carries no trailer as what it
+// is: a change pushed by hand, which is the thing an audit most wants to see
+// rather than have smoothed over.
+func (s *Server) tenantChanges(w http.ResponseWriter, r *http.Request, _ call) {
+	limit, since := changeWindow(r)
+	changes, err := s.cfg.Repo.TenantChanges(r.Context(), r.PathValue("t"), limit, since)
+	if err != nil {
+		s.repoError(w, r, err)
+		return
+	}
+	s.json(w, http.StatusOK, map[string]any{
+		"tenant":  r.PathValue("t"),
+		"changes": changes,
+		// Said in the answer, because a screen headed "audit" that showed
+		// only this would be claiming more than it has.
+		"covers": "changes to declared state, from git. Sign-ins, refused requests and reads of data are recorded elsewhere and are not in this list.",
+	})
+}
+
+func (s *Server) clusterChanges(w http.ResponseWriter, r *http.Request, _ call) {
+	limit, since := changeWindow(r)
+	changes, err := s.cfg.Repo.ClusterChanges(r.Context(), limit, since)
+	if err != nil {
+		s.repoError(w, r, err)
+		return
+	}
+	s.json(w, http.StatusOK, map[string]any{
+		"cluster": s.cfg.Cluster,
+		"changes": changes,
+		"covers":  "changes to declared state, from git. Sign-ins, refused requests and reads of data are recorded elsewhere and are not in this list.",
+	})
 }

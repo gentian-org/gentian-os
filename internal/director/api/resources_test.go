@@ -545,3 +545,82 @@ func TestOnlyWhoeverMaySetPolicyChangesTheRealm(t *testing.T) {
 		t.Fatal("a refused request moved the repository")
 	}
 }
+
+// The change history is the audit evidence the platform already had: the
+// commits, with the decision that allowed each one. What it must not do is
+// present a change pushed by hand as though something had authorised it.
+func TestTheChangeHistoryNamesWhatAllowedEachChange(t *testing.T) {
+	h, _ := startWithOperator(t)
+	tom := h.token(t, "tenant-demo", "tom")
+
+	// A change made through the platform.
+	if code, _ := h.do(t, "PUT", "/v1/tenants/demo/security-policy", tom, `{"password":{"minLength":12}}`); code != http.StatusAccepted {
+		t.Fatalf("setting up a change: %d", code)
+	}
+
+	code, body := h.do(t, "GET", "/v1/tenants/demo/changes", tom, "")
+	if code != http.StatusOK {
+		t.Fatalf("read: %d %v", code, body)
+	}
+	// The answer says what it does not cover, because a screen headed
+	// "audit" that showed only this would claim more than it has.
+	if covers, _ := body["covers"].(string); !strings.Contains(covers, "Sign-ins") {
+		t.Fatalf("the answer does not say what it leaves out: %v", body["covers"])
+	}
+	changes, _ := body["changes"].([]any)
+	if len(changes) == 0 {
+		t.Fatal("no changes for a tenant that has just been changed")
+	}
+	latest := changes[0].(map[string]any)
+	if latest["throughPlatform"] != true {
+		t.Fatalf("a change the director made is not marked as one: %v", latest)
+	}
+	if latest["principal"] != "tom" || latest["decision"] != "can_set_policy tenant:demo" {
+		t.Fatalf("the authority is not reported: %v", latest)
+	}
+	if latest["requestId"] == "" || latest["commit"] == "" {
+		t.Fatalf("nothing to join this to the decision log: %v", latest)
+	}
+	files, _ := latest["files"].([]any)
+	if len(files) == 0 {
+		t.Fatalf("no files on a change: %v", latest)
+	}
+
+	// The seed commit was pushed by hand, and says so.
+	byHand := false
+	for _, c := range changes {
+		entry := c.(map[string]any)
+		if entry["throughPlatform"] == false && entry["decision"] == nil {
+			byHand = true
+		}
+	}
+	if !byHand {
+		t.Fatal("a commit with no authorization trailer must be reported as one, not hidden")
+	}
+}
+
+func TestAChangeHistoryIsReadByAdministratorsAndAuditors(t *testing.T) {
+	h, _ := startWithOperator(t)
+
+	// A member may enter the tenant and may not read who did what in it.
+	mia := h.token(t, "tenant-demo", "mia")
+	if code, _ := h.do(t, "GET", "/v1/tenants/demo/changes", mia, ""); code != http.StatusForbidden {
+		t.Fatalf("a member read the change history: %d", code)
+	}
+	tina := h.token(t, "tenant-solo", "tina")
+	if code, _ := h.do(t, "GET", "/v1/tenants/demo/changes", tina, ""); code != http.StatusForbidden {
+		t.Fatalf("a stranger read the change history: %d", code)
+	}
+	// The cluster's whole history is the auditor's view.
+	audrey := h.token(t, "gentian", "audrey")
+	code, body := h.do(t, "GET", "/v1/clusters/"+dt.Cluster+"/changes?limit=5", audrey, "")
+	if code != http.StatusOK {
+		t.Fatalf("cluster changes: %d %v", code, body)
+	}
+	if changes, _ := body["changes"].([]any); len(changes) == 0 || len(changes) > 5 {
+		t.Fatalf("limit not honoured: %d", len(changes))
+	}
+	if code, _ := h.do(t, "GET", "/v1/clusters/"+dt.Cluster+"/changes", tina, ""); code != http.StatusForbidden {
+		t.Fatalf("a tenant admin read the cluster's history: %d", code)
+	}
+}

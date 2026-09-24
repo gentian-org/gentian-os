@@ -71,6 +71,8 @@ type Repository interface {
 	SetClusterBackupPolicy(ctx context.Context, policy gitops.BackupPolicy, meta gitops.Meta) (gitops.Result, error)
 	TenantSecurityPolicy(ctx context.Context, tenant string) (*gitops.SecurityPolicy, error)
 	SetTenantSecurityPolicy(ctx context.Context, tenant string, policy gitops.SecurityPolicy, meta gitops.Meta) (gitops.Result, error)
+	TenantChanges(ctx context.Context, tenant string, limit int, since string) ([]gitops.Change, error)
+	ClusterChanges(ctx context.Context, limit int, since string) ([]gitops.Change, error)
 }
 
 // Lifecycle is the operator's app-lifecycle API, read and never written: what
@@ -414,6 +416,19 @@ func (s *Server) routes() {
 		s.guarded("DELETE /v1/tenants/{t}/backup-policy", "can_set_policy", tenantObject, s.clearTenantBackupPolicy)
 		if s.cfg.Cluster != "" {
 			s.guarded("PUT /v1/clusters/{c}/backup-policy", "can_configure", s.clusterObject, s.setClusterBackupPolicy)
+		}
+
+		// What changed, who changed it, and what allowed them to. The
+		// audit evidence the platform already had: every change to declared
+		// state is a commit the director authored as the person and
+		// trailered with the decision that permitted it.
+		//
+		// can_administer, not can_view: a change history names people and
+		// what they were allowed to do, and an audit trail is something a
+		// tenant's administrators read rather than its members.
+		s.guarded("GET /v1/tenants/{t}/changes", "can_administer", tenantObject, s.tenantChanges)
+		if s.cfg.Cluster != "" {
+			s.guarded("GET /v1/clusters/{c}/changes", "can_audit", s.clusterObject, s.clusterChanges)
 		}
 
 		// The realm policy this tenant runs under: how strong a password
