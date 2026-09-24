@@ -264,7 +264,9 @@ func allow(route *Route, who identity) Decision {
 	}
 	// The edge token is valid at the director and at every sibling; a
 	// backend gets it only where its exposure says forwardToken (AD-13).
-	if !route.ForwardToken {
+	// A route that keeps the caller's own token is not stripped either: its
+	// backend authenticates the bearer the page already holds.
+	if !route.ForwardToken && !route.KeepClientToken {
 		dec.RemoveHeaders = []string{"authorization"}
 	}
 	return dec

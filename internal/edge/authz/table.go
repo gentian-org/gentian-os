@@ -50,6 +50,15 @@ type Route struct {
 	// AccessTokenCookie is where the zone's session keeps the access token,
 	// for routes whose token is not forwarded as a bearer.
 	AccessTokenCookie string `json:"accessTokenCookie,omitempty"`
+	// KeepClientToken leaves the caller's own Authorization header alone
+	// without the edge putting its token there.
+	//
+	// Not the same as ForwardToken, and conflating them broke the Keycloak
+	// console: that page mints a token with its own code flow and calls the
+	// Admin REST API with it. Stripping the header is a 401; replacing it
+	// with the edge's is "Token issued for an application that is not the
+	// admin console". It needs neither -- only to be left alone.
+	KeepClientToken bool `json:"keepClientToken,omitempty"`
 	// ForwardToken keeps the Authorization header for the backend. Only a
 	// route whose exposure declares it -- the desktop, which relays to the
 	// director -- has it; every other backend gets identity headers instead.

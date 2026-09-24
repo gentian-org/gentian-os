@@ -67,6 +67,7 @@ func table() *Table {
 	return &Table{Routes: []Route{
 		{Host: "argocd.k.example", Relation: "can_configure", Object: "cluster:c1", AccessTokenCookie: "at", AuthMode: AuthModeOIDC},
 		{Host: "console.k.example", Relation: "can_enter", Object: "tenant:platform", AccessTokenCookie: "at", ForwardToken: true, AuthMode: AuthModeOIDC},
+		{Host: "id.k.example", Relation: "can_configure", Object: "cluster:c1", AccessTokenCookie: "at", KeepClientToken: true, AuthMode: AuthModeOIDC},
 		{Host: "api.k.example", Relation: "can_view", Object: "tenant:platform", AuthMode: AuthModeBearer},
 	}}
 }
@@ -110,6 +111,24 @@ func TestTheDesktopRouteKeepsTheToken(t *testing.T) {
 	}
 	if len(dec.RemoveHeaders) != 0 {
 		t.Fatalf("forwardToken route must keep the bearer; removes %v", dec.RemoveHeaders)
+	}
+}
+
+// The Keycloak console is authorised from its zone cookie like anything else,
+// but the bearer it then sends is its own. Neither flag means the same thing:
+// this route is not forwarded the edge's token, and it must still not be
+// stripped of the one it has.
+func TestAKeepClientTokenRouteIsNotStripped(t *testing.T) {
+	store := &fakeStore{allow: map[string]bool{"user:root|can_configure|cluster:c1": true}}
+	dec := decider(store).Decide(context.Background(), Request{
+		Host:    "id.k.example",
+		Cookies: map[string]string{"at": "root-token"},
+	})
+	if !dec.Allow {
+		t.Fatalf("denied: %s", dec.Reason)
+	}
+	if len(dec.RemoveHeaders) != 0 {
+		t.Fatalf("the console's own bearer was stripped; removes %v", dec.RemoveHeaders)
 	}
 }
 

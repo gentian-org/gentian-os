@@ -270,16 +270,19 @@ func kernelHTTPRouteSpecs(
 				kernelBackendRulePrefixNS(kcService, identityNamespace, kcPort, edgeOAuth2Prefix),
 			},
 			policy: keycloakProxyBackendTrafficPolicySpec(),
-			// The bearer on this route is the console's own, not the edge's.
+			// The bearer on this route is the console's own. Keep it; do not
+			// replace it.
 			//
 			// Keycloak's administration console runs its own code flow inside
 			// the page and calls the Admin REST API with the token that flow
-			// produced. Stripping Authorization here -- which is what every
-			// other kernel route wants, so that a backend gets identity
-			// headers instead of a token it has no use for -- took that token
-			// away, Keycloak answered 401 to the first admin call, and the
-			// console sat on its loading spinner for ever.
-			authz: &routeAuthz{relation: "can_configure", object: clusterObject, forwardToken: true},
+			// produced. Stripping Authorization -- what every other kernel
+			// route wants, so a backend gets identity headers instead of a
+			// token it has no use for -- answered 401 and left the console on
+			// its spinner. Forwarding the EDGE's token instead answered "Token
+			// issued for an application that is not the admin console", which
+			// is true: it was minted for the zone's client. The console needs
+			// neither, only to be left alone.
+			authz: &routeAuthz{relation: "can_configure", object: clusterObject, keepClientToken: true},
 		})
 	}
 	// The desktop is the tenant's own component, routed where it runs

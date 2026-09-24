@@ -283,12 +283,44 @@ Five things worth doing differently:
 5. **People stay in Keycloak**, deep-linked with the tenant in the URL. The
    Members, Groups, Invitations and Sessions tabs go (S7A.4), which is four of
    the fourteen and the four that need a credential the console must not have.
+6. **Templates have to come back on their own feet.** They are worth keeping:
+   a template is how an MSP brings on the twentieth customer in the time the
+   first one took, and it is the one screen here that no upstream console
+   offers. But the Templates tab today is built beside the member screens and
+   draws on the same desktop backend, so removing those takes it with them.
+   Decide where a template lives before the rebuild reaches it, because that
+   decides who may apply one. The shape that fits the rest of this plan: a
+   template is a file in git under the cluster, listing apps, entitlements,
+   limits and the tenant settings to seed, and applying one is a single
+   director call that writes a tenant from it — one commit, one relation
+   (`can_configure` on the cluster), reviewable in the deployments repository
+   like everything else. Then the screen is a list, a preview of what the
+   commit would contain, and an apply button, with no backend of its own.
 
 The director needs endpoints these screens do not have yet. In order:
 tenants (list, create, retire), resource plans and ceilings, backup policies
 and schedules, security policies, and the authorization view of S7A.8. Each is
 the same shape as the app and settings endpoints that already exist: a
 relation, a read of git, a commit.
+
+#### How it ships
+
+As an app component, built from the app template and described by a
+`ComponentProfile` — the same path a customer's app takes, with nothing
+reserved for the kernel's own console. That is deliberate: the template and
+the profile are the contract every app is asked to meet, and the fastest way
+to find out whether they actually carry a real application is to put the
+product's own console through them. If the console needs something the
+template cannot express, that is a gap in the template, and better found here
+than by the first partner who packages an app.
+
+What it exercises, specifically: an image built by the template's pipeline; a
+`ComponentProfile` declaring one HTTP exposure on its own subdomain, the
+relation that may open it (`can_configure` on the cluster) and its tile; the
+generic provisioning path rather than a bespoke Job; and the route table entry
+the operator derives from the profile instead of the compiled-in kernel list.
+It needs no database, no secret of its own and no identity beyond the caller's,
+which makes it the smallest honest test of the contract.
 
 ### S7A.5 ✅ Keycloak looks like the rest of the product
 
@@ -397,12 +429,19 @@ no second write path exists.
   carries the full path, `/gentian:platform:admin`, because OpenBao's roles
   need it; Argo CD's policy named the bare form and matched nothing. Fixed by
   naming both spellings. Verify after the next `D-02`.
-- **Headlamp** ☐ asks for a second sign-in. It runs its own OIDC flow with its
-  own client and keeps the result in its own cookie, and the kubeconfig it
-  proxies with has no token until that flow has run. It costs a click, not a
-  password. Decide between starting that flow from the tile and giving
-  Headlamp an authenticating sidecar that turns the edge session into what it
-  expects, which is the pattern an app with no OIDC support would use anyway.
+- **Headlamp** ◐ asks for a second sign-in, and until today that second
+  sign-in failed: the callback answered `unauthorized_client`, "Invalid client
+  or Invalid client credentials". Headlamp builds the code exchange out of the
+  `auth-provider` block of the kubeconfig it proxies with, and that block named
+  `client-id: headlamp` with no secret, so it authenticated with nothing
+  against a confidential client. Proved inside the pod against the live realm:
+  the real secret answers `400` for a spent code, a wrong one and no one at all
+  both answer `401`. The kubeconfig is now a Secret carrying a placeholder that
+  the portal bootstrap rewrites with the client's real secret before restarting
+  Headlamp. **Verify after the next `D-02`.** The click itself remains: decide
+  between starting that flow from the tile and giving Headlamp an
+  authenticating sidecar that turns the edge session into what it expects,
+  which is the pattern an app with no OIDC support would use anyway.
 - **The Keycloak console** ✅ showed a spinner. Not an iframe problem: embedding
   works, the silent SSO and the token exchange both complete in the frame, and
   it then dies on its first Admin REST call with a 401 because `KC_HOSTNAME`
@@ -416,6 +455,19 @@ no second write path exists.
   its protection. This tile is now also how tenant administrators manage
   people (S7A.4), so it is reached by more than the platform administrator and
   its relation has to allow for that.
+
+  Two things surfaced behind that fix, both now built. The console mints a
+  token of its own inside the page and calls the Admin REST API with it, so the
+  edge must leave that header alone — and "leave it alone" is neither of the
+  two things the edge knew how to do. Stripping it, which is right everywhere
+  else because a backend should get identity headers rather than a token it
+  cannot use, answered `401` and left the console on its spinner. Forwarding
+  the edge's own token instead answered "Token issued for an application that
+  is not the admin console", which was true: that token is minted for the
+  zone's client. So the single `forwardToken` flag is now two. `forwardToken`
+  still means the edge puts its token on the request, and only the desktop asks
+  for it; `keepClientToken` means the caller's own bearer survives untouched,
+  and the console asks for that. **Verify after the next `D-02`.**
 
 ### S7A.9b ✅ A refusal a person can act on
 
@@ -452,6 +504,81 @@ order:
    the operator still writes Postfix entries and still routes `llm.<kernel>`
    to a service nothing deploys. Decide whether these are deliberate drops.
 7. `B-08-seed-secrets` declares a dependency on a step that runs after it.
+
+### S7A.11 ☐ Signing out does not ask a second time
+
+Pressing sign out lands on a Keycloak page asking whether you meant it, and
+only then returns. Nothing is broken; it is what Keycloak does when a logout
+request arrives without an `id_token_hint`. Since Keycloak 18 a logout that
+cannot prove which session it means has to be confirmed by the person, so that
+a link on someone else's page cannot sign people out. The edge sends exactly
+such a request: Envoy Gateway's `logoutPath` clears the zone cookies and hands
+the browser to the realm's `end_session_endpoint` with no hint.
+
+The hint is already in the browser. The zone keeps the ID token in its own
+named cookie, `gentian-kernel-id`, next to the access token. So the fix is to
+send it, and the order matters, because `/oauth2/logout` clears that cookie:
+
+1. Sign out points at the edge authorization service, which already serves the
+   zone's refusal page and knows which zone the host belongs to.
+2. It reads `gentian-kernel-id` and answers `302` to
+   `{issuer}/protocol/openid-connect/logout` with `id_token_hint` set and
+   `post_logout_redirect_uri` set to the zone's own `/oauth2/logout`.
+3. Keycloak ends the SSO session without asking, because the hint names it,
+   and returns the browser to `/oauth2/logout`.
+4. Envoy clears the zone cookies and the person lands on the portal, signed
+   out of the realm and not only of the edge.
+
+One thing has to be provisioned for it: `post.logout.redirect.uris` on the
+zone's confidential client, which the composition of S7A.1 should write along
+with the redirect URIs it already writes. Keycloak rejects an unregistered
+`post_logout_redirect_uri` and the person would end on an error page instead.
+
+Two alternatives, recorded so they are not rediscovered:
+
+- **Admin REST**, `POST /admin/realms/{realm}/users/{id}/logout`, ends every
+  session server-side with no redirect at all. Rejected: it needs
+  `manage-users` in the director, which S7A.2 just took away, and it would
+  make signing out depend on a credential rather than on the person's own
+  session.
+- **Account REST**, `DELETE /realms/{realm}/account/sessions`, ends the
+  person's own sessions with the person's own token and no admin rights. It is
+  the right shape, but it needs `account` in the edge token's audience, which
+  means an audience mapper on every zone client, and it gives no redirect, so
+  the console would still have to drive the browser afterwards. Keep it as the
+  fallback if the hint route hits something unexpected.
+
+### S7A.12 ☐ The tile catalogue leaves the director
+
+`GET /v1/clusters/{c}/tiles` is what the portal asks for the links it should
+show. The director answers it from `internal/director/tiles/tiles.yaml`, a
+list of three kernel UIs compiled into the binary, filtering each by whether
+the caller holds one of its relations on the cluster.
+
+The filtering belongs there. The list does not. Which components exist, where
+each is served and what relation opens it is cluster state, and the operator
+already holds all of it: it writes the `HTTPRoute` for those same hostnames
+and it reads the `ComponentProfile` of every installed app. A catalogue
+compiled into the director means the director has a second, hand-maintained
+copy of that, which will drift, and it means an installed app cannot appear on
+the portal without a director release — which is the wrong answer for a
+platform whose point is installing apps.
+
+To build:
+
+1. The operator projects the catalogue from what it actually routes: the
+   kernel routes it composes plus every `ComponentProfile` exposure that
+   declares a tile, into one ConfigMap in `kernel-control`.
+2. `ComponentProfile` gains the tile fields an app needs to describe itself —
+   display name, description, icon, the path within the host, and the relation
+   that may open it. An app that declares none gets no tile.
+3. The director reads that ConfigMap instead of the compiled list and keeps
+   doing the one thing that is its job: asking the graph, per caller, which of
+   those the caller may open. `internal/director/tiles` and its YAML go.
+
+The endpoint itself stays where it is. A tile the caller cannot open must not
+be on the page, that decision is an authorization read, and authorization
+reads are what the director is for.
 
 ## S8 — purge and reinstall
 

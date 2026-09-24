@@ -817,7 +817,9 @@ func TestKernelConsolesMayBeFramedByTheDesktop(t *testing.T) {
 
 // Keycloak's administration console calls its own Admin REST API with a token
 // its own code flow minted inside the page. The edge must leave that header
-// alone: stripping it answers 401 and the console never finishes loading.
+// alone -- neither strip it, which answers 401 and leaves the console on its
+// spinner, nor replace it with the edge's own, which answers "Token issued for
+// an application that is not the admin console".
 func TestTheKeycloakConsoleKeepsItsOwnBearer(t *testing.T) {
 	t.Parallel()
 	specs := kernelHTTPRouteSpecs("platform.example.test", nil, nil, nil, false, "c1", true, true)
@@ -825,8 +827,20 @@ func TestTheKeycloakConsoleKeepsItsOwnBearer(t *testing.T) {
 		if s.name != kernelRouteKeycloakAdmin {
 			continue
 		}
-		if s.authz == nil || !s.authz.forwardToken {
-			t.Fatalf("the admin console route must forward the token: %+v", s.authz)
+		if s.authz == nil || !s.authz.keepClientToken {
+			t.Fatalf("the console's own bearer must survive the edge: %+v", s.authz)
+		}
+		if s.authz.forwardToken {
+			t.Fatalf("the edge must not put its own token on this route: %+v", s.authz)
+		}
+		// And the two must reach their two destinations: the table line the
+		// authorization service reads, and the policy Envoy reads.
+		table, err := edgeAuthzRouteTable([]kernelHTTPRouteSpec{s}, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(table, "keepClientToken: true") || strings.Contains(table, "forwardToken") {
+			t.Fatalf("the table line the authorization service reads:\n%s", table)
 		}
 		return
 	}

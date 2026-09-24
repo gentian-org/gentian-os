@@ -63,14 +63,18 @@ const (
 type routeAuthz struct {
 	relation string
 	object   string
-	// forwardToken leaves the Authorization header alone, so whatever bearer
-	// the request carries reaches the backend.
+	// keepClientToken leaves the caller's own Authorization header alone
+	// WITHOUT the edge putting its token there. The Keycloak console needs
+	// exactly this: it mints a token with its own code flow inside the page
+	// and calls the Admin REST API with it, so stripping the header is a 401
+	// and replacing it with the edge's is "Token issued for an application
+	// that is not the admin console".
+	keepClientToken bool
+	// forwardToken makes the EDGE put its own access token on the request.
 	//
-	// Two reasons a route wants it, and they are not the same. The desktop
-	// relays the edge's token to the director (AD-13). Keycloak's
-	// administration console carries a token of its OWN, minted by the code
-	// flow inside the page, and calls its Admin REST API with it; stripping
-	// that is a 401 and a console that never finishes loading.
+	// Only the desktop declares it: it relays that token to the director
+	// (AD-13). Anything else wanting its header untouched wants
+	// keepClientToken instead.
 	forwardToken bool
 }
 
@@ -225,6 +229,7 @@ type edgeAuthzRoute struct {
 	Relation          string `json:"relation"`
 	Object            string `json:"object"`
 	AccessTokenCookie string `json:"accessTokenCookie,omitempty"`
+	KeepClientToken   bool   `json:"keepClientToken,omitempty"`
 	ForwardToken      bool   `json:"forwardToken,omitempty"`
 	AuthMode          string `json:"authMode"`
 }
@@ -241,7 +246,8 @@ func edgeAuthzRouteTable(specs []kernelHTTPRouteSpec, extra []edgeAuthzRoute) (s
 		routes = append(routes, edgeAuthzRoute{
 			Host: s.host, Relation: s.authz.relation, Object: s.authz.object,
 			AccessTokenCookie: edgeKernelAccessTokenCookie, ForwardToken: s.authz.forwardToken,
-			AuthMode: "oidc",
+			KeepClientToken: s.authz.keepClientToken,
+			AuthMode:        "oidc",
 		})
 	}
 	routes = append(routes, extra...)
