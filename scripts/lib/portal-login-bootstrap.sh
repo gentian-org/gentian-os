@@ -1303,6 +1303,43 @@ spec:
               fi
 
 
+              # Keycloak's own administration console must be issued a token
+              # the Admin REST API will accept.
+              #
+              # Keycloak 26 turns on lightweight access tokens for
+              # security-admin-console. Such a token carries exp, iat, jti,
+              # iss, typ, azp, sid and scope, and NOTHING else -- no sub, no
+              # aud, no realm_access, no resource_access. The console then
+              # calls /admin/serverinfo with it and Keycloak answers 401, so
+              # the console never finishes loading and sits on its spinner.
+              #
+              # Proved on the cluster rather than guessed: the same person, in
+              # the same realm, holding realm-admin through
+              # gentian:platform:admin, is answered 200 by that same endpoint
+              # when the token comes from admin-cli, which issues a full one.
+              # The only difference is what the token carries.
+              #
+              # So this realm's console gets full tokens. It costs a slightly
+              # larger token on requests that never leave the identity host,
+              # and it is the difference between a console that works and one
+              # that does not. Merged into whatever attributes the client
+              # already has, so nothing else about it is disturbed.
+              ADMIN_CONSOLE_ID=\$(curl -sf -H "\${AUTH}" \\
+                "\${KEYCLOAK_BASE}/admin/realms/\${REALM}/clients?clientId=security-admin-console" \\
+                | jq -r '.[0].id // empty')
+              if [ -n "\${ADMIN_CONSOLE_ID}" ]; then
+                ADMIN_CONSOLE_BODY=\$(curl -sf -H "\${AUTH}" \\
+                  "\${KEYCLOAK_BASE}/admin/realms/\${REALM}/clients/\${ADMIN_CONSOLE_ID}" \\
+                  | jq '.attributes["client.use.lightweight.access.token.enabled"] = "false"')
+                if [ -n "\${ADMIN_CONSOLE_BODY}" ] && curl -sf -X PUT -H "\${AUTH}" -H "Content-Type: application/json" \\
+                    "\${KEYCLOAK_BASE}/admin/realms/\${REALM}/clients/\${ADMIN_CONSOLE_ID}" \\
+                    -d "\${ADMIN_CONSOLE_BODY}" >/dev/null; then
+                  echo "security-admin-console issues full access tokens"
+                else
+                  echo "WARNING: could not turn off lightweight tokens for security-admin-console; the console will 401" >&2
+                fi
+              fi
+
               # The kernel zone's edge client: confidential, code flow only,
               # one redirect per kernel-zone host, NO groups scope (the shim
               # asks the store, never the token), the director in its
@@ -1332,7 +1369,14 @@ spec:
                   # five minutes and its refresh fails once the session is
                   # gone, which is the same outcome one token later and needs
                   # no write to the authorization store.
-                  "post.logout.redirect.uris": ("https://console." + \$domain + "/*")
+                  # Every host in the zone, because signing out has to work
+                  # from whichever one the person is looking at. The sign-out
+                  # that skips Keycloak's "did you mean it" page hands it a
+                  # post_logout_redirect_uri pointing back at that host's own
+                  # /oauth2/logout, and Keycloak refuses one it has not been
+                  # told about -- which puts the person on an error page
+                  # instead of back on the portal.
+                  "post.logout.redirect.uris": (["console", "argocd", "headlamp", "id"] | map("https://" + . + "." + \$domain + "/*") | join("##"))
                 }
               }')
               if [ -n "\${EDGE_CLIENT_ID}" ]; then
