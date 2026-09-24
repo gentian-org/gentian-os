@@ -145,12 +145,58 @@ ensure_edge_kernel_secret() {
 
 # The Secret Headlamp reads, in the namespace Headlamp runs in. Keys are the
 # environment variable names, because the chart loads it with envFrom.
+# Put the derived client secret into the kubeconfig Headlamp reads.
+#
+# The chart renders the Secret with a placeholder, because the value is
+# derived from the master password and no chart can know it. This rewrites
+# that one line in place and leaves the rest of the file exactly as the chart
+# wrote it, so the two cannot drift.
+_headlamp_kubeconfig_secret() {
+    local ns="$1" secret="$2" config
+    config="$(kubectl get secret headlamp-kubeconfig -n "${ns}" -o jsonpath='{.data.config}' 2>/dev/null | base64 -d 2>/dev/null || true)"
+    if [[ -z "${config}" ]]; then
+        info "headlamp-kubeconfig is not present yet; Argo CD renders it and this fills it in on the next run."
+        return 0
+    fi
+    if ! grep -q "client-secret:" <<<"${config}"; then
+        warn "headlamp-kubeconfig carries no client-secret line; is the chart up to date?"
+        return 0
+    fi
+    # Rewrite the one line, leaving the indentation the chart wrote.
+    local updated line out=""
+    while IFS= read -r line; do
+        case "${line}" in
+        *client-secret:*) out+="${line%%client-secret:*}client-secret: ${secret}"$'\n' ;;
+        *) out+="${line}"$'\n' ;;
+        esac
+    done <<<"${config}"
+    updated="${out%$'\n'}"
+    if [[ "${updated}" == "${config}" ]]; then
+        return 0
+    fi
+    kubectl create secret generic headlamp-kubeconfig -n "${ns}" \
+        --from-literal=config="${updated}" \
+        --dry-run=client -o yaml | kubectl apply -f - >&2
+    # envFrom and mounted Secrets are read at container start, so the running
+    # pod keeps the old file until it is replaced.
+    kubectl rollout restart deployment/headlamp -n "${ns}" >/dev/null 2>&1 || true
+}
+
 ensure_headlamp_oidc_secret() {
     local kernel_domain="${KERNEL_DOMAIN:?KERNEL_DOMAIN required}"
     local kernel_realm="${KERNEL_REALM:-kernel}"
     local ns secret
     ns="$(_pl_observability_ns)"
     secret="$(_headlamp_derive_secret)"
+    # The kubeconfig Headlamp builds its token exchange from.
+    #
+    # It names the client AND its secret, because Headlamp exchanges the code
+    # with what the kubeconfig's auth-provider says and not with its own
+    # -oidc-client-secret flag. A kubeconfig naming only the client sends no
+    # credential, Keycloak answers "unauthorized_client", and the person is
+    # asked to sign in again with no way to succeed. The chart declares the
+    # rest of the file; this fills in the one value the chart cannot know.
+    _headlamp_kubeconfig_secret "${ns}" "${secret}"
     kubectl create secret generic headlamp-oidc -n "${ns}" \
         --from-literal=OIDC_CLIENT_ID="headlamp" \
         --from-literal=OIDC_CLIENT_SECRET="${secret}" \

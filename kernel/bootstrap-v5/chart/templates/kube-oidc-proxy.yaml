@@ -197,11 +197,17 @@ spec:
 # cluster, reached through the proxy, with the proxy's own CA to verify it.
 # The token it sends is the person's, which is the whole point.
 apiVersion: v1
-kind: ConfigMap
+kind: Secret
 metadata:
   name: headlamp-kubeconfig
   namespace: {{ $ns }}
-data:
+  annotations:
+    # The installer replaces the placeholder below with the derived client
+    # secret. Argo CD must not put the placeholder back over it.
+    argocd.argoproj.io/compare-options: IgnoreExtraneous
+    argocd.argoproj.io/sync-options: Replace=false
+type: Opaque
+stringData:
   config: |
     apiVersion: v1
     kind: Config
@@ -224,12 +230,22 @@ data:
         # but its "paste your authentication token" prompt -- which is exactly
         # the thing the proxy exists to remove.
         #
-        # The values are the browser's half of the flow. The client secret is
-        # not here: Headlamp holds it from its own Secret, and a kubeconfig is
-        # readable by anything that can read the ConfigMap.
+        # The client secret is here too, which is why this object is a Secret
+        # and not a ConfigMap.
+        #
+        # Headlamp builds the token exchange from THIS config, not from its
+        # own -oidc-client-secret flag, so a kubeconfig naming the client and
+        # not its secret exchanges the code with no credential at all and
+        # Keycloak answers "unauthorized_client: Invalid client or Invalid
+        # client credentials". That is what the second sign-in prompt was.
+        #
+        # The value is not the chart's to know -- it is derived by the
+        # installer from the master password -- so the installer writes this
+        # object and the chart declares what it must contain.
         auth-provider:
           name: oidc
           config:
             idp-issuer-url: {{ $issuer }}
             client-id: headlamp
+            client-secret: PLACEHOLDER_REPLACED_BY_THE_INSTALLER
 {{- end }}

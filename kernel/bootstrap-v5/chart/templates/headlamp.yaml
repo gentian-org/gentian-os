@@ -43,8 +43,8 @@ spec:
               name: headlamp-oidc
         volumes:
         - name: kubeconfig
-          configMap:
-            name: headlamp-kubeconfig
+          secret:
+            secretName: headlamp-kubeconfig
         - name: proxy-ca
           secret:
             secretName: kube-oidc-proxy-tls
