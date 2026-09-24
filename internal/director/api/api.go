@@ -56,6 +56,9 @@ type Repository interface {
 	KernelDomain(ctx context.Context) (string, error)
 	ClusterSettingValues(ctx context.Context) (map[string]string, error)
 	SetClusterSettings(ctx context.Context, values map[string]string, meta gitops.Meta) (gitops.Result, error)
+	TenantDetails(ctx context.Context) ([]gitops.Tenant, error)
+	CreateTenant(ctx context.Context, req gitops.NewTenant, meta gitops.Meta) (gitops.Result, error)
+	RetireTenant(ctx context.Context, tenant string, meta gitops.Meta) (gitops.Result, error)
 }
 
 // Config assembles a Server.
@@ -252,6 +255,13 @@ func (s *Server) routes() {
 		// author, and the operator acts on it from there.
 		s.guarded("GET /v1/clusters/{c}/settings", "can_audit", s.clusterObject, s.clusterSettings)
 		s.guarded("PATCH /v1/clusters/{c}/settings", "can_configure", s.clusterObject, s.setClusterSettings)
+		// Bringing a tenant on is the errand the console exists for, and it
+		// is one commit. Listing is can_audit because seeing which customers
+		// a cluster carries is a read; creating and retiring are
+		// can_configure because they change what the cluster runs.
+		s.guarded("GET /v1/clusters/{c}/tenants", "can_audit", s.clusterObject, s.listTenants)
+		s.guarded("POST /v1/clusters/{c}/tenants", "can_configure", s.clusterObject, s.createTenant)
+		s.guarded("DELETE /v1/clusters/{c}/tenants/{t}", "can_configure", s.clusterObject, s.retireTenant)
 	}
 	if s.cfg.Store != nil {
 		s.mux.HandleFunc("POST /v1/tenants/{t}/entitlements", s.entitle)
@@ -503,6 +513,53 @@ func (s *Server) clusterSettings(w http.ResponseWriter, r *http.Request, _ call)
 		out = append(out, entry)
 	}
 	s.json(w, http.StatusOK, map[string]any{"cluster": s.cfg.Cluster, "settings": out})
+}
+
+func (s *Server) listTenants(w http.ResponseWriter, r *http.Request, _ call) {
+	tenants, err := s.cfg.Repo.TenantDetails(r.Context())
+	if err != nil {
+		s.repoError(w, r, err)
+		return
+	}
+	s.json(w, http.StatusOK, map[string]any{"cluster": s.cfg.Cluster, "tenants": tenants})
+}
+
+// createTenant writes one manifest and commits it.
+//
+// The name is the only thing that must be right, because it becomes a
+// namespace, a realm, a database prefix and a hostname, and none of those can
+// be renamed afterwards without moving data. So it is validated here and the
+// refusal says which rule it broke rather than answering a bare 400.
+func (s *Server) createTenant(w http.ResponseWriter, r *http.Request, c call) {
+	var body gitops.NewTenant
+	if err := decode(r, &body); err != nil {
+		s.fail(w, r, http.StatusBadRequest, `body must be {"name": "<name>", "displayName": "<name>"}`)
+		return
+	}
+	if !gitops.ValidName(body.Name) {
+		s.fail(w, r, http.StatusBadRequest,
+			"a tenant name is a DNS label: lower-case letters, digits and hyphens, starting and ending with a letter or digit")
+		return
+	}
+	res, err := s.cfg.Repo.CreateTenant(r.Context(), body, c.meta)
+	if errors.Is(err, gitops.ErrTenantExists) {
+		s.fail(w, r, http.StatusConflict, "a tenant of that name already exists")
+		return
+	}
+	s.written(w, r, res, err)
+}
+
+// retireTenant stops git describing a tenant, which is what removes it.
+//
+// Whether its data goes with it is the manifest's deletionPolicy, honoured by
+// the operator, not something decided here.
+func (s *Server) retireTenant(w http.ResponseWriter, r *http.Request, c call) {
+	res, err := s.cfg.Repo.RetireTenant(r.Context(), r.PathValue("t"), c.meta)
+	if errors.Is(err, gitops.ErrTenantProtected) {
+		s.fail(w, r, http.StatusForbidden, err.Error())
+		return
+	}
+	s.written(w, r, res, err)
 }
 
 type clusterSettingsRequest struct {
