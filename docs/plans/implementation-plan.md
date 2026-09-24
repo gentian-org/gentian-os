@@ -283,19 +283,24 @@ Five things worth doing differently:
 5. **People stay in Keycloak**, deep-linked with the tenant in the URL. The
    Members, Groups, Invitations and Sessions tabs go (S7A.4), which is four of
    the fourteen and the four that need a credential the console must not have.
-6. **Templates have to come back on their own feet.** They are worth keeping:
-   a template is how an MSP brings on the twentieth customer in the time the
-   first one took, and it is the one screen here that no upstream console
-   offers. But the Templates tab today is built beside the member screens and
-   draws on the same desktop backend, so removing those takes it with them.
-   Decide where a template lives before the rebuild reaches it, because that
-   decides who may apply one. The shape that fits the rest of this plan: a
-   template is a file in git under the cluster, listing apps, entitlements,
-   limits and the tenant settings to seed, and applying one is a single
-   director call that writes a tenant from it — one commit, one relation
-   (`can_configure` on the cluster), reviewable in the deployments repository
-   like everything else. Then the screen is a list, a preview of what the
-   commit would contain, and an apply button, with no backend of its own.
+6. **The Templates tab was not what its name suggested, and what the name
+   suggested is still worth building.** Read before removing: that screen
+   copied one member's shell preferences onto another. It is a member screen
+   under a different name, it went with the member screens, and nothing is
+   owed to it. Its one real use — a new joiner should not start on an empty
+   desktop — belongs to the desktop as a default preference set, not to an
+   administrator pushing settings onto people one at a time.
+
+   What the name should mean is a **tenant template**, and that does not exist
+   yet. It is how an MSP brings on the twentieth customer in the time the
+   first one took, and no upstream console offers it. The shape that fits the
+   rest of this plan: a template is a file in git under the cluster listing
+   apps, entitlements, limits and the tenant settings to seed, and applying
+   one is a single director call that writes a tenant from it — one commit,
+   one relation (`can_configure` on the cluster), reviewable in the
+   deployments repository like everything else. The screen is then a list, a
+   preview of the commit it would make, and an apply button, with no backend
+   of its own. Build it when the tenant endpoints land, not before.
 
 The director needs endpoints these screens do not have yet. In order:
 tenants (list, create, retire), resource plans and ceilings, backup policies
@@ -303,11 +308,35 @@ and schedules, security policies, and the authorization view of S7A.8. Each is
 the same shape as the app and settings endpoints that already exist: a
 relation, a read of git, a commit.
 
+#### Where it stands
+
+First cut landed in `gentian-ui` on `feat/console-is-a-director-client`. The
+four people tabs and Templates are gone, replaced by a People tab that opens
+Keycloak's console with the session the person already holds, and Cluster
+settings arrived as the first screen that asks the director: no catalogue of
+its own, no credential, the caller's token forwarded, and a commit named on
+screen rather than a save claimed. Fourteen tabs are now eleven.
+
+One thing that blocks the rest. The backend's Keycloak administrator
+credential cannot go with the member screens, because `Security` and `Audit`
+read through the same admin client (`keycloak_security_policy_store.py`,
+`keycloak_audit_fetcher.py`). Until those two move to the director, the
+desktop still holds a credential that can read and write the realm, so S7A.6
+is not closed by this. Move them next, and the credential goes with them.
+
 #### How it ships
 
 As an app component, built from the app template and described by a
 `ComponentProfile` — the same path a customer's app takes, with nothing
-reserved for the kernel's own console. That is deliberate: the template and
+reserved for the kernel's own console.
+
+**The template cannot do this yet.** `gentian-app-template` knows only
+`AppProfile`; `ComponentProfile` does not appear in it, and the template ships
+no CI at all, so there is nothing to build and publish an image with. The only
+working reference for the publish flow is `gentian-ui`'s own workflow. So the
+sequence is: teach the template `ComponentProfile` and give it a CI workflow,
+then move the console onto it. Discovering that gap was the point of choosing
+the console as the test. That is deliberate: the template and
 the profile are the contract every app is asked to meet, and the fastest way
 to find out whether they actually carry a real application is to put the
 product's own console through them. If the console needs something the
