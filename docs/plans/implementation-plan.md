@@ -594,7 +594,7 @@ Two alternatives, recorded so they are not rediscovered:
   the console would still have to drive the browser afterwards. Keep it as the
   fallback if the hint route hits something unexpected.
 
-### S7A.12 ☐ The tile catalogue leaves the director
+### S7A.12 ◐ The tile catalogue leaves the director — built, not yet verified
 
 `GET /v1/clusters/{c}/tiles` is what the portal asks for the links it should
 show. The director answers it from `internal/director/tiles/tiles.yaml`, a
@@ -625,6 +625,38 @@ To build:
 The endpoint itself stays where it is. A tile the caller cannot open must not
 be on the page, that decision is an authorization read, and authorization
 reads are what the director is for.
+
+**Built.** The operator projects a `gentian-tiles` ConfigMap in the control
+namespace from the routes it composes plus every `ComponentProfile` exposure
+that declares a tile; `internal/director/tiles` and its YAML are gone. Each
+kernel tile's hostname now comes from its route rather than being written
+twice, so a console with no route is simply absent instead of being a link to
+nothing.
+
+Three decisions worth knowing, none of them forced:
+
+- **`ComponentProfile` gained the tile fields**, and its doc comment, which
+  said the type carries no presentation because presentation is the App
+  Store's, was rewritten rather than left saying something untrue. The store
+  still owns the catalogue listing; the cluster owns the tile, because the
+  portal has to show what the cluster routes without asking a service outside
+  the cluster. `AppProfile`'s existing tile fields were not reused: they are
+  the v4 portal's icon plumbing and they carry no relation, which is the one
+  field the per-caller question needs.
+- **The director reads that ConfigMap as a mounted file**, not through the
+  Kubernetes API. It holds the git push credential and no cluster credential,
+  and its ServiceAccount does not even mount a token; an API read would have
+  meant giving it one, plus a Role and a RoleBinding, for one ConfigMap. A
+  cluster whose operator has not projected yet has no file, and the endpoint
+  answers an empty list.
+- **No app declares a tile yet**, so a real cluster's catalogue today is the
+  same three kernel consoles it was before. The desktop declares none on
+  purpose: it *is* the page the tiles are shown on.
+
+One thing to fix before an app can have a tile: the relation an app's profile
+declares has to exist on `type app` in `authz/model/v1/model.fga`, and today
+that type has only `tenant` and `admin`. `can_launch` is named in the design
+documents and is not in model v1.
 
 ### S7A.13 ☐ `denyPaths` promises a control it does not apply
 

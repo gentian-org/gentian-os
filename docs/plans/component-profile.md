@@ -330,6 +330,38 @@ type ExposureSpec struct {
     // +optional
     ForwardToken bool     `json:"forwardToken,omitempty"`
     Backend  BackendRef   `json:"backend"`
+    // Tile is how this exposure appears on the portal, and who may open it.
+    // Absent means no tile: a component with an exposure nobody should be
+    // linked to says nothing here rather than opting out of something.
+    //
+    // It lives on the exposure and not on the profile because the tile is a
+    // link to one host and one path, and the exposure is what decides those.
+    // The operator projects the catalogue from the routes it actually
+    // composes, so a tile and the thing it points at cannot disagree.
+    // +optional
+    Tile *ExposureTile `json:"tile,omitempty"`
+}
+
+// ExposureTile is what a person is told about a component, and the relation
+// that decides whether they see it at all.
+//
+// Presentation in the cluster, where the profile's own doc comment once said
+// there would be none. The App Store still owns the catalogue listing that
+// sells an app; this is the link on the portal of a cluster that has already
+// installed it, and the portal has to render that without asking a service
+// outside the cluster.
+type ExposureTile struct {
+    DisplayName string `json:"displayName"`
+    Description string `json:"description,omitempty"`
+    Icon        string `json:"icon,omitempty"`
+    // Path within the exposure's host. The tile is the sign-in entry, which
+    // is not always the front page.
+    // +optional
+    Path string `json:"path,omitempty"`
+    // Relation that opens it, checked per caller against the component's
+    // object. It must exist on `type app` in the authorization model, and
+    // today that type has only `tenant` and `admin`.
+    Relation string `json:"relation"`
 }
 
 // SourceRestriction pins the caller. Exactly one form; both are evaluated at
