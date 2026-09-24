@@ -958,6 +958,30 @@ does not exist yet that something cannot be the Composition.
   - `[ ]` Gentian plugins (Tenants/Apps/AppProfiles/IntegrationBindings, tenant ownership on a Namespace, branding), built and published from gentian-ui and mounted by an init container.
   - `[ ]` Per-admin kube identity via OIDC, so the console authorises the person rather than a pasted ServiceAccount token. Needs API server OIDC configuration, which the installer does not do today — the same door as §1.28.
 
+---
+
+### 2.24 The StorageClasses Are Taken As Given (**)
+* **Target Domain**: Platform, Infrastructure & Lifecycle
+* **Context**: Every PVC on ifk-w4h lands on `csi-cinder-sc-retain`, the default, and nothing in this repo declares or checks what that class does. Three of its properties are load-bearing and none of them were chosen here.
+
+  `volumeBindingMode: Immediate` provisions the volume before a pod is scheduled, so the volume picks an availability zone and the scheduler then has to find a node in it. `WaitForFirstConsumer` inverts that — schedule first, provision where the pod landed — and is the upstream default for exactly this reason. The failure it prevents is not theoretical here: `open-webui-post-install` mounts the app's own ReadWriteOnce claim and sat in `ContainerCreating` for six days in both tenants, because a Job landing on the other node cannot attach a volume already attached elsewhere. Pod affinity on the Job fixed that one instance; binding mode is the class-level half of the same problem, and the next workload to mount an existing claim will meet it again.
+
+  `allowVolumeExpansion: true` is already set on both classes, which is the good news and the whole point of recording it: growing a volume is a supported one-line edit, and nobody knows that. A Cinder volume is a fixed-size block device, so a full one is `ENOSPC` at the application — Postgres stops accepting writes, Dovecot refuses delivery and senders eventually give up. There is no cluster-level backpressure, because the node has disk; the volume does not. Finding out at 03:00 that the remedy was a `kubectl patch` is a worse way to learn it than a runbook.
+
+  `reclaimPolicy: Retain` on the default class means a deleted PVC leaves its PV *and its Cinder volume* behind, still billed. One is already there: a `Released` 10Gi volume for `tenant-finnor/odoo-data`, beside the `Bound` one that replaced it. This is a slow leak by construction — correct for data safety, and with no counterpart that ever reclaims.
+
+  None of this is urgent at present utilisation. 99Gi is provisioned across 17 PVs and roughly 3Gi holds data: `odoo-data` is at 1%, `/var/mail` at 1%, `postgres-1` at 9%, and only Nextcloud at 22% looks like a volume in use. The risk is not running out; it is that the first volume to fill does so with no warning and no documented remedy.
+* **Proposed Solution**: Own the classes rather than inherit them. Ship a Gentian StorageClass that sets `WaitForFirstConsumer` and is the default, leaving the provider's classes in place for anything that needs Immediate binding. Note that binding mode is immutable on an existing class, so this is a new class plus a default flip, not an edit — and existing PVs keep the class they were bound with, so it applies to new claims only. Separately, write the expansion path down and alert on utilisation, so the capability that already exists is reachable under pressure.
+* **Open decisions**:
+  - Whether the platform ships its own class or asserts properties on the provider's. A class of our own is portable across CSI drivers; asserting on theirs avoids a second class to explain.
+  - Whether `Retain` stays the default. It is the safe choice for tenant data and the expensive one for churn — the answer probably differs for tenant volumes and for kernel scratch.
+* **Backlog Items**:
+  - `[ ]` Provide a `WaitForFirstConsumer` class and make it the default; leave the provider's Immediate classes available.
+  - `[ ]` Lint that the default class binds late and allows expansion, so a cluster whose provider changes its defaults fails a check rather than a mount.
+  - `[ ]` A documented expansion procedure — patch the claim, confirm `FileSystemResizePending` clears — and a rehearsal on a scratch volume, since the capability is untested here.
+  - `[ ]` Alert on volume utilisation. `postgres-1` is the one to watch: 10Gi shared by every tenant app, growing with tenant count rather than with any one tenant.
+  - `[ ]` Reclaim `Released` PVs, and decide whether that is a sweep or a deliberate operator action. The Cinder volume outlives the PV either way, so deleting the PV is not the end of the bill.
+
 ## 3. User Management & Shell UI
 
 ### 3.1 SCIM & Provisioning Bus Integration (*)
