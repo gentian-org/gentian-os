@@ -223,6 +223,15 @@ cluster. Nothing may create a username that is not an address.
 
 ### S7A.4 ◐ The admin console is an app, and it talks to the director
 
+**Every screen is wired.** What is left is four things, each for a reason
+rather than for want of time, and all four are in `NOT_YET_MAPPED` with that
+reason beside them: minting a backup key (a key minted in the console is a
+key the console held), a notification addressed to groups (the group list is
+Keycloak's and nothing here holds a credential for it), the audit panes that
+need stores which do not exist (roadmap §1.12), and the authorization summary
+(S7A.8). The screens themselves all read real state and all writes commit or
+act.
+
 It was a route inside the desktop image, built against a Keycloak admin
 credential the desktop no longer holds. It becomes a component like any other,
 visible only to holders of the relation, whose only job is to be a GUI over
@@ -258,13 +267,13 @@ worklist, and a screen leaves it by getting real routes.
 | Resources: plans, ceilings, usage | director, relaying the operator | director → `tenants/<t>/resource-plan.yaml` | ✅ |
 | Apps in a tenant: install, remove, addons | director, from git | director, endpoints that exist | ◐ endpoints exist, screen not built |
 | Backup and backup policy | operator state | policy → git; taking one is an action | ✅ |
-| Backup schedules | operator state | derived from the policy | ◐ read only |
+| Backup schedules | operator state | through the policy they are derived from | ✅ |
 | Security policies | git, applied to the realm by the composition | director → `tenants/<t>/security-policy.yaml` | ✅ |
 | Audit: what changed, and what allowed it | director, from git | — | ✅ |
 | Audit: sign-ins, refusals, reads of data | not recorded anywhere yet | — | ☐ roadmap §1.12 |
-| Integrations: bindings and grants | operator state | changing a grant is declared state | ◐ read only |
-| Notifications | tenant database | tenant database | ☐ |
-| Platform security: MAC waivers | operator state | the operator chart's own values | ◐ read only |
+| Integrations: bindings and grants | operator state | director → `tenants/<t>/grant-<app>.yaml` | ✅ |
+| Notifications | the desktop's own table, read by the operator | publishing is an action | ✅ |
+| Platform security: MAC waivers | git, joined with what the catalogue asks | director → `kernel/claims/platform-security-policy.yaml` | ✅ `can_set_admission` is break-glass |
 | Customization debt | `Customization` CRs | — | ✅ |
 | Credentials | credential manager, as the caller | the same | ✅ |
 | Authorization view | OpenFGA, read-only | — | ☐ S7A.8 |

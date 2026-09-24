@@ -430,10 +430,101 @@ func (s *Server) tenantIntegrations(w http.ResponseWriter, r *http.Request, _ ca
 	s.relayed(w, r, "/v1/tenants/"+url.PathEscape(r.PathValue("t"))+"/integrations")
 }
 
-func (s *Server) platformSecurity(w http.ResponseWriter, r *http.Request, _ call) {
-	s.relayed(w, r, "/v1/platform-security")
-}
-
 func (s *Server) customizations(w http.ResponseWriter, r *http.Request, _ call) {
 	s.relayed(w, r, "/v1/customizations")
+}
+
+// setAppGrant writes what one app may consume. Declared state: a commit.
+func (s *Server) setAppGrant(w http.ResponseWriter, r *http.Request, c call) {
+	var body gitops.AppGrant
+	if err := decode(r, &body); err != nil {
+		s.fail(w, r, http.StatusBadRequest, `body must be {"consume": [...], "allowConsumers": [...]}`)
+		return
+	}
+	res, err := s.cfg.Repo.SetAppGrant(r.Context(), r.PathValue("t"), r.PathValue("app"), body, c.meta)
+	s.written(w, r, res, err)
+}
+
+// clearAppGrant withdraws everything one app was permitted.
+func (s *Server) clearAppGrant(w http.ResponseWriter, r *http.Request, c call) {
+	res, err := s.cfg.Repo.ClearAppGrant(r.Context(), r.PathValue("t"), r.PathValue("app"), c.meta)
+	s.written(w, r, res, err)
+}
+
+// platformSecurity answers what the cluster permits and what asks for it.
+//
+// Two sources on purpose: the allowlist is declared in git and read from
+// there, because that is the list this screen edits; what the catalogue asks
+// of it is cluster state and comes from the operator. Reading the allowlist
+// from the cluster instead would show the last thing that synced rather than
+// the thing about to be changed.
+func (s *Server) platformSecurity(w http.ResponseWriter, r *http.Request, _ call) {
+	declared, err := s.cfg.Repo.PlatformSecurity(r.Context())
+	if err != nil {
+		s.repoError(w, r, err)
+		return
+	}
+	status, body, err := s.cfg.Lifecycle.Get(r.Context(), "/v1/platform-security", nil)
+	if err != nil {
+		s.cfg.Log.ErrorContext(r.Context(), "app-lifecycle API unreachable", "request_id", reqID(r.Context()), "error", err.Error())
+		s.fail(w, r, http.StatusBadGateway, "the operator's API did not answer")
+		return
+	}
+	if status != http.StatusOK || !json.Valid(body) {
+		s.fail(w, r, status, lifecycle.ErrorMessage(body))
+		return
+	}
+	var fromCluster map[string]any
+	if err := json.Unmarshal(body, &fromCluster); err != nil {
+		s.fail(w, r, http.StatusBadGateway, "the operator's API answered something unreadable")
+		return
+	}
+	if declared == nil {
+		declared = []gitops.MacWaiver{}
+	}
+	// What git declares wins as "the list", and what the cluster has is
+	// reported beside it: the two differing means a commit has not synced
+	// yet, which is worth seeing rather than hiding.
+	fromCluster["allowedMacWaivers"] = declared
+	s.json(w, http.StatusOK, fromCluster)
+}
+
+// setPlatformSecurity commits the allowlist.
+func (s *Server) setPlatformSecurity(w http.ResponseWriter, r *http.Request, c call) {
+	var body struct {
+		AllowedMacWaivers []gitops.MacWaiver `json:"allowedMacWaivers"`
+	}
+	if err := decode(r, &body); err != nil {
+		s.fail(w, r, http.StatusBadRequest, `body must be {"allowedMacWaivers": [{"profile":…,"policy":…,"scope":…}]}`)
+		return
+	}
+	res, err := s.cfg.Repo.SetPlatformSecurity(r.Context(), body.AllowedMacWaivers, c.meta)
+	if errors.Is(err, gitops.ErrInvalidName) {
+		s.fail(w, r, http.StatusBadRequest, err.Error())
+		return
+	}
+	s.written(w, r, res, err)
+}
+
+// tenantNotifications answers what has been said to this tenant's people.
+func (s *Server) tenantNotifications(w http.ResponseWriter, r *http.Request, _ call) {
+	s.relayed(w, r, "/v1/tenants/"+url.PathEscape(r.PathValue("t"))+"/notifications")
+}
+
+// publishNotification says something to them. An action: it happens once,
+// and the person who published it is recorded because a notice nobody can
+// ask about is worse than none.
+func (s *Server) publishNotification(w http.ResponseWriter, r *http.Request, c call) {
+	var body map[string]any
+	if err := decode(r, &body); err != nil {
+		s.fail(w, r, http.StatusBadRequest, `body must be {"title": "…", "body": "…"}`)
+		return
+	}
+	status, answer, err := s.cfg.Lifecycle.Do(r.Context(),
+		"/v1/tenants/"+url.PathEscape(r.PathValue("t"))+"/actions/notify", c.meta.ActorName(), body)
+	if err != nil {
+		s.lifecycleError(w, r, err)
+		return
+	}
+	s.started(w, r, status, answer)
 }

@@ -117,6 +117,13 @@ spec:
         director:
           enabled: true
           entitlements: "off"
+        # The waiver allowlist is the director's to write, into the claims,
+        # where the console's changes to it are commits. The chart would
+        # otherwise create a second copy of the same object from its own
+        # values, and two writers of one object is a sync conflict waiting
+        # for whoever edits the wrong one.
+        platformSecurityPolicy:
+          create: false
         # The vault's namespace, for the Role that lets the operator exec into
         # its pod during bootstrap.
         openbaoNamespace: {{ include "ns" (list . "secrets") }}

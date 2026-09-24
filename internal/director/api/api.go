@@ -73,6 +73,10 @@ type Repository interface {
 	SetTenantSecurityPolicy(ctx context.Context, tenant string, policy gitops.SecurityPolicy, meta gitops.Meta) (gitops.Result, error)
 	TenantChanges(ctx context.Context, tenant string, limit int, since string) ([]gitops.Change, error)
 	ClusterChanges(ctx context.Context, limit int, since string) ([]gitops.Change, error)
+	SetAppGrant(ctx context.Context, tenant, app string, grant gitops.AppGrant, meta gitops.Meta) (gitops.Result, error)
+	ClearAppGrant(ctx context.Context, tenant, app string, meta gitops.Meta) (gitops.Result, error)
+	PlatformSecurity(ctx context.Context) ([]gitops.MacWaiver, error)
+	SetPlatformSecurity(ctx context.Context, waivers []gitops.MacWaiver, meta gitops.Meta) (gitops.Result, error)
 }
 
 // Lifecycle is the operator's app-lifecycle API, read and never written: what
@@ -422,13 +426,29 @@ func (s *Server) routes() {
 		// grant permits what the binding asks for. can_view: seeing which
 		// apps are wired together is reading the tenant, not changing it.
 		s.guarded("GET /v1/tenants/{t}/integrations", "can_view", tenantObject, s.tenantIntegrations)
+		// What an app may consume is declared state, and can_grant is model
+		// v1's own verb for deciding it.
+		s.guarded("PUT /v1/tenants/{t}/grants/{app}", "can_grant", tenantObject, s.setAppGrant)
+		s.guarded("DELETE /v1/tenants/{t}/grants/{app}", "can_grant", tenantObject, s.clearAppGrant)
 		if s.cfg.Cluster != "" {
 			// What the platform permits to escape its default posture, and
 			// how much customisation the cluster carries. Both are the
 			// cluster's own state and read under can_audit.
 			s.guarded("GET /v1/clusters/{c}/platform-security", "can_audit", s.clusterObject, s.platformSecurity)
+			// Changing what may escape the default posture is the cluster's
+			// own security configuration: can_set_admission, which model v1
+			// defines as exactly this.
+			s.guarded("PUT /v1/clusters/{c}/platform-security", "can_set_admission", s.clusterObject, s.setPlatformSecurity)
 			s.guarded("GET /v1/clusters/{c}/customizations", "can_audit", s.clusterObject, s.customizations)
 		}
+
+		// The notices an administrator publishes to the people of a tenant.
+		// Reading them is can_view -- they are addressed to everyone in the
+		// tenant. Publishing is an action under can_administer: it is not a
+		// statement about how the cluster should be, it happens once, and
+		// nothing reconciles it.
+		s.guarded("GET /v1/tenants/{t}/notifications", "can_view", tenantObject, s.tenantNotifications)
+		s.action("POST /v1/tenants/{t}/actions/notify", "can_administer", tenantObject, s.publishNotification)
 
 		// What changed, who changed it, and what allowed them to. The
 		// audit evidence the platform already had: every change to declared

@@ -113,64 +113,81 @@ func (g *GitOps) ClearTenantBackupPolicy(ctx context.Context, tenant string, met
 }
 
 // SetClusterBackupPolicy writes the cluster's own policy and commits it.
-//
-// Beside the claims, because that is the directory Argo CD syncs for what
-// this cluster declares about itself, and a backup policy is exactly that.
 func (g *GitOps) SetClusterBackupPolicy(ctx context.Context, policy BackupPolicy, meta Meta) (Result, error) {
+	return g.writeClaimsFile(ctx, BackupPolicyFile, renderBackupPolicy("cluster", "", policy),
+		"Set the cluster's backup policy", meta)
+}
+
+// writeClaimsFile writes one object into the directory Argo CD syncs for what
+// this cluster declares about itself, and commits it.
+//
+// The directory is called claims and holds more than Crossplane claims: a
+// backup policy and a waiver allowlist are declarations about the cluster in
+// exactly the same sense, and putting them where the cluster's own
+// declarations are synced beats inventing a second place Argo would also
+// have to be told about.
+func (g *GitOps) writeClaimsFile(ctx context.Context, name, body, message string, meta Meta) (Result, error) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	if err := g.ensureRepo(ctx); err != nil {
 		return Result{}, err
 	}
-	cluster := g.cluster
-	if cluster == "" {
-		cluster = "default-cluster"
-	}
-	path := filepath.Join(g.path, "clusters", cluster, "kernel", "claims", BackupPolicyFile)
-	desired := renderBackupPolicy("cluster", "", policy)
+	path := filepath.Join(g.claimsDir(), name)
 	existing, err := os.ReadFile(path)
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return Result{}, err
 	}
-	if string(existing) == desired {
+	if string(existing) == body {
 		return Result{Status: "unchanged"}, nil
 	}
-	if err := os.WriteFile(path, []byte(desired), 0o644); err != nil {
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
 		return Result{}, err
 	}
 	rel, err := filepath.Rel(g.path, path)
 	if err != nil {
 		return Result{}, err
 	}
-	if err := g.commitPaths(ctx, []string{rel}, "Set the cluster's backup policy", meta); err != nil {
+	if err := g.commitPaths(ctx, []string{rel}, message, meta); err != nil {
 		return Result{}, err
 	}
 	return g.landed(ctx, "updated")
 }
 
-// ClusterBackupPolicy reads what the cluster declares, so a screen can show
-// the form it is about to change rather than only what the cluster resolved.
-func (g *GitOps) ClusterBackupPolicy(ctx context.Context) (*BackupPolicy, error) {
+// readClaimsFile parses one, reporting whether it was there at all. Absent is
+// not an error: a cluster that declares nothing is the ordinary starting
+// state and the screen renders it as such.
+func (g *GitOps) readClaimsFile(ctx context.Context, name string, out any) (bool, error) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	if err := g.ensureRepoRead(ctx); err != nil {
-		return nil, err
+		return false, err
 	}
+	raw, err := os.ReadFile(filepath.Join(g.claimsDir(), name))
+	if errors.Is(err, os.ErrNotExist) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return true, yaml.Unmarshal(raw, out)
+}
+
+func (g *GitOps) claimsDir() string {
 	cluster := g.cluster
 	if cluster == "" {
 		cluster = "default-cluster"
 	}
-	raw, err := os.ReadFile(filepath.Join(g.path, "clusters", cluster, "kernel", "claims", BackupPolicyFile))
-	if errors.Is(err, os.ErrNotExist) {
-		return nil, nil
-	}
-	if err != nil {
-		return nil, err
-	}
+	return filepath.Join(g.path, "clusters", cluster, "kernel", "claims")
+}
+
+// ClusterBackupPolicy reads what the cluster declares, so a screen can show
+// the form it is about to change rather than only what the cluster resolved.
+func (g *GitOps) ClusterBackupPolicy(ctx context.Context) (*BackupPolicy, error) {
 	var doc struct {
 		Spec BackupPolicy `json:"spec"`
 	}
-	if err := yaml.Unmarshal(raw, &doc); err != nil {
+	found, err := g.readClaimsFile(ctx, BackupPolicyFile, &doc)
+	if err != nil || !found {
 		return nil, err
 	}
 	return &doc.Spec, nil

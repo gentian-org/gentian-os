@@ -147,3 +147,43 @@ func TestANewTenantStartsWithItsKustomization(t *testing.T) {
 		t.Fatalf("kustomization:\n%s", k)
 	}
 }
+
+// The waiver allowlist's write path, tested here because nobody in the
+// authorization fixture holds can_set_admission: it is break-glass, so the
+// API test can only prove the refusal, and this proves what lands when
+// somebody does hold it.
+func TestTheWaiverAllowlistIsWrittenAsOneObject(t *testing.T) {
+	remote := dt.Remote(t, "demo")
+	g := gitops.NewGitOps(dt.Clone(t, remote), remote, dt.Cluster, director)
+	ctx := context.Background()
+
+	res, err := g.SetPlatformSecurity(ctx, []gitops.MacWaiver{
+		{Profile: "element", Policy: "gentian-require-non-root", Scope: "synapse"},
+	}, gitops.Meta{Author: gitops.Person{Name: "Beth", Email: "beth@example.com"}, Subject: "beth"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !res.Changed {
+		t.Fatalf("result = %+v", res)
+	}
+	declared, err := g.PlatformSecurity(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(declared) != 1 || declared[0].Profile != "element" || declared[0].Scope != "synapse" {
+		t.Fatalf("read back = %+v", declared)
+	}
+
+	// An empty list is a real statement -- nothing escapes -- and is written
+	// as one rather than left as an absent file that reads as "not decided".
+	if _, err := g.SetPlatformSecurity(ctx, nil, gitops.Meta{Subject: "beth"}); err != nil {
+		t.Fatal(err)
+	}
+	declared, err = g.PlatformSecurity(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(declared) != 0 {
+		t.Fatalf("emptying the list left %+v", declared)
+	}
+}

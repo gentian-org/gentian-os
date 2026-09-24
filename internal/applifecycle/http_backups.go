@@ -201,3 +201,59 @@ func (h *HTTPServer) handleCustomizationDebt(w http.ResponseWriter, r *http.Requ
 	}
 	writeJSON(w, http.StatusOK, report)
 }
+
+// registerNotificationRoutes serves the notices an administrator publishes.
+//
+// A read of what has been said, and an action that says something. The table
+// belongs to the desktop, which is where people read them; this writes into
+// it because the operator already resolves that database, and a console that
+// kept its own copy would be a second place a notice could exist.
+func (h *HTTPServer) registerNotificationRoutes(mux *http.ServeMux) {
+	mux.HandleFunc("GET /v1/tenants/{tenant}/notifications", h.handleNotifications)
+	mux.HandleFunc("POST /v1/tenants/{tenant}/actions/notify", h.handlePublishNotification)
+}
+
+func (h *HTTPServer) handleNotifications(w http.ResponseWriter, r *http.Request) {
+	notices, err := h.Service.Notifications(r.Context(), r.PathValue("tenant"))
+	if err != nil {
+		writeErr(w, notificationStatus(err), err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"tenant": r.PathValue("tenant"), "notifications": notices})
+}
+
+func (h *HTTPServer) handlePublishNotification(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Title     string                `json:"title"`
+		Body      string                `json:"body"`
+		Severity  string                `json:"severity"`
+		Audience  *NotificationAudience `json:"audience"`
+		LinkURL   string                `json:"linkUrl"`
+		LinkLabel string                `json:"linkLabel"`
+		ExpiresAt int64                 `json:"expiresAt"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 64<<10)).Decode(&body); err != nil {
+		writeErr(w, http.StatusBadRequest, fmt.Errorf("invalid request body: %w", err))
+		return
+	}
+	notice, err := h.Service.PublishNotification(r.Context(), PublishNotificationRequest{
+		Tenant: r.PathValue("tenant"), Actor: actorOf(r),
+		Title: body.Title, Body: body.Body, Severity: body.Severity, Audience: body.Audience,
+		LinkURL: body.LinkURL, LinkLabel: body.LinkLabel, ExpiresAt: body.ExpiresAt,
+	})
+	if err != nil {
+		writeErr(w, notificationStatus(err), err)
+		return
+	}
+	writeJSON(w, http.StatusAccepted, notice)
+}
+
+// notificationStatus distinguishes the one failure a caller can act on: the
+// desktop has not created its table yet, which is a 503 rather than a 500 —
+// it will work once the desktop has started, and nothing is broken.
+func notificationStatus(err error) int {
+	if errors.Is(err, ErrNoNotificationStore) {
+		return http.StatusServiceUnavailable
+	}
+	return http.StatusBadRequest
+}

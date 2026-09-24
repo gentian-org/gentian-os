@@ -130,6 +130,31 @@ func startOperator(t *testing.T) *operator {
 	mux.HandleFunc("GET /v1/backup-schedules", func(w http.ResponseWriter, _ *http.Request) {
 		_ = json.NewEncoder(w).Encode(map[string]any{"schedules": []any{}})
 	})
+	mux.HandleFunc("GET /v1/tenants/{t}/integrations", func(w http.ResponseWriter, r *http.Request) {
+		if !known(w, r) {
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"bindings": []any{}, "grants": []any{}, "effectiveAccess": []any{},
+			"summary": map[string]any{"bindingCount": 0, "grantCount": 0, "grantReadyCount": 0},
+		})
+	})
+	mux.HandleFunc("GET /v1/platform-security", func(w http.ResponseWriter, _ *http.Request) {
+		// The cluster answers what the catalogue asks for; what is permitted
+		// is git's, and the director overwrites this field with it.
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"allowedMacWaivers": []any{},
+			"catalogueRequests": []any{map[string]any{
+				"name": "element", "displayName": "Element",
+				"macWaivers": []any{map[string]any{"policy": "gentian-require-non-root", "scope": "synapse"}},
+			}},
+		})
+	})
+	mux.HandleFunc("GET /v1/customizations", func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"totalRecords": 0, "carriedDeltas": 0, "byRung": map[string]any{}, "records": []any{},
+		})
+	})
 	mux.HandleFunc("POST /v1/tenants/{t}/actions/{action}", func(w http.ResponseWriter, r *http.Request) {
 		if !known(w, r) {
 			return
@@ -622,5 +647,96 @@ func TestAChangeHistoryIsReadByAdministratorsAndAuditors(t *testing.T) {
 	}
 	if code, _ := h.do(t, "GET", "/v1/clusters/"+dt.Cluster+"/changes", tina, ""); code != http.StatusForbidden {
 		t.Fatalf("a tenant admin read the cluster's history: %d", code)
+	}
+}
+
+// A grant is declared state: what one app may consume, committed as an
+// object a reviewer reads, under the verb model v1 has for deciding it.
+func TestAGrantIsCommittedAndWithdrawn(t *testing.T) {
+	h, _ := startWithOperator(t)
+	tom := h.token(t, "tenant-demo", "tom")
+
+	before := h.tip(t)
+	code, body := h.do(t, "PUT", "/v1/tenants/demo/grants/notes", tom,
+		`{"consume":[{"contract":"files","granted":["read"]}],"allowConsumers":[{"app":"tasks","contract":"notes","scope":["read"]}]}`)
+	if code != http.StatusAccepted || body["commit"] != h.tip(t) || h.tip(t) == before {
+		t.Fatalf("grant: %d %v", code, body)
+	}
+	grant := dt.RemoteFile(t, h.remote, "clusters/"+dt.Cluster+"/tenants/demo/grant-notes.yaml")
+	for _, want := range []string{"kind: AppGrant", "name: notes", "namespace: tenant-demo", "app: notes", "contract: files", "- read", "app: tasks"} {
+		if !strings.Contains(grant, want) {
+			t.Errorf("grant is missing %q:\n%s", want, grant)
+		}
+	}
+	kustomization := dt.RemoteFile(t, h.remote, "clusters/"+dt.Cluster+"/tenants/demo/kustomization.yaml")
+	if !strings.Contains(kustomization, "- grant-notes.yaml") {
+		t.Fatalf("the grant is not applied:\n%s", kustomization)
+	}
+
+	// Withdrawing takes the file and the listing away, which withdraws
+	// everything it permitted.
+	if code, _ := h.do(t, "DELETE", "/v1/tenants/demo/grants/notes", tom, ""); code != http.StatusAccepted {
+		t.Fatalf("withdraw: %d", code)
+	}
+	if out := dt.Git(t, "", "--git-dir", h.remote, "ls-tree", "--name-only", "main:clusters/"+dt.Cluster+"/tenants/demo"); strings.Contains(out, "grant-notes.yaml") {
+		t.Fatalf("the grant survived being withdrawn:\n%s", out)
+	}
+}
+
+// The waiver allowlist is the cluster's own security configuration. It is
+// read under can_audit, joined with what the catalogue asks of it, and
+// changed under can_set_admission -- which model v1 binds to break-glass and
+// nobody holds by standing membership. That is the model's decision and the
+// right one: letting an app out of the pod-security baseline should cost a
+// deliberate elevation, not an ordinary admin session.
+func TestTheWaiverAllowlistIsReadWidelyAndChangedOnlyByBreakGlass(t *testing.T) {
+	h, _ := startWithOperator(t)
+	audrey := h.token(t, "gentian", "audrey") // may audit the cluster
+	alice := h.token(t, "gentian", "alice")   // platform administrator
+
+	code, body := h.do(t, "GET", "/v1/clusters/"+dt.Cluster+"/platform-security", audrey, "")
+	if code != http.StatusOK {
+		t.Fatalf("read: %d %v", code, body)
+	}
+	// Declared nothing yet: an empty list, with what asks for a waiver
+	// beside it, which is the difference the screen exists to show.
+	if list, _ := body["allowedMacWaivers"].([]any); len(list) != 0 {
+		t.Fatalf("allowed = %v", body["allowedMacWaivers"])
+	}
+	asks, _ := body["catalogueRequests"].([]any)
+	if len(asks) != 1 {
+		t.Fatalf("nothing says what asks for a waiver: %v", body)
+	}
+
+	// A platform administrator is refused, and nothing moves.
+	before := h.tip(t)
+	if code, _ := h.do(t, "PUT", "/v1/clusters/"+dt.Cluster+"/platform-security", alice,
+		`{"allowedMacWaivers":[{"profile":"element","policy":"gentian-require-non-root","scope":"synapse"}]}`); code != http.StatusForbidden {
+		t.Fatalf("a platform administrator changed the admission posture without break-glass: %d", code)
+	}
+	if h.tip(t) != before {
+		t.Fatal("a refused request moved the repository")
+	}
+	// A tenant administrator is refused too, for the ordinary reason.
+	if code, _ := h.do(t, "PUT", "/v1/clusters/"+dt.Cluster+"/platform-security",
+		h.token(t, "tenant-solo", "tina"), `{"allowedMacWaivers":[]}`); code != http.StatusForbidden {
+		t.Fatalf("a tenant admin changed the cluster's admission posture: %d", code)
+	}
+}
+
+func TestOnlyTheRightVerbsChangeGrantsAndWaivers(t *testing.T) {
+	h, _ := startWithOperator(t)
+	before := h.tip(t)
+
+	mia := h.token(t, "tenant-demo", "mia")
+	if code, _ := h.do(t, "PUT", "/v1/tenants/demo/grants/notes", mia, `{"consume":[]}`); code != http.StatusForbidden {
+		t.Fatalf("a member set a grant: %d", code)
+	}
+	tina := h.token(t, "tenant-solo", "tina")
+	if code, _ := h.do(t, "PUT", "/v1/tenants/demo/grants/notes", tina, `{"consume":[]}`); code != http.StatusForbidden {
+		t.Fatalf("a stranger set a grant: %d", code)
+	}
+	if h.tip(t) != before {
+		t.Fatal("a refused request moved the repository")
 	}
 }

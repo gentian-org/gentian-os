@@ -1,3 +1,13 @@
+{{- /*
+  The cluster's waiver allowlist, when nothing else writes it.
+
+  On a cluster with a director this is written to git instead -- the console
+  edits it, the director commits it, Argo CD applies it from the claims --
+  and `create` is turned off there, because one object with two writers is a
+  sync conflict waiting for the first person who edits the wrong one. It
+  stays here for a cluster installed without a director, which then has the
+  chart's values as its only way to say what may escape the posture.
+*/}}
 {{- if .Values.platformSecurityPolicy.create }}
 apiVersion: gentianos.io/v1alpha1
 kind: PlatformSecurityPolicy
