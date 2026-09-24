@@ -80,7 +80,9 @@ func (r *ComponentReconciler) componentEgressNamespaces(profile *gentianov1alpha
 	// director lives in the control namespace. Following the mapping rather
 	// than a name means the console and the desktop both reach it and a
 	// component that never asked cannot.
-	if wantsDirector(profile) {
+	// Both the director and the credential manager are in the control
+	// namespace, and naming either is what opens the way there.
+	if wantsDirector(profile) || wantsCredentialManager(profile) {
 		add(layout.Namespace(layout.Control))
 	}
 	return out

@@ -920,6 +920,18 @@ type PlatformValueMapping struct {
 	// naming it also opens the component's egress to the control namespace.
 	// +optional
 	DirectorURLKey string `json:"directorUrlKey,omitempty"`
+
+	// CredentialManagerURLKey receives the credential manager's in-cluster
+	// URL. Like DirectorURLKey it is more than a fact: naming it is what
+	// opens the component's egress to the control namespace, because a
+	// component that does not relay there has no business reaching it.
+	//
+	// The credential manager holds no authority of its own -- every write
+	// takes the caller's token and exchanges it for one OpenBao will accept
+	// -- so a component that relays to it is passing the person through,
+	// exactly as it does with the director.
+	// +optional
+	CredentialManagerURLKey string `json:"credentialManagerUrlKey,omitempty"`
 	// ClusterKey receives the id the director knows this cluster by.
 	// +optional
 	ClusterKey string `json:"clusterKey,omitempty"`

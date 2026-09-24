@@ -39,6 +39,9 @@ spec:
         zoneClientIdKey: auth.clientId
         audienceKey: auth.audience
         directorUrlKey: director.url
+        # Where a person's own credential writes go. Naming it is also what
+        # opens this component's way to the control namespace.
+        credentialManagerUrlKey: credentialManager.url
         clusterKey: director.cluster
         tenantKey: platform.tenant
         kernelDomainKey: platform.kernelDomain

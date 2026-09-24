@@ -57,6 +57,9 @@ type ComponentReconciler struct {
 	// DirectorURL is where the desktop relays to; empty derives it from the
 	// layout's control namespace.
 	DirectorURL string
+	// CredentialManagerURL overrides where a component is told the credential
+	// manager is. Empty derives it from the layout.
+	CredentialManagerURL string
 }
 
 // The markers are a free-floating block: controller-gen ignores a block that
@@ -669,6 +672,23 @@ func (r *ComponentReconciler) directorURL() string {
 		return r.DirectorURL
 	}
 	return fmt.Sprintf("http://gentian-os-director.%s.svc.cluster.local:8080", layout.Namespace(layout.Control))
+}
+
+// credentialManagerPort is charts/gentian-os/values.yaml's
+// credentialManager.port. Named rather than repeated, because a component
+// told the wrong port fails at the first credential write with a connection
+// refused that names nothing.
+const credentialManagerPort = 9444
+
+// credentialManagerURL is where a component relays a person's credential
+// writes. In the control namespace beside the director, and for the same
+// reason: it holds the OpenBao connection and no authority of its own.
+func (r *ComponentReconciler) credentialManagerURL() string {
+	if r.CredentialManagerURL != "" {
+		return r.CredentialManagerURL
+	}
+	return fmt.Sprintf("http://gentian-os-credentials.%s.svc.cluster.local:%d",
+		layout.Namespace(layout.Control), credentialManagerPort)
 }
 
 func mergeValues(dst, src map[string]interface{}) {

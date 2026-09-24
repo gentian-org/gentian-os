@@ -81,15 +81,16 @@ func (r *ComponentReconciler) platformValues(profile *gentianov1alpha1.Component
 		zoneKind = "kernel"
 	}
 	for key, value := range map[string]string{
-		m.IssuerKey:       fmt.Sprintf("https://id.%s/auth/realms/%s", r.KernelDomain, zone.realm),
-		m.ZoneClientIDKey: zone.clientID,
-		m.AudienceKey:     directorAudience,
-		m.DirectorURLKey:  r.directorURL(),
-		m.ClusterKey:      r.Cluster,
-		m.TenantKey:       tenant.Name,
-		m.KernelDomainKey: r.KernelDomain,
-		m.RealmKey:        zone.realm,
-		m.ZoneKindKey:     zoneKind,
+		m.IssuerKey:               fmt.Sprintf("https://id.%s/auth/realms/%s", r.KernelDomain, zone.realm),
+		m.ZoneClientIDKey:         zone.clientID,
+		m.AudienceKey:             directorAudience,
+		m.DirectorURLKey:          r.directorURL(),
+		m.CredentialManagerURLKey: r.credentialManagerURL(),
+		m.ClusterKey:              r.Cluster,
+		m.TenantKey:               tenant.Name,
+		m.KernelDomainKey:         r.KernelDomain,
+		m.RealmKey:                zone.realm,
+		m.ZoneKindKey:             zoneKind,
 	} {
 		if key != "" {
 			setPath(out, key, value)
@@ -102,9 +103,21 @@ func (r *ComponentReconciler) platformValues(profile *gentianov1alpha1.Component
 // is, which is the one platform fact that also changes what the component may
 // reach: its egress to the control namespace follows from it.
 func wantsDirector(profile *gentianov1alpha1.ComponentProfile) bool {
-	return profile.Spec.Package.ValueMapping != nil &&
-		profile.Spec.Package.ValueMapping.Platform != nil &&
-		profile.Spec.Package.ValueMapping.Platform.DirectorURLKey != ""
+	return platformMapping(profile) != nil && platformMapping(profile).DirectorURLKey != ""
+}
+
+// wantsCredentialManager reports the same for the credential manager, and has
+// the same consequence: both live in the control namespace, and a component
+// that relays to either is allowed to reach it.
+func wantsCredentialManager(profile *gentianov1alpha1.ComponentProfile) bool {
+	return platformMapping(profile) != nil && platformMapping(profile).CredentialManagerURLKey != ""
+}
+
+func platformMapping(profile *gentianov1alpha1.ComponentProfile) *gentianov1alpha1.PlatformValueMapping {
+	if profile.Spec.Package.ValueMapping == nil {
+		return nil
+	}
+	return profile.Spec.Package.ValueMapping.Platform
 }
 
 // databaseValues maps the fulfilled database requirement onto the chart the

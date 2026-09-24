@@ -60,11 +60,18 @@ They are not a second plan, and they are not renumbered when something lands.
 
 1. **S7A.14 — immutable image names.** Everything below is tested by
    deploying it, and today a deploy can silently be a no-op.
-2. **S7A.4 — the remaining console screens**. Backup, Security and the
-   change half of Audit are done; what is left is Integrations ·
-   Notifications · Platform security · Customization · Credentials. The rest
-   of Audit — sign-ins, refused requests, reads of data — is not a screen
-   but three stores that do not exist yet, and is now roadmap §1.12.
+2. **S7A.4 — the remaining console screens.** Every screen now reads real
+   state. What is left is four writes and one screen:
+   - **a grant** (what an app may consume) and **the platform's waivers** are
+     declared state with no commit path yet;
+   - **backup schedules** are derived from the policy, so the screen should
+     change them through it rather than directly;
+   - **Notifications** has no home for its data: it was the desktop's
+     database, and a console that keeps no state cannot inherit it. Decide
+     whether notifications belong to the desktop, to a tenant-scoped service,
+     or nowhere.
+   The rest of Audit — sign-ins, refused requests, reads of data — is not a
+   screen but three stores that do not exist yet, and is roadmap §1.12.
 3. **S7A.6 — remove the bundled console from the desktop**, which the two
    above make possible, and the credential goes with it.
 4. **S7A.8 — the authorization view**, the last console screen.
@@ -250,15 +257,16 @@ worklist, and a screen leaves it by getting real routes.
 | Cluster settings | director, from the Cluster claim | director → `kernel/claims/cluster.yaml` | ✅ |
 | Resources: plans, ceilings, usage | director, relaying the operator | director → `tenants/<t>/resource-plan.yaml` | ✅ |
 | Apps in a tenant: install, remove, addons | director, from git | director, endpoints that exist | ◐ endpoints exist, screen not built |
-| Backup, backup policy, backup schedules | operator state | operator CRs, through the director | ☐ |
-| Security policies | Keycloak realm | Keycloak, through the director | ☐ |
+| Backup and backup policy | operator state | policy → git; taking one is an action | ✅ |
+| Backup schedules | operator state | derived from the policy | ◐ read only |
+| Security policies | git, applied to the realm by the composition | director → `tenants/<t>/security-policy.yaml` | ✅ |
 | Audit: what changed, and what allowed it | director, from git | — | ✅ |
 | Audit: sign-ins, refusals, reads of data | not recorded anywhere yet | — | ☐ roadmap §1.12 |
-| Integrations: bindings and grants | operator state | operator CRs, through the director | ☐ |
+| Integrations: bindings and grants | operator state | changing a grant is declared state | ◐ read only |
 | Notifications | tenant database | tenant database | ☐ |
-| Platform security: MAC waivers | operator state | claim, through the director | ☐ |
-| Customization debt | `Customization` CRs | — | ☐ |
-| Credentials | credential manager | credential manager | ☐ needs a profile mapping |
+| Platform security: MAC waivers | operator state | the operator chart's own values | ◐ read only |
+| Customization debt | `Customization` CRs | — | ✅ |
+| Credentials | credential manager, as the caller | the same | ✅ |
 | Authorization view | OpenFGA, read-only | — | ☐ S7A.8 |
 | People and groups | **not here** — Keycloak's own console, embedded | | ✅ |
 
