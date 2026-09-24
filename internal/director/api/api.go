@@ -660,6 +660,11 @@ func (s *Server) clusterSettings(w http.ResponseWriter, r *http.Request, _ call)
 		if len(c.OneOf) > 0 {
 			entry["oneOf"] = c.OneOf
 		}
+		// What applies when the claim does not carry it. A screen that says
+		// "unset, the default applies" is only useful if it can say which.
+		if c.Default != "" {
+			entry["default"] = c.Default
+		}
 		if v, ok := values[c.Path]; ok {
 			entry["value"] = v
 		}

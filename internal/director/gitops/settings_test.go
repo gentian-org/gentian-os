@@ -178,3 +178,42 @@ func TestScalarsAreQuotedOnlyWhenTheyMustBe(t *testing.T) {
 		}
 	}
 }
+
+// A setting the console offers must be a path the claim can carry, and the
+// default it shows must be the one the schema applies. Both come from the
+// Cluster XRD; this asserts the catalogue agrees with it, so a setting that
+// would commit cleanly and change nothing fails here rather than in a
+// cluster.
+func TestEverySettingsDefaultComesFromTheSchema(t *testing.T) {
+	byPath := map[string]ClusterSetting{}
+	for _, s := range ClusterSettings() {
+		byPath[s.Path] = s
+	}
+	for path, want := range map[string]string{
+		"certificates.acmeEnv":                 "production",
+		"certificates.issuerMode":              "acme-dns01",
+		"mail.serviceMode":                     "external",
+		"mail.port":                            "587",
+		"mail.starttls":                        "true",
+		"mail.ssl":                             "false",
+		"llm.enabled":                          "false",
+		"tenancyMode":                          "multi",
+		"platformRoles.admin":                  "gentian:platform:admin",
+		"tenantDefaults.limitRange.defaultCpu": "500m",
+		"tenantDefaults.limitRange.defaultRequestCpu": "100m",
+	} {
+		got, ok := byPath[path]
+		if !ok {
+			t.Errorf("%s is not in the catalogue", path)
+			continue
+		}
+		if got.Default != want {
+			t.Errorf("%s default = %q, the XRD says %q", path, got.Default, want)
+		}
+	}
+	// A setting the schema gives no default keeps none: unset is a real
+	// answer and must not be dressed up as a value.
+	if d := byPath["mail.host"].Default; d != "" {
+		t.Errorf("mail.host has no default in the schema, catalogue says %q", d)
+	}
+}

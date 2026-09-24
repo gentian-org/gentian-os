@@ -67,7 +67,7 @@ func (g *GitOps) Apps(ctx context.Context, tenant string) ([]App, error) {
 func (g *GitOps) Tenants(ctx context.Context) ([]string, error) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	if err := g.ensureRepo(ctx); err != nil {
+	if err := g.ensureRepoRead(ctx); err != nil {
 		return nil, err
 	}
 	cluster := g.cluster
@@ -165,7 +165,7 @@ func (g *GitOps) PlatformRoles(ctx context.Context) (map[string]string, error) {
 func (g *GitOps) readClusterClaim(ctx context.Context, out any) error {
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	if err := g.ensureRepo(ctx); err != nil {
+	if err := g.ensureRepoRead(ctx); err != nil {
 		return err
 	}
 	cluster := g.cluster

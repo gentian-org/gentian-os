@@ -902,6 +902,18 @@ func TestClusterSettingsAreReadWidelyAndWrittenNarrowly(t *testing.T) {
 	if len(settings) == 0 {
 		t.Fatal("the catalogue is empty; a console has nothing to render")
 	}
+	// A setting the claim does not carry is answered with the default the
+	// schema will apply, so "unset" can be rendered as what it means rather
+	// than as a blank the reader has to go and look up.
+	for _, s := range settings {
+		m := s.(map[string]any)
+		if m["path"] != "certificates.acmeEnv" {
+			continue
+		}
+		if m["default"] != "production" {
+			t.Fatalf("certificates.acmeEnv default = %v, the Cluster XRD says production", m["default"])
+		}
+	}
 
 	// A change lands as a commit against the claim.
 	code, body = h.do(t, "PATCH", "/v1/clusters/"+dt.Cluster+"/settings", alice,

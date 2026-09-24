@@ -52,6 +52,9 @@ type GitOps struct {
 	// It is not the concurrency control between writers — a rejected push is —
 	// it only keeps two handlers from editing the same checkout at once.
 	mu sync.Mutex
+	// syncedAt is when the checkout last equalled the remote, which is what
+	// lets a read skip the fetch. Guarded by mu, like the checkout itself.
+	syncedAt time.Time
 }
 
 // Result is the outcome of a write.
@@ -171,13 +174,38 @@ func (g *GitOps) gitCmd(ctx context.Context, args ...string) (*exec.Cmd, context
 	return exec.CommandContext(cctx, "git", args...), cancel
 }
 
+// readFreshness is how stale the checkout may be when answering a read.
+//
+// Every read used to fetch from the remote first, which put a round trip to
+// the forge in front of each one: a console screen that asks three questions
+// paid for three fetches, and the slowest part of every answer was a network
+// call for state that changes when someone commits -- minutes or hours apart,
+// not seconds. A write still syncs unconditionally, and still retries when
+// the push is refused, so nothing about correctness rests on this window:
+// the worst a read can do is describe git as it was a few seconds ago, which
+// it does anyway, because Argo CD has not applied it yet either.
+const readFreshness = 15 * time.Second
+
 // ensureRepo makes the checkout equal to the remote. The checkout is never a
 // source of truth — it is scratch space for composing one commit — so it is
 // reset, not merged: anything in it that the remote does not have is the
 // residue of a request that failed, and nobody was told it succeeded.
 func (g *GitOps) ensureRepo(ctx context.Context) error {
+	return g.ensureRepoWithin(ctx, 0)
+}
+
+// ensureRepoRead syncs only when the checkout has not been synced within
+// readFreshness, for the reads that do not need the remote's latest word.
+func (g *GitOps) ensureRepoRead(ctx context.Context) error {
+	return g.ensureRepoWithin(ctx, readFreshness)
+}
+
+func (g *GitOps) ensureRepoWithin(ctx context.Context, maxAge time.Duration) error {
 	if err := g.requirePath(); err != nil {
 		return err
+	}
+	if maxAge > 0 && !g.syncedAt.IsZero() && time.Since(g.syncedAt) < maxAge {
+		return nil
 	}
 	if _, err := os.Stat(filepath.Join(g.path, ".git")); err != nil {
 		if g.repo == "" {
@@ -188,6 +216,7 @@ func (g *GitOps) ensureRepo(ctx context.Context) error {
 		if out, err := cmd.CombinedOutput(); err != nil {
 			return fmt.Errorf("git clone: %w: %s", err, out)
 		}
+		g.syncedAt = time.Now()
 		return nil
 	}
 	for _, args := range [][]string{
@@ -203,6 +232,7 @@ func (g *GitOps) ensureRepo(ctx context.Context) error {
 			return fmt.Errorf("git %s: %w: %s", args[0], err, out)
 		}
 	}
+	g.syncedAt = time.Now()
 	return nil
 }
 
@@ -218,11 +248,22 @@ var dnsLabel = regexp.MustCompile(`^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?$`)
 // are spliced into YAML, so nothing else is accepted, here or at the API.
 func ValidName(s string) bool { return dnsLabel.MatchString(s) }
 
+// tenantFile resolves a tenant's manifest against a checkout equal to the
+// remote. Writes call it; a reader that does not need the remote's latest
+// word calls tenantFileRead.
 func (g *GitOps) tenantFile(ctx context.Context, tenant string) (string, error) {
+	return g.tenantFileWithin(ctx, tenant, 0)
+}
+
+func (g *GitOps) tenantFileRead(ctx context.Context, tenant string) (string, error) {
+	return g.tenantFileWithin(ctx, tenant, readFreshness)
+}
+
+func (g *GitOps) tenantFileWithin(ctx context.Context, tenant string, maxAge time.Duration) (string, error) {
 	if !ValidName(tenant) {
 		return "", fmt.Errorf("%w: tenant %q", ErrInvalidName, tenant)
 	}
-	if err := g.ensureRepo(ctx); err != nil {
+	if err := g.ensureRepoWithin(ctx, maxAge); err != nil {
 		return "", err
 	}
 	cluster := g.cluster
@@ -514,10 +555,11 @@ func (g *GitOps) head(ctx context.Context) (string, error) {
 	return strings.TrimSpace(string(out)), nil
 }
 
-// TenantFile returns the path of a tenant's manifest after syncing the
-// checkout, for callers that read state rather than change it.
+// TenantFile returns the path of a tenant's manifest, for callers that read
+// state rather than change it. The checkout is synced when it is stale; a
+// listing that asks about twenty tenants pays for one fetch, not twenty.
 func (g *GitOps) TenantFile(ctx context.Context, tenant string) (string, error) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	return g.tenantFile(ctx, tenant)
+	return g.tenantFileRead(ctx, tenant)
 }

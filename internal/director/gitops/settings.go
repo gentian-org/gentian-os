@@ -59,6 +59,11 @@ type ClusterSetting struct {
 	Doc string
 	// OneOf, when set, is the values the setting accepts.
 	OneOf []string
+	// Default is what the Cluster XRD applies when the claim does not carry
+	// this setting, empty when the schema declares none. Compiled in from the
+	// XRD (scripts/gen/gen-cluster-setting-defaults.py), because a default a
+	// console shows must be the one the cluster will actually apply.
+	Default string
 }
 
 // clusterSettings is every setting the director will write.
@@ -87,16 +92,20 @@ var clusterSettings = []ClusterSetting{
 	{Path: "platformRoles.serviceAdmin", Doc: "The Keycloak group that runs the system services."},
 	{Path: "platformRoles.sharedAppsAdmin", Doc: "The Keycloak group that runs shared applications."},
 	{Path: "platformRoles.breakGlass", Doc: "The Keycloak group for recovery when the normal path is down."},
-	{Path: "tenantDefaults.limitRange.default.cpu", Doc: "Default CPU limit for a tenant's containers."},
-	{Path: "tenantDefaults.limitRange.default.memory", Doc: "Default memory limit for a tenant's containers."},
-	{Path: "tenantDefaults.limitRange.defaultRequest.cpu", Doc: "Default CPU request for a tenant's containers."},
-	{Path: "tenantDefaults.limitRange.defaultRequest.memory", Doc: "Default memory request for a tenant's containers."},
+	{Path: "tenantDefaults.limitRange.defaultCpu", Doc: "Default CPU limit for a tenant's containers."},
+	{Path: "tenantDefaults.limitRange.defaultMemory", Doc: "Default memory limit for a tenant's containers."},
+	{Path: "tenantDefaults.limitRange.defaultRequestCpu", Doc: "Default CPU request for a tenant's containers."},
+	{Path: "tenantDefaults.limitRange.defaultRequestMemory", Doc: "Default memory request for a tenant's containers."},
 }
 
-// ClusterSettings is the catalogue: what may be set, and what each means.
+// ClusterSettings is the catalogue: what may be set, what each means, and
+// what applies when it is not set.
 func ClusterSettings() []ClusterSetting {
 	out := make([]ClusterSetting, len(clusterSettings))
 	copy(out, clusterSettings)
+	for i := range out {
+		out[i].Default = clusterSettingDefaults[out[i].Path]
+	}
 	return out
 }
 
