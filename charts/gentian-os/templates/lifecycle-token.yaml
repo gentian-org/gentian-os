@@ -1,0 +1,43 @@
+{{- /*
+  The token the director presents to the operator's app-lifecycle API.
+
+  That API used to authenticate nobody: anything that could reach the Service
+  could install an app, set addons or take a backup, and each took the actor's
+  name from a header, which is a claim and not a proof. One shared secret is
+  what makes only the director able to set it.
+
+  Generated here rather than asked for, and preserved on upgrade by reading
+  back what is already in the cluster. Without the lookup Helm would mint a
+  new value on every `helm upgrade`, and the two deployments would disagree
+  for as long as it took both to roll -- which looks like the API failing
+  intermittently rather than like a rotation.
+
+  lookup returns nothing during `helm template` and on a dry run, so a render
+  produces a fresh value there and the real install still keeps the old one.
+*/ -}}
+{{- $name := (.Values.appLifecycle).tokenSecretName | default "" }}
+{{- if $name }}
+{{- $existing := lookup "v1" "Secret" .Release.Namespace $name }}
+{{- $token := "" }}
+{{- if and $existing $existing.data (index $existing.data "token") }}
+{{- $token = index $existing.data "token" | b64dec }}
+{{- else }}
+{{- $token = randAlphaNum 48 }}
+{{- end }}
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ $name }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "gentian-os.labels" . | nindent 4 }}
+    app.kubernetes.io/component: app-lifecycle
+  annotations:
+    # Helm keeps the Secret when the release is uninstalled only if asked;
+    # here it should go with the release, because a new install mints a new
+    # token for both sides at once.
+    helm.sh/resource-policy: ""
+type: Opaque
+stringData:
+  token: {{ $token | quote }}
+{{- end }}

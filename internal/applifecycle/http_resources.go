@@ -35,7 +35,7 @@ const (
 	maxUsageWindow = 400 * 24 * time.Hour
 )
 
-func (h *HTTPServer) registerResourceRoutes(mux *http.ServeMux) {
+func (h *HTTPServer) registerResourceRoutes(mux router) {
 	mux.HandleFunc("GET /v1/tenants/{tenant}/resources", h.handleResourceState)
 	mux.HandleFunc("GET /v1/tenants/{tenant}/resources/plans", h.handleResourcePlans)
 	// No PUT. Choosing a plan is a commit to the deployments repository, and

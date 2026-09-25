@@ -167,15 +167,42 @@ func startOperator(t *testing.T) *operator {
 			"name": "manual-20260924-210000", "status": "started",
 		})
 	})
-	op.Server = httptest.NewServer(mux)
+	// The real operator refuses a request that presents no token, so this one
+	// does too: the director's actor header is a claim and not a proof unless
+	// only the director can reach the API to set it.
+	guarded := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "Bearer "+operatorToken {
+			w.WriteHeader(http.StatusUnauthorized)
+			_, _ = w.Write([]byte(`{"detail":"this API is the director's; present its token"}`))
+			return
+		}
+		mux.ServeHTTP(w, r)
+	})
+	op.Server = httptest.NewServer(guarded)
 	t.Cleanup(op.Close)
 	return op
 }
 
+// operatorToken is what both halves of the test agree on, standing in for the
+// Secret the chart mounts into each.
+const operatorToken = "operator-token-for-the-director"
+
 func startWithOperator(t *testing.T) (*harness, *operator) {
 	t.Helper()
 	op := startOperator(t)
-	return startWith(t, false, projectedTiles(t), lifecycle.New(op.URL)), op
+	return startWith(t, false, projectedTiles(t), lifecycle.New(op.URL, operatorToken)), op
+}
+
+// A director with no token reaches nothing, which is what a misconfigured
+// deployment must look like rather than an open API.
+func TestTheOperatorsAPIRefusesADirectorWithNoToken(t *testing.T) {
+	op := startOperator(t)
+	h := startWith(t, false, projectedTiles(t), lifecycle.New(op.URL, ""))
+	tom := h.token(t, "tenant-demo", "tom")
+	code, _ := h.do(t, http.MethodGet, "/v1/tenants/demo/resources", tom, "")
+	if code == http.StatusOK {
+		t.Fatal("a director presenting no token reached the operator's API")
+	}
 }
 
 func TestAPlanIsChosenAsACommitAndTheOperatorLearnsItFromGit(t *testing.T) {

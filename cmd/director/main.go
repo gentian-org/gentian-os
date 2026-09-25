@@ -200,7 +200,15 @@ func run(log *slog.Logger) error {
 	if u := os.Getenv("DIRECTOR_APP_LIFECYCLE_URL"); u == "" {
 		log.Warn("no app-lifecycle URL: a tenant's resources cannot be read or its plan chosen here", "setting", "DIRECTOR_APP_LIFECYCLE_URL")
 	} else {
-		lc = lifecycle.New(u)
+		// The operator's API refuses a request that presents no token, so a
+		// director started without one reaches nothing. Saying so here is
+		// better than every resources call answering 401 with no clue why.
+		token := os.Getenv("APP_LIFECYCLE_TOKEN")
+		if token == "" {
+			log.Warn("no app-lifecycle token: the operator's API will refuse every request from here",
+				"setting", "APP_LIFECYCLE_TOKEN")
+		}
+		lc = lifecycle.New(u, token)
 	}
 	handler, err := api.New(api.Config{Authn: verifier, Authz: checker, Repo: repo, Log: log,
 		EnforceEntitlements: enforce, Store: store, Cluster: cluster,

@@ -79,7 +79,7 @@ steps yet; `work-packages.md` is where their content lives until they are.
 | S7A.13 | `denyPaths` promises a control it does not apply | ✅ built at L2 |
 | S7A.14 | A release reaches a cluster by an immutable name | ✅ |
 | S7A.15 | A zone's hosts follow the components, not a list | ☐ |
-| S7A.16 | The app-lifecycle API authenticates nobody | ☐ |
+| S7A.16 | The app-lifecycle API authenticates nobody | ✅ a shared token |
 | S7A.17 | The director speaks for Keycloak | ☐ |
 
 ### What is left, in the order to do it
@@ -617,7 +617,7 @@ its image. That refusal is correct and is now worded as "that commit has not
 been published yet" rather than "no such tag in the registry", which used to
 send the reader off to edit a values file.
 
-### S7A.16 ☐ The app-lifecycle API authenticates nobody
+### S7A.16 ✅ The app-lifecycle API authenticates nobody
 
 The operator's HTTP API is reachable by anything that can reach the Service,
 and it has writes: installing and uninstalling an app, setting addons, and now
@@ -642,7 +642,23 @@ they cost:
    which is the director's job — so this is really "there should be no HTTP
    write here at all, only the director's".
 
-Worth doing before a tenant application shares a cluster with this.
+**Option 2, built.** The chart mints one Secret, keeps it across upgrades by
+reading back what is already in the cluster, and mounts it into both
+deployments. The operator requires it as a bearer on everything under `/v1`,
+reads included — a tenant's installed apps and its usage are its own business
+— and the director presents it on every request. `/healthz` stays open.
+
+Two decisions inside it. **No token refuses everything**, rather than
+admitting everything: an operator whose Secret failed to mount must not
+quietly become the open API this replaces. And the routes are registered
+through a small wrapper rather than against the bare mux, so a future route
+cannot be added unguarded by forgetting.
+
+Option 3 remains the honest end state: there should be no HTTP write here at
+all, only the director's. This is what makes the `X-Gentian-Actor` header
+worth the paper it is written on until then, because only the director can
+set it. Option 1's NetworkPolicy is still worth adding as depth, and is not
+here.
 
 ### S7A.15 ☐ A zone's hosts follow the components, not a list
 

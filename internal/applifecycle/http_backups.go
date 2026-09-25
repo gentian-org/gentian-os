@@ -34,7 +34,7 @@ import (
 // that git cannot answer is the state — which exports exist, what each one
 // did, what a policy resolves to once inheritance is applied, and when the
 // next scheduled run is — and that is what this serves.
-func (h *HTTPServer) registerBackupRoutes(mux *http.ServeMux) {
+func (h *HTTPServer) registerBackupRoutes(mux router) {
 	// Reads of state.
 	mux.HandleFunc("GET /v1/tenants/{tenant}/backups", h.handleBackups)
 	mux.HandleFunc("GET /v1/tenants/{tenant}/backups/{name}", h.handleBackup)
@@ -169,7 +169,7 @@ func (h *HTTPServer) handleAllBackupSchedules(w http.ResponseWriter, r *http.Req
 // declared in git, what the cluster permits to escape the default posture is
 // the operator chart's, and a customisation record is written where the
 // customisation is.
-func (h *HTTPServer) registerPlatformRoutes(mux *http.ServeMux) {
+func (h *HTTPServer) registerPlatformRoutes(mux router) {
 	mux.HandleFunc("GET /v1/tenants/{tenant}/integrations", h.handleIntegrations)
 	mux.HandleFunc("GET /v1/platform-security", h.handlePlatformSecurity)
 	mux.HandleFunc("GET /v1/customizations", h.handleCustomizationDebt)
@@ -208,7 +208,7 @@ func (h *HTTPServer) handleCustomizationDebt(w http.ResponseWriter, r *http.Requ
 // belongs to the desktop, which is where people read them; this writes into
 // it because the operator already resolves that database, and a console that
 // kept its own copy would be a second place a notice could exist.
-func (h *HTTPServer) registerNotificationRoutes(mux *http.ServeMux) {
+func (h *HTTPServer) registerNotificationRoutes(mux router) {
 	mux.HandleFunc("GET /v1/tenants/{tenant}/notifications", h.handleNotifications)
 	mux.HandleFunc("POST /v1/tenants/{tenant}/actions/notify", h.handlePublishNotification)
 }

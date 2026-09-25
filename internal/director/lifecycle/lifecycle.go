@@ -40,13 +40,30 @@ import (
 
 // Client talks to one operator.
 type Client struct {
-	base string
-	http *http.Client
+	base  string
+	token string
+	http  *http.Client
 }
 
 // New returns a client for the operator's API at base.
-func New(base string) *Client {
-	return &Client{base: strings.TrimRight(base, "/"), http: &http.Client{Timeout: 30 * time.Second}}
+//
+// token is the shared secret that API requires. The operator used to require
+// nothing, which made the actor header this client sets a claim rather than a
+// proof: any pod that could reach the Service could act as anybody.
+func New(base, token string) *Client {
+	return &Client{
+		base:  strings.TrimRight(base, "/"),
+		token: token,
+		http:  &http.Client{Timeout: 30 * time.Second},
+	}
+}
+
+// authorize presents the shared token. Called on every request, including
+// reads: a tenant's installed apps and its usage are its own business.
+func (c *Client) authorize(req *http.Request) {
+	if c.token != "" {
+		req.Header.Set("Authorization", "Bearer "+c.token)
+	}
 }
 
 // Get relays one read and returns the status and body as the operator
@@ -62,6 +79,7 @@ func (c *Client) Get(ctx context.Context, path string, query url.Values) (int, [
 	if err != nil {
 		return 0, nil, err
 	}
+	c.authorize(req)
 	resp, err := c.http.Do(req)
 	if err != nil {
 		return 0, nil, fmt.Errorf("app-lifecycle API: %w", err)
@@ -149,6 +167,7 @@ func (c *Client) Do(ctx context.Context, path, actor string, body any) (int, []b
 		return 0, nil, err
 	}
 	req.Header.Set("Content-Type", "application/json")
+	c.authorize(req)
 	if actor != "" {
 		req.Header.Set("X-Gentian-Actor", actor)
 	}

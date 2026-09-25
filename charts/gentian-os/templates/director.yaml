@@ -222,6 +222,16 @@ spec:
             # cluster question the director asks. A tenant's enforced
             # ceiling and the plans it may move to come from here; the plan
             # chosen goes to git, and the operator reads it back from there.
+            {{- with (.Values.appLifecycle).tokenSecretName }}
+            # The same Secret the operator mounts: this API is the director's
+            # and nobody else's, and this is what says so.
+            - name: APP_LIFECYCLE_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ . | quote }}
+                  key: token
+                  optional: true
+            {{- end }}
             - name: DIRECTOR_APP_LIFECYCLE_URL
               value: {{ .Values.director.appLifecycleURL | default (printf "http://%s-lifecycle.%s.svc.cluster.local:%v" (include "gentian-os.fullname" .) .Release.Namespace .Values.appLifecycle.port) | quote }}
             - name: DIRECTOR_COMMITTER_NAME

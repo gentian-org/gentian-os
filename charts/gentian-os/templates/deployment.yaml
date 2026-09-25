@@ -391,6 +391,17 @@ spec:
               value: {{ printf ":%v" .Values.appLifecycle.port | quote }}
             - name: GENTIAN_DEPLOYMENTS_PATH
               value: {{ $lifecycleDeployments.path | default "/data/gentian-deployments" | quote }}
+            {{- with (.Values.appLifecycle).tokenSecretName }}
+            # The shared token this API requires. Optional on the ref so a pod
+            # still starts while the Secret is being created; the server then
+            # refuses every request rather than serving them unauthenticated.
+            - name: APP_LIFECYCLE_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ . | quote }}
+                  key: token
+                  optional: true
+            {{- end }}
             - name: GENTIAN_DEPLOYMENTS_REPO
               value: {{ $lifecycleDeployments.repo | default "https://git.example.domain/gentian-deployments" | quote }}
             - name: GENTIAN_DEPLOYMENTS_CLUSTER_ID

@@ -675,6 +675,13 @@ membershipListener:
 
 appLifecycle:
   port: 8082
+  # The shared secret the director presents to this API, and the only thing
+  # that makes its X-Gentian-Actor header a proof rather than a claim. The
+  # chart creates the Secret with a random value on first install and keeps
+  # whatever is already there on an upgrade, so it never rotates by accident.
+  # Empty name disables the Secret; the API then has no token and refuses
+  # every request, which is the safe direction for a misconfiguration.
+  tokenSecretName: gentian-os-lifecycle-token
   deployments:
     enabled: false
     path: /data/gentian-deployments

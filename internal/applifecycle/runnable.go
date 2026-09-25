@@ -47,7 +47,14 @@ func NewRunnableFromEnv(mgr manager.Manager) (*Runnable, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Runnable{Server: &HTTPServer{Service: svc, Addr: addr}}, nil
+	// The shared token the director presents. Absent means the server
+	// refuses every request: an operator whose Secret failed to mount must
+	// not fall back to the open API this replaced.
+	return &Runnable{Server: &HTTPServer{
+		Service: svc,
+		Addr:    addr,
+		Token:   os.Getenv("APP_LIFECYCLE_TOKEN"),
+	}}, nil
 }
 
 func envOrDefault(key, def string) string {
