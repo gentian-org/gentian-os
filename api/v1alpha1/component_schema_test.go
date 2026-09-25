@@ -326,6 +326,15 @@ func TestComponentRules(t *testing.T) {
 		{"a grant without the approver's reason", component("  class: app\n  privileges:\n  - {privilege: egress/x, approver: u, approvedAt: \"2026-09-01T00:00:00Z\", reason: ok}\n"), "", "reason"},
 
 		{"class changed in place", component("  class: shared-app\n"), component("  class: app\n"), "class is immutable"},
+		// The one carve-out, and it is not a loosening: a Component with no
+		// class was never creatable, so the only way to hold one is to have
+		// been written before spec.tenancy became spec.class. Refusing the
+		// repair strands the object in a way that is worse than it sounds --
+		// it cannot be deleted either, because removing its finalizer is an
+		// update of the whole object and the whole object is invalid. Both
+		// shipped components deadlocked exactly there.
+		{"class set on an object that has none", component("  class: app\n"), component("  fulfilment: auto\n"), ""},
+		{"and still not changed once it has one", component("  class: service\n"), component("  class: app\n"), "class is immutable"},
 		{"pointed at another profile", strings.Replace(component("  class: app\n"), "{name: nextcloud}", "{name: odoo}", 1), component("  class: app\n"), "profileRef.name is immutable"},
 	}
 	for _, c := range cases {

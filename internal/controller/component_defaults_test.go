@@ -124,12 +124,16 @@ func TestWithdrawingTheDeclarationLeavesExistingComponentsAlone(t *testing.T) {
 	}
 }
 
-// A Component written before spec.tenancy became spec.class carries neither.
-// The API server hands the stored object back untouched, so the field this
-// reconciler reads is empty and the component reports ClassUnsupported for
-// ever. It cannot be patched -- class is immutable, and "" to "app" is a
-// change -- so the reconciler replaces it.
-func TestAComponentWrittenBeforeTheRenameIsReplaced(t *testing.T) {
+// A Component written before spec.tenancy became spec.class carries neither,
+// and is repaired in place.
+//
+// Replacing it was the first attempt and it deadlocked a live cluster: the
+// object has a finalizer, removing a finalizer is an update of the whole
+// object, and the whole object is invalid while class is empty. The delete
+// never completed and the create that followed answered AlreadyExists, so
+// both shipped components sat terminating and un-finalizable. The
+// immutability rule admits a transition from empty for exactly this repair.
+func TestAComponentWrittenBeforeTheRenameIsRepaired(t *testing.T) {
 	scheme := runtime.NewScheme()
 	_ = gentianov1alpha1.AddToScheme(scheme)
 	tenant := platformTenantFixture()
@@ -153,7 +157,12 @@ func TestAComponentWrittenBeforeTheRenameIsReplaced(t *testing.T) {
 		t.Fatal(err)
 	}
 	if got.Spec.Class != gentianov1alpha1.ComponentClassApp {
-		t.Fatalf("class = %q, want app: the stale component was not replaced", got.Spec.Class)
+		t.Fatalf("class = %q, want app: the stale component was not repaired", got.Spec.Class)
+	}
+	// Repaired, which means the same object: a replacement would have lost
+	// the finalizer that could not have been removed in the first place.
+	if got.UID != stale.UID {
+		t.Fatal("the component was replaced rather than repaired")
 	}
 }
 

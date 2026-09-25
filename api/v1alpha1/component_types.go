@@ -39,7 +39,19 @@ const (
 // and until when. Enablements and grants are written only by the director,
 // from the token of the person who approved.
 //
-// +kubebuilder:validation:XValidation:rule="self.class == oldSelf.class",message="class is immutable: reinstall to change it"
+// class is immutable, with one carve-out: it may be set on an object that
+// does not have it.
+//
+// A Component with no class was never creatable, because the field is
+// required — the only way to hold one is to have been written before
+// spec.tenancy became spec.class. Without the carve-out such an object is
+// stranded in a way that is worse than it sounds: it cannot be repaired,
+// because setting the field is a change the rule refuses, and it cannot be
+// DELETED either, because removing its finalizer is an update of the whole
+// object and the whole object is invalid. Both shipped Components deadlocked
+// exactly there, terminating and un-finalizable, with the reconciler logging
+// "spec.class: Unsupported value" once a minute.
+// +kubebuilder:validation:XValidation:rule="!has(oldSelf.class) || oldSelf.class == '' || self.class == oldSelf.class",message="class is immutable: reinstall to change it"
 // +kubebuilder:validation:XValidation:rule="self.profileRef.name == oldSelf.profileRef.name",message="profileRef.name is immutable"
 // +kubebuilder:validation:XValidation:rule="self.class == 'app' || !has(self.fulfilment) || self.fulfilment == 'auto'",message="fulfilment is a tenant's choice and applies to class app only"
 // A service may have a console, but never on the perimeter: that surface has

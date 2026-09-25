@@ -379,20 +379,22 @@ func (r *TenantReconciler) ensureDefaultComponents(ctx context.Context, tenant *
 		// A Component written before spec.tenancy became spec.class has
 		// neither: the API server returns the stored object untouched, and
 		// the rename left the field this reconciler reads empty. Such a
-		// component reports ClassUnsupported forever and its release is never
+		// component reports ClassUnsupported and its release is never
 		// reconciled again.
 		//
-		// It cannot be patched. class is immutable, and "" to "app" is a
-		// change, so the rule refuses the repair. Recreating is the honest
-		// fix and costs nothing here: this object holds no state of its own,
-		// only the answers the operator itself wrote, and it is recreated on
-		// this same pass.
+		// It is REPAIRED, not replaced. Deleting it was the first attempt and
+		// it deadlocked the cluster: the object has a finalizer, removing a
+		// finalizer is an update of the whole object, and the whole object is
+		// invalid while class is empty — so the delete never completed, the
+		// create that followed it answered AlreadyExists, and both shipped
+		// components sat terminating and un-finalizable with the reconciler
+		// erroring once a minute. Setting the field is one small write and
+		// the immutability rule admits it from empty for exactly this.
 		if existing.Spec.Class == "" {
-			if err := r.Delete(ctx, existing); err != nil && !errors.IsNotFound(err) {
-				return fmt.Errorf("replace %s component written before spec.class: %w", profile.Name, err)
-			}
-			if err := r.Create(ctx, desired); err != nil && !errors.IsAlreadyExists(err) {
-				return fmt.Errorf("recreate %s component: %w", profile.Name, err)
+			patch := client.MergeFrom(existing.DeepCopy())
+			existing.Spec.Class = gentianov1alpha1.ComponentClassApp
+			if err := r.Patch(ctx, existing, patch); err != nil {
+				return fmt.Errorf("set spec.class on the %s component written before the rename: %w", profile.Name, err)
 			}
 		}
 	}
