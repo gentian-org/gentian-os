@@ -37,6 +37,29 @@ _v5_apps_healthy() { echo "reloader cnpg kernel-postgres kyverno headlamp"; }
 _v5_apps_synced()  { echo "openbao openbao-transit"; }
 _v5_apps()         { echo "$(_v5_apps_healthy) $(_v5_apps_synced)"; }
 
+# _v5_keep_chart_version — do not downgrade a component chart this cluster has
+# already resolved.
+#
+# D-02 resolves a branch's newest IMMUTABLE chart version and passes it in.
+# Every other caller passes nothing, and nothing used to mean "the moving
+# version" -- so running B-01 on its own quietly reverted the desktop and the
+# administration console to a version string that never changes, which
+# provider-helm never upgrades, which means the first build the cluster ever
+# saw. On this cluster that put the desktop back on an image old enough to
+# loop on sign-in, hours after D-02 had moved it off.
+#
+# So an unset version means "keep what is installed", and only an empty
+# cluster falls through to the moving one.
+_v5_keep_chart_version() {
+    local profile="$1" have="${2:-}"
+    if [[ -n "${have}" ]]; then
+        printf '%s' "${have}"
+        return 0
+    fi
+    kubectl get componentprofile "${profile}" \
+        -o jsonpath='{.spec.package.chart.version}' 2>/dev/null || true
+}
+
 _v5_render() {
     # The layout goes in as a values file under its own key; platforms.yaml
     # already is one (its top-level dnsProviders table is what the chart reads).
@@ -71,9 +94,9 @@ _v5_render() {
         --set-string "headlamp.oidc.enabled=${V5_HEADLAMP_OIDC:-false}" \
         --set-string "kernelRealm=${KERNEL_REALM:-kernel}" \
         --set-string "desktop.chartBranch=${PORTAL_IMAGE_TAG:-develop}" \
-        --set-string "desktop.chartVersion=${DESKTOP_CHART_VERSION:-}" \
+        --set-string "desktop.chartVersion=$(_v5_keep_chart_version desktop "${DESKTOP_CHART_VERSION:-}")" \
         --set-string "adminConsole.chartBranch=${GENTIAN_APPS_BRANCH:-main}" \
-        --set-string "adminConsole.chartVersion=${ADMIN_CONSOLE_CHART_VERSION:-}" \
+        --set-string "adminConsole.chartVersion=$(_v5_keep_chart_version admin-console "${ADMIN_CONSOLE_CHART_VERSION:-}")" \
         --set-string "llmEnabled=${LLM_SUPPORT:-false}" \
         --set-string "tenancyMode=${TENANCY_MODE:-multi}" \
         --set-string "acmeStaging=${acme_staging}" \
