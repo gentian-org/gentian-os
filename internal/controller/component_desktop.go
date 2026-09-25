@@ -376,6 +376,25 @@ func (r *TenantReconciler) ensureDefaultComponents(ctx context.Context, tenant *
 		if err != nil {
 			return err
 		}
+		// A Component written before spec.tenancy became spec.class has
+		// neither: the API server returns the stored object untouched, and
+		// the rename left the field this reconciler reads empty. Such a
+		// component reports ClassUnsupported forever and its release is never
+		// reconciled again.
+		//
+		// It cannot be patched. class is immutable, and "" to "app" is a
+		// change, so the rule refuses the repair. Recreating is the honest
+		// fix and costs nothing here: this object holds no state of its own,
+		// only the answers the operator itself wrote, and it is recreated on
+		// this same pass.
+		if existing.Spec.Class == "" {
+			if err := r.Delete(ctx, existing); err != nil && !errors.IsNotFound(err) {
+				return fmt.Errorf("replace %s component written before spec.class: %w", profile.Name, err)
+			}
+			if err := r.Create(ctx, desired); err != nil && !errors.IsAlreadyExists(err) {
+				return fmt.Errorf("recreate %s component: %w", profile.Name, err)
+			}
+		}
 	}
 	return nil
 }

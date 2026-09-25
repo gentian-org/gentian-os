@@ -22,6 +22,7 @@ import (
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
@@ -120,6 +121,39 @@ func TestWithdrawingTheDeclarationLeavesExistingComponentsAlone(t *testing.T) {
 	}
 	if len(list.Items) != 1 || list.Items[0].Name != "desktop" {
 		t.Fatalf("components = %v", list.Items)
+	}
+}
+
+// A Component written before spec.tenancy became spec.class carries neither.
+// The API server hands the stored object back untouched, so the field this
+// reconciler reads is empty and the component reports ClassUnsupported for
+// ever. It cannot be patched -- class is immutable, and "" to "app" is a
+// change -- so the reconciler replaces it.
+func TestAComponentWrittenBeforeTheRenameIsReplaced(t *testing.T) {
+	scheme := runtime.NewScheme()
+	_ = gentianov1alpha1.AddToScheme(scheme)
+	tenant := platformTenantFixture()
+	stale := &gentianov1alpha1.Component{ObjectMeta: metav1.ObjectMeta{
+		Name: "desktop", Namespace: tenantNamespaceName(tenant),
+	}}
+	stale.Spec.ProfileRef.Name = "desktop"
+	// No Class: what the rename leaves behind.
+	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(
+		tenant.DeepCopy(), stale,
+		profileFixture("desktop", true, gentianov1alpha1.ComponentClassApp),
+	).Build()
+	r := &TenantReconciler{Client: c, Scheme: scheme}
+	if err := r.ensureDefaultComponents(context.Background(), tenant); err != nil {
+		t.Fatal(err)
+	}
+	got := &gentianov1alpha1.Component{}
+	if err := c.Get(context.Background(), types.NamespacedName{
+		Name: "desktop", Namespace: tenantNamespaceName(tenant),
+	}, got); err != nil {
+		t.Fatal(err)
+	}
+	if got.Spec.Class != gentianov1alpha1.ComponentClassApp {
+		t.Fatalf("class = %q, want app: the stale component was not replaced", got.Spec.Class)
 	}
 }
 
