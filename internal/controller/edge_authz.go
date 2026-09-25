@@ -144,7 +144,29 @@ func zoneSecurityPolicySpec(kernelDomain string, zone edgeZone, route string, au
 			"clientID":     zone.clientID,
 			"clientSecret": clientSecret,
 			"logoutPath":   "/oauth2/logout",
-			"cookieDomain": zone.domain,
+			// No cookieDomain, so the session cookie is scoped to the host
+			// that set it.
+			//
+			// It used to be scoped to the whole zone, .<kernel>, so one
+			// sign-in covered every host in it -- which also meant the
+			// browser sent that cookie to every application in the zone, and
+			// nothing removed it before the request arrived. An application
+			// that is compromised, or merely careless about what it logs, saw
+			// a credential good for every other application beside it.
+			//
+			// Stripping it later does not work: Envoy Gateway applies the
+			// authorization service's header mutations before the remaining
+			// filters, and ext_authz runs ahead of the OIDC filter, so a
+			// cookie removed there would be invisible to the filter that has
+			// to validate it and sign-in would break. Rewriting it at the
+			// router stage needs Envoy Gateway 1.3.
+			//
+			// The cost is one silent round trip to Keycloak the first time a
+			// browser reaches each host, because the Keycloak session already
+			// exists and the redirect comes straight back. Single sign-on is
+			// preserved and so is signing out everywhere at once: the realm
+			// session ends, and the back-channel logout marks it revoked for
+			// every host's cookie at once.
 			"cookieNames": map[string]interface{}{
 				"accessToken": zone.cookie,
 				"idToken":     zone.idCookie,

@@ -34,8 +34,15 @@ func TestKernelSecurityPolicyIsTheZoneSessionAndTheShim(t *testing.T) {
 	if oidc["provider"].(map[string]interface{})["issuer"] != "https://id.k.example/auth/realms/kernel" {
 		t.Fatalf("issuer = %v", oidc["provider"])
 	}
-	if oidc["cookieDomain"] != "k.example" || oidc["forwardAccessToken"] != false {
-		t.Fatalf("cookieDomain = %v forwardAccessToken = %v", oidc["cookieDomain"], oidc["forwardAccessToken"])
+	// No cookieDomain: the session cookie is the host's, not the zone's. A
+	// zone-scoped cookie was sent by the browser to every application beside
+	// this one, so a single careless application saw a credential good for
+	// all of them.
+	if _, widened := oidc["cookieDomain"]; widened {
+		t.Fatalf("cookieDomain = %v: the session must not be shared across the zone's hosts", oidc["cookieDomain"])
+	}
+	if oidc["forwardAccessToken"] != false {
+		t.Fatalf("forwardAccessToken = %v", oidc["forwardAccessToken"])
 	}
 	ext := spec["extAuth"].(map[string]interface{})
 	if ext["failOpen"] != false {

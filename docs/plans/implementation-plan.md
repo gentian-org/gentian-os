@@ -69,7 +69,7 @@ steps yet; `work-packages.md` is where their content lives until they are.
 | S7A.4 | The admin console is an app, and it talks to the director | ◐ every screen wired; untested against a cluster that can push |
 | S7A.5 | Keycloak looks like the rest of the product | ✅ |
 | S7A.6 | The console and the desktop hold nothing | ◐ console yes, desktop still holds a Keycloak credential |
-| S7A.7 | The zone cookie does not reach the applications | ☐ |
+| S7A.7 | The zone cookie does not reach the applications | ◐ built, needs a browser |
 | S7A.8 | A read-only view of the authorization state | ☐ |
 | S7A.9 | The kernel UIs are actually usable | ✅ |
 | S7A.9b | A refusal a person can act on | ✅ |
@@ -384,7 +384,7 @@ When either grows a screen that seems to need a credential, that is the signal
 that an endpoint is missing from the director — not that the UI needs the
 credential.
 
-### S7A.7 ☐ The zone cookie does not reach the applications
+### S7A.7 ◐ The zone cookie does not reach the applications
 
 The one place the edge session is weaker than a session per application.
 
@@ -412,8 +412,24 @@ Three that do work:
 3. **Remove the whole `Cookie` header** at the route. Available today and too
    blunt: applications behind the edge set their own cookies.
 
-Recommendation: (1), measured first. Do it before any third-party application
-is routed.
+**(1) is built**: the zone's `SecurityPolicy` no longer sets `cookieDomain`,
+so each host's session cookie is that host's. What the browser hands an
+application is now good only for that application.
+
+**It needs a browser before it is called done**, and it is the one change in
+this branch that alters how signing in behaves. Two things to watch:
+
+- **The first request to each host does one extra redirect.** The Keycloak
+  session already exists, so it should be invisible. If it is not, it is
+  measurable here rather than a mystery later.
+- **Components the desktop opens in a frame.** That first redirect now
+  happens inside the frame. The realm sends no `X-Frame-Options` and the edge
+  injects a permissive `frame-ancestors`, so it should complete; if a framed
+  component comes up blank on first open, this is why.
+
+Signing out everywhere at once is unaffected: the realm session ends and the
+back-channel logout marks it revoked, which every host's shim honours whatever
+cookie it read.
 
 ### S7A.8 ☐ A read-only view of the authorization state
 
