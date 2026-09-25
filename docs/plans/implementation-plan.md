@@ -696,21 +696,40 @@ things follow that are easy to get wrong:
 author, a time and a diff, and that is the standard the rest of the console is
 held to. Keycloak writes cannot meet it the same way, because the thing that
 makes git good here — append-only history — is exactly what makes it wrong for
-personal data. So the equivalent is an append-only change log the director
-writes: who asked, when, which object, which fields changed, and which
-relation allowed it.
+personal data. The record has to live somewhere with a retention policy.
+
+**Two halves, joined by a request id, and both already have a home.**
+
+- **What changed** is a Keycloak admin event, and the event listener in
+  `kernel/extensions/keycloak-event-listener/` already receives realm events
+  and posts signed statements to the operator. It projects group membership
+  and drops the rest. Recording admin events is roadmap §1.12's "extend the
+  event listener" item, and it needs no credential anywhere.
+- **Who was allowed to ask for it** is the director's to record: the caller,
+  the relation and the object that permitted the call, and a request id. This
+  is the same trailer the director already writes on every commit.
+
+Keycloak's own event is the better record of the change, because it is written
+whether the change came through the director or through Keycloak's console.
+The director's record is the better record of the authority, because Keycloak
+sees only the director's service account. Neither is sufficient alone, which
+is why the request id matters.
 
 **The fields, not the values.** "Alice's address was changed by Bob at 14:02,
 under `can_manage_people`" is the record. The old and new addresses are not,
-or the log becomes the problem the git decision avoided. A change log of
-personal data needs a retention policy; git's history deliberately has none.
+or the log becomes the problem the git decision avoided. Keycloak admin events
+carry a representation of the changed object by default, so this is a
+configuration decision and not a thing that happens by itself.
 
-**Build one log, not two.** This is the same store roadmap §1.12 needs for
-audit events — sign-ins, refused requests, reads of data. Writing a
-Keycloak-specific log now and an audit store later would leave two answers to
-"what happened", which is worse than either. The Changes pane in the console
-already reads git history; this is its second source, and the pane should
-show both in one timeline.
+**A change made in Keycloak's console has one half and not the other**, which
+is the same case as a commit pushed to `gentian-deployments` by hand: it
+happened, it is recorded, and nothing authorised it through the platform. The
+Changes pane already reports that for git and should report it the same way
+here, rather than hiding it.
+
+**Build one store, not two.** This is the same store roadmap §1.12 needs for
+sign-ins, refused requests and actions. The Changes pane already reads git
+history; this is its second source, and one timeline is the point.
 
 **Done when** a tenant administrator can invite a person, change a group
 membership and adjust the realm's password policy from the administration
