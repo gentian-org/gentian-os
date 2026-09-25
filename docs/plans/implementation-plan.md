@@ -78,7 +78,7 @@ steps yet; `work-packages.md` is where their content lives until they are.
 | S7A.12 | The tile catalogue leaves the director | ✅ |
 | S7A.13 | `denyPaths` promises a control it does not apply | ✅ built at L2 |
 | S7A.14 | A release reaches a cluster by an immutable name | ✅ |
-| S7A.15 | A zone's hosts follow the components, not a list | ☐ |
+| S7A.15 | A zone's hosts follow the components, not a list | ◐ two of five; three are kernel tier |
 | S7A.16 | The app-lifecycle API authenticates nobody | ✅ a shared token |
 | S7A.17 | The director speaks for Keycloak | ☐ |
 
@@ -660,7 +660,7 @@ worth the paper it is written on until then, because only the director can
 set it. Option 1's NetworkPolicy is still worth adding as depth, and is not
 here.
 
-### S7A.15 ☐ A zone's hosts follow the components, not a list
+### S7A.15 ◐ A zone's hosts follow the components, not a list
 
 The zone client's redirect URIs are enumerated in the tenant composition —
 `console`, `admin`, and for the kernel zone `argocd`, `headlamp`, `id`. A
@@ -669,11 +669,29 @@ component whose profile declares any other `subDomain` gets a Keycloak refusal
 redirect URI list. The administration console hit exactly this the first time
 its tile was opened.
 
-The operator is what knows every host a zone serves, because it composes the
-routes. Projecting that per tenant — the way it already projects the tile
-catalogue — would make the list follow the components instead of being
-maintained beside them. Until then, a component with a host of its own has to
-be added to the composition by hand.
+**Built, for the components.** The operator projects, per tenant, the host
+labels its components' gateway exposures serve, into a ConfigMap the tenant
+Composition reads and unions with its base list. It rides on the same walk as
+the tile catalogue, because it reads exactly the same objects and a second
+watch over them would be a second thing to keep in step. Labels and not
+hostnames: the Composition knows the tenant's effective domain and the
+operator does not, so a tenant on a custom domain still gets the right URI.
+
+Gateway entries only. A perimeter surface is published through its own proxy
+with its own credential and never reaches the zone's client, so listing it
+would widen that client for a host the zone does not serve.
+
+**Three of the five hosts still cannot follow anything**, and this is why it
+is ◐ rather than ✅. `argocd`, `headlamp` and `id` are kernel tier: installed
+by `install.sh`, not components, so nothing projects them. They stay named in
+the Composition. `console` and `admin` stay in the base list too, so a tenant
+reconciling before the operator has projected still has a desktop to sign in
+to.
+
+Closing the remaining three means either giving kernel services profiles —
+which the bootstrap order refuses, since the operator depends on them existing
+— or a second declared list for the kernel's own hosts, which is what the
+Composition already is.
 
 **Three of those five hosts cannot be components at all today**, which is the
 part of this that is not just plumbing. `argocd`, `headlamp` and `id` are

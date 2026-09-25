@@ -171,12 +171,14 @@ spec:
     - https://argocd.platform.example.test/*
     - https://headlamp.platform.example.test/*
     - https://id.platform.example.test/*
+    - https://wiki.platform.example.test/*
     validRedirectUris:
     - https://console.platform.example.test/oauth2/callback
     - https://admin.platform.example.test/oauth2/callback
     - https://argocd.platform.example.test/oauth2/callback
     - https://headlamp.platform.example.test/oauth2/callback
     - https://id.platform.example.test/oauth2/callback
+    - https://wiki.platform.example.test/oauth2/callback
     webOrigins: []
   managementPolicies:
   - Observe

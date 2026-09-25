@@ -44,6 +44,30 @@ spec:
                   - key: gentianos.io/tenant
                     type: FromCompositeFieldPath
                     valueFromFieldPath: metadata.name
+            # Which hosts this tenant's components are routed at, projected by
+            # the operator from the routes it composes. The zone's Keycloak
+            # client admits a redirect only to a host it lists, and that list
+            # used to be written here by hand -- so a component with a
+            # subDomain of its own got "Invalid parameter: redirect_uri" on a
+            # page naming neither the component nor a list.
+            #
+            # minMatch 0 because the projection does not exist until the
+            # operator has run once: a tenant reconciling before then gets the
+            # base hosts and the rest on the next pass.
+            - kind: ConfigMap
+              into: zoneHosts
+              apiVersion: v1
+              type: Selector
+              selector:
+                maxMatch: 1
+                minMatch: 0
+                matchLabels:
+                  - key: gentianos.io/config-type
+                    type: Value
+                    value: zone-hosts
+                  - key: gentianos.io/tenant
+                    type: FromCompositeFieldPath
+                    valueFromFieldPath: metadata.name
 
     # ── Step 2: Render composed resources (tenant shell owner) ────────────────
     - step: render-tenant-resources
@@ -323,7 +347,33 @@ spec:
                  is what would make this list follow the components instead of
                  being maintained beside them. Until then, a component with a
                  host of its own belongs here. */}}
-            {{- $zoneHosts  := ternary (list "console" "admin" "argocd" "headlamp" "id") (list "console" "admin") $adoptsKernelRealm }}
+            {{- /* The hosts a zone's client admits a redirect to, from two
+                 places because they have two owners.
+
+                 The kernel's own consoles are installed by install.sh and are
+                 not components, so nothing projects them and they are named
+                 here. Everything else follows the components: the operator
+                 writes the labels its routes serve into a ConfigMap per
+                 tenant, and this reads it back. console and admin stay in the
+                 base list so a tenant reconciling before the operator has
+                 projected still has a desktop to sign in to. */}}
+            {{- $zoneHosts := ternary (list "console" "admin" "argocd" "headlamp" "id") (list "console" "admin") $adoptsKernelRealm }}
+            {{- /* An explicit if, not ternary: Go templates evaluate both of
+                 ternary's arms, so indexing an empty list is an error even
+                 when the guard is false. The clusterConfig read above has the
+                 same shape and gets away with it only because that ConfigMap
+                 always exists. */}}
+            {{- $zhList := dig "zoneHosts" list $extraRes }}
+            {{- $zhData := dict }}
+            {{- if gt (len $zhList) 0 }}
+            {{- $zhData = dig "data" dict (index $zhList 0) }}
+            {{- end }}
+            {{- range $h := (splitList "\n" (dig "hosts" "" $zhData)) }}
+            {{- $h = trim $h }}
+            {{- if and $h (not (has $h $zoneHosts)) }}
+            {{- $zoneHosts = append $zoneHosts $h }}
+            {{- end }}
+            {{- end }}
 
             {{- /* The secret exists before the client does, and is generated
                  here rather than minted by Keycloak. A client created with no

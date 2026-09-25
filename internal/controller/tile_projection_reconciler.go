@@ -192,6 +192,14 @@ func (r *TileProjectionReconciler) Reconcile(ctx context.Context, _ ctrl.Request
 	if err := r.write(ctx, catalogue); err != nil {
 		return ctrl.Result{}, fmt.Errorf("write the tile catalogue: %w", err)
 	}
+	// The same walk answers a second question the cluster cannot answer for
+	// itself: which hosts a zone's Keycloak client must admit a redirect to.
+	// Here rather than in its own reconciler because it reads exactly the
+	// same objects, and a second watch over them would be a second thing to
+	// keep in step.
+	if err := r.projectZoneHosts(ctx); err != nil {
+		return ctrl.Result{}, fmt.Errorf("project the zone hosts: %w", err)
+	}
 	logger.V(1).Info("tile catalogue projected",
 		"cluster", r.Cluster, "kernel", len(kernel), "components", len(apps))
 	return ctrl.Result{RequeueAfter: tileProjectionRequeue}, nil
