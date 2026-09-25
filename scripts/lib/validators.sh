@@ -465,8 +465,22 @@ validate_image_tag() {
 
     case "${code}" in
         200) return 0 ;;
-        404) _v_fail "${repo}:${tag}" "no such tag in the registry" \
-                 "CI publishes v1.2.3 for a release, develop/main for a branch, and develop-abc1234 for a commit — there is no stage-named tag" ;;
+        404)
+            # Two very different 404s wear the same status. A tag shaped
+            # <branch>-<sha> is the one the installer resolves from the
+            # checkout's own commit, so it is not wrong -- it is early: CI
+            # has not finished publishing that commit. Saying "there is no
+            # stage-named tag" there sends somebody to edit a values file
+            # when what they needed was to wait.
+            case "${tag}" in
+                *-[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f])
+                    _v_fail "${repo}:${tag}" "that commit has not been published yet" \
+                        "this is the image of the commit this checkout is on. Wait for CI to finish building it, then run again — or set GENTIAN_OS_IMAGE_TAG to a tag that exists" ;;
+                *)
+                    _v_fail "${repo}:${tag}" "no such tag in the registry" \
+                        "CI publishes v1.2.3 for a release, develop/main for a branch, and develop-abc1234 for a commit — there is no stage-named tag" ;;
+            esac
+            ;;
         000) warn "ghcr.io unreachable; skipping the image tag check for ${repo}:${tag}."
              return 0 ;;
         *)   warn "HTTP ${code} checking ${repo}:${tag}; continuing without the check."
