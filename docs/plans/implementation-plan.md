@@ -41,7 +41,7 @@ They are not a second plan, and they are not renumbered when something lands.
 | S7A.1 | The operator produces a zone's Keycloak client and its secret | ✅ |
 | S7A.2 | The director stops writing authorization state | ◐ entitlements left; read-only token impossible |
 | S7A.3 | The platform administrator is an address | ✅ |
-| S7A.4 | The admin console is an app, and it talks to the director | ◐ shipped; 7 screens still to re-point |
+| S7A.4 | The admin console is an app, and it talks to the director | ◐ every screen wired; untested against a cluster that can push |
 | S7A.5 | Keycloak looks like the rest of the product | ✅ |
 | S7A.6 | The console and the desktop hold nothing | ◐ console yes, desktop still holds a Keycloak credential |
 | S7A.7 | The zone cookie does not reach the applications | ☐ |
@@ -52,30 +52,27 @@ They are not a second plan, and they are not renumbered when something lands.
 | S7A.11 | Signing out does not ask a second time | ◐ built, not verified |
 | S7A.12 | The tile catalogue leaves the director | ✅ |
 | S7A.13 | `denyPaths` promises a control it does not apply | ☐ |
-| S7A.14 | A release reaches a cluster by an immutable name | ☐ |
+| S7A.14 | A release reaches a cluster by an immutable name | ✅ |
 | S7A.15 | A zone's hosts follow the components, not a list | ☐ |
 | S7A.16 | The app-lifecycle API authenticates nobody | ☐ |
 
 ### What is left, in the order to do it
 
-1. **S7A.14 — immutable image names.** Everything below is tested by
-   deploying it, and today a deploy can silently be a no-op.
-2. **S7A.4 — the remaining console screens.** Every screen now reads real
-   state. What is left is four writes and one screen:
-   - **a grant** (what an app may consume) and **the platform's waivers** are
-     declared state with no commit path yet;
-   - **backup schedules** are derived from the policy, so the screen should
-     change them through it rather than directly;
-   - **Notifications** has no home for its data: it was the desktop's
-     database, and a console that keeps no state cannot inherit it. Decide
-     whether notifications belong to the desktop, to a tenant-scoped service,
-     or nowhere.
-   The rest of Audit — sign-ins, refused requests, reads of data — is not a
-   screen but three stores that do not exist yet, and is roadmap §1.12.
-3. **S7A.6 — remove the bundled console from the desktop**, which the two
-   above make possible, and the credential goes with it.
-4. **S7A.8 — the authorization view**, the last console screen.
-5. **S7A.15 — zone hosts derived from what the operator routes.**
+1. **S7A.4 — test the console against a cluster that can push.** Every
+   screen reads real state and every write is a commit or an action, but no
+   write has ever succeeded here: the director mounts
+   `deployments-git-credentials` optionally and the Secret does not exist, so
+   every write answers 503. Supplying `GENTIAN_DEPLOYMENTS_GIT_TOKEN` and
+   applying the `deployments` Repository claim is what turns the screens on.
+   Three refusals stay by design until the work behind them lands: minting a
+   backup key, a group-scoped notification audience, and audit events beyond
+   the change history (roadmap §1.12).
+2. **S7A.6 — remove the bundled console from the desktop.** Its Resources tab
+   still calls an operator `PUT` that no longer exists, and the image carries
+   a Keycloak admin credential that goes with it.
+3. **S7A.8 — the authorization view**, the last console screen.
+4. **S7A.15 — zone hosts derived from what the operator routes.**
+5. **S7A.16 — the app-lifecycle API authenticates nobody.**
 6. **S7A.11 — verify sign-out**; it is built and unverified.
 7. **S7A.7 — scope the zone cookie per host**, before any third-party
    application is routed.
@@ -289,10 +286,17 @@ person; the operator dropped its `PUT` and records the plan event when the
 change *lands* on the Tenant, with the chooser carried in an annotation. What
 is billed is then what the cluster enforced, and it still names who chose it.
 
-**Credentials needs one thing first**: a `credentialManagerUrlKey` on the
-profile's platform mapping, the way `directorUrlKey` works today. Without it
-the component does not know where the credential manager is and cannot relay
-to it.
+**Credentials needed one thing first**, and it landed: a
+`credentialManagerUrlKey` on the profile's platform mapping, the way
+`directorUrlKey` works. Without it the component does not know where the
+credential manager is and cannot relay to it.
+
+**No write has succeeded on this cluster yet.** The director mounts
+`deployments-git-credentials` optionally and that Secret does not exist, so a
+push fails with `could not read Username` and every write answers 503 naming
+`GENTIAN_DEPLOYMENTS_GIT_TOKEN`. The Secret is what the `deployments`
+Repository claim's composition materialises from OpenBao, which is why the
+installer now scaffolds that claim whether or not a token was supplied.
 
 **Three gaps in the app template**, found by putting the console through it
 and all three fixed there rather than worked around in the console: the chart
@@ -520,7 +524,7 @@ other lands, the field is a false statement in a published API — the same
 pattern the September threat-model exercise turned up, and the second time the
 CRD has described a control we do not have.
 
-### S7A.14 ☐ A release reaches a cluster by an immutable name
+### S7A.14 ✅ A release reaches a cluster by an immutable name
 
 Found the hard way on 2026-09-24, twice in one afternoon, and it cost more
 time than anything else in this plan.
@@ -540,11 +544,18 @@ time than anything else in this plan.
   a manual `helm uninstall`. Worth deciding whether the component reconciler
   should recognise that state.
 
-The rule to apply everywhere: **a cluster follows an immutable name.** CI
-already publishes `<branch>-<sha>` images and immutable chart versions, and
-gentian-ui's workflow already rewrites its chart's values to the immutable
-image tag before packaging. Do the same for the operator, the director and
-every component chart in `gentian-apps`, and keep the moving tag for humans.
+The rule, now applied everywhere: **a cluster follows an immutable name.**
+The installer resolves `<branch>-<sha7>` from the checkout's own commit rather
+than taking the moving tag; every component chart is published twice, moving
+as `<version>-<branch>` for humans and immutable as `<version>-<branch>.<sha>`
+for clusters, with `appVersion` naming the immutable image; provider-helm is
+only ever handed the immutable one, because it does not upgrade a release
+whose version string has not changed.
+
+The cost of this is that a fresh commit fails preflight until CI has published
+its image. That refusal is correct and is now worded as "that commit has not
+been published yet" rather than "no such tag in the registry", which used to
+send the reader off to edit a values file.
 
 ### S7A.16 ☐ The app-lifecycle API authenticates nobody
 
