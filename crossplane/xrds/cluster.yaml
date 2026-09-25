@@ -566,12 +566,23 @@ spec:
                       type: string
                       description: >
                         Keycloak group whose members receive the cluster-admin
-                        policy. Defaults to the group the platform already
-                        provisions the administrator into — D-06-portal-login
-                        creates it and adds administrator@<kernelDomain>, so a
-                        cluster admin can log in without being added to anything
-                        by hand.
-                      default: "/gentian:platform:admin"
+                        policy. Leave unset: the composition uses
+                        spec.platformRoles.admin, which is the group the
+                        platform actually provisions the administrator into.
+
+                        No default, and that is the point. This carried
+                        "/gentian:platform:superadmin" before S1 renamed the
+                        role, and the API server had already materialised that
+                        onto every composite — where it stayed, because a
+                        changed default does not reach an object that already
+                        has the field. The result was silent and total: the
+                        administrator signed in, held gentian:platform:admin,
+                        and OpenBao's cluster-admin role wanted a group nobody
+                        was in, so no exchange ever granted cluster-admin and
+                        the handover proof was never written.
+
+                        Two fields that must agree will eventually disagree.
+                        Derived from platformRoles.admin so there is only one.
                     additionalAudiences:
                       type: array
                       items:

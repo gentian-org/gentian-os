@@ -207,6 +207,23 @@ spec:
                  of Crossplane, and none appear below.
             */}}
             {{- $oidc := ($spec.oidc) | default dict }}
+            {{- /* Which Keycloak group OpenBao's cluster-admin role admits.
+                 One source, because two fields that must agree eventually do
+                 not: platformRoles.admin is the group the platform provisions
+                 the administrator into, so it is also the group that may hold
+                 the cluster-admin policy. oidc.clusterAdminGroup overrides it
+                 and is normally unset.
+
+                 It used to default to "/gentian:platform:superadmin" in the
+                 XRD, S1 renamed the role, and every composite created before
+                 that kept the old value -- a changed default does not reach an
+                 object that already has the field. The administrator then
+                 signed in holding gentian:platform:admin while the role wanted
+                 a group nobody was in, so no exchange granted cluster-admin
+                 and the install's last step waited for a proof that could
+                 never be written. */}}
+            {{- $platformAdminGroup := default "gentian:platform:admin" (dig "platformRoles" "admin" "" $spec) }}
+            {{- $clusterAdminGroup := default (printf "/%s" $platformAdminGroup) (dig "clusterAdminGroup" "" $oidc) }}
             {{- if $oidc.discoveryUrl }}
             ---
             apiVersion: vault.vault.upbound.io/v1alpha1
@@ -368,7 +385,7 @@ spec:
                   {{- end }}
                 boundClaimsType: string
                 boundClaims:
-                  groups: {{ $oidc.clusterAdminGroup | default "/gentian:platform:admin" | quote }}
+                  groups: {{ $clusterAdminGroup | quote }}
                 allowedRedirectUris:
                   - {{ printf "%s/ui/vault/auth/oidc/oidc/callback" ($oidc.externalUrl | default "") | quote }}
                   - http://localhost:8250/oidc/callback
@@ -482,7 +499,7 @@ spec:
                   {{- end }}
                 boundClaimsType: string
                 boundClaims:
-                  groups: {{ $oidc.clusterAdminGroup | default "/gentian:platform:admin" | quote }}
+                  groups: {{ $clusterAdminGroup | quote }}
                 tokenPolicies:
                   - cluster-admin
                 tokenTtl: 1800
