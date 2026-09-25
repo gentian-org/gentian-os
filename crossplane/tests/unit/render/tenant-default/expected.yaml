@@ -367,6 +367,7 @@ spec:
     - acr
     - basic
     - email
+    - groups
     - profile
     - roles
     - web-origins

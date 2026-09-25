@@ -489,13 +489,30 @@ spec:
                  session authority (AD-13), so nothing else ever presents this
                  client, and no other grant type has a caller.
 
-                 fullScopeAllowed false and no groups scope, which is what the
-                 ClientDefaultScopes below spells out. The token this client
-                 issues is a session, not an authorization: the shim asks
-                 OpenFGA on every request and reads nothing out of the token but
-                 who the person is. Roles and groups riding along would be a
-                 second answer to a question that already has one, and a stale
-                 one, since a token outlives the membership it was minted from.
+                 fullScopeAllowed false. The token this client issues is a
+                 session, not an authorization: the shim asks OpenFGA on every
+                 request and reads nothing out of the token but who the person
+                 is, and nothing in this platform decides a permission from a
+                 claim.
+
+                 It carried no groups scope either, on the reasoning that a
+                 group riding along is a second answer to a question that
+                 already has one, and a stale one since a token outlives the
+                 membership it was minted from. That reasoning does not
+                 survive OpenBao. OpenBao is its own enforcement point with
+                 its own policy engine and no way to ask OpenFGA, so binding
+                 its roles to a group claim is not a SECOND answer there, it
+                 is the only one available -- and without the scope the
+                 credential manager could not exchange a token at all, which
+                 left the Credentials screen unreadable and the install unable
+                 to prove anybody but the installer can write.
+
+                 The alternative was the credential manager holding an OpenBao
+                 token of its own, which its own package refuses structurally:
+                 one component able to write every secret in the cluster, with
+                 the service and not the human in the audit device. That is a
+                 worse trade than a claim whose staleness is bounded by a
+                 five-minute token.
 
                  A redirect URI per host in the zone, and a post-logout URI per
                  host as well. The second is not decoration: signing out hands
@@ -612,10 +629,10 @@ spec:
                  email, profile, roles and web-origins from the client and every
                  zone token would lose its profile and email claims.
 
-                 Stating it at all, rather than leaving Keycloak's defaults
-                 alone, is what makes "no groups scope" a fact this file
-                 maintains instead of one that held until somebody added the
-                 scope by hand. */}}
+                 Stating the list at all, rather than leaving Keycloak's
+                 defaults alone, is what makes each scope a fact this file
+                 maintains instead of one that held until somebody changed it
+                 by hand. */}}
             ---
             apiVersion: openidclient.keycloak.crossplane.io/v1alpha1
             kind: ClientDefaultScopes
@@ -635,6 +652,11 @@ spec:
                   - acr
                   - basic
                   - email
+                  # OpenBao binds its auth backend roles to this claim and has
+                  # no way to ask OpenFGA. Nothing else reads it: the shim
+                  # ignores it, and the rule that a permission is never
+                  # decided from a claim is unchanged.
+                  - groups
                   - profile
                   - roles
                   - web-origins
