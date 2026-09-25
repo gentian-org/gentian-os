@@ -516,9 +516,25 @@ Two cold-start races are fixed, three of the seven below are done, and:
 4. ☐ The **credential catalogue** that `make check-credentials` reads.
 5. ☐ The **recovery kit** and **bootstrap token revocation**, so an install
    does not end with the installer's root token still valid.
-6. ☐ **Mail** and **LLM serving** have no v5 step and no ApplicationSet, while
-   the operator still writes Postfix entries and still routes `llm.<kernel>`
-   to a service nothing deploys. Decide whether these are deliberate drops.
+6. ◐ **Mail** and **LLM serving** — decided, not yet enforced. Both are
+   deliberate drops for M1, and neither is a live defect: this cluster runs
+   `mail.serviceMode: external` and `llm.enabled: false`, and both are gated
+   on exactly that.
+
+   What is wrong is narrower than "the operator still writes Postfix entries",
+   and it is the same shape in both: **an opt-in v5 cannot honour, which fails
+   silently.** A tenant that asks for `mail.mode: selfhosted` is registered
+   into a Postfix and Dovecot that no v5 step deploys — the reconciler is
+   explicit that empty means external and that a tenant asking for selfhosted
+   still gets it. A cluster that sets `llm.enabled: true` gets a route for
+   `llm.<kernel>` pointing at `litellm-proxy`, which v5 has no step to deploy
+   and no ApplicationSet to sync; v4 had `D-05-llm-serving` and `E-02`.
+
+   So the answer is not to port the steps for M1. It is to **refuse the
+   opt-in** while the layout cannot honour it, so the failure is a refusal
+   somebody can act on rather than a route to nothing and a tenant whose mail
+   is silently undeliverable. That is a schema statement on the Cluster claim
+   and on the Tenant, and it is not built here.
 7. ✅ `B-08-seed-secrets` declared a dependency on a step that runs after it.
    It required `C-01-cluster-claim`, nine steps later. The install was never
    wrong, because the driver reads the line as documentation — but the
