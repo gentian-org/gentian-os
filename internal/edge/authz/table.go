@@ -81,6 +81,48 @@ type Route struct {
 	// route whose exposure declares it -- the desktop, which relays to the
 	// director -- has it; every other backend gets identity headers instead.
 	ForwardToken bool `json:"forwardToken,omitempty"`
+	// DenyPaths are refused before anything else is asked, whoever is
+	// calling. It is what lets a component publish a UI without publishing
+	// its own administrative endpoints, and the alternative is every app
+	// carrying that logic itself.
+	//
+	// Enforced here rather than by leaving the path unrouted, because a
+	// gateway route is a prefix and the more specific rule would still need
+	// somewhere to send the request. Refusing at L2 is the one place that
+	// already sees every request to the host.
+	//
+	// Unioned across a host's exposures: an entry that denies a path denies
+	// it for the host, because deny wins.
+	DenyPaths []string `json:"denyPaths,omitempty"`
+}
+
+// Denies reports whether a path is one the route refuses outright.
+//
+// Prefix semantics are the Gateway API's, on segment boundaries: "/admin"
+// denies "/admin" and "/admin/users" and does not deny "/administrators".
+// Matching on the raw string instead would refuse paths nobody meant to name,
+// which for a deny rule is a silent outage rather than a silent hole -- but
+// still not what the profile said.
+func (r *Route) Denies(path string) bool {
+	if r == nil || len(r.DenyPaths) == 0 {
+		return false
+	}
+	if i := strings.IndexAny(path, "?#"); i >= 0 {
+		path = path[:i]
+	}
+	for _, d := range r.DenyPaths {
+		if d == "" {
+			continue
+		}
+		if d == "/" {
+			return true
+		}
+		d = strings.TrimSuffix(d, "/")
+		if path == d || strings.HasPrefix(path, d+"/") {
+			return true
+		}
+	}
+	return false
 }
 
 // The two L1 modes a route with an L2 question can have.
@@ -124,6 +166,7 @@ func ParseTable(b []byte) (*Table, error) {
 		}
 		seen[host] = true
 		t.Routes[i].Host = host
+		t.Routes[i].DenyPaths = normalisePaths(r.DenyPaths)
 	}
 	return &t, nil
 }
@@ -144,4 +187,29 @@ func (t *Table) Match(host string) *Route {
 		}
 	}
 	return nil
+}
+
+// normalisePaths trims each entry and gives it a leading slash, so a profile
+// that wrote "admin" denies the same thing one that wrote "/admin" does.
+// Empty entries are dropped rather than treated as "/", which would refuse
+// the whole host on a typo.
+func normalisePaths(in []string) []string {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(in))
+	for _, p := range in {
+		p = strings.TrimSpace(p)
+		if p == "" {
+			continue
+		}
+		if !strings.HasPrefix(p, "/") {
+			p = "/" + p
+		}
+		out = append(out, p)
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }

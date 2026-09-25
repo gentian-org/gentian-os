@@ -20,6 +20,7 @@ import (
 	"context"
 	"fmt"
 	"sort"
+	"strings"
 
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/equality"
@@ -234,6 +235,9 @@ type edgeAuthzRoute struct {
 	KeepClientToken   bool   `json:"keepClientToken,omitempty"`
 	ForwardToken      bool   `json:"forwardToken,omitempty"`
 	AuthMode          string `json:"authMode"`
+	// DenyPaths are refused at L2 before identity is looked at. Unioned
+	// across every exposure that shares the host.
+	DenyPaths []string `json:"denyPaths,omitempty"`
 }
 
 // endSessionURL is the realm's OIDC logout endpoint.
@@ -355,18 +359,22 @@ func componentRouteTableEntries(ctx context.Context, c client.Reader) ([]edgeAut
 		if mode == "" {
 			mode = "oidc"
 		}
+		denied := splitDenyPaths(ann[edgeAuthzDenyPathsAnnotation])
 		for _, h := range route.Spec.Hostnames {
 			host := string(h)
 			// A component's routes share its host and its question; the
-			// token is forwarded to the host if any of them says so.
+			// token is forwarded to the host if any of them says so, and a
+			// path denied by any of them is denied for the host, because
+			// deny wins.
 			if cur, ok := byHost[host]; ok {
 				cur.ForwardToken = cur.ForwardToken || ann[edgeAuthzForwardAnnotation] == "true"
+				cur.DenyPaths = mergeDenyPaths(cur.DenyPaths, denied)
 				continue
 			}
 			byHost[host] = &edgeAuthzRoute{
 				Host: host, Relation: ann[edgeAuthzRelationAnnotation], Object: ann[edgeAuthzObjectAnnotation],
 				AccessTokenCookie: ann[edgeAuthzCookieAnnotation], ForwardToken: ann[edgeAuthzForwardAnnotation] == "true",
-				AuthMode: mode,
+				AuthMode: mode, DenyPaths: denied,
 			}
 			order = append(order, host)
 		}
@@ -376,4 +384,37 @@ func componentRouteTableEntries(ctx context.Context, c client.Reader) ([]edgeAut
 		out = append(out, *byHost[h])
 	}
 	return out, nil
+}
+
+// splitDenyPaths reads the annotation the component reconciler writes.
+func splitDenyPaths(v string) []string {
+	if strings.TrimSpace(v) == "" {
+		return nil
+	}
+	var out []string
+	for _, p := range strings.Split(v, ",") {
+		if p = strings.TrimSpace(p); p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+// mergeDenyPaths unions two lists, keeping the first list's order so the
+// table is stable across reconciles and does not churn the ConfigMap.
+func mergeDenyPaths(have, add []string) []string {
+	if len(add) == 0 {
+		return have
+	}
+	seen := make(map[string]bool, len(have))
+	for _, p := range have {
+		seen[p] = true
+	}
+	for _, p := range add {
+		if !seen[p] {
+			have = append(have, p)
+			seen[p] = true
+		}
+	}
+	return have
 }

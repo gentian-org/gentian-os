@@ -101,6 +101,10 @@ const (
 	edgeAuthzForwardAnnotation    = "gentianos.io/edge-authz-forward-token"
 	edgeAuthzCookieAnnotation     = "gentianos.io/edge-authz-cookie"
 	edgeAuthzAuthModeAnnotation   = "gentianos.io/edge-authz-mode"
+	// edgeAuthzDenyPathsAnnotation carries the exposure's denyPaths to the
+	// shim's table. Comma-separated because an annotation is a string and a
+	// path cannot contain a comma without being escaped, which none are.
+	edgeAuthzDenyPathsAnnotation = "gentianos.io/edge-authz-deny-paths"
 	componentDatabaseSecretSuffix = "-database"
 )
 
@@ -548,18 +552,27 @@ func buildExposureRoute(comp *gentianov1alpha1.Component, name, host string, zon
 	if e.AuthMode == gentianov1alpha1.AuthModeJWT || e.AuthMode == gentianov1alpha1.AuthModeBearer {
 		mode = "bearer"
 	}
+	annotations := map[string]string{
+		edgeAuthzRelationAnnotation: authz.relation,
+		edgeAuthzObjectAnnotation:   authz.object,
+		edgeAuthzForwardAnnotation:  fmt.Sprint(authz.forwardToken),
+		edgeAuthzCookieAnnotation:   zone.cookie,
+		edgeAuthzAuthModeAnnotation: mode,
+	}
+	// denyPaths is not a route rule. A gateway route matches by prefix, so
+	// the denied path is already inside the rule that serves the host, and
+	// the more specific rule that would shadow it still needs a backend to
+	// send the request to. It is refused at L2 instead, which is the one
+	// place that sees every request to this host.
+	if len(e.DenyPaths) > 0 {
+		annotations[edgeAuthzDenyPathsAnnotation] = strings.Join(e.DenyPaths, ",")
+	}
 	return &gatewayv1.HTTPRoute{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      name,
-			Namespace: comp.Namespace,
-			Labels:    labels,
-			Annotations: map[string]string{
-				edgeAuthzRelationAnnotation: authz.relation,
-				edgeAuthzObjectAnnotation:   authz.object,
-				edgeAuthzForwardAnnotation:  fmt.Sprint(authz.forwardToken),
-				edgeAuthzCookieAnnotation:   zone.cookie,
-				edgeAuthzAuthModeAnnotation: mode,
-			},
+			Name:        name,
+			Namespace:   comp.Namespace,
+			Labels:      labels,
+			Annotations: annotations,
 		},
 		Spec: gatewayv1.HTTPRouteSpec{
 			CommonRouteSpec: gatewayv1.CommonRouteSpec{ParentRefs: []gatewayv1.ParentReference{parent}},

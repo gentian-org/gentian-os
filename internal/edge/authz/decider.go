@@ -195,6 +195,13 @@ func (d *Decider) Decide(ctx context.Context, req Request) Decision {
 	if strings.HasPrefix(req.Path, edgeOAuth2Prefix) {
 		return Decision{Allow: true, RemoveHeaders: append([]string{"authorization"}, identityHeaders...)}
 	}
+	// Deny wins, and it wins before identity is looked at: the profile said
+	// this path is not published, so who is asking does not enter into it.
+	// Below the edge's own endpoints, because denying /oauth2/ would refuse
+	// the sign-in that the deny rule exists to sit behind.
+	if route.Denies(req.Path) {
+		return deny(http.StatusForbidden, "path is not published on "+req.Host)
+	}
 	// Where the SESSION is, which is what the route's auth mode says and
 	// nothing else.
 	//

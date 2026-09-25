@@ -76,7 +76,7 @@ steps yet; `work-packages.md` is where their content lives until they are.
 | S7A.10 | The installer does what it claims | ◐ 1 of 7 done |
 | S7A.11 | Signing out does not ask a second time | ◐ built, not verified |
 | S7A.12 | The tile catalogue leaves the director | ✅ |
-| S7A.13 | `denyPaths` promises a control it does not apply | ☐ |
+| S7A.13 | `denyPaths` promises a control it does not apply | ✅ built at L2 |
 | S7A.14 | A release reaches a cluster by an immutable name | ✅ |
 | S7A.15 | A zone's hosts follow the components, not a list | ☐ |
 | S7A.16 | The app-lifecycle API authenticates nobody | ☐ |
@@ -550,7 +550,7 @@ console sidesteps it by asking on the tenant (`object: tenant`), which is
 right for a console that administers the tenant it runs in, and wrong as a
 general answer.
 
-### S7A.13 ☐ `denyPaths` promises a control it does not apply
+### S7A.13 ✅ `denyPaths` promises a control it does not apply
 
 `ComponentProfile.spec.expose[].denyPaths` is declared, documented as "refused
 even where Paths admits them. Deny wins regardless", and read by no code
@@ -562,12 +562,27 @@ every reason to believe that listing an administrative path there keeps it off
 the edge, and it does not — the path is served. The same is true of
 `stripPrefix` and `source`, though neither reads as a security control.
 
-Either build it or take it out, and prefer building it: deny rules are what a
-component needs to expose a UI without exposing its own admin endpoints, and
-the alternative is every app carrying that logic itself. Until one or the
-other lands, the field is a false statement in a published API — the same
-pattern the September threat-model exercise turned up, and the second time the
-CRD has described a control we do not have.
+**Built, at L2.** Not as a route rule: a gateway route matches by prefix, so
+the denied path is already inside the rule that serves the host, and the more
+specific rule that would shadow it still needs a backend to send the request
+to. Gateway API has no direct-response filter here. The edge authorization
+service is the one place that already sees every request to a host, so the
+exposure's list travels there on the route as an annotation, the operator
+unions it per host — two exposures share a host and deny wins — and the shim
+refuses a match with 403 before it looks at identity. The profile said the
+path is not published, so who is asking does not enter into it.
+
+Below the edge's own endpoints, because denying `/oauth2/` would refuse the
+sign-in the deny rule exists to sit behind. Prefixes stop at segment
+boundaries, so a denied `/admin` does not take `/administrators` with it, and
+a query string cannot defeat the rule.
+
+**`source` is the same promise and is still unkept.** `expose[].source` pins
+the caller, and the CRD says Collabora's WOPI callbacks are `authMode: none`
+and "safe only because the caller is pinned". No code reads it either. That
+reads as a security control whatever the earlier note here said, and it is the
+next one to close. `stripPrefix` is also unread, and that one is a routing
+convenience rather than a control.
 
 ### S7A.14 ✅ A release reaches a cluster by an immutable name
 

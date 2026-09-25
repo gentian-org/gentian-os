@@ -70,6 +70,8 @@ func table() *Table {
 		{Host: "console.k.example", Relation: "can_enter", Object: "tenant:platform", AccessTokenCookie: "at", ForwardToken: true, AuthMode: AuthModeOIDC},
 		{Host: "id.k.example", Relation: "can_configure", Object: "cluster:c1", AccessTokenCookie: "at", IDTokenCookie: "idt", EndSessionURL: "https://id.k.example/auth/realms/kernel/protocol/openid-connect/logout", KeepClientToken: true, AuthMode: AuthModeOIDC},
 		{Host: "api.k.example", Relation: "can_view", Object: "tenant:platform", AuthMode: AuthModeBearer},
+		{Host: "shop.k.example", Relation: "can_use", Object: "app:acme/odoo", AccessTokenCookie: "at", AuthMode: AuthModeOIDC,
+			DenyPaths: []string{"/web/database", "/admin"}},
 	}}
 }
 
@@ -414,5 +416,81 @@ func TestARefusedBrowserIsToldHowToLeave(t *testing.T) {
 	})
 	if dec.Allow || dec.Browser {
 		t.Fatalf("an API refusal must stay a bare status: allow=%v browser=%v", dec.Allow, dec.Browser)
+	}
+}
+
+// denyPaths is a control the CRD promised for a while and nothing applied: a
+// component author could list an administrative path and have it served
+// anyway. It is refused at L2, before identity is looked at, because the
+// profile said the path is not published and who is asking does not enter
+// into it.
+func TestADeniedPathIsRefusedWhoeverIsAsking(t *testing.T) {
+	store := &fakeStore{allow: map[string]bool{"user:root|can_use|app:acme/odoo": true}}
+	d := decider(store)
+	allowed := func(path string) Decision {
+		return d.Decide(context.Background(), Request{
+			Host: "shop.k.example", Path: path, Cookies: map[string]string{"at": "root-token"},
+		})
+	}
+	// root holds the relation, so every refusal below is the deny rule.
+	if dec := allowed("/web"); !dec.Allow {
+		t.Fatalf("/web should be served: %s", dec.Reason)
+	}
+	for _, path := range []string{"/web/database", "/web/database/manager", "/admin", "/admin/"} {
+		if dec := allowed(path); dec.Allow || dec.Status != http.StatusForbidden {
+			t.Fatalf("%s: allow=%v status=%d, want a 403", path, dec.Allow, dec.Status)
+		}
+	}
+	// Prefixes stop at a segment boundary: a denied /admin does not take
+	// /administrators with it.
+	for _, path := range []string{"/administrators", "/web/databases"} {
+		if dec := allowed(path); !dec.Allow {
+			t.Fatalf("%s should be served, deny matched too much: %s", path, dec.Reason)
+		}
+	}
+	// A query string is not part of the path and must not defeat the rule.
+	if dec := allowed("/admin?x=1"); dec.Allow {
+		t.Fatal("a query string got past the deny rule")
+	}
+}
+
+// Signing in has to keep working behind a deny rule, so the edge's own
+// endpoints are answered before it.
+func TestADenyRuleDoesNotRefuseTheSignInItSitsBehind(t *testing.T) {
+	d := decider(&fakeStore{})
+	// The callback is allowed outright; sign-out answers its own redirect.
+	// Neither may become the deny rule's 403.
+	if dec := d.Decide(context.Background(), Request{Host: "shop.k.example", Path: "/oauth2/callback"}); !dec.Allow {
+		t.Fatalf("the callback was refused behind a deny rule: %s", dec.Reason)
+	}
+	if dec := d.Decide(context.Background(), Request{Host: "shop.k.example", Path: SignOutPath}); dec.Status == http.StatusForbidden {
+		t.Fatalf("signing out was refused behind a deny rule: %s", dec.Reason)
+	}
+}
+
+// A profile that wrote "admin" means the same thing as one that wrote
+// "/admin", and an empty entry must not turn into "/" and refuse the host.
+func TestDenyPathsAreNormalisedAndAnEmptyOneIsDropped(t *testing.T) {
+	tbl, err := ParseTable([]byte(`routes:
+- host: shop.k.example
+  relation: can_use
+  object: app:acme/odoo
+  authMode: oidc
+  denyPaths: ["admin", "  ", "/web/database/"]
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := tbl.Match("shop.k.example")
+	if got := r.DenyPaths; len(got) != 2 || got[0] != "/admin" || got[1] != "/web/database/" {
+		t.Fatalf("denyPaths = %v", got)
+	}
+	for _, path := range []string{"/admin/users", "/web/database"} {
+		if !r.Denies(path) {
+			t.Fatalf("%s should be denied", path)
+		}
+	}
+	if r.Denies("/") {
+		t.Fatal("an empty entry refused the whole host")
 	}
 }

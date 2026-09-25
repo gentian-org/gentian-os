@@ -18,6 +18,7 @@ package controller
 
 import (
 	"context"
+	"sort"
 	"testing"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -195,6 +196,60 @@ func TestAComponentRouteCarriesItsQuestion(t *testing.T) {
 	}
 	if len(entries) != 1 || entries[0].Host != "console.k.example" || entries[0].Relation != "can_enter" || !entries[0].ForwardToken || entries[0].AuthMode != "oidc" || entries[0].AccessTokenCookie != edgeKernelAccessTokenCookie {
 		t.Fatalf("entries = %+v", entries)
+	}
+}
+
+// denyPaths reaches the enforcement point. The CRD described the control for
+// a while and no code read the field, so a component author could list an
+// administrative path, believe it kept off the edge, and have it served.
+//
+// It is carried on the route and unioned per host, because two exposures
+// share a host and deny wins: an entry that denies a path denies it for
+// everything on that host.
+func TestDenyPathsReachTheTableAndAreUnionedPerHost(t *testing.T) {
+	comp := &gentianov1alpha1.Component{}
+	comp.Name, comp.Namespace = "odoo", "tenant-acme"
+	zone := edgeZone{domain: "k.example", cookie: edgeKernelAccessTokenCookie, sectionName: wildcardListenerName}
+	build := func(name, sub string, deny []string) *gatewayv1.HTTPRoute {
+		e := &gentianov1alpha1.ExposureSpec{
+			Name: name, Surface: gentianov1alpha1.SurfaceGateway, AuthMode: gentianov1alpha1.AuthModeOIDC,
+			SubDomain: sub, DenyPaths: deny,
+			Backend: gentianov1alpha1.BackendRef{Service: "odoo", Port: 80},
+		}
+		return buildExposureRoute(comp, "odoo-"+name, sub+".k.example", zone, e,
+			exposureAuthz(platformTenantFixture(), false), "k.example")
+	}
+	web := build("web", "shop", []string{"/web/database"})
+	api := build("api", "shop", []string{"/admin"})
+	other := build("wiki", "wiki", nil)
+
+	if web.Annotations[edgeAuthzDenyPathsAnnotation] != "/web/database" {
+		t.Fatalf("annotation = %q", web.Annotations[edgeAuthzDenyPathsAnnotation])
+	}
+	if _, has := other.Annotations[edgeAuthzDenyPathsAnnotation]; has {
+		t.Fatal("an exposure that denies nothing must not carry the annotation")
+	}
+
+	scheme := runtime.NewScheme()
+	_ = gatewayv1.Install(scheme)
+	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(web, api, other).Build()
+	entries, err := componentRouteTableEntries(context.Background(), c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	byHost := map[string][]string{}
+	for _, e := range entries {
+		byHost[e.Host] = e.DenyPaths
+	}
+	// Both exposures' entries, in the order the routes list: stable across
+	// reconciles, which is what keeps the shim's ConfigMap from churning.
+	got := append([]string(nil), byHost["shop.k.example"]...)
+	sort.Strings(got)
+	if len(got) != 2 || got[0] != "/admin" || got[1] != "/web/database" {
+		t.Fatalf("shop denyPaths = %v, want both exposures' union", got)
+	}
+	if len(byHost["wiki.k.example"]) != 0 {
+		t.Fatalf("wiki denyPaths = %v, want none", byHost["wiki.k.example"])
 	}
 }
 
