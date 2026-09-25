@@ -74,7 +74,7 @@ steps yet; `work-packages.md` is where their content lives until they are.
 | S7A.9 | The kernel UIs are actually usable | ✅ |
 | S7A.9b | A refusal a person can act on | ✅ |
 | S7A.10 | The installer does what it claims | ◐ 6 of 7; one decided |
-| S7A.10b | The v5 step set is the v4 step set | ◐ 7 of 9 migrated |
+| S7A.10b | The v5 step set is the v4 step set | ✅ |
 | S7A.11 | Signing out does not ask a second time | ◐ built, not verified |
 | S7A.12 | The tile catalogue leaves the director | ✅ |
 | S7A.13 | `denyPaths` promises a control it does not apply | ✅ built at L2 |
@@ -97,21 +97,17 @@ steps yet; `work-packages.md` is where their content lives until they are.
 2. **S7A.6 — remove the bundled console from the desktop.** Its Resources tab
    still calls an operator `PUT` that no longer exists, and the image carries
    a Keycloak admin credential that goes with it.
-3. **S7A.8 — the authorization view**, the last console screen.
-4. **S7A.15 — zone hosts derived from what the operator routes.**
-5. **S7A.16 — the app-lifecycle API authenticates nobody.**
-6. **S7A.11 — verify sign-out**; it is built and unverified.
-7. **S7A.7 — scope the zone cookie per host**, before any third-party
-   application is routed.
-8. **S7A.13 — `denyPaths`**: build it or take it out of the CRD.
-9. **S7A.10 — the installer's remaining six**, of which tenant teardown
-   blocks S8.
-10. **S7A.17 — the director speaks for Keycloak.** In M1, not after it: the
-    screens it brings back are the console's, and putting them in later means
-    shipping the console twice.
-11. **S8 — purge and reinstall**, which is what makes M1 reached rather
-    than demonstrated.
-12. **After M1**, the work packages in the order in §6.
+3. **S7A.17 — the director speaks for Keycloak.** In M1, not after it: the
+   screens it brings back are the console's, and putting them in later means
+   shipping the console twice.
+4. **S7A.11 and S7A.7 — verify in a browser.** Both are built and neither has
+   been exercised: sign-out without the second question, and a zone cookie
+   that does not reach a third-party application.
+5. **S8 — purge and reinstall**, which is what makes M1 reached rather
+   than demonstrated. A purge now also exercises what S7A.10b added: the
+   trust-anchor dispatch and the repository handoff have never run on a
+   cluster that started from nothing.
+6. **After M1**, the work packages in the order in §6.
 
 ---
 
@@ -625,12 +621,12 @@ decided rather than built. The two still open are 4 and 5.
    `make lint-step-order` now refuses a forward dependency, and found this one
    as its first act. 65 steps across both sets check out.
 
-### S7A.10b ◐ The v5 step set is the v4 step set
+### S7A.10b ✅ The v5 step set is the v4 step set
 
 Not a numbered step of its own; recorded here because "the installer does what
 it claims" hid it. A functional comparison of the two sets — not a diff of
 their filenames, which differ by more than renaming — found **nine** v4 steps
-with no v5 equivalent. Seven are migrated, one is deliberate, one is left.
+with no v5 equivalent. All nine are migrated.
 
 | migrated | what was broken without it |
 |---|---|
@@ -642,6 +638,8 @@ with no v5 equivalent. Seven are migrated, one is deliberate, one is left.
 | `E-01-tenants` | a plain uninstall left Tenant, Component and App finalizers behind |
 | `E-02-recovery-kit` | every install ended with no kit |
 | `E-03-revoke-bootstrap-token` | every install ended with a live root token |
+| `A-09-cluster-issuers` | a cluster without DNS-01 got **no trust anchor at all** |
+| `C-06-os-repository-handoff` | the bootstrap credential for a private `gentian-os` outlived its window |
 
 Three v5 steps had kept only the first half of their v4 counterpart, which a
 name comparison cannot see: `B-08` seeded the KV paths and never released the
@@ -656,20 +654,32 @@ four landed in a namespace that does not exist. And v5 delivered the Kyverno
 admission controller with **no ClusterPolicies**, which from outside is
 indistinguishable from one that is working.
 
-**Left: `C-07-os-repository-handoff`**, and migrating it alone accomplishes
-nothing. Its precondition is absent too — v5's `A-06` never applies the
-bootstrap repository credential, so an install against a private or mirrored
-`gentian-os` has no Argo CD credential during the bootstrap window and `B-01`'s
-Applications cannot resolve their source. The public default is unaffected,
-which is why this is last.
+**The trust anchor.** v5 reached `apply_gentian_cluster_issuers` only through
+`install_kernel_wildcard`, which returns early when the DNS provider is
+`none` — so such a cluster got no ClusterIssuers at all, not even the HTTP-01
+one it can actually use, and the two offline anchors had no v5 path at all.
+`A-09-cluster-issuers` is the dispatch, as a step of its own: HTTP-01 always,
+DNS-01 when a provider is named, `self-signed` bootstrapping its own root CA,
+`private-ca` from an operator-supplied Secret, and an unknown mode refused
+rather than quietly downgraded to public ACME. `C-03` keeps the wildcard.
 
-**Also outstanding, from the same comparison:** `A-06-cluster-issuers` is only
-partly covered. v5 reaches `apply_gentian_cluster_issuers` through
-`install_kernel_wildcard`, which returns early when the DNS provider is `none`
-— so such a cluster gets no ClusterIssuers at all, where v4 still applied the
-HTTP-01 one. The `issuerMode` dispatch for `self-signed` and `private-ca` has
-no v5 equivalent either, so an offline or internal-domain cluster has no trust
-anchor.
+Two things the migration had to fix rather than copy. The self-signed manifest
+hardcoded `namespace: cert-manager` on its root CA Certificate, which on v5 is
+a namespace that does not exist — it is namespace-free now and both steps pass
+the one they resolved. And both `destroy()` bodies ended in
+`kubectl delete clusterissuer --all`, which on a shared cluster removes every
+other tenant's anchor too; they delete what this installer labelled.
+
+**The bootstrap repository credential.** `C-07`'s precondition was absent as
+well: v5's Argo CD step never applied the bootstrap repo-creds Secret, so an
+install against a private or mirrored `gentian-os` had no credential during
+the bootstrap window and `B-01`'s Applications could not resolve their source.
+`A-06` registers it now and `C-06-os-repository-handoff` removes it once
+`Repository/gentian-os` reports `credentialSatisfied` — confirm, then delete,
+so there is never a window with no working credential. The bridge was landing
+in a literal `argocd` namespace; `gentian_argocd_namespace` resolves it from
+the layout. The public default has no bridge and nothing to hand over, which
+is why v5 got this far without noticing.
 
 ### S7A.11 ◐ Signing out does not ask a second time
 

@@ -59,7 +59,8 @@ check() {
             # signs from gentian-root-ca-tls, which only the Certificate keeps
             # current.
             kubectl get clusterissuer gentian-ca >/dev/null 2>&1 || return 1
-            kubectl get certificate gentian-root-ca -n cert-manager >/dev/null 2>&1
+            kubectl get certificate gentian-root-ca \
+                -n "$(gentian_cert_manager_namespace)" >/dev/null 2>&1
             ;;
         acme-dns01|acme-http01)
             # The issuers this cluster's ACME endpoint NAMES, not any
@@ -102,22 +103,24 @@ apply() {
             install_kernel_cert_resources
             ;;
         self-signed)
-            gentian_run kubectl apply -f \
+            local cmns; cmns="$(gentian_cert_manager_namespace)"
+            gentian_run kubectl apply -n "${cmns}" -f \
                 "${SCRIPT_DIR}/kernel/manifests/cert-manager/cluster-issuers-selfsigned.yaml"
             info "Waiting for the root CA to be issued (up to 2m)..."
             kubectl wait --for=condition=Ready certificate/gentian-root-ca \
-                -n cert-manager --timeout=120s ||
+                -n "${cmns}" --timeout=120s ||
                 warn "gentian-root-ca not Ready yet; gentian-ca will not issue until it is."
             warn "Certificates from this anchor are not publicly trusted."
-            warn "  Import cert-manager/gentian-root-ca-tls tls.crt into any client"
+            warn "  Import ${cmns}/gentian-root-ca-tls tls.crt into any client"
             warn "  that validates kernel hostnames from outside the cluster."
             ;;
         private-ca)
             # An operator-supplied CA: the Secret has to exist first, because
             # cert-manager's ca issuer has nothing to generate from.
             local ref="${CERT_CA_BUNDLE_SECRET:-gentian-root-ca-tls}"
-            if ! kubectl get secret "${ref}" -n cert-manager >/dev/null 2>&1; then
-                error "issuerMode is private-ca but Secret cert-manager/${ref} does not exist."
+            local cmns; cmns="$(gentian_cert_manager_namespace)"
+            if ! kubectl get secret "${ref}" -n "${cmns}" >/dev/null 2>&1; then
+                error "issuerMode is private-ca but Secret ${cmns}/${ref} does not exist."
                 error "  Create it from your CA's certificate and key, then re-run this step."
                 return 1
             fi
@@ -148,7 +151,11 @@ EOF
 destroy() {
     kubectl delete clusterissuer -l gentianos.io/issuer-mode \
         --ignore-not-found=true 2>/dev/null || true
-    kubectl delete certificate gentian-root-ca -n cert-manager \
+    kubectl delete certificate gentian-root-ca \
+        -n "$(gentian_cert_manager_namespace)" \
         --ignore-not-found=true 2>/dev/null || true
-    kubectl delete clusterissuer --all --ignore-not-found=true 2>/dev/null || true
+    # Was `delete clusterissuer --all`, which on a shared cluster takes out
+    # every other tenant of it too. Only what this installer labelled.
+    kubectl delete clusterissuer -l app.kubernetes.io/managed-by=gentian-install \
+        --ignore-not-found=true 2>/dev/null || true
 }

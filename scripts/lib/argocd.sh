@@ -6,6 +6,27 @@
 # =============================================================================
 
 # =============================================================================
+# gentian_argocd_namespace — where Argo CD actually runs.
+#
+# v4 installs it into a namespace called argocd; v5's layout puts it in the
+# gitops namespace that kernel/namespaces.yaml names. The literal was fine
+# while there was one layout and is not any more: the bootstrap repo-creds
+# bridge below landed in `argocd` on a v5 cluster, where nothing reads it, and
+# the Applications that need it could not resolve their source.
+# =============================================================================
+gentian_argocd_namespace() {
+    if [[ -n "${ARGOCD_NAMESPACE:-}" ]]; then
+        echo "${ARGOCD_NAMESPACE}"
+        return 0
+    fi
+    if [[ "${GENTIAN_LAYOUT:-v4}" == "v5" ]]; then
+        ns_kernel gitops
+        return
+    fi
+    echo argocd
+}
+
+# =============================================================================
 # _apply_argocd_repo_creds <role> <repo_var> <auth_var> <user_var> <token_var>
 #
 # Registers a prefix-matched ArgoCD repo-creds Secret directly from the
@@ -36,14 +57,15 @@ _apply_argocd_repo_creds() {
         return 0
     fi
 
-    info "Registering bootstrap ArgoCD repo-creds for ${role} (${repo})..."
+    local ns; ns="$(gentian_argocd_namespace)"
+    info "Registering bootstrap ArgoCD repo-creds for ${role} (${repo}) in ${ns}..."
     if [[ "${auth}" == "bearer" ]]; then
         kubectl apply -f - <<EOF
 apiVersion: v1
 kind: Secret
 metadata:
   name: argocd-repo-creds-bootstrap-${role}
-  namespace: argocd
+  namespace: ${ns}
   labels:
     argocd.argoproj.io/secret-type: repo-creds
 stringData:
@@ -57,7 +79,7 @@ apiVersion: v1
 kind: Secret
 metadata:
   name: argocd-repo-creds-bootstrap-${role}
-  namespace: argocd
+  namespace: ${ns}
   labels:
     argocd.argoproj.io/secret-type: repo-creds
 stringData:

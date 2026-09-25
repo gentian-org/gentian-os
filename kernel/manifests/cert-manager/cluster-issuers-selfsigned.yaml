@@ -35,8 +35,10 @@ spec:
 apiVersion: cert-manager.io/v1
 kind: Certificate
 metadata:
+  # No namespace: cert-manager does not always live in a namespace called
+  # cert-manager -- v5 puts it in the edge namespace -- so the applying step
+  # passes -n with the namespace it actually resolved.
   name: gentian-root-ca
-  namespace: cert-manager
   labels:
     app.kubernetes.io/managed-by: gentian-install
     app.kubernetes.io/part-of: gentian-os

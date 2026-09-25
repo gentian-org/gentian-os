@@ -2,8 +2,8 @@
 # step: A-06-argocd
 # phase: control-plane
 # requires: A-01-namespaces
-# provides: Argo CD (server, repo-server, application controller, applicationset controller) and argocd-image-updater in the gitops namespace
-# mutates: the gitops namespace, Argo CD CRDs, cluster-scoped RBAC
+# provides: Argo CD (server, repo-server, application controller, applicationset controller), argocd-image-updater, and the bootstrap repo-creds bridge for a private gentian-os, in the gitops namespace
+# mutates: the gitops namespace, Argo CD CRDs, cluster-scoped RBAC, the bootstrap repo-creds Secret
 # pins: argocd
 
 # Argo CD's upstream manifests are written for a namespace called argocd:
@@ -81,10 +81,25 @@ apply() {
         --set "config.argocd\.namespace=${ns}" \
         --set "config.watch\.namespaces=${ns}" \
         --wait --timeout 5m
+
+    # The bootstrap bridge for a private or mirrored gentian-os. B-01's
+    # Applications are the first thing to read that repository and they read
+    # it before OpenBao is reachable, so the only credential that can serve
+    # them is the one the installer collected. A no-op on the public default
+    # (GENTIAN_OS_AUTH=none), which is why v5 got this far without it.
+    #
+    # Deliberately not in check(): the bridge is conditional, and
+    # C-06-os-repository-handoff deletes it as soon as the Repository claim
+    # proves it can read the same credential from OpenBao. Requiring it here
+    # would leave this step unsatisfiable from that moment on.
+    _apply_argocd_repo_creds gentian-os GENTIAN_OS_REPO GENTIAN_OS_AUTH \
+        GENTIAN_OS_GIT_USERNAME GENTIAN_OS_GIT_TOKEN
 }
 
 destroy() {
     local ns; ns="$(_argocd_ns)"
+    kubectl delete secret argocd-repo-creds-bootstrap-gentian-os -n "${ns}" \
+        --ignore-not-found >/dev/null 2>&1 || true
     helm uninstall argocd-image-updater -n "${ns}" >/dev/null 2>&1 || true
     curl -fsSL "https://raw.githubusercontent.com/argoproj/argo-cd/$(gentian_pin argocd manifest)/manifests/install.yaml" 2>/dev/null \
         | sed "s/^\(\s*\)namespace: argocd$/\1namespace: ${ns}/" \
