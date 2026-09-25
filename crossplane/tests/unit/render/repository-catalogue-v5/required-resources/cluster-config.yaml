@@ -1,0 +1,18 @@
+# What this fixture is for: the catalogue-sync ApplicationSet and the AppProject
+# source entry are written into Argo CD's namespace, and that was the literal
+# string "argocd" for every repository. On v5 Argo CD runs in kernel-gitops, so
+# both landed in a namespace that does not exist and Argo CD saw neither --
+# which reads as an empty catalogue rather than as a missing declaration.
+#
+# Every other repository fixture is v4, so the goldens agreed with the bug.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: gentian-cluster-config
+  namespace: kernel-provisioning
+  labels:
+    gentianos.io/config-type: cluster-config
+data:
+  kernel.controlNamespace: kernel-control
+  kernel.gitopsNamespace: kernel-gitops
+  kernel.layout: v5

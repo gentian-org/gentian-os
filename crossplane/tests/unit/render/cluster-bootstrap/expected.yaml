@@ -121,6 +121,7 @@ spec:
         identity.internalUrl: http://gentian-idp-keycloak-keycloakx-http.platform-kernel.svc.cluster.local:8080/auth
         identity.kernelRealm: ""
         kernel.controlNamespace: gentian-system
+        kernel.gitopsNamespace: argocd
         kernel.layout: v4
         llm.enabled: "false"
         mail.egressHost: ""

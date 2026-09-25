@@ -43,7 +43,7 @@ spec:
       kind: AppProject
       metadata:
         name: gentianos-tenants
-        namespace: argocd
+        namespace: kernel-gitops
       spec:
         sourceRepos:
         - https://github.com/gentian-org/gentian-deployments
@@ -78,7 +78,7 @@ spec:
       kind: ExternalSecret
       metadata:
         name: repo-deployments-m288c
-        namespace: argocd
+        namespace: kernel-gitops
       spec:
         data:
         - remoteRef:

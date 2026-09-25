@@ -964,6 +964,14 @@ spec:
                          every cluster -- correct on v4 and nowhere on v5, which
                          is why the director could clone and never push. */}}
                     kernel.controlNamespace: {{ $controlNs | quote }}
+                    {{- /* Where Argo CD runs, for the same reason the control
+                         namespace is published: the Repository composition
+                         writes Argo CD's repository Secret and the catalogue
+                         ApplicationSet, and it wrote both to "argocd" on
+                         every cluster -- correct on v4 and a namespace that
+                         does not exist on v5, so Argo CD never saw the
+                         credential or the ApplicationSet. */}}
+                    kernel.gitopsNamespace: {{ $argoNs | quote }}
                     kernel.layout: {{ $layout | quote }}
                     # Whether this cluster serves one tenant or many.
                     #

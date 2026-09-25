@@ -132,6 +132,14 @@ spec:
             {{- $ccData = .data | default dict }}
             {{- end }}
             {{- $kernelNs := dig "kernel.controlNamespace" "gentian-system" $ccData }}
+            {{- /* Where Argo CD runs. Absent means a cluster whose claim
+                 predates the key, which is a v4 cluster, and v4's name is the
+                 right answer there -- the same reasoning as the control
+                 namespace above. This was written as "argocd" four times, so
+                 on v5 the repository Secret and the catalogue ApplicationSet
+                 landed in a namespace that does not exist and Argo CD saw
+                 neither. */}}
+            {{- $argoNs := dig "kernel.gitopsNamespace" "argocd" $ccData }}
             {{- /* No credential means nothing to wait for, so the artefacts below are
                  emitted immediately rather than never. */}}
             {{- $satisfied := not $hasCred }}
@@ -303,7 +311,7 @@ spec:
                   kind: Secret
                   metadata:
                     name: repo-{{ $name }}
-                    namespace: argocd
+                    namespace: {{ $argoNs }}
                     labels:
                       argocd.argoproj.io/secret-type: repository
                   stringData:
@@ -319,7 +327,7 @@ spec:
                   kind: ExternalSecret
                   metadata:
                     name: repo-{{ $name }}
-                    namespace: argocd
+                    namespace: {{ $argoNs }}
                   spec:
                     refreshInterval: 1h
                     secretStoreRef:
@@ -379,7 +387,7 @@ spec:
                   kind: AppProject
                   metadata:
                     name: gentianos-tenants
-                    namespace: argocd
+                    namespace: {{ $argoNs }}
                   spec:
                     sourceRepos:
                       - {{ $url | quote }}
@@ -423,7 +431,7 @@ spec:
                   kind: ApplicationSet
                   metadata:
                     name: catalogue-{{ $name }}
-                    namespace: argocd
+                    namespace: {{ $argoNs }}
                     finalizers:
                       - resources-finalizer.argocd.argoproj.io
                   spec:

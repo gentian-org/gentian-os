@@ -10,4 +10,8 @@ metadata:
     gentianos.io/config-type: cluster-config
 data:
   kernel.controlNamespace: kernel-control
+  # Where Argo CD runs. Without it the repository Secret and the catalogue
+  # ApplicationSet land in "argocd", which does not exist on v5, and Argo CD
+  # sees neither.
+  kernel.gitopsNamespace: kernel-gitops
   kernel.layout: v5
