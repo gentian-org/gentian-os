@@ -81,7 +81,7 @@ steps yet; `work-packages.md` is where their content lives until they are.
 | S7A.14 | A release reaches a cluster by an immutable name | ✅ |
 | S7A.15 | A zone's hosts follow the components, not a list | ◐ two of five; three are kernel tier |
 | S7A.16 | The app-lifecycle API authenticates nobody | ✅ a shared token |
-| S7A.17 | The director speaks for Keycloak | ☐ |
+| S7A.17 | The director speaks for Keycloak | ◐ credential, routes and screens built; the record's second half is left |
 
 ### What is left, in the order to do it
 
@@ -94,12 +94,22 @@ steps yet; `work-packages.md` is where their content lives until they are.
    Three refusals stay by design until the work behind them lands: minting a
    backup key, a group-scoped notification audience, and audit events beyond
    the change history (roadmap §1.12).
-2. **S7A.6 — remove the bundled console from the desktop.** Its Resources tab
-   still calls an operator `PUT` that no longer exists, and the image carries
-   a Keycloak admin credential that goes with it.
-3. **S7A.17 — the director speaks for Keycloak.** In M1, not after it: the
-   screens it brings back are the console's, and putting them in later means
-   shipping the console twice.
+2. **S7A.6 — remove the bundled console from the desktop.** The only S7A item
+   not started, and the reason is its size rather than its difficulty: about
+   4,700 lines across `frontend/src/admin/` and a `backend/app/api/routes/
+   admin.py` entangled with services the desktop's own plumbing uses. The
+   frontend half is two import sites and is nearly free; the backend half is
+   not, and doing it badly takes the desktop down.
+
+   Its security goal is narrower than the deletion and can be had first:
+   `keycloak_admin_password` is a setting the desktop's backend still reads,
+   used by `keycloak_admin_store`, `keycloak_user_groups`,
+   `keycloak_security_policy_store` and `keycloak_audit_fetcher`. Nothing
+   supplies it on v5, so the credential is latent rather than live. Removing
+   the setting is what makes it impossible rather than merely unfed.
+3. **S7A.17's remaining half.** The listener's request-id read-back and a
+   durable home for the director's record of the authority. Both are against
+   M3; neither blocks M1.
 4. **S7A.11 and S7A.7 — verify in a browser.** Both are built and neither has
    been exercised: sign-out without the second question, and a zone cookie
    that does not reach a third-party application.
@@ -908,7 +918,7 @@ existed. Relaxing that rule to "a service's exposures are gateway-only" is a
 prerequisite here, not a separate piece of work; it is in
 [target-component-structure.md](target-component-structure.md) §5.
 
-### S7A.17 ☐ The director speaks for Keycloak
+### S7A.17 ◐ The director speaks for Keycloak
 
 **The same rule as S7A.2, one source of truth along.** Keycloak holds *who*,
 OpenFGA holds *what they may do*, git holds *how the cluster is configured*,
@@ -955,11 +965,24 @@ credential is the director's; the authority is always the caller's. Two
 things follow that are easy to get wrong:
 
 - **Scope the credential per realm.** A tenant administrator's request must
-  not be able to reach another tenant's realm even through a bug. Keycloak
-  26.2's fine-grained admin permissions are what make that expressible — the
-  same mechanism S7A.4 was going to use to scope a human administrator, used
-  to scope the director instead. One `realm-admin` for every realm would make
-  a single missing OpenFGA check a cross-tenant breach.
+  not be able to reach another tenant's realm even through a bug.
+
+  **Two corrections to what this paragraph first said.** Keycloak 26.2's
+  fine-grained admin permissions cannot express this at all: they scope a
+  client WITHIN its own realm, and a client in the kernel realm has no
+  authority in a tenant's realm regardless of them. And a `master`-realm
+  client CAN be scoped per realm, through the `<realm>-realm` client roles
+  that master holds for every realm — so the choice was never "per-realm
+  client or a credential for everything".
+
+  The real choice was confinement by **role**, with one credential, against
+  confinement by **credential**, with one per realm. The first is what
+  provisioning tooling does — Terraform's provider, `keycloak-config-cli`, CI
+  — because it is a trusted admin plane managing many realms. The director is
+  not that: it handles a tenant administrator's request at runtime, and under
+  role-confinement a missed OpenFGA check still reaches every realm. So it is
+  one credential per realm, and to touch another tenant's realm the director
+  would have to be handed a credential it was never given.
 - **Refuse rather than fall back.** If the check cannot be made — OpenFGA
   unreachable, no relation for this object — the answer is a refusal, not the
   call.
@@ -1009,6 +1032,36 @@ console; each one appears in the change log with the caller and the relation;
 the same administrator attempting it against another tenant's realm is
 refused; and no image other than the director's holds a Keycloak credential.
 
+**What is built.** The credential, provisioned per realm by the operator's
+Keycloak platform reconciler and handed to the director as a mounted Secret
+with a key per realm — re-read rather than read once, because a tenant's realm
+appears after the director started. Five `realm-management` roles and the list
+is the security statement: `view-users`, `query-users`, `query-groups`,
+`manage-users`, and `manage-realm` for the password policy, which has no
+narrower role. The confinement is in the type: a realm arrives only through
+`Client.Realm`, which refuses one there is no credential for, and every admin
+URL is built from that value, so a handler cannot spell a realm into a call. A
+tenant sharing the kernel realm gets the group subtree as a second boundary,
+because there the credential is no longer one.
+
+The routes are `can_manage_users` throughout and `can_set_policy` for the
+password policy, and every write is an action under `/actions/` rather than a
+PUT. The console's People screen reads and writes them; Keycloak's own console
+stays at the bottom of it as the detail view.
+
+**What is left, and both are named against M3.** The listener reading
+`X-Gentian-Request-Id` back off the admin request it is already inside, and a
+durable place for the director's half of the record. Keycloak already holds
+the change itself with retention, so what remains is the join and the
+authority — which is also what roadmap §1.12 needs for refusals, and a refusal
+reaches Keycloak not at all.
+
+**And the desktop still holds the capability**, which is S7A.6 rather than
+this step: `keycloak_admin_password` is a setting the desktop's backend still
+reads, and four services still use it. Nothing supplies it on v5, so it is
+latent rather than live — but "no image other than the director's holds a
+Keycloak credential" is not true until the code path is gone.
+
 **In M1, and it gates M3.** Inviting a user is a Keycloak write, and today
 nothing a tenant administrator can reach is allowed to make one, so M3 cannot
 start without this. It is inside M1 rather than after it because what it
@@ -1032,8 +1085,8 @@ cannot execute the page. Blocked on S7A.10's tenant teardown.
 
 ## 5. M2–M7 — what each one means
 
-Stated now so the work in §6 can be pointed at one of them. None is broken
-into steps yet.
+Stated now so the work in §6 can be pointed at one of them. M2, M3 and M4 are
+broken into steps below; M5–M7 are not yet.
 
 **M2 — the first functional tenant.** A tenant claim in
 `gentian-deployments` becomes a running tenant: its namespace, its realm, its
@@ -1067,6 +1120,118 @@ is reversible at each one, and what the downtime is.
 namespaces and the code paths that carry it are removed rather than kept
 working. Until M7 every `ternary "kernel-x" "old-x" $v5` in the Compositions
 is a branch that has to stay correct.
+
+### M2 — the first functional tenant
+
+Almost all of this exists and none of it has run end to end: `demo` on this
+cluster was made by v4. The steps are therefore mostly "prove", and the ones
+that are not say so.
+
+| | what has to be true | where it lives | state |
+|---|---|---|---|
+| M2.1 | The claim reaches `gentian-deployments` | console → director `POST /v1/clusters/{c}/tenants` | built, **never written** — blocked on S7A.4 |
+| M2.2 | Argo CD syncs it and the XTenant composes | `gentian-claims` ApplicationSet, `tenant-default` | exercised on v4 only |
+| M2.3 | Namespace, quota and limit range exist and bind | `tenant-default`: namespace, resourcequota, limitrange | exercised on v4 only |
+| M2.4 | The realm exists with its groups, user profile and required actions | `tenant-default`: keycloak-realm, keycloak-group-* | exercised on v4 only |
+| M2.5 | The realm can send mail | operator copies `keycloak-smtp-credentials` into the tenant realm | needs the `smtp-relay` credential supplied |
+| M2.6 | The zone answers: client, session, Gateway listener, hosts, DNS | `keycloak-edge-zone-client` + the operator's `zoneSecurityPolicySpec` + `zone_hosts_projection.go` | **the second zone has never been stood up** |
+| M2.7 | The tenant's desktop is installed and opens | desktop ComponentProfile, `component_desktop.go` | exercised on v4 only |
+| M2.8 | The director holds a Keycloak credential for the new realm | `KeycloakPlatformReconciler.ensureDirectorRealmCredentials` | **new, never run** |
+| M2.9 | A tenant administrator can sign in and see the tenant | the whole of the above | — |
+| M2.10 | The tenant has a backup policy | `SetTenantBackupPolicy`, backup schedules | exercised on v4 only |
+
+**Two things are genuinely new rather than unexercised.**
+
+M2.6 is the open half of S3 and the "done when" of S7A.1. Every zone-shaped
+bug on this cluster so far has been found with one zone, where the kernel
+zone's values and the tenant zone's values are the same values. A second zone
+is the first time they differ, and the projection in
+`zone_hosts_projection.go` is what stops the list of hosts being written by
+hand.
+
+M2.8 has a timing shape worth knowing before it is mistaken for a failure.
+The credential is written by a reconcile loop with a five-minute period, so a
+tenant created at 12:00 may have no director credential until 12:05, and the
+People screen answers 503 naming the realm until it does. That refusal is
+correct and it is not an error; if it persists past a loop, the operator's log
+names the realm and the reason.
+
+**Done when** a tenant claim written by the console becomes a tenant whose
+administrator signs in at its own host, sees its desktop, and is refused
+nothing they hold.
+
+### M3 — the first user invited by a tenant administrator
+
+The write path is built (S7A.17). What M3 adds is everything around the
+invitation actually arriving and working.
+
+| | what has to be true | where it lives | state |
+|---|---|---|---|
+| M3.1 | The administrator can reach the People screen | console `IdentitySection`, director `GET /v1/tenants/{t}/people` | built, needs a browser |
+| M3.2 | The invitation is created and the link sent | director `POST /actions/invite-person` | built, never sent a real mail |
+| M3.3 | The mail leaves the cluster and arrives | realm `smtpServer` → the relay | **the first real test of mail** |
+| M3.4 | The link is accepted by Keycloak | the action token names the zone client | derived; **the redirect is unresolved — see below** |
+| M3.5 | The person sets a password and signs in | Keycloak required actions + the zone session | — |
+| M3.6 | They land in that tenant and no other | zone cookie scoped per host (S7A.7) | built, needs a browser |
+| M3.7 | Their groups reach the authorization graph | the event listener → the operator's projector | built, exercised on v4 |
+| M3.8 | The change is recorded with who was allowed to ask | Keycloak admin event + the director's request id | **half built — see below** |
+
+**M3.4, the decision to make.** An action-token link may carry a
+`redirect_uri`, and Keycloak refuses one that is not on the client's valid
+redirect URIs. The zone client lists each host's `/oauth2/callback` there and
+nothing else, which is the OIDC callback and not a page to land on. So today
+the director sends no redirect, and the person finishes on Keycloak's own
+"your account has been updated" page with no way into the product.
+
+The fix is to add `https://<host>.<zoneDomain>/*` to the zone client's
+`validRedirectUris`, which `validPostLogoutRedirectUris` already carries. It
+is a widening: an open redirect within the zone's own hosts. Those hosts are
+the platform's own and the post-logout list already allows them, so the
+exposure is small — but it is a loosening of something stated deliberately,
+and it is recorded here rather than taken quietly.
+
+**M3.8, what is left of the record.** Keycloak writes an admin event for the
+change, with retention, whether it came through the director or through
+Keycloak's own console — so the "what changed" half needs nothing built. The
+director sets `X-Gentian-Request-Id` on every admin call so the two halves can
+be joined. What is missing is the listener reading that header back off the
+request it is already inside, and somewhere durable for the director's half —
+the caller, the relation, the object. That store is also what roadmap §1.12
+needs for refusals, which by definition reach Keycloak not at all, and it is
+the only piece of S7A.17 deliberately left for later.
+
+**Done when** a tenant administrator invites somebody by address, that person
+receives a mail, sets a password, signs in, lands in that tenant and no other,
+and the change is visible with the caller and the relation that permitted it.
+
+### M4 — the first app a user can actually work in
+
+Not "the Helm release is Ready". A member opens a tile, is already signed in,
+and does the thing the app is for.
+
+| | what has to be true | where it lives | state |
+|---|---|---|---|
+| M4.1 | The catalogue offers the entry and the tenant may install it | `catalogue_source`, entitlements | exercised on v4 |
+| M4.2 | Installing is a commit and the App composes | director `POST /v1/tenants/{t}/apps/{p}`, `app-default` | exercised on v4 |
+| M4.3 | Its database and storage are fulfilled | the app composition's claims | exercised on v4 |
+| M4.4 | Its OIDC client exists and the zone session reaches it | `app-default` keycloak client, the edge | exercised on v4 |
+| M4.5 | The tile appears for somebody who holds the relation | the operator's tile catalogue, `tilecatalogue` | exercised on v4 |
+| M4.6 | Opening it does not ask for a second sign-in | the zone session, per-host cookie (S7A.7) | **changed since it last worked** |
+| M4.7 | What the app consumes from another app is granted | `AppGrant`, integrations | exercised on v4 |
+| M4.8 | The person writes something and it survives a restart | the app, its volumes | — |
+
+**M4.6 is the one to watch.** Scoping the zone cookie per host (S7A.7) means
+the first request to each host does one silent round trip to Keycloak, and on
+a framed component that round trip now happens inside the frame. It should be
+invisible; if a framed component comes up blank on first open, this is why,
+and it is measurable here rather than mysterious later.
+
+**M4.8 is the point of the milestone.** Everything above it can be true while
+the app is unusable, and no status field anywhere reports that.
+
+**Done when** a member of a tenant opens a tile, is already signed in, does
+the thing the app is for with their own identity and the tenant's data, and
+what they did is still there afterwards.
 
 ---
 

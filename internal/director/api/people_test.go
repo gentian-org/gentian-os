@@ -49,6 +49,8 @@ type fakeIdentity struct {
 	groups map[string][]identity.Group
 	// requestIDs is what travelled with each call.
 	requestIDs []string
+	// lastInvite is what the last invitation asked for.
+	lastInvite identity.Invitation
 }
 
 func newFakeIdentity(realms ...string) *fakeIdentity {
@@ -108,6 +110,9 @@ func (f *fakeIdentity) Groups(ctx context.Context, r identity.Realm) ([]identity
 
 func (f *fakeIdentity) Invite(ctx context.Context, r identity.Realm, inv identity.Invitation) (identity.Person, error) {
 	f.note(ctx, r)
+	f.mu.Lock()
+	f.lastInvite = inv
+	f.mu.Unlock()
 	if !strings.Contains(inv.Email, "@") {
 		return identity.Person{}, errNotAnAddress
 	}
@@ -338,5 +343,28 @@ func TestWithoutIdentityTheScreensDoNotExist(t *testing.T) {
 		if status != http.StatusNotFound {
 			t.Errorf("%s answered %d; with no credential it should not be registered", path, status)
 		}
+	}
+}
+
+// The invitation link has to name a client that exists in the realm, and the
+// zone's own client is what the person signs in through the moment they have
+// a password. Derived, because a value configured per tenant is one more
+// thing to write per tenant and one more thing to get wrong.
+func TestTheInvitationNamesTheZonesOwnClient(t *testing.T) {
+	f := newFakeIdentity("demo")
+	h := startWithIdentity(t, f)
+
+	if status, _ := h.do(t, http.MethodPost, "/v1/tenants/demo/actions/invite-person",
+		h.token(t, "tenant-demo", "tom"), `{"email":"ada@example.com"}`); status != http.StatusAccepted {
+		t.Fatalf("invite: %d", status)
+	}
+	if f.lastInvite.ClientID != "gentian-edge-demo" {
+		t.Fatalf("client = %q, want gentian-edge-demo", f.lastInvite.ClientID)
+	}
+	// And no redirect: the zone client's valid redirect URIs are each host's
+	// /oauth2/callback, which is not a page to land on. Sending one Keycloak
+	// refuses would make every invitation fail.
+	if f.lastInvite.RedirectURI != "" {
+		t.Fatalf("redirect = %q, want none until the client accepts one", f.lastInvite.RedirectURI)
 	}
 }

@@ -190,11 +190,9 @@ func (s *Server) invitePerson(w http.ResponseWriter, r *http.Request, c call) {
 		return
 	}
 	person, err := s.cfg.Identity.Invite(identityContext(r), realm, identity.Invitation{
-		Email:  body.Email,
-		Groups: body.Groups,
-		// The zone's own client and host, so the link lands where they
-		// already are rather than on a realm page with no way back.
-		ClientID:    s.cfg.InviteClientID,
+		Email:       body.Email,
+		Groups:      body.Groups,
+		ClientID:    s.inviteClientID(realm),
 		RedirectURI: s.cfg.InviteRedirectURI,
 	})
 	if err != nil {
@@ -218,6 +216,33 @@ func (s *Server) invitePerson(w http.ResponseWriter, r *http.Request, c call) {
 	}
 	s.recordIdentityAction(r, c, "invite", realm, person.Username)
 	s.json(w, http.StatusAccepted, map[string]any{"person": person, "mailed": true})
+}
+
+// inviteClientID is the client the invitation link is for.
+//
+// Keycloak validates an action token against a client, so the link has to name
+// one that exists in the realm. The zone's own client is the right one: it is
+// what the person will sign in through the moment they have a password.
+//
+// Derived from the realm rather than configured per tenant, because a
+// configured value would be one more thing to write per tenant and one more
+// thing to get wrong. The composition names the zone client
+// gentian-edge-<zone>, and the zone is the realm's own name in every case but
+// one: a cluster whose kernel realm was renamed keeps the zone called "kernel"
+// while the realm is called something else. Such a cluster sets the override.
+//
+// No redirect by default. A redirect must be on the client's valid redirect
+// URIs, and the composition lists only each host's /oauth2/callback there --
+// which is the OIDC callback and not a page to land on. Sending none leaves
+// Keycloak's own "your account has been updated" page, which works and says
+// nothing useful; giving the person a way back is the decision recorded
+// against M3 rather than one taken here by widening what the zone client
+// accepts.
+func (s *Server) inviteClientID(realm identity.Realm) string {
+	if s.cfg.InviteClientID != "" {
+		return s.cfg.InviteClientID
+	}
+	return "gentian-edge-" + realm.Name()
 }
 
 // setMembership adds or removes one person from one group.

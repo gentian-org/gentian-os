@@ -140,9 +140,10 @@ type Config struct {
 	// reach is decided by what the operator handed it rather than by what a
 	// handler remembered to check.
 	Identity Identity
-	// InviteClientID and InviteRedirectURI are where an invitation lands.
-	// Keycloak refuses an action-token mail that names neither, and a link
-	// that lands on a realm page with no way back is a person stuck.
+	// InviteClientID overrides the client an invitation link names. Empty
+	// derives it from the realm, which is right on every cluster but one --
+	// see inviteClientID. InviteRedirectURI is where the link lands, and is
+	// empty until the zone client accepts somewhere worth landing.
 	InviteClientID    string
 	InviteRedirectURI string
 }
