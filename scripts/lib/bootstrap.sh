@@ -2429,6 +2429,79 @@ EOF
         generated=1
     fi
 
+    # The other three repositories the platform reads: its own charts, the app
+    # catalogue and the desktop. Without a claim each one has no AppProject
+    # source, so Argo CD refuses to deploy from it, and the catalogue-sync
+    # ApplicationSet has nothing to sync -- which reads as an empty catalogue
+    # rather than as a missing declaration.
+    #
+    # Public by default, and that is a real shape rather than a degenerate
+    # one: spec.credential is optional precisely so a public repository does
+    # not have to name a vault path for a secret that does not exist, which
+    # would then sit in the credential manager as a requirement nobody can
+    # satisfy. A mirror sets the matching AUTH and gets the credential block.
+    local _repo_role _repo_url _repo_branch _repo_auth _repo_file _repo_xrd_role _repo_auth_var
+    for _repo_role in gentian-os gentian-apps gentian-ui; do
+        _repo_file="${kernel_dir}/claims/${_repo_role}-repository.yaml"
+        [[ -f "${_repo_file}" ]] && continue
+        # role is the XRD's vocabulary and is not always the repository's
+        # name: the catalogue is "apps".
+        _repo_xrd_role="${_repo_role}"
+        case "${_repo_role}" in
+            gentian-os)
+                _repo_url="${GENTIAN_OS_REPO:-https://github.com/gentian-org/gentian-os}"
+                _repo_branch="${GENTIAN_OS_BRANCH:-main}"
+                _repo_auth="${GENTIAN_OS_AUTH:-none}"
+                _repo_auth_var=GENTIAN_OS_AUTH ;;
+            gentian-apps)
+                _repo_url="${GENTIAN_APPS_REPO:-https://github.com/gentian-org/gentian-apps}"
+                _repo_branch="${GENTIAN_APPS_BRANCH:-main}"
+                _repo_auth="${GENTIAN_APPS_AUTH:-none}"
+                _repo_auth_var=GENTIAN_APPS_AUTH
+                _repo_xrd_role=apps ;;
+            gentian-ui)
+                _repo_url="${GENTIAN_UI_REPO:-https://github.com/gentian-org/gentian-ui}"
+                _repo_branch="${GENTIAN_UI_BRANCH:-main}"
+                _repo_auth="${GENTIAN_UI_AUTH:-none}"
+                _repo_auth_var=GENTIAN_UI_AUTH ;;
+        esac
+        cat > "${_repo_file}" <<EOF
+# ${_repo_role}, as this cluster reads it. The claim is what gives Argo CD an
+# AppProject source for the repository; without one it refuses to deploy from
+# it whatever the Application says.
+#
+# No credential block: this repository is public. Naming a vault path for a
+# secret that does not exist puts an unsatisfiable requirement in front of
+# whoever runs \`make check-credentials\`. A mirror sets ${_repo_auth_var}
+# and re-runs this scaffold to get one.
+apiVersion: gentianos.io/v1alpha1
+kind: Repository
+metadata:
+  name: ${_repo_role}
+  namespace: ${CROSSPLANE_NAMESPACE:-crossplane-system}
+spec:
+  type: git
+  role: ${_repo_xrd_role}
+  writable: false
+  branch: ${_repo_branch}
+  endpoints:
+    inCluster: ${_repo_url}
+EOF
+        if [[ "${_repo_auth}" != "none" ]]; then
+            cat >> "${_repo_file}" <<EOF
+  credential:
+    vaultPath: gentian-os/kernel/repositories/${_repo_role}
+    displayName: "${_repo_role} repository read access"
+    phase: bootstrap
+    authType: ${_repo_auth}
+    validate:
+      type: git-https
+EOF
+        fi
+        info "Scaffolded ${_repo_file}"
+        generated=1
+    done
+
     if [[ ! -f "${kernel_dir}/values.yaml" ]]; then
         cat > "${kernel_dir}/values.yaml" <<EOF
 # Cluster overlay — only what's unique to THIS cluster. Tier-wide policy

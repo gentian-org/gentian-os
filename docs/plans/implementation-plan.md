@@ -485,16 +485,21 @@ a program is reading it.
 
 ### S7A.10 ◐ The installer does what it claims
 
-Two cold-start races are fixed, and:
+Two cold-start races are fixed, three of the seven below are done, and:
 
 1. ✅ The OpenBao **`oidc` auth mount** — `B-09-vault-oidc-mount` enables it
    between the seeded secrets and the Cluster claim, so the roles the
    composition composes have a mount to attach to. Its *configuration* needs
    the realm's client secret and Keycloak serving discovery, and belongs after
    `D-02`.
-2. ☐ The four **`Repository` claims**. Without them nothing composes Argo CD's
-   repository Secret, the operator's push credential or the catalogue-sync
-   ApplicationSet, and a private deployments repository has no credential path.
+2. ✅ The four **`Repository` claims** are scaffolded. `deployments` is
+   writable and names its vault path, because it is the one repository the
+   platform commits to. The other three — `gentian-os`, `gentian-apps` as role
+   `apps`, and `gentian-ui` — are public by default and carry **no**
+   `credential` block: naming a vault path for a secret that does not exist
+   would put an unsatisfiable requirement in front of anybody running
+   `make check-credentials`. A mirror sets the matching `_AUTH` and gets one.
+   All four validate against the XRD.
 3. ☐ **Tenant teardown**, without which a purge cannot complete — S8 needs it.
 4. ☐ The **credential catalogue** that `make check-credentials` reads.
 5. ☐ The **recovery kit** and **bootstrap token revocation**, so an install
