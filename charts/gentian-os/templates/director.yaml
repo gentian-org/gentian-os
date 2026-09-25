@@ -16,6 +16,18 @@
 {{- if .Values.director.enabled }}
 {{- $deployments := .Values.appLifecycle.deployments | default dict }}
 {{- $gitSecret := $deployments.gitCredentialsSecret | default "" }}
+{{- /* Two credential shapes, as repository-default.yaml writes them. basic is
+     username+password, stored under the key `.git-credentials` as a complete
+     scheme://user:pass@host/path URL. bearer has no userinfo form, so it is a
+     single `token` key, read as an env var and sent as an http.extraHeader.
+     The key name matters: a Secret volume projects each key as a file NAMED
+     for the key, so the basic file has to be subPath-mounted onto the path
+     this reads, or it lands at /etc/git/.git-credentials and the clone below
+     silently falls back to an anonymous URL whose push then fails with
+     "could not read Username". That is exactly what happened on 2026-09-25. */}}
+{{- $gitAuthType := $deployments.authType | default "basic" }}
+{{- $gitBearer := eq $gitAuthType "bearer" }}
+{{- $gitCredsFile := and $gitSecret (not $gitBearer) }}
 {{- $checkout := "/data/gentian-deployments" }}
 apiVersion: v1
 kind: ServiceAccount
@@ -102,9 +114,14 @@ spec:
             - |
               set -e
               CLONE_URL="${GENTIAN_DEPLOYMENTS_REPO}"
+              {{- if $gitCredsFile }}
+              # An optional Secret volume that does not exist yet mounts as an
+              # empty DIRECTORY at this path rather than failing, and -s alone
+              # reports true for a directory, so -f is what rules that out.
               if [ -f /etc/git/credentials ] && [ -s /etc/git/credentials ]; then
                 CLONE_URL="$(cat /etc/git/credentials)"
               fi
+              {{- end }}
               rm -rf {{ $checkout }}/* {{ $checkout }}/.git 2>/dev/null || true
               for attempt in 1 2 3 4 5; do
                 git clone "${CLONE_URL}" {{ $checkout }} && exit 0
@@ -117,6 +134,23 @@ spec:
               value: {{ $deployments.repo | quote }}
             - name: HOME
               value: /tmp
+            {{- if $gitBearer }}
+            - name: GIT_CONFIG_COUNT
+              value: "1"
+            # Dependent env var: $(GIT_BEARER_TOKEN) below is expanded by
+            # Kubernetes, not by a shell, so the order here is what makes it
+            # resolve.
+            - name: GIT_BEARER_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $gitSecret | quote }}
+                  key: token
+                  optional: true
+            - name: GIT_CONFIG_KEY_0
+              value: http.extraHeader
+            - name: GIT_CONFIG_VALUE_0
+              value: "Authorization: Bearer $(GIT_BEARER_TOKEN)"
+            {{- end }}
           securityContext:
             allowPrivilegeEscalation: false
             capabilities:
@@ -127,9 +161,19 @@ spec:
               mountPath: {{ $checkout }}
             - name: tmp
               mountPath: /tmp
-            {{- if $gitSecret }}
+            {{- if $gitCredsFile }}
+            # subPath, so the key lands at this exact path. Without it the
+            # file is named for the key and the test above never matches.
+            # This is the operator's mount, spelled the same way on purpose.
+            #
+            # A subPath mount is not refreshed when its Secret changes, and
+            # the clone only happens here, at startup. So a director that
+            # started before the Repository claim was satisfied keeps its
+            # anonymous origin until the pod is restarted -- which is once,
+            # at bootstrap, and is what B-01 does anyway.
             - name: git-credentials
-              mountPath: /etc/git
+              mountPath: /etc/git/credentials
+              subPath: .git-credentials
               readOnly: true
             {{- end }}
       containers:
@@ -213,14 +257,28 @@ spec:
             # the platform roles -- and the director looks like it has lost its
             # repository rather than like it cannot be trusted with it.
             - name: GIT_CONFIG_COUNT
-              value: "1"
+              value: {{ ternary "2" "1" $gitBearer | quote }}
             - name: GIT_CONFIG_KEY_0
               value: safe.directory
             - name: GIT_CONFIG_VALUE_0
               value: {{ $checkout | quote }}
-            {{- if $gitSecret }}
+            {{- if $gitCredsFile }}
             # The clone carries the credential in its origin URL, which is
             # what the push then reads; nothing else in this container has it.
+            {{- end }}
+            {{- if $gitBearer }}
+            # A bearer token is not in the origin URL, so this container needs
+            # it too, as the same header the clone used.
+            - name: GIT_BEARER_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $gitSecret | quote }}
+                  key: token
+                  optional: true
+            - name: GIT_CONFIG_KEY_1
+              value: http.extraHeader
+            - name: GIT_CONFIG_VALUE_1
+              value: "Authorization: Bearer $(GIT_BEARER_TOKEN)"
             {{- end }}
             {{- with .Values.trustAnchorSecret }}
             - name: SSL_CERT_FILE
@@ -265,7 +323,9 @@ spec:
           configMap:
             name: gentian-tiles
             optional: true
-        {{- if $gitSecret }}
+        {{- if $gitCredsFile }}
+        # Optional: the Secret is materialised from OpenBao by the deployments
+        # Repository claim, which may be satisfied after this pod first runs.
         - name: git-credentials
           secret:
             secretName: {{ $gitSecret | quote }}
