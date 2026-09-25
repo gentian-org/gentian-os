@@ -797,6 +797,64 @@ _purge_guard_single_instance() {
     return 0
 }
 
+# purge_tenant_namespaces — the namespaces the installer never created.
+#
+# Every namespace this teardown deletes is one a step made: A-01 creates the
+# kernel set and its destroy() removes the same list. A tenant's namespaces are
+# not on that list, because nothing in the installer made them -- the tenant
+# Composition did, when somebody provisioned a tenant. So a purge stripped and
+# deleted the Tenant object and left tenant-<name>, tenant-<name>-dmz and any
+# shared-<app> or system-<function> behind it standing, with no owner left to
+# finalize them and nothing that names them.
+#
+# S8 is a purge followed by a reinstall, and a reinstall onto a cluster still
+# holding a tenant's namespace does not fail cleanly: the Composition adopts
+# whatever is there, including PVCs bound to the previous install's data.
+#
+# Ordered before the kernel namespaces and after the gentianos.io sweep, which
+# is where the operator and Crossplane are already gone: nothing can recreate
+# what this removes, and nothing is still holding a finalizer it would need to
+# answer.
+#
+# By label first, because that is what the Composition writes and it is the
+# only thing that is true of a namespace whose name nobody can predict. By
+# prefix as well, for one written before the label existed and for one whose
+# tier label was lost with the object that set it.
+purge_tenant_namespaces() {
+    banner "Purge — tenant, shared and system namespaces"
+    local ns seen found
+    seen=""
+    found=0
+    for ns in $(kubectl get namespaces \
+        -l 'gentianos.io/tier in (tenant,tenant-dmz,shared,system,system-dmz)' \
+        -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}' 2>/dev/null || true); do
+        [[ -n "${ns}" ]] || continue
+        seen="${seen} ${ns}"
+    done
+    # The prefixes the layout reserves. A namespace matching one of these is
+    # the platform's whatever label it is or is not carrying.
+    for ns in $(kubectl get namespaces -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}' 2>/dev/null || true); do
+        case "${ns}" in
+            tenant-*|shared-*|system-*) ;;
+            *) continue ;;
+        esac
+        case " ${seen} " in *" ${ns} "*) continue ;; esac
+        seen="${seen} ${ns}"
+    done
+
+    for ns in ${seen}; do
+        found=$((found + 1))
+        info "Removing ${ns}..."
+        # PVCs first, or the NFS directories behind them are never reclaimed
+        # and a reinstall binds new StatefulSets to the old data.
+        _drain_pvcs "${ns}"
+        _delete_namespace "${ns}"
+    done
+    if [[ "${found}" -eq 0 ]]; then
+        info "No tenant, shared or system namespaces; nothing to remove."
+    fi
+}
+
 purge_release_volumes() {
     local ns
     # Before the volumes, because the reverse pass that follows deletes the Argo

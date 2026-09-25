@@ -505,6 +505,11 @@ main() {
             fi
             drive_reverse
             if [[ "${GENTIAN_PURGE}" == "1" && "${GENTIAN_DRY_RUN}" != "1" ]]; then
+                # The namespaces no step created, and so no step's destroy()
+                # removes: a tenant's, and any shared or system namespace a
+                # component landed in. Before the volume pass, which is what
+                # reclaims what draining them releases.
+                purge_tenant_namespaces
                 purge_delete_volumes
                 # After the volumes: the CRDs removed here define the objects
                 # those volumes back, and taking the definitions first strands

@@ -500,7 +500,19 @@ Two cold-start races are fixed, three of the seven below are done, and:
    would put an unsatisfiable requirement in front of anybody running
    `make check-credentials`. A mirror sets the matching `_AUTH` and gets one.
    All four validate against the XRD.
-3. ☐ **Tenant teardown**, without which a purge cannot complete — S8 needs it.
+3. ✅ **Tenant teardown.** Every namespace the teardown removed was one a
+   step created: A-01 makes the kernel set and its `destroy()` removes the
+   same list. A tenant's namespaces are on no list, because the Composition
+   made them — so a purge stripped and deleted the `Tenant` object and left
+   `tenant-<name>`, its `-dmz` and any `shared-*` or `system-*` standing, with
+   no owner left to finalize them and nothing that names them. A reinstall
+   onto that does not fail cleanly: the Composition adopts what is there,
+   PVCs bound to the previous install's data included.
+   `purge_tenant_namespaces` runs after the `gentianos.io` sweep, where the
+   operator and Crossplane are already gone, and before the kernel namespaces.
+   It finds them by tier label and by the prefixes the layout reserves, drains
+   their PVCs first so the volumes are reclaimed, and leaves everything else
+   alone.
 4. ☐ The **credential catalogue** that `make check-credentials` reads.
 5. ☐ The **recovery kit** and **bootstrap token revocation**, so an install
    does not end with the installer's root token still valid.
