@@ -73,7 +73,7 @@ steps yet; `work-packages.md` is where their content lives until they are.
 | S7A.8 | A read-only view of the authorization state | ☐ |
 | S7A.9 | The kernel UIs are actually usable | ✅ |
 | S7A.9b | A refusal a person can act on | ✅ |
-| S7A.10 | The installer does what it claims | ◐ 1 of 7 done |
+| S7A.10 | The installer does what it claims | ◐ 4 of 7; one decided, two open |
 | S7A.11 | Signing out does not ask a second time | ◐ built, not verified |
 | S7A.12 | The tile catalogue leaves the director | ✅ |
 | S7A.13 | `denyPaths` promises a control it does not apply | ✅ built at L2 |
@@ -485,7 +485,8 @@ a program is reading it.
 
 ### S7A.10 ◐ The installer does what it claims
 
-Two cold-start races are fixed, three of the seven below are done, and:
+Two cold-start races are fixed, four of the seven below are done and one is
+decided rather than built. The two still open are 4 and 5.
 
 1. ✅ The OpenBao **`oidc` auth mount** — `B-09-vault-oidc-mount` enables it
    between the seeded secrets and the Cluster claim, so the roles the
