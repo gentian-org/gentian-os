@@ -46,14 +46,19 @@ spec:
   class: app              # the one mode chosen, must be in the profile's list
 ```
 
-| value | serves | who is responsible | exposure |
-|---|---|---|---|
-| `service` | other components, over contracts | the cluster administrator | none, by rule |
-| `app` | the people of one tenant | the tenant administrator | its own, in the tenant's zone |
-| `shared-app` | the people of several tenants, from one backend | the cluster administrator | its own, per tenant |
+| value | serves | who is responsible | instances | exposure |
+|---|---|---|---|---|
+| `service` | other components over contracts, and operators at its own console | the cluster administrator | one | in the kernel zone, gateway only |
+| `app` | the people of one tenant | the tenant administrator | one per tenant | in the tenant's zone |
+| `shared-app` | the people of several tenants, from one backend | the cluster administrator | one | in each tenant's zone |
 
-`service` is exclusive: a component that serves contracts does not also serve
-humans. If it appears to, it is two components.
+`service` is exclusive: a component may not be both a service and an app.
+
+**A service may expose, and the current rule that it may not is wrong.** See
+§5: it conflates a service's contract surface, which is in-cluster and is not
+an exposure, with having no north-south surface at all. Argo CD, Headlamp and
+the Keycloak console are services with consoles, and the rule is the reason
+their hosts are a hand-maintained list rather than components.
 
 **Why this replaces `tenancy: system | shared | tenant`.** The three current
 values mix a placement word, a bare adjective and a scope word for what is one
@@ -284,11 +289,59 @@ spec:
 A tile is a field on one entry of `expose`, not on the component. That is the
 right place and it already works, but it leaves one question half answered.
 
-**A `service` cannot have a tile, and the rule that says so is stronger than
-tiles.** A service has no `expose` at all, by CEL, on the profile and on the
-instance. A tile lives on an exposure, so there is nowhere to put one. Nothing
-further is needed and nothing should be added: "services have no tiles" is a
-consequence, not a rule of its own.
+**A `service` may have a tile, and the rule that currently forbids it is
+wrong.** Today CEL says a `system` component has no `expose` at all, on the
+profile and on the instance, and the stated reason is that *"a component
+serving contracts does not also serve humans"*. That conflates two claims:
+
+- **True, and worth keeping:** a service's *contract* surface is in-cluster.
+  Another component reaches it over a plain Service. That is not an exposure
+  and never was.
+- **False:** that a service therefore has no north-south surface. Argo CD,
+  Headlamp, the Keycloak console, OpenBao and a model gateway all have an
+  operator console, and it is the same component, not a second one.
+
+**What it costs today.** The tenant Composition carries
+`$zoneHosts := (list "console" "admin" "argocd" "headlamp" "id")` — a
+hand-maintained list of hosts, three of which are services with consoles that
+cannot be components because of this rule. That list is S7A.15, "a zone's
+hosts follow the components, not a list". Relaxing this rule is what makes
+S7A.15 buildable rather than a separate piece of work.
+
+**What is actually invariant about a service**, and should be the rule
+instead:
+
+1. **One instance, not one per tenant.** `defaultForTenants` is meaningless on
+   a service, and its exposure is not multiplied.
+2. **Gateway only, never perimeter.** A service's console sits behind the
+   kernel session. Publishing one on the perimeter, which by definition has no
+   session, is never right. The instance-level rule already says this for
+   perimeter enablements and should be lifted to the profile.
+3. **Its tile asks on the cluster.** Not on a tenant and not on an app. The
+   authorization model already has the relations: `can_operate_system` for
+   `service_admin`, plus `can_configure` and `can_audit`, all on `cluster`.
+
+Point 3 needs one schema change. `TileObject` offers `app` and `tenant` and
+nothing else, so a service's console has no object to ask a relation on. It
+needs `cluster`.
+
+```yaml
+spec:
+  classes: [service]
+  launch: tile
+  expose:
+    - name: console
+      surface: gateway            # a service is never perimeter
+      authMode: oidc
+      subDomain: argocd
+      backend: {service: argocd-server, port: 80}
+      tile:
+        displayName: Deployments
+        description: What is running, and whether it matches git
+        icon: deploy
+        relation: can_configure
+        object: cluster           # new value
+```
 
 **An `app` is not required to have one, and must not be.** Two of the
 platform's own components prove it:
@@ -313,7 +366,9 @@ to reach every app they installed**, and that happens in exactly three ways:
 1. **a tile**, on one of its exposures;
 2. **another component opens it** — Collabora from Nextcloud, a viewer from a
    file manager. Common in a suite, and the reason the blanket rule is wrong;
-3. **it is the launcher** — the desktop, and only the desktop.
+3. **nothing opens it** — either because it *is* the launcher, which is the
+   desktop and only the desktop, or because it has no human surface at all,
+   which is a database.
 
 Only the first is expressible today, so the second and third are
 indistinguishable from an omission. One field on the profile fixes it and says
@@ -325,7 +380,7 @@ spec:
   classes: [app]
   launch: tile                  # default: at least one expose entry has a tile
   # launch: {from: file-store}  # opened by whatever provides this contract
-  # launch: none                # this component is the launcher
+  # launch: none                # the launcher itself, or no human surface
 ```
 
 With CEL: `launch: tile` requires at least one `expose[].tile`, and the other
@@ -333,8 +388,9 @@ two require none. That turns a silent omission into a refusal at admission,
 and it makes a suite's navigation graph readable from the catalogue rather
 than from each app's own configuration.
 
-`shared-app` behaves as `app` here. `service` may not set `launch` at all,
-because it has no exposures to launch from.
+`shared-app` behaves as `app` here. A `service` with a console sets
+`launch: tile` like anything else; a service with no console, such as a
+database, sets `launch: none` and has no `expose` at all.
 
 ---
 
@@ -343,7 +399,6 @@ because it has no exposures to launch from.
 Existing and correct, restated with the new words:
 
 - `service` is exclusive: `classes` may not contain it alongside another.
-- `service` components have no `expose`, on the profile and on the instance.
 - `shared-app` requires `trustTier: platform`.
 - `forwardToken` requires `trustTier: platform`.
 - `class` and `profileRef.name` are immutable on the instance.
@@ -359,7 +414,13 @@ New, and the reason this document exists:
 - **`launch: tile` requires at least one `expose[].tile`**, and `launch: from`
   and `launch: none` require none, so an app nobody can open is refused at
   admission instead of installed and lost;
-- **`service` may not set `launch`**, having no exposures.
+- **a `service`'s exposures are all `surface: gateway`**, never perimeter,
+  and it switches on no perimeter enablement. This *replaces* the current rule
+  that a service has no exposure at all, which is wrong and which is why the
+  kernel UIs are a hand-maintained host list;
+- **a `service`'s tile asks `object: cluster`**, and an `app` or `shared-app`
+  tile does not;
+- **`defaultForTenants` is false for a `service`**, which has one instance.
 
 Still unbuilt and still a promise the CRD makes:
 
@@ -386,6 +447,8 @@ Still unbuilt and still a promise the CRD makes:
 | `package.deploymentMethod` | deleted | 2 profiles |
 | `package.compositionRef` | `package.composition` | nothing yet, unused |
 | nothing | `spec.launch` | new field, default `tile` |
+| `TileObject: app\|tenant` | `app\|tenant\|cluster` | nothing, additive |
+| CEL "system has no expose" | "service is gateway-only" | nothing yet, no service profiles exist |
 
 ---
 

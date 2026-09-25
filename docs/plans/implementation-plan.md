@@ -643,6 +643,14 @@ catalogue — would make the list follow the components instead of being
 maintained beside them. Until then, a component with a host of its own has to
 be added to the composition by hand.
 
+**Three of those five hosts cannot be components at all today**, which is the
+part of this that is not just plumbing. `argocd`, `headlamp` and `id` are
+services with an operator console, and CEL forbids a service from having any
+exposure. So they could not follow the components even if the projection
+existed. Relaxing that rule to "a service's exposures are gateway-only" is a
+prerequisite here, not a separate piece of work; it is in
+[target-component-structure.md](target-component-structure.md) §5.
+
 ### S7A.17 ☐ The director speaks for Keycloak
 
 **A reversal, stated as one.** S7A.4 decided that people and the realm's own
