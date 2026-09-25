@@ -70,10 +70,11 @@ steps yet; `work-packages.md` is where their content lives until they are.
 | S7A.5 | Keycloak looks like the rest of the product | ✅ |
 | S7A.6 | The console and the desktop hold nothing | ◐ console yes, desktop still holds a Keycloak credential |
 | S7A.7 | The zone cookie does not reach the applications | ◐ built, needs a browser |
-| S7A.8 | A read-only view of the authorization state | ◐ director serves it; no screen yet |
+| S7A.8 | A read-only view of the authorization state | ✅ |
 | S7A.9 | The kernel UIs are actually usable | ✅ |
 | S7A.9b | A refusal a person can act on | ✅ |
-| S7A.10 | The installer does what it claims | ◐ 4 of 7; one decided, two open |
+| S7A.10 | The installer does what it claims | ◐ 6 of 7; one decided |
+| S7A.10b | The v5 step set is the v4 step set | ◐ 7 of 9 migrated |
 | S7A.11 | Signing out does not ask a second time | ◐ built, not verified |
 | S7A.12 | The tile catalogue leaves the director | ✅ |
 | S7A.13 | `denyPaths` promises a control it does not apply | ✅ built at L2 |
@@ -474,7 +475,7 @@ Signing out everywhere at once is unaffected: the realm session ends and the
 back-channel logout marks it revoked, which every host's shim honours whatever
 cookie it read.
 
-### S7A.8 ◐ A read-only view of the authorization state
+### S7A.8 ✅ A read-only view of the authorization state
 
 Part of the same console, named separately because it replaces the idea of
 exposing OpenFGA's own playground — a development tool with a write surface.
@@ -502,7 +503,13 @@ two differ only in the separator and the reader knows the Keycloak name. And
 **a `tupleToUserset` is not followed** — a permission somebody holds through
 their relation to the cluster is the cluster's row to show, not the tenant's.
 
-**What is left is the screen.** The console still answers 501 for it.
+**The screen is built.** Platform security shows who holds what on the
+cluster, each row with the permissions its role carries. A tenant
+administrator holds no `can_audit`, so that one query is refused and the
+screen says so in words rather than showing an empty table — "you may not read
+this" and "nobody holds anything" are different answers. It replaced a
+counts-only summary that said how many bindings existed and never who held
+them.
 
 ### S7A.9 ✅ The kernel UIs are actually usable
 
@@ -578,9 +585,16 @@ decided rather than built. The two still open are 4 and 5.
    It finds them by tier label and by the prefixes the layout reserves, drains
    their PVCs first so the volumes are reclaimed, and leaves everything else
    alone.
-4. ☐ The **credential catalogue** that `make check-credentials` reads.
-5. ☐ The **recovery kit** and **bootstrap token revocation**, so an install
-   does not end with the installer's root token still valid.
+4. ✅ The **credential catalogue** that `make check-credentials` reads.
+   `C-05-credential-catalogue` creates the requirements and the ESO probes,
+   applying v4's manifest with the layout's namespace substituted.
+   `check-credentials` asked the cluster config where the control namespace is
+   rather than assuming `gentian-system`, which is why it reported nine
+   missing on a cluster where most were fine.
+5. ✅ The **recovery kit** and **bootstrap token revocation**.
+   `E-02-recovery-kit` and `E-03-revoke-bootstrap-token`. The second was
+   unsatisfiable until `D-03-vault-oidc-config` landed: its guard requires a
+   proven OIDC login, and with no `auth/oidc/config` nobody could make one.
 6. ◐ **Mail** and **LLM serving** — decided, not yet enforced. Both are
    deliberate drops for M1, and neither is a live defect: this cluster runs
    `mail.serviceMode: external` and `llm.enabled: false`, and both are gated
@@ -610,6 +624,52 @@ decided rather than built. The two still open are 4 and 5.
    paths must exist *before* the claims that consume them.
    `make lint-step-order` now refuses a forward dependency, and found this one
    as its first act. 65 steps across both sets check out.
+
+### S7A.10b ◐ The v5 step set is the v4 step set
+
+Not a numbered step of its own; recorded here because "the installer does what
+it claims" hid it. A functional comparison of the two sets — not a diff of
+their filenames, which differ by more than renaming — found **nine** v4 steps
+with no v5 equivalent. Seven are migrated, one is deliberate, one is left.
+
+| migrated | what was broken without it |
+|---|---|
+| `A-08-prewarm` | two cold-start races hit the first real workload instead of a throwaway pod |
+| `C-04-dns-wait` | a slow DNS publish read as Keycloak being unreachable |
+| `C-05-credential-catalogue` | `make check-credentials` reported every credential missing |
+| `D-03-vault-oidc-config` | **OpenBao accepted no Keycloak login at all** |
+| `D-04-gateway-wait` | an unprogrammed Gateway surfaced inside the realm bootstrap |
+| `E-01-tenants` | a plain uninstall left Tenant, Component and App finalizers behind |
+| `E-02-recovery-kit` | every install ended with no kit |
+| `E-03-revoke-bootstrap-token` | every install ended with a live root token |
+
+Three v5 steps had kept only the first half of their v4 counterpart, which a
+name comparison cannot see: `B-08` seeded the KV paths and never released the
+controllers waiting on them or cleared the local credential cache; `D-01`'s
+teardown deleted the Argo Application and left the operator Deployment, the
+`gentianos.io` CRDs and the tenant webhook standing.
+
+Two things that were not steps at all. The Repository Composition wrote Argo
+CD's repository Secret, its ExternalSecret, the AppProject source and the
+catalogue ApplicationSet into the literal `argocd` — four times, so on v5 all
+four landed in a namespace that does not exist. And v5 delivered the Kyverno
+admission controller with **no ClusterPolicies**, which from outside is
+indistinguishable from one that is working.
+
+**Left: `C-07-os-repository-handoff`**, and migrating it alone accomplishes
+nothing. Its precondition is absent too — v5's `A-06` never applies the
+bootstrap repository credential, so an install against a private or mirrored
+`gentian-os` has no Argo CD credential during the bootstrap window and `B-01`'s
+Applications cannot resolve their source. The public default is unaffected,
+which is why this is last.
+
+**Also outstanding, from the same comparison:** `A-06-cluster-issuers` is only
+partly covered. v5 reaches `apply_gentian_cluster_issuers` through
+`install_kernel_wildcard`, which returns early when the DNS provider is `none`
+— so such a cluster gets no ClusterIssuers at all, where v4 still applied the
+HTTP-01 one. The `issuerMode` dispatch for `self-signed` and `private-ca` has
+no v5 equivalent either, so an offline or internal-domain cluster has no trust
+anchor.
 
 ### S7A.11 ◐ Signing out does not ask a second time
 
