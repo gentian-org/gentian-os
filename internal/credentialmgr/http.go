@@ -536,11 +536,26 @@ func (s *Server) handleSet(w http.ResponseWriter, r *http.Request) {
 	// Validate BEFORE storing. This is what justifies the service existing at
 	// all: it turns "tenant provisioning stalled because a password was pasted
 	// with a trailing newline" into a rejected form field.
+	unvalidated := ""
 	if req.Validator != "" && req.Validator != "noop" {
 		if err := s.Validator.Validate(r.Context(), req.Validator, req.ValidateHost, body.Fields); err != nil {
-			writeErr(w, http.StatusUnprocessableEntity,
-				fmt.Errorf("validation failed against the target endpoint: %w", err))
-			return
+			// Nothing to probe is a gap in the requirement, not a fact about
+			// the credential. Refusing the write there is the wrong way
+			// round: the credential is still needed and the declaration is
+			// what is incomplete, so it is stored and reported as
+			// unvalidated. The deployments token could not be set at all
+			// until this distinction existed -- its entry asks for a
+			// git-https probe and names no host.
+			if errors.Is(err, ErrNoEndpoint) {
+				unvalidated = err.Error()
+				ctrl.Log.WithName("credentialmgr").Info(
+					"storing a credential that could not be validated",
+					"requirement", req.Name, "validator", req.Validator, "reason", unvalidated)
+			} else {
+				writeErr(w, http.StatusUnprocessableEntity,
+					fmt.Errorf("validation failed against the target endpoint: %w", err))
+				return
+			}
 		}
 	}
 
@@ -572,12 +587,23 @@ func (s *Server) handleSet(w http.ResponseWriter, r *http.Request) {
 	s.refreshConsumers(r.Context(), req.VaultPath)
 
 	// Metadata only in the response, as everywhere else.
-	writeJSON(w, http.StatusOK, map[string]any{
+	out := map[string]any{
 		"name":      name,
 		"vaultPath": req.VaultPath,
 		"stored":    true,
 		"setBy":     c.name,
-	})
+	}
+	// Said out loud rather than implied by its absence. A caller who asked for
+	// a validated write and got an unvalidated one should be told which they
+	// got, on the screen, at the time -- not left to infer it from a status
+	// field they were not looking at.
+	if unvalidated != "" {
+		out["validated"] = false
+		out["validationSkipped"] = unvalidated
+	} else if req.Validator != "" && req.Validator != "noop" {
+		out["validated"] = true
+	}
+	writeJSON(w, http.StatusOK, out)
 }
 
 // checkFields enforces the declared schema before anything is sent anywhere.

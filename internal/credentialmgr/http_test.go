@@ -799,3 +799,49 @@ func TestTheSummaryPrefersARefusalThatIsAboutTheCaller(t *testing.T) {
 		t.Fatalf("the summary kept the refusal that is about the role, not the caller: %v", err)
 	}
 }
+
+// A credential that cannot be probed is stored, and said to be unvalidated.
+//
+// Validation runs before the write and a failure refuses it, which is right
+// for a probe that says the credential is wrong. "There is nothing to probe"
+// is not that: it is a gap in the requirement's declaration, and refusing the
+// write because of it blocks whatever was waiting on the credential. The
+// deployments token could not be set at all for exactly this reason — its
+// catalogue entry asks for a git-https probe and named no host — which left
+// every console write answering 503 for want of a credential nobody was
+// allowed to store.
+func TestACredentialThatCannotBeProbedIsStoredAndSaysSo(t *testing.T) {
+	s, _ := newServer(t, requirementWithValidator("deployments-repository", "cluster",
+		"gentian-os/kernel/repositories/deployments", 0, "git-https"))
+	s.Validator = stubValidator{err: fmt.Errorf("%w: the requirement declares no host or url", ErrNoEndpoint)}
+
+	w := do(t, s, "PUT", "/v1/credentials/deployments-repository",
+		`{"fields":{"password":"a-real-token"}}`)
+	if w.Code != http.StatusOK {
+		t.Fatalf("a credential that could not be probed was refused: %d %s", w.Code, w.Body.String())
+	}
+	var got map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	if got["stored"] != true {
+		t.Fatalf("not stored: %v", got)
+	}
+	// Said out loud: a caller who asked for a validated write and got an
+	// unvalidated one should be told which they got.
+	if got["validated"] != false || got["validationSkipped"] == nil {
+		t.Fatalf("the response does not say it was unvalidated: %v", got)
+	}
+}
+
+// A probe that actually ran and refused still blocks the write. That is what
+// the service is for, and the case above must not have weakened it.
+func TestAProbeThatRefusesStillBlocksTheWrite(t *testing.T) {
+	s, _ := newServer(t, requirementWithValidator("smtp-relay", "cluster", "gentian/mail/relay", 0, "smtp"))
+	s.Validator = stubValidator{err: fmt.Errorf("the endpoint rejected these credentials")}
+
+	w := do(t, s, "PUT", "/v1/credentials/smtp-relay", `{"fields":{"password":"wrong"}}`)
+	if w.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("a refused probe did not block the write: %d %s", w.Code, w.Body.String())
+	}
+}

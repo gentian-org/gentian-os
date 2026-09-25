@@ -29,8 +29,24 @@ _cc_ns() { ns_kernel control; }
 
 _catalogue_file() { echo "${SCRIPT_DIR}/kernel/credentials/credential-requirements.yaml"; }
 
+# The catalogue with this cluster's addresses in it.
+#
+# Two substitutions. The namespace, because the file is v4's. And the four
+# repository hosts, because a git-https probe has no endpoint of its own --
+# username and password do not carry one -- so a requirement without a host
+# cannot be validated at all, and a write that asked to be validated was
+# refused rather than stored.
+#
+# The addresses are this cluster's, which is why they are not in the file.
+# Defaults match the public repositories, so a cluster that mirrors none of
+# them still gets a probe that reaches something.
 _cc_render() {
-    sed -e "s/^  namespace: gentian-system$/  namespace: $(_cc_ns)/" "$(_catalogue_file)"
+    sed -e "s/^  namespace: gentian-system$/  namespace: $(_cc_ns)/" \
+        -e "s#__GENTIAN_DEPLOYMENTS_REPO__#${GENTIAN_DEPLOYMENTS_REPO:-https://github.com/gentian-org/gentian-deployments}#" \
+        -e "s#__GENTIAN_OS_REPO__#${GENTIAN_OS_REPO:-https://github.com/gentian-org/gentian-os}#" \
+        -e "s#__GENTIAN_APPS_REPO__#${GENTIAN_APPS_REPO:-https://github.com/gentian-org/gentian-apps}#" \
+        -e "s#__GENTIAN_UI_REPO__#${GENTIAN_UI_REPO:-https://github.com/gentian-org/gentian-ui}#" \
+        "$(_catalogue_file)"
 }
 
 check() {
@@ -83,7 +99,19 @@ apply() {
     kubectl wait --for=condition=Established \
         crd/credentialrequirements.gentianos.io --timeout=60s >/dev/null 2>&1 || true
 
-    _cc_render | gentian_run kubectl apply -f -
+    # A placeholder that survived substitution would become a host nothing
+    # can reach, and the probe would then report a good credential as bad --
+    # which is worse than not probing at all.
+    local rendered
+    rendered="$(_cc_render)"
+    if grep -q '__GENTIAN_' <<<"${rendered}"; then
+        error "The credential catalogue still holds an unsubstituted placeholder:"
+        grep -o '__GENTIAN_[A-Z_]*__' <<<"${rendered}" | sort -u | while IFS= read -r ph; do
+            error "  ${ph}"
+        done
+        return 1
+    fi
+    printf '%s\n' "${rendered}" | gentian_run kubectl apply -f -
 }
 
 destroy() {

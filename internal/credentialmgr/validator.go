@@ -17,6 +17,7 @@ limitations under the License.
 package credentialmgr
 
 import (
+	"errors"
 	"context"
 	"crypto/tls"
 	"encoding/json"
@@ -102,9 +103,21 @@ func (v *EndpointValidator) Validate(ctx context.Context, kind, host string, fie
 	}
 }
 
+// ErrNoEndpoint is "there is nothing to probe", which is a gap in the
+// requirement's declaration and not a fact about the credential.
+//
+// It has to be distinguishable, because validation runs before the write and a
+// failure refuses it. Refusing to STORE a credential because it could not be
+// CHECKED is the wrong way round: the credential is still needed, the
+// declaration is what is incomplete, and blocking the write blocks whatever
+// was waiting on the credential. The deployments token could not be set at
+// all for exactly this reason -- its catalogue entry asks for a git-https
+// probe and names no host.
+var ErrNoEndpoint = errors.New("no endpoint to probe")
+
 func (v *EndpointValidator) basicAuthProbe(ctx context.Context, base, suffix, user, pass, userField, passField string) error {
 	if base == "" {
-		return fmt.Errorf("no endpoint to probe: the requirement declares no host or url")
+		return fmt.Errorf("%w: the requirement declares no host or url", ErrNoEndpoint)
 	}
 	url := strings.TrimSuffix(base, "/") + suffix
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
@@ -121,7 +134,7 @@ func (v *EndpointValidator) basicAuthProbe(ctx context.Context, base, suffix, us
 
 func (v *EndpointValidator) bearerProbe(ctx context.Context, url, token, tokenField string) error {
 	if url == "" {
-		return fmt.Errorf("no endpoint to probe: the requirement declares no url")
+		return fmt.Errorf("%w: the requirement declares no url", ErrNoEndpoint)
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
