@@ -1,13 +1,25 @@
 #!/usr/bin/env bash
 # step: B-08-seed-secrets
 # phase: secrets
-# requires: C-01-cluster-claim
+# requires: B-07-crossplane-secrets
 # provides: the kernel KV paths ESO reads — DNS provider, tunnel, mail relay, registry, the deployments repository credential
 # mutates: vault KV paths under gentian-os/kernel/
 
-# After C-01: the Cluster claim is what creates the eso-read policy and the
-# ClusterSecretStore, so a path seeded earlier would be unreadable until then
-# anyway. Values come from the bootstrap credential cache; none is committed.
+# This said "requires: C-01-cluster-claim", which runs nine steps later. The
+# install was never wrong -- the driver reads the line as documentation -- but
+# the documentation was, and the next person to reorder the steps would have
+# believed it. scripts/lint/lint-step-order.py now refuses a forward
+# dependency.
+#
+# What this actually needs is a vault that is up, unsealed and holding the
+# derived credentials, which is B-07 by way of B-04 and B-03. Writing a KV
+# path uses the root token and needs no policy. What needs C-01 is READING:
+# the Cluster claim creates the eso-read policy and the ClusterSecretStore.
+# That is the right way round -- these paths must exist before the claims
+# that consume them, or every ExternalSecret starts unsatisfied and waits for
+# a refresh.
+#
+# Values come from the bootstrap credential cache; none is committed.
 
 check() {
     local addr token

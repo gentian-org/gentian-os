@@ -502,7 +502,16 @@ Two cold-start races are fixed, and:
 6. ☐ **Mail** and **LLM serving** have no v5 step and no ApplicationSet, while
    the operator still writes Postfix entries and still routes `llm.<kernel>`
    to a service nothing deploys. Decide whether these are deliberate drops.
-7. ☐ `B-08-seed-secrets` declares a dependency on a step that runs after it.
+7. ✅ `B-08-seed-secrets` declared a dependency on a step that runs after it.
+   It required `C-01-cluster-claim`, nine steps later. The install was never
+   wrong, because the driver reads the line as documentation — but the
+   documentation was, and a reorder would have trusted it. It requires
+   `B-07-crossplane-secrets`, which is what actually has to be true: a vault
+   up, unsealed and holding the derived credentials. Writing a KV path uses
+   the root token and needs no policy; what needs C-01 is reading, and these
+   paths must exist *before* the claims that consume them.
+   `make lint-step-order` now refuses a forward dependency, and found this one
+   as its first act. 65 steps across both sets check out.
 
 ### S7A.11 ◐ Signing out does not ask a second time
 
