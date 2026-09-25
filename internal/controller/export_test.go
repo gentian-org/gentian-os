@@ -19,6 +19,8 @@ package controller
 import (
 	"context"
 
+	"sigs.k8s.io/controller-runtime/pkg/client"
+
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 )
 
@@ -51,3 +53,14 @@ func (r *TenantReconciler) EnsureMailForTest(ctx context.Context, tenant *gentia
 	_, err := r.ensureMail(ctx, tenant)
 	return err
 }
+
+// WriteDirectorRealmSecretForTest exposes the hand-over write. Its merge rule
+// decides whether a realm that could not be reached on one pass keeps a
+// working credential, and getting that wrong takes a screen down for as long
+// as the outage lasts.
+func WriteDirectorRealmSecretForTest(ctx context.Context, c client.Client, data map[string][]byte, complete bool) error {
+	return writeDirectorRealmSecret(ctx, c, data, complete)
+}
+
+// ServicesNamespaceForTest is where the hand-over Secret lands.
+func ServicesNamespaceForTest() string { return servicesNamespace }
