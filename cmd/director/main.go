@@ -210,7 +210,10 @@ func run(log *slog.Logger) error {
 		}
 		lc = lifecycle.New(u, token)
 	}
-	handler, err := api.New(api.Config{Authn: verifier, Authz: checker, Repo: repo, Log: log,
+	// The same OpenFGA client answers both questions, and the two are
+	// separate interfaces on purpose: Check is the hot path, ViewOf is a
+	// person reviewing who holds what. Neither can write through the API.
+	handler, err := api.New(api.Config{Authn: verifier, Authz: checker, Viewer: checker, Repo: repo, Log: log,
 		EnforceEntitlements: enforce, Store: store, Cluster: cluster,
 		TilesPath: envOr("DIRECTOR_TILES_PATH", "/etc/gentian/tiles/tiles.yaml"),
 		Lifecycle: lc})

@@ -70,7 +70,7 @@ steps yet; `work-packages.md` is where their content lives until they are.
 | S7A.5 | Keycloak looks like the rest of the product | ✅ |
 | S7A.6 | The console and the desktop hold nothing | ◐ console yes, desktop still holds a Keycloak credential |
 | S7A.7 | The zone cookie does not reach the applications | ◐ built, needs a browser |
-| S7A.8 | A read-only view of the authorization state | ☐ |
+| S7A.8 | A read-only view of the authorization state | ◐ director serves it; no screen yet |
 | S7A.9 | The kernel UIs are actually usable | ✅ |
 | S7A.9b | A refusal a person can act on | ✅ |
 | S7A.10 | The installer does what it claims | ◐ 4 of 7; one decided, two open |
@@ -474,14 +474,35 @@ Signing out everywhere at once is unaffected: the realm session ends and the
 back-channel logout marks it revoked, which every host's shim honours whatever
 cookie it read.
 
-### S7A.8 ☐ A read-only view of the authorization state
+### S7A.8 ◐ A read-only view of the authorization state
 
 Part of the same console, named separately because it replaces the idea of
-exposing OpenFGA's own playground. OpenFGA's read APIs answer "which groups
-hold which relations on which objects" with no write surface. The console
-renders that; anything a person wants to change is changed on the screens
-above, through the director, into git. No development-only UI, no second write
+exposing OpenFGA's own playground — a development tool with a write surface.
+Anything a person wants to change is changed on the screens above, through the
+director, into git or into Keycloak. No development-only UI, no second write
 path.
+
+**The director serves it.** `GET /v1/clusters/{c}/authorization` under
+`can_audit` and `GET /v1/tenants/{t}/authorization` under `can_view`: the same
+relation that governs reading the object each one describes, because who holds
+what is not public within a cluster and a tenant's bindings are the tenant's.
+Every other method on those paths is refused by the mux rather than by a
+handler that could one day grow a write.
+
+**Two halves, because the first alone is close to useless.** The tuples say a
+group holds `admin`. What `admin` lets them do is several derivations into the
+model — `can_audit` is auditor or security officer or admin — and nobody
+should read `model.fga` to find out. So the view resolves both: which groups
+hold which role, and which permissions each role carries.
+
+Three decisions worth knowing. **A role nobody holds is a row with no groups**,
+not a missing row: "nobody holds break_glass" is the most useful single thing
+this screen says. **Group ids come back in Keycloak's spelling**, since the
+two differ only in the separator and the reader knows the Keycloak name. And
+**a `tupleToUserset` is not followed** — a permission somebody holds through
+their relation to the cluster is the cluster's row to show, not the tenant's.
+
+**What is left is the screen.** The console still answers 501 for it.
 
 ### S7A.9 ✅ The kernel UIs are actually usable
 

@@ -139,7 +139,7 @@ func startWith(t *testing.T, entitlements bool, tilesPath string, lc api.Lifecyc
 		t.Fatal(err)
 	}
 	srv, err := api.New(api.Config{
-		Authn: v, Authz: decisions, Repo: repo, EnforceEntitlements: entitlements, Cluster: dt.Cluster,
+		Authn: v, Authz: decisions, Viewer: fixedViewer{}, Repo: repo, EnforceEntitlements: entitlements, Cluster: dt.Cluster,
 		Store:     &api.StoreConfig{Verifier: verifier, Applier: &entitlement.Applier{Repo: repo, Store: tuples}},
 		Log:       slog.New(slog.NewTextHandler(io.Discard, nil)),
 		TilesPath: tilesPath,
@@ -957,5 +957,58 @@ func TestClusterSettingsAreReadWidelyAndWrittenNarrowly(t *testing.T) {
 	if code, _ := h.do(t, "PATCH", "/v1/clusters/"+dt.Cluster+"/settings", tina,
 		`{"settings":{"mail.serviceMode":"kernel"}}`); code != http.StatusForbidden {
 		t.Fatalf("a tenant admin changed the cluster's settings: %d", code)
+	}
+}
+
+
+// fixedViewer stands in for OpenFGA's read side. What the API test is about is
+// who may reach the view and that it has no write surface; what it answers is
+// the authz package's own test.
+type fixedViewer struct{}
+
+func (fixedViewer) ViewOf(_ context.Context, object string) (authz.View, error) {
+	return authz.View{
+		Object: object,
+		Bindings: []authz.Binding{
+			{Relation: "admin", Groups: []string{"gentian:platform:admins"}, Grants: []string{"can_configure"}},
+			{Relation: "break_glass", Groups: nil, Grants: []string{"can_edit_raw"}},
+		},
+		Unheld: 1,
+	}, nil
+}
+
+// The authorization view is read-only and guarded by the relation that governs
+// reading the object it describes. It exists instead of OpenFGA's playground,
+// which is a development tool with a write surface.
+func TestTheAuthorizationViewIsReadOnlyAndGuarded(t *testing.T) {
+	h := start(t, false)
+	tom := h.token(t, "tenant-demo", "tom")
+	// tina belongs to another tenant: she holds can_view on solo and nothing
+	// at all on demo, which is what makes her the right refusal to assert.
+	tina := h.token(t, "tenant-solo", "tina")
+
+	// A tenant admin may read their own tenant's bindings.
+	code, body := h.do(t, http.MethodGet, "/v1/tenants/demo/authorization", tom, "")
+	if code != http.StatusOK {
+		t.Fatalf("tom: %d %v", code, body)
+	}
+	if body["object"] != "tenant:demo" {
+		t.Fatalf("object = %v", body["object"])
+	}
+	// Another tenant's administrator may not: a tenant's bindings are the
+	// tenant's, and who holds what is not public within a cluster.
+	if code, _ := h.do(t, http.MethodGet, "/v1/tenants/demo/authorization", tina, ""); code != http.StatusForbidden {
+		t.Fatalf("tina reached another tenant's view: %d", code)
+	}
+	// And neither may an unauthenticated caller.
+	if code, _ := h.do(t, http.MethodGet, "/v1/tenants/demo/authorization", "", ""); code != http.StatusUnauthorized {
+		t.Fatalf("anonymous reached the view: %d", code)
+	}
+	// No write surface: every other method is refused by the mux, not by a
+	// handler that might one day grow one.
+	for _, method := range []string{http.MethodPost, http.MethodPut, http.MethodDelete, http.MethodPatch} {
+		if code, _ := h.do(t, method, "/v1/tenants/demo/authorization", tom, "{}"); code != http.StatusMethodNotAllowed {
+			t.Fatalf("%s on the view answered %d, want 405", method, code)
+		}
 	}
 }

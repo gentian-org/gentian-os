@@ -94,8 +94,13 @@ type Lifecycle interface {
 type Config struct {
 	Authn Authenticator
 	Authz authz.Checker
-	Repo  Repository
-	Log   *slog.Logger
+	// Viewer reads who holds what, for the console's read-only authorization
+	// view. Optional: without it the routes do not exist, which a console
+	// shows as the screen being unavailable rather than as an error on a
+	// screen that should have worked.
+	Viewer authz.Viewer
+	Repo   Repository
+	Log    *slog.Logger
 	// EnforceEntitlements makes an install require
 	// catalogue_entry:<coordinate>#can_install for the tenant. It is on unless
 	// a deployment turns it off explicitly, which a cluster without a store
@@ -366,6 +371,15 @@ func (s *Server) routes() {
 		// hold nothing here" is the ordinary answer for almost everyone who
 		// signs in, and a console has to render that rather than an error.
 		s.identified("GET /v1/clusters/{c}/me", s.clusterMe)
+	}
+	// The authorization state, read-only. can_audit at cluster scope and
+	// can_view at tenant scope: the same relation that governs reading the
+	// object each one describes.
+	if s.cfg.Viewer != nil {
+		if s.cfg.Cluster != "" {
+			s.guarded("GET /v1/clusters/{c}/authorization", "can_audit", s.clusterObject, s.clusterAuthorization)
+		}
+		s.guarded("GET /v1/tenants/{t}/authorization", "can_view", tenantObject, s.tenantAuthorization)
 	}
 	if s.cfg.Store != nil {
 		s.mux.HandleFunc("POST /v1/tenants/{t}/entitlements", s.entitle)

@@ -49,6 +49,15 @@ type Checker interface {
 	Check(ctx context.Context, requestID, user, relation, object string) (bool, error)
 }
 
+// Viewer reads who holds what on one object, for the console's read-only
+// authorization view. Separate from Checker because it is a different
+// question with a different audience: Check answers "may this caller do this,
+// now", on the hot path; ViewOf answers "who holds what here", for a person
+// reviewing it.
+type Viewer interface {
+	ViewOf(ctx context.Context, object string) (View, error)
+}
+
 // encode maps an external identifier onto OpenFGA's id alphabet. OpenFGA
 // reserves ':' (type separator) and '#' (relation separator) and rejects
 // whitespace. Keycloak uses ':' in group names (gentian:tenant:demo:admins)
