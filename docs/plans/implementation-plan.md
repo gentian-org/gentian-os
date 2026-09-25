@@ -839,6 +839,32 @@ runtime. That is less code and a smaller blast radius: a bug in a projector
 can then add or remove a membership, but it cannot invent a relation that was
 never in the model.
 
+**The catalogue's vocabulary**, raised 2026-09-25 and not settled. Three
+questions, one answer each, none of them started. The analysis is in
+`unified-app-crd-sketch.md`.
+
+- **`ComponentProfile` or `AppProfile`.** AD-4 already says Component, and
+  36 of the 38 catalogue entries are still `AppProfile`. What is unsettled is
+  not the name but whether the rename gets finished, and the load-bearing
+  blocker is that `Tenant.spec.apps` resolves `AppProfile` only.
+- **`tenancy: system | shared | tenant` becomes `class: service | app |
+  shared-app`.** The current values mix a placement word, an adjective and a
+  scope word for what is one question: who this component serves. The code's
+  own comment gives the game away — `system` is documented as "serves
+  contracts to other components", which is a service.
+- **`kernelRequirements` names a fulfiller that is not the fulfiller.** A
+  database comes from a component of class `service`, mail may come from a
+  relay outside the cluster. `requires.contracts` is where it landed on
+  `ComponentProfile`, which collides with the open named set already called
+  contracts (`provides: wiki, project-management`). `requires.services` is the
+  proposal.
+
+Two defects found while looking, both admissible on `ComponentProfile` today
+and neither on `AppProfile`: a package may declare `deploymentMethod: api`
+and carry a chart, and a package may carry a chart and an API integration at
+once. The one-of rule is an OR where it should be an exactly-one, which the
+same file already writes correctly for egress.
+
 **The director's OpenFGA credential** cannot be made read-only (S7A.2). Accept
 the weaker guarantee, or pay for a proxy or OIDC auth mode.
 
