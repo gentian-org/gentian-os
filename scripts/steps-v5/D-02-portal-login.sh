@@ -179,8 +179,25 @@ apply() {
         && "$(kubectl get component desktop -n tenant-platform -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null)" == "True" ]]; do
         if (( SECONDS > deadline )); then
             error "The platform desktop is not Ready after 15 minutes."
-            kubectl get component desktop -n tenant-platform -o jsonpath='{range .status.conditions[*]}{.type}={.status} {.reason}: {.message}{"\n"}{end}' 2>/dev/null || \
+            # Both halves of the condition, because reporting one of two is
+            # how this came to print "not Ready" directly above a line
+            # reading Ready=True: the Component was Ready and the Release was
+            # still on the moving chart version, and only the Component was
+            # shown.
+            local have_version
+            have_version="$(kubectl get release tenant-platform-desktop -o jsonpath='{.spec.forProvider.chart.version}' 2>/dev/null)"
+            if [[ "${have_version}" != "${desktop_chart_version}" ]]; then
+                error "  chart: release is on ${have_version:-<no release>}, waiting for ${desktop_chart_version}"
+                kubectl get release tenant-platform-desktop -o jsonpath='{range .status.conditions[*]}  release {.type}={.status} {.reason}: {.message}{"\n"}{end}' 2>/dev/null || true
+            fi
+            kubectl get component desktop -n tenant-platform -o jsonpath='{range .status.conditions[*]}  component {.type}={.status} {.reason}: {.message}{"\n"}{end}' 2>/dev/null || \
                 error "  Component tenant-platform/desktop does not exist: is the operator running and the desktop profile installed?"
+            # A Component stuck terminating cannot be repaired or removed by
+            # anything the installer does, and it is invisible in the
+            # conditions above.
+            if [[ -n "$(kubectl get component desktop -n tenant-platform -o jsonpath='{.metadata.deletionTimestamp}' 2>/dev/null)" ]]; then
+                error "  the Component is terminating and its finalizer is not clearing; the operator cannot reconcile it"
+            fi
             return 1
         fi
         sleep 10
