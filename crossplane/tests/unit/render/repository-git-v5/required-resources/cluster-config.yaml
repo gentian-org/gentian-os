@@ -1,0 +1,13 @@
+# What the Cluster Composition publishes about this cluster's layout. The
+# Repository Composition reads kernel.controlNamespace from here rather than
+# spelling a kernel namespace itself.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: gentian-cluster-config
+  namespace: kernel-provisioning
+  labels:
+    gentianos.io/config-type: cluster-config
+data:
+  kernel.controlNamespace: kernel-control
+  kernel.layout: v5

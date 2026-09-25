@@ -1,0 +1,32 @@
+# The same writable git repository as repository-git, on a v5 cluster.
+#
+# The point of this fixture is one line of output: which namespace the git
+# credential lands in. The Composition used to write "gentian-system", a v4
+# name, so on v5 the Secret appeared where nothing reads it -- the director
+# could clone the deployments repository and never push to it, and the console
+# answered 500 on every write for a day before anyone traced it here.
+#
+# The answer comes from the cluster config ConfigMap, not from this claim, so
+# the required-resources directory beside this file is what the test is really
+# about.
+apiVersion: gentianos.io/v1alpha1
+kind: XRepository
+metadata:
+  name: deployments-m288c
+  labels:
+    crossplane.io/claim-name: deployments
+    crossplane.io/claim-namespace: kernel-provisioning
+spec:
+  type: git
+  role: deployments
+  endpoints:
+    inCluster: https://github.com/gentian-org/gentian-deployments
+  branch: main
+  writable: true
+  credential:
+    vaultPath: gentian-os/kernel/repositories/deployments
+    displayName: "Deployments repository write access"
+    phase: bootstrap
+    authType: basic
+    validate:
+      type: git-https
