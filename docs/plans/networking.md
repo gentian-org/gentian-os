@@ -458,8 +458,8 @@ design cannot do for it.
   `DNSEndpoint` naming the hostnames and the tunnel CNAME and external-dns
   reconciles that. As `edge_dnsendpoint.go` puts it: not the operator writing
   DNS, the operator declaring intent for the component that owns it.
-- `expose[]` in the profile ([component-profile.md](component-profile.md)
-  §5) is the single source for every `HTTPRoute`, `TCPRoute`, `UDPRoute`
+- `expose[]` in the profile ([target-component-structure.md](target-component-structure.md)
+  §8) is the single source for every `HTTPRoute`, `TCPRoute`, `UDPRoute`
   and `SecurityPolicy`; `browserProxy` and `additionalIngresses` retire
   into it.
 - The gateway reconciler emits, per `surface: gateway` entry, an
@@ -490,7 +490,7 @@ keeping them apart is what makes self-service and control compatible.
 | Level | Object | Declared by | How many | Lives |
 | --- | --- | --- | --- | --- |
 | **Cluster ceiling** (`Cluster.spec.exposure`) | modes the cluster refuses outright, whether a `none` surface must provide the exposure-policy contract, default and maximum lifetime, review interval. A ceiling, not a permission list: nothing is published by default at any trust tier, so it has nothing to grant | security officer, through the director | one per cluster | permanent |
-| **Tenant enablement** | *this* surface of *this* instance is on: `exposureName`, host, owner, `expiresAt`, `reviewAt`. The `authMode` is **not** restated — it is the profile entry's and the enablement cannot weaken it (component-profile.md §5.1); the view joins it for display | perimeter approver, through the director | a handful per tenant | months, bounded by policy |
+| **Tenant enablement** | *this* surface of *this* instance is on: `exposureName`, host, owner, `expiresAt`, `reviewAt`. The `authMode` is **not** restated — it is the profile entry's and the enablement cannot weaken it (target-component-structure.md §8.3); the view joins it for display | perimeter approver, through the director | a handful per tenant | months, bounded by policy |
 | **App-level object** | a share link, a guest meeting, a public form | any app user, inside the app | thousands | days; expiry set by the app's policy, which the platform writes (§8.5) |
 
 A share never needs an administrator: the perimeter approver enabled
@@ -501,7 +501,7 @@ What the platform never does is learn about individual shares by routing
 The enablement is the unit of record. Written through the director it
 carries who, when and the OpenFGA decision in its commit; the operator
 creates the proxy from it and removes the proxy when `expiresAt` passes.
-Field shapes belong to [component-profile.md](component-profile.md).
+Field shapes belong to [target-component-structure.md](target-component-structure.md).
 
 ### 8.2 Worked example: a vanity public website
 

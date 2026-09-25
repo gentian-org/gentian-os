@@ -43,9 +43,9 @@ import (
 // ComponentReconciler turns a Component into what runs: the chart its profile
 // names as a provider-helm Release in the component's namespace, the
 // requirements its profile declares fulfilled beside it, and one route and
-// one policy per gateway exposure in the tenant's zone (component-profile.md
-// §5, networking.md §7). It writes nothing outside the component's namespace
-// except the ReferenceGrant the zone's policy needs in the edge namespace.
+// one policy per gateway exposure in the tenant's zone. It writes nothing
+// outside the component's namespace except the ReferenceGrant the zone's
+// policy needs in the edge namespace.
 type ComponentReconciler struct {
 	client.Client
 	Scheme           *runtime.Scheme

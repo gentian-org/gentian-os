@@ -115,7 +115,7 @@ token to the credential manager rather than holding an OpenBao token
   client secret; the edge does.) The profile certifies
   `[tenant]` today; when the BFF is stateless-per-request or verifies the
   tenant natively, `shared` is added to the list and the platform admin may
-  choose it per instance (component-profile.md §1) — a deployment decision,
+  choose it per instance (target-component-structure.md §1) — a deployment decision,
   no schema change. The static bundle needs no such wait but gains nothing
   from sharing either (AD-10).
 - Every write is a director call with the user's token
@@ -138,7 +138,7 @@ token to the credential manager rather than holding an OpenBao token
   officer's queue on the platform desktop (`can_approve`), which is the same
   screen across tenants. Approving writes a `PrivilegeGrant` through the
   director carrying the approver, the reason in their own words and an
-  expiry — the console records nothing itself (component-profile.md §3.1).
+  expiry — the console records nothing itself (target-component-structure.md §4.3).
 - Credentials keep going to the credential manager, as today.
 - Audit is not a console feature. An admin action is a Keycloak event, an
   FGA decision and a commit joined by one request id (principle 7); the
@@ -168,7 +168,7 @@ What the store is:
 - **A listing.** Presentation and commercial data — names, texts in every
   locale, media, categories, keywords, tiles, editions, plans, prices,
   subscriptions. Everything that was removed from the profile because it is
-  reference data, not a deployment contract (component-profile.md §2).
+  reference data, not a deployment contract (target-component-structure.md §9).
 - **An entitlement issuer.** When a subscription makes tenant T entitled to
   app A, the store issues a **signed grant** (`entitlement_grant`,
   `signing_key`) and delivers it to the director. The director verifies the
