@@ -1,0 +1,602 @@
+#!/usr/bin/env bash
+# step: D-03-vault-oidc-config
+# phase: applications
+# requires: D-02-portal-login
+# provides: OpenBao's oidc mount configured against the kernel realm, so `bao login -method=oidc` works
+# mutates: auth/oidc/config in OpenBao
+
+# B-09 enables the oidc mount and stops there, saying so: writing the mount's
+# CONFIG needs the Keycloak client secret and a Keycloak that is serving its
+# discovery document, and neither exists that early. It called the rest "a
+# later step's verdict" — and on v5 there was no later step.
+#
+# The consequence is not cosmetic. The Cluster composition composes
+# AuthBackendRoles against `backend: oidc`; the mount exists and the roles
+# attach; and with no `auth/oidc/config` the mount has no issuer, so
+# `bao login -method=oidc` fails on every v5 cluster. That also makes E-03's
+# "somebody has actually logged in" guard unsatisfiable, which is why the
+# bootstrap root token could never be revoked.
+#
+# This is v4's D-07 with its layout assumptions corrected: the claim is read
+# from the provisioning namespace rather than crossplane-system, Keycloak is
+# found in the authentication namespace rather than platform-kernel, the
+# gateway certificate is read from the edge namespace, and the vault address
+# and token are resolved the way every other v5 vault step resolves them
+# rather than assumed to be in the environment.
+#
+# Nothing here defers as its normal mode. The deferrals below are a safety net
+# for a cluster whose Keycloak is late, not the mechanism by which an install
+# completes.
+
+# Where the vault is, and the token to reach it with.
+#
+# v4 assumed BAO_TOKEN was already in the environment and that the vault was
+# in a namespace called openbao. On v5 it is in the secrets namespace, and a
+# step run on its own has no token in the shell -- so this resolves both the
+# way B-09 does, which is the pattern every v5 vault step follows.
+_oidc_ns() { ns_kernel secrets; }
+
+_oidc_bao_addr() {
+    local addr token
+    addr="$(OPENBAO_NAMESPACE="$(_oidc_ns)" gentian_service_addr openbao "$(_oidc_ns)" 8200 https 2>/dev/null)" || return 1
+    token="${BAO_TOKEN:-$(jq -r '.root_token // empty' "${OPENBAO_INIT_FILE:-${HOME}/.gentian/openbao-init.json}" 2>/dev/null)}"
+    [[ -n "${token}" ]] || return 1
+    BAO_ADDR="${addr}"
+    BAO_TOKEN="${token}"
+    export BAO_ADDR BAO_TOKEN VAULT_SKIP_VERIFY=true BAO_SKIP_VERIFY=true
+    return 0
+}
+
+# The live claim first, unlike B-07 which reads the file.
+#
+# B-07 runs before B-08, the only thing that applies the claim, so the object
+# on the cluster is always one revision behind the file there. By this step
+# B-08 has applied it, so the object IS the applied configuration — and reading
+# it means this step configures the realm the cluster actually composed against
+# rather than whatever the checkout happens to say now. The file is the
+# fallback, for a cluster whose claim was never applied.
+_oidc_values() {
+    OIDC_DISCOVERY_URL="$(kubectl get cluster.gentianos.io -n "$(ns_kernel provisioning)" \
+        -o jsonpath='{.items[0].spec.oidc.discoveryUrl}' 2>/dev/null || true)"
+    OIDC_CLIENT_ID="$(kubectl get cluster.gentianos.io -n "$(ns_kernel provisioning)" \
+        -o jsonpath='{.items[0].spec.oidc.clientId}' 2>/dev/null || true)"
+    OIDC_SECRET_NS="$(kubectl get cluster.gentianos.io -n "$(ns_kernel provisioning)" \
+        -o jsonpath='{.items[0].spec.openbao.namespace}' 2>/dev/null || true)"
+
+    if [[ -z "${OIDC_DISCOVERY_URL}" ]]; then
+        local claim_file
+        claim_file="${GENTIAN_DEPLOYMENTS_PATH:-}/clusters/${GENTIAN_DEPLOYMENTS_CLUSTER_ID:-}/kernel/claims/cluster.yaml"
+        OIDC_DISCOVERY_URL="$(yq_get '.spec.oidc.discoveryUrl' "${claim_file}" 2>/dev/null || true)"
+        OIDC_CLIENT_ID="$(yq_get '.spec.oidc.clientId' "${claim_file}" 2>/dev/null || true)"
+        OIDC_SECRET_NS="$(yq_get '.spec.openbao.namespace' "${claim_file}" 2>/dev/null || true)"
+        [[ -n "${OIDC_DISCOVERY_URL}" ]] &&
+            info "  Using spec.oidc from ${claim_file}; no applied claim was readable."
+    fi
+    OIDC_CLIENT_ID="${OIDC_CLIENT_ID:-openbao}"
+    # Where the composed client secret lands. The claim may say, and usually
+    # does not: spec.openbao has no default object, so its nested defaults
+    # never materialise and the field comes back empty. v4 fell back to the
+    # literal "openbao", which is v4's namespace -- on v5 the secret is in the
+    # secrets namespace, and looking in the wrong one makes this step defer
+    # for ever on a cluster where the secret is present.
+    OIDC_SECRET_NS="${OIDC_SECRET_NS:-$(_oidc_ns)}"
+}
+
+# Presence, not readiness: this only decides whether an unreachable discovery
+# document is "not yet" or "wrong". Matched by name rather than by the exact
+# Service the keycloakx chart publishes, because the caller that does need the
+# precise Service (portal-login-bootstrap.sh) already tries three spellings of
+# it, and predicting it wrong here would turn a deferral into a hard failure on
+# a cluster where Keycloak is present under an unexpected name.
+_keycloak_deployed() {
+    local ns
+    ns="$(ns_kernel authentication)"
+    kubectl get svc -n "${ns}" -o name 2>/dev/null | grep -qi keycloak
+}
+
+# _oidc_write_config <client-secret> <ca-pem-file-or-empty>
+#
+# The write itself, so the plain and pinned attempts cannot drift apart. Its
+# stderr is kept: OpenBao's own message is the useful part when both fail, and
+# suppressing the first attempt's would hide the reason the second was needed.
+_oidc_write_config() {
+    local secret="$1" ca_file="$2"
+    local args=(
+        oidc_discovery_url="${OIDC_DISCOVERY_URL}"
+        oidc_client_id="${OIDC_CLIENT_ID}"
+        oidc_client_secret="${secret}"
+        default_role="cluster-admin"
+    )
+    # @file, which the bao CLI reads as "take this value from that path" —
+    # a PEM bundle on a command line is unwieldy and ends up in ps output.
+    [[ -n "${ca_file}" ]] && args+=(oidc_discovery_ca_pem="@${ca_file}")
+    bao write auth/oidc/config "${args[@]}"
+}
+
+# _oidc_gateway_ca_file — the chain the cluster's gateway serves, as a file.
+#
+# Same source and same fallback ArgoCD's own OIDC wiring uses when it registers
+# a CA in argocd-tls-certs-cm: ca.crt if the issuer supplied one, tls.crt
+# otherwise. ACME issuers never supply ca.crt, so on this path it is always
+# tls.crt — the leaf plus its chain, which is what has to be trusted anyway.
+#
+# wildcard-tls in the services namespace first, because that is the copy the
+# kernel services actually present; wildcard-kernel-tls in cert-manager is the
+# original C-01 issues and propagates from. Echoes a temp file path, or nothing
+# when neither secret carries a certificate. The caller removes it.
+_oidc_gateway_ca_file() {
+    local ns tmp ns_secret key value
+    # The gateway's certificate is in the edge namespace on v5, which is where
+    # C-03 puts it, not in the services namespace v4 had.
+    ns="$(ns_kernel edge)"
+    tmp="$(mktemp)"
+    for ns_secret in "${ns}:wildcard-tls" "cert-manager:wildcard-kernel-tls"; do
+        for key in 'ca\.crt' 'tls\.crt'; do
+            value="$(kubectl get secret "${ns_secret#*:}" -n "${ns_secret%%:*}" \
+                -o jsonpath="{.data.${key}}" 2>/dev/null | base64 -d 2>/dev/null || true)"
+            if [[ -n "${value}" ]]; then
+                printf '%s\n' "${value}" > "${tmp}"
+                chmod 600 "${tmp}"
+                echo "${tmp}"
+                return 0
+            fi
+        done
+    done
+    rm -f "${tmp}"
+    return 1
+}
+
+# _oidc_cert_covers_host <pem-file> <host> — does the chain the gateway serves
+# actually carry this name?
+#
+# The distinction the step could not previously make, and the reason a failure
+# here read as the wrong fault entirely. oidc_discovery_ca_pem fixes a chain no
+# trust store knows. It cannot fix a certificate that does not carry the NAME —
+# so on a name mismatch both attempts fail with the same bare "error checking
+# oidc discovery URL", and the pinned retry's identical refusal is what makes it
+# look like a trust problem.
+#
+# Answers "no" only when it is certain: no openssl, or no SAN extension to read,
+# returns success, because a diagnosis this step cannot substantiate is worse
+# than none. The caller only ever ADDS a message on a definite mismatch.
+_oidc_cert_covers_host() {
+    local pem="$1" host="$2" names name base
+    command -v openssl >/dev/null 2>&1 || return 0
+    names="$(openssl x509 -in "${pem}" -noout -ext subjectAltName 2>/dev/null |
+        tr ',' '\n' | sed -n 's/.*DNS://p' | tr -d ' []')"
+    [[ -n "${names}" ]] || return 0
+    while IFS= read -r name; do
+        [[ -n "${name}" ]] || continue
+        if [[ "${name}" == "${host}" ]]; then
+            return 0
+        fi
+        if [[ "${name}" == '*.'* ]]; then
+            # One label only, per RFC 6125: *.example.org covers a.example.org
+            # and not a.b.example.org. Matching the suffix alone would call a
+            # deep kernel domain covered by a wildcard that does not cover it.
+            base="${name#\*.}"
+            if [[ "${host}" == *".${base}" && "${host%%.*}.${base}" == "${host}" ]]; then
+                return 0
+            fi
+        fi
+    done <<< "${names}"
+    return 1
+}
+
+# _oidc_cert_names <pem-file> — subject and SANs, for the report.
+_oidc_cert_names() {
+    command -v openssl >/dev/null 2>&1 || return 1
+    openssl x509 -in "$1" -noout -subject -issuer -ext subjectAltName 2>/dev/null
+}
+
+check() {
+    _oidc_values
+    # No OIDC configured for this cluster: nothing to configure, and nothing to
+    # report about a mount that is not meant to exist here.
+    [[ -n "${OIDC_DISCOVERY_URL}" ]] || return "${CHECK_UNDEFINED}"
+    # No token, or no route to OpenBao, is "cannot tell" rather than "missing":
+    # reporting missing would blame the cluster for a gap in this shell.
+    _oidc_bao_addr || return "${CHECK_UNDEFINED}"
+
+    # Configured means the discovery URL matches the claim, not merely that some
+    # config exists — a mount pointed at the wrong realm authenticates nobody and
+    # would otherwise read as satisfied.
+    #
+    # A refused read says nothing about the config. A token OpenBao rejects —
+    # the revoked bootstrap token from a completed install is the common one —
+    # got its 403 swallowed here, the empty answer read as a mismatch, and
+    # apply() was sent into the same 403 to fail loudly. Permission denied is a
+    # gap in this shell, same as no token at all: cannot tell.
+    local have rc=0
+    have="$(bao read -field=oidc_discovery_url auth/oidc/config 2>&1)" || rc=$?
+    if [[ ${rc} -ne 0 ]]; then
+        grep -qi 'permission denied' <<<"${have}" && return "${CHECK_UNDEFINED}"
+        return "${CHECK_MISSING}"
+    fi
+    [[ "${have}" == "${OIDC_DISCOVERY_URL}" ]]
+}
+
+apply() {
+    _oidc_values
+    if [[ -z "${OIDC_DISCOVERY_URL}" ]]; then
+        info "spec.oidc.discoveryUrl is unset; no OIDC config to write."
+        return 0
+    fi
+
+    if ! _oidc_bao_addr; then
+        error "Cannot reach OpenBao on :8200, and no BAO_TOKEN in this shell."
+        error "  Neither the ClusterIP nor a kubectl port-forward responded."
+        return 1
+    fi
+
+    # B-07's mount has to be there. It is a required step, so absent here means
+    # something removed it after the fact — say which step owns it rather than
+    # letting `bao write` answer with a bare 404 on an unrelated-looking path.
+    if ! bao auth list -format=json 2>/dev/null | jq -e '."oidc/"' >/dev/null 2>&1; then
+        error "There is no oidc/ auth mount to configure."
+        error "  B-07-openbao-oidc-mount enables it. Re-run that step first:"
+        error "    ./install.sh --step B-07"
+        return 1
+    fi
+
+    local secret
+    secret="$(kubectl get secret openbao-oidc-client -n "${OIDC_SECRET_NS}" \
+        -o jsonpath='{.data.client-secret}' 2>/dev/null | base64 -d 2>/dev/null || true)"
+    if [[ -z "${secret}" ]]; then
+        # Safety net, not the normal path: B-08 created the ExternalSecret long
+        # before this step, so by now ESO has almost always synced it.
+        info "Secret ${OIDC_SECRET_NS}/openbao-oidc-client has no client-secret yet."
+        info "  ESO materialises it from gentian-os/kernel/oidc/openbao. It should"
+        info "  already exist by this step; re-run once it has synced."
+        return 0
+    fi
+
+    if ! _keycloak_deployed; then
+        # Also a safety net. D-06 has run by now and talks to Keycloak, so a
+        # missing Keycloak here means it was removed or never came up.
+        info "Keycloak is not deployed, so its discovery document cannot be checked."
+        info "  It arrives at sync-wave 9 via the root ApplicationSet (C-02)."
+        info "  Re-run once it is serving to write auth/oidc/config."
+        return 0
+    fi
+
+    # Check the discovery document before handing the URL to OpenBao. OpenBao's
+    # own refusal is "error checking oidc discovery URL", which does not say
+    # whether the name failed to resolve, the TLS was rejected, or the realm
+    # simply is not at that path — and the last is the common one, because
+    # Keycloak serves either /realms/<realm> or /auth/realms/<realm> depending on
+    # how it was deployed.
+    #
+    # Reached only when Keycloak IS deployed, so a document that stays
+    # unreadable is a real fault — a wrong path or a broken realm — and stops
+    # the run. "Stays" is doing the work there; see the wait below.
+    local well_known="${OIDC_DISCOVERY_URL%/}/.well-known/openid-configuration"
+
+    # Retried, because this is a public URL on a cluster that has just been
+    # built. Reaching it needs DNS for the name, a programmed Gateway, an ACME
+    # certificate that is issued rather than pending, and Keycloak serving the
+    # realm — four things that become true at their own pace, and the
+    # certificate is minutes on a good day.
+    #
+    # _dd_resolves / _dd_tls_ok — which link of the chain is missing.
+#
+# Deliberately not `dig`: it is not in the pre-flight set and a teardown or a
+# minimal image may not have it. getent hosts is in libc, and the Bash /dev/tcp
+# probe needs nothing at all. Both are advisory — they decide what the wait
+# SAYS, never whether it proceeds, so a false negative costs a misleading line
+# and not a failed install.
+_dd_resolves() {
+    # Shared with D-03, and asks the zone's nameservers rather than this
+    # machine's resolver — whose negative cache outlives this wait.
+    gentian_dns_resolves "$1" "${KERNEL_DOMAIN:-}"
+}
+
+_dd_curl_resolve_args() {
+    local host="$1" addr
+    # Connect to the address the ZONE gives, not the one this machine's
+    # resolver remembers. Three distinct failures collapse into one wrong
+    # message otherwise, and all three were seen on one host in one afternoon:
+    #
+    #   - the local resolver holding a negative for the A record long after the
+    #     record was republished, and the upstream router holding its own copy
+    #     of that negative, so flushing locally changed nothing;
+    #   - a proxied name always publishing AAAA, so a host with no IPv6 route
+    #     connects to an unreachable address and fails in one millisecond;
+    #   - neither of which has anything to do with a certificate.
+    #
+    # --resolve pins the address for the request and skips name resolution
+    # entirely, so what gets tested is the edge, which is what this step waits
+    # for. Empty when no address can be found, and the caller falls back to
+    # ordinary resolution rather than refusing to probe. Echoes the address
+    # alone -- the caller builds the curl arguments, because stock macOS bash
+    # is 3.2 and has neither mapfile nor readarray to read a multi-line list.
+    addr="$(gentian_dns_address "${host}" "${KERNEL_DOMAIN:-}" 2>/dev/null || true)"
+    [[ -n "${addr}" ]] || return 1
+    printf '%s' "${addr}"
+}
+
+# _dd_transport_ok <host> — can this machine open a connection at all?
+#
+# Separate from the TLS question so neither can be reported as the other. A
+# connect failure is the network; saying "no certificate" about it sends the
+# reader to the zone's TLS settings for a routing problem.
+_dd_transport_ok() {
+    local host="$1" err addr
+    local -a ra=()
+    addr="$(_dd_curl_resolve_args "${host}" || true)"
+    [[ -n "${addr}" ]] && ra=(--resolve "${host}:443:${addr}")
+    curl -sS "${ra[@]}" -o /dev/null --max-time 10 "https://${host}/" >/dev/null 2>&1 && return 0
+    err="$(curl -sS "${ra[@]}" -o /dev/null --max-time 10 "https://${host}/" 2>&1 || true)"
+    case "${err}" in
+        *"Failed to connect"*|*"Connection refused"*|*"Couldn't connect"*|*"Could not resolve"*) return 1 ;;
+        *) return 0 ;;
+    esac
+}
+
+_dd_tls_ok() {
+    local host="$1" err addr
+    local -a ra=()
+    addr="$(_dd_curl_resolve_args "${host}" || true)"
+    [[ -n "${addr}" ]] && ra=(--resolve "${host}:443:${addr}")
+    curl -sS "${ra[@]}" -o /dev/null --max-time 10 "https://${host}/" >/dev/null 2>&1 && return 0
+    # A 4xx/5xx from the server still means TLS completed; only a TLS failure
+    # counts as "no usable certificate".
+    err="$(curl -sS "${ra[@]}" -o /dev/null --max-time 10 "https://${host}/" 2>&1 || true)"
+    case "${err}" in
+        *SSL*|*certificate*|*handshake*) return 1 ;;
+        *) return 0 ;;
+    esac
+}
+
+# _keycloak_deployed above only says the workload exists. That is what makes
+    # an unreadable document "a real fault" in the comment below, and it is true
+    # of a document that stays unreadable — not of one checked eight seconds
+    # after the Gateway came up. D-06 failed exactly this way against Keycloak
+    # itself, on a wait that was too short rather than a check that was wrong.
+    #
+    # The hard failure below is kept, with its diagnosis, for when the budget
+    # really has expired: a wrong path in spec.oidc.discoveryUrl never becomes
+    # right by waiting, and should still stop the run.
+    # Three things have to become true, in order, and the wait says which one it
+    # is on rather than reporting "not readable" for all of them.
+    #
+    # The name has to resolve, TLS has to present a certificate covering it, and
+    # the realm has to answer. Each arrives from somewhere different: the record
+    # from external-dns, the certificate from cert-manager, the realm from
+    # Keycloak. A single yes/no poll across all three said only that the document
+    # could not be read, which was true and useless — the run that found this was
+    # waiting on a DNS record for a domain external-dns had not been deployed to
+    # serve yet, and the message pointed at spec.oidc.discoveryUrl instead.
+    #
+    # This went unnoticed for as long as it did because the DNS records already
+    # existed: the cluster had been installed under a domain whose records were
+    # configured by hand, so the name resolved before the installer ever ran and
+    # the ordering was never exercised.
+    local _dd_host
+    _dd_host="$(printf '%s' "${OIDC_DISCOVERY_URL}" | sed -E 's#^[a-z]+://##; s#/.*$##; s#:.*$##')"
+    local _dd_wait="${GENTIAN_OIDC_DISCOVERY_WAIT_SECS:-900}"
+    local _dd_deadline=$(( SECONDS + _dd_wait ))
+    local _dd_ok=0 _dd_stage="" _dd_last="" _dd_next=0
+
+    info "Checking the OIDC discovery document (up to $(( _dd_wait / 60 ))m)."
+    info "  ${well_known}"
+    while (( SECONDS < _dd_deadline )); do
+        # Same address the stage probes use, so the validator and the diagnosis
+        # cannot disagree about which host they reached.
+        local _dd_addr
+        _dd_addr="$(gentian_dns_address "${_dd_host}" "${KERNEL_DOMAIN:-}" 2>/dev/null || true)"
+        if [[ -n "${_dd_addr}" ]]; then
+            export GENTIAN_CURL_RESOLVE="${_dd_host}:443:${_dd_addr}"
+        else
+            unset GENTIAN_CURL_RESOLVE
+        fi
+
+        if run_validator oidc-discovery "${well_known}" >/dev/null 2>&1; then
+            _dd_ok=1
+            unset GENTIAN_CURL_RESOLVE
+            break
+        fi
+
+        # Which of the three is not ready yet. Cheap enough to re-evaluate each
+        # pass, and it is the only way the message can improve as things arrive.
+        if ! _dd_resolves "${_dd_host}"; then
+            _dd_stage="DNS: ${_dd_host} does not resolve yet — external-dns publishes it once it is running"
+        elif ! _dd_transport_ok "${_dd_host}"; then
+            _dd_stage="NETWORK: ${_dd_host} resolves, but no connection can be opened to it — egress, or an AAAA address with no route from this host"
+        elif ! _dd_tls_ok "${_dd_host}"; then
+            _dd_stage="TLS: ${_dd_host} is reachable, but serves no certificate covering it — on Cloudflare a name more than one label below the zone apex needs Total TLS or an advanced certificate, and issuance can outlast this wait or stall on a CA rate limit"
+        else
+            _dd_stage="HTTP: ${_dd_host} serves TLS, but the realm has not answered yet"
+        fi
+
+        if [[ "${_dd_stage}" != "${_dd_last}" ]] || (( SECONDS >= _dd_next )); then
+            info "  waiting — ${_dd_stage}"
+            _dd_last="${_dd_stage}"
+            _dd_next=$(( SECONDS + 60 ))
+        fi
+        sleep 10
+    done
+
+    if (( _dd_ok == 0 )); then
+        error "Gave up after $(( _dd_wait / 60 ))m. Last state was:"
+        error "  ${_dd_stage}"
+        error "The OIDC discovery document is not readable at:"
+        error "  ${well_known}"
+        error "  OpenBao must fetch this to accept the config, so it is checked first."
+        case "${OIDC_DISCOVERY_URL}" in
+            */auth/realms/*) : ;;
+            */realms/*)
+                error "  Some Keycloak deployments serve the realm under /auth. Try:"
+                error "    ${OIDC_DISCOVERY_URL/\/realms\//\/auth\/realms\/}" ;;
+        esac
+        # What to do next follows from WHICH of the three stages it died on.
+        # The old advice was "fix spec.oidc.discoveryUrl" regardless, which is
+        # right only for the HTTP case: a run that timed out on certificate
+        # issuance sent the operator to edit a correct value, and cost about
+        # forty minutes of looking in the wrong place.
+        case "${_dd_stage}" in
+            DNS:*)
+                error "  Nothing is publishing this name. Check external-dns is running and"
+                error "  that its domain filter includes the ZONE, not just the kernel domain."
+                ;;
+            NETWORK:*)
+                error "  The name resolves but this machine cannot reach it, so nothing"
+                error "  about the cluster is proven either way. A proxied name always"
+                error "  publishes AAAA: a host with no IPv6 route connects to an address"
+                error "  it cannot use. Check egress from here before changing the cluster."
+                ;;
+            TLS:*)
+                error "  The edge serves no certificate for this name. It is not the"
+                error "  discovery URL and not the cluster."
+                error "    - Universal SSL covers the apex and ONE label below it. A kernel"
+                error "      domain deeper than that needs Total TLS or an advanced"
+                error "      certificate."
+                error "    - Issuance takes minutes, and repeated installs against one"
+                error "      domain can exhaust a CA's rate limit — Let's Encrypt allows"
+                error "      five duplicate certificates a week. Switching the certificate"
+                error "      authority clears that immediately."
+                ;;
+            *)
+                error "  Fix spec.oidc.discoveryUrl on the Cluster claim and re-run."
+                ;;
+        esac
+        return 1
+    fi
+
+    info "Configuring auth/oidc/config against ${OIDC_DISCOVERY_URL}..."
+    if [[ "${GENTIAN_DRY_RUN:-0}" == "1" ]]; then
+        info "     + bao write auth/oidc/config oidc_discovery_url=${OIDC_DISCOVERY_URL}" \
+             "oidc_client_id=${OIDC_CLIENT_ID} oidc_client_secret=<redacted> default_role=cluster-admin (dry run)"
+        return 0
+    fi
+
+    # Printed by hand rather than through gentian_run, which echoes the whole
+    # command line — and this one carries the Keycloak client secret. It was
+    # going to terminals and CI logs in full.
+    echo "     + bao write auth/oidc/config oidc_discovery_url=${OIDC_DISCOVERY_URL}" \
+         "oidc_client_id=${OIDC_CLIENT_ID} oidc_client_secret=<redacted> default_role=cluster-admin"
+
+    # Plain first, pinned second.
+    #
+    # OpenBao fetches the discovery document itself, from inside the cluster,
+    # and verifies its TLS. Where the kernel domain resolves to the in-cluster
+    # gateway — split-horizon DNS, which is the normal arrangement — that
+    # gateway serves whatever the cluster's ClusterIssuer produced. Under
+    # ACME_ENV=staging that is a Let's Encrypt STAGING chain ((STAGING) Ersatz
+    # Emmer YR2 → (STAGING) Pretend Pear X1), which no trust store contains, so
+    # the fetch fails with a bare "error checking oidc discovery URL" and the
+    # whole step stops. The installer host does not see this: it resolves the
+    # same name to the public edge, with a publicly trusted certificate, so the
+    # discovery pre-check above passes and only OpenBao fails.
+    #
+    # oidc_discovery_ca_pem pins the fetch to a CA bundle, which fixes that —
+    # but pinning is not free: it REPLACES the system trust for this fetch. On
+    # a cluster whose certificates are publicly trusted, pinning to the
+    # gateway's chain would break a working configuration if the discovery URL
+    # resolves anywhere else. So it is a fallback, not the default: try the
+    # system trust, and reach for the bundle only when that is refused.
+    # Both attempts' output is captured, not printed as it happens.
+    #
+    # On a cluster with a private or staging chain — which is most of them — the
+    # first attempt is EXPECTED to fail, and printing OpenBao's refusal as it
+    # arrived put a red "Code: 400 ... error checking oidc discovery URL" in the
+    # middle of a step that then succeeded. An operator reading that reasonably
+    # concludes something is wrong. Nothing is: it is how the step establishes
+    # which trust store applies.
+    #
+    # So the first refusal is held, and only surfaces if the second attempt
+    # fails too — at which point it is the diagnosis rather than noise.
+    local plain_err="" pinned_err="" ca_file=""
+
+    if plain_err="$(_oidc_write_config "${secret}" "" 2>&1)"; then
+        success "OIDC auth mount configured (client ${OIDC_CLIENT_ID})."
+        return 0
+    fi
+
+    ca_file="$(_oidc_gateway_ca_file)"
+    local covers_host=1
+    if [[ -n "${ca_file}" ]]; then
+        if _oidc_cert_covers_host "${ca_file}" "${_dd_host}"; then
+            covers_host=0
+            info "  OpenBao does not trust the certificate the cluster serves for"
+            info "  ${OIDC_DISCOVERY_URL%%/auth*} — a private or staging chain, which"
+            info "  is normal. Pinning the discovery fetch to the gateway's CA."
+        else
+            # Said before the retry rather than after it, because the retry is
+            # going to fail and an operator watching should know why it was run
+            # at all. It IS still run: its refusal belongs in the report below,
+            # and a cert this step misread would otherwise go unattempted.
+            warn "  The certificate the cluster serves does not carry ${_dd_host}."
+            warn "  Pinning its CA cannot fix a name mismatch; retrying anyway so"
+            warn "  that OpenBao's own answer is on the record."
+        fi
+        if pinned_err="$(_oidc_write_config "${secret}" "${ca_file}" 2>&1)"; then
+            rm -f "${ca_file}"
+            success "OIDC auth mount configured (client ${OIDC_CLIENT_ID}, discovery pinned to the gateway CA)."
+            return 0
+        fi
+    fi
+
+    # Only now is any of this an error, so only now is any of it printed.
+    error "Could not write auth/oidc/config."
+    error "  OpenBao fetches ${OIDC_DISCOVERY_URL} from inside the cluster and"
+    error "  verifies its TLS. Check that the name resolves in-cluster and that"
+    error "  what answers serves a chain the gateway's CA covers."
+    error ""
+
+    # The specific fault, when it can be named. A name mismatch is not a trust
+    # problem and must not be reported as one: the certificate is a symptom and
+    # the issuer behind it is the fault.
+    #
+    # What leaves one behind is a kernel domain CHANGE. The old wildcard stays
+    # in wildcard-kernel-tls, the gateway goes on serving it, and every name
+    # under the new domain gets a certificate for the old one. Seen on a cluster
+    # moved from test.gentian-os.org to gentian-os.org: the leaf was
+    # CN=test.gentian-os.org with SAN *.test.gentian-os.org, while the DNS-01
+    # ClusterIssuer that would have re-issued it was itself stuck on a
+    # credential seeded after it had already given up — see
+    # resync_credential_consumers in scripts/lib/bootstrap.sh.
+    #
+    # Note which side sees this. The pre-check above reads the PUBLIC edge,
+    # which on a tunnelled cluster is Cloudflare terminating TLS with its own
+    # valid certificate, so it passes. OpenBao resolves the same name to the
+    # in-cluster gateway and sees the stale leaf. Two different certificates for
+    # one hostname, and only one of them is the one that matters here.
+    if (( covers_host != 0 )) && [[ -n "${ca_file}" ]]; then
+        error "  The certificate the gateway serves does not cover ${_dd_host}:"
+        # `|| true`: pipefail makes an openssl that cannot parse the file fail
+        # the whole pipeline, and this is the diagnosis — it must not become a
+        # second failure on top of the one being explained.
+        { _oidc_cert_names "${ca_file}" || true; } | sed 's/^/      /' >&2
+        error ""
+        error "  That is a certificate that was never re-issued, not a trust gap,"
+        error "  and no CA bundle will fix it. Check the Certificate and the"
+        error "  ClusterIssuer it names:"
+        error "    kubectl get certificate -A"
+        error "    kubectl get clusterissuers"
+        error "  A ClusterIssuer that is not Ready issues nothing, and the wildcard"
+        error "  stays at whatever it last held."
+        error ""
+    fi
+    error "  Using the system trust store, OpenBao said:"
+    printf '%s\n' "${plain_err}" | sed 's/^/      /' >&2
+    if [[ -n "${ca_file}" || -n "${pinned_err}" ]]; then
+        error "  Pinned to the gateway CA bundle, it said:"
+        printf '%s\n' "${pinned_err}" | sed 's/^/      /' >&2
+    else
+        error "  No gateway CA bundle was available to retry with: looked for"
+        error "  wildcard-tls in $(ns_kernel edge) and"
+        error "  wildcard-kernel-tls in cert-manager, and neither had a certificate."
+    fi
+    # Held until here so the diagnosis above could read it; the success paths
+    # remove it on their own way out.
+    if [[ -n "${ca_file}" ]]; then
+        rm -f "${ca_file}"
+    fi
+    return 1
+}
+
+# No destroy(): the config lives inside the oidc/ mount, and disabling that
+# mount is B-07-openbao-oidc-mount's destroy(), which takes the config, the
+# roles and the policies under it in one go. Deleting the config separately
+# here would only add a second writer to an object one step already owns.
