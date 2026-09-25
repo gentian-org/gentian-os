@@ -196,6 +196,7 @@ metadata:
   name: openproject
 spec:
   classes: [app]                 # was tenancy
+  launch: tile                   # new: how a person gets to it
   trustTier: platform
   version: "1.4.2"
 
@@ -278,7 +279,66 @@ spec:
 
 ---
 
-## 5. Rules the schema must enforce
+## 5. Tiles hang off exposures, not components
+
+A tile is a field on one entry of `expose`, not on the component. That is the
+right place and it already works, but it leaves one question half answered.
+
+**A `service` cannot have a tile, and the rule that says so is stronger than
+tiles.** A service has no `expose` at all, by CEL, on the profile and on the
+instance. A tile lives on an exposure, so there is nowhere to put one. Nothing
+further is needed and nothing should be added: "services have no tiles" is a
+consequence, not a rule of its own.
+
+**An `app` is not required to have one, and must not be.** Two of the
+platform's own components prove it:
+
+| component | exposures | tiles |
+|---|---|---|
+| desktop | `api`, `web` | none, on either |
+| admin console | `api`, `web` | on `web` only |
+
+The desktop is the surface tiles appear on, so it does not appear on itself.
+The admin console's API entry is reachable and unadvertised, which is what an
+API entry should be. Both are correct, and a blanket "every app has a tile"
+would reject the first and complicate the second.
+
+**The gap.** The schema cannot tell *deliberately unadvertised* from
+*somebody forgot*. A tenant administrator installs an app, it runs, and there
+is no way to open it. Nothing catches that, at admission or afterwards.
+
+The rule worth having is not "apps need tiles". It is **a person must be able
+to reach every app they installed**, and that happens in exactly three ways:
+
+1. **a tile**, on one of its exposures;
+2. **another component opens it** — Collabora from Nextcloud, a viewer from a
+   file manager. Common in a suite, and the reason the blanket rule is wrong;
+3. **it is the launcher** — the desktop, and only the desktop.
+
+Only the first is expressible today, so the second and third are
+indistinguishable from an omission. One field on the profile fixes it and says
+something the model currently cannot say at all, which is *which* component
+opens this one:
+
+```yaml
+spec:
+  classes: [app]
+  launch: tile                  # default: at least one expose entry has a tile
+  # launch: {from: file-store}  # opened by whatever provides this contract
+  # launch: none                # this component is the launcher
+```
+
+With CEL: `launch: tile` requires at least one `expose[].tile`, and the other
+two require none. That turns a silent omission into a refusal at admission,
+and it makes a suite's navigation graph readable from the catalogue rather
+than from each app's own configuration.
+
+`shared-app` behaves as `app` here. `service` may not set `launch` at all,
+because it has no exposures to launch from.
+
+---
+
+## 6. Rules the schema must enforce
 
 Existing and correct, restated with the new words:
 
@@ -295,7 +355,11 @@ New, and the reason this document exists:
 
 - **the package is exactly one of `chart`, `composition` or `api`**, except
   for an addon, which rides on its base and has none;
-- **`deploymentMethod` does not exist**, so nothing can contradict the package.
+- **`deploymentMethod` does not exist**, so nothing can contradict the package;
+- **`launch: tile` requires at least one `expose[].tile`**, and `launch: from`
+  and `launch: none` require none, so an app nobody can open is refused at
+  admission instead of installed and lost;
+- **`service` may not set `launch`**, having no exposures.
 
 Still unbuilt and still a promise the CRD makes:
 
@@ -308,7 +372,7 @@ Still unbuilt and still a promise the CRD makes:
 
 ---
 
-## 6. What changes, in one table
+## 7. What changes, in one table
 
 | today | target | breaks |
 |---|---|---|
@@ -321,10 +385,11 @@ Still unbuilt and still a promise the CRD makes:
 | `package.apiIntegration` | `package.api` | 2 profiles |
 | `package.deploymentMethod` | deleted | 2 profiles |
 | `package.compositionRef` | `package.composition` | nothing yet, unused |
+| nothing | `spec.launch` | new field, default `tile` |
 
 ---
 
-## 7. What has to happen first
+## 8. What has to happen first
 
 In order. The first two are not naming work and block everything else.
 
@@ -340,7 +405,7 @@ In order. The first two are not naming work and block everything else.
    rename are one migration rather than two.
 5. Retire `AppProfile`, `AppCatalogue` and the `App` claim.
 
-## 8. What gets deleted when this lands
+## 9. What gets deleted when this lands
 
 - `unified-app-crd-sketch.md`, this document's predecessor.
 - The guidance in `gentian-app-template` and `gentian-apps` that teaches
