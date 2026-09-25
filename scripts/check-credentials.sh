@@ -112,26 +112,51 @@ check_via_vault() {
 # =============================================================================
 # cluster — read what ESO already knows
 # =============================================================================
+# _probe_namespace — where the catalogue's ExternalSecrets live.
+#
+# This was the literal string gentian-system, which is v4's control namespace.
+# On v5 the probes are in kernel-control, so every credential reported
+# "no probe ExternalSecret ... is the catalogue applied?" on a cluster where
+# most of them were fine, and a genuinely absent one was invisible in the
+# noise.
+#
+# Asked of the cluster rather than derived from a flag, because this script is
+# run by hand against whatever cluster kubectl points at and has no --layout.
+# The cluster config the Cluster composition publishes is the same answer the
+# Compositions use.
+_probe_namespace() {
+    local ns
+    ns="$(kubectl get configmap -A -l gentianos.io/config-type=cluster-config \
+        -o jsonpath='{.items[0].data.kernel\.controlNamespace}' 2>/dev/null || true)"
+    if [[ -n "${ns}" ]]; then
+        printf '%s' "${ns}"
+        return 0
+    fi
+    # No cluster config means a cluster that predates the key, which is v4.
+    printf '%s' "gentian-system"
+}
+
 check_via_cluster() {
     command -v kubectl >/dev/null 2>&1 || { echo "kubectl not found" >&2; exit 1; }
-    local name es ready optional
+    local name es ready optional ns
+    ns="$(_probe_namespace)"
     while IFS= read -r name; do
         [[ -n "${name}" ]] || continue
         es="credreq-${name}"
         optional="$(_yq ".requirements[] | select(.name == \"${name}\") | .optional" "${CATALOGUE}" || echo false)"
 
-        if ! kubectl get externalsecret "${es}" -n gentian-system >/dev/null 2>&1; then
-            _report "${name}" missing "no probe ExternalSecret ${es} — is the catalogue applied?"
+        if ! kubectl get externalsecret "${es}" -n "${ns}" >/dev/null 2>&1; then
+            _report "${name}" missing "no probe ExternalSecret ${es} in ${ns} — is the catalogue applied?"
             continue
         fi
-        ready="$(kubectl get externalsecret "${es}" -n gentian-system \
+        ready="$(kubectl get externalsecret "${es}" -n "${ns}" \
             -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null || true)"
         if [[ "${ready}" == "True" ]]; then
             _report "${name}" satisfied "ESO reports Ready"
         elif [[ "${optional}" == "true" ]]; then
             _report "${name}" optional-missing
         else
-            _report "${name}" missing "$(kubectl get externalsecret "${es}" -n gentian-system \
+            _report "${name}" missing "$(kubectl get externalsecret "${es}" -n "${ns}" \
                 -o jsonpath='{.status.conditions[?(@.type=="Ready")].message}' 2>/dev/null || echo 'not Ready')"
         fi
     done < <(_list_names)
