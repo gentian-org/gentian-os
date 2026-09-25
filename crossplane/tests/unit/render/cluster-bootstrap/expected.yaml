@@ -120,6 +120,8 @@ spec:
         certificates.trustAnchorSecret: ""
         identity.internalUrl: ""
         identity.kernelRealm: ""
+        kernel.controlNamespace: gentian-system
+        kernel.layout: v4
         llm.enabled: "false"
         mail.egressHost: ""
         mail.serviceMode: ""

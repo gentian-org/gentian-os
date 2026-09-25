@@ -2382,6 +2382,53 @@ EOF
         generated=1
     fi
 
+    # The deployments repository's own credential.
+    #
+    # Without this claim nothing composes the Secret the operator and the
+    # director mount to PUSH. Both can clone a public repository without it,
+    # so everything looks installed until the first write: a tenant created
+    # in the console commits locally and then fails with "could not read
+    # Username for https://github.com", which names neither this claim nor
+    # the token it wants.
+    #
+    # The claim is scaffolded whether or not a token has been supplied. It
+    # emits a CredentialRequirement, so `make check-credentials` can say the
+    # push credential is missing -- which is the whole point of declaring a
+    # requirement rather than discovering it.
+    if [[ ! -f "${kernel_dir}/claims/deployments-repository.yaml" ]]; then
+        cat > "${kernel_dir}/claims/deployments-repository.yaml" <<EOF
+# The repository this cluster is described by, and the credential that writes
+# to it. The name matters: the composition emits \`<name>-git-credentials\`,
+# which is what kernel/values.yaml names as appLifecycle.deployments.
+#
+# Supply the token with GENTIAN_DEPLOYMENTS_GIT_TOKEN in install.env and run
+# B-08; it is stored at the vault path below and materialised from there.
+apiVersion: gentianos.io/v1alpha1
+kind: Repository
+metadata:
+  name: deployments
+  namespace: ${CROSSPLANE_NAMESPACE:-crossplane-system}
+spec:
+  type: git
+  role: deployments
+  # Writable: this is the one repository the platform commits to. Every
+  # change the console makes lands here as a commit by the person who asked.
+  writable: true
+  branch: ${GENTIAN_DEPLOYMENTS_BRANCH:-main}
+  endpoints:
+    inCluster: ${GENTIAN_DEPLOYMENTS_REPO:-https://github.com/gentian-org/gentian-deployments}
+  credential:
+    vaultPath: gentian-os/kernel/repositories/deployments
+    displayName: "Deployments repository write access"
+    phase: bootstrap
+    authType: ${GENTIAN_DEPLOYMENTS_AUTH_TYPE:-basic}
+    validate:
+      type: git-https
+EOF
+        info "Scaffolded ${kernel_dir}/claims/deployments-repository.yaml"
+        generated=1
+    fi
+
     if [[ ! -f "${kernel_dir}/values.yaml" ]]; then
         cat > "${kernel_dir}/values.yaml" <<EOF
 # Cluster overlay — only what's unique to THIS cluster. Tier-wide policy

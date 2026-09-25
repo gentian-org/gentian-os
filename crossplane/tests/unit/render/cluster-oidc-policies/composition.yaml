@@ -946,6 +946,15 @@ spec:
                     # the same question from GENTIAN_NS_EDGE, which the chart
                     # sets from the same file this branch encodes.
                     network.edgeNamespace: {{ ternary "kernel-edge" "platform-kernel" $v5 | quote }}
+                    {{- /* Where the kernel's own services run, so a composition
+                         that has to put something beside them does not have to
+                         guess the layout. The Repository composition needs it:
+                         it writes the git credential the operator and the
+                         director mount, and it wrote it to gentian-system on
+                         every cluster -- correct on v4 and nowhere on v5, which
+                         is why the director could clone and never push. */}}
+                    kernel.controlNamespace: {{ $controlNs | quote }}
+                    kernel.layout: {{ $layout | quote }}
                     # Whether this cluster serves one tenant or many.
                     #
                     # Here for the same reason mail.serviceMode is: the operator read it

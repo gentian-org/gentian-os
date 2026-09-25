@@ -75,3 +75,33 @@ func TestAMalformedTrailerIsNotGuessedAt(t *testing.T) {
 		}
 	}
 }
+
+// A push that fails for want of a credential is the one git failure that is
+// a configuration mistake rather than a fault, and it has to be told apart
+// from the rest: reporting it as "repository operation failed" sends
+// somebody looking for a broken repository instead of a missing Secret.
+func TestAMissingPushCredentialIsRecognised(t *testing.T) {
+	for _, out := range []string{
+		"fatal: could not read Username for 'https://github.com': No such device or address",
+		"remote: Invalid username or password.\nfatal: Authentication failed for 'https://github.com/x/y'",
+		"fatal: could not read Username for 'https://github.com': terminal prompts disabled",
+		"remote: Permission denied to user.",
+		"fatal: unable to access 'https://github.com/x/y': The requested URL returned error: 403",
+	} {
+		if !pushUnauthenticated(out) {
+			t.Errorf("not recognised as a credential problem:\n%s", out)
+		}
+	}
+
+	// Everything else must stay what it was. A rejected push is contention
+	// and retries; a missing repository is a different mistake entirely.
+	for _, out := range []string{
+		"! [rejected] main -> main (fetch first)",
+		"fatal: repository 'https://github.com/x/y' not found",
+		"fatal: unable to access: Could not resolve host: github.com",
+	} {
+		if pushUnauthenticated(out) {
+			t.Errorf("wrongly read as a credential problem:\n%s", out)
+		}
+	}
+}

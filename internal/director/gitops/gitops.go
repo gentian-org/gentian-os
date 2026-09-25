@@ -142,6 +142,17 @@ func (m Meta) trailers() []string {
 // ErrPushContended is returned when every retry lost the race to another writer.
 var ErrPushContended = errors.New("push rejected after retries: another writer keeps winning")
 
+// ErrNoPushCredential is a push refused because this process has nothing to
+// authenticate with.
+//
+// Distinguished because it is the one git failure that is a configuration
+// mistake rather than a fault: the commit was made, the remote is reachable,
+// and nobody told this process who it is. It reads as
+// "could not read Username for 'https://...'" -- git asking a terminal that
+// is not there -- and reporting that as "repository operation failed" sends
+// somebody looking for a broken repository instead of a missing Secret.
+var ErrNoPushCredential = errors.New("no credential to push to the deployments repository")
+
 // maxPushAttempts bounds the sync-edit-push loop.
 const maxPushAttempts = 8
 
@@ -491,6 +502,9 @@ func (g *GitOps) commitPaths(ctx context.Context, rels []string, message string,
 		if pushRejected(string(out)) {
 			return errPushRejected
 		}
+		if pushUnauthenticated(string(out)) {
+			return fmt.Errorf("%w: %s", ErrNoPushCredential, strings.TrimSpace(string(out)))
+		}
 		return fmt.Errorf("git push: %w: %s", perr, out)
 	}
 	return nil
@@ -533,6 +547,26 @@ var commitID = regexp.MustCompile(`^[0-9a-f]{40}([0-9a-f]{24})?$`)
 // pushRejected reports whether a failed push lost a race rather than hit a
 // real error. Only a race is worth retrying; a hook that refuses the push
 // ("[remote rejected]") will refuse it again.
+// pushUnauthenticated reports the credential being absent or refused.
+//
+// Matched on git's own words because git offers no exit code for it: a
+// missing credential, a rejected one and a repository that does not exist
+// are all exit 128, and only the text tells them apart.
+func pushUnauthenticated(out string) bool {
+	for _, phrase := range []string{
+		"could not read Username",   // no credential at all, no terminal to ask
+		"Authentication failed",     // a credential the remote refused
+		"terminal prompts disabled", // asked for one with nowhere to ask
+		"Permission denied",         // a credential without write access
+		"403",                       // the forge's answer to the same
+	} {
+		if strings.Contains(out, phrase) {
+			return true
+		}
+	}
+	return false
+}
+
 func pushRejected(out string) bool {
 	return strings.Contains(out, "non-fast-forward") ||
 		strings.Contains(out, "fetch first") ||

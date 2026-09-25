@@ -906,6 +906,16 @@ func (s *Server) repoError(w http.ResponseWriter, r *http.Request, err error) {
 		s.fail(w, r, http.StatusNotFound, "this cluster has no Cluster claim in the repository")
 	case errors.Is(err, gitops.ErrInvalidName):
 		s.fail(w, r, http.StatusBadRequest, "invalid name")
+	case errors.Is(err, gitops.ErrNoPushCredential):
+		// 503, not 500: nothing is broken and the request was fine. The
+		// cluster has not been given a credential to write with, which is
+		// something an operator fixes and a caller can do nothing about.
+		s.cfg.Log.ErrorContext(r.Context(), "no credential to push with",
+			"request_id", reqID(r.Context()), "error", err.Error())
+		s.fail(w, r, http.StatusServiceUnavailable,
+			"this cluster has no credential to write to its deployments repository: "+
+				"the change was prepared and could not be pushed. Supply the token "+
+				"(GENTIAN_DEPLOYMENTS_GIT_TOKEN) and apply the deployments Repository claim.")
 	case errors.Is(err, gitops.ErrPushContended):
 		w.Header().Set("Retry-After", "2")
 		s.fail(w, r, http.StatusConflict, "repository is contended; retry")
