@@ -368,3 +368,29 @@ func TestTheInvitationNamesTheZonesOwnClient(t *testing.T) {
 		t.Fatalf("redirect = %q, want none until the client accepts one", f.lastInvite.RedirectURI)
 	}
 }
+
+// A director configured to speak for realms serves the routes even before any
+// credential has arrived.
+//
+// Gating registration on "are there credentials right now" fails exactly the
+// case that has to work: on a first install the operator writes the Secret
+// minutes after the director starts, and the screens would never appear no
+// matter how many realms arrived. A realm with no credential is a 503 naming
+// it, which is a refusal somebody can act on; a route that does not exist is
+// not.
+func TestTheRoutesExistBeforeAnyCredentialArrives(t *testing.T) {
+	f := newFakeIdentity() // configured, holding nothing
+	h := startWithIdentity(t, f)
+
+	status, body := h.do(t, http.MethodGet, "/v1/tenants/demo/people",
+		h.token(t, "tenant-demo", "tom"), "")
+	if status == http.StatusNotFound {
+		t.Fatal("the route was not registered; a first install would never serve it")
+	}
+	if status != http.StatusServiceUnavailable {
+		t.Fatalf("status %d, want 503", status)
+	}
+	if msg, _ := body["error"].(string); !strings.Contains(msg, "demo") {
+		t.Errorf("the refusal should name the realm: %v", body)
+	}
+}

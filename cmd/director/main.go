@@ -235,12 +235,29 @@ func run(log *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("identity: %w", err)
 	}
-	if realms := idClient.Realms(); len(realms) == 0 {
+	// Registered on CONFIGURATION, not on contents.
+	//
+	// Gating this on "are there credentials right now" was wrong and would
+	// have failed exactly the case it has to work for: on a first install the
+	// operator writes the Secret minutes after this process starts, and a
+	// director that decided at boot would never serve the screens no matter
+	// how many realms arrived. The source re-reads; what a realm without a
+	// credential gets is a 503 naming it, from the route.
+	//
+	// DIRECTOR_REALM_CREDENTIALS_PATH set to the empty string is how a
+	// deployment says this director speaks for nothing at all, and then the
+	// routes genuinely do not exist.
+	if realmDir == "" {
 		log.Warn("this director speaks for no realm: people and realm settings are not served here",
-			"path", realmDir)
+			"setting", "DIRECTOR_REALM_CREDENTIALS_PATH")
 	} else {
-		log.Info("speaking for realms", "realms", realms, "path", realmDir)
 		ident = idClient
+		if realms := idClient.Realms(); len(realms) == 0 {
+			log.Info("no realm credentials yet; the operator writes one per realm",
+				"path", realmDir)
+		} else {
+			log.Info("speaking for realms", "realms", realms, "path", realmDir)
+		}
 	}
 
 	// person reviewing who holds what. Neither can write through the API.
