@@ -96,15 +96,15 @@ var helmReleaseGVK = schema.GroupVersionKind{
 }
 
 const (
-	edgeAuthzRelationAnnotation   = "gentianos.io/edge-authz-relation"
-	edgeAuthzObjectAnnotation     = "gentianos.io/edge-authz-object"
-	edgeAuthzForwardAnnotation    = "gentianos.io/edge-authz-forward-token"
-	edgeAuthzCookieAnnotation     = "gentianos.io/edge-authz-cookie"
-	edgeAuthzAuthModeAnnotation   = "gentianos.io/edge-authz-mode"
+	edgeAuthzRelationAnnotation = "gentianos.io/edge-authz-relation"
+	edgeAuthzObjectAnnotation   = "gentianos.io/edge-authz-object"
+	edgeAuthzForwardAnnotation  = "gentianos.io/edge-authz-forward-token"
+	edgeAuthzCookieAnnotation   = "gentianos.io/edge-authz-cookie"
+	edgeAuthzAuthModeAnnotation = "gentianos.io/edge-authz-mode"
 	// edgeAuthzDenyPathsAnnotation carries the exposure's denyPaths to the
 	// shim's table. Comma-separated because an annotation is a string and a
 	// path cannot contain a comma without being escaped, which none are.
-	edgeAuthzDenyPathsAnnotation = "gentianos.io/edge-authz-deny-paths"
+	edgeAuthzDenyPathsAnnotation  = "gentianos.io/edge-authz-deny-paths"
 	componentDatabaseSecretSuffix = "-database"
 )
 

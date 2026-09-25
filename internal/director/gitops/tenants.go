@@ -72,6 +72,41 @@ type Tenant struct {
 // this is the second lock, on the path a person can reach through a UI.
 const platformTenant = "platform"
 
+// TenantRealm is the Keycloak realm one tenant's people live in.
+//
+// Read from the manifest, and defaulted to the tenant's own name exactly as
+// the operator defaults it. The two must agree: the operator provisions the
+// director's credential per realm, and a director that resolved a different
+// realm name would ask for a credential nobody wrote -- which reads as "this
+// tenant has no identity" rather than as the disagreement it is.
+func (g *GitOps) TenantRealm(ctx context.Context, tenant string) (string, error) {
+	if !ValidName(tenant) {
+		return "", fmt.Errorf("%w: tenant %q", ErrInvalidName, tenant)
+	}
+	file, err := g.TenantFile(ctx, tenant)
+	if err != nil {
+		return "", err
+	}
+	b, err := os.ReadFile(file)
+	if err != nil {
+		return "", err
+	}
+	var doc struct {
+		Spec struct {
+			Isolation struct {
+				KeycloakRealm string `json:"keycloakRealm"`
+			} `json:"isolation"`
+		} `json:"spec"`
+	}
+	if err := yaml.Unmarshal(b, &doc); err != nil {
+		return "", fmt.Errorf("read %s: %w", file, err)
+	}
+	if realm := doc.Spec.Isolation.KeycloakRealm; realm != "" {
+		return realm, nil
+	}
+	return tenant, nil
+}
+
 // TenantDetails lists this cluster's tenants with what the manifests say.
 func (g *GitOps) TenantDetails(ctx context.Context) ([]Tenant, error) {
 	names, err := g.Tenants(ctx)

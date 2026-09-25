@@ -960,7 +960,6 @@ func TestClusterSettingsAreReadWidelyAndWrittenNarrowly(t *testing.T) {
 	}
 }
 
-
 // fixedViewer stands in for OpenFGA's read side. What the API test is about is
 // who may reach the view and that it has no write surface; what it answers is
 // the authz package's own test.

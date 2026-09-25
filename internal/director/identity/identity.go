@@ -307,6 +307,21 @@ func (c *Client) do(ctx context.Context, r Realm, method, path string, query url
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}
+	// The half of the record Keycloak cannot know.
+	//
+	// Keycloak writes an admin event for every one of these calls, with what
+	// changed and with retention, and that is the better record of the change
+	// because it is written whether the change came through here or through
+	// Keycloak's own console. What it cannot see is WHO was allowed to ask:
+	// authDetails names this director's service account and nothing else.
+	//
+	// So the request id travels with the call. The platform's event listener
+	// runs inside this request's transaction and reads it back off the
+	// headers, which joins Keycloak's record of the change to the director's
+	// record of the authority without either one storing the other's half.
+	if id := RequestIDFrom(ctx); id != "" {
+		req.Header.Set(RequestIDHeader, id)
+	}
 	resp, err := c.http.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("keycloak %s %s: %w", method, path, err)
@@ -359,4 +374,37 @@ func statusError(status int, method, path string, body []byte) error {
 		detail = strings.TrimSpace(string(body))
 	}
 	return fmt.Errorf("keycloak %s %s: HTTP %d: %s", method, path, status, detail)
+}
+
+// ClientID is the client the director authenticates as, in every realm it
+// speaks for. One name everywhere, so an operator reading a realm can tell
+// what it is at a glance and an audit can find it without a convention to
+// remember.
+//
+// Canonical here and referenced by the operator that provisions it: the two
+// must agree or the operator writes a credential under a name the director
+// never asks for, which reads as "this tenant has no identity".
+const ClientID = "gentian-director-admin"
+
+// RequestIDHeader is how the caller's request id reaches Keycloak's admin
+// event, and through it the authority record. Named here rather than in the
+// caller because the listener that reads it back has to agree on the spelling.
+const RequestIDHeader = "X-Gentian-Request-Id"
+
+// requestIDKey is the context key the director puts the request id under.
+type requestIDKey struct{}
+
+// WithRequestID carries a request id into the admin calls made under ctx.
+func WithRequestID(ctx context.Context, id string) context.Context {
+	if id == "" {
+		return ctx
+	}
+	return context.WithValue(ctx, requestIDKey{}, id)
+}
+
+// RequestIDFrom reads it back. Empty when there is none, which is what a call
+// made outside a request looks like -- a reconcile, or a test.
+func RequestIDFrom(ctx context.Context) string {
+	id, _ := ctx.Value(requestIDKey{}).(string)
+	return id
 }

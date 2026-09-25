@@ -42,6 +42,7 @@ import (
 	"github.com/gentian-org/gentian-os/internal/director/authz"
 	"github.com/gentian-org/gentian-os/internal/director/entitlement"
 	"github.com/gentian-org/gentian-os/internal/director/gitops"
+	"github.com/gentian-org/gentian-os/internal/director/identity"
 	"github.com/gentian-org/gentian-os/internal/director/lifecycle"
 	"github.com/gentian-org/gentian-os/internal/tilecatalogue"
 )
@@ -65,6 +66,7 @@ type Repository interface {
 	CreateTenant(ctx context.Context, req gitops.NewTenant, meta gitops.Meta) (gitops.Result, error)
 	RetireTenant(ctx context.Context, tenant string, meta gitops.Meta) (gitops.Result, error)
 	Tenants(ctx context.Context) ([]string, error)
+	TenantRealm(ctx context.Context, tenant string) (string, error)
 	SetResourcePlan(ctx context.Context, tenant string, plan gitops.Plan, meta gitops.Meta) (gitops.Result, error)
 	SetTenantBackupPolicy(ctx context.Context, tenant string, policy gitops.BackupPolicy, meta gitops.Meta) (gitops.Result, error)
 	ClearTenantBackupPolicy(ctx context.Context, tenant string, meta gitops.Meta) (gitops.Result, error)
@@ -129,6 +131,34 @@ type Config struct {
 	// with no operator to ask has nothing to relay and nothing to validate a
 	// plan against.
 	Lifecycle Lifecycle
+	// Identity is how this director speaks for Keycloak (S7A.17). Nil leaves
+	// the people, group and realm-settings routes unregistered, which a
+	// console shows as those screens not being here -- rather than as a
+	// screen that should have worked answering 502.
+	//
+	// It holds one credential per realm and can name no other, so what it can
+	// reach is decided by what the operator handed it rather than by what a
+	// handler remembered to check.
+	Identity Identity
+	// InviteClientID and InviteRedirectURI are where an invitation lands.
+	// Keycloak refuses an action-token mail that names neither, and a link
+	// that lands on a realm page with no way back is a person stuck.
+	InviteClientID    string
+	InviteRedirectURI string
+}
+
+// Identity is the part of the Keycloak client this API uses. An interface so
+// the routes can be tested without a realm, and so nothing here can reach a
+// method that was not meant to be reachable from a request.
+type Identity interface {
+	Realm(name string) (identity.Realm, error)
+	People(ctx context.Context, r identity.Realm, search string, limit int) ([]identity.Person, error)
+	Person(ctx context.Context, r identity.Realm, id string) (identity.Person, error)
+	Groups(ctx context.Context, r identity.Realm) ([]identity.Group, error)
+	Invite(ctx context.Context, r identity.Realm, inv identity.Invitation) (identity.Person, error)
+	SetMembership(ctx context.Context, r identity.Realm, userID, groupPath string, member bool) error
+	PasswordPolicy(ctx context.Context, r identity.Realm) (string, error)
+	SetPasswordPolicy(ctx context.Context, r identity.Realm, policy string) error
 }
 
 // StoreConfig is what the entitlement write needs.
@@ -491,6 +521,30 @@ func (s *Server) routes() {
 		// writes a bundle somebody can restore from.
 		s.action("POST /v1/tenants/{t}/actions/backup", "can_administer", tenantObject, s.startBackup)
 		s.action("POST /v1/tenants/{t}/actions/delete-backup", "can_administer", tenantObject, s.deleteBackup)
+	}
+
+	// People, groups and the realm's settings (S7A.17).
+	//
+	// Registered only when this director holds a Keycloak credential. A
+	// console then shows the screens as absent rather than as broken, which
+	// is the difference between "this cluster has not provisioned it" and
+	// "this is failing".
+	//
+	// Every write is an ACTION and none is a PUT. A commit says what should
+	// be true from now on and is reviewable in git for ever; inviting
+	// somebody happens once, and people do not belong in an append-only
+	// history. can_manage_users throughout, except the password policy, which
+	// is a statement about the tenant rather than about a person and sits
+	// with can_set_policy.
+	if s.cfg.Identity != nil {
+		s.guarded("GET /v1/tenants/{t}/people", "can_manage_users", tenantObject, s.listPeople)
+		s.guarded("GET /v1/tenants/{t}/people/{id}", "can_manage_users", tenantObject, s.getPerson)
+		s.guarded("GET /v1/tenants/{t}/groups", "can_manage_users", tenantObject, s.listGroups)
+		s.guarded("GET /v1/tenants/{t}/identity", "can_manage_users", tenantObject, s.tenantIdentitySettings)
+
+		s.action("POST /v1/tenants/{t}/actions/invite-person", "can_manage_users", tenantObject, s.invitePerson)
+		s.action("POST /v1/tenants/{t}/actions/set-membership", "can_manage_users", tenantObject, s.setMembership)
+		s.action("POST /v1/tenants/{t}/actions/set-password-policy", "can_set_policy", tenantObject, s.setPasswordPolicy)
 	}
 }
 

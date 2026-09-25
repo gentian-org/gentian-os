@@ -49,11 +49,12 @@ type fakeKeycloak struct {
 }
 
 type recorded struct {
-	method string
-	path   string
-	query  string
-	token  string
-	body   string
+	method    string
+	path      string
+	query     string
+	token     string
+	body      string
+	requestID string
 }
 
 func newFake(t *testing.T) (*fakeKeycloak, *httptest.Server) {
@@ -101,8 +102,9 @@ func (f *fakeKeycloak) serve(w http.ResponseWriter, r *http.Request) {
 	f.mu.Lock()
 	f.calls = append(f.calls, recorded{
 		method: r.Method, path: r.URL.Path, query: r.URL.RawQuery,
-		token: strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer "),
-		body:  string(body),
+		token:     strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer "),
+		body:      string(body),
+		requestID: r.Header.Get(RequestIDHeader),
 	})
 	if code, ok := f.status[r.Method+" "+path]; ok {
 		f.mu.Unlock()
@@ -141,6 +143,16 @@ func (f *fakeKeycloak) serve(w http.ResponseWriter, r *http.Request) {
 	default:
 		w.WriteHeader(http.StatusNoContent)
 	}
+}
+
+func (f *fakeKeycloak) recordedHeaders() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	out := make([]string, 0, len(f.calls))
+	for _, c := range f.calls {
+		out = append(out, c.requestID)
+	}
+	return out
 }
 
 func (f *fakeKeycloak) recorded() []recorded {
@@ -436,5 +448,47 @@ func TestAnIdWithAPathSeparatorIsRefused(t *testing.T) {
 	}
 	if len(f.recorded()) != 0 {
 		t.Errorf("nothing should reach Keycloak: %+v", f.recorded())
+	}
+}
+
+// The request id has to reach Keycloak, because it is the only thing that
+// joins Keycloak's record of WHAT changed to the director's record of WHO was
+// allowed to ask. Keycloak's own event names this service account and nobody
+// else.
+func TestTheRequestIdTravelsWithEveryAdminCall(t *testing.T) {
+	t.Parallel()
+	f, srv := newFake(t)
+	f.groups["demo"] = []groupRep{{ID: "g1", Path: "/gentian:tenant:demo:members"}}
+	c := clientFor(t, srv, StaticSource{"demo": {Realm: "demo", ClientID: "a", ClientSecret: "s"}})
+	r, _ := c.Realm("demo")
+
+	ctx := WithRequestID(context.Background(), "req-42")
+	if err := c.SetMembership(ctx, r, "abc123", "gentian:tenant:demo:members", true); err != nil {
+		t.Fatal(err)
+	}
+	var admin int
+	for _, call := range f.recordedHeaders() {
+		if call == "req-42" {
+			admin++
+		}
+	}
+	if admin == 0 {
+		t.Fatal("no admin call carried the request id")
+	}
+}
+
+func TestACallWithNoRequestIdSendsNoHeader(t *testing.T) {
+	t.Parallel()
+	f, srv := newFake(t)
+	c := clientFor(t, srv, StaticSource{"demo": {Realm: "demo", ClientID: "a", ClientSecret: "s"}})
+	r, _ := c.Realm("demo")
+
+	if _, err := c.Groups(context.Background(), r); err != nil {
+		t.Fatal(err)
+	}
+	for _, v := range f.recordedHeaders() {
+		if v != "" {
+			t.Fatalf("an empty request id must not become a header: %q", v)
+		}
 	}
 }

@@ -988,7 +988,7 @@ sees only the director's service account. Neither is sufficient alone, which
 is why the request id matters.
 
 **The fields, not the values.** "Alice's address was changed by Bob at 14:02,
-under `can_manage_people`" is the record. The old and new addresses are not,
+under `can_manage_users`" is the record. The old and new addresses are not,
 or the log becomes the problem the git decision avoided. Keycloak admin events
 carry a representation of the changed object by default, so this is a
 configuration decision and not a thing that happens by itself.

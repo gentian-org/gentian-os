@@ -234,6 +234,19 @@ spec:
             {{- end }}
             - name: DIRECTOR_APP_LIFECYCLE_URL
               value: {{ .Values.director.appLifecycleURL | default (printf "http://%s-lifecycle.%s.svc.cluster.local:%v" (include "gentian-os.fullname" .) .Release.Namespace .Values.appLifecycle.port) | quote }}
+            {{- /* Where the director reads its Keycloak credentials.
+
+                 One file per realm, written by the operator's Keycloak
+                 platform reconciler: it holds the admin credential and the
+                 director does not, so the credentials are handed over rather
+                 than fetched -- the same division as the tile catalogue.
+
+                 A realm the director holds no file for is a realm it cannot
+                 name, let alone reach. That is the confinement: a missed
+                 authorization check cannot cross into another tenant's realm
+                 because there is no credential for it to cross with. */}}
+            - name: DIRECTOR_REALM_CREDENTIALS_PATH
+              value: /etc/gentian/realms
             - name: DIRECTOR_COMMITTER_NAME
               value: {{ .Values.director.committer.name | quote }}
             - name: DIRECTOR_COMMITTER_EMAIL
@@ -317,6 +330,9 @@ spec:
             - name: tiles
               mountPath: /etc/gentian/tiles
               readOnly: true
+            - name: realm-credentials
+              mountPath: /etc/gentian/realms
+              readOnly: true
             {{- with .Values.trustAnchorSecret }}
             - name: trust-anchor
               mountPath: /opt/gentian-trust-anchor
@@ -332,6 +348,14 @@ spec:
         - name: tiles
           configMap:
             name: gentian-tiles
+            optional: true
+        # Optional, and re-read rather than read once: the operator writes a
+        # realm's key when the realm appears, which for every tenant is after
+        # this pod started. A director that read the directory at boot would
+        # never speak for a tenant created since.
+        - name: realm-credentials
+          secret:
+            secretName: gentian-director-realms
             optional: true
         {{- if $gitCredsFile }}
         # Optional: the Secret is materialised from OpenBao by the deployments

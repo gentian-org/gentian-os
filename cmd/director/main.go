@@ -36,6 +36,7 @@ import (
 	"github.com/gentian-org/gentian-os/internal/director/authz"
 	"github.com/gentian-org/gentian-os/internal/director/entitlement"
 	"github.com/gentian-org/gentian-os/internal/director/gitops"
+	"github.com/gentian-org/gentian-os/internal/director/identity"
 	"github.com/gentian-org/gentian-os/internal/director/lifecycle"
 	"github.com/gentian-org/gentian-os/internal/membership"
 )
@@ -212,11 +213,43 @@ func run(log *slog.Logger) error {
 	}
 	// The same OpenFGA client answers both questions, and the two are
 	// separate interfaces on purpose: Check is the hot path, ViewOf is a
+	// How this director speaks for Keycloak (S7A.17).
+	//
+	// One credential per realm, handed over by the operator as a mounted
+	// Secret with a key per realm. The director holds no Kubernetes identity
+	// and does not go and look for them, the same division as the tile
+	// catalogue above: the operator holds the administrative credential and
+	// gives this service exactly what it may use.
+	//
+	// A cluster whose operator has not written the Secret yet has no realms
+	// here, and the people and realm-settings routes are simply not
+	// registered -- which a console shows as those screens being absent
+	// rather than as screens that should have worked.
+	var ident api.Identity
+	realmDir := envOr("DIRECTOR_REALM_CREDENTIALS_PATH", "/etc/gentian/realms")
+	idClient, err := identity.New(identity.Config{
+		BaseURL: envOr("DIRECTOR_IDENTITY_BASE_URL", issuerBase),
+		Source:  identity.NewDirectorySource(realmDir, envOr("DIRECTOR_IDENTITY_CLIENT_ID", identity.ClientID)),
+		Logger:  log,
+	})
+	if err != nil {
+		return fmt.Errorf("identity: %w", err)
+	}
+	if realms := idClient.Realms(); len(realms) == 0 {
+		log.Warn("this director speaks for no realm: people and realm settings are not served here",
+			"path", realmDir)
+	} else {
+		log.Info("speaking for realms", "realms", realms, "path", realmDir)
+		ident = idClient
+	}
+
 	// person reviewing who holds what. Neither can write through the API.
 	handler, err := api.New(api.Config{Authn: verifier, Authz: checker, Viewer: checker, Repo: repo, Log: log,
 		EnforceEntitlements: enforce, Store: store, Cluster: cluster,
 		TilesPath: envOr("DIRECTOR_TILES_PATH", "/etc/gentian/tiles/tiles.yaml"),
-		Lifecycle: lc})
+		Lifecycle: lc, Identity: ident,
+		InviteClientID:    os.Getenv("DIRECTOR_INVITE_CLIENT_ID"),
+		InviteRedirectURI: os.Getenv("DIRECTOR_INVITE_REDIRECT_URI")})
 	if err != nil {
 		return err
 	}

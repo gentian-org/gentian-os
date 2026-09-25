@@ -162,18 +162,18 @@ func buildProfileEntries(profiles []gentianov1alpha1.AppProfile, installedCounts
 		p := &profiles[i]
 		id := gentianov1alpha1.ProfileIdentityFor(p)
 		entries = append(entries, gentianov1alpha1.CatalogueEntry{
-			Name:               p.Name,
-			Family:             id.Family,
-			CatalogueVersion:   id.CatalogueVersion,
-			Edition:            id.Edition,
-			TrustTier:          gentianov1alpha1.EffectiveTrustTier(p.Spec.TrustTier),
-			License:            p.Spec.License,
-			DisplayName:        p.Spec.DisplayName,
-			Description:        p.Spec.Description,
-			ChartVersion:       p.Spec.Chart.Version,
-			DeploymentMethod:   p.Spec.DeploymentMethod,
+			Name:                p.Name,
+			Family:              id.Family,
+			CatalogueVersion:    id.CatalogueVersion,
+			Edition:             id.Edition,
+			TrustTier:           gentianov1alpha1.EffectiveTrustTier(p.Spec.TrustTier),
+			License:             p.Spec.License,
+			DisplayName:         p.Spec.DisplayName,
+			Description:         p.Spec.Description,
+			ChartVersion:        p.Spec.Chart.Version,
+			DeploymentMethod:    p.Spec.DeploymentMethod,
 			ServiceRequirements: kernelRequirementLabels(p.Spec.ServiceRequirements),
-			InstalledCount:     installedCounts[p.Name],
+			InstalledCount:      installedCounts[p.Name],
 		})
 	}
 	sort.Slice(entries, func(i, j int) bool {
