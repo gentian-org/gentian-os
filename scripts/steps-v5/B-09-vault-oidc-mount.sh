@@ -72,17 +72,29 @@ check() {
     # here. Undefined rather than satisfied, so --status does not claim work
     # that was never asked for.
     _v5_oidc_configured || return "${CHECK_UNDEFINED}"
-    # No token or no route is "cannot tell" rather than "missing": reporting
-    # missing would blame the cluster for a gap in this shell.
-    _v5_oidc_bao || return "${CHECK_UNDEFINED}"
+    # No token or no route is MISSING, not undefined.
+    #
+    # This said "cannot tell" and returned undefined, on the reasoning that
+    # reporting missing would blame the cluster for a gap in this shell. The
+    # driver skips an undefined step on the forward pass -- so a pass that
+    # could not reach the vault at check time never enabled the mount, and
+    # said "nothing to do here" while doing nothing. Every later step that
+    # needs the mount then failed for reasons that name something else.
+    #
+    # Missing is the honest verdict: it makes apply() run, and apply() already
+    # says exactly what is wrong and stops. A check that cannot verify a step
+    # must never be the reason the step is skipped.
+    _v5_oidc_bao || return "${CHECK_MISSING}"
 
     # The mount, and only the mount. Whether it is CONFIGURED is a later
     # step's verdict; asking it here would report this step unsatisfied for
     # the whole of a first install, on account of work it does not do.
     local body
-    body="$(_v5_oidc_auth_list)" || return "${CHECK_UNDEFINED}"
+    body="$(_v5_oidc_auth_list)" || return "${CHECK_MISSING}"
+    # Permission denied is a token that cannot answer the question, which is
+    # the same "cannot tell" as above and gets the same verdict.
     if grep -qi 'permission denied' <<<"${body}"; then
-        return "${CHECK_UNDEFINED}"
+        return "${CHECK_MISSING}"
     fi
     jq -e '.data["oidc/"] // .["oidc/"]' >/dev/null 2>&1 <<<"${body}"
 }

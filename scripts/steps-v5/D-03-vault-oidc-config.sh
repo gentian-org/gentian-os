@@ -196,7 +196,11 @@ check() {
     [[ -n "${OIDC_DISCOVERY_URL}" ]] || return "${CHECK_UNDEFINED}"
     # No token, or no route to OpenBao, is "cannot tell" rather than "missing":
     # reporting missing would blame the cluster for a gap in this shell.
-    _oidc_bao_addr || return "${CHECK_UNDEFINED}"
+    # Missing, not undefined: the driver skips an undefined step, so a pass
+    # that could not reach the vault here would silently never configure the
+    # mount. apply() says what is wrong; a check must not be why a step is
+    # skipped.
+    _oidc_bao_addr || return "${CHECK_MISSING}"
 
     # Configured means the discovery URL matches the claim, not merely that some
     # config exists — a mount pointed at the wrong realm authenticates nobody and
@@ -210,7 +214,7 @@ check() {
     local have rc=0
     have="$(bao read -field=oidc_discovery_url auth/oidc/config 2>&1)" || rc=$?
     if [[ ${rc} -ne 0 ]]; then
-        grep -qi 'permission denied' <<<"${have}" && return "${CHECK_UNDEFINED}"
+        grep -qi 'permission denied' <<<"${have}" && return "${CHECK_MISSING}"
         return "${CHECK_MISSING}"
     fi
     [[ "${have}" == "${OIDC_DISCOVERY_URL}" ]]

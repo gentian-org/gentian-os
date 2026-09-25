@@ -284,8 +284,15 @@ _has_verb() {
 # codes. Call as: `verdict=0; _step_verdict || verdict=$?`.
 #
 # A step with no check() is UNDEFINED rather than MISSING: it has not told us
-# there is work to do, only that it has no way to say. The callers decide what
-# that means for their direction — the forward pass still applies such a step.
+# there is work to do, only that it has no way to say.
+#
+# What the callers do with that differs, and the forward pass SKIPS it — this
+# comment used to claim the opposite, which is worth knowing because it makes
+# UNDEFINED dangerous to return for the wrong reason. "This cluster does not
+# want this feature" is a correct use. "I could not verify it" is not: the
+# step is then skipped silently and the log reads "nothing to do here". B-09
+# returned undefined when it could not reach the vault, and the OIDC mount was
+# never enabled on a cluster that had asked for one.
 _step_verdict() {
     local rc=0
     _has_verb check || return "${CHECK_UNDEFINED}"
