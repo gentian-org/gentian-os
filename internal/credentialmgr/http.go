@@ -260,8 +260,23 @@ func loadBaoCA(mgr manager.Manager) []byte {
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 	if err := mgr.GetAPIReader().Get(ctx, types.NamespacedName{Name: name, Namespace: namespace}, sec); err != nil {
+		// An in-cluster address over https is a certificate no public root
+		// signs, so this is not the conditional warning it used to be: every
+		// token exchange WILL fail, and saying it at Info under an "if" is
+		// how it scrolled past on a cluster where the Secret was simply
+		// being looked for in the wrong namespace.
+		if addr := os.Getenv("BAO_ADDR"); strings.HasPrefix(addr, "https://") &&
+			strings.Contains(addr, ".svc") {
+			log.Error(err, "OpenBao's CA was not found, so every token exchange will fail: "+
+				"nothing in the cluster can verify an in-cluster certificate against the public roots. "+
+				"Set credentialManager.caSecretNamespace to the namespace the vault runs in "+
+				"(it follows openbaoNamespace by default), or BAO_CACERT to a file.",
+				"secret", namespace+"/"+name, "address", addr)
+			return nil
+		}
 		log.Info("no OpenBao CA available; verifying against the system roots instead. "+
-			"If OpenBao serves a self-signed certificate, every token exchange will fail to connect.",
+			"That is correct for a vault with a publicly trusted certificate, and fatal to "+
+			"every token exchange for one without.",
 			"secret", namespace+"/"+name, "reason", err.Error())
 		return nil
 	}

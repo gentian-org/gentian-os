@@ -160,8 +160,14 @@ spec:
             */}}
             - name: BAO_CA_SECRET
               value: {{ (.Values.credentialManager).caSecret | default "openbao-tls" | quote }}
+            {{- /* Where that Secret is: the vault's own namespace, which this
+                 chart is already told. It defaulted to the literal "openbao",
+                 which is the v4 name -- so on a v5 cluster the certificate was
+                 looked for in a namespace that does not exist, the CA was not
+                 found, and every token exchange failed at TLS while the log
+                 said only that it was verifying against the system roots. */}}
             - name: BAO_CA_SECRET_NAMESPACE
-              value: {{ (.Values.credentialManager).caSecretNamespace | default "openbao" | quote }}
+              value: {{ (.Values.credentialManager).caSecretNamespace | default .Values.openbaoNamespace | default "openbao" | quote }}
             {{- if (.Values.credentialManager).tlsSkipVerify }}
             - name: BAO_TLS_SKIP_VERIFY
               value: "true"

@@ -513,7 +513,12 @@ credentialManager:
   # the API, because a Pod cannot mount a Secret from another namespace — the
   # same reason ESO's ClusterSecretStore names it as a caProvider.
   caSecret: openbao-tls
-  caSecretNamespace: openbao
+  # Empty follows openbaoNamespace, which is where the vault actually is.
+  # This used to say "openbao" outright, which is the v4 name: on a v5
+  # cluster the certificate was looked for in a namespace that does not
+  # exist, so the CA was never found and every token exchange failed at TLS.
+  # Set it only for a vault whose certificate lives somewhere else again.
+  caSecretNamespace: ""
   # Last resort for a cluster whose CA cannot be read at all. Prefer fixing the
   # Secret reference: this turns off verification for every exchange.
   tlsSkipVerify: false
