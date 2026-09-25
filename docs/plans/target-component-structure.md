@@ -86,6 +86,11 @@ spec:
 |---|---|---|
 | `workload` | `chart` or `composition` | the platform runs it |
 | `api` | `api` | the platform routes to something already running |
+| `addon` | `addon` | the platform flips a switch inside another component |
+
+**`addon` belongs in the package and is not there today.** It sits under
+`spec.customization.addon`, which is why the current one-of rule has to reach
+out of `package` into a sibling block to finish its own union. See §3.
 
 **This is not a field.** It is read from the package, and the schema makes the
 package a discriminated union so it cannot be ambiguous. Adding a field would
@@ -136,7 +141,97 @@ to change. Named here only so it is clear the model has three dimensions.
 
 ---
 
-## 3. Requirements and contracts are two vocabularies, not one
+## 3. `addon` is a package type
+
+An addon is a catalogue entry that is not deployed. It flips a switch inside
+another component's own addon system: an Odoo module name, a Nextcloud app id,
+an Activepieces piece name. Structurally that is the same statement `api`
+makes, namely that this entry is not run here and here is where it really lives, and
+it belongs in the same field.
+
+```yaml
+spec:
+  classes: [app]
+  package:
+    addon:
+      id: mrp
+      of: odoo-base-ce
+```
+
+Today it is `spec.customization.addon`, and the schema strains in five places
+because of it.
+
+**1. The one-of rule reaches out of `package`.** It reads, verbatim:
+
+```
+has(package.chart) || (has(package.compositionRef) && ...) ||
+has(package.apiIntegration) || (has(self.customization) && has(self.customization.addon))
+```
+
+A discriminator that has to reach into a sibling block to finish its own union
+is in the wrong block.
+
+**2. The kind is decided by an annotation, not by either field.**
+`EffectiveDeploymentRole` reads `gentianos.io/deployment-role`, and that is
+what the addon resolver checks. So *is this an addon* is answered by an
+annotation, *which addon, and of what* by `customization.addon`, and *how is
+it delivered* by `package`. Three places, one question.
+
+**3. The profiles disagree with themselves.** Of the 20 addon profiles in the
+catalogue, 11 declare a `chart`. `odoo-mrp-ce` declares
+`deploymentMethod: crossplane`, a `compositionRef`, a chart version, and its
+own CPU and memory requests, alongside `customization.addon: {id: mrp, of:
+odoo-base-ce}`. It describes itself as deploying something it does not deploy.
+The `of` field's own comment explains why: it replaced an annotation that
+existed to auto-install a base when an addon was installed standalone, *"the
+relationship the L3 cleanup inverts"*. Those fields are from the standalone
+era and nothing removed them.
+
+**4. `ProfileDeploysWorkload` gets it wrong.** It is `!ProfileIsAPI(p)`, so an
+addon reports that it deploys a workload.
+
+**5. The derived delivery axis was incomplete**, which is how this surfaced.
+An addon is neither `workload` nor `api`: nothing is run and nothing is routed.
+
+### What `customization` keeps
+
+Most of that block rates how changeable a deployable app is: grade, rubric
+score, supported rungs, drop-ins, `extension`, `publishes`, `repackage`. That
+is an assessment. `addon` is not an assessment — it says this entry is not an
+app at all.
+
+The block already mixes sides. `addon` is set on the addon, while
+`addonActivation` and `addonValues` are documented as *"set on the base
+profile, not on the addons"*. So one field is a kind discriminator and the
+others are the base's machinery.
+
+**The fair counter-argument**: an addon *is* rung L3, the app's own addon
+system, so grouping it with the ladder has a logic. But a rung is a property
+of the relationship, not of the entry, and the one-of rule already treats
+`addon` as a kind by putting it in the union. The base's side of L3,
+`extension`, is genuinely a ladder statement and stays where it is.
+
+**Open, and not decided here:** whether `addonActivation` and `addonValues`
+follow into `package`. They change the *base's* chart values, which is a
+packaging concern, but they are tied to the ladder. Decide it when the addon
+move is made, not before.
+
+### The conversion blocker this exposes
+
+All 20 addon profiles carry a tile, and an addon's tile points into its base:
+`linkSuffix: "/odoo/action-mrp..."`, `linkTarget: embedded`. In the new model
+a tile hangs off an `expose` entry, and an exposure's `backend` is required
+and documented as *"a Service in the component's own namespace"*. An addon has
+no Service of its own.
+
+So an addon with a tile cannot be expressed as a `ComponentProfile` today, and
+that is all 20 of them. Either an exposure's backend may name another
+component's Service, or an addon's tile is declared differently from an app's.
+This has to be answered before the catalogue converts.
+
+---
+
+## 4. Requirements and contracts are two vocabularies, not one
 
 This is the second rename, and the obvious landing place is taken.
 
@@ -192,7 +287,7 @@ no LLM member in the struct. Either add it or stop promising it.
 
 ---
 
-## 4. The entry, end to end
+## 5. The entry, end to end
 
 ```yaml
 apiVersion: gentianos.io/v1alpha1
@@ -284,7 +379,7 @@ spec:
 
 ---
 
-## 5. Tiles hang off exposures, not components
+## 6. Tiles hang off exposures, not components
 
 A tile is a field on one entry of `expose`, not on the component. That is the
 right place and it already works, but it leaves one question half answered.
@@ -394,7 +489,7 @@ database, sets `launch: none` and has no `expose` at all.
 
 ---
 
-## 6. Rules the schema must enforce
+## 7. Rules the schema must enforce
 
 Existing and correct, restated with the new words:
 
@@ -408,8 +503,8 @@ Existing and correct, restated with the new words:
 
 New, and the reason this document exists:
 
-- **the package is exactly one of `chart`, `composition` or `api`**, except
-  for an addon, which rides on its base and has none;
+- **the package is exactly one of `chart`, `composition`, `api` or `addon`**,
+  with no exception and nothing to reach for outside `package`;
 - **`deploymentMethod` does not exist**, so nothing can contradict the package;
 - **`launch: tile` requires at least one `expose[].tile`**, and `launch: from`
   and `launch: none` require none, so an app nobody can open is refused at
@@ -433,7 +528,7 @@ Still unbuilt and still a promise the CRD makes:
 
 ---
 
-## 7. What changes, in one table
+## 8. What changes, in one table
 
 | today | target | breaks |
 |---|---|---|
@@ -446,13 +541,15 @@ Still unbuilt and still a promise the CRD makes:
 | `package.apiIntegration` | `package.api` | 2 profiles |
 | `package.deploymentMethod` | deleted | 2 profiles |
 | `package.compositionRef` | `package.composition` | nothing yet, unused |
+| `customization.addon` | `package.addon` | 20 profiles |
+| annotation `deployment-role` | deleted, read from the package | 20 profiles |
 | nothing | `spec.launch` | new field, default `tile` |
 | `TileObject: app\|tenant` | `app\|tenant\|cluster` | nothing, additive |
 | CEL "system has no expose" | "service is gateway-only" | nothing yet, no service profiles exist |
 
 ---
 
-## 8. What has to happen first
+## 9. What has to happen first
 
 In order. The first two are not naming work and block everything else.
 
@@ -461,14 +558,19 @@ In order. The first two are not naming work and block everything else.
    there, the catalogue cannot move and there is nothing to rename.
 2. **The component reconciler refuses any package that is not a chart**
    (*"only package.chart is reconciled yet"*). Converting the two
-   API-delivered profiles today would stop them working.
-3. Run the conversion in `gentian-apps` and settle its review items. The
+   API-delivered profiles today would stop them working, and there is no addon
+   path in it at all.
+3. **An addon's tile has no backend it may name.** All 20 addon profiles carry
+   a tile pointing into their base, and an exposure's `backend` is required and
+   must be a Service in the component's own namespace. Answer §3's last
+   question before converting anything in the Odoo or Nextcloud families.
+4. Run the conversion in `gentian-apps` and settle its review items. The
    converter exists and all profiles convert; nobody has run it for real.
-4. Apply the renames in `convert-appprofile.py`, so the conversion and the
+5. Apply the renames in `convert-appprofile.py`, so the conversion and the
    rename are one migration rather than two.
-5. Retire `AppProfile`, `AppCatalogue` and the `App` claim.
+6. Retire `AppProfile`, `AppCatalogue` and the `App` claim.
 
-## 9. What gets deleted when this lands
+## 10. What gets deleted when this lands
 
 - `unified-app-crd-sketch.md`, this document's predecessor.
 - The guidance in `gentian-app-template` and `gentian-apps` that teaches
