@@ -66,3 +66,44 @@ spec:
       selfHeal: true
     syncOptions:
     - ServerSideApply=true
+---
+# The policies themselves, which v5 delivered nowhere.
+#
+# The chart above installs the admission controller and stops. v4 delivered a
+# second Application for kernel/security/kyverno/policies, and without it
+# Stage-0 MAC runs with the webhook up, every namespace selected, and ZERO
+# ClusterPolicies -- an admission controller that admits everything, which
+# reads exactly like one that is working.
+#
+# prune: false, like the controller above. A policy removed from the checkout
+# should stop being enforced deliberately, through a commit somebody reviewed,
+# rather than because a sync noticed a file was gone.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: kyverno-policies
+  namespace: {{ include "ns" (list . "gitops") }}
+  annotations:
+    # After the controller: a ClusterPolicy applied before the CRDs are
+    # established is rejected, and Argo retries it as a sync failure rather
+    # than as the ordering problem it is.
+    argocd.argoproj.io/sync-wave: "6"
+  finalizers:
+  - resources-finalizer.argocd.argoproj.io
+spec:
+  project: gentian
+  source:
+    repoURL: {{ .Values.osRepo | default "https://github.com/gentian-org/gentian-os" }}
+    targetRevision: {{ .Values.gentianOsBranch }}
+    path: kernel/security/kyverno/policies
+    directory:
+      recurse: true
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: {{ include "ns" (list . "admission") }}
+  syncPolicy:
+    automated:
+      prune: false
+      selfHeal: true
+    syncOptions:
+    - ServerSideApply=true
