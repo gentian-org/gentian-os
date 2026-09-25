@@ -840,8 +840,8 @@ can then add or remove a membership, but it cannot invent a relation that was
 never in the model.
 
 **The catalogue's vocabulary**, raised 2026-09-25 and not settled. Three
-questions, one answer each, none of them started. The analysis is in
-`unified-app-crd-sketch.md`.
+questions, one answer each, none of them started. The shape they resolve to is
+written out in [target-component-structure.md](target-component-structure.md).
 
 - **`ComponentProfile` or `AppProfile`.** AD-4 already says Component, and
   36 of the 38 catalogue entries are still `AppProfile`. What is unsettled is
