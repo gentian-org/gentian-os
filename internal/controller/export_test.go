@@ -43,3 +43,11 @@ func (r *TenantReconciler) DefaultTenantMailModeForTest(ctx context.Context) gen
 func (r *TenantReconciler) SyncTenantMailDNSForTest(ctx context.Context, tenant *gentianov1alpha1.Tenant) error {
 	return r.syncTenantMailDNS(ctx, tenant)
 }
+
+// EnsureMailForTest exposes the mail dispatch. What it decides is whether a
+// tenant is registered in a mail stack this cluster runs, and the failure mode
+// this test guards is silent: mail that is never delivered.
+func (r *TenantReconciler) EnsureMailForTest(ctx context.Context, tenant *gentianov1alpha1.Tenant) error {
+	_, err := r.ensureMail(ctx, tenant)
+	return err
+}

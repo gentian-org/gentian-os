@@ -1,0 +1,17 @@
+# Valid Cluster claim — v4 may still ask for the kernel mail stack.
+#
+# The refusal above is about what the LAYOUT can honour, not about the
+# function: v4 has D-04-mail and deploys it. This fixture is what keeps the
+# rule from being read as "the kernel mail stack is gone".
+apiVersion: gentianos.io/v1alpha1
+kind: Cluster
+metadata:
+  name: test-v4-kernel-mail
+  namespace: default
+spec:
+  kernelDomain: example.org
+  layout: v4
+  mail:
+    serviceMode: kernel
+  llm:
+    enabled: true

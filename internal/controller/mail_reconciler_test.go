@@ -732,3 +732,84 @@ func TestSyncTenantMailDNS_GatedOnClusterMailMode(t *testing.T) {
 		}
 	})
 }
+
+// The opt-in a cluster cannot honour.
+//
+// selfhosted means "register in the shared kernel Postfix and Dovecot". A
+// cluster relaying through a provider has neither, and v5 has no step that
+// deploys them at all -- so the tenant sat at MailReady=False/Provisioning
+// waiting for a Keycloak client belonging to a Dovecot that was never coming,
+// and nothing in the message said the cluster was the reason. Mail was
+// silently undeliverable, which is the worst shape this can fail in.
+//
+// The default already answers transport-only on such a cluster, so what is
+// asserted here is the EXPLICIT case: a tenant that asks for selfhosted is
+// refused by name, and the refusal says who has to change what.
+func TestMail_SelfhostedIsRefusedWhenTheClusterRunsNone(t *testing.T) {
+	t.Parallel()
+
+	mailNS := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "system-mail"}}
+	tenant := &gentianov1alpha1.Tenant{
+		ObjectMeta: metav1.ObjectMeta{Name: "wishful", Namespace: "default"},
+		Spec: gentianov1alpha1.TenantSpec{
+			DisplayName: "Wishful Co",
+			Domain:      "wishful.example.com",
+			Mail:        &gentianov1alpha1.TenantMail{Mode: gentianov1alpha1.MailModeSelfhosted},
+		},
+	}
+	c := fake.NewClientBuilder().WithScheme(scheme.Scheme).
+		WithObjects(mailNS, tenant).Build()
+
+	// MailServiceMode external: the relay is deployed, Dovecot is not.
+	r := &controller.TenantReconciler{Client: c, MailServiceMode: "external"}
+	if err := r.EnsureMailForTest(context.Background(), tenant); err != nil {
+		t.Fatalf("a refusal is a condition, not an error: %v", err)
+	}
+
+	cond := findCondition(tenant, "MailReady")
+	if cond == nil {
+		t.Fatal("no MailReady condition")
+	}
+	if cond.Status != metav1.ConditionFalse || cond.Reason != "ClusterCannotHost" {
+		t.Fatalf("MailReady = %s/%s, want False/ClusterCannotHost", cond.Status, cond.Reason)
+	}
+	// The message has to name the setting that is wrong and an answer that
+	// works, or it is just a different way of failing silently.
+	for _, want := range []string{"serviceMode", "transport-only", "external"} {
+		if !strings.Contains(cond.Message, want) {
+			t.Errorf("message does not mention %q: %s", want, cond.Message)
+		}
+	}
+}
+
+// The other half: a cluster that DOES run kernel mail must still honour it.
+// A rule that refuses the function rather than the layout would be a
+// regression dressed as a fix.
+func TestMail_SelfhostedIsHonouredWhenTheClusterRunsIt(t *testing.T) {
+	t.Parallel()
+
+	mailNS := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "system-mail"}}
+	tenant := &gentianov1alpha1.Tenant{
+		ObjectMeta: metav1.ObjectMeta{Name: "hosted", Namespace: "default"},
+		Spec: gentianov1alpha1.TenantSpec{
+			DisplayName: "Hosted Co",
+			Domain:      "hosted.example.com",
+			Mail:        &gentianov1alpha1.TenantMail{Mode: gentianov1alpha1.MailModeSelfhosted},
+		},
+	}
+	c := fake.NewClientBuilder().WithScheme(scheme.Scheme).
+		WithObjects(mailNS, tenant).Build()
+
+	r := &controller.TenantReconciler{Client: c, MailServiceMode: "kernel"}
+	_ = r.EnsureMailForTest(context.Background(), tenant)
+
+	cond := findCondition(tenant, "MailReady")
+	if cond == nil {
+		t.Fatal("no MailReady condition")
+	}
+	// Whatever it reports, it must not be the refusal: on this cluster the
+	// stack exists and the tenant's wish is satisfiable.
+	if cond.Reason == "ClusterCannotHost" {
+		t.Fatalf("a cluster running kernel mail refused selfhosted: %s", cond.Message)
+	}
+}

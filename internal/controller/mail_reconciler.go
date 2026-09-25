@@ -213,6 +213,30 @@ func (r *TenantReconciler) ensureMail(ctx context.Context, tenant *gentianov1alp
 		mode = tenant.Spec.Mail.Mode
 	}
 
+	// An opt-in this cluster cannot honour is refused, not attempted.
+	//
+	// selfhosted means "register in the shared kernel Postfix and Dovecot".
+	// A cluster relaying through a provider has neither, and v5 has no step
+	// that deploys them at all. Registering anyway produced a tenant whose
+	// mail was silently undeliverable: the condition said Provisioning, the
+	// Keycloak client it waits for is Dovecot's and Dovecot is not there, and
+	// nothing in the message said the cluster was the reason.
+	//
+	// Only an EXPLICIT selfhosted reaches this. defaultTenantMailMode already
+	// answers transport-only on such a cluster, so a tenant that did not ask
+	// is unaffected -- what is refused is a statement the cluster cannot
+	// satisfy, and the refusal names who has to change what.
+	if mode == gentianov1alpha1.MailModeSelfhosted && !r.dovecotDeployed(ctx) {
+		r.setCondition(tenant, conditionMailReady, metav1.ConditionFalse,
+			"ClusterCannotHost",
+			"spec.mail.mode is selfhosted, and this cluster runs no kernel mail stack "+
+				"(Cluster spec.mail.serviceMode is not 'kernel'), so there is no Postfix or "+
+				"Dovecot to register this tenant in. Use mode 'transport-only' for outbound "+
+				"only, 'external' with an SMTP relay secret, or ask a platform administrator "+
+				"to run the cluster's mail function.")
+		return ctrl.Result{}, nil
+	}
+
 	switch mode {
 	case gentianov1alpha1.MailModeSelfhosted:
 		done, err := r.ensureMailSelfhosted(ctx, tenant)

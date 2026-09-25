@@ -1,0 +1,15 @@
+# Invalid Cluster claim — layout v5 asking for LLM serving.
+#
+# v5 composes the route for llm.<kernelDomain> and deploys neither
+# litellm-proxy nor any vLLM instance, so the host would resolve and answer
+# nothing. Refused for the same reason as the kernel mail stack above.
+apiVersion: gentianos.io/v1alpha1
+kind: Cluster
+metadata:
+  name: test-v5-llm
+  namespace: default
+spec:
+  kernelDomain: example.org
+  layout: v5
+  llm:
+    enabled: true

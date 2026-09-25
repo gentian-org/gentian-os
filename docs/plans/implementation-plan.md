@@ -73,7 +73,7 @@ steps yet; `work-packages.md` is where their content lives until they are.
 | S7A.8 | A read-only view of the authorization state | ✅ |
 | S7A.9 | The kernel UIs are actually usable | ✅ |
 | S7A.9b | A refusal a person can act on | ✅ |
-| S7A.10 | The installer does what it claims | ◐ 6 of 7; one decided |
+| S7A.10 | The installer does what it claims | ✅ |
 | S7A.10b | The v5 step set is the v4 step set | ✅ |
 | S7A.11 | Signing out does not ask a second time | ◐ built, not verified |
 | S7A.12 | The tile catalogue leaves the director | ✅ |
@@ -104,9 +104,10 @@ steps yet; `work-packages.md` is where their content lives until they are.
    been exercised: sign-out without the second question, and a zone cookie
    that does not reach a third-party application.
 5. **S8 — purge and reinstall**, which is what makes M1 reached rather
-   than demonstrated. A purge now also exercises what S7A.10b added: the
-   trust-anchor dispatch and the repository handoff have never run on a
-   cluster that started from nothing.
+   than demonstrated. Nothing blocks it: S7A.10's tenant teardown is done. A
+   purge now also exercises what S7A.10b added — the trust-anchor dispatch
+   and the repository handoff have never run on a cluster that started from
+   nothing.
 6. **After M1**, the work packages in the order in §6.
 
 ---
@@ -550,10 +551,9 @@ sign-out. It grants nothing: signing out is available to anyone holding a
 session, refused or not. A `bearer` route still gets the bare status, because
 a program is reading it.
 
-### S7A.10 ◐ The installer does what it claims
+### S7A.10 ✅ The installer does what it claims
 
-Two cold-start races are fixed, four of the seven below are done and one is
-decided rather than built. The two still open are 4 and 5.
+Two cold-start races are fixed and all seven below are done.
 
 1. ✅ The OpenBao **`oidc` auth mount** — `B-09-vault-oidc-mount` enables it
    between the seeded secrets and the Cluster claim, so the roles the
@@ -591,8 +591,8 @@ decided rather than built. The two still open are 4 and 5.
    `E-02-recovery-kit` and `E-03-revoke-bootstrap-token`. The second was
    unsatisfiable until `D-03-vault-oidc-config` landed: its guard requires a
    proven OIDC login, and with no `auth/oidc/config` nobody could make one.
-6. ◐ **Mail** and **LLM serving** — decided, not yet enforced. Both are
-   deliberate drops for M1, and neither is a live defect: this cluster runs
+6. ✅ **Mail** and **LLM serving** — the opt-in is refused. Both are
+   deliberate drops for M1, and neither was a live defect: this cluster runs
    `mail.serviceMode: external` and `llm.enabled: false`, and both are gated
    on exactly that.
 
@@ -608,8 +608,22 @@ decided rather than built. The two still open are 4 and 5.
    So the answer is not to port the steps for M1. It is to **refuse the
    opt-in** while the layout cannot honour it, so the failure is a refusal
    somebody can act on rather than a route to nothing and a tenant whose mail
-   is silently undeliverable. That is a schema statement on the Cluster claim
-   and on the Tenant, and it is not built here.
+   is silently undeliverable.
+
+   Built in two places, because the two opt-ins are stated in two places. The
+   Cluster XRD carries CEL rules refusing `mail.serviceMode: kernel` and
+   `llm.enabled: true` on `layout: v5`, at admission, with a message naming
+   what to use instead; `crossplane beta validate` evaluates them, so the
+   fixtures assert both the refusal and that v4 still gets the function. The
+   tenant's own `mail.mode: selfhosted` is refused by the reconciler, as
+   `MailReady=False/ClusterCannotHost`, because only the cluster knows whether
+   there is a Dovecot to register in. The default was already transport-only
+   on such a cluster, so what changed is the explicit case: it used to sit at
+   `Provisioning`, waiting for a Keycloak client belonging to a Dovecot that
+   was never coming.
+
+   **Both rules go when the steps exist.** A rule that outlives its reason is
+   worse than none.
 7. ✅ `B-08-seed-secrets` declared a dependency on a step that runs after it.
    It required `C-01-cluster-claim`, nine steps later. The install was never
    wrong, because the driver reads the line as documentation — but the

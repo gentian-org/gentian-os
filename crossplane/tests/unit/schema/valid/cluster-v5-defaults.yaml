@@ -1,0 +1,15 @@
+# Valid Cluster claim — v5 saying nothing about mail or LLM serving.
+#
+# The rules must not refuse a claim that simply does not mention them, which
+# is every v5 claim this installer scaffolds.
+apiVersion: gentianos.io/v1alpha1
+kind: Cluster
+metadata:
+  name: test-v5-defaults
+  namespace: default
+spec:
+  kernelDomain: example.org
+  layout: v5
+  mail:
+    serviceMode: external
+    host: smtp.example.org

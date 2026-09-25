@@ -24,6 +24,32 @@ spec:
               type: object
               required:
                 - kernelDomain
+              # An opt-in the layout cannot honour is refused here, where the
+              # person who wrote it finds out, rather than three layers away as
+              # a route to nothing or a tenant whose mail never arrives.
+              #
+              # Both of these are v4 functions with no v5 step: the kernel mail
+              # stack (Postfix, Dovecot and their DMZ) and LLM serving
+              # (litellm-proxy and the vLLM instances). v5 composes the route
+              # and the tenant registration for each and deploys neither. When
+              # the steps exist these rules go, and not before -- a rule that
+              # outlives its reason is worse than none.
+              x-kubernetes-validations:
+                - rule: >-
+                    !(self.layout == 'v5' && has(self.mail) &&
+                    has(self.mail.serviceMode) && self.mail.serviceMode == 'kernel')
+                  message: >-
+                    mail.serviceMode 'kernel' is not available on layout v5: no step
+                    deploys the kernel Postfix and Dovecot, so tenants would be
+                    registered in a mail stack that does not exist. Use 'external'
+                    with an smtp-relay credential.
+                - rule: >-
+                    !(self.layout == 'v5' && has(self.llm) &&
+                    has(self.llm.enabled) && self.llm.enabled)
+                  message: >-
+                    llm.enabled is not available on layout v5: no step deploys
+                    litellm-proxy or the vLLM instances, so llm.<kernelDomain> would
+                    route to nothing. Leave it false until the layout serves models.
               properties:
                 layout:
                   type: string
