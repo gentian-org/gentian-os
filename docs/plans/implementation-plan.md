@@ -20,6 +20,31 @@ They are not a second plan, and they are not renumbered when something lands.
 
 ## 1. Sequence at a glance
 
+### The milestones
+
+Seven of them, in order. Each is a thing a person can do, not a set of parts
+that exist. Nothing here is called reached until somebody has done it on a
+cluster.
+
+| | Milestone | |
+|---|---|---|
+| **M1** | The platform administrator signs in and sees the cluster, and the installer leaves that cluster ready to be given a tenant | ◐ |
+| **M2** | The first functional tenant | ☐ |
+| **M3** | The first user invited by a tenant administrator | ☐ |
+| **M4** | The first app a user can actually work in | ☐ |
+| **M5** | A v0.4 backup imported into a v0.5 install | ☐ |
+| **M6** | An update procedure from v0.4 to v0.5 | ☐ |
+| **M7** | Complete cutover | ☐ |
+
+**M1 is not the sign-in alone.** A cluster where the administrator can sign in
+but half the kernel is not running is not a cluster anybody can provision a
+tenant on. M1 is reached when `install.sh --layout v5` brings up every service
+the platform needs and leaves the cluster in a state where M2 can begin. S8 is
+what proves that, and S7A is what has to be true before S8 is worth running.
+
+The steps below (`S1`…`S8`, `S7A.*`) are all M1. M2 onward are not broken into
+steps yet; `work-packages.md` is where their content lives until they are.
+
 ### M1 — the platform administrator signs in and sees the cluster
 
 | Step | What it is | |
@@ -55,6 +80,7 @@ They are not a second plan, and they are not renumbered when something lands.
 | S7A.14 | A release reaches a cluster by an immutable name | ✅ |
 | S7A.15 | A zone's hosts follow the components, not a list | ☐ |
 | S7A.16 | The app-lifecycle API authenticates nobody | ☐ |
+| S7A.17 | The director speaks for Keycloak | ☐ gates M3, not M1 |
 
 ### What is left, in the order to do it
 
@@ -79,8 +105,11 @@ They are not a second plan, and they are not renumbered when something lands.
 8. **S7A.13 — `denyPaths`**: build it or take it out of the CRD.
 9. **S7A.10 — the installer's remaining six**, of which tenant teardown
    blocks S8.
-10. **S8 — purge and reinstall.**
-11. **After M1**, the work packages in the order in §5.
+10. **S8 — purge and reinstall**, which is what makes M1 reached rather
+    than demonstrated.
+11. **S7A.17 — the director speaks for Keycloak.** Not M1, but the first
+    thing after it, because M3 cannot start without it.
+12. **After M1**, the work packages in the order in §6.
 
 ---
 
@@ -94,6 +123,16 @@ that account's relations; each opens signed in, with no second login and no
 token to paste. Nothing about it is a stand-in: the desktop is
 `Tenant/platform`'s, the edge holds the session, the desktop holds no
 authority.
+
+**And the installer finishes the job.** The sign-in is the visible half; the
+other half is that the same run brings up every kernel service, so the cluster
+it leaves behind is one a tenant can be provisioned on. A cluster where the
+console loads and the provisioning chain is half-applied has not reached M1,
+it has reached a demo. Concretely: every step's `check()` honest, `--status`
+all true, and the services the tenant Composition depends on — the edge, the
+identity provider, the secret store, the GitOps chain, the operator and the
+director — running and reconciling. That is the handover to M2, and it is why
+S8 is the last step of M1 rather than a tidy-up after it.
 
 What each step meant, and what landed:
 
@@ -244,13 +283,18 @@ what the director answered — including a refusal. Putting the product's own
 console through the app template was the point, and it found three gaps the
 template had (below).
 
-**People are not in this console.** Decided, not deferred. Declaring people in
-git is worse than it sounds — git is append-only, so a name and an address
-committed there outlive the account, which collides with erasure. Keycloak's
-own console already manages them, is maintained, and since 26.2 its
-fine-grained admin permissions can be scoped so a tenant administrator manages
-only that tenant's users without holding `realm-admin`. So the People screen
-is the Identity tile, embedded like any other component.
+**People are not in this console — reversed, see S7A.17.** The decision here
+was that people belong in Keycloak's own console, because declaring them in
+git collides with erasure: git is append-only, so a name and an address
+committed there outlive the account. That half still holds and is not being
+undone. What did not hold is the conclusion drawn from it — that because
+people must not be in git, the screen must be Keycloak's. Embedding Keycloak's
+console makes its information architecture the product's, and for the
+administrators who will live in this product every day that is a worse
+interface than the one they had. S7A.17 is the way back: the director speaks
+to Keycloak on the caller's behalf and records what it did, so the screen is
+ours and the state is still Keycloak's. Keycloak's console stays reachable for
+anybody who wants the whole of it.
 
 **Screen by screen.** A screen whose director endpoints do not exist yet
 answers 501 naming itself, so the console shows exactly that rather than a
@@ -599,6 +643,89 @@ catalogue — would make the list follow the components instead of being
 maintained beside them. Until then, a component with a host of its own has to
 be added to the composition by hand.
 
+### S7A.17 ☐ The director speaks for Keycloak
+
+**A reversal, stated as one.** S7A.4 decided that people and the realm's own
+settings belong in Keycloak's console, embedded as the Identity tile. The
+reasoning for keeping people out of git stands. The conclusion drawn from it
+does not: embedding Keycloak's console makes Keycloak's information
+architecture the product's, and it is a worse interface than the one it
+replaced. Managed service providers and in-house tenant administrators are the
+people who will spend the most hours in this product. Handing them a console
+built for realm engineers, as their primary surface, is the wrong trade.
+
+**What it should be instead.** The screens come back into the administration
+console, against the director. Keycloak's own console stays reachable, as the
+place to go when somebody wants the whole of it — the detail view behind the
+product view, not the way in.
+
+**The director gets a Keycloak administrative credential.** This is the part
+worth being explicit about, because it changes an invariant the plans have
+stated more than once: the director held a git credential and an OpenFGA
+token and no Kubernetes credential, and that was the whole of what it could
+do. Now it also holds a credential that can write a realm.
+
+The trade is still the right way round, and for two reasons rather than one:
+
+1. **One holder instead of many.** The credential exists today — the desktop
+   image carries it (S7A.6). Moving it to the director takes it out of an
+   image every tenant runs and puts it in the one component that is already
+   the platform's single writer.
+2. **The one component that already asks who is calling.** Every director
+   route is authorised against OpenFGA with the caller's own token before it
+   does anything. A Keycloak write behind that check is a write somebody was
+   entitled to make; a Keycloak write from a UI that holds the credential is
+   a write nobody checked.
+
+**Indirect is a rule, not a description.** The director must never make a
+Keycloak call it cannot name a caller, a relation and an object for. The
+credential is the director's; the authority is always the caller's. Two
+things follow that are easy to get wrong:
+
+- **Scope the credential per realm.** A tenant administrator's request must
+  not be able to reach another tenant's realm even through a bug. Keycloak
+  26.2's fine-grained admin permissions are what make that expressible — the
+  same mechanism S7A.4 was going to use to scope a human administrator, used
+  to scope the director instead. One `realm-admin` for every realm would make
+  a single missing OpenFGA check a cross-tenant breach.
+- **Refuse rather than fall back.** If the check cannot be made — OpenFGA
+  unreachable, no relation for this object — the answer is a refusal, not the
+  call.
+
+**Recording, and why it cannot be a commit.** Git gives every change an
+author, a time and a diff, and that is the standard the rest of the console is
+held to. Keycloak writes cannot meet it the same way, because the thing that
+makes git good here — append-only history — is exactly what makes it wrong for
+personal data. So the equivalent is an append-only change log the director
+writes: who asked, when, which object, which fields changed, and which
+relation allowed it.
+
+**The fields, not the values.** "Alice's address was changed by Bob at 14:02,
+under `can_manage_people`" is the record. The old and new addresses are not,
+or the log becomes the problem the git decision avoided. A change log of
+personal data needs a retention policy; git's history deliberately has none.
+
+**Build one log, not two.** This is the same store roadmap §1.12 needs for
+audit events — sign-ins, refused requests, reads of data. Writing a
+Keycloak-specific log now and an audit store later would leave two answers to
+"what happened", which is worse than either. The Changes pane in the console
+already reads git history; this is its second source, and the pane should
+show both in one timeline.
+
+**Done when** a tenant administrator can invite a person, change a group
+membership and adjust the realm's password policy from the administration
+console; each one appears in the change log with the caller and the relation;
+the same administrator attempting it against another tenant's realm is
+refused; and no image other than the director's holds a Keycloak credential.
+
+**This gates M3.** Inviting a user is a Keycloak write, and today nothing a
+tenant administrator can reach is allowed to make one. It does not gate M1.
+
+**S7A.6 is unchanged by this.** The desktop still holds nothing. The bundled
+console still goes; its screens come back in the administration console
+against the director, which is a different thing from leaving them where they
+are.
+
 ---
 
 ## 4. S8 ☐ Purge and reinstall
@@ -609,7 +736,47 @@ cannot execute the page. Blocked on S7A.10's tenant teardown.
 
 ---
 
-## 5. After M1
+## 5. M2–M7 — what each one means
+
+Stated now so the work in §6 can be pointed at one of them. None is broken
+into steps yet.
+
+**M2 — the first functional tenant.** A tenant claim in
+`gentian-deployments` becomes a running tenant: its namespace, its realm, its
+zone with its own client and session, its desktop, its quota and its backup
+policy. Functional means a tenant administrator can sign in to it and see it,
+not that the objects exist. This is the first time a second zone is stood up,
+which is the open half of S3 and the "done when" of S7A.1.
+
+**M3 — the first user invited by a tenant administrator.** The tenant
+administrator invites somebody by address, that person sets a password and
+signs in, and lands in that tenant and no other. Inviting is a write to
+Keycloak, so M3 is gated on S7A.17: today no component that a tenant
+administrator can reach is allowed to make it.
+
+**M4 — the first app a user can actually work in.** Not "the Helm release is
+Ready": a member of the tenant opens a tile, is already signed in, and does
+the thing the app is for — writes a document, sends a mail — with their own
+identity and the tenant's data. This is what proves the catalogue, the zone
+session, the database and storage fulfilment, and the grant model together.
+
+**M5 — a v0.4 backup imported into a v0.5 install.** Data written under the
+old architecture is readable under the new one. This is the first milestone
+whose failure is not recoverable by reinstalling, so it is also where the
+export format stops being an implementation detail.
+
+**M6 — an update procedure from v0.4 to v0.5.** M5 proves the data can move;
+M6 is the procedure that moves a running cluster, with the order of steps, what
+is reversible at each one, and what the downtime is.
+
+**M7 — complete cutover.** No v0.4 cluster left, and the v4 layout, its
+namespaces and the code paths that carry it are removed rather than kept
+working. Until M7 every `ternary "kernel-x" "old-x" $v5` in the Compositions
+is a branch that has to stay correct.
+
+---
+
+## 6. After M1
 
 The work packages in order. Each is specified in `work-packages.md`.
 
@@ -638,7 +805,7 @@ App Store.
 
 ---
 
-## 6. Open decisions
+## 7. Open decisions
 
 **How much of the graph has to be written at all.** Raised while planning
 S7A.2 and still unanswered. Most of what is written into OpenFGA is not
