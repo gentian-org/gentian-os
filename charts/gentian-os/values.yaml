@@ -507,8 +507,17 @@ credentialManager:
   oidcRoles:
     - cluster-admin-jwt
     - tenant-admin
-  # Namespace holding the ESO satisfaction probes it reads.
-  probeNamespace: gentian-system
+  # Namespace holding the ESO satisfaction probes it reads. Empty means the
+  # namespace this chart is released into, which is where the operator runs
+  # and where the catalogue step writes them.
+  #
+  # It said "gentian-system", which is v4's control namespace. On v5 the
+  # probes are in kernel-control, so the credential manager looked in a
+  # namespace that does not exist and reported every credential missing --
+  # including one that had just been supplied and that ESO was reporting
+  # Ready two commands away. `make check-credentials` said satisfied and the
+  # console said missing, about the same credential, at the same moment.
+  probeNamespace: ""
   # Where the CA that signs OpenBao's serving certificate lives. Read through
   # the API, because a Pod cannot mount a Secret from another namespace — the
   # same reason ESO's ClusterSecretStore names it as a caProvider.

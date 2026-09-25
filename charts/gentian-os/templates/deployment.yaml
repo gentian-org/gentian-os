@@ -334,7 +334,7 @@ spec:
             - name: CREDENTIAL_MANAGER_ADDR
               value: ":{{ .Values.credentialManager.port }}"
             - name: CREDENTIAL_PROBE_NAMESPACE
-              value: {{ .Values.credentialManager.probeNamespace | quote }}
+              value: {{ .Values.credentialManager.probeNamespace | default .Release.Namespace | quote }}
             - name: BAO_AUTH_MOUNT
               value: {{ .Values.credentialManager.authMount | quote }}
             - name: BAO_OIDC_ROLES

@@ -74,6 +74,12 @@ spec:
           {{- end }}
         # The Gateway, its routes and its reference grants live at the edge.
         servicesNamespace: {{ include "ns" (list . "edge") }}
+        # Where Argo CD runs. The operator chart's default is "argocd", which
+        # is v4's name -- it reaches only a ConfigMap key nothing reads today,
+        # but a stale namespace waiting in a ConfigMap for its first reader is
+        # how several of today's failures started.
+        argocd:
+          namespace: {{ include "ns" (list . "gitops") }}
         infraNamespace: {{ include "ns" (list . "authentication") }}
         authzBridge:
           # Retired with the split: the director projects membership from
