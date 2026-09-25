@@ -37,6 +37,21 @@ apply() {
     OPENBAO_NAMESPACE="$(ns_kernel secrets)"
     GENTIAN_SYSTEM_NAMESPACE="$(ns_kernel control)"
     seed_secrets_remaining
+
+    # The paths exist now. The controllers that read them gave up before they
+    # did -- the ClusterIssuer and the bootstrap ExternalSecrets were created
+    # several steps ago against a path that answered 403 until this moment --
+    # and cert-manager in particular will not re-read an Issuer's solver
+    # Secret on its own. Released here, where the seeding they were waiting
+    # for happens, rather than left for a later step to trip over. v5 dropped
+    # both of these when the step was written and nothing kicked them.
+    resync_credential_consumers
+
+    # OpenBao now holds every credential the cache was standing in for, and
+    # try_load_creds_from_openbao recovers them from here on, so the local
+    # copy is redundant -- and a redundant credential on disk is just a
+    # credential on disk.
+    clear_credential_cache
 }
 
 destroy() {

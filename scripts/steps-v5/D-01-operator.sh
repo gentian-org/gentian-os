@@ -34,4 +34,20 @@ apply() {
 
 destroy() {
     kubectl delete application gentian-os -n "$(ns_kernel gitops)" --ignore-not-found --wait=false >/dev/null 2>&1 || true
+
+    # The workload, whether or not the Application still owns it. Deleting the
+    # Application with --wait=false leaves Argo CD's prune to finish in the
+    # background, and a teardown that returns before it does leaves the
+    # operator Running -- which then makes check() report the step satisfied on
+    # a torn-down cluster.
+    kubectl delete deployment,service,replicaset -n "$(ns_kernel control)" \
+        -l app.kubernetes.io/name=gentian-os \
+        --ignore-not-found=true --wait=false 2>/dev/null || true
+
+    # The API scaffold: the gentianos.io CRDs and the tenant validating
+    # webhook. v4 removed these here and v5 did not, so a v5 teardown left the
+    # webhook intercepting PATCH on Tenant CRs with no service behind it --
+    # every patch failing with "service not found", which is what E-01 exists
+    # to get ahead of and cannot if the webhook outlives this step.
+    _delete_gentianos_api_scaffold || true
 }
