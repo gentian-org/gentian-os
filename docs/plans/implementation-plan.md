@@ -64,7 +64,7 @@ steps yet; `work-packages.md` is where their content lives until they are.
 | | | |
 |---|---|---|
 | S7A.1 | The operator produces a zone's Keycloak client and its secret | ✅ |
-| S7A.2 | The director stops writing authorization state | ◐ entitlements left; read-only token impossible |
+| S7A.2 | The director writes authorization state the way it writes git | ✅ read-only token still impossible |
 | S7A.3 | The platform administrator is an address | ✅ |
 | S7A.4 | The admin console is an app, and it talks to the director | ◐ every screen wired; untested against a cluster that can push |
 | S7A.5 | Keycloak looks like the rest of the product | ✅ |
@@ -215,7 +215,7 @@ at `console.<t>.<kernel>` with no installer step having run for it. That has
 not been tried. It is the same code path, and the kernel zone is the harder
 case, but it is unproven.
 
-### S7A.2 ◐ The director stops writing authorization state
+### S7A.2 ✅ The director writes authorization state the same way it writes git
 
 The director's job is to read the graph to decide whether a caller may make a
 call, and to write git. As built it also wrote OpenFGA in six places.
@@ -245,8 +245,51 @@ authorizing proxy in front of OpenFGA, or OpenFGA's OIDC auth mode with
 something that maps a subject to permitted operations. Neither is small.
 Worth a decision rather than a silent assumption.
 
-**Left:** the entitlement tuples, which the App Store's signed statements
-produce and which are off on this cluster.
+**Decided, 2026-09-25: the entitlement tuples stay the director's.** The step
+was named "the director stops writing authorization state", and the premise
+under it was wrong. What matters is not *which* source of truth the director
+writes, it is *how*.
+
+There are three sources of truth and the rule is the same for each:
+
+| | what it holds | who writes it |
+|---|---|---|
+| Keycloak | **who** | the director, on the caller's behalf (S7A.17) |
+| OpenFGA | **what** they may do | the director, for what cannot be derived |
+| git | **how** the cluster is configured | the director, as commits |
+
+A director write into any of the three is admissible when it is
+**authenticated, evaluated and recorded**. The operator's job is the other
+half: turning declared state into what runs. So anything that *can* be derived
+from the cluster, the tenant, its users or its apps belongs in git and is the
+operator's to satisfy; anything that cannot is the director's to do as an
+**action**, and an action is legitimate because of those three properties
+rather than because it went through a file.
+
+The entitlement path already meets all three, which is why this closes rather
+than needing work:
+
+- **Authenticated** twice over. The statement is a compact JWS the director
+  verifies against keys pinned in the cluster's own configuration, never
+  against a key it could fetch; and the caller presents their own token.
+- **Evaluated.** A grant checks `can_install_app` on the tenant before it is
+  applied. A revocation deliberately does not: it is the App Store's decision
+  and its signature is the authority, and asking a tenant administrator to
+  authorise their own revocation would be the wrong question.
+- **Recorded.** The fact is committed to git before the tuple is written, with
+  the person, the signing key that decided it and the request id that joins
+  them. The tuple mirrors a commit; it is not the only trace.
+
+An entitlement is exactly the case the rule is for: what a tenant is entitled
+to install is a fact from outside the cluster and cannot be derived from
+anything inside it.
+
+**What remains open is not this.** The director's OpenFGA credential still
+cannot be made read-only, because OpenFGA authenticates with a preshared key
+and a key carries no scope. Under the rule above that is a smaller problem than
+it looked — the director is *meant* to write here — but it still means nothing
+stops a bug writing a tuple no action asked for. An authorizing proxy or
+OpenFGA's OIDC auth mode would; neither is small, and neither is in M1.
 
 ### S7A.3 ✅ The platform administrator is an address
 
@@ -761,6 +804,13 @@ prerequisite here, not a separate piece of work; it is in
 [target-component-structure.md](target-component-structure.md) §5.
 
 ### S7A.17 ☐ The director speaks for Keycloak
+
+**The same rule as S7A.2, one source of truth along.** Keycloak holds *who*,
+OpenFGA holds *what they may do*, git holds *how the cluster is configured*,
+and a director write into any of the three is admissible when it is
+authenticated, evaluated and recorded. People cannot be derived from anything
+and cannot go in git, so managing them is the director's to do as an action.
+That is the whole justification for what follows.
 
 **A reversal, stated as one.** S7A.4 decided that people and the realm's own
 settings belong in Keycloak's console, embedded as the Identity tile. The
