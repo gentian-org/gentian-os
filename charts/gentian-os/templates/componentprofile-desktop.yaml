@@ -16,7 +16,11 @@ metadata:
   labels:
     {{- include "gentian-os.labels" . | nindent 4 }}
 spec:
-  tenancy: [tenant]
+  classes: [app]
+  # The desktop is the surface tiles appear on, so it does not appear on
+  # itself. This is the one component for which "nothing opens it" means it
+  # is the launcher rather than that it has no human surface.
+  launch: none
   trustTier: platform
   version: {{ .Values.desktop.chart.version | quote }}
   # Every tenant gets one. Declared here, on the profile, so that the operator
@@ -69,7 +73,7 @@ spec:
       {{- toYaml . | nindent 6 }}
       {{- end }}
   requires:
-    contracts:
+    services:
       database:
         engine: postgresql
         databasePerTenant: true

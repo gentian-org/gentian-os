@@ -38,7 +38,7 @@ const (
 )
 
 // ensureMariaDB provisions per-app-per-tenant MariaDB databases using idempotent
-// SQL Jobs. It looks up which apps require MariaDB via AppProfile KernelRequirements,
+// SQL Jobs. It looks up which apps require MariaDB via AppProfile ServiceRequirements,
 // then runs a setup Job for each (CREATE DATABASE IF NOT EXISTS + CREATE USER +
 // GRANT). Completion of all setup Jobs sets MariaDBReady=True.
 func (r *TenantReconciler) ensureMariaDB(ctx context.Context, tenant *gentianov1alpha1.Tenant) (ctrl.Result, error) {

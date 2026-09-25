@@ -81,7 +81,7 @@ func cacheAppNames(in BuildInput) []string {
 	seen := map[string]struct{}{}
 	for _, app := range in.Apps {
 		profile := in.Profiles[app.Profile]
-		if profile == nil || profile.Spec.KernelRequirements == nil || profile.Spec.KernelRequirements.Cache == nil {
+		if profile == nil || profile.Spec.ServiceRequirements == nil || profile.Spec.ServiceRequirements.Cache == nil {
 			continue
 		}
 		if _, ok := seen[app.Profile]; ok {

@@ -67,7 +67,7 @@ func (r *ComponentReconciler) componentEgressNamespaces(profile *gentianov1alpha
 		seen[ns] = struct{}{}
 		out = append(out, ns)
 	}
-	if profile.Spec.Requires != nil && profile.Spec.Requires.Contracts != nil && profile.Spec.Requires.Contracts.Database != nil {
+	if profile.Spec.Requires != nil && profile.Spec.Requires.Services != nil && profile.Spec.Requires.Services.Database != nil {
 		add(r.componentDatabaseNamespace(tenant))
 	}
 	for i := range profile.Spec.Expose {

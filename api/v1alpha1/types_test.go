@@ -42,7 +42,7 @@ func TestAppProfile_DeepCopy(t *testing.T) {
 				Name:       "catalogue-app",
 				Version:    "1.0.0",
 			},
-			KernelRequirements: &v1alpha1.KernelRequirements{
+			ServiceRequirements: &v1alpha1.ServiceRequirements{
 				Identity: &v1alpha1.IdentityRequirement{
 					OIDC: &v1alpha1.OIDCClientSpec{ClientID: "test-client"},
 				},
@@ -89,8 +89,8 @@ func TestAppProfile_DeepCopy(t *testing.T) {
 	if copy.Spec.Chart.Version != original.Spec.Chart.Version {
 		t.Errorf("expected chart version %q, got %q", original.Spec.Chart.Version, copy.Spec.Chart.Version)
 	}
-	if copy.Spec.KernelRequirements.Identity.OIDC.ClientID != "test-client" {
-		t.Errorf("expected OIDC clientID test-client, got %q", copy.Spec.KernelRequirements.Identity.OIDC.ClientID)
+	if copy.Spec.ServiceRequirements.Identity.OIDC.ClientID != "test-client" {
+		t.Errorf("expected OIDC clientID test-client, got %q", copy.Spec.ServiceRequirements.Identity.OIDC.ClientID)
 	}
 	if len(copy.Spec.AppSecrets) != 1 {
 		t.Fatalf("expected 1 appSecret, got %d", len(copy.Spec.AppSecrets))

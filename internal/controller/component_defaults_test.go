@@ -28,9 +28,9 @@ import (
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 )
 
-func profileFixture(name string, defaultForTenants bool, tenancy ...gentianov1alpha1.ComponentTenancy) *gentianov1alpha1.ComponentProfile {
+func profileFixture(name string, defaultForTenants bool, classes ...gentianov1alpha1.ComponentClass) *gentianov1alpha1.ComponentProfile {
 	p := &gentianov1alpha1.ComponentProfile{ObjectMeta: metav1.ObjectMeta{Name: name}}
-	p.Spec.Tenancy = tenancy
+	p.Spec.Classes = classes
 	p.Spec.DefaultForTenants = defaultForTenants
 	return p
 }
@@ -45,13 +45,13 @@ func TestEveryDeclaredDefaultBecomesAComponent(t *testing.T) {
 	tenant := platformTenantFixture()
 	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(
 		tenant.DeepCopy(),
-		profileFixture("desktop", true, gentianov1alpha1.ComponentTenancyTenant),
-		profileFixture("admin-console", true, gentianov1alpha1.ComponentTenancyTenant),
+		profileFixture("desktop", true, gentianov1alpha1.ComponentClassApp),
+		profileFixture("admin-console", true, gentianov1alpha1.ComponentClassApp),
 		// Declared, but not certified for tenants: there is no tenant to give
 		// a shared or system component to, so the declaration is ignored.
-		profileFixture("registry", true, gentianov1alpha1.ComponentTenancyShared),
+		profileFixture("registry", true, gentianov1alpha1.ComponentClassSharedApp),
 		// Not declared: an ordinary app a tenant installs on purpose.
-		profileFixture("nextcloud", false, gentianov1alpha1.ComponentTenancyTenant),
+		profileFixture("nextcloud", false, gentianov1alpha1.ComponentClassApp),
 	).Build()
 	r := &TenantReconciler{Client: c, Scheme: scheme}
 
@@ -74,7 +74,7 @@ func TestEveryDeclaredDefaultBecomesAComponent(t *testing.T) {
 		if !ok {
 			t.Fatalf("%s was not created", name)
 		}
-		if comp.Spec.ProfileRef.Name != name || comp.Spec.Tenancy != gentianov1alpha1.ComponentTenancyTenant {
+		if comp.Spec.ProfileRef.Name != name || comp.Spec.Class != gentianov1alpha1.ComponentClassApp {
 			t.Fatalf("%s spec = %+v", name, comp.Spec)
 		}
 		// Owned by the tenant, so it goes when the tenant goes.
@@ -105,10 +105,10 @@ func TestWithdrawingTheDeclarationLeavesExistingComponentsAlone(t *testing.T) {
 	tenant := platformTenantFixture()
 	existing := &gentianov1alpha1.Component{ObjectMeta: metav1.ObjectMeta{Name: "desktop", Namespace: tenantNamespaceName(tenant)}}
 	existing.Spec.ProfileRef.Name = "desktop"
-	existing.Spec.Tenancy = gentianov1alpha1.ComponentTenancyTenant
+	existing.Spec.Class = gentianov1alpha1.ComponentClassApp
 	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(
 		tenant.DeepCopy(), existing,
-		profileFixture("desktop", false, gentianov1alpha1.ComponentTenancyTenant),
+		profileFixture("desktop", false, gentianov1alpha1.ComponentClassApp),
 	).Build()
 	r := &TenantReconciler{Client: c, Scheme: scheme}
 	if err := r.ensureDefaultComponents(context.Background(), tenant); err != nil {

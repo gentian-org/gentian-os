@@ -37,7 +37,7 @@ func KernelAccessNetworkPolicy(
 	if profile == nil {
 		return nil
 	}
-	targets := kernelEgressTargets(profile.Spec.KernelRequirements, profile, cfg)
+	targets := kernelEgressTargets(profile.Spec.ServiceRequirements, profile, cfg)
 	if len(targets) == 0 {
 		return nil
 	}
@@ -71,7 +71,7 @@ func kernelPolicyName(appName string) string {
 	return name
 }
 
-func kernelEgressTargets(kr *gentianov1alpha1.KernelRequirements, profile *gentianov1alpha1.AppProfile, cfg Config) []string {
+func kernelEgressTargets(kr *gentianov1alpha1.ServiceRequirements, profile *gentianov1alpha1.AppProfile, cfg Config) []string {
 	var out []string
 	seen := map[string]struct{}{}
 	add := func(ns string) {

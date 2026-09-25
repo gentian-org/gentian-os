@@ -23,19 +23,46 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 )
 
-// ComponentTenancy is a mode a component may be deployed under.
-// +kubebuilder:validation:Enum=system;shared;tenant
-type ComponentTenancy string
+// ComponentClass is who a component serves, and therefore who is responsible
+// for it. It was called ComponentTenancy, with the values system, shared and
+// tenant: a placement word, a bare adjective and a scope word for one
+// question. "system" named the namespace rather than the role, while its own
+// description -- serves contracts to other components, serves no human -- is
+// the definition of a service.
+//
+// +kubebuilder:validation:Enum=service;app;shared-app
+type ComponentClass string
 
 const (
-	// ComponentTenancySystem serves contracts to other components from
-	// system-<function>. It serves no human and has no exposure.
-	ComponentTenancySystem ComponentTenancy = "system"
-	// ComponentTenancyShared is one backend in shared-<app> serving several
+	// ComponentClassService serves other components over contracts, and
+	// operators at its own console. One instance, in system-<function>,
+	// the platform administrator's.
+	ComponentClassService ComponentClass = "service"
+	// ComponentClassApp serves the people of one tenant, from a dedicated
+	// release in tenant-<t>.
+	ComponentClassApp ComponentClass = "app"
+	// ComponentClassSharedApp is one backend in shared-<app> serving several
 	// tenants, each of which still installs the app for itself.
-	ComponentTenancyShared ComponentTenancy = "shared"
-	// ComponentTenancyTenant is a dedicated release in tenant-<t>.
-	ComponentTenancyTenant ComponentTenancy = "tenant"
+	ComponentClassSharedApp ComponentClass = "shared-app"
+)
+
+// ComponentLaunch is how a person reaches a component. It exists because the
+// schema could not otherwise tell a component that is deliberately
+// unadvertised from one whose tile was forgotten, and an app nobody can open
+// is installed and lost rather than refused.
+//
+// +kubebuilder:validation:Enum=tile;from;none
+type ComponentLaunch string
+
+const (
+	// ComponentLaunchTile means at least one exposure carries a tile.
+	ComponentLaunchTile ComponentLaunch = "tile"
+	// ComponentLaunchFrom means another component opens it: Collabora from
+	// Nextcloud, a viewer from a file manager. LaunchFrom names the contract.
+	ComponentLaunchFrom ComponentLaunch = "from"
+	// ComponentLaunchNone means nothing opens it: either it is the launcher
+	// itself, which is the desktop, or it has no human surface at all.
+	ComponentLaunchNone ComponentLaunch = "none"
 )
 
 // ComponentProfileSpec is one catalogue entry: what a component is, what it
@@ -48,22 +75,52 @@ const (
 // grants anything: every permissive statement here is a request that a named
 // person answers on the Component.
 //
-// +kubebuilder:validation:XValidation:rule="!('system' in self.tenancy) || self.tenancy.size() == 1",message="system is exclusive: a component serving contracts does not also serve humans"
-// +kubebuilder:validation:XValidation:rule="!('system' in self.tenancy) || !has(self.expose) || self.expose.size() == 0",message="system components have no exposure"
-// +kubebuilder:validation:XValidation:rule="!('shared' in self.tenancy) || self.trustTier == 'platform'",message="shared tenancy requires trustTier platform"
+// +kubebuilder:validation:XValidation:rule="!has(self.classes) || !('service' in self.classes) || self.classes.size() == 1",message="service is exclusive: a component may not be both a service and an app"
+// +kubebuilder:validation:XValidation:rule="!has(self.classes) || !('shared-app' in self.classes) || self.trustTier == 'platform'",message="shared-app requires trustTier platform"
 // +kubebuilder:validation:XValidation:rule="!has(self.expose) || self.expose.all(e, !(has(e.forwardToken) && e.forwardToken) || self.trustTier == 'platform')",message="forwardToken requires trustTier platform: the edge token is valid at the director and at every sibling"
-// +kubebuilder:validation:XValidation:rule="has(self.__package__.chart) || (has(self.__package__.compositionRef) && self.__package__.compositionRef.size() > 0) || has(self.__package__.apiIntegration) || (has(self.customization) && has(self.customization.addon))",message="a package is a chart, a composition or an API integration; only an addon, which rides on its base, has none"
+// A service may expose -- a console is not a contract surface -- but only on
+// the gateway. The perimeter has no session, and a service console published
+// there is never what anybody meant.
+// +kubebuilder:validation:XValidation:rule="!has(self.classes) || !('service' in self.classes) || !has(self.expose) || self.expose.all(e, e.surface == 'gateway')",message="a service exposes on the gateway only: the perimeter has no session"
+// +kubebuilder:validation:XValidation:rule="!has(self.classes) || !('service' in self.classes) || !has(self.expose) || self.expose.all(e, !has(e.tile) || e.tile.object == 'cluster')",message="a service's tile asks on the cluster: it has no app object and runs in no tenant"
+// +kubebuilder:validation:XValidation:rule="!has(self.classes) || ('app' in self.classes) || !has(self.defaultForTenants) || !self.defaultForTenants",message="defaultForTenants is for class app: a service and a shared-app have one instance"
+// Exactly one, and nothing outside package to reach for. The OR this replaces
+// admitted a chart beside an API integration, and deploymentMethod could
+// contradict whichever was set.
+// +kubebuilder:validation:XValidation:rule="[has(self.__package__.chart), has(self.__package__.composition) && self.__package__.composition.size() > 0, has(self.__package__.api), has(self.__package__.addon)].exists_one(x, x)",message="a package is exactly one of chart, composition, api or addon"
+// +kubebuilder:validation:XValidation:rule="!has(self.customization) || !has(self.customization.addon)",message="an addon is package.addon on this kind, not customization.addon"
+// +kubebuilder:validation:XValidation:rule="self.launch != 'from' || (has(self.launchFrom) && self.launchFrom.size() > 0)",message="launch from needs launchFrom: which contract's provider opens this"
+// +kubebuilder:validation:XValidation:rule="self.launch == 'from' || !has(self.launchFrom) || self.launchFrom.size() == 0",message="launchFrom is meaningless unless launch is from"
+// +kubebuilder:validation:XValidation:rule="self.launch != 'tile' || (has(self.expose) && self.expose.exists(e, has(e.tile)))",message="launch tile needs a tile on an exposure: an app nobody can open is installed and lost"
+// +kubebuilder:validation:XValidation:rule="self.launch == 'tile' || !has(self.expose) || !self.expose.exists(e, has(e.tile))",message="a tile means launch tile: say how a person reaches this"
 type ComponentProfileSpec struct {
-	// Tenancy lists the modes this component may be deployed under. It is a
-	// certification claim, not a choice. "system" is exclusive.
+	// Classes lists the modes this component may be deployed under. It is a
+	// certification claim, not a choice: whether a component *can* serve
+	// several tenants safely is reviewed with the entry, while running it
+	// shared is a decision a named person makes on the Component.
+	// "service" is exclusive.
 	// +kubebuilder:validation:MinItems=1
 	// +kubebuilder:validation:MaxItems=2
 	// +listType=set
-	Tenancy []ComponentTenancy `json:"tenancy"`
+	Classes []ComponentClass `json:"classes"`
+
+	// Launch is how a person reaches this component. Required, with no
+	// default, for the reason authMode, surface and trustTier are: an app
+	// nobody can open should be refused at admission, and "nobody opens this"
+	// has to be a word somebody wrote rather than a field they omitted.
+	Launch ComponentLaunch `json:"launch"`
+
+	// LaunchFrom names the contract whose provider opens this component.
+	// Required when Launch is "from", meaningless otherwise. It records what
+	// the model could not say before: which component opens this one.
+	// +optional
+	// +kubebuilder:validation:MaxLength=63
+	// +kubebuilder:validation:Pattern=`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`
+	LaunchFrom string `json:"launchFrom,omitempty"`
 
 	// TrustTier is the review level of this entry. "platform" is required
-	// before "shared" may appear in Tenancy. Required, with no default: the
-	// tier is a statement a reviewer made, not an absence.
+	// before "shared-app" may appear in Classes. Required, with no default:
+	// the tier is a statement a reviewer made, not an absence.
 	TrustTier TrustTier `json:"trustTier"`
 
 	// Version is the catalogue entry's version, not the upstream project's.
@@ -84,8 +141,9 @@ type ComponentProfileSpec struct {
 	// +optional
 	Integrations []IntegrationRef `json:"integrations,omitempty"`
 
-	// Provides lists the contracts this component supplies. Tenancy decides the
-	// audience: cluster-wide for system and shared, within the tenant otherwise.
+	// Provides lists the contracts this component supplies. The class decides
+	// the audience: cluster-wide for a service and a shared-app, within the
+	// tenant otherwise.
 	// +optional
 	Provides []ContractRef `json:"provides,omitempty"`
 
@@ -95,8 +153,10 @@ type ComponentProfileSpec struct {
 	// +optional
 	Secrets *ComponentSecrets `json:"secrets,omitempty"`
 
-	// Expose declares entry points. Forbidden for system tenancy. Every entry
-	// states its authMode; there is no default.
+	// Expose declares entry points. A service may have them -- a console is
+	// not a contract surface -- but only on the gateway, never the perimeter,
+	// which has no session. Every entry states its authMode; there is no
+	// default.
 	// +optional
 	// +listType=map
 	// +listMapKey=name
@@ -133,27 +193,42 @@ type ComponentProfileSpec struct {
 	// declaring it, and it is here as a field so that a second component the
 	// platform ships to everyone, such as the administration console, is
 	// declared the same way rather than by another name the operator knows.
-	// Only a tenant-tenancy profile may say it; the operator ignores it
-	// otherwise, since there is no tenant to give a shared component to.
+	// Only a profile of class "app" may say it: a service and a shared-app
+	// have one instance, so there is nothing to give each tenant.
 	// +optional
 	DefaultForTenants bool `json:"defaultForTenants,omitempty"`
 }
 
 // PackageSpec is the chart, the deployment method, and the mapping from granted
 // requirements onto chart values.
+// PackageSpec is what this entry is made of, and it is exactly one thing.
+// Delivery -- whether the platform runs the component or only routes to it --
+// is read from here rather than stated beside it, because a second statement
+// of one fact is a second statement that can be wrong. There was one:
+// deploymentMethod could say "api" beside a chart, and nothing refused it.
 type PackageSpec struct {
-	// Chart is the Helm chart or OCI artifact.
+	// Chart is the Helm chart or OCI artifact. Delivery: workload.
 	// +optional
 	Chart *ChartRef `json:"chart,omitempty"`
 
-	// DeploymentMethod selects how the component is rolled out.
+	// Composition names a Crossplane composition, for a component that is not
+	// a single chart. Delivery: workload.
 	// +optional
-	DeploymentMethod DeploymentMethod `json:"deploymentMethod,omitempty"`
+	// +kubebuilder:validation:MaxLength=253
+	Composition string `json:"composition,omitempty"`
 
-	// CompositionRef names a Crossplane composition for components that are
-	// not a single chart.
+	// API describes a component the platform routes to rather than runs. It
+	// does not mean external: the catalogue's own example points at a Service
+	// inside the cluster. Delivery: api.
 	// +optional
-	CompositionRef string `json:"compositionRef,omitempty"`
+	API *APIIntegration `json:"api,omitempty"`
+
+	// Addon describes a component the platform does not deploy at all: it
+	// flips a switch inside another component's own addon system. Delivery:
+	// addon. It lived under customization.addon, which is why the one-of rule
+	// had to reach out of this struct to finish itself.
+	// +optional
+	Addon *PackageAddon `json:"addon,omitempty"`
 
 	// ValueMapping places what the platform granted into the chart's values.
 	// +optional
@@ -163,19 +238,34 @@ type PackageSpec struct {
 	// +optional
 	// +kubebuilder:pruning:PreserveUnknownFields
 	ExtraValues *runtime.RawExtension `json:"extraValues,omitempty"`
+}
 
-	// APIIntegration describes a component that is an API client rather than a
-	// workload.
-	// +optional
-	APIIntegration *APIIntegration `json:"apiIntegration,omitempty"`
+// PackageAddon is a component that rides on another component's addon system.
+type PackageAddon struct {
+	// ID is what the hosting component's own addon system calls this addon:
+	// an Odoo module name, a Nextcloud app id, an Activepieces piece name.
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=128
+	// +kubebuilder:validation:Pattern=`^[a-zA-Z0-9][a-zA-Z0-9_.-]*$`
+	ID string `json:"id"`
+
+	// Of is the ComponentProfile this addon activates into.
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=63
+	Of string `json:"of"`
 }
 
 // RequirementSpec is everything the platform must provide or permit.
 type RequirementSpec struct {
-	// Contracts are platform capabilities: identity, database, object storage,
-	// cache, mail, LLM, MCP.
+	// Services are what the platform must fulfil before this component runs:
+	// identity, database, object storage, cache, mail, MCP. Each is fulfilled
+	// by a component of class "service", or by something outside the cluster
+	// entirely -- a relay, a bucket at a cloud provider. It was called
+	// kernelRequirements, which named a fulfiller that is not the fulfiller,
+	// and then contracts, which is the word the open named set in Provides
+	// already holds.
 	// +optional
-	Contracts *KernelRequirements `json:"contracts,omitempty"`
+	Services *ServiceRequirements `json:"services,omitempty"`
 
 	// Privileges escape the default posture. Declaring one is asking, never
 	// receiving: each is granted per install, by a named person, and recorded
@@ -416,12 +506,16 @@ type ExposureTile struct {
 	// A component that exists to administer the tenant it runs in has no app
 	// object worth asking about, and asking one would be answered no.
 	//
+	// "cluster" is the third, for a service's own console: a service has no
+	// app object and runs in no tenant, and the relations that govern it --
+	// can_operate_system, can_configure, can_audit -- are all on cluster.
+	//
 	// Not called "on": YAML 1.1 reads a bare on as the boolean true, so a
 	// profile written by hand would carry a key named true and be refused by
 	// the schema, and the same goes for off, yes and no.
 	// +optional
 	// +kubebuilder:default=app
-	// +kubebuilder:validation:Enum=app;tenant
+	// +kubebuilder:validation:Enum=app;tenant;cluster
 	Object TileObject `json:"object,omitempty"`
 }
 
@@ -433,6 +527,9 @@ const (
 	TileObjectApp TileObject = "app"
 	// TileObjectTenant checks the relation on tenant:<tenant>.
 	TileObjectTenant TileObject = "tenant"
+	// TileObjectCluster checks the relation on cluster:<cluster>, which is
+	// where a service's console is governed from.
+	TileObjectCluster TileObject = "cluster"
 )
 
 // SourceRestriction pins the caller. Exactly one form; both are evaluated at
@@ -454,8 +551,24 @@ type SourceRestriction struct {
 	Component string `json:"component,omitempty"`
 }
 
-// BackendRef is a Service in the component's own namespace.
+// BackendRef is the Service an exposure routes to. It defaults to this
+// component's own namespace, and may name another component's instead.
+//
+// Three cases need the second form and only one of them is new: an addon has
+// no Service of its own and its tile points into its base; a shared-app
+// binding routes into shared-<app>, which is required today and is implied by
+// fulfilment rather than declared; and everything else routes to itself.
 type BackendRef struct {
+	// Component names another component whose Service this entry routes to.
+	// Empty means this component's own. Admission bounds it to a component
+	// this one is already bound to -- its addon base, or the shared instance
+	// it is bound to -- so publishing is never a way to reach a component
+	// there is no relationship with.
+	// +optional
+	// +kubebuilder:validation:MaxLength=63
+	// +kubebuilder:validation:Pattern=`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`
+	Component string `json:"component,omitempty"`
+
 	// +kubebuilder:validation:MinLength=1
 	Service string `json:"service"`
 	// +kubebuilder:validation:Minimum=1
@@ -479,6 +592,45 @@ type HookSpec struct {
 type ComponentProfileStatus struct {
 	// +optional
 	Conditions []metav1.Condition `json:"conditions,omitempty"`
+
+	// Delivery is read from the package: workload for a chart or a
+	// composition, api for a component the platform routes to, addon for one
+	// it does not deploy at all. It is status and not spec on purpose -- a
+	// second settable statement of one fact is a second statement that can be
+	// wrong, and deploymentMethod was exactly that. Here so a person can see
+	// at a glance which entries the platform runs and which it merely routes
+	// to, which is the question behind the exposure register.
+	// +optional
+	Delivery ComponentDelivery `json:"delivery,omitempty"`
+}
+
+// ComponentDelivery is how the platform realises a component, derived from
+// which member of the package union is set.
+// +kubebuilder:validation:Enum=workload;api;addon
+type ComponentDelivery string
+
+const (
+	// ComponentDeliveryWorkload is a chart or a composition: the platform runs it.
+	ComponentDeliveryWorkload ComponentDelivery = "workload"
+	// ComponentDeliveryAPI is a component already running elsewhere, which the
+	// platform routes to. It does not mean external: the catalogue's own
+	// example points at a Service inside the cluster.
+	ComponentDeliveryAPI ComponentDelivery = "api"
+	// ComponentDeliveryAddon is a switch inside another component's own addon
+	// system. Nothing is run and nothing is routed.
+	ComponentDeliveryAddon ComponentDelivery = "addon"
+)
+
+// Delivery reads the package union. It is the one place that mapping lives.
+func (s ComponentProfileSpec) Delivery() ComponentDelivery {
+	switch {
+	case s.Package.API != nil:
+		return ComponentDeliveryAPI
+	case s.Package.Addon != nil:
+		return ComponentDeliveryAddon
+	default:
+		return ComponentDeliveryWorkload
+	}
 }
 
 // ComponentProfile is a catalogue entry for a system service, an app or an
@@ -487,7 +639,8 @@ type ComponentProfileStatus struct {
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
 // +kubebuilder:resource:scope=Cluster,shortName=cprof
-// +kubebuilder:printcolumn:name="Tenancy",type=string,JSONPath=`.spec.tenancy`
+// +kubebuilder:printcolumn:name="Classes",type=string,JSONPath=`.spec.classes`
+// +kubebuilder:printcolumn:name="Delivery",type=string,JSONPath=`.status.delivery`
 // +kubebuilder:printcolumn:name="Tier",type=string,JSONPath=`.spec.trustTier`
 // +kubebuilder:printcolumn:name="Version",type=string,JSONPath=`.spec.version`
 type ComponentProfile struct {

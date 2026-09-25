@@ -98,10 +98,10 @@ type CatalogueEntry struct {
 	// ApiProfile that runs no workload).
 	DeploymentMethod DeploymentMethod `json:"deploymentMethod"`
 
-	// KernelRequirements is a compact human-readable list of kernel services the
+	// ServiceRequirements is a compact human-readable list of kernel services the
 	// app requires (e.g., ["oidc", "postgresql", "s3", "smtp"]).
 	// +optional
-	KernelRequirements []string `json:"kernelRequirements,omitempty"`
+	ServiceRequirements []string `json:"kernelRequirements,omitempty"`
 
 	// InstalledCount is the number of Tenant CRs that currently list this app.
 	InstalledCount int `json:"installedCount"`

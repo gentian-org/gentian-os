@@ -1012,7 +1012,7 @@ spec:
                     type: boolean
                 type: object
               kernelRequirements:
-                description: KernelRequirements declares which kernel services this
+                description: ServiceRequirements declares which kernel services this
                   app requires.
                 properties:
                   cache:
@@ -1842,7 +1842,7 @@ spec:
                       type: object
                       x-kubernetes-preserve-unknown-fields: true
                     kernelRequirements:
-                      description: KernelRequirements declares kernel services the
+                      description: ServiceRequirements declares kernel services the
                         sidecar needs.
                       properties:
                         cache:

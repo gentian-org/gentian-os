@@ -345,7 +345,7 @@ func (r *TenantReconciler) ensureDefaultComponents(ctx context.Context, tenant *
 	}
 	for i := range profiles.Items {
 		profile := &profiles.Items[i]
-		if !profile.Spec.DefaultForTenants || !tenancyIncludes(profile, gentianov1alpha1.ComponentTenancyTenant) {
+		if !profile.Spec.DefaultForTenants || !classIncludes(profile, gentianov1alpha1.ComponentClassApp) {
 			continue
 		}
 		desired := &gentianov1alpha1.Component{
@@ -359,7 +359,7 @@ func (r *TenantReconciler) ensureDefaultComponents(ctx context.Context, tenant *
 			},
 			Spec: gentianov1alpha1.ComponentSpec{
 				ProfileRef: gentianov1alpha1.ProfileRef{Name: profile.Name},
-				Tenancy:    gentianov1alpha1.ComponentTenancyTenant,
+				Class:      gentianov1alpha1.ComponentClassApp,
 			},
 		}
 		if err := controllerutil.SetControllerReference(tenant, desired, r.Scheme); err != nil {
@@ -380,10 +380,10 @@ func (r *TenantReconciler) ensureDefaultComponents(ctx context.Context, tenant *
 	return nil
 }
 
-// tenancyIncludes reports whether a profile is certified for a tenancy.
-func tenancyIncludes(profile *gentianov1alpha1.ComponentProfile, t gentianov1alpha1.ComponentTenancy) bool {
-	for _, have := range profile.Spec.Tenancy {
-		if have == t {
+// classIncludes reports whether a profile is certified for a class.
+func classIncludes(profile *gentianov1alpha1.ComponentProfile, c gentianov1alpha1.ComponentClass) bool {
+	for _, have := range profile.Spec.Classes {
+		if have == c {
 			return true
 		}
 	}

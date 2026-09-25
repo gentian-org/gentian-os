@@ -49,9 +49,9 @@ func makeProfile(name string) *gentianov1alpha1.AppProfile {
 	}
 }
 
-func makeProfileWithKernel(name string, kr *gentianov1alpha1.KernelRequirements) *gentianov1alpha1.AppProfile {
+func makeProfileWithKernel(name string, kr *gentianov1alpha1.ServiceRequirements) *gentianov1alpha1.AppProfile {
 	p := makeProfile(name)
-	p.Spec.KernelRequirements = kr
+	p.Spec.ServiceRequirements = kr
 	return p
 }
 
@@ -108,7 +108,7 @@ func TestAppCatalogue_KernelRequirementLabels(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 
-	p := makeProfileWithKernel("cat-with-kernel", &gentianov1alpha1.KernelRequirements{
+	p := makeProfileWithKernel("cat-with-kernel", &gentianov1alpha1.ServiceRequirements{
 		Identity: &gentianov1alpha1.IdentityRequirement{
 			OIDC: &gentianov1alpha1.OIDCClientSpec{ClientID: "test-client"},
 		},
@@ -145,7 +145,7 @@ func TestAppCatalogue_KernelRequirementLabels(t *testing.T) {
 	}
 
 	wantLabels := map[string]bool{"oidc": true, "postgresql": true, "s3": true}
-	for _, l := range entry.KernelRequirements {
+	for _, l := range entry.ServiceRequirements {
 		if !wantLabels[l] {
 			t.Errorf("unexpected kernel requirement label %q", l)
 		}

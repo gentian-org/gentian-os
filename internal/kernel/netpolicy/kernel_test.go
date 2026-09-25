@@ -34,7 +34,7 @@ func TestKernelAccessNetworkPolicy_ProfileKernelEgressNamespaces(t *testing.T) {
 			},
 		},
 		Spec: gentianov1alpha1.AppProfileSpec{
-			KernelRequirements: &gentianov1alpha1.KernelRequirements{
+			ServiceRequirements: &gentianov1alpha1.ServiceRequirements{
 				Database: &gentianov1alpha1.DatabaseRequirement{},
 			},
 		},

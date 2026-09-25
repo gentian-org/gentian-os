@@ -39,18 +39,20 @@ const (
 // and until when. Enablements and grants are written only by the director,
 // from the token of the person who approved.
 //
-// +kubebuilder:validation:XValidation:rule="self.tenancy == oldSelf.tenancy",message="tenancy is immutable: reinstall to change it"
+// +kubebuilder:validation:XValidation:rule="self.class == oldSelf.class",message="class is immutable: reinstall to change it"
 // +kubebuilder:validation:XValidation:rule="self.profileRef.name == oldSelf.profileRef.name",message="profileRef.name is immutable"
-// +kubebuilder:validation:XValidation:rule="self.tenancy == 'tenant' || !has(self.fulfilment) || self.fulfilment == 'auto'",message="fulfilment is a tenant's choice and applies to tenancy tenant only"
-// +kubebuilder:validation:XValidation:rule="self.tenancy != 'system' || !has(self.exposures) || self.exposures.size() == 0",message="system components have no exposure"
+// +kubebuilder:validation:XValidation:rule="self.class == 'app' || !has(self.fulfilment) || self.fulfilment == 'auto'",message="fulfilment is a tenant's choice and applies to class app only"
+// A service may have a console, but never on the perimeter: that surface has
+// no session, so there is nothing for an enablement to switch on.
+// +kubebuilder:validation:XValidation:rule="self.class != 'service' || !has(self.exposures) || self.exposures.size() == 0",message="a service switches on no perimeter entry: its console is on the gateway"
 type ComponentSpec struct {
 	// ProfileRef names the catalogue entry this is an instance of.
 	ProfileRef ProfileRef `json:"profileRef"`
 
-	// Tenancy is the one mode this instance runs under. It must be a member of
+	// Class is the one mode this instance runs under. It must be a member of
 	// the profile's list, and the namespace must be of the matching tier; both
 	// are admission checks, because neither is visible from here.
-	Tenancy ComponentTenancy `json:"tenancy"`
+	Class ComponentClass `json:"class"`
 
 	// Fulfilment pins how a tenant install is backed.
 	// +optional
@@ -192,7 +194,7 @@ type ComponentStatus struct {
 // +kubebuilder:subresource:status
 // +kubebuilder:resource:shortName=comp
 // +kubebuilder:printcolumn:name="Profile",type=string,JSONPath=`.spec.profileRef.name`
-// +kubebuilder:printcolumn:name="Tenancy",type=string,JSONPath=`.spec.tenancy`
+// +kubebuilder:printcolumn:name="Class",type=string,JSONPath=`.spec.class`
 // +kubebuilder:printcolumn:name="Fulfilment",type=string,JSONPath=`.status.fulfilment`
 // +kubebuilder:printcolumn:name="Ready",type=string,JSONPath=`.status.conditions[?(@.type=="Ready")].status`
 type Component struct {

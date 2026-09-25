@@ -51,7 +51,7 @@ const (
 )
 
 // ensureStorage provisions per-app MinIO S3 buckets declared via AppProfile
-// KernelRequirements.Storage.S3.
+// ServiceRequirements.Storage.S3.
 func (r *TenantReconciler) ensureStorage(ctx context.Context, tenant *gentianov1alpha1.Tenant) (ctrl.Result, error) {
 	s3Apps, err := r.collectStorageApps(ctx, tenant, CollectForProvision)
 	if err != nil {

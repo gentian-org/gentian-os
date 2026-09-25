@@ -332,7 +332,7 @@ func crossplaneOwnsOIDCClient(profile *gentianov1alpha1.AppProfile, cfg oidcAppC
 	if cfg.parentProfile != "" {
 		return profile.Spec.CompositionRef != ""
 	}
-	kr := profile.Spec.KernelRequirements
+	kr := profile.Spec.ServiceRequirements
 	if kr == nil || kr.Identity == nil || kr.Identity.OIDC == nil {
 		return false
 	}

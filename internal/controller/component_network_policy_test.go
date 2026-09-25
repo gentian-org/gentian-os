@@ -47,7 +47,7 @@ func TestTheDesktopReachesItsDatabaseAndTheDirector(t *testing.T) {
 		Platform: &gentianov1alpha1.PlatformValueMapping{DirectorURLKey: "director.url"},
 	}
 	profile.Spec.Requires = &gentianov1alpha1.RequirementSpec{
-		Contracts: &gentianov1alpha1.KernelRequirements{Database: &gentianov1alpha1.DatabaseRequirement{}},
+		Services: &gentianov1alpha1.ServiceRequirements{Database: &gentianov1alpha1.DatabaseRequirement{}},
 	}
 	profile.Spec.Expose = []gentianov1alpha1.ExposureSpec{{Name: "api", Surface: gentianov1alpha1.SurfaceGateway, ForwardToken: true}}
 	comp := &gentianov1alpha1.Component{}
@@ -100,7 +100,7 @@ func TestATenantDesktopReachesTheSystemPostgres(t *testing.T) {
 		Platform: &gentianov1alpha1.PlatformValueMapping{DirectorURLKey: "director.url"},
 	}
 	profile.Spec.Requires = &gentianov1alpha1.RequirementSpec{
-		Contracts: &gentianov1alpha1.KernelRequirements{Database: &gentianov1alpha1.DatabaseRequirement{}},
+		Services: &gentianov1alpha1.ServiceRequirements{Database: &gentianov1alpha1.DatabaseRequirement{}},
 	}
 	got := r.componentEgressNamespaces(profile, tenant)
 	if len(got) != 2 || got[0] != postgresNamespace || got[1] != layout.Namespace(layout.Control) {

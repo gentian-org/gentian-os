@@ -43,7 +43,7 @@ func newOIDCProfile(name string) *gentianov1alpha1.AppProfile {
 				Name:       name,
 				Version:    "1.0.0",
 			},
-			KernelRequirements: &gentianov1alpha1.KernelRequirements{
+			ServiceRequirements: &gentianov1alpha1.ServiceRequirements{
 				Identity: &gentianov1alpha1.IdentityRequirement{OIDC: &gentianov1alpha1.OIDCClientSpec{
 					ClientID:     name,
 					RedirectURIs: []string{"https://${TENANT_DOMAIN}/oidc/callback"},
@@ -334,10 +334,10 @@ func TestIdentity_CreatesClientJobAfterRealmComplete(t *testing.T) {
 func TestIdentity_CrossplaneOwnsClientWithoutPack(t *testing.T) {
 	t.Parallel()
 	profile := newOIDCProfile("oidc-nopack")
-	profile.Spec.KernelRequirements.Identity.OIDC.OIDCPackRef = ""
+	profile.Spec.ServiceRequirements.Identity.OIDC.OIDCPackRef = ""
 	// The clientID must not match a pack either — ResolvePack falls back to it
 	// when oidcPackRef is empty.
-	profile.Spec.KernelRequirements.Identity.OIDC.ClientID = "oidc-nopack"
+	profile.Spec.ServiceRequirements.Identity.OIDC.ClientID = "oidc-nopack"
 	if err := testClient.Create(context.Background(), profile); err != nil {
 		t.Fatalf("create AppProfile: %v", err)
 	}

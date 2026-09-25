@@ -15,7 +15,10 @@ metadata:
   labels:
     {{- include "gentian-os.labels" . | nindent 4 }}
 spec:
-  tenancy: [tenant]
+  classes: [app]
+  # Reached from the Administration tile on the web exposure. The api
+  # exposure carries none, which is what an API entry should be.
+  launch: tile
   # Platform trust, because it relays the forwarded token to the director,
   # which forwardToken below requires.
   trustTier: platform

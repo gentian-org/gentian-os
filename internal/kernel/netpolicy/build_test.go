@@ -48,7 +48,7 @@ func TestBuildDesired_KernelAndContractPolicies(t *testing.T) {
 	t.Parallel()
 	profile := &gentianov1alpha1.AppProfile{
 		Spec: gentianov1alpha1.AppProfileSpec{
-			KernelRequirements: &gentianov1alpha1.KernelRequirements{
+			ServiceRequirements: &gentianov1alpha1.ServiceRequirements{
 				Database: &gentianov1alpha1.DatabaseRequirement{},
 			},
 		},

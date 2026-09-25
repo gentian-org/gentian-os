@@ -135,10 +135,10 @@ type Stores struct {
 
 // ProfileStores reports which kernel stores a profile declares.
 func ProfileStores(profile *gentianov1alpha1.AppProfile) Stores {
-	if profile == nil || profile.Spec.KernelRequirements == nil {
+	if profile == nil || profile.Spec.ServiceRequirements == nil {
 		return Stores{}
 	}
-	kr := profile.Spec.KernelRequirements
+	kr := profile.Spec.ServiceRequirements
 	var s Stores
 	if kr.Database != nil {
 		s.Database = kr.Database.Engine

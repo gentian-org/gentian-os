@@ -1259,12 +1259,12 @@ func (r *TenantReconciler) seedPerAppMailSecrets(ctx context.Context, tenant *ge
 			}
 			return fmt.Errorf("get AppProfile %s: %w", app.Profile, err)
 		}
-		if profile.Spec.KernelRequirements == nil || profile.Spec.KernelRequirements.Mail == nil {
+		if profile.Spec.ServiceRequirements == nil || profile.Spec.ServiceRequirements.Mail == nil {
 			continue
 		}
 		needs[app.Profile] = need{
-			smtp: profile.Spec.KernelRequirements.Mail.SMTP != nil,
-			imap: profile.Spec.KernelRequirements.Mail.IMAP != nil,
+			smtp: profile.Spec.ServiceRequirements.Mail.SMTP != nil,
+			imap: profile.Spec.ServiceRequirements.Mail.IMAP != nil,
 		}
 	}
 	if len(needs) == 0 {

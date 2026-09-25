@@ -490,7 +490,7 @@ func waitForRetainShellTeardown(t *testing.T, ctx context.Context, nsName string
 
 // newFullAppProfile builds an AppProfile with multiple kernel requirements.
 func newFullAppProfile(name string, dbEngine gentianov1alpha1.DatabaseEngine, needsS3, needsRedis, needsMemcached bool) *gentianov1alpha1.AppProfile {
-	kr := &gentianov1alpha1.KernelRequirements{
+	kr := &gentianov1alpha1.ServiceRequirements{
 		Database: &gentianov1alpha1.DatabaseRequirement{
 			Engine:            dbEngine,
 			DatabasePerTenant: true,
@@ -518,7 +518,7 @@ func newFullAppProfile(name string, dbEngine gentianov1alpha1.DatabaseEngine, ne
 				Name:       name,
 				Version:    "1.0.0",
 			},
-			KernelRequirements: kr,
+			ServiceRequirements: kr,
 		},
 	}
 }

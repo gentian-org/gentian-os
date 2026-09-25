@@ -80,7 +80,7 @@ steps yet; `work-packages.md` is where their content lives until they are.
 | S7A.14 | A release reaches a cluster by an immutable name | ✅ |
 | S7A.15 | A zone's hosts follow the components, not a list | ☐ |
 | S7A.16 | The app-lifecycle API authenticates nobody | ☐ |
-| S7A.17 | The director speaks for Keycloak | ☐ gates M3, not M1 |
+| S7A.17 | The director speaks for Keycloak | ☐ |
 
 ### What is left, in the order to do it
 
@@ -105,10 +105,11 @@ steps yet; `work-packages.md` is where their content lives until they are.
 8. **S7A.13 — `denyPaths`**: build it or take it out of the CRD.
 9. **S7A.10 — the installer's remaining six**, of which tenant teardown
    blocks S8.
-10. **S8 — purge and reinstall**, which is what makes M1 reached rather
+10. **S7A.17 — the director speaks for Keycloak.** In M1, not after it: the
+    screens it brings back are the console's, and putting them in later means
+    shipping the console twice.
+11. **S8 — purge and reinstall**, which is what makes M1 reached rather
     than demonstrated.
-11. **S7A.17 — the director speaks for Keycloak.** Not M1, but the first
-    thing after it, because M3 cannot start without it.
 12. **After M1**, the work packages in the order in §6.
 
 ---
@@ -745,8 +746,11 @@ console; each one appears in the change log with the caller and the relation;
 the same administrator attempting it against another tenant's realm is
 refused; and no image other than the director's holds a Keycloak credential.
 
-**This gates M3.** Inviting a user is a Keycloak write, and today nothing a
-tenant administrator can reach is allowed to make one. It does not gate M1.
+**In M1, and it gates M3.** Inviting a user is a Keycloak write, and today
+nothing a tenant administrator can reach is allowed to make one, so M3 cannot
+start without this. It is inside M1 rather than after it because what it
+brings back are the administration console's own screens: shipping the console
+without them and adding them later is shipping the console twice.
 
 **S7A.6 is unchanged by this.** The desktop still holds nothing. The bundled
 console still goes; its screens come back in the administration console

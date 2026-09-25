@@ -25,9 +25,12 @@ A consequence for S7A.15: of the five hosts in the tenant Composition's
 `headlamp` and `id` are kernel tier. Deriving the list from components covers
 two of the five. The other three need a separate answer.
 
-**Status.** Nothing in §2, §3 or §4 is built. Two renames break every profile
-in the catalogue, so they are a change to `convert-appprofile.py` rather than
-an edit.
+**Status.** The schema, the two shipped profiles and the app template are
+aligned with everything below, and the rules are covered by
+`TestComponentProfileRules`. What is not built is the reconciler behind the new
+package shapes, and the catalogue conversion: 36 of the 38 entries are still
+`AppProfile`, and two of the renames break every one of them, so they are a
+change to `convert-appprofile.py` rather than an edit.
 
 ---
 
@@ -523,12 +526,17 @@ in exactly three ways, and `launch` names which:
 ```yaml
 spec:
   launch: tile                  # at least one expose entry carries a tile
-  # launch: {from: file-store}  # opened by whatever provides this contract
+  # launch: from                # opened by another component
+  # launchFrom: file-store      #   named by the contract it provides
   # launch: none                # the launcher itself, or no human surface
 ```
 
-`from` also records something the model cannot say today: which component opens
-this one. Collabora is opened from Nextcloud and never from a launcher.
+`launch` is required with no default, for the reason `authMode`, `surface` and
+`trustTier` are: "nothing opens this" has to be a word somebody wrote rather
+than a field they left out.
+
+`from` also records something the model could not say before: which component
+opens this one. Collabora is opened from Nextcloud and never from a launcher.
 
 A `service` with a console sets `tile`; one without sets `none` and has no
 `expose`.
@@ -766,13 +774,15 @@ relied on at every write path.
 
 - the package is **exactly one** of `chart`, `composition`, `api` or `addon`;
 - `deploymentMethod` does not exist;
+- `customization.addon` is refused: on this kind an addon is `package.addon`;
 - a `service`'s exposures are all `surface: gateway`, and it switches on no
   perimeter enablement;
 - a `service`'s tile asks `object: cluster`; an `app` or `shared-app` tile does
   not;
 - `defaultForTenants` is false for a `service`;
-- `launch: tile` requires at least one `expose[].tile`; `from` and `none`
-  require none.
+- `launch` is required with no default; `tile` requires at least one
+  `expose[].tile`, `from` requires `launchFrom`, and neither `from` nor `none`
+  may carry a tile.
 
 ### Admission policy
 
@@ -783,6 +793,15 @@ relied on at every write path.
 - `backend.component` must name the addon's base or the bound shared instance;
 - a `none` surface must provide the `exposure-policy` contract wherever the
   cluster requires it.
+
+### What the CRD cannot catch
+
+A structural schema **prunes** an unknown field before CEL runs. So a profile
+still saying `requires.contracts` or `package.deploymentMethod` is admitted,
+the field is dropped, and the component installs Ready and without what it
+asked for. That is worse than a refusal, and no rule here can reach it.
+`make lint-legacy-profile-fields` does, by rendering the chart and reading the
+profiles that actually ship.
 
 ### Promises the CRD makes and does not keep
 
@@ -820,7 +839,7 @@ tenant's blast radius. The escape hatch never creates a cluster-scoped object.
 | `package.compositionRef` | `package.composition` | nothing, unused |
 | `customization.addon` | `package.addon` | 20 profiles |
 | annotation `deployment-role` | deleted, read from the package | 20 profiles |
-| nothing | `spec.launch` | new field, default `tile` |
+| nothing | `spec.launch` | new field, required, no default |
 | `TileObject: app\|tenant` | `app\|tenant\|cluster` | nothing, additive |
 | `BackendRef: {service, port}` | `{component?, service, port}` | nothing, additive |
 | CEL "system has no expose" | "service is gateway-only" | nothing, no service profiles exist |

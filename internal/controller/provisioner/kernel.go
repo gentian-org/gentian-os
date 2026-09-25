@@ -53,30 +53,30 @@ type JobWaitRequirement struct {
 
 // MatchMariaDBProfile reports whether an AppProfile requires MariaDB provisioning.
 func MatchMariaDBProfile(profile *gentianov1alpha1.AppProfile) bool {
-	return profile.Spec.KernelRequirements != nil &&
-		profile.Spec.KernelRequirements.Database != nil &&
-		profile.Spec.KernelRequirements.Database.Engine == gentianov1alpha1.DatabaseEngineMariaDB
+	return profile.Spec.ServiceRequirements != nil &&
+		profile.Spec.ServiceRequirements.Database != nil &&
+		profile.Spec.ServiceRequirements.Database.Engine == gentianov1alpha1.DatabaseEngineMariaDB
 }
 
 // MatchS3Profile reports whether an AppProfile requires S3 storage provisioning.
 func MatchS3Profile(profile *gentianov1alpha1.AppProfile) bool {
-	return profile.Spec.KernelRequirements != nil &&
-		profile.Spec.KernelRequirements.Storage != nil &&
-		profile.Spec.KernelRequirements.Storage.S3 != nil
+	return profile.Spec.ServiceRequirements != nil &&
+		profile.Spec.ServiceRequirements.Storage != nil &&
+		profile.Spec.ServiceRequirements.Storage.S3 != nil
 }
 
 // MatchRedisProfile reports whether an AppProfile requires Redis cache provisioning.
 func MatchRedisProfile(profile *gentianov1alpha1.AppProfile) bool {
-	return profile.Spec.KernelRequirements != nil &&
-		profile.Spec.KernelRequirements.Cache != nil &&
-		profile.Spec.KernelRequirements.Cache.Engine == gentianov1alpha1.CacheEngineRedis
+	return profile.Spec.ServiceRequirements != nil &&
+		profile.Spec.ServiceRequirements.Cache != nil &&
+		profile.Spec.ServiceRequirements.Cache.Engine == gentianov1alpha1.CacheEngineRedis
 }
 
 // MatchMemcachedProfile reports whether an AppProfile requires Memcached cache provisioning.
 func MatchMemcachedProfile(profile *gentianov1alpha1.AppProfile) bool {
-	return profile.Spec.KernelRequirements != nil &&
-		profile.Spec.KernelRequirements.Cache != nil &&
-		profile.Spec.KernelRequirements.Cache.Engine == gentianov1alpha1.CacheEngineMemcached
+	return profile.Spec.ServiceRequirements != nil &&
+		profile.Spec.ServiceRequirements.Cache != nil &&
+		profile.Spec.ServiceRequirements.Cache.Engine == gentianov1alpha1.CacheEngineMemcached
 }
 
 // NewKernelProvisioningJob builds a standard kernel-namespace provisioning Job.

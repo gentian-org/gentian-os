@@ -44,7 +44,7 @@ func newPostgresProfile(name string) *gentianov1alpha1.AppProfile {
 				Name:       name,
 				Version:    "1.0.0",
 			},
-			KernelRequirements: &gentianov1alpha1.KernelRequirements{
+			ServiceRequirements: &gentianov1alpha1.ServiceRequirements{
 				Database: &gentianov1alpha1.DatabaseRequirement{
 					Engine:            gentianov1alpha1.DatabaseEnginePostgreSQL,
 					DatabasePerTenant: true,

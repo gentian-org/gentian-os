@@ -118,10 +118,10 @@ func oidcIngressSubdomainsFromProfile(profile *gentianov1alpha1.AppProfile) []st
 			subs = append(subs, ing.SubDomain)
 		}
 	}
-	if profile.Spec.KernelRequirements != nil &&
-		profile.Spec.KernelRequirements.Identity != nil &&
-		profile.Spec.KernelRequirements.Identity.OIDC != nil {
-		for _, uri := range profile.Spec.KernelRequirements.Identity.OIDC.RedirectURIs {
+	if profile.Spec.ServiceRequirements != nil &&
+		profile.Spec.ServiceRequirements.Identity != nil &&
+		profile.Spec.ServiceRequirements.Identity.OIDC != nil {
+		for _, uri := range profile.Spec.ServiceRequirements.Identity.OIDC.RedirectURIs {
 			if sub := oidcRedirectURISubdomain(uri); sub != "" {
 				subs = append(subs, sub)
 			}
@@ -149,15 +149,15 @@ func oidcRedirectURISubdomain(uri string) string {
 }
 
 func appProfileDeclaresOIDC(profile *gentianov1alpha1.AppProfile) bool {
-	if profile.Spec.KernelRequirements != nil &&
-		profile.Spec.KernelRequirements.Identity != nil &&
-		profile.Spec.KernelRequirements.Identity.OIDC != nil {
+	if profile.Spec.ServiceRequirements != nil &&
+		profile.Spec.ServiceRequirements.Identity != nil &&
+		profile.Spec.ServiceRequirements.Identity.OIDC != nil {
 		return true
 	}
 	for _, sidecar := range profile.Spec.Sidecars {
-		if sidecar.KernelRequirements != nil &&
-			sidecar.KernelRequirements.Identity != nil &&
-			sidecar.KernelRequirements.Identity.OIDC != nil {
+		if sidecar.ServiceRequirements != nil &&
+			sidecar.ServiceRequirements.Identity != nil &&
+			sidecar.ServiceRequirements.Identity.OIDC != nil {
 			return true
 		}
 	}

@@ -133,9 +133,9 @@ func (r *ComponentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		}
 		return ctrl.Result{}, err
 	}
-	if comp.Spec.Tenancy != gentianov1alpha1.ComponentTenancyTenant {
-		return r.status(ctx, comp, metav1.ConditionFalse, "TenancyUnsupported",
-			fmt.Sprintf("tenancy %q is not reconciled yet; only tenant components are", comp.Spec.Tenancy), 0)
+	if comp.Spec.Class != gentianov1alpha1.ComponentClassApp {
+		return r.status(ctx, comp, metav1.ConditionFalse, "ClassUnsupported",
+			fmt.Sprintf("class %q is not reconciled yet; only apps are", comp.Spec.Class), 0)
 	}
 	tenant, err := r.tenantOf(ctx, comp.Namespace)
 	if err != nil {
@@ -156,7 +156,7 @@ func (r *ComponentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 
 	// Requirements first: a chart whose database does not exist yet is not
 	// installed, it is waited for.
-	if profile.Spec.Requires != nil && profile.Spec.Requires.Contracts != nil && profile.Spec.Requires.Contracts.Database != nil {
+	if profile.Spec.Requires != nil && profile.Spec.Requires.Services != nil && profile.Spec.Requires.Services.Database != nil {
 		ready, reason, message, err := r.ensureDatabaseRequirement(ctx, comp, tenant)
 		if err != nil {
 			return ctrl.Result{}, err
@@ -176,9 +176,13 @@ func (r *ComponentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		return ctrl.Result{}, fmt.Errorf("network policy: %w", err)
 	}
 
+	// The package is exactly one of chart, composition, api or addon, and only
+	// the first is built. Naming the delivery the profile asked for makes the
+	// refusal something a person can act on rather than a flat "unsupported".
 	if profile.Spec.Package.Chart == nil {
 		return r.status(ctx, comp, metav1.ConditionFalse, "PackageUnsupported",
-			"only package.chart is reconciled yet", 0)
+			fmt.Sprintf("delivery %q is not reconciled yet; only a chart package is",
+				profile.Spec.Delivery()), 0)
 	}
 	releaseReady, releaseMessage, err := r.ensureRelease(ctx, comp, profile, values)
 	if err != nil {

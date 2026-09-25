@@ -109,9 +109,9 @@ type AppProfileSpec struct {
 	// +optional
 	BrowserProxy []BrowserProxyRoute `json:"browserProxy,omitempty"`
 
-	// KernelRequirements declares which kernel services this app requires.
+	// ServiceRequirements declares which kernel services this app requires.
 	// +optional
-	KernelRequirements *KernelRequirements `json:"kernelRequirements,omitempty"`
+	ServiceRequirements *ServiceRequirements `json:"kernelRequirements,omitempty"`
 
 	// Backup declares how this app must be captured and restored. Optional:
 	// omitting it selects the safe default (scale to zero, dump every store in
@@ -516,8 +516,16 @@ type IngressSpec struct {
 	Annotations map[string]string `json:"annotations,omitempty"`
 }
 
-// KernelRequirements specifies which kernel services the app requires.
-type KernelRequirements struct {
+// ServiceRequirements is what the platform must fulfil before a component
+// runs: identity, a database, object storage, a cache, mail, MCP.
+//
+// It was called KernelRequirements, which named a fulfiller that is not the
+// fulfiller. A database comes from a component of class "service"; mail may
+// be a relay outside the cluster; object storage may be a bucket at a cloud
+// provider. On AppProfile the JSON key is still kernelRequirements, because
+// every profile in the catalogue writes it; ComponentProfile spells it
+// requires.services.
+type ServiceRequirements struct {
 	// Identity specifies OIDC requirements.
 	// +optional
 	Identity *IdentityRequirement `json:"identity,omitempty"`
@@ -1109,9 +1117,9 @@ type AppSidecarSpec struct {
 	// Chart references the sidecar Helm chart.
 	Chart ChartRef `json:"chart"`
 
-	// KernelRequirements declares kernel services the sidecar needs.
+	// ServiceRequirements declares kernel services the sidecar needs.
 	// +optional
-	KernelRequirements *KernelRequirements `json:"kernelRequirements,omitempty"`
+	ServiceRequirements *ServiceRequirements `json:"kernelRequirements,omitempty"`
 
 	// AppSecrets are sidecar-internal secrets stored at
 	// gentian-os/tenants/{tenant}/apps/{parent}-{name}/internal/{secret}.

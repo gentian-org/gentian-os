@@ -32,7 +32,7 @@ func TestCollectOIDCIngressSubdomainsByTenant(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: "xwiki"},
 		Spec: gentianov1alpha1.AppProfileSpec{
 			Ingress: &gentianov1alpha1.IngressSpec{SubDomain: "wiki"},
-			KernelRequirements: &gentianov1alpha1.KernelRequirements{
+			ServiceRequirements: &gentianov1alpha1.ServiceRequirements{
 				Identity: &gentianov1alpha1.IdentityRequirement{
 					OIDC: &gentianov1alpha1.OIDCClientSpec{ClientID: "wiki-oidc-client"},
 				},
@@ -46,7 +46,7 @@ func TestCollectOIDCIngressSubdomainsByTenant(t *testing.T) {
 			AdditionalIngresses: []gentianov1alpha1.IngressSpec{
 				{SubDomain: "matrix"},
 			},
-			KernelRequirements: &gentianov1alpha1.KernelRequirements{
+			ServiceRequirements: &gentianov1alpha1.ServiceRequirements{
 				Identity: &gentianov1alpha1.IdentityRequirement{
 					OIDC: &gentianov1alpha1.OIDCClientSpec{ClientID: "chat-oidc-client"},
 				},
@@ -104,7 +104,7 @@ func TestCollectOIDCIngressSubdomainsFromRedirectURI(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: "element"},
 		Spec: gentianov1alpha1.AppProfileSpec{
 			Ingress: &gentianov1alpha1.IngressSpec{SubDomain: "chat"},
-			KernelRequirements: &gentianov1alpha1.KernelRequirements{
+			ServiceRequirements: &gentianov1alpha1.ServiceRequirements{
 				Identity: &gentianov1alpha1.IdentityRequirement{
 					OIDC: &gentianov1alpha1.OIDCClientSpec{
 						ClientID: "chat-oidc-client",

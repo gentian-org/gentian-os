@@ -17,8 +17,11 @@ spec:
   scope: Cluster
   versions:
   - additionalPrinterColumns:
-    - jsonPath: .spec.tenancy
-      name: Tenancy
+    - jsonPath: .spec.classes
+      name: Classes
+      type: string
+    - jsonPath: .status.delivery
+      name: Delivery
       type: string
     - jsonPath: .spec.trustTier
       name: Tier
@@ -61,6 +64,13 @@ spec:
               outside the cluster answers is an app a person cannot reach. Nothing in it
               grants anything: every permissive statement here is a request that a named
               person answers on the Component.
+
+              A service may expose -- a console is not a contract surface -- but only on
+              the gateway. The perimeter has no session, and a service console published
+              there is never what anybody meant.
+              Exactly one, and nothing outside package to reach for. The OR this replaces
+              admitted a chart beside an API integration, and deploymentMethod could
+              contradict whichever was set.
             properties:
               backup:
                 description: Backup declares what a consistent copy of this component
@@ -217,6 +227,30 @@ spec:
                         type: array
                     type: object
                 type: object
+              classes:
+                description: |-
+                  Classes lists the modes this component may be deployed under. It is a
+                  certification claim, not a choice: whether a component *can* serve
+                  several tenants safely is reviewed with the entry, while running it
+                  shared is a decision a named person makes on the Component.
+                  "service" is exclusive.
+                items:
+                  description: |-
+                    ComponentClass is who a component serves, and therefore who is responsible
+                    for it. It was called ComponentTenancy, with the values system, shared and
+                    tenant: a placement word, a bare adjective and a scope word for one
+                    question. "system" named the namespace rather than the role, while its own
+                    description -- serves contracts to other components, serves no human -- is
+                    the definition of a service.
+                  enum:
+                  - service
+                  - app
+                  - shared-app
+                  type: string
+                maxItems: 2
+                minItems: 1
+                type: array
+                x-kubernetes-list-type: set
               customization:
                 description: Customization declares what a tenant may change about
                   this component.
@@ -625,13 +659,15 @@ spec:
                   declaring it, and it is here as a field so that a second component the
                   platform ships to everyone, such as the administration console, is
                   declared the same way rather than by another name the operator knows.
-                  Only a tenant-tenancy profile may say it; the operator ignores it
-                  otherwise, since there is no tenant to give a shared component to.
+                  Only a profile of class "app" may say it: a service and a shared-app
+                  have one instance, so there is nothing to give each tenant.
                 type: boolean
               expose:
                 description: |-
-                  Expose declares entry points. Forbidden for system tenancy. Every entry
-                  states its authMode; there is no default.
+                  Expose declares entry points. A service may have them -- a console is
+                  not a contract surface -- but only on the gateway, never the perimeter,
+                  which has no session. Every entry states its authMode; there is no
+                  default.
                 items:
                   description: ExposureSpec declares one entry point.
                   properties:
@@ -648,6 +684,16 @@ spec:
                     backend:
                       description: Backend is the Service the entry routes to.
                       properties:
+                        component:
+                          description: |-
+                            Component names another component whose Service this entry routes to.
+                            Empty means this component's own. Admission bounds it to a component
+                            this one is already bound to -- its addon base, or the shared instance
+                            it is bound to -- so publishing is never a way to reach a component
+                            there is no relationship with.
+                          maxLength: 63
+                          pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
+                          type: string
                         port:
                           format: int32
                           maximum: 65535
@@ -769,12 +815,17 @@ spec:
                             A component that exists to administer the tenant it runs in has no app
                             object worth asking about, and asking one would be answered no.
 
+                            "cluster" is the third, for a service's own console: a service has no
+                            app object and runs in no tenant, and the relations that govern it --
+                            can_operate_system, can_configure, can_audit -- are all on cluster.
+
                             Not called "on": YAML 1.1 reads a bare on as the boolean true, so a
                             profile written by hand would carry a key named true and be refused by
                             the schema, and the same goes for off, yes and no.
                           enum:
                           - app
                           - tenant
+                          - cluster
                           type: string
                         path:
                           description: |-
@@ -885,7 +936,7 @@ spec:
                       type: object
                       x-kubernetes-preserve-unknown-fields: true
                     kernelRequirements:
-                      description: KernelRequirements declares kernel services the
+                      description: ServiceRequirements declares kernel services the
                         sidecar needs.
                       properties:
                         cache:
@@ -1337,13 +1388,58 @@ spec:
                   - contract
                   type: object
                 type: array
+              launch:
+                description: |-
+                  Launch is how a person reaches this component. Required, with no
+                  default, for the reason authMode, surface and trustTier are: an app
+                  nobody can open should be refused at admission, and "nobody opens this"
+                  has to be a word somebody wrote rather than a field they omitted.
+                enum:
+                - tile
+                - from
+                - none
+                type: string
+              launchFrom:
+                description: |-
+                  LaunchFrom names the contract whose provider opens this component.
+                  Required when Launch is "from", meaningless otherwise. It records what
+                  the model could not say before: which component opens this one.
+                maxLength: 63
+                pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
+                type: string
               package:
                 description: Package is how the component is deployed.
                 properties:
-                  apiIntegration:
+                  addon:
                     description: |-
-                      APIIntegration describes a component that is an API client rather than a
-                      workload.
+                      Addon describes a component the platform does not deploy at all: it
+                      flips a switch inside another component's own addon system. Delivery:
+                      addon. It lived under customization.addon, which is why the one-of rule
+                      had to reach out of this struct to finish itself.
+                    properties:
+                      id:
+                        description: |-
+                          ID is what the hosting component's own addon system calls this addon:
+                          an Odoo module name, a Nextcloud app id, an Activepieces piece name.
+                        maxLength: 128
+                        minLength: 1
+                        pattern: ^[a-zA-Z0-9][a-zA-Z0-9_.-]*$
+                        type: string
+                      of:
+                        description: Of is the ComponentProfile this addon activates
+                          into.
+                        maxLength: 63
+                        minLength: 1
+                        type: string
+                    required:
+                    - id
+                    - of
+                    type: object
+                  api:
+                    description: |-
+                      API describes a component the platform routes to rather than runs. It
+                      does not mean external: the catalogue's own example points at a Service
+                      inside the cluster. Delivery: api.
                     properties:
                       baseUrl:
                         description: BaseURL is the external service origin (e.g.
@@ -1386,7 +1482,8 @@ spec:
                     - baseUrl
                     type: object
                   chart:
-                    description: Chart is the Helm chart or OCI artifact.
+                    description: 'Chart is the Helm chart or OCI artifact. Delivery:
+                      workload.'
                     properties:
                       name:
                         description: Name is the chart name within the repository.
@@ -1405,17 +1502,11 @@ spec:
                     - repository
                     - version
                     type: object
-                  compositionRef:
+                  composition:
                     description: |-
-                      CompositionRef names a Crossplane composition for components that are
-                      not a single chart.
-                    type: string
-                  deploymentMethod:
-                    description: DeploymentMethod selects how the component is rolled
-                      out.
-                    enum:
-                    - crossplane
-                    - api
+                      Composition names a Crossplane composition, for a component that is not
+                      a single chart. Delivery: workload.
+                    maxLength: 253
                     type: string
                   extraValues:
                     description: ExtraValues are static chart values.
@@ -1703,8 +1794,9 @@ spec:
                 type: object
               provides:
                 description: |-
-                  Provides lists the contracts this component supplies. Tenancy decides the
-                  audience: cluster-wide for system and shared, within the tenant otherwise.
+                  Provides lists the contracts this component supplies. The class decides
+                  the audience: cluster-wide for a service and a shared-app, within the
+                  tenant otherwise.
                 items:
                   description: ContractRef identifies an integration contract this
                     app provides.
@@ -1728,230 +1820,6 @@ spec:
                   Requires is what the platform is obliged to provide before this component
                   may run. Unmet means it does not start, and the platform is at fault.
                 properties:
-                  contracts:
-                    description: |-
-                      Contracts are platform capabilities: identity, database, object storage,
-                      cache, mail, LLM, MCP.
-                    properties:
-                      cache:
-                        description: Cache specifies a caching backend requirement.
-                        properties:
-                          engine:
-                            default: redis
-                            description: Engine selects the caching backend. Defaults
-                              to redis.
-                            enum:
-                            - redis
-                            - memcached
-                            type: string
-                        type: object
-                      database:
-                        description: Database specifies a relational database requirement.
-                        properties:
-                          allowDynamicDatabaseCreation:
-                            description: |-
-                              AllowDynamicDatabaseCreation lets the app create databases of its own at
-                              runtime — mariadb via GRANT ALL PRIVILEGES ON *.*, postgresql via role
-                              CREATEDB. Ask for it only when creating databases is what the app is for
-                              (a data explorer, say); an app that merely stores its own state must not.
-
-                              Databases created this way are still purged with the app: they are owned
-                              by the app role, and uninstall --purge drops everything that role owns.
-                              They are not otherwise governed — the tenant chooses the names, and they
-                              do not appear in the catalogue's provisioning model.
-
-                              Omitted is equivalent to false, which is also Go's zero value for bool —
-                              left undefaulted at the schema level so profiles that omit it don't
-                              permanently diff against GitOps tooling that applies CRD defaults
-                              server-side.
-                            type: boolean
-                          databasePerTenant:
-                            default: true
-                            description: |-
-                              DatabasePerTenant creates a separate database for each tenant (default true).
-                              Set to false only for shared-schema apps.
-                            type: boolean
-                          engine:
-                            default: postgresql
-                            description: Engine selects the database engine. Defaults
-                              to postgresql.
-                            enum:
-                            - postgresql
-                            - mariadb
-                            type: string
-                          schemaPreference:
-                            description: |-
-                              SchemaPreference decides which schema the app's role resolves unqualified
-                              table names against first.
-
-                              Default (app-schema) puts the per-tenant schema ahead of public, which is
-                              what an app doing its own schema isolation expects. Apps whose migrations
-                              create everything in public — and then look it up unqualified — need
-                              public first, or the migration writes to one schema and the query reads
-                              the other.
-
-                              This is declared rather than inferred: the platform cannot know an app's
-                              migration behaviour from its name, and matching on the name is how a
-                              second app with the same need silently gets the wrong search_path.
-                            enum:
-                            - app-schema
-                            - public
-                            type: string
-                        type: object
-                      identity:
-                        description: Identity specifies OIDC requirements.
-                        properties:
-                          oidc:
-                            description: |-
-                              OIDC describes the OIDC client to register in the tenant's Keycloak realm.
-                              When set, the composition emits a Client CR so every newly deployed tenant
-                              automatically gets the correct Keycloak client without manual setup.
-                              Leave unset for apps whose Keycloak client is managed externally
-                              (e.g. kernel-realm clients managed via keycloak-config).
-                            properties:
-                              accessType:
-                                default: PUBLIC
-                                description: |-
-                                  AccessType controls whether the client requires a shared secret
-                                  (CONFIDENTIAL, for server-side apps) or relies on PKCE without a secret
-                                  (PUBLIC, for SPAs and mobile apps). Defaults to PUBLIC.
-                                enum:
-                                - PUBLIC
-                                - CONFIDENTIAL
-                                type: string
-                              backchannelLogoutUrl:
-                                description: |-
-                                  BackchannelLogoutURL is the endpoint Keycloak calls for backchannel logout
-                                  notifications (RFC 7009). Supports ${TENANT_DOMAIN} substitution.
-                                type: string
-                              clientId:
-                                description: ClientID is the OIDC client identifier
-                                  registered in Keycloak.
-                                minLength: 1
-                                type: string
-                              directAccessGrantsEnabled:
-                                description: |-
-                                  DirectAccessGrantsEnabled enables the Resource Owner Password Credentials
-                                  grant (legacy / CLI apps). Defaults to false.
-                                type: boolean
-                              name:
-                                description: |-
-                                  Name is the human-readable display name shown in the Keycloak admin UI.
-                                  Defaults to ClientID when empty.
-                                type: string
-                              oidcPackRef:
-                                description: |-
-                                  OIDCPackRef selects a pack entry from an OIDCPackCatalog CR when the
-                                  pack key differs from clientId. When empty, clientId is used as the pack key.
-                                type: string
-                              postLogoutRedirectUris:
-                                description: |-
-                                  PostLogoutRedirectURIs lists the allowed post-logout redirect URIs.
-                                  Supports ${TENANT_DOMAIN} substitution.
-                                items:
-                                  type: string
-                                type: array
-                              redirectUris:
-                                description: |-
-                                  RedirectURIs lists the valid OAuth2 redirect URIs for the authorization
-                                  code flow. Supports ${TENANT_DOMAIN} substitution.
-                                items:
-                                  type: string
-                                type: array
-                            required:
-                            - clientId
-                            type: object
-                          saml:
-                            description: SAML describes the SAML client to register
-                              in the tenant's Keycloak realm.
-                            properties:
-                              acsUrl:
-                                description: ACSURL is the SAML Assertion Consumer
-                                  Service URL for the auth callback.
-                                minLength: 1
-                                type: string
-                              entityId:
-                                description: EntityID is the SAML Service Provider
-                                  Entity ID registered in Keycloak.
-                                minLength: 1
-                                type: string
-                            required:
-                            - acsUrl
-                            - entityId
-                            type: object
-                        type: object
-                      mail:
-                        description: Mail specifies SMTP and/or IMAP requirements.
-                        properties:
-                          imap:
-                            description: IMAP requests inbound mail (IMAP) credentials.
-                            type: object
-                          smtp:
-                            description: SMTP requests outbound mail (SMTP submission)
-                              credentials.
-                            type: object
-                        type: object
-                      mcp:
-                        description: |-
-                          MCP specifies a Model Context Protocol server requirement.
-                          When enabled, the orchestrator registers the app's MCP endpoint in the
-                          kernel MCP registry and wires OIDC authentication.
-                        properties:
-                          auth:
-                            default: oidc
-                            description: Auth is the authentication method for MCP
-                              calls.
-                            enum:
-                            - oidc
-                            - none
-                            type: string
-                          enabled:
-                            default: true
-                            description: Enabled activates MCP endpoint registration.
-                            type: boolean
-                          endpoint:
-                            default: /mcp
-                            description: Endpoint is the HTTP path where the app exposes
-                              its MCP server.
-                            pattern: ^/.*
-                            type: string
-                        required:
-                        - enabled
-                        type: object
-                      storage:
-                        description: Storage specifies object storage (S3) and/or
-                          filesystem (WebDAV) requirements.
-                        properties:
-                          files:
-                            description: Files requests WebDAV access to the tenant's
-                              file-storage service.
-                            properties:
-                              capabilities:
-                                description: Capabilities lists the required access
-                                  capabilities.
-                                items:
-                                  type: string
-                                type: array
-                              protocol:
-                                default: webdav
-                                description: Protocol is the access protocol. Currently
-                                  only webdav is supported.
-                                enum:
-                                - webdav
-                                type: string
-                            type: object
-                          s3:
-                            description: S3 requests a per-tenant S3 bucket via the
-                              MinIO kernel service.
-                            properties:
-                              bucketPerTenant:
-                                default: true
-                                description: BucketPerTenant creates a dedicated bucket
-                                  for each tenant. Defaults to true.
-                                type: boolean
-                            type: object
-                        type: object
-                    type: object
                   privileges:
                     description: |-
                       Privileges escape the default posture. Declaring one is asking, never
@@ -2286,6 +2154,235 @@ spec:
                         - name
                         x-kubernetes-list-type: map
                     type: object
+                  services:
+                    description: |-
+                      Services are what the platform must fulfil before this component runs:
+                      identity, database, object storage, cache, mail, MCP. Each is fulfilled
+                      by a component of class "service", or by something outside the cluster
+                      entirely -- a relay, a bucket at a cloud provider. It was called
+                      kernelRequirements, which named a fulfiller that is not the fulfiller,
+                      and then contracts, which is the word the open named set in Provides
+                      already holds.
+                    properties:
+                      cache:
+                        description: Cache specifies a caching backend requirement.
+                        properties:
+                          engine:
+                            default: redis
+                            description: Engine selects the caching backend. Defaults
+                              to redis.
+                            enum:
+                            - redis
+                            - memcached
+                            type: string
+                        type: object
+                      database:
+                        description: Database specifies a relational database requirement.
+                        properties:
+                          allowDynamicDatabaseCreation:
+                            description: |-
+                              AllowDynamicDatabaseCreation lets the app create databases of its own at
+                              runtime — mariadb via GRANT ALL PRIVILEGES ON *.*, postgresql via role
+                              CREATEDB. Ask for it only when creating databases is what the app is for
+                              (a data explorer, say); an app that merely stores its own state must not.
+
+                              Databases created this way are still purged with the app: they are owned
+                              by the app role, and uninstall --purge drops everything that role owns.
+                              They are not otherwise governed — the tenant chooses the names, and they
+                              do not appear in the catalogue's provisioning model.
+
+                              Omitted is equivalent to false, which is also Go's zero value for bool —
+                              left undefaulted at the schema level so profiles that omit it don't
+                              permanently diff against GitOps tooling that applies CRD defaults
+                              server-side.
+                            type: boolean
+                          databasePerTenant:
+                            default: true
+                            description: |-
+                              DatabasePerTenant creates a separate database for each tenant (default true).
+                              Set to false only for shared-schema apps.
+                            type: boolean
+                          engine:
+                            default: postgresql
+                            description: Engine selects the database engine. Defaults
+                              to postgresql.
+                            enum:
+                            - postgresql
+                            - mariadb
+                            type: string
+                          schemaPreference:
+                            description: |-
+                              SchemaPreference decides which schema the app's role resolves unqualified
+                              table names against first.
+
+                              Default (app-schema) puts the per-tenant schema ahead of public, which is
+                              what an app doing its own schema isolation expects. Apps whose migrations
+                              create everything in public — and then look it up unqualified — need
+                              public first, or the migration writes to one schema and the query reads
+                              the other.
+
+                              This is declared rather than inferred: the platform cannot know an app's
+                              migration behaviour from its name, and matching on the name is how a
+                              second app with the same need silently gets the wrong search_path.
+                            enum:
+                            - app-schema
+                            - public
+                            type: string
+                        type: object
+                      identity:
+                        description: Identity specifies OIDC requirements.
+                        properties:
+                          oidc:
+                            description: |-
+                              OIDC describes the OIDC client to register in the tenant's Keycloak realm.
+                              When set, the composition emits a Client CR so every newly deployed tenant
+                              automatically gets the correct Keycloak client without manual setup.
+                              Leave unset for apps whose Keycloak client is managed externally
+                              (e.g. kernel-realm clients managed via keycloak-config).
+                            properties:
+                              accessType:
+                                default: PUBLIC
+                                description: |-
+                                  AccessType controls whether the client requires a shared secret
+                                  (CONFIDENTIAL, for server-side apps) or relies on PKCE without a secret
+                                  (PUBLIC, for SPAs and mobile apps). Defaults to PUBLIC.
+                                enum:
+                                - PUBLIC
+                                - CONFIDENTIAL
+                                type: string
+                              backchannelLogoutUrl:
+                                description: |-
+                                  BackchannelLogoutURL is the endpoint Keycloak calls for backchannel logout
+                                  notifications (RFC 7009). Supports ${TENANT_DOMAIN} substitution.
+                                type: string
+                              clientId:
+                                description: ClientID is the OIDC client identifier
+                                  registered in Keycloak.
+                                minLength: 1
+                                type: string
+                              directAccessGrantsEnabled:
+                                description: |-
+                                  DirectAccessGrantsEnabled enables the Resource Owner Password Credentials
+                                  grant (legacy / CLI apps). Defaults to false.
+                                type: boolean
+                              name:
+                                description: |-
+                                  Name is the human-readable display name shown in the Keycloak admin UI.
+                                  Defaults to ClientID when empty.
+                                type: string
+                              oidcPackRef:
+                                description: |-
+                                  OIDCPackRef selects a pack entry from an OIDCPackCatalog CR when the
+                                  pack key differs from clientId. When empty, clientId is used as the pack key.
+                                type: string
+                              postLogoutRedirectUris:
+                                description: |-
+                                  PostLogoutRedirectURIs lists the allowed post-logout redirect URIs.
+                                  Supports ${TENANT_DOMAIN} substitution.
+                                items:
+                                  type: string
+                                type: array
+                              redirectUris:
+                                description: |-
+                                  RedirectURIs lists the valid OAuth2 redirect URIs for the authorization
+                                  code flow. Supports ${TENANT_DOMAIN} substitution.
+                                items:
+                                  type: string
+                                type: array
+                            required:
+                            - clientId
+                            type: object
+                          saml:
+                            description: SAML describes the SAML client to register
+                              in the tenant's Keycloak realm.
+                            properties:
+                              acsUrl:
+                                description: ACSURL is the SAML Assertion Consumer
+                                  Service URL for the auth callback.
+                                minLength: 1
+                                type: string
+                              entityId:
+                                description: EntityID is the SAML Service Provider
+                                  Entity ID registered in Keycloak.
+                                minLength: 1
+                                type: string
+                            required:
+                            - acsUrl
+                            - entityId
+                            type: object
+                        type: object
+                      mail:
+                        description: Mail specifies SMTP and/or IMAP requirements.
+                        properties:
+                          imap:
+                            description: IMAP requests inbound mail (IMAP) credentials.
+                            type: object
+                          smtp:
+                            description: SMTP requests outbound mail (SMTP submission)
+                              credentials.
+                            type: object
+                        type: object
+                      mcp:
+                        description: |-
+                          MCP specifies a Model Context Protocol server requirement.
+                          When enabled, the orchestrator registers the app's MCP endpoint in the
+                          kernel MCP registry and wires OIDC authentication.
+                        properties:
+                          auth:
+                            default: oidc
+                            description: Auth is the authentication method for MCP
+                              calls.
+                            enum:
+                            - oidc
+                            - none
+                            type: string
+                          enabled:
+                            default: true
+                            description: Enabled activates MCP endpoint registration.
+                            type: boolean
+                          endpoint:
+                            default: /mcp
+                            description: Endpoint is the HTTP path where the app exposes
+                              its MCP server.
+                            pattern: ^/.*
+                            type: string
+                        required:
+                        - enabled
+                        type: object
+                      storage:
+                        description: Storage specifies object storage (S3) and/or
+                          filesystem (WebDAV) requirements.
+                        properties:
+                          files:
+                            description: Files requests WebDAV access to the tenant's
+                              file-storage service.
+                            properties:
+                              capabilities:
+                                description: Capabilities lists the required access
+                                  capabilities.
+                                items:
+                                  type: string
+                                type: array
+                              protocol:
+                                default: webdav
+                                description: Protocol is the access protocol. Currently
+                                  only webdav is supported.
+                                enum:
+                                - webdav
+                                type: string
+                            type: object
+                          s3:
+                            description: S3 requests a per-tenant S3 bucket via the
+                              MinIO kernel service.
+                            properties:
+                              bucketPerTenant:
+                                default: true
+                                description: BucketPerTenant creates a dedicated bucket
+                                  for each tenant. Defaults to true.
+                                type: boolean
+                            type: object
+                        type: object
+                    type: object
                 type: object
               secrets:
                 description: |-
@@ -2359,27 +2456,11 @@ spec:
                   app captured at its own login, so this — not the access-token lifetime —
                   bounds what a user may still do inside the app after their rights change.
                 type: string
-              tenancy:
-                description: |-
-                  Tenancy lists the modes this component may be deployed under. It is a
-                  certification claim, not a choice. "system" is exclusive.
-                items:
-                  description: ComponentTenancy is a mode a component may be deployed
-                    under.
-                  enum:
-                  - system
-                  - shared
-                  - tenant
-                  type: string
-                maxItems: 2
-                minItems: 1
-                type: array
-                x-kubernetes-list-type: set
               trustTier:
                 description: |-
                   TrustTier is the review level of this entry. "platform" is required
-                  before "shared" may appear in Tenancy. Required, with no default: the
-                  tier is a statement a reviewer made, not an absence.
+                  before "shared-app" may appear in Classes. Required, with no default:
+                  the tier is a statement a reviewer made, not an absence.
                 enum:
                 - platform
                 - certified
@@ -2392,29 +2473,56 @@ spec:
                 minLength: 1
                 type: string
             required:
+            - classes
+            - launch
             - package
-            - tenancy
             - trustTier
             - version
             type: object
             x-kubernetes-validations:
-            - message: 'system is exclusive: a component serving contracts does not
-                also serve humans'
-              rule: '!(''system'' in self.tenancy) || self.tenancy.size() == 1'
-            - message: system components have no exposure
-              rule: '!(''system'' in self.tenancy) || !has(self.expose) || self.expose.size()
-                == 0'
-            - message: shared tenancy requires trustTier platform
-              rule: '!(''shared'' in self.tenancy) || self.trustTier == ''platform'''
+            - message: 'service is exclusive: a component may not be both a service
+                and an app'
+              rule: '!has(self.classes) || !(''service'' in self.classes) || self.classes.size()
+                == 1'
+            - message: shared-app requires trustTier platform
+              rule: '!has(self.classes) || !(''shared-app'' in self.classes) || self.trustTier
+                == ''platform'''
             - message: 'forwardToken requires trustTier platform: the edge token is
                 valid at the director and at every sibling'
               rule: '!has(self.expose) || self.expose.all(e, !(has(e.forwardToken)
                 && e.forwardToken) || self.trustTier == ''platform'')'
-            - message: a package is a chart, a composition or an API integration;
-                only an addon, which rides on its base, has none
-              rule: has(self.__package__.chart) || (has(self.__package__.compositionRef)
-                && self.__package__.compositionRef.size() > 0) || has(self.__package__.apiIntegration)
-                || (has(self.customization) && has(self.customization.addon))
+            - message: 'a service exposes on the gateway only: the perimeter has no
+                session'
+              rule: '!has(self.classes) || !(''service'' in self.classes) || !has(self.expose)
+                || self.expose.all(e, e.surface == ''gateway'')'
+            - message: 'a service''s tile asks on the cluster: it has no app object
+                and runs in no tenant'
+              rule: '!has(self.classes) || !(''service'' in self.classes) || !has(self.expose)
+                || self.expose.all(e, !has(e.tile) || e.tile.object == ''cluster'')'
+            - message: 'defaultForTenants is for class app: a service and a shared-app
+                have one instance'
+              rule: '!has(self.classes) || (''app'' in self.classes) || !has(self.defaultForTenants)
+                || !self.defaultForTenants'
+            - message: a package is exactly one of chart, composition, api or addon
+              rule: '[has(self.__package__.chart), has(self.__package__.composition)
+                && self.__package__.composition.size() > 0, has(self.__package__.api),
+                has(self.__package__.addon)].exists_one(x, x)'
+            - message: an addon is package.addon on this kind, not customization.addon
+              rule: '!has(self.customization) || !has(self.customization.addon)'
+            - message: 'launch from needs launchFrom: which contract''s provider opens
+                this'
+              rule: self.launch != 'from' || (has(self.launchFrom) && self.launchFrom.size()
+                > 0)
+            - message: launchFrom is meaningless unless launch is from
+              rule: self.launch == 'from' || !has(self.launchFrom) || self.launchFrom.size()
+                == 0
+            - message: 'launch tile needs a tile on an exposure: an app nobody can
+                open is installed and lost'
+              rule: self.launch != 'tile' || (has(self.expose) && self.expose.exists(e,
+                has(e.tile)))
+            - message: 'a tile means launch tile: say how a person reaches this'
+              rule: self.launch == 'tile' || !has(self.expose) || !self.expose.exists(e,
+                has(e.tile))
           status:
             description: ComponentProfileStatus is the observed state of a ComponentProfile.
             properties:
@@ -2474,6 +2582,20 @@ spec:
                   - type
                   type: object
                 type: array
+              delivery:
+                description: |-
+                  Delivery is read from the package: workload for a chart or a
+                  composition, api for a component the platform routes to, addon for one
+                  it does not deploy at all. It is status and not spec on purpose -- a
+                  second settable statement of one fact is a second statement that can be
+                  wrong, and deploymentMethod was exactly that. Here so a person can see
+                  at a glance which entries the platform runs and which it merely routes
+                  to, which is the question behind the exposure register.
+                enum:
+                - workload
+                - api
+                - addon
+                type: string
             type: object
         type: object
     served: true

@@ -171,42 +171,85 @@ spec:
 
 func TestComponentProfileRules(t *testing.T) {
 	v := loadCRD(t, "gentianos.io_componentprofiles.yaml")
+	// A gateway entry with no tile, so a case that is not about tiles does not
+	// have to think about launch beyond saying "none".
 	gateway := `
   expose:
   - {name: web, surface: gateway, authMode: oidc, backend: {service: x, port: 80}}
 `
+	tile := `
+  expose:
+  - name: web
+    surface: gateway
+    authMode: oidc
+    backend: {service: x, port: 80}
+    tile: {displayName: Files, icon: files, relation: can_use}
+`
+	app := "  classes: [app]\n  launch: none\n  trustTier: certified"
 	cases := []struct{ name, spec, want string }{
-		{"a tenant app on the gateway", "  tenancy: [tenant]\n  trustTier: certified" + gateway, ""},
-		{"a system service without exposure", "  tenancy: [system]\n  trustTier: platform\n", ""},
-		{"shared and tenant at platform tier", "  tenancy: [shared, tenant]\n  trustTier: platform" + gateway, ""},
+		{"an app on the gateway", app + gateway, ""},
+		{"a service with no console", "  classes: [service]\n  launch: none\n  trustTier: platform\n", ""},
+		{"shared-app and app at platform tier", "  classes: [shared-app, app]\n  launch: none\n  trustTier: platform" + gateway, ""},
 
-		{"system is exclusive", "  tenancy: [system, tenant]\n  trustTier: platform\n", "system is exclusive"},
-		{"system has no exposure", "  tenancy: [system]\n  trustTier: platform" + gateway, "system components have no exposure"},
-		{"shared below platform tier", "  tenancy: [shared]\n  trustTier: certified\n", "shared tenancy requires trustTier platform"},
-		{"no tenancy at all", "  tenancy: []\n  trustTier: certified\n", "tenancy"},
-		{"an unknown tenancy", "  tenancy: [global]\n  trustTier: certified\n", "Unsupported value"},
-		{"no trust tier", "  tenancy: [tenant]\n", "trustTier"},
+		{"service is exclusive", "  classes: [service, app]\n  launch: none\n  trustTier: platform\n", "service is exclusive"},
+		{"shared-app below platform tier", "  classes: [shared-app]\n  launch: none\n  trustTier: certified\n", "shared-app requires trustTier platform"},
+		{"no class at all", "  classes: []\n  launch: none\n  trustTier: certified\n", "classes"},
+		{"an unknown class", "  classes: [global]\n  launch: none\n  trustTier: certified\n", "Unsupported value"},
+		{"the old vocabulary", "  classes: [tenant]\n  launch: none\n  trustTier: certified\n", "Unsupported value"},
+		{"no trust tier", "  classes: [app]\n  launch: none\n", "trustTier"},
 
-		{"authMode has no default", "  tenancy: [tenant]\n  trustTier: certified\n  expose:\n  - {name: web, surface: gateway, backend: {service: x, port: 80}}\n", "authMode"},
-		{"surface has no default", "  tenancy: [tenant]\n  trustTier: certified\n  expose:\n  - {name: web, authMode: oidc, backend: {service: x, port: 80}}\n", "surface"},
-		{"an authMode that is not a mode", "  tenancy: [tenant]\n  trustTier: certified\n  expose:\n  - {name: web, surface: gateway, authMode: forward-bearer, backend: {service: x, port: 80}}\n", "Unsupported value"},
-		{"none is a word someone may write", "  tenancy: [tenant]\n  trustTier: certified\n  expose:\n  - {name: share, surface: perimeter, authMode: none, paths: [/s/], backend: {service: x, port: 80}}\n", ""},
-		{"a perimeter entry has no session", "  tenancy: [tenant]\n  trustTier: certified\n  expose:\n  - {name: share, surface: perimeter, authMode: oidc, backend: {service: x, port: 80}}\n", "cannot use authMode oidc"},
+		// A service may have a console. What it may not have is a console on
+		// the perimeter, or a tile asking about an object it does not have.
+		{"a service with a console", "  classes: [service]\n  launch: tile\n  trustTier: platform\n  expose:\n  - {name: console, surface: gateway, authMode: oidc, backend: {service: x, port: 80}, tile: {displayName: Models, icon: model, relation: can_operate_system, object: cluster}}\n", ""},
+		{"a service on the perimeter", "  classes: [service]\n  launch: none\n  trustTier: platform\n  expose:\n  - {name: hook, surface: perimeter, authMode: signature, backend: {service: x, port: 80}}\n", "a service exposes on the gateway only"},
+		{"a service tile asking about an app", "  classes: [service]\n  launch: tile\n  trustTier: platform\n  expose:\n  - {name: console, surface: gateway, authMode: oidc, backend: {service: x, port: 80}, tile: {displayName: Models, icon: model, relation: can_use, object: app}}\n", "a service's tile asks on the cluster"},
+		{"a service given to every tenant", "  classes: [service]\n  launch: none\n  trustTier: platform\n  defaultForTenants: true\n", "defaultForTenants is for class app"},
 
-		{"forwardToken below platform tier", "  tenancy: [tenant]\n  trustTier: certified\n  expose:\n  - {name: web, surface: gateway, authMode: oidc, forwardToken: true, backend: {service: x, port: 80}}\n", "forwardToken requires trustTier platform"},
-		{"forwardToken at platform tier", "  tenancy: [tenant]\n  trustTier: platform\n  expose:\n  - {name: web, surface: gateway, authMode: oidc, forwardToken: true, backend: {service: x, port: 80}}\n", ""},
-		{"forwardToken on the perimeter", "  tenancy: [tenant]\n  trustTier: platform\n  expose:\n  - {name: hook, surface: perimeter, authMode: signature, forwardToken: true, backend: {service: x, port: 80}}\n", "meaningless on a perimeter entry"},
+		// Launch: a person must be able to reach what they installed.
+		{"launch is not optional", "  classes: [app]\n  trustTier: certified" + gateway, "launch"},
+		{"a tile, and launch says so", "  classes: [app]\n  launch: tile\n  trustTier: certified" + tile, ""},
+		{"launch tile with no tile", "  classes: [app]\n  launch: tile\n  trustTier: certified" + gateway, "launch tile needs a tile"},
+		{"a tile the profile does not own up to", "  classes: [app]\n  launch: none\n  trustTier: certified" + tile, "a tile means launch tile"},
+		{"opened by another component", "  classes: [app]\n  launch: from\n  launchFrom: file-store\n  trustTier: certified" + gateway, ""},
+		{"launch from with nothing named", "  classes: [app]\n  launch: from\n  trustTier: certified" + gateway, "launch from needs launchFrom"},
+		{"launchFrom without launch from", "  classes: [app]\n  launch: none\n  launchFrom: file-store\n  trustTier: certified" + gateway, "launchFrom is meaningless"},
 
-		{"a pinned caller, by component", "  tenancy: [tenant]\n  trustTier: certified\n  expose:\n  - {name: wopi, surface: gateway, authMode: none, source: {component: collabora}, backend: {service: x, port: 80}}\n", ""},
-		{"a source that pins nothing", "  tenancy: [tenant]\n  trustTier: certified\n  expose:\n  - {name: wopi, surface: gateway, authMode: none, source: {}, backend: {service: x, port: 80}}\n", "exactly one of cidrs or component"},
-		{"a source that pins both ways", "  tenancy: [tenant]\n  trustTier: certified\n  expose:\n  - {name: wopi, surface: gateway, authMode: none, source: {component: c, cidrs: [10.0.0.0/8]}, backend: {service: x, port: 80}}\n", "exactly one of cidrs or component"},
+		{"authMode has no default", app + "\n  expose:\n  - {name: web, surface: gateway, backend: {service: x, port: 80}}\n", "authMode"},
+		{"surface has no default", app + "\n  expose:\n  - {name: web, authMode: oidc, backend: {service: x, port: 80}}\n", "surface"},
+		{"an authMode that is not a mode", app + "\n  expose:\n  - {name: web, surface: gateway, authMode: forward-bearer, backend: {service: x, port: 80}}\n", "Unsupported value"},
+		{"none is a word someone may write", app + "\n  expose:\n  - {name: share, surface: perimeter, authMode: none, paths: [/s/], backend: {service: x, port: 80}}\n", ""},
+		{"a perimeter entry has no session", app + "\n  expose:\n  - {name: share, surface: perimeter, authMode: oidc, backend: {service: x, port: 80}}\n", "cannot use authMode oidc"},
 
-		{"a package that is nothing", "  tenancy: [tenant]\n  trustTier: certified\n  package: {deploymentMethod: helm}\n", "a package is a chart, a composition or an API integration"},
-		{"an addon rides on its base", "  tenancy: [tenant]\n  trustTier: certified\n  package: {deploymentMethod: crossplane}\n  customization: {addon: {id: deck, of: nextcloud-base-ce}}\n", ""},
-		{"a package that is a composition", "  tenancy: [tenant]\n  trustTier: certified\n  package: {compositionRef: element-stack}\n", ""},
+		{"forwardToken below platform tier", app + "\n  expose:\n  - {name: web, surface: gateway, authMode: oidc, forwardToken: true, backend: {service: x, port: 80}}\n", "forwardToken requires trustTier platform"},
+		{"forwardToken at platform tier", "  classes: [app]\n  launch: none\n  trustTier: platform\n  expose:\n  - {name: web, surface: gateway, authMode: oidc, forwardToken: true, backend: {service: x, port: 80}}\n", ""},
+		{"forwardToken on the perimeter", "  classes: [app]\n  launch: none\n  trustTier: platform\n  expose:\n  - {name: hook, surface: perimeter, authMode: signature, forwardToken: true, backend: {service: x, port: 80}}\n", "meaningless on a perimeter entry"},
 
-		{"a privilege without a reason", "  tenancy: [tenant]\n  trustTier: certified\n  requires:\n    privileges:\n      podSecurity:\n      - {name: root, policy: require-run-as-nonroot, scope: web}\n", "reason"},
-		{"a privilege with one", "  tenancy: [tenant]\n  trustTier: certified\n  requires:\n    privileges:\n      podSecurity:\n      - {name: root, policy: require-run-as-nonroot, scope: web, reason: \"the upstream image starts as root and drops privileges itself\"}\n", ""},
+		{"a pinned caller, by component", app + "\n  expose:\n  - {name: wopi, surface: gateway, authMode: none, source: {component: collabora}, backend: {service: x, port: 80}}\n", ""},
+		{"a source that pins nothing", app + "\n  expose:\n  - {name: wopi, surface: gateway, authMode: none, source: {}, backend: {service: x, port: 80}}\n", "exactly one of cidrs or component"},
+		{"a source that pins both ways", app + "\n  expose:\n  - {name: wopi, surface: gateway, authMode: none, source: {component: c, cidrs: [10.0.0.0/8]}, backend: {service: x, port: 80}}\n", "exactly one of cidrs or component"},
+
+		// An exposure may route into another component: an addon's tile points
+		// into its base, and a bound shared-app routes into shared-<app>.
+		{"a backend in another component", app + "\n  expose:\n  - {name: web, surface: gateway, authMode: oidc, backend: {component: odoo-base-ce, service: odoo, port: 80}}\n", ""},
+
+		// The package is exactly one thing, and nothing outside it completes
+		// the union. The OR this replaces admitted the first two of these.
+		{"a package that is nothing", "  classes: [app]\n  launch: none\n  trustTier: certified\n  package: {}\n", "exactly one of chart, composition, api or addon"},
+		{"a chart beside an API integration", "  classes: [app]\n  launch: none\n  trustTier: certified\n  package: {chart: {repository: oci://r, name: \"nc\", version: \"1\"}, api: {baseUrl: \"https://x\"}}\n", "exactly one of chart, composition, api or addon"},
+		{"a package that is an addon", "  classes: [app]\n  launch: none\n  trustTier: certified\n  package: {addon: {id: deck, of: nextcloud-base-ce}}\n", ""},
+		{"a package that is a composition", "  classes: [app]\n  launch: none\n  trustTier: certified\n  package: {composition: element-stack}\n", ""},
+		{"a package that is an API integration", "  classes: [app]\n  launch: none\n  trustTier: certified\n  package: {api: {baseUrl: \"https://corp.example\"}}\n", ""},
+		{"an addon left in customization", "  classes: [app]\n  launch: none\n  trustTier: certified\n  package: {composition: x}\n  customization: {addon: {id: deck, of: nextcloud-base-ce}}\n", "an addon is package.addon on this kind"},
+
+		{"a privilege without a reason", app + "\n  requires:\n    privileges:\n      podSecurity:\n      - {name: root, policy: require-run-as-nonroot, scope: web}\n", "reason"},
+		{"a privilege with one", app + "\n  requires:\n    privileges:\n      podSecurity:\n      - {name: root, policy: require-run-as-nonroot, scope: web, reason: \"the upstream image starts as root and drops privileges itself\"}\n", ""},
+		{"requirements are services now", app + "\n  requires:\n    services:\n      database: {engine: postgresql}\n", ""},
+		// The old names cannot be tested for: a structural schema prunes an
+		// unknown field before CEL runs, so requires.contracts and
+		// package.deploymentMethod are accepted and silently dropped. A
+		// profile converted without renaming them loses its requirements
+		// rather than being refused, which is the converter's job to prevent
+		// and scripts/lint/lint-legacy-profile-fields.sh guards.
 	}
 	for _, c := range cases {
 		expect(t, c.name, v.check(t, profileHead+c.spec, ""), c.want)
@@ -252,38 +295,38 @@ func component(spec string) string {
 func TestComponentRules(t *testing.T) {
 	v := loadCRD(t, "gentianos.io_components.yaml")
 	enabled := func(owner, expires string) string {
-		s := "  tenancy: tenant\n  exposures:\n  - exposureName: share\n    owner: " + owner + "\n"
+		s := "  class: app\n  exposures:\n  - exposureName: share\n    owner: " + owner + "\n"
 		if expires != "" {
 			s += "    expiresAt: \"" + expires + "\"\n"
 		}
 		return s
 	}
 	granted := func(approver string) string {
-		return "  tenancy: tenant\n  privileges:\n  - privilege: egress/smtp-relay\n    approver: " + approver +
+		return "  class: app\n  privileges:\n  - privilege: egress/smtp-relay\n    approver: " + approver +
 			"\n    approvedAt: \"2026-09-01T00:00:00Z\"\n    reason: \"relay for the customer's own mail domain\"\n"
 	}
 	cases := []struct{ name, obj, old, want string }{
-		{"a plain tenant install", component("  tenancy: tenant\n"), "", ""},
-		{"pinned to a dedicated backend", component("  tenancy: tenant\n  fulfilment: dedicated\n"), "", ""},
-		{"no tenant can demand a shared backend", component("  tenancy: tenant\n  fulfilment: shared\n"), "", "Unsupported value"},
-		{"fulfilment is a tenant's choice", component("  tenancy: shared\n  fulfilment: dedicated\n"), "", "applies to tenancy tenant only"},
+		{"a plain tenant install", component("  class: app\n"), "", ""},
+		{"pinned to a dedicated backend", component("  class: app\n  fulfilment: dedicated\n"), "", ""},
+		{"no tenant can demand a shared backend", component("  class: app\n  fulfilment: shared\n"), "", "Unsupported value"},
+		{"fulfilment is a tenant's choice", component("  class: shared-app\n  fulfilment: dedicated\n"), "", "applies to class app only"},
 
 		{"an exposure with an end", component(enabled("u-pat", "2026-12-01T00:00:00Z")), "", ""},
 		{"an exposure without one", component(enabled("u-pat", "")), "", "expiresAt"},
-		{"an exposure nobody owns", component("  tenancy: tenant\n  exposures:\n  - {exposureName: share, expiresAt: \"2026-12-01T00:00:00Z\"}\n"), "", "owner"},
+		{"an exposure nobody owns", component("  class: app\n  exposures:\n  - {exposureName: share, expiresAt: \"2026-12-01T00:00:00Z\"}\n"), "", "owner"},
 		{"review after expiry", component(enabled("u-pat", "2026-12-01T00:00:00Z") + "    reviewAt: \"2027-01-01T00:00:00Z\"\n"), "", "reviewAt must not be later"},
-		{"a system component exposed", component("  tenancy: system\n  exposures:\n  - {exposureName: share, owner: u, expiresAt: \"2026-12-01T00:00:00Z\"}\n"), "", "system components have no exposure"},
+		{"a service on the perimeter", component("  class: service\n  exposures:\n  - {exposureName: share, owner: u, expiresAt: \"2026-12-01T00:00:00Z\"}\n"), "", "a service switches on no perimeter entry"},
 		{"a vanity host", component(enabled("u-pat", "2026-12-01T00:00:00Z") + "    host: www.example.org\n"), "", ""},
 		{"a host that is not one", component(enabled("u-pat", "2026-12-01T00:00:00Z") + "    host: \"*.example.org\"\n"), "", "host"},
 
 		{"renewed by its owner", component(enabled("u-pat", "2027-03-01T00:00:00Z")), component(enabled("u-pat", "2026-12-01T00:00:00Z")), ""},
 		{"taken over by someone else", component(enabled("u-mallory", "2027-03-01T00:00:00Z")), component(enabled("u-pat", "2026-12-01T00:00:00Z")), "owner is immutable"},
 		{"a grant rewritten to another approver", component(granted("u-mallory")), component(granted("u-sam")), "approver and approvedAt are immutable"},
-		{"a grant for something that is not a privilege", component("  tenancy: tenant\n  privileges:\n  - {privilege: root, approver: u, approvedAt: \"2026-09-01T00:00:00Z\", reason: \"because it was asked for\"}\n"), "", "privilege"},
-		{"a grant without the approver's reason", component("  tenancy: tenant\n  privileges:\n  - {privilege: egress/x, approver: u, approvedAt: \"2026-09-01T00:00:00Z\", reason: ok}\n"), "", "reason"},
+		{"a grant for something that is not a privilege", component("  class: app\n  privileges:\n  - {privilege: root, approver: u, approvedAt: \"2026-09-01T00:00:00Z\", reason: \"because it was asked for\"}\n"), "", "privilege"},
+		{"a grant without the approver's reason", component("  class: app\n  privileges:\n  - {privilege: egress/x, approver: u, approvedAt: \"2026-09-01T00:00:00Z\", reason: ok}\n"), "", "reason"},
 
-		{"tenancy changed in place", component("  tenancy: shared\n"), component("  tenancy: tenant\n"), "tenancy is immutable"},
-		{"pointed at another profile", strings.Replace(component("  tenancy: tenant\n"), "{name: nextcloud}", "{name: odoo}", 1), component("  tenancy: tenant\n"), "profileRef.name is immutable"},
+		{"class changed in place", component("  class: shared-app\n"), component("  class: app\n"), "class is immutable"},
+		{"pointed at another profile", strings.Replace(component("  class: app\n"), "{name: nextcloud}", "{name: odoo}", 1), component("  class: app\n"), "profileRef.name is immutable"},
 	}
 	for _, c := range cases {
 		expect(t, c.name, v.check(t, c.obj, c.old), c.want)

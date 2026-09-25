@@ -64,9 +64,9 @@ func (r *TenantReconciler) collectOIDCAppConfigs(ctx context.Context, tenant *ge
 			}
 			return nil, fmt.Errorf("get AppProfile %s: %w", app.Profile, err)
 		}
-		if profile.Spec.KernelRequirements != nil &&
-			profile.Spec.KernelRequirements.Identity != nil &&
-			profile.Spec.KernelRequirements.Identity.OIDC != nil {
+		if profile.Spec.ServiceRequirements != nil &&
+			profile.Spec.ServiceRequirements.Identity != nil &&
+			profile.Spec.ServiceRequirements.Identity.OIDC != nil {
 			cfg, err := r.resolveOIDCAppConfig(ctx, tenant, app.Profile)
 			if err != nil {
 				return nil, err
@@ -75,9 +75,9 @@ func (r *TenantReconciler) collectOIDCAppConfigs(ctx context.Context, tenant *ge
 			seen[app.Profile] = struct{}{}
 		}
 		for _, sidecar := range profile.Spec.Sidecars {
-			if sidecar.KernelRequirements == nil ||
-				sidecar.KernelRequirements.Identity == nil ||
-				sidecar.KernelRequirements.Identity.OIDC == nil {
+			if sidecar.ServiceRequirements == nil ||
+				sidecar.ServiceRequirements.Identity == nil ||
+				sidecar.ServiceRequirements.Identity.OIDC == nil {
 				continue
 			}
 			scKey := gentianov1alpha1.SidecarAppName(app.Profile, sidecar.Name)
@@ -137,7 +137,7 @@ func (r *TenantReconciler) resolveOIDCAppConfig(ctx context.Context, tenant *gen
 	if err := r.Get(ctx, types.NamespacedName{Name: profileName}, profile); err != nil {
 		return oidcAppConfig{}, fmt.Errorf("get AppProfile %s: %w", profileName, err)
 	}
-	oidcSpec := profile.Spec.KernelRequirements.Identity.OIDC
+	oidcSpec := profile.Spec.ServiceRequirements.Identity.OIDC
 	clientID := oidcSpec.ClientID
 	if clientID == "" {
 		clientID = oidcClientID(tenant.Name, profileName)
@@ -171,7 +171,7 @@ func (r *TenantReconciler) resolveSidecarOIDCAppConfig(ctx context.Context, tena
 		return oidcAppConfig{}, fmt.Errorf("get parent AppProfile %s: %w", parentProfile, err)
 	}
 	profileName := gentianov1alpha1.SidecarAppName(parentProfile, sidecar.Name)
-	oidcSpec := sidecar.KernelRequirements.Identity.OIDC
+	oidcSpec := sidecar.ServiceRequirements.Identity.OIDC
 	clientID := oidcSpec.ClientID
 	if clientID == "" {
 		clientID = oidcClientID(tenant.Name, profileName)
@@ -314,10 +314,10 @@ func (r *TenantReconciler) collectSAMLAppConfigs(ctx context.Context, tenant *ge
 			}
 			return nil, fmt.Errorf("get AppProfile %s: %w", app.Profile, err)
 		}
-		if profile.Spec.KernelRequirements != nil &&
-			profile.Spec.KernelRequirements.Identity != nil &&
-			profile.Spec.KernelRequirements.Identity.SAML != nil {
-			samlSpec := profile.Spec.KernelRequirements.Identity.SAML
+		if profile.Spec.ServiceRequirements != nil &&
+			profile.Spec.ServiceRequirements.Identity != nil &&
+			profile.Spec.ServiceRequirements.Identity.SAML != nil {
+			samlSpec := profile.Spec.ServiceRequirements.Identity.SAML
 			host := tenant.EffectiveDomain(r.KernelDomain, r.TenancyMode)
 			if host == "" {
 				host = tenant.Spec.Domain

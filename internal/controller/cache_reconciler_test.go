@@ -41,7 +41,7 @@ func newRedisProfile(name string) *gentianov1alpha1.AppProfile {
 				Name:       name,
 				Version:    "1.0.0",
 			},
-			KernelRequirements: &gentianov1alpha1.KernelRequirements{
+			ServiceRequirements: &gentianov1alpha1.ServiceRequirements{
 				Cache: &gentianov1alpha1.CacheRequirement{
 					Engine: gentianov1alpha1.CacheEngineRedis,
 				},
@@ -61,7 +61,7 @@ func newMemcachedProfile(name string) *gentianov1alpha1.AppProfile {
 				Name:       name,
 				Version:    "1.0.0",
 			},
-			KernelRequirements: &gentianov1alpha1.KernelRequirements{
+			ServiceRequirements: &gentianov1alpha1.ServiceRequirements{
 				Cache: &gentianov1alpha1.CacheRequirement{
 					Engine: gentianov1alpha1.CacheEngineMemcached,
 				},

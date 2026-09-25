@@ -72,8 +72,8 @@ func (r *TenantReconciler) buildDataPlaneJobs(ctx context.Context, tenant *genti
 			return nil, fmt.Errorf("get AppProfile %s: %w", appName, err)
 		}
 		allowDynamic := false
-		if profile.Spec.KernelRequirements != nil && profile.Spec.KernelRequirements.Database != nil {
-			allowDynamic = profile.Spec.KernelRequirements.Database.AllowDynamicDatabaseCreation
+		if profile.Spec.ServiceRequirements != nil && profile.Spec.ServiceRequirements.Database != nil {
+			allowDynamic = profile.Spec.ServiceRequirements.Database.AllowDynamicDatabaseCreation
 		}
 		dbPassword := ""
 		if r.Seeder != nil {

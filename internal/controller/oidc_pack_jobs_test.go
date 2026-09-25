@@ -35,7 +35,7 @@ func TestCollectOIDCAppConfigs_IncludesSidecarWithoutAppProfile(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: "catalogue-test-app"},
 		Spec: gentianov1alpha1.AppProfileSpec{
 			CompositionRef: "app-default",
-			KernelRequirements: &gentianov1alpha1.KernelRequirements{
+			ServiceRequirements: &gentianov1alpha1.ServiceRequirements{
 				Identity: &gentianov1alpha1.IdentityRequirement{
 					OIDC: &gentianov1alpha1.OIDCClientSpec{
 						ClientID:     "main-oidc-client",
@@ -46,7 +46,7 @@ func TestCollectOIDCAppConfigs_IncludesSidecarWithoutAppProfile(t *testing.T) {
 			Sidecars: []gentianov1alpha1.AppSidecarSpec{
 				{
 					Name: "sidecar-meet",
-					KernelRequirements: &gentianov1alpha1.KernelRequirements{
+					ServiceRequirements: &gentianov1alpha1.ServiceRequirements{
 						Identity: &gentianov1alpha1.IdentityRequirement{
 							OIDC: &gentianov1alpha1.OIDCClientSpec{
 								ClientID:     "sidecar-oidc-client",

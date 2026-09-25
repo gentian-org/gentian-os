@@ -172,7 +172,7 @@ func buildProfileEntries(profiles []gentianov1alpha1.AppProfile, installedCounts
 			Description:        p.Spec.Description,
 			ChartVersion:       p.Spec.Chart.Version,
 			DeploymentMethod:   p.Spec.DeploymentMethod,
-			KernelRequirements: kernelRequirementLabels(p.Spec.KernelRequirements),
+			ServiceRequirements: kernelRequirementLabels(p.Spec.ServiceRequirements),
 			InstalledCount:     installedCounts[p.Name],
 		})
 	}
@@ -206,7 +206,7 @@ func buildInstalledCounts(tenants []gentianov1alpha1.Tenant, profiles []gentiano
 	return counts
 }
 
-func kernelRequirementLabels(kr *gentianov1alpha1.KernelRequirements) []string {
+func kernelRequirementLabels(kr *gentianov1alpha1.ServiceRequirements) []string {
 	if kr == nil {
 		return nil
 	}
