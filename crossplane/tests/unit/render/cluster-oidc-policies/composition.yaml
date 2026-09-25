@@ -36,6 +36,14 @@ spec:
             {{- $kvMount          := default "secret" (dig "openbao" "kvMount" "" $spec) }}
             {{- $authMount        := default "kubernetes" (dig "openbao" "authMount" "" $spec) }}
             {{- $k8sHost          := default "https://kubernetes.default.svc" (dig "openbao" "kubernetesHost" "" $spec) }}
+            {{- $authNs           := ternary "kernel-authentication" "platform-kernel" $v5 }}
+            {{- /* Keycloak's in-cluster base URL. Derived from the layout, for the
+                 reason network.edgeNamespace is: a field that asks for it can name
+                 a namespace the layout does not have, and the XRD's default did
+                 exactly that -- platform-kernel, on a v5 cluster where Keycloak
+                 runs in kernel-authentication and platform-kernel does not exist.
+                 A claim may still override it; nothing has ever needed to. */}}
+            {{- $kcInternalUrl    := default (printf "http://gentian-idp-keycloak-keycloakx-http.%s.svc.cluster.local:8080/auth" $authNs) (dig "identity" "internalUrl" "" $spec) }}
             {{- $argoNs           := default (ternary "kernel-gitops" "argocd" $v5) (dig "argocd" "namespace" "" $spec) }}
             {{- $esoNs            := default (ternary "kernel-secrets" "external-secrets" $v5) (dig "eso" "namespace" "" $spec) }}
             {{- $esoSa            := default "external-secrets" (dig "eso" "serviceAccount" "" $spec) }}
@@ -918,14 +926,16 @@ spec:
                     # fetches token, JWKS and userinfo over it so the code exchange stays
                     # inside the cluster; the browser still goes to the public URL.
                     #
-                    # No default restated, same reason as mail above: the XRD declares it
-                    # and the API server materialises it onto the composite before this
-                    # renders.
+                    # Derived from the layout, not restated from the XRD: the XRD's
+                    # default named platform-kernel, which on a v5 cluster is a
+                    # namespace that does not exist, so every tenant realm's broker
+                    # IdP would have been given a token endpoint that resolves to
+                    # nothing. See $kcInternalUrl above.
                     #
                     # The Compositions cannot read the keycloak-admin Secret, which is
                     # where this value lived and where the Jobs still read it from. That
                     # is precisely why the broker IdP could not be declared until now.
-                    identity.internalUrl: {{ dig "identity" "internalUrl" "" $spec | quote }}
+                    identity.internalUrl: {{ $kcInternalUrl | quote }}
                     # The shared realm tenant realms broker to. oidc.realm names the same
                     # realm for OpenBao and wins when a claim sets it, so the two cannot
                     # drift apart; identity.kernelRealm only supplies the default, because

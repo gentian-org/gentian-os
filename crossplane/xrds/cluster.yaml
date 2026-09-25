@@ -40,7 +40,7 @@ spec:
                   type: object
                   # The object itself defaults, not just its fields. A nested default
                   # only materialises when its parent is present, so without this the
-                  # internalUrl default below is unreachable on any cluster whose claim
+                  # kernelRealm default below is unreachable on any cluster whose claim
                   # does not mention identity — which is every one of them. spec.oidc
                   # shows the same shape: its realm has defaulted to "kernel" since it
                   # was written and no composite has ever carried the value.
@@ -80,7 +80,13 @@ spec:
                         need the /auth form. Keeping them separate keys is deliberate:
                         collapsing them would silently give one consumer the other's
                         contract.
-                      default: http://gentian-idp-keycloak-keycloakx-http.platform-kernel.svc.cluster.local:8080/auth
+
+                        No default. It carried the v4 namespace, which the API server
+                        then materialised onto every composite including v5 ones, where
+                        platform-kernel does not exist -- so a tenant realm's broker IdP
+                        would fetch tokens from an address that resolves to nothing.
+                        Left unset, the composition derives it from spec.layout, the way
+                        it derives the edge namespace.
                 kernelDomain:
                   type: string
                   description: >
