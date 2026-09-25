@@ -368,7 +368,7 @@ Specified in [networking.md](networking.md).
 
 ## WP-5 Catalogue — `ComponentProfile` (`os`, `apps`)
 
-Specified in [component-profile.md](component-profile.md).
+Specified in [target-component-structure.md](target-component-structure.md).
 
 - [x] CRDs `ComponentProfile` and `Component` with their CEL rules (§7, and
       the ones the instance needs: immutable owner, approver and tenancy; an

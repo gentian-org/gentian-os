@@ -191,7 +191,7 @@ more than it can grant itself a pod-security waiver (AD-5); `ingress`,
 `browserProxy` and the public surfaces folded into `expose[]`, each entry
 carrying a mandatory `authMode` and a `gateway` or `perimeter` surface
 (AD-6). The shape below is what the code has today, not the target —
-[component-profile.md](../plans/component-profile.md) is the target.
+[target-component-structure.md](../plans/target-component-structure.md) is the target.
 
 #### Terminology — manifest language vs CRD fields
 
