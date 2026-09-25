@@ -222,6 +222,28 @@ spec:
                  a group nobody was in, so no exchange granted cluster-admin
                  and the install's last step waited for a proof that could
                  never be written. */}}
+            {{- /* The audiences OpenBao's roles accept.
+                 
+                 The director's audience is not optional and is not part of
+                 additionalAudiences: every component behind the edge presents
+                 the zone's token, whose audience is the director's, so a
+                 cluster whose roles do not accept it cannot exchange a token
+                 at all -- which is the credential manager refusing every
+                 caller and the install's last step waiting for a proof nobody
+                 can produce.
+                 
+                 It was in additionalAudiences, defaulted in the XRD. The
+                 default was later corrected to include it, and that reached
+                 no existing composite, because a changed default does not
+                 touch an object that already has the field. "additional" now
+                 means what it says: extra audiences on top of the ones the
+                 platform requires. */}}
+            {{- $requiredAudiences := list (default "openbao" $oidc.clientId) "gentian-director" }}
+            {{- range (default (list "gentian-portal") $oidc.additionalAudiences) }}
+            {{- if not (has . $requiredAudiences) }}
+            {{- $requiredAudiences = append $requiredAudiences . }}
+            {{- end }}
+            {{- end }}
             {{- $platformAdminGroup := default "gentian:platform:admin" (dig "platformRoles" "admin" "" $spec) }}
             {{- $clusterAdminGroup := default (printf "/%s" $platformAdminGroup) (dig "clusterAdminGroup" "" $oidc) }}
             {{- if $oidc.discoveryUrl }}
@@ -379,8 +401,7 @@ spec:
                 claimMappings:
                   preferred_username: username
                 boundAudiences:
-                  - {{ $oidc.clientId | default "openbao" | quote }}
-                  {{- range (default (list "gentian-portal") $oidc.additionalAudiences) }}
+                  {{- range $requiredAudiences }}
                   - {{ . | quote }}
                   {{- end }}
                 boundClaimsType: string
@@ -429,8 +450,7 @@ spec:
                 roleType: oidc
                 userClaim: preferred_username
                 boundAudiences:
-                  - {{ $oidc.clientId | default "openbao" | quote }}
-                  {{- range (default (list "gentian-portal") $oidc.additionalAudiences) }}
+                  {{- range $requiredAudiences }}
                   - {{ . | quote }}
                   {{- end }}
                 # glob, not string: the kernel realm imports each tenant's own
@@ -493,8 +513,7 @@ spec:
                 claimMappings:
                   preferred_username: username
                 boundAudiences:
-                  - {{ $oidc.clientId | default "openbao" | quote }}
-                  {{- range (default (list "gentian-portal") $oidc.additionalAudiences) }}
+                  {{- range $requiredAudiences }}
                   - {{ . | quote }}
                   {{- end }}
                 boundClaimsType: string

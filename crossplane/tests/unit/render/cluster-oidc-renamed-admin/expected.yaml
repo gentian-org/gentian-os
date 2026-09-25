@@ -413,6 +413,7 @@ spec:
     backend: oidc
     boundAudiences:
     - openbao
+    - gentian-director
     - gentian-portal
     boundClaims:
       groups: /gentian:platform:operators
@@ -484,6 +485,7 @@ spec:
     backend: oidc
     boundAudiences:
     - openbao
+    - gentian-director
     - gentian-portal
     boundClaims:
       groups: /gentian:platform:operators
@@ -523,6 +525,7 @@ spec:
     backend: oidc
     boundAudiences:
     - openbao
+    - gentian-director
     - gentian-portal
     boundClaims:
       groups: /gentian:tenant:*:admins

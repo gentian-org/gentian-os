@@ -175,6 +175,11 @@ type Identity struct {
 //
 // The returned string is safe to show a caller: it names a category, never a
 // policy, path or role. The detail goes to the log instead.
+// reasonWrongRoleType is the one refusal that says nothing about the caller:
+// a role with role_type oidc can never accept a direct exchange, whoever is
+// asking. Named so the summary can prefer any other refusal over it.
+const reasonWrongRoleType = "the auth backend role does not permit a direct token exchange"
+
 func refusalReason(status int, body string) string {
 	b := strings.ToLower(body)
 	switch {
@@ -183,7 +188,7 @@ func refusalReason(status int, body string) string {
 	case strings.Contains(b, "bound claim"), strings.Contains(b, "claim"):
 		return "the token's claims do not match any role — typically the group claim"
 	case strings.Contains(b, "role_type"), strings.Contains(b, "not allowed"):
-		return "the auth backend role does not permit a direct token exchange"
+		return reasonWrongRoleType
 	case strings.Contains(b, "could not be found"), strings.Contains(b, "unknown role"):
 		return "the auth backend role does not exist on this cluster"
 	case status == http.StatusNotFound:
@@ -273,7 +278,19 @@ func (b *OpenBao) ExchangeToken(ctx context.Context, oidcToken string) (Identity
 			return id, nil
 		}
 		lastStatus = status
-		lastReason = refusalReason(status, body)
+		reason := refusalReason(status, body)
+		// Keep the most useful refusal, not the most recent one.
+		//
+		// The roles are tried in order and the last one is often a role whose
+		// type cannot accept a direct exchange at all -- a fact about that
+		// role, true before the caller arrived, and no help whatever. It
+		// buried the real answer: on this cluster the caller was told "the
+		// role does not permit a direct token exchange" while the role that
+		// could have worked had refused the token's AUDIENCE two lines
+		// earlier.
+		if lastReason == "" || lastReason == reasonWrongRoleType {
+			lastReason = reason
+		}
 		// The log gets OpenBao's own words. Without this every refusal was a
 		// dead end: the response cannot carry them, so nothing anywhere did,
 		// and each cause had to be found by reading code instead.
