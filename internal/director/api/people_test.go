@@ -142,6 +142,14 @@ func (f *fakeIdentity) SetPasswordPolicy(ctx context.Context, r identity.Realm, 
 	return nil
 }
 
+func (f *fakeIdentity) SendPasswordReset(ctx context.Context, r identity.Realm, userID, _, _ string) error {
+	f.note(ctx, r)
+	if userID != "u1" {
+		return identity.ErrNotFound
+	}
+	return nil
+}
+
 func (f *fakeIdentity) ZoneLanding(_ context.Context, r identity.Realm, clientID string) string {
 	if f.landing == "" {
 		return ""
@@ -420,5 +428,39 @@ func TestTheRoutesExistBeforeAnyCredentialArrives(t *testing.T) {
 	}
 	if msg, _ := body["error"].(string); !strings.Contains(msg, "demo") {
 		t.Errorf("the refusal should name the realm: %v", body)
+	}
+}
+
+// An administrator acting for somebody who cannot act for themselves.
+//
+// The self-service half is deliberately absent: a locked-out person holds no
+// token, so there is no caller for OpenFGA to answer about, and an endpoint
+// that skipped the check would be the one unauthenticated write into a source
+// of truth. Keycloak's own login page sends that mail.
+func TestAnAdministratorCanSendAPasswordReset(t *testing.T) {
+	f := newFakeIdentity("demo")
+	h := startWithIdentity(t, f)
+
+	status, body := h.do(t, http.MethodPost, "/v1/tenants/demo/actions/send-password-reset",
+		h.token(t, "tenant-demo", "tom"), `{"person":"u1"}`)
+	if status != http.StatusAccepted {
+		t.Fatalf("status %d %v", status, body)
+	}
+	if body["mailed"] != true {
+		t.Errorf("body = %v", body)
+	}
+	if seen := f.realmsSeen(); len(seen) == 0 || seen[len(seen)-1] != "demo" {
+		t.Errorf("realms reached: %v", seen)
+	}
+}
+
+func TestAMemberCannotSendSomebodyElseAReset(t *testing.T) {
+	f := newFakeIdentity("demo")
+	h := startWithIdentity(t, f)
+
+	status, _ := h.do(t, http.MethodPost, "/v1/tenants/demo/actions/send-password-reset",
+		h.token(t, "tenant-demo", "mia"), `{"person":"u1"}`)
+	if status != http.StatusForbidden {
+		t.Fatalf("status %d, want 403", status)
 	}
 }

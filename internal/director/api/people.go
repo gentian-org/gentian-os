@@ -282,6 +282,39 @@ func (s *Server) setMembership(w http.ResponseWriter, r *http.Request, c call) {
 	})
 }
 
+// sendPasswordReset mails somebody a link to set a new password.
+//
+// An administrator acting for somebody who cannot act for themselves, which is
+// why it is guarded like every other write here. Self-service reset is
+// Keycloak's own login page and needs nothing from the director: a locked-out
+// person holds no token, so there is no caller to check, and an endpoint that
+// skipped the check would be the one unauthenticated write into a source of
+// truth.
+func (s *Server) sendPasswordReset(w http.ResponseWriter, r *http.Request, c call) {
+	realm, ok := s.realmFor(w, r)
+	if !ok {
+		return
+	}
+	var body struct {
+		Person string `json:"person"`
+	}
+	if !s.decode(w, r, &body) {
+		return
+	}
+	ctx := identityContext(r)
+	client := s.inviteClientID(realm)
+	redirect := s.cfg.InviteRedirectURI
+	if redirect == "" {
+		redirect = s.cfg.Identity.ZoneLanding(ctx, realm, client)
+	}
+	if err := s.cfg.Identity.SendPasswordReset(ctx, realm, body.Person, client, redirect); err != nil {
+		s.identityError(w, r, err)
+		return
+	}
+	s.recordIdentityAction(r, c, "send-password-reset", realm, body.Person)
+	s.json(w, http.StatusAccepted, map[string]any{"person": body.Person, "mailed": true})
+}
+
 // setPasswordPolicy writes the realm's policy.
 //
 // can_set_policy rather than can_manage_users: this is a statement about the

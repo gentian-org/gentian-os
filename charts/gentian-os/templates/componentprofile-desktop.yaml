@@ -60,8 +60,6 @@ spec:
       auth:
         disabled: false
         mode: edge
-      rbac:
-        create: false
       gateway:
         enabled: false
       networkPolicy:

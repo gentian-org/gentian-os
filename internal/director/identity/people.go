@@ -289,6 +289,38 @@ func (c *Client) Invite(ctx context.Context, r Realm, inv Invitation) (Person, e
 		Groups: groupPaths(groups)}, nil
 }
 
+// SendPasswordReset mails somebody a link that lets them set a new password.
+//
+// The administrator-initiated half, and the only half that belongs here. A
+// person who has locked themselves out has no token, so there is no caller for
+// OpenFGA to answer about and an endpoint for them would be an unauthenticated
+// write into Keycloak -- which is the invariant this whole package exists to
+// keep. Self-service reset is Keycloak's own login page, which sends the same
+// mail and holds no credential of ours.
+//
+// What needs us is the case where an address no longer reaches them and an
+// administrator has to act: that has a caller, it is checked, and it is
+// recorded.
+//
+// The same action token as an invitation, with UPDATE_PASSWORD alone: the
+// address was verified when they joined, and asking them to verify it again
+// would be a second thing to explain.
+func (c *Client) SendPasswordReset(ctx context.Context, r Realm, userID, clientID, redirectURI string) error {
+	if !plainID(userID) {
+		return fmt.Errorf("%w: user %q", ErrNotFound, userID)
+	}
+	q := url.Values{}
+	if clientID != "" {
+		q.Set("client_id", clientID)
+	}
+	if redirectURI != "" {
+		q.Set("redirect_uri", redirectURI)
+	}
+	return c.call(ctx, r, http.MethodPut,
+		"/users/"+url.PathEscape(userID)+"/execute-actions-email", q,
+		[]string{"UPDATE_PASSWORD"}, nil)
+}
+
 // SetMembership adds or removes one person from one group.
 //
 // The group is named by path rather than by id, because the path is what the

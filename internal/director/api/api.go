@@ -161,6 +161,7 @@ type Identity interface {
 	PasswordPolicy(ctx context.Context, r identity.Realm) (string, error)
 	SetPasswordPolicy(ctx context.Context, r identity.Realm, policy string) error
 	ZoneLanding(ctx context.Context, r identity.Realm, clientID string) string
+	SendPasswordReset(ctx context.Context, r identity.Realm, userID, clientID, redirectURI string) error
 }
 
 // StoreConfig is what the entitlement write needs.
@@ -546,6 +547,7 @@ func (s *Server) routes() {
 
 		s.action("POST /v1/tenants/{t}/actions/invite-person", "can_manage_users", tenantObject, s.invitePerson)
 		s.action("POST /v1/tenants/{t}/actions/set-membership", "can_manage_users", tenantObject, s.setMembership)
+		s.action("POST /v1/tenants/{t}/actions/send-password-reset", "can_manage_users", tenantObject, s.sendPasswordReset)
 		s.action("POST /v1/tenants/{t}/actions/set-password-policy", "can_set_policy", tenantObject, s.setPasswordPolicy)
 	}
 }
