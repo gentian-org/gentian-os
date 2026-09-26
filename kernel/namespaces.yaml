@@ -73,6 +73,18 @@ system:
   - name: system-s3
     function: s3
     holds: MinIO, the object store apps take buckets from
+  # `when` marks a namespace the claim decides. Without it a namespace is
+  # unconditional. A cluster that relays mail through a provider has no
+  # mailbox store and no MTA of its own, and composing empty namespaces for
+  # them would make `kubectl get ns` claim a function the cluster does not run.
+  - name: system-mail
+    function: mail
+    when: mail.serviceMode=system
+    holds: Dovecot (the mailbox store) and the DKIM signer holding the per-tenant keys
+  - name: system-mail-dmz
+    function: mail-dmz
+    when: mail.serviceMode=system
+    holds: the MTA's public surface — inbound :25, submission :587 — and the DNS records that point at it
 
 # Namespaces the platform provides that gentian-os labels but does not create.
 labelled:

@@ -87,7 +87,14 @@ spec:
                  lint-namespace-layout.sh asserts this list equals
                  kernel/namespaces.yaml's. */}}
             {{- if $v5 }}
-            {{- range $fn := (list "postgresql" "mariadb" "cache" "s3") }}
+            {{- /* The unconditional four, then whatever the claim adds.
+                 kernel/namespaces.yaml marks the conditional ones with `when`
+                 and the lint asserts both halves against this. */}}
+            {{- $systemFns := list "postgresql" "mariadb" "cache" "s3" }}
+            {{- if eq (dig "mail" "serviceMode" "external" $spec) "system" }}
+            {{- $systemFns = concat $systemFns (list "mail" "mail-dmz") }}
+            {{- end }}
+            {{- range $fn := $systemFns }}
             ---
             apiVersion: kubernetes.crossplane.io/v1alpha2
             kind: Object
@@ -109,7 +116,11 @@ spec:
                            on. Calico and Kyverno match these, never the name,
                            so a namespace without them is one no policy
                            applies to. */}}
-                      gentianos.io/tier: system
+                      {{- /* A DMZ is its own tier. The policies that decide
+                           what may reach the internet and what may reach the
+                           inner namespaces select on this label, so calling a
+                           perimeter `system` would place it inside. */}}
+                      gentianos.io/tier: {{ ternary "system-dmz" "system" (hasSuffix "-dmz" $fn) }}
                       gentianos.io/function: {{ $fn }}
               providerConfigRef:
                 name: kubernetes

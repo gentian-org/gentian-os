@@ -40,22 +40,49 @@ done < <(awk '/^kernel:/{s=1;next} /^[a-z]/{s=0} s && /- name:/{n=$3} s && /func
 # policies select on the labels, and the Cluster composition is what creates
 # them — so the file and the composition have to name the same set.
 composition="${ROOT}/crossplane/compositions/cluster-default.yaml"
-declared=$(awk '/^system:/{s=1;next} /^[a-z]/{s=0} s && /function:/{print $2}'              "${ROOT}/kernel/namespaces.yaml" | sort)
+# The unconditional ones, which the composition ranges over always, and the
+# ones a `when` marks, which it adds from the claim. A function's `when` sits on
+# the line after it, so the two have to be read together.
+layout_functions() {
+  awk -v want="$1" '
+    function emit() { if ((want == "always" && cond == "") || (want == "conditional" && cond != "")) print fn }
+    /^system:/ { s = 1; next }
+    /^[a-z]/   { s = 0 }
+    !s         { next }
+    /^  - name:/     { if (fn != "") emit(); fn = ""; cond = "" }
+    /^    function:/ { fn = $2 }
+    /^    when:/     { cond = $2 }
+    END { if (fn != "") emit() }
+  ' "${ROOT}/kernel/namespaces.yaml" | sort
+}
+declared=$(layout_functions always)
+conditional=$(layout_functions conditional)
 while IFS= read -r line; do
   name="${line%% *}"; fn="${line##* }"
   [[ "${name}" == "system-${fn}" ]] || fail "kernel/namespaces.yaml: ${name} has function ${fn}; system namespaces are named system-<function>"
 done < <(awk '/^system:/{s=1;next} /^[a-z]/{s=0} s && /- name:/{n=$3} s && /function:/{print n, $2}' "${ROOT}/kernel/namespaces.yaml")
 
 # The composition's list, from the one range that creates them.
-# Matched by its shape rather than by its first element, so that reordering
-# the list does not silently match nothing.
-# shellcheck disable=SC2016 # $fn is Go template text in the composition, not a shell variable
-composed=$(grep -oE 'range \$fn := \(list [^)]*\)' "${composition}" | grep -oE '"[a-z0-9-]+"' | tr -d '"' | sort)
+# The composition's unconditional list, matched on the assignment rather
+# than on the range: the range iterates a variable, and the variable is
+# what the claim may extend.
+# shellcheck disable=SC2016 # $systemFns is Go template text, not a shell variable
+composed=$(grep -oE '\$systemFns := list [^}]*' "${composition}" | grep -oE '"[a-z0-9-]+"' | tr -d '"' | sort)
 if [[ -z "${composed}" ]]; then
   fail "crossplane/compositions/cluster-default.yaml composes no system namespaces; kernel/namespaces.yaml says it should"
 elif [[ "${declared}" != "${composed}" ]]; then
   fail "the system tier disagrees — kernel/namespaces.yaml has [$(echo "${declared}" | tr '\n' ' ')], the composition composes [$(echo "${composed}" | tr '\n' ' ')]"
 fi
+
+# A `when` entry has to appear in the composition too, somewhere: it is added
+# under a condition rather than ranged over, so only its presence is checked. A
+# namespace declared conditional and composed nowhere is one the claim can ask
+# for and never get.
+while IFS= read -r fn; do
+  [[ -z "${fn}" ]] && continue
+  grep -q "\"${fn}\"" "${composition}" \
+    || fail "kernel/namespaces.yaml declares system-${fn} under a condition; the composition never composes it"
+done <<< "${conditional}"
 
 # The v5 chart refuses to render without the layout.
 if helm template x "${ROOT}/kernel/bootstrap-v5/chart" >/dev/null 2>&1; then
