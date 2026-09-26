@@ -30,14 +30,14 @@ func TestTheGoLayoutMatchesTheInstallersFile(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	text := string(raw)
-	text = text[strings.Index(text, "kernel:"):]
-	if i := strings.Index(text, "\nlabelled:"); i > 0 {
-		text = text[:i]
-	}
+	// One section at a time. The slice used to run from "kernel:" to
+	// "labelled:", which swallowed every section in between -- so the day a
+	// system: section was added, its entries were read as kernel namespaces
+	// and Kernel(Function("postgresql")) panicked on a file that was correct.
+	kernel := section(t, string(raw), "kernel:")
 	entry := regexp.MustCompile(`- name: (\S+)\n\s+function: (\S+)`)
 	var fromFile []string
-	for _, m := range entry.FindAllStringSubmatch(text, -1) {
+	for _, m := range entry.FindAllStringSubmatch(kernel, -1) {
 		fromFile = append(fromFile, m[1])
 		if got := Kernel(Function(m[2])); got != m[1] {
 			t.Errorf("function %s: file says %s, code says %s", m[2], m[1], got)
@@ -46,6 +46,31 @@ func TestTheGoLayoutMatchesTheInstallersFile(t *testing.T) {
 	if got, want := strings.Join(KernelNamespaces(), " "), strings.Join(fromFile, " "); got != want {
 		t.Errorf("kernel namespaces:\n code: %s\n file: %s", got, want)
 	}
+
+	// The system tier, the same way. The operator addresses these through
+	// System(fn) and the Cluster composition creates them; a name the two
+	// spell differently is a namespace nothing looks in.
+	for _, m := range entry.FindAllStringSubmatch(section(t, string(raw), "system:"), -1) {
+		if got := System(m[2]); got != m[1] {
+			t.Errorf("system function %s: file says %s, code says %s", m[2], m[1], got)
+		}
+	}
+}
+
+// section returns one top-level block of the layout file: from its key to the
+// next line that starts in column zero.
+func section(t *testing.T, text, key string) string {
+	t.Helper()
+	i := strings.Index(text, key)
+	if i < 0 {
+		t.Fatalf("kernel/namespaces.yaml has no %s section", key)
+	}
+	rest := text[i+len(key):]
+	next := regexp.MustCompile(`(?m)^[a-z]`).FindStringIndex(rest)
+	if next == nil {
+		return rest
+	}
+	return rest[:next[0]]
 }
 
 func TestATenantNameFitsItsDMZ(t *testing.T) {

@@ -23,7 +23,6 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
-	"k8s.io/client-go/kubernetes/scheme"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	"github.com/gentian-org/gentian-os/internal/controller"
@@ -46,7 +45,7 @@ func TestDirectorRealmSecretReplacesOnACompletePass(t *testing.T) {
 		},
 		Data: map[string][]byte{"kernel": []byte("old"), "retired": []byte("gone")},
 	}
-	c := fake.NewClientBuilder().WithScheme(scheme.Scheme).WithObjects(existing).Build()
+	c := fake.NewClientBuilder().WithScheme(controller.SchemeForTest(t)).WithObjects(existing).Build()
 
 	err := controller.WriteDirectorRealmSecretForTest(context.Background(), c,
 		map[string][]byte{"kernel": []byte("new"), "demo": []byte("d")}, true)
@@ -75,7 +74,7 @@ func TestDirectorRealmSecretMergesOnAPartialPass(t *testing.T) {
 		},
 		Data: map[string][]byte{"kernel": []byte("k"), "demo": []byte("d")},
 	}
-	c := fake.NewClientBuilder().WithScheme(scheme.Scheme).WithObjects(existing).Build()
+	c := fake.NewClientBuilder().WithScheme(controller.SchemeForTest(t)).WithObjects(existing).Build()
 
 	// demo could not be reached this pass; kernel was.
 	err := controller.WriteDirectorRealmSecretForTest(context.Background(), c,
@@ -98,7 +97,7 @@ func TestDirectorRealmSecretMergesOnAPartialPass(t *testing.T) {
 
 func TestDirectorRealmSecretIsCreatedWhenAbsent(t *testing.T) {
 	t.Parallel()
-	c := fake.NewClientBuilder().WithScheme(scheme.Scheme).Build()
+	c := fake.NewClientBuilder().WithScheme(controller.SchemeForTest(t)).Build()
 
 	if err := controller.WriteDirectorRealmSecretForTest(context.Background(), c,
 		map[string][]byte{"kernel": []byte("k")}, true); err != nil {
@@ -126,7 +125,7 @@ func TestAnUnchangedPassDoesNotWrite(t *testing.T) {
 		},
 		Data: map[string][]byte{"kernel": []byte("k")},
 	}
-	c := fake.NewClientBuilder().WithScheme(scheme.Scheme).WithObjects(existing).Build()
+	c := fake.NewClientBuilder().WithScheme(controller.SchemeForTest(t)).WithObjects(existing).Build()
 	before := &corev1.Secret{}
 	if err := c.Get(context.Background(), types.NamespacedName{
 		Name: controller.DirectorRealmSecretName, Namespace: controller.ServicesNamespaceForTest()}, before); err != nil {

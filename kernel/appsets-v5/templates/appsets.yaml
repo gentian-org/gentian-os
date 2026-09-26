@@ -8,6 +8,12 @@
 {{- $ns := dict -}}
 {{- range .Values.namespaces.kernel }}{{ $_ := set $ns .function .name }}{{ end -}}
 {{- if not $ns }}{{ fail "kernel/appsets-v5 needs the namespace layout (.Values.namespaces from kernel/namespaces.yaml)" }}{{ end -}}
+{{- /* The system tier under its own prefix. Separate from the kernel map
+     rather than merged into it: the two tiers happen to use disjoint function
+     names today, and a merge would make a future collision resolve silently
+     to whichever was ranged last. */ -}}
+{{- $sys := dict -}}
+{{- range .Values.namespaces.system }}{{ $_ := set $sys .function .name }}{{ end -}}
 {{- range $path, $_ := .Files.Glob "raw/*.yaml" }}
 ---
 {{- $text := $.Files.Get $path
@@ -20,6 +26,7 @@
      | replace "deployments.revision.placeholder" $.Values.deploymentsRevision
      | replace "deployments.cluster.placeholder" $.Values.deploymentsCluster }}
 {{- range $fn, $name := $ns }}{{ $text = replace (printf "ns.%s.placeholder" $fn) $name $text }}{{ end }}
+{{- range $fn, $name := $sys }}{{ $text = replace (printf "sys.%s.placeholder" $fn) $name $text }}{{ end }}
 {{- if contains ".placeholder" $text }}{{ fail (printf "%s: an unresolved placeholder remains" $path) }}{{ end }}
 {{ $text }}
 {{- end }}

@@ -1132,16 +1132,16 @@ that are not say so.
 | M2.1 | The claim reaches `gentian-deployments` | console → director `POST /v1/clusters/{c}/tenants` | built, **never written** — blocked on S7A.4 |
 | M2.2 | Argo CD syncs it and the XTenant composes | `gentian-claims` ApplicationSet, `tenant-default` | exercised on v4 only |
 | M2.3 | Namespace, quota and limit range exist and bind | `tenant-default`: namespace, resourcequota, limitrange | exercised on v4 only |
-| M2.3b | Its database exists | `system-postgresql`, composed from the Cluster claim | **nothing composes it — M2 is blocked here** |
+| M2.3b | Its database exists | `system-postgresql` + `kernel/data/tenant-postgres` | ✅ built, never run on a cluster |
 | M2.4 | The realm exists with its groups, user profile and required actions | `tenant-default`: keycloak-realm, keycloak-group-* | exercised on v4 only |
 | M2.5 | The realm can send mail | operator copies `keycloak-smtp-credentials` into the tenant realm | needs the `smtp-relay` credential supplied |
 | M2.6 | The zone answers: client, session, Gateway listener, hosts, DNS | `keycloak-edge-zone-client` + the operator's `zoneSecurityPolicySpec` + `zone_hosts_projection.go` | **the second zone has never been stood up** |
-| M2.7 | The tenant's desktop is installed and opens | desktop ComponentProfile, `component_desktop.go` | **blocked on M2.3b** |
+| M2.7 | The tenant's desktop is installed and opens | desktop ComponentProfile, `component_desktop.go` | unblocked; never exercised |
 | M2.8 | The director holds a Keycloak credential for the new realm | `KeycloakPlatformReconciler.ensureDirectorRealmCredentials` | **new, never run** |
 | M2.9 | A tenant administrator can sign in and see the tenant | the whole of the above | — |
 | M2.10 | The tenant has a backup policy | `SetTenantBackupPolicy`, backup schedules | exercised on v4 only |
 
-**M2.3b is the blocker, and it is not mail.** The desktop's profile requires
+**M2.3b was the blocker, and it was not mail.** The desktop's profile requires
 `database: postgresql, databasePerTenant: true`. Only the platform tenant is
 satisfiable today, because it adopts the kernel realm and therefore the kernel
 data plane: `kernel-postgres` in `kernel-data`, bootstrapped by B-01. Every
@@ -1150,11 +1150,13 @@ other tenant takes the other branch of `ensureDatabaseRequirement` and gets
 (system-postgresql); the requirement waits". The operator is honest about it;
 what is missing is the thing it is waiting for.
 
-That is one instance of a larger gap, which has its own section below: **no
-`system-*` namespace is composed on v5 at all.** The table in
-[namespace-cleanup.md](namespace-cleanup.md) §2.2 says what belongs there and
-the Cluster claim is named as the composer; none of it is built. Until it is,
-M2 stops at a tenant whose desktop never becomes Ready, and M4 cannot start.
+That was one instance of a larger gap, which has its own section below (S9):
+no `system-*` namespace was composed on v5 at all. The tier and its first
+engine are built now — the namespaces come from the Cluster claim and
+`system-postgresql` holds the CNPG cluster the operator provisions on — so M2
+is unblocked on paper and untested on a cluster. MariaDB, Redis and MinIO are
+still missing, which is M4's problem rather than M2's: they are what a
+catalogue app asks for, not what a desktop does.
 
 **Two things are genuinely new rather than unexercised.**
 
@@ -1249,7 +1251,7 @@ the app is unusable, and no status field anywhere reports that.
 the thing the app is for with their own identity and the tenant's data, and
 what they did is still there afterwards.
 
-### S9 ☐ The system tier has no composer
+### S9 ◐ The system tier had no composer
 
 Not a step of S7A and not part of M1, but the largest gap between v0.4 and
 v0.5 and the thing M2 and M4 stop at. Recorded here because it was found by
@@ -1265,7 +1267,7 @@ operator and the network policies name six of them.
 | Function | v0.4 | v0.5 | state |
 |---|---|---|---|
 | `kernel-postgres` + CNPG — Keycloak, its extensions, OpenFGA, the console | `platform-kernel` / `gentian-infra-<stage>` | `kernel-data` | ✅ migrated, by the bootstrap chart's Argo Application (`kernel/data/kernel-postgres`), covered by `B-01` |
-| tenant postgres | `platform-kernel` via `kernel-admin` | `system-postgresql` | ☐ **no composer** — blocks M2 |
+| tenant postgres | `platform-kernel` via `kernel-admin` | `system-postgresql` | ✅ composed, and the CNPG cluster with it |
 | MariaDB | `gentian-infra-<stage>` | `system-mariadb` | ☐ no composer |
 | Redis | `gentian-infra-<stage>` | `system-cache` | ☐ no composer |
 | MinIO | `gentian-infra-<stage>` | `system-s3` | ☐ no composer |
@@ -1292,8 +1294,44 @@ it is not a naming problem: `mail.serviceMode` was renamed from `kernel` to
 `system` because the stack is a system-tier service, and that rename changed no
 behaviour — the mode is refused on v5 either way until this exists.
 
-**Done when** a second tenant's desktop reaches Ready on a v5 cluster, which
-means at least `system-postgresql` composed, quota'd, policy-labelled and
+**What is built.** The tier exists and its first engine is on it.
+
+`kernel/namespaces.yaml` grew a `system:` section, and the Cluster composition
+creates one labelled namespace per entry — v5 only, because on v4 these
+workloads live in `gentian-infra-<stage>` and composing empty namespaces
+beside them would be two homes for one engine. `lint-namespace-layout.sh`
+asserts the file and the composition name the same set, and
+`internal/layout`'s test asserts `System(fn)` agrees with both. A
+`cluster-v5-system` render fixture holds the goldens, because every other
+cluster fixture is v4 and a v5-only branch goes untested exactly that way —
+the same gap that let `namespace: argocd` survive in `repository-default`.
+
+`kernel/data/tenant-postgres` is the CNPG cluster tenant and app databases are
+provisioned on, named `postgres` because that is what
+`database_reconciler.go`'s `cnpgClusterName` asks for. It carries the two
+Secrets the operator needs by name — `cnpg-superuser`, which must be
+`kubernetes.io/basic-auth` or CNPG silently skips superuser provisioning, and
+`postgres-admin`, the four keys the provisioning Jobs read. Delivered by the
+new `08-data-plane` ApplicationSet at sync wave 8, before identity and the
+claims, and `C-02` waits for it — so "install.sh finished" now means the data
+plane is serving.
+
+Two things this needed that were not obvious. The `gentian` AppProject listed
+only the kernel namespaces, so an Application targeting `system-postgresql`
+was refused with "destination is not permitted" — a message that reads as an
+Argo permission problem three layers from the layout that caused it. And the
+appsets wrapper resolved only `ns.<fn>.placeholder`; the system tier gets
+`sys.<fn>.placeholder`, kept separate rather than merged so that a future
+collision between a kernel and a system function name cannot resolve silently.
+
+**Still open**: MariaDB, Redis and MinIO — v4 composed their Helm releases from
+the `InfraData` claim, which v5 does not have, so each needs its Release
+composed from the Cluster claim beside the prerequisites its chart already
+carries. Then mail and LLM, which are larger: a DMZ namespace, public ports,
+DNS, and in LLM's case GPU scheduling.
+
+**Done when** a second tenant's desktop reaches Ready on a v5 cluster, every
+engine a catalogue app can ask for is composed, quota'd, policy-labelled and
 backed up; and the two admission refusals (`mail.serviceMode: system`,
 `llm.enabled: true`) are removed because the layout can honour them.
 

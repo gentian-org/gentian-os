@@ -1,0 +1,69 @@
+---
+# The system tier's data plane: the CNPG cluster tenants and their apps are
+# provisioned on.
+#
+# Sync wave 8, before the identity appset (9) and the claims (11): a tenant's
+# desktop asks for a database as soon as its Component reconciles, and a
+# cluster whose engine arrives after the tenant does spends that window
+# reporting DatabaseUnavailable.
+#
+# The namespace is composed by the Cluster claim (C-01), not created here:
+# which engines a cluster runs is a property of what it declares. This
+# ApplicationSet therefore runs in C-02 and not in B-01, and CreateNamespace
+# is false so that an Application cannot quietly create an unlabelled
+# namespace that no policy selects on.
+#
+# The kernel's own Postgres is NOT here. kernel-postgres lives in kernel-data,
+# is bootstrapped by B-01 before any claim exists, and serves Keycloak,
+# OpenFGA and the console. Kernel identity does not share a data plane with
+# tenants.
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: gentian-data-plane
+  namespace: ns.gitops.placeholder
+  annotations:
+    argocd.argoproj.io/sync-wave: "8"
+spec:
+  syncPolicy:
+    preserveResourcesOnDeletion: true
+  goTemplate: true
+  goTemplateOptions: ["missingkey=error"]
+  generators:
+  - matrix:
+      generators:
+      - list:
+          elements:
+          - env: dev
+      - list:
+          elements:
+          - app: tenant-postgres
+            path: kernel/data/tenant-postgres
+            namespace: sys.postgresql.placeholder
+  template:
+    metadata:
+      name: '{{.app}}-{{.env}}'
+      annotations:
+        argocd.argoproj.io/sync-wave: "8"
+    spec:
+      project: gentian
+      source:
+        repoURL: https://github.com/gentian-org/gentian-os
+        targetRevision: develop
+        path: '{{.path}}'
+      destination:
+        server: https://kubernetes.default.svc
+        namespace: '{{.namespace}}'
+      syncPolicy:
+        automated:
+          prune: true
+          selfHeal: true
+        syncOptions:
+        - CreateNamespace=false
+        - ServerSideApply=true
+        retry:
+          backoff:
+            duration: 15s
+            factor: 2
+            maxDuration: 2m
+          limit: 10

@@ -26,7 +26,6 @@ import (
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
-	"k8s.io/client-go/kubernetes/scheme"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
 
@@ -132,7 +131,7 @@ func TestReconcileAppWorkloadHealth_RetryIsBoundedByTheQuota(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: "fine", Namespace: ns},
 	}
 
-	c := fake.NewClientBuilder().WithScheme(scheme.Scheme).
+	c := fake.NewClientBuilder().WithScheme(SchemeForTest(t)).
 		WithObjects(quota("8"), blocked("odoo"), healthy).Build()
 	r := &TenantReconciler{Client: c}
 

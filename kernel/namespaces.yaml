@@ -43,6 +43,37 @@ kernel:
     function: observability
     holds: Headlamp (the cluster administrator's view of the cluster, with their own identity); later metrics and logs
 
+# The system tier: the data plane tenants are served from.
+#
+# One namespace per engine, named by the function a component's
+# requires.services entry asks for — quotas, backup policies and future
+# managed-service claims differ per engine, and separating stateful services
+# after the fact is a data migration (namespace-cleanup.md §2.2).
+#
+# Composed from the Cluster claim, not created by the installer: WHICH of
+# these a cluster runs depends on what the claim declares, and the installer
+# does not read the claim. The four below are unconditional because every
+# cluster serves tenants; mail and LLM are conditional and are not built yet
+# (implementation-plan.md S9).
+#
+# The composition in crossplane/compositions/cluster-default.yaml is what
+# creates them. lint-namespace-layout.sh asserts this list and that one agree,
+# because two lists that can disagree is how a namespace ends up composed
+# under a name nothing looks for.
+system:
+  - name: system-postgresql
+    function: postgresql
+    holds: the CNPG cluster tenant databases are provisioned on; the kernel's own is kernel-postgres, in kernel-data
+  - name: system-mariadb
+    function: mariadb
+    holds: MariaDB, for catalogue apps that speak no other engine
+  - name: system-cache
+    function: cache
+    holds: Redis
+  - name: system-s3
+    function: s3
+    holds: MinIO, the object store apps take buckets from
+
 # Namespaces the platform provides that gentian-os labels but does not create.
 labelled:
   - name: kube-system

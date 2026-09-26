@@ -61,6 +61,61 @@ spec:
             {{- $defaultMasterRef := dict "name" "gentian-os-master-password" "namespace" $provisioningNs }}
             {{- $masterRef        := default $defaultMasterRef (default (dict) $spec.masterPasswordSecretRef) }}
 
+            {{- /* ── System namespaces ──────────────────────────────────────────
+                 The data plane tenants are served from: one namespace per
+                 engine, named by the function a component's requires.services
+                 entry asks for (namespace-cleanup.md §2.2).
+
+                 Composed here rather than created by the installer, which is
+                 what kernel/namespaces.yaml says and the reason is the claim:
+                 which of these a cluster runs is a property of what it
+                 declares, and the installer does not read the claim. The
+                 kernel's own data plane is not among them -- kernel-postgres
+                 in kernel-data serves Keycloak, OpenFGA and the console, and
+                 exists before any claim does.
+
+                 The four are unconditional because every cluster serves
+                 tenants. system-mail and system-llm are conditional on the
+                 claim and are not built yet; until they are, both opt-ins are
+                 refused at admission by the XRD, so no claim can ask for a
+                 namespace that would stay empty.
+
+                 v5 only. On v4 these workloads live in gentian-infra-<stage>
+                 and platform-kernel, and composing empty namespaces beside
+                 them would be two homes for one engine.
+
+                 lint-namespace-layout.sh asserts this list equals
+                 kernel/namespaces.yaml's. */}}
+            {{- if $v5 }}
+            {{- range $fn := (list "postgresql" "mariadb" "cache" "s3") }}
+            ---
+            apiVersion: kubernetes.crossplane.io/v1alpha2
+            kind: Object
+            metadata:
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: namespace-system-{{ $fn }}
+              name: {{ $name }}-ns-system-{{ $fn }}
+            spec:
+              forProvider:
+                manifest:
+                  apiVersion: v1
+                  kind: Namespace
+                  metadata:
+                    name: system-{{ $fn }}
+                    labels:
+                      gentianos.io/managed-by: crossplane
+                      gentianos.io/cluster: {{ $name }}
+                      {{- /* The tier and function labels every policy selects
+                           on. Calico and Kyverno match these, never the name,
+                           so a namespace without them is one no policy
+                           applies to. */}}
+                      gentianos.io/tier: system
+                      gentianos.io/function: {{ $fn }}
+              providerConfigRef:
+                name: kubernetes
+            {{- end }}
+            {{- end }}
+
             {{- /* ── Kernel namespaces ─────────────────────────────────────────── */}}
             {{- /* v5's namespaces exist before the claim does (installer A-01). */}}
             {{- range (ternary list (list "platform-kernel" "gentian-system") $v5) }}

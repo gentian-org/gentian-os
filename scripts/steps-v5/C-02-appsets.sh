@@ -2,7 +2,7 @@
 # step: C-02-appsets
 # phase: platform
 # requires: B-08-seed-secrets
-# provides: the gentian-appsets Application (kernel/appsets-v5) Synced, and its children — the identity values in their namespaces, the claims of the deployments repository — Synced and Healthy
+# provides: the gentian-appsets Application (kernel/appsets-v5) Synced, and its children — the system tier's data plane, the identity values in their namespaces, the claims of the deployments repository — Synced and Healthy
 # mutates: the gentian-appsets Application and the ApplicationSets it creates in the gitops namespace; what they sync
 
 # _v5_render and _v5_delivered are B-01's; a step file is a library of verbs
@@ -10,7 +10,12 @@
 # shellcheck source=scripts/steps-v5/B-01-bootstrap-apps.sh
 source "${SCRIPT_DIR}/scripts/steps-v5/B-01-bootstrap-apps.sh"
 
-_v5_appsets_children() { local s="${GENTIAN_DEPLOYMENTS_STAGE:-dev}"; echo "keycloak-idp-${s} openfga-${s} gentian-claims-${s} keycloak-provider-${s}"; }
+# tenant-postgres is first in the list and first in the sync waves: a tenant's
+# desktop asks for a database the moment its Component reconciles, and an
+# engine that arrives after the tenant leaves that window reporting
+# DatabaseUnavailable. Waiting for it here is what makes "install.sh finished"
+# mean the data plane is serving.
+_v5_appsets_children() { local s="${GENTIAN_DEPLOYMENTS_STAGE:-dev}"; echo "tenant-postgres-${s} keycloak-idp-${s} openfga-${s} gentian-claims-${s} keycloak-provider-${s}"; }
 
 check() {
     local ns app

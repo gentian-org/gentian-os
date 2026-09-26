@@ -1,0 +1,35 @@
+# A v5 cluster, which is the only layout that composes the system tier.
+#
+# Every other cluster fixture is v4, and that is exactly how a v5-only branch
+# goes untested: the goldens agree with each other and with the bug. The
+# repository fixtures had the same gap and the literal `namespace: argocd` in
+# repository-default survived it for weeks.
+#
+# What this asserts is the data plane tenants are served from: one namespace
+# per engine, labelled with the tier and function every policy selects on.
+apiVersion: gentianos.io/v1alpha1
+kind: XCluster
+metadata:
+  name: dev-cluster
+  annotations:
+    crossplane.io/external-name: dev-cluster
+spec:
+  layout: v5
+  kernelDomain: platform.example.test
+  masterPasswordSecretRef:
+    name: gentian-os-master-password
+    namespace: kernel-provisioning
+  openbao:
+    server: https://openbao.kernel-secrets.svc.cluster.local:8200
+    kvMount: secret
+    authMount: kubernetes
+    kubernetesHost: https://kubernetes.default.svc
+  argocd:
+    sourceRepos: []
+  eso:
+    namespace: kernel-secrets
+    serviceAccount: external-secrets
+  certManager:
+    letsencryptEmail: admin@platform.example.test
+  compositeDeletePolicy: Background
+  resourceRefs: []

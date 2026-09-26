@@ -1,0 +1,48 @@
+{{- /*
+  The CNPG cluster tenant and app databases live on.
+
+  Named `postgres` because that is the name the operator asks for:
+  database_reconciler.go's cnpgClusterName, whose default is "postgres" and
+  which every Database CR it writes names as its cluster. Renaming it here
+  would leave those CRs pointing at a cluster that does not exist, and CNPG
+  reports that as the Database never becoming ready rather than as a
+  misreference.
+
+  Separate from kernel-postgres, which is in kernel-data and holds Keycloak,
+  OpenFGA and the console. Kernel identity does not share a data plane with
+  tenants: a tenant's app cannot reach the database its own sign-in depends on,
+  and a restore of one does not touch the other.
+
+  Deployed into system-postgresql, which the Cluster claim composes. The
+  namespace has to exist first, which is why this is an appset (C-02) rather
+  than a bootstrap Application (B-01).
+*/}}
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: postgres
+  labels:
+    gentianos.io/tier: system
+    gentianos.io/function: postgresql
+  annotations:
+    # Wave 1: after the superuser ExternalSecret (wave 0). CNPG silently skips
+    # superuser provisioning when the Secret is absent at bootstrap, which
+    # leaves the postgres role with no usable password and every provisioning
+    # Job failing with "password authentication failed for user postgres" --
+    # a failure three layers from its cause.
+    argocd.argoproj.io/sync-wave: "1"
+spec:
+  instances: {{ .Values.instances }}
+  # The operator's provisioning Jobs connect as the superuser to create a role
+  # per app. Without this CNPG creates no superuser password at all.
+  enableSuperuserAccess: true
+  superuserSecret:
+    name: cnpg-superuser
+  storage:
+    size: {{ .Values.storageSize }}
+    {{- if .Values.storageClass }}
+    storageClass: {{ .Values.storageClass }}
+    {{- end }}
+  postgresql:
+    parameters:
+      max_connections: {{ .Values.maxConnections | quote }}

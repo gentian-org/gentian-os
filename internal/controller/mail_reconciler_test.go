@@ -26,7 +26,6 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/types"
-	"k8s.io/client-go/kubernetes/scheme"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
@@ -697,7 +696,7 @@ func TestSyncTenantMailDNS_GatedOnClusterMailMode(t *testing.T) {
 	}
 
 	t.Run("kernel mail publishes", func(t *testing.T) {
-		c := fake.NewClientBuilder().WithScheme(scheme.Scheme).Build()
+		c := fake.NewClientBuilder().WithScheme(controller.SchemeForTest(t)).Build()
 		r := &controller.TenantReconciler{
 			Client: c, KernelDomain: "example.org", MailServiceMode: "system",
 		}
@@ -710,7 +709,7 @@ func TestSyncTenantMailDNS_GatedOnClusterMailMode(t *testing.T) {
 	})
 
 	t.Run("external mail publishes nothing", func(t *testing.T) {
-		c := fake.NewClientBuilder().WithScheme(scheme.Scheme).Build()
+		c := fake.NewClientBuilder().WithScheme(controller.SchemeForTest(t)).Build()
 		r := &controller.TenantReconciler{
 			Client: c, KernelDomain: "example.org", MailServiceMode: "external",
 		}
@@ -723,7 +722,7 @@ func TestSyncTenantMailDNS_GatedOnClusterMailMode(t *testing.T) {
 	})
 
 	t.Run("external mail removes what kernel mail left", func(t *testing.T) {
-		c := fake.NewClientBuilder().WithScheme(scheme.Scheme).WithObjects(endpoint()).Build()
+		c := fake.NewClientBuilder().WithScheme(controller.SchemeForTest(t)).WithObjects(endpoint()).Build()
 		if err := get(c); err != nil {
 			t.Fatalf("precondition: seeded endpoint missing: %v", err)
 		}
@@ -763,7 +762,7 @@ func TestMail_SelfhostedIsRefusedWhenTheClusterRunsNone(t *testing.T) {
 			Mail:        &gentianov1alpha1.TenantMail{Mode: gentianov1alpha1.MailModeSelfhosted},
 		},
 	}
-	c := fake.NewClientBuilder().WithScheme(scheme.Scheme).
+	c := fake.NewClientBuilder().WithScheme(controller.SchemeForTest(t)).
 		WithObjects(mailNS, tenant).Build()
 
 	// MailServiceMode external: the relay is deployed, Dovecot is not.
@@ -803,7 +802,7 @@ func TestMail_SelfhostedIsHonouredWhenTheClusterRunsIt(t *testing.T) {
 			Mail:        &gentianov1alpha1.TenantMail{Mode: gentianov1alpha1.MailModeSelfhosted},
 		},
 	}
-	c := fake.NewClientBuilder().WithScheme(scheme.Scheme).
+	c := fake.NewClientBuilder().WithScheme(controller.SchemeForTest(t)).
 		WithObjects(mailNS, tenant).Build()
 
 	r := &controller.TenantReconciler{Client: c, MailServiceMode: "system"}

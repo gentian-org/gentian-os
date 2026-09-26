@@ -22,10 +22,21 @@ spec:
   - https://kubernetes-sigs.github.io/external-dns/
   - https://kyverno.github.io/kyverno/
   - https://kubernetes-sigs.github.io/headlamp/
-  # Every kernel namespace, by the layout; nothing else. System, shared and
-  # tenant namespaces get their own projects with their own ceilings.
+  # Every kernel and system namespace, by the layout. Shared and tenant
+  # namespaces get their own projects with their own ceilings.
+  #
+  # The system tier is here because the data plane is delivered the same way
+  # the kernel services are -- an Application per engine, synced by Argo into
+  # the namespace the Cluster claim composed. An AppProject that listed only
+  # the kernel namespaces refused those Applications with "destination is not
+  # permitted", which reads as an Argo permission problem three layers from
+  # the layout that caused it.
   destinations:
   {{- range .Values.namespaces.kernel }}
+  - namespace: {{ .name | quote }}
+    server: https://kubernetes.default.svc
+  {{- end }}
+  {{- range .Values.namespaces.system }}
   - namespace: {{ .name | quote }}
     server: https://kubernetes.default.svc
   {{- end }}
