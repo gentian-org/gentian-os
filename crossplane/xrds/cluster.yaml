@@ -24,28 +24,20 @@ spec:
               type: object
               required:
                 - kernelDomain
-              # An opt-in the layout cannot honour is refused here, where the
-              # person who wrote it finds out, rather than three layers away as
-              # a route to nothing or a tenant whose mail never arrives.
+              # No admission rules here any more.
               #
-              # Both of these are v4 functions with no v5 step: the kernel mail
-              # stack (Postfix, Dovecot and their DMZ) and LLM serving
-              # (litellm-proxy and the vLLM instances). v5 composes the route
-              # and the tenant registration for each and deploys neither. When
-              # the steps exist these rules go, and not before -- a rule that
-              # outlives its reason is worse than none.
-              x-kubernetes-validations:
-                # The mail refusal is gone: v5 composes system-mail and
-                # system-mail-dmz from this claim, and the appsets deploy
-                # Postfix and Dovecot into them. A rule that outlives its
-                # reason is worse than none.
-                - rule: >-
-                    !(self.layout == 'v5' && has(self.llm) &&
-                    has(self.llm.enabled) && self.llm.enabled)
-                  message: >-
-                    llm.enabled is not available on layout v5: no step deploys
-                    litellm-proxy or the vLLM instances, so llm.<kernelDomain> would
-                    route to nothing. Leave it false until the layout serves models.
+              # There were two, refusing mail.serviceMode 'system' and
+              # llm.enabled on layout v5, because v5 composed a route and a
+              # tenant registration for both functions and deployed neither --
+              # so the opt-in failed silently, three layers away, as a route to
+              # nothing or a tenant whose mail never arrived.
+              #
+              # The claim composes system-mail, system-mail-dmz and system-llm
+              # now, and the appsets deploy into them, so a rule refusing the
+              # opt-in would refuse something that works. A rule that outlives
+              # its reason is worse than none. Their schema fixtures moved with
+              # them, from invalid to valid, so neither refusal can come back
+              # unnoticed.
               properties:
                 layout:
                   type: string

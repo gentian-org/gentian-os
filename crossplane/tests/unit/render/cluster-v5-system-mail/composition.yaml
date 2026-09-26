@@ -94,6 +94,9 @@ spec:
             {{- if eq (dig "mail" "serviceMode" "external" $spec) "system" }}
             {{- $systemFns = concat $systemFns (list "mail" "mail-dmz") }}
             {{- end }}
+            {{- if dig "llm" "enabled" false $spec }}
+            {{- $systemFns = concat $systemFns (list "llm") }}
+            {{- end }}
             {{- range $fn := $systemFns }}
             ---
             apiVersion: kubernetes.crossplane.io/v1alpha2

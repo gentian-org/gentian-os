@@ -48,6 +48,7 @@ var (
 	cacheNamespace        = layout.System("cache")
 	mailNamespace         = layout.System("mail")
 	mailDMZNamespace      = layout.System("mail-dmz")
+	llmNamespace          = layout.System("llm")
 )
 
 // tenantPlatformNamespaces are every platform namespace a tenant's
@@ -63,6 +64,7 @@ func tenantPlatformNamespaces() []string {
 		cacheNamespace,
 		mailNamespace,
 		mailDMZNamespace,
+		llmNamespace,
 	)
 }
 

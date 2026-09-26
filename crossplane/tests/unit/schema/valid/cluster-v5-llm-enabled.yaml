@@ -1,0 +1,17 @@
+# A v5 cluster serving models.
+#
+# This used to be an INVALID fixture: v5 composed the route for
+# llm.<kernelDomain> and deployed neither litellm-proxy nor any vLLM instance,
+# so the host resolved and answered nothing. The claim composes system-llm now
+# and the appsets deploy into it, so the refusal is gone and this is what
+# proves it.
+apiVersion: gentianos.io/v1alpha1
+kind: Cluster
+metadata:
+  name: test-v5-llm
+  namespace: default
+spec:
+  kernelDomain: example.org
+  layout: v5
+  llm:
+    enabled: true

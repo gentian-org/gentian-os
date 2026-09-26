@@ -19,3 +19,8 @@ llmEnabled: "false"
 relayHost: ""
 egressHost: ""
 storageClass: ""
+# Whether this cluster has GPUs (spec.llm.gpuAcceleration) and whether the
+# claim lists external providers. The first decides whether the mock backend
+# runs; the second whether the chart reads a vault path for provider keys.
+llmGpuAcceleration: "false"
+llmExternalProviders: "false"

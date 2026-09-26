@@ -373,7 +373,11 @@ func kernelHTTPRouteSpecs(
 			host:        fmt.Sprintf("llm.%s", kernelDomain),
 			sectionName: wildcardListenerName,
 			rules: []gatewayv1.HTTPRouteRule{
-				kernelBackendRulePrefixNS(litellmProxyServiceName, servicesNamespace, litellmProxyPort, "/"),
+				// The LLM namespace, not the services one. servicesNamespace is
+				// the edge on v5, so this route pointed at a litellm-proxy that
+				// was never there -- and a route whose backend does not resolve
+				// answers 503 on a host that looks configured.
+				kernelBackendRulePrefixNS(litellmProxyServiceName, llmNamespace, litellmProxyPort, "/"),
 			},
 		})
 	}

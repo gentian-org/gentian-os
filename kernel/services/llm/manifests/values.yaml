@@ -18,3 +18,16 @@ mockBackend: true
 # LiteLLM's API, because a model list is not something Argo CD can project from
 # a claim into Helm values — the same reason the vLLM release is not here.
 externalProviders: false
+
+# The namespace LLM serving runs in.
+#
+# Empty keeps v4's answer, platform-kernel, which is v4's one namespace for
+# everything. v5 passes system-llm, which the Cluster claim composes when
+# llm.enabled is true — LLM serving is a system-tier function of its own
+# (namespace-cleanup.md §2.2).
+#
+# The operator has to agree: app_reconciler.go reads the LiteLLM master key
+# from here and addresses the proxy at litellm-proxy.<this>, and the kernel
+# gateway routes llm.<kernelDomain> to the same place. Both take it from
+# layout.System("llm"), so this is that name.
+servicesNamespace: platform-kernel

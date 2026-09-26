@@ -674,8 +674,16 @@ func TestKernelHTTPRouteSpecsLLMEnabled(t *testing.T) {
 	if string(backend.Name) != litellmProxyServiceName {
 		t.Fatalf("llm backend service = %q, want %q", backend.Name, litellmProxyServiceName)
 	}
-	if backend.Namespace == nil || string(*backend.Namespace) != servicesNamespace {
-		t.Fatalf("llm backend namespace = %v, want %s", backend.Namespace, servicesNamespace)
+	// The LLM namespace, not the services one. This asserted servicesNamespace,
+	// which on v5 is the edge -- so the route pointed at a litellm-proxy that
+	// was never there, and a route whose backend does not resolve answers 503
+	// on a host that looks configured. The test agreed with the bug because it
+	// read the same variable the code did.
+	if backend.Namespace == nil || string(*backend.Namespace) != llmNamespace {
+		t.Fatalf("llm backend namespace = %v, want %s", backend.Namespace, llmNamespace)
+	}
+	if llmNamespace == servicesNamespace {
+		t.Fatalf("llm and the edge share a namespace (%s); the assertion above proves nothing", llmNamespace)
 	}
 	if got := *backend.Port; got != gatewayv1.PortNumber(litellmProxyPort) {
 		t.Fatalf("llm backend port = %d, want %d", got, litellmProxyPort)

@@ -85,6 +85,10 @@ system:
     function: mail-dmz
     when: mail.serviceMode=system
     holds: the MTA's public surface — inbound :25, submission :587 — and the DNS records that point at it
+  - name: system-llm
+    function: llm
+    when: llm.enabled=true
+    holds: the LiteLLM proxy, its database, and the vLLM instances the claim lists
 
 # Namespaces the platform provides that gentian-os labels but does not create.
 labelled:

@@ -1251,7 +1251,7 @@ the app is unusable, and no status field anywhere reports that.
 the thing the app is for with their own identity and the tenant's data, and
 what they did is still there afterwards.
 
-### S9 ◐ The system tier had no composer
+### S9 ✅ The system tier had no composer
 
 Not a step of S7A and not part of M1, but the largest gap between v0.4 and
 v0.5 and the thing M2 and M4 stop at. Recorded here because it was found by
@@ -1271,8 +1271,8 @@ operator and the network policies name six of them.
 | MariaDB | `gentian-infra-<stage>` | `system-mariadb` | ✅ composed |
 | Redis | `gentian-infra-<stage>` | `system-cache` | ✅ composed |
 | MinIO | `gentian-infra-<stage>` | `system-s3` | ✅ composed |
-| Postfix, Dovecot, the DKIM milter | `platform-kernel` + the store's public ports | `system-mail`, `system-mail-dmz` | ☐ no composer — refused at admission meanwhile |
-| LiteLLM, its database, vLLM instances | `platform-kernel`, installer `D-05` | `system-llm` | ☐ no composer — refused at admission meanwhile |
+| Postfix, Dovecot, the DKIM milter | `platform-kernel` + the store's public ports | `system-mail`, `system-mail-dmz` | ✅ composed and deployed; Postfix not yet split into the DMZ |
+| LiteLLM, its database, vLLM instances | `platform-kernel`, installer `D-05` | `system-llm` | ✅ composed and deployed |
 
 **The design is not missing, only unbuilt.**
 [namespace-cleanup.md](namespace-cleanup.md) §2.2 carries the whole table, and
@@ -1343,13 +1343,47 @@ do ("the stage suffix is dropped: a cluster has one stage"), so on v5 the
 ConfigMap is `<engine>-cluster-values`. v4 keeps its stage suffix, and the
 charts render whichever applies from one template.
 
-**Still open**: mail and LLM, which are larger than the engines — a DMZ
-namespace, public ports, DNS, and in LLM's case GPU scheduling.
+**Mail and LLM came last**, and both are conditional on the claim:
+`mail.serviceMode: system` composes `system-mail` and `system-mail-dmz`,
+`llm.enabled` composes `system-llm`, and the appsets wrapper drops a raw file
+by name when its function is off — v4's mechanism, needed because a raw file is
+copied verbatim and carries ApplicationSet templating Argo evaluates later, so
+a Helm conditional cannot live inside one. `system-mail-dmz` carries tier
+`system-dmz`, which is what the policies deciding what may reach the internet
+select on.
 
-**Done when** a second tenant's desktop reaches Ready on a v5 cluster, every
-engine a catalogue app can ask for is composed, quota'd, policy-labelled and
-backed up; and the two admission refusals (`mail.serviceMode: system`,
-`llm.enabled: true`) are removed because the layout can honour them.
+Both admission refusals are gone, and their schema fixtures moved from invalid
+to valid so neither can come back unnoticed.
+
+**The requirement reconcilers were the other half of this**, and three of them
+were reading Secrets that nothing created. `cache_reconciler`, `mariadb_
+reconciler` and `storage_reconciler` each read an admin Secret from the
+engine's own namespace by name and by exact keys; v4's `kernel-admin` wrote all
+of them into `platform-kernel`, and the operator addresses engines by function
+now. Each engine's chart carries its own, and Dovecot carries `dovecot-admin`.
+Without them an app asking for a cache would have had its ACL Job crash-loop on
+a Secret that was not there — the failure v4's own header records.
+
+Two literals survived in the operator itself: `litellmMasterKeyNS` and
+`litellmProxyBaseURL` were both `platform-kernel`, which on v5 does not exist.
+The first read the master key from a namespace that is not there, the second
+dialled a name that does not resolve, and neither failure mentions LLM. The
+kernel gateway route for `llm.<kernelDomain>` pointed at `servicesNamespace`,
+which on v5 is the edge — a route whose backend does not resolve answers 503 on
+a host that looks configured. Its test asserted the same wrong variable the code
+used, so it agreed with the bug; it names `llmNamespace` now and refuses to pass
+if the two namespaces are ever equal.
+
+**Still open**: Postfix's move into `system-mail-dmz`. §2.2 wants only the
+mailbox store and the DKIM keys inside, with the public surface in the DMZ;
+that means Postfix reaching the signer across a namespace boundary with the
+network policy to match, so it is recorded rather than half-done. Both mail
+workloads are in `system-mail` today, which is v4's shape relocated.
+
+**Done when** a second tenant's desktop reaches Ready on a v5 cluster and
+every engine a catalogue app can ask for is composed and serving. Quotas,
+backup policies and per-engine network policies are not written yet, and
+neither is Postfix's move into the DMZ.
 
 ### WP-x ☐ A password manager instead of per-app SSO tricks
 

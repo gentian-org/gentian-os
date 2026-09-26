@@ -46,13 +46,23 @@ const (
 	conditionAppsReady = "AppsReady"
 
 	litellmMasterKeySecret = "llm-sensitive-values"
-	litellmMasterKeyNS     = "platform-kernel"
 	litellmMasterKeySecKey = "litellm_master_key" //nolint:gosec // Secret key name, not a credential.
 )
 
-// litellmProxyBaseURL is a var rather than a const only so tests can point it at
-// an httptest server. Nothing at run time reassigns it.
-var litellmProxyBaseURL = "http://litellm-proxy.platform-kernel.svc.cluster.local:4000"
+// Where LLM serving runs.
+//
+// Both of these were the literal platform-kernel, which is v4's one namespace
+// for everything. LLM serving is a system-tier function of its own
+// (namespace-cleanup.md §2.2), and on v5 platform-kernel does not exist -- so
+// the master key was read from a namespace that is not there and the proxy was
+// addressed at a name that does not resolve. Neither failure names LLM: the
+// first is a Secret not found, the second a dial timeout.
+//
+// litellmProxyBaseURL is a var rather than a const only so tests can point it
+// at an httptest server. Nothing at run time reassigns it.
+var litellmMasterKeyNS = llmNamespace
+
+var litellmProxyBaseURL = fmt.Sprintf("http://litellm-proxy.%s.svc.cluster.local:4000", llmNamespace)
 
 // appClaimGVK is the GVK for namespace-scoped App claims reconciled by Crossplane.
 var appClaimGVK = schema.GroupVersionKind{

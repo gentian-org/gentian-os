@@ -42,7 +42,9 @@
      | replace "deployments.cluster.placeholder" $.Values.deploymentsCluster
      | replace "storage.class.placeholder" ($.Values.storageClass | default "")
      | replace "mail.relay.placeholder" ($.Values.relayHost | default "")
-     | replace "mail.egress.placeholder" ($.Values.egressHost | default "") }}
+     | replace "mail.egress.placeholder" ($.Values.egressHost | default "")
+     | replace "llm.mock.backend.placeholder" (ternary "false" "true" (eq (toString ($.Values.llmGpuAcceleration | default "false")) "true"))
+     | replace "llm.external.providers.placeholder" (toString ($.Values.llmExternalProviders | default "false")) }}
 {{- range $fn, $name := $ns }}{{ $text = replace (printf "ns.%s.placeholder" $fn) $name $text }}{{ end }}
 {{- range $fn, $name := $sys }}{{ $text = replace (printf "sys.%s.placeholder" $fn) $name $text }}{{ end }}
 {{- if contains ".placeholder" $text }}{{ fail (printf "%s: an unresolved placeholder remains" $path) }}{{ end }}

@@ -46,6 +46,8 @@ spec:
         relayHost: {{ .Values.smtpHost | default "" | quote }}
         egressHost: {{ .Values.mailEgressHost | default "" | quote }}
         storageClass: {{ .Values.storageClass | default "" | quote }}
+        llmGpuAcceleration: {{ .Values.llmGpuAcceleration | default "false" | quote }}
+        llmExternalProviders: {{ .Values.llmExternalProviders | default "false" | quote }}
         namespaces:
           {{- toYaml .Values.namespaces | nindent 10 }}
   destination:
