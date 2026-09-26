@@ -100,3 +100,11 @@ operator:
   # the branch tag, which moves and therefore never rolls a Deployment by
   # itself.
   tag: ""
+
+# Which mail stack this cluster runs, from the Cluster claim
+# (spec.mail.serviceMode). `system` deploys Postfix and Dovecot into the system
+# tier; `external` relays through a provider and deploys neither.
+mailServiceMode: external
+# The name mail leaves from, when the cluster sends from an address it owns
+# (spec.mail.egressHost). Empty means the shared egress or a smarthost.
+mailEgressHost: ""

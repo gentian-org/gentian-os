@@ -36,6 +36,16 @@ spec:
         deploymentsRepo: {{ .Values.deployments.repo | quote }}
         deploymentsRevision: {{ .Values.deployments.revision | quote }}
         deploymentsCluster: {{ .Values.deployments.cluster | quote }}
+        {{- /* Which conditional functions this cluster runs. The wrapper in
+             kernel/appsets-v5 skips a raw file by name when its function is
+             off, the way v4's does: a raw file is copied verbatim because it
+             carries ApplicationSet templating Argo evaluates later, so a Helm
+             conditional cannot live inside one. */}}
+        mailServiceMode: {{ .Values.mailServiceMode | default "external" | quote }}
+        llmEnabled: {{ .Values.llmEnabled | default "false" | quote }}
+        relayHost: {{ .Values.smtpHost | default "" | quote }}
+        egressHost: {{ .Values.mailEgressHost | default "" | quote }}
+        storageClass: {{ .Values.storageClass | default "" | quote }}
         namespaces:
           {{- toYaml .Values.namespaces | nindent 10 }}
   destination:

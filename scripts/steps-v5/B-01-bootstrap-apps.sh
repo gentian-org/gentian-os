@@ -101,6 +101,8 @@ _v5_render() {
         --set-string "tenancyMode=${TENANCY_MODE:-multi}" \
         --set-string "acmeStaging=${acme_staging}" \
         --set-string "smtpHost=${EXTERNAL_SMTP_HOST:-}" \
+        --set-string "mailServiceMode=$(gentian_mail_service_mode)" \
+        --set-string "mailEgressHost=${MAIL_EGRESS_HOST:-}" \
         --set-string "versions.headlamp.chart=$(gentian_pin headlamp chart)" \
         --set-string "versions.headlamp.repo=$(gentian_pin headlamp repo)"
     local rc=$?

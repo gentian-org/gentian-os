@@ -10,3 +10,12 @@ deploymentsRevision: main
 deploymentsCluster: ""
 # Filled by the installer from kernel/namespaces.yaml. Never set by hand.
 namespaces: {}
+
+# Which conditional functions this cluster runs, and the values their charts
+# need. Filled by the bootstrap chart from the Cluster claim; a raw file whose
+# function is off is skipped by name in templates/appsets.yaml.
+mailServiceMode: external
+llmEnabled: "false"
+relayHost: ""
+egressHost: ""
+storageClass: ""

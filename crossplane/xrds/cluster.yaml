@@ -35,14 +35,10 @@ spec:
               # the steps exist these rules go, and not before -- a rule that
               # outlives its reason is worse than none.
               x-kubernetes-validations:
-                - rule: >-
-                    !(self.layout == 'v5' && has(self.mail) &&
-                    has(self.mail.serviceMode) && self.mail.serviceMode == 'system')
-                  message: >-
-                    mail.serviceMode 'system' is not available on layout v5 yet: no
-                    step deploys Postfix and Dovecot into system-mail, so tenants
-                    would be registered in a mail stack that does not exist. Use
-                    'external' with an smtp-relay credential until the step lands.
+                # The mail refusal is gone: v5 composes system-mail and
+                # system-mail-dmz from this claim, and the appsets deploy
+                # Postfix and Dovecot into them. A rule that outlives its
+                # reason is worse than none.
                 - rule: >-
                     !(self.layout == 'v5' && has(self.llm) &&
                     has(self.llm.enabled) && self.llm.enabled)
