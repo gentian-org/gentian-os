@@ -1132,13 +1132,29 @@ that are not say so.
 | M2.1 | The claim reaches `gentian-deployments` | console → director `POST /v1/clusters/{c}/tenants` | built, **never written** — blocked on S7A.4 |
 | M2.2 | Argo CD syncs it and the XTenant composes | `gentian-claims` ApplicationSet, `tenant-default` | exercised on v4 only |
 | M2.3 | Namespace, quota and limit range exist and bind | `tenant-default`: namespace, resourcequota, limitrange | exercised on v4 only |
+| M2.3b | Its database exists | `system-postgresql`, composed from the Cluster claim | **nothing composes it — M2 is blocked here** |
 | M2.4 | The realm exists with its groups, user profile and required actions | `tenant-default`: keycloak-realm, keycloak-group-* | exercised on v4 only |
 | M2.5 | The realm can send mail | operator copies `keycloak-smtp-credentials` into the tenant realm | needs the `smtp-relay` credential supplied |
 | M2.6 | The zone answers: client, session, Gateway listener, hosts, DNS | `keycloak-edge-zone-client` + the operator's `zoneSecurityPolicySpec` + `zone_hosts_projection.go` | **the second zone has never been stood up** |
-| M2.7 | The tenant's desktop is installed and opens | desktop ComponentProfile, `component_desktop.go` | exercised on v4 only |
+| M2.7 | The tenant's desktop is installed and opens | desktop ComponentProfile, `component_desktop.go` | **blocked on M2.3b** |
 | M2.8 | The director holds a Keycloak credential for the new realm | `KeycloakPlatformReconciler.ensureDirectorRealmCredentials` | **new, never run** |
 | M2.9 | A tenant administrator can sign in and see the tenant | the whole of the above | — |
 | M2.10 | The tenant has a backup policy | `SetTenantBackupPolicy`, backup schedules | exercised on v4 only |
+
+**M2.3b is the blocker, and it is not mail.** The desktop's profile requires
+`database: postgresql, databasePerTenant: true`. Only the platform tenant is
+satisfiable today, because it adopts the kernel realm and therefore the kernel
+data plane: `kernel-postgres` in `kernel-data`, bootstrapped by B-01. Every
+other tenant takes the other branch of `ensureDatabaseRequirement` and gets
+`DatabaseUnavailable` — "this cluster composes no tenant postgres yet
+(system-postgresql); the requirement waits". The operator is honest about it;
+what is missing is the thing it is waiting for.
+
+That is one instance of a larger gap, which has its own section below: **no
+`system-*` namespace is composed on v5 at all.** The table in
+[namespace-cleanup.md](namespace-cleanup.md) §2.2 says what belongs there and
+the Cluster claim is named as the composer; none of it is built. Until it is,
+M2 stops at a tenant whose desktop never becomes Ready, and M4 cannot start.
 
 **Two things are genuinely new rather than unexercised.**
 
@@ -1232,6 +1248,85 @@ the app is unusable, and no status field anywhere reports that.
 **Done when** a member of a tenant opens a tile, is already signed in, does
 the thing the app is for with their own identity and the tenant's data, and
 what they did is still there afterwards.
+
+### S9 ☐ The system tier has no composer
+
+Not a step of S7A and not part of M1, but the largest gap between v0.4 and
+v0.5 and the thing M2 and M4 stop at. Recorded here because it was found by
+asking a narrower question — where does the internal mail service come from —
+and the answer turned out to be about the tier rather than about mail.
+
+**`layout.System(fn)` returns `system-<fn>`, and nothing creates one.** The
+Cluster composition's namespace block is empty for v5; it creates only v4's
+`platform-kernel` and `gentian-system`. `kernel/namespaces.yaml` has a
+`kernel:` list and a `labelled:` list and no `system:` list. Meanwhile the
+operator and the network policies name six of them.
+
+| Function | v0.4 | v0.5 | state |
+|---|---|---|---|
+| `kernel-postgres` + CNPG — Keycloak, its extensions, OpenFGA, the console | `platform-kernel` / `gentian-infra-<stage>` | `kernel-data` | ✅ migrated, by the bootstrap chart's Argo Application (`kernel/data/kernel-postgres`), covered by `B-01` |
+| tenant postgres | `platform-kernel` via `kernel-admin` | `system-postgresql` | ☐ **no composer** — blocks M2 |
+| MariaDB | `gentian-infra-<stage>` | `system-mariadb` | ☐ no composer |
+| Redis | `gentian-infra-<stage>` | `system-cache` | ☐ no composer |
+| MinIO | `gentian-infra-<stage>` | `system-s3` | ☐ no composer |
+| Postfix, Dovecot, the DKIM milter | `platform-kernel` + the store's public ports | `system-mail`, `system-mail-dmz` | ☐ no composer — refused at admission meanwhile |
+| LiteLLM, its database, vLLM instances | `platform-kernel`, installer `D-05` | `system-llm` | ☐ no composer — refused at admission meanwhile |
+
+**The design is not missing, only unbuilt.**
+[namespace-cleanup.md](namespace-cleanup.md) §2.2 carries the whole table, and
+`kernel/bootstrap-v5/chart/templates/kernel-postgres.yaml` states the division
+in one line: "Kernel identity does not share a data plane with tenants; the
+tenant engines are system-* namespaces composed from the Cluster claim." So the
+composer is decided — the Cluster claim — and it is the Cluster composition
+that has to grow the block, one namespace per engine, named by the function a
+`requires.services` entry asks for.
+
+**Why the cluster works today anyway**, which is what made this easy to miss:
+there is one tenant, `platform`, and it adopts the kernel realm. That takes the
+first branch of `ensureDatabaseRequirement` and gets its database from
+`kernel-postgres`. A cluster with one tenant therefore needs no system tier at
+all, and every screen reports healthy.
+
+**Two things this is not.** It is not the kernel data plane, which is done. And
+it is not a naming problem: `mail.serviceMode` was renamed from `kernel` to
+`system` because the stack is a system-tier service, and that rename changed no
+behaviour — the mode is refused on v5 either way until this exists.
+
+**Done when** a second tenant's desktop reaches Ready on a v5 cluster, which
+means at least `system-postgresql` composed, quota'd, policy-labelled and
+backed up; and the two admission refusals (`mail.serviceMode: system`,
+`llm.enabled: true`) are removed because the layout can honour them.
+
+### WP-x ☐ A password manager instead of per-app SSO tricks
+
+To be considered rather than decided, and recorded before the reasoning is
+lost.
+
+App profiles currently ship sidecars and per-app arrangements to make single
+sign-on work: a SAML shim, a session bridge, an OIDC pack per application, and
+in some cases nothing at all because the application only understands a
+username and a password. That is a per-application cost paid again for every
+catalogue entry, and the applications that cannot do SSO are simply outside it.
+
+**The alternative**: one component that holds an app account per person per
+application and performs the login for them. It would make "this application
+only does passwords" a solved case rather than an excluded one, and would take
+the SSO plumbing out of the individual profiles — a contract a profile asks for
+instead of a sidecar it carries.
+
+**What it has to answer before it is a decision.** Where the secrets live, and
+why that is better than the vault they would otherwise sit in. Whether the
+login is performed in the browser or by the component, because the second makes
+it a holder of every person's credentials for every application and therefore
+the most valuable target in the cluster. How it interacts with the edge
+session, which is the platform's actual answer to signing in once. And whether
+it competes with the OIDC path or only backfills what cannot use it — because
+two ways to sign in to the same application is a worse place to be than one
+awkward one.
+
+**Not before M4.** M4 is what shows which applications actually need this and
+which were fine; deciding it earlier would be deciding it from the catalogue
+rather than from use.
 
 ---
 
