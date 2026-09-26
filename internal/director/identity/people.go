@@ -162,6 +162,47 @@ func (c *Client) Groups(ctx context.Context, r Realm) ([]Group, error) {
 	return out, nil
 }
 
+// ZoneLanding is where the realm's own zone client says a person should land.
+//
+// Read off the client rather than derived. The zone's domain is a vanity name,
+// or the kernel domain under single tenancy, or the tenant's subdomain of it,
+// and the composition already resolved which -- a second derivation here would
+// be a second answer, and the one that disagreed would produce a redirect
+// Keycloak refuses with "Invalid parameter: redirect_uri" on a page that says
+// nothing about a list.
+//
+// Empty when the client has no rootUrl, which is what a realm composed before
+// this looks like. An invitation then carries no redirect, which is the old
+// behaviour rather than a failure.
+func (c *Client) ZoneLanding(ctx context.Context, r Realm, clientID string) string {
+	var found []struct {
+		ClientID string `json:"clientId"`
+		RootURL  string `json:"rootUrl"`
+		BaseURL  string `json:"baseUrl"`
+	}
+	q := url.Values{"clientId": {clientID}}
+	if err := c.call(ctx, r, http.MethodGet, "/clients", q, nil, &found); err != nil {
+		return ""
+	}
+	for _, f := range found {
+		if f.ClientID != clientID {
+			continue
+		}
+		base := f.RootURL
+		if base == "" {
+			base = f.BaseURL
+		}
+		if base == "" {
+			return ""
+		}
+		// The list carries the root with its trailing slash; rootUrl is
+		// conventionally written without one, and a redirect that differs from
+		// the permitted URI by that slash is refused.
+		return strings.TrimSuffix(base, "/") + "/"
+	}
+	return ""
+}
+
 // Invitation is what the caller asked for.
 type Invitation struct {
 	// Email is the address. It is also the username: one identifier for a

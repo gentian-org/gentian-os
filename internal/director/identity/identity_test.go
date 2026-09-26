@@ -44,6 +44,8 @@ type fakeKeycloak struct {
 	status map[string]int
 	// policy per realm.
 	policy map[string]string
+	// clients per realm, for the zone-landing read.
+	clients map[string][]clientRep
 	// mints counts token requests per realm, for the cache test.
 	mints map[string]int
 }
@@ -59,12 +61,13 @@ type recorded struct {
 
 func newFake(t *testing.T) (*fakeKeycloak, *httptest.Server) {
 	f := &fakeKeycloak{
-		t:      t,
-		groups: map[string][]groupRep{},
-		users:  map[string][]userRep{},
-		status: map[string]int{},
-		policy: map[string]string{},
-		mints:  map[string]int{},
+		t:       t,
+		groups:  map[string][]groupRep{},
+		users:   map[string][]userRep{},
+		status:  map[string]int{},
+		policy:  map[string]string{},
+		clients: map[string][]clientRep{},
+		mints:   map[string]int{},
 	}
 	srv := httptest.NewServer(http.HandlerFunc(f.serve))
 	t.Cleanup(srv.Close)
@@ -119,6 +122,15 @@ func (f *fakeKeycloak) serve(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	switch {
+	case r.Method == http.MethodGet && path == "/clients":
+		wanted := r.URL.Query().Get("clientId")
+		out := []clientRep{}
+		for _, c := range f.clients[realm] {
+			if c.ClientID == wanted {
+				out = append(out, c)
+			}
+		}
+		_ = json.NewEncoder(w).Encode(out)
 	case r.Method == http.MethodGet && path == "/groups":
 		_ = json.NewEncoder(w).Encode(groups)
 	case r.Method == http.MethodGet && path == "/users":
@@ -491,4 +503,33 @@ func TestACallWithNoRequestIdSendsNoHeader(t *testing.T) {
 			t.Fatalf("an empty request id must not become a header: %q", v)
 		}
 	}
+}
+
+// ZoneLanding reads the landing page off the client, and normalises the
+// trailing slash: the permitted URI carries one, rootUrl conventionally does
+// not, and a redirect that differs from the permitted URI by that slash is
+// refused.
+func TestZoneLandingReadsTheClientsRoot(t *testing.T) {
+	t.Parallel()
+	f, srv := newFake(t)
+	f.clients["demo"] = []clientRep{{ClientID: "gentian-edge-demo", RootURL: "https://console.demo.example.test"}}
+	c := clientFor(t, srv, StaticSource{"demo": {Realm: "demo", ClientID: "a", ClientSecret: "s"}})
+	r, _ := c.Realm("demo")
+
+	if got := c.ZoneLanding(context.Background(), r, "gentian-edge-demo"); got != "https://console.demo.example.test/" {
+		t.Fatalf("landing = %q", got)
+	}
+	// A client that states no root yields nothing, and an invitation then
+	// carries no redirect rather than one Keycloak refuses.
+	if got := c.ZoneLanding(context.Background(), r, "gentian-edge-other"); got != "" {
+		t.Fatalf("landing for an unknown client = %q, want empty", got)
+	}
+}
+
+// clientRep is the part of a Keycloak client representation the landing read
+// needs.
+type clientRep struct {
+	ClientID string `json:"clientId"`
+	RootURL  string `json:"rootUrl"`
+	BaseURL  string `json:"baseUrl"`
 }

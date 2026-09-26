@@ -564,6 +564,7 @@ spec:
                 validRedirectUris:
                   {{- range $host := $zoneHosts }}
                   - https://{{ $host }}.{{ $zoneDomain }}/oauth2/callback
+                  - https://{{ $host }}.{{ $zoneDomain }}/
                   {{- end }}
                 validPostLogoutRedirectUris:
                   {{- range $host := $zoneHosts }}
@@ -573,6 +574,32 @@ spec:
                   name: {{ $zoneSecret }}
                   namespace: {{ $edgeNs }}
                   key: client-secret
+                {{- /* Where a person lands when the realm finishes with them.
+
+                     An invitation's action-token mail may name a redirect, and
+                     Keycloak refuses one that is not on validRedirectUris
+                     above -- which listed each host's /oauth2/callback and
+                     nothing else, the machine-facing end of the OIDC flow and
+                     not a page for a human. So an invitation had to send no
+                     redirect at all, and the person finished on Keycloak's
+                     "your account has been updated" page with no way into the
+                     product.
+
+                     Each host's root is on the list now. One exact URL per
+                     host rather than a wildcard: the list exists to stop an
+                     open redirect, and widening it to /* would let anything
+                     that can influence a redirect target reach any path on
+                     these hosts. A root that the Gateway serves and the edge
+                     signs into is all the invitation needs.
+
+                     rootUrl is which of those hosts to use, stated here
+                     because this is where the zone's domain is known. The
+                     director reads it back off the client rather than deriving
+                     it: the domain is a vanity name, or the kernel domain
+                     under single tenancy, or the tenant's subdomain, and a
+                     second derivation of that is a second answer that can
+                     disagree with the hosts the Gateway actually serves. */}}
+                rootUrl: https://console.{{ $zoneDomain }}
               providerConfigRef:
                 name: keycloak
 

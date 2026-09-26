@@ -51,6 +51,8 @@ type fakeIdentity struct {
 	requestIDs []string
 	// lastInvite is what the last invitation asked for.
 	lastInvite identity.Invitation
+	// landing is what the zone client says its root is.
+	landing string
 }
 
 func newFakeIdentity(realms ...string) *fakeIdentity {
@@ -138,6 +140,13 @@ func (f *fakeIdentity) PasswordPolicy(ctx context.Context, r identity.Realm) (st
 func (f *fakeIdentity) SetPasswordPolicy(ctx context.Context, r identity.Realm, _ string) error {
 	f.note(ctx, r)
 	return nil
+}
+
+func (f *fakeIdentity) ZoneLanding(_ context.Context, r identity.Realm, clientID string) string {
+	if f.landing == "" {
+		return ""
+	}
+	return f.landing
 }
 
 var errNotAnAddress = errNotAddress{}
@@ -361,11 +370,30 @@ func TestTheInvitationNamesTheZonesOwnClient(t *testing.T) {
 	if f.lastInvite.ClientID != "gentian-edge-demo" {
 		t.Fatalf("client = %q, want gentian-edge-demo", f.lastInvite.ClientID)
 	}
-	// And no redirect: the zone client's valid redirect URIs are each host's
-	// /oauth2/callback, which is not a page to land on. Sending one Keycloak
-	// refuses would make every invitation fail.
+	// A realm whose client states no root gets no redirect, which is the old
+	// behaviour rather than a failure: sending one Keycloak refuses would make
+	// every invitation fail.
 	if f.lastInvite.RedirectURI != "" {
-		t.Fatalf("redirect = %q, want none until the client accepts one", f.lastInvite.RedirectURI)
+		t.Fatalf("redirect = %q, want none when the client states no root", f.lastInvite.RedirectURI)
+	}
+}
+
+// The redirect comes off the zone client, not from a second derivation of the
+// zone's domain here. The domain is a vanity name, or the kernel domain under
+// single tenancy, or the tenant's subdomain -- and the answer that disagreed
+// with the Gateway would be refused by Keycloak on a page that says nothing
+// about a redirect URI list.
+func TestTheInvitationLandsWhereTheZoneClientSays(t *testing.T) {
+	f := newFakeIdentity("demo")
+	f.landing = "https://console.demo.example.test/"
+	h := startWithIdentity(t, f)
+
+	if status, _ := h.do(t, http.MethodPost, "/v1/tenants/demo/actions/invite-person",
+		h.token(t, "tenant-demo", "tom"), `{"email":"ada@example.com"}`); status != http.StatusAccepted {
+		t.Fatalf("invite: %d", status)
+	}
+	if f.lastInvite.RedirectURI != "https://console.demo.example.test/" {
+		t.Fatalf("redirect = %q", f.lastInvite.RedirectURI)
 	}
 }
 

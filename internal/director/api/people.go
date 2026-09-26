@@ -189,11 +189,19 @@ func (s *Server) invitePerson(w http.ResponseWriter, r *http.Request, c call) {
 	if !s.decode(w, r, &body) {
 		return
 	}
-	person, err := s.cfg.Identity.Invite(identityContext(r), realm, identity.Invitation{
+	ctx := identityContext(r)
+	client := s.inviteClientID(realm)
+	// Where they land, from the zone client itself. A configured value wins,
+	// for a deployment that lands people somewhere else on purpose.
+	redirect := s.cfg.InviteRedirectURI
+	if redirect == "" {
+		redirect = s.cfg.Identity.ZoneLanding(ctx, realm, client)
+	}
+	person, err := s.cfg.Identity.Invite(ctx, realm, identity.Invitation{
 		Email:       body.Email,
 		Groups:      body.Groups,
-		ClientID:    s.inviteClientID(realm),
-		RedirectURI: s.cfg.InviteRedirectURI,
+		ClientID:    client,
+		RedirectURI: redirect,
 	})
 	if err != nil {
 		// A person who exists with a mail that did not go is reported as

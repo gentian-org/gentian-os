@@ -160,6 +160,7 @@ type Identity interface {
 	SetMembership(ctx context.Context, r identity.Realm, userID, groupPath string, member bool) error
 	PasswordPolicy(ctx context.Context, r identity.Realm) (string, error)
 	SetPasswordPolicy(ctx context.Context, r identity.Realm, policy string) error
+	ZoneLanding(ctx context.Context, r identity.Realm, clientID string) string
 }
 
 // StoreConfig is what the entitlement write needs.

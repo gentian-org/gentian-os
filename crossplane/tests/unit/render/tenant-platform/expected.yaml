@@ -163,6 +163,7 @@ spec:
     implicitFlowEnabled: false
     name: Gentian edge (kernel zone)
     realmId: kernel
+    rootUrl: https://console.platform.example.test
     serviceAccountsEnabled: false
     standardFlowEnabled: true
     validPostLogoutRedirectUris:
@@ -174,11 +175,17 @@ spec:
     - https://wiki.platform.example.test/*
     validRedirectUris:
     - https://console.platform.example.test/oauth2/callback
+    - https://console.platform.example.test/
     - https://admin.platform.example.test/oauth2/callback
+    - https://admin.platform.example.test/
     - https://argocd.platform.example.test/oauth2/callback
+    - https://argocd.platform.example.test/
     - https://headlamp.platform.example.test/oauth2/callback
+    - https://headlamp.platform.example.test/
     - https://id.platform.example.test/oauth2/callback
+    - https://id.platform.example.test/
     - https://wiki.platform.example.test/oauth2/callback
+    - https://wiki.platform.example.test/
     webOrigins: []
   managementPolicies:
   - Observe
