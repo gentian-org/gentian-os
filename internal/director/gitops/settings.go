@@ -79,7 +79,7 @@ var clusterSettings = []ClusterSetting{
 	{Path: "certManager.letsencryptEmail", Doc: "Where Let's Encrypt sends expiry warnings."},
 	{Path: "llm.enabled", Doc: "Whether this cluster serves language models.", OneOf: []string{"true", "false"}},
 	{Path: "llm.gpuAcceleration", Doc: "Whether model serving uses a GPU.", OneOf: []string{"true", "false"}},
-	{Path: "mail.serviceMode", Doc: "Whether mail is the kernel's own stack or an external relay.", OneOf: []string{"kernel", "external"}},
+	{Path: "mail.serviceMode", Doc: "Whether the platform runs its own mail stack in system-mail, or relays through an external provider.", OneOf: []string{"system", "external"}},
 	{Path: "mail.host", Doc: "The external relay's hostname, when mail is external."},
 	{Path: "mail.port", Doc: "The external relay's port."},
 	{Path: "mail.starttls", Doc: "Whether the relay is reached with STARTTLS.", OneOf: []string{"true", "false"}},

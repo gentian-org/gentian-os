@@ -12,7 +12,7 @@ check() {
     # bootstrap. Testing it here meant apply() could never satisfy check(), so
     # the step reported missing on a cluster whose mail stack was running.
     case "$(gentian_mail_service_mode)" in
-        kernel)
+        system)
             # Both keys, not just the ConfigMap. Postfix mounts them as two
             # separate texthash: files — virtual_mailbox_domains decides which
             # recipients it accepts, virtual_mailbox_maps decides where they go

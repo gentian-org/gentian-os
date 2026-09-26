@@ -12,6 +12,6 @@ spec:
   kernelDomain: example.org
   layout: v4
   mail:
-    serviceMode: kernel
+    serviceMode: system
   llm:
     enabled: true

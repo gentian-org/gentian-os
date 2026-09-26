@@ -48,7 +48,7 @@ try_load_creds_from_openbao() {
             && -n "${SMTP_RELAY_PASSWORD:-}" ]]; then
             return
         fi
-        if [[ "${MAIL_SERVICE_MODE}" == "kernel" ]]; then
+        if [[ "${MAIL_SERVICE_MODE}" == "system" ]]; then
             return
         fi
     fi

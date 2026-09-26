@@ -577,14 +577,18 @@ func TestDovecotDeployed(t *testing.T) {
 		mode string
 		want bool
 	}{
-		{"kernel", true},
+		{"system", true},
 		{"external", false},
 		// Unset is external: configuring an absent Dovecot is silent waste,
 		// while skipping a present one fails IMAP visibly and is fixed by
 		// setting the value. Of the two, prefer the loud one.
 		{"", false},
-		// Anything unrecognised is not kernel. A typo must not provision.
-		{"Kernel", false},
+		// Anything unrecognised is not the system stack. A typo must not
+		// provision -- and neither must "kernel", the value this was called
+		// before the rename: a claim that still says it means nothing now,
+		// and meaning "external" is the safe reading of nothing.
+		{"System", false},
+		{"kernel", false},
 		{"selfhosted", false},
 	} {
 		r := &controller.TenantReconciler{MailServiceMode: tc.mode}
@@ -612,7 +616,7 @@ func TestDefaultTenantMailMode(t *testing.T) {
 		mode string
 		want gentianov1alpha1.MailMode
 	}{
-		{"kernel", gentianov1alpha1.MailModeSelfhosted},
+		{"system", gentianov1alpha1.MailModeSelfhosted},
 		// The relaying cluster: Postfix is deployed for outbound, Dovecot is
 		// not. transport-only is exactly that shape — a registered domain and
 		// SMTP credentials, no mailbox, and no MX claiming inbound.
@@ -620,8 +624,10 @@ func TestDefaultTenantMailMode(t *testing.T) {
 		// Unset is external, same as the Dovecot gate: defaulting to a stack
 		// that may not exist is the failure this whole change is about.
 		{"", gentianov1alpha1.MailModeTransportOnly},
-		// A typo must not provision kernel mail.
-		{"Kernel", gentianov1alpha1.MailModeTransportOnly},
+		// A typo must not provision the system mail stack, and neither must
+		// the value this used to be called.
+		{"System", gentianov1alpha1.MailModeTransportOnly},
+		{"kernel", gentianov1alpha1.MailModeTransportOnly},
 	} {
 		r := &controller.TenantReconciler{MailServiceMode: tc.mode}
 		if got := r.DefaultTenantMailModeForTest(context.Background()); got != tc.want {
@@ -693,7 +699,7 @@ func TestSyncTenantMailDNS_GatedOnClusterMailMode(t *testing.T) {
 	t.Run("kernel mail publishes", func(t *testing.T) {
 		c := fake.NewClientBuilder().WithScheme(scheme.Scheme).Build()
 		r := &controller.TenantReconciler{
-			Client: c, KernelDomain: "example.org", MailServiceMode: "kernel",
+			Client: c, KernelDomain: "example.org", MailServiceMode: "system",
 		}
 		if err := r.SyncTenantMailDNSForTest(context.Background(), newTenant()); err != nil {
 			t.Fatalf("sync: %v", err)
@@ -800,7 +806,7 @@ func TestMail_SelfhostedIsHonouredWhenTheClusterRunsIt(t *testing.T) {
 	c := fake.NewClientBuilder().WithScheme(scheme.Scheme).
 		WithObjects(mailNS, tenant).Build()
 
-	r := &controller.TenantReconciler{Client: c, MailServiceMode: "kernel"}
+	r := &controller.TenantReconciler{Client: c, MailServiceMode: "system"}
 	_ = r.EnsureMailForTest(context.Background(), tenant)
 
 	cond := findCondition(tenant, "MailReady")

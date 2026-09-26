@@ -771,7 +771,7 @@ validate_config() {
     _file_header "${cluster_claim_file}" "Cluster checks (the Cluster claim)"
 
     MAIL_SERVICE_MODE="$(gentian_mail_service_mode)"
-    if [[ "${MAIL_SERVICE_MODE}" != "external" && "${MAIL_SERVICE_MODE}" != "kernel" ]]; then
+    if [[ "${MAIL_SERVICE_MODE}" != "external" && "${MAIL_SERVICE_MODE}" != "system" ]]; then
         echo "  [INVALID]  MAIL_SERVICE_MODE=${MAIL_SERVICE_MODE}  — must be 'external' or 'kernel' (set in ${cluster_claim_file})"
         (( errors++ )) || true
     else
@@ -790,7 +790,7 @@ validate_config() {
         echo "  [INVALID]  MAIL_SERVICE_MODE=kernel with NETWORK_MODE=tunnel"
         echo "             Kernel mail (Postfix/Dovecot) needs a reachable SMTP ingress; use MAIL_SERVICE_MODE=external with an SMTP relay on tunnel clusters."
         (( errors++ )) || true
-    elif [[ "${MAIL_SERVICE_MODE}" == "kernel" ]]; then
+    elif [[ "${MAIL_SERVICE_MODE}" == "system" ]]; then
         echo "  [OK]       MAIL_SERVICE_MODE=kernel with NETWORK_MODE=${NETWORK_MODE}"
     fi
 
@@ -1399,7 +1399,7 @@ prompt_mail_mode() {
     fi
     export MAIL_SERVICE_MODE
 
-    if [[ "${MAIL_SERVICE_MODE}" == "kernel" && "${NETWORK_MODE:-tunnel}" != "static-ip" ]]; then
+    if [[ "${MAIL_SERVICE_MODE}" == "system" && "${NETWORK_MODE:-tunnel}" != "static-ip" ]]; then
         error "mail.serviceMode=kernel requires networkMode=static-ip; this cluster is ${NETWORK_MODE:-tunnel}."
         error "  Choose external, or re-run with NETWORK_MODE=static-ip."
         exit 1

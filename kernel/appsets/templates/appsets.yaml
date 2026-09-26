@@ -31,7 +31,7 @@
 */ -}}
 {{- if and (hasSuffix "-llm.yaml" $path) (ne (toString $.Values.llmEnabled) "true") }}
 {{- /* skipped: this cluster does not serve LLMs */ -}}
-{{- else if and (hasSuffix "-dovecot.yaml" $path) (ne $.Values.mailServiceMode "kernel") }}
+{{- else if and (hasSuffix "-dovecot.yaml" $path) (ne $.Values.mailServiceMode "system") }}
 {{- /* skipped: mail.serviceMode is {{ $.Values.mailServiceMode }} */ -}}
 {{- else if and (hasSuffix "-metallb-exception.yaml" $path) (ne (toString $.Values.metallbException) "true") }}
 {{- /* skipped: platformParams.metallb is not "true" on this cluster's claim */ -}}

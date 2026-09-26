@@ -1,4 +1,4 @@
-# Invalid Cluster claim — layout v5 asking for the kernel mail stack.
+# Invalid Cluster claim — layout v5 asking for the platform's own mail stack.
 #
 # v5 has no step that deploys Postfix and Dovecot, so this is an opt-in the
 # layout cannot honour: accepting it registers every tenant in a mail stack
@@ -7,10 +7,10 @@
 apiVersion: gentianos.io/v1alpha1
 kind: Cluster
 metadata:
-  name: test-v5-kernel-mail
+  name: test-v5-system-mail
   namespace: default
 spec:
   kernelDomain: example.org
   layout: v5
   mail:
-    serviceMode: kernel
+    serviceMode: system

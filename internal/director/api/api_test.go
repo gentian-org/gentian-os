@@ -955,7 +955,7 @@ func TestClusterSettingsAreReadWidelyAndWrittenNarrowly(t *testing.T) {
 		t.Fatalf("a tenant admin read the cluster's settings: %d", code)
 	}
 	if code, _ := h.do(t, "PATCH", "/v1/clusters/"+dt.Cluster+"/settings", tina,
-		`{"settings":{"mail.serviceMode":"kernel"}}`); code != http.StatusForbidden {
+		`{"settings":{"mail.serviceMode":"system"}}`); code != http.StatusForbidden {
 		t.Fatalf("a tenant admin changed the cluster's settings: %d", code)
 	}
 }

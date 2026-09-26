@@ -47,7 +47,7 @@ spec:
     # acmeEnv:                   staging until the cluster is proven
     dnsProvider: cloudflare
   mail:
-    serviceMode: kernel
+    serviceMode: system
 `
 
 func TestASettingIsReplacedInPlaceAndTheCommentsSurvive(t *testing.T) {
@@ -137,7 +137,7 @@ func TestAMissingSettingIsInsertedUnderItsParent(t *testing.T) {
 // Setting a value it already has is not a commit.
 func TestSettingWhatIsAlreadyThereChangesNothing(t *testing.T) {
 	t.Parallel()
-	out, changed, err := setClaimValue(claimFixture, "mail.serviceMode", "kernel")
+	out, changed, err := setClaimValue(claimFixture, "mail.serviceMode", "system")
 	if err != nil {
 		t.Fatal(err)
 	}

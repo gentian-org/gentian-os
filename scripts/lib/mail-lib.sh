@@ -28,7 +28,7 @@ _mail_kernel_namespace() { gentian_mail_namespace; }
 mail_network_mode_compatible() {
     local mode="${1:-$(gentian_mail_service_mode)}"
     local network="${2:-${NETWORK_MODE:-tunnel}}"
-    [[ "${mode}" != "kernel" || "${network}" != "tunnel" ]]
+    [[ "${mode}" != "system" || "${network}" != "tunnel" ]]
 }
 
 mail_network_mode_incompatibility_message() {
@@ -48,9 +48,9 @@ install_kernel_mail() {
     banner "Mail delivery (MAIL_SERVICE_MODE=${mode})"
 
     case "${mode}" in
-        external|kernel) ;;
+        external|system) ;;
         *)
-            error "MAIL_SERVICE_MODE must be external or kernel (got: ${mode})"
+            error "MAIL_SERVICE_MODE must be external or system (got: ${mode})"
             return 1
             ;;
     esac

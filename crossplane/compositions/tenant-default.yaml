@@ -1015,7 +1015,7 @@ spec:
             omitted clientSecretSecretRef would have Keycloak generate a new one
             and IMAP would stop validating tokens.
             */}}
-            {{- if eq (dig "mail.serviceMode" "" $ccData) "kernel" }}
+            {{- if eq (dig "mail.serviceMode" "" $ccData) "system" }}
             ---
             apiVersion: openidclient.keycloak.crossplane.io/v1alpha1
             kind: Client
@@ -1846,7 +1846,7 @@ spec:
                      cannot read one, and external mode relays through a provider
                      whose address is not derivable from the domain. Those clusters
                      keep the Job's behaviour unchanged. */}}
-                {{- if and (eq (dig "mail.serviceMode" "" $ccData) "kernel") $kd }}
+                {{- if and (eq (dig "mail.serviceMode" "" $ccData) "system") $kd }}
                 smtpServer:
                   - host: {{ printf "mail.%s" $kd | quote }}
                     port: "587"

@@ -167,7 +167,7 @@ func (r *TenantReconciler) mailFunctionPresent(ctx context.Context) (bool, error
 }
 
 func (r *TenantReconciler) dovecotDeployed(ctx context.Context) bool {
-	return clusterMailServiceMode(ctx, r.Client, r.MailServiceMode) == "kernel"
+	return clusterMailServiceMode(ctx, r.Client, r.MailServiceMode) == mailServiceModeSystem
 }
 
 // defaultTenantMailMode — what a tenant gets when it does not say.

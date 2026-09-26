@@ -37,12 +37,12 @@ spec:
               x-kubernetes-validations:
                 - rule: >-
                     !(self.layout == 'v5' && has(self.mail) &&
-                    has(self.mail.serviceMode) && self.mail.serviceMode == 'kernel')
+                    has(self.mail.serviceMode) && self.mail.serviceMode == 'system')
                   message: >-
-                    mail.serviceMode 'kernel' is not available on layout v5: no step
-                    deploys the kernel Postfix and Dovecot, so tenants would be
-                    registered in a mail stack that does not exist. Use 'external'
-                    with an smtp-relay credential.
+                    mail.serviceMode 'system' is not available on layout v5 yet: no
+                    step deploys Postfix and Dovecot into system-mail, so tenants
+                    would be registered in a mail stack that does not exist. Use
+                    'external' with an smtp-relay credential until the step lands.
                 - rule: >-
                     !(self.layout == 'v5' && has(self.llm) &&
                     has(self.llm.enabled) && self.llm.enabled)
@@ -820,11 +820,18 @@ spec:
                     serviceMode:
                       type: string
                       description: >
-                        external relays through an upstream provider; kernel
-                        runs Postfix in-cluster.
+                        external relays through an upstream provider; system
+                        runs Postfix and Dovecot in-cluster, in system-mail and
+                        system-mail-dmz.
+
+                        This was called "kernel", which was wrong under the
+                        layout: the stack is a system-tier service and no
+                        kernel namespace is involved. There is no alias — a
+                        claim that still says kernel is refused, which is
+                        better than one that silently means something else.
                       enum:
                         - external
-                        - kernel
+                        - system
                       default: external
                     egressHost:
                       type: string

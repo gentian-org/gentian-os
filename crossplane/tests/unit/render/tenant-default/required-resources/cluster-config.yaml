@@ -19,4 +19,4 @@ data:
   tenant.limitRange.default.memory: 512Mi
   tenant.limitRange.defaultRequest.cpu: 100m
   tenant.limitRange.defaultRequest.memory: 128Mi
-  mail.serviceMode: kernel
+  mail.serviceMode: system

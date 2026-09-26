@@ -322,7 +322,7 @@ func TestMain(m *testing.M) {
 		// The mail tests assert the shared Postfix AND Dovecot artefacts, which
 		// is what kernel mode provisions. With this unset the suite would run as
 		// external, where Dovecot is deliberately not configured at all.
-		MailServiceMode: "kernel",
+		MailServiceMode: "system",
 	}).SetupWithManager(mgr); err != nil {
 		panic(err)
 	}

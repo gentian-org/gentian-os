@@ -97,6 +97,14 @@ func ClusterTenancyMode(ctx context.Context, c client.Reader, fallback string) s
 // fallback described above. The two disagreed for as long as they were separate:
 // the claim said kernel while the operator, reading only its Helm value, said
 // external and skipped Dovecot provisioning entirely.
+// mailServiceModeSystem is the cluster running its own mail stack.
+//
+// It was spelled "kernel", and that was wrong under the layout: Postfix and
+// Dovecot live in system-mail and system-mail-dmz, tier system, and no kernel
+// namespace is involved. The tier vocabulary already has the word, so this is
+// the one that needs no second one.
+const mailServiceModeSystem = "system"
+
 func clusterMailServiceMode(ctx context.Context, c client.Reader, fallback string) string {
 	return clusterConfigValueOr(ctx, c, clusterConfigMailModeKey, fallback)
 }

@@ -341,7 +341,7 @@ fi
 # --- Mail transport settings ---
 # This path is operational config (not a derived password), so we intentionally
 # overwrite it on each run to reflect install.env changes.
-if [ "${MAIL_SERVICE_MODE}" != "external" ] && [ "${MAIL_SERVICE_MODE}" != "kernel" ]; then
+if [ "${MAIL_SERVICE_MODE}" != "external" ] && [ "${MAIL_SERVICE_MODE}" != "system" ]; then
   echo "  Invalid MAIL_SERVICE_MODE='${MAIL_SERVICE_MODE}' (expected external|kernel); defaulting to external"
   MAIL_SERVICE_MODE="external"
 fi
