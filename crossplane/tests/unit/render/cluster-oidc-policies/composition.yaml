@@ -116,6 +116,86 @@ spec:
             {{- end }}
             {{- end }}
 
+            {{- /* ── System-tier engines (provider-helm Releases) ───────────────
+                 MariaDB, Redis and MinIO, one per system namespace above.
+
+                 Composed here because v4 composed them from an InfraData
+                 claim and v5 does not have one: the Cluster claim is the
+                 composer of the system tier, so the engines come with the
+                 namespaces rather than from a second claim that has to be
+                 scaffolded and kept in step.
+
+                 The values are NOT inlined. Each chart in
+                 kernel/services/infra-* carries its own values as ConfigMaps
+                 and its credential as an ExternalSecret, synced into the
+                 namespace by the 08-data-plane ApplicationSet; the Release
+                 reads them by name. That split is v4's and is kept on
+                 purpose: the values stay reviewable as YAML in the
+                 repository, and the release stays an object Crossplane owns.
+
+                 Postgres is not here. The CNPG cluster is a CR, not a Helm
+                 release, and Argo delivers it the way it delivers
+                 kernel-postgres.
+
+                 Bitnami postgresql is retired rather than moved
+                 (namespace-cleanup.md §2.2): it held only kernel databases,
+                 and those are on kernel-postgres in kernel-data now. */}}
+            {{- if $v5 }}
+            {{- $infraCharts := "https://raw.githubusercontent.com/gentian-org/gentian-os/develop/charts/infra/packages" }}
+            {{- /* The ConfigMap names below carry no stage. A cluster has one
+                 stage (namespace-cleanup.md §2.2) and the Cluster claim does
+                 not carry it, so a name with a stage in it could only ever be
+                 right on a dev cluster -- and would fail as a Release that
+                 cannot find its values. */}}
+            {{- range $e := (list
+                  (dict "fn" "mariadb" "chart" "mariadb" "version" "3.0.3" "values" (list "mariadb-base-values" "mariadb-cluster-values") "secret" "mariadb-sensitive-values" "wait" "20m")
+                  (dict "fn" "cache"   "chart" "redis"   "version" "18.6.1" "values" (list "redis-env-values" "redis-base-values" "redis-cluster-values") "secret" "" "wait" "10m")
+                  (dict "fn" "s3"      "chart" "minio"   "version" "16.0.10" "values" (list "minio-env-values" "minio-base-values" "minio-cluster-values") "secret" "" "wait" "10m")
+               ) }}
+            ---
+            apiVersion: helm.crossplane.io/v1beta1
+            kind: Release
+            metadata:
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: {{ $e.chart }}-release
+                crossplane.io/external-name: {{ $e.chart }}
+              name: {{ $name }}-{{ $e.chart }}
+            spec:
+              forProvider:
+                chart:
+                  name: {{ $e.chart }}
+                  repository: {{ $infraCharts }}
+                  version: {{ $e.version | quote }}
+                namespace: system-{{ $e.fn }}
+                wait: true
+                {{- /* Generous, for the reason v4's postgresql release
+                     records: a slow first start on network storage lets the
+                     StatefulSet come up while the chart's own bootstrap --
+                     which sets the password everything connects with -- is
+                     still running, and Crossplane marks the release failed
+                     regardless. The bootstrap is idempotent; the ceiling
+                     costs nothing on the common path. */}}
+                waitTimeout: {{ $e.wait | quote }}
+                valuesFrom:
+                  {{- range $cm := $e.values }}
+                  - configMapKeyRef:
+                      name: {{ $cm }}
+                      namespace: system-{{ $e.fn }}
+                      key: values.yaml
+                      optional: false
+                  {{- end }}
+                  {{- if $e.secret }}
+                  - secretKeyRef:
+                      name: {{ $e.secret }}
+                      namespace: system-{{ $e.fn }}
+                      key: sensitive-values.yaml
+                      optional: false
+                  {{- end }}
+              providerConfigRef:
+                name: kubernetes
+            {{- end }}
+            {{- end }}
+
             {{- /* ── Kernel namespaces ─────────────────────────────────────────── */}}
             {{- /* v5's namespaces exist before the claim does (installer A-01). */}}
             {{- range (ternary list (list "platform-kernel" "gentian-system") $v5) }}

@@ -4,3 +4,12 @@ env: dev
 # storageClass empty = use the cluster's default StorageClass. Set per
 # stage in values-<env>.yaml only where a stage genuinely differs.
 storageClass: ""
+
+# Where these objects go.
+#
+# Empty keeps the v4 answer, gentian-infra-<env>, which is the namespace that
+# layout's ApplicationSet targets. v5 passes the system-tier namespace the
+# Cluster claim composed -- one namespace per engine, so a quota, a backup
+# policy and a network policy can differ per engine without separating a
+# stateful service after the fact (namespace-cleanup.md §2.2).
+namespace: ""

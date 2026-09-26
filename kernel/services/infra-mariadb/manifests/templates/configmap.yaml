@@ -18,7 +18,7 @@ apiVersion: v1
 kind: ConfigMap
 metadata:
   name: mariadb-base-values
-  namespace: gentian-infra-{{ .Values.env }}
+  namespace: {{ .Values.namespace | default (printf "gentian-infra-%s" .Values.env) }}
   annotations:
     argocd.argoproj.io/sync-wave: "-1"
 data:
@@ -59,8 +59,14 @@ data:
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: mariadb-{{ .Values.env }}-values
-  namespace: gentian-infra-{{ .Values.env }}
+  {{- /* The cluster's own values. On v4 the name carries the stage,
+       because one cluster served several; on v5 a cluster has one stage
+       and the suffix is dropped (namespace-cleanup.md §2.2), which is
+       also what lets the Cluster composition name this ConfigMap in the
+       Release's valuesFrom without knowing the stage -- the claim does
+       not carry one. */}}
+  name: {{ if .Values.namespace }}mariadb-cluster-values{{ else }}mariadb-{{ .Values.env }}-values{{ end }}
+  namespace: {{ .Values.namespace | default (printf "gentian-infra-%s" .Values.env) }}
   annotations:
     argocd.argoproj.io/sync-wave: "-1"
 data:

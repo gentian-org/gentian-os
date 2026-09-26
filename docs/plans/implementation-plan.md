@@ -1268,9 +1268,9 @@ operator and the network policies name six of them.
 |---|---|---|---|
 | `kernel-postgres` + CNPG — Keycloak, its extensions, OpenFGA, the console | `platform-kernel` / `gentian-infra-<stage>` | `kernel-data` | ✅ migrated, by the bootstrap chart's Argo Application (`kernel/data/kernel-postgres`), covered by `B-01` |
 | tenant postgres | `platform-kernel` via `kernel-admin` | `system-postgresql` | ✅ composed, and the CNPG cluster with it |
-| MariaDB | `gentian-infra-<stage>` | `system-mariadb` | ☐ no composer |
-| Redis | `gentian-infra-<stage>` | `system-cache` | ☐ no composer |
-| MinIO | `gentian-infra-<stage>` | `system-s3` | ☐ no composer |
+| MariaDB | `gentian-infra-<stage>` | `system-mariadb` | ✅ composed |
+| Redis | `gentian-infra-<stage>` | `system-cache` | ✅ composed |
+| MinIO | `gentian-infra-<stage>` | `system-s3` | ✅ composed |
 | Postfix, Dovecot, the DKIM milter | `platform-kernel` + the store's public ports | `system-mail`, `system-mail-dmz` | ☐ no composer — refused at admission meanwhile |
 | LiteLLM, its database, vLLM instances | `platform-kernel`, installer `D-05` | `system-llm` | ☐ no composer — refused at admission meanwhile |
 
@@ -1324,11 +1324,27 @@ appsets wrapper resolved only `ns.<fn>.placeholder`; the system tier gets
 `sys.<fn>.placeholder`, kept separate rather than merged so that a future
 collision between a kernel and a system function name cannot resolve silently.
 
-**Still open**: MariaDB, Redis and MinIO — v4 composed their Helm releases from
-the `InfraData` claim, which v5 does not have, so each needs its Release
-composed from the Cluster claim beside the prerequisites its chart already
-carries. Then mail and LLM, which are larger: a DMZ namespace, public ports,
-DNS, and in LLM's case GPU scheduling.
+**MariaDB, Redis and MinIO** came the same way. v4 composed their Helm
+releases from the `InfraData` claim, which v5 does not have; they are
+provider-helm Releases on the Cluster claim now, one per system namespace,
+reading the values ConfigMaps and the credential ExternalSecret their charts
+already carry — the appset syncs those into the namespace and the Release
+names them. The split is v4's and is kept: the values stay reviewable as YAML
+in this repository and the release stays an object Crossplane owns.
+
+Bitnami postgresql is retired rather than moved, per §2.2: it held only kernel
+databases and those are on `kernel-postgres` in `kernel-data`.
+
+One thing the port forced. The values ConfigMaps were named
+`<engine>-<stage>-values`, and the Cluster claim carries no stage — so a name
+with a stage in it could only ever be right on a dev cluster, and elsewhere
+would fail as a Release that cannot find its values. §2.2 already said what to
+do ("the stage suffix is dropped: a cluster has one stage"), so on v5 the
+ConfigMap is `<engine>-cluster-values`. v4 keeps its stage suffix, and the
+charts render whichever applies from one template.
+
+**Still open**: mail and LLM, which are larger than the engines — a DMZ
+namespace, public ports, DNS, and in LLM's case GPU scheduling.
 
 **Done when** a second tenant's desktop reaches Ready on a v5 cluster, every
 engine a catalogue app can ask for is composed, quota'd, policy-labelled and

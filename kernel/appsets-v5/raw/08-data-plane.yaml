@@ -40,6 +40,22 @@ spec:
           - app: tenant-postgres
             path: kernel/data/tenant-postgres
             namespace: sys.postgresql.placeholder
+          # The three Bitnami engines. These charts carry only the
+          # prerequisites -- the values ConfigMaps and the credential
+          # ExternalSecret -- and the Helm release itself is a provider-helm
+          # Release the Cluster composition composes, reading those
+          # ConfigMaps by name. The split is v4's and is kept: the values are
+          # reviewable as YAML in this repository, and the release is an
+          # object Crossplane owns and reconciles.
+          - app: infra-mariadb
+            path: kernel/services/infra-mariadb/manifests
+            namespace: sys.mariadb.placeholder
+          - app: infra-redis
+            path: kernel/services/infra-redis/manifests
+            namespace: sys.cache.placeholder
+          - app: infra-minio
+            path: kernel/services/infra-minio/manifests
+            namespace: sys.s3.placeholder
   template:
     metadata:
       name: '{{.app}}-{{.env}}'
@@ -51,6 +67,16 @@ spec:
         repoURL: https://github.com/gentian-org/gentian-os
         targetRevision: develop
         path: '{{.path}}'
+        helm:
+          parameters:
+            - name: env
+              value: '{{.env}}'
+            # The engine charts default this to gentian-infra-<env>, which is
+            # v4's namespace. Stated here so the objects land where the
+            # Cluster claim composed them and the Release's valuesFrom can
+            # find them; tenant-postgres ignores it.
+            - name: namespace
+              value: '{{.namespace}}'
       destination:
         server: https://kubernetes.default.svc
         namespace: '{{.namespace}}'

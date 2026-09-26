@@ -7,7 +7,7 @@ status:
   conditions:
   - lastTransitionTime: "2024-01-01T00:00:00Z"
     message: 'Unready resources: argocd-appproject-tenants, eso-cluster-secret-store,
-      gentian-cluster-config, and 20 more'
+      gentian-cluster-config, and 23 more'
     reason: Creating
     status: "False"
     type: Ready
@@ -144,6 +144,94 @@ spec:
   providerConfigRef:
     name: kubernetes
 ---
+apiVersion: helm.crossplane.io/v1beta1
+kind: Release
+metadata:
+  annotations:
+    crossplane.io/composition-resource-name: mariadb-release
+    crossplane.io/external-name: mariadb
+  labels:
+    crossplane.io/composite: dev-cluster
+  name: dev-cluster-mariadb
+  ownerReferences:
+  - apiVersion: gentianos.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XCluster
+    name: dev-cluster
+    uid: ""
+spec:
+  forProvider:
+    chart:
+      name: mariadb
+      repository: https://raw.githubusercontent.com/gentian-org/gentian-os/develop/charts/infra/packages
+      version: 3.0.3
+    namespace: system-mariadb
+    valuesFrom:
+    - configMapKeyRef:
+        key: values.yaml
+        name: mariadb-base-values
+        namespace: system-mariadb
+        optional: false
+    - configMapKeyRef:
+        key: values.yaml
+        name: mariadb-cluster-values
+        namespace: system-mariadb
+        optional: false
+    - secretKeyRef:
+        key: sensitive-values.yaml
+        name: mariadb-sensitive-values
+        namespace: system-mariadb
+        optional: false
+    wait: true
+    waitTimeout: 20m
+  providerConfigRef:
+    name: kubernetes
+---
+apiVersion: helm.crossplane.io/v1beta1
+kind: Release
+metadata:
+  annotations:
+    crossplane.io/composition-resource-name: minio-release
+    crossplane.io/external-name: minio
+  labels:
+    crossplane.io/composite: dev-cluster
+  name: dev-cluster-minio
+  ownerReferences:
+  - apiVersion: gentianos.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XCluster
+    name: dev-cluster
+    uid: ""
+spec:
+  forProvider:
+    chart:
+      name: minio
+      repository: https://raw.githubusercontent.com/gentian-org/gentian-os/develop/charts/infra/packages
+      version: 16.0.10
+    namespace: system-s3
+    valuesFrom:
+    - configMapKeyRef:
+        key: values.yaml
+        name: minio-env-values
+        namespace: system-s3
+        optional: false
+    - configMapKeyRef:
+        key: values.yaml
+        name: minio-base-values
+        namespace: system-s3
+        optional: false
+    - configMapKeyRef:
+        key: values.yaml
+        name: minio-cluster-values
+        namespace: system-s3
+        optional: false
+    wait: true
+    waitTimeout: 10m
+  providerConfigRef:
+    name: kubernetes
+---
 apiVersion: kubernetes.crossplane.io/v1alpha2
 kind: Object
 metadata:
@@ -261,6 +349,50 @@ spec:
           gentianos.io/managed-by: crossplane
           gentianos.io/tier: system
         name: system-s3
+  providerConfigRef:
+    name: kubernetes
+---
+apiVersion: helm.crossplane.io/v1beta1
+kind: Release
+metadata:
+  annotations:
+    crossplane.io/composition-resource-name: redis-release
+    crossplane.io/external-name: redis
+  labels:
+    crossplane.io/composite: dev-cluster
+  name: dev-cluster-redis
+  ownerReferences:
+  - apiVersion: gentianos.io/v1alpha1
+    blockOwnerDeletion: true
+    controller: true
+    kind: XCluster
+    name: dev-cluster
+    uid: ""
+spec:
+  forProvider:
+    chart:
+      name: redis
+      repository: https://raw.githubusercontent.com/gentian-org/gentian-os/develop/charts/infra/packages
+      version: 18.6.1
+    namespace: system-cache
+    valuesFrom:
+    - configMapKeyRef:
+        key: values.yaml
+        name: redis-env-values
+        namespace: system-cache
+        optional: false
+    - configMapKeyRef:
+        key: values.yaml
+        name: redis-base-values
+        namespace: system-cache
+        optional: false
+    - configMapKeyRef:
+        key: values.yaml
+        name: redis-cluster-values
+        namespace: system-cache
+        optional: false
+    wait: true
+    waitTimeout: 10m
   providerConfigRef:
     name: kubernetes
 ---
