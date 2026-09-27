@@ -136,6 +136,38 @@ worst time for it. So step 1 restores the capability rather than dropping it.
    All five app render fixtures pass against **unchanged goldens**, which is
    the check worth having: the same values read from a different shape render
    byte-identical output.
+## What stops step 6: two thirds of the catalogue's tiles
+
+Measured before converting anything. Of 33 catalogue profiles carrying 35
+tiles, **21 profiles carry 23 tiles and have no ingress at all**. They are the
+Nextcloud and Odoo addons, and `nextcloud-calendar-ce` says why in its own
+words:
+
+> The addon has no ingress of its own, so the shell resolves the base URL from
+> `spec.customization.addon.of` and appends this suffix to deep-link into the
+> feature inside Nextcloud.
+
+So an addon's tile points at **another component's** host with a suffix:
+`?app=calendar`, `?open=spreadsheet`, `/odoo/action-crm.action_your_pipeline?gentian_embed=1`.
+`richdocuments-ce` carries three of them.
+
+ComponentProfile has no place for such a tile. `expose[].tile` hangs a tile off
+an exposure of *this* component, and an addon exposes nothing — it has no
+Service and no route, which is the whole point of being activation state inside
+the base rather than an install. Giving an addon an `expose[]` entry to hold a
+tile would create a second HTTPRoute on the base's host, and
+`ExposureTile.path` is `^/`-anchored so it cannot hold `?app=calendar` anyway.
+
+`internal/controller/tile_projection_reconciler.go` mentions addons nowhere, so
+this is not a gap the migration would open: **v5 already shows none of these 23
+tiles.** It is a v0.4 capability that is currently unreachable, and converting
+the 21 profiles is the moment the strings would be deleted rather than merely
+unread — the same trap step 1 caught for translations, and this time it is two
+thirds of the catalogue's tiles rather than thirty labels.
+
+This needs a decision before step 6, because the shape it takes decides what
+the 21 documents are converted INTO. It is recorded here rather than guessed.
+
 4. **The Go side: 35 non-test files.** Most are mechanical, because
    `AppProfile.spec.kernelRequirements` and
    `ComponentProfile.spec.requires.services` are the **same
