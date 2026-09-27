@@ -960,6 +960,17 @@ for x in items:
     # once Keycloak answers (D-07 in v4): as Keycloak-dependent as the above.
     if "jwt.vault.upbound.io" in x.get("apiVersion", ""):
         continue
+    # The system-tier engines. Their Helm values are ConfigMaps and a Secret
+    # that the 08-data-plane ApplicationSet syncs, and that ApplicationSet is
+    # created by C-02 -- the step after this one. So a Release cannot be Ready
+    # here by construction, for exactly the reason the Keycloak objects above
+    # cannot: it is waiting on a phase this step precedes. Gating on it is
+    # waiting for a later phase to have already happened, and on a fresh
+    # cluster it can only ever time out.
+    #
+    # C-02 waits for them instead, once it has synced what they read.
+    if "helm.crossplane.io" in x.get("apiVersion", ""):
+        continue
     # Observe-only: reflects state this composition does not create.
     if [p for p in (x.get("spec", {}).get("managementPolicies") or []) if p == "Observe"] \
        and len(x.get("spec", {}).get("managementPolicies") or []) == 1:
