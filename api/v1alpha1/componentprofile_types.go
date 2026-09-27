@@ -463,9 +463,31 @@ type ExposureSpec struct {
 type ExposureTile struct {
 	// DisplayName is the label under the icon. A few words, in the language of
 	// the person using it rather than of the chart that installs it.
+	//
+	// Required, and it is also the fallback: a viewer whose locale is not in
+	// DisplayNames below sees this. A profile that ships no translations needs
+	// nothing else.
 	// +kubebuilder:validation:MinLength=1
 	// +kubebuilder:validation:MaxLength=64
 	DisplayName string `json:"displayName"`
+
+	// DisplayNames are translations of DisplayName, keyed by locale
+	// ("de_DE", "en_US").
+	//
+	// Optional and additive, which is the shape this needs: the common case is
+	// one language and stays one line, and a profile that has translations does
+	// not have to restate the fallback in a map.
+	//
+	// It exists because the old AppProfile tile carried displayName as a map
+	// and thirty tiles across the catalogue were genuinely translated --
+	// "Automatisierung", "Dateien", "Präsentation", every Odoo module. When the
+	// tile path moved to this type those strings stopped being read, and
+	// rewriting the profiles is the moment they would have been deleted rather
+	// than merely unused. A migration is the worst time to lose something
+	// quietly.
+	// +optional
+	// +kubebuilder:validation:MaxProperties=32
+	DisplayNames map[string]string `json:"displayNames,omitempty"`
 
 	// Description is the sentence the portal shows beside the label.
 	// +optional

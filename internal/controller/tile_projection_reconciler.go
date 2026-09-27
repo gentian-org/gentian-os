@@ -305,11 +305,12 @@ func (r *TileProjectionReconciler) componentTiles(ctx context.Context) ([]tileca
 				// Unique across the catalogue: two tenants may install the
 				// same profile, and the portal has to tell the two tiles
 				// apart.
-				Name:        tenant + "/" + comp.Name + "/" + e.Name,
-				DisplayName: e.Tile.DisplayName,
-				Description: e.Tile.Description,
-				Icon:        e.Tile.Icon,
-				URL:         tilecatalogue.URL(string(route.Spec.Hostnames[0]), e.Tile.Path),
+				Name:         tenant + "/" + comp.Name + "/" + e.Name,
+				DisplayName:  e.Tile.DisplayName,
+				DisplayNames: e.Tile.DisplayNames,
+				Description:  e.Tile.Description,
+				Icon:         e.Tile.Icon,
+				URL:          tilecatalogue.URL(string(route.Spec.Hostnames[0]), e.Tile.Path),
 				// Which object the relation is asked on is the tile's to say:
 				// app:<tenant>/<profile>, where an installed app's own
 				// permissions hang off (authorization-model.md §4), or the

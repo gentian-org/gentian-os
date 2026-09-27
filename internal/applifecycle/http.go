@@ -18,10 +18,10 @@ package applifecycle
 
 import (
 	"context"
+	"crypto/subtle"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"crypto/subtle"
 	"net/http"
 	"strings"
 	"time"

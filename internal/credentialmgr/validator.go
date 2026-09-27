@@ -17,10 +17,10 @@ limitations under the License.
 package credentialmgr
 
 import (
-	"errors"
 	"context"
 	"crypto/tls"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"

@@ -16,7 +16,10 @@ limitations under the License.
 
 package tilecatalogue
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 // What the operator writes is what the director reads, header and all: the
 // explanation at the top of the ConfigMap is a comment, so it has to survive
@@ -101,5 +104,46 @@ func TestURLDefaultsToTheFrontPage(t *testing.T) {
 		if got := URL("argocd.k.example", path); got != want {
 			t.Errorf("path %q: %s, want %s", path, got, want)
 		}
+	}
+}
+
+// A tile's translations survive the round trip through the projected file.
+//
+// They exist because thirty tiles in the catalogue are genuinely translated and
+// the type that replaced the old one dropped the map. The projection is the
+// narrow part of that path: if Marshal and Parse do not carry displayNames, the
+// desktop has nothing to pick from however well it picks.
+func TestTranslationsSurviveTheProjection(t *testing.T) {
+	t.Parallel()
+	body, err := Marshal(Catalogue{Tiles: []Tile{{
+		Name: "files", DisplayName: "Files",
+		DisplayNames: map[string]string{"de_DE": "Dateien"},
+		Icon:         "files", URL: "https://files.example.test/",
+		Object: "tenant:demo", AnyOf: []string{"can_view"},
+	}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := Parse([]byte(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Tiles) != 1 {
+		t.Fatalf("tiles = %d", len(got.Tiles))
+	}
+	if got.Tiles[0].DisplayNames["de_DE"] != "Dateien" {
+		t.Fatalf("translations lost: %+v", got.Tiles[0].DisplayNames)
+	}
+	// And a tile with none must not grow an empty map, which would render as
+	// `displayNames: {}` in every projected file for no reason.
+	body, err = Marshal(Catalogue{Tiles: []Tile{{
+		Name: "plain", DisplayName: "Plain", Icon: "x", URL: "https://x.test/",
+		Object: "tenant:demo", AnyOf: []string{"can_view"},
+	}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(body, "displayNames") {
+		t.Fatalf("a tile with no translations carries the key:\n%s", body)
 	}
 }

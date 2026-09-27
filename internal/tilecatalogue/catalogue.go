@@ -67,10 +67,14 @@ type Tile struct {
 	// one catalogue.
 	Name string `json:"name"`
 
-	// DisplayName, Description and Icon are what a person sees.
-	DisplayName string `json:"displayName"`
-	Description string `json:"description,omitempty"`
-	Icon        string `json:"icon"`
+	// DisplayName, Description and Icon are what a person sees. DisplayNames
+	// are translations of the label keyed by locale; the portal picks the
+	// viewer's and falls back to DisplayName, so a catalogue with no
+	// translations renders exactly as before.
+	DisplayName  string            `json:"displayName"`
+	DisplayNames map[string]string `json:"displayNames,omitempty"`
+	Description  string            `json:"description,omitempty"`
+	Icon         string            `json:"icon"`
 
 	// URL is where the tile leads, complete and absolute.
 	URL string `json:"url"`
