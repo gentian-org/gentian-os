@@ -56,28 +56,77 @@ readers to re-point or drop: `license` (2), `family` (2), `categories` (1).
 gentian-os is the jq path list of the catalogue-sync ApplicationSet — which
 AD-3 retires. Nothing in `gentian-ui` or `gentian-apps` reads it.
 
+## What the field check actually found
+
+Three of the four mappings need no new field at all, because they reuse the
+same element types: `secrets.generated`/`secrets.derived` are `[]AppSecret` and
+`[]DerivedSecretKey`, and `hooks.postInstall`/`hooks.provisioning` are
+`*AppPostInstallJob` and `*ProvisioningSpec`. `security` is
+`requires.privileges.egress` and `.podSecurity`.
+
+The fourth found something worth stopping on. **`portalTiles` has no consumer
+at all any more** — not the operator, not the composition, not the desktop. The
+tile a person sees comes from `tile_projection_reconciler.go`, which reads
+`ComponentProfile.spec.expose[].tile`. So those 38 `portalTiles` blocks are
+already dead, and with them **30 tiles' worth of German translations**:
+`PortalTile.displayName` is a `map[string]string` and `ExposureTile.displayName`
+is a plain string.
+
+Measured, not assumed: 40 `en_US` and 38 `de_DE` entries, of which 30 differ
+between the two — "Automatisierung", "Abonnements", "Dateien", "Wissen",
+"Präsentation". Thirteen are identical in both and lose nothing.
+
+That regression has already happened; the strings are simply unused today.
+What makes it this migration's business is that rewriting all 38 profiles is
+when they would be **deleted**, and a silent deletion during a migration is the
+worst time for it. So step 1 restores the capability rather than dropping it.
+
 ## What has to be done, in order
 
-1. **Close the two field gaps.** Verify `secrets` covers `appSecrets` +
-   `derivedSecretKeys`, `hooks` covers `postInstallJob`, and `expose[]` covers
-   `ingress` + `additionalIngresses` + `portalTiles`. Add only what is missing.
-2. **Teach the app composition ComponentProfile.** `app-default.yaml` reads
-   `AppProfile` today; the tenant app path is the one place the two kinds are
-   not yet interchangeable.
-3. **`Tenant.spec.apps[].profile` names a ComponentProfile.** Admission
+1. **Restore tile localisation, then close the gaps.** `ExposureTile` keeps
+   `displayName` as the required fallback and gains an optional
+   `displayNames` map of locale to string; `tilecatalogue.Tile` carries it and
+   the desktop picks by the viewer's locale, falling back. Nothing else needs a
+   new field.
+2. **Wire privileges, because AD-4 lands on them.** `security.egress[]` becomes
+   `requires.privileges.egress[]` and `security.macWaivers[]` becomes
+   `requires.privileges.podSecurity[]`. Both are mechanical wraps — the egress
+   `rule` is the same `networkingv1.NetworkPolicyEgressRule`, and a waiver keeps
+   its `policy` and `scope` — but each entry gains a `name` and a `reason`, and
+   both types say *"Name is what a PrivilegeGrant refers to"*. So the approval
+   mechanism AD-5 describes and this migration's translation are one piece of
+   work: `status.pendingPrivileges` populated, a granted counterpart, an
+   approval action under `can_approve_privilege`, and an install held rather
+   than silently unprivileged.
+3. **Teach the app composition ComponentProfile.** It reads exactly eight
+   fields of the profile spec — `appSecrets`, `chart`, `extraValues`, `ingress`,
+   `kernelRequirements`, `postInstallJob`, `sidecars`, `valueMapping` — so this
+   is eight renames, the `ExtraResources` kind, and the pipeline context key.
+   The 1,827 lines are almost all rendering, not reading.
+4. **The Go side: 35 non-test files.** Most are mechanical, because
+   `AppProfile.spec.kernelRequirements` and
+   `ComponentProfile.spec.requires.services` are the **same
+   `*ServiceRequirements` type** — one line per site. The ones that are not
+   mechanical are the egress and waiver readers from step 2:
+   `netpolicy/build.go`, `netpolicy/internal.go`, `mac_waiver_reconciler.go`.
+5. **`Tenant.spec.apps[].profile` names a ComponentProfile.** Admission
    already refuses a profile that is not in the catalogue, so the refusal moves
    with the kind.
-4. **Convert the 38 documents.** Mechanical, from the table above, and
-   verifiable: every converted profile must render the same objects through the
-   composition as it did before.
-5. **Re-point or drop the three metadata readers.**
-6. **Delete `AppProfile`**: the Go types, the CRD, the composition's old path,
+6. **Convert the 38 documents.** Mechanical, from the table above.
+7. **Re-point or drop the three metadata readers** (`license`, `family`,
+   `categories`).
+8. **Delete `AppProfile`**: the Go types, the CRD, the composition's old path,
    and the references in the AppProject and the sync path list.
 
 ## How each step is proved
 
 A conversion is right when the composition renders the same objects from the
-new profile as from the old. So step 4 is a render-fixture exercise, not a
-reading exercise: one fixture per shape (chart, composition, api, addon,
-sidecar, post-install job, privileged role), and the goldens are the ones that
-already exist for `app-default`.
+new profile as from the old. So step 6 is a render-fixture exercise, not a
+reading exercise: the goldens that already exist for `app-default` —
+`app-default`, `app-addons`, `app-sidecar`, `app-post-install-job`,
+`app-volume-mapping` — must not change. Where one does, the diff is the
+question to answer before moving on.
+
+The Go side is proved by the existing suite plus one new assertion per
+non-mechanical reader: an egress request renders the NetworkPolicy rule it
+carries, and a waiver reaches Kyverno only once it is granted.
