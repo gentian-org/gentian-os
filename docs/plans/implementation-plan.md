@@ -68,7 +68,7 @@ steps yet; `work-packages.md` is where their content lives until they are.
 | S7A.3 | The platform administrator is an address | ✅ |
 | S7A.4 | The admin console is an app, and it talks to the director | ◐ every screen wired; untested against a cluster that can push |
 | S7A.5 | Keycloak looks like the rest of the product | ✅ |
-| S7A.6 | The console and the desktop hold nothing | ◐ console yes, desktop still holds a Keycloak credential |
+| S7A.6 | The console and the desktop hold nothing | ✅ |
 | S7A.7 | The zone cookie does not reach the applications | ◐ built, needs a browser |
 | S7A.8 | A read-only view of the authorization state | ✅ |
 | S7A.9 | The kernel UIs are actually usable | ✅ |
@@ -94,31 +94,22 @@ steps yet; `work-packages.md` is where their content lives until they are.
    Three refusals stay by design until the work behind them lands: minting a
    backup key, a group-scoped notification audience, and audit events beyond
    the change history (roadmap §1.12).
-2. **S7A.6 — remove the bundled console from the desktop.** The only S7A item
-   not started, and the reason is its size rather than its difficulty: about
-   4,700 lines across `frontend/src/admin/` and a `backend/app/api/routes/
-   admin.py` entangled with services the desktop's own plumbing uses. The
-   frontend half is two import sites and is nearly free; the backend half is
-   not, and doing it badly takes the desktop down.
-
-   Its security goal is narrower than the deletion and can be had first:
-   `keycloak_admin_password` is a setting the desktop's backend still reads,
-   used by `keycloak_admin_store`, `keycloak_user_groups`,
-   `keycloak_security_policy_store` and `keycloak_audit_fetcher`. Nothing
-   supplies it on v5, so the credential is latent rather than live. Removing
-   the setting is what makes it impossible rather than merely unfed.
-3. **S7A.17's remaining half.** The listener's request-id read-back and a
+2. **S7A.17's remaining half.** The listener's request-id read-back and a
    durable home for the director's record of the authority. Both are against
    M3; neither blocks M1.
-4. **S7A.11 and S7A.7 — verify in a browser.** Both are built and neither has
+3. **S7A.11 and S7A.7 — verify in a browser.** Both are built and neither has
    been exercised: sign-out without the second question, and a zone cookie
    that does not reach a third-party application.
-5. **S8 — purge and reinstall**, which is what makes M1 reached rather
-   than demonstrated. Nothing blocks it: S7A.10's tenant teardown is done. A
-   purge now also exercises what S7A.10b added — the trust-anchor dispatch
-   and the repository handoff have never run on a cluster that started from
-   nothing.
-6. **After M1**, the work packages in the order in §6.
+4. **S8 — purge and reinstall**, which is what makes M1 reached rather than
+   demonstrated, and is now the most informative thing left to do. Nothing
+   blocks it. It is the first run of everything added since the last install:
+   the trust-anchor dispatch and the repository handoff (S7A.10b), the whole
+   system tier (S9), the director's per-realm Keycloak credential (S7A.17), and
+   a desktop with its authority removed (S7A.6). None of that has met a
+   cluster, and the checks that pass on it — renders, goldens, lints, tests —
+   did not catch the one ordering bug that a fresh install would have hit in
+   its first five minutes.
+5. **After M1**, the work packages in the order in §6.
 
 ---
 
@@ -413,7 +404,7 @@ styling and not layout — and overriding the templates is a surface we
 deliberately do not own, because Keycloak's own guidance is that custom
 templates are reworked on every upgrade.
 
-### S7A.6 ◐ The console and the desktop hold nothing
+### S7A.6 ✅ The console and the desktop hold nothing
 
 A rule to check before either is called finished: a UI offers a surface for
 making requests, and every one of those requests is decided somewhere else.
@@ -423,13 +414,32 @@ Kubernetes identity (`rbac.create` false, ServiceAccount token unmounted); and
 neither may hold a decision — showing or hiding a screen follows an answer the
 director gave, and hiding a thing is never what stops someone reaching it.
 
-**The desktop meets this. The new admin console meets it.** What does not is
-the desktop's *bundled* copy of the old console: `Security` and `Audit` read
-through a Keycloak admin client (`keycloak_security_policy_store.py`,
-`keycloak_audit_fetcher.py`), so the desktop image still carries a credential
-that can read and write the realm. Re-pointing those two screens at the
-director is what lets the bundled console be deleted, and the credential goes
-with it. That is why they are early in §1's order.
+**Both meet it now.** What did not was the desktop's *bundled* copy of the old
+console, whose `Security` and `Audit` screens read through a Keycloak admin
+client — so the image carried a credential that could read and write the realm.
+
+That is gone, with 21,700 lines: the bundled console frontend and backend, the
+whole ClusterRole (read and write on appprofiles, platformsecuritypolicies,
+integrationbindings, appgrants, backuppolicies, tenantexports and
+tenantexportschedules, plus create and delete on Secrets in any namespace), the
+`KEYCLOAK_ADMIN_USERNAME`/`PASSWORD` settings, the bridge tickets the desktop
+minted for apps to redeem, the reverse proxy for external APIs, the login page
+and its admin-credential forgot-password, the five-guess tenant inference, and
+the Kubernetes tile read that was the only reason the ServiceAccount existed.
+The token is not mounted any more either.
+
+The ClusterRole's own comment had recorded the flaw: every call reached the API
+server as the service account, so RBAC authorised *the console* and could not
+tell a tenant administrator from a platform one — the tenant boundary was
+enforced by hand in each route.
+
+Kept, and meant to grow: preferences, backgrounds and templates, with their own
+database. Two small losses are recorded in the code rather than hidden — a
+settings template can no longer be applied at invite time, because inviting is
+the console's now; and TOTP setup is a link to the realm's account console
+rather than a button, because behind that button the desktop set a required
+action through Keycloak's admin API for something the person was asking about
+themselves.
 
 When either grows a screen that seems to need a credential, that is the signal
 that an endpoint is missing from the director — not that the UI needs the
