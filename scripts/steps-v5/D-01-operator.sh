@@ -2,16 +2,41 @@
 # step: D-01-operator
 # phase: platform
 # requires: C-02-appsets
-# provides: the gentian-os operator in the control namespace, its CRDs and webhook, and the kernel Gateway it reconciles in the edge namespace
-# mutates: the gentian-os Application in the gitops namespace; the operator's Deployment, RBAC and webhook; the Gateway and its routes
+# provides: the gentian-os operator AND the director in the control namespace, the CRDs and webhook, and the kernel Gateway the operator reconciles in the edge namespace
+# mutates: the gentian-os Application in the gitops namespace; the operator's and the director's Deployments, RBAC and webhook; the Gateway and its routes
+
+# One Application, one chart, two workloads.
+#
+# charts/gentian-os carries the operator and the director, and the bootstrap
+# chart sets director.enabled unconditionally -- so the director has no step of
+# its own and arrives here. The step said only "operator", which reads as the
+# director never being installed, and check() looked only at the operator's
+# Deployment: a director that never became ready left this step reporting
+# satisfied. Both are named and both are checked now.
+#
+# They are one release on purpose. The director is not a separate product: it is
+# the half of this codebase that decides and writes git, against the half that
+# reconciles the cluster, built from one image and released together. Two
+# releases would let the two halves differ in version, which is the one thing
+# the split must never allow -- they share the CRD types.
 
 # shellcheck source=scripts/steps-v5/B-01-bootstrap-apps.sh
 source "${SCRIPT_DIR}/scripts/steps-v5/B-01-bootstrap-apps.sh"
 
+# Both Deployments of the release. The chart names them <fullname> and
+# <fullname>-director, so one release name gives both -- stated once here
+# rather than twice, because a rename that moved one and not the other would
+# leave this step checking a Deployment that does not exist.
+_d01_deployments() { local release="gentian-os"; echo "${release} ${release}-director"; }
+
 check() {
-    _v5_delivered "$(ns_kernel gitops)" gentian-os &&
-        kubectl get deployment gentian-os -n "$(ns_kernel control)" >/dev/null 2>&1 &&
-        [[ "$(kubectl get deployment gentian-os -n "$(ns_kernel control)" -o jsonpath='{.status.readyReplicas}' 2>/dev/null)" != "" ]]
+    local ns d
+    ns="$(ns_kernel control)"
+    _v5_delivered "$(ns_kernel gitops)" gentian-os || return 1
+    for d in $(_d01_deployments); do
+        kubectl get deployment "${d}" -n "${ns}" >/dev/null 2>&1 || return 1
+        [[ "$(kubectl get deployment "${d}" -n "${ns}" -o jsonpath='{.status.readyReplicas}' 2>/dev/null)" != "" ]] || return 1
+    done
 }
 
 apply() {
