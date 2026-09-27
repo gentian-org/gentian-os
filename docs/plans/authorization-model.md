@@ -24,7 +24,7 @@ Zanzibar family; each rule names what it prevents.
 | R6 | **Time is a condition** (`with grant_valid`), never a field a caller compares. | expiry checks that some caller forgets |
 | R7 | **Membership is a stored projection of Keycloak; contextual tuples carry runtime facts only.** `group:<g>#member@user:<sub>` is written by the director from Keycloak's event stream and reconciled toward Keycloak with a read-only client; it is never edited in place. Everything else — role-to-group assignments, tenant→cluster, app→tenant, entitlements — is a stored tuple written by the director from CRs (AD-12). Contextual tuples are for a task's TTL, `acting_for`, device posture. | a polling bridge with an admin credential; a second place membership can be changed; groups in every token |
 | R8 | **Every relation ships with three tests**: the grant, the denial for the neighbouring role, the derivation through the parent. | a relation nobody exercised |
-| R9 | The **director is the store's only writer**; the store is a projection of git and is rebuilt from it on start. The operator reads. | two writers; a store that cannot be reconstructed |
+| R9 | The **director is the store's only writer**; the operator reads. Git holds the **defaults** — the conventional tuples a tenant starts with, which follow from what git declares and can therefore be derived and checked. Everything beyond them is an **action through the director**, recorded when it happened and derivable from nothing else. So the store is not rebuilt on start: the director checks the defaults still match and reports drift, because rewriting would erase the acts that are not derivable. | two writers; a store whose defaults have silently drifted |
 
 ## 2. What R7 requires, and what it buys
 

@@ -163,8 +163,11 @@ Specified in [operator-split-plan.md](operator-split-plan.md) §3, §5, §6.
       the director attaches every tenant in git to its cluster at start.
 - [x] Retire `authz_bridge_reconciler` — safe because WP-3's event feed
       landed in the same phase — and `app_grant_reconciler`'s tuple writes,
-      since the director is the store's only writer and rebuilds from git on
-      start, which would otherwise delete AppGrant tuples it did not write.
+      since the director is the store's only writer, which would otherwise
+      delete AppGrant tuples it did not write. (The reason was first written as
+      "rebuilds from git on start"; it does not, and must not — a grant is an
+      action, not a default, so rebuilding would erase exactly the tuples this
+      item is about. See AD-12.)
 - [ ] Retire: `AppCatalogue` singleton and the catalogue ApplicationSet
       (catalogue leaves the cluster, AD-3); `app-privilege-requested`
       annotation kick.
@@ -613,10 +616,10 @@ From [security-gap-closing.md](security-gap-closing.md).
       - the **public DNS wait**. The first step to reach the cluster from
         outside is now the kernel realm step, so a slow publish surfaces
         inside it rather than at a named step.
-- [ ] `B-08-seed-secrets` declares `requires: C-01-cluster-claim` but runs
-      before it, because steps run in filename order and nothing validates the
-      header against that order. Fix the header or the filename, and make
-      `make validate-steps-v5` check the two agree.
+- [x] `B-08-seed-secrets` declared `requires: C-01-cluster-claim` but ran
+      before it. Its header names `B-07-crossplane-secrets` now, which is what
+      actually has to be true, and `make lint-step-order` refuses a forward
+      dependency across both step sets — it found this one as its first act.
 
 - [ ] `D-01` installs the director chart; `E-05-director-handover`: proof
       commit as the installing admin, `signatureKeys`/`sourceIntegrity`
