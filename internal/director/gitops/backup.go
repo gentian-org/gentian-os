@@ -211,6 +211,14 @@ const (
 func (g *GitOps) writeTenantFile(ctx context.Context, tenant, name, body string, list kustomizationList, message string, meta Meta) (Result, error) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
+	return g.writeTenantFileLocked(ctx, tenant, name, body, list, message, meta)
+}
+
+// writeTenantFileLocked is the same, for a caller that already holds the lock
+// because it has to read the file it is about to rewrite. A grant is appended
+// to a list, so reading and writing under one lock is what keeps two
+// approvals arriving together from costing one of them.
+func (g *GitOps) writeTenantFileLocked(ctx context.Context, tenant, name, body string, list kustomizationList, message string, meta Meta) (Result, error) {
 	manifest, err := g.tenantFile(ctx, tenant)
 	if err != nil {
 		return Result{}, err

@@ -360,6 +360,7 @@ func (r *TenantReconciler) ensureDefaultComponents(ctx context.Context, tenant *
 			Spec: gentianov1alpha1.ComponentSpec{
 				ProfileRef: gentianov1alpha1.ProfileRef{Name: profile.Name},
 				Class:      gentianov1alpha1.ComponentClassApp,
+				Privileges: tenantPrivilegeGrants(tenant, profile.Name),
 			},
 		}
 		if err := controllerutil.SetControllerReference(tenant, desired, r.Scheme); err != nil {
@@ -397,8 +398,38 @@ func (r *TenantReconciler) ensureDefaultComponents(ctx context.Context, tenant *
 				return fmt.Errorf("set spec.class on the %s component written before the rename: %w", profile.Name, err)
 			}
 		}
+		// Grants approved after the install reach the component here. This is
+		// the whole of the approval path's second half: the director commits
+		// to the Tenant, Argo applies it, and a component that was holding on
+		// a pending privilege is reconciled again with the grant in hand. An
+		// approval therefore takes effect without anybody touching the
+		// Component, which is what keeps git the only writer.
+		if want := tenantPrivilegeGrants(tenant, profile.Name); !equality.Semantic.DeepEqual(existing.Spec.Privileges, want) {
+			patch := client.MergeFrom(existing.DeepCopy())
+			existing.Spec.Privileges = want
+			if err := r.Patch(ctx, existing, patch); err != nil {
+				return fmt.Errorf("set the granted privileges on the %s component: %w", profile.Name, err)
+			}
+		}
 	}
 	return nil
+}
+
+// tenantPrivilegeGrants are the tenant's grants for one component, in the
+// order the Tenant lists them so that a patch is written once rather than on
+// every reconcile.
+//
+// Grants naming a component that is not installed are skipped rather than
+// dropped from the Tenant: the record of an approval outlives the install it
+// was given for, and reinstalling an app should not mean asking again.
+func tenantPrivilegeGrants(tenant *gentianov1alpha1.Tenant, install string) []gentianov1alpha1.PrivilegeGrant {
+	var out []gentianov1alpha1.PrivilegeGrant
+	for i := range tenant.Spec.Privileges {
+		if tenant.Spec.Privileges[i].Install == install {
+			out = append(out, tenant.Spec.Privileges[i].Grant())
+		}
+	}
+	return out
 }
 
 // classIncludes reports whether a profile is certified for a class.

@@ -19,6 +19,7 @@ package controller
 import (
 	"context"
 	"fmt"
+	"time"
 
 	networkingv1 "k8s.io/api/networking/v1"
 	"k8s.io/apimachinery/pkg/api/equality"
@@ -30,6 +31,7 @@ import (
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 	"github.com/gentian-org/gentian-os/internal/layout"
+	"github.com/gentian-org/gentian-os/internal/security"
 )
 
 // A tenant namespace is closed by default (netpolicy.BaselineNetworkPolicy):
@@ -37,6 +39,10 @@ import (
 // its requirements were fulfilled with and nothing else, and that is written
 // down as a policy of its own beside the baseline -- the same shape an app's
 // kernel-access policy has, but derived from the ComponentProfile.
+//
+// Beyond that, a profile may declare egress privileges. Those are requests:
+// they reach this policy only once somebody granted them by name, which is
+// what security.GrantedEgressRules resolves.
 
 // componentInstanceLabel is how a chart names the pods of one release, and
 // therefore how the operator selects a component's pods without knowing
@@ -92,8 +98,8 @@ func (r *ComponentReconciler) componentEgressNamespaces(profile *gentianov1alpha
 // the release label the chart puts on them, may leave for the namespaces
 // given. Ports are the peer namespace's business; what is granted is the
 // function, as the baseline grants the edge.
-func buildComponentNetworkPolicy(comp *gentianov1alpha1.Component, egressNamespaces []string) *networkingv1.NetworkPolicy {
-	egress := make([]networkingv1.NetworkPolicyEgressRule, 0, len(egressNamespaces))
+func buildComponentNetworkPolicy(comp *gentianov1alpha1.Component, egressNamespaces []string, granted []networkingv1.NetworkPolicyEgressRule) *networkingv1.NetworkPolicy {
+	egress := make([]networkingv1.NetworkPolicyEgressRule, 0, len(egressNamespaces)+len(granted))
 	for _, ns := range egressNamespaces {
 		egress = append(egress, networkingv1.NetworkPolicyEgressRule{
 			To: []networkingv1.NetworkPolicyPeer{{
@@ -103,6 +109,11 @@ func buildComponentNetworkPolicy(comp *gentianov1alpha1.Component, egressNamespa
 			}},
 		})
 	}
+	// Then the privileges somebody granted. They come last so the rules the
+	// requirements imply are readable at the top of a policy a person is
+	// reading to find out why an app can reach the internet: everything below
+	// the namespace selectors was approved by name.
+	egress = append(egress, granted...)
 	return &networkingv1.NetworkPolicy{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      componentNetworkPolicyName(comp),
@@ -122,7 +133,8 @@ func buildComponentNetworkPolicy(comp *gentianov1alpha1.Component, egressNamespa
 // ensureNetworkPolicy keeps the component's egress policy, or removes it
 // when the component may reach nothing beyond the baseline.
 func (r *ComponentReconciler) ensureNetworkPolicy(ctx context.Context, comp *gentianov1alpha1.Component, profile *gentianov1alpha1.ComponentProfile, tenant *gentianov1alpha1.Tenant) error {
-	desired := buildComponentNetworkPolicy(comp, r.componentEgressNamespaces(profile, tenant))
+	desired := buildComponentNetworkPolicy(comp, r.componentEgressNamespaces(profile, tenant),
+		security.GrantedEgressRules(profile, comp, time.Now()))
 	key := types.NamespacedName{Name: desired.Name, Namespace: desired.Namespace}
 	existing := &networkingv1.NetworkPolicy{}
 	err := r.Get(ctx, key, existing)

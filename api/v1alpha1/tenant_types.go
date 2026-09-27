@@ -74,6 +74,76 @@ type TenantSpec struct {
 	// Apps lists the applications to install for this tenant.
 	// +optional
 	Apps []TenantApp `json:"apps,omitempty"`
+
+	// Privileges are the privilege requests a person granted for this
+	// tenant's components (AD-5). They live here because a grant has to
+	// survive the thing it applies to: a Component is rebuilt from its
+	// profile and can be deleted and recreated, while the record that a named
+	// person said yes on a named date must not be. The Tenant comes from git,
+	// so this is also what makes an approval a commit rather than an edit
+	// somebody made to a live object.
+	//
+	// The operator copies each entry onto the Component named by Install. A
+	// grant for a component that does not exist is kept and ignored, because
+	// an app can be uninstalled and reinstalled and re-asking for an approval
+	// that was already given is how approvals become a formality.
+	// +optional
+	// +listType=map
+	// +listMapKey=install
+	// +listMapKey=privilege
+	// +kubebuilder:validation:MaxItems=256
+	Privileges []TenantPrivilegeGrant `json:"privileges,omitempty"`
+}
+
+// TenantPrivilegeGrant is one grant, against one of the tenant's components.
+//
+// The fields of PrivilegeGrant are spelled out rather than embedded so that
+// this is one flat object in the CRD and the two list map keys can be the
+// component and the privilege -- together they are what makes a grant unique,
+// and letting the API server enforce that is better than a controller
+// discovering two answers to the same question.
+type TenantPrivilegeGrant struct {
+	// Install names the Component this grant is for, which is the component's
+	// object name in the tenant's namespace.
+	// +kubebuilder:validation:Pattern=`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`
+	// +kubebuilder:validation:MaxLength=253
+	Install string `json:"install"`
+
+	// Privilege names one entry of the profile's request, as <kind>/<name>.
+	// +kubebuilder:validation:Pattern=`^(podSecurity|egress|clusterRoles)/[a-z0-9]([-a-z0-9]*[a-z0-9])?$`
+	// +kubebuilder:validation:MaxLength=80
+	Privilege string `json:"privilege"`
+
+	// Approver is the Keycloak subject who said yes, set by the director from
+	// the caller's token. Never supplied by a caller: a grant that could name
+	// its own approver would record nothing.
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=256
+	Approver string `json:"approver"`
+
+	ApprovedAt metav1.Time `json:"approvedAt"`
+
+	// Reason in the approver's words, not the profile's. The profile already
+	// said why it wants the privilege; this is why somebody agreed.
+	// +kubebuilder:validation:MinLength=10
+	// +kubebuilder:validation:MaxLength=2000
+	Reason string `json:"reason"`
+
+	// ExpiresAt bounds the grant. A waiver with no expiry is a waiver nobody
+	// reviews.
+	// +optional
+	ExpiresAt *metav1.Time `json:"expiresAt,omitempty"`
+}
+
+// Grant is this entry as the Component carries it.
+func (g *TenantPrivilegeGrant) Grant() PrivilegeGrant {
+	return PrivilegeGrant{
+		Privilege:  g.Privilege,
+		Approver:   g.Approver,
+		ApprovedAt: g.ApprovedAt,
+		Reason:     g.Reason,
+		ExpiresAt:  g.ExpiresAt,
+	}
 }
 
 // TenantIsolation describes the namespace and identity boundaries.

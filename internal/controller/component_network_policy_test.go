@@ -61,7 +61,7 @@ func TestTheDesktopReachesItsDatabaseAndTheDirector(t *testing.T) {
 		t.Fatalf("egress namespaces = %v, want %v", got, want)
 	}
 
-	np := buildComponentNetworkPolicy(comp, got)
+	np := buildComponentNetworkPolicy(comp, got, nil)
 	if np.Name != "component-desktop" || np.Namespace != "tenant-platform" {
 		t.Fatalf("policy named %s/%s", np.Namespace, np.Name)
 	}

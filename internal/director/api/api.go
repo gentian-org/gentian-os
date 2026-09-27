@@ -73,6 +73,9 @@ type Repository interface {
 	SetClusterBackupPolicy(ctx context.Context, policy gitops.BackupPolicy, meta gitops.Meta) (gitops.Result, error)
 	TenantSecurityPolicy(ctx context.Context, tenant string) (*gitops.SecurityPolicy, error)
 	SetTenantSecurityPolicy(ctx context.Context, tenant string, policy gitops.SecurityPolicy, meta gitops.Meta) (gitops.Result, error)
+	TenantPrivileges(ctx context.Context, tenant string) ([]gitops.PrivilegeGrant, error)
+	GrantPrivilege(ctx context.Context, tenant string, grant gitops.PrivilegeGrant, meta gitops.Meta) (gitops.Result, error)
+	RevokePrivilege(ctx context.Context, tenant, install, privilege string, meta gitops.Meta) (gitops.Result, error)
 	TenantChanges(ctx context.Context, tenant string, limit int, since string) ([]gitops.Change, error)
 	ClusterChanges(ctx context.Context, limit int, since string) ([]gitops.Change, error)
 	SetAppGrant(ctx context.Context, tenant, app string, grant gitops.AppGrant, meta gitops.Meta) (gitops.Result, error)
@@ -422,6 +425,26 @@ func (s *Server) routes() {
 	s.guarded("DELETE /v1/tenants/{t}/apps/{p}", "can_install_app", tenantObject, s.uninstall)
 	s.guarded("PUT /v1/tenants/{t}/apps/{p}/addons", "can_install_app", tenantObject, s.setAddons)
 
+	// WHO may answer follows from the KIND, so the two writes here are the
+	// one place in this API where the relation on the route is not the
+	// whole check. An egress request leaves the tenant's own namespace and
+	// tenant#can_approve_privilege answers for it. A pod-security waiver
+	// or a cluster role weakens what protects the NODE, and that is
+	// cluster#can_approve -- the security officer's, who is deliberately
+	// NOT a tenant administrator and must not have to become one to do
+	// their job. Requiring both relations would mean exactly that, and
+	// requiring only the tenant's would let a tenant administrator waive
+	// a rule protecting every tenant on the node.
+	//
+	// So the route carries can_view, which is the floor -- you cannot
+	// approve for a tenant you may not see -- and mayApprove makes the
+	// decision per kind before either handler writes anything. It is
+	// derived from the kind and never read from the request, or a profile
+	// could ask for the cheaper approver.
+	s.guarded("GET /v1/tenants/{t}/privileges", "can_view", tenantObject, s.tenantPrivileges)
+	s.guarded("PUT /v1/tenants/{t}/privileges/{inst}/{kind}/{name}", "can_view", tenantObject, s.grantPrivilege)
+	s.guarded("DELETE /v1/tenants/{t}/privileges/{inst}/{kind}/{name}", "can_view", tenantObject, s.revokePrivilege)
+
 	// A tenant's resources: the ceiling the cluster enforces, what is under
 	// it, the plans it may move to, and its history. The reads are the
 	// operator's answers relayed under can_view. The one write, choosing a
@@ -519,6 +542,11 @@ func (s *Server) routes() {
 		s.guarded("GET /v1/tenants/{t}/security-policy", "can_view", tenantObject, s.tenantSecurityPolicy)
 		s.guarded("PUT /v1/tenants/{t}/security-policy", "can_set_policy", tenantObject, s.setTenantSecurityPolicy)
 
+		// The privileges this tenant's components asked for and what was
+		// answered. A profile declaring a privilege is a request (AD-5); the
+		// component waits until somebody answers, so these three routes are
+		// what unblocks an install rather than a setting somebody tunes.
+		//
 		// Taking a backup is not declaring anything: it happens once, now.
 		// can_administer, because it reads every store the tenant has and
 		// writes a bundle somebody can restore from.

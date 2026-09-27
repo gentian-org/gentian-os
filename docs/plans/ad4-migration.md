@@ -88,7 +88,7 @@ worst time for it. So step 1 restores the capability rather than dropping it.
    `displayNames` map of locale to string; `tilecatalogue.Tile` carries it and
    the desktop picks by the viewer's locale, falling back. Nothing else needs a
    new field.
-2. **Wire privileges, because AD-4 lands on them.** `security.egress[]` becomes
+2. **[done] Wire privileges, because AD-4 lands on them.** `security.egress[]` becomes
    `requires.privileges.egress[]` and `security.macWaivers[]` becomes
    `requires.privileges.podSecurity[]`. Both are mechanical wraps — the egress
    `rule` is the same `networkingv1.NetworkPolicyEgressRule`, and a waiver keeps
@@ -98,6 +98,23 @@ worst time for it. So step 1 restores the capability rather than dropping it.
    work: `status.pendingPrivileges` populated, a granted counterpart, an
    approval action under `can_approve_privilege`, and an install held rather
    than silently unprivileged.
+
+   Built, and it found one thing worth recording. `requires.privileges.egress`
+   had **no reader at all** on the ComponentProfile path, and the AppProfile
+   path applied `security.egress` unconditionally — so an app's declared
+   outbound access was granted to every tenant that installed it, with nobody
+   asked. `macWaivers` at least passed the `PlatformSecurityPolicy` allowlist.
+   The gate now holds the install before it writes anything, and
+   `security.GrantedEgressRules` is what puts a rule in the policy.
+
+   Who approves follows from the kind, and that is the part the route shape had
+   to bend for: egress is `tenant#can_approve_privilege`, pod security and
+   cluster roles are `cluster#can_approve`. Requiring both would mean a
+   security officer had to be a tenant administrator to waive a rule; requiring
+   only the tenant's would let a tenant administrator waive a rule that
+   protects every tenant on the node. So the routes carry `can_view` as the
+   floor and `mayApprove` decides per kind, recording the relation that
+   actually authorised it in the commit trailer rather than the route's.
 3. **Teach the app composition ComponentProfile.** It reads exactly eight
    fields of the profile spec — `appSecrets`, `chart`, `extraValues`, `ingress`,
    `kernelRequirements`, `postInstallJob`, `sidecars`, `valueMapping` — so this

@@ -38,6 +38,7 @@ import (
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 	"github.com/gentian-org/gentian-os/internal/layout"
+	"github.com/gentian-org/gentian-os/internal/security"
 )
 
 // ComponentReconciler turns a Component into what runs: the chart its profile
@@ -148,6 +149,21 @@ func (r *ComponentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	if tenant == nil {
 		return r.status(ctx, comp, metav1.ConditionFalse, "NoTenant",
 			fmt.Sprintf("namespace %q belongs to no Tenant", comp.Namespace), componentRequeue)
+	}
+
+	// Privileges are requests, never grants (AD-5). Anything the profile asks
+	// for that no live grant answers holds the install here: not rejected,
+	// because the approver may still say yes and a rejected Component would
+	// have to be reinstalled to receive the answer; and not run without it,
+	// because a component that quietly starts unprivileged is the exact
+	// failure the mechanism exists to prevent. The reconciler stops before it
+	// has written anything -- no network policy, no release -- so a component
+	// waiting for an approval has no half-built footprint in the namespace.
+	comp.Status.PendingPrivileges = security.PendingPrivileges(profile, comp, time.Now())
+	if len(comp.Status.PendingPrivileges) > 0 {
+		return r.status(ctx, comp, metav1.ConditionFalse, "PrivilegesPending",
+			fmt.Sprintf("waiting for approval of %s", strings.Join(comp.Status.PendingPrivileges, ", ")),
+			componentRequeue)
 	}
 
 	zone := r.zoneOf(tenant)
