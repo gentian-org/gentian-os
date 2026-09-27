@@ -24,7 +24,7 @@ GENTIAN_MAIL_LIB_LOADED=1
 # silently rejected every later one.
 _mail_kernel_namespace() { gentian_mail_namespace; }
 
-# MAIL_SERVICE_MODE=kernel needs reachable SMTP ingress; Cloudflare tunnel is HTTP-only.
+# MAIL_SERVICE_MODE=system needs reachable SMTP ingress; Cloudflare tunnel is HTTP-only.
 mail_network_mode_compatible() {
     local mode="${1:-$(gentian_mail_service_mode)}"
     local network="${2:-${NETWORK_MODE:-tunnel}}"
@@ -33,9 +33,9 @@ mail_network_mode_compatible() {
 
 mail_network_mode_incompatibility_message() {
     cat <<'EOF'
-MAIL_SERVICE_MODE=kernel is incompatible with NETWORK_MODE=tunnel.
+MAIL_SERVICE_MODE=system is incompatible with NETWORK_MODE=tunnel.
 Cloudflare tunnel exposes HTTP/HTTPS only — it cannot receive inbound SMTP (ports 25/587) or act as a public MX endpoint.
-Use MAIL_SERVICE_MODE=external with EXTERNAL_SMTP_HOST + SMTP_RELAY_* credentials for invitation and outbound mail on tunnel clusters, or switch to NETWORK_MODE=static-ip when you have a reachable SMTP ingress for kernel mail.
+Use MAIL_SERVICE_MODE=external with EXTERNAL_SMTP_HOST + SMTP_RELAY_* credentials for invitation and outbound mail on tunnel clusters, or switch to NETWORK_MODE=static-ip when you have a reachable SMTP ingress.
 EOF
 }
 
@@ -87,7 +87,7 @@ install_kernel_mail() {
         return 0
     fi
 
-    info "MAIL_SERVICE_MODE=kernel — in-cluster Postfix + Dovecot via the 09-infra-helm ApplicationSet."
+    info "MAIL_SERVICE_MODE=system — in-cluster Postfix + Dovecot via the mail ApplicationSet."
     info "Keycloak realm SMTP will target postfix-${ENV:-dev}.${KERNEL_NAMESPACE}.svc.cluster.local:587"
     if ! verify_dovecot_installation; then
         error "Dovecot installation verification failed."

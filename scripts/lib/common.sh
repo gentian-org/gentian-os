@@ -787,11 +787,11 @@ validate_config() {
 
     NETWORK_MODE="${NETWORK_MODE:-tunnel}"
     if ! mail_network_mode_compatible "${MAIL_SERVICE_MODE}" "${NETWORK_MODE}"; then
-        echo "  [INVALID]  MAIL_SERVICE_MODE=kernel with NETWORK_MODE=tunnel"
-        echo "             Kernel mail (Postfix/Dovecot) needs a reachable SMTP ingress; use MAIL_SERVICE_MODE=external with an SMTP relay on tunnel clusters."
+        echo "  [INVALID]  MAIL_SERVICE_MODE=system with NETWORK_MODE=tunnel"
+        echo "             A cluster running its own mail stack needs a reachable SMTP ingress; use MAIL_SERVICE_MODE=external with an SMTP relay on tunnel clusters."
         (( errors++ )) || true
     elif [[ "${MAIL_SERVICE_MODE}" == "system" ]]; then
-        echo "  [OK]       MAIL_SERVICE_MODE=kernel with NETWORK_MODE=${NETWORK_MODE}"
+        echo "  [OK]       MAIL_SERVICE_MODE=system with NETWORK_MODE=${NETWORK_MODE}"
     fi
 
     # KERNEL_DOMAIN has exactly one authored copy — the cluster's Crossplane

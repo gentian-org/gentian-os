@@ -3,7 +3,7 @@
 # scripts/lib/verify-kernel-services.sh — post-install smoke check for kernel mail
 # =============================================================================
 # Sourced from scripts/lib/load.sh. One verifier remains, called from
-# mail-lib.sh: Dovecot, when MAIL_SERVICE_MODE=kernel.
+# mail-lib.sh: Dovecot, when MAIL_SERVICE_MODE=system.
 #
 # There were three. verify_keycloak_installation, verify_keycloak_iframe_policy
 # and verify_argocd_controller were written and never wired to a caller, so they
@@ -111,7 +111,7 @@ _verify_tcp_from_cluster() {
         sh -c "nc -z -w 5 ${host} ${port}"
 }
 
-# When MAIL_SERVICE_MODE=kernel, confirm Dovecot Deployment, Service endpoints, and IMAP/LMTP ports.
+# When MAIL_SERVICE_MODE=system, confirm Dovecot Deployment, Service endpoints, and IMAP/LMTP ports.
 verify_dovecot_installation() {
     if ! _verify_kernel_services_enabled; then
         info "Skipping Dovecot verification (VERIFY_KERNEL_SERVICES=0)."

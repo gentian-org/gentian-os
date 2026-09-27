@@ -1,6 +1,6 @@
 # Kernel Postfix (SMTP relay)
 
-Outbound relay and inbound MTA for `MAIL_SERVICE_MODE=kernel`, built on a public
+Outbound relay and inbound MTA for `MAIL_SERVICE_MODE=system`, built on a public
 Helm chart and image. Wired to the tenant mail reconciler: the operator maintains
 the virtual-domain and mailbox maps this deployment mounts, so tenant churn needs
 no restart.
@@ -17,7 +17,7 @@ yet configured — see `kernel/services/dovecot/README.md`.
 | Release name | `postfix-<env>` (e.g. `postfix-dev`) |
 | Service DNS | `postfix-dev.platform-kernel.svc.cluster.local:587` |
 | Argo CD | ApplicationSet `gentian-infra-helm` (wave 9) |
-| Bootstrap | `install.sh` step `D-04-mail` when `MAIL_SERVICE_MODE=kernel` |
+| Bootstrap | `install.sh` step `D-04-mail` when `MAIL_SERVICE_MODE=system` |
 
 The namespace is not `gentian-<env>`. `mailSharedPostfixHost()` hands every tenant
 app `postfix-<stage>.<servicesNamespace>`, the operator writes

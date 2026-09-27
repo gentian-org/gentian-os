@@ -498,7 +498,7 @@ that file was replaced by the claim, which the installer reads directly and whic
 On a `dev`-stage cluster, in-cluster SMTP is
 `postfix-dev.platform-kernel.svc.cluster.local:587`.
 
-**Tunnel clusters:** `MAIL_SERVICE_MODE=kernel` is rejected when `NETWORK_MODE=tunnel`.
+**Tunnel clusters:** `MAIL_SERVICE_MODE=system` is rejected when `NETWORK_MODE=tunnel`.
 Cloudflare tunnel exposes HTTP/HTTPS only — use `MAIL_SERVICE_MODE=external` with
 `EXTERNAL_SMTP_HOST` / `SMTP_RELAY_*` for invitation mail.
 

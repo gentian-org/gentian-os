@@ -621,7 +621,7 @@ Two cold-start races are fixed and all seven below are done.
    is silently undeliverable.
 
    Built in two places, because the two opt-ins are stated in two places. The
-   Cluster XRD carries CEL rules refusing `mail.serviceMode: kernel` and
+   Cluster XRD carries CEL rules refusing `mail.serviceMode: system` and
    `llm.enabled: true` on `layout: v5`, at admission, with a message naming
    what to use instead; `crossplane beta validate` evaluates them, so the
    fixtures assert both the refusal and that v4 still gets the function. The

@@ -563,7 +563,7 @@ POLICY
 # Nested inside create_crossplane_secrets it existed only while B-06 ran, and
 # `declare -F _derive` — which _keycloak_smtp_settings tests before deriving the
 # Postfix password — was therefore false everywhere else. On every
-# MAIL_SERVICE_MODE=kernel cluster that test failed, so Keycloak realm SMTP was
+# MAIL_SERVICE_MODE=system cluster that test failed, so Keycloak realm SMTP was
 # skipped with "SMTP credentials incomplete" and the realm could not send an
 # invitation or a password reset, while the credentials it needed existed.
 # =============================================================================
@@ -764,7 +764,7 @@ create_crossplane_secrets() {
              + (if $user != "" then {relay_username:$user} else {} end)
              + (if $pass != "" then {relay_password:$pass} else {} end)')"
 
-    # ── mail/dovecot (HMAC-derived; only active when MAIL_SERVICE_MODE=kernel) ─
+    # ── mail/dovecot (HMAC-derived; only active when MAIL_SERVICE_MODE=system) ─
     # The Cluster XR creates a SecretV2 MR for this path and will seed OpenBao
     # on first apply. The doveadm_password shares its derivation namespace with
     # the minio secret for cross-service derivation consistency.

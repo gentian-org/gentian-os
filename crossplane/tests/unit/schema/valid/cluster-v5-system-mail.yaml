@@ -14,5 +14,7 @@ metadata:
 spec:
   kernelDomain: example.org
   layout: v5
+  networkMode: static-ip
+  nodeIp: 198.51.100.10
   mail:
     serviceMode: system

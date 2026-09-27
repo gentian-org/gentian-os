@@ -327,7 +327,7 @@ operator emits an SPF record that matches:
 
 ```yaml
   mail:
-    serviceMode: kernel
+    serviceMode: system
     egressHost: <egress-host>
 ```
 
@@ -475,7 +475,7 @@ must be grey-clouded even though the rest of the zone is proxied.
 TXT records for SPF, DKIM and DMARC are unaffected by the proxy setting.
 
 If the cluster runs `networkMode: tunnel`, inbound mail is not possible at all —
-a Cloudflare tunnel carries HTTP only. That is why `MAIL_SERVICE_MODE=kernel` is
+a Cloudflare tunnel carries HTTP only. That is why `MAIL_SERVICE_MODE=system` is
 rejected on tunnel clusters; use an external SMTP provider there.
 
 ### Verifying

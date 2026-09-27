@@ -6,11 +6,17 @@
 apiVersion: gentianos.io/v1alpha1
 kind: Cluster
 metadata:
-  name: test-v4-kernel-mail
+  name: test-v4-system-mail
   namespace: default
 spec:
   kernelDomain: example.org
   layout: v4
+  # A reachable SMTP ingress. networkMode defaults to tunnel, which carries no
+  # SMTP at all, so a claim asking for its own mail stack and saying nothing
+  # about the network is refused -- on v4 as much as on v5, because that rule
+  # is about what a tunnel can carry rather than about what is built.
+  networkMode: static-ip
+  nodeIp: 198.51.100.11
   mail:
     serviceMode: system
   llm:

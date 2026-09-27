@@ -24,20 +24,42 @@ spec:
               type: object
               required:
                 - kernelDomain
-              # No admission rules here any more.
+              # One rule, and it is about physics rather than about what is
+              # built yet.
               #
-              # There were two, refusing mail.serviceMode 'system' and
-              # llm.enabled on layout v5, because v5 composed a route and a
-              # tenant registration for both functions and deployed neither --
-              # so the opt-in failed silently, three layers away, as a route to
-              # nothing or a tenant whose mail never arrived.
-              #
-              # The claim composes system-mail, system-mail-dmz and system-llm
-              # now, and the appsets deploy into them, so a rule refusing the
-              # opt-in would refuse something that works. A rule that outlives
-              # its reason is worse than none. Their schema fixtures moved with
-              # them, from invalid to valid, so neither refusal can come back
+              # Two rules used to live here, refusing mail.serviceMode 'system'
+              # and llm.enabled on layout v5, because v5 composed a route and a
+              # tenant registration for both and deployed neither. Both are
+              # deployed now, so both rules are gone -- a rule that outlives its
+              # reason is worse than none -- and their schema fixtures moved
+              # from invalid to valid so neither refusal can come back
               # unnoticed.
+              #
+              # This one does not expire. A tunnel carries HTTP and HTTPS and
+              # nothing else: it cannot receive a connection on 25, so the
+              # cluster cannot be an MX, and it cannot publish submission on
+              # 587. A cluster that asked for its own mail stack behind one
+              # would get Postfix, a LoadBalancer nothing routes to, and an MX
+              # record naming an address that never answers -- senders retry
+              # for days and then bounce, which is the most expensive way for
+              # this to fail.
+              #
+              # The installer has always refused this combination
+              # (mail_network_mode_compatible), but only on paths driven by
+              # MAIL_SERVICE_MODE. On v5 the mode comes from this claim and no
+              # step reads that variable, so the guard did not reach the
+              # cluster that needs it.
+              x-kubernetes-validations:
+                - rule: >-
+                    !(has(self.mail) && has(self.mail.serviceMode) &&
+                    self.mail.serviceMode == 'system' &&
+                    has(self.networkMode) && self.networkMode == 'tunnel')
+                  message: >-
+                    mail.serviceMode 'system' cannot run behind networkMode
+                    'tunnel': a tunnel carries HTTP and HTTPS only, so the cluster
+                    can neither receive mail on port 25 nor publish submission on
+                    587. Use 'external' with an smtp-relay credential, or switch
+                    to networkMode 'static-ip' with a reachable SMTP ingress.
               properties:
                 layout:
                   type: string

@@ -28,7 +28,7 @@ kernelDomain: ""
 # Outbound relay host and port, supplied by the ApplicationSet from
 # EXTERNAL_SMTP_HOST / EXTERNAL_SMTP_PORT.
 #
-# Empty host means deliver directly, which is what MAIL_SERVICE_MODE=kernel wants:
+# Empty host means deliver directly, which is what MAIL_SERVICE_MODE=system wants:
 # it runs its own Postfix and needs no upstream. Because kernel mode leaves
 # EXTERNAL_SMTP_HOST unset, the mode needs no switch here — an unset host IS
 # direct delivery.

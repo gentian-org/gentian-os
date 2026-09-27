@@ -654,7 +654,7 @@ configure_keycloak_realm_smtp() {
 
     if ! _apply_keycloak_smtp_secret "${ns}"; then
         warn "SMTP credentials incomplete — set EXTERNAL_SMTP_* + SMTP_RELAY_*" \
-             "(external) or MAIL_SERVICE_MODE=kernel with derived smtp password."
+             "(external) or MAIL_SERVICE_MODE=system with derived smtp password."
         return 1
     fi
 
