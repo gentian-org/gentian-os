@@ -115,11 +115,27 @@ worst time for it. So step 1 restores the capability rather than dropping it.
    protects every tenant on the node. So the routes carry `can_view` as the
    floor and `mayApprove` decides per kind, recording the relation that
    actually authorised it in the commit trailer rather than the route's.
-3. **Teach the app composition ComponentProfile.** It reads exactly eight
+3. **[done] Teach the app composition ComponentProfile.** It reads exactly eight
    fields of the profile spec — `appSecrets`, `chart`, `extraValues`, `ingress`,
    `kernelRequirements`, `postInstallJob`, `sidecars`, `valueMapping` — so this
    is eight renames, the `ExtraResources` kind, and the pipeline context key.
    The 1,827 lines are almost all rendering, not reading.
+
+   It was nine reads, not eight — `kernelRequirements` is read three times, and
+   a `sort -u` on the field name hid two of them. Eight were `dig` renames.
+   The ninth was not: `spec.ingress.serviceName`/`servicePort` became a list of
+   exposures, so the stable service alias now takes the first `surface:
+   gateway` entry's `backend.service`/`backend.port`.
+
+   One thing that had to move in the same commit: the Crossplane
+   extra-resources **RBAC grant** in `crossplane/xrds/app.yaml` named
+   `appprofiles`. That file's own comment says what a missing half looks like —
+   the informer cannot sync, the step times out, every XApp stays
+   `Synced=False`, and nothing in the logs mentions RBAC.
+
+   All five app render fixtures pass against **unchanged goldens**, which is
+   the check worth having: the same values read from a different shape render
+   byte-identical output.
 4. **The Go side: 35 non-test files.** Most are mechanical, because
    `AppProfile.spec.kernelRequirements` and
    `ComponentProfile.spec.requires.services` are the **same

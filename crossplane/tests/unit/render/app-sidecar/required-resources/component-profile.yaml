@@ -1,0 +1,56 @@
+apiVersion: gentianos.io/v1alpha1
+kind: ComponentProfile
+metadata:
+  name: demo-app
+  labels:
+    gentianos.io/profile-name: demo-app
+spec:
+  classes:
+    - app
+  launch: tile
+  trustTier: certified
+  version: "1.0.0"
+  package:
+    composition: app-demo-app
+    chart:
+      repository: oci://example.invalid/demo-app
+      name: demo-app
+      version: "1.0.0"
+    valueMapping:
+      oidc:
+        clientSecretKey: demo-app.oidc.secret
+  requires:
+    services:
+      identity:
+        oidc:
+          clientId: catalogue-test-client
+          name: Demo App
+          accessType: CONFIDENTIAL
+          redirectUris:
+            - "https://demo.${TENANT_DOMAIN}/oidc/callback"
+          postLogoutRedirectUris:
+            - "https://demo.${TENANT_DOMAIN}/"
+  secrets:
+    # A primary-app secret as well as the sidecar's, so the golden covers both
+    # KV paths. Only the sidecar's was covered before, which left the branch
+    # every ordinary app actually uses unexercised -- including the
+    # external-name that decides whether a reinstall reuses an existing secret
+    # or overwrites it.
+    generated:
+      - name: admin_password
+        valuePath: demo-app.admin.password
+  extensions:
+    - name: mcp
+      chart:
+        repository: oci://example.invalid/demo-app-mcp
+        name: demo-app-mcp
+        version: "0.1.0"
+      appSecrets:
+        - name: service_password
+          valuePath: auth.password
+      extraValues:
+        image:
+          tag: "0.1.0"
+        upstreamUrl: "https://demo.${TENANT_DOMAIN}"
+      stableServiceName: demo-app-mcp
+      stableServicePort: 8765

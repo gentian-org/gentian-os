@@ -1,0 +1,38 @@
+apiVersion: gentianos.io/v1alpha1
+kind: ComponentProfile
+metadata:
+  annotations:
+    # Exercises the group-attribute path: nine catalogue profiles carry
+    # this, and the Odoo ones name the modules the app provisions from.
+    # A list stays a list; a bare string becomes a one-element list, the
+    # way collectGentianGroupsJSON normalises it.
+    gentianos.io/keycloak-group-attributes: '{"gentianOdooModules":["account","crm"],"gentianSingle":"one"}'
+  name: demo-app
+  labels:
+    gentianos.io/profile-name: demo-app
+spec:
+  classes:
+    - app
+  launch: tile
+  trustTier: certified
+  version: "1.0.0"
+  package:
+    composition: app-demo-app
+    chart:
+      repository: oci://example.invalid/demo-app
+      name: demo-app
+      version: "1.0.0"
+    valueMapping:
+      oidc:
+        clientSecretKey: demo-app.oidc.secret
+  requires:
+    services:
+      identity:
+        oidc:
+          clientId: catalogue-test-client
+          name: Demo App
+          accessType: CONFIDENTIAL
+          redirectUris:
+            - "https://demo.${TENANT_DOMAIN}/oidc/callback"
+          postLogoutRedirectUris:
+            - "https://demo.${TENANT_DOMAIN}/"
