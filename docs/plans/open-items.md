@@ -18,10 +18,10 @@ plans are what the code was supposed to become.
 | --- | --- | --- |
 | AD-1 | Nine security principles normative | ✅ |
 | AD-2 | The director is the only writer of `gentian-deployments` | ◐ the director writes; **commit signing and `sourceIntegrity` are not implemented**. On the backlog below |
-| AD-3 | The store runs outside the cluster | ◐ contract and grant format exist; materialise-on-reference is not wired |
+| AD-3 | The store runs outside the cluster | ✅ an entry is fetched at the digest the store named, verified, and committed when a tenant installs it. A catalogue with no configured source still syncs wholesale |
 | AD-4 | One catalogue kind, `ComponentProfile` | ◐ steps 1–7 done; `AppProfile` the Go type is unused but not yet deleted |
 | AD-5 | Privileges are requests with one approval path | ✅ |
-| AD-6 | `authMode` mandatory; perimeter enabled per tenant | ◐ `authMode` and `surface` are enforced; **no publishing proxy exists** — `layout.TenantDMZ()` is defined and called nowhere |
+| AD-6 | `authMode` mandatory; perimeter enabled per tenant | ✅ a perimeter approver publishes a surface under `can_expose`, bounded by an expiry; the operator stands a proxy in `tenant-<t>-dmz` that forwards only the declared prefixes with no session and no identity. `exposures.yaml` is the registry |
 | AD-7 | Namespaces named by tier | ✅ |
 | AD-8 | Kernel trust domains are separate namespaces | ✅ |
 | AD-9 | System services have no public route | ✅ |
@@ -106,4 +106,7 @@ none of it blocks the purge.
 
 ## Known and deliberately not now
 
-- The tenant-DMZ publishing proxy and its registry of shared URLs (AD-6).
+- AD-14's `catalogue.sources[]` on the Cluster claim. The director takes its
+  sources from `DIRECTOR_CATALOGUE_SOURCES` today, which is the same list in a
+  less reviewable place; moving it to the claim is what makes opening a source
+  to a tenant a commit rather than a deployment setting.
