@@ -75,10 +75,12 @@ Two implementation gaps the design already names:
 | | |
 | --- | --- |
 | ✅ | `claims/deployments-repository.yaml` is required on v5, and an uncommitted working copy is named. Without that claim the director has no push credential and every write answers 503 — no tenant, no invited user |
+| ☐ | A tenant's default language for the desktop. A user can choose (Settings) and a tenant can choose which languages its realm offers; what is missing is the default a tenant's people get before they choose |
 | ☐ | Deployment preparation is not DRY: `--prepare-deployment` writes the files and nothing commits them, so the claim reaches the cluster only if somebody remembers. One writer, folded into the normal run |
 | ☐ | `GETTING-STARTED.md` still names `claims/infra-data.yaml`, which v5 does not have and which would compose the system-tier engines a second time |
 | ☐ | S7A.4 — no write has ever succeeded against this cluster |
-| ☐ | S7A.17's second half: the event listener recording admin events with the request id read back, and a durable home for the director's record of the authority. Against M3 |
+| ✅ | S7A.17's durable record: the director's own database on `kernel-postgres` holds who was allowed to ask for each identity change, with a retention horizon it enforces. Optional — a cluster without it starts and warns |
+| ☐ | S7A.17's other half: the event listener recording Keycloak **admin** events, carrying the request id so the two records join. It projects group membership today and drops the rest |
 | ☐ | S7A.7 and S7A.11 — built, never exercised in a browser |
 | ☐ | S8 — purge and reinstall, which is what makes M1 reached rather than demonstrated |
 
