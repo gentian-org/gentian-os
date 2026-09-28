@@ -17,7 +17,7 @@ plans are what the code was supposed to become.
 | AD | | State |
 | --- | --- | --- |
 | AD-1 | Nine security principles normative | ✅ |
-| AD-2 | The director is the only writer of `gentian-deployments` | ◐ the director writes; **commit signing and `sourceIntegrity` are not implemented**. Deferred deliberately — a separate, confined piece of work |
+| AD-2 | The director is the only writer of `gentian-deployments` | ◐ the director writes; **commit signing and `sourceIntegrity` are not implemented**. On the backlog below |
 | AD-3 | The store runs outside the cluster | ◐ contract and grant format exist; materialise-on-reference is not wired |
 | AD-4 | One catalogue kind, `ComponentProfile` | ◐ steps 1–7 done; `AppProfile` the Go type is unused but not yet deleted |
 | AD-5 | Privileges are requests with one approval path | ✅ |
@@ -27,8 +27,8 @@ plans are what the code was supposed to become.
 | AD-9 | System services have no public route | ✅ |
 | AD-10 | The portal splits two ways; the platform is a tenant | ✅ |
 | AD-11 | The target layout applies to fresh installs | ✅ |
-| AD-12 | The authorization store is a projection; git holds the defaults | ◐ the projection works; **the bootstrap check that compares git's defaults to the store's does not exist** |
-| AD-13 | The edge is the only session authority | ◐ **the AD and the code disagree.** The AD says back-channel logout makes the director write `session:<sid>#revoked` and the shim denies on it; `decider.go` removed that path on purpose, relying on short-lived tokens and a refresh that fails against an ended session. One of the two is wrong and it should be the text, but that is a decision |
+| AD-12 | The authorization store is a projection; git holds the defaults | ◐ the projection works; the bootstrap drift check is on the backlog below |
+| AD-13 | The edge is the only session authority | ✅ the text now describes what the code does: ending the session at Keycloak ends it, bounded by the access token's lifetime, with no revocation list for the shim to consult |
 | AD-14 | Catalogue sources on the Cluster claim | ☐ **nothing built.** `catalogue.sources[]` is not on the XRD, no tuples are written, and the director serves no index. The authorization model already has `can_install: entitled or open from source` |
 | AD-15 | Multi-language is a core requirement | ☐ see below |
 
@@ -93,8 +93,17 @@ and the union's exactly-one rule cannot, so it survives as the annotation
 | ☐ | S7A.7 and S7A.11 — built, never exercised in a browser |
 | ☐ | S8 — purge and reinstall, which is what makes M1 reached rather than demonstrated |
 
+## Backlog — wanted, not now, and not forgotten
+
+Each of these is a decision already taken. What is missing is the work, and
+none of it blocks the purge.
+
+| | Why it waits |
+| --- | --- |
+| **Deployment authorization** (AD-2): commit signing and Argo's `sourceIntegrity`, so the cluster syncs only commits the director or the break-glass key signed | Confined and separable. Until it lands, git is trusted because of who can push to it rather than because of what the commit carries |
+| **The bootstrap drift check** (AD-12): at start the director recomputes the defaults git implies and compares them to what OpenFGA holds, then REPORTS the difference | No urgency, and the reporting-not-fixing part is the point: a store that has diverged is a question, because overwriting it would erase exactly the grants and revocations that are nobody's default |
+| **Simplify the package union back to one** | The union now admits a chart and a composition together, because three entries genuinely are both. If those three ever render their extra objects some other way — a hook, a sidecar, the chart itself — the pair stops being needed and the rule can go back to exactly one, which is easier to answer without reading it twice |
+
 ## Known and deliberately not now
 
-- Commit signing and `sourceIntegrity` (AD-2). Confined, and separable.
 - The tenant-DMZ publishing proxy and its registry of shared URLs (AD-6).
-  Wanted, and larger than the path to M3.

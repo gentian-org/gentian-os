@@ -234,8 +234,15 @@ func TestComponentProfileRules(t *testing.T) {
 
 		// The package is exactly one thing, and nothing outside it completes
 		// the union. The OR this replaces admitted the first two of these.
-		{"a package that is nothing", "  classes: [app]\n  launch: none\n  trustTier: certified\n  package: {}\n", "exactly one of chart, composition, api or addon"},
-		{"a chart beside an API integration", "  classes: [app]\n  launch: none\n  trustTier: certified\n  package: {chart: {repository: oci://r, name: \"nc\", version: \"1\"}, api: {baseUrl: \"https://x\"}}\n", "exactly one of chart, composition, api or addon"},
+		{"a package that is nothing", "  classes: [app]\n  launch: none\n  trustTier: certified\n  package: {}\n", "a chart, a composition, the two together"},
+		{"a chart beside an API integration", "  classes: [app]\n  launch: none\n  trustTier: certified\n  package: {chart: {repository: oci://r, name: \"nc\", version: \"1\"}, api: {baseUrl: \"https://x\"}}\n", "a chart, a composition, the two together"},
+		// The one legal pair: they answer different halves of one question.
+		// The chart is what is installed; the Composition is what else is
+		// created beside it, which is how Odoo gets its portal bridge and
+		// Element its SSO sidecar.
+		{"a chart rendered by its own composition", "  classes: [app]\n  launch: none\n  trustTier: certified\n  package: {chart: {repository: oci://r, name: \"nc\", version: \"1\"}, composition: app-odoo-base-ce}\n", ""},
+		{"a composition alone", "  classes: [app]\n  launch: none\n  trustTier: certified\n  package: {composition: app-thing}\n", ""},
+		{"an addon beside a chart", "  classes: [app]\n  launch: none\n  trustTier: certified\n  package: {chart: {repository: oci://r, name: \"nc\", version: \"1\"}, addon: {id: cal, of: base}}\n", "a chart, a composition, the two together"},
 		{"a package that is an addon", "  classes: [app]\n  launch: none\n  trustTier: certified\n  package: {addon: {id: deck, of: nextcloud-base-ce}}\n", ""},
 		{"a package that is a composition", "  classes: [app]\n  launch: none\n  trustTier: certified\n  package: {composition: element-stack}\n", ""},
 		{"a package that is an API integration", "  classes: [app]\n  launch: none\n  trustTier: certified\n  package: {api: {baseUrl: \"https://corp.example\"}}\n", ""},

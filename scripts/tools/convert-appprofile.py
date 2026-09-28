@@ -318,28 +318,15 @@ def convert(doc, review, bases):
         if customization is not None and not customization:
             del src["customization"]
 
-    if "compositionRef" in src:
-        # NOT dropped. It names the Composition that renders this app, and the
-        # tenant reads it to set the App claim's compositionRef -- without it
-        # the three apps that have their own Composition would silently render
-        # through app-default instead, losing the bridge, sidecar or alias
-        # that Composition exists to emit.
-        #
-        # An annotation rather than package.composition: package is exactly
-        # one of chart, composition, api or addon and says HOW the component
-        # is delivered. These are delivered as a chart; the Composition is
-        # what renders that chart with extra objects beside it. Putting it in
-        # package would claim otherwise and be refused by the union's rule.
-        meta = doc["metadata"]
-        annotations = meta.get("annotations")
-        if annotations is None:
-            annotations = CommentedMap()
-            meta["annotations"] = annotations
-        annotations["gentianos.io/composition"] = str(src["compositionRef"])
-        review.note(f"package: compositionRef {src['compositionRef']!r} became the annotation "
-                    "gentianos.io/composition. Whether the package union should instead admit a "
-                    "composition alongside a chart is an open design question")
-        del src["compositionRef"]
+    # It names the Composition that renders this app, and the tenant reads it
+    # to set the App claim's compositionRef -- without it the three apps that
+    # have their own Composition render through app-default instead, losing the
+    # bridge, sidecar or alias that Composition exists to emit.
+    #
+    # package.composition beside package.chart: the chart is WHAT is installed
+    # and the Composition is WHAT ELSE is created beside it. The union admits
+    # that pair and nothing else.
+    move(src, "compositionRef", package, "composition")
     if "deploymentMethod" in src:
         review.note(f"package: dropped deploymentMethod {src['deploymentMethod']!r} — delivery is read "
                     "from which package kind is present and can no longer contradict it")

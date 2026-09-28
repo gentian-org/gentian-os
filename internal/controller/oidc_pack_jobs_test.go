@@ -32,18 +32,12 @@ func TestCollectOIDCAppConfigs_IncludesSidecarWithoutAppProfile(t *testing.T) {
 	_ = gentianov1alpha1.AddToScheme(scheme)
 
 	parent := &gentianov1alpha1.ComponentProfile{
-		ObjectMeta: metav1.ObjectMeta{
-			Name: "catalogue-test-app",
-			// The parent is rendered by a Composition, which is what decides
-			// that Crossplane owns its sidecar's OIDC client rather than the
-			// operator. This was spec.compositionRef; AD-4 deletes that field
-			// and the annotation carries it.
-			Annotations: map[string]string{
-				gentianov1alpha1.AnnotationProfileComposition: "app-default",
-			},
-		},
+		ObjectMeta: metav1.ObjectMeta{Name: "catalogue-test-app"},
 		Spec: gentianov1alpha1.ComponentProfileSpec{
 			Classes: []gentianov1alpha1.ComponentClass{gentianov1alpha1.ComponentClassApp}, Launch: gentianov1alpha1.ComponentLaunchNone, TrustTier: gentianov1alpha1.TrustTierCertified, Version: "1.0.0",
+			// Rendered by a Composition, which is what decides that Crossplane
+			// owns its sidecar's OIDC client rather than the operator.
+			Package: gentianov1alpha1.PackageSpec{Composition: "app-default"},
 			Requires: &gentianov1alpha1.RequirementSpec{Services: &gentianov1alpha1.ServiceRequirements{
 				Identity: &gentianov1alpha1.IdentityRequirement{
 					OIDC: &gentianov1alpha1.OIDCClientSpec{

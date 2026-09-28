@@ -84,10 +84,21 @@ const (
 // +kubebuilder:validation:XValidation:rule="!has(self.classes) || !('service' in self.classes) || !has(self.expose) || self.expose.all(e, e.surface == 'gateway')",message="a service exposes on the gateway only: the perimeter has no session"
 // +kubebuilder:validation:XValidation:rule="!has(self.classes) || !('service' in self.classes) || !has(self.expose) || self.expose.all(e, !has(e.tile) || e.tile.object == 'cluster')",message="a service's tile asks on the cluster: it has no app object and runs in no tenant"
 // +kubebuilder:validation:XValidation:rule="!has(self.classes) || ('app' in self.classes) || !has(self.defaultForTenants) || !self.defaultForTenants",message="defaultForTenants is for class app: a service and a shared-app have one instance"
-// Exactly one, and nothing outside package to reach for. The OR this replaces
+// One delivery, and nothing outside package to reach for. The OR this replaces
 // admitted a chart beside an API integration, and deploymentMethod could
 // contradict whichever was set.
-// +kubebuilder:validation:XValidation:rule="[has(self.__package__.chart), has(self.__package__.composition) && self.__package__.composition.size() > 0, has(self.__package__.api), has(self.__package__.addon)].exists_one(x, x)",message="a package is exactly one of chart, composition, api or addon"
+//
+// chart and composition together are the one legal pair, because they answer
+// different halves of one question: the chart is WHAT is installed, and the
+// composition is WHAT ELSE is created beside it. Three catalogue entries are
+// like this -- Odoo, Element and OpenProject each render their chart through a
+// Composition that also emits a portal bridge, an SSO sidecar or a stable
+// service alias. Refusing the pair sent that fact into an annotation, where
+// nothing validated it.
+//
+// Every other pairing is still refused, and composition alone is still a
+// delivery of its own: a component the Composition creates entirely.
+// +kubebuilder:validation:XValidation:rule="[has(self.__package__.chart) || (has(self.__package__.composition) && self.__package__.composition.size() > 0), has(self.__package__.api), has(self.__package__.addon)].exists_one(x, x)",message="a package is a chart, a composition, the two together, an api, or an addon -- and nothing else beside them"
 // +kubebuilder:validation:XValidation:rule="!has(self.customization) || !has(self.customization.addon)",message="an addon is package.addon on this kind, not customization.addon"
 // +kubebuilder:validation:XValidation:rule="self.launch != 'from' || (has(self.launchFrom) && self.launchFrom.size() > 0)",message="launch from needs launchFrom: which contract's provider opens this"
 // +kubebuilder:validation:XValidation:rule="self.launch == 'from' || !has(self.launchFrom) || self.launchFrom.size() == 0",message="launchFrom is meaningless unless launch is from"

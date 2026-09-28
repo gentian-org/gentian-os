@@ -1388,11 +1388,9 @@ func (r *TenantReconciler) buildXTenant(ctx context.Context, tenant *gentianov1a
 				continue
 			}
 			// Which Composition renders this app, if it is not app-default.
-			// From an annotation now: spec.compositionRef is gone, and
-			// package.composition would claim the component is delivered as a
-			// composition rather than as the chart it is.
-			if variant := strings.TrimSpace(
-				profile.Annotations[gentianov1alpha1.AnnotationProfileComposition]); variant != "" {
+			// package.composition beside package.chart: the chart is what is
+			// installed and the Composition is what else is created beside it.
+			if variant := strings.TrimSpace(profile.Spec.Package.Composition); variant != "" {
 				entry["variant"] = strings.TrimPrefix(variant, "app-")
 			}
 		} else {

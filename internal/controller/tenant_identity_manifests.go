@@ -330,7 +330,7 @@ func crossplaneOwnsOIDCClient(profile *gentianov1alpha1.ComponentProfile, cfg oi
 		return false
 	}
 	if cfg.parentProfile != "" {
-		return profile.Annotations[gentianov1alpha1.AnnotationProfileComposition] != ""
+		return profile.Spec.Package.Composition != ""
 	}
 	kr := profile.Services()
 	if kr == nil || kr.Identity == nil || kr.Identity.OIDC == nil {

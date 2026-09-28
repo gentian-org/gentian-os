@@ -38,25 +38,6 @@ const (
 	// authorization question and the thing that enforces it runs in here.
 	AnnotationProfileRequiresEntitlement = "gentianos.io/requires-entitlement"
 
-	// AnnotationProfileComposition names the Crossplane Composition that
-	// renders this entry, without the "app-" prefix the claim adds.
-	//
-	// An annotation and not package.composition, because those are different
-	// statements and only one of them fits the package union. package is
-	// exactly one of chart, composition, api or addon — it says HOW a
-	// component is delivered. These three entries are delivered as a chart,
-	// and the composition is the thing that renders that chart with the extra
-	// objects the app needs: Odoo's, Element's and OpenProject's each read
-	// package.chart and then emit a bridge, a sidecar or a stable alias
-	// beside the Release.
-	//
-	// So naming the composition in package would claim the component is not a
-	// chart, which is false, and would be refused by the union's own rule.
-	// Whether that rule should instead admit a composition alongside a chart
-	// is a design question this does not answer; what it does is keep three
-	// apps rendering through the composition they have always rendered
-	// through, rather than silently falling back to app-default.
-	AnnotationProfileComposition = "gentianos.io/composition"
 	// GatewayRootRedirect is an HTTPRoute redirect target for GET / on the app host.
 	AnnotationProfileGatewayRootRedirect = "gentianos.io/gateway-root-redirect"
 	// GatewayAPIBackends is a JSON array of extra path→Service routes on the app host.
