@@ -41,10 +41,11 @@ The market is German-speaking, so this is not polish.
 | Tile labels on the desktop | ✅ `ExposureTile.displayNames`, projected, and `localisedLabel` picks by the viewer's locale |
 | The desktop's own strings | ✅ i18next with JSON catalogues in `src/locales`, English and German, discovered by a glob — adding a language is adding a file |
 | Keycloak login and account | ✅ every realm enables internationalization; the kernel realm reads `GENTIAN_SUPPORTED_LOCALES`, a tenant realm reads `spec.locales` |
-| A language chooser | ✅ in Settings, defaulting to "match my browser" |
+| A language chooser | ✅ in Settings. Clearing it falls back to the tenant's language, not the browser |
+| Where a person's language comes from | ✅ their own choice (which a settings template also sets, because a template copies preferences and language is one), then the tenant's, then the browser |
 | Admin console | ☐ nothing started. Same approach as the desktop; it is a separate app in `gentian-apps` |
 | A component's other catalogue text | ☐ `description` and the store listing's text are single strings |
-| The account's language | ◐ an explicit choice is remembered per browser. AD-15 says it comes from the account: the seam is there (`detection.order`) and nothing writes a locale to Keycloak yet |
+| The account's language | ✅ in the desktop's preferences database, one row per user per tenant, so it follows a person between machines. Browser storage is only a first-paint cache |
 | A missing-translation check in CI | ☐ `src/locales/README.md` has the script; nothing runs it |
 
 ## AD-4 — what is left
@@ -75,7 +76,6 @@ Two implementation gaps the design already names:
 | | |
 | --- | --- |
 | ✅ | `claims/deployments-repository.yaml` is required on v5, and an uncommitted working copy is named. Without that claim the director has no push credential and every write answers 503 — no tenant, no invited user |
-| ☐ | A tenant's default language for the desktop. A user can choose (Settings) and a tenant can choose which languages its realm offers; what is missing is the default a tenant's people get before they choose |
 | ☐ | Deployment preparation is not DRY: `--prepare-deployment` writes the files and nothing commits them, so the claim reaches the cluster only if somebody remembers. One writer, folded into the normal run |
 | ☐ | `GETTING-STARTED.md` still names `claims/infra-data.yaml`, which v5 does not have and which would compose the system-tier engines a second time |
 | ☐ | S7A.4 — no write has ever succeeded against this cluster |
