@@ -83,7 +83,7 @@ worst time for it. So step 1 restores the capability rather than dropping it.
 
 ## What has to be done, in order
 
-1. **Restore tile localisation, then close the gaps.** `ExposureTile` keeps
+1. **[done] Restore tile localisation, then close the gaps.** `ExposureTile` keeps
    `displayName` as the required fallback and gains an optional
    `displayNames` map of locale to string; `tilecatalogue.Tile` carries it and
    the desktop picks by the viewer's locale, falling back. Nothing else needs a
@@ -136,37 +136,49 @@ worst time for it. So step 1 restores the capability rather than dropping it.
    All five app render fixtures pass against **unchanged goldens**, which is
    the check worth having: the same values read from a different shape render
    byte-identical output.
-## What stops step 6: two thirds of the catalogue's tiles
+## The addon tiles, and where they land
 
 Measured before converting anything. Of 33 catalogue profiles carrying 35
-tiles, **21 profiles carry 23 tiles and have no ingress at all**. They are the
-Nextcloud and Odoo addons, and `nextcloud-calendar-ce` says why in its own
-words:
+tiles, **21 profiles carry 23 tiles and have no ingress of their own** — the
+Nextcloud and Odoo addons, whose tiles deep-link into the *base* app:
+`?app=calendar`, `?open=spreadsheet`,
+`/odoo/action-crm.action_your_pipeline?gentian_embed=1`.
 
-> The addon has no ingress of its own, so the shell resolves the base URL from
-> `spec.customization.addon.of` and appends this suffix to deep-link into the
-> feature inside Nextcloud.
+This looked at first like a gap in ComponentProfile. It is not.
+`target-component-structure.md` already answers it, in a table — *"an addon's
+tile | the base's Service, named by `package.addon.of`"* — and with a worked
+example. An addon's exposure names the base through `backend.component`; the
+tile hangs off that exposure like any other. Nothing new is needed in the
+schema, and `ExposureTile.path` takes `/?app=calendar` because a bare query is
+written as `/?…`.
 
-So an addon's tile points at **another component's** host with a suffix:
-`?app=calendar`, `?open=spreadsheet`, `/odoo/action-crm.action_your_pipeline?gentian_embed=1`.
-`richdocuments-ce` carries three of them.
+What *was* wrong was the converter, which filed `portalTiles` under
+presentation and sent every tile out of the cluster with the store listing. A
+tile carries `relation`, the permission a person must hold to see it, and that
+is an authorization question the operator has to be able to read. Fixed: tiles
+become `expose[].tile`, and an addon's exposure keeps the base's subdomain so
+`cloud.<tenant>/?app=calendar` still opens what it always did.
 
-ComponentProfile has no place for such a tile. `expose[].tile` hangs a tile off
-an exposure of *this* component, and an addon exposes nothing — it has no
-Service and no route, which is the whole point of being activation state inside
-the base rather than an install. Giving an addon an `expose[]` entry to hold a
-tile would create a second HTTPRoute on the base's host, and
-`ExposureTile.path` is `^/`-anchored so it cannot hold `?app=calendar` anyway.
+`tile_projection_reconciler.go` mentions addons nowhere, so v5 shows none of
+these 23 tiles today. That is implementation, not design, and it is the second
+of the three gaps below.
 
-`internal/controller/tile_projection_reconciler.go` mentions addons nowhere, so
-this is not a gap the migration would open: **v5 already shows none of these 23
-tiles.** It is a v0.4 capability that is currently unreachable, and converting
-the 21 profiles is the moment the strings would be deleted rather than merely
-unread — the same trap step 1 caught for translations, and this time it is two
-thirds of the catalogue's tiles rather than thirty labels.
+## What is left, from the design's own list
 
-This needs a decision before step 6, because the shape it takes decides what
-the 21 documents are converted INTO. It is recorded here rather than guessed.
+1. `Tenant.spec.apps` resolves `AppProfile` only. Until a `ComponentProfile`
+   can be installed into a tenant by naming it there, the catalogue cannot
+   move. This is step 5 below.
+2. The component reconciler refuses any package that is not a chart (*"only
+   package.chart is reconciled yet"*). It has no addon path and no API path.
+3. `BackendRef.component` is declared and unread: `buildExposureRoute` uses
+   `e.Backend.Service` in the component's own namespace. For an addon the base
+   is in that same namespace, so the Service resolves — but an addon's exposure
+   must **not** create a second HTTPRoute, because it reuses the base's host
+   and two routes matching `/` on one hostname conflict. The tile projection
+   then has to read the host from the base's route rather than requiring one of
+   the addon's own. *(Confirm: an addon reusing the base's host is what v0.4
+   did and what keeps the URLs; giving each addon its own subdomain is the
+   alternative and changes every addon URL.)*
 
 4. **The Go side: 35 non-test files.** Most are mechanical, because
    `AppProfile.spec.kernelRequirements` and
@@ -177,7 +189,10 @@ the 21 documents are converted INTO. It is recorded here rather than guessed.
 5. **`Tenant.spec.apps[].profile` names a ComponentProfile.** Admission
    already refuses a profile that is not in the catalogue, so the refusal moves
    with the kind.
-6. **Convert the 38 documents.** Mechanical, from the table above.
+6. **Convert the 38 documents.** The converter does it and all 33 in
+   `gentian-apps` pass the CRD's schema and its CEL rules; 145 review items
+   remain, 34 of them icons where the old profile carried an SVG and the new
+   field wants a glyph name.
 7. **Re-point or drop the three metadata readers** (`license`, `family`,
    `categories`).
 8. **Delete `AppProfile`**: the Go types, the CRD, the composition's old path,
