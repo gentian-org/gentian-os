@@ -74,6 +74,9 @@ type Repository interface {
 	SetClusterBackupPolicy(ctx context.Context, policy gitops.BackupPolicy, meta gitops.Meta) (gitops.Result, error)
 	TenantSecurityPolicy(ctx context.Context, tenant string) (*gitops.SecurityPolicy, error)
 	SetTenantSecurityPolicy(ctx context.Context, tenant string, policy gitops.SecurityPolicy, meta gitops.Meta) (gitops.Result, error)
+	TenantExposures(ctx context.Context, tenant string) ([]gitops.Exposure, error)
+	PublishExposure(ctx context.Context, tenant string, e gitops.Exposure, meta gitops.Meta) (gitops.Result, error)
+	WithdrawExposure(ctx context.Context, tenant, install, exposure string, meta gitops.Meta) (gitops.Result, error)
 	TenantLocales(ctx context.Context, tenant string) ([]string, error)
 	SetTenantLocales(ctx context.Context, tenant string, locales []string, meta gitops.Meta) (gitops.Result, error)
 	TenantPrivileges(ctx context.Context, tenant string) ([]gitops.PrivilegeGrant, error)
@@ -449,6 +452,21 @@ func (s *Server) routes() {
 	// decision per kind before either handler writes anything. It is
 	// derived from the kind and never read from the request, or a profile
 	// could ask for the cheaper approver.
+	// What this tenant publishes to the internet, and who said it could.
+	//
+	// can_expose, never admin (AD-6). The tenant's administrators hold it by
+	// default because most tenants do not staff a perimeter approver
+	// separately — but it is asked as its own relation, so putting something
+	// on the internet is always its own line in the record rather than
+	// something that happened while somebody was doing everything else.
+	//
+	// The READ is can_view, and it is the registry: every URL this tenant
+	// publishes, who published it and until when. "What of ours is on the
+	// internet" answered by the thing that put it there.
+	s.guarded("GET /v1/tenants/{t}/exposures", "can_view", tenantObject, s.tenantExposures)
+	s.guarded("PUT /v1/tenants/{t}/exposures/{inst}/{name}", "can_expose", tenantObject, s.publishExposure)
+	s.guarded("DELETE /v1/tenants/{t}/exposures/{inst}/{name}", "can_expose", tenantObject, s.withdrawExposure)
+
 	s.guarded("GET /v1/tenants/{t}/privileges", "can_view", tenantObject, s.tenantPrivileges)
 	s.guarded("PUT /v1/tenants/{t}/privileges/{inst}/{kind}/{name}", "can_view", tenantObject, s.grantPrivilege)
 	s.guarded("DELETE /v1/tenants/{t}/privileges/{inst}/{kind}/{name}", "can_view", tenantObject, s.revokePrivilege)

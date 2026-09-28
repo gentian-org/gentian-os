@@ -368,6 +368,7 @@ func (r *TenantReconciler) ensureDefaultComponents(ctx context.Context, tenant *
 				ProfileRef: gentianov1alpha1.ProfileRef{Name: profile.Name},
 				Class:      gentianov1alpha1.ComponentClassApp,
 				Privileges: tenantPrivilegeGrants(tenant, profile.Name),
+				Exposures:  tenantExposures(tenant, profile.Name),
 			},
 		}
 		if err := controllerutil.SetControllerReference(tenant, desired, r.Scheme); err != nil {
@@ -418,8 +419,35 @@ func (r *TenantReconciler) ensureDefaultComponents(ctx context.Context, tenant *
 				return fmt.Errorf("set the granted privileges on the %s component: %w", profile.Name, err)
 			}
 		}
+		// And what a perimeter approver published, for the same reason: the
+		// decision is a commit, and this is how it reaches the Component
+		// whose reconcile stands the proxy up. Withdrawing one takes the
+		// surface down by the same route.
+		if want := tenantExposures(tenant, profile.Name); !equality.Semantic.DeepEqual(existing.Spec.Exposures, want) {
+			patch := client.MergeFrom(existing.DeepCopy())
+			existing.Spec.Exposures = want
+			if err := r.Patch(ctx, existing, patch); err != nil {
+				return fmt.Errorf("set the published exposures on the %s component: %w", profile.Name, err)
+			}
+		}
 	}
 	return nil
+}
+
+// tenantExposures are the surfaces a perimeter approver published from one
+// component, in the order the Tenant lists them.
+//
+// An entry naming a component that is not installed is skipped rather than
+// dropped: a decision to publish outlives a reinstall, and asking somebody to
+// approve the same thing twice is how approvals become a formality.
+func tenantExposures(tenant *gentianov1alpha1.Tenant, install string) []gentianov1alpha1.ExposureEnablement {
+	var out []gentianov1alpha1.ExposureEnablement
+	for i := range tenant.Spec.Exposures {
+		if tenant.Spec.Exposures[i].Install == install {
+			out = append(out, tenant.Spec.Exposures[i].Enablement())
+		}
+	}
+	return out
 }
 
 // tenantPrivilegeGrants are the tenant's grants for one component, in the

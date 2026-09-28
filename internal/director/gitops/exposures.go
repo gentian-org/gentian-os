@@ -1,0 +1,232 @@
+/*
+Copyright 2026 Gentian Organization.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
+package gitops
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"os"
+	"path/filepath"
+	"sort"
+	"strings"
+	"time"
+
+	"sigs.k8s.io/yaml"
+)
+
+// What a tenant publishes to the internet, as a commit.
+//
+// A profile DECLARES that it could publish something — Nextcloud's shared
+// links, its CalDAV endpoints — and that publishes nothing. A perimeter
+// approver ENABLES it, for a host, until a date, and that is this file
+// (AD-6). The relation asked is can_expose and never admin, so publishing is
+// always its own audit line rather than something an administrator does
+// incidentally while doing everything else.
+//
+// The expiry is required and there is no way to say "forever". A public
+// surface with no end is not something anybody decided; it is something
+// somebody once did.
+//
+// This file is also the REGISTRY. Every URL a tenant has ever published is
+// here with who published it and until when, and a perimeter approver reads
+// it back through the director — which is the answer to "what of ours is on
+// the internet", asked of the thing that put it there rather than of a scan.
+
+// ExposuresFile is the patch a tenant's published surfaces are written to.
+const ExposuresFile = "exposures.yaml"
+
+// Exposure is one published surface, shaped like the CRD's own entry.
+type Exposure struct {
+	// Install is the Component this publishes from.
+	Install string `json:"install"`
+	// ExposureName is the entry of that component's profile, whose surface is
+	// perimeter.
+	ExposureName string `json:"exposureName"`
+	// Host is the public hostname. Empty means the entry's default in the
+	// tenant's zone, which the operator resolves.
+	Host string `json:"host,omitempty"`
+	// Owner is the subject that enabled it, from the caller's token.
+	Owner string `json:"owner"`
+	// ExpiresAt is when it stops answering, RFC 3339. Always set.
+	ExpiresAt string `json:"expiresAt"`
+	// ReviewAt is when the owner and the approver are asked to renew.
+	ReviewAt string `json:"reviewAt,omitempty"`
+	// Reason is why this is public, in the approver's words.
+	Reason string `json:"reason,omitempty"`
+}
+
+// Key is what makes one unique: a component's entry, published once.
+func (e Exposure) Key() string { return e.Install + " " + e.ExposureName }
+
+// TenantExposures reads what a tenant publishes, for the console's view of
+// its own perimeter.
+func (g *GitOps) TenantExposures(ctx context.Context, tenant string) ([]Exposure, error) {
+	if !ValidName(tenant) {
+		return nil, fmt.Errorf("%w: tenant %q", ErrInvalidName, tenant)
+	}
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return g.tenantExposures(ctx, tenant)
+}
+
+func (g *GitOps) tenantExposures(ctx context.Context, tenant string) ([]Exposure, error) {
+	manifest, err := g.tenantFileRead(ctx, tenant)
+	if err != nil {
+		return nil, err
+	}
+	raw, err := os.ReadFile(filepath.Join(filepath.Dir(manifest), ExposuresFile))
+	if errors.Is(err, os.ErrNotExist) {
+		// Nothing published, which is the answer most tenants have and the
+		// one they should have until somebody decides otherwise.
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	var doc struct {
+		Spec struct {
+			Exposures []Exposure `json:"exposures"`
+		} `json:"spec"`
+	}
+	if err := yaml.Unmarshal(raw, &doc); err != nil {
+		return nil, err
+	}
+	return doc.Spec.Exposures, nil
+}
+
+// PublishExposure records that a perimeter approver enabled one surface.
+//
+// Re-publishing the same surface on the same terms is "unchanged". New terms
+// — a later expiry, a different host — REPLACE the old entry, because two
+// enablements of one surface would leave the question of which applies, and
+// the answer would decide how long something is on the internet.
+func (g *GitOps) PublishExposure(ctx context.Context, tenant string, e Exposure, meta Meta) (Result, error) {
+	if !ValidName(tenant) {
+		return Result{}, fmt.Errorf("%w: tenant %q", ErrInvalidName, tenant)
+	}
+	if !ValidName(e.Install) {
+		return Result{}, fmt.Errorf("%w: install %q", ErrInvalidName, e.Install)
+	}
+	if !ValidName(e.ExposureName) {
+		return Result{}, fmt.Errorf("%w: exposure %q", ErrInvalidName, e.ExposureName)
+	}
+	if e.Owner == "" {
+		return Result{}, fmt.Errorf("an exposure needs an owner")
+	}
+	if e.ExpiresAt == "" {
+		return Result{}, fmt.Errorf("an exposure needs an expiry: a public surface with no end is not a decision")
+	}
+	if _, err := time.Parse(time.RFC3339, e.ExpiresAt); err != nil {
+		return Result{}, fmt.Errorf("expiresAt must be an RFC 3339 timestamp")
+	}
+
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	have, err := g.tenantExposures(ctx, tenant)
+	if err != nil {
+		return Result{}, err
+	}
+	next := make([]Exposure, 0, len(have)+1)
+	replaced := false
+	for _, h := range have {
+		if h.Key() == e.Key() {
+			next = append(next, e)
+			replaced = true
+			continue
+		}
+		next = append(next, h)
+	}
+	if !replaced {
+		next = append(next, e)
+	}
+	return g.writeTenantFileLocked(ctx, tenant, ExposuresFile, renderExposures(tenant, next), listPatch,
+		fmt.Sprintf("Publish %s/%s for tenant %s", e.Install, e.ExposureName, tenant), meta)
+}
+
+// WithdrawExposure takes one down. The operator removes the proxy, the route
+// and the policies on its next reconcile, and the URL stops answering.
+func (g *GitOps) WithdrawExposure(ctx context.Context, tenant, install, exposure string, meta Meta) (Result, error) {
+	if !ValidName(tenant) {
+		return Result{}, fmt.Errorf("%w: tenant %q", ErrInvalidName, tenant)
+	}
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	have, err := g.tenantExposures(ctx, tenant)
+	if err != nil {
+		return Result{}, err
+	}
+	want := Exposure{Install: install, ExposureName: exposure}.Key()
+	next := make([]Exposure, 0, len(have))
+	for _, h := range have {
+		if h.Key() == want {
+			continue
+		}
+		next = append(next, h)
+	}
+	if len(next) == len(have) {
+		return Result{Status: "unchanged"}, nil
+	}
+	body := ""
+	if len(next) > 0 {
+		body = renderExposures(tenant, next)
+	}
+	return g.writeTenantFileLocked(ctx, tenant, ExposuresFile, body, listPatch,
+		fmt.Sprintf("Withdraw %s/%s for tenant %s", install, exposure, tenant), meta)
+}
+
+// renderExposures writes the patch a reviewer reads in the commit.
+func renderExposures(tenant string, exposures []Exposure) string {
+	sorted := make([]Exposure, len(exposures))
+	copy(sorted, exposures)
+	sort.Slice(sorted, func(i, j int) bool { return sorted[i].Key() < sorted[j].Key() })
+
+	var b strings.Builder
+	b.WriteString("# Managed by the director: what this tenant publishes to the internet.\n")
+	b.WriteString("#\n")
+	b.WriteString("# Each entry is a surface a profile declared and a perimeter approver\n")
+	b.WriteString("# enabled, for a host, until a date. The operator stands a proxy in the\n")
+	b.WriteString("# tenant's DMZ for each one, forwarding only the paths the profile\n")
+	b.WriteString("# declared, with no session and no identity of ours attached.\n")
+	b.WriteString("#\n")
+	b.WriteString("# Removing an entry, or letting it expire, takes the surface down: the\n")
+	b.WriteString("# proxy goes and the URL stops answering. The entry stays in the history\n")
+	b.WriteString("# either way, because what a tenant once published is the question an\n")
+	b.WriteString("# audit asks.\n")
+	b.WriteString("apiVersion: gentianos.io/v1alpha1\n")
+	b.WriteString("kind: Tenant\n")
+	b.WriteString("metadata:\n")
+	b.WriteString("  name: " + tenant + "\n")
+	b.WriteString("spec:\n")
+	b.WriteString("  exposures:\n")
+	for _, e := range sorted {
+		b.WriteString("    - install: " + e.Install + "\n")
+		b.WriteString("      exposureName: " + e.ExposureName + "\n")
+		if e.Host != "" {
+			b.WriteString("      host: " + e.Host + "\n")
+		}
+		b.WriteString("      owner: " + e.Owner + "\n")
+		b.WriteString("      expiresAt: " + e.ExpiresAt + "\n")
+		if e.ReviewAt != "" {
+			b.WriteString("      reviewAt: " + e.ReviewAt + "\n")
+		}
+		if e.Reason != "" {
+			b.WriteString("      reason: " + yamlScalar(e.Reason) + "\n")
+		}
+	}
+	return b.String()
+}

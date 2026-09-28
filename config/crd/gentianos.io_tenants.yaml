@@ -220,6 +220,87 @@ spec:
                   for *.<effectiveDomain> via DNS-01. See docs/design/multi-tenancy.md §3.
                 pattern: ^([a-z0-9]([a-z0-9\-\.]*[a-z0-9])?)?$
                 type: string
+              exposures:
+                description: |-
+                  Exposures are the perimeter surfaces a perimeter approver published
+                  (AD-6): what this tenant has on the internet, from when, until when,
+                  and who said so.
+
+                  Here for the same reason the grants are: the decision has to outlive
+                  the thing it applies to, and it has to be a commit rather than an edit
+                  somebody made to a live object. The operator copies each entry onto the
+                  Component it names, and the Component's reconcile is what stands the
+                  proxy up in the tenant's DMZ.
+
+                  It is also the registry. Every URL this tenant publishes is one of
+                  these, which is what lets "what of ours is on the internet" be answered
+                  by the thing that put it there.
+                items:
+                  description: |-
+                    TenantExposure is one published surface, against one of the tenant's
+                    components.
+
+                    The fields are spelled out rather than embedded so the two list map keys can
+                    be the component and the entry: together they are what makes a published
+                    surface unique, and letting the API server enforce that is better than a
+                    controller finding two answers to how long something is on the internet.
+                  properties:
+                    expiresAt:
+                      description: |-
+                        ExpiresAt is when it stops answering, and it is required. A public
+                        surface with no end is not something anybody decided.
+                      format: date-time
+                      type: string
+                    exposureName:
+                      description: |-
+                        ExposureName names an entry of that component's profile whose surface
+                        is perimeter. An entry that is not is never published here: the
+                        operator checks, because enabling a gateway entry by name would
+                        otherwise put the component's authenticated surface on the internet.
+                      maxLength: 40
+                      pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
+                      type: string
+                    host:
+                      description: |-
+                        Host is the public hostname. Empty means the entry's default in the
+                        tenant's zone.
+                      maxLength: 253
+                      pattern: ^([a-z0-9]([-a-z0-9]*[a-z0-9])?\.)+[a-z]{2,}$
+                      type: string
+                    install:
+                      description: Install names the Component this publishes from.
+                      maxLength: 253
+                      pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
+                      type: string
+                    owner:
+                      description: |-
+                        Owner is the subject that published it, set by the director from the
+                        caller's token.
+                      maxLength: 256
+                      minLength: 1
+                      type: string
+                    reason:
+                      description: Reason is why this is public, in the approver's
+                        words.
+                      maxLength: 2000
+                      type: string
+                    reviewAt:
+                      description: ReviewAt is when the owner and the approver are
+                        asked to renew.
+                      format: date-time
+                      type: string
+                  required:
+                  - expiresAt
+                  - exposureName
+                  - install
+                  - owner
+                  type: object
+                maxItems: 256
+                type: array
+                x-kubernetes-list-map-keys:
+                - install
+                - exposureName
+                x-kubernetes-list-type: map
               isolation:
                 description: Isolation describes the workload isolation boundaries
                   for this tenant.

@@ -678,6 +678,11 @@ var facts = table{
 	"user:tina can_install_app tenant:solo":      true,
 	"user:tina can_view tenant:solo":             true,
 	"user:tom can_approve_privilege tenant:demo": true,
+	// can_expose is the perimeter approver's, and a tenant's admins hold it
+	// by default (AD-6). pat holds it and nothing else -- the model's own
+	// fixture for the role existing separately from running the tenant.
+	"user:tom can_expose tenant:demo": true,
+	"user:pat can_expose tenant:demo": true,
 	// sam is the security officer: cluster#can_approve, and can_view on every
 	// tenant because can_audit reaches it. Deliberately NOT a tenant
 	// administrator, which is the case the kind-scoped check exists for.

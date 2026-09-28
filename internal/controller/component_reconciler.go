@@ -316,14 +316,27 @@ func (r *ComponentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		return r.status(ctx, comp, metav1.ConditionFalse, "Installing", releaseMessage, componentRequeue)
 	}
 	logger.V(1).Info("component reconciled", "component", comp.Name, "namespace", comp.Namespace, "exposures", exposed)
+	// The perimeter: a surface the profile declared and a perimeter approver
+	// enabled, published from the tenant's DMZ with no session in front of it
+	// (AD-6). Declaring one publishes nothing; this only acts on enablements.
+	published, err := r.ensurePerimeter(ctx, comp, profile, tenant, zone)
+	if err != nil {
+		return ctrl.Result{}, fmt.Errorf("perimeter: %w", err)
+	}
+
 	// What Ready MEANS differs by package, so the message says which it is
 	// rather than claiming a release for a component that deploys none.
 	installed := "release deployed"
 	if releaseMessage != "" && profile.Spec.Package.Chart == nil {
 		installed = releaseMessage
 	}
-	return r.status(ctx, comp, metav1.ConditionTrue, "Ready",
-		fmt.Sprintf("%s; %d gateway exposure(s) routed in zone %s", installed, exposed, zone.domain), 0)
+	message := fmt.Sprintf("%s; %d gateway exposure(s) routed in zone %s", installed, exposed, zone.domain)
+	if published > 0 {
+		// Said out loud, because a public surface is the one thing about a
+		// component that somebody should never discover by accident.
+		message += fmt.Sprintf("; %d published on the perimeter", published)
+	}
+	return r.status(ctx, comp, metav1.ConditionTrue, "Ready", message, 0)
 }
 
 // addonBaseReady reports whether the component this addon activates into is

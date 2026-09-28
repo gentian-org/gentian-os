@@ -106,6 +106,85 @@ type TenantSpec struct {
 	// +listMapKey=privilege
 	// +kubebuilder:validation:MaxItems=256
 	Privileges []TenantPrivilegeGrant `json:"privileges,omitempty"`
+
+	// Exposures are the perimeter surfaces a perimeter approver published
+	// (AD-6): what this tenant has on the internet, from when, until when,
+	// and who said so.
+	//
+	// Here for the same reason the grants are: the decision has to outlive
+	// the thing it applies to, and it has to be a commit rather than an edit
+	// somebody made to a live object. The operator copies each entry onto the
+	// Component it names, and the Component's reconcile is what stands the
+	// proxy up in the tenant's DMZ.
+	//
+	// It is also the registry. Every URL this tenant publishes is one of
+	// these, which is what lets "what of ours is on the internet" be answered
+	// by the thing that put it there.
+	// +optional
+	// +listType=map
+	// +listMapKey=install
+	// +listMapKey=exposureName
+	// +kubebuilder:validation:MaxItems=256
+	Exposures []TenantExposure `json:"exposures,omitempty"`
+}
+
+// TenantExposure is one published surface, against one of the tenant's
+// components.
+//
+// The fields are spelled out rather than embedded so the two list map keys can
+// be the component and the entry: together they are what makes a published
+// surface unique, and letting the API server enforce that is better than a
+// controller finding two answers to how long something is on the internet.
+type TenantExposure struct {
+	// Install names the Component this publishes from.
+	// +kubebuilder:validation:Pattern=`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`
+	// +kubebuilder:validation:MaxLength=253
+	Install string `json:"install"`
+
+	// ExposureName names an entry of that component's profile whose surface
+	// is perimeter. An entry that is not is never published here: the
+	// operator checks, because enabling a gateway entry by name would
+	// otherwise put the component's authenticated surface on the internet.
+	// +kubebuilder:validation:Pattern=`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`
+	// +kubebuilder:validation:MaxLength=40
+	ExposureName string `json:"exposureName"`
+
+	// Host is the public hostname. Empty means the entry's default in the
+	// tenant's zone.
+	// +optional
+	// +kubebuilder:validation:Pattern=`^([a-z0-9]([-a-z0-9]*[a-z0-9])?\.)+[a-z]{2,}$`
+	// +kubebuilder:validation:MaxLength=253
+	Host string `json:"host,omitempty"`
+
+	// Owner is the subject that published it, set by the director from the
+	// caller's token.
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=256
+	Owner string `json:"owner"`
+
+	// ExpiresAt is when it stops answering, and it is required. A public
+	// surface with no end is not something anybody decided.
+	ExpiresAt metav1.Time `json:"expiresAt"`
+
+	// ReviewAt is when the owner and the approver are asked to renew.
+	// +optional
+	ReviewAt *metav1.Time `json:"reviewAt,omitempty"`
+
+	// Reason is why this is public, in the approver's words.
+	// +optional
+	// +kubebuilder:validation:MaxLength=2000
+	Reason string `json:"reason,omitempty"`
+}
+
+// Enablement is this entry as the Component carries it.
+func (e *TenantExposure) Enablement() ExposureEnablement {
+	return ExposureEnablement{
+		ExposureName: e.ExposureName,
+		Host:         e.Host,
+		Owner:        e.Owner,
+		ExpiresAt:    e.ExpiresAt,
+		ReviewAt:     e.ReviewAt,
+	}
 }
 
 // TenantPrivilegeGrant is one grant, against one of the tenant's components.
