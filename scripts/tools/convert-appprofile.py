@@ -109,8 +109,7 @@ HANDLED = set(PRESENTATION) | set(PACKAGE_RENAME) | set(CARRIED) | {
     "derivedSecretKeys", "ingress", "additionalIngresses", "browserProxy",
     "postInstallJob", "provisioning", "portalTiles", "deploymentMethod"}
 
-# What a browser-proxy authMode meant, in the words of the new enum.
-PROXY_AUTH = {"": "oidc", "forward-bearer": "oidc", "session": "oidc", "none": "none", "bearer": "bearer"}
+
 
 
 # The tile every component ships when its author has no art yet. Read from the
@@ -159,27 +158,26 @@ def expose_from_ingress(ing, name, review, has_oidc):
     return entry
 
 
-def expose_from_proxy(route, review):
-    name = slug(route.get("path", "proxy"))
-    target = urlparse(route.get("target", ""))
-    mode = PROXY_AUTH.get(route.get("authMode", ""))
-    if mode is None:
-        mode = "oidc"
-        review.note(f"expose/{name}: unknown browserProxy authMode {route.get('authMode')!r}; set to oidc")
-    entry = {"name": name, "surface": "gateway", "authMode": mode,
-             "paths": ["/" + str(route.get("path", "")).strip("/")]}
-    if route.get("stripPrefix"):
-        entry["stripPrefix"] = True
-    entry["backend"] = {"service": target.hostname or "REVIEW",
-                        "port": target.port or (443 if target.scheme == "https" else 80)}
-    if target.path not in ("", "/"):
-        review.note(f"expose/{name}: the proxy target carried a path ({target.path}) that a backend "
-                    "reference cannot; check the route still reaches the right prefix")
-    if route.get("authMode", "") in ("", "forward-bearer"):
-        review.note(f"expose/{name}: was forward-bearer — the backend received the user's token. It now "
-                    "gets identity headers; set forwardToken only if it calls the director as the user "
-                    "(platform tier only)")
-    return entry
+def drop_proxy_route(route, review):
+    """browserProxy is dropped, not converted.
+
+    It described a route the PORTAL proxied on the app's behalf, to any host
+    the profile named. The portal's proxy was deleted with the rest of the
+    BFF's authority (S7A.6), and an exposure's backend must be a real Service
+    in the tenant's namespace — so converting these produced entries pointing
+    at Services nothing creates, and an HTTPRoute reporting BackendNotFound
+    answers 500 on every path of that host, not just the proxied one.
+
+    validate-secret-refs.py caught exactly that, which is the argument for
+    running a repository's own checks against a migration rather than trusting
+    that a schema-valid document is a working one.
+    """
+    path = "/" + str(route.get("path", "")).strip("/")
+    target = route.get("target", "")
+    review.note(f"browserProxy {path} -> {target} was DROPPED. The portal no longer proxies for apps, "
+                "and an exposure's backend must be a Service in the tenant's namespace. If this route "
+                "is still needed, the app has to serve that path itself or ship a Service for it")
+
 
 
 
@@ -387,7 +385,7 @@ def convert(doc, review, bases):
         expose.append(expose_from_ingress(ing, slug(ing.get("subDomain") or ing.get("serviceName")),
                                           review, has_oidc))
     for route in src.get("browserProxy") or []:
-        expose.append(expose_from_proxy(route, review))
+        drop_proxy_route(route, review)
 
     tiles = src.get("portalTiles") or []
     if addon is not None:
