@@ -4415,6 +4415,11 @@ func (in *TenantSpec) DeepCopyInto(out *TenantSpec) {
 			(*in)[i].DeepCopyInto(&(*out)[i])
 		}
 	}
+	if in.Locales != nil {
+		in, out := &in.Locales, &out.Locales
+		*out = make([]string, len(*in))
+		copy(*out, *in)
+	}
 	if in.Privileges != nil {
 		in, out := &in.Privileges, &out.Privileges
 		*out = make([]TenantPrivilegeGrant, len(*in))

@@ -23,6 +23,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -178,13 +179,38 @@ func BrowserSecurityHeadersJSON() string {
 // styling rather than breaking login.
 const GentianLoginTheme = "gentian"
 
-// SupportedLocales are the languages every realm renders in, and the platform
-// ships its own strings in both (AD-15). ISO 639-1, which is what Keycloak's
-// realm representation takes.
-var SupportedLocales = []string{"en", "de"}
+// DefaultSupportedLocales are the languages a realm renders in when the
+// deployment names none (AD-15). ISO 639-1, which is what Keycloak's realm
+// representation takes.
+//
+// A default rather than a constant: adding a language to the platform must not
+// mean editing Go. The desktop discovers its catalogues from
+// gentian-ui/frontend/src/locales, so a language arrives there as one JSON
+// file; here it arrives as GENTIAN_SUPPORTED_LOCALES on the operator, and
+// Keycloak's own translations are already present for far more languages than
+// this platform has strings for.
+var DefaultSupportedLocales = []string{"en", "de"}
 
 // DefaultLocale answers a browser asking for a language that is not supported.
 const DefaultLocale = "en"
+
+// SupportedLocales reads the languages this deployment offers, as a
+// comma-separated list; blank entries are ignored and an empty or unset value
+// means the default. The value is a list of languages, not locales: Keycloak
+// serves de-CH from its German catalogue, and a realm listing regional codes
+// would offer a picker full of entries that render identically.
+func SupportedLocales(configured string) []string {
+	out := make([]string, 0, 4)
+	for _, part := range strings.Split(configured, ",") {
+		if lang := strings.TrimSpace(part); lang != "" {
+			out = append(out, lang)
+		}
+	}
+	if len(out) == 0 {
+		return DefaultSupportedLocales
+	}
+	return out
+}
 
 // UpdateRealmBrowserSecurityHeaders applies DefaultBrowserSecurityHeaders,
 // functional session timeouts (12 hours) and the Gentian login theme to a realm.
@@ -232,7 +258,7 @@ func (c *KeycloakAdminClient) UpdateRealmBrowserSecurityHeaders(ctx context.Cont
 		// realm has no Composition and this is the only thing that maintains
 		// it.
 		"internationalizationEnabled": true,
-		"supportedLocales":            SupportedLocales,
+		"supportedLocales":            SupportedLocales(os.Getenv("GENTIAN_SUPPORTED_LOCALES")),
 		"defaultLocale":               DefaultLocale,
 	}
 	_, err = c.doAdminExpect(ctx, token, http.MethodPut, "/admin/realms/"+url.PathEscape(realm), body, http.StatusNoContent, http.StatusOK)

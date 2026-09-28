@@ -1677,10 +1677,15 @@ spec:
                      a fallback should be the author's own words rather than a
                      guess.
 
-                     A list rather than a field: the provider models it as one,
-                     and a tenant needing more locales gets them here. */}}
+                     A list rather than a field: the provider models it as one.
+                     spec.locales overrides the default, so a tenant whose
+                     people speak something else says so on the claim rather
+                     than waiting for a release -- the same reason the operator
+                     reads GENTIAN_SUPPORTED_LOCALES for the kernel realm and
+                     the desktop discovers its catalogues from a directory. */}}
+                {{- $locales := default (list "en" "de") (dig "locales" nil $spec) }}
                 internationalization:
-                  - supportedLocales: ["en", "de"]
+                  - supportedLocales: {{ toJson $locales }}
                     defaultLocale: "en"
                 {{- /* ── Security policy ──────────────────────────────────
                      What the tenant declares in spec.security, as the realm's

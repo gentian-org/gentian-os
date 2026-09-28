@@ -28,6 +28,17 @@ spec:
                   type: string
                   description: >
                     Human-readable name for this tenant / organisation.
+                locales:
+                  type: array
+                  items:
+                    type: string
+                  description: >
+                    The languages this tenant's realm renders its login and
+                    account pages in, as ISO 639-1 codes. Empty means the
+                    platform's own set. Keycloak ships the translations, so
+                    this only says which to offer; a language the desktop has
+                    no catalogue for still logs in translated and then shows
+                    an English desktop.
                 domain:
                   type: string
                   description: >

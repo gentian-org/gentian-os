@@ -75,6 +75,19 @@ type TenantSpec struct {
 	// +optional
 	Apps []TenantApp `json:"apps,omitempty"`
 
+	// Locales are the languages this tenant's realm renders its login and
+	// account pages in, as ISO 639-1 codes (AD-15). Empty means the
+	// platform's own set.
+	//
+	// Languages rather than locales: Keycloak serves de-CH from its German
+	// catalogue, and a realm listing regional codes offers a picker full of
+	// entries that render identically.
+	// +optional
+	// +listType=set
+	// +kubebuilder:validation:MaxItems=32
+	// +kubebuilder:validation:items:Pattern=`^[a-z]{2}(-[A-Za-z0-9]{2,8})?$`
+	Locales []string `json:"locales,omitempty"`
+
 	// Privileges are the privilege requests a person granted for this
 	// tenant's components (AD-5). They live here because a grant has to
 	// survive the thing it applies to: a Component is rebuilt from its
