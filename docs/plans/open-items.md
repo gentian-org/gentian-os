@@ -19,7 +19,7 @@ plans are what the code was supposed to become.
 | AD-1 | Nine security principles normative | ✅ |
 | AD-2 | The director is the only writer of `gentian-deployments` | ◐ the director writes; **commit signing and `sourceIntegrity` are not implemented**. Deferred deliberately — a separate, confined piece of work |
 | AD-3 | The store runs outside the cluster | ◐ contract and grant format exist; materialise-on-reference is not wired |
-| AD-4 | One catalogue kind, `ComponentProfile` | ◐ steps 1–3 done; see below |
+| AD-4 | One catalogue kind, `ComponentProfile` | ◐ steps 1–7 done; `AppProfile` the Go type is unused but not yet deleted |
 | AD-5 | Privileges are requests with one approval path | ✅ |
 | AD-6 | `authMode` mandatory; perimeter enabled per tenant | ◐ `authMode` and `surface` are enforced; **no publishing proxy exists** — `layout.TenantDMZ()` is defined and called nowhere |
 | AD-7 | Namespaces named by tier | ✅ |
@@ -56,20 +56,29 @@ profile it writes passes the CRD's schema and its CEL rules.
 
 | | |
 | --- | --- |
-| 4 | The Go side: 38 non-test files still name `AppProfile`. Mostly one line each, because `kernelRequirements` and `requires.services` are the same type |
-| 5 | `Tenant.spec.apps[].profile` resolves `AppProfile` only. Until a `ComponentProfile` can be named there, the catalogue cannot move |
-| 6 | Run the conversion in `gentian-apps` and `gentian-pro` for real, and settle the 119 review items — 8 of them tiles on the placeholder |
-| 7 | Re-point the three metadata readers (`license`, `family`, `categories`) |
-| 8 | Delete `AppProfile`, `AppCatalogue` and the `App` claim |
+| 4 | ✅ Every Go reader, 20 files plus 35 test files |
+| 5 | ✅ `Tenant.spec.apps[].profile` resolves a `ComponentProfile`; `profileRef` by catalogue identity is retired with AD-3's metadata |
+| 6 | ✅ 33 profiles in `gentian-apps` and 5 in `gentian-pro`, converted in place with their comments. 135 review items remain, 8 of them tiles on the placeholder |
+| 7 | ✅ `license` became an annotation, `family` became the chart's name, `categories` went with the webhook that checked it |
+| 8 | ◐ `AppCatalogue` and the profile webhook are gone. The `AppProfile` Go type is unused but still defined: `appprofile_types.go` is 1,559 lines and most of it is types `ComponentProfile` still uses, so deleting it is a split rather than a delete |
 
-Two implementation gaps the design already names:
+Two implementation gaps the design already names, and both are still open:
 
 - The component reconciler refuses any package that is not a chart. No addon
-  path, no API path.
+  path, no API path. This is what stops an addon's tile appearing on the v5
+  Component path; the v4 App path, which is what a tenant's apps still use,
+  renders them through the Compositions as before.
 - `BackendRef.component` is declared and unread. An addon's exposure reuses the
   base's host and must therefore **not** create a second HTTPRoute on it; the
   tile projection reads the host from the base's route instead. Confirmed: no
   dedicated URL per addon.
+
+One question the migration raised and did not answer: **should the package
+union admit a `composition` alongside a `chart`?** Three apps are delivered as
+a chart *and* rendered by their own Composition, which emits a portal bridge, an
+SSO sidecar or a stable alias beside the Release. `spec.compositionRef` said so
+and the union's exactly-one rule cannot, so it survives as the annotation
+`gentianos.io/composition`.
 
 ## The installer, to M3
 
