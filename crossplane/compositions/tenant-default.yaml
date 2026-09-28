@@ -1683,6 +1683,10 @@ spec:
                      than waiting for a release -- the same reason the operator
                      reads GENTIAN_SUPPORTED_LOCALES for the kernel realm and
                      the desktop discovers its catalogues from a directory. */}}
+                {{- /* The default matches internal/locales.Default and the
+                     catalogues in gentian-ui/frontend/src/locales. If they
+                     drift, a person signs in translated and lands on an
+                     English desktop. */}}
                 {{- $locales := default (list "en" "de") (dig "locales" nil $spec) }}
                 internationalization:
                   - supportedLocales: {{ toJson $locales }}

@@ -73,6 +73,8 @@ type Repository interface {
 	SetClusterBackupPolicy(ctx context.Context, policy gitops.BackupPolicy, meta gitops.Meta) (gitops.Result, error)
 	TenantSecurityPolicy(ctx context.Context, tenant string) (*gitops.SecurityPolicy, error)
 	SetTenantSecurityPolicy(ctx context.Context, tenant string, policy gitops.SecurityPolicy, meta gitops.Meta) (gitops.Result, error)
+	TenantLocales(ctx context.Context, tenant string) ([]string, error)
+	SetTenantLocales(ctx context.Context, tenant string, locales []string, meta gitops.Meta) (gitops.Result, error)
 	TenantPrivileges(ctx context.Context, tenant string) ([]gitops.PrivilegeGrant, error)
 	GrantPrivilege(ctx context.Context, tenant string, grant gitops.PrivilegeGrant, meta gitops.Meta) (gitops.Result, error)
 	RevokePrivilege(ctx context.Context, tenant, install, privilege string, meta gitops.Meta) (gitops.Result, error)
@@ -541,6 +543,17 @@ func (s *Server) routes() {
 		// under can_set_policy, like the backup policy beside it.
 		s.guarded("GET /v1/tenants/{t}/security-policy", "can_view", tenantObject, s.tenantSecurityPolicy)
 		s.guarded("PUT /v1/tenants/{t}/security-policy", "can_set_policy", tenantObject, s.setTenantSecurityPolicy)
+
+		// The languages this tenant's realm offers on its login and account
+		// pages (AD-15). Declared state like the policy above, for the same
+		// reason: the composition that owns the realm is what writes it, so
+		// nothing in this path holds a Keycloak credential and a realm rebuilt
+		// from scratch comes back offering the same languages.
+		//
+		// can_set_policy, beside the security policy it sits with. Which
+		// languages a tenant's people are offered is the tenant's to choose.
+		s.guarded("GET /v1/tenants/{t}/locales", "can_view", tenantObject, s.tenantLocales)
+		s.guarded("PUT /v1/tenants/{t}/locales", "can_set_policy", tenantObject, s.setTenantLocales)
 
 		// The privileges this tenant's components asked for and what was
 		// answered. A profile declaring a privilege is a request (AD-5); the

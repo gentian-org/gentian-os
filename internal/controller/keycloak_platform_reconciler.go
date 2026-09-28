@@ -89,7 +89,7 @@ func (r *KeycloakPlatformReconciler) ensureAllBrowserSecurityHeaders(ctx context
 		Client:      r.Client,
 		KernelRealm: kernelRealm,
 	}
-	if err := tr.ensureRealmBrowserSecurityHeaders(ctx, kernelRealm); err != nil {
+	if err := tr.ensureRealmBrowserSecurityHeaders(ctx, kernelRealm, tr.kernelRealmLocales(ctx, kernelRealm)); err != nil {
 		return fmt.Errorf("kernel browser security headers: %w", err)
 	}
 
@@ -102,7 +102,10 @@ func (r *KeycloakPlatformReconciler) ensureAllBrowserSecurityHeaders(ctx context
 		if tenant.DeletionTimestamp != nil {
 			continue
 		}
-		if err := tr.ensureRealmBrowserSecurityHeaders(ctx, keycloakRealmName(tenant)); err != nil {
+		// No locales for a tenant realm: tenant-default composes the Realm and
+		// declares them from the same spec.locales. Two writers of one field
+		// is the bug this file's own comment records for session lifetimes.
+		if err := tr.ensureRealmBrowserSecurityHeaders(ctx, keycloakRealmName(tenant), nil); err != nil {
 			return fmt.Errorf("tenant %s browser security headers: %w", tenant.Name, err)
 		}
 		tr.deleteRetiredJobs(ctx, tenantBrowserSecurityJobName(tenant.Name))

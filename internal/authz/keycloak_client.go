@@ -23,8 +23,9 @@ import (
 	"io"
 	"net/http"
 	"net/url"
-	"os"
 	"strings"
+
+	"github.com/gentian-org/gentian-os/internal/locales"
 	"sync"
 	"time"
 )
@@ -179,42 +180,17 @@ func BrowserSecurityHeadersJSON() string {
 // styling rather than breaking login.
 const GentianLoginTheme = "gentian"
 
-// DefaultSupportedLocales are the languages a realm renders in when the
-// deployment names none (AD-15). ISO 639-1, which is what Keycloak's realm
-// representation takes.
-//
-// A default rather than a constant: adding a language to the platform must not
-// mean editing Go. The desktop discovers its catalogues from
-// gentian-ui/frontend/src/locales, so a language arrives there as one JSON
-// file; here it arrives as GENTIAN_SUPPORTED_LOCALES on the operator, and
-// Keycloak's own translations are already present for far more languages than
-// this platform has strings for.
-var DefaultSupportedLocales = []string{"en", "de"}
-
-// DefaultLocale answers a browser asking for a language that is not supported.
-const DefaultLocale = "en"
-
-// SupportedLocales reads the languages this deployment offers, as a
-// comma-separated list; blank entries are ignored and an empty or unset value
-// means the default. The value is a list of languages, not locales: Keycloak
-// serves de-CH from its German catalogue, and a realm listing regional codes
-// would offer a picker full of entries that render identically.
-func SupportedLocales(configured string) []string {
-	out := make([]string, 0, 4)
-	for _, part := range strings.Split(configured, ",") {
-		if lang := strings.TrimSpace(part); lang != "" {
-			out = append(out, lang)
-		}
-	}
-	if len(out) == 0 {
-		return DefaultSupportedLocales
-	}
-	return out
-}
-
 // UpdateRealmBrowserSecurityHeaders applies DefaultBrowserSecurityHeaders,
 // functional session timeouts (12 hours) and the Gentian login theme to a realm.
-func (c *KeycloakAdminClient) UpdateRealmBrowserSecurityHeaders(ctx context.Context, realm string) error {
+// UpdateRealmBrowserSecurityHeaders writes the realm settings that have no
+// other writer.
+//
+// offered is the languages the realm offers. It is passed in rather than read
+// from this process's environment because it is an administrator's choice, not
+// a property of the build: the Tenant declares it, the director is what
+// changes it, and this only applies what git already says. Empty means the
+// platform's own set.
+func (c *KeycloakAdminClient) UpdateRealmBrowserSecurityHeaders(ctx context.Context, realm string, offered []string) error {
 	if realm == "" {
 		return nil
 	}
@@ -257,9 +233,19 @@ func (c *KeycloakAdminClient) UpdateRealmBrowserSecurityHeaders(ctx context.Cont
 		// its Composition, which declares it alongside the theme; the kernel
 		// realm has no Composition and this is the only thing that maintains
 		// it.
-		"internationalizationEnabled": true,
-		"supportedLocales":            SupportedLocales(os.Getenv("GENTIAN_SUPPORTED_LOCALES")),
-		"defaultLocale":               DefaultLocale,
+	}
+	// The languages, only where this is the realm's one writer.
+	//
+	// A tenant realm is composed, and tenant-default declares its languages
+	// from the same spec.locales. Writing them here as well would make two
+	// writers of one field and the last one would win -- which is exactly the
+	// bug recorded above for the session lifetimes. So a caller that passes no
+	// locales is saying "not mine to set", and this leaves the realm's own
+	// alone rather than putting a default over a declared value.
+	if len(offered) > 0 {
+		body["internationalizationEnabled"] = true
+		body["supportedLocales"] = locales.Normalise(offered)
+		body["defaultLocale"] = locales.DefaultLanguage
 	}
 	_, err = c.doAdminExpect(ctx, token, http.MethodPut, "/admin/realms/"+url.PathEscape(realm), body, http.StatusNoContent, http.StatusOK)
 	return err

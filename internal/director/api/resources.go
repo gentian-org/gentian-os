@@ -27,6 +27,7 @@ import (
 	"github.com/gentian-org/gentian-os/internal/director/authz"
 	"github.com/gentian-org/gentian-os/internal/director/gitops"
 	"github.com/gentian-org/gentian-os/internal/director/lifecycle"
+	"github.com/gentian-org/gentian-os/internal/locales"
 )
 
 // A tenant's resources.
@@ -367,6 +368,50 @@ func (s *Server) tenantSecurityPolicy(w http.ResponseWriter, r *http.Request, _ 
 		// you change it" instead of leaving a zero to be interpreted.
 		"defaults": map[string]any{"session": map[string]any{"idleMinutes": 720, "maxHours": 12}},
 	})
+}
+
+// tenantLocales answers which languages this tenant's realm offers, from git.
+//
+// Nothing declared is a real answer and the usual one: the realm offers the
+// platform's own set, which the response names so a screen can show it rather
+// than an empty list somebody has to interpret.
+func (s *Server) tenantLocales(w http.ResponseWriter, r *http.Request, _ call) {
+	declared, err := s.cfg.Repo.TenantLocales(r.Context(), r.PathValue("t"))
+	if err != nil {
+		s.repoError(w, r, err)
+		return
+	}
+	if declared == nil {
+		declared = []string{}
+	}
+	s.json(w, http.StatusOK, map[string]any{
+		"tenant":  r.PathValue("t"),
+		"locales": declared,
+		// What the realm offers when the tenant declares nothing. Not a guess:
+		// these are the languages the platform ships its own strings in.
+		"defaults": locales.Default,
+	})
+}
+
+// setTenantLocales commits them. An empty list means "the platform's own set"
+// rather than "no languages": a realm offering none would be a login page
+// nobody could read.
+func (s *Server) setTenantLocales(w http.ResponseWriter, r *http.Request, c call) {
+	var body struct {
+		Locales []string `json:"locales"`
+	}
+	if err := decode(r, &body); err != nil {
+		s.fail(w, r, http.StatusBadRequest, `body must be {"locales": ["de", "en"]}`)
+		return
+	}
+	res, err := s.cfg.Repo.SetTenantLocales(r.Context(), r.PathValue("t"), body.Locales, c.meta)
+	if err != nil && !errors.Is(err, gitops.ErrInvalidName) {
+		// A language that is not a language code is the caller's mistake, and
+		// the message names the value.
+		s.fail(w, r, http.StatusBadRequest, err.Error())
+		return
+	}
+	s.written(w, r, res, err)
 }
 
 // setTenantSecurityPolicy commits it.

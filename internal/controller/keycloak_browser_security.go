@@ -22,9 +22,10 @@ import (
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 	"github.com/gentian-org/gentian-os/internal/authz"
+	"github.com/gentian-org/gentian-os/internal/locales"
 )
 
-func (r *TenantReconciler) ensureRealmBrowserSecurityHeaders(ctx context.Context, realm string) error {
+func (r *TenantReconciler) ensureRealmBrowserSecurityHeaders(ctx context.Context, realm string, locales []string) error {
 	if realm == "" {
 		return nil
 	}
@@ -33,10 +34,39 @@ func (r *TenantReconciler) ensureRealmBrowserSecurityHeaders(ctx context.Context
 		return fmt.Errorf("load keycloak-admin for browser security headers: %w", err)
 	}
 	kc := authz.NewKeycloakAdminClient(kcURL, kcUser, kcPass)
-	if err := kc.UpdateRealmBrowserSecurityHeaders(ctx, realm); err != nil {
+	if err := kc.UpdateRealmBrowserSecurityHeaders(ctx, realm, locales); err != nil {
 		return fmt.Errorf("update realm %s browser security headers: %w", realm, err)
 	}
 	return nil
+}
+
+// kernelRealmLocales are the languages the kernel realm offers, which is the
+// PLATFORM TENANT's declared state: Tenant/platform adopts the kernel realm
+// (AD-10), so what that tenant declares is what that realm is.
+//
+// Read from the Tenant rather than from this process, because which languages
+// a realm offers is an administrator's choice. It reaches the cluster the way
+// every other choice does — a director call, a commit, Argo — and the operator
+// only applies what git already says. Nothing here decides it.
+//
+// A cluster with no platform tenant yet gets the platform's own set, which is
+// what the realm would have had anyway.
+func (r *TenantReconciler) kernelRealmLocales(ctx context.Context, kernelRealm string) []string {
+	tenants := &gentianov1alpha1.TenantList{}
+	if err := r.List(ctx, tenants); err != nil {
+		return locales.Default
+	}
+	for i := range tenants.Items {
+		t := &tenants.Items[i]
+		if t.DeletionTimestamp == nil && tenantAdoptsKernelRealm(t, kernelRealm) {
+			// Normalised here, never empty: this is the kernel realm's only
+			// writer, so "the platform tenant declares nothing" has to come
+			// back as the platform's own set rather than as silence. Silence
+			// would leave internationalization off and the login page English.
+			return locales.Normalise(t.Spec.Locales)
+		}
+	}
+	return locales.Default
 }
 
 // ensureKeycloakBrowserSecurityHeaders disables X-Frame-Options on kernel and
@@ -46,7 +76,7 @@ func (r *TenantReconciler) ensureKeycloakBrowserSecurityHeaders(ctx context.Cont
 	if kernelRealm == "" {
 		kernelRealm = "kernel"
 	}
-	if err := r.ensureRealmBrowserSecurityHeaders(ctx, kernelRealm); err != nil {
+	if err := r.ensureRealmBrowserSecurityHeaders(ctx, kernelRealm, r.kernelRealmLocales(ctx, kernelRealm)); err != nil {
 		return err
 	}
 	// Not the tenant realm. tenant-default composes a Realm that declares the
