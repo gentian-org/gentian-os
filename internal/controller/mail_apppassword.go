@@ -128,19 +128,22 @@ func argon2idPasswdLine(address, password string) (string, error) {
 // nothing logged.
 var keycloakAdminHTTP = &http.Client{Timeout: 30 * time.Second}
 
-func (r *TenantReconciler) keycloakRealmUsers(ctx context.Context, realm string) ([]string, error) {
+// keycloakAdminBase returns the admin API base URL and a bearer token for it.
+//
+// Extracted so the two realm readers below share one way of authenticating
+// rather than two that can drift.
+func (r *TenantReconciler) keycloakAdminBase(ctx context.Context) (base, token string, err error) {
 	ns := defaultServicesNamespace()
-	base, err := r.secretValue(ctx, keycloakAdminSecret, ns, "url")
-	if err != nil {
-		return nil, err
+	if base, err = r.secretValue(ctx, keycloakAdminSecret, ns, "url"); err != nil {
+		return "", "", err
 	}
 	user, err := r.secretValue(ctx, keycloakAdminSecret, ns, "username")
 	if err != nil {
-		return nil, err
+		return "", "", err
 	}
 	pass, err := r.secretValue(ctx, keycloakAdminSecret, ns, "password")
 	if err != nil {
-		return nil, err
+		return "", "", err
 	}
 	base = strings.TrimSuffix(base, "/")
 
@@ -155,22 +158,30 @@ func (r *TenantReconciler) keycloakRealmUsers(ctx context.Context, realm string)
 	tokenReq, err := http.NewRequestWithContext(ctx, http.MethodPost,
 		base+"/realms/master/protocol/openid-connect/token", strings.NewReader(form.Encode()))
 	if err != nil {
-		return nil, err
+		return "", "", err
 	}
 	tokenReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	resp, err := keycloakAdminHTTP.Do(tokenReq)
 	if err != nil {
-		return nil, err
+		return "", "", err
 	}
 	defer func() { _ = resp.Body.Close() }()
 	var tok struct {
 		AccessToken string `json:"access_token"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&tok); err != nil {
-		return nil, err
+		return "", "", err
 	}
 	if tok.AccessToken == "" {
-		return nil, fmt.Errorf("keycloak returned no admin token (status %d)", resp.StatusCode)
+		return "", "", fmt.Errorf("keycloak returned no admin token (status %d)", resp.StatusCode)
+	}
+	return base, tok.AccessToken, nil
+}
+
+func (r *TenantReconciler) keycloakRealmUsers(ctx context.Context, realm string) ([]string, error) {
+	base, token, err := r.keycloakAdminBase(ctx)
+	if err != nil {
+		return nil, err
 	}
 
 	// Paged: a realm with more than the default page of users would otherwise
@@ -183,15 +194,12 @@ func (r *TenantReconciler) keycloakRealmUsers(ctx context.Context, realm string)
 		if err != nil {
 			return nil, err
 		}
-		req.Header.Set("Authorization", "Bearer "+tok.AccessToken)
+		req.Header.Set("Authorization", "Bearer "+token)
 		page, err := keycloakAdminHTTP.Do(req)
 		if err != nil {
 			return nil, err
 		}
-		var users []struct {
-			Username string `json:"username"`
-			Enabled  bool   `json:"enabled"`
-		}
+		var users []keycloakRealmUser
 		err = json.NewDecoder(page.Body).Decode(&users)
 		_ = page.Body.Close()
 		if err != nil {
@@ -208,6 +216,79 @@ func (r *TenantReconciler) keycloakRealmUsers(ctx context.Context, realm string)
 	}
 	sort.Strings(names)
 	return names, nil
+}
+
+// keycloakRealmUser is the part of a realm user this file reads.
+type keycloakRealmUser struct {
+	Username string `json:"username"`
+	Email    string `json:"email"`
+	Enabled  bool   `json:"enabled"`
+}
+
+// mailAddress is where this user receives, which is not always the login.
+//
+// A tenant realm creates its users with the address as the username, so the two
+// are the same string and TenantAdminUsername says so deliberately. The kernel
+// realm does not: its administrator is "administrator", with the address in the
+// email field. Reading the login there yields something with no domain in it at
+// all.
+//
+// Returns "" for a user with no usable address, which the caller skips rather
+// than counting as an owner.
+func (u keycloakRealmUser) mailAddress() string {
+	if strings.Contains(u.Username, "@") {
+		return u.Username
+	}
+	if strings.Contains(u.Email, "@") {
+		return u.Email
+	}
+	return ""
+}
+
+// keycloakRealmAddresses returns the addresses a realm's users receive at.
+//
+// Separate from keycloakRealmUsers, which returns the LOGIN and must keep doing
+// so: syncMailAppPasswords derives an app password per (user, address) from it,
+// and changing what it returns would silently re-derive every password a tenant
+// has already configured in a mail client.
+func (r *TenantReconciler) keycloakRealmAddresses(ctx context.Context, realm string) ([]string, error) {
+	base, token, err := r.keycloakAdminBase(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	var addrs []string
+	for first := 0; ; first += 100 {
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet,
+			fmt.Sprintf("%s/admin/realms/%s/users?first=%d&max=100", base, realm, first), nil)
+		if err != nil {
+			return nil, err
+		}
+		req.Header.Set("Authorization", "Bearer "+token)
+		page, err := keycloakAdminHTTP.Do(req)
+		if err != nil {
+			return nil, err
+		}
+		var users []keycloakRealmUser
+		err = json.NewDecoder(page.Body).Decode(&users)
+		_ = page.Body.Close()
+		if err != nil {
+			return nil, err
+		}
+		for _, u := range users {
+			if !u.Enabled {
+				continue
+			}
+			if a := u.mailAddress(); a != "" {
+				addrs = append(addrs, a)
+			}
+		}
+		if len(users) < 100 {
+			break
+		}
+	}
+	sort.Strings(addrs)
+	return addrs, nil
 }
 
 // tenantMailSeed returns the tenant's derivation seed, creating it once.
