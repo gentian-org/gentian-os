@@ -82,6 +82,11 @@ type TileProjectionReconciler struct {
 	KernelRealm string
 }
 
+// primaryExposureName is what a component's own host is called: the first
+// gateway entry of a profile, which the catalogue conversion names "web".
+// An addon's tile is resolved against its base's entry of that name.
+const primaryExposureName = "web"
+
 // kernelTile is one of the kernel's own UIs, keyed by the HTTPRoute that makes
 // it reachable.
 type kernelTile struct {
@@ -290,8 +295,28 @@ func (r *TileProjectionReconciler) componentTiles(ctx context.Context) ([]tileca
 			if e.Tile == nil || e.Surface != gentianov1alpha1.SurfaceGateway {
 				continue
 			}
+			// Whose route carries this tile's host.
+			//
+			// Normally the component's own. An ADDON has none: it activates
+			// inside another component and its exposure names that component's
+			// Service, so the host is the base's and the route is the base's
+			// too. Following backend.component here is what puts a Nextcloud
+			// calendar tile on the desktop pointing at Nextcloud's own host --
+			// without it the addon has a tile declared and no route to read a
+			// hostname from, and twenty of them vanish.
+			//
+			// The base's route is found by the exposure NAME the base gave it,
+			// not this addon's: they are different entries on different
+			// profiles. "web" is the name the conversion gives a component's
+			// own host, and an addon's backend names the component, so the
+			// pair is enough to find it.
+			routeOwner, routeEntry := comp.Name, e.Name
+			if e.Backend.Component != "" && e.Backend.Component != comp.Name {
+				routeOwner, routeEntry = e.Backend.Component, primaryExposureName
+			}
 			route := &gatewayv1.HTTPRoute{}
-			err := r.Get(ctx, types.NamespacedName{Name: comp.Name + "-" + e.Name, Namespace: comp.Namespace}, route)
+			err := r.Get(ctx, types.NamespacedName{
+				Name: routeOwner + "-" + routeEntry, Namespace: comp.Namespace}, route)
 			if errors.IsNotFound(err) {
 				continue
 			}

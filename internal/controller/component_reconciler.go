@@ -196,25 +196,84 @@ func (r *ComponentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		return ctrl.Result{}, fmt.Errorf("network policy: %w", err)
 	}
 
-	// The package is exactly one of chart, composition, api or addon, and only
-	// the first is built. Naming the delivery the profile asked for makes the
-	// refusal something a person can act on rather than a flat "unsupported".
-	if profile.Spec.Package.Chart == nil {
+	// The package is exactly one of chart, composition, api or addon, and what
+	// "installed" means differs for each. Two of them run nothing at all, and
+	// that is not a gap to refuse -- it is the answer.
+	releaseReady, releaseMessage := true, ""
+	switch {
+	case profile.Spec.Package.Chart != nil:
+		var err error
+		releaseReady, releaseMessage, err = r.ensureRelease(ctx, comp, profile, values)
+		if err != nil {
+			return ctrl.Result{}, err
+		}
+
+	case profile.Spec.Package.Addon != nil:
+		// An addon is activation state inside another component, not a
+		// deployment. There is nothing to install; what has to be true is that
+		// the thing it activates into is there, because an addon whose base is
+		// missing is a tile pointing at a host nobody serves.
+		//
+		// The activation itself is the base's: the base's chart is what turns
+		// the feature on, from the addon list the tenant carries. This
+		// component exists so the addon is a first-class thing that can be
+		// named, granted privileges, and given a tile.
+		ready, message, err := r.addonBaseReady(ctx, comp, profile)
+		if err != nil {
+			return ctrl.Result{}, err
+		}
+		if !ready {
+			return r.status(ctx, comp, metav1.ConditionFalse, "AddonBaseNotReady", message, componentRequeue)
+		}
+		releaseMessage = message
+
+	case profile.Spec.Package.API != nil:
+		// An API entry runs nothing here: it is an external service the tenant
+		// is pointed at. The platform's part is the tile and whatever
+		// integration the profile declares, both of which are already done by
+		// the time this is reached.
+		if profile.Spec.Package.API.Runtime == gentianov1alpha1.APIIntegrationRuntimePortalProxy {
+			// The proxy runtime needs something in the tenant's DMZ to
+			// terminate the caller and hold the credential, and that is not
+			// built. Refusing names it rather than reporting Ready for an
+			// entry nothing serves.
+			return r.status(ctx, comp, metav1.ConditionFalse, "PackageUnsupported",
+				"an API entry with runtime portal-proxy needs a publishing proxy, which is not built yet", 0)
+		}
+		releaseMessage = "external service at " + profile.Spec.Package.API.BaseURL
+
+	default:
+		// A composition package: the claim chooses the Composition and
+		// Crossplane renders it, so there is nothing for this reconciler to
+		// create. Naming the delivery makes the refusal actionable.
 		return r.status(ctx, comp, metav1.ConditionFalse, "PackageUnsupported",
-			fmt.Sprintf("delivery %q is not reconciled yet; only a chart package is",
-				profile.Spec.Delivery()), 0)
-	}
-	releaseReady, releaseMessage, err := r.ensureRelease(ctx, comp, profile, values)
-	if err != nil {
-		return ctrl.Result{}, err
+			fmt.Sprintf("delivery %q is not reconciled here", profile.Spec.Delivery()), 0)
 	}
 
 	// Exposures: every gateway entry becomes a route in this namespace and
 	// a policy carrying the zone's session and the shim. Not before the
 	// zone's client exists -- a policy naming a missing Secret is invalid,
 	// and an invalid policy leaves its route open.
+	// What this component actually PUBLISHES, which is not the same as what it
+	// declares. An entry naming another component's Service routes nothing
+	// here -- the named component already serves that host -- so a component
+	// whose every entry is somebody else's needs no zone client, no
+	// ReferenceGrant and no policy, and must not wait for a secret it will
+	// never use. That is every addon.
+	var routable []*gentianov1alpha1.ExposureSpec
+	for i := range profile.Spec.Expose {
+		e := &profile.Spec.Expose[i]
+		if e.Surface != gentianov1alpha1.SurfaceGateway {
+			continue // perimeter surfaces are enabled per tenant (§5.1); not yet
+		}
+		if e.Backend.Component != "" && e.Backend.Component != comp.Name {
+			continue
+		}
+		routable = append(routable, e)
+	}
+
 	exposed := 0
-	if len(profile.Spec.Expose) > 0 {
+	if len(routable) > 0 {
 		zoneReady, err := r.zoneReady(ctx, zone)
 		if err != nil {
 			return ctrl.Result{}, err
@@ -231,11 +290,7 @@ func (r *ComponentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		}
 		var oidcRoutes []string
 		forward := false
-		for i := range profile.Spec.Expose {
-			e := &profile.Spec.Expose[i]
-			if e.Surface != gentianov1alpha1.SurfaceGateway {
-				continue // perimeter surfaces are enabled per tenant (§5.1); not yet
-			}
+		for _, e := range routable {
 			routeName, err := r.ensureExposureRoute(ctx, comp, tenant, zone, e)
 			if err != nil {
 				return ctrl.Result{}, fmt.Errorf("expose %s: %w", e.Name, err)
@@ -261,8 +316,48 @@ func (r *ComponentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		return r.status(ctx, comp, metav1.ConditionFalse, "Installing", releaseMessage, componentRequeue)
 	}
 	logger.V(1).Info("component reconciled", "component", comp.Name, "namespace", comp.Namespace, "exposures", exposed)
+	// What Ready MEANS differs by package, so the message says which it is
+	// rather than claiming a release for a component that deploys none.
+	installed := "release deployed"
+	if releaseMessage != "" && profile.Spec.Package.Chart == nil {
+		installed = releaseMessage
+	}
 	return r.status(ctx, comp, metav1.ConditionTrue, "Ready",
-		fmt.Sprintf("release deployed; %d gateway exposure(s) routed in zone %s", exposed, zone.domain), 0)
+		fmt.Sprintf("%s; %d gateway exposure(s) routed in zone %s", installed, exposed, zone.domain), 0)
+}
+
+// addonBaseReady reports whether the component this addon activates into is
+// installed and Ready.
+//
+// An addon deploys nothing, so "is it working" is a question about something
+// else: the base. Until the base is there, an addon that reported Ready would
+// be advertising a tile pointing at a host nobody serves.
+//
+// The base is looked for in this component's own namespace, which is the
+// tenant's. An addon cannot activate into another tenant's install, and not
+// looking outside the namespace is what makes that true rather than intended.
+func (r *ComponentReconciler) addonBaseReady(
+	ctx context.Context, comp *gentianov1alpha1.Component, profile *gentianov1alpha1.ComponentProfile,
+) (bool, string, error) {
+	base := profile.Spec.Package.Addon.Of
+	if base == "" {
+		return false, "package.addon names no base to activate into", nil
+	}
+	installed := &gentianov1alpha1.Component{}
+	err := r.Get(ctx, types.NamespacedName{Name: base, Namespace: comp.Namespace}, installed)
+	if errors.IsNotFound(err) {
+		return false, fmt.Sprintf("%s is not installed in this tenant, and this activates inside it", base), nil
+	}
+	if err != nil {
+		return false, "", err
+	}
+	for i := range installed.Status.Conditions {
+		c := &installed.Status.Conditions[i]
+		if c.Type == conditionComponentReady && c.Status == metav1.ConditionTrue {
+			return true, "activated inside " + base, nil
+		}
+	}
+	return false, fmt.Sprintf("%s is installed but not ready yet", base), nil
 }
 
 func (r *ComponentReconciler) status(ctx context.Context, comp *gentianov1alpha1.Component, st metav1.ConditionStatus, reason, message string, requeue time.Duration) (ctrl.Result, error) {
