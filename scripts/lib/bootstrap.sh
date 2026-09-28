@@ -2622,6 +2622,43 @@ EOF
 # would decide the cluster's domain, tenancy and exposure model without anyone
 # having read it. Name what is missing and stop.
 # =============================================================================
+# A scaffolded file the cluster never sees.
+#
+# clusters/<id>/kernel/claims is synced by the gentian-claims ApplicationSet,
+# straight from the deployments repository -- so a claim that exists only in
+# the working copy is applied by nothing. The install still finishes: every
+# step's check() passes, because none of them looks for a claim that Argo was
+# supposed to bring. What fails is the first write, long afterwards and with
+# nothing connecting it back to here.
+#
+# So this warns rather than refuses: a working copy mid-review is a legitimate
+# state, and an installer that stopped on it would be wrong. Naming what will
+# happen is enough, and it is what nobody was told.
+_warn_uncommitted_cluster_deployment() {
+    local kernel_dir="$1" cluster="$2" dirty
+    command -v git >/dev/null 2>&1 || return 0
+    git -C "${GENTIAN_DEPLOYMENTS_PATH}" rev-parse --git-dir >/dev/null 2>&1 || return 0
+
+    # Untracked or modified, under this cluster's kernel directory only: a
+    # tenant being edited elsewhere in the repository is not this step's
+    # business.
+    dirty="$(git -C "${GENTIAN_DEPLOYMENTS_PATH}" status --porcelain -- \
+        "clusters/${cluster}/kernel" 2>/dev/null)" || return 0
+    [[ -n "${dirty}" ]] || return 0
+
+    warn "clusters/${cluster}/kernel has uncommitted changes:"
+    while IFS= read -r line; do
+        [[ -n "${line}" ]] && warn "    ${line}"
+    done <<< "${dirty}"
+    warn "  Argo CD syncs claims/ from the repository, not from this checkout,"
+    warn "  so anything above reaches the cluster only once it is pushed."
+    if grep -q "deployments-repository.yaml" <<< "${dirty}"; then
+        warn "  deployments-repository.yaml is among them. Until it is pushed the"
+        warn "  director has no push credential: every write answers 503, so no"
+        warn "  tenant can be created and no user invited."
+    fi
+}
+
 require_cluster_deployment() {
     local cluster="${GENTIAN_DEPLOYMENTS_CLUSTER_ID}"
     local kernel_dir="${GENTIAN_DEPLOYMENTS_PATH}/clusters/${cluster}/kernel"
@@ -2632,8 +2669,18 @@ require_cluster_deployment() {
     # cluster exists, so demanding the file rejected a cluster whose
     # configuration is complete — this one, immediately after migrating it.
     # v5 has no InfraData claim (see scaffold_cluster_deployment).
+    #
+    # claims/deployments-repository.yaml is required on v5 and was required by
+    # nothing before. Its composition emits deployments-git-credentials, which
+    # is the Secret the director mounts to push -- so without it the install
+    # completes, every screen reads, and the FIRST WRITE answers 503. A tenant
+    # cannot be created and a user cannot be invited, which is M2 and M3, and
+    # nothing in the install output says why. The claims/ directory is synced
+    # from git by the gentian-claims ApplicationSet, so scaffolding the file is
+    # only half of it: it has to be committed to reach the cluster.
     local kernel_files="claims/cluster.yaml claims/infra-data.yaml claims/suze.yaml values.yaml"
-    [[ "${GENTIAN_LAYOUT:-v4}" == "v5" ]] && kernel_files="claims/cluster.yaml claims/suze.yaml values.yaml"
+    [[ "${GENTIAN_LAYOUT:-v4}" == "v5" ]] &&
+        kernel_files="claims/cluster.yaml claims/suze.yaml claims/deployments-repository.yaml values.yaml"
     for f in ${kernel_files}; do
         [[ -f "${kernel_dir}/${f}" ]] || missing+=("${f}")
     done
@@ -2654,6 +2701,7 @@ require_cluster_deployment() {
     fi
 
     if (( ${#missing[@]} == 0 )); then
+        _warn_uncommitted_cluster_deployment "${kernel_dir}" "${cluster}"
         return 0
     fi
 
