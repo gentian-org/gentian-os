@@ -1090,6 +1090,11 @@ spec:
     displayName: Render Fixture
     duplicateEmailsAllowed: true
     enabled: true
+    internationalization:
+    - defaultLocale: en
+      supportedLocales:
+      - en
+      - de
     loginTheme: gentian
     passwordPolicy: length(12) and digits(1) and lowerCase(1) and upperCase(1) and
       specialChars(1) and passwordHistory(3) and forceExpiredPasswordChange(90)

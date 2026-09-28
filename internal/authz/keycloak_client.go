@@ -178,6 +178,14 @@ func BrowserSecurityHeadersJSON() string {
 // styling rather than breaking login.
 const GentianLoginTheme = "gentian"
 
+// SupportedLocales are the languages every realm renders in, and the platform
+// ships its own strings in both (AD-15). ISO 639-1, which is what Keycloak's
+// realm representation takes.
+var SupportedLocales = []string{"en", "de"}
+
+// DefaultLocale answers a browser asking for a language that is not supported.
+const DefaultLocale = "en"
+
 // UpdateRealmBrowserSecurityHeaders applies DefaultBrowserSecurityHeaders,
 // functional session timeouts (12 hours) and the Gentian login theme to a realm.
 func (c *KeycloakAdminClient) UpdateRealmBrowserSecurityHeaders(ctx context.Context, realm string) error {
@@ -207,6 +215,25 @@ func (c *KeycloakAdminClient) UpdateRealmBrowserSecurityHeaders(ctx context.Cont
 		// Set here rather than per realm-creation path because the kernel realm has
 		// no such path — it is bootstrapped once at install.
 		"loginTheme": GentianLoginTheme,
+		// And the languages it renders in (AD-15). Keycloak ships these
+		// translations; a realm only has to say it wants them, and until it
+		// does it serves English to everyone — which, for a German-speaking
+		// market, is the product's first screen being in the wrong language.
+		//
+		// With this on, Keycloak honours the browser's Accept-Language and
+		// offers a picker, so a German browser gets German without anybody
+		// choosing anything. The default is what answers a browser asking for
+		// a language that is not here, and it is English because that is the
+		// language the platform's own strings are written in: a fallback
+		// should be the author's own words rather than a guess.
+		//
+		// Here for the same reason as the theme. A tenant realm gets this from
+		// its Composition, which declares it alongside the theme; the kernel
+		// realm has no Composition and this is the only thing that maintains
+		// it.
+		"internationalizationEnabled": true,
+		"supportedLocales":            SupportedLocales,
+		"defaultLocale":               DefaultLocale,
 	}
 	_, err = c.doAdminExpect(ctx, token, http.MethodPut, "/admin/realms/"+url.PathEscape(realm), body, http.StatusNoContent, http.StatusOK)
 	return err
