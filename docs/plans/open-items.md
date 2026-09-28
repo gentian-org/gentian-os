@@ -39,11 +39,13 @@ The market is German-speaking, so this is not polish.
 | Surface | State |
 | --- | --- |
 | Tile labels on the desktop | ✅ `ExposureTile.displayNames`, projected, and `localisedLabel` picks by the viewer's locale |
-| Everything else in the desktop | ☐ every string inline in English; no catalogue, no library |
-| Admin console | ☐ the same, and nothing started |
-| Keycloak login and account | ☐ Keycloak ships the translations; the realm never enables them, so it serves English. A realm field, and the cheapest of these by a wide margin |
+| The desktop's own strings | ✅ i18next with JSON catalogues in `src/locales`, English and German, discovered by a glob — adding a language is adding a file |
+| Keycloak login and account | ✅ every realm enables internationalization; the kernel realm reads `GENTIAN_SUPPORTED_LOCALES`, a tenant realm reads `spec.locales` |
+| A language chooser | ✅ in Settings, defaulting to "match my browser" |
+| Admin console | ☐ nothing started. Same approach as the desktop; it is a separate app in `gentian-apps` |
 | A component's other catalogue text | ☐ `description` and the store listing's text are single strings |
-| Where the viewer's language comes from | ☐ the browser today. AD-15 says the account, and the browser until they have said |
+| The account's language | ◐ an explicit choice is remembered per browser. AD-15 says it comes from the account: the seam is there (`detection.order`) and nothing writes a locale to Keycloak yet |
+| A missing-translation check in CI | ☐ `src/locales/README.md` has the script; nothing runs it |
 
 ## AD-4 — what is left
 
