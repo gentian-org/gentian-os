@@ -74,7 +74,12 @@ type Tile struct {
 	DisplayName  string            `json:"displayName"`
 	DisplayNames map[string]string `json:"displayNames,omitempty"`
 	Description  string            `json:"description,omitempty"`
-	Icon         string            `json:"icon"`
+	// Icon is what the portal draws, and it is one of two things: an SVG as a
+	// data URI, which is what every component ships and what a tile from a
+	// ComponentProfile always carries, or a name out of the portal's own set,
+	// which only the kernel's own consoles use. The portal tells them apart by
+	// the data: prefix.
+	Icon string `json:"icon"`
 
 	// URL is where the tile leads, complete and absolute.
 	URL string `json:"url"`

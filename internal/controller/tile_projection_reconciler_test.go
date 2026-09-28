@@ -187,9 +187,14 @@ func tileFixtureProfile(name string, tile *gentianov1alpha1.ExposureTile) *genti
 // because the operator routed it. Neither alone is enough: a declared tile
 // with no route would be a link to nothing, and a route whose profile declares
 // no tile is an entry point that was never meant to be advertised.
+// testTileLogo is what every component ships: its own SVG, inline. The
+// projection carries it through to the portal unchanged.
+const testTileLogo = "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCI+PHJlY3Qgd2lkdGg9IjI0IiBoZWlnaHQ9IjI0Ii8+PC9zdmc+"
+
 func TestAComponentTileNeedsBothTheProfileAndTheRoute(t *testing.T) {
 	tile := &gentianov1alpha1.ExposureTile{
-		DisplayName: "Notes", Description: "Write things down.", Icon: "notes",
+		DisplayName: "Notes", Description: "Write things down.",
+		Logo: testTileLogo,
 		Path: "/dashboard", Relation: "can_launch",
 	}
 	tenant := tileFixtureTenant("demo")

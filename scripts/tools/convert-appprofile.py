@@ -53,6 +53,22 @@ HANDLED = set(PRESENTATION) | set(PACKAGE_RENAME) | set(CARRIED) | {
 PROXY_AUTH = {"": "oidc", "forward-bearer": "oidc", "session": "oidc", "none": "none", "bearer": "bearer"}
 
 
+# The tile every component ships when its author has no art yet. Read from the
+# app template rather than copied, so the placeholder a converted profile gets
+# is the same one a new profile starts from.
+def _placeholder_logo():
+    import base64
+    for root in (pathlib.Path(__file__).resolve().parents[2],
+                 pathlib.Path.home() / "develop" / "gentian-apps"):
+        svg = root / "apps" / "_template" / "profile" / "assets" / "tile.svg"
+        if svg.is_file():
+            return "data:image/svg+xml;base64," + base64.b64encode(svg.read_bytes()).decode()
+    return ""
+
+
+PLACEHOLDER_LOGO = _placeholder_logo()
+
+
 def slug(text):
     return re.sub(r"[^a-z0-9]+", "-", str(text).lower()).strip("-")[:40] or "x"
 
@@ -130,7 +146,7 @@ def tile_path(suffix):
     return suffix if suffix.startswith("/") else "/" + suffix
 
 
-def tile_from_portal(pt, review, profile_name):
+def tile_from_portal(pt, review, profile_name, profile_tile=None):
     label, translations = tile_label(pt.get("displayName"))
     if not label:
         label = pt.get("name") or profile_name
@@ -138,12 +154,29 @@ def tile_from_portal(pt, review, profile_name):
     tile = {"displayName": label}
     if translations:
         tile["displayNames"] = translations
-    # icon is required and is a glyph NAME, where the old profile carried an
-    # SVG under spec.tile. The name is a guess from the tile's own id and a
-    # person has to confirm the portal knows it.
-    tile["icon"] = slug(pt.get("name") or profile_name)
-    review.note(f"tile/{pt.get('name')}: icon set to {tile['icon']!r} from the tile id -- the old profile "
-                "carried an SVG, not a glyph name; confirm the portal has this icon")
+    # The tile's image is the SVG the component ships. AppProfile kept it in
+    # two places: spec.tile for the whole profile, and an optional override on
+    # the portal tile itself. The override wins, exactly as it did.
+    art = pt.get("tile") or profile_tile or {}
+    if art.get("logo"):
+        tile["logo"] = art["logo"]
+        if art.get("image"):
+            tile["image"] = art["image"]
+    elif art.get("image"):
+        tile["image"] = art["image"]
+        review.note(f"tile/{pt.get('name')}: the profile names {art['image']} but never inlined it; run "
+                    "gentian-apps' scripts/sync-profile-tile.py, because the cluster reads logo")
+    else:
+        # The profile named a built-in glyph, and there are no built-in glyphs
+        # any more. The placeholder keeps the profile admissible rather than
+        # leaving a component that cannot be installed at all; it is meant to
+        # look unfinished, and the review line says to replace it.
+        tile["logo"] = PLACEHOLDER_LOGO
+        tile["image"] = "assets/tile.svg"
+        was = f" The old profile named the built-in glyph {art['icon']!r}." if art.get("icon") else ""
+        review.note(f"tile/{pt.get('name')}: no SVG, so the placeholder was used.{was} Draw this "
+                    "component's own art into assets/tile.svg and re-run "
+                    "gentian-apps' scripts/sync-profile-tile.py")
     path = tile_path(pt.get("linkSuffix"))
     if path:
         tile["path"] = path
@@ -162,7 +195,7 @@ def tile_from_portal(pt, review, profile_name):
 
 # An addon publishes nothing of its own. Its tile opens the base, so its
 # exposure names the base's Service -- which is what backend.component is for.
-def expose_for_addon(addon, tiles, bases, review, profile_name):
+def expose_for_addon(addon, tiles, bases, review, profile_name, profile_tile=None):
     base = addon.get("of") or ""
     service = bases.get(base, {}).get("service")
     port = bases.get(base, {}).get("port", 80)
@@ -176,7 +209,7 @@ def expose_for_addon(addon, tiles, bases, review, profile_name):
         out.append({"name": name, "surface": "gateway", "authMode": "oidc",
                     "subDomain": bases.get(base, {}).get("subDomain") or slug(base),
                     "backend": {"component": base, "service": service, "port": port},
-                    "tile": tile_from_portal(pt, review, profile_name)})
+                    "tile": tile_from_portal(pt, review, profile_name, profile_tile)})
     return out
 
 def convert(doc, review, bases):
@@ -274,7 +307,7 @@ def convert(doc, review, bases):
     # both, so a tile hangs off an exposure rather than off the profile.
     tiles = src.get("portalTiles") or []
     if addon:
-        expose.extend(expose_for_addon(addon, tiles, bases, review, name))
+        expose.extend(expose_for_addon(addon, tiles, bases, review, name, src.get("tile")))
     elif tiles:
         # The first tile belongs on the entry that serves the app's own host.
         # Any further tile is a second entry on the same backend: it is a
@@ -290,11 +323,11 @@ def convert(doc, review, bases):
                 review.note("portalTiles: the profile has tiles but no ingress and is not an addon; "
                             "the tiles were dropped because there is no host to open")
         else:
-            expose[0]["tile"] = tile_from_portal(tiles[0], review, name)
+            expose[0]["tile"] = tile_from_portal(tiles[0], review, name, src.get("tile"))
             for pt in tiles[1:]:
                 extra = {k: v for k, v in expose[0].items() if k != "tile"}
                 extra["name"] = slug(pt.get("name") or "tile")
-                extra["tile"] = tile_from_portal(pt, review, name)
+                extra["tile"] = tile_from_portal(pt, review, name, src.get("tile"))
                 expose.append(extra)
 
     names = [e["name"] for e in expose]

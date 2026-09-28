@@ -183,7 +183,7 @@ func TestComponentProfileRules(t *testing.T) {
     surface: gateway
     authMode: oidc
     backend: {service: x, port: 80}
-    tile: {displayName: Files, icon: files, relation: can_use}
+    tile: {displayName: Files, logo: "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCI+PHJlY3Qgd2lkdGg9IjI0IiBoZWlnaHQ9IjI0Ii8+PC9zdmc+", relation: can_use}
 `
 	app := "  classes: [app]\n  launch: none\n  trustTier: certified"
 	cases := []struct{ name, spec, want string }{
@@ -200,9 +200,9 @@ func TestComponentProfileRules(t *testing.T) {
 
 		// A service may have a console. What it may not have is a console on
 		// the perimeter, or a tile asking about an object it does not have.
-		{"a service with a console", "  classes: [service]\n  launch: tile\n  trustTier: platform\n  expose:\n  - {name: console, surface: gateway, authMode: oidc, backend: {service: x, port: 80}, tile: {displayName: Models, icon: model, relation: can_operate_system, object: cluster}}\n", ""},
+		{"a service with a console", "  classes: [service]\n  launch: tile\n  trustTier: platform\n  expose:\n  - {name: console, surface: gateway, authMode: oidc, backend: {service: x, port: 80}, tile: {displayName: Models, logo: \"data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCI+PHJlY3Qgd2lkdGg9IjI0IiBoZWlnaHQ9IjI0Ii8+PC9zdmc+\", relation: can_operate_system, object: cluster}}\n", ""},
 		{"a service on the perimeter", "  classes: [service]\n  launch: none\n  trustTier: platform\n  expose:\n  - {name: hook, surface: perimeter, authMode: signature, backend: {service: x, port: 80}}\n", "a service exposes on the gateway only"},
-		{"a service tile asking about an app", "  classes: [service]\n  launch: tile\n  trustTier: platform\n  expose:\n  - {name: console, surface: gateway, authMode: oidc, backend: {service: x, port: 80}, tile: {displayName: Models, icon: model, relation: can_use, object: app}}\n", "a service's tile asks on the cluster"},
+		{"a service tile asking about an app", "  classes: [service]\n  launch: tile\n  trustTier: platform\n  expose:\n  - {name: console, surface: gateway, authMode: oidc, backend: {service: x, port: 80}, tile: {displayName: Models, logo: \"data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCI+PHJlY3Qgd2lkdGg9IjI0IiBoZWlnaHQ9IjI0Ii8+PC9zdmc+\", relation: can_use, object: app}}\n", "a service's tile asks on the cluster"},
 		{"a service given to every tenant", "  classes: [service]\n  launch: none\n  trustTier: platform\n  defaultForTenants: true\n", "defaultForTenants is for class app"},
 
 		// Launch: a person must be able to reach what they installed.

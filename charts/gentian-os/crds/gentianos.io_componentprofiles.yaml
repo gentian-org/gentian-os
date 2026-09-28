@@ -819,13 +819,32 @@ spec:
                             quietly.
                           maxProperties: 32
                           type: object
-                        icon:
+                        image:
                           description: |-
-                            Icon is the glyph the portal draws, by name. The portal owns the set; a
-                            name it does not know draws its fallback rather than failing the page.
-                          maxLength: 64
+                            Image is the profile-relative path the SVG lives at in git, e.g.
+                            assets/tile.svg. It is the author's copy: gentian-apps'
+                            scripts/sync-profile-tile.py inlines it into Logo before commit, so the
+                            cluster reads one field and a reviewer still sees a real file in the
+                            diff rather than a wall of base64.
+                          maxLength: 256
+                          type: string
+                        logo:
+                          description: |-
+                            Logo is the tile's image: an SVG the component ships, inline as a data
+                            URI. Every component brings its own -- an app, an API entry and an addon
+                            alike -- because a tile is how a person recognises the thing before they
+                            can read the label, and a shared glyph set makes two different apps look
+                            like the same one.
+
+                            A component with no idea for its own starts from the placeholder in the
+                            app template rather than from a name out of a set the platform owns.
+
+                            Inline rather than a URL: the portal renders the desktop from one
+                            ConfigMap and must not fetch an image per tile from wherever a profile
+                            pointed, which is a request per tile to a third party on every login.
+                          maxLength: 65536
                           minLength: 1
-                          pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
+                          pattern: ^data:image/svg\+xml;base64,[A-Za-z0-9+/]+=*$
                           type: string
                         object:
                           default: app
@@ -872,7 +891,7 @@ spec:
                           type: string
                       required:
                       - displayName
-                      - icon
+                      - logo
                       - relation
                       type: object
                   required:

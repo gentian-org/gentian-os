@@ -494,12 +494,31 @@ type ExposureTile struct {
 	// +kubebuilder:validation:MaxLength=256
 	Description string `json:"description,omitempty"`
 
-	// Icon is the glyph the portal draws, by name. The portal owns the set; a
-	// name it does not know draws its fallback rather than failing the page.
+	// Logo is the tile's image: an SVG the component ships, inline as a data
+	// URI. Every component brings its own -- an app, an API entry and an addon
+	// alike -- because a tile is how a person recognises the thing before they
+	// can read the label, and a shared glyph set makes two different apps look
+	// like the same one.
+	//
+	// A component with no idea for its own starts from the placeholder in the
+	// app template rather than from a name out of a set the platform owns.
+	//
+	// Inline rather than a URL: the portal renders the desktop from one
+	// ConfigMap and must not fetch an image per tile from wherever a profile
+	// pointed, which is a request per tile to a third party on every login.
 	// +kubebuilder:validation:MinLength=1
-	// +kubebuilder:validation:MaxLength=64
-	// +kubebuilder:validation:Pattern=`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`
-	Icon string `json:"icon"`
+	// +kubebuilder:validation:MaxLength=65536
+	// +kubebuilder:validation:Pattern=`^data:image/svg\+xml;base64,[A-Za-z0-9+/]+=*$`
+	Logo string `json:"logo"`
+
+	// Image is the profile-relative path the SVG lives at in git, e.g.
+	// assets/tile.svg. It is the author's copy: gentian-apps'
+	// scripts/sync-profile-tile.py inlines it into Logo before commit, so the
+	// cluster reads one field and a reviewer still sees a real file in the
+	// diff rather than a wall of base64.
+	// +optional
+	// +kubebuilder:validation:MaxLength=256
+	Image string `json:"image,omitempty"`
 
 	// Path is where within the host the tile leads. Empty means the front page.
 	// It exists because an app's front page is not always its entry: a tool

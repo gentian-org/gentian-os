@@ -309,7 +309,7 @@ func (r *TileProjectionReconciler) componentTiles(ctx context.Context) ([]tileca
 				DisplayName:  e.Tile.DisplayName,
 				DisplayNames: e.Tile.DisplayNames,
 				Description:  e.Tile.Description,
-				Icon:         e.Tile.Icon,
+				Icon:         e.Tile.Logo,
 				URL:          tilecatalogue.URL(string(route.Spec.Hostnames[0]), e.Tile.Path),
 				// Which object the relation is asked on is the tile's to say:
 				// app:<tenant>/<profile>, where an installed app's own
