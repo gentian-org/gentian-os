@@ -29,17 +29,17 @@ import (
 )
 
 // newProviderProfile builds an AppProfile that provides the given contract.
-func newProviderProfile(name, contract string) *gentianov1alpha1.AppProfile {
-	return &gentianov1alpha1.AppProfile{
+func newProviderProfile(name, contract string) *gentianov1alpha1.ComponentProfile {
+	return &gentianov1alpha1.ComponentProfile{
 		ObjectMeta: metav1.ObjectMeta{Name: name},
-		Spec: gentianov1alpha1.AppProfileSpec{
-			DisplayName:      name,
-			DeploymentMethod: gentianov1alpha1.DeploymentMethodCrossplane,
-			Chart: gentianov1alpha1.ChartRef{
+		Spec: gentianov1alpha1.ComponentProfileSpec{
+			Classes: []gentianov1alpha1.ComponentClass{gentianov1alpha1.ComponentClassApp}, Launch: gentianov1alpha1.ComponentLaunchNone, TrustTier: gentianov1alpha1.TrustTierCertified, Version: "1.0.0",
+			Package: gentianov1alpha1.PackageSpec{Chart: &gentianov1alpha1.ChartRef{
 				Repository: "oci://charts.example.com",
 				Name:       name,
 				Version:    "0.1.0",
-			},
+			}},
+
 			Provides: []gentianov1alpha1.ContractRef{
 				{Name: contract},
 			},
@@ -48,18 +48,18 @@ func newProviderProfile(name, contract string) *gentianov1alpha1.AppProfile {
 }
 
 // newConsumerProfile builds an AppProfile that optionally integrates with the given contract.
-func newConsumerProfile(name, contract, provider string) *gentianov1alpha1.AppProfile {
-	return &gentianov1alpha1.AppProfile{
+func newConsumerProfile(name, contract, provider string) *gentianov1alpha1.ComponentProfile {
+	return &gentianov1alpha1.ComponentProfile{
 		ObjectMeta: metav1.ObjectMeta{Name: name},
-		Spec: gentianov1alpha1.AppProfileSpec{
-			DisplayName:      name,
-			DeploymentMethod: gentianov1alpha1.DeploymentMethodCrossplane,
-			Chart: gentianov1alpha1.ChartRef{
+		Spec: gentianov1alpha1.ComponentProfileSpec{
+			Classes: []gentianov1alpha1.ComponentClass{gentianov1alpha1.ComponentClassApp}, Launch: gentianov1alpha1.ComponentLaunchNone, TrustTier: gentianov1alpha1.TrustTierCertified, Version: "1.0.0",
+			Package: gentianov1alpha1.PackageSpec{Chart: &gentianov1alpha1.ChartRef{
 				Repository: "oci://charts.example.com",
 				Name:       name,
 				Version:    "0.1.0",
-			},
-			OptionalIntegrations: []gentianov1alpha1.IntegrationRef{
+			}},
+
+			Integrations: []gentianov1alpha1.IntegrationRef{
 				{Contract: contract, Provider: provider},
 			},
 		},
@@ -69,20 +69,19 @@ func newConsumerProfile(name, contract, provider string) *gentianov1alpha1.AppPr
 // TestBindings_NoIntegrations: no app has OptionalIntegrations → BindingsReady=True, NoBindingsRequired.
 func TestBindings_NoIntegrations(t *testing.T) {
 	t.Parallel()
-	profile := &gentianov1alpha1.AppProfile{
+	profile := &gentianov1alpha1.ComponentProfile{
 		ObjectMeta: metav1.ObjectMeta{Name: "bind-profile-none"},
-		Spec: gentianov1alpha1.AppProfileSpec{
-			DisplayName:      "bind-profile-none",
-			DeploymentMethod: gentianov1alpha1.DeploymentMethodCrossplane,
-			Chart: gentianov1alpha1.ChartRef{
+		Spec: gentianov1alpha1.ComponentProfileSpec{
+			Classes: []gentianov1alpha1.ComponentClass{gentianov1alpha1.ComponentClassApp}, Launch: gentianov1alpha1.ComponentLaunchNone, TrustTier: gentianov1alpha1.TrustTierCertified, Version: "1.0.0",
+			Package: gentianov1alpha1.PackageSpec{Chart: &gentianov1alpha1.ChartRef{
 				Repository: "oci://charts.example.com",
 				Name:       "bind-profile-none",
 				Version:    "0.1.0",
-			},
+			}},
 		},
 	}
 	if err := testClient.Create(context.Background(), profile); err != nil {
-		t.Fatalf("create AppProfile: %v", err)
+		t.Fatalf("create ComponentProfile: %v", err)
 	}
 	t.Cleanup(func() { _ = testClient.Delete(context.Background(), profile) })
 

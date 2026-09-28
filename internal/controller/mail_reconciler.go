@@ -1507,19 +1507,19 @@ func (r *TenantReconciler) seedPerAppMailSecrets(ctx context.Context, tenant *ge
 	type need struct{ smtp, imap bool }
 	needs := map[string]need{}
 	for _, app := range tenant.Spec.Apps {
-		profile := &gentianov1alpha1.AppProfile{}
+		profile := &gentianov1alpha1.ComponentProfile{}
 		if err := r.Get(ctx, types.NamespacedName{Name: app.Profile}, profile); err != nil {
 			if errors.IsNotFound(err) {
 				continue
 			}
 			return fmt.Errorf("get AppProfile %s: %w", app.Profile, err)
 		}
-		if profile.Spec.ServiceRequirements == nil || profile.Spec.ServiceRequirements.Mail == nil {
+		if profile.Services() == nil || profile.Services().Mail == nil {
 			continue
 		}
 		needs[app.Profile] = need{
-			smtp: profile.Spec.ServiceRequirements.Mail.SMTP != nil,
-			imap: profile.Spec.ServiceRequirements.Mail.IMAP != nil,
+			smtp: profile.Services().Mail.SMTP != nil,
+			imap: profile.Services().Mail.IMAP != nil,
 		}
 	}
 	if len(needs) == 0 {

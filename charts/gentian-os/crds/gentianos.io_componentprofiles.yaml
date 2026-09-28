@@ -671,6 +671,25 @@ spec:
                 items:
                   description: ExposureSpec declares one entry point.
                   properties:
+                    annotations:
+                      additionalProperties:
+                        type: string
+                      description: |-
+                        Annotations are gateway policy for this host, by the same keys
+                        AppProfile's ingress carried: gentianos.io/gateway-frame-ancestors and
+                        gentianos.io/gateway-escaped-slashes-action.
+
+                        Here rather than on the object, because they are per HOST and a profile
+                        may publish several. frame-ancestors decides which pages may embed this
+                        one in a frame, which is what lets the desktop open an app in a window
+                        instead of a browser tab — so it is not decoration, and a profile that
+                        lost it would open in a tab with no error to say why.
+
+                        Not a free-form passthrough: the nginx ingress annotations that used to
+                        sit beside these — body size, read and send timeouts — are the gateway's
+                        own policy now and are not read from here.
+                      maxProperties: 16
+                      type: object
                     authMode:
                       description: AuthMode is mandatory and has no default.
                       enum:

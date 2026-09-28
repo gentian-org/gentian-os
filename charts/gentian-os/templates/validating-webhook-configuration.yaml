@@ -41,28 +41,11 @@ webhooks:
     manifests target generates crd and rbac only, so this file is hand-maintained
     and a new webhook has to be added here by hand.
 
-    failurePolicy is shared with the tenant webhook deliberately. AppProfiles
-    arrive from the app catalogue through Argo CD, so with Fail a sync while the
-    operator is unavailable is refused rather than admitting a profile nothing
-    checked — the same trade the tenant webhook already makes.
+    The profile webhook is gone. Its one check was spec.categories, and a
+    category is presentation: AD-3 moves it to the store's listing, outside the
+    cluster. What a profile must satisfy is now CEL on the CRD itself — exactly
+    one package, launch agreeing with the tiles, a service's console only on
+    the gateway — which the API server enforces without a webhook to be
+    unavailable.
   */}}
-  - name: vappprofile.gentianos.io
-    admissionReviewVersions:
-      - v1
-    sideEffects: None
-    failurePolicy: {{ $failurePolicy }}
-    matchPolicy: Equivalent
-    timeoutSeconds: 10
-    rules:
-      - apiGroups: ["gentianos.io"]
-        apiVersions: ["v1alpha1"]
-        operations: ["CREATE", "UPDATE"]
-        resources: ["appprofiles"]
-        scope: "*"
-    clientConfig:
-      service:
-        namespace: {{ .Release.Namespace }}
-        name: {{ include "gentian-os.fullname" . }}-webhook
-        path: /validate-gentianos-io-v1alpha1-appprofile
-        port: 443
 {{- end }}

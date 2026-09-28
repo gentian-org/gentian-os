@@ -442,9 +442,14 @@ func TestVolumeUnitsRunInTheTenantNamespaceWithStagedCredentials(t *testing.T) {
 		Namespace: "tenant-demo",
 		Labels:    map[string]string{"gentianos.io/app": "nextcloud-base-ce"},
 	}}
-	profile := &gentianov1alpha1.AppProfile{
+	profile := &gentianov1alpha1.ComponentProfile{
 		ObjectMeta: metav1.ObjectMeta{Name: "nextcloud-base-ce"},
-		Spec:       gentianov1alpha1.AppProfileSpec{Family: "nextcloud"},
+		// The chart's name, which is what PVC matching uses now that family
+		// has moved to the store's listing.
+		Spec: gentianov1alpha1.ComponentProfileSpec{
+			Classes: []gentianov1alpha1.ComponentClass{gentianov1alpha1.ComponentClassApp}, Launch: gentianov1alpha1.ComponentLaunchNone, TrustTier: gentianov1alpha1.TrustTierCertified, Version: "1.0.0",
+			Package: gentianov1alpha1.PackageSpec{Chart: &gentianov1alpha1.ChartRef{Name: "nextcloud"}},
+		},
 	}
 
 	c := fake.NewClientBuilder().WithScheme(s).WithObjects(tenant, export, pvc).Build()
@@ -556,12 +561,18 @@ func TestAListThatCannotSeePVCsFailsTheExportAndResumesTheApp(t *testing.T) {
 	tenant := &gentianov1alpha1.Tenant{
 		ObjectMeta: metav1.ObjectMeta{Name: "demo"},
 		Spec: gentianov1alpha1.TenantSpec{
-			Apps: []gentianov1alpha1.TenantApp{{Profile: "nextcloud-base-ce"}},
+			DisplayName: "Test Tenant",
+			Apps:        []gentianov1alpha1.TenantApp{{Profile: "nextcloud-base-ce"}},
 		},
 	}
-	profile := &gentianov1alpha1.AppProfile{
+	profile := &gentianov1alpha1.ComponentProfile{
 		ObjectMeta: metav1.ObjectMeta{Name: "nextcloud-base-ce"},
-		Spec:       gentianov1alpha1.AppProfileSpec{Family: "nextcloud"},
+		// The chart's name, which is what PVC matching uses now that family
+		// has moved to the store's listing.
+		Spec: gentianov1alpha1.ComponentProfileSpec{
+			Classes: []gentianov1alpha1.ComponentClass{gentianov1alpha1.ComponentClassApp}, Launch: gentianov1alpha1.ComponentLaunchNone, TrustTier: gentianov1alpha1.TrustTierCertified, Version: "1.0.0",
+			Package: gentianov1alpha1.PackageSpec{Chart: &gentianov1alpha1.ChartRef{Name: "nextcloud"}},
+		},
 	}
 	paused := deployment("nextcloud", "nextcloud-base-ce", 0)
 	paused.Annotations = map[string]string{replicaMemoAnnotation: "1"}
@@ -625,12 +636,14 @@ func TestCommandModeResumeRunsTheResumeHook(t *testing.T) {
 	tenant := &gentianov1alpha1.Tenant{
 		ObjectMeta: metav1.ObjectMeta{Name: "demo"},
 		Spec: gentianov1alpha1.TenantSpec{
-			Apps: []gentianov1alpha1.TenantApp{{Profile: "nextcloud-base-ce"}},
+			DisplayName: "Test Tenant",
+			Apps:        []gentianov1alpha1.TenantApp{{Profile: "nextcloud-base-ce"}},
 		},
 	}
-	profile := &gentianov1alpha1.AppProfile{
+	profile := &gentianov1alpha1.ComponentProfile{
 		ObjectMeta: metav1.ObjectMeta{Name: "nextcloud-base-ce"},
-		Spec: gentianov1alpha1.AppProfileSpec{
+		Spec: gentianov1alpha1.ComponentProfileSpec{
+			Classes: []gentianov1alpha1.ComponentClass{gentianov1alpha1.ComponentClassApp}, Launch: gentianov1alpha1.ComponentLaunchNone, TrustTier: gentianov1alpha1.TrustTierCertified, Version: "1.0.0",
 			Backup: &gentianov1alpha1.BackupSpec{
 				Quiesce: &gentianov1alpha1.BackupQuiesce{
 					Mode: gentianov1alpha1.BackupQuiesceCommand,

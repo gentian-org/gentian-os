@@ -28,6 +28,7 @@ func TestCollectTenantGroupNames_IncludesAppAdmins(t *testing.T) {
 	tenant := &gentianov1alpha1.Tenant{
 		ObjectMeta: metav1.ObjectMeta{Name: "demo"},
 		Spec: gentianov1alpha1.TenantSpec{
+			DisplayName: "Test Tenant",
 			Apps: []gentianov1alpha1.TenantApp{
 				{Profile: "demo-app"},
 			},

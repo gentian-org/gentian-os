@@ -499,7 +499,7 @@ func (r *TenantReconciler) SetupWithManager(mgr ctrl.Manager) error {
 			})),
 		).
 		Watches(
-			&gentianov1alpha1.AppProfile{},
+			&gentianov1alpha1.ComponentProfile{},
 			handler.EnqueueRequestsFromMapFunc(mapAppProfileToTenants),
 		).
 		Watches(
@@ -833,12 +833,15 @@ func (r *TenantReconciler) ensureRegistryCredentials(ctx context.Context, tenant
 			continue
 		}
 
-		profile := &gentianov1alpha1.AppProfile{}
+		profile := &gentianov1alpha1.ComponentProfile{}
 		if err := r.Get(ctx, types.NamespacedName{Name: profileName}, profile); err != nil {
-			return fmt.Errorf("failed to read AppProfile %s: %w", profileName, err)
+			return fmt.Errorf("failed to read ComponentProfile %s: %w", profileName, err)
 		}
 
-		if profile.Spec.License != "proprietary" {
+		// Registry credentials are for an entry somebody paid for. The
+		// licence itself is the store's now (AD-3); whether this needs paying
+		// for is an annotation, because the thing that acts on it runs here.
+		if !gentianov1alpha1.ProfileRequiresEntitlement(profile) {
 			continue
 		}
 
@@ -1381,14 +1384,16 @@ func (r *TenantReconciler) buildXTenant(ctx context.Context, tenant *gentianov1a
 		if exists {
 			// ApiProfiles run no workload; keep them out of the XTenant so the
 			// composition creates no App claim / Helm release for them.
-			if gentianov1alpha1.ProfileIsAPI(profile) {
+			if profile.IsAPI() {
 				continue
 			}
-			if profile.Spec.CompositionRef != "" {
-				variant := strings.TrimPrefix(profile.Spec.CompositionRef, "app-")
-				if variant != "" {
-					entry["variant"] = variant
-				}
+			// Which Composition renders this app, if it is not app-default.
+			// From an annotation now: spec.compositionRef is gone, and
+			// package.composition would claim the component is delivered as a
+			// composition rather than as the chart it is.
+			if variant := strings.TrimSpace(
+				profile.Annotations[gentianov1alpha1.AnnotationProfileComposition]); variant != "" {
+				entry["variant"] = strings.TrimPrefix(variant, "app-")
 			}
 		} else {
 			log.FromContext(ctx).Info("AppProfile not found in index in buildXTenant", "profile", app.Profile)

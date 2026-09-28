@@ -336,14 +336,6 @@ func main() {
 		os.Exit(1)
 	}
 
-	if err := (&controller.AppStoreReconciler{
-		Client: mgr.GetClient(),
-		Scheme: mgr.GetScheme(),
-	}).SetupWithManager(mgr); err != nil {
-		setupLog.Error(err, "unable to create controller", "controller", "AppStore")
-		os.Exit(1)
-	}
-
 	if err := (&controller.CustomizationReconciler{
 		Client: mgr.GetClient(),
 		Scheme: mgr.GetScheme(),
@@ -485,9 +477,6 @@ func main() {
 			HandoverNamespace: envOrDefault("HANDOVER_NAMESPACE", envOrDefault("OPERATOR_NAMESPACE", layout.Namespace(layout.Control))),
 		}).SetupWithManager(mgr)
 
-		(&webhook.AppProfileValidator{
-			Client: mgr.GetClient(),
-		}).SetupWithManager(mgr)
 	}
 
 	if os.Getenv("APP_LIFECYCLE_ENABLED") != "false" {

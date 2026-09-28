@@ -370,7 +370,7 @@ func (r *TenantExportReconciler) captureUnits(
 	ctx context.Context,
 	tenant *gentianov1alpha1.Tenant,
 	appName string,
-	profile *gentianov1alpha1.AppProfile,
+	profile *gentianov1alpha1.ComponentProfile,
 	export *gentianov1alpha1.TenantExport,
 	encryption backup.Encryption,
 ) ([]captureUnit, error) {
@@ -465,7 +465,7 @@ func (r *TenantExportReconciler) captureUnits(
 func (r *TenantExportReconciler) appVolumes(
 	ctx context.Context,
 	tenantName, appName string,
-	profile *gentianov1alpha1.AppProfile,
+	profile *gentianov1alpha1.ComponentProfile,
 	spec *gentianov1alpha1.BackupSpec,
 ) ([]string, error) {
 	if included := spec.IncludedVolumes(); len(included) > 0 {
@@ -481,9 +481,13 @@ func (r *TenantExportReconciler) appVolumes(
 	if err := reader.List(ctx, pvcs, client.InNamespace(namespace)); err != nil {
 		return nil, fmt.Errorf("list claims in %s: %w", namespace, err)
 	}
+	// The chart's name, which is what a PVC's app.kubernetes.io/name is when
+	// it is not the install's own. This was spec.family, which AD-3 moves to
+	// the store listing. Empty only narrows the match, so a profile with no
+	// chart exports less rather than exporting a sibling's volume.
 	family := ""
-	if profile != nil {
-		family = profile.Spec.Family
+	if chart := profile.Chart(); chart != nil {
+		family = chart.Name
 	}
 	var claims []string
 	for _, pvc := range pvcs.Items {

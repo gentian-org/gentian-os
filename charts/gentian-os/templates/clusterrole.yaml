@@ -215,7 +215,6 @@ rules:
   - apiGroups:
     - gentianos.io
     resources:
-    - appcatalogues
     - appgrants
     - apps
     - backuppolicies
@@ -240,7 +239,18 @@ rules:
   - apiGroups:
     - gentianos.io
     resources:
-    - appcatalogues/status
+    - appgrants/finalizers
+    - components/finalizers
+    - integrationbindings/finalizers
+    - platformsecuritypolicies/finalizers
+    - tenantexports/finalizers
+    - tenantrestores/finalizers
+    - tenants/finalizers
+    verbs:
+    - update
+  - apiGroups:
+    - gentianos.io
+    resources:
     - appgrants/status
     - backuppolicies/status
     - components/status
@@ -259,29 +269,7 @@ rules:
   - apiGroups:
     - gentianos.io
     resources:
-    - appgrants/finalizers
-    - components/finalizers
-    - integrationbindings/finalizers
-    - platformsecuritypolicies/finalizers
-    - tenantexports/finalizers
-    - tenantrestores/finalizers
-    - tenants/finalizers
-    verbs:
-    - update
-  - apiGroups:
-    - gentianos.io
-    resources:
     - appprofiles
-    - customizations
-    verbs:
-    - get
-    - list
-    - watch
-    - update
-    - patch
-  - apiGroups:
-    - gentianos.io
-    resources:
     - clusters
     - componentprofiles
     - oidcpackcatalogs
@@ -291,6 +279,16 @@ rules:
     - get
     - list
     - watch
+  - apiGroups:
+    - gentianos.io
+    resources:
+    - customizations
+    verbs:
+    - get
+    - list
+    - watch
+    - update
+    - patch
   - apiGroups:
     - helm.crossplane.io
     resources:

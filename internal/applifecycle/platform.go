@@ -243,18 +243,22 @@ func (s *Service) PlatformSecurity(ctx context.Context) (*PlatformSecurityResult
 		}
 	}
 
-	var profiles gentianov1alpha1.AppProfileList
+	var profiles gentianov1alpha1.ComponentProfileList
 	if err := s.client.List(ctx, &profiles); err != nil {
 		return nil, fmt.Errorf("list app profiles: %w", err)
 	}
 	for i := range profiles.Items {
 		p := &profiles.Items[i]
-		asks := macWaiverAsks(p.Spec.Security)
+		asks := macWaiverAsks(p.Privileges())
 		if len(asks) == 0 {
 			continue
 		}
 		entry := MacWaiverCatalogueInfo{
-			Name: p.Name, DisplayName: p.Spec.DisplayName,
+			// No DisplayName from the profile: presentation moved to the
+			// store's listing (AD-3). The object's own name is what the
+			// cluster knows this entry by, and it is what an operator
+			// looking at a waiver needs to find it again.
+			Name: p.Name, DisplayName: p.Name,
 			MacWaivers: asks, Allowed: []MacWaiverAsk{}, Refused: []MacWaiverAsk{},
 		}
 		for _, ask := range asks {
@@ -361,12 +365,12 @@ func (s *Service) CustomizationDebtReport(ctx context.Context) (*CustomizationDe
 const customizationRungNone = "L0"
 
 // macWaiverAsks reads what one profile asks to escape.
-func macWaiverAsks(security *gentianov1alpha1.SecuritySpec) []MacWaiverAsk {
-	if security == nil || len(security.MacWaivers) == 0 {
+func macWaiverAsks(privileges *gentianov1alpha1.PrivilegeRequest) []MacWaiverAsk {
+	if privileges == nil || len(privileges.PodSecurity) == 0 {
 		return nil
 	}
-	out := make([]MacWaiverAsk, 0, len(security.MacWaivers))
-	for _, w := range security.MacWaivers {
+	out := make([]MacWaiverAsk, 0, len(privileges.PodSecurity))
+	for _, w := range privileges.PodSecurity {
 		out = append(out, MacWaiverAsk{Policy: w.Policy, Scope: w.Scope})
 	}
 	return out

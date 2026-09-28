@@ -361,7 +361,7 @@ func (r *TenantRestoreReconciler) restoreUnits(
 	ctx context.Context,
 	tenant *gentianov1alpha1.Tenant,
 	appName string,
-	profile *gentianov1alpha1.AppProfile,
+	profile *gentianov1alpha1.ComponentProfile,
 	restore *gentianov1alpha1.TenantRestore,
 	d backup.Decryption,
 ) ([]captureUnit, error) {

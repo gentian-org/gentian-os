@@ -37,8 +37,8 @@ const (
 
 type ingressIntent struct {
 	appProfile string
-	profile    *gentianov1alpha1.AppProfile
-	ingress    *gentianov1alpha1.IngressSpec
+	profile    *gentianov1alpha1.ComponentProfile
+	ingress    *gentianov1alpha1.ExposureSpec
 }
 
 func appHTTPRouteName(tenantName, appProfile string) string {
@@ -120,11 +120,11 @@ func buildAppHTTPRoute(
 ) *gatewayv1.HTTPRoute {
 	host := ingressHost(intent.appProfile, intent.ingress, effectiveDomain)
 	ingress := intent.ingress
-	svcName := ingress.ServiceName
+	svcName := ingress.Backend.Service
 	if svcName == "" {
 		svcName = intent.appProfile
 	}
-	svcPort := ingress.ServicePort
+	svcPort := ingress.Backend.Port
 	if svcPort == 0 {
 		svcPort = defaultServicePort
 	}
@@ -144,8 +144,8 @@ func buildAppHTTPRoute(
 		},
 	}
 
-	if intent.profile != nil && gentianov1alpha1.ProfileIsAPI(intent.profile) && intent.profile.Spec.APIIntegration != nil {
-		api := intent.profile.Spec.APIIntegration
+	if intent.profile != nil && intent.profile.IsAPI() && intent.profile.Spec.Package.API != nil {
+		api := intent.profile.Spec.Package.API
 		switch api.Runtime {
 		case gentianov1alpha1.APIIntegrationRuntimeRedirect:
 			u, err := url.Parse(api.BaseURL)
@@ -223,9 +223,10 @@ func buildAppHTTPRoute(
 			}
 		}
 	}
+	// The component's own host, which is the first gateway exposure.
 	mainIngressSubDomain := ""
-	if intent.profile != nil && intent.profile.Spec.Ingress != nil {
-		mainIngressSubDomain = intent.profile.Spec.Ingress.SubDomain
+	if gateways := intent.profile.GatewayExposures(); len(gateways) > 0 {
+		mainIngressSubDomain = gateways[0].SubDomain
 	}
 	if filters := gatewayEmbeddingResponseFilters(kernelDomain, effectiveDomain, ingress.SubDomain, mainIngressSubDomain, ingress); len(filters) > 0 {
 		rule.Filters = filters
@@ -274,7 +275,7 @@ func buildAppHTTPRoute(
 	}
 }
 
-func appRootRedirectRule(profile *gentianov1alpha1.AppProfile, host string) *gatewayv1.HTTPRouteRule {
+func appRootRedirectRule(profile *gentianov1alpha1.ComponentProfile, host string) *gatewayv1.HTTPRouteRule {
 	target := gentianov1alpha1.ProfileGatewayRootRedirect(profile)
 	if target == "" {
 		return nil
@@ -310,18 +311,18 @@ func appRootRedirectRule(profile *gentianov1alpha1.AppProfile, host string) *gat
 }
 
 func appAPIBackendRules(
-	profile *gentianov1alpha1.AppProfile,
+	profile *gentianov1alpha1.ComponentProfile,
 	defaultPort int32,
 	kernelDomain, effectiveDomain string,
-	ingress *gentianov1alpha1.IngressSpec,
+	ingress *gentianov1alpha1.ExposureSpec,
 ) []gatewayv1.HTTPRouteRule {
 	backends, err := gentianov1alpha1.ProfileGatewayAPIBackends(profile)
 	if err != nil || len(backends) == 0 {
 		return nil
 	}
 	mainIngressSubDomain := ""
-	if profile != nil && profile.Spec.Ingress != nil {
-		mainIngressSubDomain = profile.Spec.Ingress.SubDomain
+	if gateways := profile.GatewayExposures(); len(gateways) > 0 {
+		mainIngressSubDomain = gateways[0].SubDomain
 	}
 	var filters []gatewayv1.HTTPRouteFilter
 	if ingress != nil {
@@ -359,7 +360,7 @@ func appAPIBackendRules(
 
 func gatewayEmbeddingResponseFilters(
 	kernelDomain, effectiveDomain, ingressSubDomain, mainIngressSubDomain string,
-	ingress *gentianov1alpha1.IngressSpec,
+	ingress *gentianov1alpha1.ExposureSpec,
 ) []gatewayv1.HTTPRouteFilter {
 	policy := computeGatewayFrameAncestorsPolicy(kernelDomain, effectiveDomain, ingressSubDomain)
 	if custom, ok, err := ingressFrameAncestorsPolicy(kernelDomain, effectiveDomain, mainIngressSubDomain, ingress); err == nil && ok {

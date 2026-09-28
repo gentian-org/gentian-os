@@ -154,7 +154,9 @@ func (e *BackupEncryption) IsSet() bool {
 // restated. Two types meant two schemas, two status shapes and a merge that
 // could disagree with itself.
 //
-// +kubebuilder:validation:XValidation:rule="self.scope == 'tenant' ? (has(self.tenant) && self.tenant != '') : (!has(self.tenant) || self.tenant == '')",message="tenant is required when scope is tenant, and must be empty when scope is cluster"
+// The emptiness test is size(): see component_types.go for why a pair of
+// straight single quotes in a marker does not survive gofmt.
+// +kubebuilder:validation:XValidation:rule="self.scope == 'tenant' ? (has(self.tenant) && size(self.tenant) > 0) : (!has(self.tenant) || size(self.tenant) == 0)",message="tenant is required when scope is tenant, and must be empty when scope is cluster"
 type BackupPolicySpec struct {
 	// Scope decides whether this is the cluster default or one tenant's
 	// override, and with it who may edit the policy and which OpenBao path its

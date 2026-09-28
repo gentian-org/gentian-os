@@ -318,7 +318,7 @@ func (r *TenantReconciler) buildOIDCClientProvisioningJob(ctx context.Context, t
 // Sidecars: when the parent profile has compositionRef, Crossplane owns Client MRs
 // for sidecar OIDC clients too; the operator still reconciles OIDC pack Jobs when
 // a pack catalog is configured (see collectOIDCAppConfigs).
-func crossplaneOwnsOIDCClient(profile *gentianov1alpha1.AppProfile, cfg oidcAppConfig) bool {
+func crossplaneOwnsOIDCClient(profile *gentianov1alpha1.ComponentProfile, cfg oidcAppConfig) bool {
 	if cfg.pack != nil {
 		return false
 	}
@@ -326,13 +326,13 @@ func crossplaneOwnsOIDCClient(profile *gentianov1alpha1.AppProfile, cfg oidcAppC
 	// MR. This was written as "anything that is not crossplane", which also
 	// covered deploymentMethod: argocd — a value no profile ever set and that no
 	// longer exists.
-	if profile.Spec.DeploymentMethod == gentianov1alpha1.DeploymentMethodAPI {
+	if profile.IsAPI() {
 		return false
 	}
 	if cfg.parentProfile != "" {
-		return profile.Spec.CompositionRef != ""
+		return profile.Annotations[gentianov1alpha1.AnnotationProfileComposition] != ""
 	}
-	kr := profile.Spec.ServiceRequirements
+	kr := profile.Services()
 	if kr == nil || kr.Identity == nil || kr.Identity.OIDC == nil {
 		return false
 	}
@@ -425,7 +425,7 @@ func (r *TenantReconciler) collectGentianGroupsJSON(ctx context.Context, tenant 
 
 	// Helper to extract attributes from AppProfile name
 	resolveProfileAttrs := func(profileName string) (map[string][]string, error) {
-		profile := &gentianov1alpha1.AppProfile{}
+		profile := &gentianov1alpha1.ComponentProfile{}
 		err := r.Get(ctx, types.NamespacedName{Name: profileName}, profile)
 		if err != nil {
 			if errors.IsNotFound(err) {

@@ -66,7 +66,8 @@ func testCatalogue() *Catalogue {
 func tenantWith(quotas *gentianov1alpha1.TenantQuotas, annotation string) *gentianov1alpha1.Tenant {
 	t := &gentianov1alpha1.Tenant{
 		ObjectMeta: metav1.ObjectMeta{Name: "demo"},
-		Spec:       gentianov1alpha1.TenantSpec{Quotas: quotas},
+		Spec: gentianov1alpha1.TenantSpec{
+			DisplayName: "Test Tenant", Quotas: quotas},
 	}
 	if annotation != "" {
 		t.Annotations = map[string]string{gentianov1alpha1.ResourcePlanAnnotation: annotation}

@@ -26,20 +26,21 @@ import (
 
 func TestBuildDesired_TenantCachePolicies(t *testing.T) {
 	t.Parallel()
-	profile := &gentianov1alpha1.AppProfile{
-		Spec: gentianov1alpha1.AppProfileSpec{
-			ServiceRequirements: &gentianov1alpha1.ServiceRequirements{
+	profile := &gentianov1alpha1.ComponentProfile{
+		Spec: gentianov1alpha1.ComponentProfileSpec{
+			Classes: []gentianov1alpha1.ComponentClass{gentianov1alpha1.ComponentClassApp}, Launch: gentianov1alpha1.ComponentLaunchNone, TrustTier: gentianov1alpha1.TrustTierCertified, Version: "1.0.0",
+			Requires: &gentianov1alpha1.RequirementSpec{Services: &gentianov1alpha1.ServiceRequirements{
 				Cache: &gentianov1alpha1.CacheRequirement{
 					Engine: gentianov1alpha1.CacheEngineMemcached,
 				},
-			},
+			}},
 		},
 	}
 	in := netpolicy.BuildInput{
 		TenantName: "demo",
 		Namespace:  "tenant-demo",
 		Apps:       []gentianov1alpha1.TenantApp{{Profile: "catalogue-test-app"}},
-		Profiles:   map[string]*gentianov1alpha1.AppProfile{"catalogue-test-app": profile},
+		Profiles:   map[string]*gentianov1alpha1.ComponentProfile{"catalogue-test-app": profile},
 		Config:     netpolicy.DefaultConfig(),
 	}
 	policies := netpolicy.BuildDesired(in)

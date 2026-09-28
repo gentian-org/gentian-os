@@ -62,7 +62,7 @@ const (
 	pvcPollInterval    = 3 * time.Second
 )
 
-func (s *Service) purge(ctx context.Context, tenant *gentianov1alpha1.Tenant, profile *gentianov1alpha1.AppProfile, app string) []string {
+func (s *Service) purge(ctx context.Context, tenant *gentianov1alpha1.Tenant, profile *gentianov1alpha1.ComponentProfile, app string) []string {
 	var warnings []string
 	dbEngine, s3Req, redisReq := profileKernelReqs(profile)
 	if profile == nil {
@@ -90,12 +90,12 @@ func (s *Service) purge(ctx context.Context, tenant *gentianov1alpha1.Tenant, pr
 	return warnings
 }
 
-func profileKernelReqs(profile *gentianov1alpha1.AppProfile) (db gentianov1alpha1.DatabaseEngine, s3, redis bool) {
+func profileKernelReqs(profile *gentianov1alpha1.ComponentProfile) (db gentianov1alpha1.DatabaseEngine, s3, redis bool) {
 	stores := backup.ProfileStores(profile)
 	return stores.Database, stores.S3, stores.Redis
 }
 
-func sidecarNames(profile *gentianov1alpha1.AppProfile) []string {
+func sidecarNames(profile *gentianov1alpha1.ComponentProfile) []string {
 	return backup.SidecarNames(profile)
 }
 
@@ -523,7 +523,7 @@ func (s *Service) purgeClusterArtifacts(ctx context.Context, tenant, app string)
 	return warnings
 }
 
-func (s *Service) purgePVCs(ctx context.Context, tenantName, appName string, profile *gentianov1alpha1.AppProfile) []string {
+func (s *Service) purgePVCs(ctx context.Context, tenantName, appName string, profile *gentianov1alpha1.ComponentProfile) []string {
 	var warnings []string
 	ns := tenantNamespace(tenantName)
 	pvcs, err := s.clientset.CoreV1().PersistentVolumeClaims(ns).List(ctx, metav1.ListOptions{})
@@ -534,9 +534,17 @@ func (s *Service) purgePVCs(ctx context.Context, tenantName, appName string, pro
 		return []string{fmt.Sprintf("list tenant PVCs: %v", err)}
 	}
 
+	// What a PVC's app.kubernetes.io/name is likely to be when it is not the
+	// install's own name: the chart's. This was spec.family, which AD-3 moves
+	// to the store listing — and the chart name is the more direct answer
+	// anyway, because it is what the chart actually labels its objects with.
+	//
+	// Empty only narrows the match (see PVCBelongsToApp), so a profile with no
+	// chart leaves a volume behind rather than taking a sibling's with it,
+	// which is the right way round for a purge.
 	family := ""
-	if profile != nil {
-		family = profile.Spec.Family
+	if chart := profile.Chart(); chart != nil {
+		family = chart.Name
 	}
 
 	logger := log.FromContext(ctx).WithName("purge").WithValues("app", appName)

@@ -115,10 +115,11 @@ func TestRungAboveRecommendedFlagsUnjustifiedNewCapability(t *testing.T) {
 // CI resolved this inheritance and the operator did not, so the two disagreed about
 // the same record.
 
-func addonProfile(name, of string) *gentianov1alpha1.AppProfile {
-	return &gentianov1alpha1.AppProfile{
+func addonProfile(name, of string) *gentianov1alpha1.ComponentProfile {
+	return &gentianov1alpha1.ComponentProfile{
 		ObjectMeta: metav1.ObjectMeta{Name: name},
-		Spec: gentianov1alpha1.AppProfileSpec{
+		Spec: gentianov1alpha1.ComponentProfileSpec{
+			Classes: []gentianov1alpha1.ComponentClass{gentianov1alpha1.ComponentClassApp}, Launch: gentianov1alpha1.ComponentLaunchNone, TrustTier: gentianov1alpha1.TrustTierCertified, Version: "1.0.0",
 			Customization: &gentianov1alpha1.CustomizationSurface{
 				Addon: &gentianov1alpha1.CustomizationAddon{ID: "crm", Of: of},
 			},
@@ -126,10 +127,11 @@ func addonProfile(name, of string) *gentianov1alpha1.AppProfile {
 	}
 }
 
-func baseProfile(name string, rungs ...gentianov1alpha1.CustomizationRung) *gentianov1alpha1.AppProfile {
-	return &gentianov1alpha1.AppProfile{
+func baseProfile(name string, rungs ...gentianov1alpha1.CustomizationRung) *gentianov1alpha1.ComponentProfile {
+	return &gentianov1alpha1.ComponentProfile{
 		ObjectMeta: metav1.ObjectMeta{Name: name},
-		Spec: gentianov1alpha1.AppProfileSpec{
+		Spec: gentianov1alpha1.ComponentProfileSpec{
+			Classes: []gentianov1alpha1.ComponentClass{gentianov1alpha1.ComponentClassApp}, Launch: gentianov1alpha1.ComponentLaunchNone, TrustTier: gentianov1alpha1.TrustTierCertified, Version: "1.0.0",
 			Customization: &gentianov1alpha1.CustomizationSurface{
 				Grade:          gentianov1alpha1.GradeA,
 				SupportedRungs: rungs,
@@ -167,9 +169,10 @@ func TestLadderSurfaceLeavesANonAddonAlone(t *testing.T) {
 	t.Parallel()
 	// An edition shares a family name and nothing else, so it must be read as it
 	// stands rather than borrowing another profile's reachability.
-	ee := &gentianov1alpha1.AppProfile{
+	ee := &gentianov1alpha1.ComponentProfile{
 		ObjectMeta: metav1.ObjectMeta{Name: "nextcloud-base-ee"},
-		Spec: gentianov1alpha1.AppProfileSpec{
+		Spec: gentianov1alpha1.ComponentProfileSpec{
+			Classes: []gentianov1alpha1.ComponentClass{gentianov1alpha1.ComponentClassApp}, Launch: gentianov1alpha1.ComponentLaunchNone, TrustTier: gentianov1alpha1.TrustTierCertified, Version: "1.0.0",
 			Customization: &gentianov1alpha1.CustomizationSurface{
 				Grade:          gentianov1alpha1.GradeUnknown,
 				SupportedRungs: []gentianov1alpha1.CustomizationRung{gentianov1alpha1.RungConfigure, gentianov1alpha1.RungRepackage},

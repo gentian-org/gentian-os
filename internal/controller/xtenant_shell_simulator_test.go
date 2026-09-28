@@ -223,7 +223,8 @@ func deleteSimulatedShellResources(ctx context.Context, c client.Client, nsName 
 }
 
 func tenantSpecFromXR(spec map[string]interface{}) gentianov1alpha1.TenantSpec {
-	ts := gentianov1alpha1.TenantSpec{}
+	ts := gentianov1alpha1.TenantSpec{
+		DisplayName: "Test Tenant"}
 	if iso, ok := spec["isolation"].(map[string]interface{}); ok {
 		if ns, ok := iso["namespace"].(string); ok && ns != "" {
 			ts.Isolation = &gentianov1alpha1.TenantIsolation{Namespace: ns}

@@ -26,19 +26,19 @@ import (
 )
 
 // loadAppProfileIndex lists cluster AppProfiles once per tenant reconcile.
-func loadAppProfileIndex(ctx context.Context, c client.Client) (map[string]*gentianov1alpha1.AppProfile, error) {
-	list := &gentianov1alpha1.AppProfileList{}
+func loadAppProfileIndex(ctx context.Context, c client.Client) (map[string]*gentianov1alpha1.ComponentProfile, error) {
+	list := &gentianov1alpha1.ComponentProfileList{}
 	if err := c.List(ctx, list); err != nil {
 		return nil, fmt.Errorf("list AppProfiles: %w", err)
 	}
-	index := make(map[string]*gentianov1alpha1.AppProfile, len(list.Items))
+	index := make(map[string]*gentianov1alpha1.ComponentProfile, len(list.Items))
 	for i := range list.Items {
 		index[list.Items[i].Name] = &list.Items[i]
 	}
 	return index, nil
 }
 
-func appProfileFromIndex(index map[string]*gentianov1alpha1.AppProfile, name string) (*gentianov1alpha1.AppProfile, bool) {
+func appProfileFromIndex(index map[string]*gentianov1alpha1.ComponentProfile, name string) (*gentianov1alpha1.ComponentProfile, bool) {
 	if index == nil || name == "" {
 		return nil, false
 	}

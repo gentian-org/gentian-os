@@ -32,18 +32,18 @@ import (
 )
 
 // newOIDCProfile creates a minimal AppProfile that requires OIDC.
-func newOIDCProfile(name string) *gentianov1alpha1.AppProfile {
-	return &gentianov1alpha1.AppProfile{
+func newOIDCProfile(name string) *gentianov1alpha1.ComponentProfile {
+	return &gentianov1alpha1.ComponentProfile{
 		ObjectMeta: metav1.ObjectMeta{Name: name},
-		Spec: gentianov1alpha1.AppProfileSpec{
-			DisplayName:      name,
-			DeploymentMethod: gentianov1alpha1.DeploymentMethodCrossplane,
-			Chart: gentianov1alpha1.ChartRef{
+		Spec: gentianov1alpha1.ComponentProfileSpec{
+			Classes: []gentianov1alpha1.ComponentClass{gentianov1alpha1.ComponentClassApp}, Launch: gentianov1alpha1.ComponentLaunchNone, TrustTier: gentianov1alpha1.TrustTierCertified, Version: "1.0.0",
+			Package: gentianov1alpha1.PackageSpec{Chart: &gentianov1alpha1.ChartRef{
 				Repository: "https://charts.example.com",
 				Name:       name,
 				Version:    "1.0.0",
-			},
-			ServiceRequirements: &gentianov1alpha1.ServiceRequirements{
+			}},
+
+			Requires: &gentianov1alpha1.RequirementSpec{Services: &gentianov1alpha1.ServiceRequirements{
 				Identity: &gentianov1alpha1.IdentityRequirement{OIDC: &gentianov1alpha1.OIDCClientSpec{
 					ClientID:     name,
 					RedirectURIs: []string{"https://${TENANT_DOMAIN}/oidc/callback"},
@@ -55,7 +55,7 @@ func newOIDCProfile(name string) *gentianov1alpha1.AppProfile {
 					// effect, a value no real profile ever carried.
 					OIDCPackRef: "catalogue-test-client",
 				}},
-			},
+			}},
 		},
 	}
 }
@@ -226,7 +226,7 @@ func TestIdentity_CreatesRealmJob(t *testing.T) {
 	t.Parallel()
 	profile := newOIDCProfile("oidc-app1")
 	if err := testClient.Create(context.Background(), profile); err != nil {
-		t.Fatalf("create AppProfile: %v", err)
+		t.Fatalf("create ComponentProfile: %v", err)
 	}
 	t.Cleanup(func() { _ = testClient.Delete(context.Background(), profile) })
 
@@ -270,7 +270,7 @@ func TestIdentity_CreatesClientJobAfterRealmComplete(t *testing.T) {
 	t.Parallel()
 	profile := newOIDCProfile("oidc-app2")
 	if err := testClient.Create(context.Background(), profile); err != nil {
-		t.Fatalf("create AppProfile: %v", err)
+		t.Fatalf("create ComponentProfile: %v", err)
 	}
 	t.Cleanup(func() { _ = testClient.Delete(context.Background(), profile) })
 
@@ -334,12 +334,12 @@ func TestIdentity_CreatesClientJobAfterRealmComplete(t *testing.T) {
 func TestIdentity_CrossplaneOwnsClientWithoutPack(t *testing.T) {
 	t.Parallel()
 	profile := newOIDCProfile("oidc-nopack")
-	profile.Spec.ServiceRequirements.Identity.OIDC.OIDCPackRef = ""
+	profile.Services().Identity.OIDC.OIDCPackRef = ""
 	// The clientID must not match a pack either — ResolvePack falls back to it
 	// when oidcPackRef is empty.
-	profile.Spec.ServiceRequirements.Identity.OIDC.ClientID = "oidc-nopack"
+	profile.Services().Identity.OIDC.ClientID = "oidc-nopack"
 	if err := testClient.Create(context.Background(), profile); err != nil {
-		t.Fatalf("create AppProfile: %v", err)
+		t.Fatalf("create ComponentProfile: %v", err)
 	}
 	t.Cleanup(func() { _ = testClient.Delete(context.Background(), profile) })
 
@@ -395,7 +395,7 @@ func TestIdentity_SetsReadyWhenAllJobsDone(t *testing.T) {
 	t.Parallel()
 	profile := newOIDCProfile("oidc-app3")
 	if err := testClient.Create(context.Background(), profile); err != nil {
-		t.Fatalf("create AppProfile: %v", err)
+		t.Fatalf("create ComponentProfile: %v", err)
 	}
 	t.Cleanup(func() { _ = testClient.Delete(context.Background(), profile) })
 
@@ -468,7 +468,7 @@ func TestIdentity_CreatesAdminJobAfterRealm(t *testing.T) {
 	t.Parallel()
 	profile := newOIDCProfile("oidc-app-admin")
 	if err := testClient.Create(context.Background(), profile); err != nil {
-		t.Fatalf("create AppProfile: %v", err)
+		t.Fatalf("create ComponentProfile: %v", err)
 	}
 	t.Cleanup(func() { _ = testClient.Delete(context.Background(), profile) })
 
@@ -536,14 +536,14 @@ func TestIdentity_DeleteDeletePolicy_CreatesCleanupJob(t *testing.T) {
 	t.Parallel()
 	profile := newOIDCProfile("oidc-app4")
 	if err := testClient.Create(context.Background(), profile); err != nil {
-		t.Fatalf("create AppProfile: %v", err)
+		t.Fatalf("create ComponentProfile: %v", err)
 	}
 	t.Cleanup(func() { _ = testClient.Delete(context.Background(), profile) })
 
 	tenant := &gentianov1alpha1.Tenant{
 		ObjectMeta: metav1.ObjectMeta{Name: "identdelete"},
 		Spec: gentianov1alpha1.TenantSpec{
-			DisplayName:    "Identity Delete Co",
+			DisplayName:    "Test Tenant",
 			Domain:         "identdelete.example.com",
 			DeletionPolicy: gentianov1alpha1.DeletionPolicyDelete,
 			Apps:           []gentianov1alpha1.TenantApp{{Profile: "oidc-app4"}},
@@ -576,14 +576,14 @@ func TestIdentity_RetainPolicy_DisablesRealm(t *testing.T) {
 	t.Parallel()
 	profile := newOIDCProfile("oidc-app5")
 	if err := testClient.Create(context.Background(), profile); err != nil {
-		t.Fatalf("create AppProfile: %v", err)
+		t.Fatalf("create ComponentProfile: %v", err)
 	}
 	t.Cleanup(func() { _ = testClient.Delete(context.Background(), profile) })
 
 	tenant := &gentianov1alpha1.Tenant{
 		ObjectMeta: metav1.ObjectMeta{Name: "identretain"},
 		Spec: gentianov1alpha1.TenantSpec{
-			DisplayName:    "Identity Retain Co",
+			DisplayName:    "Test Tenant",
 			Domain:         "identretain.example.com",
 			DeletionPolicy: gentianov1alpha1.DeletionPolicyRetain,
 			Apps:           []gentianov1alpha1.TenantApp{{Profile: "oidc-app5"}},

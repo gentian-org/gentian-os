@@ -34,7 +34,7 @@ func (r *TenantReconciler) collectTenantIngressIntents(ctx context.Context, tena
 func buildAppBackendTrafficPolicyObject(
 	tenant *gentianov1alpha1.Tenant,
 	nsName, appProfile string,
-	ingress *gentianov1alpha1.IngressSpec,
+	ingress *gentianov1alpha1.ExposureSpec,
 ) *unstructured.Unstructured {
 	spec := backendTrafficPolicySpecFromIngressAnnotations(ingress.Annotations)
 	if spec == nil {

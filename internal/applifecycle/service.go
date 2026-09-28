@@ -240,7 +240,7 @@ func (s *Service) Uninstall(ctx context.Context, req UninstallRequest) (*Result,
 	if err := s.client.Get(ctx, client.ObjectKey{Name: req.Tenant}, tenant); err != nil {
 		return nil, fmt.Errorf("get tenant %q: %w", req.Tenant, err)
 	}
-	profileCR := &gentianov1alpha1.AppProfile{}
+	profileCR := &gentianov1alpha1.ComponentProfile{}
 	profileErr := s.client.Get(ctx, client.ObjectKey{Name: req.Profile}, profileCR)
 	if profileErr != nil {
 		if apierrors.IsNotFound(profileErr) {
@@ -290,7 +290,7 @@ func (s *Service) Uninstall(ctx context.Context, req UninstallRequest) (*Result,
 }
 
 func (s *Service) validateProfile(ctx context.Context, profile string) error {
-	ap := &gentianov1alpha1.AppProfile{}
+	ap := &gentianov1alpha1.ComponentProfile{}
 	if err := s.client.Get(ctx, client.ObjectKey{Name: profile}, ap); err != nil {
 		if apierrors.IsNotFound(err) {
 			return fmt.Errorf("appprofile %q not found", profile)
@@ -354,7 +354,7 @@ func (s *Service) ListInstalled(ctx context.Context, tenant string) ([]Result, e
 		if app.Profile == "" {
 			continue
 		}
-		ap := &gentianov1alpha1.AppProfile{}
+		ap := &gentianov1alpha1.ComponentProfile{}
 		if err := s.client.Get(ctx, client.ObjectKey{Name: app.Profile}, ap); err == nil {
 			if ap.Annotations != nil && ap.Annotations[platformAppAnnotation] == "true" {
 				continue
@@ -474,16 +474,16 @@ func (s *Service) provisionAppGroupUsers(ctx context.Context, tenantName, profil
 func (s *Service) SetAddons(ctx context.Context, req SetAddonsRequest) (*Result, error) {
 	defer s.lockApp(req.Tenant, req.Profile)()
 
-	base := &gentianov1alpha1.AppProfile{}
+	base := &gentianov1alpha1.ComponentProfile{}
 	if err := s.client.Get(ctx, client.ObjectKey{Name: req.Profile}, base); err != nil {
 		return nil, fmt.Errorf("get appprofile %q: %w", req.Profile, err)
 	}
 
-	profiles := &gentianov1alpha1.AppProfileList{}
+	profiles := &gentianov1alpha1.ComponentProfileList{}
 	if err := s.client.List(ctx, profiles); err != nil {
 		return nil, fmt.Errorf("list appprofiles: %w", err)
 	}
-	index := make(map[string]*gentianov1alpha1.AppProfile, len(profiles.Items))
+	index := make(map[string]*gentianov1alpha1.ComponentProfile, len(profiles.Items))
 	for i := range profiles.Items {
 		index[profiles.Items[i].Name] = &profiles.Items[i]
 	}

@@ -32,17 +32,33 @@ import (
 func TestAppProfile_DeepCopy(t *testing.T) {
 	qty := resource.MustParse("5Gi")
 
-	original := &v1alpha1.AppProfile{
+	original := &v1alpha1.ComponentProfile{
 		ObjectMeta: metav1.ObjectMeta{Name: "catalogue-app"},
-		Spec: v1alpha1.AppProfileSpec{
-			DisplayName:      "Catalogue App",
-			DeploymentMethod: v1alpha1.DeploymentMethodCrossplane,
-			Chart: v1alpha1.ChartRef{
-				Repository: "oci://charts.example.com",
-				Name:       "catalogue-app",
-				Version:    "1.0.0",
+		Spec: v1alpha1.ComponentProfileSpec{
+			Classes: []v1alpha1.ComponentClass{v1alpha1.ComponentClassApp}, Launch: v1alpha1.ComponentLaunchNone, TrustTier: v1alpha1.TrustTierCertified, Version: "1.0.0",
+			Package: v1alpha1.PackageSpec{
+				Chart: &v1alpha1.ChartRef{
+					Repository: "oci://charts.example.com",
+					Name:       "catalogue-app",
+					Version:    "1.0.0",
+				},
+				// valueMapping belongs to the package: it maps what the
+				// platform supplies onto the chart's own value keys.
+				ValueMapping: &v1alpha1.ValueMapping{
+					OIDC: &v1alpha1.OIDCValueMapping{
+						IssuerKey:       "oidc.issuer",
+						ClientIDKey:     "oidc.clientId",
+						ClientSecretKey: "oidc.clientSecret",
+					},
+					Database: &v1alpha1.DatabaseValueMapping{
+						HostKey:     "database.host",
+						NameKey:     "database.name",
+						UserKey:     "database.user",
+						PasswordKey: "database.password",
+					},
+				},
 			},
-			ServiceRequirements: &v1alpha1.ServiceRequirements{
+			Requires: &v1alpha1.RequirementSpec{Services: &v1alpha1.ServiceRequirements{
 				Identity: &v1alpha1.IdentityRequirement{
 					OIDC: &v1alpha1.OIDCClientSpec{ClientID: "test-client"},
 				},
@@ -60,23 +76,10 @@ func TestAppProfile_DeepCopy(t *testing.T) {
 					SMTP: &v1alpha1.SMTPRequirement{},
 				},
 				MCP: &v1alpha1.MCPRequirement{Enabled: true, Endpoint: "/mcp", Auth: "oidc"},
-			},
-			ValueMapping: &v1alpha1.ValueMapping{
-				OIDC: &v1alpha1.OIDCValueMapping{
-					IssuerKey:       "oidc.issuer",
-					ClientIDKey:     "oidc.clientId",
-					ClientSecretKey: "oidc.clientSecret",
-				},
-				Database: &v1alpha1.DatabaseValueMapping{
-					HostKey:     "database.host",
-					NameKey:     "database.name",
-					UserKey:     "database.user",
-					PasswordKey: "database.password",
-				},
-			},
-			AppSecrets: []v1alpha1.AppSecret{
+			}},
+			Secrets: &v1alpha1.ComponentSecrets{Generated: []v1alpha1.AppSecret{
 				{Name: "admin_password", ValuePath: "catalogue-app.adminPassword"},
-			},
+			}},
 		},
 	}
 	_ = qty
@@ -86,22 +89,22 @@ func TestAppProfile_DeepCopy(t *testing.T) {
 	if copy.Name != original.Name {
 		t.Errorf("expected Name %q, got %q", original.Name, copy.Name)
 	}
-	if copy.Spec.Chart.Version != original.Spec.Chart.Version {
-		t.Errorf("expected chart version %q, got %q", original.Spec.Chart.Version, copy.Spec.Chart.Version)
+	if copy.Chart().Version != original.Chart().Version {
+		t.Errorf("expected chart version %q, got %q", original.Chart().Version, copy.Chart().Version)
 	}
-	if copy.Spec.ServiceRequirements.Identity.OIDC.ClientID != "test-client" {
-		t.Errorf("expected OIDC clientID test-client, got %q", copy.Spec.ServiceRequirements.Identity.OIDC.ClientID)
+	if copy.Services().Identity.OIDC.ClientID != "test-client" {
+		t.Errorf("expected OIDC clientID test-client, got %q", copy.Services().Identity.OIDC.ClientID)
 	}
-	if len(copy.Spec.AppSecrets) != 1 {
-		t.Fatalf("expected 1 appSecret, got %d", len(copy.Spec.AppSecrets))
+	if len(copy.GeneratedSecrets()) != 1 {
+		t.Fatalf("expected 1 appSecret, got %d", len(copy.GeneratedSecrets()))
 	}
-	if copy.Spec.AppSecrets[0].Name != "admin_password" {
-		t.Errorf("expected appSecret name admin_password, got %q", copy.Spec.AppSecrets[0].Name)
+	if copy.GeneratedSecrets()[0].Name != "admin_password" {
+		t.Errorf("expected appSecret name admin_password, got %q", copy.GeneratedSecrets()[0].Name)
 	}
 
 	// Mutation of copy must not affect original
-	copy.Spec.AppSecrets[0].Name = "mutated"
-	if original.Spec.AppSecrets[0].Name == "mutated" {
+	copy.GeneratedSecrets()[0].Name = "mutated"
+	if original.GeneratedSecrets()[0].Name == "mutated" {
 		t.Error("DeepCopy did not produce independent AppSecrets slice")
 	}
 }
@@ -117,29 +120,32 @@ func TestAppProfile_DeepCopy(t *testing.T) {
 // what it had just been set to, while its failure message claimed the default
 // was argocd. It asserted nothing and documented something untrue.
 func TestAppProfile_UnsetDeploymentMethodDeploysWorkload(t *testing.T) {
-	unset := &v1alpha1.AppProfile{}
-	if v1alpha1.ProfileIsAPI(unset) {
+	unset := &v1alpha1.ComponentProfile{}
+	if unset.IsAPI() {
 		t.Error("an unset deploymentMethod must not read as an ApiProfile")
 	}
-	if !v1alpha1.ProfileDeploysWorkload(unset) {
+	if !unset.DeploysWorkload() {
 		t.Error("an unset deploymentMethod must deploy a workload")
 	}
 
-	api := &v1alpha1.AppProfile{
-		Spec: v1alpha1.AppProfileSpec{DeploymentMethod: v1alpha1.DeploymentMethodAPI},
+	api := &v1alpha1.ComponentProfile{
+		Spec: v1alpha1.ComponentProfileSpec{
+			Classes: []v1alpha1.ComponentClass{v1alpha1.ComponentClassApp}, Launch: v1alpha1.ComponentLaunchNone, TrustTier: v1alpha1.TrustTierCertified, Version: "1.0.0", Package: v1alpha1.PackageSpec{API: &v1alpha1.APIIntegration{}}},
 	}
-	if v1alpha1.ProfileDeploysWorkload(api) {
+	if api.DeploysWorkload() {
 		t.Error("an ApiProfile must not deploy a workload")
 	}
 }
 
 func TestAppProfile_ExtraValues_RoundTrip(t *testing.T) {
 	raw := `{"smtp":{"port":587},"someNested":{"key":"value"}}`
-	ap := &v1alpha1.AppProfile{
-		Spec: v1alpha1.AppProfileSpec{
-			DisplayName: "Test",
-			Chart:       v1alpha1.ChartRef{Repository: "oci://r", Name: "n", Version: "1.0.0"},
-			ExtraValues: &runtime.RawExtension{Raw: []byte(raw)},
+	ap := &v1alpha1.ComponentProfile{
+		Spec: v1alpha1.ComponentProfileSpec{
+			Classes: []v1alpha1.ComponentClass{v1alpha1.ComponentClassApp}, Launch: v1alpha1.ComponentLaunchNone, TrustTier: v1alpha1.TrustTierCertified, Version: "1.0.0",
+			Package: v1alpha1.PackageSpec{
+				Chart:       &v1alpha1.ChartRef{Repository: "oci://r", Name: "n", Version: "1.0.0"},
+				ExtraValues: &runtime.RawExtension{Raw: []byte(raw)},
+			},
 		},
 	}
 
@@ -148,17 +154,17 @@ func TestAppProfile_ExtraValues_RoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("marshal failed: %v", err)
 	}
-	var restored v1alpha1.AppProfile
+	var restored v1alpha1.ComponentProfile
 	if err := json.Unmarshal(data, &restored); err != nil {
 		t.Fatalf("unmarshal failed: %v", err)
 	}
 
 	copy := ap.DeepCopy()
-	if copy.Spec.ExtraValues == nil {
+	if copy.Spec.Package.ExtraValues == nil {
 		t.Error("DeepCopy lost ExtraValues")
 	}
-	if string(copy.Spec.ExtraValues.Raw) != raw {
-		t.Errorf("ExtraValues mismatch: got %q", string(copy.Spec.ExtraValues.Raw))
+	if string(copy.Spec.Package.ExtraValues.Raw) != raw {
+		t.Errorf("ExtraValues mismatch: got %q", string(copy.Spec.Package.ExtraValues.Raw))
 	}
 }
 
@@ -173,7 +179,7 @@ func TestTenant_DeepCopy(t *testing.T) {
 	original := &v1alpha1.Tenant{
 		ObjectMeta: metav1.ObjectMeta{Name: "gtn-demo"},
 		Spec: v1alpha1.TenantSpec{
-			DisplayName:    "GTN Demo",
+			DisplayName:    "Test Tenant",
 			Domain:         "gtn-demo.example.com",
 			DeletionPolicy: v1alpha1.DeletionPolicyRetain,
 			Isolation: &v1alpha1.TenantIsolation{
@@ -237,7 +243,7 @@ func TestTenant_DeletionPolicyValues(t *testing.T) {
 		t.Run(string(tc.policy), func(t *testing.T) {
 			tenant := &v1alpha1.Tenant{
 				Spec: v1alpha1.TenantSpec{
-					DisplayName:    "T",
+					DisplayName:    "Test Tenant",
 					Domain:         "t.example.com",
 					DeletionPolicy: tc.policy,
 				},
@@ -361,9 +367,9 @@ func TestIntegrationBinding_StateValues(t *testing.T) {
 
 // ----- List type DeepCopy tests -----
 
-func TestAppProfileList_DeepCopy(t *testing.T) {
-	list := &v1alpha1.AppProfileList{
-		Items: []v1alpha1.AppProfile{
+func TestComponentProfileList_DeepCopy(t *testing.T) {
+	list := &v1alpha1.ComponentProfileList{
+		Items: []v1alpha1.ComponentProfile{
 			{ObjectMeta: metav1.ObjectMeta{Name: "app-a"}},
 			{ObjectMeta: metav1.ObjectMeta{Name: "app-b"}},
 		},
@@ -374,7 +380,7 @@ func TestAppProfileList_DeepCopy(t *testing.T) {
 	}
 	copy.Items[0].Name = "mutated"
 	if list.Items[0].Name == "mutated" {
-		t.Error("AppProfileList DeepCopy not independent")
+		t.Error("ComponentProfileList DeepCopy not independent")
 	}
 }
 
@@ -413,8 +419,8 @@ func TestSchemeRegistration(t *testing.T) {
 	}
 
 	types := []runtime.Object{
-		&v1alpha1.AppProfile{},
-		&v1alpha1.AppProfileList{},
+		&v1alpha1.ComponentProfile{},
+		&v1alpha1.ComponentProfileList{},
 		&v1alpha1.Tenant{},
 		&v1alpha1.TenantList{},
 		&v1alpha1.IntegrationBinding{},

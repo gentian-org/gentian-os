@@ -218,7 +218,7 @@ func TestTenantGatewayName(t *testing.T) {
 func TestBuildAppHTTPRoute(t *testing.T) {
 	t.Parallel()
 	tenant := &gentianov1alpha1.Tenant{ObjectMeta: metav1.ObjectMeta{Name: "demo"}}
-	ingress := &gentianov1alpha1.IngressSpec{
+	ingress := &gentianov1alpha1.ExposureSpec{
 		SubDomain: "app",
 	}
 	route := buildAppHTTPRoute(tenant, "tenant-demo", ingressIntent{
@@ -253,11 +253,11 @@ func TestBuildAppHTTPRoute(t *testing.T) {
 func TestBuildAppHTTPRouteRootRedirect(t *testing.T) {
 	t.Parallel()
 	tenant := &gentianov1alpha1.Tenant{ObjectMeta: metav1.ObjectMeta{Name: "demo"}}
-	ingress := &gentianov1alpha1.IngressSpec{
-		SubDomain:   "app",
-		ServiceName: "ui",
+	ingress := &gentianov1alpha1.ExposureSpec{
+		SubDomain: "app",
+		Backend:   gentianov1alpha1.BackendRef{Service: "ui"},
 	}
-	profile := &gentianov1alpha1.AppProfile{
+	profile := &gentianov1alpha1.ComponentProfile{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: "multi-route-app",
 			Annotations: map[string]string{
@@ -299,7 +299,7 @@ func TestComputeGatewayFrameAncestorsPolicy(t *testing.T) {
 
 func TestIngressGatewayFrameAncestorsPolicy(t *testing.T) {
 	t.Parallel()
-	ingress := &gentianov1alpha1.IngressSpec{
+	ingress := &gentianov1alpha1.ExposureSpec{
 		Annotations: map[string]string{
 			gentianov1alpha1.AnnotationIngressGatewayFrameAncestors: `{"mode":"replace","origins":["mainApp","portal"]}`,
 		},
@@ -333,7 +333,7 @@ func TestIngressGatewayFrameAncestorsPolicy(t *testing.T) {
 // carry a narrower list than the default it replaced.
 func TestIngressGatewayFrameAncestorsPortalTokenMatchesRoutedPortalHosts(t *testing.T) {
 	t.Parallel()
-	ingress := &gentianov1alpha1.IngressSpec{
+	ingress := &gentianov1alpha1.ExposureSpec{
 		Annotations: map[string]string{
 			gentianov1alpha1.AnnotationIngressGatewayFrameAncestors: `{"mode":"replace","origins":["portal"]}`,
 		},
@@ -355,7 +355,7 @@ func TestIngressGatewayFrameAncestorsPortalTokenMatchesRoutedPortalHosts(t *test
 // a repeated origin in the header is noise, not a second permission.
 func TestIngressGatewayFrameAncestorsDeduplicatesOrigins(t *testing.T) {
 	t.Parallel()
-	ingress := &gentianov1alpha1.IngressSpec{
+	ingress := &gentianov1alpha1.ExposureSpec{
 		Annotations: map[string]string{
 			gentianov1alpha1.AnnotationIngressGatewayFrameAncestors: `{"mode":"replace","origins":["mainApp","portal"]}`,
 		},
@@ -394,17 +394,21 @@ func TestBackendTrafficPolicySpecFromIngressAnnotations(t *testing.T) {
 
 func TestAppAPIBackendRulesApplyEmbeddingFilters(t *testing.T) {
 	t.Parallel()
-	profile := &gentianov1alpha1.AppProfile{
+	profile := &gentianov1alpha1.ComponentProfile{
 		ObjectMeta: metav1.ObjectMeta{
 			Annotations: map[string]string{
 				gentianov1alpha1.AnnotationProfileGatewayAPIBackends: `[{"pathPrefix":"/portal-bridge","serviceName":"app-portal-bridge","port":8080}]`,
 			},
 		},
-		Spec: gentianov1alpha1.AppProfileSpec{
-			Ingress: &gentianov1alpha1.IngressSpec{SubDomain: "projects"},
+		Spec: gentianov1alpha1.ComponentProfileSpec{
+			Classes: []gentianov1alpha1.ComponentClass{gentianov1alpha1.ComponentClassApp}, Launch: gentianov1alpha1.ComponentLaunchNone, TrustTier: gentianov1alpha1.TrustTierCertified, Version: "1.0.0",
+			Expose: []gentianov1alpha1.ExposureSpec{{
+				Name: "web", Surface: gentianov1alpha1.SurfaceGateway,
+				AuthMode: gentianov1alpha1.AuthModeOIDC, SubDomain: "projects",
+			}},
 		},
 	}
-	ingress := &gentianov1alpha1.IngressSpec{SubDomain: "projects"}
+	ingress := &gentianov1alpha1.ExposureSpec{SubDomain: "projects"}
 	rules := appAPIBackendRules(profile, 8080, "platform.example.test", "demo.platform.example.test", ingress)
 	if len(rules) != 1 {
 		t.Fatalf("rules = %d, want 1", len(rules))
@@ -445,7 +449,7 @@ func TestBuildTenantReferenceGrantObjects(t *testing.T) {
 func TestBuildAppBackendTrafficPolicyObject(t *testing.T) {
 	t.Parallel()
 	tenant := &gentianov1alpha1.Tenant{ObjectMeta: metav1.ObjectMeta{Name: "demo"}}
-	ingress := &gentianov1alpha1.IngressSpec{
+	ingress := &gentianov1alpha1.ExposureSpec{
 		Annotations: map[string]string{
 			gentianov1alpha1.AnnotationIngressGatewayRequestTimeout: "600",
 		},
@@ -466,7 +470,7 @@ func TestBuildAppBackendTrafficPolicyObject(t *testing.T) {
 		t.Fatalf("target route = %v", ref["name"])
 	}
 
-	if buildAppBackendTrafficPolicyObject(tenant, "tenant-demo", "plain", &gentianov1alpha1.IngressSpec{}) != nil {
+	if buildAppBackendTrafficPolicyObject(tenant, "tenant-demo", "plain", &gentianov1alpha1.ExposureSpec{}) != nil {
 		t.Fatal("expected nil for ingress without policy annotations")
 	}
 }

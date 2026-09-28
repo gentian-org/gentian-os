@@ -327,13 +327,6 @@ func TestMain(m *testing.M) {
 		panic(err)
 	}
 
-	if err := (&controller.AppStoreReconciler{
-		Client: mgr.GetClient(),
-		Scheme: mgr.GetScheme(),
-	}).SetupWithManager(mgr); err != nil {
-		panic(err)
-	}
-
 	testClient = mgr.GetClient()
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -946,9 +939,9 @@ func TestTenantReconciler_DataPlaneRedisAndPostgresJobs(t *testing.T) {
 	t.Parallel()
 	pgProfile := newPostgresProfile("combo-pg")
 	redisProfile := newRedisProfile("combo-redis")
-	for _, p := range []*gentianov1alpha1.AppProfile{pgProfile, redisProfile} {
+	for _, p := range []*gentianov1alpha1.ComponentProfile{pgProfile, redisProfile} {
 		if err := testClient.Create(context.Background(), p); err != nil {
-			t.Fatalf("create AppProfile: %v", err)
+			t.Fatalf("create ComponentProfile: %v", err)
 		}
 		t.Cleanup(func() { _ = testClient.Delete(context.Background(), p) })
 	}

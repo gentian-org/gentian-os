@@ -109,10 +109,10 @@ func (r *TenantReconciler) collectCacheApps(ctx context.Context, tenant *gentian
 		if !ok {
 			continue
 		}
-		if profile.Spec.ServiceRequirements == nil || profile.Spec.ServiceRequirements.Cache == nil {
+		if profile.Services() == nil || profile.Services().Cache == nil {
 			continue
 		}
-		switch profile.Spec.ServiceRequirements.Cache.Engine {
+		switch profile.Services().Cache.Engine {
 		case gentianov1alpha1.CacheEngineRedis:
 			if matchRedisProfile(profile) {
 				redisApps = appendUniqueStrings(redisApps, app.Profile)

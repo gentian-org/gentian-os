@@ -51,7 +51,15 @@ const (
 // object and the whole object is invalid. Both shipped Components deadlocked
 // exactly there, terminating and un-finalizable, with the reconciler logging
 // "spec.class: Unsupported value" once a minute.
-// +kubebuilder:validation:XValidation:rule="!has(oldSelf.class) || oldSelf.class == '' || self.class == oldSelf.class",message="class is immutable: reinstall to change it"
+// The emptiness test is size(), never a comparison against a pair of straight
+// single quotes. gofmt reformats doc comments -- it has since Go 1.19 -- and
+// one of the things it does is turn such a pair into a single typographic
+// closing quote. A kubebuilder marker IS a doc comment, so a rule written that
+// way is silently corrupted the next time anyone runs gofmt -w or saves the
+// file in an editor that does, and the API server then refuses the CRD: every
+// test that installs it panics before its first assertion. That happened twice
+// here before the cause was found. size() gives gofmt nothing to convert.
+// +kubebuilder:validation:XValidation:rule="!has(oldSelf.class) || size(oldSelf.class) == 0 || self.class == oldSelf.class",message="class is immutable: reinstall to change it"
 // +kubebuilder:validation:XValidation:rule="self.profileRef.name == oldSelf.profileRef.name",message="profileRef.name is immutable"
 // +kubebuilder:validation:XValidation:rule="self.class == 'app' || !has(self.fulfilment) || self.fulfilment == 'auto'",message="fulfilment is a tenant's choice and applies to class app only"
 // A service may have a console, but never on the perimeter: that surface has

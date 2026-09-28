@@ -40,7 +40,7 @@ func (r *TenantReconciler) collectKernelApps(
 	ctx context.Context,
 	tenant *gentianov1alpha1.Tenant,
 	mode AppCollectionMode,
-	match func(*gentianov1alpha1.AppProfile) bool,
+	match func(*gentianov1alpha1.ComponentProfile) bool,
 	setupJobPrefix func(tenantName string) string,
 ) ([]string, error) {
 	profileIndex, err := loadAppProfileIndex(ctx, r.Client)
@@ -70,19 +70,19 @@ func (r *TenantReconciler) collectKernelApps(
 	return apps, nil
 }
 
-func matchMariaDBProfile(profile *gentianov1alpha1.AppProfile) bool {
+func matchMariaDBProfile(profile *gentianov1alpha1.ComponentProfile) bool {
 	return provisioner.MatchMariaDBProfile(profile)
 }
 
-func matchS3Profile(profile *gentianov1alpha1.AppProfile) bool {
+func matchS3Profile(profile *gentianov1alpha1.ComponentProfile) bool {
 	return provisioner.MatchS3Profile(profile)
 }
 
-func matchRedisProfile(profile *gentianov1alpha1.AppProfile) bool {
+func matchRedisProfile(profile *gentianov1alpha1.ComponentProfile) bool {
 	return provisioner.MatchRedisProfile(profile)
 }
 
-func matchMemcachedProfile(profile *gentianov1alpha1.AppProfile) bool {
+func matchMemcachedProfile(profile *gentianov1alpha1.ComponentProfile) bool {
 	return provisioner.MatchMemcachedProfile(profile)
 }
 

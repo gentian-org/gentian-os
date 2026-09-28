@@ -27,16 +27,17 @@ import (
 
 func TestKernelAccessNetworkPolicy_ProfileKernelEgressNamespaces(t *testing.T) {
 	t.Parallel()
-	profile := &gentianov1alpha1.AppProfile{
+	profile := &gentianov1alpha1.ComponentProfile{
 		ObjectMeta: metav1.ObjectMeta{
 			Annotations: map[string]string{
 				gentianov1alpha1.AnnotationProfileKernelEgressNamespaces: "gentian-system",
 			},
 		},
-		Spec: gentianov1alpha1.AppProfileSpec{
-			ServiceRequirements: &gentianov1alpha1.ServiceRequirements{
+		Spec: gentianov1alpha1.ComponentProfileSpec{
+			Classes: []gentianov1alpha1.ComponentClass{gentianov1alpha1.ComponentClassApp}, Launch: gentianov1alpha1.ComponentLaunchNone, TrustTier: gentianov1alpha1.TrustTierCertified, Version: "1.0.0",
+			Requires: &gentianov1alpha1.RequirementSpec{Services: &gentianov1alpha1.ServiceRequirements{
 				Database: &gentianov1alpha1.DatabaseRequirement{},
-			},
+			}},
 		},
 	}
 	np := netpolicy.KernelAccessNetworkPolicy("demo", "tenant-demo", "app-store", profile, netpolicy.DefaultConfig())

@@ -41,18 +41,16 @@ var appClaimTestGVK = schema.GroupVersionKind{
 
 // newAppProfile builds an AppProfile with the crossplane DeploymentMethod and
 // optional ValueMapping.
-func newAppProfile(name string, vm *gentianov1alpha1.ValueMapping) *gentianov1alpha1.AppProfile {
-	return &gentianov1alpha1.AppProfile{
+func newAppProfile(name string, vm *gentianov1alpha1.ValueMapping) *gentianov1alpha1.ComponentProfile {
+	return &gentianov1alpha1.ComponentProfile{
 		ObjectMeta: metav1.ObjectMeta{Name: name},
-		Spec: gentianov1alpha1.AppProfileSpec{
-			DisplayName:      name,
-			DeploymentMethod: gentianov1alpha1.DeploymentMethodCrossplane,
-			Chart: gentianov1alpha1.ChartRef{
+		Spec: gentianov1alpha1.ComponentProfileSpec{
+			Classes: []gentianov1alpha1.ComponentClass{gentianov1alpha1.ComponentClassApp}, Launch: gentianov1alpha1.ComponentLaunchNone, TrustTier: gentianov1alpha1.TrustTierCertified, Version: "1.0.0",
+			Package: gentianov1alpha1.PackageSpec{Chart: &gentianov1alpha1.ChartRef{
 				Repository: "oci://charts.example.com",
 				Name:       name,
 				Version:    "1.2.3",
-			},
-			ValueMapping: vm,
+			}, ValueMapping: vm},
 		},
 	}
 }
@@ -104,7 +102,7 @@ func TestApps_CreatesAppClaim(t *testing.T) {
 	t.Parallel()
 	profile := newAppProfile("my-app", nil)
 	if err := testClient.Create(context.Background(), profile); err != nil {
-		t.Fatalf("create AppProfile: %v", err)
+		t.Fatalf("create ComponentProfile: %v", err)
 	}
 	t.Cleanup(func() { _ = testClient.Delete(context.Background(), profile) })
 
@@ -170,7 +168,7 @@ func TestApps_MultipleApps(t *testing.T) {
 		}
 		n := name
 		t.Cleanup(func() {
-			_ = testClient.Delete(context.Background(), &gentianov1alpha1.AppProfile{
+			_ = testClient.Delete(context.Background(), &gentianov1alpha1.ComponentProfile{
 				ObjectMeta: metav1.ObjectMeta{Name: n},
 			})
 		})
@@ -211,14 +209,14 @@ func TestApps_DeleteRemovesAppClaims(t *testing.T) {
 	t.Parallel()
 	profile := newAppProfile("del-app", nil)
 	if err := testClient.Create(context.Background(), profile); err != nil {
-		t.Fatalf("create AppProfile: %v", err)
+		t.Fatalf("create ComponentProfile: %v", err)
 	}
 	t.Cleanup(func() { _ = testClient.Delete(context.Background(), profile) })
 
 	tenant := &gentianov1alpha1.Tenant{
 		ObjectMeta: metav1.ObjectMeta{Name: "del-tenant"},
 		Spec: gentianov1alpha1.TenantSpec{
-			DisplayName:    "Del Tenant",
+			DisplayName:    "Remove App Tenant",
 			Domain:         "del.example.com",
 			DeletionPolicy: gentianov1alpha1.DeletionPolicyDelete,
 			Apps:           []gentianov1alpha1.TenantApp{{Profile: "del-app"}},
@@ -272,7 +270,7 @@ func TestApps_RemoveAppCleansUpClaim(t *testing.T) {
 	tenant := &gentianov1alpha1.Tenant{
 		ObjectMeta: metav1.ObjectMeta{Name: "rm-app-tenant"},
 		Spec: gentianov1alpha1.TenantSpec{
-			DisplayName: "Remove App Tenant",
+			DisplayName: "Skip NoApp Tenant",
 			Domain:      "rmapp.example.com",
 			Apps: []gentianov1alpha1.TenantApp{
 				{Profile: "rm-keep-app"},
@@ -339,14 +337,14 @@ func TestApps_OrphanCleanupSkipsCRsWithoutAppLabel(t *testing.T) {
 	t.Parallel()
 	profile := newAppProfile("only-app", nil)
 	if err := testClient.Create(context.Background(), profile); err != nil {
-		t.Fatalf("create AppProfile: %v", err)
+		t.Fatalf("create ComponentProfile: %v", err)
 	}
 	t.Cleanup(func() { _ = testClient.Delete(context.Background(), profile) })
 
 	tenant := &gentianov1alpha1.Tenant{
 		ObjectMeta: metav1.ObjectMeta{Name: "skip-noapp"},
 		Spec: gentianov1alpha1.TenantSpec{
-			DisplayName: "Skip NoApp Tenant",
+			DisplayName: "Orphan App Workload",
 			Domain:      "skipnoapp.example.com",
 			Apps:        []gentianov1alpha1.TenantApp{{Profile: "only-app"}},
 		},
@@ -421,14 +419,14 @@ func TestApps_CleanupOrphanedAppWorkload(t *testing.T) {
 	t.Parallel()
 	profile := newAppProfile("orphan-wl-app", nil)
 	if err := testClient.Create(context.Background(), profile); err != nil {
-		t.Fatalf("create AppProfile: %v", err)
+		t.Fatalf("create ComponentProfile: %v", err)
 	}
 	t.Cleanup(func() { _ = testClient.Delete(context.Background(), profile) })
 
 	tenant := &gentianov1alpha1.Tenant{
 		ObjectMeta: metav1.ObjectMeta{Name: "orphan-app-wl"},
 		Spec: gentianov1alpha1.TenantSpec{
-			DisplayName: "Orphan App Workload",
+			DisplayName: "Orphan App Workload 2",
 			Domain:      "orphanwl.example.com",
 			Apps:        []gentianov1alpha1.TenantApp{{Profile: "orphan-wl-app"}},
 		},
@@ -527,14 +525,14 @@ func TestApps_CleanupOrphanedAppWorkloadOwnerlessJobPod(t *testing.T) {
 	t.Parallel()
 	profile := newAppProfile("orphan-wl-app2", nil)
 	if err := testClient.Create(context.Background(), profile); err != nil {
-		t.Fatalf("create AppProfile: %v", err)
+		t.Fatalf("create ComponentProfile: %v", err)
 	}
 	t.Cleanup(func() { _ = testClient.Delete(context.Background(), profile) })
 
 	tenant := &gentianov1alpha1.Tenant{
 		ObjectMeta: metav1.ObjectMeta{Name: "orphan-app-wl2"},
 		Spec: gentianov1alpha1.TenantSpec{
-			DisplayName: "Orphan App Workload 2",
+			DisplayName: "Test Tenant",
 			Domain:      "orphanwl2.example.com",
 			Apps:        []gentianov1alpha1.TenantApp{{Profile: "orphan-wl-app2"}},
 		},

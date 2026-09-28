@@ -35,6 +35,7 @@ func profileAsking() *gentianov1alpha1.ComponentProfile {
 	port := intstr.FromInt32(587)
 	return &gentianov1alpha1.ComponentProfile{
 		Spec: gentianov1alpha1.ComponentProfileSpec{
+			Classes: []gentianov1alpha1.ComponentClass{gentianov1alpha1.ComponentClassApp}, Launch: gentianov1alpha1.ComponentLaunchNone, TrustTier: gentianov1alpha1.TrustTierCertified, Version: "1.0.0",
 			Requires: &gentianov1alpha1.RequirementSpec{
 				Privileges: &gentianov1alpha1.PrivilegeRequest{
 					PodSecurity: []gentianov1alpha1.PodSecurityWaiver{{

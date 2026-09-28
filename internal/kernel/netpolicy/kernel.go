@@ -31,13 +31,13 @@ import (
 // declared in its AppProfile kernelRequirements and optional profile annotations.
 func KernelAccessNetworkPolicy(
 	tenantName, nsName, appName string,
-	profile *gentianov1alpha1.AppProfile,
+	profile *gentianov1alpha1.ComponentProfile,
 	cfg Config,
 ) *networkingv1.NetworkPolicy {
 	if profile == nil {
 		return nil
 	}
-	targets := kernelEgressTargets(profile.Spec.ServiceRequirements, profile, cfg)
+	targets := kernelEgressTargets(profile.Services(), profile, cfg)
 	if len(targets) == 0 {
 		return nil
 	}
@@ -71,7 +71,7 @@ func kernelPolicyName(appName string) string {
 	return name
 }
 
-func kernelEgressTargets(kr *gentianov1alpha1.ServiceRequirements, profile *gentianov1alpha1.AppProfile, cfg Config) []string {
+func kernelEgressTargets(kr *gentianov1alpha1.ServiceRequirements, profile *gentianov1alpha1.ComponentProfile, cfg Config) []string {
 	var out []string
 	seen := map[string]struct{}{}
 	add := func(ns string) {

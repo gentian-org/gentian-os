@@ -33,9 +33,9 @@ const (
 
 func ingressFrameAncestorsPolicy(
 	kernelDomain, effectiveDomain, mainIngressSubDomain string,
-	ingress *gentianov1alpha1.IngressSpec,
+	exposure *gentianov1alpha1.ExposureSpec,
 ) (gatewayFrameAncestorsPolicy, bool, error) {
-	spec, err := gentianov1alpha1.IngressGatewayFrameAncestors(ingress)
+	spec, err := gentianov1alpha1.GatewayFrameAncestors(exposure.Annotations)
 	if err != nil {
 		return gatewayFrameAncestorsPolicy{}, false, fmt.Errorf("parse %s: %w", gentianov1alpha1.AnnotationIngressGatewayFrameAncestors, err)
 	}
@@ -85,8 +85,8 @@ func ingressFrameAncestorsPolicy(
 	}, true, nil
 }
 
-func ingressNeedsEscapedSlashesKeepUnchanged(ingress *gentianov1alpha1.IngressSpec) bool {
-	return gentianov1alpha1.IngressGatewayEscapedSlashesAction(ingress) == "KeepUnchanged"
+func ingressNeedsEscapedSlashesKeepUnchanged(exposure *gentianov1alpha1.ExposureSpec) bool {
+	return gentianov1alpha1.GatewayEscapedSlashesAction(exposure.Annotations) == "KeepUnchanged"
 }
 
 func anyIntentNeedsEscapedSlashesKeepUnchanged(intents []ingressIntent) bool {
@@ -109,8 +109,11 @@ func collectTenantIngressIntents(ctx context.Context, c client.Client, tenant *g
 		if !ok {
 			continue
 		}
-		if profile.Spec.Ingress != nil {
-			intents = append(intents, ingressIntent{appProfile: app.Profile, profile: profile, ingress: profile.Spec.Ingress})
+		// The FIRST gateway exposure is what spec.ingress was: the app's own
+		// host. Any further gateway entry is what additionalIngresses were.
+		gateways := profile.GatewayExposures()
+		if len(gateways) > 0 {
+			intents = append(intents, ingressIntent{appProfile: app.Profile, profile: profile, ingress: gateways[0]})
 		}
 		intents = append(intents, additionalIngressIntents(app.Profile, profile)...)
 
@@ -139,14 +142,18 @@ func collectTenantIngressIntents(ctx context.Context, c client.Client, tenant *g
 // The name carries the profile the ingress was declared on, so an addon's host
 // is named for the addon rather than for the base it is activated inside.
 func additionalIngressIntents(
-	profileName string, profile *gentianov1alpha1.AppProfile,
+	profileName string, profile *gentianov1alpha1.ComponentProfile,
 ) []ingressIntent {
-	intents := make([]ingressIntent, 0, len(profile.Spec.AdditionalIngresses))
-	for i := range profile.Spec.AdditionalIngresses {
+	gateways := profile.GatewayExposures()
+	if len(gateways) > 0 {
+		gateways = gateways[1:] // the first is the app's own host, above
+	}
+	intents := make([]ingressIntent, 0, len(gateways))
+	for i := range gateways {
 		intents = append(intents, ingressIntent{
 			appProfile: additionalIngressProfile(profileName, i),
 			profile:    profile,
-			ingress:    &profile.Spec.AdditionalIngresses[i],
+			ingress:    gateways[i],
 		})
 	}
 	return intents

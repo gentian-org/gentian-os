@@ -91,7 +91,7 @@ func (r *TenantReconciler) ensureAppPrivileges(ctx context.Context, tenant *gent
 		if err != nil {
 			return ctrl.Result{}, err
 		}
-		profile := &gentianov1alpha1.AppProfile{}
+		profile := &gentianov1alpha1.ComponentProfile{}
 		if err := r.Get(ctx, types.NamespacedName{Name: profileName}, profile); err != nil {
 			if errors.IsNotFound(err) {
 				continue
@@ -216,11 +216,11 @@ func (r *TenantReconciler) markAppPrivilegeRequestProcessed(ctx context.Context,
 	return r.Patch(ctx, tenant, client.MergeFrom(orig))
 }
 
-func profilePrivilegedRole(profile *gentianov1alpha1.AppProfile) *gentianov1alpha1.PrivilegedRoleSpec {
-	if profile == nil || profile.Spec.Provisioning == nil {
+func profilePrivilegedRole(profile *gentianov1alpha1.ComponentProfile) *gentianov1alpha1.PrivilegedRoleSpec {
+	if profile == nil || profile.Provisioning() == nil {
 		return nil
 	}
-	return profile.Spec.Provisioning.PrivilegedRole
+	return profile.Provisioning().PrivilegedRole
 }
 
 // syncAppPrivilegedRole applies app-admins membership to one app by running
@@ -235,7 +235,7 @@ func (r *TenantReconciler) syncAppPrivilegedRole(
 	ctx context.Context,
 	tenant *gentianov1alpha1.Tenant,
 	profileName string,
-	profile *gentianov1alpha1.AppProfile,
+	profile *gentianov1alpha1.ComponentProfile,
 	role *gentianov1alpha1.PrivilegedRoleSpec,
 	members []authz.KeycloakUser,
 	fingerprint string,
@@ -245,7 +245,7 @@ func (r *TenantReconciler) syncAppPrivilegedRole(
 	default:
 		return false, fmt.Errorf("unsupported privileged role kind %q", role.Kind)
 	}
-	jobSpec := profile.Spec.Provisioning.SyncJob
+	jobSpec := profile.Provisioning().SyncJob
 	if jobSpec == nil {
 		return false, fmt.Errorf(
 			"profile %q declares provisioning.privilegedRole but no provisioning.syncJob, "+

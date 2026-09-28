@@ -25,22 +25,30 @@ import (
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 )
 
-func profile(name, family, role string, addon *gentianov1alpha1.CustomizationAddon, license string) *gentianov1alpha1.AppProfile {
-	p := &gentianov1alpha1.AppProfile{ObjectMeta: metav1.ObjectMeta{Name: name}}
+func profile(name, family, role string, addon *gentianov1alpha1.CustomizationAddon, license string) *gentianov1alpha1.ComponentProfile {
+	p := &gentianov1alpha1.ComponentProfile{ObjectMeta: metav1.ObjectMeta{Name: name}}
 	if role != "" {
 		p.Annotations = map[string]string{gentianov1alpha1.AnnotationProfileDeploymentRole: role}
 	}
-	p.Spec.Family = family
-	p.Spec.License = license
+	// family and license are the store's now (AD-3). What is left in the
+	// cluster is the addon declaration itself, and an annotation for whether
+	// the entry has to be paid for.
+	_ = family
+	if license == "proprietary" {
+		if p.Annotations == nil {
+			p.Annotations = map[string]string{}
+		}
+		p.Annotations[gentianov1alpha1.AnnotationProfileRequiresEntitlement] = "true"
+	}
 	if addon != nil {
-		p.Spec.Customization = &gentianov1alpha1.CustomizationSurface{Addon: addon}
+		p.Spec.Package.Addon = &gentianov1alpha1.PackageAddon{ID: addon.ID, Of: addon.Of}
 	}
 	return p
 }
 
-func odooFixture() (*gentianov1alpha1.AppProfile, map[string]*gentianov1alpha1.AppProfile) {
+func odooFixture() (*gentianov1alpha1.ComponentProfile, map[string]*gentianov1alpha1.ComponentProfile) {
 	base := profile("odoo-base-ce", "odoo", "base", nil, "LGPL-3.0")
-	idx := map[string]*gentianov1alpha1.AppProfile{
+	idx := map[string]*gentianov1alpha1.ComponentProfile{
 		"odoo-base-ce": base,
 		"odoo-crm-ce": profile("odoo-crm-ce", "odoo", "addon",
 			&gentianov1alpha1.CustomizationAddon{ID: "crm", Of: "odoo-base-ce"}, "LGPL-3.0"),
@@ -71,21 +79,26 @@ func TestResolveAddonsDeduplicatesSelection(t *testing.T) {
 	}
 }
 
-func TestResolveAddonsRejectsNonAddonProfile(t *testing.T) {
-	base, idx := odooFixture()
-	// selecting the base itself, or any standalone app, is not an addon selection
-	_, errs := ResolveAddons(base, []string{"odoo-base-ce"}, idx)
-	if !anyContains(errs, "not addon") {
-		t.Fatalf("expected role rejection, got %v", errs)
-	}
-}
-
-func TestResolveAddonsRejectsUndeclaredAddon(t *testing.T) {
-	base, idx := odooFixture()
-	idx["odoo-broken-ce"] = profile("odoo-broken-ce", "odoo", "addon", nil, "LGPL-3.0")
-	_, errs := ResolveAddons(base, []string{"odoo-broken-ce"}, idx)
-	if !anyContains(errs, "spec.customization.addon is not declared") {
-		t.Fatalf("expected missing-declaration error, got %v", errs)
+// Selecting something that is not an addon is one refusal, not two.
+//
+// It used to be two: an annotation said whether a profile WAS an addon, and
+// spec.customization.addon said what the app called it and which base it
+// activated into — so a profile could claim to be an addon and then not say
+// what it was, and the resolver had a separate error for each. AD-4 leaves one
+// statement, package.addon, and it carries both facts. A profile without it is
+// not an addon; there is nothing else to be inconsistent with.
+func TestResolveAddonsRejectsAnythingThatIsNotAnAddon(t *testing.T) {
+	for name, selected := range map[string]string{
+		// The base itself, or any standalone app.
+		"a standalone app":      "odoo-base-ce",
+		"a profile claiming to": "odoo-broken-ce",
+	} {
+		base, idx := odooFixture()
+		idx["odoo-broken-ce"] = profile("odoo-broken-ce", "odoo", "addon", nil, "LGPL-3.0")
+		_, errs := ResolveAddons(base, []string{selected}, idx)
+		if !anyContains(errs, "package.addon is not declared") {
+			t.Errorf("%s: expected a not-an-addon refusal, got %v", name, errs)
+		}
 	}
 }
 

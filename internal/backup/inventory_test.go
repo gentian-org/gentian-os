@@ -28,7 +28,8 @@ import (
 func tenant(name string, isolation *gentianov1alpha1.TenantIsolation) *gentianov1alpha1.Tenant {
 	return &gentianov1alpha1.Tenant{
 		ObjectMeta: metav1.ObjectMeta{Name: name},
-		Spec:       gentianov1alpha1.TenantSpec{Isolation: isolation},
+		Spec: gentianov1alpha1.TenantSpec{
+			DisplayName: "Test Tenant", Isolation: isolation},
 	}
 }
 
@@ -108,14 +109,15 @@ func TestProfileStoresReadsOnlyKernelRequirements(t *testing.T) {
 		t.Errorf("nil profile yielded stores %+v, want zero", none)
 	}
 
-	bare := ProfileStores(&gentianov1alpha1.AppProfile{})
+	bare := ProfileStores(&gentianov1alpha1.ComponentProfile{})
 	if bare.Database != "" || bare.S3 || bare.Redis {
 		t.Errorf("profile without kernelRequirements yielded %+v, want zero", bare)
 	}
 
-	full := ProfileStores(&gentianov1alpha1.AppProfile{
-		Spec: gentianov1alpha1.AppProfileSpec{
-			ServiceRequirements: &gentianov1alpha1.ServiceRequirements{
+	full := ProfileStores(&gentianov1alpha1.ComponentProfile{
+		Spec: gentianov1alpha1.ComponentProfileSpec{
+			Classes: []gentianov1alpha1.ComponentClass{gentianov1alpha1.ComponentClassApp}, Launch: gentianov1alpha1.ComponentLaunchNone, TrustTier: gentianov1alpha1.TrustTierCertified, Version: "1.0.0",
+			Requires: &gentianov1alpha1.RequirementSpec{Services: &gentianov1alpha1.ServiceRequirements{
 				Database: &gentianov1alpha1.DatabaseRequirement{
 					Engine: gentianov1alpha1.DatabaseEnginePostgreSQL,
 				},
@@ -125,7 +127,7 @@ func TestProfileStoresReadsOnlyKernelRequirements(t *testing.T) {
 				Cache: &gentianov1alpha1.CacheRequirement{
 					Engine: gentianov1alpha1.CacheEngineRedis,
 				},
-			},
+			}},
 		},
 	})
 	if full.Database != gentianov1alpha1.DatabaseEnginePostgreSQL {

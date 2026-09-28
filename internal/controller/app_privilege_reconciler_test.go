@@ -84,14 +84,15 @@ func TestMemberFingerprint_roleMappingInput(t *testing.T) {
 	if fp == "" {
 		t.Fatal("expected non-empty fingerprint")
 	}
-	profile := &gentianov1alpha1.AppProfile{
-		Spec: gentianov1alpha1.AppProfileSpec{
-			Provisioning: &gentianov1alpha1.ProvisioningSpec{
+	profile := &gentianov1alpha1.ComponentProfile{
+		Spec: gentianov1alpha1.ComponentProfileSpec{
+			Classes: []gentianov1alpha1.ComponentClass{gentianov1alpha1.ComponentClassApp}, Launch: gentianov1alpha1.ComponentLaunchNone, TrustTier: gentianov1alpha1.TrustTierCertified, Version: "1.0.0",
+			Hooks: &gentianov1alpha1.HookSpec{Provisioning: &gentianov1alpha1.ProvisioningSpec{
 				PrivilegedRole: &gentianov1alpha1.PrivilegedRoleSpec{
 					Kind: gentianov1alpha1.PrivilegedRoleKindGroup,
 					Name: "admin",
 				},
-			},
+			}},
 		},
 	}
 	role := profilePrivilegedRole(profile)

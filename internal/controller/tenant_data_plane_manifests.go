@@ -67,13 +67,13 @@ func (r *TenantReconciler) buildDataPlaneJobs(ctx context.Context, tenant *genti
 		return nil, err
 	}
 	for _, appName := range mariaApps {
-		profile := &gentianov1alpha1.AppProfile{}
+		profile := &gentianov1alpha1.ComponentProfile{}
 		if err := r.Get(ctx, client.ObjectKey{Name: appName}, profile); err != nil {
-			return nil, fmt.Errorf("get AppProfile %s: %w", appName, err)
+			return nil, fmt.Errorf("get ComponentProfile %s: %w", appName, err)
 		}
 		allowDynamic := false
-		if profile.Spec.ServiceRequirements != nil && profile.Spec.ServiceRequirements.Database != nil {
-			allowDynamic = profile.Spec.ServiceRequirements.Database.AllowDynamicDatabaseCreation
+		if profile.Services() != nil && profile.Services().Database != nil {
+			allowDynamic = profile.Services().Database.AllowDynamicDatabaseCreation
 		}
 		dbPassword := ""
 		if r.Seeder != nil {
@@ -207,14 +207,14 @@ func (r *TenantReconciler) collectDesiredIntegrationBindings(ctx context.Context
 
 	var out []*gentianov1alpha1.IntegrationBinding
 	for _, app := range tenant.Spec.Apps {
-		profile := &gentianov1alpha1.AppProfile{}
+		profile := &gentianov1alpha1.ComponentProfile{}
 		if err := r.Get(ctx, client.ObjectKey{Name: app.Profile}, profile); err != nil {
 			if errors.IsNotFound(err) {
 				continue
 			}
-			return nil, fmt.Errorf("get AppProfile %s: %w", app.Profile, err)
+			return nil, fmt.Errorf("get ComponentProfile %s: %w", app.Profile, err)
 		}
-		for _, integration := range profile.Spec.OptionalIntegrations {
+		for _, integration := range profile.Spec.Integrations {
 			providerApp := ""
 			if integration.Provider != "" {
 				if _, ok := presentApps[integration.Provider]; ok {

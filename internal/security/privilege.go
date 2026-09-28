@@ -100,13 +100,54 @@ func GrantedPrivileges(comp *gentianov1alpha1.Component, now time.Time) map[stri
 	if comp == nil {
 		return nil
 	}
+	return GrantedSet(comp.Spec.Privileges, now)
+}
+
+// GrantedSet is the same arithmetic over a bare list of grants, for a caller
+// that has the grants without a Component to hang them on.
+//
+// The tenant's own netpolicy is built from Tenant.spec.apps and the profiles
+// they name, before any Component exists for them, and it must not open
+// outbound network for a privilege nobody answered. So it reads the grants
+// the Tenant carries and asks this the same question the reconciler does.
+func GrantedSet(grants []gentianov1alpha1.PrivilegeGrant, now time.Time) map[string]struct{} {
 	out := map[string]struct{}{}
-	for i := range comp.Spec.Privileges {
-		g := &comp.Spec.Privileges[i]
+	for i := range grants {
+		g := &grants[i]
 		if g.ExpiresAt != nil && !now.Before(g.ExpiresAt.Time) {
 			continue
 		}
 		out[g.Privilege] = struct{}{}
+	}
+	return out
+}
+
+// TenantGrants are the grants a Tenant carries for one install.
+func TenantGrants(tenant *gentianov1alpha1.Tenant, install string) []gentianov1alpha1.PrivilegeGrant {
+	if tenant == nil {
+		return nil
+	}
+	var out []gentianov1alpha1.PrivilegeGrant
+	for i := range tenant.Spec.Privileges {
+		if tenant.Spec.Privileges[i].Install == install {
+			out = append(out, tenant.Spec.Privileges[i].Grant())
+		}
+	}
+	return out
+}
+
+// EgressRulesFor are the egress rules of the privileges in granted, in the
+// profile's own order.
+func EgressRulesFor(profile *gentianov1alpha1.ComponentProfile, granted map[string]struct{}) []networkingv1.NetworkPolicyEgressRule {
+	if profile == nil || profile.Privileges() == nil {
+		return nil
+	}
+	var out []networkingv1.NetworkPolicyEgressRule
+	for i := range profile.Privileges().Egress {
+		e := &profile.Privileges().Egress[i]
+		if _, ok := granted[PrivilegeRef(PrivilegeEgress, e.Name)]; ok {
+			out = append(out, e.Rule)
+		}
 	}
 	return out
 }
@@ -141,15 +182,7 @@ func GrantedEgressRules(profile *gentianov1alpha1.ComponentProfile, comp *gentia
 	if profile == nil || profile.Spec.Requires == nil || profile.Spec.Requires.Privileges == nil {
 		return nil
 	}
-	granted := GrantedPrivileges(comp, now)
-	var out []networkingv1.NetworkPolicyEgressRule
-	for i := range profile.Spec.Requires.Privileges.Egress {
-		e := &profile.Spec.Requires.Privileges.Egress[i]
-		if _, ok := granted[PrivilegeRef(PrivilegeEgress, e.Name)]; ok {
-			out = append(out, e.Rule)
-		}
-	}
-	return out
+	return EgressRulesFor(profile, GrantedPrivileges(comp, now))
 }
 
 // GrantedPodSecurityWaivers are the waivers a person granted, in the
@@ -216,4 +249,25 @@ func PrivilegeReason(profile *gentianov1alpha1.ComponentProfile, ref string) str
 		}
 	}
 	return ""
+}
+
+// WaiverRequests are a profile's pod-security privileges in the shape the
+// PlatformSecurityPolicy allowlist is written in.
+//
+// The allowlist is a cluster-wide statement about what may EVER be waived
+// here, keyed on policy and scope; a privilege adds a name and a reason for
+// the person who approves one install. Both questions are asked, and this is
+// what lets the coarse one keep its own vocabulary.
+func WaiverRequests(privileges *gentianov1alpha1.PrivilegeRequest) []gentianov1alpha1.MacWaiverRequest {
+	if privileges == nil {
+		return nil
+	}
+	out := make([]gentianov1alpha1.MacWaiverRequest, 0, len(privileges.PodSecurity))
+	for i := range privileges.PodSecurity {
+		out = append(out, gentianov1alpha1.MacWaiverRequest{
+			Policy: privileges.PodSecurity[i].Policy,
+			Scope:  privileges.PodSecurity[i].Scope,
+		})
+	}
+	return out
 }

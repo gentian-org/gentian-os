@@ -56,13 +56,18 @@ func TestEnsureMacWaivers_annotatesApprovedWaivers(t *testing.T) {
 			},
 		},
 	}
-	profile := &gentianov1alpha1.AppProfile{
+	profile := &gentianov1alpha1.ComponentProfile{
 		ObjectMeta: metav1.ObjectMeta{Name: "catalogue-test-app"},
-		Spec: gentianov1alpha1.AppProfileSpec{
-			Security: &gentianov1alpha1.SecuritySpec{
-				MacWaivers: []gentianov1alpha1.MacWaiverRequest{
-					{Policy: "gentian-require-non-root", Scope: "sidecar-meet"},
-					{Policy: "other-policy", Scope: "other-scope"},
+		Spec: gentianov1alpha1.ComponentProfileSpec{
+			Classes: []gentianov1alpha1.ComponentClass{gentianov1alpha1.ComponentClassApp}, Launch: gentianov1alpha1.ComponentLaunchNone, TrustTier: gentianov1alpha1.TrustTierCertified, Version: "1.0.0",
+			Requires: &gentianov1alpha1.RequirementSpec{
+				Privileges: &gentianov1alpha1.PrivilegeRequest{
+					PodSecurity: []gentianov1alpha1.PodSecurityWaiver{
+						{Name: "run-as-root", Policy: "gentian-require-non-root", Scope: "sidecar-meet",
+							Reason: "the meet sidecar needs a privileged port"},
+						{Name: "other", Policy: "other-policy", Scope: "other-scope",
+							Reason: "asks for something the cluster does not allow"},
+					},
 				},
 			},
 		},
@@ -70,7 +75,8 @@ func TestEnsureMacWaivers_annotatesApprovedWaivers(t *testing.T) {
 	tenant := &gentianov1alpha1.Tenant{
 		ObjectMeta: metav1.ObjectMeta{Name: "demo"},
 		Spec: gentianov1alpha1.TenantSpec{
-			Apps: []gentianov1alpha1.TenantApp{{Profile: "catalogue-test-app"}},
+			DisplayName: "Test Tenant",
+			Apps:        []gentianov1alpha1.TenantApp{{Profile: "catalogue-test-app"}},
 		},
 	}
 
@@ -117,12 +123,16 @@ func macWaiverFixture(extra ...client.Object) (*gentianov1alpha1.Tenant, []clien
 			},
 		},
 	}
-	profile := &gentianov1alpha1.AppProfile{
+	profile := &gentianov1alpha1.ComponentProfile{
 		ObjectMeta: metav1.ObjectMeta{Name: "app-a"},
-		Spec: gentianov1alpha1.AppProfileSpec{
-			Security: &gentianov1alpha1.SecuritySpec{
-				MacWaivers: []gentianov1alpha1.MacWaiverRequest{
-					{Policy: "gentian-require-non-root", Scope: "main"},
+		Spec: gentianov1alpha1.ComponentProfileSpec{
+			Classes: []gentianov1alpha1.ComponentClass{gentianov1alpha1.ComponentClassApp}, Launch: gentianov1alpha1.ComponentLaunchNone, TrustTier: gentianov1alpha1.TrustTierCertified, Version: "1.0.0",
+			Requires: &gentianov1alpha1.RequirementSpec{
+				Privileges: &gentianov1alpha1.PrivilegeRequest{
+					PodSecurity: []gentianov1alpha1.PodSecurityWaiver{
+						{Name: "run-as-root", Policy: "gentian-require-non-root", Scope: "main",
+							Reason: "the main container writes as root on first start"},
+					},
 				},
 			},
 		},
@@ -130,7 +140,8 @@ func macWaiverFixture(extra ...client.Object) (*gentianov1alpha1.Tenant, []clien
 	tenant := &gentianov1alpha1.Tenant{
 		ObjectMeta: metav1.ObjectMeta{Name: "demo"},
 		Spec: gentianov1alpha1.TenantSpec{
-			Apps: []gentianov1alpha1.TenantApp{{Profile: "app-a"}},
+			DisplayName: "Test Tenant",
+			Apps:        []gentianov1alpha1.TenantApp{{Profile: "app-a"}},
 		},
 	}
 	objs := append([]client.Object{psp, profile, tenant,

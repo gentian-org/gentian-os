@@ -437,6 +437,23 @@ type ExposureSpec struct {
 	// +optional
 	ForwardToken bool `json:"forwardToken,omitempty"`
 
+	// Annotations are gateway policy for this host, by the same keys
+	// AppProfile's ingress carried: gentianos.io/gateway-frame-ancestors and
+	// gentianos.io/gateway-escaped-slashes-action.
+	//
+	// Here rather than on the object, because they are per HOST and a profile
+	// may publish several. frame-ancestors decides which pages may embed this
+	// one in a frame, which is what lets the desktop open an app in a window
+	// instead of a browser tab — so it is not decoration, and a profile that
+	// lost it would open in a tab with no error to say why.
+	//
+	// Not a free-form passthrough: the nginx ingress annotations that used to
+	// sit beside these — body size, read and send timeouts — are the gateway's
+	// own policy now and are not read from here.
+	// +optional
+	// +kubebuilder:validation:MaxProperties=16
+	Annotations map[string]string `json:"annotations,omitempty"`
+
 	// Tile is how this entry appears on the portal, for an entry a person is
 	// meant to open. An entry that declares none is reachable and unadvertised,
 	// which is what an API or a callback endpoint should be, so the absence is
@@ -703,4 +720,105 @@ type ComponentProfileList struct {
 
 func init() {
 	SchemeBuilder.Register(&ComponentProfile{}, &ComponentProfileList{})
+}
+
+// Services are the platform services this component requires, or nil.
+//
+// An accessor because `requires` is optional and `requires.services` is
+// optional within it, so every reader would otherwise write the same two nil
+// checks — and the one that forgets panics on a profile that asks for
+// nothing, which is most of them.
+func (p *ComponentProfile) Services() *ServiceRequirements {
+	if p == nil || p.Spec.Requires == nil {
+		return nil
+	}
+	return p.Spec.Requires.Services
+}
+
+// Privileges are what this component asks for beyond the default posture, or
+// nil. Asking is not receiving: each is granted per install (AD-5).
+func (p *ComponentProfile) Privileges() *PrivilegeRequest {
+	if p == nil || p.Spec.Requires == nil {
+		return nil
+	}
+	return p.Spec.Requires.Privileges
+}
+
+// GeneratedSecrets are the secrets this component has created for it, or nil.
+func (p *ComponentProfile) GeneratedSecrets() []AppSecret {
+	if p == nil || p.Spec.Secrets == nil {
+		return nil
+	}
+	return p.Spec.Secrets.Generated
+}
+
+// Chart is the chart this component is delivered as, or nil when it is
+// delivered some other way — a composition, an API entry, or an addon that
+// runs nothing of its own.
+func (p *ComponentProfile) Chart() *ChartRef {
+	if p == nil {
+		return nil
+	}
+	return p.Spec.Package.Chart
+}
+
+// Provisioning is what this component needs done inside itself after install,
+// or nil. On this kind it lives under hooks, beside the post-install job it
+// sits with.
+func (p *ComponentProfile) Provisioning() *ProvisioningSpec {
+	if p == nil || p.Spec.Hooks == nil {
+		return nil
+	}
+	return p.Spec.Hooks.Provisioning
+}
+
+// PostInstall is the job to run once the release is up, or nil.
+func (p *ComponentProfile) PostInstall() *AppPostInstallJob {
+	if p == nil || p.Spec.Hooks == nil {
+		return nil
+	}
+	return p.Spec.Hooks.PostInstall
+}
+
+// DerivedSecrets are secrets computed from others rather than generated, or
+// nil.
+func (p *ComponentProfile) DerivedSecrets() []DerivedSecretKey {
+	if p == nil || p.Spec.Secrets == nil {
+		return nil
+	}
+	return p.Spec.Secrets.Derived
+}
+
+// IsAPI reports whether this entry is delivered as an external API rather than
+// something the platform runs. Read from the package, which is the one place
+// that says how a component is delivered — spec.deploymentMethod is gone, so
+// delivery can no longer contradict it.
+func (p *ComponentProfile) IsAPI() bool {
+	return p != nil && p.Spec.Package.API != nil
+}
+
+// DeploysWorkload reports whether installing this creates something that runs.
+// An API entry contributes a tile and an integration; an addon flips a switch
+// inside another component. Neither is a workload of its own.
+func (p *ComponentProfile) DeploysWorkload() bool {
+	return p != nil && !p.IsAPI() && p.Spec.Package.Addon == nil
+}
+
+// GatewayExposures are the entries published on the tenant gateway, in the
+// profile's own order.
+//
+// The first is what spec.ingress was — the component's own host — and any
+// further one is what an additionalIngress was. A perimeter entry is not here:
+// it is reached through the tenant's DMZ and has no route in the tenant zone.
+func (p *ComponentProfile) GatewayExposures() []*ExposureSpec {
+	if p == nil {
+		return nil
+	}
+	var out []*ExposureSpec
+	for i := range p.Spec.Expose {
+		if p.Spec.Expose[i].Surface == SurfaceGateway {
+			out = append(out, &p.Spec.Expose[i])
+		}
+	}
+	return out
 }

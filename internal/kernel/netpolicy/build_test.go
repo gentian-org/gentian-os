@@ -46,11 +46,12 @@ func TestBuildDesired_BaselineOnly(t *testing.T) {
 
 func TestBuildDesired_KernelAndContractPolicies(t *testing.T) {
 	t.Parallel()
-	profile := &gentianov1alpha1.AppProfile{
-		Spec: gentianov1alpha1.AppProfileSpec{
-			ServiceRequirements: &gentianov1alpha1.ServiceRequirements{
+	profile := &gentianov1alpha1.ComponentProfile{
+		Spec: gentianov1alpha1.ComponentProfileSpec{
+			Classes: []gentianov1alpha1.ComponentClass{gentianov1alpha1.ComponentClassApp}, Launch: gentianov1alpha1.ComponentLaunchNone, TrustTier: gentianov1alpha1.TrustTierCertified, Version: "1.0.0",
+			Requires: &gentianov1alpha1.RequirementSpec{Services: &gentianov1alpha1.ServiceRequirements{
 				Database: &gentianov1alpha1.DatabaseRequirement{},
-			},
+			}},
 		},
 	}
 	binding := &gentianov1alpha1.IntegrationBinding{}
@@ -67,7 +68,7 @@ func TestBuildDesired_KernelAndContractPolicies(t *testing.T) {
 		TenantName: "demo",
 		Namespace:  "tenant-demo",
 		Apps:       []gentianov1alpha1.TenantApp{{Profile: "consumer-app"}},
-		Profiles:   map[string]*gentianov1alpha1.AppProfile{"consumer-app": profile},
+		Profiles:   map[string]*gentianov1alpha1.ComponentProfile{"consumer-app": profile},
 		Bindings:   []*gentianov1alpha1.IntegrationBinding{binding},
 		Config:     netpolicy.DefaultConfig(),
 	}

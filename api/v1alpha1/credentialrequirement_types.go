@@ -56,7 +56,9 @@ type CredentialRequirement struct {
 
 // CredentialRequirementSpec describes one credential an operator must supply.
 //
-// +kubebuilder:validation:XValidation:rule="self.scope == 'tenant' ? (has(self.tenant) && self.tenant != '') : (!has(self.tenant) || self.tenant == '')",message="tenant is required when scope is tenant, and must be empty when scope is cluster"
+// The emptiness test is size(): see component_types.go for why a pair of
+// straight single quotes in a marker does not survive gofmt.
+// +kubebuilder:validation:XValidation:rule="self.scope == 'tenant' ? (has(self.tenant) && size(self.tenant) > 0) : (!has(self.tenant) || size(self.tenant) == 0)",message="tenant is required when scope is tenant, and must be empty when scope is cluster"
 type CredentialRequirementSpec struct {
 	// DisplayName is the label a form renders for this requirement.
 	// +kubebuilder:validation:MinLength=1

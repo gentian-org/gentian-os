@@ -41,7 +41,8 @@ func TestRunTenantReconcileStages_blockedRequeues(t *testing.T) {
 	tenant := &gentianov1alpha1.Tenant{
 		ObjectMeta: metav1.ObjectMeta{Name: "demo"},
 		Spec: gentianov1alpha1.TenantSpec{
-			Apps: []gentianov1alpha1.TenantApp{{Profile: "profile-that-does-not-exist"}},
+			DisplayName: "Test Tenant",
+			Apps:        []gentianov1alpha1.TenantApp{{Profile: "profile-that-does-not-exist"}},
 		},
 	}
 

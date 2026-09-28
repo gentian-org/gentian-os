@@ -115,9 +115,9 @@ func (r *TenantReconciler) collectPostgresApps(ctx context.Context, tenant *gent
 		if !ok {
 			continue
 		}
-		if profile.Spec.ServiceRequirements != nil &&
-			profile.Spec.ServiceRequirements.Database != nil &&
-			profile.Spec.ServiceRequirements.Database.Engine == gentianov1alpha1.DatabaseEnginePostgreSQL {
+		if profile.Services() != nil &&
+			profile.Services().Database != nil &&
+			profile.Services().Database.Engine == gentianov1alpha1.DatabaseEnginePostgreSQL {
 			pgApps = append(pgApps, app.Profile)
 		}
 	}
@@ -128,12 +128,12 @@ func (r *TenantReconciler) collectPostgresApps(ctx context.Context, tenant *gent
 // Unset means the app's own schema comes first, which is the safe default: it is
 // what an app doing its own schema isolation expects, and it is the behaviour
 // every app had before the preference was declarable.
-func schemaPreferenceFor(profile *gentianov1alpha1.AppProfile) gentianov1alpha1.SchemaPreference {
-	if profile == nil || profile.Spec.ServiceRequirements == nil ||
-		profile.Spec.ServiceRequirements.Database == nil {
+func schemaPreferenceFor(profile *gentianov1alpha1.ComponentProfile) gentianov1alpha1.SchemaPreference {
+	if profile == nil || profile.Services() == nil ||
+		profile.Services().Database == nil {
 		return gentianov1alpha1.SchemaPreferenceAppSchema
 	}
-	if pref := profile.Spec.ServiceRequirements.Database.SchemaPreference; pref != "" {
+	if pref := profile.Services().Database.SchemaPreference; pref != "" {
 		return pref
 	}
 	return gentianov1alpha1.SchemaPreferenceAppSchema
@@ -143,12 +143,12 @@ func schemaPreferenceFor(profile *gentianov1alpha1.AppProfile) gentianov1alpha1.
 // its own at runtime. Only apps whose whole purpose is letting a user make
 // databases should ask for it — every database created this way is owned by the
 // app role, which is what lets the purge find and drop them again.
-func allowsDynamicDatabaseCreation(profile *gentianov1alpha1.AppProfile) bool {
-	if profile == nil || profile.Spec.ServiceRequirements == nil ||
-		profile.Spec.ServiceRequirements.Database == nil {
+func allowsDynamicDatabaseCreation(profile *gentianov1alpha1.ComponentProfile) bool {
+	if profile == nil || profile.Services() == nil ||
+		profile.Services().Database == nil {
 		return false
 	}
-	return profile.Spec.ServiceRequirements.Database.AllowDynamicDatabaseCreation
+	return profile.Services().Database.AllowDynamicDatabaseCreation
 }
 
 // ensureDatabaseCR waits for the Crossplane-owned CloudNativePG Database CR.

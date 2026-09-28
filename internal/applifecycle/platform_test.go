@@ -100,18 +100,24 @@ func TestAWaiverTheClusterDoesNotPermitIsShownAsRefused(t *testing.T) {
 				},
 			},
 		},
-		&gentianov1alpha1.AppProfile{
+		&gentianov1alpha1.ComponentProfile{
 			ObjectMeta: metav1.ObjectMeta{Name: "element"},
-			Spec: gentianov1alpha1.AppProfileSpec{
-				DisplayName: "Element",
-				Security: &gentianov1alpha1.SecuritySpec{MacWaivers: []gentianov1alpha1.MacWaiverRequest{
-					{Policy: "gentian-require-non-root", Scope: "synapse"},
-					{Policy: "gentian-drop-capabilities", Scope: "synapse"},
-				}},
+			Spec: gentianov1alpha1.ComponentProfileSpec{
+				Classes: []gentianov1alpha1.ComponentClass{gentianov1alpha1.ComponentClassApp}, Launch: gentianov1alpha1.ComponentLaunchNone, TrustTier: gentianov1alpha1.TrustTierCertified, Version: "1.0.0",
+				Requires: &gentianov1alpha1.RequirementSpec{
+					Privileges: &gentianov1alpha1.PrivilegeRequest{
+						PodSecurity: []gentianov1alpha1.PodSecurityWaiver{
+							{Name: "run-as-root", Policy: "gentian-require-non-root", Scope: "synapse",
+								Reason: "synapse writes its media store as root"},
+							{Name: "keep-capabilities", Policy: "gentian-drop-capabilities", Scope: "synapse",
+								Reason: "synapse binds a privileged port for federation"},
+						},
+					},
+				},
 			},
 		},
 		// A profile that asks for nothing does not appear at all.
-		&gentianov1alpha1.AppProfile{ObjectMeta: metav1.ObjectMeta{Name: "quiet"}},
+		&gentianov1alpha1.ComponentProfile{ObjectMeta: metav1.ObjectMeta{Name: "quiet"}},
 	)
 
 	out, err := s.PlatformSecurity(context.Background())

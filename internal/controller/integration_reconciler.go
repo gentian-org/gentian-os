@@ -145,7 +145,7 @@ func (r *TenantReconciler) findProviderInTenant(
 		if appName == consumerApp {
 			continue
 		}
-		providerProfile := &gentianov1alpha1.AppProfile{}
+		providerProfile := &gentianov1alpha1.ComponentProfile{}
 		if err := r.Get(ctx, types.NamespacedName{Name: appName}, providerProfile); err != nil {
 			continue
 		}

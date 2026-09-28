@@ -319,8 +319,26 @@ def convert(doc, review, bases):
             del src["customization"]
 
     if "compositionRef" in src:
-        review.note(f"package: dropped compositionRef {src['compositionRef']!r} — the composition that "
-                    "renders an app is chosen by the claim, and nothing reads this field")
+        # NOT dropped. It names the Composition that renders this app, and the
+        # tenant reads it to set the App claim's compositionRef -- without it
+        # the three apps that have their own Composition would silently render
+        # through app-default instead, losing the bridge, sidecar or alias
+        # that Composition exists to emit.
+        #
+        # An annotation rather than package.composition: package is exactly
+        # one of chart, composition, api or addon and says HOW the component
+        # is delivered. These are delivered as a chart; the Composition is
+        # what renders that chart with extra objects beside it. Putting it in
+        # package would claim otherwise and be refused by the union's rule.
+        meta = doc["metadata"]
+        annotations = meta.get("annotations")
+        if annotations is None:
+            annotations = CommentedMap()
+            meta["annotations"] = annotations
+        annotations["gentianos.io/composition"] = str(src["compositionRef"])
+        review.note(f"package: compositionRef {src['compositionRef']!r} became the annotation "
+                    "gentianos.io/composition. Whether the package union should instead admit a "
+                    "composition alongside a chart is an open design question")
         del src["compositionRef"]
     if "deploymentMethod" in src:
         review.note(f"package: dropped deploymentMethod {src['deploymentMethod']!r} — delivery is read "
@@ -436,6 +454,25 @@ def convert(doc, review, bases):
     if spec["launch"] == "none" and addon is None and "expose" in spec:
         review.note("launch: none — the profile is reachable but advertises no tile; confirm that is "
                     "intended rather than a tile that failed to convert")
+
+    # Entitlement is the one thing presentation cannot take with it.
+    #
+    # license: proprietary is what gated a commercial addon, and the operator
+    # read it off the profile. AD-3 moves license to the listing, outside the
+    # cluster — so without this the gate would still be there, reading a field
+    # that is always empty, and every paid addon would activate for free.
+    #
+    # It stays as an annotation for the same reason a tile keeps its relation:
+    # it is an authorization question, and the enforcement point is in the
+    # cluster. What it is NOT is the licence text, which is presentation and
+    # does leave.
+    if str((src.get("license") or "")).strip().lower() == "proprietary":
+        meta = doc["metadata"]
+        annotations = meta.get("annotations")
+        if annotations is None:
+            annotations = CommentedMap()
+            meta["annotations"] = annotations
+        annotations["gentianos.io/requires-entitlement"] = "true"
 
     # Presentation leaves the cluster, comments and all.
     listing = CommentedMap()

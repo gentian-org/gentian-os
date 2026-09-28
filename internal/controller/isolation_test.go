@@ -279,7 +279,7 @@ func TestDeletion_EndToEnd_WithApps(t *testing.T) {
 	tenant := &gentianov1alpha1.Tenant{
 		ObjectMeta: metav1.ObjectMeta{Name: "del-full"},
 		Spec: gentianov1alpha1.TenantSpec{
-			DisplayName:    "Deletion E2E",
+			DisplayName:    "Test Tenant",
 			Domain:         "del-full.example.com",
 			DeletionPolicy: gentianov1alpha1.DeletionPolicyDelete,
 			Apps: []gentianov1alpha1.TenantApp{
@@ -375,14 +375,14 @@ func TestDeletion_Retain_KeepsDataRevokesAccess(t *testing.T) {
 
 	profile := newFullAppProfile("ret-app", gentianov1alpha1.DatabaseEnginePostgreSQL, true, true, false)
 	if err := testClient.Create(ctx, profile); err != nil {
-		t.Fatalf("create AppProfile: %v", err)
+		t.Fatalf("create ComponentProfile: %v", err)
 	}
 	t.Cleanup(func() { _ = testClient.Delete(ctx, profile) })
 
 	tenant := &gentianov1alpha1.Tenant{
 		ObjectMeta: metav1.ObjectMeta{Name: "ret-full"},
 		Spec: gentianov1alpha1.TenantSpec{
-			DisplayName:    "Retain E2E",
+			DisplayName:    "Test Tenant",
 			Domain:         "ret-full.example.com",
 			DeletionPolicy: gentianov1alpha1.DeletionPolicyRetain,
 			Mail:           &gentianov1alpha1.TenantMail{Mode: gentianov1alpha1.MailModeSelfhosted},
@@ -489,7 +489,7 @@ func waitForRetainShellTeardown(t *testing.T, ctx context.Context, nsName string
 // ---------------------------------------------------------------------------
 
 // newFullAppProfile builds an AppProfile with multiple kernel requirements.
-func newFullAppProfile(name string, dbEngine gentianov1alpha1.DatabaseEngine, needsS3, needsRedis, needsMemcached bool) *gentianov1alpha1.AppProfile {
+func newFullAppProfile(name string, dbEngine gentianov1alpha1.DatabaseEngine, needsS3, needsRedis, needsMemcached bool) *gentianov1alpha1.ComponentProfile {
 	kr := &gentianov1alpha1.ServiceRequirements{
 		Database: &gentianov1alpha1.DatabaseRequirement{
 			Engine:            dbEngine,
@@ -508,17 +508,17 @@ func newFullAppProfile(name string, dbEngine gentianov1alpha1.DatabaseEngine, ne
 		kr.Cache = &gentianov1alpha1.CacheRequirement{Engine: gentianov1alpha1.CacheEngineMemcached}
 	}
 
-	return &gentianov1alpha1.AppProfile{
+	return &gentianov1alpha1.ComponentProfile{
 		ObjectMeta: metav1.ObjectMeta{Name: name},
-		Spec: gentianov1alpha1.AppProfileSpec{
-			DisplayName:      name,
-			DeploymentMethod: gentianov1alpha1.DeploymentMethodCrossplane,
-			Chart: gentianov1alpha1.ChartRef{
+		Spec: gentianov1alpha1.ComponentProfileSpec{
+			Classes: []gentianov1alpha1.ComponentClass{gentianov1alpha1.ComponentClassApp}, Launch: gentianov1alpha1.ComponentLaunchNone, TrustTier: gentianov1alpha1.TrustTierCertified, Version: "1.0.0",
+			Package: gentianov1alpha1.PackageSpec{Chart: &gentianov1alpha1.ChartRef{
 				Repository: "oci://charts.example.com",
 				Name:       name,
 				Version:    "1.0.0",
-			},
-			ServiceRequirements: kr,
+			}},
+
+			Requires: &gentianov1alpha1.RequirementSpec{Services: kr},
 		},
 	}
 }
