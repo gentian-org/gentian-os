@@ -13,11 +13,10 @@ metadata:
 spec:
   classes:
     - app
-  launch: tile
+  launch: none
   trustTier: certified
   version: "1.0.0"
   package:
-    composition: app-demo-app
     chart:
       repository: oci://example.invalid/demo-app
       name: demo-app
