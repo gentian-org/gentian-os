@@ -35,6 +35,7 @@ import (
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 	"github.com/gentian-org/gentian-os/internal/layout"
+	"github.com/gentian-org/gentian-os/internal/locales"
 )
 
 // The desktop is the one component the OS ships itself (ui-restructure.md
@@ -91,6 +92,12 @@ func (r *ComponentReconciler) platformValues(profile *gentianov1alpha1.Component
 		m.KernelDomainKey:         r.KernelDomain,
 		m.RealmKey:                zone.realm,
 		m.ZoneKindKey:             zoneKind,
+		// The tenant's own language, for a desktop deciding what to render
+		// before this person has chosen one and before a settings template
+		// has chosen for them (AD-15). Normalise never returns an empty
+		// slice, so the index is safe: a tenant declaring nothing gets the
+		// platform's first language.
+		m.DefaultLanguageKey: locales.Normalise(tenant.Spec.Locales)[0],
 	} {
 		if key != "" {
 			setPath(out, key, value)

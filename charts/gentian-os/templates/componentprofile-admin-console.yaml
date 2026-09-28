@@ -50,6 +50,9 @@ spec:
         kernelDomainKey: platform.kernelDomain
         realmKey: platform.realm
         zoneKindKey: platform.zoneKind
+        # The tenant's own language, for what this renders before a person has
+        # chosen one and before a settings template has chosen for them.
+        defaultLanguageKey: platform.defaultLanguage
     extraValues:
       # The name every object of the release derives from, pinned so the
       # Services the exposures below route to are known before the release

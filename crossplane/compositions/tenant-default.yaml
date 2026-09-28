@@ -1690,7 +1690,9 @@ spec:
                 {{- $locales := default (list "en" "de") (dig "locales" nil $spec) }}
                 internationalization:
                   - supportedLocales: {{ toJson $locales }}
-                    defaultLocale: "en"
+                    # The first, not "en": the order is the preference, so a
+                    # tenant listing de then en gets a German login page.
+                    defaultLocale: {{ index $locales 0 | quote }}
                 {{- /* ── Security policy ──────────────────────────────────
                      What the tenant declares in spec.security, as the realm's
                      own fields. The console changes it by committing to the

@@ -1729,6 +1729,18 @@ spec:
                               -- so a component that relays to it is passing the person through,
                               exactly as it does with the director.
                             type: string
+                          defaultLanguageKey:
+                            description: |-
+                              DefaultLanguageKey receives the tenant's own language, as an ISO 639-1
+                              code (AD-15). It is what a person sees before they have chosen one and
+                              before any settings template has given them one — a German tenant's
+                              people get a German desktop on their first sign-in rather than whatever
+                              their browser happens to ask for.
+
+                              The tenant's language is the FIRST of the languages it declares, because
+                              the order is the preference: a tenant listing de then en is saying it is
+                              German-speaking and also serves English.
+                            type: string
                           directorUrlKey:
                             description: |-
                               DirectorURLKey receives the director's in-cluster URL. Only meaningful

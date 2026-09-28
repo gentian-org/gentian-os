@@ -243,9 +243,14 @@ func (c *KeycloakAdminClient) UpdateRealmBrowserSecurityHeaders(ctx context.Cont
 	// locales is saying "not mine to set", and this leaves the realm's own
 	// alone rather than putting a default over a declared value.
 	if len(offered) > 0 {
+		langs := locales.Normalise(offered)
 		body["internationalizationEnabled"] = true
-		body["supportedLocales"] = locales.Normalise(offered)
-		body["defaultLocale"] = locales.DefaultLanguage
+		body["supportedLocales"] = langs
+		// The FIRST language, not English: the order is the preference, so a
+		// tenant listing de then en is saying it is German-speaking and also
+		// serves English. Its login page should open in German for a browser
+		// that asks for neither.
+		body["defaultLocale"] = langs[0]
 	}
 	_, err = c.doAdminExpect(ctx, token, http.MethodPut, "/admin/realms/"+url.PathEscape(realm), body, http.StatusNoContent, http.StatusOK)
 	return err

@@ -958,6 +958,18 @@ type PlatformValueMapping struct {
 	// than from a list of capabilities the operator composes for it.
 	// +optional
 	ZoneKindKey string `json:"zoneKindKey,omitempty"`
+
+	// DefaultLanguageKey receives the tenant's own language, as an ISO 639-1
+	// code (AD-15). It is what a person sees before they have chosen one and
+	// before any settings template has given them one — a German tenant's
+	// people get a German desktop on their first sign-in rather than whatever
+	// their browser happens to ask for.
+	//
+	// The tenant's language is the FIRST of the languages it declares, because
+	// the order is the preference: a tenant listing de then en is saying it is
+	// German-speaking and also serves English.
+	// +optional
+	DefaultLanguageKey string `json:"defaultLanguageKey,omitempty"`
 }
 
 // IntegrationValueMapping maps integration credentials to Helm chart keys.

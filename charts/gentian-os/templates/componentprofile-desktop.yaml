@@ -48,6 +48,10 @@ spec:
         kernelDomainKey: kernelDomain
         realmKey: kernelRealm
         zoneKindKey: zoneKind
+        # The tenant's own language, for what the desktop renders before this
+        # person has chosen one and before a settings template has chosen for
+        # them (AD-15).
+        defaultLanguageKey: defaultLanguage
       database:
         # The desktop consumes its credentials Secret whole, with envFrom, so
         # it is told the Secret's name and nothing else.
