@@ -20,18 +20,78 @@ not, the tool writes the safe value and says so: every line of the review report
 is a decision a person has to look at before the profile ships, and the tool
 exits non-zero with --strict while any remain.
 
-  convert-appprofile.py <profiles-dir> --out <dir> [--strict]
+COMMENTS SURVIVE. A quarter of the catalogue is design rationale — 949 inline
+comments across 33 profiles, recording why each one is built the way it is —
+and a safe_load/safe_dump round trip deletes every one of them. That has
+happened here before: sync-profile-tile.py's own docstring records dropping 118
+lines from docmost-ce for the sake of inlining one base64 string. So this reads
+and writes with ruamel's round-trip mode, and moving a field to its new parent
+moves the comment attached to it.
 
-Writes <dir>/profiles/<name>.yaml, <dir>/listings/<name>.yaml and
-<dir>/REVIEW.md.
+  convert-appprofile.py <profiles-dir> --out <dir> [--strict]
+  convert-appprofile.py <profiles-dir> --in-place [--strict]
+
+--out writes <dir>/profiles/<name>.yaml, <dir>/listings/<name>.yaml and
+<dir>/REVIEW.md. --in-place rewrites each profile.yaml where it stands and puts
+the listing beside it, which is what the real conversion does.
 """
 import argparse
+import io
 import pathlib
 import re
 import sys
 from urllib.parse import urlparse
 
-import yaml
+import ruamel.yaml
+from ruamel.yaml.comments import CommentedMap, CommentedSeq
+
+# Round trip: preserves comments, key order, block scalars and quoting.
+_yaml = ruamel.yaml.YAML(typ="rt")
+_yaml.preserve_quotes = True
+_yaml.width = 4096          # never re-wrap a line somebody chose the shape of
+_yaml.indent(mapping=2, sequence=4, offset=2)
+
+
+def _load_all(path):
+    with io.open(path, encoding="utf-8") as fh:
+        return list(_yaml.load_all(fh))
+
+
+def _dump(doc, path):
+    with io.open(path, "w", encoding="utf-8") as fh:
+        _yaml.dump(doc, fh)
+
+
+def _dump_str(doc):
+    buf = io.StringIO()
+    _yaml.dump(doc, buf)
+    return buf.getvalue()
+
+
+def move(src, skey, dst, dkey=None):
+    """Move src[skey] to dst[dkey], carrying its comment.
+
+    ruamel keeps a key's comment on the PARENT map, so popping a value leaves
+    the comment behind and the rationale is lost exactly where it mattered.
+    This moves both.
+    """
+    if src is None or skey not in src:
+        return False
+    dkey = dkey or skey
+    dst[dkey] = src[skey]
+    comment = getattr(src, "ca", None)
+    if comment is not None and skey in comment.items:
+        dst.ca.items[dkey] = comment.items.pop(skey)
+    del src[skey]
+    return True
+
+
+def carry_comment(src, skey, dst, dkey):
+    """Copy a key's comment without moving its value, for a field that is
+    rebuilt rather than moved -- an ingress becoming an expose entry."""
+    comment = getattr(src, "ca", None)
+    if comment is not None and skey in comment.items and dkey in dst:
+        dst.ca.items[dkey] = comment.items[skey]
 
 PRESENTATION = ["displayName", "description", "family", "edition", "author", "license",
                 "categories", "keywords", "tile"]
@@ -213,106 +273,126 @@ def expose_for_addon(addon, tiles, bases, review, profile_name, profile_tile=Non
     return out
 
 def convert(doc, review, bases):
-    src = doc.get("spec", {})
+    """Rewrite one AppProfile document as a ComponentProfile plus a listing.
+
+    Fields are MOVED rather than copied into a fresh map, so the comment a
+    profile author wrote above a field travels to wherever that field now
+    lives. What is left in the source at the end is, by construction, what
+    this tool did not handle — which is how the review report is honest rather
+    than optimistic.
+    """
+    src = doc.get("spec") or CommentedMap()
     name = doc["metadata"]["name"]
+    spec = CommentedMap()
+
     # classes, not tenancy: the field was renamed when a profile stopped
     # saying where it may run and started saying what it may be certified as.
-    spec = {"classes": ["app"]}
+    spec["classes"] = CommentedSeq(["app"])
 
-    if src.get("trustTier"):
-        spec["trustTier"] = src["trustTier"]
+    if "trustTier" in src:
+        move(src, "trustTier", spec)
     else:
         spec["trustTier"] = "experimental"
         review.note("trustTier was absent; set to experimental, the tier that claims nothing")
-    if src.get("catalogueVersion"):
-        spec["version"] = str(src["catalogueVersion"])
+    if "catalogueVersion" in src:
+        move(src, "catalogueVersion", spec, "version")
+        spec["version"] = str(spec["version"])
     else:
         spec["version"] = "0.0.0"
         review.note("catalogueVersion was absent; version set to 0.0.0")
 
     # package is exactly one of chart | composition | api | addon, plus the
     # value plumbing. deploymentMethod is dropped: the union says it now.
-    package = {new: src[old] for old, new in PACKAGE_RENAME.items() if old in src}
-    addon = (src.get("customization") or {}).get("addon")
-    if addon:
-        # Exactly one package. An addon runs nothing of its own, so a chart on
-        # an addon is a leftover from when an addon could be installed
-        # standalone -- eleven of the twenty carry one.
+    package = CommentedMap()
+    for old, new_key in PACKAGE_RENAME.items():
+        move(src, old, package, new_key)
+
+    customization = src.get("customization")
+    addon = (customization or {}).get("addon")
+    if addon is not None:
         dropped = [k for k in ("chart", "api") if k in package]
         for k in dropped:
-            package.pop(k)
-        package["addon"] = {"id": addon.get("id"), "of": addon.get("of")}
+            del package[k]
+        move(customization, "addon", package, "addon")
         if dropped:
             review.note(f"package: dropped {', '.join(sorted(dropped))} — an addon activates inside its "
                         "base and runs nothing of its own; these are from the standalone era")
-    if src.get("compositionRef"):
+        if customization is not None and not customization:
+            del src["customization"]
+
+    if "compositionRef" in src:
         review.note(f"package: dropped compositionRef {src['compositionRef']!r} — the composition that "
                     "renders an app is chosen by the claim, and nothing reads this field")
-    if src.get("deploymentMethod"):
+        del src["compositionRef"]
+    if "deploymentMethod" in src:
         review.note(f"package: dropped deploymentMethod {src['deploymentMethod']!r} — delivery is read "
                     "from which package kind is present and can no longer contradict it")
+        del src["deploymentMethod"]
+
     present = [k for k in ("chart", "composition", "api", "addon") if k in package]
     if len(present) != 1:
         review.note(f"package: {present or 'nothing'} — exactly one of chart, composition, api or addon "
                     "is required and the profile will be refused")
     spec["package"] = package
 
-    requires = {}
-    if src.get("kernelRequirements"):
-        requires["services"] = src["kernelRequirements"]
-    privileges = {}
-    security = src.get("security") or {}
-    for w in security.get("macWaivers", []):
+    # requires: the services the platform owes, and the privileges it must be
+    # asked for.
+    requires = CommentedMap()
+    move(src, "kernelRequirements", requires, "services")
+
+    privileges = CommentedMap()
+    security = src.get("security") or CommentedMap()
+    for w in security.get("macWaivers") or []:
         wname = slug(f"{w.get('policy')}-{w.get('scope')}")
-        privileges.setdefault("podSecurity", []).append({
-            "name": wname, "policy": w.get("policy"), "scope": w.get("scope"),
-            "reason": "REVIEW: say why this component needs the waiver"})
+        privileges.setdefault("podSecurity", CommentedSeq()).append(CommentedMap([
+            ("name", wname), ("policy", w.get("policy")), ("scope", w.get("scope")),
+            ("reason", "REVIEW: say why this component needs the waiver")]))
         review.note(f"requires.privileges.podSecurity/{wname}: write the reason the security officer will read")
-    for i, rule in enumerate(security.get("egress", [])):
+    for i, rule in enumerate(security.get("egress") or []):
         ename = f"egress-{i + 1}"
-        privileges.setdefault("egress", []).append({
-            "name": ename, "rule": rule,
-            "reason": "REVIEW: say what this component reaches and why"})
+        privileges.setdefault("egress", CommentedSeq()).append(CommentedMap([
+            ("name", ename), ("rule", rule),
+            ("reason", "REVIEW: say what this component reaches and why")]))
         review.note(f"requires.privileges.egress/{ename}: write the reason the tenant administrator will "
                     "read, and give it a name that says where it goes")
     if privileges:
         requires["privileges"] = privileges
+        # The old block's comment explained why the app needs what it needs,
+        # which is exactly what the approver now reads.
+        carry_comment(src, "security", requires, "privileges")
+    if "security" in src:
+        del src["security"]
     if requires:
         spec["requires"] = requires
 
-    for old, new in CARRIED.items():
-        if old in ("provides", "optionalIntegrations") and src.get(old):
-            spec[new] = src[old]
+    move(src, "provides", spec, "provides")
+    move(src, "optionalIntegrations", spec, "integrations")
 
-    secrets = {}
-    if src.get("appSecrets"):
-        secrets["generated"] = src["appSecrets"]
-    if src.get("derivedSecretKeys"):
-        secrets["derived"] = src["derivedSecretKeys"]
+    secrets = CommentedMap()
+    move(src, "appSecrets", secrets, "generated")
+    if move(src, "derivedSecretKeys", secrets, "derived"):
         review.note("secrets.derived: derived secrets rotate silently if the formula or its inputs change; "
                     "move to generated unless something external recomputes the value")
     if secrets:
         spec["secrets"] = secrets
 
-    identity = (src.get("kernelRequirements") or {}).get("identity") or {}
+    # expose: one ingress, any additional ingresses, and the browser-proxy
+    # routes, each stating the authMode the old shape left implicit.
+    identity = (requires.get("services") or {}).get("identity") or {}
     has_oidc = bool(identity.get("oidc") or identity.get("saml"))
-    expose = []
+    expose = CommentedSeq()
     if src.get("ingress"):
         expose.append(expose_from_ingress(src["ingress"], "web", review, has_oidc))
-    for ing in src.get("additionalIngresses", []):
-        expose.append(expose_from_ingress(ing, slug(ing.get("subDomain") or ing.get("serviceName")), review, has_oidc))
-    for route in src.get("browserProxy", []):
+    for ing in src.get("additionalIngresses") or []:
+        expose.append(expose_from_ingress(ing, slug(ing.get("subDomain") or ing.get("serviceName")),
+                                          review, has_oidc))
+    for route in src.get("browserProxy") or []:
         expose.append(expose_from_proxy(route, review))
-    # The tiles. A tile opens one host and one path, and the exposure decides
-    # both, so a tile hangs off an exposure rather than off the profile.
+
     tiles = src.get("portalTiles") or []
-    if addon:
+    if addon is not None:
         expose.extend(expose_for_addon(addon, tiles, bases, review, name, src.get("tile")))
     elif tiles:
-        # The first tile belongs on the entry that serves the app's own host.
-        # Any further tile is a second entry on the same backend: it is a
-        # different path into the same app, and the old profile distinguished
-        # them by linkSuffix alone.
         if not expose:
             if "api" in package:
                 review.note("portalTiles: an API-delivered entry has no Service, so there is no exposure to "
@@ -325,7 +405,7 @@ def convert(doc, review, bases):
         else:
             expose[0]["tile"] = tile_from_portal(tiles[0], review, name, src.get("tile"))
             for pt in tiles[1:]:
-                extra = {k: v for k, v in expose[0].items() if k != "tile"}
+                extra = CommentedMap((k, v) for k, v in expose[0].items() if k != "tile")
                 extra["name"] = slug(pt.get("name") or "tile")
                 extra["tile"] = tile_from_portal(pt, review, name, src.get("tile"))
                 expose.append(extra)
@@ -335,54 +415,75 @@ def convert(doc, review, bases):
         review.note(f"expose: two entries are named {dup}; names must be unique")
     if expose:
         spec["expose"] = expose
+        # Whatever the author wrote above the ingress explains the surface,
+        # and the first expose entry IS that surface.
+        carry_comment(src, "ingress", spec, "expose")
+    for gone in ("ingress", "additionalIngresses", "browserProxy", "portalTiles"):
+        if gone in src:
+            del src[gone]
 
-    # launch says how a person reaches this component at all.
-    spec["launch"] = "tile" if any(e.get("tile") for e in expose) else "none"
-    if spec["launch"] == "none" and not addon and src.get("ingress"):
-        review.note("launch: none — the profile is reachable but advertises no tile; confirm that is "
-                    "intended rather than a tile that failed to convert")
+    move(src, "sidecars", spec, "extensions")
 
-    for old in ("sidecars", "backup", "customization"):
-        if not src.get(old):
-            continue
-        value = src[old]
-        if old == "customization" and addon:
-            # On this kind an addon is package.addon, and customization.addon
-            # is refused. What is left of the block still belongs here.
-            value = {k: v for k, v in value.items() if k != "addon"}
-            if not value:
-                continue
-        spec[CARRIED[old]] = value
-    hooks = {}
-    if src.get("postInstallJob"):
-        hooks["postInstall"] = src["postInstallJob"]
-    if src.get("provisioning"):
-        hooks["provisioning"] = src["provisioning"]
+    hooks = CommentedMap()
+    move(src, "postInstallJob", hooks, "postInstall")
+    move(src, "provisioning", hooks, "provisioning")
     if hooks:
         spec["hooks"] = hooks
 
-    for key in sorted(set(src) - HANDLED):
-        review.note(f"{key}: not a field this tool knows; it was dropped")
+    move(src, "backup", spec, "backup")
+    move(src, "customization", spec, "customization")
 
-    profile = {"apiVersion": "gentianos.io/v1alpha1", "kind": "ComponentProfile",
-               "metadata": {"name": name}, "spec": spec}
-    for meta in ("labels", "annotations"):
-        if doc["metadata"].get(meta):
-            profile["metadata"][meta] = doc["metadata"][meta]
-    listing = {"profile": name}
-    listing.update({k: src[k] for k in PRESENTATION if k in src})
+    # launch says how a person reaches this component at all.
+    spec["launch"] = "tile" if any(e.get("tile") for e in expose) else "none"
+    if spec["launch"] == "none" and addon is None and "expose" in spec:
+        review.note("launch: none — the profile is reachable but advertises no tile; confirm that is "
+                    "intended rather than a tile that failed to convert")
+
+    # Presentation leaves the cluster, comments and all.
+    listing = CommentedMap()
+    listing["profile"] = name
+    for key in PRESENTATION:
+        move(src, key, listing)
+
+    # By construction, anything still here is unhandled.
+    for key in list(src.keys()):
+        review.note(f"{key}: not a field this tool knows; it was dropped")
+        del src[key]
+
+    profile = CommentedMap()
+    profile["apiVersion"] = doc.get("apiVersion", "gentianos.io/v1alpha1")
+    profile["kind"] = "ComponentProfile"
+    profile["metadata"] = doc["metadata"]
+    profile["spec"] = spec
+    # The document's own header — the block above apiVersion, which is where a
+    # profile records why it is built the way it is. The kind is renamed in it
+    # too: a header that still says "AppProfile" above a ComponentProfile
+    # reads as an oversight a year later, and every one of these headers names
+    # the kind in its first line.
+    if getattr(doc, "ca", None) is not None and doc.ca.comment:
+        profile.ca.comment = _rename_kind_in_comment(doc.ca.comment)
     return profile, listing
+
+
+def _rename_kind_in_comment(comment):
+    """AppProfile -> ComponentProfile inside a preserved comment block."""
+    for token in comment or []:
+        for item in (token if isinstance(token, list) else [token]):
+            if item is not None and getattr(item, "value", None):
+                item.value = item.value.replace("AppProfile", "ComponentProfile")
+    return comment
 
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("source", type=pathlib.Path, help="directory searched recursively for AppProfile manifests")
-    ap.add_argument("--out", type=pathlib.Path, required=True)
+    ap.add_argument("--out", type=pathlib.Path, help="write the results to a directory instead of in place")
+    ap.add_argument("--in-place", action="store_true",
+                    help="rewrite each profile.yaml where it stands, and put its listing beside it")
     ap.add_argument("--strict", action="store_true", help="exit 1 while any review item remains")
     args = ap.parse_args()
-
-    (args.out / "profiles").mkdir(parents=True, exist_ok=True)
-    (args.out / "listings").mkdir(parents=True, exist_ok=True)
+    if not args.out and not args.in_place:
+        ap.error("one of --out or --in-place is required")
 
     # Two passes. An addon's exposure names its base's Service, so every
     # profile's own ingress has to be known before any addon is converted --
@@ -390,16 +491,16 @@ def main():
     sources = []
     for path in sorted(args.source.rglob("*.yaml")):
         try:
-            docs = list(yaml.safe_load_all(path.read_text()))
-        except yaml.YAMLError as err:
+            docs = _load_all(path)
+        except ruamel.yaml.YAMLError as err:
             print(f"skip {path}: {err}", file=sys.stderr)
             continue
-        for doc in docs:
+        for index, doc in enumerate(docs):
             if isinstance(doc, dict) and doc.get("kind") == "AppProfile":
-                sources.append((path, doc))
+                sources.append((path, index, docs, doc))
 
     bases = {}
-    for _, doc in sources:
+    for _, _, _, doc in sources:
         ing = (doc.get("spec") or {}).get("ingress") or {}
         if ing.get("serviceName"):
             bases[doc["metadata"]["name"]] = {
@@ -408,8 +509,12 @@ def main():
                 "subDomain": ing.get("subDomain") if ing.get("subDomain") != "auto" else None,
             }
 
+    if args.out:
+        (args.out / "profiles").mkdir(parents=True, exist_ok=True)
+        (args.out / "listings").mkdir(parents=True, exist_ok=True)
+
     reviews, seen = [], {}
-    for path, doc in sources:
+    for path, index, docs, doc in sources:
         name = doc["metadata"]["name"]
         if name in seen:
             print(f"FAIL — {name} is defined in {seen[name]} and in {path}", file=sys.stderr)
@@ -417,9 +522,20 @@ def main():
         seen[name] = path
         review = Review(name)
         profile, listing = convert(doc, review, bases)
-        (args.out / "profiles" / f"{name}.yaml").write_text(yaml.safe_dump(profile, sort_keys=False))
-        (args.out / "listings" / f"{name}.yaml").write_text(yaml.safe_dump(listing, sort_keys=False, allow_unicode=True))
         reviews.append(review)
+
+        if args.in_place:
+            # The converted profile replaces the document it came from, in the
+            # file it came from: a multi-document file keeps its other
+            # documents, and git shows a diff of one profile rather than a
+            # delete and an add.
+            docs[index] = profile
+            with io.open(path, "w", encoding="utf-8") as fh:
+                _yaml.dump_all(docs, fh)
+            _dump(listing, path.parent / "listing.yaml")
+        else:
+            _dump(profile, args.out / "profiles" / f"{name}.yaml")
+            _dump(listing, args.out / "listings" / f"{name}.yaml")
 
     open_items = sum(len(r.items) for r in reviews)
     lines = ["# Conversion review", "",
@@ -427,9 +543,10 @@ def main():
     for r in reviews:
         if r.items:
             lines += [f"## {r.profile}", ""] + [f"- {i}" for i in r.items] + [""]
-    (args.out / "REVIEW.md").write_text("\n".join(lines))
-    print(f"{len(reviews)} profiles → {args.out}/profiles, listings → {args.out}/listings, "
-          f"{open_items} review items → {args.out}/REVIEW.md")
+    report = (args.out / "REVIEW.md") if args.out else (args.source / "CONVERSION-REVIEW.md")
+    report.write_text("\n".join(lines), encoding="utf-8")
+    where = "in place" if args.in_place else f"{args.out}/profiles"
+    print(f"{len(reviews)} profiles → {where}, {open_items} review items → {report}")
     return 1 if (args.strict and open_items) else 0
 
 
