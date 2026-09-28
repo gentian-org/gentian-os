@@ -44,6 +44,7 @@ import (
 	"github.com/gentian-org/gentian-os/internal/director/gitops"
 	"github.com/gentian-org/gentian-os/internal/director/identity"
 	"github.com/gentian-org/gentian-os/internal/director/lifecycle"
+	"github.com/gentian-org/gentian-os/internal/director/record"
 	"github.com/gentian-org/gentian-os/internal/tilecatalogue"
 )
 
@@ -107,6 +108,11 @@ type Config struct {
 	// screen that should have worked.
 	Viewer authz.Viewer
 	Repo   Repository
+	// Record is the durable record of who was allowed to ask for a change to
+	// a person (S7A.17). Optional: a cluster whose director database has not
+	// been provisioned keeps the log line and nothing else, which is a worse
+	// record rather than a broken director.
+	Record *record.Store
 	Log    *slog.Logger
 	// EnforceEntitlements makes an install require
 	// catalogue_entry:<coordinate>#can_install for the tenant. It is on unless

@@ -38,6 +38,7 @@ import (
 	"github.com/gentian-org/gentian-os/internal/director/gitops"
 	"github.com/gentian-org/gentian-os/internal/director/identity"
 	"github.com/gentian-org/gentian-os/internal/director/lifecycle"
+	"github.com/gentian-org/gentian-os/internal/director/record"
 	"github.com/gentian-org/gentian-os/internal/membership"
 )
 
@@ -261,7 +262,25 @@ func run(log *slog.Logger) error {
 	}
 
 	// person reviewing who holds what. Neither can write through the API.
+	// The durable record of who was allowed to ask for a change to a person
+	// (S7A.17). Optional on purpose: a cluster whose director database has
+	// not been provisioned yet keeps the log line and starts anyway, because
+	// refusing to serve at all would take the console down over an audit
+	// trail. The warning says which it is.
+	var authorityRecord *record.Store
+	if dsn := os.Getenv("DIRECTOR_DATABASE_URL"); dsn != "" {
+		authorityRecord, err = record.Open(context.Background(), dsn, recordRetention(log))
+		if err != nil {
+			return fmt.Errorf("director database: %w", err)
+		}
+		defer authorityRecord.Close()
+		go pruneRecord(authorityRecord, log)
+	} else {
+		log.Warn("DIRECTOR_DATABASE_URL is not set; identity actions are logged but not recorded")
+	}
+
 	handler, err := api.New(api.Config{Authn: verifier, Authz: checker, Viewer: checker, Repo: repo, Log: log,
+		Record:              authorityRecord,
 		EnforceEntitlements: enforce, Store: store, Cluster: cluster,
 		TilesPath: envOr("DIRECTOR_TILES_PATH", "/etc/gentian/tiles/tiles.yaml"),
 		Lifecycle: lc, Identity: ident,
@@ -298,4 +317,42 @@ func run(log *slog.Logger) error {
 		return err
 	}
 	return nil
+}
+
+// recordRetention is how long an authority record is kept, from
+// DIRECTOR_RECORD_RETENTION (a Go duration). Personal data needs a horizon
+// somebody chose, and an unparseable value is a misconfiguration worth saying
+// out loud rather than silently becoming the default.
+func recordRetention(log *slog.Logger) time.Duration {
+	raw := os.Getenv("DIRECTOR_RECORD_RETENTION")
+	if raw == "" {
+		return record.DefaultRetention
+	}
+	d, err := time.ParseDuration(raw)
+	if err != nil || d <= 0 {
+		log.Warn("DIRECTOR_RECORD_RETENTION is not a duration; using the default",
+			"value", raw, "default", record.DefaultRetention.String())
+		return record.DefaultRetention
+	}
+	return d
+}
+
+// pruneRecord removes what is past the horizon, once at start and daily after.
+//
+// In the process rather than a CronJob: it is one DELETE against a database
+// only this process has a credential for, and a CronJob would need its own
+// copy of that credential to run it.
+func pruneRecord(store *record.Store, log *slog.Logger) {
+	for {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+		n, err := store.Prune(ctx)
+		cancel()
+		switch {
+		case err != nil:
+			log.Error("could not prune the authority record", "error", err.Error())
+		case n > 0:
+			log.Info("pruned authority records past their retention", "rows", n)
+		}
+		time.Sleep(24 * time.Hour)
+	}
 }

@@ -23,8 +23,10 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/gentian-org/gentian-os/internal/director/identity"
+	"github.com/gentian-org/gentian-os/internal/director/record"
 )
 
 // People, groups and the realm's password policy — the director speaking for
@@ -356,9 +358,23 @@ func (s *Server) setPasswordPolicy(w http.ResponseWriter, r *http.Request, c cal
 // The fields, not the values: what changed and who was allowed to change it,
 // never the old and new address. A log that carried those would become the
 // problem the decision to keep people out of git avoided.
+// recordIdentityAction records WHO WAS ALLOWED to ask for this, which is the
+// half of the record Keycloak cannot write: its own admin event sees the
+// director's service account and nothing about the person who asked or what
+// permitted the call. The two join on the request id (S7A.17).
+//
+// The log line stays. It is what a person reads while watching a deployment,
+// and it is the only record on a cluster whose database has not been
+// provisioned yet.
+//
+// A failure to record does not undo what was done. The caller has already
+// invited somebody; refusing to have done it because the record could not be
+// written would be the worse outcome, and the gap is visible anyway — a
+// Keycloak event with no partner is exactly what an audit looks for.
 func (s *Server) recordIdentityAction(r *http.Request, c call, action string, realm identity.Realm, target string) {
-	s.cfg.Log.InfoContext(r.Context(), "identity action",
-		"request_id", reqID(r.Context()),
+	ctx := r.Context()
+	s.cfg.Log.InfoContext(ctx, "identity action",
+		"request_id", reqID(ctx),
 		"action", action,
 		"realm", realm.Name(),
 		"tenant", r.PathValue("t"),
@@ -366,6 +382,26 @@ func (s *Server) recordIdentityAction(r *http.Request, c call, action string, re
 		"principal", c.meta.Subject,
 		"decision", c.meta.Decision,
 	)
+	if s.cfg.Record == nil {
+		return
+	}
+	// Not the request's context: it is cancelled the moment the response is
+	// written, and the record must not be lost to the caller hanging up.
+	writeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	defer cancel()
+	err := s.cfg.Record.Write(writeCtx, record.Action{
+		RequestID: reqID(ctx),
+		Action:    action,
+		Realm:     realm.Name(),
+		Tenant:    r.PathValue("t"),
+		Target:    target,
+		Principal: c.meta.Subject,
+		Decision:  c.meta.Decision,
+	})
+	if err != nil {
+		s.cfg.Log.ErrorContext(ctx, "the authority for an identity action was not recorded",
+			"request_id", reqID(ctx), "action", action, "error", err.Error())
+	}
 }
 
 // decode reads a JSON body, refusing anything unreasonable rather than

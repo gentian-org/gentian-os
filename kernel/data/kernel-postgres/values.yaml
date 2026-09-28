@@ -16,6 +16,19 @@ databases:
   # The portal's own store: a signed-in person's preferences and desktop
   # layout. Named portal_shell because the console calls its shell what the
   # user sees before any app is open.
+  # The director's record of WHO WAS ALLOWED to ask for an identity change:
+  # the caller, the relation and the object that permitted it, and the request
+  # id that joins it to Keycloak's own event (S7A.17).
+  #
+  # A database rather than git, and this is the one place the platform makes
+  # that choice deliberately. Git gives every change an author, a time and a
+  # diff, which is the standard the rest of the console is held to -- but the
+  # thing that makes git good here, append-only history, is exactly what makes
+  # it wrong for a record about people. This has a retention policy; a commit
+  # cannot.
+  - name: director
+    role: director_user
+    passwordKey: director_user_password
   - name: portal-shell
     # The name Postgres knows it by. A Kubernetes object cannot carry an
     # underscore and a Postgres identifier is happier with one than with a

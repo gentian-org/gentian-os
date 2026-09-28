@@ -247,6 +247,32 @@ spec:
                  because there is no credential for it to cross with. */}}
             - name: DIRECTOR_REALM_CREDENTIALS_PATH
               value: /etc/gentian/realms
+            {{- /* The durable record of WHO WAS ALLOWED to ask for a change
+                 to a person (S7A.17).
+
+                 A database and not a commit, and this is the one place the
+                 platform chooses that deliberately: git's append-only history
+                 is what makes it right for configuration and wrong for a
+                 record about people. This one has a retention horizon.
+
+                 Optional. A cluster whose director database has not been
+                 provisioned starts anyway and keeps only the log line, because
+                 taking the console down over an audit trail is the worse
+                 failure. The director warns at start which it is. */}}
+            {{- with .Values.director.recordDatabase }}
+            {{- if .secretName }}
+            - name: DIRECTOR_DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .secretName | quote }}
+                  key: {{ .secretKey | default "uri" | quote }}
+                  optional: true
+            {{- end }}
+            {{- with .retention }}
+            - name: DIRECTOR_RECORD_RETENTION
+              value: {{ . | quote }}
+            {{- end }}
+            {{- end }}
             - name: DIRECTOR_COMMITTER_NAME
               value: {{ .Values.director.committer.name | quote }}
             - name: DIRECTOR_COMMITTER_EMAIL
