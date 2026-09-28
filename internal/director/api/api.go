@@ -40,6 +40,7 @@ import (
 
 	"github.com/gentian-org/gentian-os/internal/director/authn"
 	"github.com/gentian-org/gentian-os/internal/director/authz"
+	"github.com/gentian-org/gentian-os/internal/director/catalogue"
 	"github.com/gentian-org/gentian-os/internal/director/entitlement"
 	"github.com/gentian-org/gentian-os/internal/director/gitops"
 	"github.com/gentian-org/gentian-os/internal/director/identity"
@@ -74,6 +75,7 @@ type Repository interface {
 	SetClusterBackupPolicy(ctx context.Context, policy gitops.BackupPolicy, meta gitops.Meta) (gitops.Result, error)
 	TenantSecurityPolicy(ctx context.Context, tenant string) (*gitops.SecurityPolicy, error)
 	SetTenantSecurityPolicy(ctx context.Context, tenant string, policy gitops.SecurityPolicy, meta gitops.Meta) (gitops.Result, error)
+	MaterialiseProfile(ctx context.Context, name, digest string, body []byte, meta gitops.Meta) (gitops.Result, error)
 	TenantExposures(ctx context.Context, tenant string) ([]gitops.Exposure, error)
 	PublishExposure(ctx context.Context, tenant string, e gitops.Exposure, meta gitops.Meta) (gitops.Result, error)
 	WithdrawExposure(ctx context.Context, tenant, install, exposure string, meta gitops.Meta) (gitops.Result, error)
@@ -116,7 +118,11 @@ type Config struct {
 	// been provisioned keeps the log line and nothing else, which is a worse
 	// record rather than a broken director.
 	Record *record.Store
-	Log    *slog.Logger
+	// Catalogue materialises a profile when a tenant installs it (AD-3). Nil
+	// on a cluster whose profiles are still synced wholesale, which is what a
+	// deployment naming no catalogue source is saying.
+	Catalogue *catalogue.Fetcher
+	Log       *slog.Logger
 	// EnforceEntitlements makes an install require
 	// catalogue_entry:<coordinate>#can_install for the tenant. It is on unless
 	// a deployment turns it off explicitly, which a cluster without a store
@@ -851,17 +857,30 @@ type installRequest struct {
 	// Coordinate is the store coordinate <catalogue>/<app> the profile was
 	// offered under; the entitlement is recorded against it.
 	Coordinate string `json:"coordinate"`
+	// Digest is the content digest of the profile bundle, as the store's
+	// index gives it: "sha256:<hex>".
+	//
+	// From the store, over TLS, and not from the source that serves the
+	// bytes. That separation is the point: the source could be a customer's
+	// own web server, and what protects the install is that only one set of
+	// bytes hashes to what the store named (AD-3).
+	Digest string `json:"digest,omitempty"`
 }
 
 func (s *Server) install(w http.ResponseWriter, r *http.Request, c call) {
 	ctx := r.Context()
 	tenant, profile := r.PathValue("t"), r.PathValue("p")
-	if s.cfg.EnforceEntitlements {
-		var body installRequest
+	// Read once. The coordinate is what the entitlement check asks about and
+	// what materialising fetches, and decoding twice would read an empty body
+	// the second time.
+	var body installRequest
+	if r.ContentLength != 0 {
 		if err := decode(r, &body); err != nil {
 			s.fail(w, r, http.StatusBadRequest, "invalid body")
 			return
 		}
+	}
+	if s.cfg.EnforceEntitlements {
 		entry, err := authz.CatalogueEntry(body.Coordinate)
 		if err != nil {
 			s.fail(w, r, http.StatusBadRequest, "coordinate is required: <catalogue>/<app>")
@@ -879,8 +898,73 @@ func (s *Server) install(w http.ResponseWriter, r *http.Request, c call) {
 			return
 		}
 	}
+	// The profile itself, if this cluster materialises on reference (AD-3).
+	//
+	// Before the app entry, not after: an entry naming a profile the cluster
+	// does not have is a tenant whose app never appears, with the composition
+	// failing on a ComponentProfile that is not there. Fetching first means an
+	// install either has everything it needs or changed nothing.
+	if s.cfg.Catalogue != nil && body.Coordinate != "" {
+		if res, ok := s.materialise(w, r, c, body); !ok {
+			return
+		} else if res.Changed {
+			s.cfg.Log.InfoContext(ctx, "materialised a catalogue entry",
+				"request_id", reqID(ctx), "coordinate", body.Coordinate, "commit", res.Commit)
+		}
+	}
+
 	res, err := s.cfg.Repo.Install(ctx, tenant, profile, c.meta)
 	s.written(w, r, res, err)
+}
+
+// materialise fetches the entry being installed and commits it, so the
+// cluster has the profile the tenant's manifest is about to name.
+//
+// The digest comes from the STORE's index, over TLS. The bytes come from the
+// SOURCE, which is not trusted: if they do not hash to that digest the install
+// is refused and nothing is written. That is the whole of AD-3's "the store
+// never supplies the artefact" — the store says WHAT, the source says the
+// bytes, and only agreement produces an install.
+func (s *Server) materialise(
+	w http.ResponseWriter, r *http.Request, c call, body installRequest,
+) (gitops.Result, bool) {
+	ctx := r.Context()
+	cat, _, _ := strings.Cut(body.Coordinate, "/")
+	if !s.cfg.Catalogue.Known(cat) {
+		// A catalogue this cluster has no source for. Not an error: a cluster
+		// may name a source for one catalogue and sync another wholesale, and
+		// the install proceeds against whatever is already there.
+		return gitops.Result{}, true
+	}
+	if body.Digest == "" {
+		s.fail(w, r, http.StatusBadRequest,
+			"installing from a catalogue source needs the entry's digest, which the store's index gives")
+		return gitops.Result{}, false
+	}
+	profile, err := s.cfg.Catalogue.Fetch(ctx, body.Coordinate, body.Digest)
+	switch {
+	case errors.Is(err, catalogue.ErrDigestMismatch):
+		// Said plainly and logged, because this is the one failure here that
+		// is not a mistake: the source served something other than the entry
+		// the store named.
+		s.cfg.Log.ErrorContext(ctx, "a catalogue source served a bundle that is not the entry the store named",
+			"request_id", reqID(ctx), "coordinate", body.Coordinate)
+		s.fail(w, r, http.StatusBadGateway,
+			"the catalogue source served a bundle that is not this entry; nothing was installed")
+		return gitops.Result{}, false
+	case errors.Is(err, catalogue.ErrNotFound):
+		s.fail(w, r, http.StatusNotFound, "the catalogue source does not serve this entry")
+		return gitops.Result{}, false
+	case err != nil:
+		s.fail(w, r, http.StatusBadGateway, "the catalogue entry could not be read: "+err.Error())
+		return gitops.Result{}, false
+	}
+	res, err := s.cfg.Repo.MaterialiseProfile(ctx, profile.Name, profile.Digest, profile.Body, c.meta)
+	if err != nil {
+		s.repoError(w, r, err)
+		return gitops.Result{}, false
+	}
+	return res, true
 }
 
 func (s *Server) uninstall(w http.ResponseWriter, r *http.Request, c call) {

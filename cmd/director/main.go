@@ -34,6 +34,7 @@ import (
 	"github.com/gentian-org/gentian-os/internal/director/api"
 	"github.com/gentian-org/gentian-os/internal/director/authn"
 	"github.com/gentian-org/gentian-os/internal/director/authz"
+	"github.com/gentian-org/gentian-os/internal/director/catalogue"
 	"github.com/gentian-org/gentian-os/internal/director/entitlement"
 	"github.com/gentian-org/gentian-os/internal/director/gitops"
 	"github.com/gentian-org/gentian-os/internal/director/identity"
@@ -279,8 +280,21 @@ func run(log *slog.Logger) error {
 		log.Warn("DIRECTOR_DATABASE_URL is not set; identity actions are logged but not recorded")
 	}
 
+	// Catalogue sources: where a profile is fetched from when a tenant
+	// installs it (AD-3). Named as "<slug>=<https url>", comma separated.
+	// Without any, this cluster's profiles arrive some other way and nothing
+	// is materialised.
+	var entries *catalogue.Fetcher
+	if sources := catalogue.ParseSources(os.Getenv("DIRECTOR_CATALOGUE_SOURCES")); len(sources) > 0 {
+		entries = catalogue.NewFetcher(sources)
+		for slug := range sources {
+			log.Info("catalogue source", "catalogue", slug)
+		}
+	}
+
 	handler, err := api.New(api.Config{Authn: verifier, Authz: checker, Viewer: checker, Repo: repo, Log: log,
 		Record:              authorityRecord,
+		Catalogue:           entries,
 		EnforceEntitlements: enforce, Store: store, Cluster: cluster,
 		TilesPath: envOr("DIRECTOR_TILES_PATH", "/etc/gentian/tiles/tiles.yaml"),
 		Lifecycle: lc, Identity: ident,

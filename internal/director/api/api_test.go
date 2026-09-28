@@ -40,6 +40,7 @@ import (
 	"github.com/gentian-org/gentian-os/internal/director/api"
 	"github.com/gentian-org/gentian-os/internal/director/authn"
 	"github.com/gentian-org/gentian-os/internal/director/authz"
+	"github.com/gentian-org/gentian-os/internal/director/catalogue"
 	dt "github.com/gentian-org/gentian-os/internal/director/directortest"
 	"github.com/gentian-org/gentian-os/internal/director/entitlement"
 	"github.com/gentian-org/gentian-os/internal/director/gitops"
@@ -123,7 +124,19 @@ func startWithTiles(t *testing.T, entitlements bool, tilesPath string) *harness 
 // startWith is the harness with an operator to ask. lc is what answers the
 // app-lifecycle API's reads; nil leaves the resources routes unregistered,
 // which is what a director configured without one does.
-func startWith(t *testing.T, entitlements bool, tilesPath string, lc api.Lifecycle) *harness {
+// startWithCatalogue is the harness with catalogue sources, for the installs
+// that materialise a profile on reference (AD-3). The fetcher is given the
+// test server's own client, so it trusts that certificate and no other.
+func startWithCatalogue(t *testing.T, src *httptest.Server, sources map[string]string) *harness {
+	t.Helper()
+	return startWith(t, false, "", nil, func(cfg *api.Config) {
+		f := catalogue.NewFetcher(sources)
+		f.Client = src.Client()
+		cfg.Catalogue = f
+	})
+}
+
+func startWith(t *testing.T, entitlements bool, tilesPath string, lc api.Lifecycle, opts ...func(*api.Config)) *harness {
 	t.Helper()
 	is := dt.NewIssuer(t, "gentian", "tenant-demo", "tenant-solo")
 	v, err := authn.NewVerifier(authn.Config{IssuerBase: is.URL, Audience: audience})
@@ -138,13 +151,17 @@ func startWith(t *testing.T, entitlements bool, tilesPath string, lc api.Lifecyc
 	if err != nil {
 		t.Fatal(err)
 	}
-	srv, err := api.New(api.Config{
+	cfg := api.Config{
 		Authn: v, Authz: decisions, Viewer: fixedViewer{}, Repo: repo, EnforceEntitlements: entitlements, Cluster: dt.Cluster,
 		Store:     &api.StoreConfig{Verifier: verifier, Applier: &entitlement.Applier{Repo: repo, Store: tuples}},
 		Log:       slog.New(slog.NewTextHandler(io.Discard, nil)),
 		TilesPath: tilesPath,
 		Lifecycle: lc,
-	})
+	}
+	for _, opt := range opts {
+		opt(&cfg)
+	}
+	srv, err := api.New(cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
