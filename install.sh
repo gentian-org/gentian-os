@@ -298,7 +298,12 @@ prepare_run() {
     # makes them rather than refusing with instructions. --prepare-deployment
     # is the same code path with nothing after it, kept because writing the
     # definition without installing is a thing operators legitimately do.
-    if [[ -n "$(cluster_deployment_missing)" ]]; then
+    #
+    # Not under --validate. That command's contract is that it changes
+    # nothing, and writing files and pushing them to a remote is a change --
+    # a smaller one than touching a cluster, but not none. Validation reports
+    # an incomplete definition instead, which is the answer it is for.
+    if [[ "${INSTALL_VALIDATE_ONLY:-0}" != "1" && -n "$(cluster_deployment_missing)" ]]; then
         echo ""
         info "This cluster has no deployment definition yet. Writing one first."
         info "  Nothing is applied and no cluster is contacted by this part."
