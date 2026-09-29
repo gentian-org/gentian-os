@@ -315,3 +315,92 @@ func TestAGatewayEntryCannotBePublishedOnThePerimeter(t *testing.T) {
 		t.Fatalf("a gateway surface was published on the perimeter")
 	}
 }
+
+// A published host needs a listener on the perimeter Gateway, or its route
+// attaches to nothing.
+//
+// This is the failure with no error to read: the HTTPRoute exists, the proxy
+// runs, and the hostname resolves to an Envoy that has never been told to
+// serve it. The route's status says NoMatchingParent in a field nobody
+// watches, and the link simply does not answer.
+func TestAPublishedHostGetsAListenerOnThePerimeterGateway(t *testing.T) {
+	tenant := acmeTenantFixture()
+	tenant.Spec.Exposures = []gentianov1alpha1.TenantExposure{{
+		Install: "nextcloud-base-ce", ExposureName: "shares", Owner: "u-tom",
+		ExpiresAt: metav1.NewTime(time.Now().Add(24 * time.Hour)),
+	}}
+	gw := buildPerimeterGateway("k.example", "", []gentianov1alpha1.Tenant{*tenant})
+
+	var hosts []string
+	for _, l := range gw.Spec.Listeners {
+		if l.Hostname != nil {
+			hosts = append(hosts, string(*l.Hostname))
+		}
+	}
+	if !containsString(hosts, "shares.acme.k.example") {
+		t.Fatalf("the published host has no listener; got %v", hosts)
+	}
+	// The identity provider's own listener is still there: publishing a
+	// tenant surface must not displace the thing every login goes through.
+	if !containsString(hosts, "id.k.example") {
+		t.Fatalf("the identity provider lost its listener; got %v", hosts)
+	}
+}
+
+// EXACT hostnames, never a wildcard. The authenticated Gateway already holds
+// *.<tenant domain>, and under mergeGateways a listener is unique per port
+// and hostname across the class — so a wildcard here would collide with the
+// edge every other surface of that tenant is served from.
+func TestThePerimeterDoesNotClaimTheTenantsWildcard(t *testing.T) {
+	tenant := acmeTenantFixture()
+	tenant.Spec.Exposures = []gentianov1alpha1.TenantExposure{{
+		Install: "nextcloud-base-ce", ExposureName: "shares", Owner: "u-tom",
+		ExpiresAt: metav1.NewTime(time.Now().Add(24 * time.Hour)),
+	}}
+	gw := buildPerimeterGateway("k.example", "", []gentianov1alpha1.Tenant{*tenant})
+	for _, l := range gw.Spec.Listeners {
+		if l.Hostname != nil && strings.HasPrefix(string(*l.Hostname), "*") {
+			t.Fatalf("the perimeter claimed a wildcard listener: %s", *l.Hostname)
+		}
+	}
+}
+
+// A vanity host is published at the name it names, not under the tenant's
+// domain.
+func TestAVanityHostIsPublishedAsGiven(t *testing.T) {
+	tenant := acmeTenantFixture()
+	tenant.Spec.Exposures = []gentianov1alpha1.TenantExposure{{
+		Install: "nextcloud-base-ce", ExposureName: "shares", Owner: "u-tom",
+		Host:      "files.acme.example",
+		ExpiresAt: metav1.NewTime(time.Now().Add(24 * time.Hour)),
+	}}
+	gw := buildPerimeterGateway("k.example", "", []gentianov1alpha1.Tenant{*tenant})
+	var hosts []string
+	for _, l := range gw.Spec.Listeners {
+		if l.Hostname != nil {
+			hosts = append(hosts, string(*l.Hostname))
+		}
+	}
+	if !containsString(hosts, "files.acme.example") {
+		t.Fatalf("the vanity host has no listener; got %v", hosts)
+	}
+}
+
+// A tenant that publishes nothing adds nothing: the perimeter stays the two
+// listeners the kernel needs.
+func TestATenantPublishingNothingAddsNoListener(t *testing.T) {
+	tenant := acmeTenantFixture()
+	gw := buildPerimeterGateway("k.example", "", []gentianov1alpha1.Tenant{*tenant})
+	if len(gw.Spec.Listeners) != 2 {
+		t.Fatalf("listeners = %d, want the identity provider and :80 only", len(gw.Spec.Listeners))
+	}
+}
+
+func containsString(all []string, want string) bool {
+	for _, s := range all {
+		if s == want {
+			return true
+		}
+	}
+	return false
+}

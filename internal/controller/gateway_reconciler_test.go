@@ -113,7 +113,7 @@ func TestBuildKernelGateway(t *testing.T) {
 	if _, exists := byName[httpRedirectListenerName]; exists {
 		t.Fatalf("listener %q on the authenticated Gateway; :80 belongs to the perimeter", httpRedirectListenerName)
 	}
-	perimeter := buildPerimeterGateway("platform.example.test")
+	perimeter := buildPerimeterGateway("platform.example.test", "", nil)
 	if perimeter.Name != PerimeterGatewayName || perimeter.Namespace != servicesNamespace {
 		t.Fatalf("perimeter Gateway = %s/%s", perimeter.Namespace, perimeter.Name)
 	}

@@ -18,7 +18,11 @@ package controller
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
+	"sort"
+	"strings"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
@@ -235,7 +239,7 @@ func (r *GatewayPlatformReconciler) ensureEdgeGateways(ctx context.Context) erro
 	ann := edgeDNSAnnotations(r.Ingress)
 	for _, desired := range []*gatewayv1.Gateway{
 		buildAuthenticatedGateway(r.KernelDomain, r.TenancyMode, tenantList.Items),
-		buildPerimeterGateway(r.KernelDomain),
+		buildPerimeterGateway(r.KernelDomain, r.TenancyMode, tenantList.Items),
 	} {
 		if len(ann) > 0 {
 			if desired.Annotations == nil {
@@ -257,7 +261,7 @@ func (r *GatewayPlatformReconciler) ensureEdgeGateways(ctx context.Context) erro
 // the ACME HTTP-01 solver answers and everything else is redirected to https.
 // Under mergeGateways a listener is unique per port and hostname across the
 // class, so :80 lives here and nowhere else.
-func buildPerimeterGateway(kernelDomain string) *gatewayv1.Gateway {
+func buildPerimeterGateway(kernelDomain, tenancyMode string, tenants []gentianov1alpha1.Tenant) *gatewayv1.Gateway {
 	idHost := gatewayv1.Hostname("id." + kernelDomain)
 	return &gatewayv1.Gateway{
 		ObjectMeta: metav1.ObjectMeta{
@@ -271,12 +275,89 @@ func buildPerimeterGateway(kernelDomain string) *gatewayv1.Gateway {
 		},
 		Spec: gatewayv1.GatewaySpec{
 			GatewayClassName: gatewayv1.ObjectName(GentianGatewayClassName),
-			Listeners: []gatewayv1.Listener{
+			Listeners: append([]gatewayv1.Listener{
 				withAllowedRoutes(tlsListener(perimeterIDListenerName, idHost, kernelWildcardTLSSecretName, servicesNamespace), true),
 				withAllowedRoutes(httpRedirectListener(), true),
-			},
+			}, perimeterTenantListeners(kernelDomain, tenancyMode, tenants)...),
 		},
 	}
+}
+
+// perimeterTenantListeners is one listener per host a tenant publishes.
+//
+// A published host needs a listener or its route attaches to nothing, and
+// "the route exists but answers nothing" is the failure mode with no error to
+// read: the HTTPRoute reports NoMatchingParent in a status nobody is watching.
+//
+// EXACT hostnames, not a wildcard. Two reasons, and the second is the one
+// that matters. Under mergeGateways a listener is unique per port and
+// hostname across the class, and the authenticated Gateway already holds
+// *.<tenant-domain> -- so a wildcard here would collide with it. And an exact
+// hostname is what makes the perimeter narrow: a tenant publishes
+// share.acme.example and that host alone leaves the session behind, while
+// everything else on *.acme.example stays on the authenticated edge where it
+// was. Gateway API prefers the more specific listener, so the two coexist and
+// only the published name is public.
+//
+// The certificate is the tenant's own wildcard, which already covers any
+// subdomain of its domain, so publishing a surface issues nothing new.
+func perimeterTenantListeners(kernelDomain, tenancyMode string, tenants []gentianov1alpha1.Tenant) []gatewayv1.Listener {
+	var out []gatewayv1.Listener
+	seen := map[string]struct{}{}
+	for i := range tenants {
+		tenant := &tenants[i]
+		if tenant.DeletionTimestamp != nil {
+			continue
+		}
+		domain := tenant.EffectiveDomain(kernelDomain, tenancyMode)
+		if domain == "" {
+			continue
+		}
+		for j := range tenant.Spec.Exposures {
+			host := publishedHost(&tenant.Spec.Exposures[j], domain)
+			if host == "" {
+				continue
+			}
+			if _, dup := seen[host]; dup {
+				continue
+			}
+			seen[host] = struct{}{}
+			out = append(out, withAllowedRoutes(tlsListener(
+				perimeterListenerName(host), gatewayv1.Hostname(host),
+				tenantWildcardSecretName(tenant.Name), tenantNamespaceName(tenant),
+			), true))
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	return out
+}
+
+// publishedHost is where one enablement answers: the vanity host it names, or
+// the entry's own name under the tenant's domain.
+//
+// An expired enablement still gets a listener. A listener with no route
+// behind it serves nothing -- the proxy and the route are what the operator
+// takes down at expiry -- and keeping it means a renewal does not have to
+// wait for the Gateway to be reprogrammed before the link works again.
+func publishedHost(e *gentianov1alpha1.TenantExposure, domain string) string {
+	if e.Host != "" {
+		return e.Host
+	}
+	if e.ExposureName == "" {
+		return ""
+	}
+	return e.ExposureName + "." + domain
+}
+
+// perimeterListenerName is a Gateway listener name derived from the host:
+// a DNS label, unique, and within the 253 the API allows.
+func perimeterListenerName(host string) string {
+	name := "perimeter-" + strings.ReplaceAll(host, ".", "-")
+	if len(name) <= 63 {
+		return name
+	}
+	sum := sha256.Sum256([]byte(host))
+	return "perimeter-" + hex.EncodeToString(sum[:])[:16]
 }
 
 func buildAuthenticatedGateway(kernelDomain, tenancyMode string, tenants []gentianov1alpha1.Tenant) *gatewayv1.Gateway {
