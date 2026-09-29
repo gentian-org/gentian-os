@@ -1976,6 +1976,42 @@ EOF
 # So this warns rather than refuses: a working copy mid-review is a legitimate
 # state, and an installer that stopped on it would be wrong. Naming what will
 # happen is enough, and it is what nobody was told.
+# _claims_this_checkout_cannot_apply <kernel-dir> — stale claims, named.
+#
+# A claim names a kind, and a kind exists here only if crossplane/xrds/ defines
+# it. One that names anything else is a file Argo CD will sync and the API
+# server will refuse -- and because the refusal happens three layers away, on
+# a resource nothing else mentions, it reads as an unrelated Argo error days
+# later.
+#
+# This exists because a leftover claims/infra-data.yaml survived the layout
+# that removed the InfraData kind, and step 0 -- which commits whatever is
+# dirty under the cluster's kernel directory -- committed and pushed it. The
+# file was UNTRACKED, so it had never been reviewed, never been in a diff,
+# and the first thing that ever touched it was an installer being helpful.
+#
+# Names them rather than deleting them. A file somebody put there on purpose
+# is not the installer's to remove, and a kind this checkout does not define
+# may be one a newer checkout does.
+_claims_this_checkout_cannot_apply() {
+    local kernel_dir="$1" claim kind
+    local -a known=()
+    while IFS= read -r kind; do
+        [[ -n "${kind}" ]] && known+=("${kind}")
+    done < <(grep -h '^    kind:' "${SCRIPT_DIR}"/crossplane/xrds/*.yaml 2>/dev/null |
+        awk '{print $2}' | sort -u)
+    (( ${#known[@]} > 0 )) || return 0   # no XRDs to compare against: say nothing
+
+    for claim in "${kernel_dir}"/claims/*.yaml; do
+        [[ -f "${claim}" ]] || continue
+        kind="$(awk '/^kind:/ {print $2; exit}' "${claim}" 2>/dev/null)"
+        [[ -n "${kind}" ]] || continue
+        local found=0 k
+        for k in "${known[@]}"; do [[ "${k}" == "${kind}" ]] && found=1 && break; done
+        (( found )) || printf '%s\t%s\n' "$(basename "${claim}")" "${kind}"
+    done
+}
+
 # gentian_commit_cluster_deployment <kernel-dir> <cluster> — close the loop.
 #
 # The scaffolder used to write the files and warn that they were uncommitted,
@@ -2007,6 +2043,27 @@ gentian_commit_cluster_deployment() {
     dirty="$(git -C "${GENTIAN_DEPLOYMENTS_PATH}" status --porcelain -- \
         "clusters/${cluster}/kernel" 2>/dev/null || true)"
     [[ -n "${dirty}" ]] || return 0
+
+    # Refuse to commit a claim nothing here can apply.
+    #
+    # Committing is the act that makes a file the cluster's problem, so this
+    # is the last moment it is still only a file on somebody's disk.
+    local stale
+    stale="$(_claims_this_checkout_cannot_apply "${kernel_dir}")"
+    if [[ -n "${stale}" ]]; then
+        error "clusters/${cluster}/kernel has claims this checkout cannot apply:"
+        while IFS=$'\t' read -r f k; do
+            [[ -n "${f}" ]] && error "    ${f} declares kind ${k}, which no XRD in crossplane/xrds/ defines"
+        done <<< "${stale}"
+        error ""
+        error "  Argo CD would sync them and the API server would refuse them, days"
+        error "  from here and with nothing pointing back. Nothing was committed."
+        error ""
+        error "  Delete the file if its kind is gone, or update this checkout if it"
+        error "  is a kind a newer release defines:"
+        error "    rm ${kernel_dir}/claims/<file>"
+        return 1
+    fi
 
     if ! sign_args="$(gentian_git_sign_args break-glass 2>/dev/null)"; then
         gentian_ensure_signing_key break-glass >/dev/null || {
