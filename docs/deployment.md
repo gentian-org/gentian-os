@@ -184,10 +184,10 @@ accumulate faster than anything else the kernel creates.
 safety rules:
 
 **A. Scaffolding `gentian-deployments` (new cluster only)** —
-`scaffold_cluster_deployment()`, step 0 of the forward run and the whole of
-`./install.sh --prepare-deployment`. Given `GENTIAN_DEPLOYMENTS_CLUSTER_ID` and
-`GENTIAN_DEPLOYMENTS_STAGE` in `install.env`, and the kernel domain, network
-mode, issuer mode and mail mode from the prompt:
+`scaffold_cluster_deployment()`, step 0 of the forward run. Given
+`GENTIAN_DEPLOYMENTS_CLUSTER_ID` and `GENTIAN_DEPLOYMENTS_STAGE` in
+`install.env`, and every cluster setting from the prompt — each asked with
+its default, so Enter accepts it:
 
 1. For each of `claims/cluster.yaml`, `claims/suze.yaml`,
    `claims/deployments-repository.yaml` and `values.yaml`: generate it **only
@@ -202,9 +202,11 @@ mode, issuer mode and mail mode from the prompt:
 The commit is the installer's because Argo CD syncs `claims/` from the
 repository, not from the checkout: a file left uncommitted is applied by
 nothing, and the one that matters most — `deployments-repository.yaml` — is
-what gives the director its push credential. The review is still the
-operator's: the files are written before anything is applied, and
-GETTING-STARTED step 4 is reading them.
+what gives the director its push credential. There is no review-and-edit
+pause between writing and installing: under AD-2 the operator does not push
+to this repository by hand, so the interview is where the settings are
+decided. A later edit to the claim is committed the same way, by the next
+`./install.sh` run.
 
 No cluster is contacted before this runs, and `--validate` never runs it — a
 missing definition is reported there, not scaffolded.

@@ -21,7 +21,6 @@
 # One driver, three directions. Update is not a separate program: converging a
 # running cluster IS the update, so it is the same forward pass.
 #
-#   ./install.sh --prepare-deployment   write this cluster's files and stop
 #   ./install.sh --prepare-tenant NAME  write one tenant's definition, change nothing
 #   ./install.sh                    install or converge
 #   ./install.sh --update           same thing, named for what you meant
@@ -41,10 +40,11 @@
 # A cluster is its claims and values in gentian-deployments, so those come
 # first -- and an install writes them when they are absent rather than
 # refusing with instructions. That is step 0 of the forward pass: if the
-# definition is there, nothing is prepared; if it is not, the questions are
-# asked, the files are written, and they are committed and pushed signed
-# (AD-2). --prepare-deployment is the same code path with nothing after it,
-# for writing the definition on a day you are not installing.
+# definition is there, nothing is prepared; if it is not, every setting is
+# asked with its default, the files are written, and they are committed and
+# pushed signed (AD-2). There is no separate command for it: under AD-2 the
+# operator does not edit and push these files by hand, so there is nothing
+# to review between writing them and installing from them.
 #
 # A tenant is the same shape one level down, and stops in the same place:
 # --prepare-tenant writes its DEFINITION, you choose its apps, and
@@ -151,11 +151,6 @@ Running part of it. A step is named by its number or its full id, so
                         is asking the wrong question
 
 Other options:
-  --prepare-deployment  write clusters/<id>/kernel in gentian-deployments from
-                        install.env, commit and push it, then stop. A plain
-                        install does this itself when the files are absent, so
-                        this is for writing the definition on a day you are not
-                        installing. Nothing is applied either way
   --prepare-tenant NAME write clusters/<id>/definitions/NAME the same way,
                         then stop. Deploy it with `kubectl gentian tenants
                         deploy NAME`. Needs the cluster's files to exist already
@@ -189,7 +184,6 @@ parse_driver_args() {
     while [[ $# -gt 0 ]]; do
         case "$1" in
             --update)            GENTIAN_DIRECTION="forward" ;;
-            --prepare-deployment) GENTIAN_DIRECTION="prepare" ;;
             --prepare-tenant)
                 GENTIAN_DIRECTION="prepare-tenant"
                 # The name is optional here and prompted for when absent, so a
@@ -301,18 +295,20 @@ prepare_run() {
 
     # Step 0. The claims and values this cluster is built from have to exist
     # before any credential is collected -- and when they do not, the install
-    # makes them rather than refusing with instructions. --prepare-deployment
-    # is the same code path with nothing after it, kept because writing the
-    # definition without installing is a thing operators legitimately do.
+    # makes them rather than refusing with instructions. When they do, the
+    # same call commits and pushes any edit sitting in the checkout, signed,
+    # so "change the claim, run ./install.sh" is the whole of a reconfigure.
     #
-    # Not under --validate. That command's contract is that it changes
-    # nothing, and writing files and pushing them to a remote is a change --
-    # a smaller one than touching a cluster, but not none. Validation reports
-    # an incomplete definition instead, which is the answer it is for.
-    if [[ "${INSTALL_VALIDATE_ONLY:-0}" != "1" && -n "$(cluster_deployment_missing)" ]]; then
-        echo ""
-        info "This cluster has no deployment definition yet. Writing one first."
-        info "  Nothing is applied and no cluster is contacted by this part."
+    # Not under --validate or --dry-run. Both promise to change nothing, and
+    # writing files and pushing them to a remote is a change -- a smaller one
+    # than touching a cluster, but not none. They report an incomplete
+    # definition instead, which is the answer they are for.
+    if [[ "${INSTALL_VALIDATE_ONLY:-0}" != "1" && "${GENTIAN_DRY_RUN:-0}" != "1" ]]; then
+        if [[ -n "$(cluster_deployment_missing)" ]]; then
+            echo ""
+            info "This cluster has no deployment definition yet. Writing one first."
+            info "  Nothing is applied and no cluster is contacted by this part."
+        fi
         ensure_cluster_deployment
     fi
 
@@ -357,13 +353,6 @@ prepare_run() {
 }
 
 # =============================================================================
-# prepare_deployment_run — write this cluster's directory in gentian-deployments
-# and stop.
-#
-# Reads only what the files need: the repository pointers, the kernel domain and
-# the exposure model. No credentials are collected and no cluster is contacted,
-# so this runs against a cluster that does not exist yet.
-# =============================================================================
 # ensure_cluster_deployment — step 0 of every install.
 #
 # The definition this cluster is built from used to be a separate command the
@@ -372,43 +361,33 @@ prepare_run() {
 # itself: if the files are there, there is nothing to prepare; if they are
 # not, ask what they need and write them.
 #
-# One writer, called from both the forward run and --prepare-deployment, so
-# the two cannot drift. It is still true that nothing is applied here and no
-# cluster is contacted -- the questions and the files come first either way.
-#
-# Assumes load_operator_config and prompt_app_repos have run, which both
-# callers do.
+# Nothing is applied here and no cluster is contacted -- the questions and
+# the files come first. Assumes load_operator_config and prompt_app_repos
+# have run.
 ensure_cluster_deployment() {
     resolve_kernel_domain_from_claim   # a re-run reads back what it wrote
     prompt_kernel_domain
 
     # A re-run is a scaffold of whatever is still missing, never a second
-    # interview: the exposure model, the issuer and the mail model are in the
-    # claim already, and the claim is not rewritten. Asking again produced
-    # answers nothing used and, without a terminal, an install that stopped.
+    # interview: the settings are in the claim already, and the claim is not
+    # rewritten. Asking again produced answers nothing used and, without a
+    # terminal, an install that stopped.
     if [[ -f "${GENTIAN_DEPLOYMENTS_PATH}/clusters/${GENTIAN_DEPLOYMENTS_CLUSTER_ID}/kernel/claims/cluster.yaml" ]]; then
-        info "clusters/${GENTIAN_DEPLOYMENTS_CLUSTER_ID}/kernel/claims/cluster.yaml exists; exposure, issuer and mail are read from it."
+        info "clusters/${GENTIAN_DEPLOYMENTS_CLUSTER_ID}/kernel/claims/cluster.yaml exists; its settings are read from it."
     else
         prompt_network_mode
         prompt_issuer_mode
         prompt_mail_mode
+        prompt_cluster_settings
     fi
     scaffold_cluster_deployment
-}
-
-prepare_deployment_run() {
-    load_operator_config
-    load_deployments_cluster_settings
-    prompt_app_repos
-    ensure_cluster_deployment
 }
 
 # =============================================================================
 # prepare_tenant_run — write one tenant's directory and stop.
 #
-# Reads less than prepare_deployment_run: a tenant needs the cluster's identity
-# and its domain, and nothing else. No credentials, no cluster contact — the
-# same reasoning as --prepare-deployment, one level down.
+# Reads less than step 0: a tenant needs the cluster's identity and its
+# domain, and nothing else. No credentials, no cluster contact.
 # =============================================================================
 prepare_tenant_run() {
     load_operator_config
@@ -478,9 +457,6 @@ main() {
     fi
 
     case "${GENTIAN_DIRECTION}" in
-        prepare)
-            prepare_deployment_run
-            ;;
         prepare-tenant)
             prepare_tenant_run
             ;;

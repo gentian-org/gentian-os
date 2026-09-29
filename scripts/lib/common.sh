@@ -971,7 +971,7 @@ load_deployments_cluster_settings() {
     # Read when present, silent when not. Absent is the CORRECT state on a
     # current cluster: nothing writes cluster-settings.env any more -- everything
     # that described the cluster is a field on claims/cluster.yaml, and
-    # --prepare-deployment deliberately stops emitting it (bootstrap.sh). This
+    # step 0 deliberately stops emitting it (bootstrap.sh). This
     # branch survives only so a cluster that still has one keeps working while it
     # migrates.
     #
@@ -1284,12 +1284,98 @@ prompt_mail_mode() {
         #
         #   [ABORT] Install stopped: a command failed and was not handled.
         #     command   : [[ -n "${EXTERNAL_SMTP_HOST:-}" ]]
-        #     call stack: ./install.sh:322 in prepare_deployment_run()
+        #     call stack: ./install.sh:322 in prepare_run()
         #
-        # which stopped --prepare-deployment before it wrote anything at all.
+        # which stopped step 0 before it wrote anything at all.
         if [[ -n "${EXTERNAL_SMTP_HOST:-}" ]]; then
             export EXTERNAL_SMTP_HOST
         fi
+    fi
+    return 0
+}
+
+# _claim_value_valid <value> <valid...> — is value one of the words in valid?
+_claim_value_valid() {
+    local value="$1" valid="$2"
+    case " ${valid} " in *" ${value} "*) return 0 ;; esac
+    return 1
+}
+
+# prompt_claim_value <VAR> <label> <default> [valid] — one claim setting.
+#
+# Every setting an operator can decide is asked, with its default already in
+# the answer: Enter takes it. An environment value wins without a question
+# (that is how a re-run and an unattended run answer), a non-interactive run
+# takes the default, and an answer outside the valid list is asked again.
+# An empty default with an empty answer means "leave it unset" -- the claim
+# then carries the field commented with what the cluster does instead.
+prompt_claim_value() {
+    local var="$1" label="$2" default="$3" valid="${4:-}" v current
+    current="${!var:-}"
+    if [[ -n "${current}" ]]; then
+        if [[ -n "${valid}" ]] && ! _claim_value_valid "${current}" "${valid}"; then
+            error "${var}=${current} is invalid. One of: ${valid}."
+            exit 1
+        fi
+        info "Using ${var}=${current}"
+        export "${var?}"
+        return 0
+    fi
+    if [[ "${GENTIAN_NONINTERACTIVE:-0}" == "1" ]]; then
+        if [[ -n "${default}" ]]; then
+            printf -v "${var}" '%s' "${default}"
+            export "${var?}"
+        fi
+        return 0
+    fi
+    local choices=""
+    [[ -n "${valid}" ]] && choices=" [${valid// /|}]"
+    while true; do
+        read -rp "  ${label}${choices} (default: ${default:-unset}): " v
+        v="${v:-${default}}"
+        if [[ -z "${v}" || -z "${valid}" ]] || _claim_value_valid "${v}" "${valid}"; then
+            break
+        fi
+        warn "Invalid value '${v}'. One of: ${valid}."
+    done
+    if [[ -n "${v}" ]]; then
+        printf -v "${var}" '%s' "${v}"
+        export "${var?}"
+    fi
+    return 0
+}
+
+# prompt_cluster_settings — the rest of what the Cluster claim decides.
+#
+# The exposure model, the issuer and the mail model are asked by their own
+# functions above because they gate what else is asked. Everything else the
+# operator can meaningfully choose is here, each with the default the XRD
+# applies, so the interview IS the review: nothing is left to "edit the file
+# afterwards", which under AD-2 is not a thing an operator does casually.
+prompt_cluster_settings() {
+    echo ""
+    info "Cluster settings — Enter takes the default shown."
+    prompt_claim_value PLATFORM "platform (blank = detect from the nodes)" "" \
+        "self-hosted openstack infomaniak hetzner aws gcp azure none"
+    prompt_claim_value STORAGE_CLASS "storageClass (blank = the cluster default)" ""
+    prompt_claim_value TENANCY_MODE "tenancyMode" multi "multi single"
+    prompt_claim_value SECRET_MODE "secretMode" derived "derived random"
+    if [[ "${CERT_ISSUER_MODE:-acme-dns01}" == acme-* ]]; then
+        # Staging on dev: a dev cluster is rebuilt often, and Let's Encrypt
+        # allows five duplicate certificates per name per week.
+        local acme_default=production
+        [[ "${GENTIAN_DEPLOYMENTS_STAGE:-dev}" == "dev" ]] && acme_default=staging
+        prompt_claim_value ACME_ENV "certificates.acmeEnv" "${acme_default}" "staging production"
+    fi
+    if [[ "${CERT_ISSUER_MODE:-acme-dns01}" == "acme-dns01" ]]; then
+        prompt_claim_value DNS_PROVIDER "certificates.dnsProvider" cloudflare \
+            "cloudflare route53 clouddns azuredns rfc2136 hetzner infomaniak"
+    fi
+    prompt_claim_value BACKUP_ESCROW_IDENTITY \
+        "backup.escrowIdentity (also keep the backup key in OpenBao)" true "true false"
+    prompt_claim_value LLM_SUPPORT "llm.enabled (this cluster serves models)" false "true false"
+    if [[ "${LLM_SUPPORT:-false}" == "true" ]]; then
+        prompt_claim_value GPU_ACCELERATION "llm.gpuAcceleration (the cluster has GPUs)" false "true false"
     fi
     return 0
 }
@@ -1401,7 +1487,7 @@ _is_ip_address() {
 #
 # Only auto-detection would fill this in otherwise, and that reads the first
 # node's InternalIP from a running cluster: wrong for the public address DNS
-# points at, and unavailable altogether to --prepare-deployment, which writes
+# points at, and unavailable altogether to step 0, which writes
 # cluster-settings.env without contacting a cluster.
 _prompt_node_ip() {
     [[ "${NETWORK_MODE}" == "static-ip" ]] || return 0

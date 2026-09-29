@@ -1186,8 +1186,8 @@ scaffold_tenant_deployment() {
 
     if [[ ! -d "${cluster_dir}/kernel" ]]; then
         error "Cluster ${cluster} has no kernel/ directory in ${GENTIAN_DEPLOYMENTS_PATH}."
-        error "  A tenant belongs to a cluster that exists. Run this first:"
-        error "    ./install.sh --prepare-deployment"
+        error "  A tenant belongs to a cluster that exists. Install it first:"
+        error "    ./install.sh"
         return 1
     fi
 
@@ -1296,7 +1296,7 @@ _print_tenant_next_steps() {
 # scaffold_cluster_deployment — write this cluster's kernel/ directory in
 # gentian-deployments: claims/{cluster,infra-data,suze}.yaml and values.yaml,
 # generated from KERNEL_DOMAIN and GENTIAN_DEPLOYMENTS_STAGE. Reached through
-# `install.sh --prepare-deployment`.
+# step 0 of `install.sh`.
 #
 # Per-file checks, not a directory-level one: an existing file is never
 # overwritten, so re-running converges a partially-written directory and
@@ -1394,17 +1394,21 @@ _claim_cluster_fields() {
     printf '  certificates:\n'
     printf '    issuerMode: %s\n' "${im}"
     if [[ "${im}" == acme-* ]]; then
-        # Staging on dev, production everywhere else. A dev cluster is rebuilt
-        # often and Let's Encrypt allows five duplicate certificates per name
-        # per week, which one bad afternoon exhausts — and the rate limit is per
-        # name, so it outlives the cluster that spent it.
-        if [[ "${st}" == "dev" ]]; then
+        # Asked by prompt_cluster_settings; staging on dev unless answered
+        # otherwise. A dev cluster is rebuilt often and Let's Encrypt allows
+        # five duplicate certificates per name per week, which one bad
+        # afternoon exhausts — and the rate limit is per name, so it outlives
+        # the cluster that spent it.
+        local ae="${ACME_ENV:-}"
+        if [[ -z "${ae}" ]]; then
+            ae=production
+            [[ "${st}" == "dev" ]] && ae=staging
+        fi
+        if [[ "${ae}" == "staging" ]]; then
             printf '    # staging: untrusted certificates, generous rate limits.\n'
             printf '    # Switch to production once the names are settled.\n'
-            printf '    acmeEnv: staging\n'
-        else
-            printf '    acmeEnv: production\n'
         fi
+        printf '    acmeEnv: %s\n' "${ae}"
     fi
     if [[ "${im}" == "acme-dns01" ]]; then
         printf '    # cloudflare, route53, clouddns, azuredns, rfc2136, hetzner,\n'
@@ -1515,8 +1519,13 @@ _claim_cluster_fields() {
     printf '  # the kit -- and anyone who reaches OpenBao as one can read every bundle.\n'
     printf '  # Set false to keep it in the kit alone: nothing the cluster holds can then\n'
     printf '  # open a bundle, and losing every copy of the kit loses every backup.\n'
-    printf '  # backup:\n'
-    printf '  #   escrowIdentity: true\n'
+    if [[ "${BACKUP_ESCROW_IDENTITY:-true}" == "false" ]]; then
+        printf '  backup:\n'
+        printf '    escrowIdentity: false\n'
+    else
+        printf '  # backup:\n'
+        printf '  #   escrowIdentity: true\n'
+    fi
 
     if [[ "${LLM_SUPPORT:-false}" == "true" ]]; then
         printf '  llm:\n'
@@ -1948,11 +1957,9 @@ EOF
     gentian_commit_cluster_deployment "${kernel_dir}" "${cluster}"
 
     echo ""
-    info "Next:"
-    info "  1. Read clusters/${cluster}/kernel — the claims are what the cluster"
-    info "     becomes, including its exposure and mail model. Edit and re-run"
-    info "     this to commit any change."
-    info "  2. Run ./install.sh"
+    info "clusters/${cluster}/kernel is what this cluster becomes. To change a"
+    info "  setting later, edit it there and run ./install.sh: step 0 commits the"
+    info "  edit signed and the cluster reconciles."
 }
 
 # =============================================================================
@@ -2201,9 +2208,7 @@ require_cluster_deployment() {
     error "  Missing: ${missing[*]}"
     error "  Path:    ${kernel_dir}"
     error ""
-    error "  Generate them, review them, then install:"
-    error "    ./install.sh --prepare-deployment"
-    error "    (edit, commit and push clusters/${cluster}/kernel)"
+    error "  An install writes them first, asking for each setting:"
     error "    ./install.sh"
     error ""
     error "  If this cluster's configuration lives elsewhere, check"

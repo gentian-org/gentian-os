@@ -80,7 +80,7 @@ gentian_signing_key_id() {
 
 # gentian_ensure_signing_key <role> — make the key if this cluster has none.
 #
-# Idempotent by uid: a second --prepare-deployment must not mint a second key,
+# Idempotent by uid: a second install run must not mint a second key,
 # because the key id is written into the claim and into Argo CD's keyring, and
 # a cluster that trusted two ids for one role would be a cluster where nobody
 # could say which key was supposed to be able to write.
