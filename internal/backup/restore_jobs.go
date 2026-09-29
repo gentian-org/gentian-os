@@ -90,13 +90,11 @@ rm -f /tmp/identity`, IdentityEnvVar, plain, cipher)
 # Deliberately NOT apk-installing "mc": on Alpine that package is Midnight
 # Commander, which installs a binary of the same name, satisfies any "is mc
 # present" check, and then fails on the first alias call with something
-# unrecognisable. The MinIO client is fetched to its own path instead.
-MCLI=/usr/local/bin/mcli
-if [ ! -x "${MCLI}" ]; then
-  wget -qO "${MCLI}" https://dl.min.io/client/mc/release/linux-amd64/mc \
-    || { echo "ERROR: could not fetch the MinIO client" >&2; exit 1; }
-  chmod +x "${MCLI}"
-fi
+# unrecognisable. The MinIO client is staged at its own path by the
+# mc-client init container, copied out of the pinned image the capture Jobs
+# already run.
+MCLI=%[7]s
+[ -x "${MCLI}" ] || { echo "ERROR: the MinIO client was not staged at ${MCLI}" >&2; exit 1; }
 "${MCLI}" alias set gentian "${MINIO_ENDPOINT}" "${MINIO_ACCESS_KEY}" "${MINIO_SECRET_KEY}"
 
 "${MCLI}" cp "%[2]s" '%[3]s'
@@ -112,7 +110,7 @@ fi
 [ -s '%[6]s' ] || { echo "ERROR: decryption produced no output" >&2; exit 1; }
 rm -f '%[3]s'
 echo "fetched and decrypted %[4]s"`,
-		encryptBootstrap(Encryption{Mode: d.Mode}), remote, cipher, artefact, decrypt, plain)
+		encryptBootstrap(Encryption{Mode: d.Mode}), remote, cipher, artefact, decrypt, plain, stagedMCLI)
 
 	container := corev1.Container{
 		Name:         "fetch",
@@ -408,7 +406,29 @@ echo "restored ${restored} user(s) WITHOUT credentials - they must be sent a pas
 
 func quotedRealm(realm string) string { return shellSingleQuote(realm) }
 
+// stagedMCLI is where the mc-client init container leaves the MinIO client for
+// the fetch step. It lives on the shared work volume, so it outlasts the
+// container that put it there.
+const stagedMCLI = workDir + "/mcli"
+
+// stageMinIOClient copies the MinIO client out of the image the capture Jobs
+// already pin. The fetch step used to download it from dl.min.io, and when
+// MinIO retired that path (410 Gone) every restore failed before reading a
+// byte — while backups, which run mcImage directly, kept succeeding. A restore
+// that depends on a third-party download URL at the moment it is needed is
+// the wrong dependency for the one Job that must work on a bad day.
+func stageMinIOClient() corev1.Container {
+	return corev1.Container{
+		Name:         "mc-client",
+		Image:        mcImage,
+		Command:      []string{"/bin/sh", "-c"},
+		Args:         []string{fmt.Sprintf("cp /usr/bin/mc %[1]s && chmod +x %[1]s", stagedMCLI)},
+		VolumeMounts: []corev1.VolumeMount{{Name: "work", MountPath: workDir}},
+	}
+}
+
 // restoreJob assembles a fetch/decrypt init step and the loading container.
 func restoreJob(p JobParams, initContainers []corev1.Container, main corev1.Container, extraVolumes []corev1.Volume) *batchv1.Job {
+	initContainers = append([]corev1.Container{stageMinIOClient()}, initContainers...)
 	return newJob(p, []corev1.Container{main}, initContainers, extraVolumes)
 }

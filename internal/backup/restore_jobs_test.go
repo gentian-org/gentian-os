@@ -203,8 +203,8 @@ func TestRestoreDoesNotConfuseMinioClientWithMidnightCommander(t *testing.T) {
 		strings.Contains(script, "apk add mc") {
 		t.Errorf("restore apk-installs 'mc', which is Midnight Commander on Alpine:\n%s", script)
 	}
-	if !strings.Contains(script, "MCLI=/usr/local/bin/mcli") {
-		t.Errorf("restore does not fetch the MinIO client to its own path:\n%s", script)
+	if !strings.Contains(script, "MCLI="+stagedMCLI) {
+		t.Errorf("restore does not use the MinIO client from its own path:\n%s", script)
 	}
 	// And every call goes through that path, not a bare `mc`.
 	for _, line := range strings.Split(script, "\n") {
@@ -345,5 +345,50 @@ func TestPostgresRestoreUsesTheRoleThatExists(t *testing.T) {
 		"corp_docmost_ce").Spec.Template.Spec.Containers[0].Args[0]
 	if !strings.Contains(appScript, "'corp_docmost-ce'") {
 		t.Errorf("an app's role is no longer derived from its name:\n%s", appScript)
+	}
+}
+
+// The fetch step downloaded the MinIO client from dl.min.io. When MinIO retired
+// that path every restore failed with 410 Gone before reading a byte, while
+// backups kept succeeding — so the failure surfaced only on the day a restore
+// was needed. No restore Job may reach the internet for a tool; the client is
+// copied out of the pinned image, before fetch runs, onto the volume fetch reads.
+func TestRestoreStagesTheMinIOClientFromThePinnedImage(t *testing.T) {
+	jobs := map[string]*batchv1.Job{
+		"postgres": PostgresRestoreJob(params(), recipientDecryption(), "demo_app"),
+		"mariadb":  MariaDBRestoreJob(params(), recipientDecryption(), "demo_app"),
+		"s3":       S3RestoreJob(params(), recipientDecryption(), "demo-app"),
+		"volume":   VolumeRestoreJob(params(), recipientDecryption(), "data"),
+		"realm":    RealmImportJob(params(), recipientDecryption(), "demo"),
+	}
+	for name, job := range jobs {
+		inits := job.Spec.Template.Spec.InitContainers
+		stage, fetch := -1, -1
+		for i, c := range inits {
+			for _, arg := range append(append([]string{}, c.Command...), c.Args...) {
+				if strings.Contains(arg, "wget") || strings.Contains(arg, "dl.min.io") || strings.Contains(arg, "curl ") {
+					t.Errorf("%s: init container %q downloads at restore time:\n%s", name, c.Name, arg)
+				}
+			}
+			switch c.Name {
+			case "mc-client":
+				stage = i
+				if c.Image != mcImage {
+					t.Errorf("%s: mc-client runs %q, not the pinned %q", name, c.Image, mcImage)
+				}
+				var mountsWork bool
+				for _, m := range c.VolumeMounts {
+					mountsWork = mountsWork || (m.Name == "work" && m.MountPath == workDir)
+				}
+				if !mountsWork {
+					t.Errorf("%s: mc-client does not write to the work volume fetch reads", name)
+				}
+			case "fetch":
+				fetch = i
+			}
+		}
+		if stage < 0 || fetch < 0 || stage > fetch {
+			t.Errorf("%s: mc-client (index %d) must run before fetch (index %d)", name, stage, fetch)
+		}
 	}
 }
