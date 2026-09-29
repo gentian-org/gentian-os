@@ -8,10 +8,9 @@
 apiVersion: gentianos.io/v1alpha1
 kind: Cluster
 metadata:
-  name: test-v5-llm
+  name: test-llm
   namespace: default
 spec:
   kernelDomain: example.org
-  layout: v5
   llm:
     enabled: true

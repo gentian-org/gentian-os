@@ -15,7 +15,6 @@ metadata:
   namespace: default
 spec:
   kernelDomain: example.org
-  layout: v5
   networkMode: tunnel
   mail:
     serviceMode: system

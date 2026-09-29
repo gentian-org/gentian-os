@@ -22,7 +22,7 @@ CROSSPLANE_IMAGE ?= xpkg.crossplane.io/crossplane/crossplane:$(CROSSPLANE_CLI_VE
 KUBEBUILDER_ASSETS ?= /tmp/envtest-bins/k8s/1.32.0-linux-amd64
 export KUBEBUILDER_ASSETS
 
-.PHONY: all build generate manifests test lint docker-build clean install-plugin uninstall-plugin validate-steps gen-credentials gen-authz-model check-credentials lint-cluster-config-keys lint-rbac-coverage lint-marker-ascii test-bootstrap-token-classification test-cert-manager-dns01-args lint-composed-resource-names lint-sequencer-targets lint-eso-readable-paths lint-template-placeholders lint-portability lint-image-digests check-render-fixtures lint-resolvable lint-unreachable lint-bootstrap-apps lint-step-contracts lint-job-scripts lint-claim-defaults lint-live-identifiers lint-password-schemes test-policy test-policy-openbao test-policy-authz verify-authz-vocabulary test-director-contract run-director-dev lint-namespace-layout verify-claim-applied verify-argocd-config verify-image-updates gen-provider-rbac lint-provider-rbac lint-credential-validators lint-credential-catalogue
+.PHONY: verify all build generate manifests test lint docker-build clean install-plugin uninstall-plugin validate-steps gen-credentials gen-authz-model check-credentials lint-cluster-config-keys lint-rbac-coverage lint-marker-ascii test-bootstrap-token-classification test-cert-manager-dns01-args lint-composed-resource-names lint-sequencer-targets lint-eso-readable-paths lint-template-placeholders lint-portability lint-image-digests check-render-fixtures lint-resolvable lint-unreachable lint-bootstrap-apps lint-step-contracts lint-job-scripts lint-claim-defaults lint-live-identifiers lint-password-schemes test-policy test-policy-openbao test-policy-authz verify-authz-vocabulary test-director-contract run-director-dev lint-namespace-layout verify-claim-applied verify-argocd-config verify-image-updates gen-provider-rbac lint-provider-rbac lint-credential-validators lint-credential-catalogue
 
 all: generate build test
 
@@ -121,6 +121,18 @@ tidy:
 
 ## Run every linter the CI Lint job runs (Go, YAML, shell)
 lint: lint-go lint-yaml lint-shell
+
+## Everything CI runs, in one target.
+##
+## It exists because of the way the v4 removal was verified: make lint, make
+## test and make test-unit-render all passed, and the one target NOT run was
+## make test-unit -- which CI ran, and which caught a schema fixture still
+## carrying the field the XRD had just lost. A local gate set that is a
+## subset of CI's is a gate set that reports green on work CI will reject.
+verify: verify-gen lint validate-steps test test-unit
+	@bash install.sh --explain >/dev/null
+	@printf '\n\033[0;32mEverything CI runs is green here.\033[0m\n'
+
 
 ## Run golangci-lint (install from https://golangci-lint.run/usage/install/)
 lint-go:

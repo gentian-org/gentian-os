@@ -1,19 +1,18 @@
-# A v5 cluster running the platform's own mail stack.
+# A cluster running the platform's own mail stack.
 #
-# This was an INVALID fixture: v5 had no step that deployed Postfix or Dovecot,
-# so the opt-in was refused at admission rather than accepted and silently
-# unhonoured. The Cluster claim composes system-mail and system-mail-dmz now
+# This was an INVALID fixture: there was no step that deployed Postfix or
+# Dovecot, so the opt-in was refused at admission rather than accepted and
+# silently unhonoured. The Cluster claim composes system-mail and system-mail-dmz now
 # and the appsets deploy both, so the refusal is gone and this is the fixture
 # that proves it -- a rule removed without a case moving with it is a rule
 # nobody notices came back.
 apiVersion: gentianos.io/v1alpha1
 kind: Cluster
 metadata:
-  name: test-v5-system-mail
+  name: test-system-mail
   namespace: default
 spec:
   kernelDomain: example.org
-  layout: v5
   networkMode: static-ip
   nodeIp: 198.51.100.10
   mail:

@@ -5,11 +5,10 @@
 apiVersion: gentianos.io/v1alpha1
 kind: Cluster
 metadata:
-  name: test-v5-defaults
+  name: test-defaults
   namespace: default
 spec:
   kernelDomain: example.org
-  layout: v5
   mail:
     serviceMode: external
     host: smtp.example.org

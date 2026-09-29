@@ -112,11 +112,15 @@ none of it blocks the purge.
 
 
 - A catalogue source has to publish `index.yaml` for a cluster to browse it.
-  gentian-apps' CI now builds the flat, https-served shape on every run and
-  deploys it to GitHub Pages on `main` and `develop`
-  (`scripts/build-catalogue-source.py`). **That job fails until Pages is
-  enabled for the repository**, with "GitHub Actions" as the source — one
-  setting, and nothing else in the pipeline depends on it.
+  gentian-apps' CI builds the flat, https-served shape on every run
+  (`scripts/build-catalogue-source.py`) and deploys it to GitHub Pages **from
+  `main` only** — one repository has one Pages site, so publishing from
+  develop as well would make the catalogue whichever branch ran last. Pages is
+  enabled. The catalogue therefore follows releases: until the work merges to
+  `main`, a cluster that wants the in-progress one declares no source and
+  syncs it wholesale from git, as every cluster did before AD-3.
+  `https://gentian-org.github.io/gentian-apps` is the URL for
+  `spec.catalogue.sources[].url`.
 - The cluster's catalogue view lists; it does not install. Installing stays the
   tenant's own act from their own screens, because a third place that installs
   apps — after the store and the desktop — is a third place to keep correct.
