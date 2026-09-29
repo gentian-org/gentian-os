@@ -883,10 +883,12 @@ spec:
       frontendUrl: https://id.platform.example.test/auth
     browserFlow: browser
     displayName: Render Fixture
+    duplicateEmailsAllowed: true
     enabled: true
     loginTheme: gentian
     realm: render-fixture
     registrationAllowed: false
+    resetPasswordAllowed: true
     securityDefenses:
     - headers:
       - contentSecurityPolicy: ""
@@ -897,6 +899,19 @@ spec:
         xFrameOptions: ""
         xRobotsTag: none
         xXssProtection: 1; mode=block
+    smtpServer:
+    - auth:
+      - passwordSecretRef:
+          key: smtp_password
+          name: mail-submission-render-fixture
+          namespace: platform-kernel
+        username: noreply@render-fixture.platform.example.test
+      from: noreply@platform.example.test
+      fromDisplayName: Gentian
+      host: mail.platform.example.test
+      port: "587"
+      ssl: false
+      starttls: true
     ssoSessionIdleTimeout: 12h0m0s
     ssoSessionMaxLifespan: 12h0m0s
   providerConfigRef:

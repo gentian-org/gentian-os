@@ -83,6 +83,16 @@ spec:
         value: "{{ .Values.llmEnabled }}"
       - name: llmGpuAcceleration
         value: "{{ .Values.llmGpuAcceleration }}"
+      # Whether the claim lists any spec.llm.providers, which gates the
+      # ExternalSecret carrying their API keys. Every value the appsets chart
+      # substitutes has to be relayed here explicitly — it is a separate chart
+      # reached through this Application, so a value set on the bootstrap chart
+      # and not listed here arrives as nil, and `toString nil` renders the
+      # literal "<nil>". That is what reached the LLM Application as
+      # externalProviders: <nil>, which is not "true", so the ExternalSecret was
+      # never rendered and every provider reported a missing API key.
+      - name: llmExternalProviders
+        value: "{{ .Values.llmExternalProviders }}"
       - name: mailEgressHost
         value: "{{ .Values.mailEgressHost }}"
       # Whether the MetalLB Kyverno exception (raw/05b-metallb-exception.yaml)

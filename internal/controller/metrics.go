@@ -107,5 +107,6 @@ func init() {
 		operatorCRFailed,
 		tenantExportQuiesceDuration,
 		tenantExportTotal,
+		dnsRecordPublished,
 	)
 }

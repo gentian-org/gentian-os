@@ -135,6 +135,8 @@ func main() {
 		KernelDomain:             os.Getenv("KERNEL_DOMAIN"),
 		TenancyMode:              os.Getenv("TENANCY_MODE"),
 		MailServiceMode:          os.Getenv("MAIL_SERVICE_MODE"),
+		MailAdminContact:         os.Getenv("MAIL_ADMIN_CONTACT"),
+		MailRecipientPolicy:      os.Getenv("MAIL_RECIPIENT_POLICY"),
 		TenantDNS01ClusterIssuer: os.Getenv("TENANT_DNS01_CLUSTER_ISSUER"),
 		KernelRealm:              kernelRealmOrDefault(os.Getenv("KERNEL_REALM")),
 		Ingress:                  buildEdgeIngress(),
@@ -162,6 +164,25 @@ func main() {
 			Interval:   interval,
 		}); err != nil {
 			setupLog.Error(err, "unable to add metering worker to manager")
+			os.Exit(1)
+		}
+	}
+
+	// DNS publication: whether the records the platform requests through
+	// DNSEndpoints are actually served. external-dns can decline a record in
+	// silence — it did, for the kernel domain's SPF and MX — and without this the
+	// first report of it is a receiving mail server's verdict. Off only by an
+	// explicit env var, because silence is the failure it exists to end.
+	if os.Getenv("DNS_PUBLICATION_VERIFY") != "false" {
+		if err := mgr.Add(&controller.DNSPublicationVerifier{
+			Client: mgr.GetClient(),
+			// The core-API recorder, deliberately. Its replacement writes
+			// events.k8s.io/v1 Events, which the operator's RBAC does not grant;
+			// the existing rule covers core Events. controller-runtime marks its
+			// own call to this the same way.
+			Recorder: mgr.GetEventRecorderFor("dns-publication-verifier"), //nolint:staticcheck
+		}); err != nil {
+			setupLog.Error(err, "unable to add DNS publication verifier to manager")
 			os.Exit(1)
 		}
 	}

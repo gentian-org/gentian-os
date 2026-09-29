@@ -48,7 +48,18 @@ const (
 	KeycloakAdminSecret = "keycloak-admin"
 
 	// mcImage carries the MinIO client used to upload every artefact.
-	mcImage = "minio/mc:RELEASE.2025-04-03T17-07-56Z"
+	// quay.io, not Docker Hub, and a tag that still exists.
+	//
+	// MinIO retired the older mc tags from Docker Hub: pulling
+	// minio/mc:RELEASE.2025-04-03T17-07-56Z now fails with
+	//   pull access denied, repository does not exist or may require authorization
+	// which reads as a credentials problem and is not one — the tag is simply gone.
+	// The Job then sits in ImagePullBackOff, and because tenant provisioning waits
+	// on that Job, the whole tenant stops short of Ready: storage never finishes, so
+	// the stages behind it never run. Both tenants on this cluster were stuck there.
+	//
+	// quay.io is where MinIO publishes now, so it is the registry to track.
+	mcImage = "quay.io/minio/mc:RELEASE.2025-08-13T08-35-41Z"
 
 	// workDir is the scratch mount a dump is staged in before upload.
 	//

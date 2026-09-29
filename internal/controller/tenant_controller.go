@@ -239,6 +239,24 @@ type TenantReconciler struct {
 	// TenancyMode controls default app URL shape: multi → {sub}.{tenant}.{kernel};
 	// single → {sub}.{kernel}. Sourced from TENANCY_MODE (default multi).
 	TenancyMode string
+	// MailAdminContact is where abuse@ and postmaster@ are delivered, for every
+	// domain this cluster accepts mail for. Sourced from MAIL_ADMIN_CONTACT.
+	//
+	// An address OUTSIDE this cluster's domains, and empty until someone says so.
+	// Both role addresses already arrive — the mailbox map is a catch-all — but
+	// Dovecot only lets a Keycloak user open a mailbox, and neither "abuse" nor
+	// "postmaster" is one. Left empty, the mail keeps landing where it lands
+	// today and syncRoleAliasWarning says so; there is no local address worth
+	// defaulting to, because every one of them is just as unreadable.
+	MailAdminContact string
+	// MailRecipientPolicy decides whether an address nobody owns is accepted:
+	// catchall (default), observe, or strict. Sourced from
+	// MAIL_RECIPIENT_POLICY.
+	//
+	// Anything other than observe or strict leaves the catch-all in place, so an
+	// unset or misspelled value keeps today's behaviour rather than rejecting
+	// mail on the strength of a typo.
+	MailRecipientPolicy string
 	// MailServiceMode is the CLUSTER's mail stack — kernel or external — from
 	// the Cluster claim's mail.serviceMode. Sourced from MAIL_SERVICE_MODE.
 	//

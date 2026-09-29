@@ -1498,6 +1498,48 @@ spec:
                         serviceAccountName: {{ $pijSA }}
                         {{- end }}
                         restartPolicy: OnFailure
+                        {{- if $pijPVCClaim }}
+                        {{- /* Run where the volume already is.
+
+                             readOnlyPVC mounts the app's OWN claim, and an app's
+                             claim is ReadWriteOnce on every StorageClass this
+                             platform installs — csi-cinder-sc-retain included. A
+                             ReadWriteOnce volume attaches to one node, so a Job
+                             scheduled onto the other node cannot mount it. The pod
+                             does not fail: it sits in ContainerCreating, which no
+                             backoffLimit bounds and no reconcile clears, so the
+                             bootstrap never runs and nothing reports an error.
+
+                             That is not theoretical. On ifk-w4h both tenants lost
+                             the coin flip and their open-webui post-install sat
+                             wedged for six days, so the tenant administrator was
+                             never seeded in either.
+
+                             Required, not preferred: preferred would schedule
+                             anywhere when the app pod is briefly unschedulable and
+                             wedge exactly as before. Unsatisfiable leaves the Job
+                             Pending instead — visible, and retried by the scheduler
+                             the moment the app pod is running.
+
+                             Matched on the platform's own labels, which the
+                             operator puts on every app workload, so this does not
+                             depend on what an upstream chart happens to label its
+                             pods. The component exclusion keeps a previous
+                             post-install pod from being the thing anchored to. */}}
+                        affinity:
+                          podAffinity:
+                            requiredDuringSchedulingIgnoredDuringExecution:
+                              - topologyKey: kubernetes.io/hostname
+                                labelSelector:
+                                  matchLabels:
+                                    gentianos.io/tenant: {{ $tenant }}
+                                    gentianos.io/app: {{ $app }}
+                                  matchExpressions:
+                                    - key: gentianos.io/component
+                                      operator: NotIn
+                                      values:
+                                        - post-install
+                        {{- end }}
                         securityContext:
                           seccompProfile:
                             type: RuntimeDefault

@@ -57,6 +57,19 @@ relayPort: "587"
 # Publishing an MX record before this exists is what makes mail "disappear":
 # senders resolve the record, fail to connect, and retry for days before
 # bouncing.
+# Whether submission (587) is published alongside the MX on the same load
+# balancer, so that mail clients outside the cluster can send.
+#
+# It shares the MX's Service and therefore its address — no second load balancer
+# and no second bill. It is safe to publish only because submission now requires
+# a credential AND requires TLS before offering to take one
+# (smtpd_tls_auth_only), so what reaches the internet is an authenticated
+# endpoint rather than the open relay this stack started with.
+#
+# Turn it off on a cluster whose users only ever send through in-cluster apps.
+submissionIngress:
+  enabled: true
+
 smtpIngress:
   enabled: true
   # Pin the address when the MX record already names one, so a rebuild does not
@@ -98,6 +111,84 @@ mailServiceMode: external
 # The node label the pin uses. A platform convention rather than a per-cluster
 # value — label the node holding the floating IP with it set to "true".
 egressNodeLabel: gentianos.io/mail-egress
+
+# The networks Postfix treats as trusted, i.e. whose clients may relay to any
+# destination. Rendered into POSTFIX_mynetworks.
+#
+# It MUST cover the cluster pod range and NOTHING else. The image's default is
+#   127.0.0.0/8,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16
+# and that default made this an open relay the moment smtpIngress published port
+# 25: the Octavia load balancer connects to the Pod from its own address on the
+# node network (172.21.1.188 here), which falls inside 172.16.0.0/12 — so EVERY
+# client on the internet arrived pre-trusted, and permit_mynetworks in
+# smtpd_relay_restrictions let them relay anywhere. The smtpd_recipient_restrictions
+# below do not save it: relay restrictions are evaluated first, and a PERMIT there
+# ends the check. Spammers found it, sent DKIM-signed mail as the kernel domain,
+# and got the egress IP listed on the Spamhaus SBL.
+#
+# Excluding 172.16.0.0/12 and 192.168.0.0/16 is the whole point: pods live in
+# 10.0.0.0/8 (kubeadm's podSubnet and serviceSubnet defaults, 10.64.0.0/12 and
+# 10.96.0.0/12 on Infomaniak), while node and load-balancer networks live in the
+# other two ranges. Trusting the node network cannot be distinguished from
+# trusting the internet, because inbound mail is proxied from it.
+#
+# This is now the FALLBACK, not the mechanism. The operator derives the Pod CIDRs
+# from the cluster's own Nodes and writes them to the postfix-kernel-virtual-mailbox-maps
+# ConfigMap, which overrides this value wherever it can be derived — see
+# internal/controller/mail_trustednetworks.go. The value here applies only on a
+# cluster whose CNI leaves spec.podCIDR unset (Calico with its own IPAM is the
+# usual case).
+#
+# It FAILS CLOSED: loopback only. It used to be 10.0.0.0/8, chosen to be wide
+# enough to cover any cluster's Pods — which on a provider that also puts nodes
+# and load balancers inside 10.0.0.0/8 trusts the load balancer, and through it
+# every client on the internet. That is the open relay this chart already had
+# once. A value that cannot be derived should cost unauthenticated in-cluster
+# senders their relay, loudly, rather than risk handing it to strangers quietly:
+#   554 5.7.1 <user@domain>: Relay access denied
+# Such a cluster sets its real Pod range here, or has its senders authenticate.
+#
+# Senders that authenticate need none of this: Keycloak realms present a
+# credential Dovecot verifies (internal/controller/keycloak_tenant_smtp.go), and
+# that is the grant intended to replace this one entirely.
+trustedNetworks: "127.0.0.0/8"
+
+# Require authentication to relay. See smtpd_relay_restrictions in
+# templates/configmap.yaml for what each setting does and how to tell when it is
+# safe to turn on.
+#
+# Off by default, not because on is wrong but because not every catalogue app
+# authenticates yet. At the time this was written: Nextcloud and Docmost send
+# credentials but STARTTLS to the in-cluster Service name, which the public
+# certificate does not cover; Nextcloud Mail's per-user provisioning sends none;
+# OpenProject offers CRAM-MD5, which Dovecot does not; Element uses a hardcoded
+# identity and hostname. Turning this on before those are fixed takes their
+# outbound mail down. The reject_warning log names every one still relying on
+# the address it connects from.
+submission:
+  requireAuthentication: false
+
+# TLS.
+#
+# The certificate is NOT issued here. It is the cluster's existing wildcard —
+# the same publicly-trusted certificate the gateway serves — because every name
+# that matters for mail is a public one: mail.<kernelDomain> for the MX and for
+# submission, imap.<kernelDomain> for retrieval. A wildcard already covers them.
+#
+# Issuing an internal one instead was the first design and it was wrong twice
+# over: the gentian-ca ClusterIssuer it needed is defined in this repo but
+# applied on no cluster (issuerMode defaults to acme-dns01), so the Certificate
+# would never become Ready and the Pod would wait in ContainerCreating with mail
+# down; and a privately-signed certificate has to be distributed to every client
+# before any of them will speak to it — Keycloak's Java truststore, Nextcloud's
+# PHP openssl.cafile, and each app added later. A publicly-trusted certificate
+# needs none of that, on any cluster, for any client.
+#
+# Empty disables TLS. The Secret must exist in servicesNamespace before the
+# Release syncs, because the chart mounts it and a missing Secret holds the Pod
+# rather than failing it.
+tls:
+  secretName: wildcard-tls
 
 # Storage for the DKIM keys. A handful of 2048-bit keys; the size is almost
 # irrelevant, the persistence is not.

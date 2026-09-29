@@ -48,7 +48,33 @@ policy: sync
 # it registered itself. Without a registry it assumes ownership of everything
 # matching the domain filter, which is how unrelated records get removed.
 registry: txt
-txtPrefix: _extdns.
+# The record type goes INTO the prefix, because otherwise the zone apex can never
+# be owned.
+#
+# registry/mapper ToTXTName() builds each ownership record's name. Without
+# %{record_type} in the prefix it glues "<type>-" onto the first label of the
+# name being owned:
+#
+#   _extdns.  +  gentian.cloud  ->  _extdns.a-gentian.cloud
+#
+# which is a name under a-gentian.cloud — a different domain, outside the zone.
+# It cannot be written, so no apex record is ever owned, and external-dns "only
+# add[s] creates if the external dns has ownership claim on the domain": SPF, MX
+# and the apex A that its own HTTPRoute asks for were all skipped on every cycle,
+# silently, while the log said "All records are already up to date". Every
+# subdomain worked, because a subdomain has a label of its own to glue onto —
+# which is what made this look like anything but a naming problem.
+#
+# With the template the type moves into the prefix and the name stays whole:
+#
+#   _extdns-%{record_type}.  +  gentian.cloud  ->  _extdns-a.gentian.cloud
+#
+# CHANGING THIS ON A LIVE CLUSTER NEEDS A MIGRATION, run BEFORE the new value is
+# deployed: external-dns reads ownership only under the prefix it is configured
+# with, so switching first leaves it owning nothing until the markers exist under
+# the new names. scripts/tools/extdns-reown.sh migrate-prefix writes them.
+# A fresh cluster needs nothing.
+txtPrefix: "_extdns-%{record_type}."
 
 # No txtOwnerId here. It is per-cluster, and the bootstrap template sets it —
 # see the note there. A shared value would make every Gentian cluster claim

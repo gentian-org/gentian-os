@@ -23,7 +23,9 @@ instances: []
 # machine, not only this platform's. A cluster that already configures it — its
 # own GPU operator install, another chart, an operator team — keeps that
 # configuration, and the installer sets this to false rather than fighting for
-# ownership of an object it did not create.
+# ownership of an object it did not create. It also sets it to false when the
+# claim's llm.gpuAcceleration is false: the ConfigMap's namespace belongs to the
+# GPU Operator, and a CPU-only cluster has neither.
 manageTimeSlicing: true
 
 # NVIDIA time-slicing replicas per GPU. 1 disables sharing.
