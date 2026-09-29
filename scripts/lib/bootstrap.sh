@@ -1859,8 +1859,8 @@ install_llm_serving() {
         info "Mock inference backend (GPU_ACCELERATION=false) — set llm.instances on the claim to serve a real model."
     fi
 
-    # One release either way. It carries GPU time-slicing, which applies whether
-    # or not instances are served, and the instances themselves — so flipping
+    # One release either way. It carries GPU time-slicing, when the claim enables
+    # GPU acceleration, and the instances themselves — so flipping
     # GPU_ACCELERATION back to false removes them through the upgrade instead of
     # a separate sweep that had to name the kinds it deleted.
     render_and_apply_vllm_gpu_manifest

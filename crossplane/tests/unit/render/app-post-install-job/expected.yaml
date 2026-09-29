@@ -345,6 +345,19 @@ spec:
               gentianos.io/component: post-install
               gentianos.io/tenant: demo
           spec:
+            affinity:
+              podAffinity:
+                requiredDuringSchedulingIgnoredDuringExecution:
+                - labelSelector:
+                    matchExpressions:
+                    - key: gentianos.io/component
+                      operator: NotIn
+                      values:
+                      - post-install
+                    matchLabels:
+                      gentianos.io/app: demo-app
+                      gentianos.io/tenant: demo
+                  topologyKey: kubernetes.io/hostname
             containers:
             - command:
               - /bin/sh

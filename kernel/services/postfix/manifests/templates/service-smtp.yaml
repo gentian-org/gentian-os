@@ -47,4 +47,18 @@ spec:
       port: 25
       targetPort: 25
       protocol: TCP
+    {{- if .Values.submissionIngress.enabled }}
+    # Submission, on the same address as the MX.
+    #
+    # 587 with STARTTLS rather than 465 with implicit TLS, which RFC 8314 would
+    # prefer: 465 needs a second smtpd in master.cf and the upstream chart
+    # exposes no way to add one. The property RFC 8314 is protecting — a password
+    # never crossing in clear — is kept by smtpd_tls_auth_only instead, which
+    # withholds AUTH until STARTTLS has succeeded, so a stripped session cannot
+    # authenticate at all rather than authenticating in the clear.
+    - name: submission
+      port: 587
+      targetPort: 587
+      protocol: TCP
+    {{- end }}
 {{- end }}

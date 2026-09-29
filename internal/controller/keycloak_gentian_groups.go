@@ -130,6 +130,80 @@ REALM=%q
 AUTH_HEADER="Authorization: Bearer ${TOKEN}"
 %s
 
+# ── The email claim must follow the USERNAME, not the email field ────────────
+#
+# Keycloak's own password reset mails whatever is in the user's email field, and
+# no setting points it at an attribute instead. So the field holds the address a
+# locked-out human can still read — their recovery address — which means it can no
+# longer be the value applications read as the user's identity.
+#
+# The username already IS the workspace address (christian@corp.example is both
+# the login and the mailbox), so repointing the built-in email mapper at it keeps
+# every token and userinfo response exactly as it was. For every user that exists
+# when this first runs the two are the same string, so the claim does not change
+# at all; afterwards it stays the workspace address while the field becomes the
+# recovery address.
+#
+# FIRST, before the group loop, because an admin token lives 60 seconds and the
+# loop takes longer than that. This ran at the end of the script once: the token
+# had expired, every request came back 401, and the "|| echo empty-array" fallback
+# turned that into
+# "the email scope has no mapper named email" — a Keycloak state that was not the
+# case, reported as though it had been read. Hence both the position and the
+# explicit status checks below: a request that fails must never be
+# indistinguishable from an answer.
+#
+# The mapper is patched field-by-field through jq rather than rebuilt, because a
+# PUT replaces the config wholesale: naming only what changes leaves Keycloak's
+# own keys (id.token.claim, jsonType.label …) exactly as it wrote them, so
+# nothing here and nothing in the Composition sees drift.
+EMAIL_SCOPES_FILE=$(mktemp)
+EMAIL_SCOPES_CODE=$(curl -s -o "${EMAIL_SCOPES_FILE}" -w '%%{http_code}' -H "${AUTH_HEADER}" \
+  "${KEYCLOAK_URL}/admin/realms/${REALM}/client-scopes")
+if [ "${EMAIL_SCOPES_CODE}" != "200" ]; then
+  echo "ERROR: listing client scopes returned HTTP ${EMAIL_SCOPES_CODE}" >&2
+  rm -f "${EMAIL_SCOPES_FILE}"
+  exit 1
+fi
+keycloak_json_id_by_attr "$(cat "${EMAIL_SCOPES_FILE}")" "name" "email"
+rm -f "${EMAIL_SCOPES_FILE}"
+EMAIL_SCOPE_ID="${_kj_id}"
+if [ -z "${EMAIL_SCOPE_ID}" ]; then
+  echo "ERROR: realm ${REALM} has no email client scope, so the email claim cannot be separated from the reset address" >&2
+  exit 1
+fi
+EMAIL_MAPPERS_FILE=$(mktemp)
+EMAIL_MAPPERS_CODE=$(curl -s -o "${EMAIL_MAPPERS_FILE}" -w '%%{http_code}' -H "${AUTH_HEADER}" \
+  "${KEYCLOAK_URL}/admin/realms/${REALM}/client-scopes/${EMAIL_SCOPE_ID}/protocol-mappers/models")
+if [ "${EMAIL_MAPPERS_CODE}" != "200" ]; then
+  echo "ERROR: listing the email scope's mappers returned HTTP ${EMAIL_MAPPERS_CODE}" >&2
+  rm -f "${EMAIL_MAPPERS_FILE}"
+  exit 1
+fi
+EMAIL_MAPPER=$(jq -c '[.[] | select(.name == "email")][0] // empty' < "${EMAIL_MAPPERS_FILE}")
+rm -f "${EMAIL_MAPPERS_FILE}"
+if [ -z "${EMAIL_MAPPER}" ]; then
+  echo "ERROR: the email client scope in realm ${REALM} has no mapper named email" >&2
+  exit 1
+fi
+EMAIL_MAPPER_ID=$(printf '%%s' "${EMAIL_MAPPER}" | jq -r '.id')
+EMAIL_MAPPER_SOURCE=$(printf '%%s' "${EMAIL_MAPPER}" | jq -r '.config["user.attribute"] // ""')
+if [ "${EMAIL_MAPPER_SOURCE}" = "username" ]; then
+  echo "email claim already follows the username"
+else
+  UPDATED_MAPPER=$(printf '%%s' "${EMAIL_MAPPER}" | jq -c '.config["user.attribute"] = "username"')
+  EMAIL_PUT_CODE=$(curl -s -o /dev/null -w '%%{http_code}' -X PUT -H "${AUTH_HEADER}" -H "Content-Type: application/json" \
+    "${KEYCLOAK_URL}/admin/realms/${REALM}/client-scopes/${EMAIL_SCOPE_ID}/protocol-mappers/models/${EMAIL_MAPPER_ID}" \
+    -d "${UPDATED_MAPPER}")
+  case "${EMAIL_PUT_CODE}" in
+  20*) echo "email claim repointed from ${EMAIL_MAPPER_SOURCE:-<unset>} to the username" ;;
+  *)
+    echo "ERROR: repointing the email claim returned HTTP ${EMAIL_PUT_CODE}" >&2
+    exit 1
+    ;;
+  esac
+fi
+
 echo "${GENTIAN_GROUPS_JSON}" | jq -c '.[]' | while read -r group; do
   GROUP_NAME=$(echo "${group}" | jq -r '.name')
   GROUP_ATTRS=$(echo "${group}" | jq -c '.attributes')

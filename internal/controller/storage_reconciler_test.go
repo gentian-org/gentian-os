@@ -120,7 +120,7 @@ func TestStorage_CreatesS3BucketJob(t *testing.T) {
 		t.Fatal("expected at least one container in S3 bucket Job")
 	}
 	container := job.Spec.Template.Spec.Containers[0]
-	if container.Image != "minio/mc:RELEASE.2025-04-03T17-07-56Z" {
+	if container.Image != "quay.io/minio/mc:RELEASE.2025-08-13T08-35-41Z" {
 		t.Errorf("unexpected container image %q", container.Image)
 	}
 

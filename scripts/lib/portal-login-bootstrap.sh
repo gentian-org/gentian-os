@@ -92,13 +92,19 @@ ensure_argocd_oidc_secret() {
     local ns="platform-kernel"
     local secret
     secret="$(_argocd_oidc_derive_secret)"
+    # >&2 on both, for the reason spelled out in ensure_litellm_sso_secret:
+    # this function's stdout is its return value, and two kubectl commands were
+    # printing into it. argocd_client_secret came out 138 characters long,
+    # beginning "secret/gentian-argocd configured", and that is what the
+    # Keycloak client was configured with -- so ArgoCD's OIDC login was broken
+    # by the same bug, in the same way, at the same time.
     kubectl create secret generic gentian-argocd -n "${ns}" \
         --from-literal=client_id="gentian-argocd" \
         --from-literal=client_secret="${secret}" \
-        --dry-run=client -o yaml | kubectl apply -f -
+        --dry-run=client -o yaml | kubectl apply -f - >&2
     # Also patch the actual argocd-secret in the argocd namespace
     kubectl patch secret argocd-secret -n argocd --type merge \
-        -p "{\"stringData\":{\"oidc.keycloak.clientSecret\":\"${secret}\"}}"
+        -p "{\"stringData\":{\"oidc.keycloak.clientSecret\":\"${secret}\"}}" >&2
     echo "${secret}"
 }
 
@@ -106,10 +112,19 @@ ensure_litellm_sso_secret() {
     local ns="platform-kernel"
     local secret
     secret="$(_litellm_sso_derive_secret)"
+    # >&2 on the apply, and this is not cosmetic. This function's stdout IS its
+    # return value -- callers do secret="$(ensure_litellm_sso_secret)" -- so
+    # kubectl's own "secret/litellm-dashboard-sso configured" line was captured
+    # as part of the secret. The caller then handed Keycloak a 104-character
+    # string beginning "secret/litellm-dashboard-sso configured\n" as the
+    # client secret, while the Secret this function writes held the clean 64.
+    # Every SSO login then failed the token exchange with
+    # "(unauthorized_client) Invalid client or Invalid client credentials",
+    # surfacing to the browser as an opaque 500.
     kubectl create secret generic litellm-dashboard-sso -n "${ns}" \
         --from-literal=client_id="litellm-dashboard" \
         --from-literal=client_secret="${secret}" \
-        --dry-run=client -o yaml | kubectl apply -f -
+        --dry-run=client -o yaml | kubectl apply -f - >&2
     echo "${secret}"
 }
 
@@ -295,16 +310,21 @@ _keycloak_smtp_settings() {
             if ! declare -F _derive >/dev/null 2>&1; then
                 return 1
             fi
-            # platform-kernel, matching the operator's SERVICES_NAMESPACE and the
-            # namespace 09-infra-helm deploys Postfix into — not gentian-<env>.
-            KC_SMTP_HOST="postfix-${env}.${SERVICES_NAMESPACE:-platform-kernel}.svc.cluster.local"
+            # The PUBLIC name, with STARTTLS. Postfix offers AUTH only after
+            # STARTTLS (smtpd_tls_auth_only), so a realm that does not upgrade
+            # cannot present the credential below at all and relays only while
+            # the cluster still trusts its address. Java then checks the
+            # certificate against the name it dialled, and the certificate is the
+            # public wildcard for the kernel domain, which covers mail.<domain> and
+            # not postfix-<env>.<ns>.svc.cluster.local — the name this used before,
+            # together with STARTTLS off, when Postfix presented a self-signed
+            # certificate no client trusted.
+            KC_SMTP_HOST="mail.${kernel_domain}"
             KC_SMTP_PORT="587"
             KC_SMTP_USER="gentian-system@${kernel_domain}"
             KC_SMTP_PASSWORD="$(_derive smtp password)"
             KC_SMTP_SSL="false"
-            # In-cluster Postfix advertises STARTTLS with a self-signed cert that Keycloak
-            # does not trust; submission stays on the cluster network without TLS upgrade.
-            KC_SMTP_STARTTLS="false"
+            KC_SMTP_STARTTLS="true"
             KC_SMTP_FROM="noreply@${kernel_domain}"
             ;;
         *)
@@ -718,6 +738,29 @@ run_keycloak_portal_bootstrap_job() {
     if [[ "${llm_support}" == "true" ]]; then
         litellm_sso_secret=$(ensure_litellm_sso_secret)
     fi
+
+    # These two are about to be handed to Keycloak as OIDC client secrets, and
+    # they came back over stdout from functions that also run kubectl. A single
+    # unredirected kubectl line silently turns a secret into a paragraph, the
+    # client is configured with the paragraph, and the only symptom is every SSO
+    # login failing the token exchange with "Invalid client credentials" and a
+    # 500 in the browser. It took a packet capture's worth of digging to find
+    # once; it should announce itself from here on.
+    #
+    # A derived secret is one whitespace-free token. Anything else is a bug in
+    # the producer, not a credential.
+    local _name _val
+    for _name in argocd_secret litellm_sso_secret; do
+        _val="${!_name}"
+        [[ -n "${_val}" ]] || continue
+        if [[ "${_val}" != "${_val//[[:space:]]/}" ]]; then
+            error "${_name} contains whitespace — it captured command output, not just a secret."
+            error "  first line: ${_val%%$'\n'*}"
+            error "  Whichever ensure_* function produced it is printing to stdout;"
+            error "  its kubectl calls need >&2. Refusing to configure Keycloak with this."
+            return 1
+        fi
+    done
 
     local -a bootstrap_secret_args=(
         --from-literal=kernel_domain="${kernel_domain}"
@@ -1558,8 +1601,23 @@ apply_gentian_portal_argocd_application() {
         return 1
     fi
 
+    # llmEnabled is in this list because THIS is the render that applies the
+    # portal Application. It is the third --set-string list for the same chart:
+    # the two in common.sh (the drift check and apply_bootstrap_application)
+    # were unified into _bootstrap_chart_values, and neither is on this path, so
+    # the value was added to both of them and still never reached the cluster.
+    #
+    # The list is legitimately different rather than duplicated — this template
+    # needs uiBranch, portalImageTag and deploymentsBranch, which the shared
+    # list does not carry — so it cannot simply defer to the shared one.
+    #
+    # The chain it feeds: claim llm.enabled -> LLM_SUPPORT -> this flag ->
+    # valuesObject.llm.enabled -> GENTIAN_CAPABILITIES -> whether the portal
+    # offers the LLM tile. Every hop is a restatement, and a dropped value at
+    # any of them presents as an absent tile rather than an error.
     helm template gentian-bootstrap "${SCRIPT_DIR}/kernel/bootstrap/chart" \
         -s templates/gentian-portal.yaml \
+        --set-string "llmEnabled=${LLM_SUPPORT:-false}" \
         --set-string "gentianOsBranch=${GENTIAN_OS_BRANCH}" \
         --set-string "osRepo=${GENTIAN_OS_REPO:-}" \
         --set-string "uiBranch=${gentian_ui_branch}" \
