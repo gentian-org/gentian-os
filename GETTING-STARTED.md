@@ -6,10 +6,10 @@ and how to tell it worked.
 Re-running `./install.sh` is always safe. It reads the cluster to decide what is
 already done, so a second run continues rather than restarting.
 
-**The whole install, once you are configured (steps 1–6):**
+**The whole install, once you are configured (steps 1–3):**
 
 ```bash
-./install.sh     # installs everything, writes the recovery kit, then waits
+./install.sh     # asks what the cluster is, installs everything, writes the recovery kit, then waits
 ```
 
 It then waits for the things only you can do: move the kit somewhere safe, sign
@@ -42,8 +42,9 @@ mutates, straight from the step files, so it cannot drift from what runs.
 
 Before any of that there is a **step 0**: the cluster's definition in
 `gentian-deployments`. If it exists the installer reads it; if it does not, the
-installer asks the questions, writes the files, commits them signed and pushes
-them — step 3 below. Nothing on the cluster is touched until that is done.
+installer asks for every setting — each with its default already in the answer
+— writes the files, commits them signed and pushes them. Nothing on the cluster
+is touched until that is done. Step 4 below is what that looks like.
 
 Each step reports what it found before it changes anything:
 
@@ -60,11 +61,11 @@ why re-running continues rather than restarting. You can run one phase with
 
 From phase C onward much of the work is Argo CD and Crossplane converging on
 their own, so the installer finishing is not the same as the cluster being
-ready — step 9 covers how to tell the difference.
+ready — step 6 covers how to tell the difference.
 
 Nor is it the same as the cluster being *yours*: phase E ends by revoking the
 credential the installer used, and it will not do that until an administrator
-has signed in. Step 8 is that handover, and the cluster holds tenants back
+has signed in. Step 5 is that handover, and the cluster holds tenants back
 until it is done.
 
 ---
@@ -114,7 +115,7 @@ git clone <your-gentian-deployments-url> ~/.gentian/gentian-deployments
 To keep it somewhere else, set `GENTIAN_DEPLOYMENTS_PATH` in step 2.
 
 The repository needs `profiles/_base.yaml` and `profiles/<stage>.yaml` for the
-stage you are about to use. Step 3 warns if either is missing and carries on,
+stage you are about to use. Step 0 warns if either is missing and carries on,
 but the cluster's stage-tier policy has no home until they exist.
 
 ## 2. Write `install.env`
@@ -127,7 +128,7 @@ Edit it. These are the values that matter for a first install:
 
 | Variable | Set it to |
 |---|---|
-| `GENTIAN_DEPLOYMENTS_CLUSTER_ID` | This cluster's ID. It names the directory under `clusters/` and, with the stage, the Cluster claim — get it right before step 3, which pushes the tree it names |
+| `GENTIAN_DEPLOYMENTS_CLUSTER_ID` | This cluster's ID. It names the directory under `clusters/` and, with the stage, the Cluster claim — get it right before step 4, which pushes the tree it names |
 | `GENTIAN_DEPLOYMENTS_STAGE` | `dev`, `staging` or `prod` |
 | `GENTIAN_DEPLOYMENTS_REPO` / `_BRANCH` | Your deployments repository |
 | `GENTIAN_APPS_REPO` / `_BRANCH` | The app catalogue |
@@ -138,114 +139,10 @@ questions.
 
 **Nothing about the cluster itself is set here.** Its domain, network and
 routing modes, certificate issuer, mail mode and storage class live on the
-Cluster claim, which the next step writes. `install.env` says how to run the
-install; the claim says what the cluster is.
+Cluster claim, which the install asks for in step 4. `install.env` says how to
+run the install; the claim says what the cluster is.
 
-## 3. Generate this cluster's configuration
-
-```bash
-./install.sh --prepare-deployment
-```
-
-This is step 0 of the install, run on its own. A plain `./install.sh` does
-exactly the same thing when the definition is absent, then carries on into
-phase A; running it separately lets you read what it wrote before anything is
-built from it.
-
-It asks four questions — the kernel domain, how traffic reaches the cluster
-(`tunnel` or `static-ip`), how certificates are issued, and how mail is sent
-(for a relay, its hostname only; the credentials come later) — and writes
-`clusters/<cluster-id>/kernel` into your deployments checkout:
-
-| File | What it is |
-|---|---|
-| `claims/cluster.yaml` | Everything that describes this cluster |
-| `claims/suze.yaml` | Cluster security: Keycloak and OpenFGA |
-| `claims/deployments-repository.yaml` | Where the director pushes. Without it every write answers 503: no tenant can be created and nobody can be invited |
-| `values.yaml` | This cluster's Helm overlay |
-| `signing/director.asc`, `signing/break-glass.asc`, `signing/keys.env` | The two public keys Argo CD will accept commits from, and their ids |
-
-Then it **commits and pushes** them, signed with the break-glass key. Two keys
-are generated for this cluster in `~/.gentian/gnupg` the first time: the
-*director* key, which the director on the cluster signs with, and the
-*break-glass* key, which signs what a person writes directly — and before the
-cluster exists, that is the only way its first claim can get there at all.
-`git log --show-signature` in the deployments repository afterwards says which
-commits a person made and which the director made.
-
-It contacts no cluster and applies nothing. If the push fails — no credential
-yet, a branch behind its upstream — it says so and prints the command to run
-by hand. Run it before going on: Argo CD syncs from the repository and not from
-your checkout, so until the push lands nothing it syncs — the claims, later the
-tenants — reaches the cluster.
-
-Re-running it is safe: it writes only the files that are missing, re-asks
-nothing whose answer is already in the claim, and commits whatever you have
-edited since.
-
-## 4. Read what it generated
-
-These files are what the cluster becomes. Read them.
-
-It asked for the four settings that decide whether the install works at all
-and wrote every other setting into the claim as a comment showing the default
-in effect. So `claims/cluster.yaml` lists the cluster's whole configuration: a
-value is either set, or commented with what it defaults to and why. A field
-that does nothing in your configuration says so rather than being absent — on
-a `tunnel` cluster you get:
-
-```yaml
-  networkMode: tunnel
-  # nodeIp:                      not used while networkMode is tunnel
-```
-
-To change a default, uncomment the line and edit it. The schema rejects a name
-it does not know, so a typo fails at `kubectl apply` rather than being silently
-ignored.
-
-The settings the file carries:
-
-| Field | Default | Set it when |
-|---|---|---|
-| `networkMode` | `tunnel` | DNS points straight at a node — then use `static-ip` **and set `nodeIp`** |
-| `nodeIp` | — | Required by `static-ip`. Apps can also reference it as `${NODE_IP}` |
-| `certificates.issuerMode` | `acme-dns01` | The domain is not publicly resolvable — see step 6 |
-| `mail.serviceMode` | `external` | You want in-cluster Postfix/Dovecot instead of a relay (`kernel`, needs `static-ip`) |
-| `mail.host` | — | `external` mode: the relay's address. Its credentials are a credential, not a field |
-| `storageClass` | cluster default | The cluster has more than one StorageClass |
-| `tenancyMode` | `multi` | One tenant occupies the whole cluster (`single`) |
-| `secretMode` | `derived` | You want independent random secrets rather than ones reproducible from the master password |
-| `llm.enabled` | `false` | This cluster serves models |
-
-`routingMode` is `gateway` and that is the only supported value.
-
-**If you edit anything, run `./install.sh --prepare-deployment` again.** It
-commits and pushes your edits, signed. A commit you make by hand with your own
-key is one Argo CD will refuse to sync — that is the signing policy doing its
-job, not a fault.
-
-There is no `claims/infra-data.yaml`. The shared Postgres, MariaDB, Redis and
-MinIO are composed with the cluster into the system tier, and the installer
-refuses to commit a claim whose kind this checkout does not define — so a
-leftover from an older checkout stops step 0 rather than reaching the cluster.
-
-## 5. Preview the install
-
-```bash
-./install.sh --validate      # is this configuration coherent? No cluster needed.
-./install.sh --dry-run       # what would the install do to THIS cluster?
-```
-
-`--validate` reads the configuration and the step contracts and reports what is
-missing or contradictory. It never contacts a cluster and never writes to the
-deployments repository — a missing definition is reported, not scaffolded — so
-it is the first thing to run.
-
-`--dry-run` runs every step's check against the cluster and prints what it would
-do. It collects no credentials and changes nothing, so run it before you have
-gathered a single secret — it is how you find out what the install intends.
-
-## 6. Have the credentials ready
+## 3. Have the credentials ready
 
 The install asks for these, validates each against the system it belongs to, and
 stops before touching the cluster if any fail.
@@ -264,37 +161,87 @@ re-ask. Nothing is written to this machine except a short-lived cache that step
 `B-08-seed-secrets` deletes.
 
 **Everything else is supplied after the cluster is up, not now** — you set it
-when you first sign in, in step 8.
+when you first sign in, in step 5.
 
 **The Cloudflare token is only optional if this cluster's issuer does not need
 it.** Under the default `acme-dns01`, DNS-01 issues every kernel certificate,
 not just the wildcard, so an absent or rejected token leaves the cluster with no
-working TLS. Set `certificates.issuerMode` on the Cluster claim to `acme-http01`
-(public DNS, port 80 reachable, no wildcards) or `self-signed` (internal
-domains) if you do not want to supply one. On a tunnel cluster the same token
-needs a second permission for tenant routing — see
+working TLS. Choose `acme-http01` (public DNS, port 80 reachable, no wildcards)
+or `self-signed` (internal domains) at the issuer question in step 4 if you do
+not want to supply one. On a tunnel cluster the same token needs a second
+permission for tenant routing — see
 [design/routing.md](docs/design/routing.md) §3a for what to grant it.
 
 If a value is rejected, the installer names where it came from and asks for a
 replacement rather than aborting.
 
-## 7. Install
+## 4. Install
 
 ```bash
 ./install.sh
 ```
 
-One command, start to finish. It works through phases A to E, reporting each
-step before acting, and re-running it is safe: every step checks whether its
-work is already done and skips if so. Expect it to take a while in B, where
-OpenBao is deployed and initialised, and in C and D, where Argo CD pulls and
-syncs the platform's own applications.
+One command, start to finish. Before the first phase it runs **step 0**: it
+finds no definition for this cluster in `gentian-deployments` and asks for
+one. Every question shows its default; Enter takes it.
+
+| Question | Default | Choose otherwise when |
+|---|---|---|
+| Kernel domain | — | Always asked; there is no default |
+| `networkMode` | `tunnel` | DNS points straight at a node — `static-ip`, which then asks for `nodeIp` |
+| `certificates.issuerMode` | `acme-dns01` | The domain is not publicly resolvable (`self-signed`), or port 80 is reachable but you have no DNS API token (`acme-http01`) |
+| `certificates.acmeEnv` | `staging` on a `dev` stage, else `production` | Names are settled and you want trusted certificates on dev |
+| `certificates.dnsProvider` | `cloudflare` | The zone is hosted elsewhere |
+| `mail.serviceMode` | `external` | You want in-cluster Postfix/Dovecot (`kernel`, needs `static-ip`) |
+| `mail.host` | unset | `external` mode: the relay's hostname. Its credentials are a credential, supplied in step 5 — not asked here |
+| `platform` | detected from the nodes | Detection is wrong for your provider |
+| `storageClass` | the cluster default | The cluster has more than one StorageClass |
+| `tenancyMode` | `multi` | One tenant occupies the whole cluster (`single`) |
+| `secretMode` | `derived` | You want independent random secrets rather than ones reproducible from the master password |
+| `backup.escrowIdentity` | `true` | The backup key should live in the recovery kit only, never in OpenBao |
+| `llm.enabled` | `false` | This cluster serves models; then `llm.gpuAcceleration` is asked too |
+
+With the answers it writes `clusters/<cluster-id>/kernel` into your deployments
+checkout:
+
+| File | What it is |
+|---|---|
+| `claims/cluster.yaml` | Everything that describes this cluster — every setting above, set or commented with the default in effect |
+| `claims/suze.yaml` | Cluster security: Keycloak and OpenFGA |
+| `claims/deployments-repository.yaml` | Where the director pushes. Without it every write answers 503: no tenant can be created and nobody can be invited |
+| `values.yaml` | This cluster's Helm overlay |
+| `signing/director.asc`, `signing/break-glass.asc`, `signing/keys.env` | The two public keys Argo CD will accept commits from, and their ids |
+
+Then it **commits and pushes** them, signed with the break-glass key. Two keys
+are generated for this cluster in `~/.gentian/gnupg` the first time: the
+*director* key, which the director on the cluster signs with, and the
+*break-glass* key, which signs what a person writes directly — and before the
+cluster exists, that is the only way its first claim can get there at all.
+`git log --show-signature` in the deployments repository afterwards says which
+commits a person made and which the director made.
+
+If the push fails — no credential yet, a branch behind its upstream — it says
+so and prints the command to run by hand. Run it before going on: Argo CD syncs
+from the repository and not from your checkout, so until the push lands nothing
+it syncs — the claims, later the tenants — reaches the cluster.
+
+There is no `claims/infra-data.yaml`. The shared Postgres, MariaDB, Redis and
+MinIO are composed with the cluster into the system tier, and the installer
+refuses to commit a claim whose kind this checkout does not define — so a
+leftover from an older checkout stops step 0 rather than reaching the cluster.
+
+Step 0 done, the install collects the credentials from step 3 and works through
+phases A to E, reporting each step before acting. Re-running it is safe: every
+step checks whether its work is already done and skips if so, and step 0 asks
+nothing on a re-run — the settings are read back from the claim. Expect it to
+take a while in B, where OpenBao is deployed and initialised, and in C and D,
+where Argo CD pulls and syncs the platform's own applications.
 
 It ends in one of two ways:
 
 - **`Gentian OS — Almost There: 1 step left`** — everything is installed and
   handover remains. The summary lists exactly what to do, in order. That is
-  step 8 below, and it is the normal ending for a first install.
+  step 5 below, and it is the normal ending for a first install.
 - **`Gentian OS — Install Complete`** — handover is done too. Nothing is left.
 
 If a step fails, the run stops there and names the command, the step file and
@@ -307,20 +254,29 @@ installer removes them once their contents are safe elsewhere.
 
 Near the end, `E-02-recovery-kit` writes this cluster's **recovery kit** as
 `gentian-recovery-kit-<cluster-id>.age` in the root of this checkout, asking
-for a passphrase to encrypt it, and prints the path. That file is the one thing you
-have to look after — step 8. By default it carries the break-glass signing key
-too, so whoever holds the kit can write to the deployments repository when the
-director cannot; set `GENTIAN_KIT_INCLUDE_BREAK_GLASS=0` to keep that key out
-of it.
+for a passphrase to encrypt it, and prints the path. That file is the one thing
+you have to look after — step 5. By default it carries the break-glass signing
+key too, so whoever holds the kit can write to the deployments repository when
+the director cannot; set `GENTIAN_KIT_INCLUDE_BREAK_GLASS=0` to keep that key
+out of it.
 
-## 8. Handover
+**Want to see the plan before anything runs?** Both of these change nothing —
+neither the cluster nor the deployments repository — and report a missing
+definition instead of writing one:
+
+```bash
+./install.sh --validate      # is this configuration coherent? No cluster needed.
+./install.sh --dry-run       # what would the install do to THIS cluster?
+```
+
+## 5. Handover
 
 The install pauses here and waits for you. Three things finish it:
 
-1. **Move the recovery kit somewhere safe.** Step 7 wrote it beside the
-   checkout and printed the path. Put it where your break-glass material
-   already lives — a password manager, a sealed vault, offline media. Without
-   it this cluster cannot be rebuilt as itself.
+1. **Move the recovery kit somewhere safe.** Step 4 wrote it in the checkout
+   root and printed the path. Put it where your break-glass material already
+   lives — a password manager, a sealed vault, offline media. Without it this
+   cluster cannot be rebuilt as itself.
 2. **Sign in to the console** as the administrator, at
    `https://console.<kernel-domain>/`. The installer prints the URL, the
    username — `admin@<kernel-domain>` — and the password while it waits.
@@ -346,7 +302,7 @@ and interrupting it costs nothing. Sign in whenever you like, then:
 ./install.sh --only E-03
 ```
 
-## 9. Check the status
+## 6. Check the status
 
 ```bash
 ./install.sh --status
@@ -374,7 +330,7 @@ kubectl get managed
 kubectl get application,applicationset -n kernel-gitops
 ```
 
-## 10. Create your first tenant
+## 7. Create your first tenant
 
 The commands below use the `gentian` CLI. Install it once, on whichever machine
 you administer clusters from:
@@ -476,11 +432,14 @@ credentials through the environment instead of the prompt:
 | `gentian-os-repository` etc. | `GENTIAN_OS_GIT_USERNAME` / `_TOKEN`, and the same for `APPS` and `UI` |
 | Cloudflare API token | `CF_API_TOKEN` |
 
-Step 0's questions take their defaults unattended — `tunnel`, `acme-dns01`,
-`external` — unless `KERNEL_DOMAIN`, `NETWORK_MODE`, `CERT_ISSUER_MODE` and
-`MAIL_SERVICE_MODE` are set; the domain has no default and must be. The
-handover wait is skipped, so the run ends at `Almost There` and `--only E-03`
-finishes it once someone has signed in.
+Step 0's questions take their defaults unattended, and an environment value
+answers any of them without a question: `KERNEL_DOMAIN` (no default — must be
+set), `NETWORK_MODE`, `NODE_IP`, `CERT_ISSUER_MODE`, `ACME_ENV`,
+`DNS_PROVIDER`, `MAIL_SERVICE_MODE`, `EXTERNAL_SMTP_HOST`, `PLATFORM`,
+`STORAGE_CLASS`, `TENANCY_MODE`, `SECRET_MODE`, `BACKUP_ESCROW_IDENTITY`,
+`LLM_SUPPORT`, `GPU_ACCELERATION`. The handover wait is skipped, so the run
+ends at `Almost There` and `--only E-03` finishes it once someone has signed
+in.
 
 The installer reads the environment first, then its cache, then OpenBao, and
 prompts for whatever is still missing — so a partly-supplied environment still
@@ -536,7 +495,7 @@ what is already done, so convergence and update are the same operation.
 
 ## Next steps
 
-- **Add more tenants** — repeat step 10. Day-to-day operations are in
+- **Add more tenants** — repeat step 7. Day-to-day operations are in
   [docs/commands.md](docs/commands.md).
 - **Configure mail** — [docs/design/mail.md](docs/design/mail.md). Mail between
   users of this cluster works once the kernel mail stack is deployed; mail to and
@@ -544,9 +503,9 @@ what is already done, so convergence and update are the same operation.
   DMARC and PTR records described in
   [§10 DNS for real mail](docs/design/mail.md#10-dns-for-real-mail) — including
   the Cloudflare rule that MX records must stay DNS-only, never proxied.
-- **Change this cluster's configuration** — edit its claims in
-  `gentian-deployments` and commit them signed (`./install.sh
-  --prepare-deployment` does that); the cluster reconciles.
+- **Change this cluster's configuration** — edit `claims/cluster.yaml` in your
+  deployments checkout and run `./install.sh`: step 0 commits the edit signed
+  and pushes it, and the cluster reconciles.
   [docs/deployment.md](docs/deployment.md) explains the layering.
 - **Understand the architecture** — [docs/architecture.md](docs/architecture.md)
   and [docs/design/kernel.md](docs/design/kernel.md).
@@ -656,7 +615,7 @@ export MASTER_PASSWORD=... DERIVATION_SALT=...
 Argo CD syncs that repository only for commits signed by the director or the
 break-glass key — the two ids in `clusters/<cluster-id>/kernel/signing/keys.env`.
 A commit made with your own key, or unsigned, sits at the head of the branch
-and stops every later sync. Fix it by committing the same change through
-`./install.sh --prepare-deployment`, which signs with the break-glass key, or
-by importing that key from the recovery kit on another machine
-(`./install.sh --recover <kit>` puts it in `~/.gentian/gnupg`).
+and stops every later sync. Undo it, make the change in your checkout instead,
+and run `./install.sh`: step 0 commits it signed with the break-glass key. On
+another machine, `./install.sh --recover <kit>` imports that key into
+`~/.gentian/gnupg` first.

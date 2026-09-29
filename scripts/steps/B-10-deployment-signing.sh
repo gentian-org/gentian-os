@@ -28,7 +28,7 @@
 #
 # B-01 renders the AppProject, and it renders the sourceIntegrity policy when
 # the key ids are in the deployments checkout -- which they are, because
-# --prepare-deployment put them there. C-02 creates the ApplicationSet that
+# step 0 put them there. C-02 creates the ApplicationSet that
 # syncs claims/ from that repository, and that is the first thing Argo CD
 # verifies. Between those two the keyring has to be filled, or the very first
 # sync of the cluster's own claims is refused for want of a key. Anywhere
@@ -81,7 +81,7 @@ apply() {
     if [[ ! -f "${dir}/signing/keys.env" ]]; then
         warn "clusters/${GENTIAN_DEPLOYMENTS_CLUSTER_ID}/kernel/signing is absent."
         warn "  Nothing signs this cluster's deployments yet, and Argo CD verifies"
-        warn "  nothing. Run ./install.sh --prepare-deployment to generate the keys."
+        warn "  nothing. A full ./install.sh run generates them in its step 0."
         return 0
     fi
 

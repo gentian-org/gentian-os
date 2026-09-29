@@ -50,9 +50,11 @@ phase, so a new step only ever affects its own phase.
 | **E** | `handover` | Recovery kit, revoke the bootstrap token |
 
 Before phase A there is a step 0: the cluster's definition in
-`gentian-deployments`. When it is absent the forward run asks for it, writes it,
-commits it signed with the break-glass key and pushes it, then continues.
-`./install.sh --prepare-deployment` is that step on its own.
+`gentian-deployments`. When it is absent the forward run asks for every setting
+with its default, writes the files, commits them signed with the break-glass key
+and pushes them, then continues. When it is present, the same step commits any
+edit found in the checkout — so changing the claim and running `./install.sh`
+is the whole of a reconfigure.
 
 ### Reading a `--status` verdict
 

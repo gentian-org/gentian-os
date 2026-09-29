@@ -6,7 +6,7 @@
 # mutates: the Cluster claim in the provisioning namespace and everything its composition creates
 
 # The claim comes from the deployments checkout, written by the installer's
-# own scaffold (--prepare-deployment) so every cluster's claim has one shape.
+# own scaffold (step 0 of install.sh) so every cluster's claim has one shape.
 # Its spec.layout must be this installer's; apply_cluster_xr refuses otherwise.
 
 check() {
