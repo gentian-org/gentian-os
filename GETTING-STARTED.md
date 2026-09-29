@@ -220,10 +220,14 @@ cluster exists, that is the only way its first claim can get there at all.
 `git log --show-signature` in the deployments repository afterwards says which
 commits a person made and which the director made.
 
-If the push fails — no credential yet, a branch behind its upstream — it says
-so and prints the command to run by hand. Run it before going on: Argo CD syncs
-from the repository and not from your checkout, so until the push lands nothing
-it syncs — the claims, later the tenants — reaches the cluster.
+Before any of this, step 0 brings your deployments checkout up to date with
+its remote — a fast-forward when that is all it takes. If the checkout has
+local commits or uncommitted changes that origin does not, it stops and shows
+the two ways to reconcile (`pull --rebase` to keep them, `reset --hard` to
+discard them); which one is your call. If the push itself fails — no
+credential yet — it stops too and prints the command to run by hand: Argo CD
+syncs from the repository and not from your checkout, so nothing it syncs —
+the claims, later the tenants — reaches the cluster until the push lands.
 
 There is no `claims/infra-data.yaml`. The shared Postgres, MariaDB, Redis and
 MinIO are composed with the cluster into the system tier, and the installer

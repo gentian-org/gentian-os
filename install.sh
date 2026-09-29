@@ -286,6 +286,13 @@ prepare_run() {
     fi
 
     load_operator_config
+    # Before the claim is read: a checkout behind its remote would answer
+    # "this cluster has a definition" for one that was deleted on origin.
+    if [[ "${INSTALL_VALIDATE_ONLY:-0}" == "1" || "${GENTIAN_DRY_RUN:-0}" == "1" ]]; then
+        gentian_sync_deployments_checkout check || exit 1
+    else
+        gentian_sync_deployments_checkout || exit 1
+    fi
     load_deployments_cluster_settings
     try_load_creds_from_openbao
 
@@ -309,7 +316,10 @@ prepare_run() {
             info "This cluster has no deployment definition yet. Writing one first."
             info "  Nothing is applied and no cluster is contacted by this part."
         fi
-        ensure_cluster_deployment
+        ensure_cluster_deployment || {
+            error "Step 0 did not complete. Nothing was applied and no cluster was contacted."
+            exit 1
+        }
     fi
 
     # Now a genuine precondition rather than an instruction: it validates what
