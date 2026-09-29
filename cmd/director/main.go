@@ -281,20 +281,45 @@ func run(log *slog.Logger) error {
 	}
 
 	// Catalogue sources: where a profile is fetched from when a tenant
-	// installs it (AD-3). Named as "<slug>=<https url>", comma separated.
-	// Without any, this cluster's profiles arrive some other way and nothing
-	// is materialised.
+	// installs it (AD-3), read from the Cluster claim in git (AD-14).
+	//
+	// On the claim and not in this process's environment, because opening a
+	// catalogue to a tenant is a decision about what software may enter the
+	// cluster. On the claim it is a commit with an author and a date, next to
+	// everything else the cluster is; in an environment variable it is a
+	// value that changed when somebody rolled a Deployment, and the only
+	// record is whatever the pod spec says now.
+	//
+	// The list is read once, at start. A source added to the claim reaches
+	// the director when its Deployment next starts -- which is what an Argo
+	// sync of a changed claim produces anyway -- and the tuples that say
+	// WHICH tenant a source is open to are the operator's, reconciled
+	// continuously. Without any source, this cluster's profiles arrive some
+	// other way and nothing is materialised on reference.
 	var entries *catalogue.Fetcher
-	if sources := catalogue.ParseSources(os.Getenv("DIRECTOR_CATALOGUE_SOURCES")); len(sources) > 0 {
-		entries = catalogue.NewFetcher(sources)
-		for slug := range sources {
-			log.Info("catalogue source", "catalogue", slug)
+	readSources, cancelRead := context.WithTimeout(context.Background(), time.Minute)
+	declared, err := repo.CatalogueSources(readSources)
+	cancelRead()
+	if err != nil {
+		// Not fatal. A director that cannot read the claim still serves
+		// every call that is not an install from a catalogue, and refusing
+		// to start would take the console down with it.
+		log.Warn("catalogue sources could not be read from the Cluster claim; nothing will be materialised",
+			"error", err)
+	} else if len(declared) > 0 {
+		sources := make(map[string]string, len(declared))
+		for _, src := range declared {
+			sources[src.Name] = src.URL
+			log.Info("catalogue source", "catalogue", src.Name, "url", src.URL,
+				"access", src.Access, "openTo", len(src.Tenants))
 		}
+		entries = catalogue.NewFetcher(sources)
 	}
 
 	handler, err := api.New(api.Config{Authn: verifier, Authz: checker, Viewer: checker, Repo: repo, Log: log,
 		Record:              authorityRecord,
 		Catalogue:           entries,
+		Binder:              checker,
 		EnforceEntitlements: enforce, Store: store, Cluster: cluster,
 		TilesPath: envOr("DIRECTOR_TILES_PATH", "/etc/gentian/tiles/tiles.yaml"),
 		Lifecycle: lc, Identity: ident,

@@ -247,3 +247,62 @@ func TestTenantsAreAttachedToTheirClusterFromGit(t *testing.T) {
 		t.Error("the platform tenant is always operated by its cluster")
 	}
 }
+
+// Opening a catalogue to a tenant is the Cluster claim's to say (AD-14), and
+// closing it again is the same edit undone: this is the path that has to take
+// the access away as readily as it gives it.
+func TestOpenCatalogueSourcesFollowTheClaim(t *testing.T) {
+	o := requireOpenFGA(t)
+	ctx := context.Background()
+	store, model, err := Bootstrap(ctx, o)
+	if err != nil {
+		t.Fatal(err)
+	}
+	o.StoreID, o.ModelID = store, model
+	c, err := NewOpenFGA(o)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tenants := []string{"sources-a", "sources-b"}
+	entry := "in-house/timesheets"
+
+	// Nothing declared: nothing is open, and an entry nobody granted is not
+	// installable by anybody.
+	if err := c.ReconcileCatalogueSources(ctx, tenants, nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.BindEntryToSource(ctx, entry); err != nil {
+		t.Fatal(err)
+	}
+	object, _ := CatalogueEntry(entry)
+	for _, tenant := range tenants {
+		if ok, _ := c.Check(ctx, "test", Tenant(tenant), "can_install", object); ok {
+			t.Fatalf("%s may install from a source nothing opened", tenant)
+		}
+	}
+
+	// The claim opens it to one of them.
+	if err := c.ReconcileCatalogueSources(ctx, tenants, map[string][]string{
+		"in-house": {"sources-a"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if ok, err := c.Check(ctx, "test", Tenant("sources-a"), "can_install", object); err != nil || !ok {
+		t.Fatalf("the tenant the claim named may not install: %v %v", ok, err)
+	}
+	if ok, _ := c.Check(ctx, "test", Tenant("sources-b"), "can_install", object); ok {
+		t.Fatal("a source opened to one tenant admits another")
+	}
+
+	// Binding twice writes nothing more, and the claim dropping the source
+	// entirely closes it again.
+	if err := c.BindEntryToSource(ctx, entry); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.ReconcileCatalogueSources(ctx, tenants, nil); err != nil {
+		t.Fatal(err)
+	}
+	if ok, _ := c.Check(ctx, "test", Tenant("sources-a"), "can_install", object); ok {
+		t.Fatal("a source dropped from the claim is still open")
+	}
+}

@@ -2278,6 +2278,34 @@ _claim_cluster_fields() {
     printf '    # clientSecretRef:   openbao-oidc-client   Secret in the OpenBao namespace\n'
     printf '    # clusterAdminGroup: /gentian:platform:admin\n'
     printf '    # externalUrl:                             OpenBao UI callback, if exposed\n'
+
+    # Where software may enter this cluster (AD-14).
+    #
+    # Commented rather than set, because a cluster with no source materialises
+    # nothing on reference and that is a working cluster: its profiles arrive
+    # with the kernel. Adding a source is a deliberate act, and having it be an
+    # edit to this file rather than an environment variable on the director is
+    # the point -- opening a catalogue to a tenant is then a commit with an
+    # author and a date, and "what may this cluster install from" is answerable
+    # without cluster access.
+    printf '\n'
+    printf '  # Catalogues this cluster may fetch profiles from. A tenant installing\n'
+    printf '  # "main/nextcloud-base-ce" gets the bundle from the source named main,\n'
+    printf '  # at the digest the App Store stated -- the source itself is not trusted.\n'
+    printf '  #\n'
+    printf '  #   access: entitled   the store decides, per tenant, with a signed grant\n'
+    printf '  #   access: open       your own repository; the tenants listed here may\n'
+    printf '  #                      install from it with no grant. Nothing is open by\n'
+    printf '  #                      default, and removing a tenant closes it again.\n'
+    printf '  # catalogue:\n'
+    printf '  #   sources:\n'
+    printf '  #     - name: main\n'
+    printf '  #       url: https://store.gentian.org/catalogue\n'
+    printf '  #       access: entitled\n'
+    printf '  #     - name: in-house\n'
+    printf '  #       url: https://git.example.com/profiles\n'
+    printf '  #       access: open\n'
+    printf '  #       tenants: [demo]\n'
     return 0
 }
 

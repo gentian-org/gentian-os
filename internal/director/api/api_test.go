@@ -67,6 +67,9 @@ type harness struct {
 	issuer   *dt.Issuer
 	remote   string
 	storeKey ed25519.PrivateKey
+	// graph is what decides, when a real OpenFGA is deciding: the tests that
+	// are about the MODEL rather than about a table write their tuples here.
+	graph *authz.OpenFGA
 }
 
 func start(t *testing.T, entitlements bool) *harness {
@@ -129,7 +132,16 @@ func startWithTiles(t *testing.T, entitlements bool, tilesPath string) *harness 
 // test server's own client, so it trusts that certificate and no other.
 func startWithCatalogue(t *testing.T, src *httptest.Server, sources map[string]string) *harness {
 	t.Helper()
-	return startWith(t, false, "", nil, func(cfg *api.Config) {
+	return startWithEntitledCatalogue(t, false, src, sources)
+}
+
+// startWithEntitledCatalogue is the same with the entitlement gate on, for the
+// tests about which entries a tenant may install at all.
+func startWithEntitledCatalogue(
+	t *testing.T, entitlements bool, src *httptest.Server, sources map[string]string,
+) *harness {
+	t.Helper()
+	return startWith(t, entitlements, "", nil, func(cfg *api.Config) {
 		f := catalogue.NewFetcher(sources)
 		f.Client = src.Client()
 		cfg.Catalogue = f
@@ -158,6 +170,12 @@ func startWith(t *testing.T, entitlements bool, tilesPath string, lc api.Lifecyc
 		TilesPath: tilesPath,
 		Lifecycle: lc,
 	}
+	// The binder records which catalogue serves an entry, which is how a
+	// source the Cluster claim opened reaches the entry (AD-14).
+	graph, _ := tuples.(*authz.OpenFGA)
+	if graph != nil {
+		cfg.Binder = graph
+	}
 	for _, opt := range opts {
 		opt(&cfg)
 	}
@@ -165,7 +183,7 @@ func startWith(t *testing.T, entitlements bool, tilesPath string, lc api.Lifecyc
 	if err != nil {
 		t.Fatal(err)
 	}
-	h := &harness{Server: httptest.NewServer(srv), issuer: is, remote: remote, storeKey: priv}
+	h := &harness{Server: httptest.NewServer(srv), issuer: is, remote: remote, storeKey: priv, graph: graph}
 	t.Cleanup(h.Close)
 	return h
 }
@@ -806,7 +824,14 @@ func loadOpenFGA(t *testing.T, base string) (storeID, modelID string) {
 	var store struct {
 		ID string `json:"id"`
 	}
-	post("/stores", map[string]string{"name": t.Name()}, &store)
+	// OpenFGA caps a store name at 64 characters, and this repository's test
+	// names run longer than that. Keeping the tail keeps the part that
+	// distinguishes one test from another.
+	name := t.Name()
+	if len(name) > 64 {
+		name = name[len(name)-64:]
+	}
+	post("/stores", map[string]string{"name": name}, &store)
 
 	raw, err := os.ReadFile("../../../authz/model/v1/model.json")
 	if err != nil {

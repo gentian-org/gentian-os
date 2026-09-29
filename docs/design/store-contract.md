@@ -138,9 +138,14 @@ the entitlements on top of the same index.
 Whether an entry may be installed is one question with two answers
 (`catalogue_entry#can_install`): the store granted it, or the entry's source
 is open to the tenant. Opening a source is the platform administrator's act,
-under `can_configure`, recorded as a tuple the director writes from the
-claim; nothing is open by default, and a source is opened per tenant, not
-per cluster.
+under `can_configure`, recorded as a tuple the operator projects from the
+claim — the same path as the cluster's roles, and declarative the same way,
+so a tenant the claim stops naming loses the access on the next pass.
+Nothing is open by default, and a source is opened per tenant, not per
+cluster. Which catalogue serves an entry (`catalogue_entry#source`) is a
+fact about the coordinate's own spelling and is recorded by the director the
+first time somebody installs it, because a cluster holds no catalogue to
+enumerate up front (AD-3).
 
 What does not change without the store: the install mechanism (fetch the
 bundle at the digest, apply the profile, commit as the person), the

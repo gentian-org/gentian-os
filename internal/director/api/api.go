@@ -103,6 +103,12 @@ type Lifecycle interface {
 	Do(ctx context.Context, path, actor string, body any) (int, []byte, error)
 }
 
+// EntryBinder records the edge from a catalogue entry to the catalogue that
+// serves it. See authz.OpenFGA.BindEntryToSource.
+type EntryBinder interface {
+	BindEntryToSource(ctx context.Context, coordinate string) error
+}
+
 // Config assembles a Server.
 type Config struct {
 	Authn Authenticator
@@ -122,7 +128,13 @@ type Config struct {
 	// on a cluster whose profiles are still synced wholesale, which is what a
 	// deployment naming no catalogue source is saying.
 	Catalogue *catalogue.Fetcher
-	Log       *slog.Logger
+	// Binder records which source serves a coordinate, so that a source the
+	// Cluster claim opened to this tenant admits its entries (AD-14). Nil
+	// leaves that leg unreachable, which means entitlement by signed
+	// statement and nothing else -- the right behaviour for a cluster that
+	// declares no source of its own.
+	Binder EntryBinder
+	Log    *slog.Logger
 	// EnforceEntitlements makes an install require
 	// catalogue_entry:<coordinate>#can_install for the tenant. It is on unless
 	// a deployment turns it off explicitly, which a cluster without a store
@@ -885,6 +897,19 @@ func (s *Server) install(w http.ResponseWriter, r *http.Request, c call) {
 		if err != nil {
 			s.fail(w, r, http.StatusBadRequest, "coordinate is required: <catalogue>/<app>")
 			return
+		}
+		// An entry's source is part of the question: a catalogue the Cluster
+		// claim opened to this tenant admits its entries without a statement
+		// from the store, and the graph reaches that through the entry's
+		// source tuple. Recording it is a fact about the coordinate, not a
+		// decision -- the decision is the claim's, and it is checked below.
+		if cat, _, _ := strings.Cut(body.Coordinate, "/"); s.cfg.Binder != nil && s.cfg.Catalogue.Known(cat) {
+			if err := s.cfg.Binder.BindEntryToSource(ctx, body.Coordinate); err != nil {
+				s.cfg.Log.ErrorContext(ctx, "could not record which catalogue serves an entry",
+					"request_id", reqID(ctx), "coordinate", body.Coordinate, "error", err)
+				s.fail(w, r, http.StatusServiceUnavailable, "authorization unavailable")
+				return
+			}
 		}
 		// The second question is about the tenant, not the person: is this
 		// tenant entitled to this entry, now.

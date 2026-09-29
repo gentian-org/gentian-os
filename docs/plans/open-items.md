@@ -29,7 +29,7 @@ plans are what the code was supposed to become.
 | AD-11 | The target layout applies to fresh installs | ✅ |
 | AD-12 | The authorization store is a projection; git holds the defaults | ◐ the projection works; the bootstrap drift check is on the backlog below |
 | AD-13 | The edge is the only session authority | ✅ the text now describes what the code does: ending the session at Keycloak ends it, bounded by the access token's lifetime, with no revocation list for the shim to consult |
-| AD-14 | Catalogue sources on the Cluster claim | ☐ **nothing built.** `catalogue.sources[]` is not on the XRD, no tuples are written, and the director serves no index. The authorization model already has `can_install: entitled or open from source` |
+| AD-14 | Catalogue sources on the Cluster claim | ◐ `catalogue.sources[]` is on the Cluster XRD and the installer scaffolds it; the director reads its sources from the claim in git instead of from an environment variable, and the operator projects each open source's tenants as `catalogue_source#open`, declaratively — a tenant the claim stops naming loses the access. What is left is the **index**: the director serves none, so a desktop store screen still needs the store to be reachable |
 | AD-15 | Multi-language is a core requirement | ☐ see below |
 
 ## AD-15 — multi-language
@@ -106,7 +106,13 @@ none of it blocks the purge.
 
 ## Known and deliberately not now
 
-- AD-14's `catalogue.sources[]` on the Cluster claim. The director takes its
-  sources from `DIRECTOR_CATALOGUE_SOURCES` today, which is the same list in a
-  less reviewable place; moving it to the claim is what makes opening a source
-  to a tenant a commit rather than a deployment setting.
+- AD-14's **index**. The director knows which catalogues this cluster may fetch
+  from and which tenant each open one admits, but it serves no listing of what
+  is in them. Until it does, the desktop's store screen needs the store itself
+  to be reachable; AD-14 wants it to render from the cluster's own copy and let
+  the store add listings when it is there.
+- The director reads `catalogue.sources[]` once, at start. An edit to the claim
+  reaches it when its Deployment next rolls, which an Argo sync of a changed
+  claim produces anyway. The tuples that decide *which tenant* a source is open
+  to are the operator's and are reconciled continuously, so the access half is
+  never stale — only the list of URLs is.

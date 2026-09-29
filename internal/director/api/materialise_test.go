@@ -17,6 +17,7 @@ limitations under the License.
 package api_test
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
@@ -160,5 +161,60 @@ func TestAnUnknownCatalogueInstallsAsBefore(t *testing.T) {
 	log := dt.Git(t, "", "--git-dir", h.remote, "log", "--format=%s", "-5", "main")
 	if strings.Contains(log, "materialise") {
 		t.Fatalf("it materialised from a source it does not have:\n%s", log)
+	}
+}
+
+// AD-14: a catalogue the Cluster claim opened to a tenant installs without a
+// statement from the store, and only for the tenants the claim names.
+//
+// Needs the model to decide, because what is being tested IS the model: the
+// entry's source is open to this tenant, therefore the entry is installable.
+// A table would only restate the answer.
+func TestATenantInstallsFromACatalogueTheClaimOpenedToIt(t *testing.T) {
+	src := catalogueSource(t, elementProfile)
+	h := startWithEntitledCatalogue(t, true, src, map[string]string{"in-house": src.URL})
+	if h.graph == nil {
+		t.Skip("needs OpenFGA deciding: make test-director-contract")
+	}
+	ctx := context.Background()
+	if err := h.graph.ReconcileCatalogueSources(ctx, []string{"demo", "solo"},
+		map[string][]string{"in-house": {"demo"}}); err != nil {
+		t.Fatal(err)
+	}
+
+	body := fmt.Sprintf(`{"coordinate":"in-house/element","digest":%q}`, sha(elementProfile))
+	tom := h.token(t, "tenant-demo", "tom")
+	if code, out := h.do(t, "POST", "/v1/tenants/demo/apps/element", tom, body); code != http.StatusAccepted {
+		t.Fatalf("install from an open catalogue = %d %v", code, out)
+	}
+
+	// And a tenant the claim did not name gets nothing, from the same source.
+	tina := h.token(t, "tenant-solo", "tina")
+	before := h.tip(t)
+	if code, _ := h.do(t, "POST", "/v1/tenants/solo/apps/element", tina, body); code != http.StatusForbidden {
+		t.Fatalf("a tenant the claim did not name installed anyway: %d", code)
+	}
+	if h.tip(t) != before {
+		t.Fatal("a refused install committed something")
+	}
+}
+
+// The other half: an entry of an ENTITLED source still needs the store to
+// have said so, and recording which catalogue serves it grants nothing.
+func TestBindingAnEntryToItsSourceGrantsNothingByItself(t *testing.T) {
+	src := catalogueSource(t, elementProfile)
+	h := startWithEntitledCatalogue(t, true, src, map[string]string{"in-house": src.URL})
+	if h.graph == nil {
+		t.Skip("needs OpenFGA deciding: make test-director-contract")
+	}
+	if err := h.graph.ReconcileCatalogueSources(context.Background(),
+		[]string{"demo", "solo"}, nil); err != nil {
+		t.Fatal(err)
+	}
+
+	body := fmt.Sprintf(`{"coordinate":"in-house/element","digest":%q}`, sha(elementProfile))
+	tom := h.token(t, "tenant-demo", "tom")
+	if code, _ := h.do(t, "POST", "/v1/tenants/demo/apps/element", tom, body); code != http.StatusForbidden {
+		t.Fatalf("an entry of a source nothing opened installed: %d", code)
 	}
 }
