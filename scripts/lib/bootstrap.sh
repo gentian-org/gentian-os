@@ -1649,6 +1649,62 @@ _claim_default_line() {
     fi
 }
 
+# gentian_sync_deployments_checkout [check] — bring the checkout up to origin.
+#
+# Step 0 reads the checkout to decide whether this cluster has a definition,
+# and commits into it. A checkout behind its remote answers both wrongly: a
+# definition deleted on origin still "exists" here, so the interview is
+# skipped, and the push that follows is refused with "fetch first". Observed
+# on the first fresh install after a cluster was removed through GitHub.
+#
+# Fast-forwards when that is all it takes. When it is not -- local commits
+# origin does not have, or uncommitted changes -- it refuses and says exactly
+# what to run, because either choice (keep or discard) is the operator's.
+# With `check`, it only reports: --validate and --dry-run promise to change
+# nothing, and moving the checkout is a change.
+gentian_sync_deployments_checkout() {
+    local mode="${1:-sync}" path="${GENTIAN_DEPLOYMENTS_PATH}" branch behind ahead dirty
+    [[ -d "${path}/.git" ]] || return 0   # scaffold_cluster_deployment reports this
+    git -C "${path}" remote get-url origin >/dev/null 2>&1 || return 0
+    branch="$(git -C "${path}" branch --show-current 2>/dev/null || true)"
+    branch="${branch:-${GENTIAN_DEPLOYMENTS_BRANCH:-main}}"
+    if ! git -C "${path}" fetch -q origin "${branch}" 2>/dev/null; then
+        warn "Could not fetch origin/${branch} of the deployments repository; using the checkout as it is."
+        return 0
+    fi
+    # An empty remote -- a repository created a minute ago -- has no branch to
+    # compare against, and nothing to be behind.
+    git -C "${path}" rev-parse --verify -q "origin/${branch}" >/dev/null 2>&1 || return 0
+    behind="$(git -C "${path}" rev-list --count "HEAD..origin/${branch}" 2>/dev/null || echo 0)"
+    ahead="$(git -C "${path}" rev-list --count "origin/${branch}..HEAD" 2>/dev/null || echo 0)"
+    (( behind > 0 )) || return 0
+    dirty="$(git -C "${path}" status --porcelain 2>/dev/null || true)"
+    if (( ahead == 0 )) && [[ -z "${dirty}" ]]; then
+        if [[ "${mode}" == "check" ]]; then
+            warn "The deployments checkout is ${behind} commit(s) behind origin/${branch}; an install fast-forwards it."
+            return 0
+        fi
+        git -C "${path}" merge -q --ff-only "origin/${branch}" >/dev/null 2>&1 || {
+            error "Could not fast-forward ${path} to origin/${branch}."
+            return 1
+        }
+        info "Deployments checkout fast-forwarded to origin/${branch} (${behind} commit(s))."
+        return 0
+    fi
+    error "The deployments checkout is ${behind} commit(s) behind origin/${branch} and cannot be fast-forwarded:"
+    if (( ahead > 0 )); then
+        error "  it has ${ahead} local commit(s) origin does not:"
+        git -C "${path}" log --oneline "origin/${branch}..HEAD" 2>/dev/null | while IFS= read -r line; do
+            error "    ${line}"
+        done
+    fi
+    [[ -n "${dirty}" ]] && error "  it has uncommitted changes."
+    error "  Step 0 would read a stale definition and its push would be refused. Reconcile first:"
+    error "    git -C ${path} pull --rebase origin ${branch}     # keep the local work"
+    error "    git -C ${path} reset --hard origin/${branch}      # or discard it"
+    return 1
+}
+
 scaffold_cluster_deployment() {
     # The files are only useful inside the checkout they get committed from.
     # Writing them into a bare directory produces a tree nothing tracks, which
@@ -2032,10 +2088,14 @@ _claims_this_checkout_cannot_apply() {
 # case, and giving that act its own key means `git log --show-signature`
 # afterwards says which commits a person made and which the director made.
 #
-# It never fails the run. A checkout with no remote, no credential, or a
-# branch behind its upstream is an ordinary situation on an install host, and
-# an installer that refused to continue would be worse than one that says
-# clearly what is still to do.
+# A checkout that is not a repository, or has nothing to commit, is fine and
+# returns 0. A commit or a push that FAILS returns 1, and step 0 stops the
+# install on it: Argo CD syncs the definition from the repository, so an
+# install that went on from here would build a cluster whose own claims never
+# reach it -- and the one that matters most, deployments-repository.yaml, is
+# the director's push credential. That failure used to be a warning that
+# scrolled past, and the install that followed looked fine until its first
+# write answered 503.
 gentian_commit_cluster_deployment() {
     local kernel_dir="$1" cluster="$2" dirty sign_args branch
     command -v git >/dev/null 2>&1 || return 0
@@ -2098,9 +2158,9 @@ gentian_commit_cluster_deployment() {
 Written by install.sh (step 0) and signed with this cluster's
 break-glass key: before the cluster exists there is no director to write it,
 and AD-2 names that case." 2>&1; then
-        warn "The commit failed; clusters/${cluster}/kernel is still uncommitted."
+        error "The commit failed; clusters/${cluster}/kernel is still uncommitted."
         _warn_uncommitted_cluster_deployment "${kernel_dir}" "${cluster}"
-        return 0
+        return 1
     fi
 
     # Explicitly to the branch of the same name, not a bare `git push`. A
@@ -2111,10 +2171,11 @@ and AD-2 names that case." 2>&1; then
     branch="$(git -C "${GENTIAN_DEPLOYMENTS_PATH}" branch --show-current 2>/dev/null || true)"
     branch="${branch:-${GENTIAN_DEPLOYMENTS_BRANCH:-main}}"
     if ! git -C "${GENTIAN_DEPLOYMENTS_PATH}" push -q origin "HEAD:${branch}" 2>&1; then
-        warn "Committed, but the push failed. The cluster reads the repository, not"
-        warn "  this checkout, so run it by hand once the remote will take it:"
-        warn "    git -C ${GENTIAN_DEPLOYMENTS_PATH} push origin HEAD:${branch}"
-        return 0
+        error "Committed, but the push failed. The cluster reads the repository, not"
+        error "  this checkout, so nothing committed here reaches it until this succeeds:"
+        error "    git -C ${GENTIAN_DEPLOYMENTS_PATH} push origin HEAD:${branch}"
+        error "  Then run ./install.sh again."
+        return 1
     fi
     success "Committed and pushed clusters/${cluster}/kernel (signed, break-glass)."
 }

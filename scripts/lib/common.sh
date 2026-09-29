@@ -866,10 +866,6 @@ EOF
     chmod 0600 "$cfg_file"
     success "App repo configuration saved to ${cfg_file}"
 
-    if [[ -z "${GENTIAN_DEPLOYMENTS_GIT_TOKEN:-}" ]]; then
-        warn "GENTIAN_DEPLOYMENTS_GIT_TOKEN not set — in-cluster App Store installs cannot push to gentian-deployments."
-        warn "  Export it, or let the installer prompt and cache it, when needed."
-    fi
     # No default+export for GENTIAN_DEPLOYMENTS_GIT_USERNAME here — this runs
     # before collect_bootstrap_credentials, so defaulting it this early wins
     # the "already set" race against the 0600 cache and OpenBao recovery
