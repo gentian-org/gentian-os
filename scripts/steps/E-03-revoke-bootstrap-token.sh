@@ -119,7 +119,7 @@ _revoked_at_detail() {
 # _bootstrap_token — the token this step exists to revoke.
 #
 # B-04 exports BAO_TOKEN, but this step is the one an operator runs on its own:
-# the summary ends every incomplete install with `./install.sh --only E-04`,
+# the summary ends every incomplete install with `./install.sh --only E-03`,
 # and a scoped run never reaches B-04. So BAO_TOKEN was unset, check() returned
 # undefined, the step skipped, and the summary printed the same instruction
 # again — telling the operator to run the command they had just run, forever.
@@ -292,10 +292,10 @@ check() {
     # loading credentials, and reporting "revoked" there would announce the
     # install's last safety step as done on a cluster that never installed.
     # The init file counts as somewhere — see _bootstrap_token, without which
-    # `--only E-04` could never do anything at all.
+    # `--only E-03` could never do anything at all.
     _bootstrap_token >/dev/null || return "${CHECK_UNDEFINED}"
 
-    # A kit is E-03's job and a hard precondition. Without one there is nothing
+    # A kit is E-02's job and a hard precondition. Without one there is nothing
     # for this step to do but say so, and undefined keeps it out of the
     # end-of-run report on a cluster where the operator has not got there yet.
     _kit_exported || return "${CHECK_UNDEFINED}"
@@ -354,10 +354,10 @@ check() {
 #
 # Bounded and interruptible on purpose: Ctrl-C leaves a cluster that is
 # installed and un-revoked, which is exactly the state a later
-# `./install.sh --only E-04` finishes from. A timeout is the same state.
+# `./install.sh --only E-03` finishes from. A timeout is the same state.
 _wait_for_sign_in() {
     local timeout="${GENTIAN_HANDOVER_WAIT_SECS:-1800}"
-    local url="https://portal.${KERNEL_DOMAIN:-<kernel-domain>}/login"
+    local url="https://console.${KERNEL_DOMAIN:-<kernel-domain>}/"
     local waited=0 interval=10
 
     echo ""
@@ -369,12 +369,12 @@ _wait_for_sign_in() {
     # Both instructions here, in the colour the rest of the installer uses for
     # things that matter.
     #
-    # The kit warning used to be printed by E-03, several minutes and a few
+    # The kit warning used to be printed by E-02, several minutes and a few
     # hundred lines earlier, and had scrolled off by the time the install
     # stopped to wait. The one screen an operator is actually looking at — the
     # one that is not moving — has to carry everything they are being asked to
     # do. The path comes from the handover record rather than being recomputed,
-    # so this names the file E-03 actually wrote.
+    # so this names the file E-02 actually wrote.
     local kit_path
     kit_path="$(kubectl get configmap gentian-handover \
         -n "${GENTIAN_SYSTEM_NAMESPACE:-gentian-system}" \
@@ -397,7 +397,7 @@ _wait_for_sign_in() {
     #
     # This said "credentials are in the summary above" — and the summary is
     # printed AFTER the steps, so at this moment there is no summary above.
-    # D-06 printed them, several hundred lines and many minutes earlier. An
+    # D-02 printed them, several hundred lines and many minutes earlier. An
     # instruction to sign in that does not say what to sign in with sends the
     # operator scrolling, which is the opposite of what a step that has stopped
     # to wait for them should do.
@@ -421,7 +421,7 @@ _wait_for_sign_in() {
         printf '%s\n' "${creds}"
     else
         warn "  ${url}"
-        warn "  User: administrator@${KERNEL_DOMAIN:-<kernel-domain>}"
+        warn "  User: admin@${KERNEL_DOMAIN:-<kernel-domain>}"
         warn "  Password: derived — print it with ./install.sh --verify-only"
     fi
     echo ""
@@ -516,7 +516,7 @@ _wait_for_sign_in() {
                     warn "  Ctrl-C is safe. The cluster is installed and stays as it"
                     warn "  is; only the installer's own credential is left live."
                     warn "  To finish, enable the credential manager and re-run:"
-                    warn "    ./install.sh --only E-04"
+                    warn "    ./install.sh --only E-03"
                     echo ""
                     announced=1
                 fi
@@ -554,7 +554,7 @@ apply() {
             warn "No sign-in recorded within the wait. Nothing has changed:"
             warn "  the cluster is installed, the installer's credential is still"
             warn "  live, and creating tenants stays held back."
-            warn "  Sign in, then run: ./install.sh --only E-04"
+            warn "  Sign in, then run: ./install.sh --only E-03"
             return 0
         fi
     fi
@@ -573,7 +573,7 @@ apply() {
         if (( proven != 0 )); then
             warn "  Sign in to the portal as the cluster administrator; the sign-in"
             warn "  performs the exchange and records it. Then:"
-            warn "    ./install.sh --only E-04"
+            warn "    ./install.sh --only E-03"
             warn ""
             warn "  If signing in records nothing, the portal predates the login-time"
             warn "  exchange — open the Admin Console and select the Credentials tab,"
@@ -600,7 +600,7 @@ apply() {
             warn "  OpenBao if the login path above turns out to be broken later:"
             warn "    ./install.sh --export-recovery-kit"
             warn "  Then:"
-            warn "    ./install.sh --only E-04"
+            warn "    ./install.sh --only E-03"
         fi
         return 0
     fi

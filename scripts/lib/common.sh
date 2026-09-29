@@ -1584,10 +1584,10 @@ check_prereqs() {
     local missing=0
 
     # ── CLI tools ─────────────────────────────────────────────────────────────
-    # age is required: E-03 generates the cluster's backup key with it, and
+    # age is required: E-02 generates the cluster's backup key with it, and
     # there is no fallback. Without it the install finishes with no key and
     # every nightly export fails.
-    local base_tools=(kubectl helm jq yq openssl curl bao age age-keygen)
+    local base_tools=(kubectl helm jq yq openssl curl git gpg bao age age-keygen)
     # Crossplane-based installer also needs the crossplane CLI and python3.
     local extra_tools=()
     [[ "${CROSSPLANE_MODE:-0}" == "1" ]] && extra_tools=(crossplane python3)
@@ -2022,7 +2022,7 @@ gentian_mail_service_mode() {
 #
 # Read from the Secret create_crossplane_secrets writes, which is where the
 # Cluster claim's masterPasswordSecretRef points. Deliberately not OpenBao:
-# reading OpenBao needs a root token, and E-04 revokes the installer's at
+# reading OpenBao needs a root token, and E-03 revokes the installer's at
 # handover — which is precisely when a re-run most needs this answer.
 #
 # Prints nothing and returns 1 when the cluster has no salt yet (a first

@@ -498,7 +498,7 @@ trustAnchorSecret: ""
 credentialManager:
   # On by default, because the install cannot finish without it.
   #
-  # E-04 revokes the installer's bootstrap token, and refuses to until something
+  # E-03 revokes the installer's bootstrap token, and refuses to until something
   # else has demonstrably written a credential. That proof is this service
   # recording its first cluster-admin exchange — it holds no token of its own,
   # it exchanges the caller's Keycloak one. Off, nothing records anything, and

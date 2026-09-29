@@ -426,7 +426,7 @@ _kit_gather() {
     # went out with OPENBAO_RECOVERY_KEYS listed under "Absent" on every
     # export ever taken. The recovery key is the one credential in the kit
     # that cannot be re-derived from anything else: it exists in this file and
-    # nowhere else, and E-04 deletes the file. A kit without it is a kit that
+    # nowhere else, and E-03 deletes the file. A kit without it is a kit that
     # cannot open OpenBao when Keycloak is what broke.
     OPENBAO_RECOVERY_KEYS="${OPENBAO_RECOVERY_KEYS:-$(
         _kit_from_json "${OPENBAO_INIT_FILE:-${HOME}/.gentian/openbao-init.json}" \
@@ -437,7 +437,7 @@ _kit_gather() {
     _kit_backup_identity || return 1
 
     if [[ -z "${KERNEL_DOMAIN:-}" ]]; then
-        KERNEL_DOMAIN="$(kubectl get cluster.gentianos.io -n crossplane-system \
+        KERNEL_DOMAIN="$(kubectl get cluster.gentianos.io -n "${CROSSPLANE_NAMESPACE:-kernel-provisioning}" \
             -o jsonpath='{.items[0].spec.kernelDomain}' 2>/dev/null || true)"
     fi
 }
@@ -632,7 +632,7 @@ export_recovery_kit() {
 
 # _record_kit_export_proof — note in gentian-handover that a kit now exists.
 #
-# E-04 reads this before revoking the bootstrap token: once that token is
+# E-03 reads this before revoking the bootstrap token: once that token is
 # gone, this kit — or another export after it — is the only way back into a
 # cluster whose normal login path turns out to be broken. Revoking on the
 # strength of "the operator probably ran this command at some point" is the
@@ -647,13 +647,13 @@ _record_kit_export_proof() {
     local now; now="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
     # The path is recorded too, so a later step can name the file rather than
-    # describe it. E-04 stops the install to ask for two things, one of which
+    # describe it. E-03 stops the install to ask for two things, one of which
     # is "move that kit" — and an instruction to move a file is no use without
     # the file's name. It was written and announced hundreds of lines earlier,
     # which by then has scrolled away.
 
     # patch first: unambiguous (RFC 7396 JSON Merge Patch merges .data by key,
-    # never wipes what handover.RecordWritePathProven or E-04 already wrote),
+    # never wipes what handover.RecordWritePathProven or E-03 already wrote),
     # and correct on every re-run after the first. Only fails when the
     # ConfigMap does not exist yet — expected when export runs before anyone
     # has signed in, which GETTING-STARTED's own ordering invites.
@@ -676,7 +676,7 @@ _record_kit_export_proof() {
         return 0
     fi
 
-    warn "Could not record the export in ${ns}/gentian-handover — E-04 will not"
+    warn "Could not record the export in ${ns}/gentian-handover — E-03 will not"
     warn "  see this kit until it can. Check kubectl access to that namespace,"
     warn "  or run this export again once it is available."
 }

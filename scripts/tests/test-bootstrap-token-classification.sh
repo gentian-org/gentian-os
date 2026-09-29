@@ -2,7 +2,7 @@
 # =============================================================================
 # scripts/tests/test-bootstrap-token-classification.sh
 # =============================================================================
-# E-04 revokes the bootstrap credential. After handover the installer no longer
+# E-03 revokes the bootstrap credential. After handover the installer no longer
 # has one — _resolve_bao_token signs in via OIDC instead — so "a token
 # authenticates" stopped meaning "the bootstrap token is live", and the step
 # reported every later run as an unfinished cluster.
@@ -54,7 +54,7 @@ expect() {
 }
 
 echo ""
-echo "E-04 token classification"
+echo "E-03 token classification"
 echo ""
 
 # The bootstrap credential: the one thing this step exists to revoke.

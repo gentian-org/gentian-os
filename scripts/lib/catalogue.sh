@@ -52,7 +52,7 @@ report_gentian_cli_state() {
 
 _gentian_os_services_namespace() {
     local ns
-    ns=$(kubectl get deploy gentian-os -n gentian-system \
+    ns=$(kubectl get deploy gentian-os -n "$(ns_kernel control)" \
         -o jsonpath='{.spec.template.spec.containers[?(@.name=="manager")].env[?(@.name=="SERVICES_NAMESPACE")].value}' 2>/dev/null || true)
     if [[ -n "$ns" ]]; then
         echo "$ns"
