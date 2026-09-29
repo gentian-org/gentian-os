@@ -45,7 +45,7 @@ const (
 func kernelHTTPSHairpinHosts(kernelDomain string) map[string]struct{} {
 	hosts := []string{
 		kernelDomain,
-		"portal." + kernelDomain,
+		consoleHost(kernelDomain),
 		"id." + kernelDomain,
 		"argocd." + kernelDomain,
 	}
@@ -127,7 +127,13 @@ func patchHairpinCorefile(corefile, edgeIP, kernelDomain string, tenantHosts map
 			continue
 		}
 
-		outLines = append(outLines, line)
+		// A host inside our own markers that nothing wants any more: a tenant
+		// that was deleted, an app that was uninstalled, or a kernel domain
+		// this cluster was installed under before. It goes. Keeping it was
+		// not harmless -- the line pins a name to an address that may now
+		// belong to something else, and it does so for every pod in the
+		// cluster, which is the one place a stale override is hardest to see.
+		changed = true
 	}
 
 	for host := range httpsHosts {
@@ -207,8 +213,8 @@ func sortedHairpinHosts(kernelDomain string) []string {
 	return []string{
 		kernelDomain,
 		"argocd." + kernelDomain,
+		consoleHost(kernelDomain),
 		"id." + kernelDomain,
-		"portal." + kernelDomain,
 	}
 }
 
@@ -225,20 +231,11 @@ func insertBeforeMarker(lines []string, marker, newLine string) []string {
 }
 
 func kernelEdgeClusterIP(ctx context.Context, c client.Client, _ string) (string, error) {
-	list := &corev1.ServiceList{}
-	if err := c.List(ctx, list,
-		client.InNamespace(envoyGatewayInstallNamespace),
-		client.MatchingLabels{
-			"gateway.envoyproxy.io/owning-gateway-name":      KernelPublicGatewayName,
-			"gateway.envoyproxy.io/owning-gateway-namespace": servicesNamespace,
-		},
-	); err != nil {
-		return "", fmt.Errorf("list kernel Envoy Gateway service: %w", err)
+	svc, err := findKernelEdgeService(ctx, c)
+	if err != nil {
+		return "", err
 	}
-	if len(list.Items) == 0 {
-		return "", fmt.Errorf("kernel Envoy Gateway service not found")
-	}
-	ip := list.Items[0].Spec.ClusterIP
+	ip := svc.Spec.ClusterIP
 	if ip == "" {
 		return "", fmt.Errorf("kernel Envoy Gateway service has no ClusterIP")
 	}

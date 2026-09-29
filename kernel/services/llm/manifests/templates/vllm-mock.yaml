@@ -12,7 +12,7 @@ apiVersion: v1
 kind: ConfigMap
 metadata:
   name: mock-vllm-script
-  namespace: platform-kernel
+  namespace: {{ .Values.servicesNamespace }}
 data:
   mock_openai.py: |
     import json
@@ -78,7 +78,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: vllm-inference
-  namespace: platform-kernel
+  namespace: {{ .Values.servicesNamespace }}
 spec:
   replicas: 1
   selector:
@@ -108,7 +108,7 @@ apiVersion: v1
 kind: Service
 metadata:
   name: vllm-inference
-  namespace: platform-kernel
+  namespace: {{ .Values.servicesNamespace }}
 spec:
   ports:
   - port: 8000

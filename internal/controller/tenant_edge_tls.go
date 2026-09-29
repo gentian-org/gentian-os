@@ -217,7 +217,7 @@ func additionalIngressProfile(appProfile string, index int) string {
 	return fmt.Sprintf("%s-extra%d", appProfile, index)
 }
 
-func ingressHost(appProfile string, ingress *gentianov1alpha1.IngressSpec, effectiveDomain string) string {
+func ingressHost(appProfile string, ingress *gentianov1alpha1.ExposureSpec, effectiveDomain string) string {
 	sub := ingress.SubDomain
 	if sub == "@" {
 		return effectiveDomain

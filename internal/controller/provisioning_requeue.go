@@ -22,7 +22,6 @@ import (
 
 	batchv1 "k8s.io/api/batch/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
-	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
 )
 
@@ -52,8 +51,7 @@ func (r *TenantReconciler) provisioningRequeueDelay(ctx context.Context, tenantN
 		if jobName == "" {
 			continue
 		}
-		job := &batchv1.Job{}
-		err := r.Get(ctx, types.NamespacedName{Name: jobName, Namespace: kernelNamespace}, job)
+		job, err := r.getProvisioningJob(ctx, jobName)
 		if err != nil {
 			if errors.IsNotFound(err) {
 				continue

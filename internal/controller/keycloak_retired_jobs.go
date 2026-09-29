@@ -81,7 +81,7 @@ func (r *TenantReconciler) deleteRetiredJobs(ctx context.Context, names ...strin
 	for _, name := range names {
 		job := &batchv1.Job{}
 		job.Name = name
-		job.Namespace = kernelNamespace
+		job.Namespace = identityNamespace
 		if err := r.Delete(ctx, job); err != nil && !errors.IsNotFound(err) {
 			logger.Error(err, "delete retired provisioning job", "job", name)
 		}

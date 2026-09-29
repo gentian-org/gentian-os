@@ -155,7 +155,21 @@ const (
 	// and a hand-edited tenant.yaml may match none. The annotation says what
 	// was chosen, matching says what is in force, and the two disagreeing is
 	// itself worth showing rather than resolving silently.
+	//
+	// Written by the director, into the tenant's resource-plan.yaml patch in
+	// the deployments repository, when someone who may set the plan chooses
+	// one. The operator reads it once Argo CD has synced it, and records the
+	// change in the tenant's usage history from there — so the billing record
+	// says what landed, not what was asked for.
 	ResourcePlanAnnotation = "gentianos.io/resource-plan"
+
+	// ResourcePlanSetByAnnotation names who chose the plan the tenant is on.
+	//
+	// Beside the plan rather than only in the commit, because the operator
+	// reads the Tenant and not git: it is what lets the plan event in the
+	// usage history carry an actor at all. The commit has the same name as
+	// its author, which is how the two records are joined.
+	ResourcePlanSetByAnnotation = "gentianos.io/resource-plan-set-by"
 )
 
 // QuotasEqual reports whether two quota sets impose the same limits.

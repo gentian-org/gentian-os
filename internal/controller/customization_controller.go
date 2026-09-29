@@ -51,7 +51,7 @@ const (
 
 // +kubebuilder:rbac:groups=gentianos.io,resources=customizations,verbs=get;list;watch;update;patch
 // +kubebuilder:rbac:groups=gentianos.io,resources=customizations/status,verbs=get;update;patch
-// +kubebuilder:rbac:groups=gentianos.io,resources=appprofiles,verbs=get;list;watch
+// +kubebuilder:rbac:groups=gentianos.io,resources=componentprofiles,verbs=get;list;watch
 
 // CustomizationReconciler computes the derived state behind the customization debt
 // report: whether a record is overdue for review, whether the app it targets has
@@ -74,7 +74,7 @@ type CustomizationReconciler struct {
 // immediately re-evaluates every customization riding on it.
 func (r *CustomizationReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	mapProfileToRecords := func(ctx context.Context, obj client.Object) []reconcile.Request {
-		profile, ok := obj.(*gentianov1alpha1.AppProfile)
+		profile, ok := obj.(*gentianov1alpha1.ComponentProfile)
 		if !ok {
 			return nil
 		}
@@ -98,7 +98,7 @@ func (r *CustomizationReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&gentianov1alpha1.Customization{}).
 		Watches(
-			&gentianov1alpha1.AppProfile{},
+			&gentianov1alpha1.ComponentProfile{},
 			handler.EnqueueRequestsFromMapFunc(mapProfileToRecords),
 		).
 		Complete(r)
@@ -140,11 +140,11 @@ func (r *CustomizationReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 func (r *CustomizationReconciler) resolveTargetProfile(
 	ctx context.Context,
 	name string,
-) (*gentianov1alpha1.AppProfile, bool, error) {
+) (*gentianov1alpha1.ComponentProfile, bool, error) {
 	if name == "" {
 		return nil, false, nil
 	}
-	var profile gentianov1alpha1.AppProfile
+	var profile gentianov1alpha1.ComponentProfile
 	err := r.Get(ctx, client.ObjectKey{Name: name}, &profile)
 	if errors.IsNotFound(err) {
 		return nil, false, nil
@@ -172,7 +172,7 @@ func (r *CustomizationReconciler) resolveTargetProfile(
 // name with nextcloud-base-ce and no artifact, so it carries its own declaration.
 func (r *CustomizationReconciler) ladderSurfaceFor(
 	ctx context.Context,
-	profile *gentianov1alpha1.AppProfile,
+	profile *gentianov1alpha1.ComponentProfile,
 ) *gentianov1alpha1.CustomizationSurface {
 	if profile == nil || profile.Spec.Customization == nil {
 		return nil
@@ -195,7 +195,7 @@ func (r *CustomizationReconciler) ladderSurfaceFor(
 // evaluate computes the full derived status for a record.
 func (r *CustomizationReconciler) evaluate(
 	record *gentianov1alpha1.Customization,
-	profile *gentianov1alpha1.AppProfile,
+	profile *gentianov1alpha1.ComponentProfile,
 	profileFound bool,
 	surface *gentianov1alpha1.CustomizationSurface,
 ) gentianov1alpha1.CustomizationStatus {
@@ -207,7 +207,7 @@ func (r *CustomizationReconciler) evaluate(
 		status.Phase = gentianov1alpha1.CustomizationPhaseInvalid
 		setRecordCondition(&status, conditionCustomizationValid, metav1.ConditionFalse,
 			"TargetNotFound",
-			fmt.Sprintf("AppProfile %q does not exist", record.Spec.Target.Profile))
+			fmt.Sprintf("ComponentProfile %q does not exist", record.Spec.Target.Profile))
 		return status
 	}
 
@@ -312,11 +312,11 @@ func upstreamStale(record *gentianov1alpha1.Customization) bool {
 
 // targetVersionDrift reports that the profile now pins a version this record was
 // never tested against — the upgrade blast radius signal.
-func targetVersionDrift(record *gentianov1alpha1.Customization, profile *gentianov1alpha1.AppProfile) bool {
+func targetVersionDrift(record *gentianov1alpha1.Customization, profile *gentianov1alpha1.ComponentProfile) bool {
 	if profile == nil || len(record.Spec.TestedAgainst) == 0 {
 		return false
 	}
-	current := profile.Spec.Chart.Version
+	current := profile.Chart().Version
 	if current == "" {
 		return false
 	}

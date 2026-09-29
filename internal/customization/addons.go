@@ -48,9 +48,9 @@ type ResolvedAddon struct {
 // Every problem is reported rather than just the first, so a tenant editing several
 // addons at once fixes them in one pass.
 func ResolveAddons(
-	base *gentianov1alpha1.AppProfile,
+	base *gentianov1alpha1.ComponentProfile,
 	selected []string,
-	index map[string]*gentianov1alpha1.AppProfile,
+	index map[string]*gentianov1alpha1.ComponentProfile,
 ) ([]ResolvedAddon, []error) {
 	if base == nil {
 		return nil, []error{fmt.Errorf("base profile is nil")}
@@ -61,26 +61,21 @@ func ResolveAddons(
 		errs     []error
 		seenID   = map[string]string{} // addon id -> profile that claimed it
 	)
-	baseFamily := gentianov1alpha1.ProfileFamily(base)
-
 	for _, name := range dedupe(selected) {
 		addon, ok := index[name]
 		if !ok {
-			errs = append(errs, fmt.Errorf("addon %q: no such AppProfile", name))
+			errs = append(errs, fmt.Errorf("addon %q: no such ComponentProfile", name))
 			continue
 		}
-		if gentianov1alpha1.EffectiveDeploymentRole(addon) != gentianov1alpha1.ProfileDeploymentRoleAddon {
-			errs = append(errs, fmt.Errorf(
-				"addon %q: deployment-role is %q, not addon — only addons may be selected into an app",
-				name, gentianov1alpha1.EffectiveDeploymentRole(addon)))
-			continue
-		}
-
-		decl := addonDecl(addon)
+		// Whether something IS an addon is now the package saying so, rather
+		// than an annotation beside a customization block that said it again.
+		// One statement, and it is the same one that carries what the app
+		// calls this addon and which base it activates into.
+		decl := addon.Spec.Package.Addon
 		if decl == nil {
 			errs = append(errs, fmt.Errorf(
-				"addon %q: spec.customization.addon is not declared, so the operator "+
-					"cannot know what the app calls it", name))
+				"addon %q: package.addon is not declared, so this is not an addon — "+
+					"only an addon may be selected into an app", name))
 			continue
 		}
 
@@ -91,12 +86,6 @@ func ResolveAddons(
 				"addon %q activates into %q, not %q", name, decl.Of, base.Name))
 			continue
 		}
-		if family := gentianov1alpha1.ProfileFamily(addon); family != baseFamily {
-			errs = append(errs, fmt.Errorf(
-				"addon %q is family %q but %q is family %q", name, family, base.Name, baseFamily))
-			continue
-		}
-
 		// Two profiles resolving to the same app-side id would activate the same thing
 		// twice — usually a packaging mistake (e.g. a ce and pro profile of one addon
 		// selected together), and worth failing on rather than silently deduplicating.
@@ -141,13 +130,6 @@ func EntitledAddons(resolved []ResolvedAddon, granted map[string]bool) (allowed,
 		allowed = append(allowed, a)
 	}
 	return allowed, blocked
-}
-
-func addonDecl(p *gentianov1alpha1.AppProfile) *gentianov1alpha1.CustomizationAddon {
-	if p == nil || p.Spec.Customization == nil {
-		return nil
-	}
-	return p.Spec.Customization.Addon
 }
 
 func dedupe(in []string) []string {

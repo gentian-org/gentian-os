@@ -40,7 +40,7 @@ func (r *TenantReconciler) collectKernelApps(
 	ctx context.Context,
 	tenant *gentianov1alpha1.Tenant,
 	mode AppCollectionMode,
-	match func(*gentianov1alpha1.AppProfile) bool,
+	match func(*gentianov1alpha1.ComponentProfile) bool,
 	setupJobPrefix func(tenantName string) string,
 ) ([]string, error) {
 	profileIndex, err := loadAppProfileIndex(ctx, r.Client)
@@ -70,19 +70,19 @@ func (r *TenantReconciler) collectKernelApps(
 	return apps, nil
 }
 
-func matchMariaDBProfile(profile *gentianov1alpha1.AppProfile) bool {
+func matchMariaDBProfile(profile *gentianov1alpha1.ComponentProfile) bool {
 	return provisioner.MatchMariaDBProfile(profile)
 }
 
-func matchS3Profile(profile *gentianov1alpha1.AppProfile) bool {
+func matchS3Profile(profile *gentianov1alpha1.ComponentProfile) bool {
 	return provisioner.MatchS3Profile(profile)
 }
 
-func matchRedisProfile(profile *gentianov1alpha1.AppProfile) bool {
+func matchRedisProfile(profile *gentianov1alpha1.ComponentProfile) bool {
 	return provisioner.MatchRedisProfile(profile)
 }
 
-func matchMemcachedProfile(profile *gentianov1alpha1.AppProfile) bool {
+func matchMemcachedProfile(profile *gentianov1alpha1.ComponentProfile) bool {
 	return provisioner.MatchMemcachedProfile(profile)
 }
 
@@ -127,19 +127,20 @@ func (r *TenantReconciler) reconcileJobWaitRequirement(
 	return ctrl.Result{}, nil
 }
 
-func newKernelProvisioningJob(name string, tenant *gentianov1alpha1.Tenant, appName string, container corev1.Container) *batchv1.Job {
+func newKernelProvisioningJob(name, namespace string, tenant *gentianov1alpha1.Tenant, appName string, container corev1.Container) *batchv1.Job {
 	return provisioner.NewKernelProvisioningJob(
-		name, kernelNamespace, tenantLabel, managedByLabel, managedByValue, appLabel,
+		name, namespace, tenantLabel, managedByLabel, managedByValue, appLabel,
 		tenant.Name, appName, container,
 	)
 }
 
 func (r *TenantReconciler) ensureDeleteJobs(
 	ctx context.Context,
+	namespace string,
 	tenant *gentianov1alpha1.Tenant,
 	apps []string,
 	jobName func(tenantName, appName string) string,
 	makeJob func(*gentianov1alpha1.Tenant, string) *batchv1.Job,
 ) error {
-	return provisioner.EnsureDeleteJobs(ctx, r.Client, kernelNamespace, tenant, apps, jobName, makeJob, jobIsComplete)
+	return provisioner.EnsureDeleteJobs(ctx, r.Client, namespace, tenant, apps, jobName, makeJob, jobIsComplete)
 }

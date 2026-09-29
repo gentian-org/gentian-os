@@ -18,9 +18,9 @@ package applifecycle
 
 import (
 	"context"
+	"github.com/gentian-org/gentian-os/internal/layout"
 	"os"
 
-	"github.com/gentian-org/gentian-os/internal/meta"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
 )
 
@@ -36,9 +36,8 @@ func NewRunnableFromEnv(mgr manager.Manager) (*Runnable, error) {
 		addr = ":8082"
 	}
 	svc, err := NewService(mgr.GetClient(), mgr.GetConfig(), Options{
-		KernelNamespace:    envOrDefault("KERNEL_NAMESPACE", meta.KernelNamespace),
 		OpenBaoNamespace:   envOrDefault("OPENBAO_NAMESPACE", "openbao"),
-		OperatorNamespace:  envOrDefault("POD_NAMESPACE", "gentian-system"),
+		OperatorNamespace:  envOrDefault("POD_NAMESPACE", layout.Namespace(layout.Control)),
 		OperatorSA:         envOrDefault("OPERATOR_SA", "gentian-os"),
 		DeploymentsPath:    os.Getenv("GENTIAN_DEPLOYMENTS_PATH"),
 		DeploymentsRepo:    os.Getenv("GENTIAN_DEPLOYMENTS_REPO"),
@@ -48,7 +47,14 @@ func NewRunnableFromEnv(mgr manager.Manager) (*Runnable, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Runnable{Server: &HTTPServer{Service: svc, Addr: addr}}, nil
+	// The shared token the director presents. Absent means the server
+	// refuses every request: an operator whose Secret failed to mount must
+	// not fall back to the open API this replaced.
+	return &Runnable{Server: &HTTPServer{
+		Service: svc,
+		Addr:    addr,
+		Token:   os.Getenv("APP_LIFECYCLE_TOKEN"),
+	}}, nil
 }
 
 func envOrDefault(key, def string) string {

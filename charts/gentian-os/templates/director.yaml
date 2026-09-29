@@ -1,0 +1,427 @@
+{{- /*
+  The director: the only writer to gentian-deployments.
+
+  It runs beside the operator and shares nothing with it. The operator holds a
+  cluster credential and no git credential; the director holds a git credential
+  and, in the cluster, only what its own ServiceAccount is granted — which is
+  nothing. Every request it serves is authorised against OpenFGA with the
+  caller's own Keycloak token.
+
+  The one thing it needs from the cluster, the tile catalogue the operator
+  projects, is mounted rather than fetched: handing it the file keeps the
+  division intact, where reading one ConfigMap through the API would mean
+  giving this pod a token that can read the API at all. The mount is optional,
+  so a cluster whose operator has not projected yet still starts.
+*/ -}}
+{{- if .Values.director.enabled }}
+{{- $deployments := .Values.appLifecycle.deployments | default dict }}
+{{- $gitSecret := $deployments.gitCredentialsSecret | default "" }}
+{{- /* Two credential shapes, as repository-default.yaml writes them. basic is
+     username+password, stored under the key `.git-credentials` as a complete
+     scheme://user:pass@host/path URL. bearer has no userinfo form, so it is a
+     single `token` key, read as an env var and sent as an http.extraHeader.
+     The key name matters: a Secret volume projects each key as a file NAMED
+     for the key, so the basic file has to be subPath-mounted onto the path
+     this reads, or it lands at /etc/git/.git-credentials and the clone below
+     silently falls back to an anonymous URL whose push then fails with
+     "could not read Username". That is exactly what happened on 2026-09-25. */}}
+{{- $gitAuthType := $deployments.authType | default "basic" }}
+{{- $gitBearer := eq $gitAuthType "bearer" }}
+{{- $gitCredsFile := and $gitSecret (not $gitBearer) }}
+{{- $checkout := "/data/gentian-deployments" }}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ include "gentian-os.fullname" . }}-director
+  labels:
+    {{- include "gentian-os.labels" . | nindent 4 }}
+    app.kubernetes.io/component: director
+automountServiceAccountToken: false
+---
+{{- if .Values.director.openfgaTokenSecretRef.openbaoPath }}
+apiVersion: external-secrets.io/v1
+kind: ExternalSecret
+metadata:
+  name: {{ .Values.director.openfgaTokenSecretRef.name }}
+  labels:
+    {{- include "gentian-os.labels" . | nindent 4 }}
+spec:
+  refreshInterval: 1h
+  secretStoreRef:
+    kind: ClusterSecretStore
+    name: openbao
+  target:
+    name: {{ .Values.director.openfgaTokenSecretRef.name }}
+    creationPolicy: Owner
+    deletionPolicy: Retain
+  data:
+    - secretKey: {{ .Values.director.openfgaTokenSecretRef.key }}
+      remoteRef:
+        key: {{ .Values.director.openfgaTokenSecretRef.openbaoPath }}
+        property: {{ .Values.director.openfgaTokenSecretRef.property }}
+---
+{{- end }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "gentian-os.fullname" . }}-director
+  labels:
+    {{- include "gentian-os.labels" . | nindent 4 }}
+    app.kubernetes.io/component: director
+spec:
+  selector:
+    {{- include "gentian-os.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: director
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "gentian-os.fullname" . }}-director
+  labels:
+    {{- include "gentian-os.labels" . | nindent 4 }}
+    app.kubernetes.io/component: director
+spec:
+  replicas: {{ .Values.director.replicas }}
+  selector:
+    matchLabels:
+      {{- include "gentian-os.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: director
+  template:
+    metadata:
+      labels:
+        {{- include "gentian-os.labels" . | nindent 8 }}
+        app.kubernetes.io/component: director
+    spec:
+      serviceAccountName: {{ include "gentian-os.fullname" . }}-director
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        fsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      initContainers:
+        # The checkout is scratch space for composing one commit, so it is an
+        # emptyDir and a fresh clone on every start.
+        - name: clone-deployments
+          image: alpine/git:2.45.2
+          command: ["sh", "-c"]
+          args:
+            - |
+              set -e
+              CLONE_URL="${GENTIAN_DEPLOYMENTS_REPO}"
+              {{- if $gitCredsFile }}
+              # An optional Secret volume that does not exist yet mounts as an
+              # empty DIRECTORY at this path rather than failing, and -s alone
+              # reports true for a directory, so -f is what rules that out.
+              if [ -f /etc/git/credentials ] && [ -s /etc/git/credentials ]; then
+                CLONE_URL="$(cat /etc/git/credentials)"
+              fi
+              {{- end }}
+              rm -rf {{ $checkout }}/* {{ $checkout }}/.git 2>/dev/null || true
+              for attempt in 1 2 3 4 5; do
+                git clone "${CLONE_URL}" {{ $checkout }} && exit 0
+                echo "clone attempt ${attempt} failed; retrying"
+                sleep 10
+              done
+              exit 1
+          env:
+            - name: GENTIAN_DEPLOYMENTS_REPO
+              value: {{ $deployments.repo | quote }}
+            - name: HOME
+              value: /tmp
+            {{- if $gitBearer }}
+            - name: GIT_CONFIG_COUNT
+              value: "1"
+            # Dependent env var: $(GIT_BEARER_TOKEN) below is expanded by
+            # Kubernetes, not by a shell, so the order here is what makes it
+            # resolve.
+            - name: GIT_BEARER_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $gitSecret | quote }}
+                  key: token
+                  optional: true
+            - name: GIT_CONFIG_KEY_0
+              value: http.extraHeader
+            - name: GIT_CONFIG_VALUE_0
+              value: "Authorization: Bearer $(GIT_BEARER_TOKEN)"
+            {{- end }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+            readOnlyRootFilesystem: true
+          volumeMounts:
+            - name: deployments
+              mountPath: {{ $checkout }}
+            - name: tmp
+              mountPath: /tmp
+            {{- if $gitCredsFile }}
+            # subPath, so the key lands at this exact path. Without it the
+            # file is named for the key and the test above never matches.
+            # This is the operator's mount, spelled the same way on purpose.
+            #
+            # A subPath mount is not refreshed when its Secret changes, and
+            # the clone only happens here, at startup. So a director that
+            # started before the Repository claim was satisfied keeps its
+            # anonymous origin until the pod is restarted -- which is once,
+            # at bootstrap, and is what B-01 does anyway.
+            - name: git-credentials
+              mountPath: /etc/git/credentials
+              subPath: .git-credentials
+              readOnly: true
+            {{- end }}
+      containers:
+        - name: director
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: ["/director"]
+          ports:
+            - name: http
+              containerPort: 8080
+          env:
+            - name: DIRECTOR_LISTEN
+              value: ":8080"
+            # Identity comes from the issuer and from nowhere else. The public
+            # URL is what tokens carry; the in-cluster one is where keys are
+            # fetched, which is not the same address from inside.
+            - name: DIRECTOR_ISSUER_BASE_URL
+              value: {{ printf "https://id.%s/auth" .Values.kernelDomain | quote }}
+            - name: DIRECTOR_JWKS_BASE_URL
+              value: {{ .Values.director.jwksBaseURL | default (printf "http://gentian-idp-keycloak-keycloakx-http.%s.svc.cluster.local:8080/auth" (.Values.layout.authentication | default .Values.servicesNamespace)) | quote }}
+            - name: DIRECTOR_AUDIENCE
+              value: {{ .Values.director.audience | quote }}
+            - name: OPENFGA_API_URL
+              value: {{ .Values.director.openfgaURL | default .Values.authzBridge.openfgaURL | quote }}
+            {{- if .Values.director.openfgaTokenSecretRef.name }}
+            - name: OPENFGA_API_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.director.openfgaTokenSecretRef.name }}
+                  key: {{ .Values.director.openfgaTokenSecretRef.key }}
+                  optional: true
+            {{- end }}
+            - name: GENTIAN_DEPLOYMENTS_PATH
+              value: {{ $checkout }}
+            - name: GENTIAN_DEPLOYMENTS_REPO
+              value: {{ $deployments.repo | quote }}
+            - name: GENTIAN_DEPLOYMENTS_CLUSTER_ID
+              value: {{ $deployments.cluster | quote }}
+            - name: DIRECTOR_ENTITLEMENTS
+              value: {{ .Values.director.entitlements | quote }}
+            # internal/tiles.ConfigMapName and internal/tiles.Key, as the
+            # operator's projection writes them.
+            - name: DIRECTOR_TILES_PATH
+              value: /etc/gentian/tiles/tiles.yaml
+            # The operator's app-lifecycle API, beside this pod: the one
+            # cluster question the director asks. A tenant's enforced
+            # ceiling and the plans it may move to come from here; the plan
+            # chosen goes to git, and the operator reads it back from there.
+            {{- with (.Values.appLifecycle).tokenSecretName }}
+            # The same Secret the operator mounts: this API is the director's
+            # and nobody else's, and this is what says so.
+            - name: APP_LIFECYCLE_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ . | quote }}
+                  key: token
+                  optional: true
+            {{- end }}
+            - name: DIRECTOR_APP_LIFECYCLE_URL
+              value: {{ .Values.director.appLifecycleURL | default (printf "http://%s-lifecycle.%s.svc.cluster.local:%v" (include "gentian-os.fullname" .) .Release.Namespace .Values.appLifecycle.port) | quote }}
+            {{- /* Where the director reads its Keycloak credentials.
+
+                 One file per realm, written by the operator's Keycloak
+                 platform reconciler: it holds the admin credential and the
+                 director does not, so the credentials are handed over rather
+                 than fetched -- the same division as the tile catalogue.
+
+                 A realm the director holds no file for is a realm it cannot
+                 name, let alone reach. That is the confinement: a missed
+                 authorization check cannot cross into another tenant's realm
+                 because there is no credential for it to cross with. */}}
+            - name: DIRECTOR_REALM_CREDENTIALS_PATH
+              value: /etc/gentian/realms
+            {{- /* The durable record of WHO WAS ALLOWED to ask for a change
+                 to a person (S7A.17).
+
+                 A database and not a commit, and this is the one place the
+                 platform chooses that deliberately: git's append-only history
+                 is what makes it right for configuration and wrong for a
+                 record about people. This one has a retention horizon.
+
+                 Optional. A cluster whose director database has not been
+                 provisioned starts anyway and keeps only the log line, because
+                 taking the console down over an audit trail is the worse
+                 failure. The director warns at start which it is. */}}
+            {{- with .Values.director.recordDatabase }}
+            {{- if .secretName }}
+            - name: DIRECTOR_DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .secretName | quote }}
+                  key: {{ .secretKey | default "uri" | quote }}
+                  optional: true
+            {{- end }}
+            {{- with .retention }}
+            - name: DIRECTOR_RECORD_RETENTION
+              value: {{ . | quote }}
+            {{- end }}
+            {{- end }}
+            {{- if .Values.director.signingKeySecret }}
+            # AD-2: what the director writes is signed, and Argo CD syncs the
+            # deployments repository only for commits carrying a key the
+            # cluster was told to trust. The private half comes from the vault
+            # through External Secrets; GNUPGHOME is under /tmp because the
+            # root filesystem is read-only and gpg insists on writing its
+            # keyring.
+            - name: DIRECTOR_SIGNING_KEY_FILE
+              value: /etc/gentian/signing/private.asc
+            - name: DIRECTOR_GNUPGHOME
+              value: /tmp/gentian-director-gnupg
+            {{- end }}
+            - name: DIRECTOR_COMMITTER_NAME
+              value: {{ .Values.director.committer.name | quote }}
+            - name: DIRECTOR_COMMITTER_EMAIL
+              value: {{ .Values.director.committer.email | quote }}
+            {{- if .Values.director.storeKeysSecretRef.name }}
+            - name: DIRECTOR_STORE_KEYS
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.director.storeKeysSecretRef.name }}
+                  key: {{ .Values.director.storeKeysSecretRef.key }}
+                  optional: true
+            {{- end }}
+            {{- /* No listener key here any more.
+
+                 Keycloak states a user's groups to the operator, which
+                 projects them into the authorization graph along with the
+                 rest of its structure. This service reads that graph to
+                 decide whether a caller may make a call, and writes git. It
+                 writes no tuples, and with the key gone it could not verify a
+                 statement even if something posted one.
+              */}}
+            - name: HOME
+              value: /tmp
+            # git refuses to work in a repository owned by someone else, and
+            # this one always is: the checkout is an emptyDir, so Kubernetes
+            # owns its top directory as root and hands it to the pod by group.
+            # Naming it safe is the documented answer; the alternative is a
+            # chown the container has no right to make.
+            #
+            # Without this every read of the claim fails -- the kernel domain,
+            # the platform roles -- and the director looks like it has lost its
+            # repository rather than like it cannot be trusted with it.
+            - name: GIT_CONFIG_COUNT
+              value: {{ ternary "2" "1" $gitBearer | quote }}
+            - name: GIT_CONFIG_KEY_0
+              value: safe.directory
+            - name: GIT_CONFIG_VALUE_0
+              value: {{ $checkout | quote }}
+            {{- if $gitCredsFile }}
+            # The clone carries the credential in its origin URL, which is
+            # what the push then reads; nothing else in this container has it.
+            {{- end }}
+            {{- if $gitBearer }}
+            # A bearer token is not in the origin URL, so this container needs
+            # it too, as the same header the clone used.
+            - name: GIT_BEARER_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $gitSecret | quote }}
+                  key: token
+                  optional: true
+            - name: GIT_CONFIG_KEY_1
+              value: http.extraHeader
+            - name: GIT_CONFIG_VALUE_1
+              value: "Authorization: Bearer $(GIT_BEARER_TOKEN)"
+            {{- end }}
+            {{- with .Values.trustAnchorSecret }}
+            - name: SSL_CERT_FILE
+              value: /opt/gentian-trust-anchor/ca.crt
+            {{- end }}
+          livenessProbe:
+            httpGet: { path: /healthz, port: http }
+            initialDelaySeconds: 5
+            periodSeconds: 20
+          readinessProbe:
+            httpGet: { path: /healthz, port: http }
+            initialDelaySeconds: 3
+            periodSeconds: 10
+          resources:
+            {{- toYaml .Values.director.resources | nindent 12 }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+            readOnlyRootFilesystem: true
+          volumeMounts:
+            - name: deployments
+              mountPath: {{ $checkout }}
+            - name: tmp
+              mountPath: /tmp
+            - name: tiles
+              mountPath: /etc/gentian/tiles
+              readOnly: true
+            - name: realm-credentials
+              mountPath: /etc/gentian/realms
+              readOnly: true
+            {{- if .Values.director.signingKeySecret }}
+            - name: signing-key
+              mountPath: /etc/gentian/signing
+              readOnly: true
+            {{- end }}
+            {{- with .Values.trustAnchorSecret }}
+            - name: trust-anchor
+              mountPath: /opt/gentian-trust-anchor
+              readOnly: true
+            {{- end }}
+      volumes:
+        - name: deployments
+          emptyDir: {}
+        - name: tmp
+          emptyDir: {}
+        # Optional: the projection is the operator's, and the director serves
+        # an empty catalogue until it exists rather than refusing to start.
+        - name: tiles
+          configMap:
+            name: gentian-tiles
+            optional: true
+        # Optional, and re-read rather than read once: the operator writes a
+        # realm's key when the realm appears, which for every tenant is after
+        # this pod started. A director that read the directory at boot would
+        # never speak for a tenant created since.
+        - name: realm-credentials
+          secret:
+            secretName: gentian-director-realms
+            optional: true
+        {{- if .Values.director.signingKeySecret }}
+        # Optional for the same reason as the git credential: B-10 writes the
+        # key to the vault and External Secrets projects it, which may happen
+        # after this pod first runs. A director without it commits unsigned
+        # and says so, rather than refusing to start.
+        - name: signing-key
+          secret:
+            secretName: {{ .Values.director.signingKeySecret | quote }}
+            optional: true
+        {{- end }}
+        {{- if $gitCredsFile }}
+        # Optional: the Secret is materialised from OpenBao by the deployments
+        # Repository claim, which may be satisfied after this pod first runs.
+        - name: git-credentials
+          secret:
+            secretName: {{ $gitSecret | quote }}
+            optional: true
+        {{- end }}
+        {{- with .Values.trustAnchorSecret }}
+        - name: trust-anchor
+          secret:
+            secretName: {{ . }}
+            optional: true
+        {{- end }}
+{{- end }}

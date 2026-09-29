@@ -33,6 +33,15 @@ metadata:
     # bridge read an empty OpenFGA token for an hour after ESO had populated
     # its Secret, retrying 401 bearer_token_missing against a value that was
     # by then sitting right beside it.
+    {{- /*
+      The claim's projection. gentian-cluster-config carries the settings the
+      operator reads from the claim rather than from its own Helm values --
+      tenancy, mail, LLM, the tenant limit range. Without this annotation a
+      setting changed through the director lands in git, reaches the
+      ConfigMap, and then waits for an unrelated restart before anything acts
+      on it, which reads as the change having been ignored.
+    */}}
+    configmap.reloader.stakater.com/reload: "gentian-cluster-config"
     secret.reloader.stakater.com/reload: >-
       {{ .Values.authzBridge.openfgaTokenSecretRef.name | default "gentian-os-openfga-token" }}
       {{- with .Values.cloudflare.apiTokenSecretRef }}{{- if .name }},{{ .name }}{{- end }}{{- end }}
@@ -82,6 +91,7 @@ spec:
             - configMapRef:
                 name: {{ include "gentian-os.fullname" . }}-config
           env:
+            {{- include "gentian-os.layoutEnv" . | nindent 12 }}
             {{- with .Values.trustAnchorSecret }}
             # Outside every feature guard on purpose: the operator talks to
             # Keycloak and OpenBao over kernel hostnames whatever else is
@@ -164,8 +174,14 @@ spec:
             */}}
             - name: BAO_CA_SECRET
               value: {{ (.Values.credentialManager).caSecret | default "openbao-tls" | quote }}
+            {{- /* Where that Secret is: the vault's own namespace, which this
+                 chart is already told. It defaulted to the literal "openbao",
+                 which is the v4 name -- so on a v5 cluster the certificate was
+                 looked for in a namespace that does not exist, the CA was not
+                 found, and every token exchange failed at TLS while the log
+                 said only that it was verifying against the system roots. */}}
             - name: BAO_CA_SECRET_NAMESPACE
-              value: {{ (.Values.credentialManager).caSecretNamespace | default "openbao" | quote }}
+              value: {{ (.Values.credentialManager).caSecretNamespace | default .Values.openbaoNamespace | default "kernel-secrets" | quote }}
             {{- if (.Values.credentialManager).tlsSkipVerify }}
             - name: BAO_TLS_SKIP_VERIFY
               value: "true"
@@ -183,6 +199,18 @@ spec:
             {{- if .Values.authzBridge.enabled }}
             - name: AUTHZ_BRIDGE_ENABLED
               value: "true"
+            {{- end }}
+            {{- /*
+              Not gated on the retired bridge.
+
+              The operator projects the authorization graph's structure -- the
+              cluster's roles and its tenants -- whether or not the bridge that
+              used to sync app grants is on. Leaving these behind
+              authzBridge.enabled meant that turning the bridge off, which v5
+              does, also took away the address the projection needs, and
+              nobody would administer the cluster.
+            */}}
+            {{- if .Values.authzBridge.openfgaURL }}
             - name: OPENFGA_API_URL
               value: {{ .Values.authzBridge.openfgaURL | quote }}
             {{- /*
@@ -205,6 +233,34 @@ spec:
                   key: {{ .Values.authzBridge.openfgaTokenSecretRef.key | default "api-token" | quote }}
                   optional: true
             {{- end }}
+            {{- end }}
+            {{- with .Values.authzBridge.storeID }}
+            - name: OPENFGA_STORE_ID
+              value: {{ . | quote }}
+            {{- end }}
+            {{- with .Values.authzBridge.modelID }}
+            - name: OPENFGA_MODEL_ID
+              value: {{ . | quote }}
+            {{- end }}
+            {{- if .Values.membershipListener.keysSecretRef.name }}
+            # The public halves of the keys Keycloak's event listener signs
+            # with. A statement about who is in which group is believed only
+            # when it carries one of these signatures, so without this the
+            # operator accepts no membership at all and every permission that
+            # follows from a group is refused to everyone. The portal login
+            # step derives the pair and writes both halves.
+            - name: GENTIAN_LISTENER_KEYS
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.membershipListener.keysSecretRef.name | quote }}
+                  key: {{ .Values.membershipListener.keysSecretRef.key | default "keys" | quote }}
+                  optional: true
+            - name: GENTIAN_MEMBERSHIP_ADDR
+              value: ":{{ .Values.membershipListener.port }}"
+            - name: GENTIAN_PLATFORM_REALM
+              value: {{ .Values.membershipListener.platformRealm | quote }}
+            - name: GENTIAN_PLATFORM_TENANT
+              value: {{ .Values.membershipListener.platformTenant | quote }}
             {{- end }}
             # Which EdgeIngress this cluster runs, by the name
             # kernel/platforms.yaml uses. Empty follows networkMode, so an
@@ -278,6 +334,10 @@ spec:
               value: {{ .Values.infraNamespace | quote }}
             - name: SERVICES_NAMESPACE
               value: {{ .Values.servicesNamespace | quote }}
+            # The ext-auth shim's Service, which every kernel-zone SecurityPolicy
+            # the operator writes names as its ext-auth backend.
+            - name: EDGE_AUTHZ_SERVICE
+              value: {{ printf "%s-edge-authz" (include "gentian-os.fullname" .) | quote }}
             - name: GENTIAN_STAGE
               value: {{ .Values.stage | default "dev" | quote }}
             - name: LLM_SUPPORT
@@ -288,7 +348,7 @@ spec:
             - name: CREDENTIAL_MANAGER_ADDR
               value: ":{{ .Values.credentialManager.port }}"
             - name: CREDENTIAL_PROBE_NAMESPACE
-              value: {{ .Values.credentialManager.probeNamespace | quote }}
+              value: {{ .Values.credentialManager.probeNamespace | default .Release.Namespace | quote }}
             - name: BAO_AUTH_MOUNT
               value: {{ .Values.credentialManager.authMount | quote }}
             - name: BAO_OIDC_ROLES
@@ -345,6 +405,17 @@ spec:
               value: {{ printf ":%v" .Values.appLifecycle.port | quote }}
             - name: GENTIAN_DEPLOYMENTS_PATH
               value: {{ $lifecycleDeployments.path | default "/data/gentian-deployments" | quote }}
+            {{- with (.Values.appLifecycle).tokenSecretName }}
+            # The shared token this API requires. Optional on the ref so a pod
+            # still starts while the Secret is being created; the server then
+            # refuses every request rather than serving them unauthenticated.
+            - name: APP_LIFECYCLE_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ . | quote }}
+                  key: token
+                  optional: true
+            {{- end }}
             - name: GENTIAN_DEPLOYMENTS_REPO
               value: {{ $lifecycleDeployments.repo | default "https://git.example.domain/gentian-deployments" | quote }}
             - name: GENTIAN_DEPLOYMENTS_CLUSTER_ID
@@ -409,7 +480,7 @@ spec:
               value: gentian-os@gentian.org
             {{- end }}
             - name: KERNEL_NAMESPACE
-              value: {{ .Values.infraNamespace | default "platform-kernel" | quote }}
+              value: {{ .Values.infraNamespace | default "kernel-authentication" | quote }}
             - name: POD_NAMESPACE
               valueFrom:
                 fieldRef:
@@ -426,6 +497,11 @@ spec:
             - name: lifecycle
               containerPort: {{ .Values.appLifecycle.port }}
               protocol: TCP
+            {{- if .Values.membershipListener.keysSecretRef.name }}
+            - name: membership
+              containerPort: {{ .Values.membershipListener.port }}
+              protocol: TCP
+            {{- end }}
             {{- if .Values.credentialManager.enabled }}
             - name: credentials
               containerPort: {{ .Values.credentialManager.port }}

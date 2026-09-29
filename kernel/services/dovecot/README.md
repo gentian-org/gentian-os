@@ -1,6 +1,6 @@
 # Kernel Dovecot (IMAP / LMTP)
 
-Inbound MDA for `MAIL_SERVICE_MODE=kernel`: accepts mail from Postfix over LMTP,
+Inbound MDA for `MAIL_SERVICE_MODE=system`: accepts mail from Postfix over LMTP,
 files it per tenant domain, and authenticates IMAP against Keycloak with XOAUTH2.
 
 No maintained public Dovecot Helm chart was available, so this is a raw Deployment
@@ -37,7 +37,7 @@ because `result_failure = continue` moves on to the next realm.
 | Deployment / Service | `dovecot-<env>` (e.g. `dovecot-dev`) |
 | LMTP DNS | `dovecot-dev.platform-kernel.svc.cluster.local:24` |
 | Argo CD | ApplicationSet `gentian-infra-helm` (wave 9) |
-| Bootstrap | `install.sh` step `D-04-mail` when `MAIL_SERVICE_MODE=kernel` |
+| Bootstrap | `install.sh` step `D-04-mail` when `MAIL_SERVICE_MODE=system` |
 
 ## Image
 

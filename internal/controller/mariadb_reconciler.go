@@ -38,7 +38,7 @@ const (
 )
 
 // ensureMariaDB provisions per-app-per-tenant MariaDB databases using idempotent
-// SQL Jobs. It looks up which apps require MariaDB via AppProfile KernelRequirements,
+// SQL Jobs. It looks up which apps require MariaDB via AppProfile ServiceRequirements,
 // then runs a setup Job for each (CREATE DATABASE IF NOT EXISTS + CREATE USER +
 // GRANT). Completion of all setup Jobs sets MariaDBReady=True.
 func (r *TenantReconciler) ensureMariaDB(ctx context.Context, tenant *gentianov1alpha1.Tenant) (ctrl.Result, error) {
@@ -74,7 +74,7 @@ func (r *TenantReconciler) deleteMariaDB(ctx context.Context, tenant *gentianov1
 	if err != nil {
 		return err
 	}
-	return r.ensureDeleteJobs(ctx, tenant, apps, mariadbDeleteJobName, makeMariaDBDeleteJob)
+	return r.ensureDeleteJobs(ctx, mariadbNamespace, tenant, apps, mariadbDeleteJobName, makeMariaDBDeleteJob)
 }
 
 // --- Job constructors --------------------------------------------------------
@@ -93,7 +93,7 @@ func makeMariaDBSetupJob(tenant *gentianov1alpha1.Tenant, appName, dbPassword st
 	if allowDynamic {
 		c.Env = append(c.Env, corev1.EnvVar{Name: "ALLOW_DYNAMIC", Value: "true"})
 	}
-	return newKernelProvisioningJob(mariadbSetupJobName(tenant.Name, appName), tenant, appName, c)
+	return newKernelProvisioningJob(mariadbSetupJobName(tenant.Name, appName), mariadbNamespace, tenant, appName, c)
 }
 
 // makeMariaDBDeleteJob builds the DROP DATABASE / DROP USER cleanup Job.
@@ -102,6 +102,7 @@ func makeMariaDBDeleteJob(tenant *gentianov1alpha1.Tenant, appName string) *batc
 	dbUser := mariadbUserName(tenant.Name, appName)
 	return newKernelProvisioningJob(
 		mariadbDeleteJobName(tenant.Name, appName),
+		mariadbNamespace,
 		tenant,
 		appName,
 		mariadbContainer("delete-db", mariadbDeleteScript, dbName, dbUser),

@@ -17,6 +17,9 @@ ignore: |
   # being forgotten in this list.
   kernel/manifests/*/chart/templates/
   kernel/bootstrap/chart/templates/
+  kernel/bootstrap/chart/templates/
+  kernel/appsets/templates/
+  kernel/data/*/templates/
   charts/infra/
   kernel/manifests/flux-crds/
   crossplane/compositions/

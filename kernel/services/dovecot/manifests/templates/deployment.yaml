@@ -70,6 +70,46 @@ spec:
         key: gentian-os/kernel/mail/dovecot
         property: oidc_client_secret
 ---
+# The same two values under the name the OPERATOR reads.
+#
+# dovecot-sensitive-values above is the chart's own, merged into the Helm
+# release. keycloak_dovecot_tenant_client.go and mail_reconciler.go read
+# `dovecot-admin` instead — the doveadm password to provision a tenant's
+# mailboxes, and the OIDC client secret to declare the tenant's Dovecot client
+# in Keycloak. On v4 kernel/services/kernel-admin wrote it into
+# platform-kernel; the operator addresses mail by function now
+# (layout.System("mail")) and looks for it beside Dovecot.
+#
+# Two names for one vault path rather than one Secret used twice: the chart
+# consumes its copy as Helm values through provider-helm, and the operator
+# consumes its copy as env vars in a Job. Renaming either side to match the
+# other would mean one of them reading a Secret shaped for the other.
+apiVersion: external-secrets.io/v1
+kind: ExternalSecret
+metadata:
+  name: dovecot-admin
+  namespace: {{ .Values.servicesNamespace }}
+  annotations:
+    argocd.argoproj.io/sync-wave: "-1"
+spec:
+  refreshInterval: 1h
+  secretStoreRef:
+    kind: ClusterSecretStore
+    name: openbao
+  target:
+    name: dovecot-admin
+    creationPolicy: Owner
+  data:
+    - secretKey: doveadm_password
+      remoteRef:
+        key: gentian-os/kernel/mail/dovecot
+        property: doveadm_password
+    - secretKey: oidc_client_secret
+      remoteRef:
+        key: gentian-os/kernel/mail/dovecot
+        property: oidc_client_secret
+
+---
 # The running configuration. Self-contained on purpose: dovecot is started with
 # `-c` pointing at this file and it does not `!include conf.d/*.conf`, so what
 # runs is exactly what is here and not a merge with whatever the upstream image

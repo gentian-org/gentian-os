@@ -23,6 +23,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
+	"github.com/gentian-org/gentian-os/internal/layout"
 	"github.com/gentian-org/gentian-os/internal/meta"
 )
 
@@ -30,13 +31,13 @@ import (
 // declared in its AppProfile kernelRequirements and optional profile annotations.
 func KernelAccessNetworkPolicy(
 	tenantName, nsName, appName string,
-	profile *gentianov1alpha1.AppProfile,
+	profile *gentianov1alpha1.ComponentProfile,
 	cfg Config,
 ) *networkingv1.NetworkPolicy {
 	if profile == nil {
 		return nil
 	}
-	targets := kernelEgressTargets(profile.Spec.KernelRequirements, profile, cfg)
+	targets := kernelEgressTargets(profile.Services(), profile, cfg)
 	if len(targets) == 0 {
 		return nil
 	}
@@ -70,7 +71,7 @@ func kernelPolicyName(appName string) string {
 	return name
 }
 
-func kernelEgressTargets(kr *gentianov1alpha1.KernelRequirements, profile *gentianov1alpha1.AppProfile, cfg Config) []string {
+func kernelEgressTargets(kr *gentianov1alpha1.ServiceRequirements, profile *gentianov1alpha1.ComponentProfile, cfg Config) []string {
 	var out []string
 	seen := map[string]struct{}{}
 	add := func(ns string) {
@@ -87,19 +88,20 @@ func kernelEgressTargets(kr *gentianov1alpha1.KernelRequirements, profile *genti
 	if kr != nil {
 		if kr.Identity != nil {
 			add(cfg.ServicesNamespace)
-			add(meta.KernelNamespace)
+			add(layout.Namespace(layout.Authentication))
 		}
 		if kr.Database != nil {
-			add(cfg.InfraNamespace)
+			add(layout.System("postgresql"))
 		}
 		if kr.Cache != nil {
-			add(cfg.InfraNamespace)
+			add(layout.System("cache"))
 		}
 		if kr.Storage != nil {
-			add(cfg.InfraNamespace)
+			add(layout.System("s3"))
 		}
 		if kr.Mail != nil {
-			add(cfg.ServicesNamespace)
+			add(layout.System("mail"))
+			add(layout.System("mail-dmz"))
 		}
 	}
 	for _, ns := range gentianov1alpha1.ProfileKernelEgressNamespaces(profile) {

@@ -39,7 +39,7 @@ type IntegrationBindingReconciler struct {
 // +kubebuilder:rbac:groups=gentianos.io,resources=integrationbindings/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=gentianos.io,resources=integrationbindings/finalizers,verbs=update
 // +kubebuilder:rbac:groups=gentianos.io,resources=tenants,verbs=get;list;watch
-// +kubebuilder:rbac:groups=gentianos.io,resources=appprofiles,verbs=get;list;watch
+// +kubebuilder:rbac:groups=gentianos.io,resources=componentprofiles,verbs=get;list;watch
 
 // Reconcile reads that state of the cluster for a IntegrationBinding object and makes changes based on the state read
 // and what is in the IntegrationBinding.Spec
@@ -50,10 +50,17 @@ func (r *IntegrationBindingReconciler) Reconcile(ctx context.Context, req ctrl.R
 	}
 
 	if r.Seeder != nil {
-		// Fetch Provider AppProfile
-		var providerProfile gentianov1alpha1.AppProfile
+		// The provider's profile, for the Service its contract is served on.
+		//
+		// A ComponentProfile: AD-4 leaves one catalogue kind, and this read
+		// asked for the other one long after the catalogue stopped shipping
+		// it -- so every binding failed here with a NotFound and no contract
+		// credential was ever seeded. Found by deleting the AppProfile type
+		// rather than by anything noticing at runtime, which is the argument
+		// for deleting a type instead of leaving it defined and unused.
+		var providerProfile gentianov1alpha1.ComponentProfile
 		if err := r.Get(ctx, client.ObjectKey{Name: ib.Spec.Provider.App}, &providerProfile); err != nil {
-			return ctrl.Result{}, fmt.Errorf("failed to get provider AppProfile: %w", err)
+			return ctrl.Result{}, fmt.Errorf("failed to get provider ComponentProfile: %w", err)
 		}
 
 		// Fetch Tenant
@@ -70,13 +77,23 @@ func (r *IntegrationBindingReconciler) Reconcile(ctx context.Context, req ctrl.R
 		user := fmt.Sprintf("gentian-contract-%s", ib.Spec.Contract) // A standard user
 		switch ib.Spec.Contract {
 		case "calendar", "contacts":
-			if providerProfile.Spec.Ingress.SubDomain != "" {
-				// We don't have KERNEL_DOMAIN here so we can't fully construct the URL if TenantDomain is empty
-				// But we can just use the internal service URL!
+			// The provider's own web entry, which is what its DAV endpoint is
+			// served on. Its backend names the Service and the port; where
+			// the entry routes to ANOTHER component, that component's Service
+			// is the one to address, because that is where the contract is
+			// actually answered.
+			//
+			// Addressed in-cluster rather than through the gateway: the
+			// consumer is in the same namespace, the endpoint is for a
+			// machine, and a round trip out to the edge and back would need a
+			// session this has no business holding.
+			for _, e := range providerProfile.GatewayExposures() {
+				if e.Name != primaryExposureName || e.Backend.Service == "" {
+					continue
+				}
 				endpoint = fmt.Sprintf("http://%s.%s.svc.cluster.local:%d/remote.php/dav/",
-					providerProfile.Spec.Ingress.ServiceName,
-					ib.Namespace,
-					providerProfile.Spec.Ingress.ServicePort)
+					e.Backend.Service, ib.Namespace, e.Backend.Port)
+				break
 			}
 		}
 

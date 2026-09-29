@@ -52,7 +52,7 @@ func tenantHasConditionTrue(tenant *gentianov1alpha1.Tenant, condType string) bo
 //
 // Every one of them is set on every path its stage takes, including the
 // not-applicable path, which reports True with a reason saying so:
-// NoStorageRequired, PortalShellReady, "No apps require provisioning". So an
+// NoStorageRequired, NoDatabaseRequired, "No apps require provisioning". So an
 // absent condition here means the stage has not run, never that it had nothing
 // to do.
 var tenantFoundationConditions = []string{
@@ -152,7 +152,7 @@ func (r *TenantReconciler) deleteTenantProvisioningConfigMap(ctx context.Context
 	cm := &corev1.ConfigMap{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      tenantProvisioningConfigMapName(tenantName),
-			Namespace: kernelNamespace,
+			Namespace: provisioningNamespace,
 		},
 	}
 	return client.IgnoreNotFound(r.Delete(ctx, cm))

@@ -284,8 +284,15 @@ _has_verb() {
 # codes. Call as: `verdict=0; _step_verdict || verdict=$?`.
 #
 # A step with no check() is UNDEFINED rather than MISSING: it has not told us
-# there is work to do, only that it has no way to say. The callers decide what
-# that means for their direction — the forward pass still applies such a step.
+# there is work to do, only that it has no way to say.
+#
+# What the callers do with that differs, and the forward pass SKIPS it — this
+# comment used to claim the opposite, which is worth knowing because it makes
+# UNDEFINED dangerous to return for the wrong reason. "This cluster does not
+# want this feature" is a correct use. "I could not verify it" is not: the
+# step is then skipped silently and the log reads "nothing to do here". B-09
+# returned undefined when it could not reach the vault, and the OIDC mount was
+# never enabled on a cluster that had asked for one.
 _step_verdict() {
     local rc=0
     _has_verb check || return "${CHECK_UNDEFINED}"
@@ -703,7 +710,7 @@ validate_step_calls() {
         [[ -n "${src}" && -f "${SCRIPT_DIR}/${src}" ]] || continue
         # shellcheck source=/dev/null
         source "${SCRIPT_DIR}/${src}" >/dev/null 2>&1 || true
-    done < <(grep -ho 'source "\${SCRIPT_DIR}/[^"]*"' "${GENTIAN_STEPS_DIR}"/*.sh 2>/dev/null |
+    done < <({ grep -ho 'source "\${SCRIPT_DIR}/[^"]*"' "${GENTIAN_STEPS_DIR}"/*.sh 2>/dev/null || true; } |
              sed 's|source "\${SCRIPT_DIR}/||; s|"$||' | sort -u)
 
     # install.sh's own prepare_run is checked too. Leaving it out is how
@@ -773,13 +780,22 @@ validate_pins() {
     local i file rc=0 c claimed=" " comp
     for (( i = 0; i < ${#_STEP_IDS[@]}; i++ )); do
         file="${_STEP_FILES[$i]}"
-        c="$(step_header "$file" pins)"
-        [[ -n "$c" ]] || continue
-        if ! _gentian_yq ".\"${c}\"" "${GENTIAN_VERSIONS_FILE}" >/dev/null 2>&1; then
-            error "$(step_id_of "$file"): pins '${c}', which is not in versions.yaml"
-            rc=1
-        fi
-        claimed+="${c} "
+        # A step may pull more than one pinned component: `# pins: a b`.
+        for c in $(step_header "$file" pins); do
+            if ! _gentian_yq ".\"${c}\"" "${GENTIAN_VERSIONS_FILE}" >/dev/null 2>&1; then
+                error "$(step_id_of "$file"): pins '${c}', which is not in versions.yaml"
+                rc=1
+            fi
+            claimed+="${c} "
+        done
+    done
+
+    # The inventory is shared by every step set (scripts/steps*/): a pin only
+    # the other layout pulls is claimed, not stale.
+    local other
+    for other in "${SCRIPT_DIR}"/scripts/steps*/[A-Z]-[0-9][0-9]-*.sh; do
+        [[ -f "${other}" ]] || continue
+        for c in $(step_header "${other}" pins); do claimed+="${c} "; done
     done
 
     while IFS= read -r comp; do

@@ -136,14 +136,7 @@ spec:
             - group: gentianos.io
               jsonPointers:
               - /metadata/annotations/argocd.argoproj.io~1tracking-id
-              kind: AppProfile
-            - group: gentianos.io
-              jqPathExpressions:
-              - .spec.ingress.clusterIssuer
-              - .spec.additionalIngresses[]?.clusterIssuer
-              - .spec.browserProxy[]?.authMode
-              - .spec.browserProxy[]?.stripPrefix
-              kind: AppProfile
+              kind: ComponentProfile
             project: gentian
             source:
               path: '{{ .path.path }}'

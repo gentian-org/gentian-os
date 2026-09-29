@@ -37,8 +37,8 @@ const (
 
 type ingressIntent struct {
 	appProfile string
-	profile    *gentianov1alpha1.AppProfile
-	ingress    *gentianov1alpha1.IngressSpec
+	profile    *gentianov1alpha1.ComponentProfile
+	ingress    *gentianov1alpha1.ExposureSpec
 }
 
 func appHTTPRouteName(tenantName, appProfile string) string {
@@ -47,10 +47,6 @@ func appHTTPRouteName(tenantName, appProfile string) string {
 
 func appBackendTrafficPolicyName(tenantName, appProfile string) string {
 	return fmt.Sprintf("btp-%s-%s", tenantName, appProfile)
-}
-
-func tenantApexRedirectRouteName(tenantName string) string {
-	return tenantPortalRedirectName(tenantName)
 }
 
 func gatewayParentRef(gatewayName string) gatewayv1.ParentReference {
@@ -64,7 +60,7 @@ func gatewayParentRef(gatewayName string) gatewayv1.ParentReference {
 }
 
 func kernelGatewayParentRef() gatewayv1.ParentReference {
-	ref := gatewayParentRef(KernelPublicGatewayName)
+	ref := gatewayParentRef(AuthenticatedGatewayName)
 	ns := gatewayv1.Namespace(servicesNamespace)
 	ref.Namespace = &ns
 	return ref
@@ -102,10 +98,6 @@ func pathPrefixMatch(prefix string) gatewayv1.HTTPRouteMatch {
 	return pathMatch(gatewayv1.PathMatchPathPrefix, prefix)
 }
 
-func pathExactMatch(path string) gatewayv1.HTTPRouteMatch {
-	return pathMatch(gatewayv1.PathMatchExact, path)
-}
-
 // appHTTPRoutesForIntents builds the desired per-app HTTPRoutes for a tenant.
 func appHTTPRoutesForIntents(
 	tenant *gentianov1alpha1.Tenant,
@@ -128,11 +120,11 @@ func buildAppHTTPRoute(
 ) *gatewayv1.HTTPRoute {
 	host := ingressHost(intent.appProfile, intent.ingress, effectiveDomain)
 	ingress := intent.ingress
-	svcName := ingress.ServiceName
+	svcName := ingress.Backend.Service
 	if svcName == "" {
 		svcName = intent.appProfile
 	}
-	svcPort := ingress.ServicePort
+	svcPort := ingress.Backend.Port
 	if svcPort == 0 {
 		svcPort = defaultServicePort
 	}
@@ -152,8 +144,8 @@ func buildAppHTTPRoute(
 		},
 	}
 
-	if intent.profile != nil && gentianov1alpha1.ProfileIsAPI(intent.profile) && intent.profile.Spec.APIIntegration != nil {
-		api := intent.profile.Spec.APIIntegration
+	if intent.profile != nil && intent.profile.IsAPI() && intent.profile.Spec.Package.API != nil {
+		api := intent.profile.Spec.Package.API
 		switch api.Runtime {
 		case gentianov1alpha1.APIIntegrationRuntimeRedirect:
 			u, err := url.Parse(api.BaseURL)
@@ -213,6 +205,8 @@ func buildAppHTTPRoute(
 				}
 			}
 		case gentianov1alpha1.APIIntegrationRuntimePortalProxy:
+			// The tenant's own desktop, the BFF beside this route in the
+			// tenant's namespace (ui-restructure.md §1) -- not a shared one.
 			portVal := gatewayv1.PortNumber(8000)
 			rule = gatewayv1.HTTPRouteRule{
 				Matches: []gatewayv1.HTTPRouteMatch{pathPrefixMatch("/")},
@@ -220,9 +214,8 @@ func buildAppHTTPRoute(
 					{
 						BackendRef: gatewayv1.BackendRef{
 							BackendObjectReference: gatewayv1.BackendObjectReference{
-								Name:      gatewayv1.ObjectName("gentian-portal-gentian-portal-api"),
-								Namespace: (*gatewayv1.Namespace)(&servicesNamespace),
-								Port:      &portVal,
+								Name: gatewayv1.ObjectName(desktopAPIServiceName),
+								Port: &portVal,
 							},
 						},
 					},
@@ -230,9 +223,10 @@ func buildAppHTTPRoute(
 			}
 		}
 	}
+	// The component's own host, which is the first gateway exposure.
 	mainIngressSubDomain := ""
-	if intent.profile != nil && intent.profile.Spec.Ingress != nil {
-		mainIngressSubDomain = intent.profile.Spec.Ingress.SubDomain
+	if gateways := intent.profile.GatewayExposures(); len(gateways) > 0 {
+		mainIngressSubDomain = gateways[0].SubDomain
 	}
 	if filters := gatewayEmbeddingResponseFilters(kernelDomain, effectiveDomain, ingress.SubDomain, mainIngressSubDomain, ingress); len(filters) > 0 {
 		rule.Filters = filters
@@ -281,7 +275,7 @@ func buildAppHTTPRoute(
 	}
 }
 
-func appRootRedirectRule(profile *gentianov1alpha1.AppProfile, host string) *gatewayv1.HTTPRouteRule {
+func appRootRedirectRule(profile *gentianov1alpha1.ComponentProfile, host string) *gatewayv1.HTTPRouteRule {
 	target := gentianov1alpha1.ProfileGatewayRootRedirect(profile)
 	if target == "" {
 		return nil
@@ -317,18 +311,18 @@ func appRootRedirectRule(profile *gentianov1alpha1.AppProfile, host string) *gat
 }
 
 func appAPIBackendRules(
-	profile *gentianov1alpha1.AppProfile,
+	profile *gentianov1alpha1.ComponentProfile,
 	defaultPort int32,
 	kernelDomain, effectiveDomain string,
-	ingress *gentianov1alpha1.IngressSpec,
+	ingress *gentianov1alpha1.ExposureSpec,
 ) []gatewayv1.HTTPRouteRule {
 	backends, err := gentianov1alpha1.ProfileGatewayAPIBackends(profile)
 	if err != nil || len(backends) == 0 {
 		return nil
 	}
 	mainIngressSubDomain := ""
-	if profile != nil && profile.Spec.Ingress != nil {
-		mainIngressSubDomain = profile.Spec.Ingress.SubDomain
+	if gateways := profile.GatewayExposures(); len(gateways) > 0 {
+		mainIngressSubDomain = gateways[0].SubDomain
 	}
 	var filters []gatewayv1.HTTPRouteFilter
 	if ingress != nil {
@@ -366,7 +360,7 @@ func appAPIBackendRules(
 
 func gatewayEmbeddingResponseFilters(
 	kernelDomain, effectiveDomain, ingressSubDomain, mainIngressSubDomain string,
-	ingress *gentianov1alpha1.IngressSpec,
+	ingress *gentianov1alpha1.ExposureSpec,
 ) []gatewayv1.HTTPRouteFilter {
 	policy := computeGatewayFrameAncestorsPolicy(kernelDomain, effectiveDomain, ingressSubDomain)
 	if custom, ok, err := ingressFrameAncestorsPolicy(kernelDomain, effectiveDomain, mainIngressSubDomain, ingress); err == nil && ok {
@@ -407,33 +401,30 @@ type gatewayFrameAncestorsPolicy struct {
 	Origins string
 }
 
-// portalOrigins lists every origin the portal answers on for one tenant. There
-// are two: the shared kernel host, and the tenant's own apex, which
-// kernelHTTPRouteSpecs serves the same portal deployment from. Anything an
-// embedded app may be framed by has to name both, since frame-ancestors is
-// checked against the whole ancestor chain and the top frame is whichever host
-// the user happens to be signed in on.
+// consoleOrigins lists every desktop an app of one tenant may be framed by:
+// the tenant's own console, and the platform's, whose tiles open a tenant's
+// apps too. frame-ancestors is checked against the whole ancestor chain and
+// the top frame is whichever console the user came from, so both are named.
 //
 // Both the computed default below and the "portal" token in
 // ingressFrameAncestorsPolicy resolve through here. They used to enumerate the
-// hosts separately, and when the portal gained the tenant apex the token kept
-// naming only portal.<kernel-domain> — so the one route that opts out of the
-// default (Collabora) lost the origin the user was actually on, and every
-// document open failed with "Failed to load Nextcloud Office" while the server
-// side stayed healthy. A third portal hostname must reach both policies at once.
-func portalOrigins(kernelDomain, effectiveDomain string) []string {
+// hosts separately, and the one route that opts out of the default (Collabora)
+// lost the origin the user was actually on, and every document open failed
+// with "Failed to load Nextcloud Office" while the server side stayed healthy.
+// A console hostname must reach both policies at once.
+func consoleOrigins(kernelDomain, effectiveDomain string) []string {
 	var origins []string
 	if kernelDomain != "" {
-		origins = append(origins, fmt.Sprintf("https://%s", kernelPortalHost(kernelDomain)))
+		origins = append(origins, "https://"+consoleHost(kernelDomain))
 	}
 	if effectiveDomain != "" && effectiveDomain != kernelDomain {
-		origins = append(origins, fmt.Sprintf("https://%s", effectiveDomain))
+		origins = append(origins, "https://"+consoleHost(effectiveDomain))
 	}
 	return origins
 }
 
 func computeGatewayFrameAncestorsPolicy(kernelDomain, effectiveDomain, _ string) gatewayFrameAncestorsPolicy {
-	origins := portalOrigins(kernelDomain, effectiveDomain)
+	origins := consoleOrigins(kernelDomain, effectiveDomain)
 	if effectiveDomain != "" && effectiveDomain != kernelDomain {
 		origins = append(origins, fmt.Sprintf("https://*.%s", effectiveDomain))
 	}

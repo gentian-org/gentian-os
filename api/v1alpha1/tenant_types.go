@@ -52,6 +52,19 @@ type TenantSpec struct {
 	// +optional
 	Quotas *TenantQuotas `json:"quotas,omitempty"`
 
+	// Security is the realm policy this tenant runs under: how strong a
+	// password has to be, how long a session lasts, what happens after
+	// repeated failures. Unset leaves Keycloak's own defaults.
+	//
+	// Declared here rather than set through Keycloak's admin API, which is
+	// what the console used to do. The composition turns this into the
+	// realm's fields, so the policy is reviewable in git, survives a realm
+	// being rebuilt, and needs no credential anywhere: the thing that changes
+	// it is a commit, and the thing that applies it is the reconciler that
+	// owns the realm.
+	// +optional
+	Security *TenantSecurity `json:"security,omitempty"`
+
 	// DeletionPolicy controls behaviour when the Tenant CR is deleted.
 	// Defaults to Retain.
 	// +optional
@@ -61,6 +74,168 @@ type TenantSpec struct {
 	// Apps lists the applications to install for this tenant.
 	// +optional
 	Apps []TenantApp `json:"apps,omitempty"`
+
+	// Locales are the languages this tenant's realm renders its login and
+	// account pages in, as ISO 639-1 codes (AD-15). Empty means the
+	// platform's own set.
+	//
+	// Languages rather than locales: Keycloak serves de-CH from its German
+	// catalogue, and a realm listing regional codes offers a picker full of
+	// entries that render identically.
+	// +optional
+	// +listType=set
+	// +kubebuilder:validation:MaxItems=32
+	// +kubebuilder:validation:items:Pattern=`^[a-z]{2}(-[A-Za-z0-9]{2,8})?$`
+	Locales []string `json:"locales,omitempty"`
+
+	// Privileges are the privilege requests a person granted for this
+	// tenant's components (AD-5). They live here because a grant has to
+	// survive the thing it applies to: a Component is rebuilt from its
+	// profile and can be deleted and recreated, while the record that a named
+	// person said yes on a named date must not be. The Tenant comes from git,
+	// so this is also what makes an approval a commit rather than an edit
+	// somebody made to a live object.
+	//
+	// The operator copies each entry onto the Component named by Install. A
+	// grant for a component that does not exist is kept and ignored, because
+	// an app can be uninstalled and reinstalled and re-asking for an approval
+	// that was already given is how approvals become a formality.
+	// +optional
+	// +listType=map
+	// +listMapKey=install
+	// +listMapKey=privilege
+	// +kubebuilder:validation:MaxItems=256
+	Privileges []TenantPrivilegeGrant `json:"privileges,omitempty"`
+
+	// Exposures are the perimeter surfaces a perimeter approver published
+	// (AD-6): what this tenant has on the internet, from when, until when,
+	// and who said so.
+	//
+	// Here for the same reason the grants are: the decision has to outlive
+	// the thing it applies to, and it has to be a commit rather than an edit
+	// somebody made to a live object. The operator copies each entry onto the
+	// Component it names, and the Component's reconcile is what stands the
+	// proxy up in the tenant's DMZ.
+	//
+	// It is also the registry. Every URL this tenant publishes is one of
+	// these, which is what lets "what of ours is on the internet" be answered
+	// by the thing that put it there.
+	// +optional
+	// +listType=map
+	// +listMapKey=install
+	// +listMapKey=exposureName
+	// +kubebuilder:validation:MaxItems=256
+	Exposures []TenantExposure `json:"exposures,omitempty"`
+}
+
+// TenantExposure is one published surface, against one of the tenant's
+// components.
+//
+// The fields are spelled out rather than embedded so the two list map keys can
+// be the component and the entry: together they are what makes a published
+// surface unique, and letting the API server enforce that is better than a
+// controller finding two answers to how long something is on the internet.
+type TenantExposure struct {
+	// Install names the Component this publishes from.
+	// +kubebuilder:validation:Pattern=`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`
+	// +kubebuilder:validation:MaxLength=253
+	Install string `json:"install"`
+
+	// ExposureName names an entry of that component's profile whose surface
+	// is perimeter. An entry that is not is never published here: the
+	// operator checks, because enabling a gateway entry by name would
+	// otherwise put the component's authenticated surface on the internet.
+	// +kubebuilder:validation:Pattern=`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`
+	// +kubebuilder:validation:MaxLength=40
+	ExposureName string `json:"exposureName"`
+
+	// Host is the public hostname. Empty means the entry's default in the
+	// tenant's zone.
+	// +optional
+	// +kubebuilder:validation:Pattern=`^([a-z0-9]([-a-z0-9]*[a-z0-9])?\.)+[a-z]{2,}$`
+	// +kubebuilder:validation:MaxLength=253
+	Host string `json:"host,omitempty"`
+
+	// Owner is the subject that published it, set by the director from the
+	// caller's token.
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=256
+	Owner string `json:"owner"`
+
+	// ExpiresAt is when it stops answering, and it is required. A public
+	// surface with no end is not something anybody decided.
+	ExpiresAt metav1.Time `json:"expiresAt"`
+
+	// ReviewAt is when the owner and the approver are asked to renew.
+	// +optional
+	ReviewAt *metav1.Time `json:"reviewAt,omitempty"`
+
+	// Reason is why this is public, in the approver's words.
+	// +optional
+	// +kubebuilder:validation:MaxLength=2000
+	Reason string `json:"reason,omitempty"`
+}
+
+// Enablement is this entry as the Component carries it.
+func (e *TenantExposure) Enablement() ExposureEnablement {
+	return ExposureEnablement{
+		ExposureName: e.ExposureName,
+		Host:         e.Host,
+		Owner:        e.Owner,
+		ExpiresAt:    e.ExpiresAt,
+		ReviewAt:     e.ReviewAt,
+	}
+}
+
+// TenantPrivilegeGrant is one grant, against one of the tenant's components.
+//
+// The fields of PrivilegeGrant are spelled out rather than embedded so that
+// this is one flat object in the CRD and the two list map keys can be the
+// component and the privilege -- together they are what makes a grant unique,
+// and letting the API server enforce that is better than a controller
+// discovering two answers to the same question.
+type TenantPrivilegeGrant struct {
+	// Install names the Component this grant is for, which is the component's
+	// object name in the tenant's namespace.
+	// +kubebuilder:validation:Pattern=`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`
+	// +kubebuilder:validation:MaxLength=253
+	Install string `json:"install"`
+
+	// Privilege names one entry of the profile's request, as <kind>/<name>.
+	// +kubebuilder:validation:Pattern=`^(podSecurity|egress|clusterRoles)/[a-z0-9]([-a-z0-9]*[a-z0-9])?$`
+	// +kubebuilder:validation:MaxLength=80
+	Privilege string `json:"privilege"`
+
+	// Approver is the Keycloak subject who said yes, set by the director from
+	// the caller's token. Never supplied by a caller: a grant that could name
+	// its own approver would record nothing.
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=256
+	Approver string `json:"approver"`
+
+	ApprovedAt metav1.Time `json:"approvedAt"`
+
+	// Reason in the approver's words, not the profile's. The profile already
+	// said why it wants the privilege; this is why somebody agreed.
+	// +kubebuilder:validation:MinLength=10
+	// +kubebuilder:validation:MaxLength=2000
+	Reason string `json:"reason"`
+
+	// ExpiresAt bounds the grant. A waiver with no expiry is a waiver nobody
+	// reviews.
+	// +optional
+	ExpiresAt *metav1.Time `json:"expiresAt,omitempty"`
+}
+
+// Grant is this entry as the Component carries it.
+func (g *TenantPrivilegeGrant) Grant() PrivilegeGrant {
+	return PrivilegeGrant{
+		Privilege:  g.Privilege,
+		Approver:   g.Approver,
+		ApprovedAt: g.ApprovedAt,
+		Reason:     g.Reason,
+		ExpiresAt:  g.ExpiresAt,
+	}
 }
 
 // TenantIsolation describes the namespace and identity boundaries.
@@ -250,6 +425,105 @@ type TenantAppDropIn struct {
 	Files map[string]string `json:"files"`
 }
 
+// TenantSecurity is the realm policy a tenant administrator may set.
+//
+// Every field maps to something the Keycloak realm already has. Nothing here
+// is a Gentian invention on top: the console shows the realm's own controls,
+// and the composition is what carries them across.
+type TenantSecurity struct {
+	// Password is how strong a password must be.
+	// +optional
+	Password *PasswordPolicy `json:"password,omitempty"`
+
+	// Session is how long one lasts.
+	// +optional
+	Session *SessionPolicy `json:"session,omitempty"`
+
+	// BruteForce is what happens after repeated failures.
+	// +optional
+	BruteForce *BruteForcePolicy `json:"bruteForce,omitempty"`
+}
+
+// PasswordPolicy becomes Keycloak's own password policy string.
+//
+// Split into fields rather than carried as that string, because a screen has
+// to offer the parts and a reviewer has to read the diff. The composition
+// assembles it; "length(12) and digits(1)" is not something anybody should
+// have to write by hand into a tenant manifest.
+type PasswordPolicy struct {
+	// MinLength is the shortest password accepted. Zero leaves it unstated.
+	// +optional
+	// +kubebuilder:validation:Minimum=0
+	// +kubebuilder:validation:Maximum=128
+	MinLength int32 `json:"minLength,omitempty"`
+
+	// RequireDigits, RequireLowercase, RequireUppercase and
+	// RequireSpecialChars each demand at least one of that kind.
+	// +optional
+	RequireDigits bool `json:"requireDigits,omitempty"`
+	// +optional
+	RequireLowercase bool `json:"requireLowercase,omitempty"`
+	// +optional
+	RequireUppercase bool `json:"requireUppercase,omitempty"`
+	// +optional
+	RequireSpecialChars bool `json:"requireSpecialChars,omitempty"`
+
+	// HistoryCount refuses a password the person has used in their last N.
+	// +optional
+	// +kubebuilder:validation:Minimum=0
+	// +kubebuilder:validation:Maximum=64
+	HistoryCount int32 `json:"historyCount,omitempty"`
+
+	// MaxAgeDays forces a change after that many days. Zero means never,
+	// which is what current guidance actually recommends: rotation on a
+	// timer makes people choose worse passwords, and it is here because
+	// some compliance regimes still demand it.
+	// +optional
+	// +kubebuilder:validation:Minimum=0
+	// +kubebuilder:validation:Maximum=3650
+	MaxAgeDays int32 `json:"maxAgeDays,omitempty"`
+}
+
+// SessionPolicy is how long a sign-in lasts.
+type SessionPolicy struct {
+	// IdleMinutes ends a session that has done nothing for this long.
+	// +optional
+	// +kubebuilder:validation:Minimum=0
+	// +kubebuilder:validation:Maximum=43200
+	IdleMinutes int32 `json:"idleMinutes,omitempty"`
+
+	// MaxHours ends it regardless of activity.
+	// +optional
+	// +kubebuilder:validation:Minimum=0
+	// +kubebuilder:validation:Maximum=8760
+	MaxHours int32 `json:"maxHours,omitempty"`
+
+	// RememberMe offers the longer session the realm is configured for.
+	// +optional
+	RememberMe bool `json:"rememberMe,omitempty"`
+}
+
+// BruteForcePolicy is what happens after repeated failures.
+type BruteForcePolicy struct {
+	// Enabled turns detection on. Off is Keycloak's default and is worth
+	// stating deliberately: without it, a password can be guessed at the
+	// speed of the network.
+	// +optional
+	Enabled bool `json:"enabled,omitempty"`
+
+	// MaxLoginFailures before the account is locked out.
+	// +optional
+	// +kubebuilder:validation:Minimum=0
+	// +kubebuilder:validation:Maximum=1000
+	MaxLoginFailures int32 `json:"maxLoginFailures,omitempty"`
+
+	// LockoutDurationSeconds is how long a lockout lasts.
+	// +optional
+	// +kubebuilder:validation:Minimum=0
+	// +kubebuilder:validation:Maximum=604800
+	LockoutDurationSeconds int32 `json:"lockoutDurationSeconds,omitempty"`
+}
+
 // TenantStatus holds the observed state of a Tenant.
 type TenantStatus struct {
 	// Phase summarises the overall lifecycle state.
@@ -294,6 +568,14 @@ type TenantStatus struct {
 	// Operators must publish these values in the tenant's DNS zone.
 	// +optional
 	Mail *TenantMailStatus `json:"mail,omitempty"`
+
+	// ResourcePlan is the plan whose selection was last recorded in the
+	// tenant's usage history: the value of the resource-plan annotation at
+	// the time the plan event was written. It differing from the annotation
+	// is what tells the reconciler a change has landed that the billing
+	// record does not know about yet.
+	// +optional
+	ResourcePlan string `json:"resourcePlan,omitempty"`
 }
 
 // TenantMailStatus holds DNS record data emitted by the mail reconciler for

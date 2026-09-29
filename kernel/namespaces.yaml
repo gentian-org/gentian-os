@@ -1,0 +1,100 @@
+# The cluster's namespace layout: the one list the installer creates from, the
+# operator selects on and the lints check against. Policies select on the
+# labels, never on names; the names are what a person types.
+#
+# tier: kernel | system | system-dmz | shared | tenant | tenant-dmz
+# function: what the namespace is for. The software behind it can change.
+#
+# Kernel namespaces are created by the installer before anything else exists.
+# System namespaces are composed from the Cluster claim. Tenant namespaces are
+# composed per tenant as tenant-<t> and tenant-<t>-dmz.
+kernel:
+  - name: kernel-gitops
+    function: gitops
+    holds: Argo CD, argocd-image-updater
+  - name: kernel-provisioning
+    function: provisioning
+    holds: Crossplane, its providers and functions
+  - name: kernel-secrets
+    function: secrets
+    holds: OpenBao, External Secrets Operator, Reloader
+  - name: kernel-seal
+    function: seal
+    holds: the OpenBao transit seal; a separate RBAC and backup domain from the vault it unseals
+  - name: kernel-data
+    function: data
+    holds: the CNPG operator and kernel-postgres (Keycloak, its extensions, OpenFGA, the console)
+  - name: kernel-authentication
+    function: authentication
+    holds: Keycloak, its configuration, the event listener
+  - name: kernel-authorization
+    function: authorization
+    holds: OpenFGA; reachable from enforcement points only
+  - name: kernel-control
+    function: control
+    holds: the operator, the director, the credential manager, job-gc
+  - name: kernel-edge
+    function: edge
+    holds: Envoy Gateway, both Gateway objects, cert-manager, external-dns, cloudflared
+  - name: kernel-admission
+    function: admission
+    holds: Kyverno and the baseline policies
+  - name: kernel-observability
+    function: observability
+    holds: Headlamp (the cluster administrator's view of the cluster, with their own identity); later metrics and logs
+
+# The system tier: the data plane tenants are served from.
+#
+# One namespace per engine, named by the function a component's
+# requires.services entry asks for — quotas, backup policies and future
+# managed-service claims differ per engine, and separating stateful services
+# after the fact is a data migration (namespace-cleanup.md §2.2).
+#
+# Composed from the Cluster claim, not created by the installer: WHICH of
+# these a cluster runs depends on what the claim declares, and the installer
+# does not read the claim. The four below are unconditional because every
+# cluster serves tenants; mail and LLM are conditional and are not built yet
+# (implementation-plan.md S9).
+#
+# The composition in crossplane/compositions/cluster-default.yaml is what
+# creates them. lint-namespace-layout.sh asserts this list and that one agree,
+# because two lists that can disagree is how a namespace ends up composed
+# under a name nothing looks for.
+system:
+  - name: system-postgresql
+    function: postgresql
+    holds: the CNPG cluster tenant databases are provisioned on; the kernel's own is kernel-postgres, in kernel-data
+  - name: system-mariadb
+    function: mariadb
+    holds: MariaDB, for catalogue apps that speak no other engine
+  - name: system-cache
+    function: cache
+    holds: Redis
+  - name: system-s3
+    function: s3
+    holds: MinIO, the object store apps take buckets from
+  # `when` marks a namespace the claim decides. Without it a namespace is
+  # unconditional. A cluster that relays mail through a provider has no
+  # mailbox store and no MTA of its own, and composing empty namespaces for
+  # them would make `kubectl get ns` claim a function the cluster does not run.
+  - name: system-mail
+    function: mail
+    when: mail.serviceMode=system
+    holds: Dovecot (the mailbox store) and the DKIM signer holding the per-tenant keys
+  - name: system-mail-dmz
+    function: mail-dmz
+    when: mail.serviceMode=system
+    holds: the MTA's public surface — inbound :25, submission :587 — and the DNS records that point at it
+  - name: system-llm
+    function: llm
+    when: llm.enabled=true
+    holds: the LiteLLM proxy, its database, and the vLLM instances the claim lists
+
+# Namespaces the platform provides that gentian-os labels but does not create.
+labelled:
+  - name: kube-system
+    tier: kernel
+    function: platform
+  - name: metallb-system
+    tier: kernel
+    function: load-balancer

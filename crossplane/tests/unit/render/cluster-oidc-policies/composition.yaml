@@ -23,12 +23,27 @@ spec:
             {{- $spec := $xr.spec }}
             {{- $name := $xr.metadata.name }}
 
-            {{- $openbaoServer    := default "https://openbao.openbao.svc.cluster.local:8200" (dig "openbao" "server" "" $spec) }}
+            {{- /* The layout the claim is written for decides where the kernel is.
+                 v4: the namespaces release 4.1 installs. v5: kernel/namespaces.yaml,
+                 created and labelled by the installer before this claim exists. */}}
+            {{- $provisioningNs := "kernel-provisioning" }}
+            {{- $controlNs      := "kernel-control" }}
+            {{- $secretsNs      := "kernel-secrets" }}
+            {{- $obNs           := default $secretsNs (dig "openbao" "namespace" "" $spec) }}
+            {{- $openbaoServer    := default (printf "https://openbao.%s.svc.cluster.local:8200" $secretsNs) (dig "openbao" "server" "" $spec) }}
             {{- $kvMount          := default "secret" (dig "openbao" "kvMount" "" $spec) }}
             {{- $authMount        := default "kubernetes" (dig "openbao" "authMount" "" $spec) }}
             {{- $k8sHost          := default "https://kubernetes.default.svc" (dig "openbao" "kubernetesHost" "" $spec) }}
-            {{- $argoNs           := default "argocd" (dig "argocd" "namespace" "" $spec) }}
-            {{- $esoNs            := default "external-secrets" (dig "eso" "namespace" "" $spec) }}
+            {{- $authNs           := "kernel-authentication" }}
+            {{- /* Keycloak's in-cluster base URL. Derived from the layout, for the
+                 reason network.edgeNamespace is: a field that asks for it can name
+                 a namespace the layout does not have, and the XRD's default did
+                 exactly that -- platform-kernel, on a v5 cluster where Keycloak
+                 runs in kernel-authentication and platform-kernel does not exist.
+                 A claim may still override it; nothing has ever needed to. */}}
+            {{- $kcInternalUrl    := default (printf "http://gentian-idp-keycloak-keycloakx-http.%s.svc.cluster.local:8080/auth" $authNs) (dig "identity" "internalUrl" "" $spec) }}
+            {{- $argoNs           := default ("kernel-gitops") (dig "argocd" "namespace" "" $spec) }}
+            {{- $esoNs            := default ("kernel-secrets") (dig "eso" "namespace" "" $spec) }}
             {{- $esoSa            := default "external-secrets" (dig "eso" "serviceAccount" "" $spec) }}
             {{- $letsencryptEmail := default (printf "admin@%s" $spec.kernelDomain) (dig "certManager" "letsencryptEmail" "" $spec) }}
 
@@ -41,31 +56,156 @@ spec:
                  rather than rendered with a placeholder. */}}
             {{- $authObs   := dig "vault-auth-oidc" dict (default dict .observed.resources) }}
             {{- $accessor  := dig "resource" "status" "atProvider" "accessor" "" $authObs }}
-            {{- $defaultMasterRef := dict "name" "gentian-os-master-password" "namespace" "crossplane-system" }}
+            {{- $defaultMasterRef := dict "name" "gentian-os-master-password" "namespace" $provisioningNs }}
             {{- $masterRef        := default $defaultMasterRef (default (dict) $spec.masterPasswordSecretRef) }}
 
-            {{- /* ── Kernel namespaces ─────────────────────────────────────────── */}}
-            {{- range list "platform-kernel" "gentian-system" }}
+            {{- /* ── System namespaces ──────────────────────────────────────────
+                 The data plane tenants are served from: one namespace per
+                 engine, named by the function a component's requires.services
+                 entry asks for (namespace-cleanup.md §2.2).
+
+                 Composed here rather than created by the installer, which is
+                 what kernel/namespaces.yaml says and the reason is the claim:
+                 which of these a cluster runs is a property of what it
+                 declares, and the installer does not read the claim. The
+                 kernel's own data plane is not among them -- kernel-postgres
+                 in kernel-data serves Keycloak, OpenFGA and the console, and
+                 exists before any claim does.
+
+                 The four are unconditional because every cluster serves
+                 tenants. system-mail and system-llm are conditional on the
+                 claim and are not built yet; until they are, both opt-ins are
+                 refused at admission by the XRD, so no claim can ask for a
+                 namespace that would stay empty.
+
+                 v5 only. On v4 these workloads live in gentian-infra-<stage>
+                 and platform-kernel, and composing empty namespaces beside
+                 them would be two homes for one engine.
+
+                 lint-namespace-layout.sh asserts this list equals
+                 kernel/namespaces.yaml's. */}}
+            {{- /* The unconditional four, then whatever the claim adds.
+                 kernel/namespaces.yaml marks the conditional ones with `when`
+                 and the lint asserts both halves against this. */}}
+            {{- $systemFns := list "postgresql" "mariadb" "cache" "s3" }}
+            {{- if eq (dig "mail" "serviceMode" "external" $spec) "system" }}
+            {{- $systemFns = concat $systemFns (list "mail" "mail-dmz") }}
+            {{- end }}
+            {{- if dig "llm" "enabled" false $spec }}
+            {{- $systemFns = concat $systemFns (list "llm") }}
+            {{- end }}
+            {{- range $fn := $systemFns }}
             ---
             apiVersion: kubernetes.crossplane.io/v1alpha2
             kind: Object
             metadata:
               annotations:
-                gotemplating.fn.crossplane.io/composition-resource-name: namespace-{{ . }}
-              name: {{ $name }}-ns-{{ . }}
+                gotemplating.fn.crossplane.io/composition-resource-name: namespace-system-{{ $fn }}
+              name: {{ $name }}-ns-system-{{ $fn }}
             spec:
               forProvider:
                 manifest:
                   apiVersion: v1
                   kind: Namespace
                   metadata:
-                    name: {{ . }}
+                    name: system-{{ $fn }}
                     labels:
                       gentianos.io/managed-by: crossplane
                       gentianos.io/cluster: {{ $name }}
+                      {{- /* The tier and function labels every policy selects
+                           on. Calico and Kyverno match these, never the name,
+                           so a namespace without them is one no policy
+                           applies to. */}}
+                      {{- /* A DMZ is its own tier. The policies that decide
+                           what may reach the internet and what may reach the
+                           inner namespaces select on this label, so calling a
+                           perimeter `system` would place it inside. */}}
+                      gentianos.io/tier: {{ ternary "system-dmz" "system" (hasSuffix "-dmz" $fn) }}
+                      gentianos.io/function: {{ $fn }}
               providerConfigRef:
                 name: kubernetes
             {{- end }}
+
+            {{- /* ── System-tier engines (provider-helm Releases) ───────────────
+                 MariaDB, Redis and MinIO, one per system namespace above.
+
+                 Composed here because v4 composed them from an InfraData
+                 claim and v5 does not have one: the Cluster claim is the
+                 composer of the system tier, so the engines come with the
+                 namespaces rather than from a second claim that has to be
+                 scaffolded and kept in step.
+
+                 The values are NOT inlined. Each chart in
+                 kernel/services/infra-* carries its own values as ConfigMaps
+                 and its credential as an ExternalSecret, synced into the
+                 namespace by the 08-data-plane ApplicationSet; the Release
+                 reads them by name. That split is v4's and is kept on
+                 purpose: the values stay reviewable as YAML in the
+                 repository, and the release stays an object Crossplane owns.
+
+                 Postgres is not here. The CNPG cluster is a CR, not a Helm
+                 release, and Argo delivers it the way it delivers
+                 kernel-postgres.
+
+                 Bitnami postgresql is retired rather than moved
+                 (namespace-cleanup.md §2.2): it held only kernel databases,
+                 and those are on kernel-postgres in kernel-data now. */}}
+            {{- $infraCharts := "https://raw.githubusercontent.com/gentian-org/gentian-os/develop/charts/infra/packages" }}
+            {{- /* The ConfigMap names below carry no stage. A cluster has one
+                 stage (namespace-cleanup.md §2.2) and the Cluster claim does
+                 not carry it, so a name with a stage in it could only ever be
+                 right on a dev cluster -- and would fail as a Release that
+                 cannot find its values. */}}
+            {{- range $e := (list
+                  (dict "fn" "mariadb" "chart" "mariadb" "version" "3.0.3" "values" (list "mariadb-base-values" "mariadb-cluster-values") "secret" "mariadb-sensitive-values" "wait" "20m")
+                  (dict "fn" "cache"   "chart" "redis"   "version" "18.6.1" "values" (list "redis-env-values" "redis-base-values" "redis-cluster-values") "secret" "" "wait" "10m")
+                  (dict "fn" "s3"      "chart" "minio"   "version" "16.0.10" "values" (list "minio-env-values" "minio-base-values" "minio-cluster-values") "secret" "" "wait" "10m")
+               ) }}
+            ---
+            apiVersion: helm.crossplane.io/v1beta1
+            kind: Release
+            metadata:
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: {{ $e.chart }}-release
+                crossplane.io/external-name: {{ $e.chart }}
+              name: {{ $name }}-{{ $e.chart }}
+            spec:
+              forProvider:
+                chart:
+                  name: {{ $e.chart }}
+                  repository: {{ $infraCharts }}
+                  version: {{ $e.version | quote }}
+                namespace: system-{{ $e.fn }}
+                wait: true
+                {{- /* Generous, for the reason v4's postgresql release
+                     records: a slow first start on network storage lets the
+                     StatefulSet come up while the chart's own bootstrap --
+                     which sets the password everything connects with -- is
+                     still running, and Crossplane marks the release failed
+                     regardless. The bootstrap is idempotent; the ceiling
+                     costs nothing on the common path. */}}
+                waitTimeout: {{ $e.wait | quote }}
+                valuesFrom:
+                  {{- range $cm := $e.values }}
+                  - configMapKeyRef:
+                      name: {{ $cm }}
+                      namespace: system-{{ $e.fn }}
+                      key: values.yaml
+                      optional: false
+                  {{- end }}
+                  {{- if $e.secret }}
+                  - secretKeyRef:
+                      name: {{ $e.secret }}
+                      namespace: system-{{ $e.fn }}
+                      key: sensitive-values.yaml
+                      optional: false
+                  {{- end }}
+              providerConfigRef:
+                name: kubernetes
+            {{- end }}
+
+            {{- /* ── Kernel namespaces ─────────────────────────────────────────── */}}
+            {{- /* v5's namespaces exist before the claim does (installer A-01). */}}
 
             {{- /* ── OpenBao KV v2 mount ───────────────────────────────────────── */}}
             ---
@@ -189,6 +329,45 @@ spec:
                  of Crossplane, and none appear below.
             */}}
             {{- $oidc := ($spec.oidc) | default dict }}
+            {{- /* Which Keycloak group OpenBao's cluster-admin role admits.
+                 One source, because two fields that must agree eventually do
+                 not: platformRoles.admin is the group the platform provisions
+                 the administrator into, so it is also the group that may hold
+                 the cluster-admin policy. oidc.clusterAdminGroup overrides it
+                 and is normally unset.
+
+                 It used to default to "/gentian:platform:superadmin" in the
+                 XRD, S1 renamed the role, and every composite created before
+                 that kept the old value -- a changed default does not reach an
+                 object that already has the field. The administrator then
+                 signed in holding gentian:platform:admin while the role wanted
+                 a group nobody was in, so no exchange granted cluster-admin
+                 and the install's last step waited for a proof that could
+                 never be written. */}}
+            {{- /* The audiences OpenBao's roles accept.
+                 
+                 The director's audience is not optional and is not part of
+                 additionalAudiences: every component behind the edge presents
+                 the zone's token, whose audience is the director's, so a
+                 cluster whose roles do not accept it cannot exchange a token
+                 at all -- which is the credential manager refusing every
+                 caller and the install's last step waiting for a proof nobody
+                 can produce.
+                 
+                 It was in additionalAudiences, defaulted in the XRD. The
+                 default was later corrected to include it, and that reached
+                 no existing composite, because a changed default does not
+                 touch an object that already has the field. "additional" now
+                 means what it says: extra audiences on top of the ones the
+                 platform requires. */}}
+            {{- $requiredAudiences := list (default "openbao" $oidc.clientId) "gentian-director" }}
+            {{- range (default (list "gentian-portal") $oidc.additionalAudiences) }}
+            {{- if not (has . $requiredAudiences) }}
+            {{- $requiredAudiences = append $requiredAudiences . }}
+            {{- end }}
+            {{- end }}
+            {{- $platformAdminGroup := default "gentian:platform:admin" (dig "platformRoles" "admin" "" $spec) }}
+            {{- $clusterAdminGroup := default (printf "/%s" $platformAdminGroup) (dig "clusterAdminGroup" "" $oidc) }}
             {{- if $oidc.discoveryUrl }}
             ---
             apiVersion: vault.vault.upbound.io/v1alpha1
@@ -312,7 +491,7 @@ spec:
                 oidcClientId: {{ $oidc.clientId | default "openbao" | quote }}
                 oidcClientSecretSecretRef:
                   name: {{ $oidc.clientSecretRef | default "openbao-oidc-client" }}
-                  namespace: {{ $spec.openbao.namespace | default "openbao" }}
+                  namespace: {{ $obNs }}
                   key: client-secret
                 defaultRole: cluster-admin
               providerConfigRef:
@@ -344,13 +523,12 @@ spec:
                 claimMappings:
                   preferred_username: username
                 boundAudiences:
-                  - {{ $oidc.clientId | default "openbao" | quote }}
-                  {{- range (default (list "gentian-portal") $oidc.additionalAudiences) }}
+                  {{- range $requiredAudiences }}
                   - {{ . | quote }}
                   {{- end }}
                 boundClaimsType: string
                 boundClaims:
-                  groups: {{ $oidc.clusterAdminGroup | default "/gentian:platform:superadmin" | quote }}
+                  groups: {{ $clusterAdminGroup | quote }}
                 allowedRedirectUris:
                   - {{ printf "%s/ui/vault/auth/oidc/oidc/callback" ($oidc.externalUrl | default "") | quote }}
                   - http://localhost:8250/oidc/callback
@@ -394,8 +572,7 @@ spec:
                 roleType: oidc
                 userClaim: preferred_username
                 boundAudiences:
-                  - {{ $oidc.clientId | default "openbao" | quote }}
-                  {{- range (default (list "gentian-portal") $oidc.additionalAudiences) }}
+                  {{- range $requiredAudiences }}
                   - {{ . | quote }}
                   {{- end }}
                 # glob, not string: the kernel realm imports each tenant's own
@@ -458,13 +635,12 @@ spec:
                 claimMappings:
                   preferred_username: username
                 boundAudiences:
-                  - {{ $oidc.clientId | default "openbao" | quote }}
-                  {{- range (default (list "gentian-portal") $oidc.additionalAudiences) }}
+                  {{- range $requiredAudiences }}
                   - {{ . | quote }}
                   {{- end }}
                 boundClaimsType: string
                 boundClaims:
-                  groups: {{ $oidc.clusterAdminGroup | default "/gentian:platform:superadmin" | quote }}
+                  groups: {{ $clusterAdminGroup | quote }}
                 tokenPolicies:
                   - cluster-admin
                 tokenTtl: 1800
@@ -496,7 +672,6 @@ spec:
             {{- $realm := $oidc.realm | default "kernel" }}
             {{- $obClientId := $oidc.clientId | default "openbao" }}
             {{- $obSecretName := $oidc.clientSecretRef | default "openbao-oidc-client" }}
-            {{- $obNs := $spec.openbao.namespace | default "openbao" }}
 
             {{- /* The client secret, materialised from the KV path seeded above.
                  One Secret, read by both ends — the auth backend takes its
@@ -679,6 +854,75 @@ spec:
               providerConfigRef:
                 name: openbao
 
+            {{- /* ── The operator's own OpenBao access ─────────────────────────
+                 It reads the master password every credential is derived from,
+                 and writes what it seeds. This lived in a kernel service whose
+                 manifests named crossplane-system and gentian-system outright,
+                 so a v5 cluster got neither the policy nor the role: the
+                 operator's Kubernetes login failed with "invalid role name",
+                 it fell back to random credentials, and nothing said so twice.
+                 Here it follows the layout like every other binding.
+
+                 v5 only. A v4 cluster still gets both from that kernel service,
+                 and two owners of one OpenBao policy would take turns writing
+                 it. */}}
+            ---
+            apiVersion: vault.vault.upbound.io/v1alpha1
+            kind: Policy
+            metadata:
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: vault-policy-operator-write
+              name: {{ $name }}-policy-operator-write
+            spec:
+              forProvider:
+                name: operator-write
+                policy: |
+                  path "{{ $kvMount }}/data/gentian-os/*"     { capabilities = ["create","read","update","patch","delete"] }
+                  path "{{ $kvMount }}/metadata/gentian-os/*" { capabilities = ["list","read","delete"] }
+                  path "auth/token/create"                    { capabilities = ["update"] }
+                  path "auth/token/lookup-self"               { capabilities = ["read"] }
+
+                  # Per-tenant JWT auth mounts. A tenant member authenticates in
+                  # their own Keycloak realm — that is where their apps' OIDC
+                  # clients live — so their portal token is signed by that realm
+                  # and the kernel realm's mount cannot verify it. One mount per
+                  # realm is what makes the exchange possible.
+                  #
+                  # Deliberately NOT one mount trusting many keys, which would be
+                  # fewer objects and a privilege escalation: a tenant
+                  # administrator holds realm-admin in their own realm, so they
+                  # can mint a token carrying any groups claim, the cluster admin
+                  # group included. Isolation belongs at the mount boundary,
+                  # because claim values are precisely what they control.
+                  #
+                  # Glob, not the + segment wildcard: OpenBao's + matches one
+                  # whole path segment, so "oidc-+" matches nothing at all.
+                  path "sys/auth/oidc-*"                      { capabilities = ["create","read","update","delete","sudo"] }
+                  path "auth/oidc-*"                          { capabilities = ["create","read","update","delete","list"] }
+              providerConfigRef:
+                name: openbao
+
+            ---
+            apiVersion: kubernetes.vault.upbound.io/v1alpha1
+            kind: AuthBackendRole
+            metadata:
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: vault-auth-role-operator
+              name: {{ $name }}-auth-role-operator
+            spec:
+              forProvider:
+                backend: {{ $authMount }}
+                roleName: gentian-os-operator
+                boundServiceAccountNames:
+                  - gentian-os
+                boundServiceAccountNamespaces:
+                  - {{ $controlNs }}
+                tokenPolicies:
+                  - operator-write
+                tokenTtl: 3600
+              providerConfigRef:
+                name: openbao
+
             ---
             apiVersion: kubernetes.vault.upbound.io/v1alpha1
             kind: AuthBackendRole
@@ -693,7 +937,7 @@ spec:
                 boundServiceAccountNames:
                   - crossplane-provider-vault
                 boundServiceAccountNamespaces:
-                  - crossplane-system
+                  - {{ $provisioningNs }}
                 tokenPolicies:
                   - crossplane-write
                 tokenTtl: 3600
@@ -737,7 +981,7 @@ spec:
                 name: gentian-os/kernel/{{ . }}
                 dataJsonSecretRef:
                   name: gentian-os-kernel-{{ $safeName }}
-                  namespace: crossplane-system
+                  namespace: {{ $provisioningNs }}
                   key: data.json
               providerConfigRef:
                 name: openbao
@@ -807,7 +1051,7 @@ spec:
                   kind: ConfigMap
                   metadata:
                     name: gentian-cluster-config
-                    namespace: crossplane-system
+                    namespace: {{ $provisioningNs }}
                     labels:
                       app.kubernetes.io/managed-by: crossplane
                       gentianos.io/config-type: cluster-config
@@ -838,14 +1082,16 @@ spec:
                     # fetches token, JWKS and userinfo over it so the code exchange stays
                     # inside the cluster; the browser still goes to the public URL.
                     #
-                    # No default restated, same reason as mail above: the XRD declares it
-                    # and the API server materialises it onto the composite before this
-                    # renders.
+                    # Derived from the layout, not restated from the XRD: the XRD's
+                    # default named platform-kernel, which on a v5 cluster is a
+                    # namespace that does not exist, so every tenant realm's broker
+                    # IdP would have been given a token endpoint that resolves to
+                    # nothing. See $kcInternalUrl above.
                     #
                     # The Compositions cannot read the keycloak-admin Secret, which is
                     # where this value lived and where the Jobs still read it from. That
                     # is precisely why the broker IdP could not be declared until now.
-                    identity.internalUrl: {{ dig "identity" "internalUrl" "" $spec | quote }}
+                    identity.internalUrl: {{ $kcInternalUrl | quote }}
                     # The shared realm tenant realms broker to. oidc.realm names the same
                     # realm for OpenBao and wins when a claim sets it, so the two cannot
                     # drift apart; identity.kernelRealm only supplies the default, because
@@ -853,6 +1099,44 @@ spec:
                     # and a default parked there never materialises.
                     identity.kernelRealm: {{ dig "oidc" "realm" (dig "identity" "kernelRealm" "" $spec) $spec | quote }}
                     llm.enabled: {{ default false (dig "llm" "enabled" false $spec) | quote }}
+                    # Where the edge runs, which is the one kernel namespace a
+                    # Composition has to name. The Gateway, its SecurityPolicies
+                    # and the zone client secrets they read all live there, and
+                    # Envoy Gateway reads an OIDC client secret from no other
+                    # namespace, so the tenant Composition writes its zone's
+                    # secret into this one.
+                    #
+                    # Derived from the layout rather than asked for, for the
+                    # reason the trust anchor is: a second field could name a
+                    # namespace the layout does not have. The operator answers
+                    # the same question from GENTIAN_NS_EDGE, which the chart
+                    # sets from the same file this branch encodes.
+                    network.edgeNamespace: {{ "kernel-edge" | quote }}
+                    {{- /* Where the kernel's own services run, so a composition
+                         that has to put something beside them does not have to
+                         guess the layout. The Repository composition needs it:
+                         it writes the git credential the operator and the
+                         director mount, and it wrote it to gentian-system on
+                         every cluster -- correct on v4 and nowhere on v5, which
+                         is why the director could clone and never push. */}}
+                    kernel.controlNamespace: {{ $controlNs | quote }}
+                    {{- /* Where Argo CD runs, for the same reason the control
+                         namespace is published: the Repository composition
+                         writes Argo CD's repository Secret and the catalogue
+                         ApplicationSet, and it wrote both to "argocd" on
+                         every cluster -- correct on v4 and a namespace that
+                         does not exist on v5, so Argo CD never saw the
+                         credential or the ApplicationSet. */}}
+                    kernel.gitopsNamespace: {{ $argoNs | quote }}
+                    # Whether this cluster serves one tenant or many.
+                    #
+                    # Here for the same reason mail.serviceMode is: the operator read it
+                    # from its own Helm value, so the claim could say one thing and the
+                    # running operator another, and changing it through the director
+                    # would have committed a setting nothing acted on. Every host a
+                    # tenant is reachable at is derived from this, so the two disagreeing
+                    # is not cosmetic.
+                    tenancyMode: {{ default "multi" (dig "tenancyMode" "" $spec) | quote }}
                     tenant.limitRange.default.cpu: {{ default "500m" (dig "tenantDefaults" "limitRange" "defaultCpu" "" $spec) | quote }}
                     tenant.limitRange.default.memory: {{ default "512Mi" (dig "tenantDefaults" "limitRange" "defaultMemory" "" $spec) | quote }}
                     tenant.limitRange.defaultRequest.cpu: {{ default "100m" (dig "tenantDefaults" "limitRange" "defaultRequestCpu" "" $spec) | quote }}
@@ -885,7 +1169,7 @@ spec:
                         caProvider:
                           type: Secret
                           name: openbao-tls
-                          namespace: openbao
+                          namespace: {{ $secretsNs }}
                           key: tls.crt
                         {{- end }}
                         auth:

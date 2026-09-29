@@ -760,3 +760,88 @@ func TestValidateHostReachesTheCatalogue(t *testing.T) {
 		t.Fatalf("expected ValidateHost to carry the requirement's declared host, got %+v", items)
 	}
 }
+
+// When every role refuses, the caller is told the refusal that says something
+// about them — not the last one.
+//
+// The roles are tried in order, and the last is often a role whose type cannot
+// accept a direct exchange at all: true before the caller arrived, and no help
+// whatever. On a real cluster that buried the answer. The administrator was
+// told "the role does not permit a direct token exchange" while the role that
+// could have worked had refused the token's AUDIENCE two lines earlier, and
+// the audience was the thing that was actually wrong.
+func TestTheSummaryPrefersARefusalThatIsAboutTheCaller(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Role string `json:"role"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		w.WriteHeader(http.StatusBadRequest)
+		if body.Role == "cluster-admin-jwt" {
+			_, _ = w.Write([]byte(`{"errors":["error validating token: invalid audience (aud) claim"]}`))
+			return
+		}
+		// The last role tried, and the least informative refusal there is.
+		_, _ = w.Write([]byte(`{"errors":["role with oidc role_type is not allowed"]}`))
+	}))
+	defer srv.Close()
+
+	b := NewOpenBao(srv.URL, "secret", "oidc", "kernel",
+		[]string{"cluster-admin-jwt", "tenant-admin"}, nil, false)
+	_, err := b.ExchangeToken(context.Background(), "a.b.c")
+	if err == nil {
+		t.Fatal("every role refused; want an error")
+	}
+	if !strings.Contains(err.Error(), "audience") {
+		t.Fatalf("the summary lost the useful refusal: %v", err)
+	}
+	if strings.Contains(err.Error(), "does not permit a direct token exchange") {
+		t.Fatalf("the summary kept the refusal that is about the role, not the caller: %v", err)
+	}
+}
+
+// A credential that cannot be probed is stored, and said to be unvalidated.
+//
+// Validation runs before the write and a failure refuses it, which is right
+// for a probe that says the credential is wrong. "There is nothing to probe"
+// is not that: it is a gap in the requirement's declaration, and refusing the
+// write because of it blocks whatever was waiting on the credential. The
+// deployments token could not be set at all for exactly this reason — its
+// catalogue entry asks for a git-https probe and named no host — which left
+// every console write answering 503 for want of a credential nobody was
+// allowed to store.
+func TestACredentialThatCannotBeProbedIsStoredAndSaysSo(t *testing.T) {
+	s, _ := newServer(t, requirementWithValidator("deployments-repository", "cluster",
+		"gentian-os/kernel/repositories/deployments", 0, "git-https"))
+	s.Validator = stubValidator{err: fmt.Errorf("%w: the requirement declares no host or url", ErrNoEndpoint)}
+
+	w := do(t, s, "PUT", "/v1/credentials/deployments-repository",
+		`{"fields":{"password":"a-real-token"}}`)
+	if w.Code != http.StatusOK {
+		t.Fatalf("a credential that could not be probed was refused: %d %s", w.Code, w.Body.String())
+	}
+	var got map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	if got["stored"] != true {
+		t.Fatalf("not stored: %v", got)
+	}
+	// Said out loud: a caller who asked for a validated write and got an
+	// unvalidated one should be told which they got.
+	if got["validated"] != false || got["validationSkipped"] == nil {
+		t.Fatalf("the response does not say it was unvalidated: %v", got)
+	}
+}
+
+// A probe that actually ran and refused still blocks the write. That is what
+// the service is for, and the case above must not have weakened it.
+func TestAProbeThatRefusesStillBlocksTheWrite(t *testing.T) {
+	s, _ := newServer(t, requirementWithValidator("smtp-relay", "cluster", "gentian/mail/relay", 0, "smtp"))
+	s.Validator = stubValidator{err: fmt.Errorf("the endpoint rejected these credentials")}
+
+	w := do(t, s, "PUT", "/v1/credentials/smtp-relay", `{"fields":{"password":"wrong"}}`)
+	if w.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("a refused probe did not block the write: %d %s", w.Code, w.Body.String())
+	}
+}

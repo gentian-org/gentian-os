@@ -6,7 +6,7 @@
 #
 # Prerequisites:
 #   - Gentian OS Stage 1 install complete (Suze / Keycloak in platform-kernel)
-#   - For Dovecot checks: MAIL_SERVICE_MODE=kernel and dovecot-dev deployed
+#   - For Dovecot checks: MAIL_SERVICE_MODE=system and dovecot-dev deployed
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

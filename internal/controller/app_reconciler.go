@@ -46,13 +46,23 @@ const (
 	conditionAppsReady = "AppsReady"
 
 	litellmMasterKeySecret = "llm-sensitive-values"
-	litellmMasterKeyNS     = "platform-kernel"
 	litellmMasterKeySecKey = "litellm_master_key" //nolint:gosec // Secret key name, not a credential.
 )
 
-// litellmProxyBaseURL is a var rather than a const only so tests can point it at
-// an httptest server. Nothing at run time reassigns it.
-var litellmProxyBaseURL = "http://litellm-proxy.platform-kernel.svc.cluster.local:4000"
+// Where LLM serving runs.
+//
+// Both of these were the literal platform-kernel, which is v4's one namespace
+// for everything. LLM serving is a system-tier function of its own
+// (namespace-cleanup.md §2.2), and on v5 platform-kernel does not exist -- so
+// the master key was read from a namespace that is not there and the proxy was
+// addressed at a name that does not resolve. Neither failure names LLM: the
+// first is a Secret not found, the second a dial timeout.
+//
+// litellmProxyBaseURL is a var rather than a const only so tests can point it
+// at an httptest server. Nothing at run time reassigns it.
+var litellmMasterKeyNS = llmNamespace
+
+var litellmProxyBaseURL = fmt.Sprintf("http://litellm-proxy.%s.svc.cluster.local:4000", llmNamespace)
 
 // appClaimGVK is the GVK for namespace-scoped App claims reconciled by Crossplane.
 var appClaimGVK = schema.GroupVersionKind{
@@ -113,7 +123,7 @@ func (r *TenantReconciler) reconcileTenantApps(ctx context.Context, tenant *gent
 		}
 
 		// ApiProfiles have no App claim to seed or await; they are always ready.
-		if gentianov1alpha1.ProfileIsAPI(profile) {
+		if profile.IsAPI() {
 			continue
 		}
 
@@ -192,7 +202,7 @@ func (r *TenantReconciler) reconcileTenantApps(ctx context.Context, tenant *gent
 // Grouped rather than left inline so the extraction is mechanical when there is
 // somewhere to move them to, and so the loop that calls it reads as what it
 // otherwise is: status aggregation.
-func (r *TenantReconciler) seedAppPrerequisites(ctx context.Context, tenant *gentianov1alpha1.Tenant, appName string, profile *gentianov1alpha1.AppProfile) error {
+func (r *TenantReconciler) seedAppPrerequisites(ctx context.Context, tenant *gentianov1alpha1.Tenant, appName string, profile *gentianov1alpha1.ComponentProfile) error {
 	if err := r.seedAppSecrets(ctx, tenant, appName, profile); err != nil {
 		return fmt.Errorf("seed app-secrets for %s: %w", appName, err)
 	}
@@ -205,11 +215,11 @@ func (r *TenantReconciler) seedAppPrerequisites(ctx context.Context, tenant *gen
 // seedAppSecrets writes each AppProfile.spec.appSecrets entry into OpenBao at
 // …/internal/{name} with key "value". No-op when Seeder is nil or the profile
 // declares no app-secrets. Repeated calls are idempotent.
-func (r *TenantReconciler) seedAppSecrets(ctx context.Context, tenant *gentianov1alpha1.Tenant, appName string, profile *gentianov1alpha1.AppProfile) error {
-	if r.Seeder == nil || len(profile.Spec.AppSecrets) == 0 {
+func (r *TenantReconciler) seedAppSecrets(ctx context.Context, tenant *gentianov1alpha1.Tenant, appName string, profile *gentianov1alpha1.ComponentProfile) error {
+	if r.Seeder == nil || len(profile.GeneratedSecrets()) == 0 {
 		return nil
 	}
-	for _, s := range profile.Spec.AppSecrets {
+	for _, s := range profile.GeneratedSecrets() {
 		if s.Name == "" {
 			continue
 		}
@@ -217,7 +227,7 @@ func (r *TenantReconciler) seedAppSecrets(ctx context.Context, tenant *gentianov
 			return err
 		}
 	}
-	for _, sidecar := range profile.Spec.Sidecars {
+	for _, sidecar := range profile.Spec.Extensions {
 		scAppName := gentianov1alpha1.SidecarAppName(appName, sidecar.Name)
 		for _, s := range sidecar.AppSecrets {
 			if s.Name == "" {
@@ -262,7 +272,7 @@ func (r *TenantReconciler) waitForAppClaimReady(ctx context.Context, tenant *gen
 // endpoints and virtual key configured by the platform, and registers that same virtual key
 // with LiteLLM itself (idempotent — see ensureLiteLLMVirtualKey) so it is actually usable
 // rather than a string the proxy has never heard of.
-func (r *TenantReconciler) injectLLMCredentials(ctx context.Context, tenant *gentianov1alpha1.Tenant, appName string, profile *gentianov1alpha1.AppProfile) error {
+func (r *TenantReconciler) injectLLMCredentials(ctx context.Context, tenant *gentianov1alpha1.Tenant, appName string, profile *gentianov1alpha1.ComponentProfile) error {
 	if !clusterLLMEnabled(ctx, r.Client) {
 		return nil
 	}
@@ -279,7 +289,7 @@ func (r *TenantReconciler) injectLLMCredentials(ctx context.Context, tenant *gen
 	// Extra deterministic keys the profile asked for. The platform does not know
 	// which apps need one — spec.derivedSecretKeys says so.
 	if profile != nil {
-		for _, dsk := range profile.Spec.DerivedSecretKeys {
+		for _, dsk := range profile.DerivedSecrets() {
 			stringData[dsk.Key] = derivedSecretValue(tenant.Name, appName)
 		}
 	}

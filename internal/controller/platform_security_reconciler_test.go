@@ -29,6 +29,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
+	"github.com/gentian-org/gentian-os/internal/layout"
 	"github.com/gentian-org/gentian-os/internal/security"
 )
 
@@ -61,7 +62,7 @@ func TestPlatformSecurityReconciler_SyncsConfigMap(t *testing.T) {
 	cm := &corev1.ConfigMap{}
 	if err := c.Get(context.Background(), types.NamespacedName{
 		Name:      gentianov1alpha1.PlatformSecurityConfigMapName,
-		Namespace: "gentian-system",
+		Namespace: layout.Namespace(layout.Control),
 	}, cm); err != nil {
 		t.Fatalf("get ConfigMap: %v", err)
 	}
@@ -81,7 +82,7 @@ func TestPlatformSecurityReconciler_UpdatesExistingConfigMap(t *testing.T) {
 	existing := &corev1.ConfigMap{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      gentianov1alpha1.PlatformSecurityConfigMapName,
-			Namespace: "gentian-system",
+			Namespace: layout.Namespace(layout.Control),
 		},
 		Data: map[string]string{
 			gentianov1alpha1.PlatformSecurityConfigMapKey: `[{"profile":"old","policy":"p","scope":"s"}]`,
@@ -111,7 +112,7 @@ func TestPlatformSecurityReconciler_UpdatesExistingConfigMap(t *testing.T) {
 	cm := &corev1.ConfigMap{}
 	if err := c.Get(context.Background(), types.NamespacedName{
 		Name:      gentianov1alpha1.PlatformSecurityConfigMapName,
-		Namespace: "gentian-system",
+		Namespace: layout.Namespace(layout.Control),
 	}, cm); err != nil {
 		t.Fatalf("get ConfigMap: %v", err)
 	}

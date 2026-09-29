@@ -1,0 +1,83 @@
+---
+# Headlamp: the cluster as the administrator sees it, with their own identity.
+# OIDC against the kernel realm once the realm exists (headlamp.oidc.enabled);
+# until then a token login, which is enough to observe a fresh cluster.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: headlamp
+  namespace: {{ include "ns" (list . "gitops") }}
+  finalizers: []
+spec:
+  project: gentian
+  source:
+    repoURL: {{ .Values.versions.headlamp.repo }}
+    chart: headlamp
+    targetRevision: {{ .Values.versions.headlamp.chart | quote }}
+    helm:
+      valuesObject:
+        replicaCount: 1
+        ingress:
+          enabled: false
+        {{- if .Values.headlamp.oidc.enabled }}
+        config:
+          # Not in-cluster: in that mode Headlamp talks to the API server
+          # directly, and the API server has no reason to trust the kernel
+          # realm's tokens. The kubeconfig below points at the proxy that
+          # does, which turns the person's token into an impersonated request.
+          inCluster: false
+          extraArgs:
+          - "-kubeconfig=/kubeconfig/config"
+          oidc:
+            # Outside in-cluster mode Headlamp refuses the OIDC settings
+            # unless it keeps the session in a cookie: with a kubeconfig it
+            # has no place to put the token otherwise.
+            useCookie: true
+            # envFrom a Secret this cluster owns: it carries the client secret,
+            # which is not something to put in a values file.
+            secret:
+              create: false
+              name: headlamp-oidc
+            externalSecret:
+              enabled: true
+              name: headlamp-oidc
+        volumes:
+        - name: kubeconfig
+          secret:
+            secretName: headlamp-kubeconfig
+        - name: proxy-ca
+          secret:
+            secretName: kube-oidc-proxy-tls
+            items:
+            - key: ca.crt
+              path: ca.crt
+        volumeMounts:
+        - name: kubeconfig
+          mountPath: /kubeconfig
+          readOnly: true
+        - name: proxy-ca
+          mountPath: /proxy-ca
+          readOnly: true
+        {{- end }}
+        # The pod has no rights of its own: every request is the person's.
+        clusterRoleBinding:
+          create: false
+        serviceAccount:
+          create: true
+        podSecurityContext:
+          runAsNonRoot: true
+          seccompProfile: { type: RuntimeDefault }
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: {{ include "ns" (list . "observability") }}
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+  # The API server defaults hostUsers on every pod spec (1.31+); the chart
+  # does not set it, so without this Argo reports drift forever.
+  ignoreDifferences:
+  - group: apps
+    kind: Deployment
+    jsonPointers:
+    - /spec/template/spec/hostUsers

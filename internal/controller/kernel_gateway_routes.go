@@ -33,16 +33,28 @@ import (
 
 const (
 	kernelRouteKeycloakIDP   = "kernel-idp"
-	kernelRouteKernelApex    = "kernel-apex-redirect"
-	kernelRouteHTTPRedirect  = "kernel-http-redirect"
-	kernelRouteArgoCD        = "kernel-argocd"
-	kernelRouteGentianPortal = "kernel-gentian-portal"
-	kernelRouteLiteLLM       = "kernel-llm"
+	kernelRouteKeycloakAdmin = "kernel-id-admin"
+	// kernelRouteKeycloakRefused carries the paths id.<kernel> refuses -- the
+	// master realm and the admin console -- as a route of its own, more
+	// specific than the allow and closed by a policy: what a perimeter
+	// surface refuses is written down, not left to absence.
+	kernelRouteKeycloakRefused = "kernel-idp-refused"
+	kernelRouteKernelApex      = "kernel-apex-redirect"
+	kernelRouteHTTPRedirect    = "kernel-http-redirect"
+	kernelRouteArgoCD          = "kernel-argocd"
+	kernelRouteHeadlamp        = "kernel-headlamp"
+	// The name people type: an alias of the console, by redirect.
+	kernelRouteWWWRedirect = "kernel-www-redirect"
+	kernelRouteLiteLLM     = "kernel-llm"
 
-	gentianPortalAPIService = "gentian-portal-gentian-portal-api"
-	gentianPortalWebService = "gentian-portal-gentian-portal-web"
+	// consoleSubdomain is the desktop's host label in every zone
+	// (networking.md §3): console.<kernel> for the platform, console.<t>.<kernel>
+	// for a tenant. The desktop profile exposes it under this name, and
+	// every redirect and frame policy here assumes it.
+	consoleSubdomain = "console"
 
 	argocdServerServiceName = "argocd-server"
+	headlampServiceName     = "headlamp"
 	litellmProxyServiceName = "litellm-proxy"
 	litellmProxyPort        = int32(4000)
 )
@@ -57,9 +69,19 @@ type kernelHTTPRouteSpec struct {
 	// route attaches to every listener whose hostname matches, which for the
 	// HTTP->HTTPS redirect would include the :443 listeners and send TLS
 	// requests into an infinite redirect back to themselves.
-	sectionName  string
+	sectionName string
+	// gateway names the edge the route attaches to; empty is the
+	// authenticated Gateway. Only the identity provider's realm endpoints
+	// and the :80 redirect are the perimeter's.
+	gateway      string
 	policy       map[string]interface{}
 	clientPolicy map[string]interface{}
+	// securityPolicy is a SecurityPolicy of the route's own, for a route with
+	// no zone session: the refusal on the identity provider's perimeter.
+	securityPolicy map[string]interface{}
+	// authz is the L2 question for a route behind the kernel zone's session;
+	// nil for a route with no session (the perimeter's) or none yet.
+	authz *routeAuthz
 }
 
 // suzeKeycloakHTTPServiceName is the keycloakx chart HTTP Service for Stage 1 Suze IdP.
@@ -91,20 +113,36 @@ func (r *GatewayPlatformReconciler) reconcileKernelHTTPRoutes(ctx context.Contex
 	if err != nil {
 		return fmt.Errorf("collect OIDC ingress subdomains: %w", err)
 	}
-	for _, ns := range []string{argocdNamespace, kernelNamespace} {
+	// A route lives beside the Gateway; the Services it points at live where
+	// their own function does, so each of those namespaces grants the
+	// reference. Duplicates in the v4 layout, where they are one namespace.
+	for _, ns := range dedupe(argocdNamespace, identityNamespace, servicesNamespace, observabilityNamespace) {
 		if err := r.ensureRouteReferenceGrant(ctx, ns); err != nil {
 			return fmt.Errorf("ensure ReferenceGrant in %s: %w", ns, err)
 		}
 	}
 
 	specs := kernelHTTPRouteSpecs(r.KernelDomain, effectiveDomains, oidcSubs, tenantNames,
-		clusterLLMEnabled(ctx, r.Client))
+		clusterLLMEnabled(ctx, r.Client), r.Cluster, r.kernelZoneReady(ctx), desktopPresent(ctx, r.Client))
+	// The shim's table first: a route whose policy asks the shim before the
+	// shim knows the host is refused, which is the right direction, but a
+	// short one.
+	if err := r.ensureEdgeAuthzRouteTable(ctx, specs); err != nil {
+		return fmt.Errorf("ensure edge-authz route table: %w", err)
+	}
 	expected := make(map[string]struct{}, len(specs))
+	expectedPolicies := map[string]struct{}{}
 	for _, spec := range specs {
 		expected[spec.name] = struct{}{}
 		route := buildKernelHTTPRoute(spec)
 		if err := ensureHTTPRouteResource(ctx, r.Client, route); err != nil {
 			return fmt.Errorf("ensure kernel HTTPRoute %s: %w", spec.name, err)
+		}
+		if spec.authz != nil || spec.securityPolicy != nil {
+			expectedPolicies[kernelSecurityPolicyName(spec.name)] = struct{}{}
+			if err := r.ensureKernelSecurityPolicy(ctx, spec); err != nil {
+				return fmt.Errorf("ensure kernel SecurityPolicy %s: %w", spec.name, err)
+			}
 		}
 		if spec.policy != nil {
 			if err := r.ensureKernelBackendTrafficPolicy(ctx, spec); err != nil {
@@ -133,7 +171,25 @@ func (r *GatewayPlatformReconciler) reconcileKernelHTTPRoutes(ctx context.Contex
 			}
 		}
 	}
+	if err := r.deleteStaleKernelSecurityPolicies(ctx, expectedPolicies); err != nil {
+		return fmt.Errorf("delete stale kernel SecurityPolicies: %w", err)
+	}
 	return r.deleteStaleKernelHTTPRoutes(ctx, expected)
+}
+
+// desktopPresent reports whether this cluster ships a desktop at all: the
+// profile the operator chart installs (ui-restructure.md §1). Without it
+// there is no console anywhere, and nothing is redirected to one.
+func desktopPresent(ctx context.Context, c client.Reader) bool {
+	profile := &gentianov1alpha1.ComponentProfile{}
+	return c.Get(ctx, client.ObjectKey{Name: DesktopProfileName}, profile) == nil
+}
+
+// consoleHost is where a zone's desktop answers, console.<zone>
+// (networking.md §3): the name the desktop profile exposes and the
+// component reconciler routes.
+func consoleHost(zoneDomain string) string {
+	return consoleSubdomain + "." + zoneDomain
 }
 
 func kernelHTTPRouteSpecs(
@@ -142,92 +198,172 @@ func kernelHTTPRouteSpecs(
 	tenantOIDCSubdomains map[string][]string,
 	tenantNames []string,
 	llmEnabled bool,
+	cluster string,
+	kernelZoneReady bool,
+	desktop bool,
 ) []kernelHTTPRouteSpec {
 	idHost := fmt.Sprintf("id.%s", kernelDomain)
-	portalHost := kernelPortalHost(kernelDomain)
 
 	kcService := suzeKeycloakHTTPServiceName()
 	kcPort := int32(8080)
 
+	idFilters := keycloakGatewayResponseFilters(kernelDomain, tenantEffectiveDomains, tenantOIDCSubdomains, tenantNames)
 	specs := []kernelHTTPRouteSpec{
+		// The identity provider is a kernel-owned perimeter surface: no
+		// session, because it is the issuer, and a path allowlist, because it
+		// is public. Realm endpoints and the theme assets they load are the
+		// whole of it; the master realm is refused by name, and the
+		// administration console is a route of its own on this same hostname
+		// behind the kernel session (networking.md §3).
 		{
 			name:        kernelRouteKeycloakIDP,
 			host:        idHost,
-			sectionName: wildcardListenerName,
+			gateway:     PerimeterGatewayName,
+			sectionName: perimeterIDListenerName,
 			rules: []gatewayv1.HTTPRouteRule{
-				kernelBackendRulePrefixNS(
-					kcService,
-					kernelNamespace,
-					kcPort,
-					"/",
-					keycloakGatewayResponseFilters(kernelDomain, tenantEffectiveDomains, tenantOIDCSubdomains, tenantNames)...,
-				),
+				kernelBackendRulePrefixNS(kcService, identityNamespace, kcPort, "/auth/realms/", idFilters...),
+				kernelBackendRulePrefixNS(kcService, identityNamespace, kcPort, "/auth/resources/", idFilters...),
 			},
 			policy: keycloakProxyBackendTrafficPolicySpec(),
 		},
+		// What id.<kernel> refuses, as a route: these prefixes are more
+		// specific than the allow above, so Gateway API ranks them first, and
+		// the policy on them denies every caller. A refusal that is an object
+		// can be read, listed and tested; an absence cannot.
+		{
+			name:        kernelRouteKeycloakRefused,
+			host:        idHost,
+			gateway:     PerimeterGatewayName,
+			sectionName: perimeterIDListenerName,
+			rules: []gatewayv1.HTTPRouteRule{
+				kernelBackendRulePrefixNS(kcService, identityNamespace, kcPort, "/auth/realms/master/"),
+			},
+			securityPolicy: map[string]interface{}{
+				"authorization": map[string]interface{}{"defaultAction": "Deny"},
+			},
+		},
 	}
-	// Gentian UI portal (API + SPA) runs in platform-kernel; edge traffic reaches
-	// kernel-public-gateway in servicesNamespace via Cloudflare tunnel.
-	specs = append(specs, kernelHTTPRouteSpec{
-		name:        kernelRouteGentianPortal,
-		host:        portalHost,
-		sectionName: wildcardListenerName,
-		rules:       kernelGentianPortalHTTPRouteRules(),
-	})
-	// Serve the portal on each tenant's own host, rather than redirecting there to
-	// the shared one.
-	//
-	// A redirect cannot carry anything: the gateway filter replaces path and query
-	// wholesale, so a login hint travelling on <tenant>.<kernel-domain> was dropped
-	// before the portal ever saw it. Answering directly also means the address bar
-	// stays on the tenant's name instead of bouncing through portal.<kernel-domain>.
-	//
-	// Same rules and the same backends as the shared route, so there is one portal
-	// deployment answering on more names — not a copy per tenant, which would put
-	// the portal's Keycloak admin credentials inside every tenant's blast radius.
-	//
-	// Consequence worth knowing: tokens live in sessionStorage, which is per origin,
-	// so a user signed in on the tenant host is a separate session from the same
-	// user on portal.<kernel-domain>. Keycloak's SSO cookie makes crossing between
-	// them silent, but they are two sessions.
-	for i, domain := range tenantEffectiveDomains {
-		if i >= len(tenantNames) {
-			break
-		}
+	clusterObject := "cluster:" + cluster
+	if kernelZoneReady {
+		// Keycloak's administration, on the SAME hostname that issues the
+		// tokens, behind the kernel session.
+		//
+		// It had a hostname of its own, id-admin.<kernel>, which is the shape
+		// every other kernel UI has. Keycloak cannot serve it that way: with
+		// KC_HOSTNAME and KC_HOSTNAME_ADMIN different, the console takes a
+		// token stamped with the issuer's hostname and calls the Admin REST
+		// API on the admin hostname, which refuses it, and the console never
+		// finishes loading. Upstream closed that as not planned
+		// (keycloak/keycloak#42264), so it is a constraint and not a bug to
+		// wait out. One hostname carrying two classes of route, told apart by
+		// path, is the only shape that works.
 		specs = append(specs, kernelHTTPRouteSpec{
-			name: fmt.Sprintf("tenant-%s-portal", tenantNames[i]),
-			host: domain,
-			// The tenant apex listener carries the tenant's own certificate.
-			// buildKernelGateway creates it from the same filtered tenant list
-			// that produced this route, so it is always present.
-			sectionName: wildcardListenerName,
-			rules:       kernelGentianPortalHTTPRouteRules(),
+			name:        kernelRouteKeycloakAdmin,
+			host:        idHost,
+			gateway:     PerimeterGatewayName,
+			sectionName: perimeterIDListenerName,
+			rules: []gatewayv1.HTTPRouteRule{
+				kernelBackendRulePrefixNS(kcService, identityNamespace, kcPort, "/auth/admin/",
+					kernelConsoleFrameFilters(kernelDomain)...),
+				// The zone's code flow lands on /oauth2/callback: the OIDC
+				// filter answers it, but only on a path the route carries.
+				kernelBackendRulePrefixNS(kcService, identityNamespace, kcPort, edgeOAuth2Prefix),
+			},
+			policy: keycloakProxyBackendTrafficPolicySpec(),
+			// The bearer on this route is the console's own. Keep it; do not
+			// replace it.
+			//
+			// Keycloak's administration console runs its own code flow inside
+			// the page and calls the Admin REST API with the token that flow
+			// produced. Stripping Authorization -- what every other kernel
+			// route wants, so a backend gets identity headers instead of a
+			// token it has no use for -- answered 401 and left the console on
+			// its spinner. Forwarding the EDGE's token instead answered "Token
+			// issued for an application that is not the admin console", which
+			// is true: it was minted for the zone's client. The console needs
+			// neither, only to be left alone.
+			authz: &routeAuthz{relation: "can_configure", object: clusterObject, keepClientToken: true},
 		})
+	}
+	// The desktop is the tenant's own component, routed where it runs
+	// (tenant-<t>, on console.<zone>); the kernel routes two names to it.
+	// www.<kernel> and the apex are the names people type, and both send the
+	// browser to the platform console with path and query kept: a session
+	// travels in cookies on the kernel domain, so nothing is lost on the way.
+	// Only once the kernel zone exists, because the console does not before.
+	if kernelZoneReady && desktop {
+		console := consoleHost(kernelDomain)
+		specs = append(specs,
+			kernelHTTPRouteSpec{
+				name:        kernelRouteWWWRedirect,
+				host:        "www." + kernelDomain,
+				sectionName: wildcardListenerName,
+				rules:       []gatewayv1.HTTPRouteRule{consoleRedirectRule(console)},
+			},
+			kernelHTTPRouteSpec{
+				name:        kernelRouteKernelApex,
+				host:        kernelDomain,
+				sectionName: wildcardListenerName,
+				rules:       []gatewayv1.HTTPRouteRule{consoleRedirectRule(console)},
+			},
+		)
+	}
+	// A tenant's apex likewise sends the browser to the tenant's own console.
+	// The apex is published with the tenant either way (it is the tenant's
+	// name), so the redirect is what makes it answer.
+	if desktop {
+		for i, domain := range tenantEffectiveDomains {
+			if i >= len(tenantNames) {
+				break
+			}
+			specs = append(specs, kernelHTTPRouteSpec{
+				name:        fmt.Sprintf("tenant-%s-apex", tenantNames[i]),
+				host:        domain,
+				sectionName: wildcardListenerName,
+				rules:       []gatewayv1.HTTPRouteRule{consoleRedirectRule(consoleHost(domain))},
+			})
+		}
 	}
 	specs = append(specs,
 		kernelHTTPRouteSpec{
-			name:        kernelRouteKernelApex,
-			host:        kernelDomain,
-			sectionName: wildcardListenerName,
-			rules: []gatewayv1.HTTPRouteRule{
-				kernelApexRedirectRule(kernelDomain),
-			},
-		},
-		kernelHTTPRouteSpec{
 			// Plaintext :80 -> https, bound to the http-redirect listener only.
 			name:        kernelRouteHTTPRedirect,
+			gateway:     PerimeterGatewayName,
 			sectionName: httpRedirectListenerName,
 			rules:       []gatewayv1.HTTPRouteRule{kernelHTTPSRedirectRule()},
 		},
-		kernelHTTPRouteSpec{
+	)
+	// The kernel UIs: "hidden" means behind a session with a platform role,
+	// not an internal hostname, and each tool's own login is the second
+	// factor (networking.md §3). No zone, no route: never an open one.
+	if kernelZoneReady {
+		specs = append(specs, kernelHTTPRouteSpec{
 			name:        kernelRouteArgoCD,
 			host:        fmt.Sprintf("argocd.%s", kernelDomain),
 			sectionName: wildcardListenerName,
 			rules: []gatewayv1.HTTPRouteRule{
-				kernelBackendRuleCrossNamespace(argocdServerServiceName, argocdNamespace, 80),
+				kernelBackendRuleCrossNamespace(argocdServerServiceName, argocdNamespace, 80,
+					kernelConsoleFrameFilters(kernelDomain)...),
 			},
-		},
-	)
+			authz: &routeAuthz{relation: "can_configure", object: clusterObject},
+		})
+		// The cluster view, read-only: an auditor's right. A route the
+		// operator owns is the one that gets a tunnel hostname and a DNS
+		// record; only where the layout has an observability namespace, since
+		// a route to a Service that does not exist would still claim the host.
+		if observabilityNamespace != "" {
+			specs = append(specs, kernelHTTPRouteSpec{
+				name:        kernelRouteHeadlamp,
+				host:        fmt.Sprintf("headlamp.%s", kernelDomain),
+				sectionName: wildcardListenerName,
+				rules: []gatewayv1.HTTPRouteRule{
+					kernelBackendRuleCrossNamespace(headlampServiceName, observabilityNamespace, 80,
+						kernelConsoleFrameFilters(kernelDomain)...),
+				},
+				authz: &routeAuthz{relation: "can_audit", object: clusterObject},
+			})
+		}
+	}
 	// LiteLLM admin console — platform-level only (the claim's llm.enabled).
 	// Tenants do not get their own route; app-catalogue "litellm" tiles stay
 	// unused until per-tenant access is designed (see docs/design/llms.md).
@@ -237,20 +373,15 @@ func kernelHTTPRouteSpecs(
 			host:        fmt.Sprintf("llm.%s", kernelDomain),
 			sectionName: wildcardListenerName,
 			rules: []gatewayv1.HTTPRouteRule{
-				kernelBackendRulePrefixNS(litellmProxyServiceName, kernelNamespace, litellmProxyPort, "/"),
+				// The LLM namespace, not the services one. servicesNamespace is
+				// the edge on v5, so this route pointed at a litellm-proxy that
+				// was never there -- and a route whose backend does not resolve
+				// answers 503 on a host that looks configured.
+				kernelBackendRulePrefixNS(litellmProxyServiceName, llmNamespace, litellmProxyPort, "/"),
 			},
 		})
 	}
 	return specs
-}
-
-func kernelGentianPortalHTTPRouteRules() []gatewayv1.HTTPRouteRule {
-	return []gatewayv1.HTTPRouteRule{
-		kernelBackendRulePrefixNS(gentianPortalAPIService, kernelNamespace, 8000, "/api"),
-		kernelBackendRuleExactNS(gentianPortalAPIService, kernelNamespace, 8000, "/healthz"),
-		kernelBackendRuleExactNS(gentianPortalAPIService, kernelNamespace, 8000, "/readyz"),
-		kernelBackendRulePrefixNS(gentianPortalWebService, kernelNamespace, 8080, "/"),
-	}
 }
 
 // kernelBackendRuleNS routes one match to one Service, optionally cross-namespace.
@@ -283,14 +414,38 @@ func kernelBackendRulePrefixNS(serviceName, namespace string, port int32, prefix
 	return kernelBackendRuleNS(serviceName, namespace, port, pathPrefixMatch(prefix), filters...)
 }
 
-func kernelBackendRuleExactNS(serviceName, namespace string, port int32, path string, filters ...gatewayv1.HTTPRouteFilter) gatewayv1.HTTPRouteRule {
-	return kernelBackendRuleNS(serviceName, namespace, port, pathExactMatch(path), filters...)
+// kernelConsoleFrameFilters lets the desktop open a kernel console in a window.
+//
+// Each console defends itself against being framed, which is right against a
+// stranger and wrong here: the desktop, the console and the realm are all on
+// the kernel domain, and the tile is how a platform administrator is meant to
+// reach it. Argo CD is the strict one -- x-frame-options: sameorigin, which it
+// cannot be told to drop, because an empty setting falls back to the default.
+//
+// So the Gateway decides, for every kernel host the same way: the header that
+// cannot express an exception is removed, and the one that can names the
+// kernel domain and nothing else.
+func kernelConsoleFrameFilters(kernelDomain string) []gatewayv1.HTTPRouteFilter {
+	if kernelDomain == "" {
+		return nil
+	}
+	return []gatewayv1.HTTPRouteFilter{{
+		Type: gatewayv1.HTTPRouteFilterResponseHeaderModifier,
+		ResponseHeaderModifier: &gatewayv1.HTTPHeaderFilter{
+			Remove: []string{"X-Frame-Options"},
+			Set: []gatewayv1.HTTPHeader{{
+				Name:  "Content-Security-Policy",
+				Value: fmt.Sprintf("frame-ancestors 'self' https://*.%s", kernelDomain),
+			}},
+		},
+	}}
 }
 
-func kernelBackendRuleCrossNamespace(serviceName, namespace string, port int32) gatewayv1.HTTPRouteRule {
+func kernelBackendRuleCrossNamespace(serviceName, namespace string, port int32, filters ...gatewayv1.HTTPRouteFilter) gatewayv1.HTTPRouteRule {
 	p := gatewayv1.PortNumber(port)
 	ns := gatewayv1.Namespace(namespace)
 	return gatewayv1.HTTPRouteRule{
+		Filters: filters,
 		Matches: []gatewayv1.HTTPRouteMatch{pathPrefixMatch("/")},
 		BackendRefs: []gatewayv1.HTTPBackendRef{
 			{
@@ -390,19 +545,16 @@ func kernelHTTPSRedirectRule() gatewayv1.HTTPRouteRule {
 	}
 }
 
-func kernelApexRedirectRule(kernelDomain string) gatewayv1.HTTPRouteRule {
+// consoleRedirectRule sends every request on a host to the console, keeping
+// path and query: a redirect that replaced them dropped whatever travelled on
+// the request, which is why the portal used to be served on these names
+// rather than redirected. Nothing travels on them now -- the session is in
+// cookies on the zone's domain -- so an alias by redirect loses nothing.
+func consoleRedirectRule(console string) gatewayv1.HTTPRouteRule {
 	scheme := "https"
 	status := 302
 	port := gatewayv1.PortNumber(443)
-	pathType := gatewayv1.FullPathHTTPPathModifier
-	// No trailing slash. The portal's router declares the route as "/login"
-	// (frontend/src/router.tsx) and TanStack Router does not normalise the
-	// difference — "/login/" matches nothing and renders its not-found page. The
-	// static server answers both with 200 and index.html, so this is invisible
-	// from the outside: only the browser sees the 404, and only via the apex
-	// redirect, since nothing in the app ever links to "/login/".
-	loginPath := "/login"
-	portalHost := gatewayv1.PreciseHostname(kernelPortalHost(kernelDomain))
+	host := gatewayv1.PreciseHostname(console)
 	return gatewayv1.HTTPRouteRule{
 		Matches: []gatewayv1.HTTPRouteMatch{pathPrefixMatch("/")},
 		Filters: []gatewayv1.HTTPRouteFilter{
@@ -410,8 +562,7 @@ func kernelApexRedirectRule(kernelDomain string) gatewayv1.HTTPRouteRule {
 				Type: gatewayv1.HTTPRouteFilterRequestRedirect,
 				RequestRedirect: &gatewayv1.HTTPRequestRedirectFilter{
 					Scheme:     &scheme,
-					Hostname:   &portalHost,
-					Path:       &gatewayv1.HTTPPathModifier{Type: pathType, ReplaceFullPath: &loginPath},
+					Hostname:   &host,
 					Port:       &port,
 					StatusCode: &status,
 				},
@@ -445,7 +596,11 @@ func escapedSlashesKeepUnchangedClientTrafficPolicySpec() map[string]interface{}
 }
 
 func buildKernelHTTPRoute(spec kernelHTTPRouteSpec) *gatewayv1.HTTPRoute {
-	parentRef := gatewayParentRef(KernelPublicGatewayName)
+	gateway := spec.gateway
+	if gateway == "" {
+		gateway = AuthenticatedGatewayName
+	}
+	parentRef := gatewayParentRef(gateway)
 	if spec.sectionName != "" {
 		s := gatewayv1.SectionName(spec.sectionName)
 		parentRef.SectionName = &s
@@ -537,7 +692,7 @@ func attachKernelClientTrafficPolicyTarget(spec map[string]interface{}, sectionN
 		map[string]interface{}{
 			"group":       gatewayv1.GroupName,
 			"kind":        "Gateway",
-			"name":        KernelPublicGatewayName,
+			"name":        AuthenticatedGatewayName,
 			"sectionName": sectionName,
 		},
 	}
@@ -609,6 +764,21 @@ func cloneMap(in map[string]interface{}) map[string]interface{} {
 	out := make(map[string]interface{}, len(in))
 	for k, v := range in {
 		out[k] = v
+	}
+	return out
+}
+
+// dedupe returns the distinct namespaces, in order. Several functions share
+// one namespace in the v4 layout and a grant applied twice is a conflict.
+func dedupe(ns ...string) []string {
+	seen := make(map[string]bool, len(ns))
+	out := make([]string, 0, len(ns))
+	for _, n := range ns {
+		if n == "" || seen[n] {
+			continue
+		}
+		seen[n] = true
+		out = append(out, n)
 	}
 	return out
 }

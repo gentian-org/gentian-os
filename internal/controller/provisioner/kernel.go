@@ -52,31 +52,31 @@ type JobWaitRequirement struct {
 }
 
 // MatchMariaDBProfile reports whether an AppProfile requires MariaDB provisioning.
-func MatchMariaDBProfile(profile *gentianov1alpha1.AppProfile) bool {
-	return profile.Spec.KernelRequirements != nil &&
-		profile.Spec.KernelRequirements.Database != nil &&
-		profile.Spec.KernelRequirements.Database.Engine == gentianov1alpha1.DatabaseEngineMariaDB
+func MatchMariaDBProfile(profile *gentianov1alpha1.ComponentProfile) bool {
+	return profile.Services() != nil &&
+		profile.Services().Database != nil &&
+		profile.Services().Database.Engine == gentianov1alpha1.DatabaseEngineMariaDB
 }
 
 // MatchS3Profile reports whether an AppProfile requires S3 storage provisioning.
-func MatchS3Profile(profile *gentianov1alpha1.AppProfile) bool {
-	return profile.Spec.KernelRequirements != nil &&
-		profile.Spec.KernelRequirements.Storage != nil &&
-		profile.Spec.KernelRequirements.Storage.S3 != nil
+func MatchS3Profile(profile *gentianov1alpha1.ComponentProfile) bool {
+	return profile.Services() != nil &&
+		profile.Services().Storage != nil &&
+		profile.Services().Storage.S3 != nil
 }
 
 // MatchRedisProfile reports whether an AppProfile requires Redis cache provisioning.
-func MatchRedisProfile(profile *gentianov1alpha1.AppProfile) bool {
-	return profile.Spec.KernelRequirements != nil &&
-		profile.Spec.KernelRequirements.Cache != nil &&
-		profile.Spec.KernelRequirements.Cache.Engine == gentianov1alpha1.CacheEngineRedis
+func MatchRedisProfile(profile *gentianov1alpha1.ComponentProfile) bool {
+	return profile.Services() != nil &&
+		profile.Services().Cache != nil &&
+		profile.Services().Cache.Engine == gentianov1alpha1.CacheEngineRedis
 }
 
 // MatchMemcachedProfile reports whether an AppProfile requires Memcached cache provisioning.
-func MatchMemcachedProfile(profile *gentianov1alpha1.AppProfile) bool {
-	return profile.Spec.KernelRequirements != nil &&
-		profile.Spec.KernelRequirements.Cache != nil &&
-		profile.Spec.KernelRequirements.Cache.Engine == gentianov1alpha1.CacheEngineMemcached
+func MatchMemcachedProfile(profile *gentianov1alpha1.ComponentProfile) bool {
+	return profile.Services() != nil &&
+		profile.Services().Cache != nil &&
+		profile.Services().Cache.Engine == gentianov1alpha1.CacheEngineMemcached
 }
 
 // NewKernelProvisioningJob builds a standard kernel-namespace provisioning Job.

@@ -1,0 +1,8 @@
+instances: 1
+storageClass: ""
+storageSize: 20Gi
+
+# max_connections is higher than the kernel's. This one cluster serves every
+# tenant's every app: each app gets a role and a database, and each app's pods
+# hold their own pool. The kernel's serves four services with known shapes.
+maxConnections: "400"

@@ -38,7 +38,7 @@ func collectOIDCIngressSubdomainsByTenant(
 	tenants []gentianov1alpha1.Tenant,
 ) (map[string][]string, error) {
 	result := make(map[string][]string)
-	profileCache := make(map[string]*gentianov1alpha1.AppProfile)
+	profileCache := make(map[string]*gentianov1alpha1.ComponentProfile)
 
 	for i := range tenants {
 		tenant := &tenants[i]
@@ -84,16 +84,16 @@ func collectOIDCIngressSubdomainsByTenant(
 func cachedAppProfile(
 	ctx context.Context,
 	c client.Client,
-	cache map[string]*gentianov1alpha1.AppProfile,
+	cache map[string]*gentianov1alpha1.ComponentProfile,
 	name string,
-) (*gentianov1alpha1.AppProfile, error) {
+) (*gentianov1alpha1.ComponentProfile, error) {
 	if name == "" {
 		return nil, nil
 	}
 	if p, ok := cache[name]; ok {
 		return p, nil
 	}
-	profile := &gentianov1alpha1.AppProfile{}
+	profile := &gentianov1alpha1.ComponentProfile{}
 	if err := c.Get(ctx, client.ObjectKey{Name: name}, profile); err != nil {
 		if errors.IsNotFound(err) {
 			cache[name] = nil
@@ -105,23 +105,24 @@ func cachedAppProfile(
 	return profile, nil
 }
 
-func oidcIngressSubdomainsFromProfile(profile *gentianov1alpha1.AppProfile) []string {
+func oidcIngressSubdomainsFromProfile(profile *gentianov1alpha1.ComponentProfile) []string {
 	if profile == nil || !appProfileDeclaresOIDC(profile) {
 		return nil
 	}
+	// Every gateway host this component answers on. All of them, not just the
+	// first: a redirect URI that is not registered is a login that fails at
+	// the last step, and an additional host is as real a landing place as the
+	// component's own.
 	var subs []string
-	if profile.Spec.Ingress != nil && profile.Spec.Ingress.SubDomain != "" {
-		subs = append(subs, profile.Spec.Ingress.SubDomain)
-	}
-	for _, ing := range profile.Spec.AdditionalIngresses {
-		if ing.SubDomain != "" {
-			subs = append(subs, ing.SubDomain)
+	for _, exposure := range profile.GatewayExposures() {
+		if exposure.SubDomain != "" {
+			subs = append(subs, exposure.SubDomain)
 		}
 	}
-	if profile.Spec.KernelRequirements != nil &&
-		profile.Spec.KernelRequirements.Identity != nil &&
-		profile.Spec.KernelRequirements.Identity.OIDC != nil {
-		for _, uri := range profile.Spec.KernelRequirements.Identity.OIDC.RedirectURIs {
+	if profile.Services() != nil &&
+		profile.Services().Identity != nil &&
+		profile.Services().Identity.OIDC != nil {
+		for _, uri := range profile.Services().Identity.OIDC.RedirectURIs {
 			if sub := oidcRedirectURISubdomain(uri); sub != "" {
 				subs = append(subs, sub)
 			}
@@ -148,16 +149,16 @@ func oidcRedirectURISubdomain(uri string) string {
 	return label
 }
 
-func appProfileDeclaresOIDC(profile *gentianov1alpha1.AppProfile) bool {
-	if profile.Spec.KernelRequirements != nil &&
-		profile.Spec.KernelRequirements.Identity != nil &&
-		profile.Spec.KernelRequirements.Identity.OIDC != nil {
+func appProfileDeclaresOIDC(profile *gentianov1alpha1.ComponentProfile) bool {
+	if profile.Services() != nil &&
+		profile.Services().Identity != nil &&
+		profile.Services().Identity.OIDC != nil {
 		return true
 	}
-	for _, sidecar := range profile.Spec.Sidecars {
-		if sidecar.KernelRequirements != nil &&
-			sidecar.KernelRequirements.Identity != nil &&
-			sidecar.KernelRequirements.Identity.OIDC != nil {
+	for _, sidecar := range profile.Spec.Extensions {
+		if sidecar.ServiceRequirements != nil &&
+			sidecar.ServiceRequirements.Identity != nil &&
+			sidecar.ServiceRequirements.Identity.OIDC != nil {
 			return true
 		}
 	}

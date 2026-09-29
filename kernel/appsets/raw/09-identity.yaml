@@ -1,0 +1,74 @@
+---
+# Keycloak's and OpenFGA's values into their own namespaces. The workloads
+# themselves are composed by the Suze claim (11-claims), which reads these
+# ConfigMaps and ExternalSecrets from the namespaces the claim names.
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: gentian-identity
+  namespace: ns.gitops.placeholder
+  annotations:
+    argocd.argoproj.io/sync-wave: "9"
+spec:
+  syncPolicy:
+    preserveResourcesOnDeletion: true
+  goTemplate: true
+  goTemplateOptions: ["missingkey=error"]
+  generators:
+  - matrix:
+      generators:
+      - list:
+          elements:
+          - env: dev
+      - list:
+          elements:
+          - app: keycloak-idp
+            namespace: ns.authentication.placeholder
+          - app: openfga
+            namespace: ns.authorization.placeholder
+  template:
+    metadata:
+      name: '{{.app}}-{{.env}}'
+      annotations:
+        argocd.argoproj.io/sync-wave: "9"
+    spec:
+      project: gentian
+      source:
+        repoURL: https://github.com/gentian-org/gentian-os
+        targetRevision: develop
+        path: kernel/services/{{.app}}/manifests
+        helm:
+          parameters:
+            - name: env
+              value: '{{.env}}'
+            - name: kernelDomain
+              value: 'kernel.domain.placeholder'
+            # Kernel data lives on kernel-postgres, in the data namespace.
+            - name: dbHost
+              value: 'kernel-postgres-rw.ns.data.placeholder.svc.cluster.local'
+            # Where Keycloak states a user's groups. The director runs in the
+            # control namespace and is reached on the cluster network, never
+            # through the edge: this is the kernel talking to itself.
+            # The provider jar is built from this repository, so it follows
+            # the same ref the manifests do. A tag of its own would let the
+            # jar and the values that configure it come from different commits.
+            - name: eventListener.image
+              value: 'ghcr.io/gentian-org/keycloak-event-listener:gentian.os.revision.placeholder'
+            # The OPERATOR's endpoint, not the director's. Who is in which
+            # group is cluster state, so the thing that turns declared state
+            # into cluster state projects it; the director reads the graph to
+            # decide a call and writes git, and its token can no longer write
+            # a tuple at all. The path is unchanged, so only the host moved.
+            - name: eventListener.directorURL
+              value: 'http://gentian-os-membership.ns.control.placeholder.svc.cluster.local:8090/v1/events/keycloak'
+          valueFiles:
+            - values.yaml
+            - values-{{.env}}.yaml
+          ignoreMissingValueFiles: true
+      destination:
+        server: https://kubernetes.default.svc
+        namespace: '{{.namespace}}'
+      syncPolicy:
+        automated:
+          prune: true
+          selfHeal: true

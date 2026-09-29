@@ -30,6 +30,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
+	"github.com/gentian-org/gentian-os/internal/layout"
 )
 
 // ---------------------------------------------------------------------------
@@ -110,7 +111,9 @@ func TestIsolation_NetworkPolicyIngressRules(t *testing.T) {
 
 	allowedNamespaces := collectIngressNamespaces(np)
 
-	expectedNS := []string{"envoy-gateway-system", "platform-kernel"}
+	// The edge and the authentication function; platform-kernel is the
+	// v4 fallback of both.
+	expectedNS := []string{layout.Namespace(layout.Edge), layout.Namespace(layout.Authentication)}
 	for _, ns := range expectedNS {
 		found := false
 		for _, allowed := range allowedNamespaces {
@@ -276,7 +279,7 @@ func TestDeletion_EndToEnd_WithApps(t *testing.T) {
 	tenant := &gentianov1alpha1.Tenant{
 		ObjectMeta: metav1.ObjectMeta{Name: "del-full"},
 		Spec: gentianov1alpha1.TenantSpec{
-			DisplayName:    "Deletion E2E",
+			DisplayName:    "Test Tenant",
 			Domain:         "del-full.example.com",
 			DeletionPolicy: gentianov1alpha1.DeletionPolicyDelete,
 			Apps: []gentianov1alpha1.TenantApp{
@@ -314,7 +317,7 @@ func TestDeletion_EndToEnd_WithApps(t *testing.T) {
 	}
 	for _, jobName := range cleanupJobs {
 		waitForKernelJob(t, jobName, "del-full")
-		markJobComplete(t, jobName, "platform-kernel")
+		markJobComplete(t, jobName, layout.Namespace(layout.Authentication))
 	}
 
 	// Wait for Tenant CR to be gone (finalizer ran).
@@ -334,7 +337,7 @@ func TestDeletion_EndToEnd_WithApps(t *testing.T) {
 		t.Run("purges "+jobName, func(t *testing.T) {
 			waitFor(t, jobAppearTimeout, func() bool {
 				job := &batchv1.Job{}
-				err := testClient.Get(ctx, types.NamespacedName{Name: jobName, Namespace: "platform-kernel"}, job)
+				err := testClient.Get(ctx, types.NamespacedName{Name: jobName, Namespace: layout.Namespace(layout.Authentication)}, job)
 				if k8serrors.IsNotFound(err) {
 					return true
 				}
@@ -348,7 +351,7 @@ func TestDeletion_EndToEnd_WithApps(t *testing.T) {
 					prop := metav1.DeletePropagationBackground
 					_ = testClient.Delete(ctx, job, &client.DeleteOptions{PropagationPolicy: &prop})
 				}
-				err = testClient.Get(ctx, types.NamespacedName{Name: jobName, Namespace: "platform-kernel"}, job)
+				err = testClient.Get(ctx, types.NamespacedName{Name: jobName, Namespace: layout.Namespace(layout.Authentication)}, job)
 				return k8serrors.IsNotFound(err)
 			})
 		})
@@ -372,14 +375,14 @@ func TestDeletion_Retain_KeepsDataRevokesAccess(t *testing.T) {
 
 	profile := newFullAppProfile("ret-app", gentianov1alpha1.DatabaseEnginePostgreSQL, true, true, false)
 	if err := testClient.Create(ctx, profile); err != nil {
-		t.Fatalf("create AppProfile: %v", err)
+		t.Fatalf("create ComponentProfile: %v", err)
 	}
 	t.Cleanup(func() { _ = testClient.Delete(ctx, profile) })
 
 	tenant := &gentianov1alpha1.Tenant{
 		ObjectMeta: metav1.ObjectMeta{Name: "ret-full"},
 		Spec: gentianov1alpha1.TenantSpec{
-			DisplayName:    "Retain E2E",
+			DisplayName:    "Test Tenant",
 			Domain:         "ret-full.example.com",
 			DeletionPolicy: gentianov1alpha1.DeletionPolicyRetain,
 			Mail:           &gentianov1alpha1.TenantMail{Mode: gentianov1alpha1.MailModeSelfhosted},
@@ -402,7 +405,7 @@ func TestDeletion_Retain_KeepsDataRevokesAccess(t *testing.T) {
 
 	waitFor(t, jobAppearTimeout, func() bool {
 		cm := &corev1.ConfigMap{}
-		if err := testClient.Get(ctx, types.NamespacedName{Name: "mail-postfix-virtual-domains", Namespace: "platform-kernel"}, cm); err != nil {
+		if err := testClient.Get(ctx, types.NamespacedName{Name: "mail-postfix-virtual-domains", Namespace: "system-mail"}, cm); err != nil {
 			return false
 		}
 		_, ok := cm.Data["ret-full"]
@@ -446,7 +449,7 @@ func TestDeletion_Retain_KeepsDataRevokesAccess(t *testing.T) {
 
 	// Mail ConfigMap entries should be removed (cutting routing).
 	postfixCM := &corev1.ConfigMap{}
-	if err := testClient.Get(ctx, types.NamespacedName{Name: "mail-postfix-virtual-domains", Namespace: "platform-kernel"}, postfixCM); err == nil {
+	if err := testClient.Get(ctx, types.NamespacedName{Name: "mail-postfix-virtual-domains", Namespace: "system-mail"}, postfixCM); err == nil {
 		if _, ok := postfixCM.Data["ret-full"]; ok {
 			t.Error("Postfix virtual-domain entry should be removed in Retain mode (route revocation)")
 		}
@@ -455,7 +458,7 @@ func TestDeletion_Retain_KeepsDataRevokesAccess(t *testing.T) {
 	// No cleanup Jobs should be created for data resources with Retain policy.
 	identityDeleteJob := &batchv1.Job{}
 	if err := testClient.Get(ctx, types.NamespacedName{
-		Name: "keycloak-realm-delete-ret-full", Namespace: "platform-kernel",
+		Name: "keycloak-realm-delete-ret-full", Namespace: layout.Namespace(layout.Authentication),
 	}, identityDeleteJob); err == nil {
 		t.Error("Keycloak realm deletion Job should NOT be created for Retain policy")
 	}
@@ -486,8 +489,8 @@ func waitForRetainShellTeardown(t *testing.T, ctx context.Context, nsName string
 // ---------------------------------------------------------------------------
 
 // newFullAppProfile builds an AppProfile with multiple kernel requirements.
-func newFullAppProfile(name string, dbEngine gentianov1alpha1.DatabaseEngine, needsS3, needsRedis, needsMemcached bool) *gentianov1alpha1.AppProfile {
-	kr := &gentianov1alpha1.KernelRequirements{
+func newFullAppProfile(name string, dbEngine gentianov1alpha1.DatabaseEngine, needsS3, needsRedis, needsMemcached bool) *gentianov1alpha1.ComponentProfile {
+	kr := &gentianov1alpha1.ServiceRequirements{
 		Database: &gentianov1alpha1.DatabaseRequirement{
 			Engine:            dbEngine,
 			DatabasePerTenant: true,
@@ -505,17 +508,17 @@ func newFullAppProfile(name string, dbEngine gentianov1alpha1.DatabaseEngine, ne
 		kr.Cache = &gentianov1alpha1.CacheRequirement{Engine: gentianov1alpha1.CacheEngineMemcached}
 	}
 
-	return &gentianov1alpha1.AppProfile{
+	return &gentianov1alpha1.ComponentProfile{
 		ObjectMeta: metav1.ObjectMeta{Name: name},
-		Spec: gentianov1alpha1.AppProfileSpec{
-			DisplayName:      name,
-			DeploymentMethod: gentianov1alpha1.DeploymentMethodCrossplane,
-			Chart: gentianov1alpha1.ChartRef{
+		Spec: gentianov1alpha1.ComponentProfileSpec{
+			Classes: []gentianov1alpha1.ComponentClass{gentianov1alpha1.ComponentClassApp}, Launch: gentianov1alpha1.ComponentLaunchNone, TrustTier: gentianov1alpha1.TrustTierCertified, Version: "1.0.0",
+			Package: gentianov1alpha1.PackageSpec{Chart: &gentianov1alpha1.ChartRef{
 				Repository: "oci://charts.example.com",
 				Name:       name,
 				Version:    "1.0.0",
-			},
-			KernelRequirements: kr,
+			}},
+
+			Requires: &gentianov1alpha1.RequirementSpec{Services: kr},
 		},
 	}
 }

@@ -11,12 +11,12 @@ spec:
   mode: Pipeline
   pipeline:
 
-    # ── Step 1: Fetch the AppProfile + kernel service ConfigMap ──────────────
+    # ── Step 1: Fetch the ComponentProfile + kernel service ConfigMap ────────
     # Both resources are fetched in a single function-extra-resources call so
     # that they share the same context key
     # (apiextensions.crossplane.io/extra-resources). Splitting into two
     # function-extra-resources steps would cause the second call to overwrite
-    # the context key set by the first, losing the fetched AppProfile.
+    # the context key set by the first, losing the fetched ComponentProfile.
     - step: fetch-extra-resources
       functionRef:
         name: function-extra-resources
@@ -25,8 +25,8 @@ spec:
         kind: Input
         spec:
           extraResources:
-            - kind: AppProfile
-              into: appProfile
+            - kind: ComponentProfile
+              into: componentProfile
               apiVersion: gentianos.io/v1alpha1
               type: Selector
               selector:
@@ -75,7 +75,7 @@ spec:
                   - key: gentianos.io/profile-name
                     type: FromCompositeFieldPath
                     valueFromFieldPath: spec.profileRef.name
-            # Optional portal-bridge SSO helper page shipped with the AppProfile catalogue.
+            # Optional portal-bridge SSO helper page shipped with the profile catalogue.
             - kind: ConfigMap
               into: portalBridgeSso
               apiVersion: v1
@@ -94,10 +94,10 @@ spec:
     # ── Step 2: Render composed resources ─────────────────────────────────────
     # Emits per-app:
     #   • kubernetes.crossplane.io/v1alpha2 Object wrapping an ESO ExternalSecret
-    #     (present only when the AppProfile has at least one valueMapping key or
+    #     (present only when the profile has at least one valueMapping key or
     #     appSecret; creates a flat Secret with one key per sensitive value)
     #   • helm.crossplane.io/v1beta1 Release pointing at the chart from the
-    #     AppProfile, with set[] entries that pull values from the Secret above
+    #     profile, with set[] entries that pull values from the Secret above
     - step: render-app-core
       functionRef:
         name: function-go-templating
@@ -123,19 +123,26 @@ spec:
                  both blocks share the same value. */}}
             {{- $domain := default (printf "%s.example.org" $tenant) $spec.domain }}
 
-            {{- /* ── Load AppProfile from pipeline context ────────────────────── */}}
+            {{- /* ── Load ComponentProfile from pipeline context ───────────────── */}}
+            {{- /* One catalogue kind (AD-4). The fields this composition reads are
+                 the same values they were on AppProfile; what changed is that they
+                 are grouped -- the package under package, the requirements under
+                 requires, the secrets under secrets -- so each read below names its
+                 group. dig walks a missing group to the default rather than
+                 failing, which is what lets a profile omit one entirely. */}}
             {{- $extraRes  := index .context "apiextensions.crossplane.io/extra-resources" }}
-            {{- $profiles  := dig "appProfile" list $extraRes }}
+            {{- $profiles  := dig "componentProfile" list $extraRes }}
             {{- if eq (len $profiles) 0 }}
-              {{- fail (printf "AppProfile %q not found in cluster" $spec.profileRef.name) }}
+              {{- fail (printf "ComponentProfile %q not found in cluster" $spec.profileRef.name) }}
             {{- end }}
             {{- $profile   := index $profiles 0 }}
             {{- $pSpec     := dig "spec" dict $profile }}
-            {{- $vm        := default dict $pSpec.valueMapping }}
-            {{- $appSecrets := default list $pSpec.appSecrets }}
-            {{- $chart     := $pSpec.chart }}
+            {{- $package   := dig "package" dict $pSpec }}
+            {{- $vm        := dig "valueMapping" dict $package }}
+            {{- $appSecrets := dig "secrets" "generated" list $pSpec }}
+            {{- $chart     := dig "chart" nil $package }}
 
-            {{- $kr := default dict $pSpec.kernelRequirements }}
+            {{- $kr := dig "requires" "services" dict $pSpec }}
 
             {{- /* ── Load cluster-config ConfigMap ──────────────────────────────── */}}
             {{- /* Provides infra endpoints (e.g. node IP, SMTP host) for rendering. */}}
@@ -298,7 +305,7 @@ spec:
             {{- end }}
             {{- end }}
 
-            {{- /* App-internal secrets (AppProfile.spec.appSecrets) */}}
+            {{- /* App-internal secrets (spec.secrets.generated) */}}
             {{- range $s := $appSecrets }}
             {{- if and $s.name $s.valuePath }}
             {{- $internalPath := printf "gentian-os/tenants/%s/apps/%s/internal/%s" $tenant $app $s.name }}
@@ -553,8 +560,8 @@ spec:
             {{- $ksCM  := default dict (index $ksRes 0) }}
             {{- $ksCMData := dig "data" dict $ksCM }}
             {{- $kernelDomain := dig "KERNEL_DOMAIN" "" $ksCMData }}
-            {{- if $pSpec.extraValues }}
-            {{- $raw := $pSpec.extraValues | toJson }}
+            {{- if $package.extraValues }}
+            {{- $raw := $package.extraValues | toJson }}
             {{- $raw = $raw | replace "${TENANT_DOMAIN}"    $domain }}
             {{- $raw = $raw | replace "${TENANT_NAMESPACE}" $ns }}
             {{- $raw = $raw | replace "${TENANT_ID}"        $tenant }}
@@ -731,7 +738,7 @@ spec:
             {{- $hasAnchor := or (dig "certificates.trustAnchorSecret" "" $ccData) $acmeStaging }}
             {{- $anchorSecret := "gentian-trust-anchor-tls" }}
             {{- if $hasAnchor }}
-            {{- $krStaging := default dict $pSpec.kernelRequirements }}
+            {{- $krStaging := dig "requires" "services" dict $pSpec }}
             {{- $identityStaging := default dict $krStaging.identity }}
             {{- $oidcStaging := default dict $identityStaging.oidc }}
             {{- $stagingVol := dict
@@ -778,7 +785,7 @@ spec:
                    name their own keys in valueMapping.volumes. Written in addition to
                    the conventional keys above, never instead: an unrecognised value is
                    inert, so declaring this cannot remove a mount the chart already got. */}}
-            {{- $volMap := dig "valueMapping" "volumes" dict $pSpec }}
+            {{- $volMap := dig "volumes" dict $vm }}
             {{- $volWrites := list }}
             {{- if $volMap.volumesPath }}
             {{- $volWrites = append $volWrites (dict "path" $volMap.volumesPath "add" (list $stagingVol)) }}
@@ -816,11 +823,11 @@ spec:
             {{- end }}
 
             {{- /* ── Emit Keycloak Client CR ──────────────────────────────────── */}}
-            {{- /* When kernelRequirements.identity.oidc is set, the composition   */}}
+            {{- /* When requires.services.identity.oidc is set, the composition    */}}
             {{- /* registers the app as an OIDC client in the tenant's own realm.  */}}
-            {{- /* New apps only need to declare their oidc block in the AppProfile */}}
+            {{- /* A new app only needs to declare its oidc block in the profile    */}}
             {{- /* to get automatic per-tenant Keycloak client registration.        */}}
-            {{- $kr       := default dict $pSpec.kernelRequirements }}
+            {{- $kr       := dig "requires" "services" dict $pSpec }}
             {{- $identity := default dict $kr.identity }}
             {{- /* Outside the OIDC block on purpose: an entitlement group is per
                  APP, not per OIDC client. The groups Job makes one either way, and
@@ -831,7 +838,7 @@ spec:
 
                  Here rather than in tenant-default because its attributes come
                  from this profile's gentianos.io/keycloak-group-attributes
-                 annotation, and only this Composition fetches the AppProfile.
+                 annotation, and only this Composition fetches the profile.
                  Nine of the catalogue's profiles carry one — the Odoo ones name
                  the modules and roles the app provisions from — so a Group
                  declared without them would strip what the groups Job sets.
@@ -1296,19 +1303,31 @@ spec:
                 name: kubernetes
 
             {{- /* ── Emit stable service alias ─────────────────────────────────── */}}
-            {{- /* When AppProfile sets spec.ingress.serviceName (non-default Service) */}}
-            {{- /* the chart creates services named <xrName>-release-<component>.   */}}
+            {{- /* The chart creates services named <xrName>-release-<component>.   */}}
             {{- /* We emit a stable ClusterIP Service with the declared name so the */}}
             {{- /* tenant operator ingress backend always resolves correctly.        */}}
             {{- /* Skip when fullnameOverride == serviceName: the chart already      */}}
             {{- /* creates a Service with the correct name, so emitting our own      */}}
             {{- /* Object with the same name would conflict with Helm ownership.     */}}
-            {{- $ingressSpec    := default dict $pSpec.ingress }}
-            {{- $stableSvcName  := dig "serviceName" "" $ingressSpec }}
+            {{- /* This is the one read AD-4 did not simply move. AppProfile had a
+                 single spec.ingress with serviceName and servicePort;
+                 ComponentProfile has a list of exposures, each naming the Service
+                 it routes to. The gateway entry is the one that needs an alias,
+                 because it is the one the edge resolves -- a perimeter entry is
+                 reached through the tenant DMZ's proxy and never by this name.
+                 The FIRST gateway entry, because the alias is one Service and
+                 a profile publishing several on one backend names the same one. */}}
+            {{- $backend := dict }}
+            {{- range $e := (dig "expose" list $pSpec) }}
+              {{- if and (eq (dig "surface" "" $e) "gateway") (not $backend.service) }}
+                {{- $backend = dig "backend" dict $e }}
+              {{- end }}
+            {{- end }}
+            {{- $stableSvcName  := dig "service" "" $backend }}
             {{- $fullnameOverride := dig "fullnameOverride" "" $extraVals }}
             {{- if and $stableSvcName (ne $stableSvcName $fullnameOverride) }}
             {{- $component := trimPrefix (printf "%s-" $app) $stableSvcName }}
-            {{- $svcPort   := default 80 (dig "servicePort" 0 $ingressSpec | int) }}
+            {{- $svcPort   := default 80 (dig "port" 0 $backend | int) }}
             ---
             apiVersion: kubernetes.crossplane.io/v1alpha2
             kind: Object
@@ -1367,12 +1386,12 @@ spec:
             {{- end }}
 
             {{- /* ── Emit post-install bootstrap Job ─────────────────────────────── */}}
-            {{- /* AppProfile.spec.postInstallJob: app-specific bootstrap that must   */}}
+            {{- /* spec.hooks.postInstall: app-specific bootstrap that must           */}}
             {{- /* happen via the app's own admin API rather than Helm values. Job is */}}
             {{- /* retried via ttlSecondsAfterFinished + reconcile, so Script must be */}}
             {{- /* idempotent and exit non-zero if a dependency isn't ready yet. See */}}
             {{- /* app-profile-guide.md, "Post-install bootstrap jobs".               */}}
-            {{- $pij := default dict $pSpec.postInstallJob }}
+            {{- $pij := dig "hooks" "postInstall" dict $pSpec }}
             {{- $pijImage := dig "image" "" $pij }}
             {{- if $pijImage }}
             {{- $pijScript := dig "script" "" $pij }}
@@ -1595,7 +1614,7 @@ spec:
                 name: kubernetes
             {{- end }}
 
-            {{- /* ── Emit sidecars (AppProfile.spec.sidecars) ────────────────────── */}}
+            {{- /* ── Emit sidecars (spec.extensions) ─────────────────────────────── */}}
             {{- /* Each sidecar is its own Helm Release, deployed into the same       */}}
             {{- /* tenant namespace as the primary app, with its own appSecrets       */}}
             {{- /* synced from OpenBao at the SidecarAppName-scoped path              */}}
@@ -1605,7 +1624,9 @@ spec:
             {{- /* (already handled independently by oidc_pack_jobs.go) are not wired  */}}
             {{- /* into the sidecar's own Release values yet -- a sidecar that needs   */}}
             {{- /* its own database/cache/S3 isn't supported by this mechanism yet.    */}}
-            {{- $sidecars := default list $pSpec.sidecars }}
+            {{- /* extensions on ComponentProfile: the same sidecar list under the
+                 name that also covers what is not strictly a sidecar. */}}
+            {{- $sidecars := dig "extensions" list $pSpec }}
             {{- range $sc := $sidecars }}
             {{- if and $sc.name $sc.chart.name }}
             {{- $scKey := printf "%s-%s" $app $sc.name }}

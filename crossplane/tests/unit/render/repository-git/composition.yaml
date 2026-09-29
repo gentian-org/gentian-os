@@ -40,6 +40,20 @@ spec:
                   - key: gentianos.io/credential-requirement
                     type: FromCompositeFieldPath
                     valueFromFieldPath: metadata.name
+            # The cluster's own configuration, for the one thing this
+            # composition cannot derive from its claim: which namespace the
+            # kernel runs in. See where $kernelNs is read.
+            - kind: ConfigMap
+              into: clusterConfig
+              apiVersion: v1
+              type: Selector
+              selector:
+                maxMatch: 1
+                minMatch: 0
+                matchLabels:
+                  - key: gentianos.io/config-type
+                    type: Value
+                    value: cluster-config
 
     # ── Emit the credential declaration and every consumer-shaped artefact ────
     # One OpenBao path per repository, one rotation point, N artefacts kept in
@@ -103,6 +117,29 @@ spec:
             */ -}}
             {{- $extra  := index .context "apiextensions.crossplane.io/extra-resources" }}
             {{- $probes := dig "credentialProbe" list $extra }}
+            {{- /* Where the kernel runs, from the cluster's own configuration.
+                 Every artefact below is written beside the operator and the
+                 director, and which namespace that is depends on the layout
+                 the cluster was installed with. This was the v4 name,
+                 hardcoded, so on a v5 cluster the git credential landed in a
+                 namespace nothing reads: the director could clone a public
+                 repository and never push to it, which is what it did.
+
+                 Absent means a cluster whose claim predates the key, which
+                 is a v4 cluster, and v4's name is the right answer there. */}}
+            {{- $ccData := dict }}
+            {{- range (dig "clusterConfig" list $extra) }}
+            {{- $ccData = .data | default dict }}
+            {{- end }}
+            {{- $kernelNs := dig "kernel.controlNamespace" "gentian-system" $ccData }}
+            {{- /* Where Argo CD runs. Absent means a cluster whose claim
+                 predates the key, which is a v4 cluster, and v4's name is the
+                 right answer there -- the same reasoning as the control
+                 namespace above. This was written as "argocd" four times, so
+                 on v5 the repository Secret and the catalogue ApplicationSet
+                 landed in a namespace that does not exist and Argo CD saw
+                 neither. */}}
+            {{- $argoNs := dig "kernel.gitopsNamespace" "argocd" $ccData }}
             {{- /* No credential means nothing to wait for, so the artefacts below are
                  emitted immediately rather than never. */}}
             {{- $satisfied := not $hasCred }}
@@ -191,7 +228,7 @@ spec:
                   kind: ExternalSecret
                   metadata:
                     name: credreq-repository-{{ $name }}
-                    namespace: gentian-system
+                    namespace: {{ $kernelNs }}
                     labels:
                       gentianos.io/credential-requirement: {{ $name }}
                   spec:
@@ -274,7 +311,7 @@ spec:
                   kind: Secret
                   metadata:
                     name: repo-{{ $name }}
-                    namespace: argocd
+                    namespace: {{ $argoNs }}
                     labels:
                       argocd.argoproj.io/secret-type: repository
                   stringData:
@@ -290,7 +327,7 @@ spec:
                   kind: ExternalSecret
                   metadata:
                     name: repo-{{ $name }}
-                    namespace: argocd
+                    namespace: {{ $argoNs }}
                   spec:
                     refreshInterval: 1h
                     secretStoreRef:
@@ -350,7 +387,7 @@ spec:
                   kind: AppProject
                   metadata:
                     name: gentianos-tenants
-                    namespace: argocd
+                    namespace: {{ $argoNs }}
                   spec:
                     sourceRepos:
                       - {{ $url | quote }}
@@ -360,14 +397,14 @@ spec:
             {{- if and $isGit (eq $spec.role "apps") }}
             ---
             # role: apps on a git repository composes the app catalogue: an
-            # ApplicationSet syncing profile bundles (AppProfile + optional
+            # ApplicationSet syncing profile bundles (ComponentProfile + optional
             # composition.yaml, customizations/, assets/) from it. The schema
             # already promises this is additive — "a private catalogue
             # alongside the cluster's" — so every such repository gets its own
             # ApplicationSet rather than one hardcoded source. The cluster's
             # default catalogue is just the first claim of this shape;
             # deleting any of them removes the Applications, and so the
-            # AppProfiles, it owns.
+            # ComponentProfiles, it owns.
             #
             # A **files** generator (not directories) because gentian-apps
             # groups profiles at mixed depth — singletons at
@@ -376,8 +413,8 @@ spec:
             # marker file rather than a fixed directory depth supports both
             # without an exclude-list of "known family folders".
             #
-            # Naming Applications from the AppProfile CR (.metadata.name)
-            # rather than the source path matters: AppProfile is
+            # Naming Applications from the ComponentProfile CR (.metadata.name)
+            # rather than the source path matters: ComponentProfile is
             # cluster-scoped, so metadata.name is globally unique by
             # definition, whereas leaf directory names are not —
             # profiles/odoo/addons/crm-ce and a future
@@ -394,7 +431,7 @@ spec:
                   kind: ApplicationSet
                   metadata:
                     name: catalogue-{{ $name }}
-                    namespace: argocd
+                    namespace: {{ $argoNs }}
                     finalizers:
                       - resources-finalizer.argocd.argoproj.io
                   spec:
@@ -419,7 +456,7 @@ spec:
                           path: '{{ `{{ .path.path }}` }}'
                         destination:
                           server: https://kubernetes.default.svc
-                          namespace: gentian-system
+                          namespace: {{ $kernelNs }}
                         # Only ever list fields the API server *adds by
                         # itself*, i.e. fields with a CRD default — never one
                         # a profile is meant to set.
@@ -430,16 +467,32 @@ spec:
                         # database failed with "permission denied".
                         ignoreDifferences:
                           - group: gentianos.io
-                            kind: AppProfile
+                            kind: ComponentProfile
                             jsonPointers:
                               - /metadata/annotations/argocd.argoproj.io~1tracking-id
-                          - group: gentianos.io
-                            kind: AppProfile
-                            jqPathExpressions:
-                              - .spec.ingress.clusterIssuer
-                              - .spec.additionalIngresses[]?.clusterIssuer
-                              - .spec.browserProxy[]?.authMode
-                              - .spec.browserProxy[]?.stripPrefix
+                        # The four jq paths that used to sit here named
+                        # AppProfile fields -- ingress.clusterIssuer,
+                        # additionalIngresses[].clusterIssuer and two
+                        # browserProxy sub-fields -- and ComponentProfile has
+                        # none of them. They are not translated, they are
+                        # dropped, and deliberately so.
+                        #
+                        # An entry here is only correct for a field the API
+                        # server adds BY ITSELF and a profile never sets. The
+                        # comment above records what a wrong one costs:
+                        # allowDynamicDatabaseCreation was listed once, Argo
+                        # stopped seeing a diff, the value never reached the
+                        # cluster, and creating a database failed with
+                        # "permission denied". ComponentProfile's defaults are
+                        # nearly all on fields a profile may legitimately set
+                        # -- the database engine, an OIDC access type, a
+                        # tile's object -- so guessing at four of them would
+                        # be choosing that failure in advance.
+                        #
+                        # The other way round is safe: a default that does
+                        # drift shows the Application OutOfSync, which is
+                        # visible, reproducible, and names the field. Add it
+                        # here then, with the evidence.
                         syncPolicy:
                           automated:
                             prune: true
@@ -544,7 +597,7 @@ spec:
                   kind: ExternalSecret
                   metadata:
                     name: {{ $claimName }}-git-credentials
-                    namespace: gentian-system
+                    namespace: {{ $kernelNs }}
                   spec:
                     refreshInterval: 1h
                     secretStoreRef:

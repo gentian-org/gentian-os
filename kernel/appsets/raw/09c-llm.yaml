@@ -17,8 +17,8 @@
 apiVersion: argoproj.io/v1alpha1
 kind: ApplicationSet
 metadata:
-  name: gentian-infra-llm
-  namespace: argocd
+  name: gentian-llm
+  namespace: ns.gitops.placeholder
 spec:
   syncPolicy:
     preserveResourcesOnDeletion: true
@@ -57,9 +57,15 @@ spec:
             # whether an OpenBao path for provider API keys exists to read.
             - name: externalProviders
               value: 'llm.external.providers.placeholder'
+            # Where LLM serving runs. v4 left this at the chart's default,
+            # platform-kernel, because that was v4's one namespace for
+            # everything; on v5 it is a system-tier function of its own and
+            # the operator addresses it as layout.System("llm").
+            - name: servicesNamespace
+              value: 'sys.llm.placeholder'
       destination:
         server: https://kubernetes.default.svc
-        namespace: platform-kernel
+        namespace: 'sys.llm.placeholder'
       syncPolicy:
         automated:
           prune: true

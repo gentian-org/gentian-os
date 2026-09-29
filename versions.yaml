@@ -60,6 +60,13 @@ argocd:
 openbao:
   cli: "v2.5.0"
 
+# Headlamp: the cluster administrator's view of the cluster, in
+# kernel-observability. Delivered by the v5 bootstrap chart, whose Application
+# takes the version from here so the chart and this file cannot drift.
+headlamp:
+  chart: "0.45.0"
+  repo: https://kubernetes-sigs.github.io/headlamp/
+
 # The OpenFGA CLI is NOT pinned here, though it is pinned. It lives in its only
 # caller, scripts/tools/verify-authz-model.sh.
 #

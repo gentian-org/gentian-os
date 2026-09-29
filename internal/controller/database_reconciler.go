@@ -43,6 +43,11 @@ const (
 	cnpgDatabaseKind       = "Database"
 	postgresAdminSecret    = "postgres-admin"
 	databaseRequeueAfter   = 2 * time.Second
+	// portalShellAppName names the desktop's database as exports and restores
+	// address it. The tenant reconciler no longer provisions it: the desktop
+	// is a component, and its database is that component's granted
+	// requirement (ui-restructure.md §1), fulfilled where the component is.
+	portalShellAppName = "shell"
 )
 
 // cnpgClusterName is the shared CloudNativePG Cluster in platform-kernel.
@@ -51,27 +56,15 @@ var cnpgClusterName = envOrDefault("CNPG_CLUSTER_NAME", "postgres")
 // ensureDatabase provisions per-app-per-tenant PostgreSQL databases via
 // CloudNativePG Database CRs and per-app role Jobs.
 func (r *TenantReconciler) ensureDatabase(ctx context.Context, tenant *gentianov1alpha1.Tenant) (ctrl.Result, error) {
-	portalShellDone, err := r.ensurePortalShellDatabase(ctx, tenant)
-	if err != nil {
-		return ctrl.Result{}, fmt.Errorf("ensure portal shell database: %w", err)
-	}
-	if !portalShellDone {
-		r.setCondition(tenant, conditionDatabaseReady, metav1.ConditionFalse,
-			"ProvisioningPortalShell", "Waiting for portal shell PostgreSQL database")
-		return r.requeueForPendingJob(ctx, tenant.Name, roleJobName(tenant.Name, portalShellAppName)), nil
-	}
-
 	pgApps, err := r.collectPostgresApps(ctx, tenant)
 	if err != nil {
 		return ctrl.Result{}, err
 	}
-
 	if len(pgApps) == 0 {
 		r.setCondition(tenant, conditionDatabaseReady, metav1.ConditionTrue,
-			"PortalShellReady", "Portal shell database ready; no app databases required")
+			"NoDatabaseRequired", "No app databases required")
 		return ctrl.Result{}, nil
 	}
-
 	nsName := tenantNamespaceName(tenant)
 	allDone := true
 	var pendingJobs []string
@@ -122,9 +115,9 @@ func (r *TenantReconciler) collectPostgresApps(ctx context.Context, tenant *gent
 		if !ok {
 			continue
 		}
-		if profile.Spec.KernelRequirements != nil &&
-			profile.Spec.KernelRequirements.Database != nil &&
-			profile.Spec.KernelRequirements.Database.Engine == gentianov1alpha1.DatabaseEnginePostgreSQL {
+		if profile.Services() != nil &&
+			profile.Services().Database != nil &&
+			profile.Services().Database.Engine == gentianov1alpha1.DatabaseEnginePostgreSQL {
 			pgApps = append(pgApps, app.Profile)
 		}
 	}
@@ -135,12 +128,12 @@ func (r *TenantReconciler) collectPostgresApps(ctx context.Context, tenant *gent
 // Unset means the app's own schema comes first, which is the safe default: it is
 // what an app doing its own schema isolation expects, and it is the behaviour
 // every app had before the preference was declarable.
-func schemaPreferenceFor(profile *gentianov1alpha1.AppProfile) gentianov1alpha1.SchemaPreference {
-	if profile == nil || profile.Spec.KernelRequirements == nil ||
-		profile.Spec.KernelRequirements.Database == nil {
+func schemaPreferenceFor(profile *gentianov1alpha1.ComponentProfile) gentianov1alpha1.SchemaPreference {
+	if profile == nil || profile.Services() == nil ||
+		profile.Services().Database == nil {
 		return gentianov1alpha1.SchemaPreferenceAppSchema
 	}
-	if pref := profile.Spec.KernelRequirements.Database.SchemaPreference; pref != "" {
+	if pref := profile.Services().Database.SchemaPreference; pref != "" {
 		return pref
 	}
 	return gentianov1alpha1.SchemaPreferenceAppSchema
@@ -150,12 +143,12 @@ func schemaPreferenceFor(profile *gentianov1alpha1.AppProfile) gentianov1alpha1.
 // its own at runtime. Only apps whose whole purpose is letting a user make
 // databases should ask for it — every database created this way is owned by the
 // app role, which is what lets the purge find and drop them again.
-func allowsDynamicDatabaseCreation(profile *gentianov1alpha1.AppProfile) bool {
-	if profile == nil || profile.Spec.KernelRequirements == nil ||
-		profile.Spec.KernelRequirements.Database == nil {
+func allowsDynamicDatabaseCreation(profile *gentianov1alpha1.ComponentProfile) bool {
+	if profile == nil || profile.Services() == nil ||
+		profile.Services().Database == nil {
 		return false
 	}
-	return profile.Spec.KernelRequirements.Database.AllowDynamicDatabaseCreation
+	return profile.Services().Database.AllowDynamicDatabaseCreation
 }
 
 // ensureDatabaseCR waits for the Crossplane-owned CloudNativePG Database CR.
@@ -167,7 +160,7 @@ func (r *TenantReconciler) ensureDatabaseCR(ctx context.Context, tenant *gentian
 		Version: cnpgVersion,
 		Kind:    cnpgDatabaseKind,
 	})
-	err := r.Get(ctx, types.NamespacedName{Name: crName, Namespace: kernelNamespace}, existing)
+	err := r.Get(ctx, types.NamespacedName{Name: crName, Namespace: postgresNamespace}, existing)
 	if errors.IsNotFound(err) {
 		return false, nil
 	}
@@ -204,7 +197,7 @@ func buildDatabaseCR(tenant *gentianov1alpha1.Tenant, nsName, dbName, appName st
 		Kind:    cnpgDatabaseKind,
 	})
 	obj.SetName(databaseCRName(tenant.Name, appName))
-	obj.SetNamespace(kernelNamespace) // must be in the same namespace as the CNPG Cluster
+	obj.SetNamespace(postgresNamespace) // must be in the same namespace as the CNPG Cluster
 	obj.SetLabels(map[string]string{
 		tenantLabel:    tenant.Name,
 		managedByLabel: managedByValue,
@@ -241,7 +234,7 @@ func makeRoleJob(tenant *gentianov1alpha1.Tenant, nsName, dbName, appName, roleP
 	return &batchv1.Job{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      roleJobName(tenant.Name, appName),
-			Namespace: kernelNamespace,
+			Namespace: postgresNamespace,
 			Labels: map[string]string{
 				tenantLabel:    tenant.Name,
 				managedByLabel: managedByValue,

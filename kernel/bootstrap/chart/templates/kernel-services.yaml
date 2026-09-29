@@ -1,0 +1,26 @@
+---
+# Where the kernel services are, for whoever mounts it (Keycloak reads
+# KERNEL_DOMAIN and KEYCLOAK_INTERNAL_URL from it). Every address here follows
+# from the layout and the claim, so it is rendered from them rather than
+# written by a step — v4's C-05 existed only to break an ordering deadlock.
+# One copy per namespace that has a reader.
+{{- $auth := include "ns" (list . "authentication") }}
+{{- range $ns := list $auth (include "ns" (list . "control")) }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: gentian-kernel-services
+  namespace: {{ $ns }}
+  labels:
+    gentianos.io/config-type: kernel-services
+data:
+  KERNEL_DOMAIN: {{ $.Values.kernelDomain | quote }}
+  TENANCY_MODE: {{ $.Values.tenancyMode | default "multi" | quote }}
+  ACME_STAGING: {{ $.Values.acmeStaging | default "true" | quote }}
+  KEYCLOAK_INTERNAL_URL: {{ printf "http://gentian-idp-keycloak-keycloakx-http.%s.svc.cluster.local:8080/auth" $auth | quote }}
+  OPENFGA_INTERNAL_URL: {{ printf "http://gentian-openfga.%s.svc.cluster.local:8080" (include "ns" (list $ "authorization")) | quote }}
+  {{- with $.Values.smtpHost }}
+  SMTP_HOST: {{ . | quote }}
+  {{- end }}
+---
+{{- end }}

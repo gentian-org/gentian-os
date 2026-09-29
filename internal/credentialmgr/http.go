@@ -37,6 +37,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/manager"
 
 	"github.com/gentian-org/gentian-os/internal/handover"
+	"github.com/gentian-org/gentian-os/internal/layout"
 )
 
 var externalSecretGVK = schema.GroupVersionKind{
@@ -149,7 +150,7 @@ func NewRunnableFromEnv(mgr manager.Manager, validator Validator) (*Server, erro
 		Addr: addr,
 		Catalogue: &Catalogue{
 			Client:         mgr.GetClient(),
-			ProbeNamespace: envOr("CREDENTIAL_PROBE_NAMESPACE", "gentian-system"),
+			ProbeNamespace: envOr("CREDENTIAL_PROBE_NAMESPACE", layout.Namespace(layout.Control)),
 		},
 		Bao: NewOpenBao(
 			baoAddr,
@@ -179,7 +180,7 @@ func NewRunnableFromEnv(mgr manager.Manager, validator Validator) (*Server, erro
 		Client:             mgr.GetClient(),
 		// The operator's own namespace by default: the record belongs beside
 		// the thing that gates on it, not beside the credentials.
-		HandoverNamespace: envOr("HANDOVER_NAMESPACE", envOr("OPERATOR_NAMESPACE", "gentian-system")),
+		HandoverNamespace: envOr("HANDOVER_NAMESPACE", envOr("OPERATOR_NAMESPACE", layout.Namespace(layout.Control))),
 	}, nil
 }
 
@@ -259,8 +260,23 @@ func loadBaoCA(mgr manager.Manager) []byte {
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 	if err := mgr.GetAPIReader().Get(ctx, types.NamespacedName{Name: name, Namespace: namespace}, sec); err != nil {
+		// An in-cluster address over https is a certificate no public root
+		// signs, so this is not the conditional warning it used to be: every
+		// token exchange WILL fail, and saying it at Info under an "if" is
+		// how it scrolled past on a cluster where the Secret was simply
+		// being looked for in the wrong namespace.
+		if addr := os.Getenv("BAO_ADDR"); strings.HasPrefix(addr, "https://") &&
+			strings.Contains(addr, ".svc") {
+			log.Error(err, "OpenBao's CA was not found, so every token exchange will fail: "+
+				"nothing in the cluster can verify an in-cluster certificate against the public roots. "+
+				"Set credentialManager.caSecretNamespace to the namespace the vault runs in "+
+				"(it follows openbaoNamespace by default), or BAO_CACERT to a file.",
+				"secret", namespace+"/"+name, "address", addr)
+			return nil
+		}
 		log.Info("no OpenBao CA available; verifying against the system roots instead. "+
-			"If OpenBao serves a self-signed certificate, every token exchange will fail to connect.",
+			"That is correct for a vault with a publicly trusted certificate, and fatal to "+
+			"every token exchange for one without.",
 			"secret", namespace+"/"+name, "reason", err.Error())
 		return nil
 	}
@@ -520,11 +536,26 @@ func (s *Server) handleSet(w http.ResponseWriter, r *http.Request) {
 	// Validate BEFORE storing. This is what justifies the service existing at
 	// all: it turns "tenant provisioning stalled because a password was pasted
 	// with a trailing newline" into a rejected form field.
+	unvalidated := ""
 	if req.Validator != "" && req.Validator != "noop" {
 		if err := s.Validator.Validate(r.Context(), req.Validator, req.ValidateHost, body.Fields); err != nil {
-			writeErr(w, http.StatusUnprocessableEntity,
-				fmt.Errorf("validation failed against the target endpoint: %w", err))
-			return
+			// Nothing to probe is a gap in the requirement, not a fact about
+			// the credential. Refusing the write there is the wrong way
+			// round: the credential is still needed and the declaration is
+			// what is incomplete, so it is stored and reported as
+			// unvalidated. The deployments token could not be set at all
+			// until this distinction existed -- its entry asks for a
+			// git-https probe and names no host.
+			if errors.Is(err, ErrNoEndpoint) {
+				unvalidated = err.Error()
+				ctrl.Log.WithName("credentialmgr").Info(
+					"storing a credential that could not be validated",
+					"requirement", req.Name, "validator", req.Validator, "reason", unvalidated)
+			} else {
+				writeErr(w, http.StatusUnprocessableEntity,
+					fmt.Errorf("validation failed against the target endpoint: %w", err))
+				return
+			}
 		}
 	}
 
@@ -556,12 +587,23 @@ func (s *Server) handleSet(w http.ResponseWriter, r *http.Request) {
 	s.refreshConsumers(r.Context(), req.VaultPath)
 
 	// Metadata only in the response, as everywhere else.
-	writeJSON(w, http.StatusOK, map[string]any{
+	out := map[string]any{
 		"name":      name,
 		"vaultPath": req.VaultPath,
 		"stored":    true,
 		"setBy":     c.name,
-	})
+	}
+	// Said out loud rather than implied by its absence. A caller who asked for
+	// a validated write and got an unvalidated one should be told which they
+	// got, on the screen, at the time -- not left to infer it from a status
+	// field they were not looking at.
+	if unvalidated != "" {
+		out["validated"] = false
+		out["validationSkipped"] = unvalidated
+	} else if req.Validator != "" && req.Validator != "noop" {
+		out["validated"] = true
+	}
+	writeJSON(w, http.StatusOK, out)
 }
 
 // checkFields enforces the declared schema before anything is sent anywhere.

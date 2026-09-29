@@ -6,6 +6,23 @@
 # =============================================================================
 
 # =============================================================================
+# gentian_argocd_namespace — where Argo CD actually runs.
+#
+# v4 installs it into a namespace called argocd; v5's layout puts it in the
+# gitops namespace that kernel/namespaces.yaml names. The literal was fine
+# while there was one layout and is not any more: the bootstrap repo-creds
+# bridge below landed in `argocd` on a v5 cluster, where nothing reads it, and
+# the Applications that need it could not resolve their source.
+# =============================================================================
+gentian_argocd_namespace() {
+    if [[ -n "${ARGOCD_NAMESPACE:-}" ]]; then
+        echo "${ARGOCD_NAMESPACE}"
+        return 0
+    fi
+    ns_kernel gitops
+}
+
+# =============================================================================
 # _apply_argocd_repo_creds <role> <repo_var> <auth_var> <user_var> <token_var>
 #
 # Registers a prefix-matched ArgoCD repo-creds Secret directly from the
@@ -36,14 +53,15 @@ _apply_argocd_repo_creds() {
         return 0
     fi
 
-    info "Registering bootstrap ArgoCD repo-creds for ${role} (${repo})..."
+    local ns; ns="$(gentian_argocd_namespace)"
+    info "Registering bootstrap ArgoCD repo-creds for ${role} (${repo}) in ${ns}..."
     if [[ "${auth}" == "bearer" ]]; then
         kubectl apply -f - <<EOF
 apiVersion: v1
 kind: Secret
 metadata:
   name: argocd-repo-creds-bootstrap-${role}
-  namespace: argocd
+  namespace: ${ns}
   labels:
     argocd.argoproj.io/secret-type: repo-creds
 stringData:
@@ -57,7 +75,7 @@ apiVersion: v1
 kind: Secret
 metadata:
   name: argocd-repo-creds-bootstrap-${role}
-  namespace: argocd
+  namespace: ${ns}
   labels:
     argocd.argoproj.io/secret-type: repo-creds
 stringData:
@@ -144,317 +162,27 @@ resolve_argocd_url() {
     echo "kubectl port-forward -n argocd svc/argocd-server 8080:443"
 }
 
-# =============================================================================
-# tune_argocd_runtime — memory + concurrency settings for the ArgoCD controller
-#
-# Idempotent and safe to re-run; called on every install.sh run so an existing
-# cluster picks these up rather than only freshly-installed ones.
-#
-# Upstream ships no resources and high concurrency (20 status / 10 operation
-# processors), which on a small cluster produces an application-controller that
-# OOM-kills itself roughly 20 seconds into every boot — observed here as 48
-# restarts across four hours during which nothing in the cluster synced and
-# every Application silently sat on a stale revision.
-#
-# Peak memory tracks CONCURRENCY, not the number of Applications: each processor
-# holds the manifests of the app it is comparing. That is why the node still
-# showed free memory while the pod was being killed, and why a memory request
-# alone did not fix it — the request decides which pod the kernel picks under
-# node pressure, and this was not node pressure.
-#
-# Override per cluster with ARGOCD_STATUS_PROCESSORS / ARGOCD_OPERATION_PROCESSORS
-# / ARGOCD_KUBECTL_PARALLELISM; larger clusters can afford the upstream numbers.
-# =============================================================================
-tune_argocd_runtime() {
-    local ns="argocd"
-
-    kubectl -n "${ns}" patch configmap argocd-cmd-params-cm --type merge -p '{"data":{
-      "controller.status.processors":"'"${ARGOCD_STATUS_PROCESSORS:-4}"'",
-      "controller.operation.processors":"'"${ARGOCD_OPERATION_PROCESSORS:-2}"'",
-      "controller.kubectl.parallelism.limit":"'"${ARGOCD_KUBECTL_PARALLELISM:-4}"'"}}' >/dev/null 2>&1       || warn "  Could not patch argocd-cmd-params-cm (absent?)."
-
-    # Requests, not limits. A request lifts the pod out of BestEffort QoS so it
-    # is not the kernel's first choice under node pressure; a hard limit would
-    # convert an occasional node-level kill into a guaranteed self-inflicted one,
-    # because the controller's working set grows with the resources it tracks.
-    kubectl -n "${ns}" patch statefulset argocd-application-controller --type=json -p='[
-      {"op":"add","path":"/spec/template/spec/containers/0/resources","value":{"requests":{"memory":"768Mi","cpu":"250m"}}}
-    ]' >/dev/null 2>&1 || true
-    kubectl -n "${ns}" patch deployment argocd-repo-server --type=json -p='[
-      {"op":"add","path":"/spec/template/spec/containers/0/resources","value":{"requests":{"memory":"256Mi","cpu":"100m"}}}
-    ]' >/dev/null 2>&1 || true
-
-    success "ArgoCD runtime tuned (status=${ARGOCD_STATUS_PROCESSORS:-4} operation=${ARGOCD_OPERATION_PROCESSORS:-2})."
-}
-
-# argocd_installed — every artefact install-argocd.sh is responsible for.
-#
-# Keying "already installed" on the Deployment alone treats a partial apply as a
-# finished one. The manifest creates the Deployments before the CRDs, so a
-# failure part-way through leaves argocd-server running and applicationsets
-# absent — and the step then reports satisfied forever, while the root
-# ApplicationSet that needs that CRD fails much later for no visible reason.
-argocd_installed() {
-    kubectl get deployment argocd-server -n argocd >/dev/null 2>&1 &&
-        kubectl get crd applications.argoproj.io >/dev/null 2>&1 &&
-        kubectl get crd applicationsets.argoproj.io >/dev/null 2>&1 &&
-        # install_argocd applies this AppProject unconditionally on every run,
-        # and destroy() (A-09) strips it alongside Applications/ApplicationSets
-        # as a first-class, separately-tracked object. Without this, deleting
-        # just the AppProject (by hand, or a partial teardown) leaves the
-        # server/CRDs satisfying every other check here, so this function
-        # keeps reporting installed and install_argocd() never runs again to
-        # recreate it — the same shape as the ProviderConfig bug in A-02.
-        kubectl get appproject gentian -n argocd >/dev/null 2>&1
-}
-
-install_argocd() {
-    banner "Installing ArgoCD"
-
-    if argocd_installed; then
-        success "ArgoCD already installed."
-    else
-        # Server-side apply is idempotent, so re-running over a partial install
-        # completes it rather than conflicting with it.
-        bash "${SCRIPT_DIR}/scripts/bootstrap/install-argocd.sh"
-        success "ArgoCD installed."
-    fi
-
-    # Runtime tuning is applied on EVERY run, not just first install.
-    #
-    # install-argocd.sh only executes when argocd-server is absent, so anything
-    # set there reaches new clusters and never reaches existing ones. That is
-    # exactly wrong for settings that fix a running cluster: the controller
-    # OOM-crashloop these values address would have persisted through any number
-    # of install.sh re-runs, because the one script that could have fixed it was
-    # skipped for being "already installed".
-    tune_argocd_runtime
-
-    # Rendered from kernel/bootstrap/chart like every other bootstrap
-    # Application, not read as text and patched — a placeholder Helm never
-    # received falls back to the template's own default instead of reaching
-    # the cluster unexpanded, which a text substitution cannot promise (see
-    # the git history: `render the bootstrap Applications from a chart`, the
-    # sweep this file predates because it never had a placeholder to convert
-    # until GENTIAN_{OS,APPS,DEPLOYMENTS,UI}_REPO existed).
-    apply_bootstrap_application gentian-appproject
-    success "AppProject applied."
-
-    # gentian-os is the one repository ArgoCD must authenticate to before
-    # OpenBao exists: B-01-openbao-transit (right after this step) applies the
-    # openbao-transit bootstrap Application, and ArgoCD has to pull its chart
-    # from osRepo to sync it. Every other credentialed repository (apps,
-    # gentian-ui, deployments) is first consumed by an Application or
-    # ApplicationSet that does not exist until phase B/C, by which point the
-    # gentian-os Repository claim's own ESO-managed Secret has taken over —
-    # see scripts/steps/B-XX-os-repository.sh's handoff.
-    _apply_argocd_repo_creds gentian-os GENTIAN_OS_REPO GENTIAN_OS_AUTH GENTIAN_OS_GIT_USERNAME GENTIAN_OS_GIT_TOKEN
-
-    info "Patching argocd-cm with annotation-based resource tracking..."
-    # application.resourceTrackingMethod=annotation prevents ArgoCD from
-    # treating Helm-managed resources as part of an ArgoCD app via the
-    # default app.kubernetes.io/instance label. Crossplane-managed Helm charts
-    # (shared kernel PostgreSQL and MariaDB) stamp every rendered resource with
-    #   app.kubernetes.io/instance: <release-name>
-    # which equals the ArgoCD Application name. With label-based tracking
-    # ArgoCD then "adopts" those Helm-rendered StatefulSets/Services/etc.,
-    # finds them missing from git, and PRUNES them seconds after Helm
-    # creates them — leaving the Helm release in state=failed with errors
-    # like 'services "<release-name>" not found'. Annotation-based
-    # tracking uses argocd.argoproj.io/tracking-id and only tracks resources
-    # ArgoCD itself applied. See:
-    # https://argo-cd.readthedocs.io/en/stable/user-guide/resource_tracking/
-    kubectl patch configmap argocd-cm -n argocd --type merge -p '
-{
-  "data": {
-    "application.resourceTrackingMethod": "annotation"
-  }
-}'
-    success "ArgoCD annotation-based resource tracking configured."
-
-    # Treat Pending PVCs as Healthy so ArgoCD sync waves are not blocked by
-    # WaitForFirstConsumer PVCs. On a fresh install, a PVC with
-    # volumeBindingMode=WaitForFirstConsumer (microk8s-hostpath) stays Pending
-    # until a pod mounts it. Without this override ArgoCD considers the PVC
-    # Progressing and never advances to the next wave where the consuming pod
-    # (or hook job) would be created — causing a permanent deadlock.
-    # Lost PVCs are still surfaced as Degraded.
-    info "Patching argocd-cm with PVC WaitForFirstConsumer health override..."
-    kubectl patch configmap argocd-cm -n argocd --type merge -p '
-{
-  "data": {
-    "resource.customizations.health.PersistentVolumeClaim": "hs = {}\nif obj.status ~= nil then\n  if obj.status.phase == \"Bound\" then\n    hs.status = \"Healthy\"\n    hs.message = \"PVC bound\"\n    return hs\n  end\n  if obj.status.phase == \"Pending\" then\n    hs.status = \"Healthy\"\n    hs.message = \"PVC pending (WaitForFirstConsumer)\"\n    return hs\n  end\n  if obj.status.phase == \"Lost\" then\n    hs.status = \"Degraded\"\n    hs.message = \"PVC lost\"\n    return hs\n  end\nend\nhs.status = \"Progressing\"\nhs.message = \"Waiting for PVC\"\nreturn hs\n"
-  }
-}'
-    success "ArgoCD PVC health override configured."
-
-    # Prevent the ArgoCD application controller from entering a tight
-    # reconciliation loop when Crossplane providers continuously update
-    # .status on managed Keycloak resources.  Without this, the controller
-    # re-enqueues keycloak-config-dev on every Crossplane status write (~20ms),
-    # starving all other applications of reconciliation time.
-    # resource.ignoreResourceUpdatesEnabled (ArgoCD ≥ 2.10) tells the
-    # controller to skip re-queuing an app when only the listed JSON pointers
-    # change on the affected resource.
-    info "Patching argocd-cm with Crossplane Keycloak resource-update suppression..."
-    kubectl patch configmap argocd-cm -n argocd --type merge -p '{
-  "data": {
-    "resource.ignoreResourceUpdatesEnabled": "true",
-    "resource.customizations.ignoreResourceUpdates.client.keycloak.crossplane.io_ProtocolMapper": "jsonPointers:\n- /status\n- /metadata/resourceVersion\n- /metadata/generation\n",
-    "resource.customizations.ignoreResourceUpdates.openidclient.keycloak.crossplane.io_Client": "jsonPointers:\n- /status\n- /metadata/resourceVersion\n- /metadata/generation\n",
-    "resource.customizations.ignoreResourceUpdates.openidclient.keycloak.crossplane.io_ClientDefaultScopes": "jsonPointers:\n- /status\n- /metadata/resourceVersion\n- /metadata/generation\n",
-    "resource.customizations.ignoreResourceUpdates.openidclient.keycloak.crossplane.io_ClientOptionalScopes": "jsonPointers:\n- /status\n- /metadata/resourceVersion\n- /metadata/generation\n",
-    "resource.customizations.ignoreResourceUpdates.openidclient.keycloak.crossplane.io_ClientScope": "jsonPointers:\n- /status\n- /metadata/resourceVersion\n- /metadata/generation\n",
-    "resource.customizations.ignoreResourceUpdates.keycloak.crossplane.io_ProviderConfig": "jsonPointers:\n- /status\n- /metadata/resourceVersion\n- /metadata/generation\n"
-  }
-}'
-    success "ArgoCD Crossplane Keycloak resource-update suppression configured."
-
-    # Diff what a sync would actually change, not what the YAML literally says.
-    #
-    # A CRD fills in fields nobody wrote. An ExternalSecret declaring a key and a
-    # property comes back with five more set; a CNPG Cluster declaring seven
-    # fields comes back with forty-three more, twenty-three of them postgres
-    # parameters CNPG injects. Argo compared git against the live object and
-    # reported OutOfSync forever on applications that were entirely healthy.
-    #
-    # ServerSideDiff asks the API server what the manifest WOULD become — a
-    # dry-run apply — and compares that against live, so defaults and mutating
-    # webhooks land on both sides and cancel. It answers "would applying this
-    # change anything", which is the question a GitOps tool should be answering,
-    # and it needs no per-CRD list of fields to ignore. Kyverno mutates on this
-    # cluster, so the webhook half is not hypothetical either.
-    #
-    # Enumerating the defaulted paths was the alternative and is why this is not
-    # one: five for ExternalSecret is maintainable, forty-three for CNPG is not,
-    # and a list that silently covers less after each upstream upgrade is the
-    # failure mode this platform keeps meeting.
-    #
-    # managedFieldsManagers does not work here and the reason is worth keeping:
-    # it ignores fields a manager OWNS, and these have no field manager at all —
-    # argocd-controller owns exactly what git declares, and the defaults are
-    # written at admission by nobody.
-    #
-    # The cost is a global change to how all applications diff, so it was
-    # verified as one: enabled, controller restarted, and all 59 applications
-    # reached Synced with no controller errors. Reversible by setting this to
-    # false and restarting. See docs/architecture.md §"Diffing".
-    info "Enabling ArgoCD server-side diff..."
-    kubectl patch configmap argocd-cmd-params-cm -n argocd --type merge \
-        -p '{"data":{"controller.diff.server.side":"true"}}'
-    # The controller reads this at startup, so it needs a restart to take. Safe
-    # to run every install: a restart with the value already set is a no-op
-    # reconcile, not a change.
-    kubectl -n argocd rollout restart statefulset argocd-application-controller >/dev/null 2>&1 || true
-    kubectl -n argocd rollout status statefulset argocd-application-controller --timeout=240s >/dev/null 2>&1 || true
-    success "ArgoCD server-side diff enabled."
-
-    # Configure ArgoCD server to serve plain HTTP behind the Gateway API edge route.
-    # Without this flag ArgoCD redirects HTTP→HTTPS internally and the edge proxy
-    # gets into a redirect loop when terminating TLS at the Gateway.
-    #
-    # reposerver.repo.cache.expiration: how long the repo-server caches both
-    # the branch→SHA resolution and the rendered manifest for a (repo, path,
-    # revision) tuple.  The default is 24h, which means new commits to a
-    # branch are not picked up for up to 24 hours without a webhook push
-    # notification.  Setting this to 3m (same as timeout.reconciliation) means
-    # every app-controller reconcile cycle triggers a fresh git fetch so new
-    # commits are visible within one reconciliation window (~3 minutes).
-    # GitHub webhooks further reduce this to near-zero for push events.
-    info "Configuring ArgoCD server params (insecure + short repo cache)..."
-    kubectl patch configmap argocd-cmd-params-cm -n argocd --type merge \
-        -p '{"data":{"server.insecure":"true","reposerver.repo.cache.expiration":"3m"}}'
-    kubectl rollout restart deployment argocd-server -n argocd
-    kubectl rollout restart deployment argocd-repo-server -n argocd
-    kubectl rollout status deployment argocd-server -n argocd --timeout=90s \
-        2>/dev/null || true
-    kubectl rollout status deployment argocd-repo-server -n argocd --timeout=90s \
-        2>/dev/null || true
-    success "ArgoCD server running in HTTP mode with 3-minute repo cache."
-
-    # Configure GitHub webhook secret so ArgoCD accepts push notifications from
-    # the gentian-org GitHub organisation.  The actual webhook must be registered
-    # in GitHub (Settings → Webhooks, or via the GitHub CLI):
-    #
-    #   URL:     https://argocd.${KERNEL_DOMAIN}/api/webhook
-    #   Content-Type: application/json
-    #   Secret:  <value from OpenBao: identity/argocd/webhook-github-secret>
-    #   Events:  push
-    #
-    # Without a GitHub webhook ArgoCD still detects new commits within
-    # ~3 minutes (via the reduced cache expiry above), but with a webhook
-    # syncs happen within seconds of a push.
-    local github_webhook_secret="${ARGOCD_GITHUB_WEBHOOK_SECRET:-}"
-    if [[ -z "$github_webhook_secret" ]]; then
-        # Generate once, then leave it alone.
-        #
-        # This used to mint a new random secret on every run, so each converge
-        # rewrote argocd-secret and invalidated the webhook already registered in
-        # GitHub — pushes silently stopped triggering syncs and ArgoCD fell back to
-        # its ~3 minute poll, which looks like "GitOps is just slow" rather than a
-        # broken webhook.
-        local existing
-        existing="$(kubectl get secret argocd-secret -n argocd \
-            -o jsonpath='{.data.webhook\.github\.secret}' 2>/dev/null || true)"
-        if [[ -n "${existing}" ]]; then
-            info "Keeping the existing ArgoCD GitHub webhook secret (set ARGOCD_GITHUB_WEBHOOK_SECRET to change it)."
-        else
-            warn "ARGOCD_GITHUB_WEBHOOK_SECRET not set — generating a random secret once."
-            warn "Store it in OpenBao (identity/argocd/webhook-github-secret) and"
-            warn "register it as a webhook on the gentian-org GitHub organisation."
-            warn "Read it back with: kubectl get secret argocd-secret -n argocd -o jsonpath='{.data.webhook\\.github\\.secret}' | base64 -d"
-            github_webhook_secret=$(openssl rand -hex 20)
-        fi
-    fi
-    # Empty only when an existing secret is being kept, which is the one case that
-    # must not be overwritten. Everything after this point in the function still
-    # runs — an early return here would skip the ArgoCD edge route below.
-    if [[ -n "${github_webhook_secret}" ]]; then
-        kubectl patch secret argocd-secret -n argocd --type merge \
-            -p "{\"stringData\":{\"webhook.github.secret\":\"${github_webhook_secret}\"}}"
-        success "ArgoCD GitHub webhook secret configured."
-    else
-        success "ArgoCD GitHub webhook secret unchanged."
-    fi
-    info "Register webhook at: https://argocd.${KERNEL_DOMAIN:-<KERNEL_DOMAIN>}/api/webhook"
-
-    # Create Ingress for argocd.${KERNEL_DOMAIN} if KERNEL_DOMAIN is set.
-    # TLS uses wildcard-tls which is propagated by install_kernel_wildcard later;
-    # the Ingress is safe to create before the Secret exists.
-    if [[ -n "${KERNEL_DOMAIN:-}" ]]; then
-        info "ArgoCD edge route is managed by the operator (kernel-argocd HTTPRoute)."
-    fi
-
-    # Print ArgoCD admin credentials early so the user sees them even if
-    # the install is interrupted before the final summary runs (verify
-    # step can take up to 10 minutes).
-    local argocd_pw argocd_url
-    argocd_pw=$(kubectl get secret argocd-initial-admin-secret -n argocd \
-                    -o jsonpath='{.data.password}' 2>/dev/null \
-                    | base64 -d 2>/dev/null || echo "")
-    argocd_url=$(resolve_argocd_url 2>/dev/null)
-    if [[ -n "$argocd_pw" ]]; then
-        info "ArgoCD URL   : ${argocd_url}"
-        info "ArgoCD login : admin / ${argocd_pw}"
-    else
-        warn "ArgoCD initial-admin-secret not yet available; will be shown in final summary."
-    fi
-}
-
 # Configure ArgoCD OIDC settings and group mapping.
 configure_argocd_oidc() {
     local kernel_domain="${KERNEL_DOMAIN:?KERNEL_DOMAIN required}"
+    # Where Argo CD runs, and which realm signs the tokens it must accept.
+    # Both were literals: the namespace made this unusable under any other
+    # layout, and the realm silently disagreed with every other caller here,
+    # which honours KERNEL_REALM -- a cluster whose realm is not called kernel
+    # got an issuer nothing had ever issued a token for.
+    local ns="${GITOPS_NAMESPACE:-$(ns_kernel gitops)}"
+    local realm="${KERNEL_REALM:-kernel}"
     info "Configuring ArgoCD OIDC (Keycloak integration)..."
 
     # 1. Trust the wildcard-tls CA (self-signed or staging issuer support)
     local ca_cert
-    ca_cert=$(kubectl get secret wildcard-tls -n argocd -o jsonpath='{.data.ca\.crt}' 2>/dev/null | base64 -d || true)
+    ca_cert=$(kubectl get secret wildcard-tls -n "${ns}" -o jsonpath='{.data.ca\.crt}' 2>/dev/null | base64 -d || true)
     if [[ -z "$ca_cert" ]]; then
-        ca_cert=$(kubectl get secret wildcard-tls -n argocd -o jsonpath='{.data.tls\.crt}' 2>/dev/null | base64 -d || true)
+        ca_cert=$(kubectl get secret wildcard-tls -n "${ns}" -o jsonpath='{.data.tls\.crt}' 2>/dev/null | base64 -d || true)
     fi
     if [[ -n "$ca_cert" ]]; then
         info "Registering gateway CA certificate in argocd-tls-certs-cm..."
-        kubectl patch configmap argocd-tls-certs-cm -n argocd --type merge \
+        kubectl patch configmap argocd-tls-certs-cm -n "${ns}" --type merge \
             --patch "{\"data\":{\"id.${kernel_domain}\":$(jq -R -s '.' <<<"${ca_cert}")}}"
     fi
 
@@ -462,13 +190,13 @@ configure_argocd_oidc() {
     local oidc_config
     oidc_config=$(cat <<EOF
 name: Keycloak
-issuer: https://id.${kernel_domain}/auth/realms/kernel
+issuer: https://id.${kernel_domain}/auth/realms/${realm}
 clientID: gentian-argocd
 clientSecret: \$oidc.keycloak.clientSecret
 requestedScopes: ["openid", "profile", "email", "groups"]
 EOF
 )
-    kubectl patch configmap argocd-cm -n argocd --type merge -p "
+    kubectl patch configmap argocd-cm -n "${ns}" --type merge -p "
 {
   \"data\": {
     \"url\": \"https://argocd.${kernel_domain}\",
@@ -477,8 +205,23 @@ EOF
 }"
 
     # 3. Patch argocd-rbac-cm to map group to admin role
-    local policy_csv="g, gentian:platform:superadmin, role:admin"
-    kubectl patch configmap argocd-rbac-cm -n argocd --type merge -p "
+    #
+    # Both spellings, because the claim carries the FULL path.
+    #
+    # The kernel realm's groups mapper is configured full.path=true, which
+    # OpenBao needs: its roles bind /group-name with a leading slash and the
+    # bare name matches nothing. So the token Argo CD receives says
+    # "/gentian:platform:admin", and a policy naming the bare form matches no
+    # subject at all -- which does not look like a permissions problem from
+    # the outside. It looks like an empty Argo CD: "No applications available
+    # to you just yet", for a platform administrator who holds everything.
+    #
+    # Naming both costs nothing and survives the mapper being changed back.
+    local platform_admin_group="${PLATFORM_ADMIN_GROUP:-gentian:platform:admin}"
+    local policy_csv
+    policy_csv="g, ${platform_admin_group}, role:admin
+g, /${platform_admin_group}, role:admin"
+    kubectl patch configmap argocd-rbac-cm -n "${ns}" --type merge -p "
 {
   \"data\": {
     \"policy.csv\": $(jq -R -s '.' <<<"${policy_csv}"),
@@ -487,192 +230,19 @@ EOF
 }"
 
     # 4. Restart ArgoCD server to pick up new configurations
-    kubectl rollout restart deployment argocd-server -n argocd
-    kubectl rollout status deployment argocd-server -n argocd --timeout=90s 2>/dev/null || true
+    #
+    # A restart triggered within the same second as an earlier one is refused:
+    # the annotation kubectl writes carries a timestamp, and two in one second
+    # are the same value, so there is nothing to patch. It means a restart is
+    # already on its way, which is what this wanted -- but unhandled it ended
+    # the whole install one line before the step's last success message.
+    kubectl rollout restart deployment argocd-server -n "${ns}" \
+        || warn "  argocd-server restart already in flight; the new configuration comes up with it."
+    kubectl rollout status deployment argocd-server -n "${ns}" --timeout=90s 2>/dev/null || true
     success "ArgoCD OIDC configuration completed."
 }
 
 
-# =============================================================================
-# 4b. Install ArgoCD Image Updater controller
-# =============================================================================
-install_argocd_image_updater() {
-    banner "ArgoCD Image Updater"
-
-    info "Adding Argo Helm repo..."
-    helm repo add argo "$(gentian_pin argocd repo)" --force-update >/dev/null
-    helm repo update argo >/dev/null
-
-    info "Installing/upgrading argocd-image-updater chart..."
-    _helm_retry upgrade --install argocd-image-updater argo/argocd-image-updater \
-        --namespace argocd-image-updater \
-        --create-namespace \
-        --set "config.argocd\.namespace=argocd" \
-        --set "config.watch\.namespaces=argocd" \
-        --wait \
-        --timeout 5m
-
-    success "ArgoCD Image Updater controller is installed persistently in the cluster."
-    info "Environment-specific ImageUpdater CRs should be managed in gentian-deployments (GitOps), not in this OS installer."
-}
-
-# =============================================================================
-# Wait until an Argo CD Application has created its target workload.
-# install.sh applies bootstrap Applications with kubectl; the application-
-# controller reconciles asynchronously. Polling for pods immediately yields
-# permanent "NotScheduledYet" even on a healthy cluster.
-# =============================================================================
-_wait_for_argocd_application_workload() {
-    local app="$1" ns="$2" resource_kind="$3" label_selector="$4" timeout="${5:-300}"
-    local start=$SECONDS elapsed=0 sync_status health sync_msg
-
-    info "Waiting for Argo CD Application '${app}' to deploy ${resource_kind} in ${ns} (up to ${timeout}s)..."
-    kubectl rollout status statefulset/argocd-application-controller -n argocd \
-        --timeout=120s >/dev/null 2>&1 \
-        || warn "argocd-application-controller not Ready yet — continuing to poll."
-
-    kubectl annotate application "${app}" -n argocd \
-        argocd.argoproj.io/refresh=hard --overwrite >/dev/null 2>&1 || true
-
-    while (( elapsed < timeout )); do
-        if kubectl get "${resource_kind}" -n "${ns}" -l "${label_selector}" \
-                --no-headers 2>/dev/null | grep -q .; then
-            success "Argo CD Application '${app}' created ${resource_kind} in ${ns}."
-            return 0
-        fi
-
-        sync_status=$(kubectl get application "${app}" -n argocd \
-            -o jsonpath='{.status.sync.status}' 2>/dev/null || true)
-        health=$(kubectl get application "${app}" -n argocd \
-            -o jsonpath='{.status.health.status}' 2>/dev/null || true)
-        sync_msg=$(kubectl get application "${app}" -n argocd \
-            -o jsonpath='{.status.operationState.message}' 2>/dev/null || true)
-
-        if [[ "${sync_status}" == "Unknown" && -n "${sync_msg}" ]]; then
-            error "Argo CD Application '${app}' failed to sync: ${sync_msg}"
-            error "Inspect: kubectl describe application ${app} -n argocd"
-            return 1
-        fi
-
-        if (( elapsed % 30 == 0 )); then
-            echo "  [${elapsed}s] app=${app} sync=${sync_status:-<none>} health=${health:-<none>}"
-            [[ -n "${sync_msg}" ]] && echo "         message: ${sync_msg}"
-        fi
-        sleep 5
-        elapsed=$((SECONDS - start))
-    done
-
-    error "Timed out waiting for Argo CD Application '${app}' to create ${resource_kind} in ${ns}."
-    error "Inspect: kubectl describe application ${app} -n argocd"
-    kubectl get application "${app}" -n argocd \
-        -o custom-columns='NAME:.metadata.name,SYNC:.status.sync.status,HEALTH:.status.health.status' 2>/dev/null \
-        | sed 's/^/  /' || true
-    return 1
-}
-# =============================================================================
-# 6. Apply remaining ArgoCD bootstrap Applications
-# =============================================================================
-bootstrap_argocd_apps() {
-    banner "ArgoCD bootstrap Applications"
-
-    # Register the public OCI chart repos the bootstrap Applications pull from.
-    #
-    # Repository claims rather than hand-written Secrets: the ArgoCD Secret is
-    # composed from the claim, so one object describes the repository and one
-    # Composition decides what a repository produces.
-    #
-    # These carry no credential, which the XRepository schema allows — a public
-    # registry has nothing to authenticate, and requiring one meant naming a
-    # vault path for a secret that does not exist.
-    #
-    # The claim also whitelists the source in the tenants AppProject, which the
-    # Cluster XR creates later. That composed Object cannot sync until then and
-    # retries until it can; the repository Secret these Applications actually
-    # need is a separate Object and lands immediately.
-    if [[ "$INSTALL_CLUSTER_INFRA" == "1" ]]; then
-        kubectl apply -f "${SCRIPT_DIR}/kernel/argocd/repos/ghcr-stakater.yaml"
-        kubectl apply -f "${SCRIPT_DIR}/kernel/argocd/repos/ghcr-cloudnative-pg.yaml"
-    fi
-    # Unconditional, unlike the chart claims: this covers the gentian-org git
-    # sources themselves (gentian-os, gentian-ui, gentian-apps), which every
-    # install fetches regardless of cluster-infra. The ExternalSecret syncs
-    # once OpenBao holds the deployments credential (B-10); until then Argo CD
-    # fetches anonymously, exactly as it always did during bootstrap.
-    kubectl apply -f "${SCRIPT_DIR}/kernel/argocd/repos/github-gentian-org-repocreds.yaml"
-    success "Applied public chart repository claims."
-
-    local apps=(openbao globals)
-    if [[ "$INSTALL_CLUSTER_INFRA" == "1" ]]; then
-        apps+=(reloader cnpg kernel-admin)
-        # external-dns writes this cluster's DNS records — all of them, on
-        # every provider, in both network modes. It reads the HTTPRoutes the
-        # operator writes, and DNSEndpoint CRs for records with no HTTP object
-        # behind them, which is how mail publishes.
-        #
-        # It used to be opt-in, to keep it off the record set the operator's
-        # own Cloudflare adapter was writing. That adapter is gone: it covered
-        # one provider of eight, so a Route 53 cluster had no DNS writer at
-        # all, and a static-ip cluster had none either since the adapter needs
-        # a tunnel to point at. Both failed silently — names never resolved.
-        #
-        # Still skipped when the cluster names no zone host, which is the
-        # honest case for one whose records somebody else maintains.
-        if [[ "${EXTERNAL_DNS_ENABLED:-true}" == "true" && "${DNS_PROVIDER:-none}" != "none" ]]; then
-            apps+=(external-dns)
-        elif [[ "${DNS_PROVIDER:-none}" == "none" ]]; then
-            info "certificates.dnsProvider is none; external-dns is not installed."
-            info "  Nothing publishes this cluster's records — they are yours to write."
-        else
-            info "certificates.externalDns is false; external-dns is not installed."
-            info "  Nothing else writes records now that the operator does not,"
-            info "  so this cluster's hostnames resolve only if you publish them."
-        fi
-    fi
-
-    for app in "${apps[@]}"; do
-        # Not "apply, then announce success": apply_bootstrap_application exits
-        # on a real failure, but announcing before knowing is how a missing
-        # Application read as an applied one.
-        apply_bootstrap_application "${app}" || {
-            error "Applying bootstrap Application ${app} failed."
-            exit 1
-        }
-        success "Applied bootstrap Application ${app}"
-    done
-
-    wait_for_running_pod openbao "app.kubernetes.io/name=openbao,app.kubernetes.io/instance=openbao" "openbao" 300 || {
-        error "openbao pod never became Ready. Aborting install."
-        exit 1
-    }
-
-    if [[ "$INSTALL_CLUSTER_INFRA" == "1" ]]; then
-        # ArgoCD applies the Application and then syncs asynchronously, so the
-        # Deployments do not exist yet when we return from the apply loop above.
-        # Poll until the Deployment appears before calling kubectl wait.
-
-        info "Waiting for reloader deployment to be created by ArgoCD (up to 5 min)..."
-        _deadline=$((SECONDS + 300))
-        until kubectl get deployment reloader-reloader -n stakater-system &>/dev/null; do
-            (( SECONDS < _deadline )) || { error "Timed out waiting for reloader Deployment to appear."; exit 1; }
-            sleep 5
-        done
-        kubectl wait --for=condition=available --timeout=300s \
-            deployment/reloader-reloader -n stakater-system
-        success "Reloader deployment is available."
-
-        info "Waiting for CNPG operator deployment to be created by ArgoCD (up to 5 min)..."
-        _deadline=$((SECONDS + 300))
-        until kubectl get deployment cnpg-cloudnative-pg -n cnpg-system &>/dev/null; do
-            (( SECONDS < _deadline )) || { error "Timed out waiting for CNPG Deployment to appear."; exit 1; }
-            sleep 5
-        done
-        kubectl wait --for=condition=available --timeout=300s \
-            deployment/cnpg-cloudnative-pg -n cnpg-system
-        success "CNPG operator deployment is available."
-    else
-        warn "Cluster infra disabled: skipped reloader/CNPG bootstrap apps."
-    fi
-}
 verify_argocd_apps() {
     banner "Verify — ArgoCD Applications"
 
@@ -718,7 +288,7 @@ verify_argocd_apps() {
             [[ -n "$_app" ]] && synced=$((synced + 1))
         done < <(kubectl get applications -n argocd \
             -o jsonpath='{range .items[?(@.status.sync.status=="OutOfSync" && @.status.health.status=="Healthy")]}{.metadata.name}{"\n"}{end}' \
-            2>/dev/null | grep -E '^(gentian-os|gentian-appsets|gentian-portal)$' || true)
+            2>/dev/null | grep -E '^(gentian-os|gentian-appsets)$' || true)
         healthy=$(kubectl get applications -n argocd \
             -o jsonpath='{range .items[?(@.status.health.status=="Healthy")]}{.metadata.name}{"\n"}{end}' \
             2>/dev/null | wc -l)
@@ -750,6 +320,103 @@ verify_argocd_apps() {
 
         sleep "$interval"; elapsed=$((elapsed + interval))
     done
+}
+
+# =============================================================================
+# unstick_argo_hook_job <argocd_namespace> <application>
+#
+# Self-heal for a sync operation parked forever on a Helm hook.
+#
+# Argo CD maps Helm's post-install/post-upgrade hooks onto its own PostSync
+# phase and then waits for the hook Job to finish before the operation ends.
+# A Job whose pod can never start — an image that no longer pulls is the case
+# this exists for, and a Job's pod template is immutable, so a corrected chart
+# cannot repair it — parks the operation indefinitely. While an operation is
+# Running, Argo CD starts no new sync, so the Application stays OutOfSync no
+# matter what the repository now says and every step waiting on it times out.
+#
+# Removing the Job lets the hook resolve and the operation end; the next sync
+# renders from the current desired state. Only ever acts on a Job that has no
+# pod able to make progress, so a hook that is genuinely working is untouched.
+# =============================================================================
+unstick_argo_hook_job() {
+    local ns="$1" app="$2" json hook job_ns job started
+
+    json="$(kubectl get application "${app}" -n "${ns}" -o json 2>/dev/null)" || return 0
+    [[ "$(jq -r '.status.operationState.phase // ""' <<<"${json}")" == "Running" ]] || return 0
+
+    hook="$(jq -r '[.status.operationState.syncResult.resources[]?
+                    | select(.kind == "Job" and .hookType != null and .hookPhase == "Running")][0]
+                   | select(. != null) | "\(.namespace) \(.name)"' <<<"${json}")"
+    [[ -n "${hook}" ]] || return 0
+    read -r job_ns job <<<"${hook}"
+
+    # A pull that is merely slow deserves the benefit of the doubt.
+    started="$(jq -r '.status.operationState.startedAt // ""' <<<"${json}")"
+    if [[ -n "${started}" ]]; then
+        local age
+        age=$(( $(date -u +%s) - $(date -u -d "${started}" +%s 2>/dev/null || echo 0) ))
+        (( age > 300 )) || return 0
+    fi
+
+    # Progress means a pod that runs or has already finished. Anything else
+    # waiting on its image or its configuration will not resolve by itself.
+    local pods stuck
+    pods="$(kubectl get pods -n "${job_ns}" -l "batch.kubernetes.io/job-name=${job}" -o json 2>/dev/null)" || return 0
+    if jq -e '[.items[]? | select(.status.phase == "Running" or .status.phase == "Succeeded")] | length > 0' \
+        <<<"${pods}" >/dev/null 2>&1; then
+        return 0
+    fi
+    stuck="$(jq -r '[.items[]?.status.containerStatuses[]?.state.waiting.reason
+                     | select(. == "ImagePullBackOff" or . == "ErrImagePull"
+                              or . == "InvalidImageName" or . == "CreateContainerConfigError")]
+                    | first // ""' <<<"${pods}")"
+    [[ -n "${stuck}" ]] || return 0
+
+    warn "${app}: its sync is parked on hook Job ${job_ns}/${job}, whose pod cannot start (${stuck})."
+    warn "  Argo CD runs no further sync while an operation waits, so the Application"
+    warn "  cannot pick up the current chart. Removing the Job so the operation ends."
+    kubectl delete job "${job}" -n "${job_ns}" --ignore-not-found=true --wait=false >/dev/null 2>&1 || true
+    # Terminating what is left releases the operation even when Argo CD has
+    # already stopped watching the Job. The Application CRD carries no status
+    # subresource, so this is a plain merge patch.
+    kubectl patch application "${app}" -n "${ns}" --type merge \
+        -p '{"status":{"operationState":{"phase":"Terminating"}}}' >/dev/null 2>&1 || true
+    success "${app}: parked hook released."
+}
+
+# =============================================================================
+# request_argo_sync_if_stalled <argocd_namespace> <application>
+#
+# Self-heal for an Application whose automated sync has given up.
+#
+# Automated sync retries a failed attempt a fixed number of times and then
+# stops. That is correct -- retrying a bad manifest forever helps nobody -- but
+# it also means an Application whose cause has since been fixed stays OutOfSync
+# with a failure from before the fix, and a refresh does not restart it. Every
+# step waiting on that Application then waits out its whole timeout and reports
+# a fault that was repaired minutes earlier.
+#
+# Asking for a sync is the documented way to say "try again now". Only ever
+# asked when the last attempt FAILED and nothing is running, so a sync in
+# progress is never disturbed and a healthy Application is never touched.
+# =============================================================================
+request_argo_sync_if_stalled() {
+    local ns="$1" app="$2" json phase sync
+
+    json="$(kubectl get application "${app}" -n "${ns}" -o json 2>/dev/null)" || return 0
+    phase="$(jq -r '.status.operationState.phase // ""' <<<"${json}")"
+    sync="$(jq -r '.status.sync.status // ""' <<<"${json}")"
+    [[ "${phase}" == "Failed" || "${phase}" == "Error" ]] || return 0
+    [[ "${sync}" != "Synced" ]] || return 0
+    # An operation still in flight has its own phase; only a finished one is
+    # ours to replace.
+    [[ "$(jq -r '.operation // "" | type' <<<"${json}")" == "string" ]] || return 0
+
+    info "${app}: its last sync failed and automated retries are exhausted; asking for another."
+    kubectl patch application "${app}" -n "${ns}" --type merge \
+        -p '{"operation":{"initiatedBy":{"username":"gentian-installer"},"sync":{"syncStrategy":{"hook":{}}}}}' \
+        >/dev/null 2>&1 || warn "  ${app}: could not request a sync."
 }
 
 # =============================================================================

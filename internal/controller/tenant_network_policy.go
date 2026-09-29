@@ -93,9 +93,9 @@ func (r *TenantReconciler) ensureNetworkPolicies(ctx context.Context, tenant *ge
 		return err
 	}
 
-	profiles := map[string]*gentianov1alpha1.AppProfile{}
+	profiles := map[string]*gentianov1alpha1.ComponentProfile{}
 	for _, app := range tenant.Spec.Apps {
-		profile := &gentianov1alpha1.AppProfile{}
+		profile := &gentianov1alpha1.ComponentProfile{}
 		if err := r.Get(ctx, types.NamespacedName{Name: app.Profile}, profile); err != nil {
 			if errors.IsNotFound(err) {
 				continue

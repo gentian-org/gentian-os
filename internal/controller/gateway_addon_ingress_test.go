@@ -29,25 +29,40 @@ import (
 // An Odoo-shaped tenant: a base that owns the ERP host, and an addon that wants
 // a hostname of its own for the site it publishes.
 func addonIngressFixture() (*gentianov1alpha1.Tenant, []runtime.Object) {
-	base := &gentianov1alpha1.AppProfile{
+	base := &gentianov1alpha1.ComponentProfile{
 		ObjectMeta: metav1.ObjectMeta{Name: "odoo-base-ce"},
-		Spec: gentianov1alpha1.AppProfileSpec{
-			Ingress: &gentianov1alpha1.IngressSpec{
-				SubDomain: "erp", ServiceName: "odoo", ServicePort: 8069,
-			},
+		Spec: gentianov1alpha1.ComponentProfileSpec{
+			Classes: []gentianov1alpha1.ComponentClass{gentianov1alpha1.ComponentClassApp}, Launch: gentianov1alpha1.ComponentLaunchNone, TrustTier: gentianov1alpha1.TrustTierCertified, Version: "1.0.0",
+			Expose: []gentianov1alpha1.ExposureSpec{{
+				Name: "web", Surface: gentianov1alpha1.SurfaceGateway,
+				AuthMode: gentianov1alpha1.AuthModeOIDC, SubDomain: "erp",
+				Backend: gentianov1alpha1.BackendRef{Service: "odoo", Port: 8069},
+			}},
 		},
 	}
-	addon := &gentianov1alpha1.AppProfile{
+	addon := &gentianov1alpha1.ComponentProfile{
 		ObjectMeta: metav1.ObjectMeta{Name: "odoo-website-ce"},
-		Spec: gentianov1alpha1.AppProfileSpec{
-			AdditionalIngresses: []gentianov1alpha1.IngressSpec{{
-				SubDomain: "www", ServiceName: "odoo", ServicePort: 8069,
+		Spec: gentianov1alpha1.ComponentProfileSpec{
+			Classes: []gentianov1alpha1.ComponentClass{gentianov1alpha1.ComponentClassApp}, Launch: gentianov1alpha1.ComponentLaunchNone, TrustTier: gentianov1alpha1.TrustTierCertified, Version: "1.0.0",
+			// An addon's extra host. It is the FIRST gateway entry of this
+			// profile, and the base's is the first of the base's -- an addon
+			// has no primary host of its own, which is what the reconciler
+			// reads by taking gateways[1:] for additional hosts.
+			Expose: []gentianov1alpha1.ExposureSpec{{
+				Name: "web", Surface: gentianov1alpha1.SurfaceGateway,
+				AuthMode: gentianov1alpha1.AuthModeOIDC, SubDomain: "erp",
+				Backend: gentianov1alpha1.BackendRef{Service: "odoo", Port: 8069},
+			}, {
+				Name: "site", Surface: gentianov1alpha1.SurfaceGateway,
+				AuthMode: gentianov1alpha1.AuthModeNone, SubDomain: "www",
+				Backend: gentianov1alpha1.BackendRef{Service: "odoo", Port: 8069},
 			}},
 		},
 	}
 	tenant := &gentianov1alpha1.Tenant{
 		ObjectMeta: metav1.ObjectMeta{Name: "demo"},
 		Spec: gentianov1alpha1.TenantSpec{
+			DisplayName: "Test Tenant",
 			Apps: []gentianov1alpha1.TenantApp{{
 				Profile: "odoo-base-ce",
 				Addons:  []string{"odoo-website-ce"},
@@ -106,9 +121,11 @@ func TestCollectTenantIngressIntentsIgnoresAddonPrimaryIngress(t *testing.T) {
 		t.Fatalf("add scheme: %v", err)
 	}
 	tenant, objs := addonIngressFixture()
-	addon := objs[1].(*gentianov1alpha1.AppProfile)
-	addon.Spec.Ingress = &gentianov1alpha1.IngressSpec{
-		SubDomain: "hijack", ServiceName: "odoo", ServicePort: 8069,
+	addon := objs[1].(*gentianov1alpha1.ComponentProfile)
+	*addon.GatewayExposures()[0] = gentianov1alpha1.ExposureSpec{
+		Name: "web", Surface: gentianov1alpha1.SurfaceGateway,
+		AuthMode: gentianov1alpha1.AuthModeOIDC, SubDomain: "hijack",
+		Backend: gentianov1alpha1.BackendRef{Service: "odoo", Port: 8069},
 	}
 	c := fake.NewClientBuilder().WithScheme(scheme).WithRuntimeObjects(objs...).Build()
 

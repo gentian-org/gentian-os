@@ -360,171 +360,6 @@ _bao_retry() {
     done
 }
 
-# =============================================================================
-# wait_for_running_pod NS LABEL_SELECTOR FRIENDLY_NAME [TIMEOUT_SECS]
-#
-# Polls every POLL_INTERVAL seconds until at least one pod matching
-# LABEL_SELECTOR in NS is in phase=Running. Every STATUS_INTERVAL seconds it
-# prints a status line with the current pod status. If a pod sits in a
-# non-Running, non-Pending phase (e.g. ContainerCreating, ImagePullBackOff)
-# for STUCK_THRESHOLD seconds it dumps the most recent kubelet events.
-#
-# Auto-recovery: when a pod has been stuck in ContainerCreating with no IP
-# assigned for STUCK_RECOVERY_THRESHOLD seconds (a microk8s/containerd CNI
-# sandbox hang we've seen repeatedly), delete the pod so its StatefulSet /
-# Deployment / DaemonSet recreates it cleanly. Up to MAX_RECOVERY_ATTEMPTS
-# automatic kicks per call.
-#
-# Returns 0 on success, 1 on timeout.
-# =============================================================================
-wait_for_running_pod() {
-    local ns="$1" selector="$2" friendly="$3" timeout="${4:-300}"
-    local poll_interval=5 status_interval=30 stuck_threshold=60
-    local stuck_recovery_threshold=120 max_recovery_attempts=2
-    local elapsed=0 stuck_for=0 last_status="" recovery_attempts=0
-
-    info "Waiting for ${friendly} pod in namespace '${ns}' to become Running (up to ${timeout}s)..."
-    while (( elapsed < timeout )); do
-        local line phase
-        line=$(kubectl get pods -n "$ns" -l "$selector" \
-                --no-headers 2>/dev/null | head -1 || true)
-        if [[ -z "$line" ]]; then
-            phase="NotScheduledYet"
-        else
-            phase=$(awk '{print $3}' <<<"$line")
-        fi
-
-        if [[ "$phase" == "Running" ]]; then
-            # Confirm at least one container is Ready.
-            local ready
-            ready=$(kubectl get pods -n "$ns" -l "$selector" \
-                    -o jsonpath='{.items[0].status.containerStatuses[0].ready}' 2>/dev/null || echo "false")
-            if [[ "$ready" == "true" ]]; then
-                echo ""
-                success "${friendly} pod is Running and Ready."
-                return 0
-            fi
-        fi
-
-        # Periodic status line.
-        if (( elapsed % status_interval == 0 )); then
-            echo "  [${elapsed}s] status: ${phase:-<none>} ${line:+($line)}"
-        fi
-
-        # Track stuck-in-non-progressing state.
-        if [[ "$phase" != "Pending" && "$phase" != "Running" && "$phase" != "NotScheduledYet" ]] \
-           || [[ "$phase" == "Pending" && -n "$line" ]]; then
-            if [[ "$phase" == "$last_status" ]]; then
-                stuck_for=$(( stuck_for + poll_interval ))
-            else
-                stuck_for=0
-            fi
-        else
-            stuck_for=0
-        fi
-        last_status="$phase"
-
-        if (( stuck_for == stuck_threshold )); then
-            warn "${friendly} pod has been in '${phase}' for ${stuck_for}s. Recent events:"
-            kubectl get events -n "$ns" --sort-by=.lastTimestamp 2>/dev/null \
-                | tail -10 | sed 's/^/    /'
-        fi
-
-        # Auto-recovery for the silent CNI / containerd sandbox hang we've
-        # seen on microk8s: pod sits in ContainerCreating with no assigned IP,
-        # and kubelet has stopped emitting events. Deleting the pod forces the
-        # owning controller to create a fresh one, which usually unsticks it.
-        if (( stuck_for >= stuck_recovery_threshold )) \
-           && (( recovery_attempts < max_recovery_attempts )) \
-           && [[ "$phase" == "ContainerCreating" || "$phase" == "Init:0/"* ]]; then
-            local pod_name pod_ip
-            pod_name=$(kubectl get pods -n "$ns" -l "$selector" \
-                    -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)
-            pod_ip=$(kubectl get pods -n "$ns" -l "$selector" \
-                    -o jsonpath='{.items[0].status.podIP}' 2>/dev/null || true)
-            if [[ -n "$pod_name" && -z "$pod_ip" ]]; then
-                recovery_attempts=$(( recovery_attempts + 1 ))
-                warn "Auto-recovery ${recovery_attempts}/${max_recovery_attempts}:" \
-                     "deleting wedged pod ${pod_name} (no IP after ${stuck_for}s in ${phase})."
-                kubectl delete pod "$pod_name" -n "$ns" --grace-period=0 --force \
-                    >/dev/null 2>&1 || true
-                # On the second attempt, also sweep stale CRI state — the
-                # most common root cause of this wedge is leaked sandboxes
-                # from prior install/uninstall cycles.
-                if (( recovery_attempts >= 2 )); then
-                    cri_cleanup
-                    # If pod-delete + cri_cleanup both failed, the kubelet
-                    # status manager itself is wedged (calico assigns an IP
-                    # but PodReadyToStartContainers never flips True). The
-                    # only known-reliable fix is a kubelite restart. Done
-                    # under sudo, gated on microk8s being detected.
-                    kubelite_restart
-                fi
-                stuck_for=0
-                last_status=""
-            fi
-        fi
-
-        sleep "$poll_interval"
-        elapsed=$(( elapsed + poll_interval ))
-    done
-
-    echo ""
-    error "${friendly} pod did not reach Running within ${timeout}s."
-    warn  "Diagnostics:"
-    kubectl get pods -n "$ns" -l "$selector" -o wide 2>&1 | sed 's/^/    /'
-    kubectl get events -n "$ns" --sort-by=.lastTimestamp 2>/dev/null \
-        | tail -15 | sed 's/^/    /'
-
-    # Diagnose actual failure mode rather than printing generic boilerplate.
-    local d_pod d_ip d_phase d_started d_pvc_bound d_pull_err d_ready_cond
-    d_pod=$(kubectl get pods -n "$ns" -l "$selector" \
-            -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)
-    d_ip=$(kubectl get pod -n "$ns" "$d_pod" \
-            -o jsonpath='{.status.podIP}' 2>/dev/null || true)
-    d_phase=$(kubectl get pod -n "$ns" "$d_pod" \
-            -o jsonpath='{.status.phase}' 2>/dev/null || true)
-    d_started=$(kubectl get pod -n "$ns" "$d_pod" \
-            -o jsonpath='{.status.containerStatuses[0].started}' 2>/dev/null || true)
-    d_ready_cond=$(kubectl get pod -n "$ns" "$d_pod" \
-            -o jsonpath='{range .status.conditions[?(@.type=="PodReadyToStartContainers")]}{.status}{end}' 2>/dev/null || true)
-    d_pvc_bound=$(kubectl get pvc -n "$ns" --no-headers 2>/dev/null \
-            | awk '$2!="Bound"' | wc -l | tr -d ' ')
-    d_pull_err=$(kubectl get events -n "$ns" --field-selector=reason=Failed \
-            -o jsonpath='{range .items[*]}{.message}{"\n"}{end}' 2>/dev/null \
-            | grep -iE 'pull|image' | head -1 || true)
-    # Detect missing-secret / missing-configmap (CreateContainerConfigError).
-    local d_missing_ref
-    d_missing_ref=$(kubectl get events -n "$ns" --field-selector=reason=Failed \
-            -o jsonpath='{range .items[*]}{.message}{"\n"}{end}' 2>/dev/null \
-            | grep -iE '(secret|configmap) "[^"]+" not found' | head -1 || true)
-
-    if (( d_pvc_bound > 0 )); then
-        warn "Likely cause: PVC binding failure ($d_pvc_bound PVC(s) not Bound)."
-    elif [[ -n "$d_missing_ref" ]]; then
-        warn "Likely cause: missing referenced resource: ${d_missing_ref}"
-        warn "Create the missing Secret/ConfigMap (often produced by a prior bootstrap step) and retry."
-    elif [[ -n "$d_pull_err" ]]; then
-        warn "Likely cause: image pull error: ${d_pull_err}"
-    elif [[ "$d_started" == "true" && "$d_ready_cond" != "True" ]]; then
-        warn "Likely cause: kubelet status-sync wedge (container started but"
-        warn "PodReadyToStartContainers stays False)."
-        warn "Recovery: fully restart your Kubernetes runtime, then re-run this script."
-        warn "  microk8s : sudo microk8s stop && sudo microk8s start"
-        warn "  k3s      : sudo systemctl restart k3s"
-        warn "  kubeadm  : sudo systemctl restart kubelet containerd"
-    elif [[ -n "$d_ip" && "$d_phase" == "Pending" ]]; then
-        warn "Likely cause: kubelet wedge (IP assigned but phase still Pending)."
-        warn "Recovery: fully restart your Kubernetes runtime, then re-run this script."
-        warn "  microk8s : sudo microk8s stop && sudo microk8s start"
-        warn "  k3s      : sudo systemctl restart k3s"
-        warn "  kubeadm  : sudo systemctl restart kubelet containerd"
-    else
-        warn "Cause unclear. Check 'kubectl describe pod -n $ns $d_pod' for details."
-    fi
-    return 1
-}
-
 # cri_cleanup() and kubelite_restart() are defined in scripts/lib/lib-runtime.sh
 # (sourced near the top of this file) so step destroy() paths can reuse them.
 
@@ -771,7 +606,7 @@ validate_config() {
     _file_header "${cluster_claim_file}" "Cluster checks (the Cluster claim)"
 
     MAIL_SERVICE_MODE="$(gentian_mail_service_mode)"
-    if [[ "${MAIL_SERVICE_MODE}" != "external" && "${MAIL_SERVICE_MODE}" != "kernel" ]]; then
+    if [[ "${MAIL_SERVICE_MODE}" != "external" && "${MAIL_SERVICE_MODE}" != "system" ]]; then
         echo "  [INVALID]  MAIL_SERVICE_MODE=${MAIL_SERVICE_MODE}  — must be 'external' or 'kernel' (set in ${cluster_claim_file})"
         (( errors++ )) || true
     else
@@ -787,11 +622,11 @@ validate_config() {
 
     NETWORK_MODE="${NETWORK_MODE:-tunnel}"
     if ! mail_network_mode_compatible "${MAIL_SERVICE_MODE}" "${NETWORK_MODE}"; then
-        echo "  [INVALID]  MAIL_SERVICE_MODE=kernel with NETWORK_MODE=tunnel"
-        echo "             Kernel mail (Postfix/Dovecot) needs a reachable SMTP ingress; use MAIL_SERVICE_MODE=external with an SMTP relay on tunnel clusters."
+        echo "  [INVALID]  MAIL_SERVICE_MODE=system with NETWORK_MODE=tunnel"
+        echo "             A cluster running its own mail stack needs a reachable SMTP ingress; use MAIL_SERVICE_MODE=external with an SMTP relay on tunnel clusters."
         (( errors++ )) || true
-    elif [[ "${MAIL_SERVICE_MODE}" == "kernel" ]]; then
-        echo "  [OK]       MAIL_SERVICE_MODE=kernel with NETWORK_MODE=${NETWORK_MODE}"
+    elif [[ "${MAIL_SERVICE_MODE}" == "system" ]]; then
+        echo "  [OK]       MAIL_SERVICE_MODE=system with NETWORK_MODE=${NETWORK_MODE}"
     fi
 
     # KERNEL_DOMAIN has exactly one authored copy — the cluster's Crossplane
@@ -1399,7 +1234,7 @@ prompt_mail_mode() {
     fi
     export MAIL_SERVICE_MODE
 
-    if [[ "${MAIL_SERVICE_MODE}" == "kernel" && "${NETWORK_MODE:-tunnel}" != "static-ip" ]]; then
+    if [[ "${MAIL_SERVICE_MODE}" == "system" && "${NETWORK_MODE:-tunnel}" != "static-ip" ]]; then
         error "mail.serviceMode=kernel requires networkMode=static-ip; this cluster is ${NETWORK_MODE:-tunnel}."
         error "  Choose external, or re-run with NETWORK_MODE=static-ip."
         exit 1
@@ -1626,12 +1461,19 @@ _is_testnet_ip() {
 # blocks ALL matching resource creation cluster-wide — including Crossplane's
 # own pods, before Kyverno is ever reinstalled later in the sequence.
 #
-# Safe to call unconditionally: only acts when the kyverno namespace is
-# absent (i.e. Kyverno is not actually running) but its webhook
+# Safe to call unconditionally: only acts when no Kyverno admission controller
+# is deployed anywhere (i.e. Kyverno is not actually running) but its webhook
 # registrations remain. A healthy, running Kyverno is left untouched.
+#
+# Presence is read from the workload, not from a namespace name: which
+# namespace Kyverno lives in is the layout's business (kyverno under v4,
+# kernel-admission under v5), and asking for one name would tear the live
+# webhooks off a perfectly healthy Kyverno installed under the other.
 # =============================================================================
 cleanup_orphaned_kyverno_webhooks() {
-    kubectl get namespace kyverno >/dev/null 2>&1 && return 0
+    kubectl get deployments --all-namespaces \
+        -l app.kubernetes.io/part-of=kyverno -o name 2>/dev/null \
+        | grep -q . && return 0
 
     local hooks
     hooks=$(kubectl get mutatingwebhookconfiguration,validatingwebhookconfiguration \
@@ -1908,11 +1750,26 @@ check_prereqs() {
         _os_tag="$(yq_get '.image.tag' "${_os_values}" 2>/dev/null || true)"
     fi
     resolve_gentian_os_image_tag
-    _os_tag="${_os_tag:-${GENTIAN_OS_IMAGE_TAG}}"
-    if validate_image_tag "${_os_repo}" "${_os_tag}"; then
-        success "Operator image ${_os_repo}:${_os_tag} exists"
-    else
-        error "  Set image.tag in ${_os_values} to a tag that exists."
+    # Two tags can decide what runs — the one in the cluster's values file and
+    # the one the installer renders into the Application — and which of them
+    # wins is the Application's business, not this check's. Checking one and
+    # announcing it as "the operator image" is how a run reported a tag the
+    # cluster was never going to pull. Both are checked, and each is named.
+    local _os_ok=1 _t
+    for _t in "${_os_tag}" "${GENTIAN_OS_IMAGE_TAG:-}"; do
+        [[ -n "${_t}" ]] || continue
+        if validate_image_tag "${_os_repo}" "${_t}"; then
+            success "Operator image ${_os_repo}:${_t} exists"
+        else
+            error "  ${_os_repo}:${_t} does not exist."
+            error "  Set image.tag in ${_os_values}, or GENTIAN_OS_IMAGE_TAG, to a tag that does."
+            _os_ok=0
+        fi
+    done
+    if [[ -n "${_os_tag}" && -n "${GENTIAN_OS_IMAGE_TAG:-}" && "${_os_tag}" != "${GENTIAN_OS_IMAGE_TAG}" ]]; then
+        info "  The cluster's values file says ${_os_tag}; this run renders ${GENTIAN_OS_IMAGE_TAG}."
+    fi
+    if [[ "${_os_ok}" != "1" ]]; then
         missing=$((missing + 1))
     fi
 
@@ -2262,7 +2119,6 @@ gentian_claim_name() {
 }
 
 gentian_cluster_claim_name()  { gentian_claim_name cluster    dev-cluster;    }
-gentian_infradata_claim_name() { gentian_claim_name infra-data dev-infra-data; }
 gentian_suze_claim_name()      { gentian_claim_name suze       dev-suze;       }
 
 # =============================================================================
@@ -2426,10 +2282,44 @@ _verify_gentian_os_ref_exists() {
 # asks ghcr.io whether the tag exists, and the helm install pulls it. Validating
 # a different tag than the install pulls is a check that passes for the wrong
 # image — which is what the shared "develop" default was doing.
+#
+# WHY A BRANCH RESOLVES TO A COMMIT AND NOT TO THE BRANCH TAG
+# ------------------------------------------------------------
+# CI publishes both `<branch>` and `<branch>-<sha>`, and the branch tag moves.
+# A Deployment that names it never rolls on its own — the tag string does not
+# change, so nothing reconciles — and a pod that restarts for an unrelated
+# reason silently picks up whatever the tag meant at that second. That is not
+# hypothetical: the director spent an afternoon serving a binary from before
+# the branch, because it restarted while CI was still building, and nothing
+# anywhere said so.
+#
+# So a branch resolves to the image of THIS CHECKOUT'S COMMIT. It is the right
+# answer for a second reason: B-01 renders the bootstrap manifests from this
+# checkout, so pinning the image built from the same commit makes the manifests
+# and the binary one thing rather than two that agree by habit. A commit CI has
+# not published yet resolves to nothing, and validate_image_tag says so before
+# anything is deployed — which is the failure we want, and the opposite of
+# running an older build without noticing.
+#
+# Nothing rolls the cluster forward on its own any more. That is a real loss
+# and a deliberate one: nothing ever did here either, because the image-updater
+# annotations the bootstrap chart wrote were read by nobody (the deployed
+# updater is v1.x, which acts on `ImageUpdater` CRs and reads an Application's
+# annotations only when a CR points it at them). `./install.sh --only B-01`
+# advances the pin, which is one command and is honest about what it does.
 # =============================================================================
 resolve_gentian_os_image_tag() {
     if [[ -n "${GENTIAN_OS_IMAGE_TAG:-}" ]]; then
         export GENTIAN_OS_IMAGE_TAG
+        case "${GENTIAN_OS_IMAGE_TAG}" in
+            *-[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]*|[0-9]*.[0-9]*.[0-9]*) ;;
+            *)
+                warn "GENTIAN_OS_IMAGE_TAG=${GENTIAN_OS_IMAGE_TAG} names a tag that moves."
+                warn "  A Deployment on a moving tag never rolls by itself, and a pod that"
+                warn "  restarts picks up whatever the tag means then. Unset it to pin the"
+                warn "  image built from this checkout's commit."
+                ;;
+        esac
         return 0
     fi
     resolve_gentian_os_branch
@@ -2448,214 +2338,22 @@ resolve_gentian_os_image_tag() {
             export GENTIAN_OS_IMAGE_TAG="develop"
             ;;
         *)
-            # A branch CI does not publish from lands here and resolves to a tag
-            # that does not exist. That is the intended outcome: validate_image_tag
-            # answers it with a 404 before anything is deployed, which is the
-            # whole reason that check exists.
-            export GENTIAN_OS_IMAGE_TAG="${GENTIAN_OS_BRANCH}"
+            # A branch CI publishes from: the image of this checkout's commit.
+            # A branch it does not publish from resolves to a tag that does not
+            # exist, and validate_image_tag answers that with a 404 before
+            # anything is deployed, which is the whole reason that check exists.
+            local _sha
+            _sha="$(git -C "${SCRIPT_DIR}" rev-parse --short=7 HEAD 2>/dev/null || true)"
+            if [[ -n "${_sha}" ]]; then
+                export GENTIAN_OS_IMAGE_TAG="${GENTIAN_OS_BRANCH}-${_sha}"
+            else
+                # No checkout to read a commit from — an install from a tarball.
+                # The branch tag is all there is, and it moves.
+                warn "This is not a git checkout, so the operator image is the branch tag ${GENTIAN_OS_BRANCH}, which moves."
+                export GENTIAN_OS_IMAGE_TAG="${GENTIAN_OS_BRANCH}"
+            fi
             ;;
     esac
-}
-
-# =============================================================================
-# apply_bootstrap_application — render one bootstrap Application from
-# kernel/bootstrap/chart and kubectl apply it.
-#
-# Bootstrap Applications are applied by install.sh from the local checkout
-# rather than read from Git by ArgoCD, which is exactly why per-cluster values
-# (STORAGE_CLASS) reach them at all: they are the objects that install the agent
-# that will read everything else from Git.
-# =============================================================================
-# _bootstrap_chart_values — the --set-string flags every bootstrap render passes.
-#
-# One list with two callers, because there were two lists with two callers and
-# they drifted. render_bootstrap_application (the drift check) and
-# apply_bootstrap_application (the apply) each carried their own copy of eleven
-# identical flags; llmEnabled was added to the first and not the second, so the
-# check compared against a render carrying the claim's llm.enabled while the
-# apply wrote one carrying the chart default. The portal was applied with
-# llm.enabled false on a cluster whose claim says true, GENTIAN_CAPABILITIES
-# came out empty, and the LLM tile it gates could not appear.
-#
-# render_bootstrap_application's own comment already said why this must not
-# happen: "a check that renders differently from the apply is worse than no
-# check: it would report drift that applying cannot fix, or miss drift that it
-# could." It managed both.
-#
-# Emitted one argument per line and read back with mapfile, so a value
-# containing spaces stays a single argument.
-_bootstrap_chart_values() {
-    printf '%s\n' \
-        --set-string "gentianOsBranch=${GENTIAN_OS_BRANCH}" \
-        --set-string "osRepo=${GENTIAN_OS_REPO:-}" \
-        --set-string "appsRepo=${GENTIAN_APPS_REPO:-}" \
-        --set-string "deploymentsRepo=${GENTIAN_DEPLOYMENTS_REPO:-}" \
-        --set-string "uiRepo=${GENTIAN_UI_REPO:-}" \
-        --set-string "storageClass=${STORAGE_CLASS}" \
-        --set-string "stage=${GENTIAN_DEPLOYMENTS_STAGE}" \
-        --set-string "kernelDomain=${KERNEL_DOMAIN:-}" \
-        --set-string "dnsProvider=${DNS_PROVIDER:-cloudflare}" \
-        --set-string "networkMode=${NETWORK_MODE:-tunnel}" \
-        --set-string "llmEnabled=${LLM_SUPPORT:-false}" \
-        --set-string "cluster=${GENTIAN_DEPLOYMENTS_CLUSTER_ID}"
-}
-
-# render_bootstrap_application <name> <outfile>
-#
-# The render half of apply_bootstrap_application, split out so the drift check
-# in B-03 renders EXACTLY what the apply renders. A second renderer would be a
-# second thing to keep in step, and a check that renders differently from the
-# apply is worse than no check: it would report drift that applying cannot fix,
-# or miss drift that it could.
-#
-# Returns 2 for "this template deliberately renders nothing" (external-dns on a
-# cluster with no DNS provider), 1 for a real render failure, 0 on success.
-# Never exits — the caller decides, because check() must not kill an install.
-render_bootstrap_application() {
-    local name="$1" out="$2"
-    local chart="${SCRIPT_DIR}/kernel/bootstrap/chart"
-
-    [[ -f "${chart}/templates/${name}.yaml" ]] || return 1
-    [[ -n "${STORAGE_CLASS:-}" ]] || return 1
-    [[ -n "${GENTIAN_DEPLOYMENTS_STAGE:-}" ]] || return 1
-    [[ -n "${GENTIAN_DEPLOYMENTS_CLUSTER_ID:-}" ]] || return 1
-    resolve_gentian_os_branch || return 1
-
-    local -a values=(); local _val
-    # read loop, not mapfile: macOS ships bash 3.2, which has neither mapfile
-    # nor readarray (scripts/lint/lint-portability.sh enforces this).
-    while IFS= read -r _val; do values+=("${_val}"); done < <(_bootstrap_chart_values)
-    helm template gentian-bootstrap "${chart}" -s "templates/${name}.yaml" \
-        -f "${SCRIPT_DIR}/kernel/platforms.yaml" \
-        "${values[@]}" >"${out}" 2>/dev/null || return 1
-
-    [[ -s "${out}" ]] || return 2
-    return 0
-}
-
-# bootstrap_application_matches <template> <object-name>
-#
-# Whether the live Application still carries what its template declares.
-#
-# Returns 0 matches, 1 drifted, 2 cannot tell. "Cannot tell" is its own answer
-# and never means drift: a missing python3, an unreadable object or a render
-# that needs values this shell has not resolved must not make a step re-apply
-# on every run.
-bootstrap_application_matches() {
-    local tmpl="$1" obj="$2" rendered live rc
-    command -v python3 >/dev/null 2>&1 || return 2
-
-    rendered="$(mktemp)"; live="$(mktemp)"
-    render_bootstrap_application "${tmpl}" "${rendered}"; rc=$?
-    if [[ ${rc} -ne 0 ]]; then
-        rm -f "${rendered}" "${live}"
-        # 2 from the render is "this template deliberately emits nothing",
-        # which is not an Application that can have drifted.
-        [[ ${rc} -eq 2 ]] && return 0
-        return 2
-    fi
-    if ! kubectl get application "${obj}" -n argocd -o json >"${live}" 2>/dev/null; then
-        rm -f "${rendered}" "${live}"
-        return 1   # absent is the strongest possible drift
-    fi
-
-    python3 "${SCRIPT_DIR}/scripts/lib/bootstrap-app-drift.py" "${rendered}" "${live}" >/dev/null 2>&1
-    rc=$?
-    rm -f "${rendered}" "${live}"
-    return ${rc}
-}
-
-# bootstrap_application_drift_report <template> <object-name>
-#
-# The same comparison, printing what differs. Used by apply() so a re-apply
-# says why it was needed rather than repeating itself silently.
-bootstrap_application_drift_report() {
-    local tmpl="$1" obj="$2" rendered live
-    command -v python3 >/dev/null 2>&1 || return 0
-    rendered="$(mktemp)"; live="$(mktemp)"
-    if render_bootstrap_application "${tmpl}" "${rendered}" &&
-       kubectl get application "${obj}" -n argocd -o json >"${live}" 2>/dev/null; then
-        python3 "${SCRIPT_DIR}/scripts/lib/bootstrap-app-drift.py" "${rendered}" "${live}" 2>/dev/null || true
-    fi
-    rm -f "${rendered}" "${live}"
-}
-
-apply_bootstrap_application() {
-    local name="$1"
-    local chart="${SCRIPT_DIR}/kernel/bootstrap/chart"
-
-    # One chart, one template per Application. Helm is what makes the Argo CD
-    # multi-source "$values" references in these manifests safe to carry: $values
-    # is not Helm syntax, so it survives rendering untouched with no allowlist of
-    # substitutable names to keep in step with the manifests.
-    # A name with no template is a caller naming something that does not exist —
-    # a typo, or a template renamed without its callers. This used to fall
-    # through to kernel/bootstrap/${name}-application.yaml, the pre-chart layout,
-    # which has not existed for months: kubectl reported "no such file", the
-    # caller announced "Applied ${name}-application.yaml" regardless, and the
-    # Application was never created. Renaming cnpg-cluster.yaml to
-    # kernel-admin.yaml walked straight into it.
-    if [[ ! -f "${chart}/templates/${name}.yaml" ]]; then
-        error "No bootstrap template ${chart}/templates/${name}.yaml for '${name}'."
-        error "  Every name passed here must match a template in that directory."
-        exit 1
-    fi
-
-    if [[ -z "${STORAGE_CLASS:-}" ]]; then
-        error "STORAGE_CLASS is empty while rendering ${name}."
-        error "  resolve_storage_class() should have set it during pre-flight."
-        exit 1
-    fi
-    if [[ -z "${GENTIAN_DEPLOYMENTS_STAGE:-}" ]]; then
-        error "GENTIAN_DEPLOYMENTS_STAGE is empty while rendering ${name}."
-        exit 1
-    fi
-    # --show-only filters the OUTPUT; Helm still evaluates every template in
-    # the chart. So the `required` on root-applicationset.yaml's cluster id
-    # fires here too, even though this call renders a different file — and
-    # the whole render fails, leaving kubectl with nothing on stdin.
-    if [[ -z "${GENTIAN_DEPLOYMENTS_CLUSTER_ID:-}" ]]; then
-        error "GENTIAN_DEPLOYMENTS_CLUSTER_ID is empty while rendering ${name}."
-        error "  Set it in install.env; every chart template is evaluated on"
-        error "  each render, and one of them requires it."
-        exit 1
-    fi
-    resolve_gentian_os_branch
-
-    # Rendered to a file rather than piped: a pipeline reports the exit
-    # status of kubectl, so a failed render reached it as empty input and
-    # was announced as a successful apply.
-    local rendered; rendered="$(mktemp)"
-    local -a values=(); local _val
-    # read loop, not mapfile: macOS ships bash 3.2, which has neither mapfile
-    # nor readarray (scripts/lint/lint-portability.sh enforces this).
-    while IFS= read -r _val; do values+=("${_val}"); done < <(_bootstrap_chart_values)
-    if ! helm template gentian-bootstrap "${chart}" -s "templates/${name}.yaml" \
-            -f "${SCRIPT_DIR}/kernel/platforms.yaml" \
-            "${values[@]}" >"${rendered}"; then
-        rm -f "${rendered}"
-        error "Rendering ${name} failed; nothing was applied."
-        exit 1
-    fi
-    # An empty render is a decision for some templates and a failure for the
-    # rest. external-dns emits nothing when the cluster has no DNS provider,
-    # which is the correct shape — a controller with no provider would
-    # authenticate-fail every interval and never write a record.
-    if [[ ! -s "${rendered}" ]]; then
-        rm -f "${rendered}"
-        if [[ "${name}" == "external-dns" ]]; then
-            info "No DNS provider for this cluster; external-dns not installed."
-            return 0
-        fi
-        error "Rendering ${name} produced nothing; nothing was applied."
-        exit 1
-    fi
-    kubectl apply -f "${rendered}" || {
-        rm -f "${rendered}"
-        error "Applying ${name} failed."
-        exit 1
-    }
-    rm -f "${rendered}"
 }
 
 # =============================================================================
@@ -2722,65 +2420,6 @@ resolve_kernel_domain_from_claim() {
     fi
 }
 
-
-# =============================================================================
-# Crossplane platform compositions (gentian-os only)
-# =============================================================================
-# Generic app-default and tenant/cluster compositions live in gentian-os.
-# Profile-specific compositions are synced from gentian-apps via the
-# catalogue-sync ApplicationSet the gentian-apps Repository claim composes
-# (see scripts/steps/B-12-apps-repository.sh).
-
-apply_crossplane_app_compositions() {
-    local comp_dir="${SCRIPT_DIR}/crossplane/compositions"
-    info "Applying Composition app-default..."
-    kubectl apply -f "${comp_dir}/app-default.yaml"
-}
-
-apply_crossplane_platform_compositions() {
-    info "Applying Composition (cluster-default)..."
-    kubectl apply -f "${SCRIPT_DIR}/crossplane/compositions/cluster-default.yaml"
-    apply_crossplane_app_compositions
-    info "Applying Composition (tenant-default)..."
-    kubectl apply -f "${SCRIPT_DIR}/crossplane/compositions/tenant-default.yaml"
-}
-
-apply_crossplane_platform_compositions_update() {
-    local f
-    shopt -s nullglob
-    for f in "${SCRIPT_DIR}"/crossplane/compositions/*.yaml; do
-        info "Applying Composition $(basename "${f}")..."
-        kubectl apply -f "${f}"
-    done
-    shopt -u nullglob
-}
-
-# =============================================================================
-# 1. Create namespaces (idempotent)
-# =============================================================================
-create_namespaces() {
-    banner "Creating namespaces"
-
-    # The same list A-03's check() verifies, so "all namespaces already exist"
-    # and "not satisfied" can no longer both be true.
-    local namespaces=()
-    for ns in $(gentian_kernel_namespaces); do namespaces+=("$ns"); done
-    if [[ "$INSTALL_CLUSTER_INFRA" == "1" ]]; then
-        namespaces+=(stakater-system cnpg-system cert-manager)
-        if [[ "${ROUTING_MODE:-gateway}" == "gateway" ]]; then
-            namespaces+=("${ENVOY_GATEWAY_NAMESPACE}")
-        fi
-    fi
-
-    for ns in "${namespaces[@]}"; do
-        if kubectl get namespace "$ns" &>/dev/null; then
-            success "Namespace $ns already exists."
-        else
-            _kubectl_retry create namespace "$ns"
-            success "Namespace $ns created."
-        fi
-    done
-}
 
 # =============================================================================
 # 1b. Pre-warm cluster (distro-agnostic PLEG/CRI-race mitigation)

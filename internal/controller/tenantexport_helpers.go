@@ -158,18 +158,22 @@ func setExportCondition(
 
 // profileBackupSpec returns the profile's backup contract, or nil when it
 // declares none — which the accessors read as the platform default.
-func profileBackupSpec(profile *gentianov1alpha1.AppProfile) *gentianov1alpha1.BackupSpec {
+func profileBackupSpec(profile *gentianov1alpha1.ComponentProfile) *gentianov1alpha1.BackupSpec {
 	if profile == nil {
 		return nil
 	}
 	return profile.Spec.Backup
 }
 
-func profileChartVersion(profile *gentianov1alpha1.AppProfile) string {
-	if profile == nil {
+func profileChartVersion(profile *gentianov1alpha1.ComponentProfile) string {
+	// Chart() is nil for an entry that is not delivered as one -- an API
+	// entry, an addon. Neither has a chart version, and an export that
+	// recorded one would be recording a fiction.
+	chart := profile.Chart()
+	if chart == nil {
 		return ""
 	}
-	return profile.Spec.Chart.Version
+	return chart.Version
 }
 
 func unitKinds(units []captureUnit) []string {
@@ -223,7 +227,7 @@ func resolveProfile(
 	c client.Client,
 	tenant *gentianov1alpha1.Tenant,
 	appName string,
-) (*gentianov1alpha1.AppProfile, error) {
+) (*gentianov1alpha1.ComponentProfile, error) {
 	installed := false
 	for _, app := range tenant.Spec.Apps {
 		if app.Profile == appName {
@@ -241,7 +245,7 @@ func resolveProfile(
 	}
 	profile, ok := appProfileFromIndex(index, appName)
 	if !ok {
-		return nil, fmt.Errorf("AppProfile %q not found in the catalogue", appName)
+		return nil, fmt.Errorf("ComponentProfile %q not found in the catalogue", appName)
 	}
 	return profile, nil
 }

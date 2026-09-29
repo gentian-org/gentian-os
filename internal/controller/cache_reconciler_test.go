@@ -28,44 +28,47 @@ import (
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 	"github.com/gentian-org/gentian-os/internal/kernel"
+	"github.com/gentian-org/gentian-os/internal/layout"
 )
 
 // newRedisProfile creates a minimal AppProfile that requires a Redis cache.
-func newRedisProfile(name string) *gentianov1alpha1.AppProfile {
-	return &gentianov1alpha1.AppProfile{
+func newRedisProfile(name string) *gentianov1alpha1.ComponentProfile {
+	return &gentianov1alpha1.ComponentProfile{
 		ObjectMeta: metav1.ObjectMeta{Name: name},
-		Spec: gentianov1alpha1.AppProfileSpec{
-			DisplayName: name,
-			Chart: gentianov1alpha1.ChartRef{
+		Spec: gentianov1alpha1.ComponentProfileSpec{
+			Classes: []gentianov1alpha1.ComponentClass{gentianov1alpha1.ComponentClassApp}, Launch: gentianov1alpha1.ComponentLaunchNone, TrustTier: gentianov1alpha1.TrustTierCertified, Version: "1.0.0",
+			Package: gentianov1alpha1.PackageSpec{Chart: &gentianov1alpha1.ChartRef{
 				Repository: "https://charts.example.com",
 				Name:       name,
 				Version:    "1.0.0",
-			},
-			KernelRequirements: &gentianov1alpha1.KernelRequirements{
+			}},
+
+			Requires: &gentianov1alpha1.RequirementSpec{Services: &gentianov1alpha1.ServiceRequirements{
 				Cache: &gentianov1alpha1.CacheRequirement{
 					Engine: gentianov1alpha1.CacheEngineRedis,
 				},
-			},
+			}},
 		},
 	}
 }
 
 // newMemcachedProfile creates a minimal AppProfile that requires a Memcached cache.
-func newMemcachedProfile(name string) *gentianov1alpha1.AppProfile {
-	return &gentianov1alpha1.AppProfile{
+func newMemcachedProfile(name string) *gentianov1alpha1.ComponentProfile {
+	return &gentianov1alpha1.ComponentProfile{
 		ObjectMeta: metav1.ObjectMeta{Name: name},
-		Spec: gentianov1alpha1.AppProfileSpec{
-			DisplayName: name,
-			Chart: gentianov1alpha1.ChartRef{
+		Spec: gentianov1alpha1.ComponentProfileSpec{
+			Classes: []gentianov1alpha1.ComponentClass{gentianov1alpha1.ComponentClassApp}, Launch: gentianov1alpha1.ComponentLaunchNone, TrustTier: gentianov1alpha1.TrustTierCertified, Version: "1.0.0",
+			Package: gentianov1alpha1.PackageSpec{Chart: &gentianov1alpha1.ChartRef{
 				Repository: "https://charts.example.com",
 				Name:       name,
 				Version:    "1.0.0",
-			},
-			KernelRequirements: &gentianov1alpha1.KernelRequirements{
+			}},
+
+			Requires: &gentianov1alpha1.RequirementSpec{Services: &gentianov1alpha1.ServiceRequirements{
 				Cache: &gentianov1alpha1.CacheRequirement{
 					Engine: gentianov1alpha1.CacheEngineMemcached,
 				},
-			},
+			}},
 		},
 	}
 }
@@ -109,7 +112,7 @@ func TestCache_CreatesRedisACLJob(t *testing.T) {
 	t.Parallel()
 	profile := newRedisProfile("redis-app1")
 	if err := testClient.Create(context.Background(), profile); err != nil {
-		t.Fatalf("create AppProfile: %v", err)
+		t.Fatalf("create ComponentProfile: %v", err)
 	}
 	t.Cleanup(func() { _ = testClient.Delete(context.Background(), profile) })
 
@@ -129,7 +132,7 @@ func TestCache_CreatesRedisACLJob(t *testing.T) {
 	job := &batchv1.Job{}
 	waitFor(t, jobAppearTimeout, func() bool {
 		return testClient.Get(context.Background(),
-			types.NamespacedName{Name: "redis-acl-rediscreate-redis-app1", Namespace: "platform-kernel"}, job) == nil
+			types.NamespacedName{Name: "redis-acl-rediscreate-redis-app1", Namespace: "system-cache"}, job) == nil
 	})
 
 	if job.Labels["gentianos.io/tenant"] != "rediscreate" {
@@ -166,7 +169,7 @@ func TestCache_CreatesMemcachedWorkload(t *testing.T) {
 	t.Parallel()
 	profile := newMemcachedProfile("mc-app1")
 	if err := testClient.Create(context.Background(), profile); err != nil {
-		t.Fatalf("create AppProfile: %v", err)
+		t.Fatalf("create ComponentProfile: %v", err)
 	}
 	t.Cleanup(func() { _ = testClient.Delete(context.Background(), profile) })
 
@@ -211,7 +214,7 @@ func TestCache_SetsReadyWhenRedisJobsDone(t *testing.T) {
 	t.Parallel()
 	profile := newRedisProfile("redis-app2")
 	if err := testClient.Create(context.Background(), profile); err != nil {
-		t.Fatalf("create AppProfile: %v", err)
+		t.Fatalf("create ComponentProfile: %v", err)
 	}
 	t.Cleanup(func() { _ = testClient.Delete(context.Background(), profile) })
 
@@ -239,9 +242,9 @@ func TestCache_SetsReadyWhenRedisJobsDone(t *testing.T) {
 	waitFor(t, jobAppearTimeout, func() bool {
 		job := &batchv1.Job{}
 		return testClient.Get(context.Background(),
-			types.NamespacedName{Name: "redis-acl-cacheready-redis-app2", Namespace: "platform-kernel"}, job) == nil
+			types.NamespacedName{Name: "redis-acl-cacheready-redis-app2", Namespace: "system-cache"}, job) == nil
 	})
-	markJobComplete(t, "redis-acl-cacheready-redis-app2", "platform-kernel")
+	markJobComplete(t, "redis-acl-cacheready-redis-app2", "system-cache")
 
 	// Phase=Ready and CacheReady=True should follow.
 	waitFor(t, tenantReadyTimeout, func() bool {
@@ -281,7 +284,7 @@ func TestCache_DeleteDeletePolicy_CreatesDeleteJobsAndDeletesApplication(t *test
 	tenant := &gentianov1alpha1.Tenant{
 		ObjectMeta: metav1.ObjectMeta{Name: "cachedelete"},
 		Spec: gentianov1alpha1.TenantSpec{
-			DisplayName:    "Cache Delete Co",
+			DisplayName:    "Test Tenant",
 			Domain:         "cachedelete.example.com",
 			DeletionPolicy: gentianov1alpha1.DeletionPolicyDelete,
 			Apps: []gentianov1alpha1.TenantApp{
@@ -298,7 +301,7 @@ func TestCache_DeleteDeletePolicy_CreatesDeleteJobsAndDeletesApplication(t *test
 	waitFor(t, jobAppearTimeout, func() bool {
 		job := &batchv1.Job{}
 		return testClient.Get(context.Background(),
-			types.NamespacedName{Name: "redis-acl-cachedelete-redis-app3", Namespace: "platform-kernel"}, job) == nil
+			types.NamespacedName{Name: "redis-acl-cachedelete-redis-app3", Namespace: "system-cache"}, job) == nil
 	})
 	waitFor(t, jobAppearTimeout, func() bool {
 		dep := &appsv1.Deployment{}
@@ -311,7 +314,7 @@ func TestCache_DeleteDeletePolicy_CreatesDeleteJobsAndDeletesApplication(t *test
 		t.Fatalf("delete tenant: %v", err)
 	}
 	// deleteIdentity runs before deleteCache; mark its jobs.
-	go markJobCompleteWhenReady("keycloak-realm-delete-cachedelete", "platform-kernel")
+	go markJobCompleteWhenReady("keycloak-realm-delete-cachedelete", layout.Namespace(layout.Authentication))
 
 	// Redis delete Job should appear.
 	deleteJob := waitForKernelJob(t, "redis-acl-delete-cachedelete-redis-app3", "cachedelete")

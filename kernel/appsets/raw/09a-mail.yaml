@@ -1,0 +1,93 @@
+---
+# The platform's own mail stack: Postfix and Dovecot, in the system tier.
+#
+# Skipped entirely unless mail.serviceMode is `system` — the wrapper drops this
+# file by name, because raw files are copied verbatim and a Helm conditional
+# cannot live inside one. A cluster that relays through a provider runs neither
+# and composes neither namespace.
+#
+# Both land in system-mail. namespace-cleanup.md §2.2 wants Postfix's public
+# surface in system-mail-dmz and only the mailbox store and the DKIM keys in
+# system-mail; that split is a real change to both charts — Postfix would have
+# to reach the signer across a namespace boundary, with the network policy to
+# match — and is recorded as outstanding rather than half-done here. The
+# namespace exists and carries tier system-dmz, and the operator already writes
+# the mail DNS records into it.
+#
+# Sync wave 9, beside identity: Dovecot verifies a Keycloak realm's submission
+# credential, so it has nothing to check before Keycloak is up, and Postfix asks
+# Dovecot.
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: gentian-mail
+  namespace: ns.gitops.placeholder
+  annotations:
+    argocd.argoproj.io/sync-wave: "9"
+spec:
+  syncPolicy:
+    preserveResourcesOnDeletion: true
+  goTemplate: true
+  goTemplateOptions: ["missingkey=error"]
+  generators:
+  - matrix:
+      generators:
+      - list:
+          elements:
+          - env: dev
+      - list:
+          elements:
+          - app: dovecot
+          - app: postfix
+  template:
+    metadata:
+      name: '{{.app}}-{{.env}}'
+      annotations:
+        argocd.argoproj.io/sync-wave: "9"
+    spec:
+      project: gentian
+      source:
+        repoURL: https://github.com/gentian-org/gentian-os
+        targetRevision: develop
+        path: kernel/services/{{.app}}/manifests
+        helm:
+          parameters:
+            - name: env
+              value: '{{.env}}'
+            # Where the stack runs. Both charts take this one value and the
+            # operator has to agree with it: it writes Postfix's virtual
+            # mailbox maps and Dovecot's tenant OIDC values into this
+            # namespace, and a Pod can only mount a ConfigMap from its own.
+            # The operator addresses it by function (layout.System("mail")),
+            # so this is that name.
+            - name: servicesNamespace
+              value: 'sys.mail.placeholder'
+            - name: kernelDomain
+              value: 'kernel.domain.placeholder'
+            - name: mailServiceMode
+              value: 'system'
+            - name: storageClass
+              value: 'storage.class.placeholder'
+            # Direct delivery, not a relay: a cluster running its own stack
+            # needs no upstream, and an empty host IS direct delivery. Set
+            # only when the claim also names a smarthost.
+            - name: relayHost
+              value: 'mail.relay.placeholder'
+            - name: egressHost
+              value: 'mail.egress.placeholder'
+      destination:
+        server: https://kubernetes.default.svc
+        namespace: 'sys.mail.placeholder'
+      syncPolicy:
+        automated:
+          prune: true
+          selfHeal: true
+        syncOptions:
+        - CreateNamespace=false
+        - ServerSideApply=true
+        retry:
+          backoff:
+            duration: 15s
+            factor: 2
+            maxDuration: 2m
+          limit: 10

@@ -45,6 +45,10 @@ metadata:
   labels:
     app.kubernetes.io/managed-by: gentian-os
 spec:
+  # The authenticated and perimeter Gateways are two policy domains on one
+  # fleet: the cluster has one address, and two Envoy Services would
+  # contend for it (networking.md §1).
+  mergeGateways: true
   provider:
     type: Kubernetes
     kubernetes:
@@ -63,14 +67,14 @@ spec:
                 matchLabels:
                   app.kubernetes.io/name: envoy
       envoyService:
-        type: LoadBalancer
-        {{- if $pinIP }}
+        type: {{ .Values.envoy.serviceType | default "LoadBalancer" }}
+        {{- if and $pinIP (eq (.Values.envoy.serviceType | default "LoadBalancer") "LoadBalancer") }}
         # Only where the platform accepts an address by IP. AWS NLBs and Azure
         # standard load balancers do not, so they carry the address in an
         # annotation instead and this field would be a lie.
         loadBalancerIP: {{ .Values.nodeIp | quote }}
         {{- end }}
-        {{- with $ann }}
+        {{- with (ternary $ann dict (eq (.Values.envoy.serviceType | default "LoadBalancer") "LoadBalancer")) }}
         annotations:
           {{- range $k, $v := . }}
           {{ $k }}: {{ $v | quote }}

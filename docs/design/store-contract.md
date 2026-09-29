@@ -1,0 +1,176 @@
+# The App Store contract
+
+The App Store runs outside the cluster, on infrastructure the cluster does not
+trust and never calls. This is everything that crosses the boundary, in both
+directions. It is the interface a store implementation is written against.
+
+## 1. Direction of trust
+
+| | |
+|---|---|
+| The cluster calls the store | never |
+| The store calls the cluster | never with an identity of its own. Requests reach the director from the signed-in person's browser, with that person's token |
+| What the store can assert | signed **entitlement statements**, believed because of the key that signed them |
+| What the store can read | whatever the signed-in person may read, through the director's read API |
+| What the store can never supply | an artefact. Charts, images and profile bundles come from the catalogue source, by digest |
+
+The store may trigger and may read. It may not supply and may not decide for a
+tenant.
+
+## 2. Entitlement statements
+
+A statement is a compact JWS (RFC 7515), algorithm `EdDSA` (Ed25519), with the
+store's key id as `kid` in the protected header.
+
+```json
+{
+  "iss": "https://store.example",
+  "aud": "cluster:<cluster id>",
+  "sub": "tenant:<tenant name>",
+  "jti": "<the store's id for this statement>",
+  "iat": 1790000000,
+  "exp": 1821536000,
+  "coordinate": "<catalogue>/<app>",
+  "granted": true,
+  "reason": "",
+  "seats": 25
+}
+```
+
+| Claim | Rule |
+|---|---|
+| `aud` | must be this cluster. A statement for another cluster is refused whoever signed it |
+| `sub` | must be the tenant in the request path |
+| `jti`, `iat` | required. `iat` orders statements about the same entry: **the newest recorded one wins**, and an older one is refused as stale — which is what keeps a grant, delivered again after the revocation that followed it, from bringing the entitlement back. `iat` may not lie in the cluster's future |
+| `exp` | required when `granted` is true, and later than `iat`. It becomes the tuple's condition; an expired grant is recorded and entitles to nothing |
+| `granted: false` | a revocation or a denial. `reason` is required |
+| `coordinate` | `<catalogue>/<app>`, the object entitlement is checked against |
+
+**Keys are pinned, not fetched.** The cluster believes the keys listed on its
+Cluster claim (`store.signingKeys`, changed only under `can_configure`) and no
+others. A key that could be fetched at verification time would make whoever
+controls the fetch the issuer. Rotation is adding the new key to the claim
+before the store signs with it, and removing the old one after.
+
+## 3. Delivery
+
+```
+POST /v1/tenants/{t}/entitlements
+{"grant": "<compact JWS>"}
+```
+
+| Statement | Who must deliver it | Why |
+|---|---|---|
+| grant | a person with `can_install_app` on the tenant, with their token | a grant adds access. The store says the tenant *may*; someone who may install for the tenant says it *does* |
+| revocation | anyone; no token | it only removes access, and its authority is the signature. Requiring the tenant's administrator to deliver it would let them decline to |
+
+| Answer | Meaning |
+|---|---|
+| `202 {"status":"recorded","commit":…}` | committed to `gentian-deployments` and reflected in the authorization store |
+| `200 {"status":"unchanged"}` | this very statement is already the recorded one. Safe to repeat: a delivery that failed half-way is completed by delivering again |
+| `401` | not verifiably the store's — or, for a grant, no valid token |
+| `403` | for another cluster or tenant — or, for a grant, the caller may not install here |
+| `409` | a newer statement about this entry is already recorded |
+| `400` | the statement is incomplete |
+
+The director records the latest fact per entry in
+`clusters/<cluster>/tenants/<tenant>/entitlements.yaml`; history is the git log,
+and the authorization store is rebuilt from that file. A grant is committed
+before its tuple is written and a revocation removes the tuple before it is
+committed, so a failure in between always leaves less access, never more.
+
+Revocation governs install and upgrade. It does not stop a running app: a
+billing event should not take a tenant's data offline.
+
+## 4. Installing
+
+```
+POST /v1/tenants/{t}/apps/{profile}
+{"coordinate": "<catalogue>/<app>"}
+```
+
+with the person's token. The director asks two questions: may this person
+install in this tenant (`can_install_app`), and is this tenant entitled to this
+entry now (`can_install`, with the current time). A cluster with no store sets
+`DIRECTOR_ENTITLEMENTS=off`, explicitly, and the second question is not asked.
+
+## 5. Reading
+
+The store renders cluster state from the director's reads, with the person's
+token, filtered by what that person may see:
+
+```
+GET /v1/tenants/{t}/apps                  installed profiles and their addons
+GET /v1/tenants/{t}/apps/{p}/addons
+GET /v1/tenants/{t}/entitlements          the recorded facts
+```
+
+Reads are authorised by `can_view`, never by the write relation.
+
+## 6. Without the store
+
+The store is the default path to an app and the path of least resistance. It
+is not a gate on the mechanism.
+
+A **catalogue source** is a repository of profile bundles, named on the
+Cluster claim:
+
+```yaml
+catalogue:
+  storeUrl: https://…      # where people are sent for everything else
+  sources:
+  - name: store            # the store's own catalogue; entries need a grant
+    url: https://…
+    access: entitled
+  - name: in-house         # a platform administrator's own repository
+    url: https://…
+    access: open
+    tenants: [demo]        # which tenants may install from it; empty means none
+```
+
+A source publishes `index.yaml` beside its `profiles/` directory, because an
+https server does not list a directory and without it a cluster can install
+from a source by name but cannot say what is in it. The index is the
+technical half and nothing else: name, version, edition, trust tier, digest.
+
+The director serves it — `GET /v1/tenants/{t}/catalogues` and
+`GET /v1/tenants/{t}/catalogues/{source}/entries`, both under `can_view` — so
+a cluster can answer what it holds with no store connection at all.
+
+Three rules make that view the fallback rather than a rival to the store, and
+they are the point rather than an omission:
+
+* **Only `ce` and `pe` are listed.** They are the entries whose value does not
+  depend on a supplier — community, and the operator's own. `me` and `ee`
+  exist because somebody maintains or licenses them; the answer is returned as
+  a count and `storeUrl`, not as rows.
+* **Nothing a shop would show.** No display name, description, icon or price.
+  The store keeps those current and a cluster copying them would go stale.
+* **An entitled source's digest is dropped** before it reaches a caller. There
+  the digest that governs is the one the store stated over its own TLS; a
+  source's own number checked against the same source's own bytes is not a
+  check. An open source's digest IS served, because the trust there is the
+  claim naming the source and no store is in the picture.
+
+When the store is reachable it is where people go, and it adds the listings
+and the entitlements on top of the same coordinates.
+
+Whether an entry may be installed is one question with two answers
+(`catalogue_entry#can_install`): the store granted it, or the entry's source
+is open to the tenant. Opening a source is the platform administrator's act,
+under `can_configure`, recorded as a tuple the operator projects from the
+claim — the same path as the cluster's roles, and declarative the same way,
+so a tenant the claim stops naming loses the access on the next pass.
+Nothing is open by default, and a source is opened per tenant, not per
+cluster. Which catalogue serves an entry (`catalogue_entry#source`) is a
+fact about the coordinate's own spelling and is recorded by the director the
+first time somebody installs it, because a cluster holds no catalogue to
+enumerate up front (AD-3).
+
+What does not change without the store: the install mechanism (fetch the
+bundle at the digest, apply the profile, commit as the person), the
+attribution, the audit trail, and every check on the profile itself — a
+side-loaded profile meets the same CEL rules, admission policies and
+privilege approvals as one the store lists. Only the questions the store
+answers — presentation and payment — go unanswered.
+

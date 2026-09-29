@@ -21,6 +21,7 @@ import (
 	"encoding/json"
 	"time"
 
+	"github.com/gentian-org/gentian-os/internal/layout"
 	appsv1 "k8s.io/api/apps/v1"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -54,7 +55,7 @@ func startTenantProvisioningJobSimulator(ctx context.Context, c client.Client) {
 
 func simulateTenantProvisioningJobsOnce(ctx context.Context, c client.Client) {
 	var cms corev1.ConfigMapList
-	if err := c.List(ctx, &cms, client.InNamespace("platform-kernel"),
+	if err := c.List(ctx, &cms, client.InNamespace(layout.Namespace(layout.Provisioning)),
 		client.MatchingLabels{"gentianos.io/config-type": tenantProvisioningJobsConfigType}); err != nil {
 		return
 	}
@@ -71,7 +72,7 @@ func simulateTenantProvisioningJobsOnce(ctx context.Context, c client.Client) {
 		for j := range jobs {
 			job := jobs[j]
 			if job.Namespace == "" {
-				job.Namespace = "platform-kernel"
+				job.Namespace = layout.Namespace(layout.Authentication)
 			}
 			createIfMissing(ctx, c, &job)
 		}
@@ -94,7 +95,7 @@ func simulateTenantProvisioningJobsOnce(ctx context.Context, c client.Client) {
 				continue
 			}
 			if obj.GetNamespace() == "" {
-				obj.SetNamespace("platform-kernel")
+				obj.SetNamespace(layout.Namespace(layout.Authentication))
 			}
 			createIfMissing(ctx, c, obj)
 			patchSimulatorObjectStatus(ctx, c, obj)
@@ -107,7 +108,7 @@ func provisioningJobsComplete(ctx context.Context, c client.Client, jobs []batch
 		job := jobs[i]
 		ns := job.Namespace
 		if ns == "" {
-			ns = "platform-kernel"
+			ns = layout.Namespace(layout.Authentication)
 		}
 		current := &batchv1.Job{}
 		if err := c.Get(ctx, types.NamespacedName{Name: job.Name, Namespace: ns}, current); err != nil {

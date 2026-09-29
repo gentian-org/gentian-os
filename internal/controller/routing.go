@@ -18,6 +18,7 @@ package controller
 
 import (
 	"fmt"
+	"github.com/gentian-org/gentian-os/internal/layout"
 	"strings"
 	"time"
 )
@@ -28,15 +29,33 @@ const (
 
 	GentianGatewayClassName      = "gentian-envoy"
 	GentianGatewayControllerName = "gateway.envoyproxy.io/gentian-gatewayclass-controller"
-	KernelPublicGatewayName      = "kernel-public-gateway"
-	kernelWildcardTLSSecretName  = "wildcard-tls"
-	envoyGatewayInstallNamespace = "envoy-gateway-system"
-	gatewayPlatformReconcileKey  = "gateway-platform"
-	conditionGatewayReady        = "GatewayReady"
-	conditionTunnelIngressReady  = "TunnelIngressReady"
-	operatorNamespace            = "gentian-system"
-	operatorConfigMapName        = "gentian-os-config"
-	argocdNamespace              = "argocd"
+	// The two edges (networking.md §1): one Envoy fleet, two policy domains,
+	// both Gateways in the edge namespace under mergeGateways. The
+	// authenticated Gateway serves every surface behind a session; the
+	// perimeter Gateway serves surfaces on their own hostname with no
+	// session -- for the kernel, exactly two: the identity provider's realm
+	// endpoints on id.<kernel>, and the ACME challenge on :80.
+	AuthenticatedGatewayName    = "authenticated"
+	PerimeterGatewayName        = "perimeter"
+	kernelWildcardTLSSecretName = "wildcard-tls"
+	gatewayPlatformReconcileKey = "gateway-platform"
+	conditionGatewayReady       = "GatewayReady"
+	conditionTunnelIngressReady = "TunnelIngressReady"
+	operatorConfigMapName       = "gentian-os-config"
+)
+
+// Where the kernel's functions run. Resolved from the layout the chart passes
+// in (internal/layout), which answers the v4 names when a process is started
+// without it — so an operator of this release behaves identically on a cluster
+// that has not been rebuilt.
+var (
+	operatorNamespace = layout.Namespace(layout.Control)
+	argocdNamespace   = layout.Namespace(layout.GitOps)
+	// identityNamespace is where Keycloak answers: the backend its route
+	// points at, and where the jobs that configure it run.
+	identityNamespace = layout.Namespace(layout.Authentication)
+	// observabilityNamespace is where the cluster view runs.
+	observabilityNamespace = layout.Namespace(layout.Observability)
 )
 
 func normalizeRoutingMode(mode string) string {

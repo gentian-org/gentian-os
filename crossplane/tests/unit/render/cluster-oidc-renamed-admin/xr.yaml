@@ -1,0 +1,48 @@
+# The same cluster with the platform admin role renamed.
+#
+# OpenBao's cluster-admin role admits one Keycloak group, and which group that
+# is has to be the one the platform actually provisions the administrator
+# into. Those were two fields: oidc.clusterAdminGroup, defaulted in the XRD,
+# and platformRoles.admin. S1 renamed the role and only one of them moved --
+# and because the API server had already materialised the old default onto
+# every existing composite, the stale value survived the XRD being corrected.
+#
+# The failure was silent and total: the administrator signed in, held
+# gentian:platform:admin, OpenBao wanted /gentian:platform:superadmin, no
+# exchange ever granted cluster-admin, and the install's last step waited
+# thirty minutes for a proof that could never be written.
+#
+# So there is one source now, and this fixture is what holds it to that: a
+# cluster that renames the role must get the renamed group in its OpenBao
+# role, with nothing else edited.
+apiVersion: gentianos.io/v1alpha1
+kind: XCluster
+metadata:
+  name: dev-cluster
+  annotations:
+    crossplane.io/external-name: dev-cluster
+spec:
+  platformRoles:
+    admin: gentian:platform:operators
+  kernelDomain: platform.example.test
+  masterPasswordSecretRef:
+    name: gentian-os-master-password
+    namespace: crossplane-system
+  openbao:
+    server: https://openbao.openbao.svc.cluster.local:8200
+    kvMount: secret
+    authMount: kubernetes
+    kubernetesHost: https://kubernetes.default.svc
+  oidc:
+    discoveryUrl: https://id.platform.example.test/auth/realms/kernel
+    externalUrl: https://bao.platform.example.test
+  argocd:
+    namespace: argocd
+    sourceRepos: []
+  eso:
+    namespace: external-secrets
+    serviceAccount: external-secrets
+  certManager:
+    letsencryptEmail: admin@platform.example.test
+  compositeDeletePolicy: Background
+  resourceRefs: []

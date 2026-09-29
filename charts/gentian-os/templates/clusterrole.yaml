@@ -176,6 +176,7 @@ rules:
     resources:
     - backendtrafficpolicies
     - clienttrafficpolicies
+    - securitypolicies
     verbs:
     - get
     - list
@@ -214,10 +215,10 @@ rules:
   - apiGroups:
     - gentianos.io
     resources:
-    - appcatalogues
     - appgrants
     - apps
     - backuppolicies
+    - components
     - credentialrequirements
     - integrationbindings
     - platformsecuritypolicies
@@ -238,9 +239,21 @@ rules:
   - apiGroups:
     - gentianos.io
     resources:
-    - appcatalogues/status
+    - appgrants/finalizers
+    - components/finalizers
+    - integrationbindings/finalizers
+    - platformsecuritypolicies/finalizers
+    - tenantexports/finalizers
+    - tenantrestores/finalizers
+    - tenants/finalizers
+    verbs:
+    - update
+  - apiGroups:
+    - gentianos.io
+    resources:
     - appgrants/status
     - backuppolicies/status
+    - components/status
     - customizations/status
     - integrationbindings/status
     - platformsecuritypolicies/status
@@ -256,29 +269,8 @@ rules:
   - apiGroups:
     - gentianos.io
     resources:
-    - appgrants/finalizers
-    - integrationbindings/finalizers
-    - platformsecuritypolicies/finalizers
-    - tenantexports/finalizers
-    - tenantrestores/finalizers
-    - tenants/finalizers
-    verbs:
-    - update
-  - apiGroups:
-    - gentianos.io
-    resources:
-    - appprofiles
-    - customizations
-    verbs:
-    - get
-    - list
-    - watch
-    - update
-    - patch
-  - apiGroups:
-    - gentianos.io
-    resources:
     - clusters
+    - componentprofiles
     - oidcpackcatalogs
     - resourceplans
     - xapps
@@ -287,6 +279,16 @@ rules:
     - list
     - watch
   - apiGroups:
+    - gentianos.io
+    resources:
+    - customizations
+    verbs:
+    - get
+    - list
+    - watch
+    - update
+    - patch
+  - apiGroups:
     - helm.crossplane.io
     resources:
     - releases
@@ -294,6 +296,9 @@ rules:
     - get
     - list
     - watch
+    - create
+    - update
+    - patch
     - delete
   - apiGroups:
     - kubernetes.crossplane.io

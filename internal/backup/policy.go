@@ -34,6 +34,22 @@ const (
 	// clusterDestinationCredential is the requirement name for the cluster's
 	// own destination; a tenant's is suffixed with the tenant name.
 	clusterDestinationCredential = "backup-destination"
+
+	// ClusterPolicyName is the cluster-scoped BackupPolicy's name. Singleton
+	// by convention: a second would leave "which destination applies"
+	// answerable two ways.
+	//
+	// Here rather than in the reconciler because the read API answers for the
+	// same object, and a console that looked under a different name would
+	// report a cluster with no policy while one was in force.
+	ClusterPolicyName = "default"
+
+	// ManagedScheduleName is the one TenantExportSchedule the policy
+	// reconciler owns per tenant. Named distinctly so a schedule an admin
+	// wrote by hand is never mistaken for one derived from policy, and never
+	// deleted by it — and so the console can say which of the two it is
+	// showing, because editing the derived one does not hold.
+	ManagedScheduleName = "policy"
 )
 
 // DestinationCredentialName is the CredentialRequirement carrying an

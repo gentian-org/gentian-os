@@ -99,6 +99,11 @@ authzBridge:
   # cloudflare.apiTokenSecretRef. When openbaoPath is set the chart also renders
   # an ExternalSecret that syncs it out of OpenBao, so the token never transits
   # a Helm value, an Application spec, or the installer's process arguments.
+  # Pin the graph this cluster uses. Empty means find the store named
+  # "gentian" and write the model if it differs, which is what a first install
+  # does; pinning is for a cluster whose graph was established elsewhere.
+  storeID: ""
+  modelID: ""
   openfgaTokenSecretRef:
     name: "gentian-os-openfga-token"
     # The key inside the Kubernetes Secret the Deployment reads.
@@ -123,20 +128,150 @@ platformSecurityPolicy:
   #   policy: gentian-require-non-root
   #   scope: <workload-scope>
 
-# infraNamespace hosts shared infrastructure (MariaDB, Redis, MinIO).
-# Set per cluster in gentian-deployments kernel values (e.g. gentian-infra-dev).
-infraNamespace: ""
+# These three are set by the bootstrap chart from kernel/namespaces.yaml on
+# every install (kernel/bootstrap/chart/templates/gentian-os.yaml). The
+# defaults below matter only where somebody installs this chart by hand, and
+# they name namespaces this layout has -- they used to name the previous
+# layout's, which is a stale namespace sitting in a ConfigMap waiting for its
+# first reader.
 
-# openbaoNamespace hosts OpenBao; tenant app init Jobs authenticate here.
-openbaoNamespace: "openbao"
+# infraNamespace: where the kernel's own identity data plane answers.
+infraNamespace: "kernel-authentication"
 
-# servicesNamespace hosts kernel platform services (Postfix, Dovecot, …).
-# Tenant apps never live here — they get their own tenant-* namespaces.
-# "platform-kernel" is this platform's fixed naming convention, not a
-# per-stage or per-cluster choice — override in a cluster's own
-# gentian-deployments values.yaml only if a specific cluster truly needs
-# something different.
-servicesNamespace: "platform-kernel"
+# openbaoNamespace hosts the vault; tenant app init Jobs authenticate here.
+openbaoNamespace: "kernel-secrets"
+
+# servicesNamespace: the edge. The Gateway, its routes and its reference
+# grants live there. Tenant apps never do — they get their own tenant-*
+# namespaces.
+servicesNamespace: "kernel-edge"
+
+# Where each kernel function runs, from kernel/namespaces.yaml. An install
+# passes every entry; empty means the operator answers from internal/layout's
+# own table, which is the same layout -- so a chart that forgot to set these
+# is a chart that is merely redundant, not one that sends a reconciler to a
+# namespace this cluster does not have. The operator addresses namespaces by
+# function rather than by the one servicesNamespace above.
+layout: {}
+
+# The director: the only writer to gentian-deployments, and the read API the
+# desktop and the store render from. It runs beside the operator with its own
+# ServiceAccount, which is granted nothing — every request it serves is
+# authorised against OpenFGA with the caller's own token.
+director:
+  enabled: false
+  replicas: 1
+  # The audience its tokens must name. A token minted for another service is
+  # refused, which is what keeps a tenant app's token from writing to git.
+  audience: gentian-director
+  # Where keys are fetched from inside the cluster. Empty derives it from the
+  # layout's authentication namespace.
+  jwksBaseURL: ""
+  # Empty uses credentialManager.openfgaURL, which is the same service.
+  openfgaURL: ""
+  # The operator's app-lifecycle API, which the director reads a tenant's
+  # resources from and validates a plan choice against. Empty derives it from
+  # this release's own lifecycle Service.
+  appLifecycleURL: ""
+  # enforce | off. A cluster with no App Store has nothing that could grant an
+  # entitlement, and says so here rather than by an absence.
+  entitlements: "off"
+  # The Secret holding this director's OpenPGP private key, projected from
+  # the vault by External Secrets (AD-2). Empty mounts nothing and the
+  # director commits unsigned -- which is a cluster whose AppProject carries
+  # no signing policy either.
+  signingKeySecret: "gentian-director-signing"
+
+  committer:
+    name: gentian-director
+    email: director@gentian.invalid
+  # Where the director records WHO WAS ALLOWED to ask for a change to a person
+  # (S7A.17). Keycloak's own admin event says what changed; it sees only the
+  # director's service account, so it cannot say who asked or what permitted
+  # the call. The two join on a request id.
+  #
+  # A database rather than a commit, deliberately: git's append-only history is
+  # what makes it right for configuration and wrong for a record about people.
+  # retention is how long a row is kept, as a Go duration; empty means the
+  # director's own default of 400 days — long enough to answer an audit of the
+  # previous financial year.
+  #
+  # Empty secretName means no record: the director starts, warns, and keeps the
+  # log line only. Taking the console down over an audit trail is worse.
+  recordDatabase:
+    secretName: gentian-os-director-database
+    secretKey: uri
+    retention: ""
+  openfgaTokenSecretRef:
+    name: gentian-os-director-openfga-token
+    key: token
+    openbaoPath: "gentian-os/kernel/authz/openfga"
+    property: preshared_key
+  # The App Store's signing keys, pinned: id=base64,… Without them the
+  # entitlement endpoint does not exist.
+  storeKeysSecretRef:
+    name: ""
+    key: keys
+  # The Keycloak event listener's public keys, in the same form.
+  resources:
+    requests:
+      cpu: 50m
+      memory: 96Mi
+    limits:
+      memory: 256Mi
+
+# The desktop: the one component the OS ships itself, installed per tenant
+# from this chart by the component reconciler. Off by default; the v5
+# bootstrap turns it on.
+desktop:
+  enabled: false
+  chart:
+    repository: oci://ghcr.io/gentian-org/charts
+    name: gentian-portal
+    # A moving prerelease per branch on a dev cluster; a release pins one.
+    version: 0.1.0-develop
+  # Values the profile carries as its own. The chart's objects are named
+  # after the component, not the Release (which carries the namespace too),
+  # so that the profile's exposures can name the Services.
+  extraValues:
+    fullnameOverride: desktop-gentian-portal
+
+# The administration console: the second component every tenant gets, built
+# from the app template and a client of the director. Off by default; the v5
+# bootstrap turns it on beside the desktop.
+adminConsole:
+  enabled: false
+  chart:
+    repository: oci://ghcr.io/gentian-org/charts
+    name: admin-console
+    # An immutable version. gentian-apps publishes the console's chart twice:
+    # a moving prerelease per branch and an immutable one per commit, whose
+    # version the moving chart names in appVersion. The installer resolves the
+    # first into the second and pins it here, because provider-helm never
+    # upgrades a release whose version string has not changed -- so a moving
+    # version installs the first build and then stays on it for ever.
+    version: "0.1.1-main"
+  # Values the profile carries as its own, merged over what it sets already.
+  extraValues: {}
+
+# The ext-auth shim: L2 of the edge, run in the edge namespace from this
+# image. Off by default; the v5 bootstrap turns it on with the director,
+# because it decides against the store the director established.
+edgeAuthz:
+  enabled: false
+  replicas: 2
+  # A cached allow lives this long at most; eviction on the store's changelog
+  # is what normally retires one.
+  cacheTTL: 5m
+  # How often the changelog is polled: the stated bound on how long a revoked
+  # right or an ended session survives at the edge (networking.md §4).
+  pollInterval: 2s
+  resources:
+    requests:
+      cpu: 20m
+      memory: 32Mi
+    limits:
+      memory: 128Mi
 
 # kernelServices exposes cluster-wide infrastructure endpoints to Crossplane
 # compositions. Published as a `gentian-kernel-services` ConfigMap in gentian-system
@@ -400,13 +535,27 @@ credentialManager:
   oidcRoles:
     - cluster-admin-jwt
     - tenant-admin
-  # Namespace holding the ESO satisfaction probes it reads.
-  probeNamespace: gentian-system
+  # Namespace holding the ESO satisfaction probes it reads. Empty means the
+  # namespace this chart is released into, which is where the operator runs
+  # and where the catalogue step writes them.
+  #
+  # It said "gentian-system", which is v4's control namespace. On v5 the
+  # probes are in kernel-control, so the credential manager looked in a
+  # namespace that does not exist and reported every credential missing --
+  # including one that had just been supplied and that ESO was reporting
+  # Ready two commands away. `make check-credentials` said satisfied and the
+  # console said missing, about the same credential, at the same moment.
+  probeNamespace: ""
   # Where the CA that signs OpenBao's serving certificate lives. Read through
   # the API, because a Pod cannot mount a Secret from another namespace — the
   # same reason ESO's ClusterSecretStore names it as a caProvider.
   caSecret: openbao-tls
-  caSecretNamespace: openbao
+  # Empty follows openbaoNamespace, which is where the vault actually is.
+  # This used to say "openbao" outright, which is the v4 name: on a v5
+  # cluster the certificate was looked for in a namespace that does not
+  # exist, so the CA was never found and every token exchange failed at TLS.
+  # Set it only for a vault whose certificate lives somewhere else again.
+  caSecretNamespace: ""
   # Last resort for a cluster whose CA cannot be read at all. Prefer fixing the
   # Secret reference: this turns off verification for every exchange.
   tlsSkipVerify: false
@@ -541,8 +690,35 @@ usage:
           memory: 512Gi
           storage: 800Gi
 
+# Who is in which group, as Keycloak states it.
+#
+# A listener inside Keycloak posts a user's complete group set, signed, every
+# time it changes, and the operator projects that into the authorization graph
+# beside the structure it already projects. This used to be the director's
+# endpoint, which is why the director's OpenFGA token had to be able to write;
+# it is here so that token can be read-only.
+#
+# Off until keysSecretRef names something. A cluster with no key accepts no
+# membership, so every permission that follows from a group is refused to
+# everyone -- which the operator says at start rather than leaving to be
+# discovered as a login that grants nothing.
+membershipListener:
+  port: 8090
+  platformRealm: kernel
+  platformTenant: platform
+  keysSecretRef:
+    name: ""
+    key: keys
+
 appLifecycle:
   port: 8082
+  # The shared secret the director presents to this API, and the only thing
+  # that makes its X-Gentian-Actor header a proof rather than a claim. The
+  # chart creates the Secret with a random value on first install and keeps
+  # whatever is already there on an upgrade, so it never rotates by accident.
+  # Empty name disables the Secret; the API then has no token and refuses
+  # every request, which is the safe direction for a misconfiguration.
+  tokenSecretName: gentian-os-lifecycle-token
   deployments:
     enabled: false
     path: /data/gentian-deployments

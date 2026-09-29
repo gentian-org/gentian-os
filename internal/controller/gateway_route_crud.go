@@ -163,11 +163,7 @@ func (r *TenantReconciler) deleteTenantHTTPRoutes(ctx context.Context, tenant *g
 	if err := r.deleteStaleBackendTrafficPoliciesForTenant(ctx, tenant, nsName, nil); err != nil {
 		return err
 	}
-	if err := r.deleteStaleClientTrafficPoliciesForTenant(ctx, tenant, nsName, nil); err != nil {
-		return err
-	}
-	apex := &gatewayv1.HTTPRoute{ObjectMeta: metav1.ObjectMeta{Name: tenantApexRedirectRouteName(tenant.Name), Namespace: nsName}}
-	return client.IgnoreNotFound(r.Delete(ctx, apex))
+	return r.deleteStaleClientTrafficPoliciesForTenant(ctx, tenant, nsName, nil)
 }
 
 func httpRouteProgrammed(ctx context.Context, c client.Client, route *gatewayv1.HTTPRoute) (bool, string) {

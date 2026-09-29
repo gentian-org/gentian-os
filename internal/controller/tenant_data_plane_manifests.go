@@ -34,10 +34,6 @@ func (r *TenantReconciler) buildDataPlaneJobs(ctx context.Context, tenant *genti
 	var jobs []batchv1.Job
 	nsName := tenantNamespaceName(tenant)
 
-	if err := r.appendPortalShellRoleJob(ctx, tenant, nsName, &jobs); err != nil {
-		return nil, err
-	}
-
 	pgApps, err := r.collectPostgresApps(ctx, tenant)
 	if err != nil {
 		return nil, err
@@ -52,7 +48,7 @@ func (r *TenantReconciler) buildDataPlaneJobs(ctx context.Context, tenant *genti
 		rolePassword := ""
 		if r.Seeder != nil {
 			creds, seedErr := r.Seeder.SeedDatabase(ctx, tenant.Name, appName, secrets.DatabaseCreds{
-				Host: fmt.Sprintf("%s-rw.%s.svc.cluster.local", cnpgClusterName, kernelNamespace),
+				Host: fmt.Sprintf("%s-rw.%s.svc.cluster.local", cnpgClusterName, postgresNamespace),
 				Port: "5432",
 				Name: dbName,
 				User: roleUserName(tenant.Name, appName),
@@ -71,18 +67,18 @@ func (r *TenantReconciler) buildDataPlaneJobs(ctx context.Context, tenant *genti
 		return nil, err
 	}
 	for _, appName := range mariaApps {
-		profile := &gentianov1alpha1.AppProfile{}
+		profile := &gentianov1alpha1.ComponentProfile{}
 		if err := r.Get(ctx, client.ObjectKey{Name: appName}, profile); err != nil {
-			return nil, fmt.Errorf("get AppProfile %s: %w", appName, err)
+			return nil, fmt.Errorf("get ComponentProfile %s: %w", appName, err)
 		}
 		allowDynamic := false
-		if profile.Spec.KernelRequirements != nil && profile.Spec.KernelRequirements.Database != nil {
-			allowDynamic = profile.Spec.KernelRequirements.Database.AllowDynamicDatabaseCreation
+		if profile.Services() != nil && profile.Services().Database != nil {
+			allowDynamic = profile.Services().Database.AllowDynamicDatabaseCreation
 		}
 		dbPassword := ""
 		if r.Seeder != nil {
 			creds, seedErr := r.Seeder.SeedMariaDB(ctx, tenant.Name, appName, secrets.DatabaseCreds{
-				Host: fmt.Sprintf("%s.%s.svc.cluster.local", "mariadb", kernelNamespace),
+				Host: fmt.Sprintf("%s.%s.svc.cluster.local", "mariadb", mariadbNamespace),
 				Port: "3306",
 				Name: databaseName(tenant, appName),
 				User: mariadbUserName(tenant.Name, appName),
@@ -147,13 +143,6 @@ func (r *TenantReconciler) buildDataPlaneObjects(ctx context.Context, tenant *ge
 	var objects []client.Object
 	nsName := tenantNamespaceName(tenant)
 
-	objects = append(objects, buildDatabaseCR(
-		tenant,
-		nsName,
-		databaseName(tenant, portalShellAppName),
-		portalShellAppName,
-	))
-
 	pgApps, err := r.collectPostgresApps(ctx, tenant)
 	if err != nil {
 		return nil, err
@@ -207,34 +196,6 @@ func (r *TenantReconciler) buildDataPlaneObjects(ctx context.Context, tenant *ge
 	return objects, nil
 }
 
-func (r *TenantReconciler) appendPortalShellRoleJob(
-	ctx context.Context,
-	tenant *gentianov1alpha1.Tenant,
-	nsName string,
-	jobs *[]batchv1.Job,
-) error {
-	appName := portalShellAppName
-	dbName := databaseName(tenant, appName)
-	rolePassword := ""
-	if r.Seeder != nil {
-		creds, err := r.Seeder.SeedDatabase(ctx, tenant.Name, appName, secrets.DatabaseCreds{
-			Host: fmt.Sprintf("%s-rw.%s.svc.cluster.local", cnpgClusterName, kernelNamespace),
-			Port: "5432",
-			Name: dbName,
-			User: roleUserName(tenant.Name, appName),
-		})
-		if err != nil {
-			return fmt.Errorf("seed portal shell database: %w", err)
-		}
-		rolePassword = creds.Password
-	}
-	// The portal shell is not a catalogue app and has no profile to declare a
-	// preference, so it takes the defaults — and never creates databases.
-	*jobs = append(*jobs, *makeRoleJob(tenant, nsName, dbName, appName, rolePassword,
-		gentianov1alpha1.SchemaPreferenceAppSchema, false))
-	return nil
-}
-
 // collectDesiredIntegrationBindings returns IntegrationBinding CRs that should
 // exist for the tenant.
 func (r *TenantReconciler) collectDesiredIntegrationBindings(ctx context.Context, tenant *gentianov1alpha1.Tenant) ([]*gentianov1alpha1.IntegrationBinding, error) {
@@ -246,14 +207,14 @@ func (r *TenantReconciler) collectDesiredIntegrationBindings(ctx context.Context
 
 	var out []*gentianov1alpha1.IntegrationBinding
 	for _, app := range tenant.Spec.Apps {
-		profile := &gentianov1alpha1.AppProfile{}
+		profile := &gentianov1alpha1.ComponentProfile{}
 		if err := r.Get(ctx, client.ObjectKey{Name: app.Profile}, profile); err != nil {
 			if errors.IsNotFound(err) {
 				continue
 			}
-			return nil, fmt.Errorf("get AppProfile %s: %w", app.Profile, err)
+			return nil, fmt.Errorf("get ComponentProfile %s: %w", app.Profile, err)
 		}
-		for _, integration := range profile.Spec.OptionalIntegrations {
+		for _, integration := range profile.Spec.Integrations {
 			providerApp := ""
 			if integration.Provider != "" {
 				if _, ok := presentApps[integration.Provider]; ok {

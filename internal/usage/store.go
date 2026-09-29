@@ -111,6 +111,13 @@ type Store struct {
 // NewStore returns a store for a tenant database URL.
 func NewStore(dsn string) *Store { return &Store{dsn: dsn} }
 
+// Connect opens the tenant's database.
+//
+// Exported because the notifications the console publishes live in the same
+// database, in a table the desktop owns: one resolver for "which database is
+// this tenant's" beats two that agree until one moves.
+func (s *Store) Connect(ctx context.Context) (*pgx.Conn, error) { return s.connect(ctx) }
+
 func (s *Store) connect(ctx context.Context) (*pgx.Conn, error) {
 	// The Secret carries a SQLAlchemy-shaped URL because the portal is what
 	// normally reads it; pgx does not know the +psycopg dialect suffix.

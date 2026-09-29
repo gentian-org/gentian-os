@@ -44,6 +44,30 @@ spec:
                   - key: gentianos.io/tenant
                     type: FromCompositeFieldPath
                     valueFromFieldPath: metadata.name
+            # Which hosts this tenant's components are routed at, projected by
+            # the operator from the routes it composes. The zone's Keycloak
+            # client admits a redirect only to a host it lists, and that list
+            # used to be written here by hand -- so a component with a
+            # subDomain of its own got "Invalid parameter: redirect_uri" on a
+            # page naming neither the component nor a list.
+            #
+            # minMatch 0 because the projection does not exist until the
+            # operator has run once: a tenant reconciling before then gets the
+            # base hosts and the rest on the next pass.
+            - kind: ConfigMap
+              into: zoneHosts
+              apiVersion: v1
+              type: Selector
+              selector:
+                maxMatch: 1
+                minMatch: 0
+                matchLabels:
+                  - key: gentianos.io/config-type
+                    type: Value
+                    value: zone-hosts
+                  - key: gentianos.io/tenant
+                    type: FromCompositeFieldPath
+                    valueFromFieldPath: metadata.name
 
     # ── Step 2: Render composed resources (tenant shell owner) ────────────────
     - step: render-tenant-resources
@@ -73,6 +97,16 @@ spec:
                  — the same rule oidc.discoveryUrl follows. */}}
             {{- $kernelRealm := dig "identity.kernelRealm" "" $ccData }}
             {{- $kcInternal  := dig "identity.internalUrl" "" $ccData }}
+            {{- /* The realm this tenant's identity lives in: its own by default,
+                 or one named on the claim. Naming the KERNEL realm is what
+                 Tenant/platform does (AD-10): the realm every administrator
+                 signs in through is adopted, never created, configured or
+                 brokered — every object below that is realm state or a bridge
+                 between two realms stays unrendered, and only what belongs to
+                 the tenant inside that realm (its entitlement groups) is
+                 composed. */}}
+            {{- $realm := default $tenant (dig "isolation" "keycloakRealm" "" $spec) }}
+            {{- $adoptsKernelRealm := and $kernelRealm (eq $realm $kernelRealm) }}
             {{- $provList  := dig "provisioningJobs" list $extraRes }}
             {{- $provCM    := ternary (index $provList 0) dict (gt (len $provList) 0) }}
             {{- $jobsJSON  := dig "data" "jobs.json" "[]" $provCM }}
@@ -115,6 +149,7 @@ spec:
                   metadata:
                     name: {{ $ns }}
                     labels:
+                      gentianos.io/tier: tenant
                       gentianos.io/tenant: {{ $tenant }}
                       gentianos.io/managed-by: crossplane
                       app.kubernetes.io/managed-by: gentian-os
@@ -250,6 +285,419 @@ spec:
                   {{- $obj | toYaml | nindent 18 }}
             {{- end }}
 
+            {{- /* ── the zone's edge client and its secret ──────────────────
+                 A zone is one sign-in domain: a hostname, the realm behind it,
+                 one confidential client the edge holds the session with, that
+                 session's cookie names and the Gateway listener that serves it
+                 (networking.md §4). Everything that consumes a zone is already
+                 general, and until now nothing produced one except a shell Job
+                 in the installer, which made the kernel's and no other. This
+                 composes it per tenant, so a second tenant signs in at
+                 console.<t>.<kernel> with no installer step having run for it.
+
+                 Rendered for a tenant that adopts the kernel realm as well as
+                 for one with its own, unlike the realm state above. The kernel
+                 zone belongs to the platform tenant rather than to the identity
+                 bootstrap (AD-10), and a realm backs exactly one zone, so the
+                 tenant that adopts a realm is the one that owns its zone. Two
+                 tenants naming the same realm would compose the same client
+                 twice and the two copies would fight; AD-10 has only the one.
+              */}}
+            {{- $zone       := ternary "kernel" $tenant $adoptsKernelRealm }}
+            {{- $zoneSecret := printf "edge-%s-oidc" $zone }}
+            {{- /* Where the edge runs, which is where the Secret and its
+                 generator go. Envoy Gateway reads an OIDC client secret only
+                 from the SecurityPolicy's own namespace, and the policies are
+                 the edge's, so this is not a choice. Read from the cluster
+                 config rather than written here: the operator answers the same
+                 question from GENTIAN_NS_EDGE and the two have to agree, or the
+                 secret is written where nothing reads it. The default is the v4
+                 layout's answer, which is what a cluster whose ConfigMap
+                 predates the key has. */}}
+            {{- $edgeNs     := default "platform-kernel" (dig "network.edgeNamespace" "" $ccData) }}
+            {{- /* The zone's domain, which is EffectiveDomain in the operator.
+                 A vanity domain wins, then single tenancy puts the one tenant
+                 on the kernel domain itself, and otherwise the tenant is a
+                 subdomain of it. $domain above is the multi-tenant answer only,
+                 and every host in a redirect URI has to be the one the Gateway
+                 actually serves, so this is derived again rather than reused. */}}
+            {{- $tenancyMode := default "multi" (dig "tenancyMode" "" $ccData) }}
+            {{- $zoneDomain  := $domain }}
+            {{- if $adoptsKernelRealm }}
+            {{- $zoneDomain = $kd }}
+            {{- else if and (eq $tenancyMode "single") (not (default "" $spec.domain)) }}
+            {{- $zoneDomain = $kd }}
+            {{- end }}
+            {{- /* The hosts the zone serves, which is what the redirect URIs
+                 have to cover. The kernel zone's four were read off the Job
+                 this replaces rather than reconstructed from the routes.
+
+                 console and admin are the components every tenant gets: the
+                 desktop, and the administration console beside it. Both are
+                 ComponentProfiles with defaultForTenants, so both hosts exist
+                 in every zone, kernel and tenant alike.
+
+                 This list is enumerated and not derived, which is a known
+                 limit: a component whose profile declares a subDomain that is
+                 not here gets a Keycloak refusal -- "Invalid parameter:
+                 redirect_uri" -- on an error page that says nothing about a
+                 redirect URI list. The operator is what knows every host a
+                 zone serves, because it composes the routes; projecting that
+                 per tenant, the way it already projects the tile catalogue,
+                 is what would make this list follow the components instead of
+                 being maintained beside them. Until then, a component with a
+                 host of its own belongs here. */}}
+            {{- /* The hosts a zone's client admits a redirect to, from two
+                 places because they have two owners.
+
+                 The kernel's own consoles are installed by install.sh and are
+                 not components, so nothing projects them and they are named
+                 here. Everything else follows the components: the operator
+                 writes the labels its routes serve into a ConfigMap per
+                 tenant, and this reads it back. console and admin stay in the
+                 base list so a tenant reconciling before the operator has
+                 projected still has a desktop to sign in to. */}}
+            {{- $zoneHosts := ternary (list "console" "admin" "argocd" "headlamp" "id") (list "console" "admin") $adoptsKernelRealm }}
+            {{- /* An explicit if, not ternary: Go templates evaluate both of
+                 ternary's arms, so indexing an empty list is an error even
+                 when the guard is false. The clusterConfig read above has the
+                 same shape and gets away with it only because that ConfigMap
+                 always exists. */}}
+            {{- $zhList := dig "zoneHosts" list $extraRes }}
+            {{- $zhData := dict }}
+            {{- if gt (len $zhList) 0 }}
+            {{- $zhData = dig "data" dict (index $zhList 0) }}
+            {{- end }}
+            {{- range $h := (splitList "\n" (dig "hosts" "" $zhData)) }}
+            {{- $h = trim $h }}
+            {{- if and $h (not (has $h $zoneHosts)) }}
+            {{- $zoneHosts = append $zoneHosts $h }}
+            {{- end }}
+            {{- end }}
+
+            {{- /* The secret exists before the client does, and is generated
+                 here rather than minted by Keycloak. A client created with no
+                 clientSecretSecretRef gets a secret only Keycloak knows, and
+                 the edge, which reads the Secret below, would then authenticate
+                 with a value the realm never had.
+
+                 External Secrets generates it. A Password generator is
+                 configuration and holds nothing, so one per tenant costs a tiny
+                 object and keeps the zone self-contained; the value it produces
+                 lives only in the Secret the ExternalSecret owns.
+
+                 No symbols. The value travels as a form parameter in the code
+                 exchange and as a Kubernetes Secret, and 48 alphanumeric
+                 characters are well beyond what a client secret needs to be. */}}
+            ---
+            apiVersion: kubernetes.crossplane.io/v1alpha2
+            kind: Object
+            metadata:
+              name: {{ $tenant }}-edge-zone-password
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: edge-zone-password
+            spec:
+              forProvider:
+                manifest:
+                  apiVersion: generators.external-secrets.io/v1alpha1
+                  kind: Password
+                  metadata:
+                    name: {{ $zoneSecret }}
+                    namespace: {{ $edgeNs }}
+                    labels:
+                      app.kubernetes.io/managed-by: crossplane
+                      gentianos.io/edge-zone: {{ $zone }}
+                  spec:
+                    length: 48
+                    digits: 8
+                    symbols: 0
+                    noUpper: false
+                    allowRepeat: true
+                    secretKeys:
+                      - client-secret
+              providerConfigRef:
+                name: kubernetes
+
+            {{- /* The Secret both sides read, in the edge namespace, under the
+                 key Envoy Gateway's SecurityPolicy names. Envoy Gateway 1.2
+                 reads an OIDC client secret only from the policy's own
+                 namespace, ReferenceGrant or not, which is why this one is
+                 written where the edge is and copied beside a policy that
+                 sits elsewhere (ensureZoneSecret in the operator).
+
+                 Generated once and never again. A generator answers with a new
+                 value every time it is asked, so an ExternalSecret that
+                 refreshes rotates the client secret on its own schedule --
+                 which would be survivable, since the Client below is pushed
+                 whatever this holds, but it would break every session in flight
+                 at an hour nobody chose. refreshPolicy says it; refreshInterval
+                 zero says the same thing to an External Secrets that predates
+                 the policy field.
+
+                 creationPolicy Owner, so the Secret is deleted with the
+                 ExternalSecret and cannot be left behind holding a credential
+                 for a zone that no longer exists. It also means External
+                 Secrets refuses a Secret of this name that it does not own, so
+                 a cluster whose zone secret was written by the installer has to
+                 have that Secret removed once before this can take over. */}}
+            ---
+            apiVersion: kubernetes.crossplane.io/v1alpha2
+            kind: Object
+            metadata:
+              name: {{ $tenant }}-edge-zone-client-secret
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: edge-zone-client-secret
+            spec:
+              {{- /* Ready when the ExternalSecret is, not when it was applied,
+                   so the sequencer rule below holds the Client back until the
+                   Secret it reads actually exists. */}}
+              readiness:
+                policy: DeriveFromObject
+              forProvider:
+                manifest:
+                  apiVersion: external-secrets.io/v1
+                  kind: ExternalSecret
+                  metadata:
+                    name: {{ $zoneSecret }}
+                    namespace: {{ $edgeNs }}
+                    labels:
+                      app.kubernetes.io/managed-by: crossplane
+                      gentianos.io/edge-zone: {{ $zone }}
+                  spec:
+                    refreshPolicy: CreatedOnce
+                    refreshInterval: "0"
+                    target:
+                      name: {{ $zoneSecret }}
+                      creationPolicy: Owner
+                      template:
+                        metadata:
+                          labels:
+                            app.kubernetes.io/managed-by: gentian-os
+                            gentianos.io/edge-zone: {{ $zone }}
+                    dataFrom:
+                      - sourceRef:
+                          generatorRef:
+                            apiVersion: generators.external-secrets.io/v1alpha1
+                            kind: Password
+                            name: {{ $zoneSecret }}
+              providerConfigRef:
+                name: kubernetes
+
+            {{- /* The client the edge runs the code flow with.
+
+                 Confidential and standard flow only: the edge is the only
+                 session authority (AD-13), so nothing else ever presents this
+                 client, and no other grant type has a caller.
+
+                 fullScopeAllowed false. The token this client issues is a
+                 session, not an authorization: the shim asks OpenFGA on every
+                 request and reads nothing out of the token but who the person
+                 is, and nothing in this platform decides a permission from a
+                 claim.
+
+                 It carried no groups scope either, on the reasoning that a
+                 group riding along is a second answer to a question that
+                 already has one, and a stale one since a token outlives the
+                 membership it was minted from. That reasoning does not
+                 survive OpenBao. OpenBao is its own enforcement point with
+                 its own policy engine and no way to ask OpenFGA, so binding
+                 its roles to a group claim is not a SECOND answer there, it
+                 is the only one available -- and without the scope the
+                 credential manager could not exchange a token at all, which
+                 left the Credentials screen unreadable and the install unable
+                 to prove anybody but the installer can write.
+
+                 The alternative was the credential manager holding an OpenBao
+                 token of its own, which its own package refuses structurally:
+                 one component able to write every secret in the cluster, with
+                 the service and not the human in the audit device. That is a
+                 worse trade than a claim whose staleness is bounded by a
+                 five-minute token.
+
+                 A redirect URI per host in the zone, and a post-logout URI per
+                 host as well. The second is not decoration: signing out hands
+                 Keycloak a post_logout_redirect_uri pointing back at the host
+                 the person is looking at, and Keycloak refuses one it has not
+                 been told about, which puts them on an error page instead of
+                 back on the portal.
+
+                 No back-channel logout URL. It used to point at the director,
+                 which recorded the ended session so the edge would refuse it at
+                 once. Nothing records it now: the realm issues five-minute
+                 access tokens against a twelve-hour session, so the edge's
+                 refresh fails within one token lifetime of the session ending,
+                 which is the same outcome one token later and needs no write to
+                 the authorization store.
+
+                 Everything except LateInitialize, for the reason the portal BFF
+                 client demonstrated further down: late-init copies fields the
+                 provider observes but this template does not set out of the
+                 live object into spec.forProvider, and the declared intent then
+                 becomes whatever is already there. */}}
+            ---
+            apiVersion: openidclient.keycloak.crossplane.io/v1alpha1
+            kind: Client
+            metadata:
+              name: {{ $tenant }}-edge-zone-client
+              annotations:
+                crossplane.io/external-name: gentian-edge-{{ $zone }}
+                gotemplating.fn.crossplane.io/composition-resource-name: keycloak-edge-zone-client
+            spec:
+              {{- /* Orphan, like every other client here. A zone client that
+                   vanished on a reconcile hiccup would take the whole sign-in
+                   domain with it, and a tenant that is torn down loses its
+                   realm and everything in it anyway. */}}
+              deletionPolicy: Orphan
+              managementPolicies: ["Observe", "Create", "Update", "Delete"]
+              forProvider:
+                clientId: gentian-edge-{{ $zone }}
+                name: Gentian edge ({{ $zone }} zone)
+                realmId: {{ $realm }}
+                accessType: CONFIDENTIAL
+                enabled: true
+                standardFlowEnabled: true
+                implicitFlowEnabled: false
+                directAccessGrantsEnabled: false
+                serviceAccountsEnabled: false
+                fullScopeAllowed: false
+                webOrigins: []
+                validRedirectUris:
+                  {{- range $host := $zoneHosts }}
+                  - https://{{ $host }}.{{ $zoneDomain }}/oauth2/callback
+                  - https://{{ $host }}.{{ $zoneDomain }}/
+                  {{- end }}
+                validPostLogoutRedirectUris:
+                  {{- range $host := $zoneHosts }}
+                  - https://{{ $host }}.{{ $zoneDomain }}/*
+                  {{- end }}
+                clientSecretSecretRef:
+                  name: {{ $zoneSecret }}
+                  namespace: {{ $edgeNs }}
+                  key: client-secret
+                {{- /* Where a person lands when the realm finishes with them.
+
+                     An invitation's action-token mail may name a redirect, and
+                     Keycloak refuses one that is not on validRedirectUris
+                     above -- which listed each host's /oauth2/callback and
+                     nothing else, the machine-facing end of the OIDC flow and
+                     not a page for a human. So an invitation had to send no
+                     redirect at all, and the person finished on Keycloak's
+                     "your account has been updated" page with no way into the
+                     product.
+
+                     Each host's root is on the list now. One exact URL per
+                     host rather than a wildcard: the list exists to stop an
+                     open redirect, and widening it to /* would let anything
+                     that can influence a redirect target reach any path on
+                     these hosts. A root that the Gateway serves and the edge
+                     signs into is all the invitation needs.
+
+                     rootUrl is which of those hosts to use, stated here
+                     because this is where the zone's domain is known. The
+                     director reads it back off the client rather than deriving
+                     it: the domain is a vanity name, or the kernel domain
+                     under single tenancy, or the tenant's subdomain, and a
+                     second derivation of that is a second answer that can
+                     disagree with the hosts the Gateway actually serves. */}}
+                rootUrl: https://console.{{ $zoneDomain }}
+              providerConfigRef:
+                name: keycloak
+
+            {{- /* The director in the zone token's audience.
+
+                 The desktop's BFF relays to the director with the person's own
+                 token, and the director refuses a token minted for someone
+                 else. A Keycloak access token does not carry the requesting
+                 client in aud -- azp names it, and aud holds only what an
+                 audience mapper puts there -- so without this every relayed
+                 call is refused on the audience.
+
+                 All five config keys, not the three that express the intent,
+                 for the reason the openbao-audience mapper below gives: this
+                 map is replaced wholesale on reconcile and Keycloak adds the
+                 other two on create.
+
+                 No external-name, also for the reason given there: a protocol
+                 mapper is identified by its UUID, and seeding the annotation
+                 with the mapper's name hands the provider an id that will never
+                 match. */}}
+            ---
+            apiVersion: client.keycloak.crossplane.io/v1alpha1
+            kind: ProtocolMapper
+            metadata:
+              name: {{ $tenant }}-edge-zone-director-audience
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: keycloak-edge-zone-director-audience
+            spec:
+              deletionPolicy: Orphan
+              forProvider:
+                realmId: {{ $realm }}
+                clientIdRef:
+                  name: {{ $tenant }}-edge-zone-client
+                  policy:
+                    resolve: Always
+                name: director-audience
+                protocol: openid-connect
+                protocolMapper: oidc-audience-mapper
+                config:
+                  included.client.audience: gentian-director
+                  id.token.claim: "false"
+                  access.token.claim: "true"
+                  introspection.token.claim: "true"
+                  userinfo.token.claim: "false"
+              providerConfigRef:
+                name: keycloak
+
+            {{- /* Keycloak's six own defaults and deliberately not groups.
+
+                 This list is replaced wholesale on reconcile, so it has to name
+                 the six that were already there rather than only the absence
+                 that matters: declaring an empty list would strip acr, basic,
+                 email, profile, roles and web-origins from the client and every
+                 zone token would lose its profile and email claims.
+
+                 Stating the list at all, rather than leaving Keycloak's
+                 defaults alone, is what makes each scope a fact this file
+                 maintains instead of one that held until somebody changed it
+                 by hand. */}}
+            ---
+            apiVersion: openidclient.keycloak.crossplane.io/v1alpha1
+            kind: ClientDefaultScopes
+            metadata:
+              name: {{ $tenant }}-edge-zone-default-scopes
+              annotations:
+                gotemplating.fn.crossplane.io/composition-resource-name: keycloak-edge-zone-default-scopes
+            spec:
+              deletionPolicy: Orphan
+              forProvider:
+                realmId: {{ $realm }}
+                clientIdRef:
+                  name: {{ $tenant }}-edge-zone-client
+                  policy:
+                    resolve: Always
+                defaultScopes:
+                  - acr
+                  - basic
+                  - email
+                  # OpenBao binds its auth backend roles to this claim and has
+                  # no way to ask OpenFGA. Nothing else reads it: the shim
+                  # ignores it, and the rule that a permission is never
+                  # decided from a claim is unchanged.
+                  - groups
+                  - profile
+                  - roles
+                  - web-origins
+              providerConfigRef:
+                name: keycloak
+
+            {{- if not $adoptsKernelRealm }}
+            {{- /* The clients the desktop signs in with, the portal's tenant
+                 claim and the mailbox store's client are realm state: one set
+                 per realm, owned by whoever owns the realm. A tenant that
+                 adopts the kernel realm owns none of it, and composing them
+                 here would make two writers of the identity bootstrap's
+                 clients. */}}
+
             {{- /*
             The portal's public OIDC client, declared rather than provisioned by a
             Job.
@@ -280,7 +728,7 @@ spec:
               forProvider:
                 clientId: gentian-portal
                 name: Gentian Portal
-                realmId: {{ $tenant }}
+                realmId: {{ $realm }}
                 accessType: PUBLIC
                 enabled: true
                 standardFlowEnabled: true
@@ -354,7 +802,7 @@ spec:
             spec:
               deletionPolicy: Orphan
               forProvider:
-                realmId: {{ $tenant }}
+                realmId: {{ $realm }}
                 clientIdRef:
                   name: {{ $tenant }}-portal-public-client
                   policy:
@@ -414,7 +862,7 @@ spec:
               forProvider:
                 clientId: gentian-portal-bff
                 name: Gentian Portal BFF
-                realmId: {{ $tenant }}
+                realmId: {{ $realm }}
                 accessType: CONFIDENTIAL
                 enabled: true
                 standardFlowEnabled: false
@@ -484,7 +932,7 @@ spec:
             spec:
               deletionPolicy: Orphan
               forProvider:
-                realmId: {{ $tenant }}
+                realmId: {{ $realm }}
                 clientIdRef:
                   name: {{ $tenant }}-portal-bff-client
                   policy:
@@ -528,7 +976,7 @@ spec:
             spec:
               deletionPolicy: Orphan
               forProvider:
-                realmId: {{ $tenant }}
+                realmId: {{ $realm }}
                 clientIdRef:
                   name: {{ $tenant }}-portal-public-client
                   policy:
@@ -567,7 +1015,7 @@ spec:
             omitted clientSecretSecretRef would have Keycloak generate a new one
             and IMAP would stop validating tokens.
             */}}
-            {{- if eq (dig "mail.serviceMode" "" $ccData) "kernel" }}
+            {{- if eq (dig "mail.serviceMode" "" $ccData) "system" }}
             ---
             apiVersion: openidclient.keycloak.crossplane.io/v1alpha1
             kind: Client
@@ -591,7 +1039,7 @@ spec:
               managementPolicies: ["Observe", "Create", "Update", "Delete"]
               forProvider:
                 clientId: gentian-dovecot
-                realmId: {{ $tenant }}
+                realmId: {{ $realm }}
                 accessType: CONFIDENTIAL
                 enabled: true
                 standardFlowEnabled: false
@@ -607,6 +1055,7 @@ spec:
                 name: keycloak
             {{- end }}
 
+            {{- end }}
             {{- if and $kernelRealm $kcInternal }}
             {{- /* ── the tenant's entitlement groups ─────────────────────────
                  Three fixed, one per app. The names are internal/keycloak/groups.go's
@@ -645,11 +1094,12 @@ spec:
             spec:
               deletionPolicy: Orphan
               forProvider:
-                realmId: {{ $tenant }}
+                realmId: {{ $realm }}
                 name: {{ $g | quote }}
               providerConfigRef:
                 name: keycloak
             {{- end }}
+            {{- if not $adoptsKernelRealm }}
 
             {{- /* ── the reverse broker: kernel realm → this tenant ────────────
                  The mirror of the kernel IdP above. That one lets a tenant user
@@ -683,7 +1133,7 @@ spec:
               managementPolicies: ["Observe"]
               forProvider:
                 clientId: broker-kernel-portal
-                realmId: {{ $tenant }}
+                realmId: {{ $realm }}
               writeConnectionSecretToRef:
                 name: {{ $tenant }}-kernel-portal-broker-client
                 namespace: platform-kernel
@@ -746,11 +1196,11 @@ spec:
                 firstBrokerLoginFlowAlias: first-broker-login-kernel-portal
                 {{- /* Browser-facing endpoints go to the public URL; the
                      server-to-server half stays inside the cluster. */}}
-                issuer: https://id.{{ $kd }}/auth/realms/{{ $tenant }}
-                authorizationUrl: https://id.{{ $kd }}/auth/realms/{{ $tenant }}/protocol/openid-connect/auth
-                tokenUrl: {{ $kcInternal }}/realms/{{ $tenant }}/protocol/openid-connect/token
-                jwksUrl: {{ $kcInternal }}/realms/{{ $tenant }}/protocol/openid-connect/certs
-                userInfoUrl: {{ $kcInternal }}/realms/{{ $tenant }}/protocol/openid-connect/userinfo
+                issuer: https://id.{{ $kd }}/auth/realms/{{ $realm }}
+                authorizationUrl: https://id.{{ $kd }}/auth/realms/{{ $realm }}/protocol/openid-connect/auth
+                tokenUrl: {{ $kcInternal }}/realms/{{ $realm }}/protocol/openid-connect/token
+                jwksUrl: {{ $kcInternal }}/realms/{{ $realm }}/protocol/openid-connect/certs
+                userInfoUrl: {{ $kcInternal }}/realms/{{ $realm }}/protocol/openid-connect/userinfo
                 {{- /* updateProfileFirstLoginMode has no field on the provider and
                      is read back, so it belongs here.
 
@@ -804,7 +1254,7 @@ spec:
             spec:
               deletionPolicy: Orphan
               forProvider:
-                realmId: {{ $tenant }}
+                realmId: {{ $realm }}
                 alias: {{ $ra.alias }}
                 name: {{ $ra.name | quote }}
                 enabled: false
@@ -856,7 +1306,7 @@ spec:
             spec:
               deletionPolicy: Orphan
               forProvider:
-                realmId: {{ $tenant }}
+                realmId: {{ $realm }}
                 group:
                   - name: user-metadata
                     displayHeader: User metadata
@@ -988,7 +1438,7 @@ spec:
             spec:
               deletionPolicy: Orphan
               forProvider:
-                realm: {{ $tenant }}
+                realm: {{ $realm }}
                 identityProviderAlias: kernel
                 name: gentian_username
                 identityProviderMapper: oidc-user-attribute-idp-mapper
@@ -1076,7 +1526,7 @@ spec:
             spec:
               deletionPolicy: Orphan
               forProvider:
-                realmId: {{ $tenant }}
+                realmId: {{ $realm }}
                 alias: first-broker-login-gentian
                 description: Confirm/verify link kernel IdP to tenant users by email
                 providerId: basic-flow
@@ -1108,7 +1558,7 @@ spec:
             spec:
               deletionPolicy: Orphan
               forProvider:
-                realmId: {{ $tenant }}
+                realmId: {{ $realm }}
                 parentFlowAlias: first-broker-login-gentian
                 authenticator: {{ $auth }}
                 requirement: REQUIRED
@@ -1140,7 +1590,7 @@ spec:
               deletionPolicy: Orphan
               managementPolicies: ["Observe"]
               forProvider:
-                realmId: {{ $tenant }}
+                realmId: {{ $realm }}
                 name: groups
               providerConfigRef:
                 name: keycloak
@@ -1160,7 +1610,7 @@ spec:
             spec:
               deletionPolicy: Orphan
               forProvider:
-                realmId: {{ $tenant }}
+                realmId: {{ $realm }}
                 name: groups
                 protocol: openid-connect
                 protocolMapper: oidc-group-membership-mapper
@@ -1203,14 +1653,71 @@ spec:
             metadata:
               name: {{ $tenant }}-realm
               annotations:
-                crossplane.io/external-name: {{ $tenant }}
+                crossplane.io/external-name: {{ $realm }}
                 gotemplating.fn.crossplane.io/composition-resource-name: keycloak-realm
             spec:
               deletionPolicy: Orphan
               forProvider:
-                realm: {{ $tenant }}
+                realm: {{ $realm }}
                 enabled: true
                 displayName: {{ $spec.displayName | quote }}
+                {{- /* ── Languages (AD-15) ────────────────────────────────
+                     Keycloak ships these translations; a realm just has to say
+                     it wants them. Without this the login and account pages
+                     serve English to everyone, which for a German-speaking
+                     market is the first screen of the product being in the
+                     wrong language.
+
+                     With internationalization on, Keycloak honours the
+                     browser's Accept-Language and offers a picker, so a German
+                     browser gets German without anybody choosing anything.
+                     defaultLocale is only the answer for a browser asking for
+                     a language that is not here -- English, because that is
+                     the language the platform's own strings are written in and
+                     a fallback should be the author's own words rather than a
+                     guess.
+
+                     A list rather than a field: the provider models it as one.
+                     spec.locales overrides the default, so a tenant whose
+                     people speak something else says so on the claim rather
+                     than waiting for a release -- the same reason the operator
+                     reads GENTIAN_SUPPORTED_LOCALES for the kernel realm and
+                     the desktop discovers its catalogues from a directory. */}}
+                {{- /* The default matches internal/locales.Default and the
+                     catalogues in gentian-ui/frontend/src/locales. If they
+                     drift, a person signs in translated and lands on an
+                     English desktop. */}}
+                {{- $locales := default (list "en" "de") (dig "locales" nil $spec) }}
+                internationalization:
+                  - supportedLocales: {{ toJson $locales }}
+                    # The first, not "en": the order is the preference, so a
+                    # tenant listing de then en gets a German login page.
+                    defaultLocale: {{ index $locales 0 | quote }}
+                {{- /* ── Security policy ──────────────────────────────────
+                     What the tenant declares in spec.security, as the realm's
+                     own fields. The console changes it by committing to the
+                     tenant's manifest; nothing holds a Keycloak credential to
+                     do it, and a realm rebuilt from scratch comes back with
+                     the same policy because the policy is in git.
+
+                     Unstated is unstated: a field the tenant does not set is
+                     left off entirely, so Keycloak's own default applies
+                     rather than a zero written over it. */}}
+                {{- $sec := $spec.security | default dict }}
+                {{- $pw := dig "password" dict $sec }}
+                {{- $pwParts := list }}
+                {{- if gt (int (dig "minLength" 0 $pw)) 0 }}{{- $pwParts = append $pwParts (printf "length(%d)" (int (dig "minLength" 0 $pw))) }}{{- end }}
+                {{- if dig "requireDigits" false $pw }}{{- $pwParts = append $pwParts "digits(1)" }}{{- end }}
+                {{- if dig "requireLowercase" false $pw }}{{- $pwParts = append $pwParts "lowerCase(1)" }}{{- end }}
+                {{- if dig "requireUppercase" false $pw }}{{- $pwParts = append $pwParts "upperCase(1)" }}{{- end }}
+                {{- if dig "requireSpecialChars" false $pw }}{{- $pwParts = append $pwParts "specialChars(1)" }}{{- end }}
+                {{- if gt (int (dig "historyCount" 0 $pw)) 0 }}{{- $pwParts = append $pwParts (printf "passwordHistory(%d)" (int (dig "historyCount" 0 $pw))) }}{{- end }}
+                {{- if gt (int (dig "maxAgeDays" 0 $pw)) 0 }}{{- $pwParts = append $pwParts (printf "forceExpiredPasswordChange(%d)" (int (dig "maxAgeDays" 0 $pw))) }}{{- end }}
+                {{- if $pwParts }}
+                passwordPolicy: {{ join " and " $pwParts | quote }}
+                {{- end }}
+                {{- $session := dig "session" dict $sec }}
+                {{- $bf := dig "bruteForce" dict $sec }}
                 {{- if $kd }}
                 {{- /* The URL this realm advertises for itself, independent of
                      how it was asked.
@@ -1280,8 +1787,18 @@ spec:
                      managed realm that did not name them would quietly cut every
                      tenant session from twelve hours to thirty minutes. */}}
                 accessTokenLifespan: 12h0m0s
-                ssoSessionIdleTimeout: 12h0m0s
-                ssoSessionMaxLifespan: 12h0m0s
+                {{- /* Twelve hours unless the tenant says otherwise. The
+                     default is not the provider's -- Keycloak ships a 30m idle
+                     timeout, so a managed realm that named nothing would cut
+                     every session to thirty minutes -- and a tenant that
+                     states its own replaces it here rather than having a
+                     second key written further up, which is a duplicate the
+                     later one silently wins. */}}
+                ssoSessionIdleTimeout: {{ if gt (int (dig "idleMinutes" 0 $session)) 0 }}{{ printf "%dm" (int (dig "idleMinutes" 0 $session)) }}{{ else }}12h0m0s{{ end }}
+                ssoSessionMaxLifespan: {{ if gt (int (dig "maxHours" 0 $session)) 0 }}{{ printf "%dh" (int (dig "maxHours" 0 $session)) }}{{ else }}12h0m0s{{ end }}
+                {{- if dig "rememberMe" false $session }}
+                rememberMe: true
+                {{- end }}
                 loginTheme: gentian
                 {{- /* Keycloak's built-in browser flow, named explicitly.
 
@@ -1311,7 +1828,19 @@ spec:
                      xFrameOptions are cleared so the portal can frame Keycloak;
                      Keycloak's own defaults would refuse it. */}}
                 securityDefenses:
+                  {{- if dig "enabled" false $bf }}
+                  {{- /* Beside the headers, in the same list entry: the
+                       provider models securityDefenses as a repeated block,
+                       and a second entry would be a second securityDefenses
+                       rather than another field of the one. */}}
+                  - bruteForceDetection:
+                      - permanentLockout: false
+                        maxLoginFailures: {{ int (dig "maxLoginFailures" 5 $bf) }}
+                        maxFailureWaitSeconds: {{ int (dig "lockoutDurationSeconds" 900 $bf) }}
+                    headers:
+                  {{- else }}
                   - headers:
+                  {{- end }}
                       - contentSecurityPolicy: ""
                         contentSecurityPolicyReportOnly: ""
                         strictTransportSecurity: "max-age=31536000; includeSubDomains"
@@ -1349,7 +1878,7 @@ spec:
                      cannot read one, and external mode relays through a provider
                      whose address is not derivable from the domain. Those clusters
                      keep the Job's behaviour unchanged. */}}
-                {{- if and (eq (dig "mail.serviceMode" "" $ccData) "kernel") $kd }}
+                {{- if and (eq (dig "mail.serviceMode" "" $ccData) "system") $kd }}
                 smtpServer:
                   - host: {{ printf "mail.%s" $kd | quote }}
                     port: "587"
@@ -1467,7 +1996,7 @@ spec:
               # the portal BFF client ended up unable to reconcile at all.
               managementPolicies: ["Observe", "Create", "Update", "Delete"]
               forProvider:
-                realm: {{ $tenant }}
+                realm: {{ $realm }}
                 alias: kernel
                 displayName: Gentian SSO
                 providerId: oidc
@@ -1519,6 +2048,7 @@ spec:
                   key: attribute.client_secret
               providerConfigRef:
                 name: keycloak
+            {{- end }}
             {{- end }}
 
             {{- range $app := dig "apps" list $spec }}
@@ -1608,3 +2138,15 @@ spec:
           - sequence:
             - job-keycloak-(admin|broker|client|kernel|oidc)-.*
             - app-.*
+          # The zone's client secret before the client that is pushed it.
+          #
+          # A generator answers with a value the moment it is asked, but the
+          # ExternalSecret that asks has to reconcile before the Secret exists,
+          # and the Client refuses to create without the Secret its
+          # clientSecretSecretRef names. Without this the client's first few
+          # reconciles fail on a Secret that is seconds away, which is
+          # recoverable but reads as a broken zone to anyone watching.
+          - sequence:
+            - edge-zone-password
+            - edge-zone-client-secret
+            - keycloak-edge-zone-client

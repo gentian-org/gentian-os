@@ -1,0 +1,206 @@
+model
+  schema 1.1
+
+# Target authorization model, v1. The single vocabulary every plan is
+# checked against — see ../authorization-model.md for the rules behind it.
+#
+# Conventions
+#   type            one per CRD kind; object id = the CR's name, namespaced
+#                   kinds as <tenant>/<name>
+#   ids             OpenFGA ids may contain neither ':' nor '#'. A Keycloak group
+#                   gentian:tenant:demo:admins is therefore the object
+#                   group:gentian/tenant/demo/admins — ':' becomes '/', nothing
+#                   else changes, and the mapping is reversible because tenant
+#                   and profile names are DNS labels and contain no '/'.
+#   role            a noun, assigned only through group#member — one Keycloak
+#                   group per role, never a user directly
+#   permission      can_<verb>, one per verb an enforcement point exposes;
+#                   PEPs check permissions, never roles
+#   hierarchy       one parent relation per type (cluster, tenant), derived
+#                   with "<relation> from <parent>"
+#   exclusion       "but not" only for least-privilege invariants
+#   membership      STORED, like everything else. group:<g>#member@user:<sub>
+#                   is written by the director from Keycloak's event stream and
+#                   reconciled with a read-only client (AD-12, R7). It is never
+#                   taken from a token's groups and never edited in place: the
+#                   store is a projection of Keycloak, so an access review is
+#                   a ListUsers against stored tuples rather than a guess about
+#                   who might present which claim.
+#   contextual      runtime facts only — task TTL, acting_for, device posture.
+#                   Never identity, never membership.
+#   structure       everything else is stored, written only by the director
+
+type user
+
+type group
+  relations
+    define member: [user]
+
+type cluster
+  relations
+    # roles — from the Cluster claim's role-to-group assignments
+    define admin: [group#member]              # gentian:platform:admin
+    define security_officer: [group#member]   # gentian:platform:security
+    define auditor: [group#member]            # gentian:platform:auditor
+    define service_admin: [group#member]      # gentian:platform:service-admin
+    define shared_apps_admin: [group#member]  # gentian:platform:shared-apps-admin
+    define break_glass: [group#member]        # gentian:platform:break-glass — no standing membership
+
+    # permissions — the director's cluster-level verbs
+    define can_configure: admin               # Cluster claim, plans, ceilings, network intent
+    define can_deploy_tenant: admin
+    define can_operate_system: service_admin  # the claim's system section
+    define can_install_shared: shared_apps_admin
+    define can_grant_shared: shared_apps_admin
+    define can_approve: security_officer      # waivers, egress beyond baseline, exposure policy, trustTier platform
+    define can_set_admission: break_glass     # PolicyException, admission overlays (kernel tier)
+    define can_edit_raw: break_glass          # /v1/files
+    define can_audit: auditor or security_officer or admin
+
+type tenant
+  relations
+    define cluster: [cluster]
+
+    # roles. A platform administrator acts inside a tenant through the
+    # derivation, never by holding the tenant's group: authority comes down the
+    # chain (R4, principle 5), so there is no tuple to forget to remove.
+    #
+    # operated_by is CONSENT, not structure: this tenant lets the cluster's
+    # administrators act inside it. The director writes it at tenant deploy
+    # and always for tenant:platform; a tenant that administers itself removes
+    # that one tuple, and every platform-admin verb in it — users, secrets,
+    # installs — goes with it. `cluster` above stays: it is what audit and
+    # approval derive through, and it is not removable.
+    define operated_by: [cluster]
+    define admin: [group#member] or admin from operated_by   # gentian:tenant:<t>:admins
+    define perimeter_approver: [group#member]  # gentian:tenant:<t>:perimeter
+    define member: [group#member]              # gentian:tenant:<t>:members
+
+    # reach — the desktop host at L2. An admin account must get in to
+    # administer, and in tenant-platform the console's own users are the
+    # security officer and the auditor, who are members of no tenant.
+    define can_enter: member or admin or can_audit from cluster or can_approve from cluster
+
+    # permissions — the director's tenant-level verbs
+    define can_install_app: admin
+    define can_set_plan: admin
+    define can_set_policy: admin          # backup, grants, export schedules, tenant network intent
+    define can_grant: admin               # AppGrant: integration consent
+    define can_manage_users: admin
+    define can_approve_privilege: admin   # tenant-scope privilege requests (§ component-profile 3.1)
+    # Publishing to the internet is its own grant. The roles stay distinct,
+    # but most tenants do not staff them separately: at tenant creation the
+    # director writes the admins group into perimeter_approver, and a tenant
+    # that wants the separation removes that one tuple.
+    define can_expose: perimeter_approver
+    define can_view: member or admin or can_audit from cluster
+
+    # Admin tiles on the desktop. Not an app permission: app#can_use excludes
+    # admin accounts by design, so an admin account can reach no app object —
+    # which in tenant-platform would be every tile the console has.
+    define can_administer: admin
+
+# A catalogue source is a repository of profile bundles named on the Cluster
+# claim: the store's, or one a platform administrator added. Opening a source
+# to a tenant is that administrator's act (can_configure), recorded as a tuple;
+# an entry of an open source installs without any statement from the store.
+# Nothing is open by default.
+type catalogue_source
+  relations
+    define open: [tenant]                         # written by the director from the Cluster claim
+
+type catalogue_entry
+  relations
+    define source: [catalogue_source]
+    define entitled: [tenant with grant_valid]   # written by the director from a signed grant
+    define can_install: entitled or open from source   # checked with user = tenant:<t>
+
+type app
+  relations
+    define tenant: [tenant]
+    # Administration INSIDE one app, and only for profiles that declare a
+    # privilegedRole to map onto — no role, no group. Per app, not per tenant:
+    # a cross-app group made a Nextcloud administrator an Odoo administrator,
+    # which is not what a tenant delegating one app intends.
+    define admin: [group#member]                  # gentian:tenant:<t>:app:<p>:admins
+
+    # Per-app entitlement. This is NOT new behaviour — it is the rule
+    # gentian-ui already enforces in shell_apps.py ("entitlement is membership
+    # of the app's own group, and nothing else"), expressed where a second
+    # enforcement point can read it. Today the tile list is the only thing
+    # applying it, so knowing an app's hostname bypasses it (G3).
+    #
+    # Which groups entitle is the director's to compute, exactly as the portal
+    # computes it from the catalogue:
+    #   base with no activated addons → its own group
+    #   base with activated addons    → the activated addons' groups, and NOT
+    #                                   the base's own: a base is entered for
+    #                                   the addons inside it, so someone
+    #                                   entitled to none of them has nothing to
+    #                                   do there
+    # Writing the base group in the second case would widen access past what
+    # the portal grants today.
+    define entitled: [group#member]               # gentian:tenant:<t>:app:<profile>
+
+    # least privilege per account: an admin account launches nothing
+    define can_use: entitled but not admin from tenant
+    define can_launch: can_use                    # app tiles; also L2 on the app's own route
+                                                  # admin tiles are tenant#can_administer
+    define can_administer: admin
+
+    # Secret writes for this component, checked by the credential manager
+    # before OpenBao sees the request: OpenBao's policy then bounds the PATH,
+    # it does not make the decision (principle 2).
+    define can_write_credential: admin from tenant
+
+type contract
+  relations
+    define tenant: [tenant]
+    # The app that declared this contract in `provides`.
+    define provider: [app]
+    # Apps the tenant has allowed to consume it, from AppGrant.
+    define consumer: [app]
+    define can_consume: consumer
+
+    # No enforcement point asks this yet. Until workloads carry identity
+    # (G8) there is nothing sitting on an app-to-app call, so the tuple
+    # records the tenant's consent and bounds what the director will bind —
+    # it does not intercept traffic. What revoking therefore costs today is
+    # in authorization-model.md §3 and design/security.md §3.4; the one thing
+    # it is not is free.
+
+type shared_instance
+  relations
+    define cluster: [cluster]
+    # Tenants the platform administrator has made this instance available to.
+    # Availability is not visibility: a tenant sees the app only once its own
+    # administrator installs it, which creates the tenant's own app object
+    # bound to this backend (component-profile.md §6.1).
+    define offered_to: [tenant]
+    define can_bind: offered_to
+
+type session
+  relations
+    # A Keycloak session the issuer has ended. Written by the director when a
+    # zone client's back-channel logout arrives, removed once that session's
+    # longest token has expired. The shim asks it at L2; because it is a stored
+    # tuple, every shim replica sees it on the ReadChanges poll it already
+    # runs, and nothing is lost when a replica restarts (AD-13).
+    define revoked: [user]
+
+condition grant_valid(current_time: timestamp, expires_at: timestamp) {
+  current_time < expires_at
+}
+
+# Wave 2 (security-gap-closing G9) adds, without changing anything above:
+#
+#   type task
+#     relations
+#       define valid: [agent with task_live]
+#   type agent
+#     relations
+#       define acting_for: [user]
+#       define can_act: acting_for and valid from task
+#
+# and every app permission gains "or can_act from agent" bounded by the
+# delegating human's own permission (principle 5).

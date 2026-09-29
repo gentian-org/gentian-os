@@ -2,7 +2,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: litellm-proxy
-  namespace: platform-kernel
+  namespace: {{ .Values.servicesNamespace }}
   labels:
     # D-05's check() selects on this. Without it the Deployment exists, runs,
     # and reports missing — the step's check disagreeing with its own provides:.
@@ -211,7 +211,7 @@ spec:
         # an optional REDIS_PASSWORD, and builds redis://<password>@host:port
         # from them.
         - name: REDIS_HOST
-          value: redis-llm.platform-kernel.svc.cluster.local
+          value: redis-llm.{{ .Values.servicesNamespace }}.svc.cluster.local
         - name: REDIS_PORT
           value: "6379"
         - name: REDIS_PASSWORD
@@ -228,7 +228,7 @@ apiVersion: v1
 kind: Service
 metadata:
   name: litellm-proxy
-  namespace: platform-kernel
+  namespace: {{ .Values.servicesNamespace }}
 spec:
   ports:
   - port: 4000
@@ -240,7 +240,7 @@ apiVersion: postgresql.cnpg.io/v1
 kind: Cluster
 metadata:
   name: litellm-db
-  namespace: platform-kernel
+  namespace: {{ .Values.servicesNamespace }}
 spec:
   instances: 1
   primaryUpdateStrategy: unsupervised
@@ -251,7 +251,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: redis-llm
-  namespace: platform-kernel
+  namespace: {{ .Values.servicesNamespace }}
   labels:
     app.kubernetes.io/name: redis-llm
     app.kubernetes.io/component: llm-cache
@@ -271,7 +271,7 @@ spec:
         image: redis:alpine
         # requirepass, from the credential that has existed since this file was
         # written and was never used. redis:alpine with no arguments listens
-        # unauthenticated, and platform-kernel has no NetworkPolicy, so every
+        # unauthenticated, and the namespace has no NetworkPolicy, so every
         # pod in the kernel namespace could read and write the proxy's rate
         # limit and budget state.
         #
@@ -291,7 +291,7 @@ apiVersion: v1
 kind: Service
 metadata:
   name: redis-llm
-  namespace: platform-kernel
+  namespace: {{ .Values.servicesNamespace }}
 spec:
   ports:
   - port: 6379

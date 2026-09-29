@@ -58,6 +58,7 @@ import (
 	"github.com/gentian-org/gentian-os/internal/customization"
 	"github.com/gentian-org/gentian-os/internal/kernel/secrets"
 	"github.com/gentian-org/gentian-os/internal/kernel/trustanchor"
+	"github.com/gentian-org/gentian-os/internal/layout"
 	"github.com/gentian-org/gentian-os/internal/meta"
 )
 
@@ -66,7 +67,6 @@ const (
 	tenantLabel             = meta.TenantLabel
 	managedByLabel          = meta.ManagedByLabel
 	managedByValue          = meta.ManagedByValue
-	kernelNamespace         = meta.KernelNamespace
 	conditionNamespaceReady = "NamespaceReady"
 )
 
@@ -85,7 +85,9 @@ func defaultServicesNamespace() string {
 	if v := os.Getenv("SERVICES_NAMESPACE"); v != "" {
 		return v
 	}
-	return meta.KernelNamespace
+	// The edge: the Gateway, its routes and its reference grants. In the v4
+	// layout that is the same namespace as everything else kernel.
+	return layout.Namespace(layout.Edge)
 }
 
 // errDeleteJobPending is returned by delete helpers when a cleanup Job has been
@@ -101,8 +103,8 @@ var errDeleteJobPending = provisioner.ErrDeleteJobPending
 func (r *TenantReconciler) deleteProvisioningJobs(ctx context.Context, jobNames ...string) {
 	prop := metav1.DeletePropagationBackground
 	for _, name := range jobNames {
-		job := &batchv1.Job{}
-		if err := r.Get(ctx, types.NamespacedName{Name: name, Namespace: kernelNamespace}, job); err != nil {
+		job, err := r.getProvisioningJob(ctx, name)
+		if err != nil {
 			continue
 		}
 		_ = r.Delete(ctx, job, &client.DeleteOptions{PropagationPolicy: &prop})
@@ -157,7 +159,7 @@ var xTenantGVK = schema.GroupVersionKind{
 // +kubebuilder:rbac:groups="",resources=limitranges,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=networking.k8s.io,resources=networkpolicies,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=batch,resources=jobs,verbs=get;list;watch;create;update;patch;delete
-// +kubebuilder:rbac:groups=gentianos.io,resources=appprofiles,verbs=get;list;watch
+// +kubebuilder:rbac:groups=gentianos.io,resources=componentprofiles,verbs=get;list;watch
 // +kubebuilder:rbac:groups=postgresql.cnpg.io,resources=databases,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups="",resources=configmaps,verbs=get;list;watch;create;update;patch;delete
@@ -224,7 +226,10 @@ type TenantReconciler struct {
 	// APIReader is an optional uncached client for kernel Secret lookups. The
 	// default cached Client can lag behind direct API writes (e.g. envtest).
 	APIReader client.Reader
-	Scheme    *runtime.Scheme
+	// PlanEventStore opens a tenant's usage store for the plan event a landed
+	// plan change is recorded as. Nil opens the tenant's own database.
+	PlanEventStore planEventStoreFor
+	Scheme         *runtime.Scheme
 	// Seeder derives and persists per-tenant-per-app credentials into OpenBao.
 	// May be nil — in which case all reconcilers skip the seeding step and behave
 	// exactly as they did before Inc 21a. This keeps existing envtest suites
@@ -455,17 +460,7 @@ func (r *TenantReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		return requests
 	}
 
-	envoyKernelServicePredicate := predicate.NewPredicateFuncs(func(obj client.Object) bool {
-		svc, ok := obj.(*corev1.Service)
-		if !ok {
-			return false
-		}
-		if svc.GetNamespace() != envoyGatewayInstallNamespace {
-			return false
-		}
-		return svc.GetLabels()["gateway.envoyproxy.io/owning-gateway-name"] == KernelPublicGatewayName &&
-			svc.GetLabels()["gateway.envoyproxy.io/owning-gateway-namespace"] == servicesNamespace
-	})
+	envoyKernelServicePredicate := predicate.NewPredicateFuncs(isKernelEdgeService)
 
 	ctrlBuilder := ctrl.NewControllerManagedBy(mgr).
 		For(&gentianov1alpha1.Tenant{}).
@@ -492,7 +487,7 @@ func (r *TenantReconciler) SetupWithManager(mgr ctrl.Manager) error {
 			handler.EnqueueRequestsFromMapFunc(mapToTenant),
 			builder.WithPredicates(predicate.NewPredicateFuncs(func(obj client.Object) bool {
 				_, hasLabel := obj.GetLabels()[tenantLabel]
-				return hasLabel && obj.GetNamespace() == kernelNamespace
+				return hasLabel && isTenantPlatformNamespace(obj.GetNamespace())
 			})),
 		).
 		Watches(
@@ -504,7 +499,7 @@ func (r *TenantReconciler) SetupWithManager(mgr ctrl.Manager) error {
 			})),
 		).
 		Watches(
-			&gentianov1alpha1.AppProfile{},
+			&gentianov1alpha1.ComponentProfile{},
 			handler.EnqueueRequestsFromMapFunc(mapAppProfileToTenants),
 		).
 		Watches(
@@ -655,11 +650,6 @@ func (r *TenantReconciler) reconcileDelete(ctx context.Context, tenant *gentiano
 		return ctrl.Result{}, err
 	}
 
-	// The portal shell credential goes with the database it addresses.
-	if err := r.deletePortalShellSecret(ctx, tenant); err != nil {
-		return ctrl.Result{}, err
-	}
-
 	// Clean up MariaDB resources before removing the namespace.
 	if requeue, res, err := awaitJob(r.deleteMariaDB(ctx, tenant)); requeue {
 		return res, err
@@ -706,11 +696,6 @@ func (r *TenantReconciler) reconcileDelete(ctx context.Context, tenant *gentiano
 
 	// Clean up mail resources (Application CRs always; Secrets under DeletionPolicy=Delete).
 	if err := r.deleteMail(ctx, tenant); err != nil {
-		return ctrl.Result{}, err
-	}
-
-	// Clean up portal redirect routes.
-	if err := r.deletePortalRedirect(ctx, tenant); err != nil {
 		return ctrl.Result{}, err
 	}
 
@@ -848,12 +833,15 @@ func (r *TenantReconciler) ensureRegistryCredentials(ctx context.Context, tenant
 			continue
 		}
 
-		profile := &gentianov1alpha1.AppProfile{}
+		profile := &gentianov1alpha1.ComponentProfile{}
 		if err := r.Get(ctx, types.NamespacedName{Name: profileName}, profile); err != nil {
-			return fmt.Errorf("failed to read AppProfile %s: %w", profileName, err)
+			return fmt.Errorf("failed to read ComponentProfile %s: %w", profileName, err)
 		}
 
-		if profile.Spec.License != "proprietary" {
+		// Registry credentials are for an entry somebody paid for. The
+		// licence itself is the store's now (AD-3); whether this needs paying
+		// for is an annotation, because the thing that acts on it runs here.
+		if !gentianov1alpha1.ProfileRequiresEntitlement(profile) {
 			continue
 		}
 
@@ -1237,6 +1225,69 @@ func (r *TenantReconciler) deleteXTenant(ctx context.Context, tenant *gentianov1
 // was simply sold something the cluster was never told to enforce.
 //
 // xtenant_quotas_agreement_test.go holds the two ends together.
+// xtenantSecurity projects the realm policy onto the XTenant.
+//
+// Only what is set: a field left out means the realm keeps Keycloak's own
+// default, and writing a zero instead would be this projection inventing a
+// policy the tenant never stated.
+func xtenantSecurity(sec *gentianov1alpha1.TenantSecurity) map[string]interface{} {
+	if sec == nil {
+		return nil
+	}
+	out := map[string]interface{}{}
+	if p := sec.Password; p != nil {
+		pw := map[string]interface{}{}
+		if p.MinLength > 0 {
+			pw["minLength"] = int64(p.MinLength)
+		}
+		for key, on := range map[string]bool{
+			"requireDigits":       p.RequireDigits,
+			"requireLowercase":    p.RequireLowercase,
+			"requireUppercase":    p.RequireUppercase,
+			"requireSpecialChars": p.RequireSpecialChars,
+		} {
+			if on {
+				pw[key] = true
+			}
+		}
+		if p.HistoryCount > 0 {
+			pw["historyCount"] = int64(p.HistoryCount)
+		}
+		if p.MaxAgeDays > 0 {
+			pw["maxAgeDays"] = int64(p.MaxAgeDays)
+		}
+		if len(pw) > 0 {
+			out["password"] = pw
+		}
+	}
+	if s := sec.Session; s != nil {
+		session := map[string]interface{}{}
+		if s.IdleMinutes > 0 {
+			session["idleMinutes"] = int64(s.IdleMinutes)
+		}
+		if s.MaxHours > 0 {
+			session["maxHours"] = int64(s.MaxHours)
+		}
+		if s.RememberMe {
+			session["rememberMe"] = true
+		}
+		if len(session) > 0 {
+			out["session"] = session
+		}
+	}
+	if b := sec.BruteForce; b != nil && b.Enabled {
+		bf := map[string]interface{}{"enabled": true}
+		if b.MaxLoginFailures > 0 {
+			bf["maxLoginFailures"] = int64(b.MaxLoginFailures)
+		}
+		if b.LockoutDurationSeconds > 0 {
+			bf["lockoutDurationSeconds"] = int64(b.LockoutDurationSeconds)
+		}
+		out["bruteForce"] = bf
+	}
+	return out
+}
+
 func xtenantQuotas(q *gentianov1alpha1.TenantQuotas) map[string]interface{} {
 	if q == nil {
 		return nil
@@ -1317,6 +1368,10 @@ func (r *TenantReconciler) buildXTenant(ctx context.Context, tenant *gentianov1a
 		spec["quotas"] = quotas
 	}
 
+	if security := xtenantSecurity(tenant.Spec.Security); len(security) > 0 {
+		spec["security"] = security
+	}
+
 	profileIndex, err := loadAppProfileIndex(ctx, r.Client)
 	if err != nil {
 		return nil, fmt.Errorf("load AppProfile index: %w", err)
@@ -1329,14 +1384,14 @@ func (r *TenantReconciler) buildXTenant(ctx context.Context, tenant *gentianov1a
 		if exists {
 			// ApiProfiles run no workload; keep them out of the XTenant so the
 			// composition creates no App claim / Helm release for them.
-			if gentianov1alpha1.ProfileIsAPI(profile) {
+			if profile.IsAPI() {
 				continue
 			}
-			if profile.Spec.CompositionRef != "" {
-				variant := strings.TrimPrefix(profile.Spec.CompositionRef, "app-")
-				if variant != "" {
-					entry["variant"] = variant
-				}
+			// Which Composition renders this app, if it is not app-default.
+			// package.composition beside package.chart: the chart is what is
+			// installed and the Composition is what else is created beside it.
+			if variant := strings.TrimSpace(profile.Spec.Package.Composition); variant != "" {
+				entry["variant"] = strings.TrimPrefix(variant, "app-")
 			}
 		} else {
 			log.FromContext(ctx).Info("AppProfile not found in index in buildXTenant", "profile", app.Profile)

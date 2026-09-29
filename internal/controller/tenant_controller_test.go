@@ -46,8 +46,9 @@ import (
 	"sigs.k8s.io/yaml"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
-	"github.com/gentian-org/gentian-os/internal/meta"
 	"github.com/gentian-org/gentian-os/internal/controller"
+	"github.com/gentian-org/gentian-os/internal/layout"
+	"github.com/gentian-org/gentian-os/internal/meta"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 )
@@ -322,14 +323,7 @@ func TestMain(m *testing.M) {
 		// The mail tests assert the shared Postfix AND Dovecot artefacts, which
 		// is what kernel mode provisions. With this unset the suite would run as
 		// external, where Dovecot is deliberately not configured at all.
-		MailServiceMode: "kernel",
-	}).SetupWithManager(mgr); err != nil {
-		panic(err)
-	}
-
-	if err := (&controller.AppStoreReconciler{
-		Client: mgr.GetClient(),
-		Scheme: mgr.GetScheme(),
+		MailServiceMode: "system",
 	}).SetupWithManager(mgr); err != nil {
 		panic(err)
 	}
@@ -356,15 +350,20 @@ func TestMain(m *testing.M) {
 	// nothing to mark, so the wait never ended.
 	go fakeKeycloakClientProvider(ctx, mgr.GetClient())
 
-	// platform-kernel namespace is required by the identity reconciler for Keycloak Jobs.
+	// The authentication namespace: the identity reconciler's Keycloak Jobs.
 	if err := testClient.Create(context.Background(), &corev1.Namespace{
-		ObjectMeta: metav1.ObjectMeta{Name: "platform-kernel"},
+		ObjectMeta: metav1.ObjectMeta{Name: layout.Namespace(layout.Authentication)},
 	}); err != nil {
 		panic(err)
 	}
 
 	// gentian-dev holds shared service ConfigMaps (e.g. Dovecot OIDC introspection values).
-	for _, ns := range []string{"gentian-dev", "gentian-infra-dev", "envoy-gateway-system"} {
+	// The platform namespaces tenant provisioning writes to, one per function
+	// (internal/controller/namespaces.go): identity Jobs in the authentication
+	// namespace, the Gateway and its reference grants at the edge, the
+	// provisioning ConfigMap in the provisioning one, and each data-plane Job
+	// beside its system service.
+	for _, ns := range append([]string{"gentian-dev", "gentian-infra-dev", "envoy-gateway-system"}, testPlatformNamespaces[1:]...) {
 		if err := testClient.Create(context.Background(), &corev1.Namespace{
 			ObjectMeta: metav1.ObjectMeta{Name: ns},
 		}); err != nil {
@@ -374,7 +373,7 @@ func TestMain(m *testing.M) {
 
 	// dovecot-admin Secret provides OIDC + doveadm credentials for shared Dovecot.
 	if err := testClient.Create(context.Background(), &corev1.Secret{
-		ObjectMeta: metav1.ObjectMeta{Name: "dovecot-admin", Namespace: "platform-kernel"},
+		ObjectMeta: metav1.ObjectMeta{Name: "dovecot-admin", Namespace: "system-mail"},
 		Data: map[string][]byte{
 			"doveadm_password":   []byte("test-doveadm-password"),
 			"oidc_client_secret": []byte("test-oidc-secret"),
@@ -389,7 +388,7 @@ func TestMain(m *testing.M) {
 	// succeed under envtest.
 	fakeKC := startFakeKeycloak()
 	if err := testClient.Create(context.Background(), &corev1.Secret{
-		ObjectMeta: metav1.ObjectMeta{Name: "keycloak-admin", Namespace: "platform-kernel"},
+		ObjectMeta: metav1.ObjectMeta{Name: "keycloak-admin", Namespace: layout.Namespace(layout.Authentication)},
 		Data: map[string][]byte{
 			"url":      []byte(fakeKC.URL),
 			"username": []byte("kcadmin"),
@@ -416,7 +415,7 @@ func TestMain(m *testing.M) {
 
 	// minio-admin Secret is required by S3 provisioning Jobs in the kernel namespace.
 	if err := testClient.Create(context.Background(), &corev1.Secret{
-		ObjectMeta: metav1.ObjectMeta{Name: "minio-admin", Namespace: "platform-kernel"},
+		ObjectMeta: metav1.ObjectMeta{Name: "minio-admin", Namespace: "system-s3"},
 		Data: map[string][]byte{
 			"endpoint":  []byte("http://minio.platform-kernel.svc:9000"),
 			"accessKey": []byte("minioadmin"),
@@ -444,7 +443,13 @@ func TestMain(m *testing.M) {
 		for {
 			time.Sleep(50 * time.Millisecond)
 			var jobs batchv1.JobList
-			if err := testClient.List(context.Background(), &jobs, client.InNamespace("platform-kernel")); err == nil {
+			for _, ns := range testPlatformNamespaces {
+				var page batchv1.JobList
+				if err := testClient.List(context.Background(), &page, client.InNamespace(ns)); err == nil {
+					jobs.Items = append(jobs.Items, page.Items...)
+				}
+			}
+			{
 				for _, job := range jobs.Items {
 					j := job // copy loop variable
 					if j.Status.Succeeded > 0 {
@@ -496,7 +501,7 @@ func TestMain(m *testing.M) {
 							break
 						} else if k8serrors.IsConflict(err) {
 							time.Sleep(20 * time.Millisecond)
-							if err := testClient.Get(context.Background(), types.NamespacedName{Name: name, Namespace: "platform-kernel"}, &j); err != nil {
+							if err := testClient.Get(context.Background(), types.NamespacedName{Name: name, Namespace: j.Namespace}, &j); err != nil {
 								break
 							}
 							if j.Status.Succeeded > 0 {
@@ -557,9 +562,8 @@ func waitForKernelJob(t *testing.T, jobName, tenantName string) *batchv1.Job {
 	ctx := context.Background()
 	deadline := time.Now().Add(jobAppearTimeout)
 	for {
-		job := &batchv1.Job{}
-		if testClient.Get(ctx, types.NamespacedName{Name: jobName, Namespace: meta.KernelNamespace}, job) == nil {
-			return job
+		if found := getPlatformJob(ctx, jobName); found != nil {
+			return found
 		}
 		if time.Now().After(deadline) {
 			break
@@ -568,7 +572,11 @@ func waitForKernelJob(t *testing.T, jobName, tenantName string) *batchv1.Job {
 	}
 
 	list := &batchv1.JobList{}
-	_ = testClient.List(ctx, list, client.InNamespace(meta.KernelNamespace))
+	for _, ns := range testPlatformNamespaces {
+		page := &batchv1.JobList{}
+		_ = testClient.List(ctx, page, client.InNamespace(ns))
+		list.Items = append(list.Items, page.Items...)
+	}
 	present := make([]string, 0, len(list.Items))
 	for i := range list.Items {
 		if list.Items[i].Labels[meta.TenantLabel] == tenantName {
@@ -578,7 +586,7 @@ func waitForKernelJob(t *testing.T, jobName, tenantName string) *batchv1.Job {
 	tenantAlive := testClient.Get(ctx, types.NamespacedName{Name: tenantName}, &gentianov1alpha1.Tenant{}) == nil
 
 	t.Fatalf("Job %q never appeared in %s within %s\n\tkernel Jobs still labelled for tenant %q: %v\n\tTenant object still present: %v",
-		jobName, meta.KernelNamespace, jobAppearTimeout, tenantName, present, tenantAlive)
+		jobName, testPlatformNamespaces, jobAppearTimeout, tenantName, present, tenantAlive)
 	return nil
 }
 
@@ -911,7 +919,7 @@ func TestTenantReconciler_DeleteDeleteRemovesNamespace(t *testing.T) {
 		t.Fatalf("delete tenant: %v", err)
 	}
 	// For Delete policy deleteIdentity creates cleanup jobs.
-	go markJobCompleteWhenReady("keycloak-realm-delete-destroyer", "platform-kernel")
+	go markJobCompleteWhenReady("keycloak-realm-delete-destroyer", layout.Namespace(layout.Authentication))
 
 	// Wait for Tenant CR to be gone
 	waitFor(t, tenantReadyTimeout, func() bool {
@@ -933,9 +941,9 @@ func TestTenantReconciler_DataPlaneRedisAndPostgresJobs(t *testing.T) {
 	t.Parallel()
 	pgProfile := newPostgresProfile("combo-pg")
 	redisProfile := newRedisProfile("combo-redis")
-	for _, p := range []*gentianov1alpha1.AppProfile{pgProfile, redisProfile} {
+	for _, p := range []*gentianov1alpha1.ComponentProfile{pgProfile, redisProfile} {
 		if err := testClient.Create(context.Background(), p); err != nil {
-			t.Fatalf("create AppProfile: %v", err)
+			t.Fatalf("create ComponentProfile: %v", err)
 		}
 		t.Cleanup(func() { _ = testClient.Delete(context.Background(), p) })
 	}
@@ -959,12 +967,12 @@ func TestTenantReconciler_DataPlaneRedisAndPostgresJobs(t *testing.T) {
 	pgJob := &batchv1.Job{}
 	waitFor(t, jobAppearTimeout, func() bool {
 		return testClient.Get(context.Background(),
-			types.NamespacedName{Name: "pg-role-combodp-combo-pg", Namespace: "platform-kernel"}, pgJob) == nil
+			types.NamespacedName{Name: "pg-role-combodp-combo-pg", Namespace: "system-postgresql"}, pgJob) == nil
 	})
 	redisJob := &batchv1.Job{}
 	waitFor(t, jobAppearTimeout, func() bool {
 		return testClient.Get(context.Background(),
-			types.NamespacedName{Name: "redis-acl-combodp-combo-redis", Namespace: "platform-kernel"}, redisJob) == nil
+			types.NamespacedName{Name: "redis-acl-combodp-combo-redis", Namespace: "system-cache"}, redisJob) == nil
 	})
 }
 
@@ -1049,4 +1057,39 @@ func fakeKeycloakClientProvider(ctx context.Context, c client.Client) {
 			}
 		}
 	}
+}
+
+// testPlatformNamespaces are the namespaces a tenant's provisioning writes
+// to under the layout the tests run with: no GENTIAN_NS_* set, so the kernel
+// function, and each system function is always system-<function>. First is
+// the authentication namespace, which several helpers look in by position.
+//
+// Every one of these is CREATED by TestMain as well as searched. They used to
+// collapse onto one name because the layout they were written against put
+// authentication, the edge and control in a single namespace; they do not any
+// more, and a namespace a reconciler writes to and the suite never created is
+// a test that waits three minutes for something that cannot happen.
+var testPlatformNamespaces = []string{
+	layout.Namespace(layout.Authentication),
+	layout.Namespace(layout.Provisioning),
+	layout.Namespace(layout.Edge),
+	layout.Namespace(layout.Control),
+	"system-postgresql",
+	"system-mariadb",
+	"system-s3",
+	"system-cache",
+	"system-mail",
+	"system-mail-dmz",
+}
+
+// getPlatformJob finds a Job by name in whichever platform namespace its
+// function put it, or nil.
+func getPlatformJob(ctx context.Context, name string) *batchv1.Job {
+	for _, ns := range testPlatformNamespaces {
+		job := &batchv1.Job{}
+		if testClient.Get(ctx, types.NamespacedName{Name: name, Namespace: ns}, job) == nil {
+			return job
+		}
+	}
+	return nil
 }

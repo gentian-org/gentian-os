@@ -341,7 +341,7 @@ fi
 # --- Mail transport settings ---
 # This path is operational config (not a derived password), so we intentionally
 # overwrite it on each run to reflect install.env changes.
-if [ "${MAIL_SERVICE_MODE}" != "external" ] && [ "${MAIL_SERVICE_MODE}" != "kernel" ]; then
+if [ "${MAIL_SERVICE_MODE}" != "external" ] && [ "${MAIL_SERVICE_MODE}" != "system" ]; then
   echo "  Invalid MAIL_SERVICE_MODE='${MAIL_SERVICE_MODE}' (expected external|kernel); defaulting to external"
   MAIL_SERVICE_MODE="external"
 fi
@@ -418,7 +418,7 @@ fi
 
 # --- LLM serving (LiteLLM / vLLM credentials) ---
 KERNEL_REALM="${KERNEL_REALM:-kernel}"
-LITELLM_UI_USERNAME="administrator@${KERNEL_DOMAIN}"
+LITELLM_UI_USERNAME="admin@${KERNEL_DOMAIN}"
 LITELLM_UI_PASSWORD=$(derive_password "portal-bootstrap" "administrator_password")
 VLLM_API_KEY=$(derive_password "llm" "vllm_api_key")
 # sk- prefixed, because LiteLLM requires it of a master key and refuses

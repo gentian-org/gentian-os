@@ -49,7 +49,7 @@ func makeGentianGroupsJob(tenant *gentianov1alpha1.Tenant, realmName string, gro
 	return &batchv1.Job{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      gentianGroupsJobName(tenant.Name),
-			Namespace: kernelNamespace,
+			Namespace: identityNamespace,
 			Labels: map[string]string{
 				tenantLabel:    tenant.Name,
 				managedByLabel: managedByValue,

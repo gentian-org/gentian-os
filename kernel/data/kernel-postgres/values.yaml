@@ -1,0 +1,39 @@
+instances: 1
+storageClass: ""
+storageSize: 10Gi
+
+# The kernel's own databases: one role and one database per service, the
+# role's password read from the vault by ESO (the path the seed writes) and
+# kept equal to the Secret by CNPG. Kernel data lives here and nowhere else;
+# tenant and app data live on the system engines.
+databases:
+  - name: keycloak
+    role: keycloak_user
+    passwordKey: keycloak_user_password
+  - name: openfga
+    role: openfga_user
+    passwordKey: openfga_user_password
+  # The portal's own store: a signed-in person's preferences and desktop
+  # layout. Named portal_shell because the console calls its shell what the
+  # user sees before any app is open.
+  # The director's record of WHO WAS ALLOWED to ask for an identity change:
+  # the caller, the relation and the object that permitted it, and the request
+  # id that joins it to Keycloak's own event (S7A.17).
+  #
+  # A database rather than git, and this is the one place the platform makes
+  # that choice deliberately. Git gives every change an author, a time and a
+  # diff, which is the standard the rest of the console is held to -- but the
+  # thing that makes git good here, append-only history, is exactly what makes
+  # it wrong for a record about people. This has a retention policy; a commit
+  # cannot.
+  - name: director
+    role: director_user
+    passwordKey: director_user_password
+  - name: portal-shell
+    # The name Postgres knows it by. A Kubernetes object cannot carry an
+    # underscore and a Postgres identifier is happier with one than with a
+    # hyphen, so the two are stated separately rather than one being bent to
+    # the other's rules.
+    database: portal_shell
+    role: portal_shell_user
+    passwordKey: portal_shell_user_password

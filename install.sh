@@ -8,9 +8,9 @@
 # them.
 # Every step is a self-contained file you can read top to bottom:
 #
-#   scripts/steps/A-01-crossplane.sh   scripts/steps/B-08-cluster-xr.sh
-#   scripts/steps/A-08-eso.sh          scripts/steps/C-02-root-appset.sh
-#   scripts/steps/A-09-argocd.sh       ...
+#   scripts/steps/A-01-namespaces.sh   scripts/steps/C-01-cluster-claim.sh
+#   scripts/steps/A-04-crossplane.sh   scripts/steps/C-02-appsets.sh
+#   scripts/steps/A-06-argocd.sh       ...
 #
 # Each declares a contract in its header and implements up to three verbs:
 #
@@ -21,7 +21,7 @@
 # One driver, three directions. Update is not a separate program: converging a
 # running cluster IS the update, so it is the same forward pass.
 #
-#   ./install.sh --prepare-deployment   write this cluster's files, change nothing
+#   ./install.sh --prepare-deployment   write this cluster's files and stop
 #   ./install.sh --prepare-tenant NAME  write one tenant's definition, change nothing
 #   ./install.sh                    install or converge
 #   ./install.sh --update           same thing, named for what you meant
@@ -39,8 +39,12 @@
 # asked. --cluster-infra is that ask.
 #
 # A cluster is its claims and values in gentian-deployments, so those come
-# first: --prepare-deployment generates them from install.env, and you edit,
-# commit and push them before installing. Installing does not write them.
+# first -- and an install writes them when they are absent rather than
+# refusing with instructions. That is step 0 of the forward pass: if the
+# definition is there, nothing is prepared; if it is not, the questions are
+# asked, the files are written, and they are committed and pushed signed
+# (AD-2). --prepare-deployment is the same code path with nothing after it,
+# for writing the definition on a day you are not installing.
 #
 # A tenant is the same shape one level down, and stops in the same place:
 # --prepare-tenant writes its DEFINITION, you choose its apps, and
@@ -88,7 +92,9 @@ source "${SCRIPT_DIR}/scripts/lib/driver.sh"
 # operator-settable version selects an untested combination. The namespace is a
 # constant — references to it are hardcoded across the repo, so presenting it as
 # a knob would invite someone to turn it.
-export CROSSPLANE_NAMESPACE=crossplane-system
+# kernel/namespaces.yaml names it; the constant here is what the steps read
+# before the layout is on the cluster to read it from.
+export CROSSPLANE_NAMESPACE="${CROSSPLANE_NAMESPACE:-kernel-provisioning}"
 CROSSPLANE_VERSION="$(gentian_pin crossplane chart)"
 CROSSPLANE_HELM_REPO="$(gentian_pin crossplane repo)"
 export CROSSPLANE_VERSION CROSSPLANE_HELM_REPO
@@ -140,7 +146,10 @@ Running part of it. A step is named by its number or its full id, so
 
 Other options:
   --prepare-deployment  write clusters/<id>/kernel in gentian-deployments from
-                        install.env, then stop — nothing is committed or applied
+                        install.env, commit and push it, then stop. A plain
+                        install does this itself when the files are absent, so
+                        this is for writing the definition on a day you are not
+                        installing. Nothing is applied either way
   --prepare-tenant NAME write clusters/<id>/definitions/NAME the same way,
                         then stop. Deploy it with `kubectl gentian tenants
                         deploy NAME`. Needs the cluster's files to exist already
@@ -204,6 +213,17 @@ parse_driver_args() {
             --phase)
                 shift; [[ $# -gt 0 ]] || { error "$0: --phase requires a value"; exit 1; }
                 GENTIAN_PHASE="$1" ;;
+            --layout)
+                # There is one layout. The flag is still read so that a script
+                # or a runbook carrying --layout v5 keeps working rather than
+                # failing on an unknown option; anything else is refused,
+                # because a caller asking for v4 wants something this installer
+                # no longer builds and should hear so.
+                shift; [[ $# -gt 0 ]] || { error "$0: --layout requires a value (v5)"; exit 1; }
+                case "$1" in
+                    v5)  warn "--layout v5 is the only layout and is now the default; the flag does nothing." ;;
+                    *)   error "$0: --layout v5 is the only layout; '$1' is not built by this installer." ; exit 1 ;;
+                esac ;;
             --export-recovery-kit)
                 GENTIAN_DIRECTION="export-kit"
                 if [[ -z "${2:-}" || "${2:-}" == -* ]]; then GENTIAN_KIT_PATH=""
@@ -273,9 +293,25 @@ prepare_run() {
 
     prompt_app_repos
 
-    # Before any credential is collected: the claims and values this cluster is
-    # built from have to exist and have to have been read by someone. They are
-    # written by --prepare-deployment, never by an install.
+    # Step 0. The claims and values this cluster is built from have to exist
+    # before any credential is collected -- and when they do not, the install
+    # makes them rather than refusing with instructions. --prepare-deployment
+    # is the same code path with nothing after it, kept because writing the
+    # definition without installing is a thing operators legitimately do.
+    #
+    # Not under --validate. That command's contract is that it changes
+    # nothing, and writing files and pushing them to a remote is a change --
+    # a smaller one than touching a cluster, but not none. Validation reports
+    # an incomplete definition instead, which is the answer it is for.
+    if [[ "${INSTALL_VALIDATE_ONLY:-0}" != "1" && -n "$(cluster_deployment_missing)" ]]; then
+        echo ""
+        info "This cluster has no deployment definition yet. Writing one first."
+        info "  Nothing is applied and no cluster is contacted by this part."
+        ensure_cluster_deployment
+    fi
+
+    # Now a genuine precondition rather than an instruction: it validates what
+    # is there and commits an edit the operator made by hand.
     require_cluster_deployment
 
     resolve_kernel_domain_from_claim   # already-bootstrapped cluster reads its Claim
@@ -319,16 +355,43 @@ prepare_run() {
 # the exposure model. No credentials are collected and no cluster is contacted,
 # so this runs against a cluster that does not exist yet.
 # =============================================================================
+# ensure_cluster_deployment — step 0 of every install.
+#
+# The definition this cluster is built from used to be a separate command the
+# operator had to know to run first, and an install that met its absence
+# refused with instructions. That is a question the installer can answer
+# itself: if the files are there, there is nothing to prepare; if they are
+# not, ask what they need and write them.
+#
+# One writer, called from both the forward run and --prepare-deployment, so
+# the two cannot drift. It is still true that nothing is applied here and no
+# cluster is contacted -- the questions and the files come first either way.
+#
+# Assumes load_operator_config and prompt_app_repos have run, which both
+# callers do.
+ensure_cluster_deployment() {
+    resolve_kernel_domain_from_claim   # a re-run reads back what it wrote
+    prompt_kernel_domain
+
+    # A re-run is a scaffold of whatever is still missing, never a second
+    # interview: the exposure model, the issuer and the mail model are in the
+    # claim already, and the claim is not rewritten. Asking again produced
+    # answers nothing used and, without a terminal, an install that stopped.
+    if [[ -f "${GENTIAN_DEPLOYMENTS_PATH}/clusters/${GENTIAN_DEPLOYMENTS_CLUSTER_ID}/kernel/claims/cluster.yaml" ]]; then
+        info "clusters/${GENTIAN_DEPLOYMENTS_CLUSTER_ID}/kernel/claims/cluster.yaml exists; exposure, issuer and mail are read from it."
+    else
+        prompt_network_mode
+        prompt_issuer_mode
+        prompt_mail_mode
+    fi
+    scaffold_cluster_deployment
+}
+
 prepare_deployment_run() {
     load_operator_config
     load_deployments_cluster_settings
     prompt_app_repos
-    resolve_kernel_domain_from_claim   # a re-run reads back what it wrote
-    prompt_kernel_domain
-    prompt_network_mode
-    prompt_issuer_mode
-    prompt_mail_mode
-    scaffold_cluster_deployment
+    ensure_cluster_deployment
 }
 
 # =============================================================================
@@ -482,6 +545,11 @@ main() {
             fi
             drive_reverse
             if [[ "${GENTIAN_PURGE}" == "1" && "${GENTIAN_DRY_RUN}" != "1" ]]; then
+                # The namespaces no step created, and so no step's destroy()
+                # removes: a tenant's, and any shared or system namespace a
+                # component landed in. Before the volume pass, which is what
+                # reclaims what draining them releases.
+                purge_tenant_namespaces
                 purge_delete_volumes
                 # After the volumes: the CRDs removed here define the objects
                 # those volumes back, and taking the definitions first strands

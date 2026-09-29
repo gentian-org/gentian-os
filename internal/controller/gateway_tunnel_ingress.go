@@ -28,7 +28,7 @@ import (
 )
 
 // ensureKernelGatewayTunnelIngress programs explicit kernel and tenant apex hostnames
-// on the Cloudflare tunnel to reach kernel-public-gateway. Wildcard tunnel hostname
+// on the Cloudflare tunnel to reach the edge Gateways. Wildcard tunnel hostname
 // rules such as *.platform.example.com are unreliable for multi-label kernel domains;
 // tenant app wildcards (*.demo.platform.example.com) are handled per-tenant separately.
 func ensureKernelGatewayTunnelIngress(
@@ -66,15 +66,26 @@ func ensureKernelGatewayTunnelIngress(
 	}
 
 	hosts := map[string]struct{}{
-		kernelDomain:                   {},
-		kernelPortalHost(kernelDomain): {},
-		"corp." + kernelDomain:         {},
+		kernelDomain:           {},
+		"corp." + kernelDomain: {},
 	}
+	// The hostnames are the routes': a kernel UI is published only once it
+	// is routed, which is only once the kernel zone exists. The cluster id
+	// does not reach a hostname.
 	for _, spec := range kernelHTTPRouteSpecs(kernelDomain, effectiveDomains, oidcSubs, tenantNames,
-		clusterLLMEnabled(ctx, c)) {
+		clusterLLMEnabled(ctx, c), "", kernelZoneReadyWith(ctx, c), desktopPresent(ctx, c)) {
 		if spec.host != "" {
 			hosts[spec.host] = struct{}{}
 		}
+	}
+	// A component's exposures are routes in its tenant's namespace, the
+	// desktop's console among them; they are published the same way.
+	componentRoutes, err := componentRouteTableEntries(ctx, c)
+	if err != nil {
+		return fmt.Errorf("list component routes for kernel tunnel ingress: %w", err)
+	}
+	for _, route := range componentRoutes {
+		hosts[route.Host] = struct{}{}
 	}
 	for _, d := range effectiveDomains {
 		hosts[d] = struct{}{}

@@ -44,7 +44,7 @@ func TestKeycloakAdminClient_UpdateRealmBrowserSecurityHeaders(t *testing.T) {
 	defer srv.Close()
 
 	client := NewKeycloakAdminClient(srv.URL, "admin", "secret")
-	if err := client.UpdateRealmBrowserSecurityHeaders(context.Background(), "demo"); err != nil {
+	if err := client.UpdateRealmBrowserSecurityHeaders(context.Background(), "demo", []string{"en", "de"}); err != nil {
 		t.Fatalf("UpdateRealmBrowserSecurityHeaders: %v", err)
 	}
 	if gotMethod != http.MethodPut || gotPath != "/admin/realms/demo" {
@@ -55,7 +55,7 @@ func TestKeycloakAdminClient_UpdateRealmBrowserSecurityHeaders(t *testing.T) {
 func TestKeycloakAdminClient_UpdateRealmBrowserSecurityHeaders_EmptyRealm(t *testing.T) {
 	t.Parallel()
 	client := NewKeycloakAdminClient("http://127.0.0.1:1", "admin", "secret")
-	if err := client.UpdateRealmBrowserSecurityHeaders(context.Background(), ""); err != nil {
+	if err := client.UpdateRealmBrowserSecurityHeaders(context.Background(), "", nil); err != nil {
 		t.Fatalf("empty realm should no-op: %v", err)
 	}
 }

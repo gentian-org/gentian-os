@@ -4,3 +4,5 @@ env: dev
 # storageClass empty = use the cluster's default StorageClass. Set per
 # stage in values-<env>.yaml only where a stage genuinely differs.
 storageClass: ""
+# The database host. v4: the InfraData Postgres; v5: kernel-postgres in kernel-data.
+dbHost: ""   # empty: gentian-postgresql-<env>.gentian-infra-<env> (v4); v5 sets kernel-postgres-rw.kernel-data

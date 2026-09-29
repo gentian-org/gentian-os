@@ -24,6 +24,8 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+
+	"github.com/gentian-org/gentian-os/internal/locales"
 	"sync"
 	"time"
 )
@@ -180,7 +182,15 @@ const GentianLoginTheme = "gentian"
 
 // UpdateRealmBrowserSecurityHeaders applies DefaultBrowserSecurityHeaders,
 // functional session timeouts (12 hours) and the Gentian login theme to a realm.
-func (c *KeycloakAdminClient) UpdateRealmBrowserSecurityHeaders(ctx context.Context, realm string) error {
+// UpdateRealmBrowserSecurityHeaders writes the realm settings that have no
+// other writer.
+//
+// offered is the languages the realm offers. It is passed in rather than read
+// from this process's environment because it is an administrator's choice, not
+// a property of the build: the Tenant declares it, the director is what
+// changes it, and this only applies what git already says. Empty means the
+// platform's own set.
+func (c *KeycloakAdminClient) UpdateRealmBrowserSecurityHeaders(ctx context.Context, realm string, offered []string) error {
 	if realm == "" {
 		return nil
 	}
@@ -188,16 +198,59 @@ func (c *KeycloakAdminClient) UpdateRealmBrowserSecurityHeaders(ctx context.Cont
 	if err != nil {
 		return err
 	}
+	// The headers and the theme. NOT the session or token lifetimes.
+	//
+	// This used to carry accessTokenLifespan and both session timeouts, all
+	// 12 hours, and it runs on every tenant reconcile — so it was a second
+	// writer of them, and the one that ran last. The realm bootstrap set a
+	// five-minute access token, reported that it had, and this put twelve
+	// hours back within the minute. A twelve-hour access token is also
+	// exactly what made a logout need a revocation list: nothing the edge
+	// held expired for half a day.
+	//
+	// Lifetimes belong to the realm bootstrap, which sets a short access
+	// token against a workday session. One writer.
 	body := map[string]any{
 		"browserSecurityHeaders": DefaultBrowserSecurityHeaders,
-		"accessTokenLifespan":    43200, // 12 hours
-		"ssoSessionIdleTimeout":  43200, // 12 hours
-		"ssoSessionMaxLifespan":  43200, // 12 hours
 		// Every realm that can render a login screen renders Gentian's, so a user
 		// sent to the IdP sees the portal's own card rather than stock Keycloak.
 		// Set here rather than per realm-creation path because the kernel realm has
 		// no such path — it is bootstrapped once at install.
 		"loginTheme": GentianLoginTheme,
+		// And the languages it renders in (AD-15). Keycloak ships these
+		// translations; a realm only has to say it wants them, and until it
+		// does it serves English to everyone — which, for a German-speaking
+		// market, is the product's first screen being in the wrong language.
+		//
+		// With this on, Keycloak honours the browser's Accept-Language and
+		// offers a picker, so a German browser gets German without anybody
+		// choosing anything. The default is what answers a browser asking for
+		// a language that is not here, and it is English because that is the
+		// language the platform's own strings are written in: a fallback
+		// should be the author's own words rather than a guess.
+		//
+		// Here for the same reason as the theme. A tenant realm gets this from
+		// its Composition, which declares it alongside the theme; the kernel
+		// realm has no Composition and this is the only thing that maintains
+		// it.
+	}
+	// The languages, only where this is the realm's one writer.
+	//
+	// A tenant realm is composed, and tenant-default declares its languages
+	// from the same spec.locales. Writing them here as well would make two
+	// writers of one field and the last one would win -- which is exactly the
+	// bug recorded above for the session lifetimes. So a caller that passes no
+	// locales is saying "not mine to set", and this leaves the realm's own
+	// alone rather than putting a default over a declared value.
+	if len(offered) > 0 {
+		langs := locales.Normalise(offered)
+		body["internationalizationEnabled"] = true
+		body["supportedLocales"] = langs
+		// The FIRST language, not English: the order is the preference, so a
+		// tenant listing de then en is saying it is German-speaking and also
+		// serves English. Its login page should open in German for a browser
+		// that asks for neither.
+		body["defaultLocale"] = langs[0]
 	}
 	_, err = c.doAdminExpect(ctx, token, http.MethodPut, "/admin/realms/"+url.PathEscape(realm), body, http.StatusNoContent, http.StatusOK)
 	return err

@@ -1,0 +1,158 @@
+{{- /*
+  The ext-auth shim: L2 of the edge (networking.md §2), the one enforcement
+  point between the Gateway's session and every backend behind it.
+
+  It runs in the edge namespace, beside the Gateways whose SecurityPolicies
+  call it, from the operator's image with its own command. It holds one
+  credential -- the authorization store's -- and no state: the route table
+  is the operator's ConfigMap, decisions are the store's, revocation arrives
+  through the store's changelog. No ServiceAccount token, no RBAC.
+*/ -}}
+{{- if .Values.edgeAuthz.enabled }}
+{{- $ns := .Values.layout.edge | default .Values.servicesNamespace }}
+{{- $name := printf "%s-edge-authz" (include "gentian-os.fullname" .) }}
+{{- if .Values.director.openfgaTokenSecretRef.openbaoPath }}
+apiVersion: external-secrets.io/v1
+kind: ExternalSecret
+metadata:
+  name: {{ $name }}-openfga-token
+  namespace: {{ $ns }}
+  labels:
+    {{- include "gentian-os.labels" . | nindent 4 }}
+    app.kubernetes.io/component: edge-authz
+spec:
+  refreshInterval: 1h
+  secretStoreRef:
+    kind: ClusterSecretStore
+    name: openbao
+  target:
+    name: {{ $name }}-openfga-token
+    creationPolicy: Owner
+    deletionPolicy: Retain
+  data:
+    - secretKey: {{ .Values.director.openfgaTokenSecretRef.key }}
+      remoteRef:
+        key: {{ .Values.director.openfgaTokenSecretRef.openbaoPath }}
+        property: {{ .Values.director.openfgaTokenSecretRef.property }}
+---
+{{- end }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $name }}
+  namespace: {{ $ns }}
+  labels:
+    {{- include "gentian-os.labels" . | nindent 4 }}
+    app.kubernetes.io/component: edge-authz
+spec:
+  selector:
+    {{- include "gentian-os.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: edge-authz
+  ports:
+    - name: grpc
+      port: 9001
+      targetPort: grpc
+      # What tells Envoy Gateway to speak HTTP/2 to it: ext_authz is gRPC.
+      appProtocol: kubernetes.io/h2c
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $name }}
+  namespace: {{ $ns }}
+  labels:
+    {{- include "gentian-os.labels" . | nindent 4 }}
+    app.kubernetes.io/component: edge-authz
+spec:
+  replicas: {{ .Values.edgeAuthz.replicas }}
+  selector:
+    matchLabels:
+      {{- include "gentian-os.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: edge-authz
+  template:
+    metadata:
+      labels:
+        {{- include "gentian-os.labels" . | nindent 8 }}
+        app.kubernetes.io/component: edge-authz
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              {{- include "gentian-os.selectorLabels" . | nindent 14 }}
+              app.kubernetes.io/component: edge-authz
+      containers:
+        - name: edge-authz
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: ["/edge-authz"]
+          ports:
+            - name: grpc
+              containerPort: 9001
+            - name: health
+              containerPort: 8081
+          env:
+            - name: EDGE_AUTHZ_LISTEN
+              value: ":9001"
+            - name: EDGE_AUTHZ_HEALTH
+              value: ":8081"
+            - name: EDGE_AUTHZ_ROUTES
+              value: /etc/edge-authz/routes.yaml
+            - name: EDGE_AUTHZ_CACHE_TTL
+              value: {{ .Values.edgeAuthz.cacheTTL | quote }}
+            - name: EDGE_AUTHZ_POLL_INTERVAL
+              value: {{ .Values.edgeAuthz.pollInterval | quote }}
+            - name: EDGE_AUTHZ_AUDIENCE
+              value: {{ .Values.director.audience | quote }}
+            - name: DIRECTOR_ISSUER_BASE_URL
+              value: {{ printf "https://id.%s/auth" .Values.kernelDomain | quote }}
+            - name: DIRECTOR_JWKS_BASE_URL
+              value: {{ .Values.director.jwksBaseURL | default (printf "http://gentian-idp-keycloak-keycloakx-http.%s.svc.cluster.local:8080/auth" (.Values.layout.authentication | default .Values.servicesNamespace)) | quote }}
+            - name: OPENFGA_API_URL
+              value: {{ .Values.director.openfgaURL | default .Values.authzBridge.openfgaURL | quote }}
+            {{- if .Values.director.openfgaTokenSecretRef.openbaoPath }}
+            - name: OPENFGA_API_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $name }}-openfga-token
+                  key: {{ .Values.director.openfgaTokenSecretRef.key }}
+                  optional: true
+            {{- end }}
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: health
+            initialDelaySeconds: 2
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: health
+            periodSeconds: 20
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+            readOnlyRootFilesystem: true
+          resources:
+            {{- toYaml .Values.edgeAuthz.resources | nindent 12 }}
+          volumeMounts:
+            - name: routes
+              mountPath: /etc/edge-authz
+              readOnly: true
+      volumes:
+        # The operator's route table. Optional: before the first route is
+        # written the shim runs with an empty table and refuses every host.
+        - name: routes
+          configMap:
+            name: edge-authz-routes
+            optional: true
+{{- end }}

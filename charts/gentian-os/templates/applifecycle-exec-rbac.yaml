@@ -1,5 +1,5 @@
-{{- $servicesNs := .Values.servicesNamespace | default "platform-kernel" }}
-{{- $openbaoNs := .Values.openbaoNamespace | default "openbao" }}
+{{- $servicesNs := .Values.servicesNamespace | default "kernel-edge" }}
+{{- $openbaoNs := .Values.openbaoNamespace | default "kernel-secrets" }}
 {{- $saName := include "gentian-os.serviceAccountName" . }}
 {{- $saNamespace := .Release.Namespace }}
 

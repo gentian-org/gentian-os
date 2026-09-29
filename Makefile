@@ -22,7 +22,7 @@ CROSSPLANE_IMAGE ?= xpkg.crossplane.io/crossplane/crossplane:$(CROSSPLANE_CLI_VE
 KUBEBUILDER_ASSETS ?= /tmp/envtest-bins/k8s/1.32.0-linux-amd64
 export KUBEBUILDER_ASSETS
 
-.PHONY: all build generate manifests test lint docker-build clean install-plugin uninstall-plugin validate-steps gen-credentials check-credentials lint-cluster-config-keys lint-rbac-coverage lint-marker-ascii test-e04-token-classification test-a05-cert-manager-dns01-args lint-composed-resource-names lint-sequencer-targets lint-eso-readable-paths lint-template-placeholders lint-portability lint-image-digests check-render-fixtures lint-resolvable lint-bootstrap-apps lint-step-contracts lint-claim-defaults lint-live-identifiers lint-password-schemes test-policy test-policy-openbao test-policy-authz verify-claim-applied verify-argocd-config verify-image-updates gen-provider-rbac lint-provider-rbac lint-credential-validators lint-credential-catalogue
+.PHONY: verify all build generate manifests test lint docker-build clean install-plugin uninstall-plugin validate-steps gen-credentials gen-authz-model check-credentials lint-cluster-config-keys lint-rbac-coverage lint-marker-ascii test-bootstrap-token-classification test-cert-manager-dns01-args lint-composed-resource-names lint-sequencer-targets lint-eso-readable-paths lint-template-placeholders lint-portability lint-image-digests check-render-fixtures lint-resolvable lint-unreachable lint-bootstrap-apps lint-step-contracts lint-job-scripts lint-claim-defaults lint-live-identifiers lint-password-schemes test-policy test-policy-openbao test-policy-authz verify-authz-vocabulary test-director-contract run-director-dev lint-namespace-layout verify-claim-applied verify-argocd-config verify-image-updates gen-provider-rbac lint-provider-rbac lint-credential-validators lint-credential-catalogue
 
 all: generate build test
 
@@ -85,6 +85,12 @@ manifests:
 	$(CONTROLLER_GEN) rbac:roleName=gentian-os paths="./internal/..." output:rbac:artifacts:config=config/rbac
 	python3 scripts/gen/gen-clusterrole.py
 
+## The director embeds the authorization model it checks against; this copies
+## the repository's model.json to where the embed reads it, so the code and the
+## model it was tested with cannot be separated.
+gen-authz-model:
+	cp authz/model/v1/model.json internal/director/authz/model.json
+
 ## Render the Keycloak login theme sources into the ConfigMap Argo CD applies
 gen-theme:
 	python3 scripts/gen/gen-keycloak-theme-configmap.py
@@ -97,13 +103,17 @@ gen-credentials:
 gen-provider-rbac:
 	python3 scripts/gen/gen-provider-rbac.py
 
+## Regenerate the director's cluster-setting defaults from the Cluster XRD
+gen-cluster-setting-defaults:
+	python3 scripts/gen/gen-cluster-setting-defaults.py
+
 ## Both generate and manifests in order
-gen-all: generate manifests gen-theme gen-credentials gen-provider-rbac
+gen-all: generate manifests gen-theme gen-credentials gen-provider-rbac gen-cluster-setting-defaults gen-authz-model
 
 ## Verify generated files are up to date (CI check)
 verify-gen: gen-all
 	python3 scripts/gen/gen-credential-requirements.py --check
-	git diff --exit-code api/ config/crd/ charts/gentian-os/crds/ charts/gentian-os/templates/clusterrole.yaml kernel/services/keycloak-idp/manifests/ kernel/credentials/ crossplane/providers/provider-rbac.yaml || (echo "Generated files are out of date. Run 'make gen-all'." && exit 1)
+	git diff --exit-code api/ internal/director/authz/model.json internal/director/gitops/settings_defaults.go config/crd/ charts/gentian-os/crds/ charts/gentian-os/templates/clusterrole.yaml kernel/services/keycloak-idp/manifests/ kernel/credentials/ crossplane/providers/provider-rbac.yaml || (echo "Generated files are out of date. Run 'make gen-all'." && exit 1)
 
 ## Tidy module dependencies
 tidy:
@@ -111,6 +121,18 @@ tidy:
 
 ## Run every linter the CI Lint job runs (Go, YAML, shell)
 lint: lint-go lint-yaml lint-shell
+
+## Everything CI runs, in one target.
+##
+## It exists because of the way the v4 removal was verified: make lint, make
+## test and make test-unit-render all passed, and the one target NOT run was
+## make test-unit -- which CI ran, and which caught a schema fixture still
+## carrying the field the XRD had just lost. A local gate set that is a
+## subset of CI's is a gate set that reports green on work CI will reject.
+verify: verify-gen lint validate-steps test test-unit
+	@bash install.sh --explain >/dev/null
+	@printf '\n\033[0;32mEverything CI runs is green here.\033[0m\n'
+
 
 ## Run golangci-lint (install from https://golangci-lint.run/usage/install/)
 lint-go:
@@ -124,7 +146,7 @@ lint-yaml:
 ## The file list and flags must match CI exactly: -x follows sourced files, and no
 ## -S filter means info/style findings fail the build too. Hand-rolling a narrower
 ## invocation is how an SC2153 reached develop green-looking.
-lint-shell: validate-steps lint-step-contracts lint-resolvable lint-bootstrap-apps lint-credential-fields lint-credential-validators lint-credential-catalogue lint-claim-defaults lint-live-identifiers lint-cluster-config-keys lint-template-placeholders lint-provider-rbac lint-password-schemes lint-rbac-coverage lint-composed-resource-names lint-sequencer-targets lint-eso-readable-paths lint-marker-ascii lint-scaffold-schemas lint-plan-defaults test-e04-token-classification test-a05-cert-manager-dns01-args
+lint-shell: validate-steps lint-step-contracts lint-resolvable lint-unreachable lint-bootstrap-apps lint-credential-fields lint-credential-validators lint-credential-catalogue lint-claim-defaults lint-live-identifiers lint-cluster-config-keys lint-template-placeholders lint-provider-rbac lint-password-schemes lint-rbac-coverage lint-composed-resource-names lint-sequencer-targets lint-eso-readable-paths lint-marker-ascii lint-scaffold-schemas lint-plan-defaults lint-legacy-profile-fields lint-step-order test-bootstrap-token-classification test-cert-manager-dns01-args
 	@git ls-files -z -- '*.sh' | xargs -0 shellcheck -x scripts/kubectl-gentian
 
 ## Round-trip the recovery kit: export one, load it back, prove every value
@@ -135,11 +157,11 @@ verify-recovery-kit:
 
 ## E-04 must tell the bootstrap credential apart from the cluster-admin session
 ## every run carries after handover. Stubs the bao CLI; needs no cluster.
-test-e04-token-classification:
-	@bash scripts/tests/test-e04-token-classification.sh
+test-bootstrap-token-classification:
+	@bash scripts/tests/test-bootstrap-token-classification.sh
 
-test-a05-cert-manager-dns01-args:
-	@bash scripts/tests/test-a05-cert-manager-dns01-args.sh
+test-cert-manager-dns01-args:
+	@bash scripts/tests/test-cert-manager-dns01-args.sh
 
 ## Report which declared credentials are satisfied. --source picks where to look:
 ## vault (installer preflight), cluster (day-2), git (CI on a deployments branch).
@@ -156,6 +178,12 @@ lint-image-digests:
 ## function whose last caller was not checked — the most repeated mistake here.
 lint-step-contracts:
 	@bash scripts/lint/lint-step-contracts.sh
+
+## Syntax-check the shell this repo embeds in Kubernetes Jobs. `bash -n` on a
+## library proves the library parses, not the script it writes into a Job, and
+## that script only fails in a cluster, half way through its own changes.
+lint-job-scripts:
+	@bash scripts/lint/lint-job-scripts.sh
 
 lint-resolvable:
 	@bash scripts/lint/lint-resolvable.sh
@@ -234,6 +262,18 @@ lint-rbac-coverage:
 lint-plan-defaults:
 	@python3 scripts/lint/lint-plan-defaults.py
 
+## Refuse a ComponentProfile still written in the old vocabulary. The API
+## server prunes a renamed field rather than refusing it, so the component
+## installs Ready and without what it asked for.
+lint-legacy-profile-fields:
+	@python3 scripts/lint/lint-legacy-profile-fields.py
+
+## Refuse a step whose `requires:` names something that runs after it. The
+## driver reads the line as documentation, so nothing failed -- the contract
+## was simply false, and a reorder would have trusted it.
+lint-step-order:
+	@python3 scripts/lint/lint-step-order.py
+
 lint-scaffold-schemas:
 	@python3 scripts/lint/lint-scaffold-schemas.py
 
@@ -284,13 +324,24 @@ lint-portability:
 
 ## Assert every bootstrap Application name resolves to a chart template.
 ## Reads only the repository — no cluster.
+## Assert every shell function is reached by something that runs. The other
+## half of lint-resolvable: that one catches a call with no definition, this
+## one a definition with no call.
+lint-unreachable:
+	@python3 scripts/lint/lint-unreachable.py
+
 lint-bootstrap-apps:
 	@bash scripts/lint/lint-bootstrap-apps.sh
 
-## Assert every scripts/steps/*.sh declares its contract and defines apply().
-## Reads only the step files — no cluster, no kubeconfig.
-validate-steps:
+## Assert every scripts/steps/*.sh declares its contract and defines apply(),
+## and that none of them names a kernel namespace by hand. Reads only the step
+## files — no cluster, no kubeconfig.
+validate-steps: lint-namespace-layout
 	@SCRIPT_DIR="$(CURDIR)" bash -c 'source scripts/lib/load.sh; source scripts/lib/driver.sh; validate_steps'
+	@bash scripts/lint/lint-step-contracts.sh
+
+lint-namespace-layout:
+	@bash scripts/lint/lint-namespace-layout.sh
 
 ## Build the operator container image
 docker-build:
@@ -432,6 +483,24 @@ test-policy-openbao:
 
 test-policy-authz:
 	@bash scripts/tools/verify-authz-model.sh
+	@bash scripts/tools/verify-authz-vocabulary.sh
+
+## verify-authz-vocabulary: documents, director and model name the same relations.
+verify-authz-vocabulary:
+	@bash scripts/tools/verify-authz-vocabulary.sh
+
+## test-director-contract: the director's tests with a real OpenFGA deciding.
+##
+## `go test ./internal/director/...` answers authorization from a table; this
+## runs the same tests against OpenFGA loaded with model v1, which is what shows
+## the table and the model agree. Needs docker.
+test-director-contract:
+	@bash scripts/tools/test-director-contract.sh
+
+## run-director-dev: the real director API on 127.0.0.1:8090 with local stand-ins
+## for Keycloak, OpenFGA, git and the store — for UI work without a cluster.
+run-director-dev:
+	@bash scripts/dev/director-dev.sh
 
 ## verify-claim-applied: the live cluster carries what its Cluster claim says.
 ##

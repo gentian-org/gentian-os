@@ -152,14 +152,14 @@ func TestSteadyStateWritesNothing(t *testing.T) {
 	ctx := context.Background()
 	const vault = "gentian-os/tenants/corp/backup/destination"
 
-	if err := r.applyExternalSecret(ctx, "backup-destination-corp", kernelNamespace,
+	if err := r.applyExternalSecret(ctx, "backup-destination-corp", s3Namespace,
 		vault, "Owner", map[string]string{managedByLabel: managedByValue}); err != nil {
 		t.Fatalf("create: %v", err)
 	}
 	first := externalSecretVersion(t, r, "backup-destination-corp")
 
 	// A second pass with identical inputs is what a steady-state reconcile is.
-	if err := r.applyExternalSecret(ctx, "backup-destination-corp", kernelNamespace,
+	if err := r.applyExternalSecret(ctx, "backup-destination-corp", s3Namespace,
 		vault, "Owner", map[string]string{managedByLabel: managedByValue}); err != nil {
 		t.Fatalf("second pass: %v", err)
 	}
@@ -170,7 +170,7 @@ func TestSteadyStateWritesNothing(t *testing.T) {
 	}
 
 	// A real change must still be written, or the object would never converge.
-	if err := r.applyExternalSecret(ctx, "backup-destination-corp", kernelNamespace,
+	if err := r.applyExternalSecret(ctx, "backup-destination-corp", s3Namespace,
 		"gentian-os/tenants/corp/backup/moved", "Owner",
 		map[string]string{managedByLabel: managedByValue}); err != nil {
 		t.Fatalf("changed pass: %v", err)
@@ -185,7 +185,7 @@ func externalSecretVersion(t *testing.T, r *BackupPolicyReconciler, name string)
 	es := &unstructured.Unstructured{}
 	es.SetGroupVersionKind(externalSecretGVK)
 	if err := r.Get(context.Background(),
-		types.NamespacedName{Name: name, Namespace: kernelNamespace}, es); err != nil {
+		types.NamespacedName{Name: name, Namespace: s3Namespace}, es); err != nil {
 		t.Fatalf("get ExternalSecret: %v", err)
 	}
 	return es.GetResourceVersion()

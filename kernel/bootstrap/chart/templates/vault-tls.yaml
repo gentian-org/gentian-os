@@ -1,0 +1,29 @@
+---
+# The vault listens with TLS from the first byte; the certificate is
+# self-signed by an Issuer in its own namespace and its CA is what the
+# credential manager and ESO trust. Applied directly by B-01, not through an
+# Application: it is a prerequisite of the vault's pod starting at all.
+{{- $ns := include "ns" (list . "secrets") }}
+apiVersion: cert-manager.io/v1
+kind: Issuer
+metadata:
+  name: openbao-selfsigned
+  namespace: {{ $ns }}
+spec:
+  selfSigned: {}
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: openbao-tls
+  namespace: {{ $ns }}
+spec:
+  dnsNames:
+    - openbao.{{ $ns }}.svc.cluster.local
+    - openbao.{{ $ns }}.svc
+    - openbao
+    - localhost
+  issuerRef:
+    kind: Issuer
+    name: openbao-selfsigned
+  secretName: openbao-tls

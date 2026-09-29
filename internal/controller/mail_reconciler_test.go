@@ -26,7 +26,6 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/types"
-	"k8s.io/client-go/kubernetes/scheme"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
@@ -68,7 +67,7 @@ func TestMail_Disabled(t *testing.T) {
 	// No Postfix virtual-domains ConfigMap entry should exist for this tenant.
 	postfixCM := &corev1.ConfigMap{}
 	if err := testClient.Get(context.Background(),
-		types.NamespacedName{Name: "mail-postfix-virtual-domains", Namespace: "platform-kernel"}, postfixCM); err == nil {
+		types.NamespacedName{Name: "mail-postfix-virtual-domains", Namespace: "system-mail"}, postfixCM); err == nil {
 		if _, ok := postfixCM.Data["maildisabled"]; ok {
 			t.Error("unexpected Postfix virtual-domain entry found for disabled mail mode")
 		}
@@ -114,7 +113,7 @@ func TestMail_Selfhosted_ProvisionsTenantInSharedInfra(t *testing.T) {
 	dkimSecret := &corev1.Secret{}
 	waitFor(t, jobAppearTimeout, func() bool {
 		return testClient.Get(context.Background(),
-			types.NamespacedName{Name: "dkim-mailself", Namespace: "platform-kernel"}, dkimSecret) == nil
+			types.NamespacedName{Name: "dkim-mailself", Namespace: "system-mail"}, dkimSecret) == nil
 	})
 	if len(dkimSecret.Data["tls.key"]) == 0 {
 		t.Error("expected non-empty tls.key in DKIM secret")
@@ -128,7 +127,7 @@ func TestMail_Selfhosted_ProvisionsTenantInSharedInfra(t *testing.T) {
 	postfixCM := &corev1.ConfigMap{}
 	waitFor(t, jobAppearTimeout, func() bool {
 		return testClient.Get(context.Background(),
-			types.NamespacedName{Name: "mail-postfix-virtual-domains", Namespace: "platform-kernel"}, postfixCM) == nil
+			types.NamespacedName{Name: "mail-postfix-virtual-domains", Namespace: "system-mail"}, postfixCM) == nil
 	})
 	if postfixCM.Data["mailself"] != "mailself.example.com" {
 		t.Errorf("expected Postfix virtual-domain 'mailself.example.com', got %q", postfixCM.Data["mailself"])
@@ -138,7 +137,7 @@ func TestMail_Selfhosted_ProvisionsTenantInSharedInfra(t *testing.T) {
 	dovecotCM := &corev1.ConfigMap{}
 	waitFor(t, jobAppearTimeout, func() bool {
 		return testClient.Get(context.Background(),
-			types.NamespacedName{Name: "mail-dovecot-domains", Namespace: "platform-kernel"}, dovecotCM) == nil
+			types.NamespacedName{Name: "mail-dovecot-domains", Namespace: "system-mail"}, dovecotCM) == nil
 	})
 	if dovecotCM.Data["mailself"] != "mailself.example.com" {
 		t.Errorf("expected Dovecot domain 'mailself.example.com', got %q", dovecotCM.Data["mailself"])
@@ -214,7 +213,7 @@ func TestMail_Selfhosted_DoesNotCreatePerTenantApplicationCRs(t *testing.T) {
 	// We verify this by confirming the shared ConfigMap path was used instead.
 	postfixCM := &corev1.ConfigMap{}
 	if err := testClient.Get(context.Background(),
-		types.NamespacedName{Name: "mail-postfix-virtual-domains", Namespace: "platform-kernel"}, postfixCM); err != nil {
+		types.NamespacedName{Name: "mail-postfix-virtual-domains", Namespace: "system-mail"}, postfixCM); err != nil {
 		t.Errorf("expected shared Postfix ConfigMap to exist: %v", err)
 	}
 }
@@ -250,7 +249,7 @@ func TestMail_DefaultMode_IsSelfhosted(t *testing.T) {
 	postfixCM := &corev1.ConfigMap{}
 	waitFor(t, jobAppearTimeout, func() bool {
 		return testClient.Get(context.Background(),
-			types.NamespacedName{Name: "mail-postfix-virtual-domains", Namespace: "platform-kernel"}, postfixCM) == nil
+			types.NamespacedName{Name: "mail-postfix-virtual-domains", Namespace: "system-mail"}, postfixCM) == nil
 	})
 	if postfixCM.Data["maildefault"] != "maildefault.example.com" {
 		t.Errorf("expected Postfix virtual-domain 'maildefault.example.com', got %q",
@@ -261,7 +260,7 @@ func TestMail_DefaultMode_IsSelfhosted(t *testing.T) {
 	dovecotCM := &corev1.ConfigMap{}
 	waitFor(t, jobAppearTimeout, func() bool {
 		return testClient.Get(context.Background(),
-			types.NamespacedName{Name: "mail-dovecot-domains", Namespace: "platform-kernel"}, dovecotCM) == nil
+			types.NamespacedName{Name: "mail-dovecot-domains", Namespace: "system-mail"}, dovecotCM) == nil
 	})
 	if dovecotCM.Data["maildefault"] != "maildefault.example.com" {
 		t.Errorf("expected Dovecot domain 'maildefault.example.com', got %q",
@@ -291,7 +290,7 @@ func TestMail_TransportOnly_RegistersPostfixOnly(t *testing.T) {
 	postfixCM := &corev1.ConfigMap{}
 	waitFor(t, jobAppearTimeout, func() bool {
 		if err := testClient.Get(context.Background(),
-			types.NamespacedName{Name: "mail-postfix-virtual-domains", Namespace: "platform-kernel"}, postfixCM); err != nil {
+			types.NamespacedName{Name: "mail-postfix-virtual-domains", Namespace: "system-mail"}, postfixCM); err != nil {
 			return false
 		}
 		return postfixCM.Data["mailrelay"] != ""
@@ -312,7 +311,7 @@ func TestMail_TransportOnly_RegistersPostfixOnly(t *testing.T) {
 	time.Sleep(500 * time.Millisecond)
 	dovecotCM := &corev1.ConfigMap{}
 	if err := testClient.Get(context.Background(),
-		types.NamespacedName{Name: "mail-dovecot-domains", Namespace: "platform-kernel"}, dovecotCM); err == nil {
+		types.NamespacedName{Name: "mail-dovecot-domains", Namespace: "system-mail"}, dovecotCM); err == nil {
 		if _, ok := dovecotCM.Data["mailrelay"]; ok {
 			t.Error("unexpected Dovecot domain entry found for transport-only mode")
 		}
@@ -359,7 +358,7 @@ func TestMail_External_CopiesCredentialsSecret(t *testing.T) {
 	src := &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "tenant-smtp-creds",
-			Namespace: "platform-kernel",
+			Namespace: "system-mail",
 		},
 		Data: map[string][]byte{
 			"host":     []byte("smtp.example.com"),
@@ -437,7 +436,7 @@ func TestMail_PostfixInboundMapsFollowTenant(t *testing.T) {
 
 	maps := &corev1.ConfigMap{}
 	mapsKey := types.NamespacedName{
-		Name: "postfix-kernel-virtual-mailbox-maps", Namespace: "platform-kernel",
+		Name: "postfix-kernel-virtual-mailbox-maps", Namespace: "system-mail-dmz",
 	}
 	waitFor(t, jobAppearTimeout, func() bool {
 		if err := testClient.Get(context.Background(), mapsKey, maps); err != nil {
@@ -467,45 +466,6 @@ func TestMail_PostfixInboundMapsFollowTenant(t *testing.T) {
 	}
 }
 
-// TestTenantDelete_RemovesPortalShellSecret verifies the cached portal shell
-// credential goes on undeploy, under Retain — the policy that keeps the DKIM key
-// and the Keycloak realm.
-//
-// The distinction Retain draws is whether something can be reconstructed without
-// a human, not whether it is a credential. This Secret is a projection of
-// OpenBao, so a redeploy rewrites it identically; left behind it is a live
-// DATABASE_URL for a tenant that no longer exists.
-func TestTenantDelete_RemovesPortalShellSecret(t *testing.T) {
-	t.Parallel()
-	tenant := &gentianov1alpha1.Tenant{
-		ObjectMeta: metav1.ObjectMeta{Name: "shellsecret"},
-		Spec: gentianov1alpha1.TenantSpec{
-			DisplayName:    "Shell Secret Co",
-			Domain:         "shellsecret.example.com",
-			DeletionPolicy: gentianov1alpha1.DeletionPolicyRetain,
-		},
-	}
-	if err := testClient.Create(context.Background(), tenant); err != nil {
-		t.Fatalf("create tenant: %v", err)
-	}
-
-	key := types.NamespacedName{Name: "portal-shell-shellsecret", Namespace: "platform-kernel"}
-	secret := &corev1.Secret{}
-	waitFor(t, jobAppearTimeout, func() bool {
-		return testClient.Get(context.Background(), key, secret) == nil
-	})
-
-	if err := testClient.Delete(context.Background(), tenant); err != nil {
-		t.Fatalf("delete tenant: %v", err)
-	}
-	waitFor(t, jobAppearTimeout, func() bool {
-		return testClient.Get(context.Background(), key, secret) != nil
-	})
-	if err := testClient.Get(context.Background(), key, secret); err == nil {
-		t.Errorf("portal-shell-shellsecret survived undeploy under Retain")
-	}
-}
-
 // TestMail_MapsDedupeSharedDomain verifies two tenants naming the same mail
 // domain produce one texthash line, not two.
 //
@@ -531,7 +491,7 @@ func TestMail_MapsDedupeSharedDomain(t *testing.T) {
 
 	maps := &corev1.ConfigMap{}
 	key := types.NamespacedName{
-		Name: "postfix-kernel-virtual-mailbox-maps", Namespace: "platform-kernel",
+		Name: "postfix-kernel-virtual-mailbox-maps", Namespace: "system-mail-dmz",
 	}
 	waitFor(t, jobAppearTimeout, func() bool {
 		if err := testClient.Get(context.Background(), key, maps); err != nil {
@@ -616,14 +576,18 @@ func TestDovecotDeployed(t *testing.T) {
 		mode string
 		want bool
 	}{
-		{"kernel", true},
+		{"system", true},
 		{"external", false},
 		// Unset is external: configuring an absent Dovecot is silent waste,
 		// while skipping a present one fails IMAP visibly and is fixed by
 		// setting the value. Of the two, prefer the loud one.
 		{"", false},
-		// Anything unrecognised is not kernel. A typo must not provision.
-		{"Kernel", false},
+		// Anything unrecognised is not the system stack. A typo must not
+		// provision -- and neither must "kernel", the value this was called
+		// before the rename: a claim that still says it means nothing now,
+		// and meaning "external" is the safe reading of nothing.
+		{"System", false},
+		{"kernel", false},
 		{"selfhosted", false},
 	} {
 		r := &controller.TenantReconciler{MailServiceMode: tc.mode}
@@ -651,7 +615,7 @@ func TestDefaultTenantMailMode(t *testing.T) {
 		mode string
 		want gentianov1alpha1.MailMode
 	}{
-		{"kernel", gentianov1alpha1.MailModeSelfhosted},
+		{"system", gentianov1alpha1.MailModeSelfhosted},
 		// The relaying cluster: Postfix is deployed for outbound, Dovecot is
 		// not. transport-only is exactly that shape — a registered domain and
 		// SMTP credentials, no mailbox, and no MX claiming inbound.
@@ -659,8 +623,10 @@ func TestDefaultTenantMailMode(t *testing.T) {
 		// Unset is external, same as the Dovecot gate: defaulting to a stack
 		// that may not exist is the failure this whole change is about.
 		{"", gentianov1alpha1.MailModeTransportOnly},
-		// A typo must not provision kernel mail.
-		{"Kernel", gentianov1alpha1.MailModeTransportOnly},
+		// A typo must not provision the system mail stack, and neither must
+		// the value this used to be called.
+		{"System", gentianov1alpha1.MailModeTransportOnly},
+		{"kernel", gentianov1alpha1.MailModeTransportOnly},
 	} {
 		r := &controller.TenantReconciler{MailServiceMode: tc.mode}
 		if got := r.DefaultTenantMailModeForTest(context.Background()); got != tc.want {
@@ -717,7 +683,7 @@ func TestSyncTenantMailDNS_GatedOnClusterMailMode(t *testing.T) {
 		o.SetAPIVersion("externaldns.k8s.io/v1alpha1")
 		o.SetKind("DNSEndpoint")
 		o.SetName("mail-dnsgate")
-		o.SetNamespace("platform-kernel")
+		o.SetNamespace("system-mail-dmz")
 		return o
 	}
 
@@ -726,13 +692,13 @@ func TestSyncTenantMailDNS_GatedOnClusterMailMode(t *testing.T) {
 		o.SetAPIVersion("externaldns.k8s.io/v1alpha1")
 		o.SetKind("DNSEndpoint")
 		return c.Get(context.Background(), types.NamespacedName{
-			Name: "mail-dnsgate", Namespace: "platform-kernel"}, o)
+			Name: "mail-dnsgate", Namespace: "system-mail-dmz"}, o)
 	}
 
 	t.Run("kernel mail publishes", func(t *testing.T) {
-		c := fake.NewClientBuilder().WithScheme(scheme.Scheme).Build()
+		c := fake.NewClientBuilder().WithScheme(controller.SchemeForTest(t)).Build()
 		r := &controller.TenantReconciler{
-			Client: c, KernelDomain: "example.org", MailServiceMode: "kernel",
+			Client: c, KernelDomain: "example.org", MailServiceMode: "system",
 		}
 		if err := r.SyncTenantMailDNSForTest(context.Background(), newTenant()); err != nil {
 			t.Fatalf("sync: %v", err)
@@ -743,7 +709,7 @@ func TestSyncTenantMailDNS_GatedOnClusterMailMode(t *testing.T) {
 	})
 
 	t.Run("external mail publishes nothing", func(t *testing.T) {
-		c := fake.NewClientBuilder().WithScheme(scheme.Scheme).Build()
+		c := fake.NewClientBuilder().WithScheme(controller.SchemeForTest(t)).Build()
 		r := &controller.TenantReconciler{
 			Client: c, KernelDomain: "example.org", MailServiceMode: "external",
 		}
@@ -756,7 +722,7 @@ func TestSyncTenantMailDNS_GatedOnClusterMailMode(t *testing.T) {
 	})
 
 	t.Run("external mail removes what kernel mail left", func(t *testing.T) {
-		c := fake.NewClientBuilder().WithScheme(scheme.Scheme).WithObjects(endpoint()).Build()
+		c := fake.NewClientBuilder().WithScheme(controller.SchemeForTest(t)).WithObjects(endpoint()).Build()
 		if err := get(c); err != nil {
 			t.Fatalf("precondition: seeded endpoint missing: %v", err)
 		}
@@ -770,4 +736,85 @@ func TestSyncTenantMailDNS_GatedOnClusterMailMode(t *testing.T) {
 			t.Error("stale DNSEndpoint survived; the tenant's web CNAME stays discarded until it goes")
 		}
 	})
+}
+
+// The opt-in a cluster cannot honour.
+//
+// selfhosted means "register in the shared kernel Postfix and Dovecot". A
+// cluster relaying through a provider has neither, and v5 has no step that
+// deploys them at all -- so the tenant sat at MailReady=False/Provisioning
+// waiting for a Keycloak client belonging to a Dovecot that was never coming,
+// and nothing in the message said the cluster was the reason. Mail was
+// silently undeliverable, which is the worst shape this can fail in.
+//
+// The default already answers transport-only on such a cluster, so what is
+// asserted here is the EXPLICIT case: a tenant that asks for selfhosted is
+// refused by name, and the refusal says who has to change what.
+func TestMail_SelfhostedIsRefusedWhenTheClusterRunsNone(t *testing.T) {
+	t.Parallel()
+
+	mailNS := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "system-mail"}}
+	tenant := &gentianov1alpha1.Tenant{
+		ObjectMeta: metav1.ObjectMeta{Name: "wishful", Namespace: "default"},
+		Spec: gentianov1alpha1.TenantSpec{
+			DisplayName: "Wishful Co",
+			Domain:      "wishful.example.com",
+			Mail:        &gentianov1alpha1.TenantMail{Mode: gentianov1alpha1.MailModeSelfhosted},
+		},
+	}
+	c := fake.NewClientBuilder().WithScheme(controller.SchemeForTest(t)).
+		WithObjects(mailNS, tenant).Build()
+
+	// MailServiceMode external: the relay is deployed, Dovecot is not.
+	r := &controller.TenantReconciler{Client: c, MailServiceMode: "external"}
+	if err := r.EnsureMailForTest(context.Background(), tenant); err != nil {
+		t.Fatalf("a refusal is a condition, not an error: %v", err)
+	}
+
+	cond := findCondition(tenant, "MailReady")
+	if cond == nil {
+		t.Fatal("no MailReady condition")
+	}
+	if cond.Status != metav1.ConditionFalse || cond.Reason != "ClusterCannotHost" {
+		t.Fatalf("MailReady = %s/%s, want False/ClusterCannotHost", cond.Status, cond.Reason)
+	}
+	// The message has to name the setting that is wrong and an answer that
+	// works, or it is just a different way of failing silently.
+	for _, want := range []string{"serviceMode", "transport-only", "external"} {
+		if !strings.Contains(cond.Message, want) {
+			t.Errorf("message does not mention %q: %s", want, cond.Message)
+		}
+	}
+}
+
+// The other half: a cluster that DOES run kernel mail must still honour it.
+// A rule that refuses the function rather than the layout would be a
+// regression dressed as a fix.
+func TestMail_SelfhostedIsHonouredWhenTheClusterRunsIt(t *testing.T) {
+	t.Parallel()
+
+	mailNS := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "system-mail"}}
+	tenant := &gentianov1alpha1.Tenant{
+		ObjectMeta: metav1.ObjectMeta{Name: "hosted", Namespace: "default"},
+		Spec: gentianov1alpha1.TenantSpec{
+			DisplayName: "Hosted Co",
+			Domain:      "hosted.example.com",
+			Mail:        &gentianov1alpha1.TenantMail{Mode: gentianov1alpha1.MailModeSelfhosted},
+		},
+	}
+	c := fake.NewClientBuilder().WithScheme(controller.SchemeForTest(t)).
+		WithObjects(mailNS, tenant).Build()
+
+	r := &controller.TenantReconciler{Client: c, MailServiceMode: "system"}
+	_ = r.EnsureMailForTest(context.Background(), tenant)
+
+	cond := findCondition(tenant, "MailReady")
+	if cond == nil {
+		t.Fatal("no MailReady condition")
+	}
+	// Whatever it reports, it must not be the refusal: on this cluster the
+	// stack exists and the tenant's wish is satisfiable.
+	if cond.Reason == "ClusterCannotHost" {
+		t.Fatalf("a cluster running kernel mail refused selfhosted: %s", cond.Message)
+	}
 }

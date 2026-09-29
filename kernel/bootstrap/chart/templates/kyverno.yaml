@@ -1,0 +1,109 @@
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: kyverno
+  namespace: {{ include "ns" (list . "gitops") }}
+  finalizers: []
+spec:
+  project: gentian
+  source:
+    repoURL: https://kyverno.github.io/kyverno/
+    chart: kyverno
+    targetRevision: 3.3.7
+    helm:
+      values: |
+        # The kernel is exempt from the baseline policies by its tier label,
+        # never by naming namespaces.
+        config:
+          webhooks:
+            namespaceSelector:
+              matchExpressions:
+              - key: gentianos.io/tier
+                operator: NotIn
+                values: [kernel]
+        admissionController:
+          replicas: 1
+          container:
+            extraArgs:
+              # PolicyExceptions honoured from one namespace only (MetalLB's).
+              enablePolicyException: "true"
+              exceptionNamespace: "metallb-system"
+        backgroundController:
+          replicas: 1
+        cleanupController:
+          replicas: 1
+          # The default 128Mi is OOM-killed on a Crossplane-heavy cluster: the
+          # TTL manager starts an informer per GVR.
+          resources:
+            limits:
+              memory: 512Mi
+            requests:
+              cpu: 100m
+              memory: 256Mi
+        reportsController:
+          replicas: 1
+        # The chart's cleanup jobs default to bitnami/kubectl, which no longer
+        # pulls; alpine/k8s carries bash and kubectl.
+        webhooksCleanup:
+          image:
+            repository: alpine/k8s
+            tag: "1.32.3"
+        # clean-reports is a Helm post-upgrade hook, which Argo CD runs as a
+        # PostSync hook on EVERY sync -- it would delete every PolicyReport in
+        # the cluster each time, and a hook Job that cannot start (its default
+        # image is bitnami/kubectl) leaves the Application OutOfSync for good.
+        # Kyverno's reports controller rebuilds reports on its own, so the
+        # upgrade-time cleanup has no job to do here.
+        policyReportsCleanup:
+          enabled: false
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: {{ include "ns" (list . "admission") }}
+  syncPolicy:
+    automated:
+      prune: false
+      selfHeal: true
+    syncOptions:
+    - ServerSideApply=true
+---
+# The policies themselves, which v5 delivered nowhere.
+#
+# The chart above installs the admission controller and stops. v4 delivered a
+# second Application for kernel/security/kyverno/policies, and without it
+# Stage-0 MAC runs with the webhook up, every namespace selected, and ZERO
+# ClusterPolicies -- an admission controller that admits everything, which
+# reads exactly like one that is working.
+#
+# prune: false, like the controller above. A policy removed from the checkout
+# should stop being enforced deliberately, through a commit somebody reviewed,
+# rather than because a sync noticed a file was gone.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: kyverno-policies
+  namespace: {{ include "ns" (list . "gitops") }}
+  annotations:
+    # After the controller: a ClusterPolicy applied before the CRDs are
+    # established is rejected, and Argo retries it as a sync failure rather
+    # than as the ordering problem it is.
+    argocd.argoproj.io/sync-wave: "6"
+  finalizers:
+  - resources-finalizer.argocd.argoproj.io
+spec:
+  project: gentian
+  source:
+    repoURL: {{ .Values.osRepo | default "https://github.com/gentian-org/gentian-os" }}
+    targetRevision: {{ .Values.gentianOsBranch }}
+    path: kernel/security/kyverno/policies
+    directory:
+      recurse: true
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: {{ include "ns" (list . "admission") }}
+  syncPolicy:
+    automated:
+      prune: false
+      selfHeal: true
+    syncOptions:
+    - ServerSideApply=true

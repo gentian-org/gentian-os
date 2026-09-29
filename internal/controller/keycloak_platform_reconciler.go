@@ -64,6 +64,15 @@ func (r *KeycloakPlatformReconciler) Reconcile(ctx context.Context, _ reconcile.
 		return reconcile.Result{RequeueAfter: 30 * time.Second}, err
 	}
 
+	// The director's per-realm credentials. Here rather than in the tenant
+	// reconciler because the set is per REALM and several tenants may share
+	// one, and because the kernel realm needs a credential before any tenant
+	// exists -- this loop is the only thing that walks every realm.
+	if err := r.ensureDirectorRealmCredentials(ctx); err != nil {
+		logger.Error(err, "director realm credentials failed")
+		return reconcile.Result{RequeueAfter: 30 * time.Second}, err
+	}
+
 	if !keycloakGatewayFramePolicyApplied(ctx, r.Client, r.KernelDomain, r.TenancyMode) {
 		return reconcile.Result{RequeueAfter: 30 * time.Second}, nil
 	}
@@ -80,7 +89,7 @@ func (r *KeycloakPlatformReconciler) ensureAllBrowserSecurityHeaders(ctx context
 		Client:      r.Client,
 		KernelRealm: kernelRealm,
 	}
-	if err := tr.ensureRealmBrowserSecurityHeaders(ctx, kernelRealm); err != nil {
+	if err := tr.ensureRealmBrowserSecurityHeaders(ctx, kernelRealm, tr.kernelRealmLocales(ctx, kernelRealm)); err != nil {
 		return fmt.Errorf("kernel browser security headers: %w", err)
 	}
 
@@ -93,7 +102,10 @@ func (r *KeycloakPlatformReconciler) ensureAllBrowserSecurityHeaders(ctx context
 		if tenant.DeletionTimestamp != nil {
 			continue
 		}
-		if err := tr.ensureRealmBrowserSecurityHeaders(ctx, keycloakRealmName(tenant)); err != nil {
+		// No locales for a tenant realm: tenant-default composes the Realm and
+		// declares them from the same spec.locales. Two writers of one field
+		// is the bug this file's own comment records for session lifetimes.
+		if err := tr.ensureRealmBrowserSecurityHeaders(ctx, keycloakRealmName(tenant), nil); err != nil {
 			return fmt.Errorf("tenant %s browser security headers: %w", tenant.Name, err)
 		}
 		tr.deleteRetiredJobs(ctx, tenantBrowserSecurityJobName(tenant.Name))
@@ -134,7 +146,7 @@ func (r *KeycloakPlatformReconciler) SetupWithManager(mgr ctrl.Manager) error {
 			handler.EnqueueRequestsFromMapFunc(mapToPlatform),
 		).
 		Watches(
-			&gentianov1alpha1.AppProfile{},
+			&gentianov1alpha1.ComponentProfile{},
 			handler.EnqueueRequestsFromMapFunc(mapToPlatform),
 		).
 		Complete(r)

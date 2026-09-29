@@ -134,11 +134,11 @@ type Stores struct {
 }
 
 // ProfileStores reports which kernel stores a profile declares.
-func ProfileStores(profile *gentianov1alpha1.AppProfile) Stores {
-	if profile == nil || profile.Spec.KernelRequirements == nil {
+func ProfileStores(profile *gentianov1alpha1.ComponentProfile) Stores {
+	if profile == nil || profile.Services() == nil {
 		return Stores{}
 	}
-	kr := profile.Spec.KernelRequirements
+	kr := profile.Services()
 	var s Stores
 	if kr.Database != nil {
 		s.Database = kr.Database.Engine
@@ -155,12 +155,12 @@ func ProfileStores(profile *gentianov1alpha1.AppProfile) Stores {
 // SidecarNames returns the declared sidecar names of a profile. Sidecars get
 // their own OpenBao subtree under a synthetic "{app}-{sidecar}" key, so both
 // purge and export have to walk them.
-func SidecarNames(profile *gentianov1alpha1.AppProfile) []string {
+func SidecarNames(profile *gentianov1alpha1.ComponentProfile) []string {
 	if profile == nil {
 		return nil
 	}
-	out := make([]string, 0, len(profile.Spec.Sidecars))
-	for _, sc := range profile.Spec.Sidecars {
+	out := make([]string, 0, len(profile.Spec.Extensions))
+	for _, sc := range profile.Spec.Extensions {
 		if sc.Name != "" {
 			out = append(out, sc.Name)
 		}

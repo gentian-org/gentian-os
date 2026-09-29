@@ -86,10 +86,10 @@ func TestCollectGentianGroupsJSONIncludesAddonAttributes(t *testing.T) {
 	// addon profile — the base declares none. Walking only app.Profile dropped
 	// gentianOdooGroupRoles from this JSON, and the attribute mapper is derived
 	// from it, so the claim never reached Odoo and no module role was assigned.
-	base := &gentianov1alpha1.AppProfile{
+	base := &gentianov1alpha1.ComponentProfile{
 		ObjectMeta: metav1.ObjectMeta{Name: "odoo-base-ce"},
 	}
-	addon := &gentianov1alpha1.AppProfile{
+	addon := &gentianov1alpha1.ComponentProfile{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: "odoo-employees-ce",
 			Annotations: map[string]string{
@@ -100,6 +100,7 @@ func TestCollectGentianGroupsJSONIncludesAddonAttributes(t *testing.T) {
 	tenant := &gentianov1alpha1.Tenant{
 		ObjectMeta: metav1.ObjectMeta{Name: "corp"},
 		Spec: gentianov1alpha1.TenantSpec{
+			DisplayName: "Test Tenant",
 			Apps: []gentianov1alpha1.TenantApp{{
 				Profile: "odoo-base-ce",
 				Addons:  []string{"odoo-employees-ce"},
@@ -135,8 +136,8 @@ func TestCollectGentianGroupsJSONGivesAppAdminsTheDeclaredAdminRoles(t *testing.
 	// and still could not open CRM's Configuration menu, which is gated on
 	// sales_team.group_sale_manager. The role has to be granted, and the profile
 	// is what knows which role that is.
-	base := &gentianov1alpha1.AppProfile{ObjectMeta: metav1.ObjectMeta{Name: "odoo-base-ce"}}
-	crm := &gentianov1alpha1.AppProfile{
+	base := &gentianov1alpha1.ComponentProfile{ObjectMeta: metav1.ObjectMeta{Name: "odoo-base-ce"}}
+	crm := &gentianov1alpha1.ComponentProfile{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: "odoo-crm-ce",
 			Annotations: map[string]string{
@@ -144,7 +145,7 @@ func TestCollectGentianGroupsJSONGivesAppAdminsTheDeclaredAdminRoles(t *testing.
 			},
 		},
 	}
-	hr := &gentianov1alpha1.AppProfile{
+	hr := &gentianov1alpha1.ComponentProfile{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: "odoo-employees-ce",
 			Annotations: map[string]string{
@@ -155,6 +156,7 @@ func TestCollectGentianGroupsJSONGivesAppAdminsTheDeclaredAdminRoles(t *testing.
 	tenant := &gentianov1alpha1.Tenant{
 		ObjectMeta: metav1.ObjectMeta{Name: "corp"},
 		Spec: gentianov1alpha1.TenantSpec{
+			DisplayName: "Test Tenant",
 			Apps: []gentianov1alpha1.TenantApp{{
 				Profile: "odoo-base-ce",
 				Addons:  []string{"odoo-crm-ce", "odoo-employees-ce"},
@@ -206,11 +208,12 @@ func TestCollectGentianGroupsJSONLeavesAppAdminsBareWithoutDeclarations(t *testi
 	t.Parallel()
 	// A tenant whose profiles declare no admin roles must get the same
 	// attribute-free app-admins group it had before this existed.
-	profile := &gentianov1alpha1.AppProfile{ObjectMeta: metav1.ObjectMeta{Name: "docmost-ce"}}
+	profile := &gentianov1alpha1.ComponentProfile{ObjectMeta: metav1.ObjectMeta{Name: "docmost-ce"}}
 	tenant := &gentianov1alpha1.Tenant{
 		ObjectMeta: metav1.ObjectMeta{Name: "corp"},
 		Spec: gentianov1alpha1.TenantSpec{
-			Apps: []gentianov1alpha1.TenantApp{{Profile: "docmost-ce"}},
+			DisplayName: "Test Tenant",
+			Apps:        []gentianov1alpha1.TenantApp{{Profile: "docmost-ce"}},
 		},
 	}
 	scheme := runtime.NewScheme()

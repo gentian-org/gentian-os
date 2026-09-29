@@ -105,7 +105,7 @@ func TestReconcile_TenantGoneFromAPI_DoesNotResurrectCleanupJobs(t *testing.T) {
 	}
 
 	jobs := &batchv1.JobList{}
-	if err := cached.List(context.Background(), jobs, client.InNamespace(kernelNamespace)); err != nil {
+	if err := cached.List(context.Background(), jobs, client.InNamespace(identityNamespace)); err != nil {
 		t.Fatalf("list Jobs: %v", err)
 	}
 	if len(jobs.Items) != 0 {

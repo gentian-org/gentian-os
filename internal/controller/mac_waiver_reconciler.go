@@ -145,21 +145,26 @@ func (r *TenantReconciler) ensureMacWaivers(ctx context.Context, tenant *gentian
 		if err != nil {
 			return ctrl.Result{}, err
 		}
-		profile := &gentianov1alpha1.AppProfile{}
+		profile := &gentianov1alpha1.ComponentProfile{}
 		if err := r.Get(ctx, client.ObjectKey{Name: profileName}, profile); err != nil {
 			if errors.IsNotFound(err) {
 				continue
 			}
-			return ctrl.Result{}, fmt.Errorf("get AppProfile %s for mac waivers: %w", profileName, err)
+			return ctrl.Result{}, fmt.Errorf("get ComponentProfile %s for mac waivers: %w", profileName, err)
 		}
-		if profile.Spec.Security == nil || len(profile.Spec.Security.MacWaivers) == 0 {
+		// A pod-security waiver is a privilege the profile ASKS for (AD-5).
+		// This is the cluster-wide half of the answer -- the
+		// PlatformSecurityPolicy allowlist, which says what may ever be
+		// waived here; the per-install half is the grant on the Component.
+		asks := security.WaiverRequests(profile.Privileges())
+		if len(asks) == 0 {
 			continue
 		}
-		approved := security.ApprovedMacWaivers(profileName, profile.Spec.Security.MacWaivers, allowed)
+		approved := security.ApprovedMacWaivers(profileName, asks, allowed)
 		if len(approved) > 0 {
 			approvedByProfile[profileName] = approved
 		}
-		for _, req := range profile.Spec.Security.MacWaivers {
+		for _, req := range asks {
 			if !security.IsWaiverApproved(approved, req.Policy, req.Scope) {
 				pendingDenials = append(pendingDenials,
 					fmt.Sprintf("%s/%s/%s", profileName, req.Policy, req.Scope))

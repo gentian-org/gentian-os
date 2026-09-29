@@ -31,22 +31,26 @@ func TestCollectOIDCAppConfigs_IncludesSidecarWithoutAppProfile(t *testing.T) {
 	scheme := runtime.NewScheme()
 	_ = gentianov1alpha1.AddToScheme(scheme)
 
-	parent := &gentianov1alpha1.AppProfile{
+	parent := &gentianov1alpha1.ComponentProfile{
 		ObjectMeta: metav1.ObjectMeta{Name: "catalogue-test-app"},
-		Spec: gentianov1alpha1.AppProfileSpec{
-			CompositionRef: "app-default",
-			KernelRequirements: &gentianov1alpha1.KernelRequirements{
+		Spec: gentianov1alpha1.ComponentProfileSpec{
+			Classes: []gentianov1alpha1.ComponentClass{gentianov1alpha1.ComponentClassApp}, Launch: gentianov1alpha1.ComponentLaunchNone, TrustTier: gentianov1alpha1.TrustTierCertified, Version: "1.0.0",
+			// Rendered by a Composition, which is what decides that Crossplane
+			// owns its sidecar's OIDC client rather than the operator.
+			Package: gentianov1alpha1.PackageSpec{Composition: "app-default"},
+			Requires: &gentianov1alpha1.RequirementSpec{Services: &gentianov1alpha1.ServiceRequirements{
 				Identity: &gentianov1alpha1.IdentityRequirement{
 					OIDC: &gentianov1alpha1.OIDCClientSpec{
 						ClientID:     "main-oidc-client",
 						RedirectURIs: []string{"https://${TENANT_DOMAIN}/oidc/callback"},
 					},
 				},
-			},
-			Sidecars: []gentianov1alpha1.AppSidecarSpec{
+			}},
+
+			Extensions: []gentianov1alpha1.AppSidecarSpec{
 				{
 					Name: "sidecar-meet",
-					KernelRequirements: &gentianov1alpha1.KernelRequirements{
+					ServiceRequirements: &gentianov1alpha1.ServiceRequirements{
 						Identity: &gentianov1alpha1.IdentityRequirement{
 							OIDC: &gentianov1alpha1.OIDCClientSpec{
 								ClientID:     "sidecar-oidc-client",
@@ -67,8 +71,9 @@ func TestCollectOIDCAppConfigs_IncludesSidecarWithoutAppProfile(t *testing.T) {
 	tenant := &gentianov1alpha1.Tenant{
 		ObjectMeta: metav1.ObjectMeta{Name: "demo"},
 		Spec: gentianov1alpha1.TenantSpec{
-			Domain: "demo.platform.example.com",
-			Apps:   []gentianov1alpha1.TenantApp{{Profile: "catalogue-test-app"}},
+			DisplayName: "Test Tenant",
+			Domain:      "demo.platform.example.com",
+			Apps:        []gentianov1alpha1.TenantApp{{Profile: "catalogue-test-app"}},
 		},
 	}
 

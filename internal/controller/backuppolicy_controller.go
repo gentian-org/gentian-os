@@ -45,15 +45,10 @@ import (
 const (
 	conditionPolicyAccepted = "Accepted"
 
-	// clusterBackupPolicy is the cluster-scoped policy's name. Singleton by
-	// convention: a second would leave "which destination applies" answerable
-	// two ways.
-	clusterBackupPolicy = "default"
-
-	// managedScheduleName is the one TenantExportSchedule this operator owns
-	// per tenant. Named distinctly so a schedule an admin wrote by hand is
-	// never mistaken for one derived from policy, and never deleted by it.
-	managedScheduleName = "policy"
+	// Both names live in internal/backup, because the read API the console
+	// goes through answers for the same objects.
+	clusterBackupPolicy = backup.ClusterPolicyName
+	managedScheduleName = backup.ManagedScheduleName
 
 	// credentialProbePrefix names the ExternalSecret that reports whether a
 	// destination's keys have been supplied. One constant rather than four
@@ -402,7 +397,7 @@ func (r *BackupPolicyReconciler) deleteDestinationCredential(ctx context.Context
 	}
 	for _, es := range []struct{ name, namespace string }{
 		{credentialProbePrefix + name, meta.OperatorNamespace},
-		{name, kernelNamespace},
+		{name, s3Namespace},
 	} {
 		obj := &unstructured.Unstructured{}
 		obj.SetGroupVersionKind(externalSecretGVK)
@@ -438,7 +433,7 @@ func (r *BackupPolicyReconciler) ensureConsumingSecret(
 	vaultPath string,
 ) error {
 	name := backup.DestinationSecretName(policy.Spec.Scope, policy.Spec.Tenant)
-	return r.applyExternalSecret(ctx, name, kernelNamespace, vaultPath, "Owner", map[string]string{
+	return r.applyExternalSecret(ctx, name, s3Namespace, vaultPath, "Owner", map[string]string{
 		managedByLabel:               managedByValue,
 		"gentianos.io/backup-policy": policy.Name,
 	})

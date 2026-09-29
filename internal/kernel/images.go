@@ -32,6 +32,17 @@ const (
 	DefaultRedisProvisionerImage    = "redis:7-alpine"
 	DefaultMemcachedImage           = "memcached:1.6.38-alpine"
 	DefaultKeycloakProvisionerImage = "alpine:3.20"
+
+	// The publishing proxy that stands in a tenant's DMZ (AD-6). nginx
+	// because what it does is the one thing nginx is unambiguous about:
+	// forward these exact path prefixes and nothing else, to one upstream,
+	// with the headers this says and no others.
+	//
+	// -alpine rather than a distroless build of our own: this pod is on the
+	// public internet with no session in front of it, so it wants a stream of
+	// upstream security fixes more than it wants a small attack surface we
+	// maintain ourselves.
+	DefaultPerimeterProxyImage = "nginx:1.27-alpine"
 )
 
 func PostgresProvisionerImage() string {
@@ -48,6 +59,11 @@ func RedisProvisionerImage() string {
 
 func MemcachedImage() string {
 	return envOrDefault("MEMCACHED_IMAGE", DefaultMemcachedImage)
+}
+
+// PerimeterProxyImage is the publishing proxy for a tenant's DMZ.
+func PerimeterProxyImage() string {
+	return envOrDefault("PERIMETER_PROXY_IMAGE", DefaultPerimeterProxyImage)
 }
 
 func KeycloakProvisionerImage() string {

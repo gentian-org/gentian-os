@@ -19,14 +19,29 @@ COPY cmd/ cmd/
 # Build the manager binary
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=${TARGETARCH} go build -a -o manager ./cmd
 
+# The director ships in the same image and runs as its own Deployment with its
+# own identity: one image to build, scan and pin, two processes that share no
+# credential. Which binary runs is the Deployment's command.
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=${TARGETARCH} go build -o director ./cmd/director
+
+# The ext-auth shim ships the same way: the edge's one enforcement point, run
+# in the edge namespace from this image with its own command.
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=${TARGETARCH} go build -o edge-authz ./cmd/edge-authz
+
 # ── Runtime stage ──────────────────────────────────────────────────────────────
 FROM debian:bookworm-slim
 
+# gnupg: the director signs what it commits (AD-2), and git shells out to
+# gpg to do it. Without it every commit is unsigned and Argo CD refuses the
+# repository -- which would show up as a cluster that syncs nothing, several
+# layers from the missing package.
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends git ca-certificates \
+    && apt-get install -y --no-install-recommends git ca-certificates gnupg \
     && rm -rf /var/lib/apt/lists/*
 
 COPY --from=builder /workspace/manager /manager
+COPY --from=builder /workspace/director /director
+COPY --from=builder /workspace/edge-authz /edge-authz
 
 USER 65532:65532
 

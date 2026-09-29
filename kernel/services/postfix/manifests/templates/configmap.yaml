@@ -115,7 +115,7 @@ data:
         #
         # An unset variable is the only value that reads as absent to a -n test, so the
         # key has to disappear rather than say no.
-        {{- if eq (.Values.mailServiceMode | default "external") "kernel" }}
+        {{- if eq (.Values.mailServiceMode | default "external") "system" }}
         DKIM_AUTOGENERATE: "1"
         {{- end }}
       postfix:

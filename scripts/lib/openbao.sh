@@ -48,7 +48,7 @@ try_load_creds_from_openbao() {
             && -n "${SMTP_RELAY_PASSWORD:-}" ]]; then
             return
         fi
-        if [[ "${MAIL_SERVICE_MODE}" == "kernel" ]]; then
+        if [[ "${MAIL_SERVICE_MODE}" == "system" ]]; then
             return
         fi
     fi
@@ -75,7 +75,7 @@ try_load_creds_from_openbao() {
     info "Checking whether OpenBao already holds this cluster's credentials..."
 
     local bao_addr
-    if ! bao_addr=$(gentian_service_addr openbao openbao 8200 https 2>/dev/null) \
+    if ! bao_addr=$(gentian_service_addr openbao "${OPENBAO_NAMESPACE:-openbao}" 8200 https 2>/dev/null) \
         || [[ -z "${bao_addr}" ]]; then
         info "  OpenBao is not reachable yet — asking for the credentials instead."
         return 0
@@ -203,58 +203,6 @@ try_load_creds_from_openbao() {
         info "Loaded missing credentials from OpenBao."
     fi
 }
-install_eso() {
-    banner "Installing External Secrets Operator"
-
-    if helm status external-secrets -n external-secrets &>/dev/null; then
-        success "ESO already installed. Skipping."
-        return
-    fi
-
-    helm repo add external-secrets "$(gentian_pin external-secrets repo)" --force-update
-    helm repo update external-secrets
-    _helm_retry install external-secrets external-secrets/external-secrets \
-        -n external-secrets \
-        --version "${ESO_CHART_VERSION}" \
-        -f "${SCRIPT_DIR}/kernel/eso/values.yaml" \
-        --wait --timeout 5m
-    success "ESO installed."
-}
-# =============================================================================
-# 5. Deploy OpenBao transit seal instance
-# =============================================================================
-bootstrap_transit_app() {
-    banner "OpenBao transit seal instance"
-
-    # Note: CRI cleanup is intentionally NOT run here pre-flight. It is
-    # invoked reactively by wait_for_running_pod's 2nd-tier escalation
-    # only if the transit pod is demonstrably wedged (stuck 120s+ in
-    # ContainerCreating with no IP), so a fresh / healthy cluster never
-    # pays the sudo-prompt + sweep cost.
-
-    if ! kubectl get secret openbao-transit-unseal -n openbao &>/dev/null; then
-        kubectl create secret generic openbao-transit-unseal \
-            -n openbao --from-literal=unseal-key=placeholder
-        success "Placeholder openbao-transit-unseal secret created."
-    fi
-
-    apply_bootstrap_application openbao-transit
-    success "Applied openbao-transit-application.yaml (storageClass=${STORAGE_CLASS})"
-
-    _wait_for_argocd_application_workload \
-        openbao-transit openbao statefulset \
-        "app.kubernetes.io/instance=openbao-transit" 300 \
-    || {
-        error "Argo CD did not deploy openbao-transit StatefulSet."
-        exit 1
-    }
-
-    if ! wait_for_running_pod openbao "app.kubernetes.io/instance=openbao-transit" "openbao-transit" 480; then
-        error "openbao-transit pod never became Ready. Aborting install."
-        exit 1
-    fi
-}
-
 # =============================================================================
 # 5b. Init the transit instance
 # =============================================================================
@@ -271,8 +219,8 @@ init_openbao_transit() {
     # silently took an early-return path on a stale state), fail fast here
     # so subsequent steps don't proceed against a half-initialised transit.
     local missing=()
-    kubectl get secret -n openbao openbao-transit-token  >/dev/null 2>&1 || missing+=(openbao-transit-token)
-    kubectl get secret -n openbao openbao-transit-unseal >/dev/null 2>&1 || missing+=(openbao-transit-unseal)
+    kubectl get secret -n "${TRANSIT_NAMESPACE:-openbao}" openbao-transit-token  >/dev/null 2>&1 || missing+=(openbao-transit-token)
+    kubectl get secret -n "${TRANSIT_NAMESPACE:-openbao}" openbao-transit-unseal >/dev/null 2>&1 || missing+=(openbao-transit-unseal)
     if (( ${#missing[@]} > 0 )); then
         error "Transit init reported success but required Secrets are missing: ${missing[*]}"
         error "Re-run init-openbao-transit.sh manually and re-run install.sh."
@@ -287,14 +235,14 @@ init_openbao() {
 
     info "Waiting for openbao service (up to 2 min)..."
     local i=0
-    until kubectl get svc openbao -n openbao &>/dev/null; do
+    until kubectl get svc openbao -n "${OPENBAO_NAMESPACE:-openbao}" &>/dev/null; do
         echo -n "."; sleep 5; i=$((i + 5))
         [[ $i -lt 120 ]] || { error "Timed out."; exit 1; }
     done
     echo ""
 
     local BAO_HTTP
-    if ! BAO_HTTP=$(gentian_service_addr openbao openbao 8200 https); then
+    if ! BAO_HTTP=$(gentian_service_addr openbao "${OPENBAO_NAMESPACE:-openbao}" 8200 https); then
         error "Could not reach the openbao Service on :8200."
         error "  Neither the ClusterIP nor a kubectl port-forward responded."
         exit 1
@@ -419,7 +367,7 @@ init_openbao() {
             -H "Content-Type: application/json" \
             -d '{"secret_shares": 1, "secret_threshold": 1}') || {
             error "OpenBao init request failed against ${BAO_HTTP}."
-            error "The openbao-0 pod likely has no Ready endpoints (check 'kubectl get pod -n openbao')."
+            error "The openbao-0 pod likely has no Ready endpoints (check 'kubectl get pod -n ${OPENBAO_NAMESPACE:-openbao}')."
             error "Common cause: the openbao-transit-token Secret is missing, leaving openbao-0 in CreateContainerConfigError."
             exit 1
         }
@@ -546,6 +494,15 @@ _resolve_bao_token() {
         fi
     fi
 
+    # Both routes below need a person: one opens a browser, the other reads
+    # from the terminal. Unattended, they cost their own timeouts and then
+    # fail anyway, so say what is missing and let the caller decide.
+    if [[ "${GENTIAN_NONINTERACTIVE:-0}" == "1" || ! -t 0 ]]; then
+        warn "No OpenBao token available, and no terminal to ask at."
+        warn "  Export BAO_TOKEN, or run this from an interactive shell."
+        return 1
+    fi
+
     if command -v bao >/dev/null 2>&1 && [[ -n "${BAO_ADDR:-}" ]]; then
         info "No OpenBao token available; trying an OIDC sign-in as cluster-admin..."
         info "  A browser should open. Sign in as the cluster administrator."
@@ -603,7 +560,7 @@ _resolve_bao_token() {
 #
 # Returns non-zero when OpenBao cannot be reached, leaving BAO_TOKEN unset.
 resolve_openbao_access() {
-    if ! BAO_ADDR=$(gentian_service_addr openbao openbao 8200 https); then
+    if ! BAO_ADDR=$(gentian_service_addr openbao "${OPENBAO_NAMESPACE:-openbao}" 8200 https); then
         warn "Could not reach the openbao Service on :8200."
         warn "  Neither the ClusterIP nor a kubectl port-forward responded."
         return 1
@@ -617,7 +574,7 @@ resolve_openbao_access() {
 seed_secrets() {
     banner "Seeding kernel secrets"
 
-    if ! BAO_ADDR=$(gentian_service_addr openbao openbao 8200 https); then
+    if ! BAO_ADDR=$(gentian_service_addr openbao "${OPENBAO_NAMESPACE:-openbao}" 8200 https); then
         error "Could not reach the openbao Service on :8200."
         error "  Neither the ClusterIP nor a kubectl port-forward responded."
         exit 1
@@ -625,7 +582,10 @@ seed_secrets() {
     export BAO_ADDR
     export VAULT_SKIP_VERIFY=true
 
-    _resolve_bao_token
+    if ! _resolve_bao_token; then
+        error "Cannot seed kernel secrets without an OpenBao token."
+        exit 1
+    fi
 
     # Automatically query Cloudflare zone ID and tunnel CNAME to seed into OpenBao
     local zone_id=""

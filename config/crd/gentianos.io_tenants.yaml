@@ -172,6 +172,7 @@ spec:
                               description: Edition selects the edition (ce, me, ee).
                               enum:
                               - ce
+                              - pe
                               - me
                               - ee
                               type: string
@@ -220,6 +221,87 @@ spec:
                   for *.<effectiveDomain> via DNS-01. See docs/design/multi-tenancy.md §3.
                 pattern: ^([a-z0-9]([a-z0-9\-\.]*[a-z0-9])?)?$
                 type: string
+              exposures:
+                description: |-
+                  Exposures are the perimeter surfaces a perimeter approver published
+                  (AD-6): what this tenant has on the internet, from when, until when,
+                  and who said so.
+
+                  Here for the same reason the grants are: the decision has to outlive
+                  the thing it applies to, and it has to be a commit rather than an edit
+                  somebody made to a live object. The operator copies each entry onto the
+                  Component it names, and the Component's reconcile is what stands the
+                  proxy up in the tenant's DMZ.
+
+                  It is also the registry. Every URL this tenant publishes is one of
+                  these, which is what lets "what of ours is on the internet" be answered
+                  by the thing that put it there.
+                items:
+                  description: |-
+                    TenantExposure is one published surface, against one of the tenant's
+                    components.
+
+                    The fields are spelled out rather than embedded so the two list map keys can
+                    be the component and the entry: together they are what makes a published
+                    surface unique, and letting the API server enforce that is better than a
+                    controller finding two answers to how long something is on the internet.
+                  properties:
+                    expiresAt:
+                      description: |-
+                        ExpiresAt is when it stops answering, and it is required. A public
+                        surface with no end is not something anybody decided.
+                      format: date-time
+                      type: string
+                    exposureName:
+                      description: |-
+                        ExposureName names an entry of that component's profile whose surface
+                        is perimeter. An entry that is not is never published here: the
+                        operator checks, because enabling a gateway entry by name would
+                        otherwise put the component's authenticated surface on the internet.
+                      maxLength: 40
+                      pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
+                      type: string
+                    host:
+                      description: |-
+                        Host is the public hostname. Empty means the entry's default in the
+                        tenant's zone.
+                      maxLength: 253
+                      pattern: ^([a-z0-9]([-a-z0-9]*[a-z0-9])?\.)+[a-z]{2,}$
+                      type: string
+                    install:
+                      description: Install names the Component this publishes from.
+                      maxLength: 253
+                      pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
+                      type: string
+                    owner:
+                      description: |-
+                        Owner is the subject that published it, set by the director from the
+                        caller's token.
+                      maxLength: 256
+                      minLength: 1
+                      type: string
+                    reason:
+                      description: Reason is why this is public, in the approver's
+                        words.
+                      maxLength: 2000
+                      type: string
+                    reviewAt:
+                      description: ReviewAt is when the owner and the approver are
+                        asked to renew.
+                      format: date-time
+                      type: string
+                  required:
+                  - expiresAt
+                  - exposureName
+                  - install
+                  - owner
+                  type: object
+                maxItems: 256
+                type: array
+                x-kubernetes-list-map-keys:
+                - install
+                - exposureName
+                x-kubernetes-list-type: map
               isolation:
                 description: Isolation describes the workload isolation boundaries
                   for this tenant.
@@ -256,6 +338,21 @@ spec:
                     pattern: ^[a-z0-9\-]*$
                     type: string
                 type: object
+              locales:
+                description: |-
+                  Locales are the languages this tenant's realm renders its login and
+                  account pages in, as ISO 639-1 codes (AD-15). Empty means the
+                  platform's own set.
+
+                  Languages rather than locales: Keycloak serves de-CH from its German
+                  catalogue, and a realm listing regional codes offers a picker full of
+                  entries that render identically.
+                items:
+                  pattern: ^[a-z]{2}(-[A-Za-z0-9]{2,8})?$
+                  type: string
+                maxItems: 32
+                type: array
+                x-kubernetes-list-type: set
               mail:
                 description: Mail configures the mail mode and settings for this tenant.
                 properties:
@@ -280,6 +377,80 @@ spec:
                       The Secret must provide keys: host, port, username, password.
                     type: string
                 type: object
+              privileges:
+                description: |-
+                  Privileges are the privilege requests a person granted for this
+                  tenant's components (AD-5). They live here because a grant has to
+                  survive the thing it applies to: a Component is rebuilt from its
+                  profile and can be deleted and recreated, while the record that a named
+                  person said yes on a named date must not be. The Tenant comes from git,
+                  so this is also what makes an approval a commit rather than an edit
+                  somebody made to a live object.
+
+                  The operator copies each entry onto the Component named by Install. A
+                  grant for a component that does not exist is kept and ignored, because
+                  an app can be uninstalled and reinstalled and re-asking for an approval
+                  that was already given is how approvals become a formality.
+                items:
+                  description: |-
+                    TenantPrivilegeGrant is one grant, against one of the tenant's components.
+
+                    The fields of PrivilegeGrant are spelled out rather than embedded so that
+                    this is one flat object in the CRD and the two list map keys can be the
+                    component and the privilege -- together they are what makes a grant unique,
+                    and letting the API server enforce that is better than a controller
+                    discovering two answers to the same question.
+                  properties:
+                    approvedAt:
+                      format: date-time
+                      type: string
+                    approver:
+                      description: |-
+                        Approver is the Keycloak subject who said yes, set by the director from
+                        the caller's token. Never supplied by a caller: a grant that could name
+                        its own approver would record nothing.
+                      maxLength: 256
+                      minLength: 1
+                      type: string
+                    expiresAt:
+                      description: |-
+                        ExpiresAt bounds the grant. A waiver with no expiry is a waiver nobody
+                        reviews.
+                      format: date-time
+                      type: string
+                    install:
+                      description: |-
+                        Install names the Component this grant is for, which is the component's
+                        object name in the tenant's namespace.
+                      maxLength: 253
+                      pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
+                      type: string
+                    privilege:
+                      description: Privilege names one entry of the profile's request,
+                        as <kind>/<name>.
+                      maxLength: 80
+                      pattern: ^(podSecurity|egress|clusterRoles)/[a-z0-9]([-a-z0-9]*[a-z0-9])?$
+                      type: string
+                    reason:
+                      description: |-
+                        Reason in the approver's words, not the profile's. The profile already
+                        said why it wants the privilege; this is why somebody agreed.
+                      maxLength: 2000
+                      minLength: 10
+                      type: string
+                  required:
+                  - approvedAt
+                  - approver
+                  - install
+                  - privilege
+                  - reason
+                  type: object
+                maxItems: 256
+                type: array
+                x-kubernetes-list-map-keys:
+                - install
+                - privilege
+                x-kubernetes-list-type: map
               quotas:
                 description: Quotas sets resource limits for this tenant.
                 properties:
@@ -353,6 +524,104 @@ spec:
                     description: Storage is the total storage quota (PVCs + S3 buckets).
                     pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
                     x-kubernetes-int-or-string: true
+                type: object
+              security:
+                description: |-
+                  Security is the realm policy this tenant runs under: how strong a
+                  password has to be, how long a session lasts, what happens after
+                  repeated failures. Unset leaves Keycloak's own defaults.
+
+                  Declared here rather than set through Keycloak's admin API, which is
+                  what the console used to do. The composition turns this into the
+                  realm's fields, so the policy is reviewable in git, survives a realm
+                  being rebuilt, and needs no credential anywhere: the thing that changes
+                  it is a commit, and the thing that applies it is the reconciler that
+                  owns the realm.
+                properties:
+                  bruteForce:
+                    description: BruteForce is what happens after repeated failures.
+                    properties:
+                      enabled:
+                        description: |-
+                          Enabled turns detection on. Off is Keycloak's default and is worth
+                          stating deliberately: without it, a password can be guessed at the
+                          speed of the network.
+                        type: boolean
+                      lockoutDurationSeconds:
+                        description: LockoutDurationSeconds is how long a lockout
+                          lasts.
+                        format: int32
+                        maximum: 604800
+                        minimum: 0
+                        type: integer
+                      maxLoginFailures:
+                        description: MaxLoginFailures before the account is locked
+                          out.
+                        format: int32
+                        maximum: 1000
+                        minimum: 0
+                        type: integer
+                    type: object
+                  password:
+                    description: Password is how strong a password must be.
+                    properties:
+                      historyCount:
+                        description: HistoryCount refuses a password the person has
+                          used in their last N.
+                        format: int32
+                        maximum: 64
+                        minimum: 0
+                        type: integer
+                      maxAgeDays:
+                        description: |-
+                          MaxAgeDays forces a change after that many days. Zero means never,
+                          which is what current guidance actually recommends: rotation on a
+                          timer makes people choose worse passwords, and it is here because
+                          some compliance regimes still demand it.
+                        format: int32
+                        maximum: 3650
+                        minimum: 0
+                        type: integer
+                      minLength:
+                        description: MinLength is the shortest password accepted.
+                          Zero leaves it unstated.
+                        format: int32
+                        maximum: 128
+                        minimum: 0
+                        type: integer
+                      requireDigits:
+                        description: |-
+                          RequireDigits, RequireLowercase, RequireUppercase and
+                          RequireSpecialChars each demand at least one of that kind.
+                        type: boolean
+                      requireLowercase:
+                        type: boolean
+                      requireSpecialChars:
+                        type: boolean
+                      requireUppercase:
+                        type: boolean
+                    type: object
+                  session:
+                    description: Session is how long one lasts.
+                    properties:
+                      idleMinutes:
+                        description: IdleMinutes ends a session that has done nothing
+                          for this long.
+                        format: int32
+                        maximum: 43200
+                        minimum: 0
+                        type: integer
+                      maxHours:
+                        description: MaxHours ends it regardless of activity.
+                        format: int32
+                        maximum: 8760
+                        minimum: 0
+                        type: integer
+                      rememberMe:
+                        description: RememberMe offers the longer session the realm
+                          is configured for.
+                        type: boolean
+                    type: object
                 type: object
             required:
             - displayName
@@ -480,6 +749,14 @@ spec:
                 description: ReadyApps is the number of apps that have been successfully
                   provisioned.
                 type: integer
+              resourcePlan:
+                description: |-
+                  ResourcePlan is the plan whose selection was last recorded in the
+                  tenant's usage history: the value of the resource-plan annotation at
+                  the time the plan event was written. It differing from the annotation
+                  is what tells the reconciler a change has landed that the billing
+                  record does not know about yet.
+                type: string
             type: object
         type: object
     served: true

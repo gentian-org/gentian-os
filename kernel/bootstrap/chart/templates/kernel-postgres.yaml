@@ -1,0 +1,29 @@
+---
+# kernel-postgres: the CNPG cluster for Keycloak, its extensions, OpenFGA and
+# the console. Kernel identity does not share a data plane with tenants; the
+# tenant engines are system-* namespaces composed from the Cluster claim.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: kernel-postgres
+  namespace: {{ include "ns" (list . "gitops") }}
+  finalizers: []
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
+spec:
+  project: gentian
+  source:
+    repoURL: {{ .Values.osRepo | default "https://github.com/gentian-org/gentian-os" }}
+    targetRevision: {{ .Values.gentianOsBranch }}
+    path: kernel/data/kernel-postgres
+    helm:
+      parameters:
+      - name: storageClass
+        value: {{ .Values.storageClass | quote }}
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: {{ include "ns" (list . "data") }}
+  syncPolicy:
+    automated:
+      prune: false
+      selfHeal: true

@@ -28,6 +28,17 @@ spec:
                   type: string
                   description: >
                     Human-readable name for this tenant / organisation.
+                locales:
+                  type: array
+                  items:
+                    type: string
+                  description: >
+                    The languages this tenant's realm renders its login and
+                    account pages in, as ISO 639-1 codes. Empty means the
+                    platform's own set. Keycloak ships the translations, so
+                    this only says which to offer; a language the desktop has
+                    no catalogue for still logs in translated and then shows
+                    an English desktop.
                 domain:
                   type: string
                   description: >
@@ -67,6 +78,52 @@ spec:
                       description: >
                         Prefix for all S3 bucket names (e.g. "acme-"). Defaults to
                         "{name}-".
+                security:
+                  type: object
+                  description: >
+                    The realm policy this tenant runs under, as the console
+                    sets it and the composition applies it. Every field maps to
+                    something Keycloak's realm already has; nothing here is
+                    enforced by Gentian on top of it.
+                  properties:
+                    password:
+                      type: object
+                      description: How strong a password has to be.
+                      properties:
+                        minLength:
+                          type: integer
+                        requireDigits:
+                          type: boolean
+                        requireLowercase:
+                          type: boolean
+                        requireUppercase:
+                          type: boolean
+                        requireSpecialChars:
+                          type: boolean
+                        historyCount:
+                          type: integer
+                        maxAgeDays:
+                          type: integer
+                    session:
+                      type: object
+                      description: How long a sign-in lasts.
+                      properties:
+                        idleMinutes:
+                          type: integer
+                        maxHours:
+                          type: integer
+                        rememberMe:
+                          type: boolean
+                    bruteForce:
+                      type: object
+                      description: What happens after repeated failures.
+                      properties:
+                        enabled:
+                          type: boolean
+                        maxLoginFailures:
+                          type: integer
+                        lockoutDurationSeconds:
+                          type: integer
                 mail:
                   type: object
                   description: Mail stack configuration.

@@ -19,9 +19,11 @@ package main
 import (
 	"context"
 	"flag"
+	"log/slog"
 	"os"
 	"time"
 
+	"github.com/go-logr/logr"
 	corev1 "k8s.io/api/core/v1"
 	discoveryv1 "k8s.io/api/discovery/v1"
 	networkingv1 "k8s.io/api/networking/v1"
@@ -30,6 +32,7 @@ import (
 	"k8s.io/client-go/kubernetes"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
@@ -40,8 +43,9 @@ import (
 	"github.com/gentian-org/gentian-os/internal/applifecycle"
 	"github.com/gentian-org/gentian-os/internal/controller"
 	"github.com/gentian-org/gentian-os/internal/credentialmgr"
+	"github.com/gentian-org/gentian-os/internal/director/authz"
 	"github.com/gentian-org/gentian-os/internal/kernel/secrets"
-	"github.com/gentian-org/gentian-os/internal/meta"
+	"github.com/gentian-org/gentian-os/internal/layout"
 	"github.com/gentian-org/gentian-os/internal/usage"
 	"github.com/gentian-org/gentian-os/internal/webhook"
 )
@@ -72,6 +76,69 @@ func buildLogTailer(mgr ctrl.Manager) controller.PodLogTailer {
 		return nil
 	}
 	return controller.ClientsetLogTailer{Clientset: cs}
+}
+
+// authorizationGraph builds the operator's OpenFGA client, creating the store
+// and writing the model when this cluster has neither.
+//
+// Nil is a working answer: a cluster with no OPENFGA_API_URL has no
+// authorization service, and the projection is simply not run. A cluster that
+// has one and cannot be reached is a different thing, and says so loudly --
+// nobody administers a cluster whose roles were never projected, and that
+// reads from the outside exactly like a broken login.
+// bootClient reads the API server before the manager's cache exists.
+//
+// Settings taken from the claim are needed to build the reconcilers, which is
+// before the cache is running, so a cached client would answer from nothing.
+// A nil client is a working answer: every reader of it falls back to the value
+// this process was started with.
+func bootClient() client.Reader {
+	cfg, err := ctrl.GetConfig()
+	if err != nil {
+		return nil
+	}
+	c, err := client.New(cfg, client.Options{})
+	if err != nil {
+		return nil
+	}
+	return c
+}
+
+func authorizationGraph(log logr.Logger) *authz.OpenFGA {
+	url := os.Getenv("OPENFGA_API_URL")
+	if url == "" {
+		return nil
+	}
+	opts := authz.Options{
+		BaseURL:  url,
+		APIToken: os.Getenv("OPENFGA_API_TOKEN"),
+		StoreID:  os.Getenv("OPENFGA_STORE_ID"),
+		ModelID:  os.Getenv("OPENFGA_MODEL_ID"),
+		Logger:   slog.New(slog.NewTextHandler(os.Stderr, nil)),
+	}
+	if opts.StoreID == "" || opts.ModelID == "" {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+		defer cancel()
+		store, model, err := authz.Bootstrap(ctx, opts)
+		if err != nil {
+			log.Error(err, "authorization graph unavailable: the cluster's roles and tenants are not projected, "+
+				"so nobody administers this cluster until it is reachable")
+			return nil
+		}
+		if opts.StoreID == "" {
+			opts.StoreID = store
+		}
+		if opts.ModelID == "" {
+			opts.ModelID = model
+		}
+	}
+	graph, err := authz.NewOpenFGA(opts)
+	if err != nil {
+		log.Error(err, "authorization graph unavailable: the cluster's roles and tenants are not projected")
+		return nil
+	}
+	log.Info("authorization graph ready", "store", opts.StoreID, "model", opts.ModelID)
+	return graph
 }
 
 func main() {
@@ -110,6 +177,18 @@ func main() {
 	if routingMode == "" {
 		routingMode = controller.RoutingModeGateway
 	}
+	// Tenancy from the claim, not from this process's Helm value.
+	//
+	// The claim is where a cluster's settings are written down and the
+	// director's API is how they are changed; an operator that kept reading
+	// its own value would ignore both. Read once at start: the Deployment
+	// restarts when the projection changes, so an edit takes effect without
+	// anybody remembering to roll it.
+	tenancyMode := controller.ClusterTenancyMode(context.Background(), bootClient(), os.Getenv("TENANCY_MODE"))
+	if tenancyMode != os.Getenv("TENANCY_MODE") {
+		setupLog.Info("tenancy mode taken from the Cluster claim",
+			"claim", tenancyMode, "helmValue", os.Getenv("TENANCY_MODE"))
+	}
 	setupLog.Info("edge routing mode", "routing_mode", routingMode)
 
 	// Exec lets a profile's maintenance-mode and restore hooks run inside the
@@ -133,7 +212,7 @@ func main() {
 		Scheme:                   mgr.GetScheme(),
 		Seeder:                   buildSeeder(),
 		KernelDomain:             os.Getenv("KERNEL_DOMAIN"),
-		TenancyMode:              os.Getenv("TENANCY_MODE"),
+		TenancyMode:              tenancyMode,
 		MailServiceMode:          os.Getenv("MAIL_SERVICE_MODE"),
 		MailAdminContact:         os.Getenv("MAIL_ADMIN_CONTACT"),
 		MailRecipientPolicy:      os.Getenv("MAIL_RECIPIENT_POLICY"),
@@ -193,10 +272,9 @@ func main() {
 	// a cluster without the per-tenant shell databases has nowhere to write.
 	if os.Getenv("USAGE_SAMPLER_ENABLED") != "false" {
 		sampler := &usage.Sampler{
-			Client:          mgr.GetClient(),
-			KernelNamespace: envOrDefault("KERNEL_NAMESPACE", meta.KernelNamespace),
-			Interval:        envDuration("USAGE_SAMPLE_INTERVAL", 15*time.Minute),
-			Retention:       envDuration("USAGE_RETENTION", 400*24*time.Hour),
+			Client:    mgr.GetClient(),
+			Interval:  envDuration("USAGE_SAMPLE_INTERVAL", 15*time.Minute),
+			Retention: envDuration("USAGE_RETENTION", 400*24*time.Hour),
 		}
 		// The live series is optional and its absence is not an error: a
 		// cluster with no metrics-server still records the figures a plan is
@@ -222,7 +300,7 @@ func main() {
 	if err := (&controller.KeycloakPlatformReconciler{
 		Client:       mgr.GetClient(),
 		KernelDomain: os.Getenv("KERNEL_DOMAIN"),
-		TenancyMode:  os.Getenv("TENANCY_MODE"),
+		TenancyMode:  tenancyMode,
 		KernelRealm:  kernelRealmOrDefault(os.Getenv("KERNEL_REALM")),
 		RoutingMode:  routingMode,
 	}).SetupWithManager(mgr); err != nil {
@@ -231,21 +309,30 @@ func main() {
 	}
 
 	if err := (&controller.GatewayPlatformReconciler{
-		Client:       mgr.GetClient(),
-		KernelDomain: os.Getenv("KERNEL_DOMAIN"),
-		TenancyMode:  os.Getenv("TENANCY_MODE"),
-		RoutingMode:  routingMode,
-		Ingress:      buildEdgeIngress(),
+		Client:           mgr.GetClient(),
+		KernelDomain:     os.Getenv("KERNEL_DOMAIN"),
+		TenancyMode:      tenancyMode,
+		RoutingMode:      routingMode,
+		Ingress:          buildEdgeIngress(),
+		Cluster:          envOrDefault("GENTIAN_DEPLOYMENTS_CLUSTER_ID", "default-cluster"),
+		KernelRealm:      kernelRealmOrDefault(os.Getenv("KERNEL_REALM")),
+		EdgeAuthzService: envOrDefault("EDGE_AUTHZ_SERVICE", "gentian-os-edge-authz"),
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "GatewayPlatform")
 		os.Exit(1)
 	}
 
-	if err := (&controller.AppStoreReconciler{
-		Client: mgr.GetClient(),
-		Scheme: mgr.GetScheme(),
+	if err := (&controller.ComponentReconciler{
+		Client:           mgr.GetClient(),
+		Scheme:           mgr.GetScheme(),
+		KernelDomain:     os.Getenv("KERNEL_DOMAIN"),
+		KernelRealm:      kernelRealmOrDefault(os.Getenv("KERNEL_REALM")),
+		TenancyMode:      tenancyMode,
+		Cluster:          envOrDefault("GENTIAN_DEPLOYMENTS_CLUSTER_ID", "default-cluster"),
+		EdgeAuthzService: envOrDefault("EDGE_AUTHZ_SERVICE", "gentian-os-edge-authz"),
+		DirectorURL:      os.Getenv("DIRECTOR_URL"),
 	}).SetupWithManager(mgr); err != nil {
-		setupLog.Error(err, "unable to create controller", "controller", "AppStore")
+		setupLog.Error(err, "unable to create controller", "controller", "Component")
 		os.Exit(1)
 	}
 
@@ -257,37 +344,16 @@ func main() {
 		os.Exit(1)
 	}
 
-	openfgaURL := os.Getenv("OPENFGA_API_URL")
-	if openfgaURL == "" {
-		openfgaURL = "http://gentian-openfga.platform-kernel.svc.cluster.local:8080"
-	}
-	if err := (&controller.AuthzBridgeReconciler{
-		Client:       mgr.GetClient(),
-		KernelRealm:  kernelRealmOrDefault(os.Getenv("KERNEL_REALM")),
-		OpenFGAURL:   openfgaURL,
-		OpenFGAToken: os.Getenv("OPENFGA_API_TOKEN"),
-		Enabled:      controller.AuthzBridgeEnabled(),
-	}).SetupWithManager(mgr); err != nil {
-		setupLog.Error(err, "unable to create controller", "controller", "AuthzBridge")
-		os.Exit(1)
-	}
-	if controller.AuthzBridgeEnabled() {
-		setupLog.Info("authz bridge enabled", "openfga_url", openfgaURL)
-	}
-
 	if err := (&controller.PlatformSecurityPolicyReconciler{
 		Client:            mgr.GetClient(),
-		OperatorNamespace: "gentian-system",
+		OperatorNamespace: layout.Namespace(layout.Control),
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "PlatformSecurityPolicy")
 		os.Exit(1)
 	}
 
 	if err := (&controller.AppGrantReconciler{
-		Client:       mgr.GetClient(),
-		OpenFGAURL:   openfgaURL,
-		OpenFGAToken: os.Getenv("OPENFGA_API_TOKEN"),
-		Enabled:      controller.AuthzBridgeEnabled(),
+		Client: mgr.GetClient(),
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "AppGrant")
 		os.Exit(1)
@@ -346,22 +412,71 @@ func main() {
 		os.Exit(1)
 	}
 
+	// The authorization graph's structure: which tenants this cluster has and
+	// which group holds which role over it.
+	//
+	// The director used to do this at its own start, with a token that could
+	// write anything in the graph. Projecting declared state into cluster
+	// state is the operator's work, and leaving the write capability with the
+	// service that only has to READ the graph to make a decision is the part
+	// that was wrong. Off entirely when no OpenFGA address is configured,
+	// which is what a cluster with no authorization service runs.
+	if graph := authorizationGraph(setupLog); graph != nil {
+		if err := (&controller.AuthzProjectionReconciler{
+			Client:  mgr.GetClient(),
+			Cluster: os.Getenv("GENTIAN_DEPLOYMENTS_CLUSTER_ID"),
+			Graph:   graph,
+		}).SetupWithManager(mgr); err != nil {
+			setupLog.Error(err, "unable to create controller", "controller", "AuthzProjection")
+			os.Exit(1)
+		}
+		// Membership, from the same graph client and for the same reason.
+		// Keycloak states a user's whole group set, signed; this applies it.
+		// It was the director's last write to the graph, which is what kept
+		// the director's token a writing token.
+		listener, err := controller.NewMembershipListener(graph, slog.New(slog.NewJSONHandler(os.Stderr, nil)))
+		if err != nil {
+			setupLog.Error(err, "unable to create the membership listener")
+			os.Exit(1)
+		}
+		if listener != nil {
+			if err := mgr.Add(listener); err != nil {
+				setupLog.Error(err, "unable to add the membership listener")
+				os.Exit(1)
+			}
+			setupLog.Info("membership listener enabled", "addr", listener.Addr)
+		}
+	}
+
+	// The tile catalogue: the kernel consoles this operator routes, plus every
+	// exposure of an installed component whose profile declares a tile.
+	//
+	// The director used to carry this as a list compiled into its binary,
+	// which is a second copy of facts the operator already holds and which no
+	// installed app could add itself to without a director release.
+	if err := (&controller.TileProjectionReconciler{
+		Client:      mgr.GetClient(),
+		Cluster:     envOrDefault("GENTIAN_DEPLOYMENTS_CLUSTER_ID", "default-cluster"),
+		KernelRealm: kernelRealmOrDefault(os.Getenv("KERNEL_REALM")),
+	}).SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "unable to create controller", "controller", "TileProjection")
+		os.Exit(1)
+	}
+
 	if enableWebhook {
 		(&webhook.TenantValidator{
 			Client:       mgr.GetClient(),
-			TenancyMode:  os.Getenv("TENANCY_MODE"),
+			TenancyMode:  tenancyMode,
 			KernelDomain: os.Getenv("KERNEL_DOMAIN"),
 			// Default on. A cluster that has not proven its administrator can
 			// write credentials is one where the recovery from a broken write
 			// path is still cheap, and admitting tenants is what makes it
 			// expensive — so the safe default is the one that keeps the exit open.
 			GateOnHandover:    os.Getenv("HANDOVER_GATE_TENANTS") != "false",
-			HandoverNamespace: envOrDefault("HANDOVER_NAMESPACE", envOrDefault("OPERATOR_NAMESPACE", "gentian-system")),
+			KernelRealm:       kernelRealmOrDefault(os.Getenv("KERNEL_REALM")),
+			HandoverNamespace: envOrDefault("HANDOVER_NAMESPACE", envOrDefault("OPERATOR_NAMESPACE", layout.Namespace(layout.Control))),
 		}).SetupWithManager(mgr)
 
-		(&webhook.AppProfileValidator{
-			Client: mgr.GetClient(),
-		}).SetupWithManager(mgr)
 	}
 
 	if os.Getenv("APP_LIFECYCLE_ENABLED") != "false" {

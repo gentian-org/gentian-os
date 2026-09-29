@@ -261,7 +261,7 @@ func (r *TenantReconciler) reconcileTenantStagePreflight(ctx context.Context, st
 	}
 	if len(missingProfiles) > 0 {
 		r.setCondition(tenant, conditionAppsReady, metav1.ConditionFalse, "ProfileNotFound",
-			fmt.Sprintf("AppProfile(s) not found: %s", strings.Join(missingProfiles, ", ")))
+			fmt.Sprintf("ComponentProfile(s) not found: %s", strings.Join(missingProfiles, ", ")))
 		r.setCondition(tenant, conditionIdentityReady, metav1.ConditionFalse, "PrerequisitesFailed",
 			"Identity provisioning blocked because one or more requested AppProfiles are missing")
 		tenant.Status.Phase = gentianov1alpha1.TenantPhaseDegraded
@@ -397,6 +397,14 @@ func (r *TenantReconciler) reconcileTenantStageAppsAndEdge(ctx context.Context, 
 	}
 	state.privilegeResult = privilegeResult
 
+	// Every tenant gets the components the platform ships to everyone: the
+	// desktop, the administration console, whatever else declares
+	// defaultForTenants on its profile. Reconciled beside its apps
+	// (ui-restructure.md §1).
+	if err := r.ensureDefaultComponents(ctx, tenant); err != nil {
+		return ctrl.Result{}, fmt.Errorf("ensure default components: %w", err)
+	}
+
 	if _, err := r.ensureGateway(ctx, tenant); err != nil {
 		r.setCondition(tenant, conditionGatewayReady, metav1.ConditionFalse, "EnsureFailed", err.Error())
 		r.updateBlockedStatus(ctx, tenant)
@@ -435,10 +443,6 @@ func (r *TenantReconciler) reconcileTenantStageSharedKernel(ctx context.Context,
 		return mailResult, nil
 	}
 
-	if err := r.ensurePortalRedirect(ctx, tenant); err != nil {
-		logger.Error(err, "ensure shared portal convergence (non-blocking, will retry)")
-		return ctrl.Result{RequeueAfter: tenantShellRequeueAfter}, nil
-	}
 	if err := r.ensureKeycloakBrowserSecurityHeaders(ctx, tenant); err != nil {
 		logger.Error(err, "ensure Keycloak browser security headers (non-blocking, will retry)")
 		return ctrl.Result{RequeueAfter: tenantShellRequeueAfter}, nil
@@ -489,6 +493,9 @@ func (r *TenantReconciler) reconcileTenantStageFinalize(ctx context.Context, sta
 		provisioningDuration.WithLabelValues(tenant.Name).Observe(time.Since(state.start).Seconds())
 	}
 	tenantAppsTotal.WithLabelValues(tenant.Name).Set(float64(tenant.Status.AppCount))
+	// A plan change that Argo CD has synced is recorded in the usage history
+	// here, before the status it is noted on is written.
+	r.recordResourcePlan(ctx, tenant)
 	if err := r.Status().Update(ctx, tenant); err != nil {
 		return ctrl.Result{}, err
 	}

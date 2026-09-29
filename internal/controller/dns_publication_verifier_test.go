@@ -24,6 +24,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/gentian-org/gentian-os/internal/layout"
 	dto "github.com/prometheus/client_model/go"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -87,7 +88,7 @@ func gaugeValue(t *testing.T, labels ...string) float64 {
 func dnsEndpointObject(name string, endpoints ...map[string]interface{}) *unstructured.Unstructured {
 	obj := &unstructured.Unstructured{}
 	obj.SetGroupVersionKind(dnsEndpointGVK)
-	obj.SetNamespace("platform-kernel")
+	obj.SetNamespace(layout.Namespace(layout.Edge))
 	obj.SetName(name)
 	items := make([]interface{}, 0, len(endpoints))
 	for _, e := range endpoints {
@@ -165,10 +166,10 @@ func TestDNSVerifierReportsRecordMissingPastGrace(t *testing.T) {
 	if strings.Contains(ev[0], "mail.gentian.cloud A") || strings.Contains(ev[0], "A mail.gentian.cloud") {
 		t.Fatalf("event %q names a record that IS published", ev[0])
 	}
-	if got := gaugeValue(t, "platform-kernel", "mail-kernel", "gentian.cloud", "TXT"); got != 0 {
+	if got := gaugeValue(t, layout.Namespace(layout.Edge), "mail-kernel", "gentian.cloud", "TXT"); got != 0 {
 		t.Fatalf("gauge for the missing SPF = %v, want 0", got)
 	}
-	if gaugeValue(t, "platform-kernel", "mail-kernel", "mail.gentian.cloud", "A") != 1 {
+	if gaugeValue(t, layout.Namespace(layout.Edge), "mail-kernel", "mail.gentian.cloud", "A") != 1 {
 		t.Fatalf("gauge for the published A record should be 1")
 	}
 }

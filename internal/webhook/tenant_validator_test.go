@@ -48,7 +48,8 @@ func TestTenantValidatorHandleNilDecoder_DeniesMissingAppProfile(t *testing.T) {
 		},
 		ObjectMeta: metav1.ObjectMeta{Name: "gtn-demo"},
 		Spec: gentianov1alpha1.TenantSpec{
-			Apps: []gentianov1alpha1.TenantApp{{Profile: "missing-profile-app"}},
+			DisplayName: "Test Tenant",
+			Apps:        []gentianov1alpha1.TenantApp{{Profile: "missing-profile-app"}},
 		},
 	}
 

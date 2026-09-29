@@ -4,3 +4,5 @@ env: dev
 # storageClass empty = use the cluster's default StorageClass. Set per
 # stage in values-<env>.yaml only where a stage genuinely differs.
 storageClass: ""
+# Where the provider reaches Keycloak. v4: platform-kernel; v5 passes kernel-authentication.
+keycloakUrl: http://gentian-idp-keycloak-keycloakx-http.platform-kernel.svc.cluster.local:8080/auth

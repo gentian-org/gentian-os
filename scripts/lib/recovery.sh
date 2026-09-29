@@ -44,6 +44,7 @@ _KIT_KEYS=(
     SMTP_RELAY_USERNAME SMTP_RELAY_PASSWORD
     TRANSIT_UNSEAL_KEY OPENBAO_RECOVERY_KEYS OPENBAO_ROOT_TOKEN
     BACKUP_AGE_IDENTITY
+    GENTIAN_BREAK_GLASS_KEY
 )
 
 # =============================================================================
@@ -461,6 +462,31 @@ export_recovery_kit() {
     banner "Recovery kit"
     _kit_gather || return 1
 
+    # The break-glass signing key (AD-2).
+    #
+    # Included by default, because the alternative is a cluster that requires
+    # signatures and a key that exists on exactly one laptop: lose the laptop
+    # and the way back in is hand-editing the AppProject on a cluster you can
+    # no longer write to. A kit that can rebuild a cluster but not sign for it
+    # can only rebuild it unsigned.
+    #
+    # It does make the kit more sensitive -- it is now enough to write to the
+    # deployments repository as the break-glass identity -- so it can be left
+    # out deliberately. The kit is already encrypted and already carries the
+    # master password, the git tokens and the backup identity, so this is a
+    # difference of degree rather than of kind.
+    if [[ "${GENTIAN_KIT_INCLUDE_BREAK_GLASS:-1}" == "1" ]]; then
+        if [[ -z "${GENTIAN_BREAK_GLASS_KEY:-}" ]] && \
+           [[ -n "$(gentian_signing_key_id break-glass 2>/dev/null)" ]]; then
+            GENTIAN_BREAK_GLASS_KEY="$(gentian_export_secret_key break-glass 2>/dev/null || true)"
+            export GENTIAN_BREAK_GLASS_KEY
+        fi
+    else
+        info "GENTIAN_KIT_INCLUDE_BREAK_GLASS=0: the break-glass signing key is left out."
+        info "  A cluster rebuilt from this kit cannot sign for itself until the key"
+        info "  is restored by hand, or the AppProject's signing policy is removed."
+    fi
+
     # The salt is the reason this command exists. It lives only in OpenBao, so a
     # disaster that loses OpenBao's storage loses it too — and then the master
     # password alone reproduces nothing.
@@ -695,6 +721,20 @@ load_recovery_kit() {
         export "${key?}"
         loaded+=("${key}")
     done <<< "${plain}"
+
+    # The break-glass key is the one value that is not simply an environment
+    # variable somewhere downstream: it has to be back in a KEYRING before
+    # anything can sign with it. Imported here so that a --recover run can
+    # commit to the deployments repository the way the original install did.
+    if [[ -n "${GENTIAN_BREAK_GLASS_KEY:-}" ]]; then
+        if gentian_import_break_glass_key "${GENTIAN_BREAK_GLASS_KEY}"; then
+            info "  Break-glass signing key restored ($(gentian_signing_key_long_id break-glass))."
+        else
+            warn "  The kit carries a break-glass signing key and it could not be imported."
+            warn "  Commits to the deployments repository will be unsigned, which a"
+            warn "  cluster with a signing policy refuses."
+        fi
+    fi
 
     success "Loaded ${#loaded[@]} values: ${loaded[*]}"
     [[ -n "${KERNEL_DOMAIN:-}" ]] && info "  Cluster: ${KERNEL_DOMAIN}"

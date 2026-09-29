@@ -123,12 +123,33 @@ For the current baseline design of the system, refer to [architecture.md](archit
 
 ### 1.12 SOC 2 Auditing & Compliance Instrumentation (**)
 * **Target Domain**: Compliance & Audit
-* **Context**: Platform audit logs, access reviews, and change management logs are not structured or aggregated to meet compliance framework requirements.
-* **Proposed Solution**: Instrument audit log aggregation across the BFF, Keycloak administrative console events, and gateway access logs. Automate backup verification testing and establish formal audit trail storage.
+* **Context**: Researched against the Trust Services Criteria 2026-09-24. The TSC prescribe no log format; an auditor asks for evidence against criteria, and five touch logging: **CC6.1–6.3** (who has access, how it was granted and removed, periodic review), **CC7.2** (anomalies detected and analysed), **CC7.3–7.5** (incidents, with the evidence behind them), **CC8.1** (changes authorised, approved, deployed) and **A1.2** (backup and restore evidence). Evidence has to cover the whole observation window, resist tampering, and carry timestamps that correlate.
+
+  **What this platform already answers well.** Change management is the criterion most organisations struggle to evidence, and here it is structural rather than procedural: every change to declared state is a commit, reviewed as a pull request, deployed by Argo CD syncing that commit. The director authors each one as the person whose token authorised it and trailers it with the relation and object that permitted the change, joined to a request id — which is more than most platforms can show. CC7.1's configuration baseline and drift detection is answered by Argo CD's desired-versus-live comparison running continuously, not by a quarterly screenshot.
+
+  **What git cannot answer**, in the order an auditor will care:
+  - **Reads of data by operators.** Opening a Secret in Headlamp or `kubectl exec` into a tenant's pod writes nothing anywhere. The Kubernetes API audit log is not enabled on any cluster. For a hosting platform this is the "can the provider read customer data" question, and today there is no answer.
+  - **Authentication events.** Sign-in success and failure, second factor, source address. The realm has no events configuration, and `provider-keycloak`'s `Realm` does not expose one, so it cannot be declared the way the rest of the realm policy now is.
+  - **Access granted and revoked.** People and groups live in Keycloak deliberately — git is append-only and a name committed there outlives the account, which collides with erasure — so grants and revocations are Keycloak admin events and are not retained. S7A.17 changes who makes those changes, not where they live: the director will speak to Keycloak for the caller, so the authority behind each one becomes recordable, while the change itself stays a Keycloak admin event that the existing listener is the right place to capture.
+  - **Refused requests.** A refusal changes nothing, so it commits nothing. The director and the edge authorization service already log every decision with its request id, to stdout, where nothing ships or retains it.
+  - **Actions.** The category the backup work introduced: taking a backup happens once and leaves no commit. Only an annotation on the object and the operator's stdout record it.
+  - **Access reviews.** Nothing produces the artefact of "somebody recertified this". S7A.8's read-only authorization view is the raw material.
+
+  **The finding that outranks the rest**: `gentian-deployments` has 924 commits and **none** carries the authorization trailer. Every change so far was pushed from a workstation by one person with direct access — no segregation of duties, no attribution to an authenticated session, no approval gate. That is the first thing an audit opens with, and the fix is not a screen: it is that changes go through the director, which is what the S7A architecture cleanup is for. Related: the repository's history is force-pushable, so the evidence store does not yet resist tampering.
+
+  Infrastructure for four of the five gaps already exists. The Keycloak event listener (`kernel/extensions/keycloak-event-listener/`) already receives `LOGIN`, `REGISTER` and `GROUP_MEMBERSHIP` and posts signed statements to the operator; it projects membership and drops the rest. Extending it to record needs no credential anywhere.
+* **Proposed Solution**: Four panes with honest labels rather than one "audit log" that implies completeness. **Changes** from git, which needs no store. **Sign-ins** and **Access changes** from the event listener that already sees them, into a durable store. **Refused requests** from the decision logs the director and the edge already emit, into the same store. **Reads of data** from the Kubernetes API audit log, which is a cluster concern rather than a console screen. Every answer states what it does not cover.
 * **Backlog Items**:
-  - `[ ]` Setup a centralized audit log ingestion store.
-  - `[ ]` Standardize logging format for administrative mutations across Keycloak and portal BFF.
-  - `[ ]` Build automation to verify and test backup restores periodically.
+  - `[x]` Serve the change history from git, per tenant and per cluster, with the authorising decision and request id on each commit, and a commit pushed by hand reported as one. *(director `/v1/tenants/{t}/changes`, `/v1/clusters/{c}/changes`; console Audit → Changes.)*
+  - `[ ]` Protect the deployments repository's history: branch protection, no force-push, and a decision on signed commits.
+  - `[ ]` Persist the director's and the edge's authorization decisions, refusals included, with the request id that joins them to a commit. Decide the store — the tenant's shell database beside the usage history is the obvious candidate.
+  - `[ ]` Enable realm events and retention. Needs either a `provider-keycloak` field that does not exist yet or the event listener to carry them, which is the smaller path.
+  - `[ ]` Extend the Keycloak event listener to record sign-ins and group membership changes, not only project membership.
+  - `[ ]` Record actions — taking a backup, installing an app through the action path — where a commit would have been, so an action is as auditable as a change.
+  - `[ ]` Enable the Kubernetes API audit log with a policy that captures reads of Secrets and `exec` into tenant namespaces, and ship it off the node.
+  - `[ ]` Produce an access-review artefact from the authorization view (S7A.8): who held what, when it was reviewed, by whom.
+  - `[ ]` Build automation to verify and test backup restores periodically (A1.2), and keep the results as evidence.
+  - `[ ]` Decide retention for each store, against an observation window rather than a habit.
 
 ### 1.13 App Catalogue Validating Webhook (**)
 * **Target Domain**: Platform Security & Software Supply
@@ -1071,3 +1092,47 @@ does not exist yet that something cannot be the Composition.
   - `[ ]` Deploy an event listener that executes workflow scripts on NATS message triggers.
   - `[ ]` Implement the AppProfile code generation tool.
   - `[ ]` Integrate the agentic engine with the tenant provisioning API.
+
+## 5. Certification
+
+What SOC 2, ISO 27001, ISAE 3402 and ISO 9001 readiness needs beyond the
+controls the architecture cleanup produces on the components it already
+touches (work-packages.md WP-13). Everything here needs a component the
+platform does not run today.
+
+### 5.1 Immutable, Retained Audit Logs (**)
+* **Target Domain**: Audit & Assurance
+* **Context**: The three logs of the security principles — issuer events, decision log, change log — are the evidence populations every framework samples from. A Type II period is six to twelve months; logs that can be altered or that expire earlier restart the period.
+* **Proposed Solution**: When the log store lands (security-gap-closing G10), run it append-only — object lock on the bucket or a hash chain — with retention of at least twelve months, and export the proxy access logs and Keycloak events into it.
+* **Backlog Items**:
+  - `[ ]` Choose the log store and its immutability mechanism; set retention ≥ 12 months.
+  - `[ ]` Ship Keycloak events, OpenFGA decisions, director commits and DMZ proxy logs into it with the request id.
+  - `[ ]` Test: a log entry cannot be altered or deleted inside the retention window by any cluster role, break-glass included.
+
+### 5.2 Backups That Prove Themselves (**)
+* **Target Domain**: Availability
+* **Context**: Availability is the one SOC 2 criterion the platform is behind on: backups are design-only (roadmap 2.x, Velero/pgBackRest), and an untested backup is not a control.
+* **Proposed Solution**: Once backups exist, a scheduled restore drill restores a tenant into a scratch namespace, verifies it, and records the result as evidence.
+* **Backlog Items**:
+  - `[ ]` Implement backups for the kernel Postgres, the tenant data engines and OpenBao.
+  - `[ ]` Scheduled restore drill per cluster with a signed result record.
+  - `[ ]` Recovery time and recovery point objectives stated per cluster and measured by the drill.
+
+### 5.3 Vulnerability Scanning and SBOMs (**)
+* **Target Domain**: Supply Chain
+* **Context**: Signed bundles and images (security-gap-closing G11) prove provenance, not absence of known vulnerabilities; ISO 27001 A.8.8 and A.8.29 want both.
+* **Proposed Solution**: Scan every image and chart in CI and in-cluster, generate an SBOM per bundle, and let admission refuse unsigned or unscanned images.
+* **Backlog Items**:
+  - `[ ]` Trivy (or equivalent) in CI for gentian-os, gentian-ui and every catalogue bundle; findings gate the release.
+  - `[ ]` SBOM per bundle, stored beside the digest in the mirror.
+  - `[ ]` In-cluster scanning of running images with findings in the security officer's view.
+  - `[ ]` Admission refuses images without a signature and a scan record.
+
+### 5.4 Assurance Programme (**)
+* **Target Domain**: Audit & Assurance
+* **Context**: The certifications assess the organisation; the platform supplies controls and evidence. The timing of the technical work decides when an assurance period can start.
+* **Proposed Solution**: Start the ISAE 3402 / SOC 2 Type II clock the day the director and the immutable log store are live; do a Type I readiness assessment after wave 1 of the gap plan; treat the roles document as the complementary user-entity controls and `docs/compliance/controls.md` as the system description.
+* **Backlog Items**:
+  - `[ ]` Type I readiness after wave 1; Type II period after the log store.
+  - `[ ]` ISO 27001 Statement of Applicability mapped to `docs/compliance/controls.md`.
+  - `[ ]` ISO 9001: measurable objectives the platform produces — availability, mean time to recover, patch latency — reported from the same logs.

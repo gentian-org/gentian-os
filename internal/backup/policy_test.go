@@ -30,7 +30,8 @@ func policyTenant() *gentianov1alpha1.Tenant {
 	return &gentianov1alpha1.Tenant{
 		ObjectMeta: metav1.ObjectMeta{Name: "demo"},
 		Spec: gentianov1alpha1.TenantSpec{
-			Isolation: &gentianov1alpha1.TenantIsolation{S3Prefix: "demo-"},
+			DisplayName: "Test Tenant",
+			Isolation:   &gentianov1alpha1.TenantIsolation{S3Prefix: "demo-"},
 		},
 	}
 }

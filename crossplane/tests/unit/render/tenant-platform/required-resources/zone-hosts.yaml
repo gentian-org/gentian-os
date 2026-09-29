@@ -1,0 +1,24 @@
+# What the operator projects from the routes it composes: the host labels this
+# tenant's components are served at.
+#
+# The zone's Keycloak client admits a redirect only to a host it lists, and
+# that list used to be written in the Composition by hand -- so a component
+# declaring any other subDomain got "Invalid parameter: redirect_uri" on a
+# page naming neither the component nor a list. "wiki" here is that component:
+# it is in no hand-written list anywhere and must still reach the client.
+#
+# console and admin repeat what the base list already has, which is what the
+# projection really looks like, and proves the union does not double them.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: gentian-zone-hosts-platform
+  namespace: kernel-control
+  labels:
+    gentianos.io/config-type: zone-hosts
+    gentianos.io/tenant: platform
+data:
+  hosts: |
+    admin
+    console
+    wiki

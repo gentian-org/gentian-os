@@ -37,3 +37,12 @@ envoy:
   # only if a pod runs on it; one replica means one node can serve, and draining
   # it takes every hostname offline.
   replicas: 2
+
+  # How the data plane is reached. LoadBalancer is right where an address is
+  # claimed from the platform (NETWORK_MODE=static-ip). A tunnelled cluster is
+  # reached from inside — the tunnel daemon dials out — so it asks for
+  # ClusterIP: a LoadBalancer there waits on a cloud that is not there, and a
+  # Gateway with no address is never Programmed. The address fields and the
+  # platform's annotations apply to a LoadBalancer only, and are dropped
+  # otherwise rather than left as claims nothing honours.
+  serviceType: LoadBalancer

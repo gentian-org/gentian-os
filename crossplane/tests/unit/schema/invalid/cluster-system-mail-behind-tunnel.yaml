@@ -1,0 +1,20 @@
+# Invalid Cluster claim — its own mail stack behind a tunnel.
+#
+# A tunnel carries HTTP and HTTPS and nothing else. A cluster that asked for
+# this would get Postfix, a LoadBalancer nothing routes to, and an MX record
+# naming an address that never answers: senders retry for days and then bounce,
+# which is the most expensive way for mail to fail.
+#
+# Unlike the two refusals this replaces, it does not expire. Those existed
+# because v5 deployed neither function; this one is about what a tunnel can
+# carry.
+apiVersion: gentianos.io/v1alpha1
+kind: Cluster
+metadata:
+  name: test-system-mail-tunnel
+  namespace: default
+spec:
+  kernelDomain: example.org
+  networkMode: tunnel
+  mail:
+    serviceMode: system

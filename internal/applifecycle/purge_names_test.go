@@ -63,7 +63,8 @@ func TestDatabasePrefixDoesNotChangeRoleName(t *testing.T) {
 	tenant := &gentianov1alpha1.Tenant{
 		ObjectMeta: metav1.ObjectMeta{Name: "demo"},
 		Spec: gentianov1alpha1.TenantSpec{
-			Isolation: &gentianov1alpha1.TenantIsolation{DatabasePrefix: "custom_"},
+			DisplayName: "Test Tenant",
+			Isolation:   &gentianov1alpha1.TenantIsolation{DatabasePrefix: "custom_"},
 		},
 	}
 

@@ -25,24 +25,25 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
+	"github.com/gentian-org/gentian-os/internal/layout"
 )
 
-func newS3Profile(name string) *gentianov1alpha1.AppProfile {
-	return &gentianov1alpha1.AppProfile{
+func newS3Profile(name string) *gentianov1alpha1.ComponentProfile {
+	return &gentianov1alpha1.ComponentProfile{
 		ObjectMeta: metav1.ObjectMeta{Name: name},
-		Spec: gentianov1alpha1.AppProfileSpec{
-			DisplayName:      name,
-			DeploymentMethod: gentianov1alpha1.DeploymentMethodCrossplane,
-			Chart: gentianov1alpha1.ChartRef{
+		Spec: gentianov1alpha1.ComponentProfileSpec{
+			Classes: []gentianov1alpha1.ComponentClass{gentianov1alpha1.ComponentClassApp}, Launch: gentianov1alpha1.ComponentLaunchNone, TrustTier: gentianov1alpha1.TrustTierCertified, Version: "1.0.0",
+			Package: gentianov1alpha1.PackageSpec{Chart: &gentianov1alpha1.ChartRef{
 				Repository: "https://charts.example.com",
 				Name:       name,
 				Version:    "1.0.0",
-			},
-			KernelRequirements: &gentianov1alpha1.KernelRequirements{
+			}},
+
+			Requires: &gentianov1alpha1.RequirementSpec{Services: &gentianov1alpha1.ServiceRequirements{
 				Storage: &gentianov1alpha1.StorageRequirement{
 					S3: &gentianov1alpha1.S3Requirement{BucketPerTenant: true},
 				},
-			},
+			}},
 		},
 	}
 }
@@ -87,7 +88,7 @@ func TestStorage_CreatesS3BucketJob(t *testing.T) {
 	t.Parallel()
 	profile := newS3Profile("s3-app1")
 	if err := testClient.Create(context.Background(), profile); err != nil {
-		t.Fatalf("create AppProfile: %v", err)
+		t.Fatalf("create ComponentProfile: %v", err)
 	}
 	t.Cleanup(func() { _ = testClient.Delete(context.Background(), profile) })
 
@@ -107,7 +108,7 @@ func TestStorage_CreatesS3BucketJob(t *testing.T) {
 	job := &batchv1.Job{}
 	waitFor(t, jobAppearTimeout, func() bool {
 		return testClient.Get(context.Background(),
-			types.NamespacedName{Name: "s3-bucket-s3create-s3-app1", Namespace: "platform-kernel"}, job) == nil
+			types.NamespacedName{Name: "s3-bucket-s3create-s3-app1", Namespace: "system-s3"}, job) == nil
 	})
 
 	if job.Labels["gentianos.io/tenant"] != "s3create" {
@@ -155,7 +156,7 @@ func TestStorage_SetsReadyWhenAllJobsDone(t *testing.T) {
 	t.Parallel()
 	profile := newS3Profile("s3-app2")
 	if err := testClient.Create(context.Background(), profile); err != nil {
-		t.Fatalf("create AppProfile: %v", err)
+		t.Fatalf("create ComponentProfile: %v", err)
 	}
 	t.Cleanup(func() { _ = testClient.Delete(context.Background(), profile) })
 
@@ -183,9 +184,9 @@ func TestStorage_SetsReadyWhenAllJobsDone(t *testing.T) {
 	waitFor(t, jobAppearTimeout, func() bool {
 		job := &batchv1.Job{}
 		return testClient.Get(context.Background(),
-			types.NamespacedName{Name: "s3-bucket-storageready-s3-app2", Namespace: "platform-kernel"}, job) == nil
+			types.NamespacedName{Name: "s3-bucket-storageready-s3-app2", Namespace: "system-s3"}, job) == nil
 	})
-	markJobComplete(t, "s3-bucket-storageready-s3-app2", "platform-kernel")
+	markJobComplete(t, "s3-bucket-storageready-s3-app2", "system-s3")
 
 	// Phase=Ready and StorageReady=True should follow.
 	waitFor(t, tenantReadyTimeout, func() bool {
@@ -218,7 +219,7 @@ func TestStorage_DeleteDeletePolicy_CreatesDeleteJobs(t *testing.T) {
 	tenant := &gentianov1alpha1.Tenant{
 		ObjectMeta: metav1.ObjectMeta{Name: "storagedelete"},
 		Spec: gentianov1alpha1.TenantSpec{
-			DisplayName:    "Storage Delete Co",
+			DisplayName:    "Test Tenant",
 			Domain:         "storagedelete.example.com",
 			DeletionPolicy: gentianov1alpha1.DeletionPolicyDelete,
 			Apps: []gentianov1alpha1.TenantApp{
@@ -234,7 +235,7 @@ func TestStorage_DeleteDeletePolicy_CreatesDeleteJobs(t *testing.T) {
 	waitFor(t, jobAppearTimeout, func() bool {
 		job := &batchv1.Job{}
 		return testClient.Get(context.Background(),
-			types.NamespacedName{Name: "s3-bucket-storagedelete-s3-app3", Namespace: "platform-kernel"}, job) == nil
+			types.NamespacedName{Name: "s3-bucket-storagedelete-s3-app3", Namespace: "system-s3"}, job) == nil
 	})
 
 	// Delete the tenant.
@@ -242,12 +243,12 @@ func TestStorage_DeleteDeletePolicy_CreatesDeleteJobs(t *testing.T) {
 		t.Fatalf("delete tenant: %v", err)
 	}
 	// deleteIdentity runs before deleteStorage; mark cleanup Jobs so reconcile proceeds.
-	go markJobCompleteWhenReady("keycloak-realm-delete-storagedelete", "platform-kernel")
+	go markJobCompleteWhenReady("keycloak-realm-delete-storagedelete", layout.Namespace(layout.Authentication))
 
 	s3DeleteJob := &batchv1.Job{}
 	waitFor(t, jobAppearTimeout, func() bool {
 		return testClient.Get(context.Background(),
-			types.NamespacedName{Name: "s3-delete-storagedelete-s3-app3", Namespace: "platform-kernel"}, s3DeleteJob) == nil
+			types.NamespacedName{Name: "s3-delete-storagedelete-s3-app3", Namespace: "system-s3"}, s3DeleteJob) == nil
 	})
 	if s3DeleteJob.Labels["gentianos.io/tenant"] != "storagedelete" {
 		t.Errorf("expected tenant label 'storagedelete', got %q", s3DeleteJob.Labels["gentianos.io/tenant"])

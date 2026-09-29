@@ -112,26 +112,55 @@ check_via_vault() {
 # =============================================================================
 # cluster — read what ESO already knows
 # =============================================================================
+# _probe_namespace — where the catalogue's ExternalSecrets live.
+#
+# This was a literal namespace name, from the layout before this one, so every
+# credential reported "no probe ExternalSecret ... is the catalogue applied?"
+# on a cluster where most of them were fine -- and a genuinely absent one was
+# invisible in the noise.
+#
+# Asked of the cluster rather than assumed, because this script is run by hand
+# against whatever cluster kubectl points at. The cluster config the Cluster
+# composition publishes is the same answer the Compositions use.
+_probe_namespace() {
+    local ns
+    ns="$(kubectl get configmap -A -l gentianos.io/config-type=cluster-config \
+        -o jsonpath='{.items[0].data.kernel\.controlNamespace}' 2>/dev/null || true)"
+    if [[ -n "${ns}" ]]; then
+        printf '%s' "${ns}"
+        return 0
+    fi
+    # No cluster config means the Cluster composition has not run here yet,
+    # and there is nothing to probe. Saying so beats naming a namespace and
+    # reporting every credential missing from it.
+    return 1
+}
+
 check_via_cluster() {
     command -v kubectl >/dev/null 2>&1 || { echo "kubectl not found" >&2; exit 1; }
-    local name es ready optional
+    local name es ready optional ns
+    if ! ns="$(_probe_namespace)"; then
+        echo "No cluster-config ConfigMap on this cluster: the Cluster composition has not" >&2
+        echo "run here yet, so there are no credential probes to read." >&2
+        exit 1
+    fi
     while IFS= read -r name; do
         [[ -n "${name}" ]] || continue
         es="credreq-${name}"
         optional="$(_yq ".requirements[] | select(.name == \"${name}\") | .optional" "${CATALOGUE}" || echo false)"
 
-        if ! kubectl get externalsecret "${es}" -n gentian-system >/dev/null 2>&1; then
-            _report "${name}" missing "no probe ExternalSecret ${es} — is the catalogue applied?"
+        if ! kubectl get externalsecret "${es}" -n "${ns}" >/dev/null 2>&1; then
+            _report "${name}" missing "no probe ExternalSecret ${es} in ${ns} — is the catalogue applied?"
             continue
         fi
-        ready="$(kubectl get externalsecret "${es}" -n gentian-system \
+        ready="$(kubectl get externalsecret "${es}" -n "${ns}" \
             -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null || true)"
         if [[ "${ready}" == "True" ]]; then
             _report "${name}" satisfied "ESO reports Ready"
         elif [[ "${optional}" == "true" ]]; then
             _report "${name}" optional-missing
         else
-            _report "${name}" missing "$(kubectl get externalsecret "${es}" -n gentian-system \
+            _report "${name}" missing "$(kubectl get externalsecret "${es}" -n "${ns}" \
                 -o jsonpath='{.status.conditions[?(@.type=="Ready")].message}' 2>/dev/null || echo 'not Ready')"
         fi
     done < <(_list_names)

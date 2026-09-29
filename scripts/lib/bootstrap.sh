@@ -11,381 +11,6 @@
 GENTIAN_BOOTSTRAP_LOADED=1
 
 # =============================================================================
-# Crossplane 0 — Install Crossplane core
-# (mirrors the logic of crossplane/tests/e2e/scripts/p0-crossplane-install.sh)
-# =============================================================================
-_ensure_crossplane_package_crds() {
-    local required missing=()
-    required=(
-        providers.pkg.crossplane.io
-        providerrevisions.pkg.crossplane.io
-        functions.pkg.crossplane.io
-        functionrevisions.pkg.crossplane.io
-        deploymentruntimeconfigs.pkg.crossplane.io
-    )
-
-    for crd in "${required[@]}"; do
-        if ! kubectl get crd "${crd}" >/dev/null 2>&1; then
-            missing+=("${crd}")
-        fi
-    done
-
-    if [[ "${#missing[@]}" -eq 0 ]]; then
-        return 0
-    fi
-
-    warn "Crossplane package CRDs missing: ${missing[*]}"
-    info "Re-applying Crossplane CRDs from Helm chart..."
-    helm repo add crossplane-stable "${CROSSPLANE_HELM_REPO}" --force-update >/dev/null
-    helm repo update crossplane-stable >/dev/null
-    # --server-side, not plain apply: some of these CRDs' embedded OpenAPI
-    # schemas exceed the 256 KiB single-annotation limit once client-side
-    # apply embeds the full manifest into kubectl.kubernetes.io/last-applied-
-    # configuration (deploymentruntimeconfigs.pkg.crossplane.io hits this on
-    # Crossplane 2.x). Server-side apply uses field-manager tracking instead
-    # and has no such limit. --force-conflicts is safe here: these are
-    # Crossplane's own canonical chart-managed objects, never hand-edited.
-    helm template crossplane crossplane-stable/crossplane \
-        --version "${CROSSPLANE_VERSION}" \
-        --namespace "${CROSSPLANE_NAMESPACE}" \
-        --include-crds \
-        | kubectl apply --server-side --force-conflicts -f - >/dev/null
-
-    # Some chart packaging modes do not include CRDs in Helm output. Ensure the
-    # required package CRDs are explicitly applied from upstream release assets.
-    local crossplane_minor="${CROSSPLANE_VERSION%.*}"
-    for crd in providers providerrevisions functions functionrevisions deploymentruntimeconfigs; do
-        kubectl apply --server-side --force-conflicts \
-            -f "https://raw.githubusercontent.com/crossplane/crossplane/release-${crossplane_minor}/cluster/crds/pkg.crossplane.io_${crd}.yaml" \
-            >/dev/null 2>&1 || true
-    done
-
-    for crd in "${required[@]}"; do
-        kubectl wait --for=condition=Established "crd/${crd}" --timeout=90s >/dev/null 2>&1 || true
-    done
-
-    local unresolved=()
-    for crd in "${required[@]}"; do
-        if ! kubectl get crd "${crd}" >/dev/null 2>&1; then
-            unresolved+=("${crd}")
-        fi
-    done
-    if [[ "${#unresolved[@]}" -gt 0 ]]; then
-        error "Crossplane CRDs still missing after re-apply: ${unresolved[*]}"
-        exit 1
-    fi
-    success "Crossplane package CRDs are present."
-}
-
-install_crossplane() {
-    banner "Install Crossplane core"
-
-    if kubectl get deployment crossplane -n "${CROSSPLANE_NAMESPACE}" >/dev/null 2>&1; then
-        success "Crossplane deployment already present in ${CROSSPLANE_NAMESPACE}; skipping."
-        _ensure_crossplane_package_crds
-        return
-    fi
-    if helm status crossplane -n "${CROSSPLANE_NAMESPACE}" >/dev/null 2>&1; then
-        success "Crossplane already installed via Helm; skipping."
-        _ensure_crossplane_package_crds
-        return
-    fi
-
-    # Remove orphaned cluster-scoped resources left by a prior failed install.
-    if kubectl get clusterrole crossplane >/dev/null 2>&1; then
-        info "Removing orphaned Crossplane cluster-scoped RBAC before install..."
-        kubectl delete clusterrole \
-            crossplane crossplane-admin crossplane-edit crossplane-view crossplane-browse \
-            --ignore-not-found=true
-        kubectl delete clusterrolebinding \
-            crossplane crossplane-admin crossplane-edit crossplane-view crossplane-browse \
-            --ignore-not-found=true
-        _delete_namespace "${CROSSPLANE_NAMESPACE}"
-    fi
-
-    helm repo add crossplane-stable "${CROSSPLANE_HELM_REPO}" --force-update
-    helm repo update crossplane-stable
-    _helm_retry install crossplane crossplane-stable/crossplane \
-        --namespace "${CROSSPLANE_NAMESPACE}" \
-        --create-namespace \
-        --version "${CROSSPLANE_VERSION}" \
-        --set replicas=1 \
-        --wait --timeout 5m
-
-    kubectl wait deployment/crossplane \
-        -n "${CROSSPLANE_NAMESPACE}" \
-        --for=condition=Available --timeout=5m
-    _ensure_crossplane_package_crds
-    success "Crossplane core installed and Ready."
-}
-
-# =============================================================================
-# Crossplane 0b/0c — Install providers, XRD, Composition
-# (mirrors crossplane/tests/e2e/scripts/p1-kernel-dev.sh steps 1-3)
-# =============================================================================
-# _unstick_terminating_xrds — clear XRDs wedged mid-deletion.
-#
-# An XRD stuck Terminating cannot be re-created, and its claim CRD stays
-# absent, so every step that applies one of those claims fails with "no
-# matches for kind" and no indication that the cause is a deletion from
-# hours earlier that never finished. Composites hold a finalizer their
-# controller clears — but when the XRD is already half-gone the controller
-# no longer reconciles them, so the two wait on each other indefinitely.
-_unstick_terminating_xrds() {
-    local xrd claim_kind leftover
-    for xrd in $(kubectl get xrd -o jsonpath='{range .items[?(@.metadata.deletionTimestamp)]}{.metadata.name}{"\n"}{end}' 2>/dev/null); do
-        warn "XRD ${xrd} is stuck Terminating; clearing what blocks it."
-        claim_kind="$(kubectl get xrd "${xrd}" -o jsonpath='{.spec.names.plural}' 2>/dev/null)"
-        [[ -n "${claim_kind}" ]] || continue
-        for leftover in $(kubectl get "${claim_kind}.gentianos.io" -A \
-            -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}' 2>/dev/null); do
-            kubectl patch "${claim_kind}.gentianos.io" "${leftover}" --type=merge \
-                -p '{"metadata":{"finalizers":null}}' >/dev/null 2>&1 || true
-        done
-        kubectl wait xrd "${xrd}" --for=delete --timeout=60s >/dev/null 2>&1 || true
-    done
-}
-
-install_crossplane_providers() {
-    banner "Crossplane providers, XRD, Composition"
-
-    info "Applying providers (function-go-templating, provider-kubernetes, provider-vault)..."
-    _kubectl_retry apply -f "${SCRIPT_DIR}/crossplane/providers/providers.yaml"
-
-    # Grant provider-kubernetes/provider-helm rights over the objects their
-    # Compositions manage. Applied before the Healthy wait so the permissions
-    # exist by the time the first Object is reconciled — a ClusterRoleBinding may
-    # reference a ServiceAccount that does not exist yet.
-    #
-    # provider-kubernetes' binding used to point at cluster-admin under the name
-    # crossplane-provider-kubernetes-admin. roleRef on a ClusterRoleBinding is
-    # immutable, so moving that name to the scoped role is not an option — the
-    # API server refuses the patch — and provider-rbac.yaml now creates the
-    # scoped grant under a new name instead. Deleting the old one is what
-    # actually narrows anything: applying the new file without this would leave
-    # the cluster-admin grant alive alongside the scoped one, granted twice.
-    kubectl delete clusterrolebinding crossplane-provider-kubernetes-admin \
-        --ignore-not-found=true >/dev/null 2>&1 || true
-    info "Applying provider RBAC (InjectedIdentity needs an explicit grant)..."
-    _kubectl_retry apply -f "${SCRIPT_DIR}/crossplane/providers/provider-rbac.yaml"
-
-    info "Waiting for providers to become Healthy (timeout: ${PROVIDER_WAIT_TIMEOUT})..."
-
-    # function-go-templating and function-auto-ready are Function resources;
-    # the rest are Provider resources. Use the correct type for each so
-    # we don't burn the full timeout on the wrong resource kind.
-    # Each wait's result is checked. A timeout here means the package never
-    # became Healthy, and everything after this assumes all of them did — so
-    # carrying on turns "a provider did not start" into a failure somewhere
-    # further along that names the wrong thing.
-    for fn in function-go-templating function-extra-resources function-auto-ready; do
-        info "  Waiting for: ${fn}"
-        if ! _kubectl_retry wait "function.pkg.crossplane.io/${fn}" \
-            --for=condition=Healthy --timeout="${PROVIDER_WAIT_TIMEOUT}"; then
-            error "Function ${fn} did not become Healthy within ${PROVIDER_WAIT_TIMEOUT}."
-            error "  Compositions that call it cannot render until it does:"
-            error "    kubectl describe function.pkg.crossplane.io/${fn}"
-            return 1
-        fi
-    done
-
-    for provider in provider-helm provider-kubernetes provider-vault; do
-        info "  Waiting for: ${provider}"
-        if ! _kubectl_retry wait "provider.pkg.crossplane.io/${provider}" \
-            --for=condition=Healthy --timeout="${PROVIDER_WAIT_TIMEOUT}"; then
-            error "Provider ${provider} did not become Healthy within ${PROVIDER_WAIT_TIMEOUT}."
-            error "  Its ProviderConfig and every managed resource it owns depend on it:"
-            error "    kubectl describe provider.pkg.crossplane.io/${provider}"
-            return 1
-        fi
-    done
-
-    # Healthy is not the same as Established, and this apply needs Established.
-    #
-    # A Provider reports Healthy when its pod is running. Its CRDs are created
-    # separately and take a moment longer to be served, so a ProviderConfig
-    # applied in that window fails with
-    #
-    #   unable to recognize ...: no matches for kind "ProviderConfig" in version
-    #   "vault.upbound.io/v1beta1"
-    #
-    # kubectl applies the documents it CAN and exits non-zero, so the kubernetes
-    # and helm ProviderConfigs in the same file are created and the vault one is
-    # not — a partial success that looks like a whole one at a glance.
-    #
-    # What that costs is not local. provider-vault has no configuration, so every
-    # managed resource it owns fails at Connect() with "cannot get terraform
-    # setup", and B-08 waits for eighteen of them to become Ready until it gives
-    # up. The install fails four steps later than the thing that broke, pointing
-    # at OpenBao.
-    #
-    # This used to be a warn-and-proceed: a slow CRD registration (the same
-    # provider pod being Healthy well before the API server serves its CRDs —
-    # ordinary under load, e.g. a fresh install re-registering five providers'
-    # CRDs at once after --purge) let the apply below run anyway, race the same
-    # window, and — because kubectl applies the documents it CAN — still exit
-    # 0 for the two that made it. That surfaced as a Keycloak Release stuck on
-    # "ProviderConfig.helm.crossplane.io kubernetes not found" four steps
-    # later, with nothing at this step to say why. A hard wait here removes
-    # the race instead of hoping the apply below outruns it.
-    local _pc_crd
-    for _pc_crd in providerconfigs.vault.upbound.io \
-                   providerconfigs.kubernetes.crossplane.io \
-                   providerconfigs.helm.crossplane.io; do
-        if ! kubectl wait "crd/${_pc_crd}" --for=condition=Established \
-            --timeout=300s >/dev/null 2>&1; then
-            error "CRD ${_pc_crd} did not become Established within 300s."
-            error "  Its ProviderConfig cannot apply until the API server serves it:"
-            error "    kubectl get crd ${_pc_crd}"
-            return 1
-        fi
-    done
-
-    # A ProviderConfig can survive a purge in Terminating: provider-helm pins
-    # in-use ProviderConfigs with in-use.crossplane.io finalizers, and a purge
-    # whose stuck Releases held that finalizer past its own end leaves the
-    # object carrying a pending deletion. Applying over it "succeeds" — an
-    # apply on a Terminating object is just an update — and the exists-check
-    # below passes, so the step reports done. Then the finalizer clears, the
-    # OLD deletion completes, and the freshly-applied object vanishes minutes
-    # into the install: every Release on the cluster then fails with
-    # "ProviderConfig not found" and nothing points back here. Wait these
-    # deaths out BEFORE applying, so the apply below creates objects with no
-    # deletion pending against them.
-    local _pc_deadline
-    for _pc_crd in providerconfig.vault.upbound.io/openbao \
-                   providerconfig.kubernetes.crossplane.io/kubernetes \
-                   providerconfig.helm.crossplane.io/kubernetes; do
-        if [[ -n "$(kubectl get "${_pc_crd}" -o jsonpath='{.metadata.deletionTimestamp}' 2>/dev/null)" ]]; then
-            warn "  ${_pc_crd} is Terminating (a prior teardown's deletion is still pending);"
-            warn "  waiting for it to finish so the re-create isn't swept with it..."
-            _pc_deadline=$(( SECONDS + 180 ))
-            while kubectl get "${_pc_crd}" >/dev/null 2>&1; do
-                if (( SECONDS >= _pc_deadline )); then
-                    error "${_pc_crd} is still Terminating after 180s."
-                    error "  Something still references it (kubectl get ${_pc_crd} -o yaml — check"
-                    error "  finalizers, and delete the managed resources holding them)."
-                    return 1
-                fi
-                sleep 3
-            done
-        fi
-    done
-
-    # And the result is checked. This used to be a bare call, so a failed apply
-    # was indistinguishable from a successful one — which is how the missing
-    # vault ProviderConfig went unnoticed for a whole install.
-    info "Applying ProviderConfigs (InjectedIdentity for both kubernetes and openbao)..."
-    if ! _kubectl_retry apply -f "${SCRIPT_DIR}/crossplane/providers/provider-configs.yaml"; then
-        error "Applying ProviderConfigs failed."
-        error "  Every provider needs one before any managed resource it owns can"
-        error "  connect, so continuing would fail later and somewhere else."
-        return 1
-    fi
-
-    # Applied is not the same as present, for the same reason: a multi-document
-    # apply reports failure for the file, and the one document that failed is
-    # exactly the one worth naming. Present-and-dying counts as absent: an
-    # object with a deletionTimestamp is the Terminating trap described above,
-    # caught here if it was deleted between the wait and the apply.
-    for _pc_crd in providerconfig.vault.upbound.io/openbao \
-                   providerconfig.kubernetes.crossplane.io/kubernetes \
-                   providerconfig.helm.crossplane.io/kubernetes; do
-        if ! kubectl get "${_pc_crd}" >/dev/null 2>&1; then
-            error "ProviderConfig ${_pc_crd} does not exist after applying."
-            error "  crossplane/providers/provider-configs.yaml declares it, so either"
-            error "  its CRD is not served yet or the apply was rejected."
-            return 1
-        fi
-        if [[ -n "$(kubectl get "${_pc_crd}" -o jsonpath='{.metadata.deletionTimestamp}' 2>/dev/null)" ]]; then
-            error "ProviderConfig ${_pc_crd} exists but is Terminating — a deletion is"
-            error "  pending against it and it will vanish once its finalizers clear."
-            error "  Re-run this step once it is gone: ./install.sh --step A-02-crossplane-providers"
-            return 1
-        fi
-    done
-    success "ProviderConfigs applied."
-
-    # After a partial uninstall or a failed prior run the CRDs that Crossplane
-    # creates for each XRD (e.g. xapps.gentianos.io, apps.gentianos.io) can
-    # survive with ownerReferences pointing to the now-deleted XRD object UID.
-    # The XRD controller refuses to adopt CRDs owned by a different UID and
-    # the XRD never reaches Established.  Fix: after applying an XRD, if any
-    # of its owned CRDs still carry a stale UID, patch them to the current one.
-    _unstick_terminating_xrds
-
-    _adopt_xrd_crds() {
-        local xrd_name="$1"; shift   # e.g. xapps.gentianos.io
-        local -a crds=("$@")        # e.g. xapps.gentianos.io apps.gentianos.io
-        local xrd_uid
-        xrd_uid=$(kubectl get compositeresourcedefinition "${xrd_name}" \
-            -o jsonpath='{.metadata.uid}' 2>/dev/null) || return 0
-        for crd in "${crds[@]}"; do
-            local owner_uid
-            owner_uid=$(kubectl get crd "${crd}" \
-                -o jsonpath='{.metadata.ownerReferences[0].uid}' 2>/dev/null) || continue
-            if [[ -n "${owner_uid}" && "${owner_uid}" != "${xrd_uid}" ]]; then
-                warn "  CRD ${crd} has stale ownerRef UID ${owner_uid} (XRD is ${xrd_uid}); patching..."
-                kubectl patch crd "${crd}" --type=json \
-                    -p="[{\"op\":\"replace\",\"path\":\"/metadata/ownerReferences/0/uid\",\"value\":\"${xrd_uid}\"}]" \
-                    2>/dev/null || true
-                success "  Patched ownerRef on ${crd}."
-            fi
-        done
-    }
-
-    info "Applying XRD (XCluster / Cluster)..."
-    _kubectl_retry apply -f "${SCRIPT_DIR}/crossplane/xrds/cluster.yaml"
-    _adopt_xrd_crds xclusters.gentianos.io xclusters.gentianos.io clusters.gentianos.io
-    _kubectl_retry wait xrd xclusters.gentianos.io \
-        --for=condition=Established --timeout=2m
-
-    info "Applying XRD (XApp / App)..."
-    _kubectl_retry apply -f "${SCRIPT_DIR}/crossplane/xrds/app.yaml"
-    _adopt_xrd_crds xapps.gentianos.io xapps.gentianos.io apps.gentianos.io
-    _kubectl_retry wait xrd xapps.gentianos.io \
-        --for=condition=Established --timeout=2m
-
-    apply_crossplane_platform_compositions
-
-    info "Applying XRD (XTenant / Tenant)..."
-    _kubectl_retry apply -f "${SCRIPT_DIR}/crossplane/xrds/tenant.yaml"
-    # Repositories: one claim per Git repo or OCI registry the cluster draws
-    # from, emitting its own CredentialRequirement alongside the ArgoCD repo
-    # Secret, the AppProject whitelist entry and (for oci) the pull secret and
-    # ImageConfig. Adding a repository is one claim and no new Composition.
-    _kubectl_retry apply -f "${SCRIPT_DIR}/crossplane/xrds/repository.yaml"
-    _adopt_xrd_crds xtenants.gentianos.io xtenants.gentianos.io tenants.gentianos.io
-    _kubectl_retry wait xrd xtenants.gentianos.io \
-        --for=condition=Established --timeout=2m
-
-    # Everything else in the directory, so the step's `provides: XRDs` is the
-    # whole set rather than the four named above. infra-data and suze were only
-    # ever applied by the crossplane-xrds ArgoCD Application, which means a
-    # cluster whose Application had not synced yet — or had been pruned — was
-    # missing the XRDs that compose Keycloak, OpenFGA and the infra databases,
-    # with nothing in the installer able to put them back.
-    local xrd_file
-    for xrd_file in "${SCRIPT_DIR}"/crossplane/xrds/*.yaml; do
-        [[ -f "${xrd_file}" ]] || continue
-        case "${xrd_file##*/}" in
-            cluster.yaml|app.yaml|tenant.yaml|repository.yaml) continue ;;
-        esac
-        info "Applying XRD ($(basename "${xrd_file}" .yaml))..."
-        _kubectl_retry apply -f "${xrd_file}"
-    done
-
-    # Established, not merely applied: the claims that follow are rejected by an
-    # XRD whose CRD the API server has not finished registering.
-    local xrd_name
-    for xrd_name in $(kubectl get xrd -o name 2>/dev/null); do
-        kubectl wait "${xrd_name}" --for=condition=Established --timeout=2m >/dev/null 2>&1 || true
-    done
-
-    success "Crossplane providers, XRDs, and Compositions are ready."
-}
-
-# =============================================================================
 # =============================================================================
 # bootstrap_openbao_for_crossplane — the minimum that must precede Crossplane
 # =============================================================================
@@ -407,7 +32,7 @@ install_crossplane_providers() {
 bootstrap_openbao_for_crossplane() {
     banner "OpenBao bootstrap for Crossplane (mount, policy, token)"
 
-    if ! VAULT_ADDR=$(gentian_service_addr openbao openbao 8200 https); then
+    if ! VAULT_ADDR=$(gentian_service_addr openbao "${OPENBAO_NAMESPACE:-openbao}" 8200 https); then
         error "Could not reach the openbao Service on :8200."
         error "  Neither the ClusterIP nor a kubectl port-forward responded."
         exit 1
@@ -425,7 +50,10 @@ bootstrap_openbao_for_crossplane() {
     export BAO_ADDR="${VAULT_ADDR}"
     export VAULT_SKIP_VERIFY=true
 
-    _resolve_bao_token
+    if ! _resolve_bao_token; then
+        error "Cannot configure the vault without an OpenBao token."
+        exit 1
+    fi
     export VAULT_TOKEN="${BAO_TOKEN}"
 
     # ── 1. KV v2 mount — use KV_MOUNT from install.env (default: secret) ─────
@@ -560,7 +188,7 @@ POLICY
 # Nested inside create_crossplane_secrets it existed only while B-06 ran, and
 # `declare -F _derive` — which _keycloak_smtp_settings tests before deriving the
 # Postfix password — was therefore false everywhere else. On every
-# MAIL_SERVICE_MODE=kernel cluster that test failed, so Keycloak realm SMTP was
+# MAIL_SERVICE_MODE=system cluster that test failed, so Keycloak realm SMTP was
 # skipped with "SMTP credentials incomplete" and the realm could not send an
 # invitation or a password reset, while the credentials it needed existed.
 # =============================================================================
@@ -571,37 +199,6 @@ _derive() {
         echo -n "${1}:${2}" | openssl dgst -sha256 \
             -hmac "${MASTER_PASSWORD}${DERIVATION_SALT}" | awk '{print $2}'
     fi
-}
-
-# =============================================================================
-# Crossplane step 11 — Create derived-credential Secrets in crossplane-system.
-#
-# The Cluster XR's SecretV2 KV-seed MRs reference these K8s Secrets via
-# dataJsonSecretRef. Uses the same HMAC-SHA256 derivation as seed-openbao.sh.
-# --dry-run=client | kubectl apply ensures idempotency.
-# =============================================================================
-# Every Secret create_crossplane_secrets writes, in one place.
-#
-# B-06's check tested only gentian-os-master-password, so nine others could be
-# absent while the step reported satisfied — which is how the cluster ran for
-# hours with no gentian-os-kernel-oidc-openbao, the Composition's SecretV2
-# referencing a Secret that did not exist, and provider-vault answering
-# "recovered from panic: value is null" rather than naming the missing input.
-#
-# Adding a _kv_secret call above means adding its name here. The check reads
-# this list, so a secret missing from it is a secret nothing verifies.
-gentian_crossplane_secret_names() {
-    printf '%s\n' \
-        gentian-os-master-password \
-        gentian-os-kernel-database-postgresql \
-        gentian-os-kernel-database-mariadb \
-        gentian-os-kernel-cache-redis \
-        gentian-os-kernel-storage-minio \
-        gentian-os-kernel-identity-keycloak-bootstrap \
-        gentian-os-kernel-authz-openfga \
-        gentian-os-kernel-mail-postfix \
-        gentian-os-kernel-mail-dovecot \
-        gentian-os-kernel-oidc-openbao
 }
 
 create_crossplane_secrets() {
@@ -634,14 +231,66 @@ create_crossplane_secrets() {
     fi
     export DERIVATION_SALT
 
-    # Helper: upsert a K8s Secret in crossplane-system with data.json key
+    # Helper: upsert a K8s Secret in crossplane-system with data.json key.
+    #
+    # The Secret is what the composition creates the vault path FROM, and it
+    # creates it once: an existing path is observed, never overwritten, so a
+    # rotated password is never clobbered by a re-run. The cost is that a key
+    # added to this file later never arrives on a cluster that already has the
+    # path -- which is how a new database's password came to be missing from a
+    # path whose Secret carried it, with the failure surfacing as an
+    # ExternalSecret that "could not get secret data from provider".
+    #
+    # So the missing keys are patched in directly, and only the missing ones.
+    # Adding what is absent cannot overwrite what somebody rotated.
     _kv_secret() {
-        local name="$1" json="$2"
+        local name="$1" json="$2" path="${3:-}"
         kubectl create secret generic "${name}" \
             -n "${CROSSPLANE_NAMESPACE}" \
             "--from-literal=data.json=${json}" \
             --dry-run=client -o yaml | kubectl apply -f -
+        [[ -n "${path}" ]] && _kv_add_missing "${path}" "${json}"
         success "  ${name}"
+    }
+
+    # _kv_add_missing <kv path> <json> — add the keys the path does not have.
+    # Silent when the vault is unreachable: the path may not exist yet, which
+    # is the ordinary case on a first install, and the composition creates it.
+    _kv_add_missing() {
+        local path="$1" json="$2" have missing
+        if ! command -v bao >/dev/null 2>&1; then
+            warn "  ${path}: no bao on PATH, so missing keys were not added"
+            return 0
+        fi
+        # The token and the address are both by-products of initialising the
+        # vault, and they do not always travel together: a step that has the
+        # token from its own init may still have no address, and then every
+        # read fails with nothing to say for itself. Both are required.
+        if [[ -z "${BAO_TOKEN:-}" || -z "${BAO_ADDR:-}" ]]; then
+            OPENBAO_NAMESPACE="${OPENBAO_NAMESPACE:-$(ns_kernel secrets)}" \
+                resolve_openbao_access >/dev/null 2>&1 || true
+        fi
+        if [[ -z "${BAO_TOKEN:-}" ]]; then
+            warn "  ${path}: no vault token, so missing keys were not added"
+            return 0
+        fi
+        have=$(bao kv get -mount="${KV_MOUNT:-secret}" -format=json "${path}" 2>/dev/null \
+            | jq -c '.data.data // {}' 2>/dev/null) || true
+        if [[ -z "${have}" ]]; then
+            warn "  ${path}: could not be read, so missing keys were not added"
+            return 0
+        fi
+        missing=$(jq -nc --argjson have "${have}" --argjson want "${json}" \
+            '$want | with_entries(select(.key as $k | $have | has($k) | not))')
+        [[ "${missing}" == "{}" ]] && return 0
+        info "  ${path}: adding $(jq -r 'keys | join(", ")' <<<"${missing}")"
+        # One argument per key, built as an array: a value may carry anything
+        # openssl produced, and word splitting would cut it in half.
+        local -a pairs=()
+        while IFS= read -r pair; do pairs+=("${pair}"); done \
+            < <(jq -r 'to_entries[] | "\(.key)=\(.value)"' <<<"${missing}")
+        bao kv patch -mount="${KV_MOUNT:-secret}" "${path}" "${pairs[@]}" >/dev/null 2>&1 \
+            || warn "  ${path}: could not add the missing keys"
     }
 
     # master-password Secret (referenced by spec.masterPasswordSecretRef in the Cluster claim)
@@ -659,7 +308,10 @@ create_crossplane_secrets() {
             --arg b "$(_derive postgres keycloak_user)" \
             --arg c "$(_derive postgres keycloak_extensions_user)" \
             --arg h "$(_derive postgres openfga_user)" \
-            '{postgres_password:$a,keycloak_user_password:$b,keycloak_extensions_user_password:$c,openfga_user_password:$h}')"
+            --arg p "$(_derive postgres portal_shell_user)" \
+            --arg d "$(_derive postgres director_user)" \
+            '{postgres_password:$a,keycloak_user_password:$b,keycloak_extensions_user_password:$c,openfga_user_password:$h,portal_shell_user_password:$p,director_user_password:$d}')" \
+        "gentian-os/kernel/database/postgresql"
 
     # ── database/mariadb ──────────────────────────────────────────────────────
     _kv_secret "gentian-os-kernel-database-mariadb" \
@@ -707,7 +359,7 @@ create_crossplane_secrets() {
              + (if $user != "" then {relay_username:$user} else {} end)
              + (if $pass != "" then {relay_password:$pass} else {} end)')"
 
-    # ── mail/dovecot (HMAC-derived; only active when MAIL_SERVICE_MODE=kernel) ─
+    # ── mail/dovecot (HMAC-derived; only active when MAIL_SERVICE_MODE=system) ─
     # The Cluster XR creates a SecretV2 MR for this path and will seed OpenBao
     # on first apply. The doveadm_password shares its derivation namespace with
     # the minio secret for cross-service derivation consistency.
@@ -727,82 +379,6 @@ create_crossplane_secrets() {
             '{client_secret:$a}')"
 
     success "All 10 input Secrets applied to ${CROSSPLANE_NAMESPACE}."
-}
-
-# =============================================================================
-# Crossplane step 12 — Apply Cluster claim and wait for Ready.
-# The Cluster XR creates all 19 kernel MRs via provider-vault and
-# provider-kubernetes. managementPolicies: [Observe,Create] on KV seeds
-# ensures existing paths seeded by prior install runs are never overwritten.
-# =============================================================================
-# =============================================================================
-# cluster_claim_is_current <claim-name> — does the cluster have what the file asks?
-#
-# The Cluster claim is the one file the claims ApplicationSet deliberately
-# excludes, because two writers on the claim that owns the ClusterSecretStore is
-# how a cluster loses its secret store. B-08 is therefore its only applier, and
-# a check that asked only "is the XR Ready?" reported satisfied over a claim
-# edited in Git and never applied — the fields were in the file, the CRD
-# accepted them, and the live object simply never grew them.
-#
-# Compares what the file states against what the cluster has. Fields the cluster
-# adds on its own — resourceRef, compositionRef, XRD defaults — are ignored:
-# the question is whether everything the file says is true, not whether the two
-# documents are identical.
-#
-# Returns 0 when current, 1 when the file asks for something the cluster lacks.
-# =============================================================================
-cluster_claim_is_current() {
-    local claim="$1"
-    local claim_file="${GENTIAN_DEPLOYMENTS_PATH}/clusters/${GENTIAN_DEPLOYMENTS_CLUSTER_ID}/kernel/claims/cluster.yaml"
-    [[ -r "${claim_file}" ]] || return 0
-
-    local live
-    live="$(kubectl get cluster.gentianos.io "${claim}" -n crossplane-system \
-        -o jsonpath='{.spec}' 2>/dev/null)" || return 0
-    [[ -n "${live}" ]] || return 0
-
-    CLUSTER_CLAIM_DRIFT="$(python3 - "${claim_file}" "${live}" <<'PYEOF'
-import sys, json, yaml
-want = (yaml.safe_load(open(sys.argv[1])) or {}).get("spec") or {}
-have = json.loads(sys.argv[2] or "{}")
-
-# Subset comparison, and it has to descend into lists as well as dicts.
-#
-# Only keys the file names are compared: the API server adds what the XRD's
-# schema defaults, and a claim is not stale for having been defaulted. That
-# already held for dicts, but lists were compared as strings — so a default
-# applied INSIDE a list element made the whole list unequal, and the claim
-# read as drifted with no edit that could ever settle it. spec.llm.instances
-# is exactly that: the file lists one model, the live object lists the same
-# model plus imageTag: latest from the XRD, and B-08 reported itself
-# outstanding at the end of every otherwise complete install.
-#
-# Lists of different length are still drift — a model added to or removed from
-# the claim is a real change, and the per-element walk cannot express it.
-def drifted(w, h, path=""):
-    out = []
-    if isinstance(w, dict) and isinstance(h, dict):
-        for k, v in w.items():
-            p = f"{path}.{k}" if path else k
-            if k not in h:
-                out.append(p)
-            else:
-                out += drifted(v, h[k], p)
-    elif isinstance(w, list) and isinstance(h, list):
-        if len(w) != len(h):
-            out.append(path or "spec")
-        else:
-            for i, (wi, hi) in enumerate(zip(w, h)):
-                out += drifted(wi, hi, f"{path}[{i}]")
-    elif str(w) != str(h):
-        out.append(path or "spec")
-    return out
-
-print(" ".join(drifted(want, have)))
-PYEOF
-)"
-    [[ -z "${CLUSTER_CLAIM_DRIFT}" ]]
 }
 
 # =============================================================================
@@ -898,6 +474,21 @@ if not items:
 for x in items:
     # Depends on a phase this step precedes (Keycloak, wave 9/16).
     if "keycloak.crossplane.io" in x.get("apiVersion", ""):
+        continue
+    # The vault OIDC roles need the auth/oidc backend, which is configured
+    # once Keycloak answers (D-07 in v4): as Keycloak-dependent as the above.
+    if "jwt.vault.upbound.io" in x.get("apiVersion", ""):
+        continue
+    # The system-tier engines. Their Helm values are ConfigMaps and a Secret
+    # that the 08-data-plane ApplicationSet syncs, and that ApplicationSet is
+    # created by C-02 -- the step after this one. So a Release cannot be Ready
+    # here by construction, for exactly the reason the Keycloak objects above
+    # cannot: it is waiting on a phase this step precedes. Gating on it is
+    # waiting for a later phase to have already happened, and on a fresh
+    # cluster it can only ever time out.
+    #
+    # C-02 waits for them instead, once it has synced what they read.
+    if "helm.crossplane.io" in x.get("apiVersion", ""):
         continue
     # Observe-only: reflects state this composition does not create.
     if [p for p in (x.get("spec", {}).get("managementPolicies") or []) if p == "Observe"] \
@@ -1030,6 +621,19 @@ apply_cluster_xr() {
         exit 1
     }
 
+    # A claim left over from the layout this installer no longer builds is
+    # refused before anything is applied. spec.layout is gone from the schema,
+    # so a claim still carrying it is a claim nobody has looked at since the
+    # kernel moved -- and applying it would place the kernel by a composition
+    # that has one answer now, in namespaces the rest of the claim does not
+    # describe.
+    local claim_layout
+    claim_layout="$(_gentian_yq '.spec.layout' "${claims_dir}/cluster.yaml" 2>/dev/null || echo "")"
+    if [[ -n "${claim_layout}" && "${claim_layout}" != "v5" && "${claim_layout}" != "null" ]]; then
+        error "The Cluster claim says layout '${claim_layout}'. This installer builds one layout and it is not that one."
+        error "  Remove spec.layout from ${claims_dir}/cluster.yaml, or scaffold a new claim."
+        return 1
+    fi
     info "Applying Cluster claim from ${claims_dir}/cluster.yaml..."
     kubectl apply -f "${claims_dir}/cluster.yaml"
 
@@ -1041,11 +645,11 @@ apply_cluster_xr() {
     local xr_name=""
     local deadline=$((SECONDS + 60))
     until [[ -n "${xr_name}" ]]; do
-        xr_name=$(kubectl get cluster.gentianos.io "${claim_name}" -n crossplane-system \
+        xr_name=$(kubectl get cluster.gentianos.io "${claim_name}" -n "${CROSSPLANE_NAMESPACE:-crossplane-system}" \
             -o jsonpath='{.spec.resourceRef.name}' 2>/dev/null || true)
         if (( SECONDS > deadline )); then
             error "Claim ${claim_name} was never bound to a composite after 60s."
-            error "  kubectl describe cluster.gentianos.io ${claim_name} -n crossplane-system"
+            error "  kubectl describe cluster.gentianos.io ${claim_name} -n ${CROSSPLANE_NAMESPACE:-crossplane-system}"
             exit 1
         fi
         [[ -n "${xr_name}" ]] || sleep 3
@@ -1288,144 +892,6 @@ resync_credential_consumers() {
 }
 
 # =============================================================================
-# Apply root ArgoCD ApplicationSet
-#
-# gentian-appsets is the "app of apps" that syncs kernel/appsets/ into the
-# cluster. Each YAML in that directory becomes an ApplicationSet, driving:
-#   - 02-external-secrets: globals-secrets-dev (ESO ExternalSecrets per env)
-#   - 08-infra-data:        postgres/mariadb/redis/minio ESO + values ConfigMaps (InfraData XR owns Releases)
-#   - 09-suze:              Suze IdP prerequisites (OpenFGA + Keycloak ESO + values)
-#
-# Prerequisites:
-#   - ArgoCD must be installed and the 'gentian' AppProject must exist.
-#   - The 'gentian' AppProject is created by apply_cluster_xr (Cluster XR).
-#   - seed_secrets_remaining must have run so ESO can sync the globals secrets.
-# =============================================================================
-bootstrap_root_appset() {
-    banner "Bootstrap root ArgoCD ApplicationSet (app-of-apps)"
-
-    export GENTIAN_DEPLOYMENTS_STAGE="${GENTIAN_DEPLOYMENTS_STAGE:-dev}"
-    resolve_gentian_os_branch
-    # Provenance and the deployments pointer reach the child ApplicationSets
-    # through here. Defaults keep an unset install working against the public
-    # origin; a mirrored install sets them in install.env (§2, surface 1).
-    export GENTIAN_OS_REPO="${GENTIAN_OS_REPO:-https://github.com/gentian-org/gentian-os}"
-    export GENTIAN_DEPLOYMENTS_REPO="${GENTIAN_DEPLOYMENTS_REPO:-}"
-    export GENTIAN_DEPLOYMENTS_BRANCH="${GENTIAN_DEPLOYMENTS_BRANCH:-main}"
-    export GENTIAN_DEPLOYMENTS_CLUSTER_ID="${GENTIAN_DEPLOYMENTS_CLUSTER_ID:-default-cluster}"
-    # The outbound relay reaches the Postfix chart through here. Set even when
-    # empty, because empty is a meaningful value — kernel mode, delivering
-    # directly — rather than a variable someone forgot to set.
-    #
-    # The chart marks the cluster id required, so an empty one refuses to render
-    # rather than producing Applications that point at clusters//kernel/claims and
-    # never sync.
-    helm template gentian-bootstrap "${SCRIPT_DIR}/kernel/bootstrap/chart" \
-        -s templates/root-applicationset.yaml \
-        --set-string "deploymentsRepo=${GENTIAN_DEPLOYMENTS_REPO}" \
-        --set-string "deploymentsBranch=${GENTIAN_DEPLOYMENTS_BRANCH}" \
-        --set-string "cluster=${GENTIAN_DEPLOYMENTS_CLUSTER_ID}" \
-        --set-string "stage=${GENTIAN_DEPLOYMENTS_STAGE}" \
-        --set-string "osRepo=${GENTIAN_OS_REPO:-https://github.com/gentian-org/gentian-os}" \
-        --set-string "gentianOsBranch=${GENTIAN_OS_BRANCH}" \
-        --set-string "kernelDomain=${KERNEL_DOMAIN:-}" \
-        --set-string "storageClass=${STORAGE_CLASS:-}" \
-        --set-string "smtpHost=${EXTERNAL_SMTP_HOST:-}" \
-        --set-string "smtpPort=${EXTERNAL_SMTP_PORT:-587}" \
-        --set-string "smtpSsl=${EXTERNAL_SMTP_SSL:-false}" \
-        --set-string "smtpStarttls=${EXTERNAL_SMTP_STARTTLS:-true}" \
-        --set-string "mailServiceMode=$(gentian_mail_service_mode)" \
-        --set-string "llmEnabled=${LLM_SUPPORT:-false}" \
-        --set-string "llmGpuAcceleration=${GPU_ACCELERATION:-false}" \
-        --set-string "llmExternalProviders=${LLM_EXTERNAL_PROVIDERS:-false}" \
-        --set-string "mailEgressHost=${MAIL_EGRESS_HOST:-}" \
-        --set-string "metallbException=${METALLB_EXCEPTION:-false}" \
-        | kubectl apply -f -
-    success "gentian-appsets Application applied."
-
-    info "Waiting for gentian-appsets Application to be Synced (up to 2m)..."
-    local i=0
-    until kubectl get application gentian-appsets -n argocd \
-            -o jsonpath='{.status.sync.status}' 2>/dev/null | grep -q "Synced"; do
-        echo -n "."
-        sleep 5; i=$((i + 5))
-        [[ $i -lt 120 ]] || {
-            warn "gentian-appsets not yet Synced after 2m — continuing anyway."
-            echo ""
-            break
-        }
-    done
-    echo ""
-
-    success "Root ApplicationSet bootstrapped — ApplicationSets being deployed."
-    info "  Monitor: kubectl get applicationsets -n argocd"
-    info "  Apps:    kubectl get applications -n argocd"
-}
-
-# =============================================================================
-# Install provider-helm
-# provider-helm deploys Helm charts as Crossplane Managed Resources (InfraData XR,
-# kernel services, tenant apps via compositions).
-# =============================================================================
-install_provider_helm() {
-    banner "Wait for provider-helm"
-
-    # Applies nothing. A-02 already installed every provider from the same two
-    # files, and re-applying them here duplicated that with no check() to skip it,
-    # so every run rewrote the providers on the way past — while C-03's own header
-    # declared "mutates: nothing".
-    #
-    # The wait is the point: provider-helm has to be Healthy before the InfraData
-    # and Suze claims that C-02 just handed to Argo CD can be reconciled, and a
-    # provider that is installed is not yet a provider that is ready.
-    info "Waiting for provider-helm to become Healthy (up to 3m)..."
-    kubectl wait provider/provider-helm \
-        --for=condition=Healthy --timeout=180s \
-    || {
-        error "provider-helm did not become Healthy within 180s."
-        error "  kubectl describe provider/provider-helm"
-        exit 1
-    }
-
-    success "provider-helm Healthy."
-}
-
-
-# =============================================================================
-# Kyverno admission controller (Stage 0 MAC)
-#
-# Deployed by Argo CD via kernel/appsets/raw/05-admission.yaml (sync wave 5–6).
-# This step waits for the controller so later workloads are admitted under policy.
-# =============================================================================
-install_mac_admission() {
-    banner "Kyverno admission controller (Stage 0 MAC)"
-
-    info "Kyverno is synced by gentian-appsets (kernel/appsets/raw/05-admission.yaml)."
-    info "Waiting for kyverno-admission-controller (up to 5m)..."
-
-    local deadline=$((SECONDS + 300))
-    until kubectl get deployment kyverno-admission-controller -n kyverno >/dev/null 2>&1; do
-        if (( SECONDS > deadline )); then
-            warn "Kyverno deployment not found after 5m — refresh gentian-appsets and retry."
-            warn "  kubectl patch application gentian-appsets -n argocd --type merge -p '{\"metadata\":{\"annotations\":{\"argocd.argoproj.io/refresh\":\"hard\"}}}'"
-            return 0
-        fi
-        sleep 5
-    done
-
-    kubectl wait deployment/kyverno-admission-controller -n kyverno \
-        --for=condition=Available --timeout=300s \
-    || {
-        warn "Kyverno admission controller did not become Available within 300s."
-        warn "  kubectl get pods -n kyverno"
-        return 0
-    }
-
-    success "Kyverno admission controller is ready."
-}
-
-
-# =============================================================================
 # Print Crossplane-aware installation summary
 # =============================================================================
 print_summary_cp() {
@@ -1455,25 +921,26 @@ print_summary_cp() {
 
     local claim_name
     claim_name="$(gentian_cluster_claim_name)"
-    xr_name=$(kubectl get cluster.gentianos.io "${claim_name}" -n crossplane-system \
+    xr_name=$(kubectl get cluster.gentianos.io "${claim_name}" -n "${CROSSPLANE_NAMESPACE:-crossplane-system}" \
         -o jsonpath='{.spec.resourceRef.name}' 2>/dev/null || true)
     xr_name="${xr_name:-${claim_name}}"
 
     xr_ready=$(kubectl get "xcluster.gentianos.io/${xr_name}" \
         -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null || echo "unknown")
-    mr_count=$(kubectl get managed -l "crossplane.io/composite=${xr_name}" \
-        --no-headers 2>/dev/null | wc -l | tr -d ' ')
-    # Releases are named <composite>-<chart>, and the composite carries
-    # Crossplane's random suffix (e.g. ifk-l2-prod-infra-data-n6z4s-postgresql).
-    # Looking them up under the *claim* name never matched, so these flags always
-    # read "unknown" regardless of the actual state. Resolve the composite first.
-    local infra_claim infra_xr
-    infra_claim="$(gentian_infradata_claim_name)"
-    infra_xr=$(kubectl get infradata.gentianos.io "${infra_claim}" -n crossplane-system \
-        -o jsonpath='{.spec.resourceRef.name}' 2>/dev/null || true)
-    infra_xr="${infra_xr:-${infra_claim}}"
+    # `managed` is a category the providers register; before any provider is
+    # installed the query itself fails, and under pipefail that failed the
+    # whole summary.
+    mr_count=$({ kubectl get managed -l "crossplane.io/composite=${xr_name}" \
+        --no-headers 2>/dev/null || true; } | wc -l | tr -d ' ')
+    # The system-tier engines. They are composed by the CLUSTER composite, not
+    # by a kind of their own: this asked an InfraData claim for them, and after
+    # that kind went the four lines read "unknown" on every install -- which
+    # looks exactly like four engines that failed to come up.
+    #
+    # Named <composite>-<chart>, and the composite carries Crossplane's random
+    # suffix, so the composite has to be resolved first (xr_name above).
     _release_ready() {
-        kubectl get "release.helm.crossplane.io/${infra_xr}-$1" \
+        kubectl get "release.helm.crossplane.io/${xr_name}-$1" \
             -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null || echo "unknown"
     }
     infra_pg_ready=$(_release_ready postgresql)
@@ -1482,7 +949,7 @@ print_summary_cp() {
     infra_minio_ready=$(_release_ready minio)
     local suze_ready openfga_ready keycloak_ready suze_xr
     suze_ready=$(kubectl get xsuze -o jsonpath='{.items[0].status.conditions[?(@.type=="Ready")].status}' 2>/dev/null || echo "unknown")
-    suze_xr=$(kubectl get suze.gentianos.io "$(gentian_suze_claim_name)" -n crossplane-system \
+    suze_xr=$(kubectl get suze.gentianos.io "$(gentian_suze_claim_name)" -n "${CROSSPLANE_NAMESPACE:-crossplane-system}" \
         -o jsonpath='{.spec.resourceRef.name}' 2>/dev/null || gentian_suze_claim_name)
     # `|| true` on both: grep exits 1 when the release is absent, which is the
     # normal state until phase D deploys Suze. Under pipefail and the ERR trap
@@ -1500,7 +967,10 @@ print_summary_cp() {
 
     # Resolve these BEFORE the banner to avoid warnings mid-output.
     argocd_url=$(resolve_argocd_url 2>/dev/null)
-    argocd_pw=$(kubectl get secret argocd-initial-admin-secret -n argocd \
+    # _argocd_ns, not the literal: the gitops namespace is kernel-gitops, and
+    # reading the secret from "argocd" printed an empty password on every
+    # install -- the one line somebody needs to get in.
+    argocd_pw=$(kubectl get secret argocd-initial-admin-secret -n "$(_argocd_ns)" \
         -o jsonpath='{.data.password}' 2>/dev/null | base64 -d 2>/dev/null || true)
 
     echo ""
@@ -1516,10 +986,10 @@ print_summary_cp() {
     echo -e "${GREEN}  Tenancy mode   : ${TENANCY_MODE:-multi}${NC}"
     echo -e "${GREEN}  Kernel realm   : ${KERNEL_REALM:-kernel}${NC}"
     echo -e "${GREEN}  Cluster XR     : ${xr_name} (Ready=${xr_ready}, MRs=${mr_count})${NC}"
-    echo -e "${GREEN}  InfraData PG   : ${infra_xr}-postgresql (Ready=${infra_pg_ready})${NC}"
-    echo -e "${GREEN}  InfraData MDB  : ${infra_xr}-mariadb (Ready=${infra_mdb_ready})${NC}"
-    echo -e "${GREEN}  InfraData Redis: ${infra_xr}-redis (Ready=${infra_redis_ready})${NC}"
-    echo -e "${GREEN}  InfraData MinIO: ${infra_xr}-minio (Ready=${infra_minio_ready})${NC}"
+    echo -e "${GREEN}  System PG      : ${xr_name}-postgresql (Ready=${infra_pg_ready})${NC}"
+    echo -e "${GREEN}  System MDB     : ${xr_name}-mariadb (Ready=${infra_mdb_ready})${NC}"
+    echo -e "${GREEN}  System Redis   : ${xr_name}-redis (Ready=${infra_redis_ready})${NC}"
+    echo -e "${GREEN}  System MinIO   : ${xr_name}-minio (Ready=${infra_minio_ready})${NC}"
     echo -e "${GREEN}  Suze XR       : Ready=${suze_ready} (OpenFGA=${openfga_ready}, Keycloak=${keycloak_ready})${NC}"
     echo ""
     if [[ -n "${_gentian_handover_done:-}" ]]; then
@@ -1546,12 +1016,12 @@ print_summary_cp() {
     fi
     echo ""
     echo -e "${GREEN}  Inspect authz stack:${NC}"
-    echo -e "${GREEN}    kubectl get xsuze,suze -n crossplane-system${NC}"
+    echo -e "${GREEN}    kubectl get xsuze,suze -n ${CROSSPLANE_NAMESPACE:-crossplane-system}${NC}"
     echo -e "${GREEN}    kubectl get secret openfga-runtime -n platform-kernel${NC}"
     echo ""
     echo -e "${GREEN}  Inspect Crossplane managed resources:${NC}"
     echo -e "${GREEN}    kubectl get managed -l crossplane.io/composite=${xr_name}${NC}"
-    echo -e "${GREEN}    kubectl get release.helm.crossplane.io | grep ${infra_xr}${NC}"
+    echo -e "${GREEN}    kubectl get release.helm.crossplane.io | grep ${xr_name}${NC}"
     echo ""
     echo -e "${GREEN}  ArgoCD:${NC}"
     echo -e "${GREEN}    URL  : ${argocd_url}${NC}"
@@ -1665,11 +1135,11 @@ print_handover_summary() {
         # E-03 writes the kit, so this means that step did not run or failed.
         echo -e "${YELLOW}      1. ./install.sh --only E-03      (write the recovery kit)${NC}"
         echo -e "${YELLOW}      2. move the kit somewhere safe${NC}"
-        echo -e "${YELLOW}      3. sign in at https://portal.${KERNEL_DOMAIN:-<kernel-domain>}/login${NC}"
+        echo -e "${YELLOW}      3. sign in at https://console.${KERNEL_DOMAIN:-<kernel-domain>}/${NC}"
         echo -e "${YELLOW}      4. ./install.sh --only E-04      (revoke and finish)${NC}"
     elif [[ "${proven}" != "true" ]]; then
         echo -e "${YELLOW}      1. move the recovery kit somewhere safe${NC}"
-        echo -e "${YELLOW}      2. sign in at https://portal.${KERNEL_DOMAIN:-<kernel-domain>}/login${NC}"
+        echo -e "${YELLOW}      2. sign in at https://console.${KERNEL_DOMAIN:-<kernel-domain>}/${NC}"
         echo -e "${YELLOW}      3. ./install.sh --only E-04      (revoke and finish)${NC}"
     else
         echo -e "${YELLOW}    Someone has signed in and a kit exists, so only the revocation${NC}"
@@ -1822,77 +1292,6 @@ _print_tenant_next_steps() {
     info "GETTING-STARTED.md, 'Hand the cluster over'."
 }
 
-
-# =============================================================================
-# Stage 1: LLM serving (vLLM / LocalAI serving backend + LiteLLM proxy)
-# =============================================================================
-install_llm_serving() {
-    LLM_SUPPORT="${LLM_SUPPORT:-false}"
-    if [[ "${LLM_SUPPORT}" != "true" ]]; then
-        info "LLM serving support disabled; skipping deployment."
-        return 0
-    fi
-
-    banner "Deploying LLM serving stack"
-    local env="${ENV:-dev}"
-    local ns="platform-kernel"
-
-    # litellm-services.yaml references the litellm-dashboard-sso Secret
-    # (GENERIC_CLIENT_ID/SECRET) — ensure it exists even though Step 14
-    # (portal bootstrap) runs after this step.
-    # shellcheck source=scripts/lib/portal-login-bootstrap.sh
-    source "${SCRIPT_DIR}/scripts/lib/portal-login-bootstrap.sh"
-    ensure_litellm_sso_secret >/dev/null
-
-    # LiteLLM, its stores and the mock backend are NOT applied here.
-    #
-    # They were: three kubectl applies from this checkout, so the LLM stack was
-    # outside drift detection — nothing reconciled it, nothing noticed an edit
-    # on the cluster, and what ran reflected whichever working tree last ran the
-    # installer. They now arrive through the gentian-infra-llm ApplicationSet,
-    # generated only when the claim enables LLM serving.
-    info "LiteLLM and its stores are synced by the gentian-infra-llm ApplicationSet."
-    GPU_ACCELERATION="${GPU_ACCELERATION:-false}"
-    if [[ "${GPU_ACCELERATION}" == "true" ]]; then
-        info "Deploying GPU vLLM inference backend(s)..."
-    else
-        info "Mock inference backend (GPU_ACCELERATION=false) — set llm.instances on the claim to serve a real model."
-    fi
-
-    # One release either way. It carries GPU time-slicing, when the claim enables
-    # GPU acceleration, and the instances themselves — so flipping
-    # GPU_ACCELERATION back to false removes them through the upgrade instead of
-    # a separate sweep that had to name the kinds it deleted.
-    render_and_apply_vllm_gpu_manifest
-
-    info "Waiting for llm-sensitive-values ExternalSecret to sync (up to 60s)..."
-    kubectl wait externalsecret/llm-sensitive-values \
-        -n "${ns}" --for=condition=Ready --timeout=60s \
-    || warn "llm-sensitive-values not yet Ready — it will sync when OpenBao is available."
-
-    # No team sync here: the TenantReconciler owns per-tenant LiteLLM Teams.
-    if ensure_litellm_vllm_model; then :; elif [[ $? -eq 2 ]]; then
-        info "LiteLLM model sync continues in-cluster — the Job retries until the proxy"
-        info "  finishes its cold start, and E-02 verifies the result. No action needed."
-    else
-        warn "LiteLLM vLLM model sync failed — retry with ./install.sh --step D-05-llm-serving."
-    fi
-
-    # External providers, after the vLLM sync rather than beside it: they are
-    # independent of gpuAcceleration, so this runs on a CPU-only cluster where
-    # the sync above had nothing to do. Never fatal — a provider whose token is
-    # wrong is an operator's fix, not a failed install, and the Job's log says
-    # which provider and why.
-    if ensure_litellm_provider_models; then :; elif [[ $? -eq 2 ]]; then
-        info "LiteLLM provider sync continues in-cluster — the Job retries until the proxy"
-        info "  finishes its cold start, and E-02 verifies the result. No action needed."
-    else
-        warn "LiteLLM provider sync reported problems — see the log above, then retry with"
-        warn "  ./install.sh --step D-05-llm-serving once the provider credential is right."
-    fi
-
-    success "LLM serving stack deployment complete."
-}
 
 # =============================================================================
 # scaffold_cluster_deployment — write this cluster's kernel/ directory in
@@ -2191,8 +1590,40 @@ _claim_cluster_fields() {
     printf '    discoveryUrl: https://id.%s/auth/realms/kernel\n' "${KERNEL_DOMAIN:-<kernel-domain>}"
     printf '    # clientId:          openbao\n'
     printf '    # clientSecretRef:   openbao-oidc-client   Secret in the OpenBao namespace\n'
-    printf '    # clusterAdminGroup: /gentian:platform:superadmin\n'
+    printf '    # clusterAdminGroup: /gentian:platform:admin\n'
     printf '    # externalUrl:                             OpenBao UI callback, if exposed\n'
+
+    # Where software may enter this cluster (AD-14).
+    #
+    # Commented rather than set, because a cluster with no source materialises
+    # nothing on reference and that is a working cluster: its profiles arrive
+    # with the kernel. Adding a source is a deliberate act, and having it be an
+    # edit to this file rather than an environment variable on the director is
+    # the point -- opening a catalogue to a tenant is then a commit with an
+    # author and a date, and "what may this cluster install from" is answerable
+    # without cluster access.
+    printf '\n'
+    printf '  # Catalogues this cluster may fetch profiles from. A tenant installing\n'
+    printf '  # "main/nextcloud-base-ce" gets the bundle from the source named main,\n'
+    printf '  # at the digest the App Store stated -- the source itself is not trusted.\n'
+    printf '  #\n'
+    printf '  #   access: entitled   the store decides, per tenant, with a signed grant\n'
+    printf '  #   access: open       your own repository; the tenants listed here may\n'
+    printf '  #                      install from it with no grant. Nothing is open by\n'
+    printf '  #                      default, and removing a tenant closes it again.\n'
+    printf '  # catalogue:\n'
+    printf '  #   # Where people are sent for everything the cluster does not\n'
+    printf '  #   # list itself: the maintained (me) and licensed (ee) editions.\n'
+    printf '  #   # A cluster lists only ce and pe from its own sources.\n'
+    printf '  #   storeUrl: https://gentian.org/apps\n'
+    printf '  #   sources:\n'
+    printf '  #     - name: main\n'
+    printf '  #       url: https://store.gentian.org/catalogue\n'
+    printf '  #       access: entitled\n'
+    printf '  #     - name: in-house\n'
+    printf '  #       url: https://git.example.com/profiles\n'
+    printf '  #       access: open\n'
+    printf '  #       tenants: [demo]\n'
     return 0
 }
 
@@ -2251,27 +1682,19 @@ apiVersion: gentianos.io/v1alpha1
 kind: Cluster
 metadata:
   name: ${cluster}-${stage}
-  namespace: crossplane-system
+  namespace: ${CROSSPLANE_NAMESPACE:-crossplane-system}
 spec:
   kernelDomain: ${domain}
+  # Who administers this cluster, by the Keycloak group they are in. The
+  # director reads this file from git -- not the object in the cluster -- so
+  # the assignment is written here rather than left to the schema's default,
+  # which a file reader never sees. Without it the director grants nobody a
+  # cluster role and every console the person is entitled to disappears.
+  platformRoles:
+    admin: ${PLATFORM_ADMIN_GROUP:-gentian:platform:admin}
 $(_claim_cluster_fields)
 EOF
         info "Scaffolded ${kernel_dir}/claims/cluster.yaml"
-        generated=1
-    fi
-
-    if [[ ! -f "${kernel_dir}/claims/infra-data.yaml" ]]; then
-        cat > "${kernel_dir}/claims/infra-data.yaml" <<EOF
-apiVersion: gentianos.io/v1alpha1
-kind: InfraData
-metadata:
-  name: ${cluster}-${stage}-infra-data
-  namespace: crossplane-system
-spec:
-  environment: ${stage}
-  compositeDeletePolicy: Background
-EOF
-        info "Scaffolded ${kernel_dir}/claims/infra-data.yaml"
         generated=1
     fi
 
@@ -2281,10 +1704,11 @@ apiVersion: gentianos.io/v1alpha1
 kind: Suze
 metadata:
   name: ${cluster}-${stage}-suze
-  namespace: crossplane-system
+  namespace: ${CROSSPLANE_NAMESPACE:-crossplane-system}
 spec:
   environment: ${stage}
-  idpNamespace: platform-kernel
+  idpNamespace: kernel-authentication
+  fgaNamespace: kernel-authorization
   compositeDeletePolicy: Background
   openfga:
     chartVersion: "0.3.10"
@@ -2293,23 +1717,137 @@ EOF
         generated=1
     fi
 
+    # The deployments repository's own credential.
+    #
+    # Without this claim nothing composes the Secret the operator and the
+    # director mount to PUSH. Both can clone a public repository without it,
+    # so everything looks installed until the first write: a tenant created
+    # in the console commits locally and then fails with "could not read
+    # Username for https://github.com", which names neither this claim nor
+    # the token it wants.
+    #
+    # The claim is scaffolded whether or not a token has been supplied. It
+    # emits a CredentialRequirement, so `make check-credentials` can say the
+    # push credential is missing -- which is the whole point of declaring a
+    # requirement rather than discovering it.
+    if [[ ! -f "${kernel_dir}/claims/deployments-repository.yaml" ]]; then
+        cat > "${kernel_dir}/claims/deployments-repository.yaml" <<EOF
+# The repository this cluster is described by, and the credential that writes
+# to it. The name matters: the composition emits \`<name>-git-credentials\`,
+# which is what kernel/values.yaml names as appLifecycle.deployments.
+#
+# Supply the token with GENTIAN_DEPLOYMENTS_GIT_TOKEN in install.env and run
+# B-08; it is stored at the vault path below and materialised from there.
+apiVersion: gentianos.io/v1alpha1
+kind: Repository
+metadata:
+  name: deployments
+  namespace: ${CROSSPLANE_NAMESPACE:-crossplane-system}
+spec:
+  type: git
+  role: deployments
+  # Writable: this is the one repository the platform commits to. Every
+  # change the console makes lands here as a commit by the person who asked.
+  writable: true
+  branch: ${GENTIAN_DEPLOYMENTS_BRANCH:-main}
+  endpoints:
+    inCluster: ${GENTIAN_DEPLOYMENTS_REPO:-https://github.com/gentian-org/gentian-deployments}
+  credential:
+    vaultPath: gentian-os/kernel/repositories/deployments
+    displayName: "Deployments repository write access"
+    phase: bootstrap
+    authType: ${GENTIAN_DEPLOYMENTS_AUTH_TYPE:-basic}
+    validate:
+      type: git-https
+EOF
+        info "Scaffolded ${kernel_dir}/claims/deployments-repository.yaml"
+        generated=1
+    fi
+
+    # The other three repositories the platform reads: its own charts, the app
+    # catalogue and the desktop. Without a claim each one has no AppProject
+    # source, so Argo CD refuses to deploy from it, and the catalogue-sync
+    # ApplicationSet has nothing to sync -- which reads as an empty catalogue
+    # rather than as a missing declaration.
+    #
+    # Public by default, and that is a real shape rather than a degenerate
+    # one: spec.credential is optional precisely so a public repository does
+    # not have to name a vault path for a secret that does not exist, which
+    # would then sit in the credential manager as a requirement nobody can
+    # satisfy. A mirror sets the matching AUTH and gets the credential block.
+    local _repo_role _repo_url _repo_branch _repo_auth _repo_file _repo_xrd_role _repo_auth_var
+    for _repo_role in gentian-os gentian-apps gentian-ui; do
+        _repo_file="${kernel_dir}/claims/${_repo_role}-repository.yaml"
+        [[ -f "${_repo_file}" ]] && continue
+        # role is the XRD's vocabulary and is not always the repository's
+        # name: the catalogue is "apps".
+        _repo_xrd_role="${_repo_role}"
+        case "${_repo_role}" in
+            gentian-os)
+                _repo_url="${GENTIAN_OS_REPO:-https://github.com/gentian-org/gentian-os}"
+                _repo_branch="${GENTIAN_OS_BRANCH:-main}"
+                _repo_auth="${GENTIAN_OS_AUTH:-none}"
+                _repo_auth_var=GENTIAN_OS_AUTH ;;
+            gentian-apps)
+                _repo_url="${GENTIAN_APPS_REPO:-https://github.com/gentian-org/gentian-apps}"
+                _repo_branch="${GENTIAN_APPS_BRANCH:-main}"
+                _repo_auth="${GENTIAN_APPS_AUTH:-none}"
+                _repo_auth_var=GENTIAN_APPS_AUTH
+                _repo_xrd_role=apps ;;
+            gentian-ui)
+                _repo_url="${GENTIAN_UI_REPO:-https://github.com/gentian-org/gentian-ui}"
+                _repo_branch="${GENTIAN_UI_BRANCH:-main}"
+                _repo_auth="${GENTIAN_UI_AUTH:-none}"
+                _repo_auth_var=GENTIAN_UI_AUTH ;;
+        esac
+        cat > "${_repo_file}" <<EOF
+# ${_repo_role}, as this cluster reads it. The claim is what gives Argo CD an
+# AppProject source for the repository; without one it refuses to deploy from
+# it whatever the Application says.
+#
+# No credential block: this repository is public. Naming a vault path for a
+# secret that does not exist puts an unsatisfiable requirement in front of
+# whoever runs \`make check-credentials\`. A mirror sets ${_repo_auth_var}
+# and re-runs this scaffold to get one.
+apiVersion: gentianos.io/v1alpha1
+kind: Repository
+metadata:
+  name: ${_repo_role}
+  namespace: ${CROSSPLANE_NAMESPACE:-crossplane-system}
+spec:
+  type: git
+  role: ${_repo_xrd_role}
+  writable: false
+  branch: ${_repo_branch}
+  endpoints:
+    inCluster: ${_repo_url}
+EOF
+        if [[ "${_repo_auth}" != "none" ]]; then
+            cat >> "${_repo_file}" <<EOF
+  credential:
+    vaultPath: gentian-os/kernel/repositories/${_repo_role}
+    displayName: "${_repo_role} repository read access"
+    phase: bootstrap
+    authType: ${_repo_auth}
+    validate:
+      type: git-https
+EOF
+        fi
+        info "Scaffolded ${_repo_file}"
+        generated=1
+    done
+
     if [[ ! -f "${kernel_dir}/values.yaml" ]]; then
         cat > "${kernel_dir}/values.yaml" <<EOF
 # Cluster overlay — only what's unique to THIS cluster. Tier-wide policy
 # lives in gentian-deployments/profiles/${stage}.yaml (Layer 2); chart
 # defaults live in gentian-os/charts/gentian-os/values.yaml (Layer 1).
-# Also read directly by the gentian-portal Application for kernelDomain
-# (portal chart is separate from the operator chart but shares this file).
 kernelDomain: ${domain}
 stage: ${stage}
 llmSupport: ${LLM_SUPPORT:-false}
 
 image:
   tag: "develop"
-
-api:
-  env:
-    BACKEND_CORS_ORIGINS: https://portal.${domain}
 
 appLifecycle:
   deployments:
@@ -2330,6 +1868,58 @@ EOF
         generated=1
     fi
 
+    # Tenant/platform: the platform is a tenant whose realm is the kernel
+    # realm (AD-10). Its desktop is the platform-admin console and its members
+    # are the platform's administrators, so it exists from the first install,
+    # scaffolded here beside the claim rather than deployed later like a
+    # customer tenant. The operator adopts the realm it names and refuses to
+    # delete the tenant; both follow from isolation.keycloakRealm being the
+    # kernel realm, which is the one line below that must not change.
+    local platform_dir="${GENTIAN_DEPLOYMENTS_PATH}/clusters/${cluster}/tenants/platform"
+    if [[ ! -f "${platform_dir}/tenant.yaml" ]]; then
+        mkdir -p "${platform_dir}"
+        cat > "${platform_dir}/tenant.yaml" <<EOF
+# The platform tenant. Its realm is the kernel realm: the operator adopts
+# that realm rather than creating one, and this tenant cannot be deleted --
+# a realm-disable against the kernel realm would lock every administrator
+# out at once. Everything else about it is what any tenant gets.
+apiVersion: gentianos.io/v1alpha1
+kind: Tenant
+metadata:
+  name: platform
+  annotations:
+    argocd.argoproj.io/sync-wave: "2"
+spec:
+  displayName: Platform
+  isolation:
+    mode: namespace
+    keycloakRealm: ${KERNEL_REALM:-kernel}
+    databasePrefix: platform_
+    s3Prefix: platform-
+  deletionPolicy: Retain
+  # The base plan's capacity, the same ceiling every deployed tenant starts
+  # on (see the tenant-defaults component the deploy command writes).
+  quotas:
+    requestsCpu: "4"
+    requestsMemory: 16Gi
+    cpu: "16"
+    memory: 32Gi
+    storage: 50Gi
+    maxApps: 20
+  # No apps: the platform desktop's tiles are the kernel consoles the
+  # director answers from this account's relations, not catalogue apps.
+  apps: []
+EOF
+        cat > "${platform_dir}/kustomization.yaml" <<EOF
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+- tenant.yaml
+EOF
+        info "Scaffolded clusters/${cluster}/tenants/platform"
+        generated=1
+    fi
+
     # No cluster-settings.env is written. Everything it carried that describes
     # the cluster is a field on claims/cluster.yaml, emitted above by
     # _claim_cluster_fields and read back by claim_setting before Crossplane
@@ -2338,14 +1928,32 @@ EOF
     if (( generated )); then
         echo ""
         success "Wrote clusters/${cluster}/kernel in ${GENTIAN_DEPLOYMENTS_PATH}."
-        info "Nothing has been committed, pushed, or applied. Next:"
-        info "  1. Read and edit clusters/${cluster}/kernel — the claims are what"
-        info "     the cluster becomes, including its exposure and mail model."
-        info "  2. Commit and push them to ${GENTIAN_DEPLOYMENTS_BRANCH:-main}."
-        info "  3. Run ./install.sh"
     else
         info "clusters/${cluster}/kernel is already complete — nothing written."
     fi
+
+    # Committed and pushed here, not left as an instruction.
+    #
+    # It used to say "commit and push them" and stop. Argo CD syncs claims/
+    # from the repository, so a claim left in the working copy is applied by
+    # nothing -- and the one that matters most, deployments-repository.yaml,
+    # is what gives the director its push credential. Forgetting it produced
+    # an install that finished, screens that read, and a first write that
+    # answered 503 with nothing pointing back here.
+    #
+    # The keys this cluster's commits are signed by, published where a
+    # reviewer and the cluster both read them from (AD-2).
+    gentian_publish_signing_material "${kernel_dir}" || true
+
+    # Nothing is APPLIED: this still contacts no cluster.
+    gentian_commit_cluster_deployment "${kernel_dir}" "${cluster}"
+
+    echo ""
+    info "Next:"
+    info "  1. Read clusters/${cluster}/kernel — the claims are what the cluster"
+    info "     becomes, including its exposure and mail model. Edit and re-run"
+    info "     this to commit any change."
+    info "  2. Run ./install.sh"
 }
 
 # =============================================================================
@@ -2356,6 +1964,137 @@ EOF
 # would decide the cluster's domain, tenancy and exposure model without anyone
 # having read it. Name what is missing and stop.
 # =============================================================================
+# A scaffolded file the cluster never sees.
+#
+# clusters/<id>/kernel/claims is synced by the gentian-claims ApplicationSet,
+# straight from the deployments repository -- so a claim that exists only in
+# the working copy is applied by nothing. The install still finishes: every
+# step's check() passes, because none of them looks for a claim that Argo was
+# supposed to bring. What fails is the first write, long afterwards and with
+# nothing connecting it back to here.
+#
+# So this warns rather than refuses: a working copy mid-review is a legitimate
+# state, and an installer that stopped on it would be wrong. Naming what will
+# happen is enough, and it is what nobody was told.
+# gentian_commit_cluster_deployment <kernel-dir> <cluster> — close the loop.
+#
+# The scaffolder used to write the files and warn that they were uncommitted,
+# which left the most important step of bringing a cluster up as something the
+# operator had to remember. Argo CD syncs claims/ from the REPOSITORY, so an
+# uncommitted deployments-repository.yaml is a director with no push
+# credential: the install finishes, every screen reads, and the first write
+# answers 503. Nothing in the output said why.
+#
+# So this commits and pushes, signed with the break-glass key (AD-2). A human
+# writing directly to the deployments repository is exactly the break-glass
+# case, and giving that act its own key means `git log --show-signature`
+# afterwards says which commits a person made and which the director made.
+#
+# It never fails the run. A checkout with no remote, no credential, or a
+# branch behind its upstream is an ordinary situation on an install host, and
+# an installer that refused to continue would be worse than one that says
+# clearly what is still to do.
+gentian_commit_cluster_deployment() {
+    local kernel_dir="$1" cluster="$2" dirty sign_args branch
+    command -v git >/dev/null 2>&1 || return 0
+    git -C "${GENTIAN_DEPLOYMENTS_PATH}" rev-parse --git-dir >/dev/null 2>&1 || {
+        warn "${GENTIAN_DEPLOYMENTS_PATH} is not a git repository, so nothing was committed."
+        warn "  Argo CD syncs claims/ from the repository; these files reach the cluster"
+        warn "  only from a checkout that has a remote."
+        return 0
+    }
+
+    dirty="$(git -C "${GENTIAN_DEPLOYMENTS_PATH}" status --porcelain -- \
+        "clusters/${cluster}/kernel" 2>/dev/null || true)"
+    [[ -n "${dirty}" ]] || return 0
+
+    if ! sign_args="$(gentian_git_sign_args break-glass 2>/dev/null)"; then
+        gentian_ensure_signing_key break-glass >/dev/null || {
+            _warn_uncommitted_cluster_deployment "${kernel_dir}" "${cluster}"
+            return 0
+        }
+        sign_args="$(gentian_git_sign_args break-glass)"
+    fi
+
+    info "Committing clusters/${cluster}/kernel:"
+    while IFS= read -r line; do
+        [[ -n "${line}" ]] && info "    ${line}"
+    done <<< "${dirty}"
+
+    local -a SIGN
+    read -r -a SIGN <<< "${sign_args}"
+    git -C "${GENTIAN_DEPLOYMENTS_PATH}" add -- "clusters/${cluster}/kernel" || {
+        _warn_uncommitted_cluster_deployment "${kernel_dir}" "${cluster}"
+        return 0
+    }
+    if ! git -C "${GENTIAN_DEPLOYMENTS_PATH}" \
+        -c "user.name=${GENTIAN_COMMITTER_NAME:-Gentian installer}" \
+        -c "user.email=${GENTIAN_COMMITTER_EMAIL:-installer@${KERNEL_DOMAIN:-cluster.invalid}}" \
+        "${SIGN[@]}" commit -q -m "chore(${cluster}): scaffold the kernel deployment
+
+Written by install.sh --prepare-deployment and signed with this cluster's
+break-glass key: before the cluster exists there is no director to write it,
+and AD-2 names that case." 2>&1; then
+        warn "The commit failed; clusters/${cluster}/kernel is still uncommitted."
+        _warn_uncommitted_cluster_deployment "${kernel_dir}" "${cluster}"
+        return 0
+    fi
+
+    # Explicitly to the branch of the same name, not a bare `git push`. A
+    # checkout whose local branch and upstream are named differently -- which
+    # a clone of an empty repository produces -- makes a bare push refuse with
+    # "the upstream branch of your current branch does not match", and that is
+    # a confusing thing to hit while bringing up a cluster.
+    branch="$(git -C "${GENTIAN_DEPLOYMENTS_PATH}" branch --show-current 2>/dev/null || true)"
+    branch="${branch:-${GENTIAN_DEPLOYMENTS_BRANCH:-main}}"
+    if ! git -C "${GENTIAN_DEPLOYMENTS_PATH}" push -q origin "HEAD:${branch}" 2>&1; then
+        warn "Committed, but the push failed. The cluster reads the repository, not"
+        warn "  this checkout, so run it by hand once the remote will take it:"
+        warn "    git -C ${GENTIAN_DEPLOYMENTS_PATH} push origin HEAD:${branch}"
+        return 0
+    fi
+    success "Committed and pushed clusters/${cluster}/kernel (signed, break-glass)."
+}
+
+_warn_uncommitted_cluster_deployment() {
+    local kernel_dir="$1" cluster="$2" dirty
+    command -v git >/dev/null 2>&1 || return 0
+    git -C "${GENTIAN_DEPLOYMENTS_PATH}" rev-parse --git-dir >/dev/null 2>&1 || return 0
+
+    # Untracked or modified, under this cluster's kernel directory only: a
+    # tenant being edited elsewhere in the repository is not this step's
+    # business.
+    dirty="$(git -C "${GENTIAN_DEPLOYMENTS_PATH}" status --porcelain -- \
+        "clusters/${cluster}/kernel" 2>/dev/null)" || return 0
+    [[ -n "${dirty}" ]] || return 0
+
+    warn "clusters/${cluster}/kernel has uncommitted changes:"
+    while IFS= read -r line; do
+        [[ -n "${line}" ]] && warn "    ${line}"
+    done <<< "${dirty}"
+    warn "  Argo CD syncs claims/ from the repository, not from this checkout,"
+    warn "  so anything above reaches the cluster only once it is pushed."
+    if grep -q "deployments-repository.yaml" <<< "${dirty}"; then
+        warn "  deployments-repository.yaml is among them. Until it is pushed the"
+        warn "  director has no push credential: every write answers 503, so no"
+        warn "  tenant can be created and no user invited."
+    fi
+}
+
+# cluster_deployment_missing — the files this cluster's definition still lacks.
+#
+# Empty output means complete. Split out of require_cluster_deployment so that
+# the forward run can ASK rather than refuse: step 0 of an install is now
+# "make the definition if it is not there", and that needs the question
+# answered before it decides whether to interview anybody.
+cluster_deployment_missing() {
+    local kernel_dir="${GENTIAN_DEPLOYMENTS_PATH}/clusters/${GENTIAN_DEPLOYMENTS_CLUSTER_ID}/kernel"
+    local f
+    for f in claims/cluster.yaml claims/suze.yaml claims/deployments-repository.yaml values.yaml; do
+        [[ -f "${kernel_dir}/${f}" ]] || printf '%s\n' "${f}"
+    done
+}
+
 require_cluster_deployment() {
     local cluster="${GENTIAN_DEPLOYMENTS_CLUSTER_ID}"
     local kernel_dir="${GENTIAN_DEPLOYMENTS_PATH}/clusters/${cluster}/kernel"
@@ -2365,9 +2104,19 @@ require_cluster_deployment() {
     # to carry are fields on the claim now, read by claim_setting before the
     # cluster exists, so demanding the file rejected a cluster whose
     # configuration is complete — this one, immediately after migrating it.
-    for f in claims/cluster.yaml claims/infra-data.yaml claims/suze.yaml values.yaml; do
-        [[ -f "${kernel_dir}/${f}" ]] || missing+=("${f}")
-    done
+    # v5 has no InfraData claim (see scaffold_cluster_deployment).
+    #
+    # claims/deployments-repository.yaml is required on v5 and was required by
+    # nothing before. Its composition emits deployments-git-credentials, which
+    # is the Secret the director mounts to push -- so without it the install
+    # completes, every screen reads, and the FIRST WRITE answers 503. A tenant
+    # cannot be created and a user cannot be invited, which is M2 and M3, and
+    # nothing in the install output says why. The claims/ directory is synced
+    # from git by the gentian-claims ApplicationSet, so scaffolding the file is
+    # only half of it: it has to be committed to reach the cluster.
+    while IFS= read -r f; do
+        [[ -n "${f}" ]] && missing+=("${f}")
+    done < <(cluster_deployment_missing)
 
     # What the file used to guarantee, checked where it now lives. networkMode
     # decides whether the edge is a LoadBalancer, and static-ip without nodeIp
@@ -2385,6 +2134,10 @@ require_cluster_deployment() {
     fi
 
     if (( ${#missing[@]} == 0 )); then
+        # Not a warning any more. An edit sitting in the working copy at
+        # install time is an edit the cluster will not get, and the operator
+        # has already said what they want by making it.
+        gentian_commit_cluster_deployment "${kernel_dir}" "${cluster}"
         return 0
     fi
 

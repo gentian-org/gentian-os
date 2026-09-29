@@ -41,7 +41,8 @@ func TestRunTenantReconcileStages_blockedRequeues(t *testing.T) {
 	tenant := &gentianov1alpha1.Tenant{
 		ObjectMeta: metav1.ObjectMeta{Name: "demo"},
 		Spec: gentianov1alpha1.TenantSpec{
-			Apps: []gentianov1alpha1.TenantApp{{Profile: "profile-that-does-not-exist"}},
+			DisplayName: "Test Tenant",
+			Apps:        []gentianov1alpha1.TenantApp{{Profile: "profile-that-does-not-exist"}},
 		},
 	}
 
@@ -62,7 +63,7 @@ func TestRunTenantReconcileStages_blockedRequeues(t *testing.T) {
 		t.Fatalf("runTenantReconcileStages: %v", err)
 	}
 	if !state.blocked {
-		t.Fatal("expected the preflight stage to block on a missing AppProfile")
+		t.Fatal("expected the preflight stage to block on a missing ComponentProfile")
 	}
 	if res.RequeueAfter != tenantBlockedRequeueAfter {
 		t.Errorf("RequeueAfter = %v, want %v — a blocked tenant that schedules nothing never retries",
