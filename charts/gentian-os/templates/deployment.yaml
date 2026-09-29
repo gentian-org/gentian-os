@@ -181,7 +181,7 @@ spec:
                  found, and every token exchange failed at TLS while the log
                  said only that it was verifying against the system roots. */}}
             - name: BAO_CA_SECRET_NAMESPACE
-              value: {{ (.Values.credentialManager).caSecretNamespace | default .Values.openbaoNamespace | default "openbao" | quote }}
+              value: {{ (.Values.credentialManager).caSecretNamespace | default .Values.openbaoNamespace | default "kernel-secrets" | quote }}
             {{- if (.Values.credentialManager).tlsSkipVerify }}
             - name: BAO_TLS_SKIP_VERIFY
               value: "true"
@@ -480,7 +480,7 @@ spec:
               value: gentian-os@gentian.org
             {{- end }}
             - name: KERNEL_NAMESPACE
-              value: {{ .Values.infraNamespace | default "platform-kernel" | quote }}
+              value: {{ .Values.infraNamespace | default "kernel-authentication" | quote }}
             - name: POD_NAMESPACE
               valueFrom:
                 fieldRef:

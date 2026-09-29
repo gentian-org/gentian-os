@@ -128,20 +128,23 @@ platformSecurityPolicy:
   #   policy: gentian-require-non-root
   #   scope: <workload-scope>
 
-# infraNamespace hosts shared infrastructure (MariaDB, Redis, MinIO).
-# Set per cluster in gentian-deployments kernel values (e.g. gentian-infra-dev).
-infraNamespace: ""
+# These three are set by the bootstrap chart from kernel/namespaces.yaml on
+# every install (kernel/bootstrap/chart/templates/gentian-os.yaml). The
+# defaults below matter only where somebody installs this chart by hand, and
+# they name namespaces this layout has -- they used to name the previous
+# layout's, which is a stale namespace sitting in a ConfigMap waiting for its
+# first reader.
 
-# openbaoNamespace hosts OpenBao; tenant app init Jobs authenticate here.
-openbaoNamespace: "openbao"
+# infraNamespace: where the kernel's own identity data plane answers.
+infraNamespace: "kernel-authentication"
 
-# servicesNamespace hosts kernel platform services (Postfix, Dovecot, …).
-# Tenant apps never live here — they get their own tenant-* namespaces.
-# "platform-kernel" is this platform's fixed naming convention, not a
-# per-stage or per-cluster choice — override in a cluster's own
-# gentian-deployments values.yaml only if a specific cluster truly needs
-# something different.
-servicesNamespace: "platform-kernel"
+# openbaoNamespace hosts the vault; tenant app init Jobs authenticate here.
+openbaoNamespace: "kernel-secrets"
+
+# servicesNamespace: the edge. The Gateway, its routes and its reference
+# grants live there. Tenant apps never do — they get their own tenant-*
+# namespaces.
+servicesNamespace: "kernel-edge"
 
 # Where each kernel function runs, from kernel/namespaces.yaml. An install
 # passes every entry; empty means the operator answers from internal/layout's
