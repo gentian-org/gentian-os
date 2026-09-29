@@ -220,3 +220,20 @@ gentian_signing_keys_from_deployment() {
     b="$(awk -F= '$1=="GENTIAN_SIGNING_KEY_BREAK_GLASS"{print $2}' "${env_file}" || true)"
     printf '%s %s' "${d}" "${b}"
 }
+
+# gentian_import_break_glass_key <armoured> — put a kit's key back.
+#
+# The counterpart to what export_recovery_kit takes out. Ownertrust is set as
+# well as the key imported: without it gpg signs happily and then reports its
+# own signature as "good, but I do not know whether to trust this key", which
+# is the difference between git printing G and U and is the kind of thing that
+# looks like a broken key rather than a missing statement about its holder.
+gentian_import_break_glass_key() {
+    local armoured="$1" fpr
+    [[ -n "${armoured}" ]] || return 1
+    command -v gpg >/dev/null 2>&1 || return 1
+    printf '%s' "${armoured}" | _gpg --import >/dev/null 2>&1 || return 1
+    fpr="$(gentian_signing_key_id break-glass)"
+    [[ -n "${fpr}" ]] || return 1
+    printf '%s:6:\n' "${fpr}" | _gpg --import-ownertrust >/dev/null 2>&1 || return 1
+}

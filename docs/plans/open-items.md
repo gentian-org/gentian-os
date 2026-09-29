@@ -109,12 +109,21 @@ none of it blocks the purge.
 
 ## Known and deliberately not now
 
-- **The break-glass private key lives only on the install host**
-  (`~/.gentian/gnupg`). Lose that host and nobody can make a break-glass
-  commit to a cluster that requires signatures; the way back is editing the
-  AppProject by hand. Putting it in the recovery kit makes it recoverable and
-  makes the kit more sensitive, which is a decision about who may hold what
-  rather than a piece of work.
+- **Migrating a tenant to a different cluster is not a supported path.**
+  Restore is same-cluster by construction: cluster-admin only, no console
+  button, and it replaces live data. A kit + a backup rebuilds a tenant
+  faithfully — definition from the repository, every derived credential
+  identical from the master password and salt, data and member accounts from
+  the bundle, everything but passwords, which are deliberately not in either.
+  A DIFFERENT cluster has a different master password, so the restored app
+  data would meet credentials it does not expect.
+
+  Two shapes would work and they are a decision rather than a defect. Either
+  the kit IS the cluster's identity — a new server that imports it becomes the
+  old cluster, and migration reduces to restore, which is what the kit is
+  already shaped for — or the restore re-keys every app credential on import,
+  which is far more work and makes every app that caches a credential in its
+  own database a special case. Nothing here implements either yet.
 
 
 - A catalogue source has to publish `index.yaml` for a cluster to browse it.

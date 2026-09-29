@@ -21,7 +21,7 @@
 # One driver, three directions. Update is not a separate program: converging a
 # running cluster IS the update, so it is the same forward pass.
 #
-#   ./install.sh --prepare-deployment   write this cluster's files, change nothing
+#   ./install.sh --prepare-deployment   write this cluster's files and stop
 #   ./install.sh --prepare-tenant NAME  write one tenant's definition, change nothing
 #   ./install.sh                    install or converge
 #   ./install.sh --update           same thing, named for what you meant
@@ -39,8 +39,12 @@
 # asked. --cluster-infra is that ask.
 #
 # A cluster is its claims and values in gentian-deployments, so those come
-# first: --prepare-deployment generates them from install.env, and you edit,
-# commit and push them before installing. Installing does not write them.
+# first -- and an install writes them when they are absent rather than
+# refusing with instructions. That is step 0 of the forward pass: if the
+# definition is there, nothing is prepared; if it is not, the questions are
+# asked, the files are written, and they are committed and pushed signed
+# (AD-2). --prepare-deployment is the same code path with nothing after it,
+# for writing the definition on a day you are not installing.
 #
 # A tenant is the same shape one level down, and stops in the same place:
 # --prepare-tenant writes its DEFINITION, you choose its apps, and
@@ -142,7 +146,10 @@ Running part of it. A step is named by its number or its full id, so
 
 Other options:
   --prepare-deployment  write clusters/<id>/kernel in gentian-deployments from
-                        install.env, then stop — nothing is committed or applied
+                        install.env, commit and push it, then stop. A plain
+                        install does this itself when the files are absent, so
+                        this is for writing the definition on a day you are not
+                        installing. Nothing is applied either way
   --prepare-tenant NAME write clusters/<id>/definitions/NAME the same way,
                         then stop. Deploy it with `kubectl gentian tenants
                         deploy NAME`. Needs the cluster's files to exist already
@@ -286,9 +293,20 @@ prepare_run() {
 
     prompt_app_repos
 
-    # Before any credential is collected: the claims and values this cluster is
-    # built from have to exist and have to have been read by someone. They are
-    # written by --prepare-deployment, never by an install.
+    # Step 0. The claims and values this cluster is built from have to exist
+    # before any credential is collected -- and when they do not, the install
+    # makes them rather than refusing with instructions. --prepare-deployment
+    # is the same code path with nothing after it, kept because writing the
+    # definition without installing is a thing operators legitimately do.
+    if [[ -n "$(cluster_deployment_missing)" ]]; then
+        echo ""
+        info "This cluster has no deployment definition yet. Writing one first."
+        info "  Nothing is applied and no cluster is contacted by this part."
+        ensure_cluster_deployment
+    fi
+
+    # Now a genuine precondition rather than an instruction: it validates what
+    # is there and commits an edit the operator made by hand.
     require_cluster_deployment
 
     resolve_kernel_domain_from_claim   # already-bootstrapped cluster reads its Claim
@@ -332,12 +350,24 @@ prepare_run() {
 # the exposure model. No credentials are collected and no cluster is contacted,
 # so this runs against a cluster that does not exist yet.
 # =============================================================================
-prepare_deployment_run() {
-    load_operator_config
-    load_deployments_cluster_settings
-    prompt_app_repos
+# ensure_cluster_deployment — step 0 of every install.
+#
+# The definition this cluster is built from used to be a separate command the
+# operator had to know to run first, and an install that met its absence
+# refused with instructions. That is a question the installer can answer
+# itself: if the files are there, there is nothing to prepare; if they are
+# not, ask what they need and write them.
+#
+# One writer, called from both the forward run and --prepare-deployment, so
+# the two cannot drift. It is still true that nothing is applied here and no
+# cluster is contacted -- the questions and the files come first either way.
+#
+# Assumes load_operator_config and prompt_app_repos have run, which both
+# callers do.
+ensure_cluster_deployment() {
     resolve_kernel_domain_from_claim   # a re-run reads back what it wrote
     prompt_kernel_domain
+
     # A re-run is a scaffold of whatever is still missing, never a second
     # interview: the exposure model, the issuer and the mail model are in the
     # claim already, and the claim is not rewritten. Asking again produced
@@ -350,6 +380,13 @@ prepare_deployment_run() {
         prompt_mail_mode
     fi
     scaffold_cluster_deployment
+}
+
+prepare_deployment_run() {
+    load_operator_config
+    load_deployments_cluster_settings
+    prompt_app_repos
+    ensure_cluster_deployment
 }
 
 # =============================================================================

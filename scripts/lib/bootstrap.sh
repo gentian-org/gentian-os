@@ -2081,6 +2081,20 @@ _warn_uncommitted_cluster_deployment() {
     fi
 }
 
+# cluster_deployment_missing — the files this cluster's definition still lacks.
+#
+# Empty output means complete. Split out of require_cluster_deployment so that
+# the forward run can ASK rather than refuse: step 0 of an install is now
+# "make the definition if it is not there", and that needs the question
+# answered before it decides whether to interview anybody.
+cluster_deployment_missing() {
+    local kernel_dir="${GENTIAN_DEPLOYMENTS_PATH}/clusters/${GENTIAN_DEPLOYMENTS_CLUSTER_ID}/kernel"
+    local f
+    for f in claims/cluster.yaml claims/suze.yaml claims/deployments-repository.yaml values.yaml; do
+        [[ -f "${kernel_dir}/${f}" ]] || printf '%s\n' "${f}"
+    done
+}
+
 require_cluster_deployment() {
     local cluster="${GENTIAN_DEPLOYMENTS_CLUSTER_ID}"
     local kernel_dir="${GENTIAN_DEPLOYMENTS_PATH}/clusters/${cluster}/kernel"
@@ -2100,10 +2114,9 @@ require_cluster_deployment() {
     # nothing in the install output says why. The claims/ directory is synced
     # from git by the gentian-claims ApplicationSet, so scaffolding the file is
     # only half of it: it has to be committed to reach the cluster.
-    local kernel_files="claims/cluster.yaml claims/suze.yaml claims/deployments-repository.yaml values.yaml"
-    for f in ${kernel_files}; do
-        [[ -f "${kernel_dir}/${f}" ]] || missing+=("${f}")
-    done
+    while IFS= read -r f; do
+        [[ -n "${f}" ]] && missing+=("${f}")
+    done < <(cluster_deployment_missing)
 
     # What the file used to guarantee, checked where it now lives. networkMode
     # decides whether the edge is a LoadBalancer, and static-ip without nodeIp
