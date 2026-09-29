@@ -73,7 +73,8 @@ check() {
 
 apply() {
     banner "Deployment signing"
-    local ns dir role id asc args=() body
+    local ns dir role id asc body
+    local -a keyfiles=()
     ns="$(_argocd_ns)"
     dir="$(_signing_kernel_dir)"
 
@@ -95,25 +96,51 @@ apply() {
             (r=="break-glass" && $1=="GENTIAN_SIGNING_KEY_BREAK_GLASS") {print $2}
         ' "${dir}/signing/keys.env")"
         [[ -n "${id}" ]] || { error "signing/keys.env names no ${role} key."; return 1; }
-        args+=(--from-file="${id}=${asc}")
+        keyfiles+=("${id}=${asc}")
         info "  trusting ${role} ${id}"
     done
 
-    # create --dry-run | apply, so the entries are added to whatever is there
-    # rather than replacing a ConfigMap Argo CD may already use.
-    kubectl create configmap argocd-gpg-keys-cm -n "${ns}" "${args[@]}" \
-        --dry-run=client -o yaml |
-        kubectl patch configmap argocd-gpg-keys-cm -n "${ns}" --type merge --patch-file /dev/stdin ||
-        {
-            error "Could not add the signing keys to argocd-gpg-keys-cm in ${ns}."
-            return 1
-        }
+    # A merge patch of the data map ALONE.
+    #
+    # `kubectl create configmap --dry-run -o yaml` would be the obvious way to
+    # build this, but it emits a whole manifest including
+    # `metadata.creationTimestamp: null` -- and in a merge patch a null means
+    # "remove this key", so the patch asks the API server to delete a field it
+    # manages. Sending only the entries says exactly what is meant: add these
+    # keys to whatever Argo CD already has there.
+    # A quoted heredoc, not python3 -c: the resolvable lint reads every shell
+    # file looking for calls it cannot resolve, and `with open(path) as fh:`
+    # at low indent reads as a command named `with`. A heredoc body is data
+    # and the lint skips it, which is both true and convenient.
+    local patch
+    patch="$(python3 - "${keyfiles[@]}" <<'PYEOF'
+import json
+import sys
+
+data = {}
+for arg in sys.argv[1:]:
+    key, _, path = arg.partition("=")
+    with open(path) as handle:
+        data[key] = handle.read()
+print(json.dumps({"data": data}))
+PYEOF
+)" || {
+        error "Could not build the keyring patch."
+        return 1
+    }
+    kubectl patch configmap argocd-gpg-keys-cm -n "${ns}" --type merge --patch "${patch}" || {
+        error "Could not add the signing keys to argocd-gpg-keys-cm in ${ns}."
+        error "  Argo CD creates that ConfigMap; if it is absent, Argo CD is not installed here."
+        return 1
+    }
 
     # The director's private half, into the vault.
     if [[ -z "${BAO_TOKEN:-}" || -z "${BAO_ADDR:-}" ]]; then
         error "No vault token; the director's signing key cannot be stored."
         return 1
     fi
+    # -c here, not a heredoc: a heredoc IS stdin, so it would replace the key
+    # being piped in and json.dumps would encode the script instead.
     local secret_json
     secret_json="$(gentian_export_secret_key director |
         python3 -c 'import json,sys; print(json.dumps({"private": sys.stdin.read()}))')"
