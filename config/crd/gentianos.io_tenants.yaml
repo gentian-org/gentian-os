@@ -172,6 +172,7 @@ spec:
                               description: Edition selects the edition (ce, me, ee).
                               enum:
                               - ce
+                              - pe
                               - me
                               - ee
                               type: string

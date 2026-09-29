@@ -134,7 +134,15 @@ type Config struct {
 	// statement and nothing else -- the right behaviour for a cluster that
 	// declares no source of its own.
 	Binder EntryBinder
-	Log    *slog.Logger
+	// CatalogueSources is spec.catalogue.sources from the Cluster claim: the
+	// same list the Fetcher was built from, kept whole because the index
+	// routes need each source's access mode and the tenants it is open to.
+	CatalogueSources []gitops.CatalogueSource
+	// StoreURL is spec.catalogue.storeUrl: where a person is sent for
+	// everything this cluster does not list for itself. Empty is a cluster
+	// that belongs to no store.
+	StoreURL string
+	Log      *slog.Logger
 	// EnforceEntitlements makes an install require
 	// catalogue_entry:<coordinate>#can_install for the tenant. It is on unless
 	// a deployment turns it off explicitly, which a cluster without a store
@@ -400,6 +408,15 @@ func (s *Server) routes() {
 	s.guarded("GET /v1/tenants/{t}/apps/{p}/addons", "can_view", tenantObject, s.getAddons)
 
 	s.guarded("GET /v1/tenants/{t}/entitlements", "can_view", tenantObject, s.listEntitlements)
+
+	// The cluster's own catalogues (AD-14). can_view, like every other read
+	// of a tenant: whoever may see a tenant may see what it could install.
+	// Registered only where there are sources to list, so a cluster that
+	// names none answers 404 rather than an empty screen that looks broken.
+	if s.cfg.Catalogue != nil && len(s.cfg.CatalogueSources) > 0 {
+		s.guarded("GET /v1/tenants/{t}/catalogues", "can_view", tenantObject, s.listCatalogues)
+		s.guarded("GET /v1/tenants/{t}/catalogues/{s}/entries", "can_view", tenantObject, s.listCatalogueEntries)
+	}
 
 	// What the caller holds on a tenant, for the desktop: it renders from
 	// the answer -- the admin tile by can_administer, the store by

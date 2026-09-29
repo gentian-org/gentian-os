@@ -594,15 +594,31 @@ installed base, arriving in `Tenant.spec.apps[].addons`. It inherits the base's
 ladder — same image, same drop-in dirs, same plugin API — so it never restates
 `grade`, `rubricScore` or `supportedRungs`.
 
-**Editions** are `ce · me · ee`, and say *how the entry is licensed*, not who
-publishes it: `ce` is upstream's community edition, `me` is that plus active
-Gentian maintenance, `ee` is commercially licensed and entitlement-gated. `ee` is
-deliberately not "the upstream's enterprise build" — a third party's proprietary
-distribution is equally an `ee`, and `spec.author` is what names the supplier. A
-supplier's name is never an edition. Editions are technically compatible with one
-another; what gates an `ee` addon is **entitlement**, and what constrains
-addon↔base compatibility is **version**. There is therefore one addon set per
-family and no per-edition compatibility matrix.
+**Editions** are `ce · pe · me · ee`, and say *who stands behind the entry*,
+not who publishes it:
+
+| | |
+| --- | --- |
+| `ce` | community edition, as the upstream organisation publishes it |
+| `pe` | private edition: somebody's own profile, in their own catalogue source, for their own tenants |
+| `me` | maintained edition — `ce` plus active Gentian maintenance; the editions Gentian Technologies itself runs |
+| `ee` | enterprise edition — commercially licensed and entitlement-gated |
+
+`ee` is deliberately not "the upstream's enterprise build" — a third party's
+proprietary distribution is equally an `ee`, and `spec.author` is what names the
+supplier. A supplier's name is never an edition. Editions are technically
+compatible with one another; what gates an `ee` addon is **entitlement**, and
+what constrains addon↔base compatibility is **version**. There is therefore one
+addon set per family and no per-edition compatibility matrix.
+
+The split that matters operationally is not free against paid but **where the
+entry comes from**. `ce` and `pe` are entries a cluster can hold and install on
+its own — `ce` because it is public, `pe` because it is the operator's own — so
+a cluster browsing its own catalogue sources lists exactly those two. `me` and
+`ee` exist because somebody maintains or licenses them, which is the App
+Store's business: a cluster counts them and sends the person to the store,
+because an entry whose whole value is a relationship with a supplier is not
+something a cluster can describe usefully (AD-14).
 
 An **edition shares a family name and nothing else** — `nextcloud-base-ee` may
 deploy a supplier's all-in-one chart from a credentialed registry where

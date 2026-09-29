@@ -29,7 +29,7 @@ plans are what the code was supposed to become.
 | AD-11 | The target layout applies to fresh installs | ✅ |
 | AD-12 | The authorization store is a projection; git holds the defaults | ◐ the projection works; the bootstrap drift check is on the backlog below |
 | AD-13 | The edge is the only session authority | ✅ the text now describes what the code does: ending the session at Keycloak ends it, bounded by the access token's lifetime, with no revocation list for the shim to consult |
-| AD-14 | Catalogue sources on the Cluster claim | ◐ `catalogue.sources[]` is on the Cluster XRD and the installer scaffolds it; the director reads its sources from the claim in git instead of from an environment variable, and the operator projects each open source's tenants as `catalogue_source#open`, declaratively — a tenant the claim stops naming loses the access. What is left is the **index**: the director serves none, so a desktop store screen still needs the store to be reachable |
+| AD-14 | Catalogue sources on the Cluster claim | ✅ `catalogue.sources[]` and `catalogue.storeUrl` are on the Cluster XRD and the installer scaffolds them; the director reads them from the claim in git, the operator projects each open source's tenants as `catalogue_source#open` declaratively, and the director serves each source's index at `GET /v1/tenants/{t}/catalogues[/{s}/entries]` — ce and pe only, no digest from an entitled source, and the rest counted and pointed at the store. The console renders it as a table, on purpose |
 | AD-15 | Multi-language is a core requirement | ☐ see below |
 
 ## AD-15 — multi-language
@@ -106,11 +106,13 @@ none of it blocks the purge.
 
 ## Known and deliberately not now
 
-- AD-14's **index**. The director knows which catalogues this cluster may fetch
-  from and which tenant each open one admits, but it serves no listing of what
-  is in them. Until it does, the desktop's store screen needs the store itself
-  to be reachable; AD-14 wants it to render from the cluster's own copy and let
-  the store add listings when it is there.
+- A catalogue source has to publish `index.yaml` for a cluster to browse it —
+  `scripts/tools/build-catalogue-index.py` writes one, and nothing runs it in
+  CI yet. A source without one is not an error; it simply cannot be browsed,
+  which the screen shows as an empty catalogue.
+- The cluster's catalogue view lists; it does not install. Installing stays the
+  tenant's own act from their own screens, because a third place that installs
+  apps — after the store and the desktop — is a third place to keep correct.
 - The director reads `catalogue.sources[]` once, at start. An edit to the claim
   reaches it when its Deployment next rolls, which an Argo sync of a changed
   claim produces anyway. The tuples that decide *which tenant* a source is open

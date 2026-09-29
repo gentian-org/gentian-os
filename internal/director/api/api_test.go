@@ -139,12 +139,20 @@ func startWithCatalogue(t *testing.T, src *httptest.Server, sources map[string]s
 // tests about which entries a tenant may install at all.
 func startWithEntitledCatalogue(
 	t *testing.T, entitlements bool, src *httptest.Server, sources map[string]string,
+	declared ...gitops.CatalogueSource,
 ) *harness {
 	t.Helper()
 	return startWith(t, entitlements, "", nil, func(cfg *api.Config) {
 		f := catalogue.NewFetcher(sources)
 		f.Client = src.Client()
 		cfg.Catalogue = f
+		if declared == nil {
+			for name, url := range sources {
+				declared = append(declared, gitops.CatalogueSource{Name: name, URL: url})
+			}
+		}
+		cfg.CatalogueSources = declared
+		cfg.StoreURL = "https://store.example.com"
 	})
 }
 

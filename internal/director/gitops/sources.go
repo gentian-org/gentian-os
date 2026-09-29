@@ -70,6 +70,48 @@ func (s CatalogueSource) Open(tenant string) bool {
 	return false
 }
 
+// CatalogueSettings is the claim's whole spec.catalogue.
+type CatalogueSettings struct {
+	// StoreURL is where people are sent to get the entries this cluster
+	// cannot serve itself -- everything maintained or licensed by somebody.
+	//
+	// Here rather than compiled in, because which store a cluster belongs to
+	// is a fact about that cluster, and because a cluster with no store at
+	// all is a supported thing: it says nothing and its own catalogues are
+	// all there is.
+	StoreURL string `json:"storeUrl,omitempty"`
+	// Sources are the catalogues this cluster may fetch from.
+	Sources []CatalogueSource `json:"sources,omitempty"`
+}
+
+// Catalogue reads spec.catalogue from the Cluster claim.
+func (g *GitOps) Catalogue(ctx context.Context) (CatalogueSettings, error) {
+	var claim struct {
+		Spec struct {
+			Catalogue CatalogueSettings `json:"catalogue"`
+		} `json:"spec"`
+	}
+	if err := g.readClusterClaim(ctx, &claim); err != nil {
+		return CatalogueSettings{}, err
+	}
+	out := CatalogueSettings{StoreURL: strings.TrimSpace(claim.Spec.Catalogue.StoreURL)}
+	if !strings.HasPrefix(out.StoreURL, "https://") {
+		out.StoreURL = ""
+	}
+	for _, src := range claim.Spec.Catalogue.Sources {
+		src.Name = strings.TrimSpace(src.Name)
+		src.URL = strings.TrimSpace(src.URL)
+		if src.Name == "" || !strings.HasPrefix(src.URL, "https://") {
+			// http:// is skipped here as it is everywhere else: the digest
+			// makes the bytes safe, but a cluster fetching its catalogue in
+			// clear announces what it runs.
+			continue
+		}
+		out.Sources = append(out.Sources, src)
+	}
+	return out, nil
+}
+
 // CatalogueSources reads the sources this cluster declares.
 //
 // A source with no name or no https URL is skipped rather than refused: the
@@ -78,27 +120,9 @@ func (s CatalogueSource) Open(tenant string) bool {
 // are refused for want of a source, which says the same thing where somebody
 // will see it.
 func (g *GitOps) CatalogueSources(ctx context.Context) ([]CatalogueSource, error) {
-	var claim struct {
-		Spec struct {
-			Catalogue struct {
-				Sources []CatalogueSource `json:"sources"`
-			} `json:"catalogue"`
-		} `json:"spec"`
-	}
-	if err := g.readClusterClaim(ctx, &claim); err != nil {
+	c, err := g.Catalogue(ctx)
+	if err != nil {
 		return nil, err
 	}
-	out := make([]CatalogueSource, 0, len(claim.Spec.Catalogue.Sources))
-	for _, s := range claim.Spec.Catalogue.Sources {
-		s.Name = strings.TrimSpace(s.Name)
-		s.URL = strings.TrimSpace(s.URL)
-		if s.Name == "" || !strings.HasPrefix(s.URL, "https://") {
-			// http:// is skipped here as it is everywhere else: the digest
-			// makes the bytes safe, but a cluster fetching its catalogue in
-			// clear announces what it runs.
-			continue
-		}
-		out = append(out, s)
-	}
-	return out, nil
+	return c.Sources, nil
 }

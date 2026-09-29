@@ -137,6 +137,19 @@ spec:
                     "what could this cluster install from" can be answered
                     without cluster access.
                   properties:
+                    storeUrl:
+                      type: string
+                      description: >
+                        Where people are sent for the entries this cluster
+                        cannot serve itself. A cluster lists only its own
+                        catalogues' community (ce) and private (pe) entries;
+                        maintained (me) and enterprise (ee) editions exist
+                        because somebody maintains or licenses them, which is
+                        the App Store's business, so the cluster names the
+                        store rather than describing them badly.
+
+                        Unset means this cluster belongs to no store, which is
+                        supported: its own catalogues are then all there is.
                     sources:
                       type: array
                       description: >

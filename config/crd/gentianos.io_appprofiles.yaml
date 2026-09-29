@@ -946,6 +946,7 @@ spec:
                   entitlement-gated, supplied by whoever spec.author names).
                 enum:
                 - ce
+                - pe
                 - me
                 - ee
                 type: string

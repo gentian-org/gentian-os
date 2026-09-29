@@ -297,9 +297,12 @@ func run(log *slog.Logger) error {
 	// continuously. Without any source, this cluster's profiles arrive some
 	// other way and nothing is materialised on reference.
 	var entries *catalogue.Fetcher
+	var declared []gitops.CatalogueSource
+	var storeURL string
 	readSources, cancelRead := context.WithTimeout(context.Background(), time.Minute)
-	declared, err := repo.CatalogueSources(readSources)
+	catalogues, err := repo.Catalogue(readSources)
 	cancelRead()
+	declared, storeURL = catalogues.Sources, catalogues.StoreURL
 	if err != nil {
 		// Not fatal. A director that cannot read the claim still serves
 		// every call that is not an install from a catalogue, and refusing
@@ -315,10 +318,19 @@ func run(log *slog.Logger) error {
 		}
 		entries = catalogue.NewFetcher(sources)
 	}
+	if storeURL == "" {
+		// Worth one line: without it the cluster's own catalogue view can
+		// list its ce and pe entries but has nowhere to send anybody for the
+		// rest, which looks like the platform having no store at all.
+		log.Info("the Cluster claim names no App Store; nothing points anywhere for maintained or licensed entries",
+			"setting", "spec.catalogue.storeUrl")
+	}
 
 	handler, err := api.New(api.Config{Authn: verifier, Authz: checker, Viewer: checker, Repo: repo, Log: log,
 		Record:              authorityRecord,
 		Catalogue:           entries,
+		CatalogueSources:    declared,
+		StoreURL:            storeURL,
 		Binder:              checker,
 		EnforceEntitlements: enforce, Store: store, Cluster: cluster,
 		TilesPath: envOr("DIRECTOR_TILES_PATH", "/etc/gentian/tiles/tiles.yaml"),

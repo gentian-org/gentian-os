@@ -70,6 +70,9 @@ type Fetcher struct {
 	// person chose.
 	Sources map[string]string
 	Client  *http.Client
+
+	// indexCache holds each source's index between fetches. See index.go.
+	indexCache
 }
 
 // NewFetcher returns a Fetcher with a bounded client.

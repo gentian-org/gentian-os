@@ -117,6 +117,7 @@ Cluster claim:
 
 ```yaml
 catalogue:
+  storeUrl: https://…      # where people are sent for everything else
   sources:
   - name: store            # the store's own catalogue; entries need a grant
     url: https://…
@@ -127,13 +128,32 @@ catalogue:
     tenants: [demo]        # which tenants may install from it; empty means none
 ```
 
-The director reads each source's index and serves it —
-`GET /v1/catalogues` and `GET /v1/catalogues/{source}/entries`: name,
-version, digest, and whether this tenant may install it — so the desktop's
-store screen has something to render with no store connection at all: the
-entries of the cluster's sources with an install button, and none of the
-listing information. When the store is reachable, it adds the listings and
-the entitlements on top of the same index.
+A source publishes `index.yaml` beside its `profiles/` directory, because an
+https server does not list a directory and without it a cluster can install
+from a source by name but cannot say what is in it. The index is the
+technical half and nothing else: name, version, edition, trust tier, digest.
+
+The director serves it — `GET /v1/tenants/{t}/catalogues` and
+`GET /v1/tenants/{t}/catalogues/{source}/entries`, both under `can_view` — so
+a cluster can answer what it holds with no store connection at all.
+
+Three rules make that view the fallback rather than a rival to the store, and
+they are the point rather than an omission:
+
+* **Only `ce` and `pe` are listed.** They are the entries whose value does not
+  depend on a supplier — community, and the operator's own. `me` and `ee`
+  exist because somebody maintains or licenses them; the answer is returned as
+  a count and `storeUrl`, not as rows.
+* **Nothing a shop would show.** No display name, description, icon or price.
+  The store keeps those current and a cluster copying them would go stale.
+* **An entitled source's digest is dropped** before it reaches a caller. There
+  the digest that governs is the one the store stated over its own TLS; a
+  source's own number checked against the same source's own bytes is not a
+  check. An open source's digest IS served, because the trust there is the
+  claim naming the source and no store is in the picture.
+
+When the store is reachable it is where people go, and it adds the listings
+and the entitlements on top of the same coordinates.
 
 Whether an entry may be installed is one question with two answers
 (`catalogue_entry#can_install`): the store granted it, or the entry's source

@@ -93,30 +93,56 @@ const (
 	DefaultCatalogueVersion = "1.0.0"
 )
 
-// Edition identifies which edition of an app a profile packages:
+// Edition identifies which edition of an app a profile packages, and with it
+// who stands behind the entry:
 //
 //	ce — community edition, as published by the upstream organisation
+//	pe — private edition: somebody's own profile, in their own catalogue
 //	me — maintained edition: ce plus active maintenance by Gentian
-//	ee — commercially licensed, entitlement-gated; supplied either by the upstream
-//	     organisation or by a third party (see AppProfile.spec.author)
+//	ee — enterprise edition: commercially licensed, entitlement-gated
 //
-// Editions are technically interchangeable; what decides whether one may run is
-// authorization (a paid licence), and technical addon/base compatibility is managed
-// by version. See gentian-os/docs/app-customization.md §4.2.
+// The four are technically interchangeable; what decides whether one may run
+// is authorization, and addon/base compatibility is managed by version. See
+// gentian-os/docs/app-customization.md §4.2.
 //
-// +kubebuilder:validation:Enum=ce;me;ee
+// The split that matters operationally is not free against paid but WHERE the
+// entry comes from. ce and pe are entries a cluster can hold and install on
+// its own: ce because it is public, pe because it is the operator's own. me
+// and ee exist because somebody maintains or licenses them, which is the App
+// Store's business, and a cluster browsing its own catalogue does not list
+// them (AD-14) — there is nothing useful it could say about an entry whose
+// whole value is a relationship with a supplier.
+//
+// +kubebuilder:validation:Enum=ce;pe;me;ee
 type Edition string
 
 const (
 	// EditionCE is the community edition as published by the upstream organisation.
 	EditionCE Edition = "ce"
-	// EditionME is the community edition plus active maintenance by Gentian.
+	// EditionPE is a private edition: a profile its own operator wrote and
+	// publishes in their own catalogue source, for their own tenants. Nobody
+	// sells it and nobody else lists it, so nothing outside the cluster needs
+	// to be reachable for it to be installed -- which is exactly why the
+	// cluster's own catalogue view exists.
+	EditionPE Edition = "pe"
+	// EditionME is the community edition plus active maintenance by Gentian:
+	// the editions Gentian Technologies itself runs and keeps current.
 	EditionME Edition = "me"
-	// EditionEE is a commercially licensed edition requiring an entitlement. It says
-	// the entry is paid-for, not who publishes it: spec.author names the supplier,
-	// which may be the upstream organisation or a third party packaging it.
+	// EditionEE is the enterprise edition: commercially licensed and requiring
+	// an entitlement. It says the entry is paid-for, not who publishes it --
+	// spec.author names the supplier, which may be the upstream organisation
+	// or a third party packaging it.
 	EditionEE Edition = "ee"
 )
+
+// LocalEditions are the editions a cluster lists from its own catalogue
+// sources. See Edition.
+var LocalEditions = []Edition{EditionCE, EditionPE}
+
+// Local reports whether an edition is one a cluster lists for itself.
+func (e Edition) Local() bool {
+	return e == EditionCE || e == EditionPE
+}
 
 // TrustTier describes platform certification / review level for a catalogue entry.
 //
