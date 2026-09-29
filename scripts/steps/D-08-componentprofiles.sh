@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# step: D-08-appprofiles
+# step: D-08-componentprofiles
 # phase: applications
 # requires: D-01-operator, B-12-apps-repository
-# provides: AppProfile CRs from the gentian-apps repository
+# provides: ComponentProfile CRs from the gentian-apps repository
 # mutates: nothing — verification only; B-12-apps-repository.sh owns the
 #   Repository/gentian-apps claim that actually composes the catalogue-sync
 #   ApplicationSet (see crossplane/compositions/repository-default.yaml).
@@ -13,14 +13,14 @@
 #   Applications.
 
 check() {
-    kubectl get crd appprofiles.gentianos.io >/dev/null 2>&1 || return "${CHECK_MISSING}"
+    kubectl get crd componentprofiles.gentianos.io >/dev/null 2>&1 || return "${CHECK_MISSING}"
 
-    # The Repository claim, not "is there at least one AppProfile" — profiles
+    # The Repository claim, not "is there at least one profile" — profiles
     # arrive afterwards, from Argo CD, once B-12's claim composes the
     # catalogue-sync ApplicationSet. A single profile that reached the
     # cluster by some other route satisfied the old test while the catalogue
     # was not syncing at all — which surfaces as a tenant refused admission
-    # for an AppProfile that exists in gentian-apps and was never installed
+    # for a ComponentProfile that exists in gentian-apps and was never installed
     # here.
     kubectl get repository.gentianos.io gentian-apps -n crossplane-system >/dev/null 2>&1
 }
@@ -44,5 +44,5 @@ destroy() {
     # Repository/gentian-apps belongs to B-12-apps-repository.sh, which tears it down
     # itself — deleting it here would be removing another step's artefact at
     # the wrong point in the reverse-teardown order.
-    kubectl delete appprofile --all -A --ignore-not-found=true 2>/dev/null || true
+    kubectl delete componentprofile --all -A --ignore-not-found=true 2>/dev/null || true
 }

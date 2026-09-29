@@ -667,9 +667,14 @@ _delete_gentianos_api_scaffold() {
         | grep -E 'gentian-portal' \
         | xargs_r kubectl delete --ignore-not-found=true 2>/dev/null || true
 
+    # componentprofiles is the live one; appprofiles is kept because a
+    # cluster installed before AD-4 still carries that ClusterRole and a
+    # purge that left it behind would leave a grant for a kind nothing
+    # serves. Removing a name from a teardown is how orphans are made.
     kubectl delete clusterrole \
         gentian-os \
         gentian-job-gc \
+        'crossplane:extra-resources:componentprofiles.gentianos.io' \
         'crossplane:extra-resources:appprofiles.gentianos.io' \
         'crossplane:extra-resources:oidcpackcatalogs.gentianos.io' \
         'crossplane:extra-resources:externalsecrets.external-secrets.io' \

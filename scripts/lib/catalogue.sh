@@ -19,7 +19,7 @@ install_app_catalogue() {
     # sync-wave 0. Two writers, one of them whatever tree the installer happened
     # to run from.
     #
-    # Nothing local populates the catalogue either: AppProfiles arrive from
+    # Nothing local populates the catalogue either: ComponentProfiles arrive from
     # gentian-apps through the gentian-catalogue ApplicationSet, and the
     # operator's appstore controller creates the AppCatalogue singleton and
     # rebuilds its status from them. So this step waits for what Argo brings.
@@ -102,7 +102,7 @@ report_gentian_cli_state() {
 # any role: apps, type: git repository composes its own catalogue-sync
 # ApplicationSet (crossplane/compositions/repository-default.yaml) named after
 # the claim, so two claims for the same repo meant two ApplicationSets
-# fighting over the same Applications. D-08-appprofiles.sh just verifies
+# fighting over the same Applications. D-08-componentprofiles.sh just verifies
 # B-12's claim exists now.
 #
 # Once synced, each profiles/<name>/ bundle becomes an Application
@@ -113,7 +113,7 @@ report_gentian_cli_state() {
 # 15. Install gentian-os orchestrator (Helm chart + ArgoCD Application)
 # =============================================================================
 # The orchestrator chart at charts/gentian-os/ ships:
-#   - CRDs: tenants, appprofiles, integrationbindings, appcatalogues
+#   - CRDs: tenants, componentprofiles, integrationbindings
 #   - Deployment + ServiceAccount + ClusterRole(Binding) for the operator
 #   - ServiceMonitor + Grafana dashboard
 #

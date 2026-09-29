@@ -245,7 +245,7 @@ func resolveProfile(
 	}
 	profile, ok := appProfileFromIndex(index, appName)
 	if !ok {
-		return nil, fmt.Errorf("AppProfile %q not found in the catalogue", appName)
+		return nil, fmt.Errorf("ComponentProfile %q not found in the catalogue", appName)
 	}
 	return profile, nil
 }

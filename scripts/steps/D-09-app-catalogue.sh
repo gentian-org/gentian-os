@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # step: D-09-app-catalogue
 # phase: applications
-# requires: D-08-appprofiles
+# requires: D-08-componentprofiles
 # provides: the AppCatalogue CRD, confirmed present
 # mutates: AppCatalogue objects (on the reverse pass only)
 
@@ -10,7 +10,7 @@
 # The CRD ships with the operator chart, which the gentian-os Application syncs
 # at wave 0; applying it again from config/crd/ in this checkout made the
 # installer a second writer of an Argo-owned object. And the catalogue is
-# populated by neither: AppProfiles arrive from gentian-apps through the
+# populated by neither: ComponentProfiles arrive from gentian-apps through the
 # gentian-catalogue ApplicationSet, and the operator's appstore controller
 # builds the AppCatalogue singleton from them.
 #

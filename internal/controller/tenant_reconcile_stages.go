@@ -261,7 +261,7 @@ func (r *TenantReconciler) reconcileTenantStagePreflight(ctx context.Context, st
 	}
 	if len(missingProfiles) > 0 {
 		r.setCondition(tenant, conditionAppsReady, metav1.ConditionFalse, "ProfileNotFound",
-			fmt.Sprintf("AppProfile(s) not found: %s", strings.Join(missingProfiles, ", ")))
+			fmt.Sprintf("ComponentProfile(s) not found: %s", strings.Join(missingProfiles, ", ")))
 		r.setCondition(tenant, conditionIdentityReady, metav1.ConditionFalse, "PrerequisitesFailed",
 			"Identity provisioning blocked because one or more requested AppProfiles are missing")
 		tenant.Status.Phase = gentianov1alpha1.TenantPhaseDegraded

@@ -246,7 +246,7 @@ func (s *Service) Uninstall(ctx context.Context, req UninstallRequest) (*Result,
 		if apierrors.IsNotFound(profileErr) {
 			profileCR = nil
 		} else {
-			return nil, fmt.Errorf("get appprofile %q: %w", req.Profile, profileErr)
+			return nil, fmt.Errorf("get componentprofile %q: %w", req.Profile, profileErr)
 		}
 	}
 
@@ -390,15 +390,19 @@ func (s *Service) loadKeycloakAdmin(ctx context.Context) (string, string, string
 }
 
 func (s *Service) provisionAppGroupUsers(ctx context.Context, tenantName, profileName string) error {
+	// ComponentProfile: AD-4 leaves one catalogue kind, and this asked for
+	// the other one long after the catalogue stopped shipping it, so every
+	// call failed with a NotFound and no app group ever got its attributes.
+	// Unstructured because all it wants is one annotation.
 	profile := &unstructured.Unstructured{}
 	profile.SetGroupVersionKind(schema.GroupVersionKind{
 		Group:   "gentianos.io",
 		Version: "v1alpha1",
-		Kind:    "AppProfile",
+		Kind:    "ComponentProfile",
 	})
 	err := s.client.Get(ctx, client.ObjectKey{Name: profileName}, profile)
 	if err != nil {
-		return fmt.Errorf("failed to get AppProfile %s: %w", profileName, err)
+		return fmt.Errorf("failed to get ComponentProfile %s: %w", profileName, err)
 	}
 
 	var attrs map[string][]string
@@ -476,12 +480,12 @@ func (s *Service) SetAddons(ctx context.Context, req SetAddonsRequest) (*Result,
 
 	base := &gentianov1alpha1.ComponentProfile{}
 	if err := s.client.Get(ctx, client.ObjectKey{Name: req.Profile}, base); err != nil {
-		return nil, fmt.Errorf("get appprofile %q: %w", req.Profile, err)
+		return nil, fmt.Errorf("get componentprofile %q: %w", req.Profile, err)
 	}
 
 	profiles := &gentianov1alpha1.ComponentProfileList{}
 	if err := s.client.List(ctx, profiles); err != nil {
-		return nil, fmt.Errorf("list appprofiles: %w", err)
+		return nil, fmt.Errorf("list componentprofiles: %w", err)
 	}
 	index := make(map[string]*gentianov1alpha1.ComponentProfile, len(profiles.Items))
 	for i := range profiles.Items {

@@ -51,7 +51,7 @@ const (
 
 // +kubebuilder:rbac:groups=gentianos.io,resources=customizations,verbs=get;list;watch;update;patch
 // +kubebuilder:rbac:groups=gentianos.io,resources=customizations/status,verbs=get;update;patch
-// +kubebuilder:rbac:groups=gentianos.io,resources=appprofiles,verbs=get;list;watch
+// +kubebuilder:rbac:groups=gentianos.io,resources=componentprofiles,verbs=get;list;watch
 
 // CustomizationReconciler computes the derived state behind the customization debt
 // report: whether a record is overdue for review, whether the app it targets has
@@ -207,7 +207,7 @@ func (r *CustomizationReconciler) evaluate(
 		status.Phase = gentianov1alpha1.CustomizationPhaseInvalid
 		setRecordCondition(&status, conditionCustomizationValid, metav1.ConditionFalse,
 			"TargetNotFound",
-			fmt.Sprintf("AppProfile %q does not exist", record.Spec.Target.Profile))
+			fmt.Sprintf("ComponentProfile %q does not exist", record.Spec.Target.Profile))
 		return status
 	}
 
