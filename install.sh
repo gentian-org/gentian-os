@@ -95,6 +95,12 @@ source "${SCRIPT_DIR}/scripts/lib/driver.sh"
 # kernel/namespaces.yaml names it; the constant here is what the steps read
 # before the layout is on the cluster to read it from.
 export CROSSPLANE_NAMESPACE="${CROSSPLANE_NAMESPACE:-kernel-provisioning}"
+# The control namespace: the operator, the director and the handover record
+# live there, and E-02, E-03 and every summary that reports handover read it.
+# E-02 used to set this for its own process only, so `--only E-03` and
+# `--verify-only` looked in a namespace v5 never creates and reported a
+# handover that had happened as not started.
+export GENTIAN_SYSTEM_NAMESPACE="${GENTIAN_SYSTEM_NAMESPACE:-$(ns_kernel control)}"
 CROSSPLANE_VERSION="$(gentian_pin crossplane chart)"
 CROSSPLANE_HELM_REPO="$(gentian_pin crossplane repo)"
 export CROSSPLANE_VERSION CROSSPLANE_HELM_REPO
@@ -132,7 +138,7 @@ Looking before running:
   --dry-run             run every check() and print the plan; applies nothing
 
 Running part of it. A step is named by its number or its full id, so
---only B-10 and --only B-10-seed-secrets are the same thing:
+--only B-08 and --only B-08-seed-secrets are the same thing:
   --only ID[,ID...]     run only these steps (--step is a synonym)
   --skip ID[,ID...]     run everything except these
   --from ID             start here and continue to the end
@@ -343,8 +349,11 @@ prepare_run() {
         collect_bootstrap_credentials
     fi
 
-    CROSSPLANE_MODE=1 check_prereqs
+    # bao first: check_prereqs lists it as required, and it is the one tool
+    # the installer fetches itself, so checking before fetching aborted every
+    # host that did not already have it.
     _ensure_bao
+    CROSSPLANE_MODE=1 check_prereqs
 }
 
 # =============================================================================
@@ -483,7 +492,7 @@ main() {
             # requiring one to be exported already.
             #
             # try_load_creds_from_openbao below tries only BAO_TOKEN and the
-            # init file's root token, and E-04 revokes that token and strips it
+            # init file's root token, and E-03 revokes that token and strips it
             # from the file at handover. So on any cluster past handover — which
             # is every cluster this command is for — both came up empty, the
             # lookup returned silently, and the export failed with "the master

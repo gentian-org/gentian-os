@@ -2,7 +2,7 @@
 
 ## Project overview
 
-Gentian OS is the kernel of the Gentian ecosystem: a Kubernetes operator, CRDs (`AppProfile`,
+Gentian OS is the kernel of the Gentian ecosystem: a Kubernetes operator, CRDs (`ComponentProfile`,
 `Cluster`, tenant resources), Helm charts, and install/uninstall tooling. See
 [README.md](README.md) for scope and [GETTING-STARTED.md](GETTING-STARTED.md) for local/cluster
 setup. `docs/` (see [docs/architecture.md](docs/architecture.md) and [docs/design/](docs/design/))
@@ -29,7 +29,7 @@ covers architecture in depth.
 and the decision procedure agents must follow before customizing an installed app. Two rules
 bind work in *this* repo:
 
-* **Nothing app-specific lands here.** `AppProfile.spec.customization` describes an app's ladder
+* **Nothing app-specific lands here.** `ComponentProfile.spec.customization` describes an app's ladder
   in app-neutral terms; `internal/customization/` implements rung ordering and policy without
   knowing any profile name. If a customization needs a new operator behaviour, extend the
   generic contract — never add `case "myapp"` to a reconciler.

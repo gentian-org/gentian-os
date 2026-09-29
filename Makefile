@@ -155,7 +155,7 @@ lint-shell: validate-steps lint-step-contracts lint-resolvable lint-unreachable 
 verify-recovery-kit:
 	@bash scripts/tools/verify-recovery-kit.sh
 
-## E-04 must tell the bootstrap credential apart from the cluster-admin session
+## E-03 must tell the bootstrap credential apart from the cluster-admin session
 ## every run carries after handover. Stubs the bao CLI; needs no cluster.
 test-bootstrap-token-classification:
 	@bash scripts/tests/test-bootstrap-token-classification.sh

@@ -140,8 +140,9 @@ above any single cluster, so it's the one place stage is a real selector.
 
 Environment separation lives in **directory paths and layered values files**
 inside `gentian-deployments`, not in separate deployment branches, and not
-(beyond `kernelDomain`) inside `gentian-os`. Secrets never go in Git — use
-`install.secrets.env` and OpenBao (see [design/security.md](design/security.md)).
+(beyond `kernelDomain`) inside `gentian-os`. Secrets never go in Git — the
+installer prompts for them and OpenBao holds them (see
+[design/security.md](design/security.md)).
 
 ---
 
@@ -183,28 +184,30 @@ accumulate faster than anything else the kernel creates.
 safety rules:
 
 **A. Scaffolding `gentian-deployments` (new cluster only)** —
-`scaffold_cluster_deployment()`, reached through
-`./install.sh --prepare-deployment`. Given `GENTIAN_DEPLOYMENTS_CLUSTER_ID`,
-`GENTIAN_DEPLOYMENTS_STAGE`, and `KERNEL_DOMAIN` in `install.env`:
+`scaffold_cluster_deployment()`, step 0 of the forward run and the whole of
+`./install.sh --prepare-deployment`. Given `GENTIAN_DEPLOYMENTS_CLUSTER_ID` and
+`GENTIAN_DEPLOYMENTS_STAGE` in `install.env`, and the kernel domain, network
+mode, issuer mode and mail mode from the prompt:
 
-1. For each of `claims/cluster.yaml`, `claims/infra-data.yaml`,
-   `claims/suze.yaml`, `values.yaml`, `cluster-settings.env`: generate it
-   **only if it doesn't already exist**. Per-file, not directory-level — a
-   cluster whose `cluster-settings.env` already exists but is missing the rest
-   still converges correctly, and re-running never overwrites a file a human
-   has since hand-edited.
-2. Stop. The files are left uncommitted for the operator to read and edit.
+1. For each of `claims/cluster.yaml`, `claims/suze.yaml`,
+   `claims/deployments-repository.yaml` and `values.yaml`: generate it **only
+   if it doesn't already exist**. Per-file, not directory-level — re-running
+   never overwrites a file a human has since hand-edited.
+2. Publish the two signing keys' public halves and ids under `signing/`,
+   generating the keys in `~/.gentian/gnupg` if this host has none.
+3. Commit everything dirty under `clusters/<cluster>/kernel`, signed with the
+   break-glass key, and push it to the branch. A claim whose kind no XRD in
+   this checkout defines is refused rather than committed.
 
-Committing is the operator's step, and so is the review that comes with it.
-The generated claims are what the cluster becomes — its domain, stage, tenancy
-and exposure model — and `gentian-deployments` is shared with every other
-cluster, so a tree pushed unread configures a cluster nobody has agreed to. The
-inputs are also not self-evidently right: a mistyped
-`GENTIAN_DEPLOYMENTS_CLUSTER_ID` produces a complete, valid, wrong directory.
+The commit is the installer's because Argo CD syncs `claims/` from the
+repository, not from the checkout: a file left uncommitted is applied by
+nothing, and the one that matters most — `deployments-repository.yaml` — is
+what gives the director its push credential. The review is still the
+operator's: the files are written before anything is applied, and
+GETTING-STARTED step 4 is reading them.
 
-`install.sh` therefore **never writes this directory**. When a required file is
-missing it names it and stops, pointing at `--prepare-deployment`. Nothing is
-prompted for and no cluster is contacted before that check runs.
+No cluster is contacted before this runs, and `--validate` never runs it — a
+missing definition is reported there, not scaffolded.
 
 Note what `scaffold_cluster_deployment()` deliberately does **not**
 generate: the `gentian-os`/`gentian-portal` ArgoCD `Application` objects or
@@ -228,7 +231,7 @@ from `kernel/bootstrap/chart`, the chart that ships in `gentian-os` itself:
 - `kernel/bootstrap/chart/templates/gentian-portal.yaml` — rendered and
   applied by `apply_gentian_portal_argocd_application()`
   (`scripts/lib/portal-login-bootstrap.sh`, called from
-  `install_portal_login()`, step `D-06-portal-login`). Produces the
+  `install_portal_login()`, step `D-02-portal-login`). Produces the
   `gentian-portal` Application, values layered the same way.
 
 Both are templates in `kernel/bootstrap/chart`, rendered by `helm template`
@@ -535,7 +538,7 @@ runs both back to back, which is why they are listed together.
 8. Confirm the cluster actually moved:
 
    ```bash
-   kubectl -n gentian-system get deploy gentian-os \
+   kubectl -n kernel-control get deploy gentian-os \
      -o jsonpath='{.spec.template.spec.containers[0].image}'
    ```
 
@@ -650,7 +653,7 @@ tracking), and giving the staging cluster's own `clusters/<cluster>/kernel/`:
 | `gentian-deployments/clusters/<cluster>/definitions/` | Yes | Tenant definitions (inactive) |
 | `gentian-deployments/clusters/<cluster>/tenants/` | Yes | Activated tenant manifests |
 | `install.env` | No (per machine) | `GENTIAN_DEPLOYMENTS_*`, `KERNEL_DOMAIN`, `ACME_ENV`, repo URLs |
-| `install.secrets.env` | **Never** | Master password, registry, SMTP, Cloudflare token, optional `GENTIAN_DEPLOYMENTS_GIT_TOKEN`, optional `CI_BOT_PAT` (uploaded to gentian-os + gentian-ui for image pin) |
+| Credentials | **Never** | Master password, registry, deployments token, Cloudflare token: prompted for by the installer (or read from the environment unattended) and stored in OpenBao. There is no secrets file |
 
 All deployment configuration for every cluster and stage can live on the
 `main` branch of `gentian-deployments`. For bootstrap commits, `install.sh`
@@ -667,7 +670,7 @@ and review policy (PR approvals) provide the safety gate.
 | Activate a tenant | `kubectl gentian tenants deploy <name>` |
 | Install an app on a tenant | `kubectl gentian apps install <profile> --tenant <name>` |
 | Re-apply Argo bootstrap apps | `./install.sh --update` (uses current `install.env` and git branch) |
-| Monitor GitOps sync | `kubectl get applications -n argocd` |
+| Monitor GitOps sync | `kubectl get applications -n kernel-gitops` |
 
 Kernel upgrades are **cluster-wide**: when the operator image updates, all
 tenants on that cluster use the new kernel version. See

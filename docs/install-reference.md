@@ -10,9 +10,9 @@ see [GETTING-STARTED.md](../GETTING-STARTED.md).
 `install.sh` installs nothing itself. It is a driver over a directory of steps:
 
 ```text
-scripts/steps/A-01-crossplane.sh
-scripts/steps/A-08-eso.sh
-scripts/steps/B-08-cluster-xr.sh
+scripts/steps/A-01-namespaces.sh
+scripts/steps/A-04-crossplane.sh
+scripts/steps/C-01-cluster-claim.sh
 …
 ```
 
@@ -43,11 +43,16 @@ phase, so a new step only ever affects its own phase.
 
 | | Phase | What it does |
 |---|---|---|
-| **A** | `control-plane` | Crossplane, namespaces, cert-manager, ESO, ArgoCD |
-| **B** | `secrets` | OpenBao, the Cluster claim, credential seeding |
-| **C** | `platform` | Wildcard cert, root ApplicationSet, admission, catalogue |
-| **D** | `applications` | Operator, mail, LLM serving, portal, app profiles |
-| **E** | `handover` | Tenants, per-tenant reconcile, revoke the bootstrap token |
+| **A** | `control-plane` | Namespaces, cert-manager, ESO, Crossplane, Envoy Gateway, Argo CD, metrics-server, image pre-warm, cluster issuers |
+| **B** | `secrets` | Kernel bootstrap Applications, transit seal and OpenBao, Crossplane providers and definitions, credential seeding, deployment signing keys |
+| **C** | `platform` | The Cluster claim, ApplicationSets, wildcard certificate, DNS, credential catalogue, repository hand-off |
+| **D** | `applications` | Operator and director, kernel realm and platform desktop, OpenBao OIDC, kernel Gateway |
+| **E** | `handover` | Recovery kit, revoke the bootstrap token |
+
+Before phase A there is a step 0: the cluster's definition in
+`gentian-deployments`. When it is absent the forward run asks for it, writes it,
+commits it signed with the break-glass key and pushes it, then continues.
+`./install.sh --prepare-deployment` is that step on its own.
 
 ### Reading a `--status` verdict
 
@@ -57,8 +62,10 @@ phase, so a new step only ever affects its own phase.
 | `missing` | It is not; `apply()` has work to do |
 | `undefined` | The step has nothing persistent to check, or does not apply to this cluster — a feature that is switched off, or no install-time artefact |
 
-`undefined` is never a failure. `A-04-prewarm`, `C-03-provider-helm` and
-`D-02-gateway-wait` only wait or warm a cache, so they always read that way.
+`undefined` is never a failure. `E-01-tenants` always reads that way — tenants
+are created after installation; `B-09` and `D-03` do on a cluster without
+OIDC, `C-03` on one with no DNS provider, `B-10` until the signing keys are in
+the deployments repository.
 
 ---
 
@@ -86,7 +93,8 @@ drift from what will actually run.
 ./install.sh --from B-03            # from there to the end
 ./install.sh --only A-07            # one step
 ./install.sh --only A-07,A-08       # a named subset
-./install.sh --skip A-04            # everything but that
+./install.sh --skip A-08            # everything but that
+./install.sh --until D-01           # stop after a step
 ./install.sh --phase secrets        # one phase
 ```
 
@@ -94,7 +102,7 @@ A failure names the step and its file. Fix the cause and re-run — completed
 steps are skipped.
 
 ```bash
-less scripts/steps/B-08-cluster-xr.sh
+less scripts/steps/C-01-cluster-claim.sh
 ```
 
 ---
@@ -109,7 +117,10 @@ Everything you supply belongs to one of three places.
 | Declarative configuration | YAML in `gentian-deployments` and `gentian-apps` | What is this cluster, its tenants, and their apps? |
 | Credentials | Prompted, written to OpenBao | What secrets does it need that cannot be derived? |
 
-`install.env` is the only non-secret file the installer reads from local disk.
+`install.env` is the only non-secret file the installer reads from local disk,
+and the deployments checkout is the only place it writes: step 0 scaffolds the
+cluster's definition there when it is absent, commits it signed with the
+break-glass key, and pushes it.
 [docs/deployment.md](deployment.md) covers the layering inside
 `gentian-deployments`.
 
@@ -154,13 +165,15 @@ the cluster on an older image. `PORTAL_IMAGE_TAG` follows gentian-ui's tags the
 same way. A cluster pins its own tags in
 `clusters/<cluster>/kernel/values.yaml`.
 
-### App Store write-back
+### The director's write-back
 
-The in-cluster App Store pushes install and uninstall commits to
-`gentian-deployments` through the operator's lifecycle API. Set
-`GENTIAN_DEPLOYMENTS_GIT_TOKEN` in `install.secrets.env` — the installer creates
-`gentian-deployments-git-credentials` in `gentian-system` — and enable
-`appLifecycle.deployments` in `clusters/<cluster>/kernel/values.yaml`.
+The director on the cluster is the only thing that writes to
+`gentian-deployments` after the install — tenants, app installs and uninstalls
+are commits it makes, signed with its own key. Its push credential is the
+`deployments-repository` credential the installer asks for, projected by the
+composition of `claims/deployments-repository.yaml`; without that claim every
+write answers 503. Argo CD accepts commits from the director's key and the
+break-glass key only, as listed in `clusters/<cluster>/kernel/signing/keys.env`.
 
 ### Which credentials the installer handles
 
@@ -196,7 +209,7 @@ The salt is generated at first install and stored in OpenBao beside the password
 > **and** the salt. The salt lives only in OpenBao, so a disaster that loses
 > OpenBao's storage also loses it, and the master password alone reproduces
 > nothing. `./install.sh --export-recovery-kit` captures both, plus the unseal
-> material and the cluster's identity, in one encrypted file — see step 9 of
+> material and the cluster's identity, in one encrypted file — see step 8 of
 > [GETTING-STARTED.md](../GETTING-STARTED.md).
 
 Under `random` there is nothing to reproduce; recovery means restoring OpenBao.
@@ -338,10 +351,14 @@ Uninstall is the same steps in reverse:
 ./install.sh --uninstall --dry-run    # see the order first
 ./install.sh --uninstall
 ./install.sh --uninstall --skip E-01  # keep tenant workloads and their Git manifests
+./install.sh --purge                  # the same, plus OpenBao and infra volumes and local state
+./install.sh --purge --cluster-infra  # the same, plus CNPG, Reloader and their CRDs
 ```
 
 OpenBao KV data survives an uninstall, so reinstalling onto the same cluster
-recovers the credentials rather than re-prompting.
+recovers the credentials rather than re-prompting. A purge removes it; the
+recovery kit is then the only way to rebuild the cluster as itself. Neither
+touches the deployments repository or the signing keys in `~/.gentian/gnupg`.
 
 ---
 
@@ -358,8 +375,8 @@ Crossplane and ArgoCD after the installer finishes:
 
 ```bash
 kubectl get managed
-kubectl get application,applicationset -n argocd
-kubectl describe cluster.gentianos.io -n crossplane-system
+kubectl get application,applicationset -n kernel-gitops
+kubectl describe cluster.gentianos.io -n kernel-provisioning
 ```
 
 **Something depends on a credential that is not there.** A claim waiting on a

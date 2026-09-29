@@ -441,7 +441,7 @@ wait_for_gateway_platform() {
     done
     if ! kubectl get gatewayclass gentian-envoy >/dev/null 2>&1; then
         warn "GatewayClass gentian-envoy not found after 300s."
-        warn "  Check operator logs: kubectl logs -n gentian-system deploy/gentian-os | grep gateway-platform"
+        warn "  Check operator logs: kubectl logs -n $(ns_kernel control) deploy/gentian-os | grep gateway-platform"
         return 1
     fi
     success "GatewayClass gentian-envoy present."

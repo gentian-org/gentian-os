@@ -1017,7 +1017,6 @@ print_summary_cp() {
     echo ""
     echo -e "${GREEN}  Inspect authz stack:${NC}"
     echo -e "${GREEN}    kubectl get xsuze,suze -n ${CROSSPLANE_NAMESPACE:-crossplane-system}${NC}"
-    echo -e "${GREEN}    kubectl get secret openfga-runtime -n platform-kernel${NC}"
     echo ""
     echo -e "${GREEN}  Inspect Crossplane managed resources:${NC}"
     echo -e "${GREEN}    kubectl get managed -l crossplane.io/composite=${xr_name}${NC}"
@@ -1027,7 +1026,7 @@ print_summary_cp() {
     echo -e "${GREEN}    URL  : ${argocd_url}${NC}"
     echo -e "${GREEN}    User : admin${NC}"
     echo -e "${GREEN}    Pass : ${argocd_pw}${NC}"
-    # Only while it exists. E-04 deletes it, so naming it afterwards sends the
+    # Only while it exists. E-03 deletes it, so naming it afterwards sends the
     # operator to a path that is gone — and on a finished install the answer to
     # "where are the OpenBao tokens" is the recovery kit, not a file in /tmp.
     if [[ -f "${OPENBAO_INIT_FILE}" ]]; then
@@ -1110,9 +1109,9 @@ print_handover_summary() {
         -o jsonpath='{.data.writePathProven}' 2>/dev/null || true)"
     revoked="$(kubectl get configmap gentian-handover -n "${ns}" \
         -o jsonpath='{.data.bootstrapCredentialRevoked}' 2>/dev/null || true)"
-    # E-04 gates on BOTH, so this has to name both. It listed only the OIDC
+    # E-03 gates on BOTH, so this has to name both. It listed only the OIDC
     # sign-in, which is the half an operator can discover by trying it: run
-    # E-04 without a kit and it says so. The other half is silent until then,
+    # E-03 without a kit and it says so. The other half is silent until then,
     # and it is the one with no second chance — the recovery key exists in
     # the init file and nowhere else until a kit is exported.
     kit="$(kubectl get configmap gentian-handover -n "${ns}" \
@@ -1124,7 +1123,7 @@ print_handover_summary() {
         return 0
     fi
 
-    # Reached only when the wait in E-04 did not end in a revocation: the
+    # Reached only when the wait in E-03 did not end in a revocation: the
     # operator interrupted it, it timed out, or the run was unattended. So this
     # is short by design — the long explanation was printed while it waited.
     echo -e "${YELLOW}  HANDOVER IS NOT FINISHED${NC}"
@@ -1132,19 +1131,19 @@ print_handover_summary() {
     echo -e "${YELLOW}    cluster, and creating tenants stays held back until it cannot.${NC}"
     echo ""
     if [[ "${kit}" != "true" ]]; then
-        # E-03 writes the kit, so this means that step did not run or failed.
-        echo -e "${YELLOW}      1. ./install.sh --only E-03      (write the recovery kit)${NC}"
+        # E-02 writes the kit, so this means that step did not run or failed.
+        echo -e "${YELLOW}      1. ./install.sh --only E-02      (write the recovery kit)${NC}"
         echo -e "${YELLOW}      2. move the kit somewhere safe${NC}"
         echo -e "${YELLOW}      3. sign in at https://console.${KERNEL_DOMAIN:-<kernel-domain>}/${NC}"
-        echo -e "${YELLOW}      4. ./install.sh --only E-04      (revoke and finish)${NC}"
+        echo -e "${YELLOW}      4. ./install.sh --only E-03      (revoke and finish)${NC}"
     elif [[ "${proven}" != "true" ]]; then
         echo -e "${YELLOW}      1. move the recovery kit somewhere safe${NC}"
         echo -e "${YELLOW}      2. sign in at https://console.${KERNEL_DOMAIN:-<kernel-domain>}/${NC}"
-        echo -e "${YELLOW}      3. ./install.sh --only E-04      (revoke and finish)${NC}"
+        echo -e "${YELLOW}      3. ./install.sh --only E-03      (revoke and finish)${NC}"
     else
         echo -e "${YELLOW}    Someone has signed in and a kit exists, so only the revocation${NC}"
         echo -e "${YELLOW}    is left:${NC}"
-        echo -e "${YELLOW}      ./install.sh --only E-04${NC}"
+        echo -e "${YELLOW}      ./install.sh --only E-03${NC}"
     fi
     echo ""
 }
@@ -1574,7 +1573,7 @@ _claim_cluster_fields() {
     # ends with "no day-2 writes at all".
     #
     # That is not a configuration a cluster should reach by default. The install
-    # revokes its own bootstrap token at E-04, and refuses to when nothing else
+    # revokes its own bootstrap token at E-03, and refuses to when nothing else
     # can write — so a claim without this block produces an install that cannot
     # finish its last step. Observed: the operator was asked to sign in, did, and
     # waited on a record that nothing existed to write.
@@ -1585,7 +1584,7 @@ _claim_cluster_fields() {
     printf '\n'
     printf '  # Human write access to OpenBao, federated from Keycloak.\n'
     printf '  # discoveryUrl is what creates the backend; without it the only\n'
-    printf '  # write path is the installer bootstrap token, which E-04 revokes.\n'
+    printf '  # write path is the installer bootstrap token, which E-03 revokes.\n'
     printf '  oidc:\n'
     printf '    discoveryUrl: https://id.%s/auth/realms/kernel\n' "${KERNEL_DOMAIN:-<kernel-domain>}"
     printf '    # clientId:          openbao\n'
@@ -2089,7 +2088,7 @@ gentian_commit_cluster_deployment() {
         -c "user.email=${GENTIAN_COMMITTER_EMAIL:-installer@${KERNEL_DOMAIN:-cluster.invalid}}" \
         "${SIGN[@]}" commit -q -m "chore(${cluster}): scaffold the kernel deployment
 
-Written by install.sh --prepare-deployment and signed with this cluster's
+Written by install.sh (step 0) and signed with this cluster's
 break-glass key: before the cluster exists there is no director to write it,
 and AD-2 names that case." 2>&1; then
         warn "The commit failed; clusters/${cluster}/kernel is still uncommitted."
