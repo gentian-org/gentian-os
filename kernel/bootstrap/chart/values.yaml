@@ -108,3 +108,15 @@ mailServiceMode: external
 # The name mail leaves from, when the cluster sends from an address it owns
 # (spec.mail.egressHost). Empty means the shared egress or a smarthost.
 mailEgressHost: ""
+
+# The long key ids Argo CD accepts commits from on the deployments repository
+# (AD-2). Passed by the installer, which reads them out of
+# clusters/<id>/kernel/signing/keys.env in the deployments checkout -- so what
+# the cluster trusts and what the repository says it trusts are one list.
+#
+# Empty renders no sourceIntegrity policy at all. That is a cluster which has
+# not been given keys, not a cluster which trusts everyone by choice: an empty
+# key list on an armed policy would refuse every sync, including the one that
+# would fix it.
+signing:
+  keys: []

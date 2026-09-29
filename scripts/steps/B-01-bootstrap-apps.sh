@@ -75,8 +75,22 @@ _v5_render() {
     local tmp
     tmp="$(mktemp -d)"
     { echo "namespaces:"; sed 's/^/  /' "${NAMESPACES_FILE}"; } > "${tmp}/namespaces.yaml"
+
+    # The keys the AppProject will accept commits from (AD-2), read out of the
+    # deployments checkout rather than this host's keyring: the repository is
+    # what the cluster has to agree with. Absent, the chart renders no
+    # sourceIntegrity policy -- an unarmed cluster rather than one that
+    # refuses every sync.
+    local signing_values="${tmp}/signing.yaml" signing_id
+    { echo "signing:"; echo "  keys:"; } > "${signing_values}"
+    for signing_id in $(gentian_signing_keys_from_deployment \
+        "${GENTIAN_DEPLOYMENTS_PATH}/clusters/${GENTIAN_DEPLOYMENTS_CLUSTER_ID}/kernel"); do
+        [[ -n "${signing_id}" ]] && printf '  - "%s"\n' "${signing_id}" >> "${signing_values}"
+    done
+
     helm template gentian-bootstrap "${SCRIPT_DIR}/kernel/bootstrap/chart" \
         -f "${tmp}/namespaces.yaml" -f "${SCRIPT_DIR}/kernel/platforms.yaml" \
+        -f "${signing_values}" \
         --set-string "dnsProvider=$(gentian_dns_provider)" \
         --set-string "kernelDomain=${KERNEL_DOMAIN:-}" \
         --set-string "cluster=${GENTIAN_DEPLOYMENTS_CLUSTER_ID:-}" \

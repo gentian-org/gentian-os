@@ -43,7 +43,7 @@ source "${__GENTIAN_LIB_DIR}/namespaces.sh"
 # shellcheck source=scripts/lib/helm-pinned.sh
 source "${__GENTIAN_LIB_DIR}/helm-pinned.sh"
 
-for _gentian_lib in portforward common certs openbao argocd catalogue validators credentials recovery bootstrap teardown; do
+for _gentian_lib in portforward common signing certs openbao argocd catalogue validators credentials recovery bootstrap teardown; do
     # shellcheck source=/dev/null
     source "${__GENTIAN_LIB_DIR}/${_gentian_lib}.sh"
 done

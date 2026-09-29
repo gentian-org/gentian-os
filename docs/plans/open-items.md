@@ -17,7 +17,7 @@ plans are what the code was supposed to become.
 | AD | | State |
 | --- | --- | --- |
 | AD-1 | Nine security principles normative | ✅ |
-| AD-2 | The director is the only writer of `gentian-deployments` | ◐ the director writes; **commit signing and `sourceIntegrity` are not implemented**. On the backlog below |
+| AD-2 | The director is the only writer of `gentian-deployments` | ✅ built end to end: two Ed25519 keys the installer generates, public halves and ids committed under `clusters/<id>/kernel/signing/`, `B-10` puts them in Argo CD's keyring and the director's private half in the vault, the AppProject renders `sourceIntegrity.git.policies[].gpg{mode: head}` scoped to the deployments repository alone, and the director signs what it commits. **Never exercised on a cluster** — whether Argo CD accepts the signatures is what S8 finds out |
 | AD-3 | The store runs outside the cluster | ✅ an entry is fetched at the digest the store named, verified, and committed when a tenant installs it. A catalogue with no configured source still syncs wholesale |
 | AD-4 | One catalogue kind, `ComponentProfile` | ✅ the type is gone, and deleting it found two live reads of a kind the catalogue stopped shipping — the integration-binding reconciler and `provisionAppGroupUsers`, both on the path to M4 — plus an installer step whose check tested for the deleted CRD |
 | AD-5 | Privileges are requests with one approval path | ✅ |
@@ -88,7 +88,7 @@ and the union's exactly-one rule cannot, so it survives as the annotation
 | | |
 | --- | --- |
 | ✅ | `claims/deployments-repository.yaml` is required on v5, and an uncommitted working copy is named. Without that claim the director has no push credential and every write answers 503 — no tenant, no invited user |
-| ☐ | Deployment preparation is not DRY: `--prepare-deployment` writes the files and nothing commits them, so the claim reaches the cluster only if somebody remembers. One writer, folded into the normal run |
+| ✅ | `--prepare-deployment` commits and pushes what it writes, signed with the break-glass key, and so does the install-time precondition. It used to say "commit and push them" and stop — and a `deployments-repository.yaml` left in the working copy is a director with no push credential, which surfaces as a 503 on the first write with nothing pointing back |
 | ✅ | One layout. The v4 step set, kernel trees, `spec.layout`, the `InfraData` kind and `--layout` are gone, and the 50 library functions the v4 steps were the only caller of went with them. `make lint` now runs `lint-unreachable`, so a definition nothing reaches fails the build — the other half of `lint-resolvable` |
 | ✅ | `GETTING-STARTED.md` names the claim set that exists, and says plainly that a leftover `claims/infra-data.yaml` must be deleted — the `InfraData` kind itself is gone, so nothing composes those engines twice |
 | ☐ | S7A.4 — no write has ever succeeded against this cluster |
@@ -104,11 +104,17 @@ none of it blocks the purge.
 
 | | Why it waits |
 | --- | --- |
-| **Deployment authorization** (AD-2): commit signing and Argo's `sourceIntegrity`, so the cluster syncs only commits the director or the break-glass key signed | Confined and separable. Until it lands, git is trusted because of who can push to it rather than because of what the commit carries |
 | **The bootstrap drift check** (AD-12): at start the director recomputes the defaults git implies and compares them to what OpenFGA holds, then REPORTS the difference | No urgency, and the reporting-not-fixing part is the point: a store that has diverged is a question, because overwriting it would erase exactly the grants and revocations that are nobody's default |
 | **Simplify the package union back to one** | The union now admits a chart and a composition together, because three entries genuinely are both. If those three ever render their extra objects some other way — a hook, a sidecar, the chart itself — the pair stops being needed and the rule can go back to exactly one, which is easier to answer without reading it twice |
 
 ## Known and deliberately not now
+
+- **The break-glass private key lives only on the install host**
+  (`~/.gentian/gnupg`). Lose that host and nobody can make a break-glass
+  commit to a cluster that requires signatures; the way back is editing the
+  AppProject by hand. Putting it in the recovery kit makes it recoverable and
+  makes the kit more sensitive, which is a decision about who may hold what
+  rather than a piece of work.
 
 
 - A catalogue source has to publish `index.yaml` for a cluster to browse it.

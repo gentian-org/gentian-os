@@ -40,6 +40,33 @@ spec:
   - namespace: {{ .name | quote }}
     server: https://kubernetes.default.svc
   {{- end }}
+  {{- /* AD-2: this repository syncs only commits the director or the
+       break-glass key signed. Scoped to the DEPLOYMENTS repository alone --
+       gentian-os, gentian-apps and the upstream Helm repositories are not
+       ours to sign, and a policy that covered them would refuse every sync
+       the cluster depends on.
+
+       mode: head verifies the head commit of the revision being synced, which
+       is what makes the history before signing was armed acceptable while
+       everything after it has to be signed.
+
+       Rendered only when the deployments repository AND the key ids are both
+       known. A cluster whose deployments checkout predates signing has no
+       keys to name, and an empty key list would refuse everything. */}}
+  {{- $signingKeys := .Values.signing.keys | default list }}
+  {{- if and .Values.deployments.repo $signingKeys }}
+  sourceIntegrity:
+    git:
+      policies:
+      - repos:
+        - url: {{ .Values.deployments.repo | quote }}
+        gpg:
+          mode: head
+          keys:
+          {{- range $signingKeys }}
+          - {{ . | quote }}
+          {{- end }}
+  {{- end }}
   clusterResourceWhitelist:
   - group: '*'
     kind: '*'

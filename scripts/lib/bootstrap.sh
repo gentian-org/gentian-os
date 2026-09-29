@@ -1928,14 +1928,32 @@ EOF
     if (( generated )); then
         echo ""
         success "Wrote clusters/${cluster}/kernel in ${GENTIAN_DEPLOYMENTS_PATH}."
-        info "Nothing has been committed, pushed, or applied. Next:"
-        info "  1. Read and edit clusters/${cluster}/kernel — the claims are what"
-        info "     the cluster becomes, including its exposure and mail model."
-        info "  2. Commit and push them to ${GENTIAN_DEPLOYMENTS_BRANCH:-main}."
-        info "  3. Run ./install.sh"
     else
         info "clusters/${cluster}/kernel is already complete — nothing written."
     fi
+
+    # Committed and pushed here, not left as an instruction.
+    #
+    # It used to say "commit and push them" and stop. Argo CD syncs claims/
+    # from the repository, so a claim left in the working copy is applied by
+    # nothing -- and the one that matters most, deployments-repository.yaml,
+    # is what gives the director its push credential. Forgetting it produced
+    # an install that finished, screens that read, and a first write that
+    # answered 503 with nothing pointing back here.
+    #
+    # The keys this cluster's commits are signed by, published where a
+    # reviewer and the cluster both read them from (AD-2).
+    gentian_publish_signing_material "${kernel_dir}" || true
+
+    # Nothing is APPLIED: this still contacts no cluster.
+    gentian_commit_cluster_deployment "${kernel_dir}" "${cluster}"
+
+    echo ""
+    info "Next:"
+    info "  1. Read clusters/${cluster}/kernel — the claims are what the cluster"
+    info "     becomes, including its exposure and mail model. Edit and re-run"
+    info "     this to commit any change."
+    info "  2. Run ./install.sh"
 }
 
 # =============================================================================
@@ -1958,6 +1976,86 @@ EOF
 # So this warns rather than refuses: a working copy mid-review is a legitimate
 # state, and an installer that stopped on it would be wrong. Naming what will
 # happen is enough, and it is what nobody was told.
+# gentian_commit_cluster_deployment <kernel-dir> <cluster> — close the loop.
+#
+# The scaffolder used to write the files and warn that they were uncommitted,
+# which left the most important step of bringing a cluster up as something the
+# operator had to remember. Argo CD syncs claims/ from the REPOSITORY, so an
+# uncommitted deployments-repository.yaml is a director with no push
+# credential: the install finishes, every screen reads, and the first write
+# answers 503. Nothing in the output said why.
+#
+# So this commits and pushes, signed with the break-glass key (AD-2). A human
+# writing directly to the deployments repository is exactly the break-glass
+# case, and giving that act its own key means `git log --show-signature`
+# afterwards says which commits a person made and which the director made.
+#
+# It never fails the run. A checkout with no remote, no credential, or a
+# branch behind its upstream is an ordinary situation on an install host, and
+# an installer that refused to continue would be worse than one that says
+# clearly what is still to do.
+gentian_commit_cluster_deployment() {
+    local kernel_dir="$1" cluster="$2" dirty sign_args branch
+    command -v git >/dev/null 2>&1 || return 0
+    git -C "${GENTIAN_DEPLOYMENTS_PATH}" rev-parse --git-dir >/dev/null 2>&1 || {
+        warn "${GENTIAN_DEPLOYMENTS_PATH} is not a git repository, so nothing was committed."
+        warn "  Argo CD syncs claims/ from the repository; these files reach the cluster"
+        warn "  only from a checkout that has a remote."
+        return 0
+    }
+
+    dirty="$(git -C "${GENTIAN_DEPLOYMENTS_PATH}" status --porcelain -- \
+        "clusters/${cluster}/kernel" 2>/dev/null || true)"
+    [[ -n "${dirty}" ]] || return 0
+
+    if ! sign_args="$(gentian_git_sign_args break-glass 2>/dev/null)"; then
+        gentian_ensure_signing_key break-glass >/dev/null || {
+            _warn_uncommitted_cluster_deployment "${kernel_dir}" "${cluster}"
+            return 0
+        }
+        sign_args="$(gentian_git_sign_args break-glass)"
+    fi
+
+    info "Committing clusters/${cluster}/kernel:"
+    while IFS= read -r line; do
+        [[ -n "${line}" ]] && info "    ${line}"
+    done <<< "${dirty}"
+
+    local -a SIGN
+    read -r -a SIGN <<< "${sign_args}"
+    git -C "${GENTIAN_DEPLOYMENTS_PATH}" add -- "clusters/${cluster}/kernel" || {
+        _warn_uncommitted_cluster_deployment "${kernel_dir}" "${cluster}"
+        return 0
+    }
+    if ! git -C "${GENTIAN_DEPLOYMENTS_PATH}" \
+        -c "user.name=${GENTIAN_COMMITTER_NAME:-Gentian installer}" \
+        -c "user.email=${GENTIAN_COMMITTER_EMAIL:-installer@${KERNEL_DOMAIN:-cluster.invalid}}" \
+        "${SIGN[@]}" commit -q -m "chore(${cluster}): scaffold the kernel deployment
+
+Written by install.sh --prepare-deployment and signed with this cluster's
+break-glass key: before the cluster exists there is no director to write it,
+and AD-2 names that case." 2>&1; then
+        warn "The commit failed; clusters/${cluster}/kernel is still uncommitted."
+        _warn_uncommitted_cluster_deployment "${kernel_dir}" "${cluster}"
+        return 0
+    fi
+
+    # Explicitly to the branch of the same name, not a bare `git push`. A
+    # checkout whose local branch and upstream are named differently -- which
+    # a clone of an empty repository produces -- makes a bare push refuse with
+    # "the upstream branch of your current branch does not match", and that is
+    # a confusing thing to hit while bringing up a cluster.
+    branch="$(git -C "${GENTIAN_DEPLOYMENTS_PATH}" branch --show-current 2>/dev/null || true)"
+    branch="${branch:-${GENTIAN_DEPLOYMENTS_BRANCH:-main}}"
+    if ! git -C "${GENTIAN_DEPLOYMENTS_PATH}" push -q origin "HEAD:${branch}" 2>&1; then
+        warn "Committed, but the push failed. The cluster reads the repository, not"
+        warn "  this checkout, so run it by hand once the remote will take it:"
+        warn "    git -C ${GENTIAN_DEPLOYMENTS_PATH} push origin HEAD:${branch}"
+        return 0
+    fi
+    success "Committed and pushed clusters/${cluster}/kernel (signed, break-glass)."
+}
+
 _warn_uncommitted_cluster_deployment() {
     local kernel_dir="$1" cluster="$2" dirty
     command -v git >/dev/null 2>&1 || return 0
@@ -2023,7 +2121,10 @@ require_cluster_deployment() {
     fi
 
     if (( ${#missing[@]} == 0 )); then
-        _warn_uncommitted_cluster_deployment "${kernel_dir}" "${cluster}"
+        # Not a warning any more. An edit sitting in the working copy at
+        # install time is an edit the cluster will not get, and the operator
+        # has already said what they want by making it.
+        gentian_commit_cluster_deployment "${kernel_dir}" "${cluster}"
         return 0
     fi
 

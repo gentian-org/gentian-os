@@ -176,6 +176,12 @@ director:
   # enforce | off. A cluster with no App Store has nothing that could grant an
   # entitlement, and says so here rather than by an absence.
   entitlements: "off"
+  # The Secret holding this director's OpenPGP private key, projected from
+  # the vault by External Secrets (AD-2). Empty mounts nothing and the
+  # director commits unsigned -- which is a cluster whose AppProject carries
+  # no signing policy either.
+  signingKeySecret: "gentian-director-signing"
+
   committer:
     name: gentian-director
     email: director@gentian.invalid

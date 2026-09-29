@@ -31,8 +31,12 @@ RUN CGO_ENABLED=0 GOOS=linux GOARCH=${TARGETARCH} go build -o edge-authz ./cmd/e
 # ── Runtime stage ──────────────────────────────────────────────────────────────
 FROM debian:bookworm-slim
 
+# gnupg: the director signs what it commits (AD-2), and git shells out to
+# gpg to do it. Without it every commit is unsigned and Argo CD refuses the
+# repository -- which would show up as a cluster that syncs nothing, several
+# layers from the missing package.
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends git ca-certificates \
+    && apt-get install -y --no-install-recommends git ca-certificates gnupg \
     && rm -rf /var/lib/apt/lists/*
 
 COPY --from=builder /workspace/manager /manager

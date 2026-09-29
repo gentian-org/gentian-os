@@ -55,6 +55,12 @@ type GitOps struct {
 	// syncedAt is when the checkout last equalled the remote, which is what
 	// lets a read skip the fetch. Guarded by mu, like the checkout itself.
 	syncedAt time.Time
+	// signArgs are the git flags that sign a commit, set by EnableSigning.
+	// Empty means this director was given no key and commits unsigned --
+	// which is a cluster whose AppProject carries no policy either (AD-2).
+	signArgs []string
+	// signingKey is the fingerprint those flags name, for reporting.
+	signingKey string
 }
 
 // Result is the outcome of a write.
@@ -475,8 +481,10 @@ func (g *GitOps) commitPaths(ctx context.Context, rels []string, message string,
 	}
 	args := []string{"-C", g.path,
 		"-c", "user.name=" + g.committer.Name,
-		"-c", "user.email=" + g.committer.Email,
-		"commit", "-m", full}
+		"-c", "user.email=" + g.committer.Email}
+	// Signing flags before the subcommand, because they are configuration.
+	args = append(args, g.signArgs...)
+	args = append(args, "commit", "-m", full)
 	if meta.Author.Name != "" || meta.Author.Email != "" {
 		name, email := meta.Author.Name, meta.Author.Email
 		if name == "" {
