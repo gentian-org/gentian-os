@@ -30,6 +30,7 @@ import (
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 	"github.com/gentian-org/gentian-os/internal/kernel"
+	"github.com/gentian-org/gentian-os/internal/layout"
 )
 
 // newPostgresProfile creates a minimal AppProfile that requires a PostgreSQL database.
@@ -380,7 +381,7 @@ func TestDB_DeleteDeletePolicy_DeletesDatabaseCR(t *testing.T) {
 		t.Fatalf("delete tenant: %v", err)
 	}
 	// deleteIdentity runs before deleteDatabase; mark its jobs.
-	go markJobCompleteWhenReady("keycloak-realm-delete-dbdelete", "platform-kernel")
+	go markJobCompleteWhenReady("keycloak-realm-delete-dbdelete", layout.Namespace(layout.Authentication))
 
 	// Database CR should be deleted from platform-kernel.
 	waitFor(t, jobAppearTimeout, func() bool {
@@ -449,7 +450,7 @@ func TestDB_DeleteDeletePolicy_DeletesOrphanedDatabaseCR(t *testing.T) {
 	if err := testClient.Delete(context.Background(), tenant); err != nil {
 		t.Fatalf("delete tenant: %v", err)
 	}
-	go markJobCompleteWhenReady("keycloak-realm-delete-dborphan", "platform-kernel")
+	go markJobCompleteWhenReady("keycloak-realm-delete-dborphan", layout.Namespace(layout.Authentication))
 
 	waitFor(t, jobAppearTimeout, func() bool {
 		db := &unstructured.Unstructured{}

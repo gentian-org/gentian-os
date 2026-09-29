@@ -29,6 +29,7 @@ import (
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
+	"github.com/gentian-org/gentian-os/internal/layout"
 )
 
 func TestNormalizeRoutingMode(t *testing.T) {
@@ -162,7 +163,7 @@ func TestGatewayProgrammed(t *testing.T) {
 	}
 
 	gw := &gatewayv1.Gateway{
-		ObjectMeta: metav1.ObjectMeta{Name: AuthenticatedGatewayName, Namespace: "platform-kernel"},
+		ObjectMeta: metav1.ObjectMeta{Name: AuthenticatedGatewayName, Namespace: layout.Namespace(layout.Edge)},
 	}
 	gw.Status.Conditions = []metav1.Condition{
 		{Type: string(gatewayv1.GatewayConditionProgrammed), Status: metav1.ConditionTrue, Reason: "Programmed"},
@@ -183,7 +184,7 @@ func TestGatewayProgrammedAddressNotAssignedWithListeners(t *testing.T) {
 	}
 
 	gw := &gatewayv1.Gateway{
-		ObjectMeta: metav1.ObjectMeta{Name: AuthenticatedGatewayName, Namespace: "platform-kernel"},
+		ObjectMeta: metav1.ObjectMeta{Name: AuthenticatedGatewayName, Namespace: layout.Namespace(layout.Edge)},
 	}
 	gw.Status.Conditions = []metav1.Condition{
 		{

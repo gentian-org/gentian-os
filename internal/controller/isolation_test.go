@@ -317,7 +317,7 @@ func TestDeletion_EndToEnd_WithApps(t *testing.T) {
 	}
 	for _, jobName := range cleanupJobs {
 		waitForKernelJob(t, jobName, "del-full")
-		markJobComplete(t, jobName, "platform-kernel")
+		markJobComplete(t, jobName, layout.Namespace(layout.Authentication))
 	}
 
 	// Wait for Tenant CR to be gone (finalizer ran).
@@ -337,7 +337,7 @@ func TestDeletion_EndToEnd_WithApps(t *testing.T) {
 		t.Run("purges "+jobName, func(t *testing.T) {
 			waitFor(t, jobAppearTimeout, func() bool {
 				job := &batchv1.Job{}
-				err := testClient.Get(ctx, types.NamespacedName{Name: jobName, Namespace: "platform-kernel"}, job)
+				err := testClient.Get(ctx, types.NamespacedName{Name: jobName, Namespace: layout.Namespace(layout.Authentication)}, job)
 				if k8serrors.IsNotFound(err) {
 					return true
 				}
@@ -351,7 +351,7 @@ func TestDeletion_EndToEnd_WithApps(t *testing.T) {
 					prop := metav1.DeletePropagationBackground
 					_ = testClient.Delete(ctx, job, &client.DeleteOptions{PropagationPolicy: &prop})
 				}
-				err = testClient.Get(ctx, types.NamespacedName{Name: jobName, Namespace: "platform-kernel"}, job)
+				err = testClient.Get(ctx, types.NamespacedName{Name: jobName, Namespace: layout.Namespace(layout.Authentication)}, job)
 				return k8serrors.IsNotFound(err)
 			})
 		})
@@ -458,7 +458,7 @@ func TestDeletion_Retain_KeepsDataRevokesAccess(t *testing.T) {
 	// No cleanup Jobs should be created for data resources with Retain policy.
 	identityDeleteJob := &batchv1.Job{}
 	if err := testClient.Get(ctx, types.NamespacedName{
-		Name: "keycloak-realm-delete-ret-full", Namespace: "platform-kernel",
+		Name: "keycloak-realm-delete-ret-full", Namespace: layout.Namespace(layout.Authentication),
 	}, identityDeleteJob); err == nil {
 		t.Error("Keycloak realm deletion Job should NOT be created for Retain policy")
 	}

@@ -29,6 +29,7 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
+	"github.com/gentian-org/gentian-os/internal/layout"
 )
 
 // appClaimTestGVK is the GVK for App claims created by the operator. It matches
@@ -239,7 +240,7 @@ func TestApps_DeleteRemovesAppClaims(t *testing.T) {
 		t.Fatalf("delete tenant: %v", err)
 	}
 	// deleteIdentity runs before deleteAppDeployment; mark its jobs.
-	go markJobCompleteWhenReady("keycloak-realm-delete-del-tenant", "platform-kernel")
+	go markJobCompleteWhenReady("keycloak-realm-delete-del-tenant", layout.Namespace(layout.Authentication))
 
 	// App claim should be removed.
 	waitFor(t, tenantReadyTimeout, func() bool {

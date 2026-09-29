@@ -29,6 +29,7 @@ import (
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 	"github.com/gentian-org/gentian-os/internal/kernel"
+	"github.com/gentian-org/gentian-os/internal/layout"
 )
 
 // newOIDCProfile creates a minimal AppProfile that requires OIDC.
@@ -116,16 +117,16 @@ func markKernelPortalIdentityJobsComplete(t *testing.T, tenantName string) {
 		waitFor(t, jobAppearTimeout, func() bool {
 			j := &batchv1.Job{}
 			return testClient.Get(context.Background(),
-				types.NamespacedName{Name: jobName, Namespace: "platform-kernel"}, j) == nil
+				types.NamespacedName{Name: jobName, Namespace: layout.Namespace(layout.Authentication)}, j) == nil
 		})
-		markJobComplete(t, jobName, "platform-kernel")
+		markJobComplete(t, jobName, layout.Namespace(layout.Authentication))
 	}
 	// SMTP realm config is only provisioned when cluster SMTP credentials exist.
 	smtpJob := "keycloak-tenant-smtp-" + tenantName
 	j := &batchv1.Job{}
 	if testClient.Get(context.Background(),
-		types.NamespacedName{Name: smtpJob, Namespace: "platform-kernel"}, j) == nil {
-		markJobComplete(t, smtpJob, "platform-kernel")
+		types.NamespacedName{Name: smtpJob, Namespace: layout.Namespace(layout.Authentication)}, j) == nil {
+		markJobComplete(t, smtpJob, layout.Namespace(layout.Authentication))
 	}
 }
 
@@ -135,9 +136,9 @@ func markGentianGroupsComplete(t *testing.T, tenantName string) {
 	waitFor(t, jobAppearTimeout, func() bool {
 		j := &batchv1.Job{}
 		return testClient.Get(context.Background(),
-			types.NamespacedName{Name: jobName, Namespace: "platform-kernel"}, j) == nil
+			types.NamespacedName{Name: jobName, Namespace: layout.Namespace(layout.Authentication)}, j) == nil
 	})
-	markJobComplete(t, jobName, "platform-kernel")
+	markJobComplete(t, jobName, layout.Namespace(layout.Authentication))
 }
 
 // markJobCompleteWhenReady polls until the named Job appears in namespace,
@@ -188,18 +189,18 @@ func TestIdentity_NoOIDCApps(t *testing.T) {
 	waitFor(t, jobAppearTimeout, func() bool {
 		j := &batchv1.Job{}
 		return testClient.Get(context.Background(),
-			types.NamespacedName{Name: "keycloak-realm-noidc", Namespace: "platform-kernel"}, j) == nil
+			types.NamespacedName{Name: "keycloak-realm-noidc", Namespace: layout.Namespace(layout.Authentication)}, j) == nil
 	})
-	markJobComplete(t, "keycloak-realm-noidc", "platform-kernel")
+	markJobComplete(t, "keycloak-realm-noidc", layout.Namespace(layout.Authentication))
 	markGentianGroupsComplete(t, "noidc")
 
 	// Wait for admin Job, then mark it complete.
 	waitFor(t, jobAppearTimeout, func() bool {
 		j := &batchv1.Job{}
 		return testClient.Get(context.Background(),
-			types.NamespacedName{Name: "keycloak-admin-noidc", Namespace: "platform-kernel"}, j) == nil
+			types.NamespacedName{Name: "keycloak-admin-noidc", Namespace: layout.Namespace(layout.Authentication)}, j) == nil
 	})
-	markJobComplete(t, "keycloak-admin-noidc", "platform-kernel")
+	markJobComplete(t, "keycloak-admin-noidc", layout.Namespace(layout.Authentication))
 
 	markKernelPortalIdentityJobsComplete(t, "noidc")
 
@@ -246,7 +247,7 @@ func TestIdentity_CreatesRealmJob(t *testing.T) {
 	job := &batchv1.Job{}
 	waitFor(t, jobAppearTimeout, func() bool {
 		return testClient.Get(context.Background(),
-			types.NamespacedName{Name: "keycloak-realm-realmtest", Namespace: "platform-kernel"}, job) == nil
+			types.NamespacedName{Name: "keycloak-realm-realmtest", Namespace: layout.Namespace(layout.Authentication)}, job) == nil
 	})
 
 	if job.Labels["gentianos.io/tenant"] != "realmtest" {
@@ -291,24 +292,24 @@ func TestIdentity_CreatesClientJobAfterRealmComplete(t *testing.T) {
 	waitFor(t, jobAppearTimeout, func() bool {
 		j := &batchv1.Job{}
 		return testClient.Get(context.Background(),
-			types.NamespacedName{Name: "keycloak-realm-clienttest", Namespace: "platform-kernel"}, j) == nil
+			types.NamespacedName{Name: "keycloak-realm-clienttest", Namespace: layout.Namespace(layout.Authentication)}, j) == nil
 	})
-	markJobComplete(t, "keycloak-realm-clienttest", "platform-kernel")
+	markJobComplete(t, "keycloak-realm-clienttest", layout.Namespace(layout.Authentication))
 	markGentianGroupsComplete(t, "clienttest")
 
 	// Wait for admin Job, then mark it complete.
 	waitFor(t, jobAppearTimeout, func() bool {
 		j := &batchv1.Job{}
 		return testClient.Get(context.Background(),
-			types.NamespacedName{Name: "keycloak-admin-clienttest", Namespace: "platform-kernel"}, j) == nil
+			types.NamespacedName{Name: "keycloak-admin-clienttest", Namespace: layout.Namespace(layout.Authentication)}, j) == nil
 	})
-	markJobComplete(t, "keycloak-admin-clienttest", "platform-kernel")
+	markJobComplete(t, "keycloak-admin-clienttest", layout.Namespace(layout.Authentication))
 
 	// Client Job should be created after browser flow is complete.
 	clientJob := &batchv1.Job{}
 	waitFor(t, tenantReadyTimeout, func() bool {
 		return testClient.Get(context.Background(),
-			types.NamespacedName{Name: "keycloak-client-clienttest-oidc-app2", Namespace: "platform-kernel"}, clientJob) == nil
+			types.NamespacedName{Name: "keycloak-client-clienttest-oidc-app2", Namespace: layout.Namespace(layout.Authentication)}, clientJob) == nil
 	})
 
 	if clientJob.Labels["gentianos.io/app"] != "oidc-app2" {
@@ -363,9 +364,9 @@ func TestIdentity_CrossplaneOwnsClientWithoutPack(t *testing.T) {
 		waitFor(t, jobAppearTimeout, func() bool {
 			j := &batchv1.Job{}
 			return testClient.Get(context.Background(),
-				types.NamespacedName{Name: job, Namespace: "platform-kernel"}, j) == nil
+				types.NamespacedName{Name: job, Namespace: layout.Namespace(layout.Authentication)}, j) == nil
 		})
-		markJobComplete(t, job, "platform-kernel")
+		markJobComplete(t, job, layout.Namespace(layout.Authentication))
 		if job == "keycloak-realm-nopack" {
 			markGentianGroupsComplete(t, "nopack")
 		}
@@ -380,7 +381,7 @@ func TestIdentity_CrossplaneOwnsClientWithoutPack(t *testing.T) {
 
 	clientJob := &batchv1.Job{}
 	err := testClient.Get(context.Background(),
-		types.NamespacedName{Name: "keycloak-client-nopack-oidc-nopack", Namespace: "platform-kernel"}, clientJob)
+		types.NamespacedName{Name: "keycloak-client-nopack-oidc-nopack", Namespace: layout.Namespace(layout.Authentication)}, clientJob)
 	if err == nil {
 		t.Fatal("operator created a client Job for a profile whose Composition owns the Client MR")
 	}
@@ -416,26 +417,26 @@ func TestIdentity_SetsReadyWhenAllJobsDone(t *testing.T) {
 	waitFor(t, jobAppearTimeout, func() bool {
 		j := &batchv1.Job{}
 		return testClient.Get(context.Background(),
-			types.NamespacedName{Name: "keycloak-realm-allready", Namespace: "platform-kernel"}, j) == nil
+			types.NamespacedName{Name: "keycloak-realm-allready", Namespace: layout.Namespace(layout.Authentication)}, j) == nil
 	})
-	markJobComplete(t, "keycloak-realm-allready", "platform-kernel")
+	markJobComplete(t, "keycloak-realm-allready", layout.Namespace(layout.Authentication))
 	markGentianGroupsComplete(t, "allready")
 
 	// Mark admin Job complete.
 	waitFor(t, jobAppearTimeout, func() bool {
 		j := &batchv1.Job{}
 		return testClient.Get(context.Background(),
-			types.NamespacedName{Name: "keycloak-admin-allready", Namespace: "platform-kernel"}, j) == nil
+			types.NamespacedName{Name: "keycloak-admin-allready", Namespace: layout.Namespace(layout.Authentication)}, j) == nil
 	})
-	markJobComplete(t, "keycloak-admin-allready", "platform-kernel")
+	markJobComplete(t, "keycloak-admin-allready", layout.Namespace(layout.Authentication))
 
 	// Wait for client Job, then mark it complete.
 	waitFor(t, tenantReadyTimeout, func() bool {
 		j := &batchv1.Job{}
 		return testClient.Get(context.Background(),
-			types.NamespacedName{Name: "keycloak-client-allready-oidc-app3", Namespace: "platform-kernel"}, j) == nil
+			types.NamespacedName{Name: "keycloak-client-allready-oidc-app3", Namespace: layout.Namespace(layout.Authentication)}, j) == nil
 	})
-	markJobComplete(t, "keycloak-client-allready-oidc-app3", "platform-kernel")
+	markJobComplete(t, "keycloak-client-allready-oidc-app3", layout.Namespace(layout.Authentication))
 
 	markKernelPortalIdentityJobsComplete(t, "allready")
 
@@ -488,18 +489,18 @@ func TestIdentity_CreatesAdminJobAfterRealm(t *testing.T) {
 	waitFor(t, jobAppearTimeout, func() bool {
 		j := &batchv1.Job{}
 		return testClient.Get(context.Background(),
-			types.NamespacedName{Name: "keycloak-realm-admintest", Namespace: "platform-kernel"}, j) == nil
+			types.NamespacedName{Name: "keycloak-realm-admintest", Namespace: layout.Namespace(layout.Authentication)}, j) == nil
 	})
 	waitForTenantConditionReason(t, "admintest", "IdentityReady", "ProvisioningRealm")
 
-	markJobComplete(t, "keycloak-realm-admintest", "platform-kernel")
+	markJobComplete(t, "keycloak-realm-admintest", layout.Namespace(layout.Authentication))
 	waitForTenantConditionReason(t, "admintest", "IdentityReady", "ProvisioningGroups")
 	markGentianGroupsComplete(t, "admintest")
 	waitForTenantConditionReason(t, "admintest", "IdentityReady", "ProvisioningAdmin")
 
 	adminJob := &batchv1.Job{}
 	if err := testClient.Get(context.Background(),
-		types.NamespacedName{Name: "keycloak-admin-admintest", Namespace: "platform-kernel"}, adminJob); err != nil {
+		types.NamespacedName{Name: "keycloak-admin-admintest", Namespace: layout.Namespace(layout.Authentication)}, adminJob); err != nil {
 		t.Fatalf("get admin Job: %v", err)
 	}
 	if adminJob.Labels["gentianos.io/tenant"] != "admintest" {
@@ -517,7 +518,7 @@ func TestIdentity_CreatesAdminJobAfterRealm(t *testing.T) {
 		t.Error("expected TENANT_ADMIN_PASSWORD env var in admin Job")
 	}
 
-	markJobComplete(t, "keycloak-admin-admintest", "platform-kernel")
+	markJobComplete(t, "keycloak-admin-admintest", layout.Namespace(layout.Authentication))
 	// Straight from the admin Job to the client Jobs. The browser-flow and
 	// broker-first-login Jobs that used to sit between them are retired, so
 	// neither reason is reported any more.
@@ -526,7 +527,7 @@ func TestIdentity_CreatesAdminJobAfterRealm(t *testing.T) {
 	clientJob := &batchv1.Job{}
 	waitFor(t, jobAppearTimeout, func() bool {
 		return testClient.Get(context.Background(),
-			types.NamespacedName{Name: "keycloak-client-admintest-oidc-app-admin", Namespace: "platform-kernel"}, clientJob) == nil
+			types.NamespacedName{Name: "keycloak-client-admintest-oidc-app-admin", Namespace: layout.Namespace(layout.Authentication)}, clientJob) == nil
 	})
 }
 
@@ -557,7 +558,7 @@ func TestIdentity_DeleteDeletePolicy_CreatesCleanupJob(t *testing.T) {
 	waitFor(t, jobAppearTimeout, func() bool {
 		j := &batchv1.Job{}
 		return testClient.Get(context.Background(),
-			types.NamespacedName{Name: "keycloak-realm-identdelete", Namespace: "platform-kernel"}, j) == nil
+			types.NamespacedName{Name: "keycloak-realm-identdelete", Namespace: layout.Namespace(layout.Authentication)}, j) == nil
 	})
 
 	// Now delete the tenant.
@@ -597,27 +598,27 @@ func TestIdentity_RetainPolicy_DisablesRealm(t *testing.T) {
 	waitFor(t, jobAppearTimeout, func() bool {
 		j := &batchv1.Job{}
 		return testClient.Get(context.Background(),
-			types.NamespacedName{Name: "keycloak-realm-identretain", Namespace: "platform-kernel"}, j) == nil
+			types.NamespacedName{Name: "keycloak-realm-identretain", Namespace: layout.Namespace(layout.Authentication)}, j) == nil
 	})
-	markJobComplete(t, "keycloak-realm-identretain", "platform-kernel")
+	markJobComplete(t, "keycloak-realm-identretain", layout.Namespace(layout.Authentication))
 
 	// Delete the tenant.
 	if err := testClient.Delete(context.Background(), tenant); err != nil {
 		t.Fatalf("delete tenant: %v", err)
 	}
-	go markJobCompleteWhenReady("keycloak-realm-disable-identretain", "platform-kernel")
+	go markJobCompleteWhenReady("keycloak-realm-disable-identretain", layout.Namespace(layout.Authentication))
 
 	// Expect a realm-disable Job (not a delete Job).
 	waitFor(t, jobAppearTimeout, func() bool {
 		j := &batchv1.Job{}
 		return testClient.Get(context.Background(),
-			types.NamespacedName{Name: "keycloak-realm-disable-identretain", Namespace: "platform-kernel"}, j) == nil
+			types.NamespacedName{Name: "keycloak-realm-disable-identretain", Namespace: layout.Namespace(layout.Authentication)}, j) == nil
 	})
 
 	// No realm-deletion Job must be created.
 	j := &batchv1.Job{}
 	if testClient.Get(context.Background(),
-		types.NamespacedName{Name: "keycloak-realm-delete-identretain", Namespace: "platform-kernel"}, j) == nil {
+		types.NamespacedName{Name: "keycloak-realm-delete-identretain", Namespace: layout.Namespace(layout.Authentication)}, j) == nil {
 		t.Error("Keycloak realm deletion Job should NOT be created for Retain policy")
 	}
 }

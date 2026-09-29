@@ -23,15 +23,16 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
+	"github.com/gentian-org/gentian-os/internal/layout"
 )
 
 func TestTenantNameFromNamespace(t *testing.T) {
 	cases := map[string]string{
-		"tenant-demo":      "demo",
-		"tenant-acme-corp": "acme-corp",
-		"platform-kernel":  "",
-		"tenant-":          "",
-		"demo":             "",
+		"tenant-demo":                           "demo",
+		"tenant-acme-corp":                      "acme-corp",
+		layout.Namespace(layout.Authentication): "",
+		"tenant-":                               "",
+		"demo":                                  "",
 	}
 	for ns, want := range cases {
 		if got := tenantNameFromNamespace(ns); got != want {

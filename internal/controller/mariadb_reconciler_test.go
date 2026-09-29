@@ -26,6 +26,7 @@ import (
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 	"github.com/gentian-org/gentian-os/internal/kernel"
+	"github.com/gentian-org/gentian-os/internal/layout"
 )
 
 // newMariaDBProfile creates a minimal AppProfile that requires a MariaDB database.
@@ -252,7 +253,7 @@ func TestMariaDB_DeleteDeletePolicy_CreatesDeleteJob(t *testing.T) {
 		t.Fatalf("delete tenant: %v", err)
 	}
 	// deleteIdentity runs before deleteMariaDB; mark its jobs.
-	go markJobCompleteWhenReady("keycloak-realm-delete-mariadelete", "platform-kernel")
+	go markJobCompleteWhenReady("keycloak-realm-delete-mariadelete", layout.Namespace(layout.Authentication))
 
 	// A delete Job should be created in the kernel namespace.
 	deleteJob := waitForKernelJob(t, "mariadb-delete-mariadelete-maria-app3", "mariadelete")

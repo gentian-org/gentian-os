@@ -25,6 +25,7 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
+	"github.com/gentian-org/gentian-os/internal/layout"
 )
 
 func newS3Profile(name string) *gentianov1alpha1.ComponentProfile {
@@ -242,7 +243,7 @@ func TestStorage_DeleteDeletePolicy_CreatesDeleteJobs(t *testing.T) {
 		t.Fatalf("delete tenant: %v", err)
 	}
 	// deleteIdentity runs before deleteStorage; mark cleanup Jobs so reconcile proceeds.
-	go markJobCompleteWhenReady("keycloak-realm-delete-storagedelete", "platform-kernel")
+	go markJobCompleteWhenReady("keycloak-realm-delete-storagedelete", layout.Namespace(layout.Authentication))
 
 	s3DeleteJob := &batchv1.Job{}
 	waitFor(t, jobAppearTimeout, func() bool {

@@ -47,6 +47,7 @@ import (
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
 	"github.com/gentian-org/gentian-os/internal/controller"
+	"github.com/gentian-org/gentian-os/internal/layout"
 	"github.com/gentian-org/gentian-os/internal/meta"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -349,9 +350,9 @@ func TestMain(m *testing.M) {
 	// nothing to mark, so the wait never ended.
 	go fakeKeycloakClientProvider(ctx, mgr.GetClient())
 
-	// platform-kernel namespace is required by the identity reconciler for Keycloak Jobs.
+	// The authentication namespace: the identity reconciler's Keycloak Jobs.
 	if err := testClient.Create(context.Background(), &corev1.Namespace{
-		ObjectMeta: metav1.ObjectMeta{Name: "platform-kernel"},
+		ObjectMeta: metav1.ObjectMeta{Name: layout.Namespace(layout.Authentication)},
 	}); err != nil {
 		panic(err)
 	}
@@ -359,8 +360,9 @@ func TestMain(m *testing.M) {
 	// gentian-dev holds shared service ConfigMaps (e.g. Dovecot OIDC introspection values).
 	// The platform namespaces tenant provisioning writes to, one per function
 	// (internal/controller/namespaces.go): identity Jobs in the authentication
-	// namespace (platform-kernel is its v4 fallback), the provisioning ConfigMap
-	// in the provisioning one, and each data-plane Job beside its system service.
+	// namespace, the Gateway and its reference grants at the edge, the
+	// provisioning ConfigMap in the provisioning one, and each data-plane Job
+	// beside its system service.
 	for _, ns := range append([]string{"gentian-dev", "gentian-infra-dev", "envoy-gateway-system"}, testPlatformNamespaces[1:]...) {
 		if err := testClient.Create(context.Background(), &corev1.Namespace{
 			ObjectMeta: metav1.ObjectMeta{Name: ns},
@@ -386,7 +388,7 @@ func TestMain(m *testing.M) {
 	// succeed under envtest.
 	fakeKC := startFakeKeycloak()
 	if err := testClient.Create(context.Background(), &corev1.Secret{
-		ObjectMeta: metav1.ObjectMeta{Name: "keycloak-admin", Namespace: "platform-kernel"},
+		ObjectMeta: metav1.ObjectMeta{Name: "keycloak-admin", Namespace: layout.Namespace(layout.Authentication)},
 		Data: map[string][]byte{
 			"url":      []byte(fakeKC.URL),
 			"username": []byte("kcadmin"),
@@ -917,7 +919,7 @@ func TestTenantReconciler_DeleteDeleteRemovesNamespace(t *testing.T) {
 		t.Fatalf("delete tenant: %v", err)
 	}
 	// For Delete policy deleteIdentity creates cleanup jobs.
-	go markJobCompleteWhenReady("keycloak-realm-delete-destroyer", "platform-kernel")
+	go markJobCompleteWhenReady("keycloak-realm-delete-destroyer", layout.Namespace(layout.Authentication))
 
 	// Wait for Tenant CR to be gone
 	waitFor(t, tenantReadyTimeout, func() bool {
@@ -1059,11 +1061,19 @@ func fakeKeycloakClientProvider(ctx context.Context, c client.Client) {
 
 // testPlatformNamespaces are the namespaces a tenant's provisioning writes
 // to under the layout the tests run with: no GENTIAN_NS_* set, so the kernel
-// functions fall back to their v4 names, while the system functions are
-// always system-<function>. First is the authentication namespace.
+// function, and each system function is always system-<function>. First is
+// the authentication namespace, which several helpers look in by position.
+//
+// Every one of these is CREATED by TestMain as well as searched. They used to
+// collapse onto one name because the layout they were written against put
+// authentication, the edge and control in a single namespace; they do not any
+// more, and a namespace a reconciler writes to and the suite never created is
+// a test that waits three minutes for something that cannot happen.
 var testPlatformNamespaces = []string{
-	"platform-kernel",
-	"crossplane-system",
+	layout.Namespace(layout.Authentication),
+	layout.Namespace(layout.Provisioning),
+	layout.Namespace(layout.Edge),
+	layout.Namespace(layout.Control),
 	"system-postgresql",
 	"system-mariadb",
 	"system-s3",

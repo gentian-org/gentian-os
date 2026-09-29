@@ -28,6 +28,7 @@ import (
 	gatewayv1 "sigs.k8s.io/gateway-api/apis/v1"
 
 	gentianov1alpha1 "github.com/gentian-org/gentian-os/api/v1alpha1"
+	"github.com/gentian-org/gentian-os/internal/layout"
 )
 
 func TestReconcileKeycloakIDPGatewayRoutePatchesHTTPRoute(t *testing.T) {
@@ -44,7 +45,7 @@ func TestReconcileKeycloakIDPGatewayRoutePatchesHTTPRoute(t *testing.T) {
 	route := &gatewayv1.HTTPRoute{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      kernelKeycloakHTTPRouteName(),
-			Namespace: "platform-kernel",
+			Namespace: layout.Namespace(layout.Edge),
 		},
 		Spec: gatewayv1.HTTPRouteSpec{
 			// Two rules, as the kernel route builder writes them: one per
@@ -66,7 +67,7 @@ func TestReconcileKeycloakIDPGatewayRoutePatchesHTTPRoute(t *testing.T) {
 	}
 
 	got := &gatewayv1.HTTPRoute{}
-	if err := c.Get(context.Background(), types.NamespacedName{Name: kernelKeycloakHTTPRouteName(), Namespace: "platform-kernel"}, got); err != nil {
+	if err := c.Get(context.Background(), types.NamespacedName{Name: kernelKeycloakHTTPRouteName(), Namespace: layout.Namespace(layout.Edge)}, got); err != nil {
 		t.Fatalf("get HTTPRoute: %v", err)
 	}
 	// Every rule keeps its place and gets the filters. Rebuilding the route

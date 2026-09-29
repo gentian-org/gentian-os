@@ -20,6 +20,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/gentian-org/gentian-os/internal/layout"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
@@ -48,19 +49,19 @@ func TestStaticIPClusterGetsNoEdgeDNSEndpoint(t *testing.T) {
 	c := fake.NewClientBuilder().WithScheme(dnsEndpointScheme(t)).Build()
 	ctx := context.Background()
 
-	if err := syncEdgeDNSEndpoint(ctx, c, nil, "platform-kernel",
+	if err := syncEdgeDNSEndpoint(ctx, c, nil, layout.Namespace(layout.Edge),
 		[]string{"id.example.test"}); err != nil {
 		t.Fatalf("nil ingress: %v", err)
 	}
 	noTunnel := NewCloudflareTunnelIngress("t", "z", "", "")
-	if err := syncEdgeDNSEndpoint(ctx, c, noTunnel, "platform-kernel",
+	if err := syncEdgeDNSEndpoint(ctx, c, noTunnel, layout.Namespace(layout.Edge),
 		[]string{"id.example.test"}); err != nil {
 		t.Fatalf("no tunnel: %v", err)
 	}
 
 	got := &unstructured.Unstructured{}
 	got.SetGroupVersionKind(dnsEndpointGVK)
-	err := c.Get(ctx, types.NamespacedName{Name: "edge-kernel", Namespace: "platform-kernel"}, got)
+	err := c.Get(ctx, types.NamespacedName{Name: "edge-kernel", Namespace: layout.Namespace(layout.Edge)}, got)
 	if err == nil {
 		t.Fatalf("a DNSEndpoint was written with no target to point at: %v", got.Object)
 	}
@@ -76,13 +77,13 @@ func TestTunnelClusterPublishesEveryHostname(t *testing.T) {
 	ing := NewCloudflareTunnelIngress("t", "z", "abc-123.cfargotunnel.com", "")
 
 	hosts := []string{"www.example.test", "id.example.test", "www.example.test", ""}
-	if err := syncEdgeDNSEndpoint(ctx, c, ing, "platform-kernel", hosts); err != nil {
+	if err := syncEdgeDNSEndpoint(ctx, c, ing, layout.Namespace(layout.Edge), hosts); err != nil {
 		t.Fatalf("sync: %v", err)
 	}
 
 	got := &unstructured.Unstructured{}
 	got.SetGroupVersionKind(dnsEndpointGVK)
-	if err := c.Get(ctx, types.NamespacedName{Name: "edge-kernel", Namespace: "platform-kernel"}, got); err != nil {
+	if err := c.Get(ctx, types.NamespacedName{Name: "edge-kernel", Namespace: layout.Namespace(layout.Edge)}, got); err != nil {
 		t.Fatalf("expected a DNSEndpoint: %v", err)
 	}
 
@@ -126,7 +127,7 @@ func TestEdgeDNSEndpointIsIdempotent(t *testing.T) {
 	ing := NewCloudflareTunnelIngress("t", "z", "abc-123.cfargotunnel.com", "")
 
 	for i := 0; i < 2; i++ {
-		if err := syncEdgeDNSEndpoint(ctx, c, ing, "platform-kernel",
+		if err := syncEdgeDNSEndpoint(ctx, c, ing, layout.Namespace(layout.Edge),
 			[]string{"id.example.test"}); err != nil {
 			t.Fatalf("sync %d: %v", i+1, err)
 		}
