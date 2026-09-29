@@ -203,58 +203,6 @@ try_load_creds_from_openbao() {
         info "Loaded missing credentials from OpenBao."
     fi
 }
-install_eso() {
-    banner "Installing External Secrets Operator"
-
-    if helm status external-secrets -n external-secrets &>/dev/null; then
-        success "ESO already installed. Skipping."
-        return
-    fi
-
-    helm repo add external-secrets "$(gentian_pin external-secrets repo)" --force-update
-    helm repo update external-secrets
-    _helm_retry install external-secrets external-secrets/external-secrets \
-        -n external-secrets \
-        --version "${ESO_CHART_VERSION}" \
-        -f "${SCRIPT_DIR}/kernel/eso/values.yaml" \
-        --wait --timeout 5m
-    success "ESO installed."
-}
-# =============================================================================
-# 5. Deploy OpenBao transit seal instance
-# =============================================================================
-bootstrap_transit_app() {
-    banner "OpenBao transit seal instance"
-
-    # Note: CRI cleanup is intentionally NOT run here pre-flight. It is
-    # invoked reactively by wait_for_running_pod's 2nd-tier escalation
-    # only if the transit pod is demonstrably wedged (stuck 120s+ in
-    # ContainerCreating with no IP), so a fresh / healthy cluster never
-    # pays the sudo-prompt + sweep cost.
-
-    if ! kubectl get secret openbao-transit-unseal -n "${TRANSIT_NAMESPACE:-openbao}" &>/dev/null; then
-        kubectl create secret generic openbao-transit-unseal \
-            -n "${TRANSIT_NAMESPACE:-openbao}" --from-literal=unseal-key=placeholder
-        success "Placeholder openbao-transit-unseal secret created."
-    fi
-
-    apply_bootstrap_application openbao-transit
-    success "Applied openbao-transit-application.yaml (storageClass=${STORAGE_CLASS})"
-
-    _wait_for_argocd_application_workload \
-        openbao-transit openbao statefulset \
-        "app.kubernetes.io/instance=openbao-transit" 300 \
-    || {
-        error "Argo CD did not deploy openbao-transit StatefulSet."
-        exit 1
-    }
-
-    if ! wait_for_running_pod openbao "app.kubernetes.io/instance=openbao-transit" "openbao-transit" 480; then
-        error "openbao-transit pod never became Ready. Aborting install."
-        exit 1
-    fi
-}
-
 # =============================================================================
 # 5b. Init the transit instance
 # =============================================================================

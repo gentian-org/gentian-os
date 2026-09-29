@@ -131,16 +131,6 @@ _provider_req_path() {
     return 1
 }
 
-# _provider_req_prefixes — the requirement-name prefixes, for callers matching
-# on shape rather than on an exact name.
-_provider_req_prefixes() {
-    local row table prefix selector
-    for row in "${GENTIAN_PROVIDER_TABLES[@]}"; do
-        IFS=: read -r table prefix selector <<<"${row}"
-        echo "${prefix}"
-    done
-}
-
 # catalogue_names [phase] — requirement names, optionally filtered by phase.
 catalogue_names() {
     local phase="${1:-}" name p

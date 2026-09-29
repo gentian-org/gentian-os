@@ -26,7 +26,6 @@ _pl_ns() {
     ns_kernel "${fn}"
 }
 _pl_identity_ns()      { _pl_ns IDENTITY_NAMESPACE authentication; }
-_pl_authz_ns()         { _pl_ns AUTHZ_NAMESPACE authorization; }
 _pl_gitops_ns()        { _pl_ns GITOPS_NAMESPACE gitops; }
 _pl_edge_ns()          { _pl_ns EDGE_NAMESPACE edge; }
 _pl_control_ns()       { _pl_ns GENTIAN_SYSTEM_NAMESPACE control; }

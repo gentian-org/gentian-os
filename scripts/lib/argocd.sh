@@ -162,49 +162,6 @@ resolve_argocd_url() {
     echo "kubectl port-forward -n argocd svc/argocd-server 8080:443"
 }
 
-# =============================================================================
-# tune_argocd_runtime — memory + concurrency settings for the ArgoCD controller
-#
-# Idempotent and safe to re-run; called on every install.sh run so an existing
-# cluster picks these up rather than only freshly-installed ones.
-#
-# Upstream ships no resources and high concurrency (20 status / 10 operation
-# processors), which on a small cluster produces an application-controller that
-# OOM-kills itself roughly 20 seconds into every boot — observed here as 48
-# restarts across four hours during which nothing in the cluster synced and
-# every Application silently sat on a stale revision.
-#
-# Peak memory tracks CONCURRENCY, not the number of Applications: each processor
-# holds the manifests of the app it is comparing. That is why the node still
-# showed free memory while the pod was being killed, and why a memory request
-# alone did not fix it — the request decides which pod the kernel picks under
-# node pressure, and this was not node pressure.
-#
-# Override per cluster with ARGOCD_STATUS_PROCESSORS / ARGOCD_OPERATION_PROCESSORS
-# / ARGOCD_KUBECTL_PARALLELISM; larger clusters can afford the upstream numbers.
-# =============================================================================
-tune_argocd_runtime() {
-    local ns="argocd"
-
-    kubectl -n "${ns}" patch configmap argocd-cmd-params-cm --type merge -p '{"data":{
-      "controller.status.processors":"'"${ARGOCD_STATUS_PROCESSORS:-4}"'",
-      "controller.operation.processors":"'"${ARGOCD_OPERATION_PROCESSORS:-2}"'",
-      "controller.kubectl.parallelism.limit":"'"${ARGOCD_KUBECTL_PARALLELISM:-4}"'"}}' >/dev/null 2>&1       || warn "  Could not patch argocd-cmd-params-cm (absent?)."
-
-    # Requests, not limits. A request lifts the pod out of BestEffort QoS so it
-    # is not the kernel's first choice under node pressure; a hard limit would
-    # convert an occasional node-level kill into a guaranteed self-inflicted one,
-    # because the controller's working set grows with the resources it tracks.
-    kubectl -n "${ns}" patch statefulset argocd-application-controller --type=json -p='[
-      {"op":"add","path":"/spec/template/spec/containers/0/resources","value":{"requests":{"memory":"768Mi","cpu":"250m"}}}
-    ]' >/dev/null 2>&1 || true
-    kubectl -n "${ns}" patch deployment argocd-repo-server --type=json -p='[
-      {"op":"add","path":"/spec/template/spec/containers/0/resources","value":{"requests":{"memory":"256Mi","cpu":"100m"}}}
-    ]' >/dev/null 2>&1 || true
-
-    success "ArgoCD runtime tuned (status=${ARGOCD_STATUS_PROCESSORS:-4} operation=${ARGOCD_OPERATION_PROCESSORS:-2})."
-}
-
 # Configure ArgoCD OIDC settings and group mapping.
 configure_argocd_oidc() {
     local kernel_domain="${KERNEL_DOMAIN:?KERNEL_DOMAIN required}"
@@ -286,59 +243,6 @@ g, /${platform_admin_group}, role:admin"
 }
 
 
-# =============================================================================
-# Wait until an Argo CD Application has created its target workload.
-# install.sh applies bootstrap Applications with kubectl; the application-
-# controller reconciles asynchronously. Polling for pods immediately yields
-# permanent "NotScheduledYet" even on a healthy cluster.
-# =============================================================================
-_wait_for_argocd_application_workload() {
-    local app="$1" ns="$2" resource_kind="$3" label_selector="$4" timeout="${5:-300}"
-    local start=$SECONDS elapsed=0 sync_status health sync_msg
-
-    info "Waiting for Argo CD Application '${app}' to deploy ${resource_kind} in ${ns} (up to ${timeout}s)..."
-    kubectl rollout status statefulset/argocd-application-controller -n argocd \
-        --timeout=120s >/dev/null 2>&1 \
-        || warn "argocd-application-controller not Ready yet — continuing to poll."
-
-    kubectl annotate application "${app}" -n argocd \
-        argocd.argoproj.io/refresh=hard --overwrite >/dev/null 2>&1 || true
-
-    while (( elapsed < timeout )); do
-        if kubectl get "${resource_kind}" -n "${ns}" -l "${label_selector}" \
-                --no-headers 2>/dev/null | grep -q .; then
-            success "Argo CD Application '${app}' created ${resource_kind} in ${ns}."
-            return 0
-        fi
-
-        sync_status=$(kubectl get application "${app}" -n argocd \
-            -o jsonpath='{.status.sync.status}' 2>/dev/null || true)
-        health=$(kubectl get application "${app}" -n argocd \
-            -o jsonpath='{.status.health.status}' 2>/dev/null || true)
-        sync_msg=$(kubectl get application "${app}" -n argocd \
-            -o jsonpath='{.status.operationState.message}' 2>/dev/null || true)
-
-        if [[ "${sync_status}" == "Unknown" && -n "${sync_msg}" ]]; then
-            error "Argo CD Application '${app}' failed to sync: ${sync_msg}"
-            error "Inspect: kubectl describe application ${app} -n argocd"
-            return 1
-        fi
-
-        if (( elapsed % 30 == 0 )); then
-            echo "  [${elapsed}s] app=${app} sync=${sync_status:-<none>} health=${health:-<none>}"
-            [[ -n "${sync_msg}" ]] && echo "         message: ${sync_msg}"
-        fi
-        sleep 5
-        elapsed=$((SECONDS - start))
-    done
-
-    error "Timed out waiting for Argo CD Application '${app}' to create ${resource_kind} in ${ns}."
-    error "Inspect: kubectl describe application ${app} -n argocd"
-    kubectl get application "${app}" -n argocd \
-        -o custom-columns='NAME:.metadata.name,SYNC:.status.sync.status,HEALTH:.status.health.status' 2>/dev/null \
-        | sed 's/^/  /' || true
-    return 1
-}
 verify_argocd_apps() {
     banner "Verify — ArgoCD Applications"
 

@@ -89,6 +89,7 @@ and the union's exactly-one rule cannot, so it survives as the annotation
 | --- | --- |
 | ✅ | `claims/deployments-repository.yaml` is required on v5, and an uncommitted working copy is named. Without that claim the director has no push credential and every write answers 503 — no tenant, no invited user |
 | ☐ | Deployment preparation is not DRY: `--prepare-deployment` writes the files and nothing commits them, so the claim reaches the cluster only if somebody remembers. One writer, folded into the normal run |
+| ✅ | One layout. The v4 step set, kernel trees, `spec.layout`, the `InfraData` kind and `--layout` are gone, and the 50 library functions the v4 steps were the only caller of went with them. `make lint` now runs `lint-unreachable`, so a definition nothing reaches fails the build — the other half of `lint-resolvable` |
 | ✅ | `GETTING-STARTED.md` names the claim set that exists, and says plainly that a leftover `claims/infra-data.yaml` must be deleted — the `InfraData` kind itself is gone, so nothing composes those engines twice |
 | ☐ | S7A.4 — no write has ever succeeded against this cluster |
 | ✅ | S7A.17's durable record: the director's own database on `kernel-postgres` holds who was allowed to ask for each identity change, with a retention horizon it enforces. Optional — a cluster without it starts and warns |
@@ -109,16 +110,6 @@ none of it blocks the purge.
 
 ## Known and deliberately not now
 
-- **Dead library functions the v4 step set was the only caller of.** Removing
-  the layout deleted 44 step files, and the functions they called are still in
-  `scripts/lib/`. A sweep found about fifty with no call site — `install_*` for
-  cert-manager, Envoy Gateway, ESO, Crossplane, provider-helm, MAC admission,
-  mail and LLM serving, and a tail of helpers behind them. The ones that named
-  the deleted `kernel/bootstrap/` and `kernel/appsets/` trees are gone with
-  them; the rest are left because the sweep is a regular expression over shell
-  and a function dispatched by name (the credential validators are) looks
-  exactly like a dead one. Deleting them wants a real call graph, or one
-  careful pass per file, and neither belongs immediately before a purge.
 
 - A catalogue source has to publish `index.yaml` for a cluster to browse it.
   gentian-apps' CI now builds the flat, https-served shape on every run and
